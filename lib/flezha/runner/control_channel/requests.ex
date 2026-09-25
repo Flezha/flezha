@@ -1,15 +1,15 @@
 defmodule Flezha.Runner.ControlChannel.Requests do
   @moduledoc """
   The requests a runner's SDK initiates on its control stream: the ones that
-  act on one operative (a graceful-shutdown notification, a workflow
+  act on one operator (a graceful-shutdown notification, a bounded operator
   completion, an iteration park, a durability barrier) and the ones scoped to
   the runner or its namespace (a factory update, a tasklet-requested spawn,
   an admin call).
 
-  An operative request is judged first by the operative's ownership record
+  An operator request is judged first by the operator's ownership record
   (`Flezha.Runner.StreamChannel.Records.admit/3`), so a runner acts only on the
-  operatives bound to its stable identity, and a refused request does nothing
-  to the operative. A runner or namespace request is judged as the identity
+  operators bound to its stable identity, and a refused request does nothing
+  to the operator. A runner or namespace request is judged as the identity
   the connection proved.
 
   Every function runs in the control channel's process and takes its state.
@@ -20,7 +20,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   """
 
   alias Flezha.Config.Durations
-  alias Flezha.Operative.Migration
+  alias Flezha.Operator.Migration
   alias Flezha.Runner.ControlChannel.Commits
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Session
@@ -28,13 +28,13 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   alias Flezha.Runner.StreamPool
   alias Flezha.Service.Admin
   alias Flezha.Service.HubManager
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias Flezha.State.{Completion, TaskJournal}
 
   require Logger
 
   @doc """
-  Apply the SDK's final state to the operative's `Overwatch`, and answer the
+  Apply the SDK's final state to the operator's `Overwatch`, and answer the
   `RunnerShutdownAck` for the channel to write back.
 
   The cast-not-call ordering is deliberate: the snapshot is enqueued on the
@@ -49,68 +49,68 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   @spec runner_shutdown(map(), RunnerCommands.RunnerShutdownNotification.t()) ::
           {tuple(), binary()}
   def runner_shutdown(state, %RunnerCommands.RunnerShutdownNotification{} = notif) do
-    %{operative_id: operative_id, serialized_state: serialized_state} = notif
+    %{operator_id: operator_id, serialized_state: serialized_state} = notif
 
-    if Records.admit(state, operative_id, :runner_shutdown_notification) do
-      case HubManager.get_pid(state.namespace, operative_id) do
+    if Records.admit(state, operator_id, :runner_shutdown_notification) do
+      case HubManager.get_pid(state.namespace, operator_id) do
         {:ok, pid} when is_pid(pid) ->
           GenServer.cast(pid, {:apply_external_snapshot, serialized_state})
 
         _ ->
           Logger.warning(
             "[control_channel] Overwatch missing for shutdown notification — assumed migrated. " <>
-              "namespace=#{inspect(state.namespace)} operative_id=#{inspect(operative_id)}"
+              "namespace=#{inspect(state.namespace)} operator_id=#{inspect(operator_id)}"
           )
       end
     end
 
-    {{:runner_shutdown_ack, %RunnerCommands.RunnerShutdownAck{operative_id: operative_id}},
-     "RunnerShutdownAck operative=#{inspect(operative_id)}"}
+    {{:runner_shutdown_ack, %RunnerCommands.RunnerShutdownAck{operator_id: operator_id}},
+     "RunnerShutdownAck operator=#{inspect(operator_id)}"}
   end
 
   @doc """
-  Converged teardown for every workflow exit trigger (quiescence, ctx.complete,
+  Converged teardown for every bounded operator exit trigger (quiescence, ctx.complete,
   loop terminal, max_duration, cooperative stop): surface the outcome and the
-  result payload, then deregister on completion so the operative never replays
+  result payload, then deregister on completion so the operator never replays
   on boot. A `status = "error"` tears down identically, with no retry. A
   completion from a runner that does not own the instance is not an exit
   trigger.
   """
-  @spec workflow_completed(map(), RunnerCommands.WorkflowCompleted.t()) :: :ok
-  def workflow_completed(state, %RunnerCommands.WorkflowCompleted{} = completed) do
-    if Records.admit(state, completed.operative_id, :workflow_completed),
+  @spec bounded_completed(map(), RunnerCommands.BoundedCompleted.t()) :: :ok
+  def bounded_completed(state, %RunnerCommands.BoundedCompleted{} = completed) do
+    if Records.admit(state, completed.operator_id, :bounded_completed),
       do: complete(state, completed)
 
     :ok
   end
 
   defp complete(state, completed) do
-    %RunnerCommands.WorkflowCompleted{
-      operative_id: operative_id,
+    %RunnerCommands.BoundedCompleted{
+      operator_id: operator_id,
       status: status,
       error: error,
       result: result
     } = completed
 
     :telemetry.execute(
-      [:flezha, :workflow, :completed],
+      [:flezha, :bounded, :completed],
       %{count: 1},
       %{
         namespace: state.namespace,
-        operative_id: operative_id,
+        operator_id: operator_id,
         status: status,
         result: result
       }
     )
 
-    if status == "error", do: report_workflow_failure(state, operative_id, error)
+    if status == "error", do: report_bounded_failure(state, operator_id, error)
 
     # Finished-job retention: record the terminal outcome (durably, before the
-    # teardown) so `flz operative info` can surface it and `stop_operative`
+    # teardown) so `flz operator info` can surface it and `stop_operator`
     # retains the state instead of deleting it. `finished_at` is stamped
     # controller-side (the wire carries no timestamp).
     _ =
-      Completion.write(operative_id, %{
+      Completion.write(operator_id, %{
         namespace: state.namespace,
         status: status,
         error: error,
@@ -118,36 +118,36 @@ defmodule Flezha.Runner.ControlChannel.Requests do
         finished_at: System.system_time(:second)
       })
 
-    deregister_on_completion(state, operative_id)
+    deregister_on_completion(state, operator_id)
   end
 
-  defp report_workflow_failure(state, operative_id, error) do
+  defp report_bounded_failure(state, operator_id, error) do
     Logger.warning(
-      "[control_channel] workflow operative #{inspect(operative_id)} failed in namespace " <>
+      "[control_channel] bounded operator #{inspect(operator_id)} failed in namespace " <>
         "#{inspect(state.namespace)}: #{inspect(error)}"
     )
 
     :telemetry.execute(
-      [:flezha, :workflow, :failed],
+      [:flezha, :bounded, :failed],
       %{count: 1},
-      %{namespace: state.namespace, operative_id: operative_id, error: error}
+      %{namespace: state.namespace, operator_id: operator_id, error: error}
     )
   end
 
-  # Tear down off the control-channel process: `stop_operative` drives a
-  # RemOperative round-trip whose CommandResponse returns on THIS control
+  # Tear down off the control-channel process: `stop_operator` drives a
+  # RemOperator round-trip whose CommandResponse returns on THIS control
   # stream, so calling it inline would deadlock the reader.
-  defp deregister_on_completion(%{namespace: namespace, runner_id: runner_id}, operative_id) do
+  defp deregister_on_completion(%{namespace: namespace, runner_id: runner_id}, operator_id) do
     Task.start(fn ->
-      drain_owed_outputs(runner_id, operative_id)
+      drain_owed_outputs(runner_id, operator_id)
 
-      case OperativeManager.stop_operative(namespace, operative_id) do
+      case OperatorManager.stop_operator(namespace, operator_id) do
         :ok ->
           :ok
 
         {:error, reason} ->
           Logger.warning(
-            "[control_channel] workflow operative #{inspect(operative_id)} teardown failed: #{inspect(reason)}"
+            "[control_channel] bounded operator #{inspect(operator_id)} teardown failed: #{inspect(reason)}"
           )
       end
     end)
@@ -171,17 +171,17 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   #     a stage marker belongs to a stage that never committed, and is owed
   #     nothing.
 
-  defp drain_owed_outputs(runner_id, operative_id) do
+  defp drain_owed_outputs(runner_id, operator_id) do
     StreamPool.flush_channels(runner_id)
 
     await_owed_outboxes(
-      operative_id,
+      operator_id,
       System.monotonic_time(:millisecond) + Durations.get(:drain_owed_ms)
     )
   end
 
-  defp await_owed_outboxes(operative_id, deadline) do
-    owed = TaskJournal.owed_outputs(operative_id)
+  defp await_owed_outboxes(operator_id, deadline) do
+    owed = TaskJournal.owed_outputs(operator_id)
 
     cond do
       owed == 0 ->
@@ -189,37 +189,37 @@ defmodule Flezha.Runner.ControlChannel.Requests do
 
       System.monotonic_time(:millisecond) >= deadline ->
         Logger.warning(
-          "[control_channel] workflow operative #{inspect(operative_id)} completed with " <>
+          "[control_channel] bounded operator #{inspect(operator_id)} completed with " <>
             "#{owed} outbox entries still owed"
         )
 
       true ->
         Process.sleep(50)
-        await_owed_outboxes(operative_id, deadline)
+        await_owed_outboxes(operator_id, deadline)
     end
   end
 
   @doc """
   An instance of either kind has been idle past the threshold and stopped
-  without a completion (`workflow-durable-suspension`). Hand it to its
+  without a completion (`bounded-durable-suspension`). Hand it to its
   Overwatch, which writes the park record durably before it evicts the instance
   from this runner and keeps it resumable; with no Overwatch here, the record
   is written under the instance's own key so the sleep is rediscovered when the
   instance is next started.
 
-  Off this process: the eviction drives a `RemOperative` whose response returns
+  Off this process: the eviction drives a `RemOperator` whose response returns
   on this control stream, so doing it inline would deadlock the reader, the
-  same reason as the workflow-completed teardown.
+  same reason as the bounded-completed teardown.
   """
   @spec iter_park(map(), RunnerCommands.IterPark.t()) :: :ok
   def iter_park(state, %RunnerCommands.IterPark{} = park) do
-    if Records.admit(state, park.operative_id, :iter_park), do: park_instance(state, park)
+    if Records.admit(state, park.operator_id, :iter_park), do: park_instance(state, park)
     :ok
   end
 
   defp park_instance(state, park) do
     %RunnerCommands.IterPark{
-      operative_id: operative_id,
+      operator_id: operator_id,
       iter: iter,
       wake_deadline_ms: wake_deadline_ms,
       consumed_offset: consumed_offset
@@ -228,9 +228,9 @@ defmodule Flezha.Runner.ControlChannel.Requests do
     deadline = if wake_deadline_ms == 0, do: nil, else: wake_deadline_ms
 
     :telemetry.execute(
-      [:flezha, :workflow, :parked],
+      [:flezha, :bounded, :parked],
       %{count: 1},
-      %{namespace: state.namespace, operative_id: operative_id, iter: iter}
+      %{namespace: state.namespace, operator_id: operator_id, iter: iter}
     )
 
     namespace = state.namespace
@@ -239,9 +239,9 @@ defmodule Flezha.Runner.ControlChannel.Requests do
     Task.start(fn ->
       # Before the suspension asks the log whether input is still owed: a
       # message the run parked unread is consumed, not owed.
-      TaskJournal.release_input(operative_id, consumed_offset)
+      TaskJournal.release_input(operator_id, consumed_offset)
 
-      Migration.suspend(namespace, operative_id, iter, park)
+      Migration.suspend(namespace, operator_id, iter, park)
     end)
   end
 
@@ -253,7 +253,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   """
   @spec barrier(map(), :task_commit | :iter_commit, struct(), binary()) :: :ok
   def barrier(state, kind, commit, reference_id) do
-    if Records.admit(state, commit.operative_id, kind),
+    if Records.admit(state, commit.operator_id, kind),
       do: Commits.commit(state.runner_id, reference_id, commit),
       else: Commits.refuse(state.runner_id, reference_id, commit)
   end
@@ -288,13 +288,13 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   end
 
   @doc """
-  A tasklet asked for a workflow instance (`ctx.spawn_workflow`), judged as
+  A tasklet asked for a bounded instance (`ctx.spawn_bounded`), judged as
   the identity this connection proved. The namespace is this channel's, never
   the requester's claim, so a request cannot reach another namespace.
   """
-  @spec spawn_workflow(map(), RunnerCommands.SpawnWorkflowRequest.t(), binary()) :: :ok
-  def spawn_workflow(state, request, reference_id) do
-    %RunnerCommands.SpawnWorkflowRequest{
+  @spec spawn_bounded(map(), RunnerCommands.SpawnBoundedRequest.t(), binary()) :: :ok
+  def spawn_bounded(state, request, reference_id) do
+    %RunnerCommands.SpawnBoundedRequest{
       instance_id: instance_id,
       factory_id: factory_id,
       payload: payload,
@@ -306,7 +306,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
     answer_off_process(reference_id, fn ->
       judged =
         once_admitted(state, fn ->
-          OperativeManager.spawn_or_deliver(
+          OperatorManager.spawn_or_deliver(
             namespace,
             instance_id,
             factory_id,
@@ -327,7 +327,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
       {name, error} = spawn_reply(outcome)
 
       :telemetry.execute(
-        [:flezha, :operative, :requested_spawn],
+        [:flezha, :operator, :requested_spawn],
         %{count: 1},
         %{
           namespace: namespace,
@@ -337,12 +337,12 @@ defmodule Flezha.Runner.ControlChannel.Requests do
         }
       )
 
-      {{:spawn_workflow_response,
-        %RunnerCommands.SpawnWorkflowResponse{
+      {{:spawn_bounded_response,
+        %RunnerCommands.SpawnBoundedResponse{
           outcome: Atom.to_string(name),
           error: error,
           instance_id: resolved_id
-        }}, "spawn-workflow response #{name}"}
+        }}, "spawn-bounded response #{name}"}
     end)
   end
 
@@ -376,7 +376,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   end
 
   # A request whose answer cannot be worked out on the channel's process:
-  # resolving it drives an `AddOperative` or a `RemOperative` whose response
+  # resolving it drives an `AddOperator` or a `RemOperator` whose response
   # returns on this control stream, so doing it inline would deadlock the
   # reader. `answer` runs off-process and hands back the reply command and its
   # log label, which the channel writes.

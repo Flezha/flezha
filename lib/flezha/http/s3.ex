@@ -135,7 +135,7 @@ defmodule Flezha.Http.S3 do
 
   @doc """
   Create the configured bucket if it does not exist. Provisioning, not a
-  request any ship or plugin path makes: call it once from an operator script
+  request any ship or plugin path makes: call it once from a user script
   or a test fixture.
   """
   @spec create_bucket(opts()) :: :ok | {:error, term()}

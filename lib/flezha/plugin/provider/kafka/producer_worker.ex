@@ -427,7 +427,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     {:noreply, state}
   end
 
-  # A full queue never discards a record unless the operator chose a drop
+  # A full queue never discards a record unless the user chose a drop
   # strategy: the default is `:drop_nothing` for every record, guaranteed or not.
   defp admit_record(state, record, from_or_async) do
     if state.queue_size < state.queue_max do

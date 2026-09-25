@@ -1,6 +1,6 @@
 defmodule FlezhaTest.System.SleepWhenIdleE2ETest do
   @moduledoc """
-  A stream class that sleeps when idle, and the one persistence switch, end to
+  An unbounded class that sleeps when idle, and the one persistence switch, end to
   end against a live runner of the selected SDK runtime over UDS.
 
   `sleeping_counter` folds `key:delta` inputs into one total per key and emits
@@ -22,10 +22,10 @@ defmodule FlezhaTest.System.SleepWhenIdleE2ETest do
   import FlezhaTest.Helper.TierE2EHarness,
     only: [cleanup: 3, kill_overwatch: 2, unique: 1, unique_id_path: 0]
 
-  import FlezhaTest.Helper.WorkflowResumeHarness
+  import FlezhaTest.Helper.BoundedResumeHarness
 
-  alias Flezha.Operative.{Builder, ClassRegistry, Replay}
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Operator.{Builder, ClassRegistry, Replay}
+  alias Flezha.Service.OperatorManager
   alias Flezha.State.Paths
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -37,7 +37,7 @@ defmodule FlezhaTest.System.SleepWhenIdleE2ETest do
     test "sleeps when idle, wakes on a send with its total, and a restart asleep changes nothing",
          ctx do
       collector = spawn_link(fn -> collect_loop([]) end)
-      namespace = unique("sleep_stream")
+      namespace = unique("sleep_unbounded")
       id = unique("sleeping_counter")
       sibling = unique("stateful_counter")
       id_path = unique_id_path()
@@ -80,7 +80,7 @@ defmodule FlezhaTest.System.SleepWhenIdleE2ETest do
     end
 
     test "a stop removes a sleeping stream and its directory", ctx do
-      namespace = unique("sleep_stream_stop")
+      namespace = unique("sleep_unbounded_stop")
       id = unique("sleeping_counter")
       id_path = unique_id_path()
       on_exit(fn -> cleanup(namespace, id, id_path) end)
@@ -94,7 +94,7 @@ defmodule FlezhaTest.System.SleepWhenIdleE2ETest do
       send_input(namespace, id, "a:1")
       assert NodeTestHelper.wait_until(fn -> suspended?(namespace, id) end, 30_000)
 
-      assert :ok = OperativeManager.request_stop(namespace, id)
+      assert :ok = OperatorManager.request_stop(namespace, id)
       refute registered?(namespace, id)
       refute File.dir?(Paths.class_dir(id))
     end
@@ -104,7 +104,7 @@ defmodule FlezhaTest.System.SleepWhenIdleE2ETest do
     @describetag transport: :uds
 
     test "a stream that declares persistence off keeps no state and refuses a live read", ctx do
-      namespace = unique("persistence_off_stream")
+      namespace = unique("persistence_off_unbounded")
       id = unique("persistence_off_counter")
       id_path = unique_id_path()
       on_exit(fn -> cleanup(namespace, id, id_path) end)
@@ -115,7 +115,7 @@ defmodule FlezhaTest.System.SleepWhenIdleE2ETest do
 
       assert NodeTestHelper.wait_until(
                fn ->
-                 OperativeManager.get_cell_state(namespace, id) == {:error, :persistence_off}
+                 OperatorManager.get_cell_state(namespace, id) == {:error, :persistence_off}
                end,
                30_000
              ),
@@ -126,11 +126,11 @@ defmodule FlezhaTest.System.SleepWhenIdleE2ETest do
       assert Replay.resume_cell_count(id) == 0, "a rebind would ship no RestoreInitState"
     end
 
-    @tag capability: :workflow, skip: FlezhaTest.SystemCase.deferral(:workflow)
-    test "a workflow that declares persistence off keeps no state and refuses a live read",
+    @tag capability: :bounded, skip: FlezhaTest.SystemCase.deferral(:bounded)
+    test "a bounded operator that declares persistence off keeps no state and refuses a live read",
          ctx do
       collector = spawn_link(fn -> collect_loop([]) end)
-      namespace = unique("persistence_off_workflow")
+      namespace = unique("persistence_off_bounded")
       id = unique("optout_commit_block")
       id_path = unique_id_path()
       on_exit(fn -> cleanup(namespace, id, id_path) end)
@@ -138,15 +138,15 @@ defmodule FlezhaTest.System.SleepWhenIdleE2ETest do
       # Without the release env its second task blocks, so the run stays bound.
       boot_runner(namespace, ctx, id_path, release?: false)
 
-      start_workflow(namespace, id, "optout_commit_block",
+      start_bounded(namespace, id, "optout_commit_block",
         plugins: [forward_sink("mid", collector)]
       )
 
       assert NodeTestHelper.wait_until(fn -> collected(collector) != [] end, 30_000)
 
-      assert OperativeManager.get_cell_state(namespace, id) == {:error, :persistence_off}
+      assert OperatorManager.get_cell_state(namespace, id) == {:error, :persistence_off}
       refute ClassRegistry.persistent?(id)
-      refute ClassRegistry.sleep_when_idle?(id), "an opted-out workflow does not sleep"
+      refute ClassRegistry.sleep_when_idle?(id), "an opted-out bounded does not sleep"
       assert Paths.cells_of(id) == []
       refute File.exists?(Paths.journal_path(id))
     end
@@ -154,9 +154,9 @@ defmodule FlezhaTest.System.SleepWhenIdleE2ETest do
 
   defp start_stream(namespace, id, factory_id, opts) do
     builder = %Builder{id: id, factory_id: factory_id, init_values: %{}, opts: opts}
-    assert {:ok, _info} = OperativeManager.start_operative(namespace, builder)
+    assert {:ok, _info} = OperatorManager.start_operator(namespace, builder)
   end
 
   defp send_input(namespace, id, text),
-    do: :ok = OperativeManager.send_io(id, namespace, text, %{})
+    do: :ok = OperatorManager.send_io(id, namespace, text, %{})
 end

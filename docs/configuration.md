@@ -2,7 +2,7 @@
 
 Every knob Flezha exposes, and which of four layers it lives in — because the
 layer decides whether changing it costs a restart, a redeploy, or nothing. It
-is for operators setting up a node and for operative authors wondering why a
+is for users setting up a node and for operator authors wondering why a
 setting is not on the node at all. Defaults are the literal the code falls back
 to when nothing is set; `(derived)` marks a default computed from another knob.
 
@@ -12,30 +12,30 @@ to when nothing is set; `(derived)` marks a default computed from another knob.
 |---|---|---|---|
 | 1. Environment variables | the process environment / deploy manifest | whole node | restart the node |
 | 2. Application env | `config/config.exs`, `config/runtime.exs`, `config/<env>.exs` | whole node | rebuild or restart (`runtime.exs` is read at boot) |
-| 3. Operative declarations | the SDK, in the operative's `channels()` and Tasklet/Workflow class | one operative class | redeploy the runner — frozen at registration |
+| 3. Operator declarations | the SDK, in the operator's `channels()` and Tasklet/Bounded class | one operator class | redeploy the runner — frozen at registration |
 | 4. Plugin options | the plugin's `opts` map when it is installed | one plugin instance | re-install the plugin |
 
 Underneath all four sits the Erlang VM itself, which is configured before the
 application starts and so cannot be a row of any table below: its flags are
-[their own section](#erlang-vm-arguments) inside Layer 1, because an operator
+[their own section](#erlang-vm-arguments) inside Layer 1, because a user
 sets them the same way and pays the same restart to change one.
 
 Layers 1 and 2 overlap on purpose: most environment variables exist only to
 set an application-env key at boot. **Both layers are one table**:
 `lib/flezha/config/keys.ex` declares every knob once — its name, the
 application-env key, the environment variable, the type, the default, the
-runtimes that read it and the surface an operator observes it on — and
+runtimes that read it and the surface a user observes it on — and
 `config/runtime.exs` is one call over that table rather than a translation of
 its own. Prefer the variable in a container, the config file for an embedded or
 local node.
 
-Layer 3 is the one that surprises people. Anything an operative declares —
+Layer 3 is the one that surprises people. Anything an operator declares —
 its delivery tier, its acknowledgement granularity, its correction window — is
 frozen when the class registers with the controller, and there is no
-operator-facing override: these change the semantics of the operative's
+user-facing override: these change the semantics of the operator's
 output, not just its performance, so they belong with the code that relies on
 them. The effectively-once, checkpoint and output-batching options are all
-[Layer 3](#layer-3-operative-declarations-sdk).
+[Layer 3](#layer-3-operator-declarations-sdk).
 
 ## Where files land
 
@@ -45,7 +45,7 @@ claim is owed before the first write, and how `flz reset` treats it. Both
 runtimes read that declaration — the controller through
 `Flezha.Layout.Table.dir/1`, `flz reset` through the matching rows in
 `cli/src/reset/plan.rs` — so at the default settings the directory the
-controller uses and the one an operator's reset reports are one path. A knob
+controller uses and the one a user's reset reports are one path. A knob
 that moves a subtree moves it for the controller only.
 
 | Subtree | Knob | `flz reset` |
@@ -148,7 +148,7 @@ the value and the type.
 | `FLEZHA_INPUT_LOG_HOLD_WINDOW_MS` | `0` | `:input_log_hold_window_ms` — a floor; a declared `correction_window` raises its own hold above it |
 | `FLEZHA_CREDIT_FLOW_CONTROL` | `true` | `:credit_flow_control_enabled` |
 | `FLEZHA_RETENTION_CHECK_INTERVAL_MS` | `60000` | `:time_travel_retention_check_interval_ms` (not in test) |
-| `FLEZHA_WORKFLOW_RETENTION_HOURS` | `72` | `:default_workflow_completed_retention_hours` (not in test) |
+| `FLEZHA_BOUNDED_RETENTION_HOURS` | `72` | `:default_bounded_completed_retention_hours` (not in test) |
 | `FLEZHA_DURABILITY_BACKEND` | `none` (prod warns when it was defaulted) | `:durability_tier[:backend]`; `none`, `postgres`, `s3`, `local_path`; any other spelling resolves to `none` and warns. A selected backend missing an option it cannot work without refuses the boot naming it |
 | `FLEZHA_DURABILITY_WRITER_ID` | `node()` | read at runtime by `Flezha.State.DurabilityTier.writer_id/0`; the stable lineage-writer identity for a controller whose node name changes on reschedule |
 | `FLEZHA_DURABILITY_SHIP_INTERVAL_MS` | `30000` | `:durability_tier[:ship_interval_ms]` |
@@ -172,14 +172,14 @@ the value and the type.
 | `FLEZHA_DURABILITY_S3_REGION` | `us-east-1` | `backend_opts[:region]` for `s3` |
 | `FLEZHA_DURABILITY_S3_PREFIX` | `flezha` | `backend_opts[:prefix]` for `s3` |
 
-### Runner and operative lifecycle
+### Runner and operator lifecycle
 
 | Variable | Default | Sets / notes |
 |---|---|---|
 | `FLEZHA_RUNNER_KEEPALIVE` | `30000` | `:runner_keepalive`; how long a disconnected runner is kept before removal, `0` removes at once |
 | `FLEZHA_RUNNER_RETIRING_MARK_TTL_MS` | `30000` | `:runner_retiring_mark_ttl_ms`; how long a controller-initiated disconnect stays marked, so the close it produces is reported as expected rather than as an incident. A runner id is reused across reconnects, so the mark expires: past this window a close is diagnosed as unexpected again |
-| `FLEZHA_GROUP_WITHDRAW_GRACE_MS` | `5000` | `:group_withdraw_grace_ms`; how long this controller keeps declaring a factory to the namespace hub after its last runner for it goes. A runner back inside the grace moves no operative; past it the hub reassigns them to a controller that still runs the factory. A disconnect the controller asked for skips the grace |
-| `FLEZHA_PLACEMENT_LOAD_CAP_PERCENT` | `100` | `:placement_load_cap_percent`; the fairness cap on runner selection, as a percentage of the candidate set's fair share. At `100` the cap is exactly the fair share, so a namespace holding fewer operatives than it has runners still uses all of them; a value high enough that no candidate reaches the cap is plain rendezvous hashing |
+| `FLEZHA_GROUP_WITHDRAW_GRACE_MS` | `5000` | `:group_withdraw_grace_ms`; how long this controller keeps declaring a factory to the namespace hub after its last runner for it goes. A runner back inside the grace moves no operator; past it the hub reassigns them to a controller that still runs the factory. A disconnect the controller asked for skips the grace |
+| `FLEZHA_PLACEMENT_LOAD_CAP_PERCENT` | `100` | `:placement_load_cap_percent`; the fairness cap on runner selection, as a percentage of the candidate set's fair share. At `100` the cap is exactly the fair share, so a namespace holding fewer operators than it has runners still uses all of them; a value high enough that no candidate reaches the cap is plain rendezvous hashing |
 | `FLEZHA_MIGRATION_CONSENT_TIMEOUT_MS` | `5000` | `:migration_consent[:consent_timeout_ms]` |
 | `FLEZHA_MIGRATION_RETRY_INTERVAL_MS` | `2000` | `:migration_consent[:retry_interval_ms]` |
 | `FLEZHA_MIGRATION_MAX_DEFER_MS` | unset → the graceful-shutdown timeout (derived) | `:migration_consent[:max_defer_ms]` |
@@ -206,7 +206,7 @@ the value and the type.
 | `FLEZHA_CONVERGENCE_UNMET_INTENT_GRACE_MS` | `120000` | `:convergence_unmet_intent_grace_ms` (not in test) |
 | `FLEZHA_CONVERGENCE_CELL_STALL_MS` | `300000` | `:convergence_cell_stall_ms` (not in test) |
 | `FLEZHA_FABRIC_503_POLLS` | `3` | `:convergence_fabric_503_polls` (not in test); consecutive classifier polls reporting `driver_loop_frozen` / `nif_queue_backing_up` before `/healthz` answers 503; `0` disables the fabric 503 |
-| `FLEZHA_HEALTHZ_ENABLED` | `false` | `:healthz_enabled` (not in test); true only for `true`/`1`. The endpoint folds the convergence loop's verdict records: `degraded` names every reason it folded (`parked`, `dead_runner`, `plugin_unhealthy`, `output_stalled`, `intent_mismatch`, `sensor_stale`, `data_plane_wedged`, joined with `+`), and the body carries `unknown_operatives` |
+| `FLEZHA_HEALTHZ_ENABLED` | `false` | `:healthz_enabled` (not in test); true only for `true`/`1`. The endpoint folds the convergence loop's verdict records: `degraded` names every reason it folded (`parked`, `dead_runner`, `plugin_unhealthy`, `output_stalled`, `intent_mismatch`, `sensor_stale`, `data_plane_wedged`, joined with `+`), and the body carries `unknown_operators` |
 | `FLEZHA_HEALTHZ_PORT` | `9569` | `:healthz_port` (not in test) |
 | `FLEZHA_HEALTHZ_BIND` | `0.0.0.0` | `:healthz_bind` (not in test) |
 | `FLEZHA_DATA_PLANE_LIVENESS` | `true` | `:observability[:data_plane_liveness]`; `false` drops the driver poll and the stall classifier, the counters stay |
@@ -270,8 +270,8 @@ skipped as a block.
 
 The VM the node runs in is configured before the application starts, so none of
 these can be a row of `lib/flezha/config/keys.ex` and `config/runtime.exs` never
-sees one. They behave like the rest of Layer 1 in the way that matters to an
-operator (set them in the process environment or the deploy manifest, restart
+sees one. They behave like the rest of Layer 1 in the way that matters to a
+user (set them in the process environment or the deploy manifest, restart
 to change one) and they are listed here because nothing above can express them.
 
 **What the release sets.** The launcher reads two files: the start commands take
@@ -299,7 +299,7 @@ templates to each other, so a flag cannot ship undocumented.
 | `+S 1:1` | This node connects to the controller, evaluates there and exits. It was being given the host's full scheduler complement to do that. |
 | `+SDio 1` | It opens no transport, so the dirty IO pool has nothing to serve. |
 | `+Q 65536` | The same ceiling, pinned for the same reason. This node opens two ports and was allocating a table for a million of them: **15 MB of RSS**, and a tenth of the node's startup, on every `flz` verb. |
-| `+Bd` | Ctrl-C ends the verb. With the default break handler SIGINT opens the `BREAK:` menu and the node stays up, so a verb that streams, such as `flz operative listen`, could not be interrupted. |
+| `+Bd` | Ctrl-C ends the verb. With the default break handler SIGINT opens the `BREAK:` menu and the node stays up, so a verb that streams, such as `flz operator listen`, could not be interrupted. |
 
 <!-- vm-args:rel/remote.vm.args.eex:end -->
 
@@ -354,7 +354,7 @@ default.
 | Flag | Verdict |
 |---|---|
 | `+sbwt very_long` and friends | **Measured harmful.** 33% more CPU than the default, and the throughput direction was worse in 8 of 8 paired rounds on both windows. The common advice to spin harder for throughput is wrong on this workload, where the controller shares a machine with the runners it feeds |
-| `+sbwt none` and friends | Measured 22% less CPU against the default, one point better than the `short` that ships, and it pays for that point with the whole latency budget: plugin setup +204%, warmup +122%, operative creation +23%, where `short` costs +43%, +28% and +3.5%. Worth setting only where CPU is the scarce resource and nothing waits on a control-path round trip |
+| `+sbwt none` and friends | Measured 22% less CPU against the default, one point better than the `short` that ships, and it pays for that point with the whole latency budget: plugin setup +204%, warmup +122%, operator creation +23%, where `short` costs +43%, +28% and +3.5%. Worth setting only where CPU is the scarce resource and nothing waits on a control-path round trip |
 | `+sbwtdio none` alone | Measured 4.5% less CPU, consistent across rounds, and free in wall time. Most of the saving is on the normal schedulers, not the dirty IO pool, so this is the conservative fraction of the flag above rather than an alternative to it |
 | `+SDio` | Measured flat: `+SDio 4` moved CPU 1.1% and neither throughput window past its own noise. Worth setting only where the dirty IO pool's ten threads are being charged against a small CPU quota |
 | `+S` | Only where the pod's CPU limit is not the number you want; the VM already follows the limit |
@@ -398,19 +398,19 @@ crate also reads its rows inside the controller's NIF.
 | `FLEZHA_CONTROL_IDLE_TIMEOUT_MS` | `45000` | `flz_transport` — steady-state idle window |
 | `FLEZHA_CONTROL_KEEPALIVE_MS` | `15000` | `flz_transport` — control-channel ping interval |
 | `FLEZHA_DATA_HEARTBEAT_MS` | `10000` | `flz_transport`, `Flezha.SDK.RunnerServer` — `data_heartbeat` interval, jittered into `[base/2, base]` |
-| `FLEZHA_WORKER_POOL_SIZE` | Rust: host parallelism; Java: `2` fetchers | `flezha_runner::operative::poll_pool`, `FlezhaEnv` |
-| `FLEZHA_WORKER_POOL_MAX` | `10 × FLEZHA_WORKER_POOL_SIZE` (derived, never below it) | Rust and Java — ceiling the starvation supervisor may grow the worker/fetcher set to (`flezha_runner::operative::poll_pool`, `FlezhaEnv`) |
-| `FLEZHA_MAX_INFLIGHT_ACTIVATIONS` | `1024` | `flz_core::poll_core` — how many cells are handed out at once, a workflow stage's as well as a stream's |
+| `FLEZHA_WORKER_POOL_SIZE` | Rust: host parallelism; Java: `2` fetchers | `flezha_runner::operator::poll_pool`, `FlezhaEnv` |
+| `FLEZHA_WORKER_POOL_MAX` | `10 × FLEZHA_WORKER_POOL_SIZE` (derived, never below it) | Rust and Java — ceiling the starvation supervisor may grow the worker/fetcher set to (`flezha_runner::operator::poll_pool`, `FlezhaEnv`) |
+| `FLEZHA_MAX_INFLIGHT_ACTIVATIONS` | `1024` | `flz_core::poll_core` — how many cells are handed out at once, a bounded stage's as well as an unbounded operator's |
 | `FLEZHA_DROP_NOTHING_NONPARKING` | `false` (off) | **Temporary rollout switch** (`flz_core::routing`). On, a `DropNothing` push a producing Cell cannot deliver is held in that Cell's push holdback and the Cell is handed no further work until it lands, instead of parking the calling host thread. Off, the producer parks as before. Reaches Rust and Java (both complete through `flz_core`); the Elixir SDK already defers and reads nothing here. Nothing an author declared changes either way — the guarantee is "nothing discarded, order preserved" in both. **It buys the freed thread and costs throughput under saturation**: free at the default mailbox capacity (p = 0.46), but **30–36% slower than the park** on a mailbox held continuously full (measured at `FLEZHA_MAILBOX_CAPACITY=4`). Turn it on where a host cannot afford to hold a thread — a single-threaded FFI host, a Java carrier pinned by a native frame — not for speed. Flipping the DEFAULT is gated on three things: a ≥ 2 h soak with it on against a genuinely saturated consumer, the Java round-trip bench under both settings (owed), and that 30–36% cost closed or accepted in writing; the flag is deleted in the change that flips it or the next one (`docs/dev_notes/nonblocking-drop-nothing-backpressure.md`) |
 | `FLEZHA_PUSH_HOLDBACK_MAX` | `4096` | `flz_core::routing` — how many undelivered pushes one producing Cell may hold before an emit waits for its own earlier ones to land. Only an in-process typed emit loop can reach it; an FFI host's outputs are materialized before the core sees them. Reaching it logs one throttled `flezha::mailbox` warning naming the producer and the consumer |
 | `FLEZHA_FLUSH_LINGER_MS` | `5` | `flz_core::flusher` |
 | `FLEZHA_FLUSH_BEFORE_EMIT` | `true` (on) | Rust dispatcher; `0`/`false`/`off`/`no` reverts to inline emit |
-| `FLEZHA_REAP_INTERVAL_MS` | `min(cell_idle_ttl / 4, 30 s)` (derived) | `flz_core::dynamic` and the Elixir SDK's Operative — idle-Cell reaper cadence |
-| `FLEZHA_RECONNECT_RING_CAPACITY` | `1024` | `flz_core::state_sink` and `Flezha.SDK.Hold` — frames held while no stream will take them, replayed when one binds, oldest dropped on overflow and counted as a drop-oldest shed. Only a frame whose guarantee class is held enters it: a durable record or a plugin/workflow output, never a control frame and never the heartbeat. In `flz_core` one ring holds them all; the same knob bounds four holders in the Elixir SDK — the Operative's plugin-bound outputs, the frames a stopping Cell hands to it, each Cell's own change records, and the workflow driver's writes the runner relays — an Operative reads it once and hands it to its own two holds and to the Cells it starts, so those three hold at one number, while the runner's own hold and a workflow stage's Cells read it for themselves; and a rebind replays a stopped Cell's frames first, then a Cell's records, then the outputs of the same dispatch |
+| `FLEZHA_REAP_INTERVAL_MS` | `min(cell_idle_ttl / 4, 30 s)` (derived) | `flz_core::dynamic` and the Elixir SDK's Operator — idle-Cell reaper cadence |
+| `FLEZHA_RECONNECT_RING_CAPACITY` | `1024` | `flz_core::state_sink` and `Flezha.SDK.Hold` — frames held while no stream will take them, replayed when one binds, oldest dropped on overflow and counted as a drop-oldest shed. Only a frame whose guarantee class is held enters it: a durable record or a plugin/bounded output, never a control frame and never the heartbeat. In `flz_core` one ring holds them all; the same knob bounds four holders in the Elixir SDK — the Operator's plugin-bound outputs, the frames a stopping Cell hands to it, each Cell's own change records, and the bounded driver's writes the runner relays — an Operator reads it once and hands it to its own two holds and to the Cells it starts, so those three hold at one number, while the runner's own hold and a bounded stage's Cells read it for themselves; and a rebind replays a stopped Cell's frames first, then a Cell's records, then the outputs of the same dispatch |
 | `FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD` / `FLEZHA_BROKEN_PIPE_WINDOW_MS` | `10` / `5000` | `flz_core::state_sink` and `Flezha.SDK.Hold` — write failures inside the window that request a reconnect. The Elixir SDK reads them for its `data_heartbeat`, which is owed no delivery and whose misses are the only signal an idle runner gives |
 | `FLEZHA_RECONNECT_REQUEST_RETRY_MS` | `30000` | `flz_core::state_sink` and `Flezha.SDK.Hold` — an unanswered reconnect request re-arms after this, so it cannot disarm the detector for good |
-| `FLEZHA_WORKFLOW_ACK_TIMEOUT_MS` | `30000` | `flz_core::workflow` and the controller's commit worker: how long one barrier send waits for its ack before it is re-sent (three sends in all), a deadline on the pass sheet; the controller reads the same value as its deadline for the effect records a barrier names to become durable, and fails the barrier with `record_not_durable` past it |
-| `FLEZHA_PARK_IDLE_MS` | `600000` | `flz_core::operative::sleep` and the Elixir SDK's instances: how long an instance of either kind whose class declares `sleep_when_idle` stays idle before it sleeps |
+| `FLEZHA_BOUNDED_ACK_TIMEOUT_MS` | `30000` | `flz_core::bounded` and the controller's commit worker: how long one barrier send waits for its ack before it is re-sent (three sends in all), a deadline on the pass sheet; the controller reads the same value as its deadline for the effect records a barrier names to become durable, and fails the barrier with `record_not_durable` past it |
+| `FLEZHA_PARK_IDLE_MS` | `600000` | `flz_core::operator::sleep` and the Elixir SDK's instances: how long an instance of either kind whose class declares `sleep_when_idle` stays idle before it sleeps |
 | `FLEZHA_NATIVE_LIB_DIR` | `java.io.tmpdir` | Java `NativeLibraryLoader` — where the bundled `flz_core_ffi` library is extracted |
 
 ### The socket-directory ladder
@@ -431,7 +431,7 @@ The **controller** takes the first candidate it can create, stepping over one
 another controller is already listening in — taking that directory would wipe a
 live controller's sockets and strand its fleet. An explicit
 `FLEZHA_SOCKET_FILES_PATH` is still resolved unconditionally: it is what the
-operator named. It is not *prepared* unconditionally, though — a controller
+user named. It is not *prepared* unconditionally, though — a controller
 probes the directory it resolved before clearing it, and refuses to start when
 a live peer answers there, naming the path and this variable. A socket nobody
 answers is a controller that died hard and is cleared as normal. See
@@ -439,7 +439,7 @@ answers is a controller that died hard and is cleared as normal. See
 machine](operations/deployment/bare_metal.md). A **runner** takes
 the first holding a live control socket, and when two candidates hold one and
 no variable says which is meant, it **refuses to connect and names both** rather
-than attaching to a controller the operator did not choose. Every path is
+than attaching to a controller the user did not choose. Every path is
 reported absolutely, whichever candidate produced it.
 
 Two consequences worth knowing:
@@ -580,9 +580,9 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:compaction_timeout_ms` | `30_000` | `lib/flezha/state/persistence_resolver.ex`; `0` disables the compaction-timeout sweep |
 | `:record_log_cut_after_bytes` | `64 * 1024` | `lib/flezha/state/persistence_resolver.ex`; `0` rewrites at every release |
 | `:default_time_travel_retention_hours` | `6` | `lib/flezha/state/persistence_resolver.ex` |
-| `:default_workflow_completed_retention_hours` | `72` | `lib/flezha/state/persistence_resolver.ex` |
+| `:default_bounded_completed_retention_hours` | `72` | `lib/flezha/state/persistence_resolver.ex` |
 | `:default_output_stall_timeout_ms` | `60_000` | `lib/flezha/state/persistence_resolver.ex` |
-| `:operative_persistence` / `:time_travel_retention_hours` / `:workflow_completed_retention_hours` / `:compact_after_bytes` / `:compact_after_age_ms` / `:output_stall_timeout_ms` / `:sync_durability` / `:credit_window_bytes` | `%{}` | `lib/flezha/state/persistence_resolver.ex`: per-class operator overrides, `%{"OperativeClass" => value}`, winning over the SDK declaration and the instance metadata; `:operative_persistence` overrides the persistence switch a class of either kind announces |
+| `:operator_persistence` / `:time_travel_retention_hours` / `:bounded_completed_retention_hours` / `:compact_after_bytes` / `:compact_after_age_ms` / `:output_stall_timeout_ms` / `:sync_durability` / `:credit_window_bytes` | `%{}` | `lib/flezha/state/persistence_resolver.ex`: per-class user overrides, `%{"OperatorClass" => value}`, winning over the SDK declaration and the instance metadata; `:operator_persistence` overrides the persistence switch a class of either kind announces |
 | `:wal_high_watermark_bytes` | `16 * 1024 * 1024` | `lib/flezha/state/persistence_resolver.ex` — the one Cell-scale payload bound |
 | `:wal_low_watermark_bytes` | half the high watermark (derived) | `lib/flezha/state/wal_writer.ex` |
 | `:wal_hard_watermark_bytes` | 4 × the high watermark (derived) | `lib/flezha/state/wal_writer.ex` |
@@ -593,7 +593,7 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:credit_flow_control_enabled` | `true` | `lib/flezha/runner/stream_channel.ex` |
 | `:credit_low_watermark_bytes` | half the credit window (derived) | `lib/flezha/runner/stream_channel.ex` |
 | `:agent_fsync_interval_ms` | `5` | `lib/flezha/state/fsync_batcher.ex` |
-| `:input_log_hold_window_ms` | `0` | `lib/flezha/operative/class_registry.ex`, `lib/flezha/state/input_log.ex` |
+| `:input_log_hold_window_ms` | `0` | `lib/flezha/operator/class_registry.ex`, `lib/flezha/state/input_log.ex` |
 | `:time_travel_retention_check_interval_ms` | `60_000` | `lib/flezha/state/retention.ex` |
 | `:restore_await_timeout_ms` | `15_000` | `lib/flezha/state/commands.ex` |
 | `:state_resync_fun` | unset | `lib/flezha/state/recovery.ex` |
@@ -601,7 +601,7 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:durability_tier[:ship_interval_ms]` / `[:rpo_target_ms]` / `[:gc_interval_ms]` / `[:gc_grace_ms]` / `[:gc_abandoned_after_ms]` | `30_000` / `120_000` / `3_600_000` / `3_600_000` / `604_800_000` | `lib/flezha/state/durability_tier.ex` (a non-positive value falls back to the default) |
 | `:durability_tier[:backend_opts]` | see the `FLEZHA_DURABILITY_PG_*` / `_S3_*` / `_PATH` rows | `lib/flezha/state/durability_tier/backend.ex` |
 
-### Runner and operative lifecycle
+### Runner and operator lifecycle
 
 | Key | Default | Read in |
 |---|---|---|
@@ -612,16 +612,16 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:process_hub_reconcile_grace_ms` / `:process_hub_reconcile_interval_ms` | `45_000` / `30_000` | `lib/flezha/service/hub_manager.ex` |
 | `:hub_runner_assign_wait_ms` | `2_000` | `lib/flezha/service/hub_manager.ex` |
 | `:migration_consent[:consent_timeout_ms]` / `[:retry_interval_ms]` / `[:max_defer_ms]` | `5_000` / `2_000` / `:graceful_shutdown_timeout_ms` (derived) | `lib/flezha/service/hub_manager.ex` |
-| `:overwatch_call_timeout_ms` | `5_000` | `lib/flezha/service/operative_manager.ex` |
-| `:overwatch_ping_enabled` | `true` | `lib/flezha/operative/lifecycle.ex` |
+| `:overwatch_call_timeout_ms` | `5_000` | `lib/flezha/service/operator_manager.ex` |
+| `:overwatch_ping_enabled` | `true` | `lib/flezha/operator/lifecycle.ex` |
 | `:overwatch_ping_timeout_ms` | `2_000` | `lib/flezha/runner/control_unit.ex` |
-| `:overwatch_task_warn_ms` | `2_000` | `lib/flezha/operative/overwatch.ex` |
-| `:overwatch_runner_wait_ms` | `30_000` | `lib/flezha/operative/lifecycle.ex` |
-| `:stream_bind_wait_ms` | `30_000` | `lib/flezha/operative/lifecycle.ex` |
-| `:correction_debounce_ms` | `200` | `lib/flezha/operative/replay.ex` |
-| `:bind_restore_concurrency` | `16` | `lib/flezha/operative/replay.ex` — how many of a class's Cells a bind restores at once |
+| `:overwatch_task_warn_ms` | `2_000` | `lib/flezha/operator/overwatch.ex` |
+| `:overwatch_runner_wait_ms` | `30_000` | `lib/flezha/operator/lifecycle.ex` |
+| `:stream_bind_wait_ms` | `30_000` | `lib/flezha/operator/lifecycle.ex` |
+| `:correction_debounce_ms` | `200` | `lib/flezha/operator/replay.ex` |
+| `:bind_restore_concurrency` | `16` | `lib/flezha/operator/replay.ex` — how many of a class's Cells a bind restores at once |
 | `:placement_load_cap_percent` | `100` | `lib/flezha/runner/fleet_manager/load.ex` — the fairness cap on runner selection, as a percentage of the fair share |
-| `:placement_load_refresh_ms` | `1_000` | `lib/flezha/runner/fleet_manager.ex` — how long the per-runner operative count a placement reads may go without being rebuilt from the hub registry |
+| `:placement_load_refresh_ms` | `1_000` | `lib/flezha/runner/fleet_manager.ex` — how long the per-runner operator count a placement reads may go without being rebuilt from the hub registry |
 | `:control_unit_heartbeat_interval_ms` | `15_000` | `lib/flezha/runner/control_unit.ex` |
 | `:control_unit_pending_reply_timeout_ms` | `90_000` | `lib/flezha/runner/control_unit.ex` |
 
@@ -638,11 +638,11 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:convergence_output_stall_grace_ms` | `60_000` | `lib/flezha/convergence/loop.ex` |
 | `:convergence_unmet_intent_grace_ms` | `120_000` | `lib/flezha/healthz/server.ex` |
 | `:convergence_fabric_503_polls` | `3` | `lib/flezha/healthz/server.ex` |
-| `:convergence_cell_stall_ms` | `300_000` (the classifier's own default, `lib/flezha/convergence/stall_classifier.ex`) | `lib/flezha/convergence/loop/liveness.ex` — how long a handout may be out before the per-operative classifier calls that Cell stalled; a non-positive value leaves the default in place |
+| `:convergence_cell_stall_ms` | `300_000` (the classifier's own default, `lib/flezha/convergence/stall_classifier.ex`) | `lib/flezha/convergence/loop/liveness.ex` — how long a handout may be out before the per-operator classifier calls that Cell stalled; a non-positive value leaves the default in place |
 | `:healthz_enabled` | `false` | `lib/flezha/application.ex` |
 | `:healthz_port` / `:healthz_bind` | `9569` / `"0.0.0.0"` (`Flezha.Healthz.Server.default_bind/0`, the one default; `config/test.exs` binds loopback) | `lib/flezha/healthz/server.ex` |
 | `:output_watchdog_interval_ms` | `10_000` | `lib/flezha/state/watchdog.ex` |
-| `:input_silence_timeout_ms` | `0` (off) | `lib/flezha/state/watchdog.ex`: how long a stream operative that produced output earlier may receive no Change before one warning is logged and `[:flezha, :state, :input_silence]` is emitted. Off by default: silence is not a fault, and the sweep cannot tell a dead upstream from a source that reports hourly. Set a positive value on a feed you know to be continuous |
+| `:input_silence_timeout_ms` | `0` (off) | `lib/flezha/state/watchdog.ex`: how long an unbounded operator that produced output earlier may receive no Change before one warning is logged and `[:flezha, :state, :input_silence]` is emitted. Off by default: silence is not a fault, and the sweep cannot tell a dead upstream from a source that reports hourly. Set a positive value on a feed you know to be continuous |
 
 ### Observability and audit
 
@@ -698,19 +698,19 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 
 | Key | Default | Read in |
 |---|---|---|
-| `:env` | `Mix.env()` (`config/config.exs`) | `lib/flezha/operative/handover.ex`, `lib/flezha/runner/control_unit.ex` |
+| `:env` | `Mix.env()` (`config/config.exs`) | `lib/flezha/operator/handover.ex`, `lib/flezha/runner/control_unit.ex` |
 | `:pre_hooks` / `:post_hooks` | `[]` | `lib/flezha/boot/loader.ex` |
 | `:testnet_enabled` | `true` in dev/test, `false` in prod (`config/<env>.exs`) | `lib/flezha/application.ex` |
 
-## Layer 3: operative declarations (SDK)
+## Layer 3: operator declarations (SDK)
 
 Declared in code and shipped to the controller at registration: inside
-`channels()` on a stream operative, or as trait/interface overrides on a
-Tasklet or Workflow class. Rust names first, Java in parentheses. The Elixir
+`channels()` on an unbounded operator, or as trait/interface overrides on a
+Tasklet or Bounded class. Rust names first, Java in parentheses. The Elixir
 SDK carries the channel and edge options and `mailbox_capacity/0`; it has no
-delivery-tier or workflow declarations.
+delivery-tier or bounded declarations.
 
-### Delivery and acknowledgement (stream operatives)
+### Delivery and acknowledgement (unbounded operators)
 
 | Declaration | Default if absent | What it does |
 |---|---|---|
@@ -735,7 +735,7 @@ Declared on the stream handle returned by `input(...)` or a node's output.
 | Declaration | Default | What it does |
 |---|---|---|
 | `.on_full(OverflowPolicy)` (`onFull`) | `DropNothing` | What a full Cell mailbox discards: `DropNothing`, `DropNewest`, `DropOldest`. Nothing drops by default; `DropNothing` slows the producer to the consumer's rate instead. |
-| `.retry_max(n)` (`retryMax`) | `3` attempts | Attempts before a failing payload is parked to the dead-letter queue, or, into a workflow tasklet, before the tasklet fails and the run compensates. `0` is refused (`RetryMaxZero`). |
+| `.retry_max(n)` (`retryMax`) | `3` attempts | Attempts before a failing payload is parked to the dead-letter queue, or, into a bounded tasklet, before the tasklet fails and the run compensates. `0` is refused (`RetryMaxZero`). |
 | `.retry_backoff_ms(ms)` (`retryBackoffMs`) | `50` | Base of the exponential backoff between attempts, for both kinds; the wait holds no thread. |
 | `.keyed()` (`keyed`) | off | Every plugin emit must carry a natural key; the runtime stamps `flz.cell` / `flz.seq` / `flz.key`. Requires a `sink`; required on every plugin channel under `effectively_once()`. |
 | `.key_by(f)` (`keyBy`) | absent — one Cell | Route by a key function, making the consumer dynamic-cell. |
@@ -754,9 +754,9 @@ Overridden on the `Tasklet` trait (Rust) or Tasklet class (Java).
 | `max_cells()` (Elixir `max_cells/0`) | `100_000` | Soft cap on live dynamic Cells per Tasklet; new keys past it are dropped. |
 | `type Clock` | — (must be declared) | `WallClock`, `EventTimeFrom<..>` or `LogicalClock`; decides `ctx.now()` and event-time ordering. |
 
-### Workflow class options
+### Bounded class options
 
-Overridden on the `WorkflowOperative` trait (Rust) or interface (Java). A
+Overridden on the `BoundedOperator` trait (Rust) or interface (Java). A
 tasklet's retry ladder is its input edge's (above), and a commit barrier whose
 ack timed out is re-sent three times, a constant, before the run ends
 abnormally.
@@ -768,7 +768,7 @@ abnormally.
 | `loop_mode()` (`loopMode`) | `Once` | `Once`, `PerInput` or `Chained` looping over the instance's messages (its durable input log when durable). |
 | `rollback_mode()` (`rollbackMode`) | `AllOrNothing` | How a rewind undoes journaled tasks: `AllOrNothing` or `KeepProgress`. |
 | `PERSISTENCE_ENABLED` (`persistenceEnabled`) | `true` | `false` keeps the instance in memory only: a crash re-runs from the top. |
-| `SYNC_DURABILITY` (`syncDurability`) | `false` | Ack a commit barrier only after its remote ship (RPO 0); inert without a durability backend, workflow classes only. |
+| `SYNC_DURABILITY` (`syncDurability`) | `false` | Ack a commit barrier only after its remote ship (RPO 0); inert without a durability backend, bounded classes only. |
 
 ## Layer 4: plugin options
 
@@ -779,19 +779,19 @@ there is no second list to keep in step, and this page does not carry one.
 
 | Provider name | Options |
 |---|---|
-| `operative_kafka_producer` | [`plugins/kafka_producer.md`](plugins/kafka_producer.md) |
-| `operative_postgres` | [`plugins/postgres_sink.md`](plugins/postgres_sink.md) |
-| `operative_http_poll` | [`plugins/http_poll.md`](plugins/http_poll.md) |
-| `operative_file_source`, `operative_file_sink` | [`plugins/file.md`](plugins/file.md) |
-| `operative_websocket` | [`plugins/websocket_subscription.md`](plugins/websocket_subscription.md) |
-| `operative_forward` | [`plugins/operative_forward.md`](plugins/operative_forward.md) |
-| `operative_stdout`, `operative_io_filter`, `operative_beam_msg`, `monitored_io_forward`, `operative_message_forward` | [`plugins/lifecycle.md`](plugins/lifecycle.md), which lists every provider and what it declares |
+| `operator_kafka_producer` | [`plugins/kafka_producer.md`](plugins/kafka_producer.md) |
+| `operator_postgres` | [`plugins/postgres_sink.md`](plugins/postgres_sink.md) |
+| `operator_http_poll` | [`plugins/http_poll.md`](plugins/http_poll.md) |
+| `operator_file_source`, `operator_file_sink` | [`plugins/file.md`](plugins/file.md) |
+| `operator_websocket` | [`plugins/websocket_subscription.md`](plugins/websocket_subscription.md) |
+| `operator_forward` | [`plugins/operator_forward.md`](plugins/operator_forward.md) |
+| `operator_stdout`, `operator_io_filter`, `operator_beam_msg`, `monitored_io_forward`, `operator_message_forward` | [`plugins/lifecycle.md`](plugins/lifecycle.md), which lists every provider and what it declares |
 
 An option a provider does not declare is refused at enable rather than ignored,
 on the CLI path and on the `--plugins` spec path alike, so a config asking for a
 capability the provider does not offer fails loudly.
-| `operative_message_forward` | [`plugins/message_handlers.md`](plugins/message_handlers.md) |
-| `operative_beam_msg` (`:include_metadata` `false`), `operative_stdout`, `operative_io_filter` (`:regex_pattern` required, `:inverted` `false`), `monitored_io_forward` (`:recv_pid` required, `:heartbeat_interval` `5000`) | [`plugins/lifecycle.md`](plugins/lifecycle.md) |
+| `operator_message_forward` | [`plugins/message_handlers.md`](plugins/message_handlers.md) |
+| `operator_beam_msg` (`:include_metadata` `false`), `operator_stdout`, `operator_io_filter` (`:regex_pattern` required, `:inverted` `false`), `monitored_io_forward` (`:recv_pid` required, `:heartbeat_interval` `5000`) | [`plugins/lifecycle.md`](plugins/lifecycle.md) |
 
 ## See also
 

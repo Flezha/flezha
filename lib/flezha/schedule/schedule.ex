@@ -1,8 +1,8 @@
 defmodule Flezha.Service.Schedule do
   @moduledoc """
-  Published service-API surface for scheduled operative starts: the stored
+  Published service-API surface for scheduled operator starts: the stored
   entries, the hub's view of them, and the cron arithmetic a caller needs to
-  show an operator when a schedule fires next.
+  show a user when a schedule fires next.
 
   Every public function takes a `Flezha.Service.CallerContext` as its last
   argument, binds a row of `Flezha.AuthZ.Verbs`, and answers data.
@@ -13,7 +13,7 @@ defmodule Flezha.Service.Schedule do
   firings land rather than partitioning the registry. So every `schedule.*`
   action is judged in the system namespace — an `admin@_system` token, or a
   principal bound to `_system` with the role the action needs. Reading the
-  registry is a viewer's; changing it is an operator's.
+  registry is a viewer's; changing it is a user's.
 
   The cron arithmetic carries no action. `parse_cron/2` and `next_fire/4` read
   nothing and reach no store; they are the same arithmetic a caller could do

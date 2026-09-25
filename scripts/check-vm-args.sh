@@ -7,14 +7,14 @@
 # layers covers it: no compile step reads an args file and no suite does either.
 # A flag added to the release and left undocumented is a behaviour change nobody
 # can find, and a flag the reference presents as shipped that no template sets
-# sends an operator off overriding a default that was never there.
+# sends a user off overriding a default that was never there.
 #
 # The check is both directions and it is exact: the reference's block for a
 # template must carry, as code spans, exactly the flag lines that template sets.
 # A value change therefore has to be documented too, not just a new flag name.
 #
 # SCOPE IS THE FIRST COLUMN OF A TABLE ROW INSIDE THE MARKER BLOCK, not the
-# document and not the whole block. Prose elsewhere naming a flag an operator
+# document and not the whole block. Prose elsewhere naming a flag a user
 # may set, and the reference names several it deliberately does not ship, is
 # out of scope by construction, and so is a flag named in the row's own
 # explanation. A gate that goes red on correct prose gets switched off, and this

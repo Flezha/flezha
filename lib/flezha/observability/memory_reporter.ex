@@ -147,7 +147,7 @@ defmodule Flezha.Diagnostics.MemoryReporter do
   # `binary_alloc` carrier size diverges from `:erlang.memory(:binary)`
   # when refc binaries get pinned in carriers without being released to
   # the OS — surfacing it alongside the per-subsystem totals lets an
-  # operator distinguish in-use refc binaries from carrier waste.
+  # user distinguish in-use refc binaries from carrier waste.
   defp binary_alloc_carriers_size do
     :recon_alloc.memory(:allocated_types)
     |> Keyword.get(:binary_alloc, 0)

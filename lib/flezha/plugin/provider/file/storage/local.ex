@@ -51,7 +51,7 @@ defmodule Flezha.Plugin.Provider.File.Storage.Local do
   @doc """
   Under `commit: rename` the path is the directory the parts go into, made with
   mode `0700` when it does not exist, so a path that names anything else is
-  refused to the operator who typed it.
+  refused to the user who typed it.
   """
   @impl true
   def prepare_sink(%{commit: "rename", path: dir} = opts) do

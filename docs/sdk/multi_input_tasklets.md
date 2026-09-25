@@ -1,10 +1,10 @@
 # Multi-input tasklets (merge)
 
-For operative authors who need one Tasklet fed from two or more Channels —
+For operator authors who need one Tasklet fed from two or more Channels —
 a data stream plus a config stream, a join of two computed streams, an
 enrichment path — and for SDK implementers: the `merge` surface every SDK
 carries, shown here in Rust and Java, what it does and does not promise,
-containment of a failing mapping, the refusals, the workflow restriction, and
+containment of a failing mapping, the refusals, the bounded operator restriction, and
 where the code lives.
 
 A Tasklet consumes one `Input` type, and `.into::<Task>()` type-locks it to
@@ -32,8 +32,8 @@ Full examples: `sdk/rust/examples/merged_input.rs`, Java `E09_MergedInput`.
 
 ## What a merge promises
 
-- **Sources are entry or inter-tasklet Channels, freely mixed** on a stream
-  operative; a workflow merge takes inter-tasklet sources only. Mapping an
+- **Sources are entry or inter-tasklet Channels, freely mixed** on an unbounded operator
+  operator; a bounded operator merge takes inter-tasklet sources only. Mapping an
   entry Channel directly removes the parser-Tasklet detour for a low-rate
   control channel; the detour is still right for a hot path with its own
   state.
@@ -61,8 +61,8 @@ A panicking mapping is contained:
 | Where the mapping sits | What a panic does |
 | --- | --- |
 | stream, either source kind | Caught at the routing seam (`ConsumerEdge::transform_value`); the value climbs the source Channel's retry→DLQ ladder, the one a failing entry parse rides. On Java the mapping runs inside an activation, so a throw is that activation's failure and rides its ladder. |
-| workflow, forward accumulate | Runs on the worker that produced the value, at the end of the producing item, inside the routing seam (`deliver_edge`); contained there and turned into a non-retryable failure of the producing stage. The producing Cell is recorded as having run, the saga unwinds the stages **recorded as completed**, and the instance still reports `WorkflowCompleted` with status `error`. Not retried — a pure mapping would panic identically. |
-| workflow, crash-resume re-seed | Contained the same way. The resumed iteration seeds its completed list from the journal (`journaled_stages`), so a producer the journal already committed is unwound even though this pass never re-ran it. |
+| bounded operator, forward accumulate | Runs on the worker that produced the value, at the end of the producing item, inside the routing seam (`deliver_edge`); contained there and turned into a non-retryable failure of the producing stage. The producing Cell is recorded as having run, the saga unwinds the stages **recorded as completed**, and the instance still reports `BoundedCompleted` with status `error`. Not retried — a pure mapping would panic identically. |
+| bounded operator, crash-resume re-seed | Contained the same way. The resumed iteration seeds its completed list from the journal (`journaled_stages`), so a producer the journal already committed is unwound even though this pass never re-ran it. |
 
 On the forward site the mapping runs after its producer's intent markers,
 stage record and task-commit barrier, so **the producer whose edge blew up is
@@ -87,7 +87,7 @@ Definition-time, alongside every other topology issue:
 
 | Refusal | Rust | Java |
 | --- | --- | --- |
-| fewer than two sources | `TopologyIssue::MergeTooFewSources` | `MergeTooFewSources` in the accumulated `StreamOperativeConfigurationException` |
+| fewer than two sources | `TopologyIssue::MergeTooFewSources` | `MergeTooFewSources` in the accumulated `UnboundedOperatorConfigurationException` |
 | same Channel subscribed twice | `TopologyIssue::DuplicateMergeSource` (names the Channel) | `DuplicateMergeSource` (names the Channel) |
 | source re-wiring an edge `.into` or another merge already declared | `TopologyIssue::EdgeAlreadyWired` (names Channel + Tasklet) | `EdgeAlreadyWired` (names both) |
 | mapped type ≠ the Tasklet's `Input` | compile error at `.into::<Task>()` (`Tasklet<Input = I>` bound) | registration error naming both types (`wireConsumer` compares the declared merge type) |
@@ -95,12 +95,12 @@ Definition-time, alongside every other topology issue:
 A duplicated source reports only `DuplicateMergeSource`: the arity check
 counts every `.from` written, not surviving sources.
 
-## Workflow operatives
+## Bounded operators
 
 The mapping is applied where the driver accumulates a producer's released
 batch into its child and again where a crash-resume re-seeds that child from
 the journaled handoff, so a resumed merge sees exactly what the live one did.
-An **entry** Channel is a source on a workflow as on a stream: every message
+An **entry** Channel is a source on a bounded operator as on an unbounded operator: every message
 carries the Channel it arrived on, so its mapping is selected the same way. A
 merged tasklet fed by an entry Channel is a root of that Channel's chain, and
 a merge of two entry Channels runs the merged tasklet once per message, on
@@ -111,18 +111,18 @@ chains meet waits only for the producers of the chain that runs.
 
 | Piece | Rust | Java |
 | --- | --- | --- |
-| `ChannelBuilder::merge`, `Merge`, `MergeSource`, the `TopologyIssue` variants; `attach_consumer` is the one place an edge is recorded and a second declaration on a mapped edge is refused | `sdk/rust/src/channel/builder/` | `flezha-sdk-api/.../channel/Merge.java`; `flezha-sdk-runtime/.../operative/builder/StreamOperativeTopologyBuilder.java` (`MergeImpl`, `wireConsumer`) |
-| `ConsumerEdge` (`tasklet` + composed `transform` + optional `key`); `consumer_ids()` is the id-only view the graph walk and the workflow DAG use | `flz_core/src/channel.rs` | `flezha-sdk-runtime/.../operative/ConsumerEdge.java` |
+| `ChannelBuilder::merge`, `Merge`, `MergeSource`, the `TopologyIssue` variants; `attach_consumer` is the one place an edge is recorded and a second declaration on a mapped edge is refused | `sdk/rust/src/channel/builder/` | `flezha-sdk-api/.../channel/Merge.java`; `flezha-sdk-runtime/.../operator/builder/UnboundedOperatorTopologyBuilder.java` (`MergeImpl`, `wireConsumer`) |
+| `ConsumerEdge` (`tasklet` + composed `transform` + optional `key`); `consumer_ids()` is the id-only view the graph walk and the bounded operator DAG use | `flz_core/src/channel.rs` | `flezha-sdk-runtime/.../operator/ConsumerEdge.java` |
 | The one mapping site on the routing path | `flz_core/src/routing.rs` | `flezha-sdk-runtime/.../core/ActivationDispatcher.java` |
-| `ChainCtx::edge` + `extend_mapped` at the accumulate and re-seed sites | `flz_core/src/workflow/{driver,spec}.rs` | shared core |
+| `ChainCtx::edge` + `extend_mapped` at the accumulate and re-seed sites | `flz_core/src/bounded/{driver,spec}.rs` | shared core |
 
-Tests: `sdk/rust/tests/merged_input.rs`; the workflow fixtures
-`MergeWorkflow`, `PanickingMergeWorkflow` and `PanickingTransformWorkflow` in
-`sdk/rust/src/workflow/mod.rs`, each run forward and resumed from a journal
+Tests: `sdk/rust/tests/merged_input.rs`; the bounded fixtures
+`MergeBounded`, `PanickingMergeBounded` and `PanickingTransformBounded` in
+`sdk/rust/src/bounded/mod.rs`, each run forward and resumed from a journal
 so both mapping sites are exercised; Java `E09_MergedInputTest`.
 
 ## See also
 
 - [`stream_transforms.md`](stream_transforms.md) — the edge closure a merge mapping is one link of.
-- [`rust_operative_architecture.md`](rust_operative_architecture.md) — the dispatch path and cell modes a merged Tasklet runs under.
-- [`../architecture/workflow_profile.md`](../architecture/workflow_profile.md) — the stage barrier, abort and saga compensation a workflow merge rides.
+- [`rust_operator_architecture.md`](rust_operator_architecture.md) — the dispatch path and cell modes a merged Tasklet runs under.
+- [`../architecture/bounded_profile.md`](../architecture/bounded_profile.md) — the stage barrier, abort and saga compensation a bounded operator merge rides.

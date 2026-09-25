@@ -71,7 +71,7 @@ defmodule Flezha.AuthZ.BootstrapTest do
     {:ok, _} = Bootstrap.claim(raw, principal: "alice")
 
     # The claim unlinks the file, so a second one has nothing to compare
-    # against. Recovery IS a second claim, and it is the operator writing that
+    # against. Recovery IS a second claim, and it is the caller writing that
     # file again that admits it — so the refusal names the file rather than
     # asserting the bootstrap can never happen twice.
     assert {:error, {:bootstrap_token_missing, ^path}} = Bootstrap.claim(raw, principal: "eve")

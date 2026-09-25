@@ -3,7 +3,7 @@
 Durability is what keeps the desk's work when something stops: a runner
 crashes, a machine is switched off, the controller is restarted. Flezha writes
 down every change a tasklet makes to what it remembers, and every step a
-workflow finishes, on the controller's disk, as it happens. When a runner comes
+bounded operator finishes, on the controller's disk, as it happens. When a runner comes
 back, or another one takes over, the work carries on from where it was instead
 of starting again. Nothing in your code saves or loads anything: you say what a
 tasklet remembers, and Flezha keeps it.
@@ -15,15 +15,15 @@ for every symbol is a poor rule. On this page `spot_big_trade` compares each
 trade with the same symbol's last ten trades instead: a trade is big when it is
 worth at least twice their average. That needs a memory, one per symbol.
 
-Then the page crashes the runner, twice: once to see the stream's memory come
-back, and once in the middle of an order, to see the workflow continue from
-its step. Last, an order that fails is undone, which is where a workflow step
+Then the page crashes the runner, twice: once to see the operator's memory come
+back, and once in the middle of an order, to see the bounded operator continue from
+its step. Last, an order that fails is undone, which is where a bounded operator step
 needs a memory of its own.
 
 ## State: what a cell remembers
 
 What a tasklet remembers is its state, and state belongs to a cell.
-[`stream_basics.md`](stream_basics.md#several-tasklets-in-one-operative) gave
+[`unbounded_basics.md`](unbounded_basics.md#several-tasklets-in-one-operator) gave
 every symbol a cell of its own with `keyBy`, so every symbol now keeps its own
 last ten values: AAPL's never mix with MSFT's.
 
@@ -103,18 +103,18 @@ TODO: not written yet.
 
 <!-- tabs-close -->
 
-> Run the new version: stop the stream, stop the runner with Ctrl-C, start the
+> Run the new version: stop the operator, stop the runner with Ctrl-C, start the
 > runner again as in
-> [`stream_basics.md`](stream_basics.md#the-runner), and start the stream
+> [`unbounded_basics.md`](unbounded_basics.md#the-runner), and start the operator
 > again.
 > {: .step}
 
 ```sh
-$ flz operative stop prices --namespace trading
+$ flz operator stop prices --namespace trading
 ```
 
 ```sh
-$ flz operative start prices --id prices --namespace trading
+$ flz operator start prices --id prices --namespace trading
 ```
 
 ## Watch it remember
@@ -124,13 +124,13 @@ $ flz operative start prices --id prices --namespace trading
 > {: .step}
 
 ```sh
-$ flz operative send prices --namespace trading --channel manual --text 'AAPL 100 10'
-$ flz operative send prices --namespace trading --channel manual --text 'AAPL 101 12'
-$ flz operative send prices --namespace trading --channel manual --text 'AAPL 102 11'
-$ flz operative send prices --namespace trading --channel manual --text 'AAPL 103 30'
+$ flz operator send prices --namespace trading --channel manual --text 'AAPL 100 10'
+$ flz operator send prices --namespace trading --channel manual --text 'AAPL 101 12'
+$ flz operator send prices --namespace trading --channel manual --text 'AAPL 102 11'
+$ flz operator send prices --namespace trading --channel manual --text 'AAPL 103 30'
 ```
 
-The listener from [`stream_basics.md`](stream_basics.md#send-it-trades) shows
+The listener from [`unbounded_basics.md`](unbounded_basics.md#send-it-trades) shows
 one big trade, the fourth, and its decision to buy:
 
 ```output
@@ -138,7 +138,7 @@ TODO: output from an end-to-end run.
 ```
 
 `flz state get` reads a live cell's state, by
-`<operative>/<tasklet>/<key>`. AAPL's cell holds the four values it has seen:
+`<operator>/<tasklet>/<key>`. AAPL's cell holds the four values it has seen:
 
 ```sh
 $ flz state get prices/spot_big_trade/AAPL
@@ -182,7 +182,7 @@ The next trade is compared with what the cell remembers, not with an empty
 list:
 
 ```sh
-$ flz operative send prices --namespace trading --channel manual --text 'AAPL 104 40'
+$ flz operator send prices --namespace trading --channel manual --text 'AAPL 104 40'
 ```
 
 ```output
@@ -191,7 +191,7 @@ TODO: output from an end-to-end run.
 
 ## An order in the middle of a crash
 
-A workflow keeps a journal: every step that finishes is written down, with what
+A bounded operator keeps a journal: every step that finishes is written down, with what
 it handed to the next step. When the runner crashes in the middle of an order,
 the order continues at the first step that had not finished. The steps before
 it do not run again, so the money is not reserved twice and the order is not
@@ -261,7 +261,7 @@ TODO: not written yet.
 > {: .step}
 
 ```sh
-$ flz operative start paper_order --id order_1 --namespace trading --text '{"symbol": "AAPL", "quantity": 10}' --channel order
+$ flz operator start paper_order --id order_1 --namespace trading --text '{"symbol": "AAPL", "quantity": 10}' --channel order
 ```
 
 ```sh
@@ -390,7 +390,7 @@ TODO: not written yet.
 > {: .step}
 
 ```sh
-$ flz operative start paper_order --id order_2 --namespace trading --text '{"symbol": "AAPL", "quantity": 500}' --channel order
+$ flz operator start paper_order --id order_2 --namespace trading --text '{"symbol": "AAPL", "quantity": 500}' --channel order
 ```
 
 After ten seconds `confirm_fill` refuses it, is tried again, and once its tries
@@ -406,7 +406,7 @@ The runner is not the only thing that can stop. The controller keeps its own
 records on disk: the namespaces, the tokens and the keys under
 `app_data/auth/`, and each namespace's state under `app_data/state/<namespace>/`,
 apart from every other's. A controller restart brings back `trading` and its
-limits before any runner reconnects, then its operatives, which wait for a
+limits before any runner reconnects, then its operators, which wait for a
 runner to take them. The runner's key still works.
 
 What this page does not cover is delivery. After a crash, a result can reach a

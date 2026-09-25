@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Repeatable workflow-bench runner. See bench/acceptance/README.md.
+# Repeatable bounded-bench runner. See bench/acceptance/README.md.
 #
 #   bench/acceptance/run.sh [--profile quick|standard|soak]
 #                           [--repeat N] [--runners N]
@@ -51,7 +51,7 @@ grep -vE '^\s*#|^\s*$' "$CASES" | while IFS=$'\t' read -r name case_rt args; do
   for r in $(seq 1 "$REPEAT"); do
     printf '[%-14s %d/%d rt=%s] ' "$name" "$r" "$REPEAT" "$rt"
     line=$(FLEZHA_TRANSPORT="$TRANSPORT" timeout 5400 \
-             mix bench.workflow --runtime "$rt" --runners "$RUNNERS" $args 2>&1 \
+             mix bench.bounded --runtime "$rt" --runners "$RUNNERS" $args 2>&1 \
              | grep -Ev "$FILTER" | grep '^BENCH_RESULT' | tail -1)
     if [ -z "$line" ]; then
       echo "NO RESULT (stall/crash)"

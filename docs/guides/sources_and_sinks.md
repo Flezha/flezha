@@ -1,20 +1,20 @@
 # Sources and sinks
 
 > Check that the controller, your runner and `my_echo` from
-> [`running_operatives.md`](running_operatives.md) are all still running:
+> [`running_operators.md`](running_operators.md) are all still running:
 > `my_echo` should be listed with your runner under `RUNNER`. If it is not, go
 > back to the guide that starts the missing piece.
 > {: .step}
 
 ```sh
-$ flz operative list
+$ flz operator list
 ```
 
 TODO: a draft. The commands are taken from
 [`../plugins/file.md`](../plugins/file.md) but have not been run end to end yet.
 
-So far you have been the input and the output. `flz operative send` put a
-message in and `flz operative listen` read what came out, and both of them are
+So far you have been the input and the output. `flz operator send` put a
+message in and `flz operator listen` read what came out, and both of them are
 you, at a keyboard, for as long as you keep typing. A deployment needs something
 that does that on its own. That something is a **plugin**, and attaching one is
 all this page is about.
@@ -29,13 +29,13 @@ c.input(String.class, "in").into(EchoTasklet.class).sink("out");
 
 Both ends of that line are open to plugins. `input(String.class, "in")` names
 the channel messages come in on, and `sink("out")` names the channel they leave
-on. Until now nothing was attached to either: `flz operative send` put your
-messages in, and `flz operative listen` watched what came out for as long as it
+on. Until now nothing was attached to either: `flz operator send` put your
+messages in, and `flz operator listen` watched what came out for as long as it
 ran. A plugin takes over one of those ends for good: a source feeds `in`, and a
 sink receives what leaves on `out`. Your code does not change.
 
-That is the shape to remember: **an operative declares where its data comes in
-and goes out, and an operator decides what is on the other side.** The same
+That is the shape to remember: **an operator declares where its data comes in
+and goes out, and a user decides what is on the other side.** The same
 `echo` reads from a file today and Kafka tomorrow with no rebuild.
 
 ## The folder plugins may touch
@@ -62,7 +62,7 @@ file_plugin_root:              /opt/flezha/app_data/files
 ```
 
 The boot prints the same path, and once a file plugin is attached,
-`flz operative info` shows its full path too.
+`flz operator info` shows its full path too.
 
 A relative `path` in a plugin is taken under that folder, an absolute one must
 resolve inside it, and every symbolic link is followed before the check, so
@@ -83,7 +83,7 @@ $ FLEZHA_AUTHZ_ENABLED=false FLEZHA_FILE_PLUGIN_ROOT="$HOME/flezha-files" flz co
 >
 > This folder is on the machine that runs the controller. With one controller
 > that is all there is to it. With several controllers, each has its own folder,
-> and an operative that moves to another controller reads and writes the folder
+> and an operator that moves to another controller reads and writes the folder
 > on that machine: a file source no longer finds its file, and a file sink starts
 > a new one there. To avoid that, give every controller the same shared folder at
 > the same path, or keep the files in an S3 bucket, as
@@ -92,21 +92,21 @@ $ FLEZHA_AUTHZ_ENABLED=false FLEZHA_FILE_PLUGIN_ROOT="$HOME/flezha-files" flz co
 
 ## Write the output to a file
 
-> Attach a file sink named `writer` to `my_echo`, so everything the operative
+> Attach a file sink named `writer` to `my_echo`, so everything the operator
 > sends out is written to `echo-out.txt` in the plugin folder.
 > {: .step}
 
 ```sh
-$ flz plugin enable writer operative_file_sink \
-  --operative_id=my_echo \
+$ flz plugin enable writer operator_file_sink \
+  --operator_id=my_echo \
   --hook=on_output \
   --Xpath=echo-out.txt
 ```
 
 Read that as four things: `writer` is the id you will use to disable it,
-`operative_file_sink` is which plugin, `--operative_id` is which operative it
+`operator_file_sink` is which plugin, `--operator_id` is which operator it
 attaches to, and `--hook=on_output` is the hook, meaning **send this plugin
-everything the operative emits**. Options belonging to the plugin itself carry an
+everything the operator emits**. Options belonging to the plugin itself carry an
 `X` prefix, which is what separates them from the command's own flags.
 
 You do not create the file: the sink creates `echo-out.txt` when the plugin is
@@ -124,7 +124,7 @@ lands a moment after the send rather than with it:
 > {: .step}
 
 ```sh
-$ flz operative send my_echo --text hello
+$ flz operator send my_echo --text hello
 ```
 
 ```output
@@ -150,14 +150,14 @@ sink writes every record its hook hands it.
 > {: .step}
 
 ```sh
-$ flz plugin enable reader operative_file_source \
-  --operative_id=my_echo \
+$ flz plugin enable reader operator_file_source \
+  --operator_id=my_echo \
   --Xpath=echo-in.txt \
   --Xchannel_in=in
 ```
 
 `--Xchannel_in=in` is the entry channel each line is injected on, and `in` is the
-name the operative gave it. There is no `--hook` here: a source drives
+name the operator gave it. There is no `--hook` here: a source drives
 itself, reading the file and pushing lines in, rather than being sent anything.
 
 It looks for new lines once a second, so give it that second before reading the
@@ -181,23 +181,23 @@ echo: from a file
 ```
 
 That is the whole loop, and nothing is holding it open. The reader polls the file
-for growth, remembers the byte offset of the last line the operative took, and
+for growth, remembers the byte offset of the last line the operator took, and
 resumes there after a plugin restart, a move to another runner, or a controller
 restart.
 
 ## See what is attached
 
-You can list every operative in the namespace, with the plugins attached to it:
+You can list every operator in the namespace, with the plugins attached to it:
 
 ```sh
-$ flz operative info
+$ flz operator info
 ```
 
 ```output
-Fetching operative information for namespace 'default'...
-Operative information for namespace 'default':
+Fetching operator information for namespace 'default'...
+Operator information for namespace 'default':
 
-Operative: my_echo
+Operator: my_echo
   Kind: stream
   Phase: running
   Health: healthy
@@ -215,10 +215,10 @@ Operative: my_echo
         health: :healthy
 ```
 
-It lists every operative in the namespace, and under each one the plugins
+It lists every operator in the namespace, and under each one the plugins
 attached to it: the id you chose, which plugin it is, the hook it is on, the
 full path of its file, and whether it is healthy. `reader` has no hook line,
-because a source is not sent anything. When an operative shows `degraded`, this
+because a source is not sent anything. When an operator shows `degraded`, this
 is where to look for the plugin that is not healthy.
 
 ## Turn one off
@@ -229,13 +229,13 @@ To detach a plugin, disable it by its id:
 $ flz plugin disable reader
 ```
 
-The id is the one you chose at enable, the same one `flz operative info` lists
-under the operative.
+The id is the one you chose at enable, the same one `flz operator info` lists
+under the operator.
 
 ## Or from your own code
 
 Enabling and disabling are on the same admin handle
-[`running_operatives.md`](running_operatives.md#or-from-your-own-code) used, so
+[`running_operators.md`](running_operators.md#or-from-your-own-code) used, so
 an application can attach its own plugins:
 
 <!-- tabs-open -->
@@ -247,8 +247,8 @@ Admin admin = runner.admin();
 
 ObjectNode sink = JsonNodeFactory.instance.objectNode();
 sink.put("id", "writer");
-sink.put("provider", "operative_file_sink");
-sink.put("operative_id", "my_echo");
+sink.put("provider", "operator_file_sink");
+sink.put("operator_id", "my_echo");
 sink.putObject("opts").put("path", "echo-out.txt");
 sink.putArray("hooks").addArray().add("on_output").addObject();
 
@@ -265,8 +265,8 @@ admin.enable_plugin(
     "writer",
     serde_json::json!({
         "id": "writer",
-        "provider": "operative_file_sink",
-        "operative_id": "my_echo",
+        "provider": "operator_file_sink",
+        "operator_id": "my_echo",
         "opts": { "path": "echo-out.txt" },
         "hooks": [["on_output", {}]],
     }),
@@ -281,8 +281,8 @@ const admin = runner.admin();
 
 await admin.enablePlugin('writer', {
   id: 'writer',
-  provider: 'operative_file_sink',
-  operative_id: 'my_echo',
+  provider: 'operator_file_sink',
+  operator_id: 'my_echo',
   opts: { path: 'echo-out.txt' },
   hooks: [['on_output', {}]],
 });
@@ -298,8 +298,8 @@ admin.enable_plugin(
     "writer",
     {
         "id": "writer",
-        "provider": "operative_file_sink",
-        "operative_id": "my_echo",
+        "provider": "operator_file_sink",
+        "operator_id": "my_echo",
         "opts": {"path": "echo-out.txt"},
         "hooks": [["on_output", {}]],
     },
@@ -314,8 +314,8 @@ admin = runner.admin
 
 admin.enable_plugin("writer", {
   "id" => "writer",
-  "provider" => "operative_file_sink",
-  "operative_id" => "my_echo",
+  "provider" => "operator_file_sink",
+  "operator_id" => "my_echo",
   "opts" => { "path" => "echo-out.txt" },
   "hooks" => [["on_output", {}]]
 })
@@ -329,8 +329,8 @@ $admin = $runner->admin();
 
 $admin->enablePlugin('writer', [
     'id' => 'writer',
-    'provider' => 'operative_file_sink',
-    'operative_id' => 'my_echo',
+    'provider' => 'operator_file_sink',
+    'operator_id' => 'my_echo',
     'opts' => ['path' => 'echo-out.txt'],
     'hooks' => [['on_output', new stdClass()]],
 ]);
@@ -346,8 +346,8 @@ runner = Flezha.SDK.RunnerServer
 {:ok, _} =
   Admin.enable_plugin(runner, "writer", %{
     "id" => "writer",
-    "provider" => "operative_file_sink",
-    "operative_id" => "my_echo",
+    "provider" => "operator_file_sink",
+    "operator_id" => "my_echo",
     "opts" => %{"path" => "echo-out.txt"},
     "hooks" => [["on_output", %{}]]
   })
@@ -358,20 +358,20 @@ runner = Flezha.SDK.RunnerServer
 <!-- tabs-close -->
 
 The object carries what the command line carries: the plugin's id, its provider,
-the operative it attaches to, the provider's own options under `opts`, and the
+the operator it attaches to, the provider's own options under `opts`, and the
 hook that `--hook=on_output` spells on the command line. Every echo example
-carries its enable commented out right after the operative's start, ready to
+carries its enable commented out right after the operator's start, ready to
 uncomment, and a message sent after it lands in the file.
 [`../sdk/admin.md`](../sdk/admin.md) is the whole surface.
 
 What it cannot do is worth knowing: installing, upgrading and uninstalling a
-plugin package are node-wide acts, so they stay with the operator. An
+plugin package are node-wide acts, so they stay with the user. An
 application may attach and detach the plugins its own namespace already has.
 
 ## Other sources and sinks
 
 The file plugin is one of a family, and they attach exactly the same way: an id,
-a provider, an operative and its options.
+a provider, an operator and its options.
 
 | Plugin | What it connects |
 |---|---|
@@ -379,10 +379,10 @@ a provider, an operative and its options.
 | [`websocket_subscription.md`](../plugins/websocket_subscription.md) | a live socket, both directions |
 | [`kafka_producer.md`](../plugins/kafka_producer.md) | Kafka as an output |
 | [`postgres_sink.md`](../plugins/postgres_sink.md) | Postgres as an output |
-| [`operative_forward.md`](../plugins/operative_forward.md) | one operative's output into another's input |
+| [`operator_forward.md`](../plugins/operator_forward.md) | one operator's output into another's input |
 
 ## Next
 
-You have a controller, a runner, an operative and real data moving through it.
+You have a controller, a runner, an operator and real data moving through it.
 [`stop_everything.md`](stop_everything.md), the last page of Part 1, stops all of
 it and says what comes back when you start again.

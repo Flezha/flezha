@@ -4,7 +4,7 @@ defmodule FlezhaTest.System.LayoutAndIdE2ETest do
 
   The controller resolves where a file lands from `Flezha.Layout.Table`;
   `flz reset` resolves the same thing from `cli/src/reset/plan.rs`. Two
-  declarations of one layout is how an operator ends up with a directory that
+  declarations of one layout is how a user ends up with a directory that
   is never cleared, or one that is cleared and should not have been. This
   drives the real binary against a data root of its own and compares, row by
   row, the directory the controller uses with the one reset reports.

@@ -4,7 +4,7 @@
 
 The cell-state-live-query capability makes the current in-memory state of one
 named Cell readable without a serving tier. The controller asks the runner
-holding the Operative through the existing `CellState` control round-trip,
+holding the Operator through the existing `CellState` control round-trip,
 narrowed by a `tasklet` / `cell_key` selector, and renders the returned JSON
 together with the `change_seq` it was serialized at. The value is the freshest
 one there is — it includes changes applied but not yet flushed — so a reader is
@@ -16,16 +16,16 @@ refused naming why; `flz state at` remains the durable-read path.
 ### Requirement: One named Cell's live state SHALL be readable without a serving tier
 
 The controller SHALL expose `Flezha.Service.CliManager.state_get/2` taking an
-`<operative/tasklet/cell>` path, resolving the runner holding that Operative,
+`<operator/tasklet/cell>` path, resolving the runner holding that Operator,
 and returning the named Cell's current in-memory state as JSON together with the
 `change_seq` it was serialized at. The read SHALL travel the existing control
 request/reply seam and SHALL be authorized through the same `AuthZ.authorize/3`
 seam as the other `state_*` verbs. The CLI SHALL expose it as
-`flz state get <operative/tasklet/cell>`.
+`flz state get <operator/tasklet/cell>`.
 
 #### Scenario: A single Cell is read by name
 
-- **WHEN** an operator runs `flz state get ohlc/candle/BTCUSD@1m` against an Operative whose `candle` Tasklet holds a live Cell keyed `BTCUSD@1m`
+- **WHEN** a user runs `flz state get ohlc/candle/BTCUSD@1m` against an Operator whose `candle` Tasklet holds a live Cell keyed `BTCUSD@1m`
 - **THEN** the CLI SHALL print that Cell's state as JSON and its `change_seq`, and SHALL NOT serialize any other Cell
 
 #### Scenario: A dynamic-mode Cell is readable
@@ -66,8 +66,8 @@ truncation.
 
 A Cell that is not held in memory SHALL NOT be served from the durable store.
 The read SHALL return a refusal naming which of the following applies: the Cell
-was idle-evicted, the instance is suspended, the Operative holds no Cell by that
-key, or the Operative is not bound to a runner. The refusal SHALL name
+was idle-evicted, the instance is suspended, the Operator holds no Cell by that
+key, or the Operator is not bound to a runner. The refusal SHALL name
 `flz state at` as the durable-read path.
 
 #### Scenario: An evicted Cell is refused, not resurrected
@@ -75,10 +75,10 @@ key, or the Operative is not bound to a runner. The refusal SHALL name
 - **WHEN** a dynamic-mode Cell has been idle-evicted and is then read
 - **THEN** the read SHALL be refused naming eviction, and SHALL NOT create a Cell, bind a runner, or restore state from disk
 
-#### Scenario: An unbound Operative is refused
+#### Scenario: An unbound Operator is refused
 
-- **WHEN** the target Operative is not currently bound to a runner
-- **THEN** the read SHALL be refused naming the unbound Operative rather than blocking until a bind occurs
+- **WHEN** the target Operator is not currently bound to a runner
+- **THEN** the read SHALL be refused naming the unbound Operator rather than blocking until a bind occurs
 
 #### Scenario: An unknown key is refused distinctly from an evicted one
 
@@ -92,12 +92,12 @@ The serialized reply SHALL be bounded by the configured
 `{:error, {:oversized_state, bytes}}` naming the selector that would narrow the
 read. No new configuration key SHALL be introduced for this bound.
 
-#### Scenario: An unselected read of a large Operative is refused with guidance
+#### Scenario: An unselected read of a large Operator is refused with guidance
 
-- **WHEN** a whole-Operative read would serialize more than the watermark
+- **WHEN** a whole-Operator read would serialize more than the watermark
 - **THEN** the read SHALL be refused reporting the byte count and naming the Tasklet/Cell selector that would narrow it
 
-#### Scenario: The narrowed read of the same Operative succeeds
+#### Scenario: The narrowed read of the same Operator succeeds
 
-- **WHEN** the same Operative is read with a Tasklet and Cell selector whose serialized state is under the watermark
+- **WHEN** the same Operator is read with a Tasklet and Cell selector whose serialized state is under the watermark
 - **THEN** the read SHALL succeed

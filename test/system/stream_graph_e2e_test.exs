@@ -22,9 +22,9 @@ defmodule FlezhaTest.System.StreamGraphE2ETest do
 
   import FlezhaTest.Helper.TierE2EHarness, only: [send_inputs: 4, unique: 1]
 
-  alias Flezha.Operative.Builder
+  alias Flezha.Operator.Builder
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag timeout: 300_000
@@ -37,49 +37,49 @@ defmodule FlezhaTest.System.StreamGraphE2ETest do
   end
 
   test "a frame on each merged entry reaches the tasklet under its own mapping", ctx do
-    operative_id = start(ctx.namespace, "merged_input")
+    operator_id = start(ctx.namespace, "merged_input")
 
-    send_inputs(operative_id, ctx.namespace, ["AAPL:1"], %{"channel" => "ticks"})
-    send_inputs(operative_id, ctx.namespace, ["AAPL:2"], %{"channel" => "quotes"})
+    send_inputs(operator_id, ctx.namespace, ["AAPL:1"], %{"channel" => "ticks"})
+    send_inputs(operator_id, ctx.namespace, ["AAPL:2"], %{"channel" => "quotes"})
 
     assert Enum.sort(receive_lines(2)) == [
-             {"quotes:AAPL:2", "#{operative_id}/merge_label_tasklet/AAPL"},
-             {"ticks:AAPL:1", "#{operative_id}/merge_label_tasklet/AAPL"}
+             {"quotes:AAPL:2", "#{operator_id}/merge_label_tasklet/AAPL"},
+             {"ticks:AAPL:1", "#{operator_id}/merge_label_tasklet/AAPL"}
            ]
   end
 
   test "frames down one merged entry arrive in the order they were sent", ctx do
-    operative_id = start(ctx.namespace, "merged_input")
+    operator_id = start(ctx.namespace, "merged_input")
 
-    send_inputs(operative_id, ctx.namespace, ["MSFT:1", "MSFT:2"], %{"channel" => "ticks"})
+    send_inputs(operator_id, ctx.namespace, ["MSFT:1", "MSFT:2"], %{"channel" => "ticks"})
 
     assert Enum.map(receive_lines(2), &elem(&1, 0)) == ["ticks:MSFT:1", "ticks:MSFT:2"]
   end
 
   test "filter, flat_map, map and key_by apply in order on one edge", ctx do
-    operative_id = start(ctx.namespace, "transform_chain")
+    operator_id = start(ctx.namespace, "transform_chain")
 
-    send_inputs(operative_id, ctx.namespace, ["drop", "a:1,b:2"], %{"channel" => "trades"})
+    send_inputs(operator_id, ctx.namespace, ["drop", "a:1,b:2"], %{"channel" => "trades"})
 
     assert Enum.sort(receive_lines(2)) == [
-             {"A:1", "#{operative_id}/transform_label_tasklet/A"},
-             {"B:2", "#{operative_id}/transform_label_tasklet/B"}
+             {"A:1", "#{operator_id}/transform_label_tasklet/A"},
+             {"B:2", "#{operator_id}/transform_label_tasklet/B"}
            ]
 
     refute_receive {:message_forward, _, _}, 1_000, "the filtered `drop` frame reached the sink"
   end
 
   defp start(namespace, factory) do
-    operative_id = unique(factory)
+    operator_id = unique(factory)
 
     assert {:ok, _} =
-             OperativeManager.start_operative(namespace, %Builder{
-               id: operative_id,
+             OperatorManager.start_operator(namespace, %Builder{
+               id: operator_id,
                factory_id: factory,
-               opts: [plugins: [sink(namespace, operative_id)]]
+               opts: [plugins: [sink(namespace, operator_id)]]
              })
 
-    operative_id
+    operator_id
   end
 
   # `{payload, flz.cell}` per frame, in arrival order.
@@ -90,11 +90,11 @@ defmodule FlezhaTest.System.StreamGraphE2ETest do
     end
   end
 
-  defp sink(namespace, operative_id) do
+  defp sink(namespace, operator_id) do
     %Flezha.Plugin{
-      id: "stream_graph_sink_#{operative_id}",
+      id: "stream_graph_sink_#{operator_id}",
       namespace: namespace,
-      operative_id: operative_id,
+      operator_id: operator_id,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: self(), include_metadata: true},
       hooks: [{:on_output, []}]

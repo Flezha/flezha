@@ -67,7 +67,7 @@ pub enum Rung {
 }
 
 impl Rung {
-    /// How the rung is named to an operator — the source, not the value.
+    /// How the rung is named to a user — the source, not the value.
     pub fn label(self) -> &'static str {
         match self {
             Rung::Explicit => "$FLEZHA_SOCKET_FILES_PATH",
@@ -92,7 +92,7 @@ pub struct SocketDir {
 pub enum SocketDirError {
     /// More than one candidate holds a live control socket and no variable
     /// says which is meant. Naming one would attach the runner to a controller
-    /// the operator did not choose.
+    /// the user did not choose.
     Ambiguous { live: Vec<PathBuf> },
     /// No candidate could be created — the controller has nowhere to listen.
     Uncreatable {
@@ -153,7 +153,7 @@ fn resolve_from(candidates: Vec<(Rung, PathBuf)>, role: Role) -> Result<SocketDi
     let walked: Vec<PathBuf> = candidates.iter().map(|(_, p)| p.clone()).collect();
 
     // An explicit path wins outright: a runner quietly attaching to a
-    // controller the operator did not name is worse than one that will not
+    // controller the user did not name is worse than one that will not
     // start.
     if let Some(&(rung @ Rung::Explicit, ref path)) = candidates.first() {
         if role == Role::Controller {
@@ -280,7 +280,7 @@ fn within_sun_path(path: String) -> Result<String, SocketDirError> {
 
 /// Whether a file in a socket directory is one Flezha itself created — the
 /// control socket every runner dials, or a per-runner data socket opened
-/// beside it. The directory may be one an operator named through
+/// beside it. The directory may be one a user named through
 /// `FLEZHA_SOCKET_FILES_PATH` and shared with something else, so a caller
 /// clearing it asks here rather than carrying its own spelling of these names.
 pub fn is_flezha_socket(file_name: &str) -> bool {
@@ -814,10 +814,10 @@ mod tests {
             }
         }
 
-        // A directory an operator named through FLEZHA_SOCKET_FILES_PATH may
+        // A directory a user named through FLEZHA_SOCKET_FILES_PATH may
         // hold anything else, and none of it is ours.
         for theirs in [
-            "operator-notes.txt",
+            "user-notes.txt",
             "postgres.sock",
             "runner_control_channel.sock.bak",
             "primary_stream_runner-1.sock.lock",

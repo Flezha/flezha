@@ -1,6 +1,6 @@
 defmodule Flezha.AuthZ.Namespace do
   @moduledoc """
-  Namespace is a hard cell: every Operative, every Tasklet, every
+  Namespace is a hard cell: every Operator, every Tasklet, every
   persisted-state path, every audit record, and every observability
   signal carries one.
 
@@ -20,8 +20,8 @@ defmodule Flezha.AuthZ.Namespace do
   @default "default"
 
   @default_quotas %{
-    max_operatives: 100,
-    max_cells_per_operative: 1_024,
+    max_operators: 100,
+    max_cells_per_operator: 1_024,
     max_mailbox_bytes_total: 268_435_456,
     max_message_rate_per_second: 100_000,
     max_state_bytes: 107_374_182_400,
@@ -30,8 +30,8 @@ defmodule Flezha.AuthZ.Namespace do
 
   @type name :: binary()
   @type quotas :: %{
-          required(:max_operatives) => non_neg_integer(),
-          required(:max_cells_per_operative) => non_neg_integer(),
+          required(:max_operators) => non_neg_integer(),
+          required(:max_cells_per_operator) => non_neg_integer(),
           required(:max_mailbox_bytes_total) => non_neg_integer(),
           required(:max_message_rate_per_second) => non_neg_integer(),
           required(:max_state_bytes) => non_neg_integer(),
@@ -56,7 +56,7 @@ defmodule Flezha.AuthZ.Namespace do
   The namespace a listing may show `caller_context`, or `:all` for the whole
   cluster.
 
-  An admin in `_system` sees everything, which is the operator view. Every
+  An admin in `_system` sees everything, which is the caller view. Every
   caller whose context carries a namespace sees that one.
 
   `unbound` is what a context carrying **no** namespace answers, and it is a

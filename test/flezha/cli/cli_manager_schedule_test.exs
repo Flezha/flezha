@@ -11,7 +11,7 @@ defmodule Flezha.Service.CliManagerScheduleTest do
   alias Flezha.Runner.FleetManager
   alias Flezha.Schedule.Store, as: ScheduleStore
   alias Flezha.Service.CliManager
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias FlezhaTest.Helper.ScheduleTestHelper
 
   setup do
@@ -53,15 +53,15 @@ defmodule Flezha.Service.CliManagerScheduleTest do
     assert {:ok, %{init_values: %{"mode" => "daily"}}} = ScheduleStore.get("digest")
   end
 
-  test "schedule_add refuses a factory its runner announced as a stream" do
-    stub(FleetManager, :factory_kind, fn "default", "prices" -> {:ok, :stream} end)
+  test "schedule_add refuses a factory its runner announced as unbounded" do
+    stub(FleetManager, :factory_kind, fn "default", "prices" -> {:ok, :unbounded} end)
 
     err =
       capture_io(:stderr, fn ->
         assert catch_exit(add_digest(factory: "prices")) == {:shutdown, 1}
       end)
 
-    assert err =~ "only a workflow factory is schedulable; factory prices is a stream"
+    assert err =~ "only a bounded factory is schedulable; factory prices is unbounded"
     assert ScheduleStore.get("digest") == :error
   end
 
@@ -164,13 +164,13 @@ defmodule Flezha.Service.CliManagerScheduleTest do
     assert capture_io(fn -> CliManager.schedule_list() end) =~ "no schedules"
   end
 
-  # `--plugins` reaches the controller as the text the operator wrote, and the
+  # `--plugins` reaches the controller as the text the caller wrote, and the
   # stored row holds it verbatim: providers are resolved again at every firing.
   test "schedule_add stores the plugin spec as the text it was given" do
     stub(FleetManager, :runners_for_factory, fn _, _ -> ["runner-1"] end)
 
     spec =
-      ~s([{"id":"out","provider":"operative_stdout","opts":{},"hooks":["on_output"]}])
+      ~s([{"id":"out","provider":"operator_stdout","opts":{},"hooks":["on_output"]}])
 
     output = add_digest(plugins: spec)
 
@@ -183,10 +183,10 @@ defmodule Flezha.Service.CliManagerScheduleTest do
 
     add_digest()
 
-    expect(OperativeManager, :start_workflow, fn "default", id, factory_id, _init, _opts ->
+    expect(OperatorManager, :start_bounded, fn "default", id, factory_id, _init, _opts ->
       assert id =~ ~r/^digest@manual-\d+$/
       assert factory_id == "ai_digest"
-      {:ok, %{operative_id: id}}
+      {:ok, %{operator_id: id}}
     end)
 
     output = capture_io(fn -> CliManager.schedule_run("digest") end)

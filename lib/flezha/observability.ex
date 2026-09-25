@@ -10,7 +10,7 @@ defmodule Flezha.Observability do
     * `Flezha.Observability.RingBufferSink.query/3` — read recent
       signals back out of the ring buffer.
 
-  For operator-facing access (CLI / future Phoenix UI) use the
+  For user-facing access (CLI / future Phoenix UI) use the
   service module `Flezha.Service.Observability`, which validates a
   `caller_context` and emits audit events.
   """

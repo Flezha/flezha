@@ -1,7 +1,7 @@
 defmodule Flezha.State.PathsTest do
   @moduledoc """
   Where durable state lives: how the root is chosen, and how a class resolves to
-  `<state_root>/<namespace>/<class>/` through the claim an Operative records
+  `<state_root>/<namespace>/<class>/` through the claim an Operator records
   when it binds. The cell_id stays the wire's 3-tuple; isolation holds at the
   path seam.
   """
@@ -81,7 +81,7 @@ defmodule Flezha.State.PathsTest do
       # ...and every disk-driven reader resolves the same cell.
       assert %{wal_files: [{"k1", ^wal}]} = Paths.scan_dir({"orders-op", "task-0", ""})
       assert Paths.cells_of("orders-op") == [cell_id]
-      assert "orders-op" in Paths.operative_classes()
+      assert "orders-op" in Paths.operator_classes()
     end
 
     test "the task-journal is the one reserved per-instance file, and no Cell", %{tmp: base} do

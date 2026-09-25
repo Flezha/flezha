@@ -16,11 +16,6 @@ Two judgements are in use, both built here:
   left empty. Right when the retired word is ordinary English and only a few
   shapes are the retired name.
 
-`check-kind-naming.sh` runs both and fails a line that trips either: the
-allowlist carries the open-ended plain-English sense, and an unmaskable pattern
-set carries the closed kind sense, so a broad allowlist rule cannot hide the
-error the gate exists to catch.
-
 A third kind of gate judges a whole tree against a recorded list rather than a
 line against a pattern: `check-layer-direction.sh`. It does not share the walk,
 because its finding is a set difference and not a line, but it shares the list
@@ -399,12 +394,8 @@ def walk(*, check, headline, hint, ok_message, pathspec=(), path_filter=None,
 # unless it declares `finding`, which is how a tool whose status alone cannot
 # tell "found something" from "did not complete" says which it was.
 GATES = (
-    {"id": "kind-naming", "group": "naming",
-     "argv": ["scripts/check-kind-naming.sh"]},
     {"id": "overflow-naming", "group": "naming",
      "argv": ["scripts/check-overflow-naming.sh"]},
-    {"id": "tasklet-cell-naming", "group": "naming",
-     "argv": ["scripts/check-tasklet-cell-naming.sh"]},
     {"id": "local-mode-naming", "group": "naming",
      "argv": ["scripts/check-local-mode-naming.sh"]},
     {"id": "module-naming", "group": "naming",
@@ -439,8 +430,6 @@ GATES = (
      "argv": ["scripts/check-layer-direction.sh", "--self-test"]},
     {"id": "openspec-scenarios-self-test", "group": "naming",
      "argv": ["scripts/check-openspec-scenarios.sh", "--self-test"]},
-    {"id": "tasklet-cell-naming-self-test", "group": "naming",
-     "argv": ["scripts/check-tasklet-cell-naming.sh", "--self-test"]},
     # The publication-readiness record's SHAPE. Its content arm is the row
     # below, in its own group, because every blocking entry is open until the
     # day of the release and a gate that lands red stops being read.
@@ -483,7 +472,7 @@ GATES = (
 # `scripts/check-feature-symbols.sh` is deliberately not a row. It is not a gate
 # over the tree: it builds an artefact three ways and compares the exported
 # symbols, so it takes arguments, needs a compiler, and answers about one build
-# rather than about the repository. Two workflows call it directly.
+# rather than about the repository. Two bounded operators call it directly.
 
 
 def gate(gate_id):

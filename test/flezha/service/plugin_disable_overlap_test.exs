@@ -1,16 +1,16 @@
 defmodule Flezha.Service.PluginDisableOverlapTest do
   @moduledoc """
-  M unreachable operatives cost one bound, not M.
+  M unreachable operators cost one bound, not M.
 
-  The teardown walk used to be `Enum.each` over the operative ids on the
+  The teardown walk used to be `Enum.each` over the operator ids on the
   CALLER's side. Every item funnels into one registered `PluginManager`, which
-  serves one message at a time, and the per-operative `Overwatch` unsubscribe
+  serves one message at a time, and the per-operator `Overwatch` unsubscribe
   wait happens INSIDE its `handle_call` — so a caller-side fan-out only fills
   its mailbox: the waits still run end to end and every caller queued past the
-  outer bound reports a reachable operative as undisabled. The overlap has to
+  outer bound reports a reachable operator as undisabled. The overlap has to
   be created where the serialisation is, and this drill is what says so.
 
-  Red before the change: `disable_operatives/2` did not exist and the walk
+  Red before the change: `disable_operators/2` did not exist and the walk
   took M × the inner bound.
   """
 
@@ -20,7 +20,7 @@ defmodule Flezha.Service.PluginDisableOverlapTest do
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Config.Durations
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias Flezha.Service.PluginManager
   alias ProcessHub.Service.ProcessRegistry
 
@@ -35,11 +35,11 @@ defmodule Flezha.Service.PluginDisableOverlapTest do
     ProcessHub |> Mimic.stub(:is_alive?, fn _hub_id -> true end)
     ProcessRegistry |> Mimic.stub(:update, fn _hub, _id, _fun, _opts -> :ok end)
 
-    # Every operative resolves to a pid that never answers, so the real
+    # Every operator resolves to a pid that never answers, so the real
     # `Overwatch.plugin_unsubscribe` runs its full 2 s bound for each of them.
     # No stub: the wait under test is the production one.
     wedged = spawn(fn -> receive do: (:never -> :never) end)
-    OperativeManager |> Mimic.stub(:get_operative_pid, fn _ns, _id -> {:ok, wedged} end)
+    OperatorManager |> Mimic.stub(:get_operator_pid, fn _ns, _id -> {:ok, wedged} end)
 
     for id <- ids, do: PluginManager.register_plugin(plugin_id(id), {@namespace, id})
     on_exit(fn -> for id <- ids, do: PluginManager.unregister_plugin(plugin_id(id)) end)
@@ -47,13 +47,13 @@ defmodule Flezha.Service.PluginDisableOverlapTest do
     {:ok, ids: ids}
   end
 
-  defp plugin_id(operative_id), do: "overlap_plugin_#{operative_id}"
+  defp plugin_id(operator_id), do: "overlap_plugin_#{operator_id}"
 
-  test "M unreachable operatives cost one inner bound, not M", %{ids: ids} do
+  test "M unreachable operators cost one inner bound, not M", %{ids: ids} do
     inner_ms = Durations.get(:plugin_call_timeout_ms)
 
     {elapsed_us, reply} =
-      :timer.tc(fn -> PluginManager.disable_operatives(@namespace, ids) end)
+      :timer.tc(fn -> PluginManager.disable_operators(@namespace, ids) end)
 
     elapsed_ms = div(elapsed_us, 1_000)
 
@@ -69,7 +69,7 @@ defmodule Flezha.Service.PluginDisableOverlapTest do
     assert Enum.sort(undisabled) == Enum.sort(Enum.map(ids, &plugin_id/1))
 
     # Every registration is dropped either way — a plugin left registered
-    # against a torn-down operative is what the walk exists to prevent.
+    # against a torn-down operator is what the walk exists to prevent.
     registered = Map.keys(PluginManager.get_plugins())
     assert Enum.all?(ids, &(plugin_id(&1) not in registered))
   end

@@ -39,7 +39,7 @@ defmodule Flezha.State.WalWriter.Epoch do
       :telemetry.execute(
         [:flezha, :state, :stale_writer_refused],
         %{count: 1},
-        %{operative: rc, tasklet: sh, key: pk, session: runner_id}
+        %{operator: rc, tasklet: sh, key: pk, session: runner_id}
       )
 
       %{state | refused_sessions: MapSet.put(state.refused_sessions, runner_id)}
@@ -135,7 +135,7 @@ defmodule Flezha.State.WalWriter.Epoch do
       :telemetry.execute(
         [:flezha, :state, :baseline_seed],
         %{first_seq: seq},
-        %{operative: rc, tasklet: sh, key: pk, runner: runner_id}
+        %{operator: rc, tasklet: sh, key: pk, runner: runner_id}
       )
     end
 
@@ -166,7 +166,7 @@ defmodule Flezha.State.WalWriter.Epoch do
     :telemetry.execute(
       [:flezha, :state, :wal_realign],
       %{from_seq: from_seq, to_seq: to_seq},
-      %{operative: rc, tasklet: sh, key: pk, runner: runner_id}
+      %{operator: rc, tasklet: sh, key: pk, runner: runner_id}
     )
   end
 
@@ -221,7 +221,7 @@ defmodule Flezha.State.WalWriter.Epoch do
     :telemetry.execute(
       [:flezha, :state, :wal_rewind],
       %{from_seq: from_seq, to_seq: to_seq},
-      %{operative: rc, tasklet: sh, key: pk, epoch: epoch}
+      %{operator: rc, tasklet: sh, key: pk, epoch: epoch}
     )
   end
 
@@ -237,8 +237,8 @@ defmodule Flezha.State.WalWriter.Epoch do
   # nothing has consumed. Lower it, or the next retention sweep truncates away
   # the very inputs the correction is about to replay.
   defp rewind_input_watermark(state, max_consumed) do
-    {operative_class, _, _} = state.cell_id
-    InputLog.rewind_consumed(operative_class, state.cell_id, max_consumed || -1)
+    {operator_class, _, _} = state.cell_id
+    InputLog.rewind_consumed(operator_class, state.cell_id, max_consumed || -1)
   end
 
   # ---------- Effect-record scan ----------

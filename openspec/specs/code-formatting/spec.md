@@ -164,7 +164,7 @@ The Node, Ruby, PHP and Python SDKs SHALL each declare one formatter as a pinned
 A gate that checks formatting across several languages SHALL attempt every one
 of them and report per language. An unavailable tool SHALL remove only its own
 language from the report; it SHALL NOT prevent the remaining languages from
-being checked, and SHALL NOT leave the operator unable to tell which were
+being checked, and SHALL NOT leave the user unable to tell which were
 examined.
 
 The output SHALL distinguish three outcomes, each under its own heading: a tool

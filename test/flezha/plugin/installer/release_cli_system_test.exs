@@ -185,7 +185,7 @@ defmodule Flezha.Plugin.Installer.ReleaseCliSystemTest do
           provider: #{first_mod},
           hooks: [{:on_input, []}],
           default_opts: %{},
-          scope: :operative
+          scope: :operator
         }
       ],
       dependencies: []

@@ -68,8 +68,8 @@ end
 
 defmodule Flezha.Service.CliManagerSendTest do
   @moduledoc """
-  `flz operative send <id> --text <payload> [--channel <ch>]` operator surface:
-  the confirming verdict from `OperativeManager.send_io_confirming/5` is reported
+  `flz operator send <id> --text <payload> [--channel <ch>]` operations surface:
+  the confirming verdict from `OperatorManager.send_io_confirming/5` is reported
   and an optional channel is threaded into the `:io_in` metadata. The verdict
   logic itself is covered in `overwatch_confirming_ingest_test`. The error
   verdicts additionally `exit({:shutdown, 1})` for a non-zero CLI exit, so only the
@@ -91,16 +91,16 @@ defmodule Flezha.Service.CliManagerSendTest do
 
   # Stub `send_io_confirming` to answer a fixed verdict and echo its args to the
   # test process, so both the output mapping and the metadata construction are
-  # asserted without a live operative.
+  # asserted without a live operator.
   defp run_send(inst, verdict, channel) do
     test = self()
 
-    stub(Flezha.Service.OperativeManager, :send_io_confirming, fn id, ns, msg, md ->
+    stub(Flezha.Service.OperatorManager, :send_io_confirming, fn id, ns, msg, md ->
       Kernel.send(test, {:sent, id, ns, msg, md})
       verdict
     end)
 
-    capture_io(fn -> CliManager.operative_send("default", inst, "payload", channel) end)
+    capture_io(fn -> CliManager.operator_send("default", inst, "payload", channel) end)
   end
 
   test "a delivered payload is reported and carries empty metadata when no channel is given" do
@@ -135,7 +135,7 @@ end
 
 defmodule Flezha.Service.CliManagerRewindTest do
   @moduledoc """
-  `flz operative rewind <instance> --to-iteration N` operator surface: how a
+  `flz operator rewind <instance> --to-iteration N` operations surface: how a
   rewind that went through, and each verdict the Overwatch guard can return, is
   reported. The guard's own logic is covered in `overwatch_suspension_test`.
   """
@@ -152,11 +152,11 @@ defmodule Flezha.Service.CliManagerRewindTest do
 
   defp instance_id(), do: "rw_#{System.unique_integer([:positive])}"
 
-  # `operative_rewind` resolves a pid and calls `{:rewind, n}` on it, so a process
+  # `operator_rewind` resolves a pid and calls `{:rewind, n}` on it, so a process
   # that answers with a fixed verdict exercises the whole CLI surface.
   defp stub_overwatch(inst, verdict) do
     pid = spawn_link(fn -> reply_loop(verdict) end)
-    stub(Flezha.Service.OperativeManager, :get_operative_pid, fn _ns, ^inst -> {:ok, pid} end)
+    stub(Flezha.Service.OperatorManager, :get_operator_pid, fn _ns, ^inst -> {:ok, pid} end)
   end
 
   defp reply_loop(verdict) do
@@ -176,7 +176,7 @@ defmodule Flezha.Service.CliManagerRewindTest do
         stdout =
           capture_io(fn ->
             try do
-              CliManager.operative_rewind("default", inst, to_iter)
+              CliManager.operator_rewind("default", inst, to_iter)
             catch
               :exit, _ -> :ok
             end
@@ -227,9 +227,9 @@ defmodule Flezha.Service.CliManagerRewindTest do
     assert out =~ "no `compensate` hook"
   end
 
-  test "an unknown operative is reported, not crashed on" do
+  test "an unknown operator is reported, not crashed on" do
     inst = instance_id()
-    stub(Flezha.Service.OperativeManager, :get_operative_pid, fn _ns, ^inst -> {:error, :nf} end)
+    stub(Flezha.Service.OperatorManager, :get_operator_pid, fn _ns, ^inst -> {:error, :nf} end)
 
     assert rewind(inst, 1) =~ "not found"
   end
@@ -250,7 +250,7 @@ defmodule Flezha.Service.CliManagerDlqTest do
   alias Flezha.Dlq.Store
   alias Flezha.Observability.RingBufferSink
   alias Flezha.Observability.TestSinks
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.Service.CliManager
   alias FlezhaTest.Helper.DlqFixtures
 
@@ -260,7 +260,7 @@ defmodule Flezha.Service.CliManagerDlqTest do
     rc = "dlqcli_" <> Integer.to_string(System.unique_integer([:positive]))
 
     entry = %{
-      operative_class: rc,
+      operator_class: rc,
       tasklet_id: "task",
       cell_key: "k",
       channel: "input",
@@ -276,7 +276,7 @@ defmodule Flezha.Service.CliManagerDlqTest do
   test "list and show render the parked entry", %{entry: entry} do
     {:ok, ref} = Store.append(entry)
 
-    listing = capture_io(fn -> CliManager.dlq_list(entry.operative_class) end)
+    listing = capture_io(fn -> CliManager.dlq_list(entry.operator_class) end)
     assert listing =~ ref
     assert listing =~ "input"
     assert listing =~ "kaboom"
@@ -337,7 +337,7 @@ end
 
 defmodule Flezha.Service.CliManager.ClusterTest do
   @moduledoc """
-  CLI surface for `flz operative list` and `flz cluster status`. The data
+  CLI surface for `flz operator list` and `flz cluster status`. The data
   sources (`HubManager` registry access) are stubbed so the rendering
   and shaping are asserted deterministically.
 
@@ -356,32 +356,32 @@ defmodule Flezha.Service.CliManager.ClusterTest do
   alias Flezha.Service.CliManager
   alias Flezha.Service.HubManager
 
-  describe "list_operatives/2 (health column)" do
-    test "json output carries per-operative health, runner, and node" do
-      stub(HubManager, :operative_rows, fn _ns ->
+  describe "list_operators/2 (health column)" do
+    test "json output carries per-operator health, runner, and node" do
+      stub(HubManager, :operator_rows, fn _ns ->
         [
           %{id: "r1", health: :healthy, runner: "e1", node: :a@h},
           %{id: "r2", health: :failed, runner: nil, node: nil}
         ]
       end)
 
-      out = capture_io(fn -> CliManager.list_operatives("shop", "json") end)
+      out = capture_io(fn -> CliManager.list_operators("shop", "json") end)
 
       assert {:ok, decoded} = Jason.decode(out)
       assert decoded["namespace"] == "shop"
 
-      assert decoded["operatives"] == [
+      assert decoded["operators"] == [
                %{"id" => "r1", "health" => "healthy", "runner" => "e1", "node" => "a@h"},
                %{"id" => "r2", "health" => "failed", "runner" => nil, "node" => nil}
              ]
     end
 
-    test "text output shows a HEALTH column and surfaces a FAILED, unplaced operative" do
-      stub(HubManager, :operative_rows, fn _ns ->
+    test "text output shows a HEALTH column and surfaces a FAILED, unplaced operator" do
+      stub(HubManager, :operator_rows, fn _ns ->
         [%{id: "r2", health: :failed, runner: nil, node: nil}]
       end)
 
-      out = capture_io(fn -> CliManager.list_operatives("shop", "text") end)
+      out = capture_io(fn -> CliManager.list_operators("shop", "text") end)
 
       assert out =~ "HEALTH"
       assert out =~ "r2"
@@ -390,17 +390,17 @@ defmodule Flezha.Service.CliManager.ClusterTest do
     end
 
     test "empty registry renders a friendly message, not a crash" do
-      stub(HubManager, :operative_rows, fn _ns -> [] end)
-      out = capture_io(fn -> CliManager.list_operatives("shop", "text") end)
-      assert out =~ "No operatives found"
+      stub(HubManager, :operator_rows, fn _ns -> [] end)
+      out = capture_io(fn -> CliManager.list_operators("shop", "text") end)
+      assert out =~ "No operators found"
     end
   end
 
   describe "cluster_status/2" do
-    test "json reports the local node as leader, per-node operative counts, unplaced, and a health rollup" do
+    test "json reports the local node as leader, per-node operator counts, unplaced, and a health rollup" do
       stub(HubManager, :get_hub_nodes, fn _ns, true -> [node()] end)
 
-      stub(HubManager, :operative_rows, fn _ns ->
+      stub(HubManager, :operator_rows, fn _ns ->
         [
           %{id: "r1", health: :healthy, runner: "e1", node: node()},
           %{id: "r2", health: :degraded, runner: "e2", node: node()},
@@ -415,14 +415,14 @@ defmodule Flezha.Service.CliManager.ClusterTest do
       assert {:ok, d} = Jason.decode(out)
       assert d["leader"] == to_string(node())
       assert d["is_leader"] == true
-      assert d["unplaced_operatives"] == 1
-      assert d["operative_health"] == %{"healthy" => 1, "degraded" => 1, "failed" => 1}
+      assert d["unplaced_operators"] == 1
+      assert d["operator_health"] == %{"healthy" => 1, "degraded" => 1, "failed" => 1}
     end
 
     test "text output names the local node as leader" do
       stub(HubManager, :get_hub_nodes, fn _ns, true -> [node()] end)
 
-      stub(HubManager, :operative_rows, fn _ns ->
+      stub(HubManager, :operator_rows, fn _ns ->
         [%{id: "r1", health: :healthy, runner: "e1", node: node()}]
       end)
 
@@ -433,7 +433,7 @@ defmodule Flezha.Service.CliManager.ClusterTest do
       assert out =~ "Cluster status for namespace 'shop'"
       assert out =~ "Leader:"
       assert out =~ to_string(node())
-      assert out =~ "1 operative(s)"
+      assert out =~ "1 operator(s)"
       assert out =~ "[leader]"
       assert out =~ "healthy=1"
     end
@@ -443,7 +443,7 @@ end
 defmodule Flezha.Service.CliManagerAuthzRenderTest do
   @moduledoc """
   finish-platform-authn-authz §8.1: the `flz auth|token|role|namespace` verb
-  families as the operator sees them — thin renderers over the authorized
+  families as the caller sees them — thin renderers over the authorized
   wrappers, driven end to end against live auth stores.
   """
   # async: false: a shared on-disk root.
@@ -491,28 +491,28 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
       capture_io(fn ->
         CliManager.authz_render_namespace_set_quota(
           "render-ns",
-          ~s({"max_operatives": 7}),
+          ~s({"max_operators": 7}),
           token: admin_token
         )
       end)
 
-    assert set_out =~ "max_operatives: 7"
+    assert set_out =~ "max_operators: 7"
 
     # `flz role bind` / `list`.
     bind_out =
       capture_io(fn ->
-        CliManager.authz_render_role_bind("carol", "operator", "render-ns", token: admin_token)
+        CliManager.authz_render_role_bind("carol", "ops", "render-ns", token: admin_token)
       end)
 
-    assert bind_out =~ "bound carol as operator@render-ns"
+    assert bind_out =~ "bound carol as ops@render-ns"
 
     role_list_out = capture_io(fn -> CliManager.authz_render_role_list(token: admin_token) end)
-    assert role_list_out =~ "carol  operator@render-ns"
+    assert role_list_out =~ "carol  ops@render-ns"
 
     # `flz token issue` / `whoami` / `list` / `revoke`.
     issue_out =
       capture_io(fn ->
-        CliManager.authz_render_token_issue("carol", "render-ns", "operator",
+        CliManager.authz_render_token_issue("carol", "render-ns", "ops",
           ttl: 3_600,
           token: admin_token
         )
@@ -527,7 +527,7 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
     assert whoami_out =~ "namespace: render-ns"
 
     list_out = capture_io(fn -> CliManager.authz_render_token_list(token: admin_token) end)
-    assert list_out =~ "carol  operator@render-ns  active"
+    assert list_out =~ "carol  ops@render-ns  active"
 
     revoke_out =
       capture_io(fn -> CliManager.authz_render_token_revoke(token_id, token: admin_token) end)
@@ -644,21 +644,21 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
     end
 
     test "a token caller's act record names the token's one role", %{admin: admin} do
-      {:ok, operator, _} = TokenStore.issue("carol", "render-ns", :operator, 3_600)
+      {:ok, caller, _} = TokenStore.issue("carol", "render-ns", :ops, 3_600)
       boundary = System.monotonic_time(:microsecond)
 
       # The stop itself fails (nothing is running); an authorized act that
       # failed is still an act, so the record is written either way.
       capture_io(:stderr, fn ->
         capture_io(fn ->
-          catch_exit(CliManager.operative_stop("render-ns", "o1", token: operator))
+          catch_exit(CliManager.operator_stop("render-ns", "o1", token: caller))
         end)
       end)
 
       TestSinks.settle(RingBufferSink)
 
-      assert Enum.any?(RingBufferSink.query(:operative_service, boundary), fn signal ->
-               signal.name == :stop and signal.metadata[:caller_roles] == [:operator]
+      assert Enum.any?(RingBufferSink.query(:operator_service, boundary), fn signal ->
+               signal.name == :stop and signal.metadata[:caller_roles] == [:ops]
              end)
 
       # The admin's own role verb names its role the same way.
@@ -690,7 +690,7 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
       for {principal, role} <- [
             {"runner@render-ns", "spawner"},
             {"runner@render-ns", "stopper"},
-            {"alice", "operator"}
+            {"alice", "ops"}
           ] do
         capture_io(fn ->
           CliManager.authz_render_role_bind(principal, role, "render-ns", token: admin)
@@ -700,7 +700,7 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
       out = capture_io(fn -> CliManager.authz_render_role_list(token: admin) end)
 
       assert out =~ "runner@render-ns  spawner,stopper@render-ns"
-      assert out =~ "alice  operator@render-ns"
+      assert out =~ "alice  ops@render-ns"
     end
   end
 
@@ -745,39 +745,39 @@ end
 
 defmodule Flezha.Service.CliManagerReplayTest do
   @moduledoc """
-  `flz operative replay <cell> --from <seq|ts>` on a Cell of a workflow class:
+  `flz operator replay <cell> --from <seq|ts>` on a Cell of a bounded class:
   refused before anything is rewound, naming the journal as the instance's
-  baseline and `flz operative rewind` as the verb to use.
+  baseline and `flz operator rewind` as the verb to use.
   """
   # async: false: the class registry and the state tree are node-global.
   use FlezhaTest.Case, fixtures: [:tmp_app_data, :state_tree], async: false
 
   import ExUnit.CaptureIO
 
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.Service.CliManager
   alias Flezha.State.{TestHelpers, WalWriter}
 
-  test "a workflow Cell is refused, and nothing is rewound" do
+  test "a bounded Cell is refused, and nothing is rewound" do
     class = "rp_#{System.unique_integer([:positive])}"
     cell = {class, "task", "key"}
     {:ok, writer} = Flezha.State.Supervisor.find_or_start(cell)
     :ok = WalWriter.append(writer, 0, TestHelpers.stub_header(), "x0")
-    :ok = ClassRegistry.put(class, :workflow)
+    :ok = ClassRegistry.put(class, :bounded)
     on_exit(fn -> ClassRegistry.delete(class) end)
 
     stderr =
       capture_io(:stderr, fn ->
         try do
-          CliManager.operative_replay("default", "#{class}/task/key", "0")
+          CliManager.operator_replay("default", "#{class}/task/key", "0")
         catch
           :exit, _ -> :ok
         end
       end)
 
-    assert stderr =~ "is a Cell of a workflow"
+    assert stderr =~ "is a Cell of a bounded operator"
     assert stderr =~ "committed iteration in its journal"
-    assert stderr =~ "flz operative rewind"
+    assert stderr =~ "flz operator rewind"
     assert WalWriter.outbox_epoch(writer) == 0, "no epoch was bumped"
   end
 end

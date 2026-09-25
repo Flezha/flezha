@@ -5,21 +5,21 @@ TBD - created by archiving change python-sdk. Update Purpose after archive.
 ## Requirements
 ### Requirement: Python SDK Entry Point and Runner Lifecycle
 
-The Python SDK SHALL provide `flezha.create_runner(namespace)` as the single entry point, returning a concrete runner. Creating a runner SHALL NOT connect, claim the process singleton slot, or spawn any thread. `runner.start()` MUST connect to the controller's control socket, send the handshake init message per `docs/sdk/protocol_spec.md` carrying the runner's currently-declared factory ids (possibly empty), wait for `AssignRunnerId`, and return the same runner. `runner.run()` SHALL be sugar for `start()` followed by `await_termination()`, never an independent implementation. The runner SHALL expose `namespace` and `operatives()`, and SHALL support the context-manager protocol so `with flezha.create_runner(ns) as r:` performs graceful shutdown on exit.
+The Python SDK SHALL provide `flezha.create_runner(namespace)` as the single entry point, returning a concrete runner. Creating a runner SHALL NOT connect, claim the process singleton slot, or spawn any thread. `runner.start()` MUST connect to the controller's control socket, send the handshake init message per `docs/sdk/protocol_spec.md` carrying the runner's currently-declared factory ids (possibly empty), wait for `AssignRunnerId`, and return the same runner. `runner.run()` SHALL be sugar for `start()` followed by `await_termination()`, never an independent implementation. The runner SHALL expose `namespace` and `operators()`, and SHALL support the context-manager protocol so `with flezha.create_runner(ns) as r:` performs graceful shutdown on exit.
 
 At most one **started** runner SHALL exist per process; the slot is claimed at `start()`, not at create. Any number of unstarted runners MAY exist. A second `start()` on the same runner SHALL raise.
 
 The runner SHALL report, in its startup line, the wheel build tier, the active executor and the pool sizing, so a benchmark or bug report is never ambiguous about the conditions it was produced under.
 
 #### Scenario: Successful connection on a created runner
-- **WHEN** a user calls `flezha.create_runner("my_app").register_factory(MarketOperative).start()` with the controller running
+- **WHEN** a user calls `flezha.create_runner("my_app").register_factory(MarketOperator).start()` with the controller running
 - **THEN** the call blocks until the controller responds with `AssignRunnerId`, returns the same runner, and `runner.namespace` equals `"my_app"`
 
 #### Scenario: Controller unavailable triggers exponential backoff retries
 - **WHEN** a user calls `start()` and the controller's control socket is not yet listening
 - **THEN** the SDK SHALL retry the connect with exponential backoff and succeed once the controller becomes available, on the same ladder the other SDKs use
 
-#### Scenario: Zero declared operative types is legal
+#### Scenario: Zero declared operator types is legal
 - **WHEN** `start()` is called with no `register_factory` calls
 - **THEN** the runner SHALL connect successfully with an empty factory id list, and types MAY be defined later on the live runner
 
@@ -29,20 +29,20 @@ The runner SHALL report, in its startup line, the wheel build tier, the active e
 
 ### Requirement: Decorator-Based Authoring Surface
 
-The Python SDK SHALL expose its authoring surface as decorators: `@flezha.state`, `@flezha.tasklet`, `@flezha.stream_operative` and `@flezha.workflow_operative`. A decorated handler SHALL be an ordinary Python callable, callable directly in a unit test without any Flezha runtime present. Decorators SHALL register the decorated object into a module-level registry at import time and SHALL NOT connect, spawn threads, or perform I/O. A class tasklet's body SHALL be its `run` method, the name every SDK gives a tasklet's body; a decorated class defining `process` and no `run` SHALL raise `DeclarationError` naming `run`. A function tasklet is its own body.
+The Python SDK SHALL expose its authoring surface as decorators: `@flezha.state`, `@flezha.tasklet`, `@flezha.unbounded_operator` and `@flezha.bounded_operator`. A decorated handler SHALL be an ordinary Python callable, callable directly in a unit test without any Flezha runtime present. Decorators SHALL register the decorated object into a module-level registry at import time and SHALL NOT connect, spawn threads, or perform I/O. A class tasklet's body SHALL be its `run` method, the name every SDK gives a tasklet's body; a decorated class defining `process` and no `run` SHALL raise `DeclarationError` naming `run`. A function tasklet is its own body.
 
-Declaration SHALL be a pure expansion onto the shared authoring contract's surface — introducing no new runtime path, protocol message or WAL change — and decorated tasklets SHALL compose with one another in a single operative graph.
+Declaration SHALL be a pure expansion onto the shared authoring contract's surface — introducing no new runtime path, protocol message or WAL change — and decorated tasklets SHALL compose with one another in a single operator graph.
 
 #### Scenario: A decorated handler is directly callable
 - **WHEN** a user defines `@flezha.tasklet def price(tick: Tick) -> Quote: ...` and calls `price(some_tick)` from a plain unit test with no runner started
 - **THEN** the function executes as an ordinary Python function and returns a `Quote`
 
 #### Scenario: Decorating performs no I/O
-- **WHEN** a module containing `@flezha.tasklet` and `@flezha.stream_operative` declarations is imported with no controller running
+- **WHEN** a module containing `@flezha.tasklet` and `@flezha.unbounded_operator` declarations is imported with no controller running
 - **THEN** the import SHALL succeed, open no socket, and start no thread
 
 #### Scenario: A class tasklet's body is its run method
-- **WHEN** a class decorated `@flezha.tasklet` defines `run(self, value, ctx)` and an operative wires it
+- **WHEN** a class decorated `@flezha.tasklet` defines `run(self, value, ctx)` and an operator wires it
 - **THEN** each input SHALL reach `run`, and its return value SHALL be the tasklet's output
 
 #### Scenario: The old body method is refused
@@ -51,7 +51,7 @@ Declaration SHALL be a pure expansion onto the shared authoring contract's surfa
 
 ### Requirement: Type Hints Drive Graph Wiring, And The Graph Is Statically Checkable
 
-The Python SDK SHALL derive tasklet input and output types from the type hints on the decorated handler's signature and SHALL use them to wire the operative graph. The package SHALL ship `py.typed` and a fully annotated public surface, such that a wrong edge type is reported by a standard type checker before the program runs.
+The Python SDK SHALL derive tasklet input and output types from the type hints on the decorated handler's signature and SHALL use them to wire the operator graph. The package SHALL ship `py.typed` and a fully annotated public surface, such that a wrong edge type is reported by a standard type checker before the program runs.
 
 A handler whose parameter or return annotation is missing, or whose annotated types cannot be connected into a valid graph, SHALL raise at the `register_factory` call site — before any input is served — with an error naming the offending handler and the specific defect. Registration-time refusals SHALL cover the defect classes Rust catches at compile time: wrong input type on a wired edge, missing entry channel, multiple entry channels, graph cycle, unreachable tasklet, node identity collision, missing event-time extractor when an event-time clock is declared, unservable clock, keyed channel without a plugin wire, tier channel not keyed, checkpoint ack without the effectively-once tier, correction window without its preconditions, branch with too few arms, and duplicate plugin sink.
 
@@ -68,7 +68,7 @@ A handler whose parameter or return annotation is missing, or whose annotated ty
 - **THEN** `register_factory` SHALL raise an error naming the handler and the unannotated parameter
 
 #### Scenario: Refusal happens before any input is served
-- **WHEN** an operative graph contains a cycle
+- **WHEN** an operator graph contains a cycle
 - **THEN** the error SHALL be raised from the `register_factory` call site, and no cell, mailbox or connection SHALL have been created
 
 ### Requirement: Durable State Mutation Is Rejected Outside the Change Mechanism
@@ -123,10 +123,10 @@ User-supplied metadata keys in the reserved `flz.` namespace SHALL be rejected w
 
 ### Requirement: Explicit Module Registration
 
-The Python SDK SHALL require users to name the modules that declare operatives, and SHALL NOT perform implicit package scanning or filesystem discovery. A named module that cannot be imported SHALL raise an error naming the module and chaining the underlying import error.
+The Python SDK SHALL require users to name the modules that declare operators, and SHALL NOT perform implicit package scanning or filesystem discovery. A named module that cannot be imported SHALL raise an error naming the module and chaining the underlying import error.
 
 #### Scenario: Named modules are imported and registered
-- **WHEN** a user names two modules containing `@flezha.stream_operative` declarations
+- **WHEN** a user names two modules containing `@flezha.unbounded_operator` declarations
 - **THEN** both SHALL be imported, their declarations registered, and both factory ids SHALL appear in the handshake
 
 #### Scenario: An unimportable module fails loudly
@@ -155,7 +155,7 @@ Encoding SHALL be validated at registration: a `@flezha.state` class containing 
 
 ### Requirement: Dynamic Factory Declaration
 
-`register_factory` and its inverse `unregister_factory` SHALL be legal both before and after `start()`, each taking an operative of either kind, the kind read from the operative. The declared factory set SHALL be per-runner and SHALL start empty each generation. A post-start declaration SHALL reach the core immediately, so the set the reconnect init frame is serialized from at send time carries it; that frame is the resync of record. Removing a type with live instances SHALL raise; removing an undeclared type SHALL raise naming the id.
+`register_factory` and its inverse `unregister_factory` SHALL be legal both before and after `start()`, each taking an operator of either kind, the kind read from the operator. The declared factory set SHALL be per-runner and SHALL start empty each generation. A post-start declaration SHALL reach the core immediately, so the set the reconnect init frame is serialized from at send time carries it; that frame is the resync of record. Removing a type with live instances SHALL raise; removing an undeclared type SHALL raise naming the id.
 
 Shipping an `UpdateFactories` frame to a *live* controller is out of reach for a veneer host: the ABI exposes no entry point that emits one, and none that retracts a declaration, so only the in-process Rust host — which owns the runner channel directly — can notify a live controller of a post-start change. The Java SDK carries the identical gap. Closing it is a change to `sdk-core-abi`, owed to the follow-up `sdk-abi-factory-resync`; until it lands, a veneer host's post-start change reaches the controller at the next bind.
 
@@ -262,7 +262,7 @@ The SDK SHALL prove the set by one conformance run over every row of
 `Channels.merge()` SHALL return a merge handle with `from_(source, map)` (`from` being a keyword), `key_by(key)`, `into(tasklet)` and `into(tasklet, name)`, with the `multi-input-tasklets` semantics: a source is an entry edge or an inter-tasklet edge declared on the same builder, each source's mapping composes after that source's own transforms, the key is declared once on the merge and applied to the mapped value on every source's edge, and `into` returns the merged tasklet's own output edge. The builder SHALL record each source as a chain closed by the core's `merge` link under one group per merge and SHALL take the merge refusals from the reference check. `Channels.route_latest(documents, traffic, key_fn)` and `route_latest_named(documents, traffic, key_fn, name)` SHALL expand to the `sdk-graph-authoring` router, packaged in the SDK as a single-cell tasklet with journaled `{document, version, delivered}` state. `Edge.flat_map(fn)` SHALL exist beside `map` and `filter`: the callable answers an iterable, each element reaches the consumer on its own, an empty iterable is a drop, the chain is applied as a list so `filter` and `flat_map` are one mechanism, and the record carries the same `transform` link as `map`.
 
 #### Scenario: Two channels merge into one tasklet
-- **WHEN** an operative declares `c.merge().from_(ticks, tick_input).from_(quotes, quote_input).key_by(lambda v: v["symbol"]).into(detector)`
+- **WHEN** an operator declares `c.merge().from_(ticks, tick_input).from_(quotes, quote_input).key_by(lambda v: v["symbol"]).into(detector)`
 - **THEN** registration SHALL succeed with one detector node fed by two consumer edges, each applying its own mapping, and a value from either entry SHALL reach the handler as the mapped value keyed by `symbol`
 
 #### Scenario: A duplicated source is refused by the reference name
@@ -278,36 +278,36 @@ The SDK SHALL prove the set by one conformance run over every row of
 - **THEN** exactly one `("A", document)` and one `("B", document)` SHALL be emitted, and the repeated document SHALL be inert
 
 ### Requirement: The single-tasklet short form is four decorator keywords
-The short form SHALL be declared with `@flezha.stream_operative` or `@flezha.workflow_operative`, the same decorators that declare a full-form operative, and SHALL NOT be declared with `flezha.tasklet`, which SHALL accept none of `kind`, `sink`, `input` or `codec` and SHALL raise `DeclarationError` naming the keyword and the operative decorator when one is passed. Each decorator SHALL accept `id`, `sink`, `input` and `codec`, and the keywords `flezha.tasklet` takes but `name`, which it hands to the generated tasklet; the kind is the decorator's own name and SHALL NOT be a keyword.
+The short form SHALL be declared with `@flezha.unbounded_operator` or `@flezha.bounded_operator`, the same decorators that declare a full-form operator, and SHALL NOT be declared with `flezha.tasklet`, which SHALL accept none of `kind`, `sink`, `input` or `codec` and SHALL raise `DeclarationError` naming the keyword and the operator decorator when one is passed. Each decorator SHALL accept `id`, `sink`, `input` and `codec`, and the keywords `flezha.tasklet` takes but `name`, which it hands to the generated tasklet; the kind is the decorator's own name and SHALL NOT be a keyword.
 
-A decorated object SHALL be a short form when it is a tasklet body rather than a `Channels` body: a class, which is never a channels body, or any function but a channels body, which is a function whose one parameter is annotated `flezha.Channels` or not annotated at all, the shape the SDK already reads as a builder body. `sink` SHALL be optional. With `sink`, the decorator SHALL build an operative of its kind whose factory id is `id`, wiring an entry channel named `input` (or the `input` keyword's value) into a generated tasklet named `id` and that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A workflow short form SHALL accept `loop_mode=` and be a `once` workflow when it is absent, with every other workflow setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state; any other class-level keyword written on a short form SHALL raise `DeclarationError` naming it. `loop_mode` SHALL accept only `"once"`, `"per_input"` and `"chained"` and `rollback_mode` only `"all_or_nothing"` and `"keep_progress"`, on the short form and the full form alike, any other value raising `DeclarationError` naming the keyword and the value at decoration. `codec` SHALL take the vocabulary of `Channels.input(name, codec=)` and SHALL be lowered to that call, whether or not a `sink` is written. Declaring SHALL still perform no I/O.
+A decorated object SHALL be a short form when it is a tasklet body rather than a `Channels` body: a class, which is never a channels body, or any function but a channels body, which is a function whose one parameter is annotated `flezha.Channels` or not annotated at all, the shape the SDK already reads as a builder body. `sink` SHALL be optional. With `sink`, the decorator SHALL build an operator of its kind whose factory id is `id`, wiring an entry channel named `input` (or the `input` keyword's value) into a generated tasklet named `id` and that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A bounded short form SHALL accept `loop_mode=` and be a `once` bounded operator when it is absent, with every other bounded setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state; any other class-level keyword written on a short form SHALL raise `DeclarationError` naming it. `loop_mode` SHALL accept only `"once"`, `"per_input"` and `"chained"` and `rollback_mode` only `"all_or_nothing"` and `"keep_progress"`, on the short form and the full form alike, any other value raising `DeclarationError` naming the keyword and the value at decoration. `codec` SHALL take the vocabulary of `Channels.input(name, codec=)` and SHALL be lowered to that call, whether or not a `sink` is written. Declaring SHALL still perform no I/O.
 
-At decoration the SDK SHALL raise `DeclarationError` with the refusal's name in its `refusals` and at the start of its message: `SinkWithoutOutput` for a `sink` on a body whose return annotation is absent or `None`, and `ShortFormWithTopology` for a decorated object carrying both a tasklet body and a `Channels` body. An absent `id` SHALL be refused naming the required keyword, and the SDK SHALL NOT derive a factory id from `__name__`. `Runner.register_factory` SHALL accept a short form and register its operative, and `Runner.register_modules` SHALL register the operatives a named module carries, short or full. A duplicate factory id SHALL raise with a message beginning `DuplicateFactoryId`.
+At decoration the SDK SHALL raise `DeclarationError` with the refusal's name in its `refusals` and at the start of its message: `SinkWithoutOutput` for a `sink` on a body whose return annotation is absent or `None`, and `ShortFormWithTopology` for a decorated object carrying both a tasklet body and a `Channels` body. An absent `id` SHALL be refused naming the required keyword, and the SDK SHALL NOT derive a factory id from `__name__`. `Runner.register_factory` SHALL accept a short form and register its operator, and `Runner.register_modules` SHALL register the operators a named module carries, short or full. A duplicate factory id SHALL raise with a message beginning `DuplicateFactoryId`.
 
-#### Scenario: A decorated function is a whole stream operative
+#### Scenario: A decorated function is a whole unbounded operator
 
-- **WHEN** a module declares `@flezha.stream_operative(id="upcase", sink="out", codec="text") def upcase(s: str) -> str` and the runner is given `register_factory(upcase)`
-- **THEN** the runner declares a stream operative `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and sink `out`, and the module declares no `flezha.tasklet`
+- **WHEN** a module declares `@flezha.unbounded_operator(id="upcase", sink="out", codec="text") def upcase(s: str) -> str` and the runner is given `register_factory(upcase)`
+- **THEN** the runner declares an unbounded operator `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and sink `out`, and the module declares no `flezha.tasklet`
 
-#### Scenario: A decorated function is a whole workflow operative
+#### Scenario: A decorated function is a whole bounded operator
 
-- **WHEN** a module declares `@flezha.workflow_operative(id="place", sink="placed", input="order", codec="text") def place(s: str) -> str`, the runner is given `register_factory(place)`, an instance is started, and one message is sent on `order`
+- **WHEN** a module declares `@flezha.bounded_operator(id="place", sink="placed", input="order", codec="text") def place(s: str) -> str`, the runner is given `register_factory(place)`, an instance is started, and one message is sent on `order`
 - **THEN** the tasklet receives the message as text on `order`, its return value reaches `placed`, and the instance completes
 
-#### Scenario: A short-form workflow declares its loop mode
+#### Scenario: A short-form bounded operator declares its loop mode
 
-- **WHEN** a module declares `@flezha.workflow_operative(id="chat", sink="replies", codec="text", loop_mode="per_input") def chat(s: str) -> str` and two messages reach its entry channel
+- **WHEN** a module declares `@flezha.bounded_operator(id="chat", sink="replies", codec="text", loop_mode="per_input") def chat(s: str) -> str` and two messages reach its entry channel
 - **THEN** the declaration carries `loop_mode` `per_input`, the tasklet runs once per message, and the instance does not complete after the first
 
 #### Scenario: An unknown loop mode is refused at decoration
 
-- **WHEN** a module declares `@flezha.workflow_operative(id="w", loop_mode="forever")` over any body, or `rollback_mode="best_effort"`
+- **WHEN** a module declares `@flezha.bounded_operator(id="w", loop_mode="forever")` over any body, or `rollback_mode="best_effort"`
 - **THEN** importing it raises `DeclarationError` naming the keyword and the value, and nothing is declared
 
 #### Scenario: A short form with no sink is declared
 
-- **WHEN** a module declares `@flezha.stream_operative(id="counter", input="ticks", codec="text")` over a class with `run` and `apply_change` and the runner is given `register_factory`
-- **THEN** the operative declares `ticks` into the tasklet and no plugin channel, and the tasklet's changes are journaled as any tasklet's are
+- **WHEN** a module declares `@flezha.unbounded_operator(id="counter", input="ticks", codec="text")` over a class with `run` and `apply_change` and the runner is given `register_factory`
+- **THEN** the operator declares `ticks` into the tasklet and no plugin channel, and the tasklet's changes are journaled as any tasklet's are
 
 #### Scenario: A codec needs no sink
 
@@ -317,54 +317,54 @@ At decoration the SDK SHALL raise `DeclarationError` with the refusal's name in 
 #### Scenario: register_modules collects a short form
 
 - **WHEN** a module declares a short form and the runner is given `register_modules("that.module")`
-- **THEN** the runner declares the short form's operative
+- **THEN** the runner declares the short form's operator
 
 #### Scenario: A builder body is still the full form
 
-- **WHEN** `@flezha.stream_operative(id="static_cell")` decorates `def f(c: flezha.Channels) -> None`
-- **THEN** it declares a full-form operative from that body, and no tasklet is generated
+- **WHEN** `@flezha.unbounded_operator(id="static_cell")` decorates `def f(c: flezha.Channels) -> None`
+- **THEN** it declares a full-form operator from that body, and no tasklet is generated
 
 #### Scenario: A tasklet body beside a channels body is refused
 
 - **WHEN** a decorated class declares both a `run` body and a `channels` body
 - **THEN** importing it raises `DeclarationError` naming `ShortFormWithTopology`
 
-#### Scenario: An operative keyword on a tasklet is refused
+#### Scenario: An operator keyword on a tasklet is refused
 
 - **WHEN** a module declares `@flezha.tasklet(name="upcase", sink="out")`
-- **THEN** importing it raises `DeclarationError` naming `sink` and `flezha.stream_operative`
+- **THEN** importing it raises `DeclarationError` naming `sink` and `flezha.unbounded_operator`
 
 #### Scenario: A derived id is refused
 
-- **WHEN** a module declares `@flezha.stream_operative(sink="out") def upcase(s: str) -> str`
+- **WHEN** a module declares `@flezha.unbounded_operator(sink="out") def upcase(s: str) -> str`
 - **THEN** importing it raises `DeclarationError` naming the required `id`, and no socket is opened
 
 #### Scenario: A sink on a body with no output is refused
 
-- **WHEN** a module declares `@flezha.stream_operative(id="drain", sink="out") def drain(s: str) -> None`
+- **WHEN** a module declares `@flezha.unbounded_operator(id="drain", sink="out") def drain(s: str) -> None`
 - **THEN** importing it raises `DeclarationError` naming `SinkWithoutOutput`
 
 #### Scenario: The generated tasklet composes in another topology
 
-- **WHEN** a short form's generated tasklet is named in another operative's `Channels` body
-- **THEN** it wires as any tasklet does, and the short form's own operative is declared only if the runner is also handed it or its module
+- **WHEN** a short form's generated tasklet is named in another operator's `Channels` body
+- **THEN** it wires as any tasklet does, and the short form's own operator is declared only if the runner is also handed it or its module
 
-### Requirement: A Python workflow class carries what its builder recorded
+### Requirement: A Python bounded class carries what its builder recorded
 
-A workflow's `ClassSpec` SHALL be built from every flag the `Channels` builder recorded, by the builder a stream's spec is built by, and `to_host_class_decl` SHALL put every recorded key on the wire for either kind, so a stream-only builder call on a workflow reaches the core and is refused under its name (`EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow`, `CorrectionWindowOnWorkflow`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `DeclarationError` naming it. `workflow_operative` SHALL take no `retry_attempts`, `retry_backoff_ms`, `barrier_retry_attempts` or `wake_after_ms`, and the declaration SHALL carry no `wake_after_ms`; `Channels` SHALL carry no `sync_durability()` call, the decorator keyword being the one spelling. A `Ctx` inside a workflow SHALL offer `timer_after`, `timer_at_event_time` and `cancel_timer` exactly as inside a stream, and a tasklet's `on_timer` SHALL run on its firing in both kinds; only a `compensate` hook's `Ctx` SHALL raise an error naming `TimersUnavailable` from them.
+A bounded operator's `ClassSpec` SHALL be built from every flag the `Channels` builder recorded, by the builder an unbounded operator's spec is built by, and `to_host_class_decl` SHALL put every recorded key on the wire for either kind, so an unbounded-only builder call on a bounded operator reaches the core and is refused under its name (`EffectivelyOnceOnBounded`, `CheckpointOnBounded`, `CorrectionWindowOnBounded`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `DeclarationError` naming it. `bounded_operator` SHALL take no `retry_attempts`, `retry_backoff_ms`, `barrier_retry_attempts` or `wake_after_ms`, and the declaration SHALL carry no `wake_after_ms`; `Channels` SHALL carry no `sync_durability()` call, the decorator keyword being the one spelling. A `Ctx` inside a bounded operator SHALL offer `timer_after`, `timer_at_event_time` and `cancel_timer` exactly as inside a stream, and a tasklet's `on_timer` SHALL run on its firing in both kinds; only a `compensate` hook's `Ctx` SHALL raise an error naming `TimersUnavailable` from them.
 
-#### Scenario: A tier call on a workflow reaches the core
+#### Scenario: A tier call on a bounded operator reaches the core
 
-- **WHEN** a `@flezha.workflow_operative(id="w")` channels body calls `c.effectively_once()`, the runner registers it and starts
-- **THEN** declaring it to the core raises naming `EffectivelyOnceOnWorkflow`, and the operative is not declared
+- **WHEN** a `@flezha.bounded_operator(id="w")` channels body calls `c.effectively_once()`, the runner registers it and starts
+- **THEN** declaring it to the core raises naming `EffectivelyOnceOnBounded`, and the operator is not declared
 
 #### Scenario: A retired keyword is refused
 
-- **WHEN** a module declares `@flezha.workflow_operative(id="w", retry_attempts=5)` or `@flezha.workflow_operative(id="w", wake_after_ms=5000)`
+- **WHEN** a module declares `@flezha.bounded_operator(id="w", retry_attempts=5)` or `@flezha.bounded_operator(id="w", wake_after_ms=5000)`
 - **THEN** importing it raises `TypeError` for the unknown keyword, the decorator declaring neither
 
-#### Scenario: A timer inside a workflow tasklet fires
+#### Scenario: A timer inside a bounded tasklet fires
 
-- **WHEN** a tasklet of a running `per_input` workflow calls `ctx.timer_after(300)` in `run`
+- **WHEN** a tasklet of a running `per_input` bounded operator calls `ctx.timer_after(300)` in `run`
 - **THEN** the call returns the scheduled timestamp, the effect carries the timer op, and `on_timer` runs on that Cell at that timestamp, opening a pass at that tasklet
 

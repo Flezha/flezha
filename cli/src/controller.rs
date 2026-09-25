@@ -85,7 +85,7 @@ const UNREACHABLE_STOP: Failure = Failure::new(Exit::Fixed(3))
 
 // Exit codes (per controller-graceful-shutdown spec):
 //   0 — clean shutdown
-//   1 — partial drain (timeout elapsed, some Operatives still local)
+//   1 — partial drain (timeout elapsed, some Operators still local)
 //   2 — already shutting down (or coordinator not addressable)
 //   3 — controller socket unreachable
 fn handle_stop(read: &Reading) {

@@ -1,11 +1,11 @@
 defmodule Flezha.State.WalTransfer do
   @moduledoc """
-  Cross-controller pull of an operative's durable files, one reference at a
-  time: a Cell's file set (`{:cell, cell_id}`, a workflow's journal among them
+  Cross-controller pull of an operator's durable files, one reference at a
+  time: a Cell's file set (`{:cell, cell_id}`, a bounded operator's journal among them
   under its reserved identity) or the instance's input log
   (`{:input_log, class}`).
 
-  A controller that loses every runner drains its operatives to a peer. The
+  A controller that loses every runner drains its operators to a peer. The
   handover carries the SDK's in-memory state — but it sources that from the
   **runner**, dead by construction on that path, so it arrives empty. What
   survives is on the source controller's disk, and nothing else can move it:
@@ -70,28 +70,28 @@ defmodule Flezha.State.WalTransfer do
   # ---------- destination side ----------
 
   @doc """
-  Pull every durable file of `operative_class` from `source_node`: its Cells,
-  a workflow's journal, and its input log, which travel together because a
+  Pull every durable file of `operator_class` from `source_node`: its Cells,
+  a bounded operator's journal, and its input log, which travel together because a
   journal pulled without its log seeds the instance's floor in an empty
   offset space. Returns the number of references whose files landed; `0`
   means the source held nothing and a cold start is correct. A per-reference
   failure is logged via telemetry and skipped — one unreadable Cell must not
-  cost the operative the rest.
+  cost the operator the rest.
   """
-  @spec pull_operative(node(), binary(), keyword()) :: non_neg_integer()
-  def pull_operative(source_node, operative_class, opts \\ [])
+  @spec pull_operator(node(), binary(), keyword()) :: non_neg_integer()
+  def pull_operator(source_node, operator_class, opts \\ [])
 
-  def pull_operative(source_node, _operative_class, _opts) when source_node == node(), do: 0
+  def pull_operator(source_node, _operator_class, _opts) when source_node == node(), do: 0
 
-  def pull_operative(source_node, operative_class, opts) do
+  def pull_operator(source_node, operator_class, opts) do
     timeout = Keyword.get(opts, :timeout, Durations.get(:wal_transfer_call_ms))
 
-    case call(source_node, Paths, :durable_refs, [operative_class], timeout) do
+    case call(source_node, Paths, :durable_refs, [operator_class], timeout) do
       {:ok, refs} ->
         Enum.count(refs, &landed?(pull_cell(source_node, &1, opts)))
 
       {:error, reason} ->
-        emit(:wal_pull_failed, %{operative_class: operative_class, reason: reason})
+        emit(:wal_pull_failed, %{operator_class: operator_class, reason: reason})
         0
     end
   end
@@ -104,7 +104,7 @@ defmodule Flezha.State.WalTransfer do
   `{:ok, 0}` means the source held nothing — a cold start is correct.
 
   `:as` writes the files under a different reference of the same kind — for a
-  Cell, the same tasklet and key under another Operative class, which is what
+  Cell, the same tasklet and key under another Operator class, which is what
   a partition rescale's cross-controller move is. The cell key is unchanged,
   so every basename resolves in the destination's layout.
   """

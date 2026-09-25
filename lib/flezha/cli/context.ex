@@ -14,13 +14,13 @@ defmodule Flezha.Service.Cli.Context do
   # `Kernel.CLI.exec_fun/2` halts `{:shutdown, int}` with that int and prints
   # nothing, and prints an `** (exit)` banner with erl_eval frames for every
   # other reason before halting 1. Both halt 1, so this moves no `flz` exit
-  # code and leaves the operator reading the sentence alone.
+  # code and leaves the caller reading the sentence alone.
   @cli_exit {:shutdown, 1}
 
   @doc """
   A reason as text: the one `inspect/1` on this surface. A binary reason is
   already a sentence and stays one — quoting it is an artefact of inspecting,
-  not something the operator asked to see.
+  not something the caller asked to see.
   """
   @spec format_reason(term()) :: String.t()
   def format_reason(reason) when is_binary(reason), do: reason
@@ -31,7 +31,7 @@ defmodule Flezha.Service.Cli.Context do
       "on_input" => :on_input,
       "on_output" => :on_output,
       "on_interval" => :on_interval,
-      "on_operative_init" => :on_operative_init,
+      "on_operator_init" => :on_operator_init,
       "on_message" => :on_message,
       "on_snapshot" => :on_snapshot,
       "on_terminate" => :on_terminate,
@@ -129,14 +129,14 @@ defmodule Flezha.Service.Cli.Context do
 
   @doc """
   Halt the verb with `message` exactly as written. `fail!/2` is what a family
-  reaches for; this is the one whose whole text is a verdict an operator's
+  reaches for; this is the one whose whole text is a verdict a caller's
   script reads, so it carries no `error: ` prefix and still exits the same way.
   """
   @spec halt!(String.t()) :: no_return()
   def halt!(message), do: cli_error!(message)
 
   @doc """
-  A way to tell the operator one line, bound now and called later from any
+  A way to tell the caller one line, bound now and called later from any
   process.
 
   `flz controller stop`'s progress lines are emitted by the shutdown
@@ -146,21 +146,21 @@ defmodule Flezha.Service.Cli.Context do
   """
   @spec notifier() :: (String.t() -> :ok)
   def notifier() do
-    device = operator_stderr()
+    device = caller_stderr()
 
     &puts(device, &1)
   end
 
   # The device a verb writes something that is not its answer to: the
-  # operator's stderr, on whichever node the verb is running.
+  # caller's stderr, on whichever node the verb is running.
   #
   # `flzvm rpc` is `elixir --rpc-eval`, which is `:erpc.call/4`, so a verb body
   # runs on the controller with the *caller's* group leader, and stdout already
   # travels back over distribution. `:stderr` does not: it is `:standard_error`,
   # a process registered per node, and the controller's is the controller's log.
   # The caller's is resolved instead, so no verb names a stream of its own.
-  @spec operator_stderr() :: :stderr | pid()
-  defp operator_stderr() do
+  @spec caller_stderr() :: :stderr | pid()
+  defp caller_stderr() do
     caller_node = node(Process.group_leader())
 
     if caller_node == node(), do: :stderr, else: remote_standard_error(caller_node)
@@ -169,7 +169,7 @@ defmodule Flezha.Service.Cli.Context do
   # A node that just called us is connected, so this answers quickly or not at
   # all; either way the controller's own stderr is the honest fallback.
   defp remote_standard_error(caller_node) do
-    budget = Durations.get(:cli_operator_device_ms)
+    budget = Durations.get(:cli_caller_device_ms)
 
     case :erpc.call(caller_node, :erlang, :whereis, [:standard_error], budget) do
       device when is_pid(device) -> device
@@ -191,23 +191,23 @@ defmodule Flezha.Service.Cli.Context do
 
   # The one printer. Private, and so are the device and the exit it uses, so a
   # `Cli.*` module contributes what it says and never how it is said: every
-  # failure reaches the operator through `fail!/2` or `halt!/1`.
+  # failure reaches the caller through `fail!/2` or `halt!/1`.
   #
   # Fail the surrounding `flzvm rpc` evaluation, then exit only this rpc
   # process. Never System.halt here: every CliManager call runs ON the
   # controller node, so halting would stop the controller itself.
   #
-  # One stream, for every family: an operator who pipes a verb's output is
+  # One stream, for every family: a caller who pipes a verb's output is
   # collecting the answer, not the failure, so a failure never joins the data.
   @spec cli_error!(String.t()) :: no_return()
   defp cli_error!(message) do
-    puts(operator_stderr(), message)
+    puts(caller_stderr(), message)
     exit(@cli_exit)
   end
 
   @doc """
   How long a streaming verb runs: the `duration_ms` its options carry, or the
-  window `flz` uses when the operator names none.
+  window `flz` uses when the caller names none.
   """
   @spec window(keyword()) :: integer()
   def window(opts),
@@ -243,8 +243,8 @@ defmodule Flezha.Service.Cli.Context do
   end
 
   @doc """
-  A JSON document the operator typed. Unlike `Payloader.json_to_map/1`, whose
-  moduledoc calls an undecodable document a defect, an operator's document that
+  A JSON document the caller typed. Unlike `Payloader.json_to_map/1`, whose
+  moduledoc calls an undecodable document a defect, a caller's document that
   will not decode is a refusal: `what` names the flag it was written behind.
   """
   @spec json!(String.t() | nil, String.t()) :: map()
@@ -265,7 +265,7 @@ defmodule Flezha.Service.Cli.Context do
   end
 
   @doc """
-  A whole number the operator typed, refused rather than guessed: a `--limit`
+  A whole number the caller typed, refused rather than guessed: a `--limit`
   nobody can read is not every record.
   """
   @spec integer!(term(), String.t()) :: integer()
@@ -293,7 +293,7 @@ defmodule Flezha.Service.Cli.Context do
   end
 
   @doc """
-  A word the operator typed, as the atom this surface knows it by. Never
+  A word the caller typed, as the atom this surface knows it by. Never
   `String.to_atom/1`: a word nobody declared would mint an atom the node then
   keeps for ever.
   """

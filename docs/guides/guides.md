@@ -37,7 +37,7 @@ will differ from the ones on the page.
 
 ## Part 1: First steps
 
-Starting a controller, connecting a runner of your own, running an operative,
+Starting a controller, connecting a runner of your own, running an operator,
 and attaching a real input and output to it. The example is an echo that
 answers whatever you send it. The pages share one running controller, and the
 last one stops everything.
@@ -45,27 +45,27 @@ last one stops everything.
 | Guide | What you end up with |
 |---|---|
 | [`controller_deployment.md`](controller_deployment.md) | A controller running, four ways to choose from, and a check that it is up |
-| [`runner_deployment.md`](runner_deployment.md) | Your own runner connected to it, offering an operative class |
-| [`running_operatives.md`](running_operatives.md) | An operative started on that runner, taking messages and answering them |
+| [`runner_deployment.md`](runner_deployment.md) | Your own runner connected to it, offering an operator class |
+| [`running_operators.md`](running_operators.md) | An operator started on that runner, taking messages and answering them |
 | [`sources_and_sinks.md`](sources_and_sinks.md) | Data arriving from somewhere real, and results going somewhere real |
 | [`stop_everything.md`](stop_everything.md) | Everything above stopped, and what comes back when you start again |
 
 ## Part 2: Going further
 
-Authorization, namespaces, workflows and streams, durability, plugins and
-partitioning. The example is `tradedesk`, a toy trader: a stream turns trades
-into candles, and when a candle gives a signal a workflow places an order with
+Authorization, namespaces, bounded and unbounded operators, durability, plugins and
+partitioning. The example is `tradedesk`, a toy trader: an unbounded operator turns trades
+into candles, and when a candle gives a signal a bounded operator places an order with
 paper money, so nothing reaches a real exchange.
 
 | Guide | What you do |
 |---|---|
 | [`authorization.md`](tradedesk/authorization.md) | Keep authorization on, claim the admin, and issue the key tradedesk's runner connects with |
 | [`namespaces.md`](tradedesk/namespaces.md) | Give tradedesk a namespace of its own |
-| [`workflow_basics.md`](tradedesk/workflow_basics.md) | Write the paper-order workflow by hand: steps, retries and compensation, started by hand |
-| [`stream_basics.md`](tradedesk/stream_basics.md) | Write the stream operative by hand: chained tasklets, `map`, `filter`, `key_by`, a merge, and state per symbol |
+| [`bounded_basics.md`](tradedesk/bounded_basics.md) | Write the paper-order bounded operator by hand: steps, retries and compensation, started by hand |
+| [`unbounded_basics.md`](tradedesk/unbounded_basics.md) | Write the unbounded operator by hand: chained tasklets, `map`, `filter`, `key_by`, a merge, and state per symbol |
 | [`durability.md`](tradedesk/durability.md) | Kill the runner mid-order: the order continues from its step, is never placed twice, and candles keep coming |
 | [`plugins.md`](tradedesk/plugins.md) | Read the testnet's trades with the WebSocket plugin, and record filled orders with a file sink |
-| [`partitioning.md`](tradedesk/partitioning.md) | `--partitions`, `key_by`, how trades are routed, and `flz operative scale` |
+| [`partitioning.md`](tradedesk/partitioning.md) | `--partitions`, `key_by`, how trades are routed, and `flz operator scale` |
 
 ## Part 3: Advanced topics
 
@@ -89,6 +89,6 @@ read in any order.
   formats, and how a gated verb is identified.
 - [`../troubleshooting/`](../troubleshooting/runner_cannot_connect.md): from a
   symptom to its fix.
-- [`../quickstart.md`](../quickstart.md): run an operative's graph in your own
+- [`../quickstart.md`](../quickstart.md): run an operator's graph in your own
   process, with no controller and no deployment. The fastest way to see one
   work, and to test one.

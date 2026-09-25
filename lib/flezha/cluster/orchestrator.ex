@@ -6,7 +6,7 @@ defmodule Flezha.Cluster.Orchestrator do
   backoff plus a periodic discovery sweep), and exposes a `cluster_ready?/0` gate
   so a namespace hub is never created on a not-yet-clustered node (which would
   diverge from its peers). The cluster is "ready" once discovery has run and
-  either every discovered peer is connected OR the workflow
+  either every discovered peer is connected OR the bounded operator
   `:cluster_formation_timeout_ms` "degrade to solo" window has elapsed — so a
   genuinely single-node deployment still boots.
   """

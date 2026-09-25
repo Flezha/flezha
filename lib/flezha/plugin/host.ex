@@ -1,7 +1,7 @@
 defmodule Flezha.Plugin.Host do
   @moduledoc """
   Macro used by a module that exposes hooks (e.g.
-  `Flezha.Operative.Overwatch`).
+  `Flezha.Operator.Overwatch`).
 
       use Flezha.Plugin.Host, extensions: [
         {:on_input, :transform, Flezha.Plugin.Extension.Ctx.IO},
@@ -31,7 +31,7 @@ defmodule Flezha.Plugin.Host do
   @type inject_mode() :: :confirming | :verdict | :fire_and_forget
 
   @doc """
-  Hand one record to the host operative. The ONE call a source makes: five
+  Hand one record to the host operator. The ONE call a source makes: five
   spellings of "the payload is yours now" were five chances for a producer to
   pick the wrong one, and the mode is what actually differs between them.
 
@@ -68,7 +68,7 @@ defmodule Flezha.Plugin.Host do
   @doc """
   Commit a value a provider's worker holds of its own onto the plugin's options,
   through its host: the live table a plugin restart prepares the plugin from, and
-  the declared manifest a controller restart rebuilds the operative from. It does
+  the declared manifest a controller restart rebuilds the operator from. It does
   not wait. A worker with no host identity has nowhere to write, and writes
   nothing.
   """

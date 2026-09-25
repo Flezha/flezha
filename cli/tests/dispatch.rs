@@ -20,7 +20,7 @@ const COMMANDS: &[(&str, &[&str])] = &[
     ),
     ("cluster", &["status", "help"]),
     (
-        "operative",
+        "operator",
         &[
             "start", "scale", "stop", "state", "list", "info", "listen", "send", "rewind",
             "replay", "help",

@@ -1,7 +1,7 @@
-# Quickstart — run an operative in five minutes
+# Quickstart — run an operator in five minutes
 
 Flezha runs stateful compute graphs across a cluster. This page runs one on
-your laptop instead: **local mode** takes the operative class you would deploy,
+your laptop instead: **local mode** takes the operator class you would deploy,
 runs its declared graph in your own process, and hands you the output. No
 controller, no Docker, no socket.
 
@@ -11,7 +11,7 @@ Local mode holds state in memory. There is no write-ahead log, no snapshot, no
 dead-letter queue, and nothing survives the process. Every run prints that on
 stderr before it does any work, and it is not suppressible.
 
-Local mode is for trying Flezha out, for developing an operative, and for
+Local mode is for trying Flezha out, for developing an operator, and for
 running its graph in a test. **It is not a deployment.** These need a
 controller:
 
@@ -20,7 +20,7 @@ controller:
 | Durability — WAL, snapshots, crash-resume, point-in-time query | The controller owns the durable store |
 | Effectively-once delivery | An output rides its effect record and is released once that record is durable |
 | Plugins — Kafka, Postgres, HTTP, WebSocket | The plugin subsystem is installed controller-side |
-| Placement, migration, rescale, partitioning | A member's key-group range arrives with `AddOperative` |
+| Placement, migration, rescale, partitioning | A member's key-group range arrives with `AddOperator` |
 | The dead-letter queue | A park is durable, and the controller acknowledges it |
 | Observability export, authz, multi-runner scale | Controller surfaces |
 
@@ -38,10 +38,10 @@ and a section in its own SDK page:
 
 | SDK | Entry point | Worked example |
 | --- | --- | --- |
-| Node | `LocalOperative.start` | [`examples/node/local_word_count.mjs`](../examples/node/local_word_count.mjs) |
-| Python | `LocalOperative.start` | [`sdk/python/examples/local_word_count.py`](../sdk/python/examples/local_word_count.py) |
-| Ruby | `Flezha::LocalOperative.start` | [`sdk/ruby/examples/local_word_count.rb`](../sdk/ruby/examples/local_word_count.rb) |
-| PHP | `LocalOperative::start` | [`sdk/php/examples/E07_LocalMode.php`](../sdk/php/examples/E07_LocalMode.php) |
+| Node | `LocalOperator.start` | [`examples/node/local_word_count.mjs`](../examples/node/local_word_count.mjs) |
+| Python | `LocalOperator.start` | [`sdk/python/examples/local_word_count.py`](../sdk/python/examples/local_word_count.py) |
+| Ruby | `Flezha::LocalOperator.start` | [`sdk/ruby/examples/local_word_count.rb`](../sdk/ruby/examples/local_word_count.rb) |
+| PHP | `LocalOperator::start` | [`sdk/php/examples/E07_LocalMode.php`](../sdk/php/examples/E07_LocalMode.php) |
 
 ## Rust
 
@@ -58,7 +58,7 @@ The two local-mode-specific parts of a word-counting graph — the declaration,
 and the run:
 
 ```rust
-impl StreamOperative for WordCount {
+impl UnboundedOperator for WordCount {
     fn factory_id() -> &'static str {
         "local_word_count"
     }
@@ -74,7 +74,7 @@ impl StreamOperative for WordCount {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let run = LocalOperative::start::<WordCount>()?;
+    let run = LocalOperator::start::<WordCount>()?;
     run.on_sink("totals", |out| {
         println!("{}", String::from_utf8_lossy(&out.payload));
     })?;
@@ -100,7 +100,7 @@ It prints the non-durability notice, then `the 1`, `quick 1`, `brown 1`,
 ## Java
 
 ```java
-try (LocalOperative run = LocalOperative.start(WordCount.class)) {
+try (LocalOperator run = LocalOperator.start(WordCount.class)) {
     run.onSink("totals", out -> System.out.println(new String(out.payload(), UTF_8)));
     run.feed("lines", "the quick brown fox");
     run.runUntilIdle(Duration.ofSeconds(5));
@@ -151,7 +151,7 @@ defmodule Tally do
 end
 
 defmodule WordCount do
-  use Flezha.SDK.StreamOperative, factory_id: "word_count"
+  use Flezha.SDK.UnboundedOperator, factory_id: "word_count"
 
   @impl true
   def channels(c) do
@@ -206,7 +206,7 @@ deployed runner reads.
   says `.sink_named("totals")` and registers `"totals"`. The no-name form
   leaves the channel named after the producing tasklet.
 - A channel name the declaration does not carry is refused, naming the channel,
-  the operative and the channels that are declared. A value released on a sink
+  the operator and the channels that are declared. A value released on a sink
   with no callback is reported rather than discarded. A declaration that needs
   a controller is refused at startup, naming the capability.
 - **`run_until_idle(budget)`** blocks until the graph has nothing left to do. A

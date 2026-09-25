@@ -32,7 +32,7 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
   `FLEZHA_E2E_RUNTIME`, the one a nightly job builds, whose clauses also run in
   the ordinary `:system` pass. That is what makes the drill run in CI at all:
   the nightly is one job per runtime and no job builds a second one, so a
-  workflow line asking for the whole sweep would be red on every runtime it did
+  bounded operator line asking for the whole sweep would be red on every runtime it did
   not build.
   """
 
@@ -240,7 +240,7 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
         assert output =~ row.refusal,
                """
                #{@runtime} refused #{row.topology} but its runner swallowed the \
-               name on the way to exit. The refusal an operator reads is the \
+               name on the way to exit. The refusal a user reads is the \
                verdict's own name.
                Read: #{output}
                """
@@ -301,9 +301,9 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
     |> MapSet.new()
   end
 
-  # A workflow golden binds as a workflow; everything else is a stream.
+  # A bounded operator golden binds as a bounded operator; everything else is unbounded.
   defp kind_of(factory) do
-    if String.contains?(factory, "workflow"), do: :workflow, else: :stream
+    if String.contains?(factory, "bounded"), do: :bounded, else: :unbounded
   end
 
   # The surfaces a runtime's builder can author, declared by its manifest. A

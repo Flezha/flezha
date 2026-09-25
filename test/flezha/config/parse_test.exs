@@ -59,7 +59,7 @@ defmodule Flezha.Config.ParseTest do
            ] ==
              false
 
-    # A duration that is not one is a knob the operator believes they set.
+    # A duration that is not one is a knob the user believes they set.
     assert_raise ArgumentError, fn ->
       Environment.runtime_config(%{"FLEZHA_OVERWATCH_PING_TIMEOUT_MS" => "soon"}, :prod)
     end

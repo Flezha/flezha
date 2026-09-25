@@ -145,31 +145,31 @@ docker exec -it flezha_controller_dev bash -c "cd test/apps/testnet && npm ci &&
 docker exec -it flezha_controller_dev bash
 
 
-# Start operative, websocket plugin and kafka output plugins:
-_build/dev/rel/flezha/bin/flz operative start store_input --id my_operative --init-values '{"store_input_tasklet": {"binary_inputs": [], "text_inputs": ["FIRST"]}}'
+# Start operator, websocket plugin and kafka output plugins:
+_build/dev/rel/flezha/bin/flz operator start store_input --id my_operator --init-values '{"store_input_tasklet": {"binary_inputs": [], "text_inputs": ["FIRST"]}}'
 
 
-# `--X…` flags are PROVIDER options; attachment (`--operative_id`) and hooks
+# `--X…` flags are PROVIDER options; attachment (`--operator_id`) and hooks
 # (`--hook`) are read by the enable itself, before the provider sees the map.
 # A provider with a strict allow-list refuses every `--X` key it does not own,
 # and the enable refuses any other plain option. The websocket plugin names no
 # hook: it only receives, injecting what arrives on its socket.
-_build/dev/rel/flezha/bin/flz plugin enable test_plugin_ws operative_websocket \
-      --operative_id="my_operative" \
+_build/dev/rel/flezha/bin/flz plugin enable test_plugin_ws operator_websocket \
+      --operator_id="my_operator" \
       --Xuri="ws://localhost:4500" \
       --Xpost_connect='{"payload":{"type":"text","message":"{\"event_type\":\"subscribe\",\"event_data\":{\"default_message\":\"hello world\",\"interval\":1000}}"}}'
 
 
-_build/dev/rel/flezha/bin/flz plugin enable test_plugin_kafka operative_kafka_producer \
-  --operative_id=my_operative \
+_build/dev/rel/flezha/bin/flz plugin enable test_plugin_kafka operator_kafka_producer \
+  --operator_id=my_operator \
   --hook=on_output \
   --Xhosts=kafka:9092 \
   --Xtopic=test_topic
   
   
-# Listen to operative IO:  
-_build/dev/rel/flezha/bin/flz operative listen my_operative --input
-_build/dev/rel/flezha/bin/flz operative listen my_operative
+# Listen to operator IO:  
+_build/dev/rel/flezha/bin/flz operator listen my_operator --input
+_build/dev/rel/flezha/bin/flz operator listen my_operator
 ```
 
 # Kafka UI:

@@ -19,7 +19,7 @@ use crate::{
 };
 
 /// Start the class declared under `factory_id` as a local run named
-/// `operative_id`. Refuses a declaration that needs a controller, naming
+/// `operator_id`. Refuses a declaration that needs a controller, naming
 /// the capability in [`flz_core_last_error`].
 ///
 /// # Safety
@@ -28,16 +28,16 @@ use crate::{
 pub unsafe extern "C" fn flz_core_local_start(
     ctx: *mut FlzContext,
     factory_id: *const c_char,
-    operative_id: *const c_char,
+    operator_id: *const c_char,
 ) -> i32 {
     let ctx = &*ctx;
-    let (Ok(factory_id), Ok(operative_id)) = (
+    let (Ok(factory_id), Ok(operator_id)) = (
         CStr::from_ptr(factory_id).to_str(),
-        CStr::from_ptr(operative_id).to_str(),
+        CStr::from_ptr(operator_id).to_str(),
     ) else {
         return ctx.fail(Error::Utf8("local factory id"));
     };
-    let run = match flz_core::local::LocalRun::start(factory_id, operative_id) {
+    let run = match flz_core::local::LocalRun::start(factory_id, operator_id) {
         Ok(run) => run,
         Err(e) => return ctx.fail(Error::Core(e)),
     };

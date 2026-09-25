@@ -1,8 +1,8 @@
 defmodule Flezha.Plugin.SpecDecoder do
   @moduledoc """
   The one decoder for the JSON plugin-spec array carried by
-  `flz operative start --plugins` and `flz schedule add --plugins`, turning it
-  into `%Flezha.Plugin{}` structs for `Operative.Builder`'s `plugins:` opt.
+  `flz operator start --plugins` and `flz schedule add --plugins`, turning it
+  into `%Flezha.Plugin{}` structs for `Operator.Builder`'s `plugins:` opt.
 
   Provider ids resolve against the controller's currently enabled providers, so
   the decoded form is RUNTIME state: a durable schedule stores the JSON and
@@ -17,7 +17,7 @@ defmodule Flezha.Plugin.SpecDecoder do
 
   @doc """
   Decode `plugins_json` into plugin structs bound to `namespace` and
-  `operative_id`. An empty/blank spec decodes to `[]`.
+  `operator_id`. An empty/blank spec decodes to `[]`.
 
   `partition_opts` (a partition member's `Flezha.Partition.member_opts/4`) fans
   the same spec out to one member: `partition_index` / `partition_count` /
@@ -28,7 +28,7 @@ defmodule Flezha.Plugin.SpecDecoder do
   """
   @spec decode(binary() | nil, atom() | binary(), binary(), keyword()) ::
           {:ok, [Plugin.t()]} | {:error, term()}
-  def decode(plugins_json, namespace, operative_id, partition_opts \\ []) do
+  def decode(plugins_json, namespace, operator_id, partition_opts \\ []) do
     case decode_json(plugins_json) do
       {:ok, []} ->
         {:ok, []}
@@ -39,7 +39,7 @@ defmodule Flezha.Plugin.SpecDecoder do
         specs
         |> Enum.reduce_while(
           {:ok, []},
-          &collect_plugin(&1, &2, providers, namespace, operative_id, partition_opts)
+          &collect_plugin(&1, &2, providers, namespace, operator_id, partition_opts)
         )
         |> case do
           {:ok, plugins} -> {:ok, Enum.reverse(plugins)}
@@ -51,8 +51,8 @@ defmodule Flezha.Plugin.SpecDecoder do
     end
   end
 
-  defp collect_plugin(spec, {:ok, acc}, providers, namespace, operative_id, partition_opts) do
-    case build_plugin(spec, providers, namespace, operative_id, partition_opts) do
+  defp collect_plugin(spec, {:ok, acc}, providers, namespace, operator_id, partition_opts) do
+    case build_plugin(spec, providers, namespace, operator_id, partition_opts) do
       {:ok, plugin} -> {:cont, {:ok, [plugin | acc]}}
       {:error, _} = err -> {:halt, err}
     end
@@ -84,7 +84,7 @@ defmodule Flezha.Plugin.SpecDecoder do
 
   defp decode_json(_), do: {:ok, []}
 
-  defp build_plugin(spec, providers, namespace, operative_id, partition_opts) when is_map(spec) do
+  defp build_plugin(spec, providers, namespace, operator_id, partition_opts) when is_map(spec) do
     with {:ok, plugin_id} <- fetch_string(spec, "id"),
          {:ok, provider_id} <- fetch_string(spec, "provider"),
          {:ok, provider_mod} <- resolve_provider(providers, provider_id),
@@ -96,19 +96,19 @@ defmodule Flezha.Plugin.SpecDecoder do
         opts: atomize_keys(raw_opts),
         hooks: hooks,
         namespace: namespace,
-        operative_id: operative_id
+        operator_id: operator_id
       }
 
-      {:ok, bind_to_partition(plugin, operative_id, partition_opts)}
+      {:ok, bind_to_partition(plugin, operator_id, partition_opts)}
     end
   end
 
   defp build_plugin(_, _, _, _, _), do: {:error, {:invalid_opts, :plugin_spec_not_a_map}}
 
-  defp bind_to_partition(plugin, _operative_id, []), do: plugin
+  defp bind_to_partition(plugin, _operator_id, []), do: plugin
 
-  defp bind_to_partition(plugin, operative_id, partition_opts),
-    do: Plugin.for_partition(plugin, operative_id, Flezha.Partition.identity(partition_opts))
+  defp bind_to_partition(plugin, operator_id, partition_opts),
+    do: Plugin.for_partition(plugin, operator_id, Flezha.Partition.identity(partition_opts))
 
   defp fetch_string(spec, key) do
     case Map.get(spec, key) do

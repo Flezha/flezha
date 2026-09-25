@@ -83,7 +83,7 @@ jobs:
             --save-baseline cron-$(date +%Y%m%d)
       - name: Criterion dynamic-cell steady-state bench
         # Trend signal for the dynamic-mode hot path (lazy per-key routing:
-        # cell_key + DashMap lookup). Single operative, 1k active Cells,
+        # cell_key + DashMap lookup). Single operator, 1k active Cells,
         # no eviction — measures routing only, not reaping.
         run: |
           cargo bench -p flezha_runner --features bench-internals \

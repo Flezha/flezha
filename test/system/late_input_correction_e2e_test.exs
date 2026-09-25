@@ -23,10 +23,10 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
   import FlezhaTest.Helper.TierE2EHarness
 
-  alias Flezha.Operative.Builder
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.Builder
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.Payloader
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
 
   @moduletag timeout: 300_000
 
@@ -40,32 +40,32 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
 
   test "a late trade inside the window is folded back into event-time order" do
     namespace = unique("correction")
-    operative_id = unique("candle")
+    operator_id = unique("candle")
     id_path = unique_id_path()
-    on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
+    on_exit(fn -> cleanup(namespace, operator_id, id_path) end)
 
     {_port, _exec} = boot_runner(namespace, id_path)
 
     sink = %Flezha.Plugin{
       id: "tier_sink",
       namespace: namespace,
-      operative_id: operative_id,
+      operator_id: operator_id,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: self(), include_metadata: true},
       hooks: [{:on_output, []}]
     }
 
     builder = %Builder{
-      id: operative_id,
+      id: operator_id,
       factory_id: @factory,
       init_values: %{},
       opts: [plugins: [sink]]
     }
 
-    assert {:ok, _info} = OperativeManager.start_operative(namespace, builder)
+    assert {:ok, _info} = OperatorManager.start_operator(namespace, builder)
 
     assert wait_until(
-             fn -> ClassRegistry.effectively_once?(operative_id) end,
+             fn -> ClassRegistry.effectively_once?(operator_id) end,
              30_000
            ),
            "the tier declaration never reached the controller"
@@ -73,19 +73,19 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
     # --- Two on-time trades ---------------------------------------------------
     # Event times are epoch-ms; 60_000 and 120_000 fall in different candle
     # buckets, 61_000 in the same bucket as 60_000.
-    send_inputs(operative_id, namespace, ["60000:a", "120000:b"])
-    assert wait_until(fn -> folded(namespace, operative_id) == [60_000, 120_000] end, 30_000)
+    send_inputs(operator_id, namespace, ["60000:a", "120000:b"])
+    assert wait_until(fn -> folded(namespace, operator_id) == [60_000, 120_000] end, 30_000)
 
     # --- The late trade -------------------------------------------------------
     # 61_000 is behind the high-water (120_000) by 59 s — well inside the
     # 10-minute window. It must NOT be folded at the tail.
-    send_inputs(operative_id, namespace, ["61000:late"])
+    send_inputs(operator_id, namespace, ["61000:late"])
 
     assert wait_until(
-             fn -> folded(namespace, operative_id) == [60_000, 61_000, 120_000] end,
+             fn -> folded(namespace, operator_id) == [60_000, 61_000, 120_000] end,
              60_000
            ),
-           "the late trade was not folded back into event-time order; got #{inspect(folded(namespace, operative_id))}"
+           "the late trade was not folded back into event-time order; got #{inspect(folded(namespace, operator_id))}"
 
     # --- The sink converged, it did not accumulate ----------------------------
     # The live-state read answers before the replay's records reach the
@@ -97,7 +97,7 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
            ),
            "no regenerated output reached the sink"
 
-    assert await_outbox_drained(operative_id), "the outbox never drained"
+    assert await_outbox_drained(operator_id), "the outbox never drained"
     outputs = drain_outputs([])
 
     changelog =
@@ -115,23 +115,23 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
     assert Enum.max(epochs) > Enum.min(epochs), "a correction must bump the epoch"
 
     for {_msg, md} <- outputs do
-      assert md["flz.key"], "a correction-capable operative must emit keyed output"
+      assert md["flz.key"], "a correction-capable operator must emit keyed output"
     end
   end
 
   test "a trade beyond the window is processed as an arrival, not dropped" do
     namespace = unique("correction_bw")
-    operative_id = unique("candle_bw")
+    operator_id = unique("candle_bw")
     id_path = unique_id_path()
-    on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
+    on_exit(fn -> cleanup(namespace, operator_id, id_path) end)
 
     {_port, _exec} = boot_runner(namespace, id_path)
 
-    builder = %Builder{id: operative_id, factory_id: @factory, init_values: %{}, opts: []}
-    assert {:ok, _info} = OperativeManager.start_operative(namespace, builder)
+    builder = %Builder{id: operator_id, factory_id: @factory, init_values: %{}, opts: []}
+    assert {:ok, _info} = OperatorManager.start_operator(namespace, builder)
 
     assert wait_until(
-             fn -> ClassRegistry.effectively_once?(operative_id) end,
+             fn -> ClassRegistry.effectively_once?(operator_id) end,
              30_000
            )
 
@@ -139,16 +139,16 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
     # the 600 s window. The default policy is `process_as_arrival` — the
     # engine's behaviour with no window declared at all, so declaring one never
     # silently starts discarding data.
-    send_inputs(operative_id, namespace, ["1000000:a", "1000:straggler"])
+    send_inputs(operator_id, namespace, ["1000000:a", "1000:straggler"])
 
-    assert wait_until(fn -> folded(namespace, operative_id) == [1_000_000, 1_000] end, 30_000),
+    assert wait_until(fn -> folded(namespace, operator_id) == [1_000_000, 1_000] end, 30_000),
            "a beyond-window input must be processed as an arrival, not dropped"
   end
 
   # The Cell's fold order, read straight out of the live state. This is the
   # assertion surface: the change is about ORDER, so the test looks at order.
-  defp folded(namespace, operative_id) do
-    with {:ok, json} <- OperativeManager.get_cell_state(namespace, operative_id),
+  defp folded(namespace, operator_id) do
+    with {:ok, json} <- OperatorManager.get_cell_state(namespace, operator_id),
          %{@tasklet => %{"folded" => folded}} <- Payloader.json_to_map(json) do
       folded
     else

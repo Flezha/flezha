@@ -13,65 +13,65 @@ defmodule Flezha.AuthZ.QuotasTest do
   end
 
   test "unknown namespace surfaces :namespace_unknown" do
-    assert {:error, :namespace_unknown} = Quotas.check_allocation("ghost", :max_operatives)
+    assert {:error, :namespace_unknown} = Quotas.check_allocation("ghost", :max_operators)
   end
 
   test "system namespace allows allocations within default quotas" do
-    assert :ok = Quotas.check_allocation("_system", :max_operatives, 1)
+    assert :ok = Quotas.check_allocation("_system", :max_operators, 1)
     assert :ok = Quotas.check_allocation("_system", :max_state_bytes, 1024)
   end
 
-  test "exceeding max_operatives surfaces structured error" do
-    {:ok, _} = NamespaceStore.create("team-orders", quotas: %{max_operatives: 3})
+  test "exceeding max_operators surfaces structured error" do
+    {:ok, _} = NamespaceStore.create("team-orders", quotas: %{max_operators: 3})
 
-    assert :ok = Quotas.check_allocation("team-orders", :max_operatives, 1)
-    :ok = Quotas.record_allocation("team-orders", :max_operatives, 3)
+    assert :ok = Quotas.check_allocation("team-orders", :max_operators, 1)
+    :ok = Quotas.record_allocation("team-orders", :max_operators, 3)
     _ = :sys.get_state(QuotaCounters)
 
-    assert {:error, {:quota_exceeded, :max_operatives, %{current: 3, limit: 3}}} =
-             Quotas.check_allocation("team-orders", :max_operatives, 1)
+    assert {:error, {:quota_exceeded, :max_operators, %{current: 3, limit: 3}}} =
+             Quotas.check_allocation("team-orders", :max_operators, 1)
   end
 
   test "dealloc lets a new allocation succeed" do
-    {:ok, _} = NamespaceStore.create("team-orders", quotas: %{max_operatives: 2})
+    {:ok, _} = NamespaceStore.create("team-orders", quotas: %{max_operators: 2})
 
-    :ok = Quotas.record_allocation("team-orders", :max_operatives, 2)
+    :ok = Quotas.record_allocation("team-orders", :max_operators, 2)
     _ = :sys.get_state(QuotaCounters)
 
     assert {:error, {:quota_exceeded, _, _}} =
-             Quotas.check_allocation("team-orders", :max_operatives, 1)
+             Quotas.check_allocation("team-orders", :max_operators, 1)
 
-    :ok = Quotas.record_deallocation("team-orders", :max_operatives, 1)
+    :ok = Quotas.record_deallocation("team-orders", :max_operators, 1)
     # The cast must finish before the next read; round-trip a sync call
     # against the QuotaCounters GenServer to flush its mailbox.
     _ = :sys.get_state(QuotaCounters)
 
-    assert :ok = Quotas.check_allocation("team-orders", :max_operatives, 1)
+    assert :ok = Quotas.check_allocation("team-orders", :max_operators, 1)
   end
 
   test "while authn disabled, every check is :ok and no counter touched" do
     :ok = AuthState.reset()
     refute AuthZ.enabled?()
 
-    {:ok, _} = NamespaceStore.create("team-orders", quotas: %{max_operatives: 0})
-    assert :ok = Quotas.check_allocation("team-orders", :max_operatives, 1)
-    :ok = Quotas.record_allocation("team-orders", :max_operatives, 1)
-    assert QuotaCounters.get("team-orders", :operatives) == 0
+    {:ok, _} = NamespaceStore.create("team-orders", quotas: %{max_operators: 0})
+    assert :ok = Quotas.check_allocation("team-orders", :max_operators, 1)
+    :ok = Quotas.record_allocation("team-orders", :max_operators, 1)
+    assert QuotaCounters.get("team-orders", :operators) == 0
   end
 
   test "check latency is well under the 50µs spec budget against a warm cache" do
-    {:ok, _} = NamespaceStore.create("team-orders", quotas: %{max_operatives: 1_000_000})
+    {:ok, _} = NamespaceStore.create("team-orders", quotas: %{max_operators: 1_000_000})
 
     # Warm the cache (first call touches both DETS-backed stores via
     # the ETS read path).
-    :ok = Quotas.check_allocation("team-orders", :max_operatives, 1)
+    :ok = Quotas.check_allocation("team-orders", :max_operators, 1)
 
     iterations = 1_000
 
     {us, _} =
       :timer.tc(fn ->
         Enum.each(1..iterations, fn _ ->
-          :ok = Quotas.check_allocation("team-orders", :max_operatives, 1)
+          :ok = Quotas.check_allocation("team-orders", :max_operators, 1)
         end)
       end)
 

@@ -1,9 +1,9 @@
 //! Where an option stands among the words does not change what it means.
 //!
-//! An option is read wherever the operator writes it, and the positionals are
+//! An option is read wherever the caller writes it, and the positionals are
 //! the words that remain — so a flag written BEFORE the subject of the command
-//! is a flag and not the subject. `flz operative stop --token t op1` used to
-//! send `--token` as the operative id and drop the credential entirely; every
+//! is a flag and not the subject. `flz operator stop --token t op1` used to
+//! send `--token` as the operator id and drop the credential entirely; every
 //! case below is the same invocation written both ways, and the values carry
 //! the three characters an argument list has historically lost.
 //!
@@ -22,23 +22,23 @@ const ECHOING: &str = "#!/bin/sh\nprintf '%s\\n' \"$@\"\nexit 0\n";
 
 const CASES: &[(&[&str], &str)] = &[
     // An option written before the positionals reads as an option, and the
-    // words that remain are the positionals. `flz operative stop --token t
-    // op1` used to send `--token` as the operative id and drop the credential
+    // words that remain are the positionals. `flz operator stop --token t
+    // op1` used to send `--token` as the operator id and drop the credential
     // entirely; every verb below is the same invocation written both ways.
     (
-        &["operative", "stop", "--token", "t", "op1"],
-        r#"Flezha.Service.CliManager.operative_stop("", "op1", [token: "t"])"#,
+        &["operator", "stop", "--token", "t", "op1"],
+        r#"Flezha.Service.CliManager.operator_stop("", "op1", [token: "t"])"#,
     ),
     (
-        &["operative", "stop", "op1", "--token", "t"],
-        r#"Flezha.Service.CliManager.operative_stop("", "op1", [token: "t"])"#,
+        &["operator", "stop", "op1", "--token", "t"],
+        r#"Flezha.Service.CliManager.operator_stop("", "op1", [token: "t"])"#,
     ),
     (
-        &["operative", "stop", "-n", "prod", "op1"],
-        r#"Flezha.Service.CliManager.operative_stop("prod", "op1", [])"#,
+        &["operator", "stop", "-n", "prod", "op1"],
+        r#"Flezha.Service.CliManager.operator_stop("prod", "op1", [])"#,
     ),
     (
-        &["operative", "state", "--namespace=prod", "op1"],
+        &["operator", "state", "--namespace=prod", "op1"],
         r#"Flezha.Service.CliManager.cell_state("prod", "op1", [])"#,
     ),
     (
@@ -53,20 +53,20 @@ const CASES: &[(&[&str], &str)] = &[
         &["token", "issue", "--ttl", "60", "p", "ns", "viewer"],
         r#"Flezha.Service.CliManager.authz_render_token_issue("p", "ns", "viewer", [ttl: 60])"#,
     ),
-    // A switch and the credential read the same on either side of the operative.
+    // A switch and the credential read the same on either side of the operator.
     (
-        &["operative", "listen", "--input", "--token", "t", "op1"],
-        r#"Flezha.Service.CliManager.operative_listen("", "op1", "input", "text", [duration_ms: 30000, token: "t"])"#,
+        &["operator", "listen", "--input", "--token", "t", "op1"],
+        r#"Flezha.Service.CliManager.operator_listen("", "op1", "input", "text", [duration_ms: 30000, token: "t"])"#,
     ),
     (
-        &["operative", "listen", "op1", "--token", "t", "--input"],
-        r#"Flezha.Service.CliManager.operative_listen("", "op1", "input", "text", [duration_ms: 30000, token: "t"])"#,
+        &["operator", "listen", "op1", "--token", "t", "--input"],
+        r#"Flezha.Service.CliManager.operator_listen("", "op1", "input", "text", [duration_ms: 30000, token: "t"])"#,
     ),
     // A value carrying a quote, a backslash and a non-ASCII letter survives
     // whichever side of the positionals it was written on.
     (
         &[
-            "operative",
+            "operator",
             "send",
             "--text",
             "a\"b\\cä",
@@ -74,11 +74,11 @@ const CASES: &[(&[&str], &str)] = &[
             "prod",
             "op1",
         ],
-        r#"Flezha.Service.CliManager.operative_send("prod", "op1", "a\"b\\cä", "", [])"#,
+        r#"Flezha.Service.CliManager.operator_send("prod", "op1", "a\"b\\cä", "", [])"#,
     ),
     (
         &[
-            "operative",
+            "operator",
             "send",
             "op1",
             "-n",
@@ -86,7 +86,7 @@ const CASES: &[(&[&str], &str)] = &[
             "--text",
             "a\"b\\cä",
         ],
-        r#"Flezha.Service.CliManager.operative_send("prod", "op1", "a\"b\\cä", "", [])"#,
+        r#"Flezha.Service.CliManager.operator_send("prod", "op1", "a\"b\\cä", "", [])"#,
     ),
     (
         &["audit", "read", "--source", "x\"y", "f.log"],

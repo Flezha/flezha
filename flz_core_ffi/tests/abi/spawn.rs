@@ -13,7 +13,7 @@ use std::process::{Command, Stdio};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
-use flz_core::pb::SpawnWorkflowRequest;
+use flz_core::pb::SpawnBoundedRequest;
 use flz_core::schema;
 use flz_core_ffi::fake_controller::spawn_request as spawn_request_frame;
 use flz_core_ffi::veneer::{self, with_buffer, CtxPtr, Refusal};
@@ -80,7 +80,7 @@ fn a_spawn_resolves_through_its_handle() {
     assert!(status.success(), "the spawn scenario failed:\n{log}");
     let warnings: Vec<&str> = log
         .lines()
-        .filter(|line| line.starts_with("[flezha] spawn_workflow("))
+        .filter(|line| line.starts_with("[flezha] spawn_bounded("))
         .collect();
     assert_eq!(
         warnings.len(),
@@ -152,7 +152,7 @@ fn read(ctx: *mut FlzContext, handle: u64, timeout_ms: u64) -> (i32, Option<Valu
 }
 
 /// The `n`th spawn request the runner sent, counting from zero.
-fn nth_request(controller: &Controller, n: usize) -> (String, SpawnWorkflowRequest) {
+fn nth_request(controller: &Controller, n: usize) -> (String, SpawnBoundedRequest) {
     controller.await_frame(&format!("spawn request #{n}"), |captured| {
         captured
             .iter()

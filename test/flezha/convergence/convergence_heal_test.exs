@@ -14,19 +14,19 @@ defmodule Flezha.Convergence.HealTest do
 
   alias Flezha.Config.Backoff
   alias Flezha.Convergence.{Diff, Facts, Heal, Intent, Planner, Snapshot}
-  alias Flezha.Operative.Overwatch
-  alias Flezha.Service.{HubManager, OperativeManager}
+  alias Flezha.Operator.Overwatch
+  alias Flezha.Service.{HubManager, OperatorManager}
   alias Flezha.SDK.SafeCall
   alias FlezhaTest.Helper.NodeTestHelper
 
   describe "data-plane verdict → heal op (D3)" do
-    # One healthy operative bound to the runner every verdict below names, so
+    # One healthy operator bound to the runner every verdict below names, so
     # the resolution is exercised against the same probed reality the other
     # invariants are classified from.
     defp wedge_reality() do
       %{
         active_runners: %{ns: MapSet.new(["e_live", "e_second"])},
-        operatives: %{
+        operators: %{
           {:ns, "rc_a"} => %{bound_runner: "e_live"},
           {:ns, "rc_b"} => %{bound_runner: "e_live"},
           {:ns, "rc_other"} => %{bound_runner: "e_second"}
@@ -36,10 +36,10 @@ defmodule Flezha.Convergence.HealTest do
 
     defp wedge_intent() do
       %Intent{
-        operatives: [
-          %{namespace: :ns, operative_id: "rc_a", factory_id: nil, plugins: []},
-          %{namespace: :ns, operative_id: "rc_b", factory_id: nil, plugins: []},
-          %{namespace: :ns, operative_id: "rc_other", factory_id: nil, plugins: []}
+        operators: [
+          %{namespace: :ns, operator_id: "rc_a", factory_id: nil, plugins: []},
+          %{namespace: :ns, operator_id: "rc_b", factory_id: nil, plugins: []},
+          %{namespace: :ns, operator_id: "rc_other", factory_id: nil, plugins: []}
         ]
       }
     end
@@ -64,7 +64,7 @@ defmodule Flezha.Convergence.HealTest do
       assert [%{primitive: :restart_runner, target: "e_live"}] = plan_for(verdict)
     end
 
-    test "a wedged channel resyncs every operative on that runner, in place" do
+    test "a wedged channel resyncs every operator on that runner, in place" do
       verdict = {:channel_not_sending, %{runner_id: "e_live", channel: "c1"}}
 
       assert [
@@ -73,9 +73,9 @@ defmodule Flezha.Convergence.HealTest do
              ] = plan_for(verdict)
     end
 
-    test "a wedged operative is rebound, named by the verdict" do
-      assert [%{primitive: :rebind_operative, namespace: :ns, target: "rc_other", args: args}] =
-               plan_for({:operative_not_forwarding, %{operative_id: "rc_other"}})
+    test "a wedged operator is rebound, named by the verdict" do
+      assert [%{primitive: :rebind_operator, namespace: :ns, target: "rc_other", args: args}] =
+               plan_for({:operator_not_forwarding, %{operator_id: "rc_other"}})
 
       assert args.reason == :data_plane_wedge
     end
@@ -88,7 +88,7 @@ defmodule Flezha.Convergence.HealTest do
 
     test "a verdict naming nothing the probe observed plans nothing" do
       assert plan_for({:runner_pool_wedged, %{runner_id: "e_never_seen"}}) == []
-      assert plan_for({:operative_not_forwarding, %{operative_id: "rc_never_seen"}}) == []
+      assert plan_for({:operator_not_forwarding, %{operator_id: "rc_never_seen"}}) == []
       assert plan_for({:channel_not_sending, %{runner_id: "e_never_seen", channel: "c"}}) == []
     end
 
@@ -148,7 +148,7 @@ defmodule Flezha.Convergence.HealTest do
     end
 
     test "a runner with no wedge verdict is never restarted" do
-      for verdict <- [:ok, {:operative_not_forwarding, %{operative_id: "rc_other"}}] do
+      for verdict <- [:ok, {:operator_not_forwarding, %{operator_id: "rc_other"}}] do
         refute Enum.any?(plan_for(verdict), &(&1.primitive == :restart_runner))
       end
     end
@@ -209,7 +209,7 @@ defmodule Flezha.Convergence.HealTest do
 
     test "on timeout against a remote pid, reports :remote instead of crashing the caller" do
       # Regression: `Process.info/2` raises `ArgumentError` on a remote pid.
-      # That raise is an :error, not an :exit, so the catch in workflow/3 never
+      # That raise is an :error, not an :exit, so the catch in bounded/3 never
       # covered it — it propagated out of Convergence.Loop and took the node down.
       on_exit(NodeTestHelper.override_log_level(:warning))
 
@@ -238,12 +238,12 @@ defmodule Flezha.Convergence.HealTest do
 
   describe "Snapshot" do
     test "publish/current round-trips" do
-      Snapshot.publish(%{last_tick_at: 42, stuck_operatives: %{"x" => :outbox_flat}})
+      Snapshot.publish(%{last_tick_at: 42, stuck_operators: %{"x" => :outbox_flat}})
 
       assert Snapshot.current().last_tick_at == 42
-      assert Snapshot.current().stuck_operatives == %{"x" => :outbox_flat}
+      assert Snapshot.current().stuck_operators == %{"x" => :outbox_flat}
       # reset for other suites
-      Snapshot.publish(%{last_tick_at: nil, stuck_operatives: %{}})
+      Snapshot.publish(%{last_tick_at: nil, stuck_operators: %{}})
     end
 
     test "observe_recovery caches per-hub state" do
@@ -259,7 +259,7 @@ defmodule Flezha.Convergence.HealTest do
     test "the heal surface is exactly the nine reachable primitives" do
       assert Enum.sort(Heal.primitives()) ==
                Enum.sort([
-                 :rebind_operative,
+                 :rebind_operator,
                  :resync_runner,
                  :start_plugin,
                  :stop_plugin,
@@ -271,11 +271,11 @@ defmodule Flezha.Convergence.HealTest do
                ])
     end
 
-    test "resync_runner against an unknown operative is a failed heal, not a crash" do
+    test "resync_runner against an unknown operator is a failed heal, not a crash" do
       op = %{
         primitive: :resync_runner,
         namespace: "ghost_ns",
-        target: "ghost_operative",
+        target: "ghost_operator",
         args: %{reason: :output_stall}
       }
 
@@ -288,9 +288,9 @@ defmodule Flezha.Convergence.HealTest do
     end
 
     test "a deleted/unknown primitive is no longer dispatchable" do
-      # `start_operative`, `replay_state`, `compact_wal` were never planned and
+      # `start_operator`, `replay_state`, `compact_wal` were never planned and
       # did nothing — they are gone, not silent no-ops.
-      for primitive <- [:start_operative, :replay_state, :compact_wal] do
+      for primitive <- [:start_operator, :replay_state, :compact_wal] do
         op = %{primitive: primitive, namespace: nil, target: :noop, args: %{}}
         assert Heal.execute(op) == :error
       end
@@ -303,19 +303,19 @@ defmodule Flezha.Convergence.HealTest do
 
     # fails when: "no runner advertises this factory" is answered as a repair
     # that failed. The Loop reads `:unmet` as the one outcome that drives the
-    # ladder neither way, so an operative woken with nothing to bind to is not
+    # ladder neither way, so an operator woken with nothing to bind to is not
     # pushed further up its own rung by the attempt.
     test "a rebind with no runner for the factory is unmet, not a failed heal" do
       pid = overwatch_double(%Overwatch{id: "op", namespace: :ns, factory_id: "f"})
 
       stub(HubManager, :get_pid, fn :ns, "op" -> {:ok, pid} end)
-      stub(OperativeManager, :assign_runner, fn :ns, "f", "op" -> nil end)
+      stub(OperatorManager, :assign_runner, fn :ns, "f", "op" -> nil end)
 
-      op = %{primitive: :rebind_operative, namespace: :ns, target: "op", args: %{}}
+      op = %{primitive: :rebind_operator, namespace: :ns, target: "op", args: %{}}
       assert Heal.execute(op) == :unmet
     end
 
-    # A target that answers the one call `Heal` reads an operative's factory
+    # A target that answers the one call `Heal` reads an operator's factory
     # through, without standing up a real Overwatch tree.
     defp overwatch_double(%Overwatch{} = state) do
       {:ok, pid} = GenServer.start_link(__MODULE__.WedgeServer, state)
@@ -326,36 +326,36 @@ defmodule Flezha.Convergence.HealTest do
   describe "output-stall ladder (D1)" do
     @stall_ns :stall_ns
 
-    defp stalled_diff(operative_id, extra \\ []) do
+    defp stalled_diff(operator_id, extra \\ []) do
       intent = %Intent{
-        operatives: [
-          %{namespace: @stall_ns, operative_id: operative_id, factory_id: nil, plugins: []}
+        operators: [
+          %{namespace: @stall_ns, operator_id: operator_id, factory_id: nil, plugins: []}
         ]
       }
 
       reality = %{
         active_runners: %{@stall_ns => MapSet.new(["e_live"])},
-        operatives: %{{@stall_ns, operative_id} => Enum.into(extra, %{bound_runner: "e_live"})}
+        operators: %{{@stall_ns, operator_id} => Enum.into(extra, %{bound_runner: "e_live"})}
       }
 
       diff(intent, reality, %{
-        facts: %{{:output_stall, operative_id} => %{at: 0, args: %{}}}
+        facts: %{{:output_stall, operator_id} => %{at: 0, args: %{}}}
       })
     end
 
     test "a flagged instance resolves to a stalled divergence carrying its namespace" do
-      assert %Diff{stalled_operatives: [{@stall_ns, "op_a"}]} = stalled_diff("op_a")
+      assert %Diff{stalled_operators: [{@stall_ns, "op_a"}]} = stalled_diff("op_a")
     end
 
-    test "a flag for an operative this tick is not healing resolves to nothing" do
+    test "a flag for an operator this tick is not healing resolves to nothing" do
       # Not declared, or declared in a namespace still mid-recovery — the
-      # caller passes only the recovery-ready operatives.
+      # caller passes only the recovery-ready operators.
       delta =
-        diff(%Intent{operatives: []}, %{}, %{
+        diff(%Intent{operators: []}, %{}, %{
           facts: %{{:output_stall, "ghost"} => %{at: 0, args: %{}}}
         })
 
-      assert delta.stalled_operatives == []
+      assert delta.stalled_operators == []
       assert Diff.empty?(delta)
     end
 
@@ -364,7 +364,7 @@ defmodule Flezha.Convergence.HealTest do
                Planner.plan(stalled_diff("op_a"), Backoff.new(:heal))
     end
 
-    test "a stall that survived the resync escalates to rebind_operative" do
+    test "a stall that survived the resync escalates to rebind_operator" do
       now = System.monotonic_time(:millisecond)
 
       # One ladder attempt recorded and its cooldown already elapsed: the same
@@ -372,28 +372,28 @@ defmodule Flezha.Convergence.HealTest do
       backoff =
         Backoff.update(Backoff.new(:heal), Planner.ladder_key("op_a"), :error, now - 10_000)
 
-      assert [%{primitive: :rebind_operative, target: "op_a", args: %{reason: :output_stall}}] =
+      assert [%{primitive: :rebind_operator, target: "op_a", args: %{reason: :output_stall}}] =
                Planner.plan(stalled_diff("op_a"), backoff)
     end
 
     test "both rungs share one cooldown key, so escalating does not restart the throttle" do
-      for primitive <- [:resync_runner, :rebind_operative] do
+      for primitive <- [:resync_runner, :rebind_operator] do
         assert Planner.key(%{primitive: primitive, target: "r", args: %{reason: :output_stall}}) ==
                  Planner.ladder_key("r")
       end
     end
 
-    test "a stalled operative already covered by the plan is not laddered too" do
+    test "a stalled operator already covered by the plan is not laddered too" do
       # Also unbound, so the structural bind op already names it.
       delta = stalled_diff("op_dup", bound_runner: nil)
 
-      assert [%{primitive: :rebind_operative, target: "op_dup", args: args}] =
+      assert [%{primitive: :rebind_operator, target: "op_dup", args: args}] =
                Planner.plan(delta, Backoff.new(:heal))
 
       refute Map.has_key?(args, :reason)
     end
 
-    test "a stalled operative in backoff cooldown is filtered out" do
+    test "a stalled operator in backoff cooldown is filtered out" do
       now = System.monotonic_time(:millisecond)
       backoff = Backoff.update(Backoff.new(:heal), Planner.ladder_key("op_cool"), :error, now)
 
@@ -402,7 +402,7 @@ defmodule Flezha.Convergence.HealTest do
 
     test "the ladder is not starved by a plan that filled the per-tick budget" do
       %Diff{} = stalled = stalled_diff("op_a")
-      delta = %Diff{stalled | stalled_operatives: [{@stall_ns, "op_a"}]}
+      delta = %Diff{stalled | stalled_operators: [{@stall_ns, "op_a"}]}
 
       assert [%{primitive: :resync_runner, target: "op_a"}] =
                Planner.plan(delta, Backoff.new(:heal), max_ops: 0)
@@ -415,10 +415,10 @@ defmodule Flezha.Convergence.HealTest do
                args: %{reason: :output_stall}
              })
 
-      refute Planner.ladder?(%{primitive: :rebind_operative, target: "r", args: %{}})
+      refute Planner.ladder?(%{primitive: :rebind_operator, target: "r", args: %{}})
     end
 
-    test "a stall a runner's stream declared is repaired once its operative is bound elsewhere" do
+    test "a stall a runner's stream declared is repaired once its operator is bound elsewhere" do
       facts =
         Map.new(
           [
@@ -431,7 +431,7 @@ defmodule Flezha.Convergence.HealTest do
         )
 
       reality = %{
-        operatives: %{
+        operators: %{
           {@stall_ns, "op_moved"} => %{bound_runner: "e_live"},
           {@stall_ns, "op_stayed"} => %{bound_runner: "e_live"},
           {@stall_ns, "op_unread"} => %{bound_runner: :unknown},
@@ -485,19 +485,19 @@ defmodule Flezha.Convergence.HealTest do
     end
 
     test "the post-round plan adopts what the round started rather than fighting it" do
-      # The reconcile started two operatives; by the time the completion event
+      # The reconcile started two operators; by the time the completion event
       # reaches the Loop they probe as bound to a live runner, so the Diff sees
       # no divergence and the plan names neither of them.
       intent = %Intent{
-        operatives: [
-          %{namespace: :ns, operative_id: "adopted_a", factory_id: nil, plugins: []},
-          %{namespace: :ns, operative_id: "adopted_b", factory_id: nil, plugins: []}
+        operators: [
+          %{namespace: :ns, operator_id: "adopted_a", factory_id: nil, plugins: []},
+          %{namespace: :ns, operator_id: "adopted_b", factory_id: nil, plugins: []}
         ]
       }
 
       reality = %{
         active_runners: %{ns: MapSet.new(["e_live"])},
-        operatives: %{
+        operators: %{
           {:ns, "adopted_a"} => %{bound_runner: "e_live"},
           {:ns, "adopted_b"} => %{bound_runner: "e_live"}
         }
@@ -509,7 +509,7 @@ defmodule Flezha.Convergence.HealTest do
 
   # A GenServer that wedges inside `handle_call(:block, ...)` so the SafeCall
   # probe has a live-but-stuck target to introspect, and answers its start
-  # argument to `:get_overwatch_state` so a heal that reads an operative's
+  # argument to `:get_overwatch_state` so a heal that reads an operator's
   # factory has a target that is not a real Overwatch tree.
   defmodule WedgeServer do
     @moduledoc false

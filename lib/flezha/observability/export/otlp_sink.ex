@@ -1,7 +1,7 @@
 defmodule Flezha.Observability.Export.OtlpSink do
   @moduledoc """
   Sink that batches signals and POSTs them as OTLP/HTTP protobuf
-  bodies via `OtlpClient`. Overflow policy is `:block` — operators
+  bodies via `OtlpClient`. Overflow policy is `:block` — users
   who turn this on accept producer back-pressure rather than silent
   loss. Mailbox high-water default `10_000`.
 

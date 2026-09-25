@@ -3,7 +3,7 @@
 ## Purpose
 Change what a live websocket is subscribed to without reconnecting. A plugin
 pointed at a URL publishing the desired item set polls it, diffs it against the
-set it has applied, and sends operator-supplied subscribe/unsubscribe templates
+set it has applied, and sends user-supplied subscribe/unsubscribe templates
 for the difference on the connection it already holds. Item strings are opaque,
 so all exchange vocabulary stays in configuration; a delta commits only on an
 acknowledgement bearing its `req_id`, so retry is nothing but re-deriving the
@@ -168,7 +168,7 @@ frame, carrying the counts of added and removed items with `%{plugin_id: binary(
 metadata.
 
 #### Scenario: Applied set is reportable
-- **WHEN** an operator inspects a plugin configured with a subscription source
+- **WHEN** a user inspects a plugin configured with a subscription source
 - **THEN** the applied set and the last reconcile outcome SHALL be reported
 
 #### Scenario: Reconcile emits telemetry
@@ -178,7 +178,7 @@ metadata.
 
 #### Scenario: Last error is retained after a failed poll
 - **GIVEN** a poll that fails with a network error
-- **WHEN** an operator inspects the plugin
+- **WHEN** a user inspects the plugin
 - **THEN** the last error SHALL name the failure
 
 ### Requirement: The desired item set SHALL be filtered to the partition's key groups
@@ -209,9 +209,9 @@ The provider SHALL accept `subscription_items` — a literal item list feeding t
 
 ### Requirement: A websocket plugin SHALL name its entry channel with an option
 
-`Plugin.Provider.Websocket` SHALL accept the entry channel it injects on as a declared option, resolved by the rule in `operative-extensions`: `channel` names it on every plugin of this provider, together with the record filter when the plugin also has a chain hook, and `channel_in` names it alone in every case.
+`Plugin.Provider.Websocket` SHALL accept the entry channel it injects on as a declared option, resolved by the rule in `operator-extensions`: `channel` names it on every plugin of this provider, together with the record filter when the plugin also has a chain hook, and `channel_in` names it alone in every case.
 
-Before this, the provider had no option naming its entry channel and an operator had to write the `"channel"` key into `payload_metadata`, the general label bag, which is neither discoverable in the provider's help screen nor distinguishable from the provider's own `channel` option pointing the other way.
+Before this, the provider had no option naming its entry channel and a user had to write the `"channel"` key into `payload_metadata`, the general label bag, which is neither discoverable in the provider's help screen nor distinguishable from the provider's own `channel` option pointing the other way.
 
 `payload_metadata` SHALL remain the general label bag and a `"channel"` key inside it SHALL continue to select the entry channel when no channel option is supplied, so a configuration that names nothing else keeps working unchanged.
 

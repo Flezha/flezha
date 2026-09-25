@@ -2,8 +2,8 @@ defmodule Flezha.Shutdown do
   @moduledoc """
   Teardown at every scope as one walk: `run/3` folds the `Flezha.Shutdown.Step`
   implementations of a scope in their declared order, each once, each bounded,
-  stopping at the budget and naming the steps that did not run. The operator's
-  operative stop, the Overwatch's own terminate, the namespace stop and the
+  stopping at the budget and naming the steps that did not run. The user's
+  operator stop, the Overwatch's own terminate, the namespace stop and the
   node drain are the four callers.
 
   It also answers `quiesced?/2` — whether a scope is being torn down — from
@@ -23,17 +23,17 @@ defmodule Flezha.Shutdown do
   @table Flezha.Shutdown.State
   @steps_key {__MODULE__, :steps}
 
-  # The one budget an operative stop has, and the source the process teardown
+  # The one budget an operator stop has, and the source the process teardown
   # derives its own from.
 
   @type scope :: Flezha.Shutdown.Step.scope()
   @type report :: %{ran: [atom()], skipped: [atom()], errors: [{atom(), term()}], results: map()}
 
-  @doc "The budget of an operative stop."
+  @doc "The budget of an operator stop."
   @spec stop_timeout_ms() :: pos_integer()
   def stop_timeout_ms(), do: Durations.get(:stop_release_timeout_ms)
 
-  @doc "The budget of a process teardown: the operative stop's, less the slack the stop keeps."
+  @doc "The budget of a process teardown: the operator stop's, less the slack the stop keeps."
   @spec process_budget_ms() :: pos_integer()
   def process_budget_ms(), do: Durations.get(:stop_process_budget_ms)
 
@@ -171,7 +171,7 @@ defmodule Flezha.Shutdown do
   @doc """
   The one admission answer every entry point behind a teardown gives: `:ok`, or
   `{:error, :shutting_down}` once `scope`'s `target` is quiescing. A runner
-  connect and an operative start ask it in the same words, so a third caller
+  connect and an operator start ask it in the same words, so a third caller
   cannot invent a fourth spelling of the same refusal.
   """
   @spec admit(scope(), term()) :: :ok | {:error, :shutting_down}

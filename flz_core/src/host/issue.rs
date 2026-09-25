@@ -11,12 +11,12 @@
 /// Reasons a host class declaration fails at registration time.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TopologyIssue {
-    #[error("channel `{0}` declared more than once on this operative")]
+    #[error("channel `{0}` declared more than once on this operator")]
     DuplicateChannel(String),
 
     #[error(
         "node identity `{name}` is declared by two distinct nodes; a node name must be unique \
-         per operative and distinct from every tasklet name()"
+         per operator and distinct from every tasklet name()"
     )]
     NodeIdentityCollision { name: String },
 
@@ -34,7 +34,7 @@ pub enum TopologyIssue {
     BranchTooFewArms { arms: usize },
 
     #[error(
-        "tasklet `{tasklet}` is on a cycle; an operative topology is a DAG — a node's \
+        "tasklet `{tasklet}` is on a cycle; an operator topology is a DAG — a node's \
          output may never reach its own input"
     )]
     Cycle { tasklet: String },
@@ -114,7 +114,7 @@ pub enum TopologyIssue {
     #[error(
         "channel `{channel}` is named by two plugin sinks; a sink names the channel it \
          terminates, so two channels cannot name one sink. Give each its own name — a plugin \
-         still reaches both by attaching to the operative with no channel filter"
+         still reaches both by attaching to the operator with no channel filter"
     )]
     DuplicateSinkName { channel: String },
 
@@ -134,7 +134,7 @@ pub enum TopologyIssue {
     #[error(
         "channel `{channel}` has a plugin wire but is not declared .keyed(); the \
          effectively-once tier deduplicates by output identity, so every plugin-bound \
-         channel of an effectively_once() operative must opt in with .keyed()"
+         channel of an effectively_once() operator must opt in with .keyed()"
     )]
     UnkeyedChannelUnderEffectivelyOnce { channel: String },
 
@@ -145,7 +145,7 @@ pub enum TopologyIssue {
     RetryMaxZero { channel: String },
 
     #[error(
-        "channel `{channel}` declares .on_full({policy}) on an operative that declares \
+        "channel `{channel}` declares .on_full({policy}) on an operator that declares \
          effectively_once(); a shed input's offset is still advanced past by the tier's \
          watermark, so the loss is permanent and reported nowhere — declare one or the other, \
          not both (a correction window implies the tier, so it is refused here too)"
@@ -153,32 +153,32 @@ pub enum TopologyIssue {
     DroppingPolicyUnderEffectivelyOnce { channel: String, policy: String },
 
     #[error(
-        "operative declares correction_window() without effectively_once(); correction \
+        "operator declares correction_window() without effectively_once(); correction \
          replays the input log against a rewound baseline, and only the tier journals \
-         inputs before forwarding them (an at-least-once operative has no durable input \
+         inputs before forwarding them (an at-least-once operator has no durable input \
          to replay)"
     )]
     CorrectionWithoutTier,
 
     #[error(
-        "operative declares correction_window() but tasklet `{tasklet}` declares clock \
+        "operator declares correction_window() but tasklet `{tasklet}` declares clock \
          `{clock_type}`; correction orders a replayed slice by event time, which only \
          `EventTimeFrom` yields"
     )]
     CorrectionWithoutEventTime { tasklet: String, clock_type: String },
 
-    #[error("operative declares correction_window(0); a zero window can correct nothing")]
+    #[error("operator declares correction_window(0); a zero window can correct nothing")]
     CorrectionWindowZero,
 
     #[error(
-        "operative declares checkpoint_every(0); an interval that closes every zero inputs is \
+        "operator declares checkpoint_every(0); an interval that closes every zero inputs is \
          not an interval — omit it to close only on an explicit ctx.checkpoint()"
     )]
     CheckpointEveryZero,
 
     #[error(
-        "operative declares checkpoint_ack() without effectively_once(); the checkpoint is \
-         where the tier's consumed-offset advances, and an at-least-once operative has no \
+        "operator declares checkpoint_ack() without effectively_once(); the checkpoint is \
+         where the tier's consumed-offset advances, and an at-least-once operator has no \
          durable offset to hold back (nor a durable input log to replay the interval from)"
     )]
     CheckpointAckWithoutTier,
@@ -204,24 +204,24 @@ pub enum TopologyIssue {
 
     // The class facts the fixture pins. Each carries the sentence `register`
     // printed as free text before it had a name.
-    #[error("a workflow class cannot declare effectively_once")]
-    EffectivelyOnceOnWorkflow,
+    #[error("a bounded class cannot declare effectively_once")]
+    EffectivelyOnceOnBounded,
 
-    #[error("a workflow class cannot declare correction_window_ms")]
-    CorrectionWindowOnWorkflow,
+    #[error("a bounded class cannot declare correction_window_ms")]
+    CorrectionWindowOnBounded,
 
     #[error(
-        "a workflow class cannot declare a checkpoint (checkpoint_ack, checkpoint_every, \
-         checkpoint_outputs, checkpoint_max_delay_ms); a workflow commits at its stage boundary"
+        "a bounded class cannot declare a checkpoint (checkpoint_ack, checkpoint_every, \
+         checkpoint_outputs, checkpoint_max_delay_ms); a bounded commits at its stage boundary"
     )]
-    CheckpointOnWorkflow,
+    CheckpointOnBounded,
 
     #[error(
-        "class `{factory_id}` declares sync_durability, which only a workflow class may: a stream \
+        "class `{factory_id}` declares sync_durability, which only a bounded class may: a stream \
          class acknowledges at input rates, and a remote round trip per acknowledgement is \
          not a guarantee it can keep"
     )]
-    SyncDurabilityOnStream { factory_id: String },
+    SyncDurabilityOnUnbounded { factory_id: String },
 
     #[error(
         "class `{factory_id}` declares sleep_when_idle with persistence off: a sleeping \
@@ -281,10 +281,10 @@ impl TopologyIssue {
             Self::MergeTooFewSources { .. } => "MergeTooFewSources",
             Self::DuplicateMergeSource { .. } => "DuplicateMergeSource",
             Self::EdgeAlreadyWired { .. } => "EdgeAlreadyWired",
-            Self::EffectivelyOnceOnWorkflow => "EffectivelyOnceOnWorkflow",
-            Self::CorrectionWindowOnWorkflow => "CorrectionWindowOnWorkflow",
-            Self::CheckpointOnWorkflow => "CheckpointOnWorkflow",
-            Self::SyncDurabilityOnStream { .. } => "SyncDurabilityOnStream",
+            Self::EffectivelyOnceOnBounded => "EffectivelyOnceOnBounded",
+            Self::CorrectionWindowOnBounded => "CorrectionWindowOnBounded",
+            Self::CheckpointOnBounded => "CheckpointOnBounded",
+            Self::SyncDurabilityOnUnbounded { .. } => "SyncDurabilityOnUnbounded",
             Self::SleepWithoutPersistence { .. } => "SleepWithoutPersistence",
             Self::AtCheckpointWithoutMaxDelay => "AtCheckpointWithoutMaxDelay",
             Self::Declaration(..) => "Declaration",

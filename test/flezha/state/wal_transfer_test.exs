@@ -55,7 +55,7 @@ defmodule FlezhaTest.State.WalTransferTest do
   # fails when: the log's name is resolved by joining it onto the class
   # directory, where the class's sidecars live beside it.
   test "read_chunk refuses a name that is not the input log's" do
-    class = "wf_guard_#{System.unique_integer([:positive])}"
+    class = "bounded_guard_#{System.unique_integer([:positive])}"
     {:ok, 0} = InputLog.append(class, "m", %{})
     FsyncBatcher.flush_now()
 
@@ -80,14 +80,14 @@ defmodule FlezhaTest.State.WalTransferTest do
     cell_id = seed_cell("self")
 
     assert {:ok, 0} = WalTransfer.pull_cell(node(), {:cell, cell_id})
-    assert 0 = WalTransfer.pull_operative(node(), elem(cell_id, 0))
+    assert 0 = WalTransfer.pull_operator(node(), elem(cell_id, 0))
   end
 
   @tag :multi_node
-  test "a cell moves from a peer into another Operative's tree, source last" do
+  test "a cell moves from a peer into another Operator's tree, source last" do
     # This is the shape a partition rescale needs: the Cell keeps its
     # tasklet and key but changes OWNER, so it lands under a different
-    # Operative class — and the peer's copy may only go once ours is safe.
+    # Operator class — and the peer's copy may only go once ours is safe.
     {class, tasklet, key} = source = seed_cell("moveacross")
     source_bytes = File.read!(Paths.wal_path(source))
     destination = {class <> "_moved", tasklet, key}
@@ -170,11 +170,11 @@ defmodule FlezhaTest.State.WalTransferTest do
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end
 
-  # fails when: the pull enumerates Cells only, so a workflow instance placed
+  # fails when: the pull enumerates Cells only, so a bounded instance placed
   # on another controller resumes without its journal and its input log.
   @tag :multi_node
-  test "a workflow instance's journal and input log are pulled with its cells" do
-    class = "wf_pull_#{System.unique_integer([:positive])}"
+  test "a bounded instance's journal and input log are pulled with its cells" do
+    class = "bounded_pull_#{System.unique_integer([:positive])}"
     cell_id = {class, "counter", "k"}
     {:ok, srv} = Supervisor.find_or_start(cell_id)
     :ok = WalWriter.append(srv, 0, TestHelpers.stub_header(), "alpha")
@@ -191,7 +191,7 @@ defmodule FlezhaTest.State.WalTransferTest do
     dest_root = TestHelpers.tmp_app_data_dir()
     on_exit(fn -> File.rm_rf(dest_root) end)
 
-    WalTransfer.pull_operative(peer_node, class)
+    WalTransfer.pull_operator(peer_node, class)
 
     assert File.exists?(Paths.wal_path(cell_id))
     assert File.read!(Paths.journal_path(class)) == journal_bytes
@@ -216,7 +216,7 @@ defmodule FlezhaTest.State.WalTransferTest do
 
     refute File.exists?(Paths.wal_path(cell_id))
 
-    assert 1 = WalTransfer.pull_operative(peer_node, class)
+    assert 1 = WalTransfer.pull_operator(peer_node, class)
 
     assert File.read!(Paths.wal_path(cell_id)) == source_bytes
     # The staging artefact never survives a successful pull.

@@ -12,7 +12,7 @@ defmodule Flezha.Service.Cli.Dlq do
   alias Flezha.Service.Dlq, as: DlqSvc
 
   @doc "The row a `dlq list` is judged by: the named class's namespace, `_system` for none."
-  def class_row([operative_class | _]), do: DlqSvc.class_row(class_filter(operative_class))
+  def class_row([operator_class | _]), do: DlqSvc.class_row(class_filter(operator_class))
 
   @doc "The entry a `dlq show | replay | drop` names, or the family's not-found."
   def locate([entry_ref | _]) do
@@ -23,26 +23,26 @@ defmodule Flezha.Service.Cli.Dlq do
   end
 
   @doc """
-  `flz dlq list [operative]` — parked entries, nearest-to-expiry (oldest)
+  `flz dlq list [operator]` — parked entries, nearest-to-expiry (oldest)
   first.
   """
-  def dlq_list(operative_class, _call) do
-    case Store.list(class_filter(operative_class)) do
+  def dlq_list(operator_class, _call) do
+    case Store.list(class_filter(operator_class)) do
       [] -> IO.puts("dead-letter queue is empty")
       entries -> render_listing(entries)
     end
   end
 
   @doc """
-  `flz dlq show <operative/tasklet/id>` — entry metadata + payload preview.
+  `flz dlq show <operator/tasklet/id>` — entry metadata + payload preview.
   """
   def dlq_show(_entry_ref, %{row: %{entry: entry, payload: payload}}) do
     render_entry(entry, payload)
   end
 
   @doc """
-  `flz dlq replay <operative/tasklet/id>` — re-dispatch a parked payload
-  to its operative through the ordinary input path. A successful replay
+  `flz dlq replay <operator/tasklet/id>` — re-dispatch a parked payload
+  to its operator through the ordinary input path. A successful replay
   removes the entry; a failing one re-parks it with `generation`
   incremented.
   """
@@ -60,7 +60,7 @@ defmodule Flezha.Service.Cli.Dlq do
   end
 
   @doc """
-  `flz dlq drop <operative/tasklet/id>` — discard a parked entry and its
+  `flz dlq drop <operator/tasklet/id>` — discard a parked entry and its
   payload. Audited: the drop is deliberate data loss.
   """
   def dlq_drop(entry_ref, _call) do
@@ -69,7 +69,7 @@ defmodule Flezha.Service.Cli.Dlq do
   end
 
   defp class_filter(""), do: nil
-  defp class_filter(operative_class), do: operative_class
+  defp class_filter(operator_class), do: operator_class
 
   defp render_listing(entries) do
     IO.puts(
@@ -81,7 +81,7 @@ defmodule Flezha.Service.Cli.Dlq do
     )
 
     Enum.each(entries, fn e ->
-      ref = "#{e["operative_class"]}/#{e["tasklet_id"]}/#{e["id"]}"
+      ref = "#{e["operator_class"]}/#{e["tasklet_id"]}/#{e["id"]}"
       age_s = div(System.system_time(:millisecond) - (e["ts_ms"] || 0), 1000)
 
       IO.puts(
@@ -96,7 +96,7 @@ defmodule Flezha.Service.Cli.Dlq do
 
   defp render_entry(entry, payload) do
     Enum.each(
-      ~w(id operative_class tasklet_id cell_key channel origin_offset error attempts generation status ts_ms payload_bytes),
+      ~w(id operator_class tasklet_id cell_key channel origin_offset error attempts generation status ts_ms payload_bytes),
       fn key ->
         IO.puts(String.pad_trailing(key, 18) <> to_string(inspect(entry[key])))
       end
@@ -123,13 +123,13 @@ defmodule Flezha.Service.Cli.Dlq do
   defp render_dlq_error(reason), do: Context.fail!(reason, &dlq_message/1)
 
   defp dlq_message(:not_found), do: "DLQ entry not found"
-  defp dlq_message(:bad_entry_ref), do: "expected <operative>/<tasklet>/<entry-id>"
+  defp dlq_message(:bad_entry_ref), do: "expected <operator>/<tasklet>/<entry-id>"
 
   defp dlq_message(:payload_not_replayable),
     do: "entry carries no payload bytes (inter-tasklet input); inspect or drop it"
 
-  defp dlq_message(:operative_not_running),
-    do: "the entry's operative is not running; start it before replaying"
+  defp dlq_message(:operator_not_running),
+    do: "the entry's operator is not running; start it before replaying"
 
   defp dlq_message(_reason), do: nil
 end

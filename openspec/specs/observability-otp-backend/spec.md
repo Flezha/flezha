@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The observability-otp-backend capability provides the content side of the observability contract by shipping a library of built-in process-backed sources, each built on `Flezha.Observability.OtpBackend.Poller` — the macro that declares the foundation's `Flezha.Observability.Source` behaviour and registers the source through `Flezha.Observability.Registry.register_source/1`. It covers the BEAM VM (`:beam_vm`), the OS process via Linux `/proc` (`:host`), every active ProcessHub instance (`:processhub`), each configured transport (`:flezha_transport`), and the bounded-mailbox subsystem (`:flezha_bounded_mailbox`). The sources run under a dedicated `Flezha.Observability.OtpBackend.Supervisor` (`:one_for_one`) inserted into the foundation supervision tree after `DefaultSinks`, each honouring per-source cardinality budgets and an `:otp_backend_enabled` runtime flag for wholesale opt-out. The capability also ships the `flz observe` CLI verb family (`sources`, `sinks`, `tail`, `enable`, `disable`) that exposes the observability service API to operators with text and `--json` output modes, every verb routing through `Flezha.Service.CliManager.observability_*` wrappers with a `caller_context` of `source: :cli`.
+The observability-otp-backend capability provides the content side of the observability contract by shipping a library of built-in process-backed sources, each built on `Flezha.Observability.OtpBackend.Poller` — the macro that declares the foundation's `Flezha.Observability.Source` behaviour and registers the source through `Flezha.Observability.Registry.register_source/1`. It covers the BEAM VM (`:beam_vm`), the OS process via Linux `/proc` (`:host`), every active ProcessHub instance (`:processhub`), each configured transport (`:flezha_transport`), and the bounded-mailbox subsystem (`:flezha_bounded_mailbox`). The sources run under a dedicated `Flezha.Observability.OtpBackend.Supervisor` (`:one_for_one`) inserted into the foundation supervision tree after `DefaultSinks`, each honouring per-source cardinality budgets and an `:otp_backend_enabled` runtime flag for wholesale opt-out. The capability also ships the `flz observe` CLI verb family (`sources`, `sinks`, `tail`, `enable`, `disable`) that exposes the observability service API to users with text and `--json` output modes, every verb routing through `Flezha.Service.CliManager.observability_*` wrappers with a `caller_context` of `source: :cli`.
 ## Requirements
 ### Requirement: Built-in BEAM VM source
 
@@ -65,7 +65,7 @@ liveness slot, and every liveness slot SHALL declare the surface that reads it �
 a metric this source emits, a convergence verdict that consumes it, a bridged
 telemetry event, or an explicit internal-only marker carrying its reason. A
 counter the runner pays for on the wire and the controller discards is invisible
-to every operator surface, and no reader can tell a key that is absent from one
+to every operations surface, and no reader can tell a key that is absent from one
 whose value is genuinely zero. The heartbeat's key set is a cross-SDK contract,
 so a key added to it SHALL be given a slot and a surface in the same change that
 adds it.
@@ -97,13 +97,13 @@ makes its cross-runner value meaningful.
 - **WHEN** a transport is not enabled in `:flezha, :transports` config
 - **THEN** the source SHALL NOT emit signals for that transport and SHALL NOT raise
 
-#### Scenario: A rebind's discarded inputs reach an operator surface
+#### Scenario: A rebind's discarded inputs reach an operations surface
 - **WHEN** a runner's heartbeat carries `restore_discarded_inputs` after a rebind threw inputs away
 - **THEN** the count SHALL be readable on a controller surface rather than dropped at the channel
 
 #### Scenario: Armed timers that stop firing are visible
 - **WHEN** a runner's heartbeats carry a climbing `timers_armed` and a frozen `timers_fired`
-- **THEN** both counters SHALL be emitted by this source, so wedged promotion is distinguishable from an idle Operative
+- **THEN** both counters SHALL be emitted by this source, so wedged promotion is distinguishable from an idle Operator
 
 #### Scenario: Every heartbeat key has a slot
 - **WHEN** the controller's mirrored key set is compared with the key set the shared core's heartbeat builds
@@ -135,23 +135,23 @@ makes its cross-runner value meaningful.
 
 ### Requirement: Built-in bounded-mailbox source
 
-The system SHALL provide a built-in process-backed source named `:flezha_bounded_mailbox` that polls the bounded-mailbox subsystem and emits `:metric` signals for per-Operative mailbox high-water marks and drop counters.
+The system SHALL provide a built-in process-backed source named `:flezha_bounded_mailbox` that polls the bounded-mailbox subsystem and emits `:metric` signals for per-Operator mailbox high-water marks and drop counters.
 
-#### Scenario: Per-Operative mailbox high-water mark
-- **WHEN** a Operative named `"orders"` in namespace `"default"` has a mailbox high-water mark of `120`
-- **THEN** a `:metric` signal on source `:flezha_bounded_mailbox` with `name: :mailbox_high_water`, `measurements: %{value: 120}`, and `metadata: %{namespace: "default", operative: "orders"}` SHALL appear on the bus
+#### Scenario: Per-Operator mailbox high-water mark
+- **WHEN** an Operator named `"orders"` in namespace `"default"` has a mailbox high-water mark of `120`
+- **THEN** a `:metric` signal on source `:flezha_bounded_mailbox` with `name: :mailbox_high_water`, `measurements: %{value: 120}`, and `metadata: %{namespace: "default", operator: "orders"}` SHALL appear on the bus
 
 #### Scenario: Drop counter exposed
-- **WHEN** a Operative has dropped `5` messages due to bounded-mailbox overflow
-- **THEN** a `:metric` signal with `name: :messages_dropped`, `measurements: %{count: 5}` SHALL appear on the bus with the same `namespace` / `operative` metadata shape
+- **WHEN** an Operator has dropped `5` messages due to bounded-mailbox overflow
+- **THEN** a `:metric` signal with `name: :messages_dropped`, `measurements: %{count: 5}` SHALL appear on the bus with the same `namespace` / `operator` metadata shape
 
 ### Requirement: Cardinality budget enforcement on built-in sources
 
-Every built-in source SHALL declare its cardinality budget at registration time and SHALL be designed so that the cluster-scale label cardinality (operatives × tasklets × cells × runners × hubs) fits within the declared budget. Where the natural cardinality exceeds the foundation's default `1_000` budget, the source SHALL raise its budget at registration time and document the rationale in the source module's `@moduledoc`.
+Every built-in source SHALL declare its cardinality budget at registration time and SHALL be designed so that the cluster-scale label cardinality (operators × tasklets × cells × runners × hubs) fits within the declared budget. Where the natural cardinality exceeds the foundation's default `1_000` budget, the source SHALL raise its budget at registration time and document the rationale in the source module's `@moduledoc`.
 
 #### Scenario: Source declares a budget at registration
 - **WHEN** the `:flezha_bounded_mailbox` source registers
-- **THEN** its `cardinality_budget` value SHALL be at least equal to the expected count of Operatives × Namespaces in a typical cluster, and the value SHALL be visible in `Flezha.Observability.Registry.list_sources/0`
+- **THEN** its `cardinality_budget` value SHALL be at least equal to the expected count of Operators × Namespaces in a typical cluster, and the value SHALL be visible in `Flezha.Observability.Registry.list_sources/0`
 
 #### Scenario: Over-budget emit triggers the foundation's budget-exceeded event
 - **WHEN** a built-in source emits `:metric` signals with more distinct metadata shapes than its declared cardinality budget allows
@@ -175,26 +175,26 @@ The system SHALL host all built-in sources under a dedicated supervisor `Flezha.
 
 ### Requirement: `flz observe` CLI verb family
 
-The system SHALL provide a `flz observe` CLI command tree exposing the observability service API to operators. At minimum the verbs `sources`, `sinks`, `tail <source>`, `enable <source>`, and `disable <source>` SHALL be implemented. Every verb SHALL build a `caller_context` with `source: :cli` and route through `Flezha.Service.CliManager.observability_*` wrappers. Text output SHALL be the default; `--json` SHALL render machine-parseable output.
+The system SHALL provide a `flz observe` CLI command tree exposing the observability service API to users. At minimum the verbs `sources`, `sinks`, `tail <source>`, `enable <source>`, and `disable <source>` SHALL be implemented. Every verb SHALL build a `caller_context` with `source: :cli` and route through `Flezha.Service.CliManager.observability_*` wrappers. Text output SHALL be the default; `--json` SHALL render machine-parseable output.
 
 #### Scenario: `flz observe sources` lists registered sources
-- **WHEN** the operator runs `flz observe sources` against a running Controller
+- **WHEN** the user runs `flz observe sources` against a running Controller
 - **THEN** the command SHALL print one row per registered source with at minimum its name, status (`active` / `disabled`), declared kinds, and cardinality budget
 
 #### Scenario: `flz observe tail` streams live signals from a source
-- **WHEN** the operator runs `flz observe tail beam_vm` and a `:metric` signal is emitted on `:beam_vm`
+- **WHEN** the user runs `flz observe tail beam_vm` and a `:metric` signal is emitted on `:beam_vm`
 - **THEN** the command SHALL print one line per received signal (including signal `name`, monotonic `ts`, and selected `measurements` / `metadata` fields) within the same scheduler tick the signal was emitted
 
 #### Scenario: `flz observe disable` disables the source via the service API
-- **WHEN** the operator runs `flz observe disable beam_vm`
+- **WHEN** the user runs `flz observe disable beam_vm`
 - **THEN** `Flezha.Service.Observability.disable_source/2` SHALL be called with a `caller_context` of `source: :cli`, the `:beam_vm` source SHALL transition to `status: :disabled`, and an audit `:event` SHALL be emitted on `:observability_service` per the foundation's audit-seam contract
 
 #### Scenario: `--json` flag emits machine-parseable output
-- **WHEN** the operator runs `flz observe sources --json`
+- **WHEN** the user runs `flz observe sources --json`
 - **THEN** the command SHALL print a single JSON document with an array of source records, each containing the same fields as the text output
 
 #### Scenario: `flz observe tail` when PubSub sink is disabled
-- **WHEN** the operator runs `flz observe tail beam_vm` against a Controller whose `:pubsub_sink_enabled` is `false`
+- **WHEN** the user runs `flz observe tail beam_vm` against a Controller whose `:pubsub_sink_enabled` is `false`
 - **THEN** the command SHALL exit with a non-zero status and a clear error message indicating the PubSub sink must be enabled, and SHALL NOT block
 
 ### Requirement: Built-in sources share one poller template that declares the source contract

@@ -40,7 +40,7 @@ pub(crate) fn saturate<P: Send + 'static>(mailbox: &Mailbox<P>, item: P) {
 /// addressed to, and the body inside it.
 #[cfg(test)]
 pub(crate) struct CapturedPark {
-    /// `(operative_class, tasklet_id, cell_key)` — the triple the
+    /// `(operator_class, tasklet_id, cell_key)` — the triple the
     /// controller keys the row by, and whose middle element it makes a
     /// directory.
     pub identity: (String, String, String),
@@ -87,7 +87,7 @@ fn decode_park(frame: &[u8]) -> CapturedPark {
 pub(crate) mod host_class {
     use std::sync::Arc;
 
-    use crate::operative::instance::OperativeInstance;
+    use crate::operator::instance::OperatorInstance;
 
     /// One entry-channel declaration per name, each chaining into `p0`.
     /// An entry channel per name, each into tasklet 0; `facts` are extra
@@ -113,7 +113,7 @@ pub(crate) mod host_class {
         entries: &[&str],
         keys: &[&str],
         consumers: &[u32],
-    ) -> Arc<OperativeInstance> {
+    ) -> Arc<OperatorInstance> {
         let chain_list = consumers
             .iter()
             .map(|c| format!(r#"[{{"link":"into","tasklet":{c}}}]"#))
@@ -150,13 +150,13 @@ pub(crate) mod host_class {
                  "tasklets":[{tasks}]}}"#
         );
         crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
-        OperativeInstance::of_class(id, &format!("{id}_inst")).expect("class registered")
+        OperatorInstance::of_class(id, &format!("{id}_inst")).expect("class registered")
     }
 
-    /// A host `once` workflow class: an entry channel per name in `entries`,
+    /// A host `once` bounded class: an entry channel per name in `entries`,
     /// each into the one tasklet `p0` on an edge whose ladder has `retry_max`
     /// rungs of 1 ms.
-    pub(crate) fn workflow_json(id: &str, entries: &[&str], retry_max: u32) -> String {
+    pub(crate) fn bounded_json(id: &str, entries: &[&str], retry_max: u32) -> String {
         let entry_json = entry_channels(
             entries,
             &format!(r#""retry_max":{retry_max},"retry_backoff_ms":1,"#),
@@ -167,11 +167,11 @@ pub(crate) mod host_class {
                              {{"name":"out","kind":"plugin","producer":0,
                                "chains":[[{{"link":"sink","name":"out"}}]]}}],
                  "tasklets":[{{"name":"p0"}}],
-                 "workflow":{{}}}}"#
+                 "bounded":{{}}}}"#
         )
     }
 
-    /// Bind `id` of `factory` as the controller does, through `AddOperative`;
+    /// Bind `id` of `factory` as the controller does, through `AddOperator`;
     /// the refusals it answered.
     pub(crate) fn bind(
         node: &mut crate::runner::RunnerNode,
@@ -182,8 +182,8 @@ pub(crate) mod host_class {
     ) -> Vec<String> {
         use crate::command::CommandAction;
         let mut errors = Vec::new();
-        crate::pb::AddOperative {
-            operative_id: id.to_string(),
+        crate::pb::AddOperator {
+            operator_id: id.to_string(),
             factory_id: factory.to_string(),
             init_values: init.to_string(),
             inbox_tail_count: owed,
@@ -193,11 +193,11 @@ pub(crate) mod host_class {
         errors
     }
 
-    /// A host workflow instance built as the bind builds it and not yet
+    /// A host bounded instance built as the bind builds it and not yet
     /// opened, so a test reads the messages its run queues.
-    pub(crate) fn workflow(id: &str, entries: &[&str]) -> Arc<OperativeInstance> {
-        crate::host::register_host_class_json(workflow_json(id, entries, 1).as_bytes())
+    pub(crate) fn bounded(id: &str, entries: &[&str]) -> Arc<OperatorInstance> {
+        crate::host::register_host_class_json(bounded_json(id, entries, 1).as_bytes())
             .expect("class registers");
-        OperativeInstance::of_class(id, &format!("{id}_inst")).expect("class registered")
+        OperatorInstance::of_class(id, &format!("{id}_inst")).expect("class registered")
     }
 }

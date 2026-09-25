@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Helper.DlqFixtures do
   @moduledoc """
-  Fixtures for driving the dead-letter queue's operator verbs.
+  Fixtures for driving the dead-letter queue's administration verbs.
   """
 
   import ExUnit.Callbacks, only: [on_exit: 1]

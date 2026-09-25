@@ -105,12 +105,12 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_localStart(
     _class: JClass,
     ctx: jlong,
     factory_id: JString,
-    operative_id: JString,
+    operator_id: JString,
 ) {
     let ctx = ctx_of(ctx);
     let outcome = c_string(&mut env, "factory id", &factory_id).and_then(|factory| {
-        c_string(&mut env, "operative id", &operative_id)
-            .and_then(|operative| veneer::local_start(ctx, &factory, &operative))
+        c_string(&mut env, "operator id", &operator_id)
+            .and_then(|operator| veneer::local_start(ctx, &factory, &operator))
     });
     report(&mut env, outcome);
 }

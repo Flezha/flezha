@@ -5,7 +5,7 @@ defmodule FlezhaTest.Layout.TableTest do
   The point of a declaration is that nothing bypasses it, so these cases read
   the source tree as well as the table: a subtree with a private root, or a
   second module spelling `app_data/<x>`, is a finding here rather than a
-  directory an operator discovers is not cleared.
+  directory a user discovers is not cleared.
   """
   use ExUnit.Case, async: true
 

@@ -6,10 +6,10 @@ use crate::runner::RunnerNode;
 
 impl CommandAction for CellApplyState {
     fn handle(&self, runner: &mut RunnerNode, _message: &str, errors: &mut Vec<String>) -> Reply {
-        if !runner.has_operative(&self.operative_id) {
+        if !runner.has_operator(&self.operator_id) {
             errors.push(format!(
-                "StreamOperative instance with id {} not found",
-                self.operative_id
+                "UnboundedOperator instance with id {} not found",
+                self.operator_id
             ));
             return Reply {
                 payload_id: "cell_apply_state",

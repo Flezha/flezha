@@ -3,12 +3,12 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
   Reconnect binding continuity (runner-controller-connection-healing, Phase 2).
 
   A runner that restarts on the same persistence path re-presents the same
-  durable STABLE IDENTITY. An operative is owned by that identity and routed by
+  durable STABLE IDENTITY. An operator is owned by that identity and routed by
   the per-connection session token, so on reconnect each Overwatch is told the
   new session token and re-publishes its own binding (no mint-and-evict, no
-  lost operative). This drives a real Rust runner through the proven
+  lost operator). This drives a real Rust runner through the proven
   stop → restart pattern (matrix 18.7) with a fixed `FLEZHA_RUNNER_ID_PATH`,
-  and asserts the operative follows the runner onto its new session.
+  and asserts the operator follows the runner onto its new session.
   """
   # async: false: Mimic global mode; Mimic stubs; a shared on-disk root.
   use FlezhaTest.Case, fixtures: [:tmp_dir], async: false
@@ -23,12 +23,12 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
 
   alias Flezha.AuthZ.RunnerProof
   alias Flezha.Identificator
-  alias Flezha.Operative.Builder
-  alias Flezha.Operative.Overwatch
+  alias Flezha.Operator.Builder
+  alias Flezha.Operator.Overwatch
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.Service.HubManager
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias Flezha.State.TestHelpers
   alias Flezha.Transport.Server
   alias FlezhaTest.Helper.ControlFrameTestHelper
@@ -46,22 +46,22 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
     {:ok, id_path: Path.join(tmp, "flezha-stable-id")}
   end
 
-  test "an operative survives a runner restart via the stable-id binding swap", %{
+  test "an operator survives a runner restart via the stable-id binding swap", %{
     id_path: id_path
   } do
     env = [{"FLEZHA_RUNNER_ID_PATH", id_path}]
 
-    # First boot: the SDK derives + persists a stable id; the operative binds to
+    # First boot: the SDK derives + persists a stable id; the operator binds to
     # this connection's session token (session1).
     session1 = NodeTestHelper.start_runner(@namespace, env: env)
     assert session1 in FleetManager.active_runners(@namespace)
 
-    operative = %Flezha.Operative.Builder{id: "reconnect_binding_op", factory_id: @factory}
-    {:ok, _} = OperativeManager.start_operative(@namespace, operative)
-    assert bound_to?(session1, operative.id)
+    operator = %Flezha.Operator.Builder{id: "reconnect_binding_op", factory_id: @factory}
+    {:ok, _} = OperatorManager.start_operator(@namespace, operator)
+    assert bound_to?(session1, operator.id)
 
     # Restart on the SAME persistence path → the fresh process re-presents the
-    # SAME stable id. The controller mints session2 and swaps the operative's
+    # SAME stable id. The controller mints session2 and swaps the operator's
     # binding onto it rather than minting-and-evicting.
     NodeTestHelper.stop_runner(@namespace, session1)
 
@@ -69,84 +69,84 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
     assert session2 != session1, "restart must mint a fresh session token"
     assert session2 in FleetManager.active_runners(@namespace)
 
-    # The operative now belongs to the new session, and the old session is gone.
-    assert NodeTestHelper.wait_until(fn -> bound_to?(session2, operative.id) end, 1_000, 25),
-           "operative must follow the runner onto its new session token"
+    # The operator now belongs to the new session, and the old session is gone.
+    assert NodeTestHelper.wait_until(fn -> bound_to?(session2, operator.id) end, 1_000, 25),
+           "operator must follow the runner onto its new session token"
 
     # The Overwatch writes the tag itself, after it re-binds, so a tag naming the
     # new session is an Overwatch naming it too.
-    {:ok, overwatch} = OperativeManager.get_operative_pid(@namespace, operative.id)
+    {:ok, overwatch} = OperatorManager.get_operator_pid(@namespace, operator.id)
     assert :sys.get_state(overwatch).runner_id == session2
 
     refute session1 in FleetManager.active_runners(@namespace)
   end
 
-  # fails when: a warm-restarted operative binds to a live runner but its durable
+  # fails when: a warm-restarted operator binds to a live runner but its durable
   # row keeps naming the previous boot's runner and the live runner's
   # StreamChannels never learn its pid — every output frame is dropped while the
-  # operative still lists as placed and healthy, and no reconciler sees it.
-  test "an operative binding away from its recorded runner republishes the binding" do
+  # operator still lists as placed and healthy, and no reconciler sees it.
+  test "an operator binding away from its recorded runner republishes the binding" do
     session = NodeTestHelper.start_runner(@namespace)
-    operative = %Builder{id: "rebind_repair_op", factory_id: @factory}
+    operator = %Builder{id: "rebind_repair_op", factory_id: @factory}
 
     # The durable row a degraded recovery replay leaves behind: cspec args and
     # tag both name a runner whose boot is gone.
     {:ok, _} = HubRegistryTestHelper.ensure_hub(@namespace)
 
-    HubRegistryTestHelper.inject_operative(@namespace, operative.id, [{node(), self()}], %{
-      id: operative.id,
-      start: {Overwatch, :start_link, [{@namespace, @stale_runner, operative}]}
+    HubRegistryTestHelper.inject_operator(@namespace, operator.id, [{node(), self()}], %{
+      id: operator.id,
+      start: {Overwatch, :start_link, [{@namespace, @stale_runner, operator}]}
     })
 
-    :ok = HubManager.operative_set_runner(@namespace, operative.id, @stale_runner)
-    refute bound_to?(session, operative.id), "setup must start from the stale tag"
+    :ok = HubManager.operator_set_runner(@namespace, operator.id, @stale_runner)
+    refute bound_to?(session, operator.id), "setup must start from the stale tag"
 
     # `dist_sup` starts persisted children from exactly this cspec on a warm
     # restart, with no `alter_child_data` in between.
     # Linked, so it is torn down with the test process.
-    {:ok, overwatch} = Overwatch.start_link({@namespace, @stale_runner, operative})
+    {:ok, overwatch} = Overwatch.start_link({@namespace, @stale_runner, operator})
 
-    assert NodeTestHelper.wait_until(fn -> bound_to?(session, operative.id) end, 10_000, 25),
+    assert NodeTestHelper.wait_until(fn -> bound_to?(session, operator.id) end, 10_000, 25),
            "the registry tag still names the dead runner, so nothing can reconcile the binding"
 
     assert NodeTestHelper.wait_until(
-             fn -> mapped?(session, operative.id, overwatch) end,
+             fn -> mapped?(session, operator.id, overwatch) end,
              10_000,
              25
            ),
-           "the live runner's StreamChannels never learned the operative pid, so every output frame hits the `[] -> :ok` drop"
+           "the live runner's StreamChannels never learned the operator pid, so every output frame hits the `[] -> :ok` drop"
   end
 
   # fails when: the rebind publishes the runner `await_runner` handed back rather
-  # than the one `complete_init` re-resolved and actually started the operative
+  # than the one `complete_init` re-resolved and actually started the operator
   # on, so the durable row and the StreamChannel route both name a runner the
-  # operative does not run on — the same silent output drop, one layer down.
-  test "the rebind publishes the runner the operative actually started on" do
+  # operator does not run on — the same silent output drop, one layer down.
+  test "the rebind publishes the runner the operator actually started on" do
     session = NodeTestHelper.start_runner(@namespace)
-    operative = %Builder{id: "retry_rebind_op", factory_id: @factory}
+    operator = %Builder{id: "retry_rebind_op", factory_id: @factory}
 
     {:ok, _} = HubRegistryTestHelper.ensure_hub(@namespace)
 
-    HubRegistryTestHelper.inject_operative(@namespace, operative.id, [{node(), self()}], %{
-      id: operative.id,
-      start: {Overwatch, :start_link, [{@namespace, @stale_runner, operative}]}
+    HubRegistryTestHelper.inject_operator(@namespace, operator.id, [{node(), self()}], %{
+      id: operator.id,
+      start: {Overwatch, :start_link, [{@namespace, @stale_runner, operator}]}
     })
 
-    :ok = HubManager.operative_set_runner(@namespace, operative.id, @stale_runner)
+    :ok = HubManager.operator_set_runner(@namespace, operator.id, @stale_runner)
 
     # The awaited runner goes away before the SDK start, so `complete_init`'s own
-    # re-resolve moves the operative onto `session` — the runner it ends up on.
-    stub(OperativeManager, :await_runner, fn _, _, _, _, _ -> {:ok, @stale_runner} end)
-    stub(OperativeManager, :assign_runner, fn _, _, _ -> session end)
+    # re-resolve moves the operator onto `session` — the runner it ends up on.
+    stub(OperatorManager, :await_runner, fn _, _, _, _, _ -> {:ok, @stale_runner} end)
+    stub(OperatorManager, :assign_runner, fn _, _, _ -> session end)
 
-    {:ok, overwatch} = Overwatch.start_link({@namespace, @stale_runner, operative})
+    {:ok, overwatch} = Overwatch.start_link({@namespace, @stale_runner, operator})
     assert :sys.get_state(overwatch).runner_id == session
 
-    assert NodeTestHelper.wait_until(fn -> bound_to?(session, operative.id) end, 10_000, 25),
-           "the tag names the awaited runner, not the one the operative started on"
+    assert NodeTestHelper.wait_until(fn -> bound_to?(session, operator.id) end, 10_000, 25),
+           "the tag names the awaited runner, not the one the operator started on"
 
     assert NodeTestHelper.wait_until(
-             fn -> mapped?(session, operative.id, overwatch) end,
+             fn -> mapped?(session, operator.id, overwatch) end,
              10_000,
              25
            ),
@@ -209,7 +209,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
       request =
         Flezha.SDK.Codec.encode_request(
           "admin-during-handshake",
-          Flezha.SDK.Codec.admin_request_command("Operative.list_operatives", "[]")
+          Flezha.SDK.Codec.admin_request_command("Operator.list_operators", "[]")
         )
 
       :ok = Flezha.Transport.Stream.send_frame(sdk, "control_command", request, %{})
@@ -501,14 +501,14 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
     |> Enum.any?(fn {id, _, _, _} -> id == session end)
   end
 
-  # True when one of `session`'s primary StreamChannels routes `operative_id` to
+  # True when one of `session`'s primary StreamChannels routes `operator_id` to
   # `pid` — the mapping whose absence makes `stream_channel.ex` drop frames.
-  defp mapped?(session, operative_id, pid) do
+  defp mapped?(session, operator_id, pid) do
     Identificator.stream_sup_primary(session)
     |> Supervisor.which_children()
     |> Enum.any?(fn
       {_, channel, _, _} when is_pid(channel) ->
-        :sys.get_state(channel)[:operative_mapping][operative_id] == [pid]
+        :sys.get_state(channel)[:operator_mapping][operator_id] == [pid]
 
       _ ->
         false
@@ -517,8 +517,8 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
     :exit, _ -> false
   end
 
-  defp bound_to?(session_token, operative_id) do
-    HubManager.runner_operatives(@namespace, session_token)
-    |> Enum.any?(fn {oid, _node_pids} -> oid == operative_id end)
+  defp bound_to?(session_token, operator_id) do
+    HubManager.runner_operators(@namespace, session_token)
+    |> Enum.any?(fn {oid, _node_pids} -> oid == operator_id end)
   end
 end

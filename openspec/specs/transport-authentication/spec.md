@@ -5,7 +5,7 @@
 The transport-authentication capability makes every peer-facing surface of the
 Flezha Controller authenticate its peer by default: the runner transport (QUIC
 client-certificate verification against a configured trust anchor; owner-only
-UDS socket and directory), the Erlang distribution (operator-provisioned
+UDS socket and directory), the Erlang distribution (user-provisioned
 cookie, optional TLS distribution), and the CLI (verifiable token identity
 threaded into the service wrappers). Running without authentication requires an
 explicit opt-out that is warned on every boot.
@@ -25,7 +25,7 @@ world-writable.
 
 - **WHEN** a peer opens a QUIC session presenting no client certificate or one not
   signed by the configured trust anchor
-- **THEN** the handshake is rejected, no operative-control frame is processed, and a
+- **THEN** the handshake is rejected, no operator-control frame is processed, and a
   refusal is recorded
 
 #### Scenario: The peer certificate reaches the connect path
@@ -127,10 +127,10 @@ resolvable principal SHALL be refused with a message naming the token requiremen
 
 #### Scenario: Token resolves to the CLI principal
 
-- **WHEN** `FLEZHA_TOKEN` carries a valid token bound to `operator@team-orders` and
+- **WHEN** `FLEZHA_TOKEN` carries a valid token bound to `ops@team-orders` and
   a gated verb targeting `team-orders` is invoked
 - **THEN** the service call runs with `caller_context.principal =
-  operator@team-orders` and is authorized against that principal
+  ops@team-orders` and is authorized against that principal
 
 #### Scenario: Gated verb without a token is refused
 
@@ -148,7 +148,7 @@ resolvable principal SHALL be refused with a message naming the token requiremen
 
 #### Scenario: A verb that carries a JSON document still carries the token beside it
 
-- **WHEN** `flz plugin install`, `plugin upgrade` or `operative scale` is invoked with a
+- **WHEN** `flz plugin install`, `plugin upgrade` or `operator scale` is invoked with a
   token
 - **THEN** the JSON document SHALL travel unchanged and the token SHALL ride the
   trailing options list, never inside the document
@@ -160,7 +160,7 @@ authentication SHALL require an explicit opt-out that logs a warning on every bo
 
 #### Scenario: Wide-open start is explicit and loud
 
-- **WHEN** an operator disables transport authentication
+- **WHEN** a user disables transport authentication
 - **THEN** the disable requires an explicit setting and a warning is emitted on each
   boot for as long as it remains disabled
 

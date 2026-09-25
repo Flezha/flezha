@@ -3,7 +3,7 @@
 # higher one, and every module lives in a directory.
 #
 # Charter §3 gives the controller one dependency order — transport -> runner ->
-# operative -> state / plugin -> service -> http / healthz, with observability,
+# operator -> state / plugin -> service -> http / healthz, with observability,
 # authz and convergence as cross-cutting consumers no layer below service
 # names. Nothing enforced it: a cycle count says a cycle exists and never says
 # which way an edge points, and no test asserts direction at all.
@@ -26,7 +26,7 @@
 # the number the restructuring is measured by.
 #
 # A reference that resolves to no file in this tree — a registered process name
-# like `Flezha.Operative.MessageHandlerTaskSup`, a bare namespace prefix — falls
+# like `Flezha.Operator.MessageHandlerTaskSup`, a bare namespace prefix — falls
 # back to its first segment read as a directory name, and a name whose segment
 # is no directory here (the Elixir SDK's `Flezha.SDK.*`, a dependency) is no
 # edge. That is the only meaning such a name has,
@@ -117,9 +117,9 @@ LAYERS = {
     "cluster": 1,  # node discovery and the `:pg` directory every layer reads
     # 2 — a connected runner and its channels.
     "runner": 2,
-    # 3 — an operative running on a runner.
-    "operative": 3,
-    # 4 — what an operative durably keeps, and what it forwards to.
+    # 3 — an operator running on a runner.
+    "operator": 3,
+    # 4 — what an operator durably keeps, and what it forwards to.
     "state": 4,
     "plugin": 4,
     "dlq": 4,  # the plugin path's parking store
@@ -130,12 +130,12 @@ LAYERS = {
     "authz": 5,
     "convergence": 5,
     "observability": 5,
-    # 6 — the outermost: the operator and network surfaces, and the node's own
+    # 6 — the outermost: the user and network surfaces, and the node's own
     # bring-up and tear-down. Boot starts the services and shutdown stops them,
     # so both name every layer and none may name them.
     "boot": 6,
     "shutdown": 6,
-    "cli": 6,  # the operator surface, carved out of service/
+    "cli": 6,  # the operations surface, carved out of service/
     "http": 6,
     "healthz": 6,
 }
@@ -160,7 +160,7 @@ MODULE_LAYERS = {
     "Flezha.Http.S3": 0,
     "Flezha.Service.Dlq": 5,
     "Flezha.Service.Namespace": 5,
-    "Flezha.Service.Workflow": 5,
+    "Flezha.Service.Bounded": 5,
 }
 
 DEFMODULE = re.compile(r"^\s*defmodule\s+([A-Z][\w.]*)\s+do", re.M)
@@ -369,8 +369,8 @@ def self_test():
     tree = {
         # A file in a low directory reaching up, in four spellings, and one
         # downward call that must stay silent.
-        "lib/flezha/operative/mover.ex": '''
-defmodule Flezha.Operative.Mover do
+        "lib/flezha/operator/mover.ex": '''
+defmodule Flezha.Operator.Mover do
   @moduledoc """
   Talks to Flezha.Service.Prose, which is a sentence and not an edge.
   """
@@ -386,7 +386,7 @@ end
         # The higher layer naming a lower one is the correct direction.
         "lib/flezha/service/manager.ex": """
 defmodule Flezha.Service.Manager do
-  def go, do: Flezha.Operative.Mover
+  def go, do: Flezha.Operator.Mover
 end
 """,
         "lib/flezha/state/paths.ex": """
@@ -412,12 +412,12 @@ end
     }
     expected = {
         "lib/flezha/loose.ex -> (no directory owns it)",
-        "lib/flezha/operative/mover.ex -> Flezha.Service.Manager",
-        "lib/flezha/operative/mover.ex -> Flezha.State.Paths",
-        "lib/flezha/operative/mover.ex -> Flezha.State.Wire",
+        "lib/flezha/operator/mover.ex -> Flezha.Service.Manager",
+        "lib/flezha/operator/mover.ex -> Flezha.State.Paths",
+        "lib/flezha/operator/mover.ex -> Flezha.State.Wire",
         # No file defines it, so its name places it — a registered process name
         # is still a reach into the service layer.
-        "lib/flezha/operative/mover.ex -> Flezha.Service.NamedProcess",
+        "lib/flezha/operator/mover.ex -> Flezha.Service.NamedProcess",
         # `Flezha.Http.Client` is not here: MODULE_LAYERS ranks it foundation
         # even though its file sits in the top layer's directory.
         "lib/flezha/state/paths.ex -> Flezha.Http.Listener",
@@ -432,7 +432,7 @@ end
 
         # The move claim: the module keeps its name, its file changes directory,
         # and its two state edges retire. Nothing else about the tree changes.
-        os.rename("lib/flezha/operative/mover.ex", "lib/flezha/state/mover.ex")
+        os.rename("lib/flezha/operator/mover.ex", "lib/flezha/state/mover.ex")
         moved = census()
         want = {
             "lib/flezha/loose.ex -> (no directory owns it)",
@@ -444,7 +444,7 @@ end
             failures.append(f"after the move: missing {want - moved}, extra {moved - want}")
         if not len(moved) < len(found):
             failures.append(f"the move did not lower the count: {len(found)} -> {len(moved)}")
-        os.rename("lib/flezha/state/mover.ex", "lib/flezha/operative/mover.ex")
+        os.rename("lib/flezha/state/mover.ex", "lib/flezha/operator/mover.ex")
 
         # An unranked directory is the gate broken, not a clean tree.
         os.makedirs("lib/flezha/unranked")

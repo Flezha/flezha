@@ -193,20 +193,20 @@ pub struct HostClassDecl {
     #[serde(default)]
     pub compact_after_bytes: Option<usize>,
     /// The controller ships each commit barrier to the durability backend
-    /// before acking it; workflow classes only.
+    /// before acking it; bounded classes only.
     #[serde(default)]
     pub sync_durability: bool,
     pub channels: Vec<HostChannelDecl>,
     pub tasklets: Vec<HostTaskletDecl>,
-    /// Present for a workflow class: its loop and rollback facts over the
+    /// Present for a bounded class: its loop and rollback facts over the
     /// tasklets declared above.
     #[serde(default)]
-    pub workflow: Option<HostWorkflowDecl>,
+    pub bounded: Option<HostBoundedDecl>,
 }
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct HostWorkflowDecl {
+pub struct HostBoundedDecl {
     #[serde(default)]
     pub loop_mode: HostLoopMode,
     #[serde(default)]

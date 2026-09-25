@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   @moduledoc """
-  SDK -> Controller `TaskCommit` dispatch path (`workflow-task-journal`): the
+  SDK -> Controller `TaskCommit` dispatch path (`bounded-task-journal`): the
   commit worker waits until every effect record the barrier names is durable
   on its Cell's writer, appends the `task_committed` entry naming them, fsyncs,
   replies `TaskCommitResponse` under the request's reference_id, and only then
@@ -17,7 +17,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   import FlezhaTest.Helper.MimicGlobal
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.Runner.{ControlChannel, ControlUnit}
   alias Flezha.Runner.ControlChannel.Commits
   alias Flezha.SDK.Wire
@@ -183,10 +183,10 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     send(channel, {:flz_data, :stream_id, "control_command", IO.iodata_to_binary(iodata), %{}})
   end
 
-  # A durable workflow Cell of `inst` whose writer holds one effect record at
+  # A durable bounded operator Cell of `inst` whose writer holds one effect record at
   # `seq` carrying one output keyed `k` with a metadata pair, on `channel`.
-  defp workflow_cell(inst, seq, payload, opts \\ []) do
-    :ok = ClassRegistry.put(inst, :workflow)
+  defp bounded_cell(inst, seq, payload, opts \\ []) do
+    :ok = ClassRegistry.put(inst, :bounded)
     cell = {inst, "TaskA", "s0"}
     {:ok, writer} = Flezha.State.Supervisor.find_or_start(cell)
 
@@ -223,7 +223,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
 
     # The record is appended but its batch has not synced when the barrier lands.
     :ok = :sys.suspend(Flezha.State.FsyncBatcher)
-    {_cell, writer} = workflow_cell(inst, 0, "a-out")
+    {_cell, writer} = bounded_cell(inst, 0, "a-out")
     seg = Wire.encode_cell_id(inst, "TaskA", "s0")
     payload = build_task_commit_payload(inst, 0, [{seg, 0, 0, ["out"]}], [], "ref-records")
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
@@ -257,7 +257,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     inst = "opc_missing_#{System.unique_integer([:positive])}"
     {control_channel, stream_ref} = start_control_channel("missing")
     own(inst, control_channel)
-    workflow_cell(inst, 5, "never", written?: false)
+    bounded_cell(inst, 5, "never", written?: false)
 
     seg = Wire.encode_cell_id(inst, "TaskA", "s0")
     payload = build_task_commit_payload(inst, 0, [{seg, 5, 5, ["out"]}], [], "ref-missing")
@@ -278,7 +278,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     own(inst, control_channel)
 
     :ok = :sys.suspend(Flezha.State.FsyncBatcher)
-    {_cell, writer} = workflow_cell(inst, 0, "once")
+    {_cell, writer} = bounded_cell(inst, 0, "once")
     seg = Wire.encode_cell_id(inst, "TaskA", "s0")
     payload = build_task_commit_payload(inst, 0, [{seg, 0, 0, ["out"]}], [], "ref-join")
 
@@ -371,7 +371,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     {control_channel, stream_ref} = start_control_channel("comp")
     own(inst, control_channel)
 
-    {_cell, writer} = workflow_cell(inst, 0, "undo", channel: "mid")
+    {_cell, writer} = bounded_cell(inst, 0, "undo", channel: "mid")
     :ok = WalWriter.fsync(writer)
     seg = Wire.encode_cell_id(inst, "TaskA", "s0")
 
@@ -406,7 +406,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     {control_channel, stream_ref} = start_control_channel("norefuse")
     own(inst, control_channel)
 
-    {_cell, writer} = workflow_cell(inst, 0, "never")
+    {_cell, writer} = bounded_cell(inst, 0, "never")
     :ok = WalWriter.fsync(writer)
     seg = Wire.encode_cell_id(inst, "TaskA", "s0")
     fat = :binary.copy(<<0>>, TaskJournal.max_entry_bytes() + 1)
@@ -474,7 +474,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     assert InputLog.watermark(inst) == 1
   end
 
-  test "the iteration boundary requests no snapshot: the Watchdog compacts a workflow's Cells" do
+  test "the iteration boundary requests no snapshot: the Watchdog compacts a bounded operator's Cells" do
     inst = "iter_snap_#{System.unique_integer([:positive])}"
 
     seg_id = {inst, "TaskA", "s0"}
@@ -503,7 +503,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     {control_channel, _stream_ref} = start_control_channel("park")
 
     # Stand in as the instance's Overwatch: the suspension is cast at us. The
-    # park runs in a Task (the eviction's RemOperative reply returns on this very
+    # park runs in a Task (the eviction's RemOperator reply returns on this very
     # control stream), so the stub must be visible outside the test process.
     test_pid = self()
     set_mimic_global_until_exit()
@@ -527,7 +527,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     {channel, stream_ref}
   end
 
-  # Stand in as the bound operative, owned by the channel's own session.
+  # Stand in as the bound operator, owned by the channel's own session.
   defp own(inst, control_channel),
     do: ClassRegistry.put_overwatch(inst, self(), :sys.get_state(control_channel).identity)
 
@@ -562,7 +562,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   end
 
   defp build_task_commit_payload(
-         operative_id,
+         operator_id,
          task_idx,
          cells_ran,
          handoff,
@@ -573,7 +573,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
       reference_id,
       {:task_commit,
        %RunnerCommands.TaskCommit{
-         operative_id: operative_id,
+         operator_id: operator_id,
          task_idx: task_idx,
          iter: 0,
          cells_ran: Enum.map(cells_ran, &committed_cell/1),
@@ -601,7 +601,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   defp committed_cell(id) when is_binary(id), do: %RunnerCommands.CommittedCell{cell_id: id}
 
   defp build_iter_commit_payload(
-         operative_id,
+         operator_id,
          iter,
          consumed_offset,
          handoff,
@@ -611,7 +611,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     ControlFrameTestHelper.encode_request(reference_id, {
       :iter_commit,
       %RunnerCommands.IterCommit{
-        operative_id: operative_id,
+        operator_id: operator_id,
         iter: iter,
         consumed_offset: consumed_offset,
         handoff:
@@ -624,11 +624,11 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     })
   end
 
-  defp build_iter_park_payload(operative_id, iter, wake_deadline_ms, reference_id, consumed) do
+  defp build_iter_park_payload(operator_id, iter, wake_deadline_ms, reference_id, consumed) do
     ControlFrameTestHelper.encode_request(reference_id, {
       :iter_park,
       %RunnerCommands.IterPark{
-        operative_id: operative_id,
+        operator_id: operator_id,
         iter: iter,
         wake_deadline_ms: wake_deadline_ms,
         consumed_offset: consumed

@@ -2,7 +2,7 @@
 
 `@flezha/sdk` is a poll host over `flz_core`, the runner kernel the Rust and
 Java SDKs also drive. The kernel owns transport, ordering, per-cell
-exclusivity, durability, retries, timers, credit, routing and the workflow
+exclusivity, durability, retries, timers, credit, routing and the bounded operator
 driver. This package supplies threads and user code, and nothing else —
 [`poll_core.md` → "The core decides, the SDK brings the threads"](poll_core.md#the-core-decides-the-sdk-brings-the-threads).
 
@@ -55,10 +55,10 @@ succeeds and says nothing. An installation that resolved no platform package
 therefore looks healthy until the core is first loaded, where the SDK refuses
 naming the host it detected, the package it looked for and the build above.
 
-## Writing an operative
+## Writing an operator
 
 ```ts
-import { createRunner, defineStream, defineTasklet } from '@flezha/sdk';
+import { createRunner, defineUnbounded, defineTasklet } from '@flezha/sdk';
 
 interface Trade { symbol: string; price: number; at: number }
 interface Candle { symbol: string; close: number }
@@ -78,7 +78,7 @@ const Ohlc = defineTasklet({
   },
 });
 
-export default defineStream({
+export default defineUnbounded({
   factoryId: 'candles',
   channels: (c) => {
     c.input<Trade>('trades').keyBy((trade) => trade.symbol).into(Ohlc).keyed().sink('candles');
@@ -103,17 +103,17 @@ sinks — is refused at registration, naming the handler and the defect.
 **A setting of one kind is refused by name on the other.** Both kinds use one
 builder, and the declaration carries everything it recorded: the
 effectively-once tier, a checkpoint setting or a correction window on a
-workflow is refused at registration as `EffectivelyOnceOnWorkflow`,
-`CheckpointOnWorkflow` or `CorrectionWindowOnWorkflow`, and
-`syncDurability: true` on a stream as `SyncDurabilityOnStream`. A workflow's
+bounded operator is refused at registration as `EffectivelyOnceOnBounded`,
+`CheckpointOnBounded` or `CorrectionWindowOnBounded`, and
+`syncDurability: true` on an unbounded operator as `SyncDurabilityOnUnbounded`. A bounded operator's
 own options (`loopMode`, `rollbackMode`, `maxDurationMs`)
-written on `defineStream`, full form or short, are refused where it runs,
+written on `defineUnbounded`, full form or short, are refused where it runs,
 naming them. Synchronous durability is only the definition's `syncDurability`
 field; the builder has no call for it.
 
 **Persistence and sleeping are settings of both kinds.** Either definition
 takes `persistent` (default `true`) and `sleepWhenIdle`, which defaults to
-`persistent` on a workflow and to `false` on a stream; `sleepWhenIdle: true`
+`persistent` on a bounded operator and to `false` on an unbounded operator; `sleepWhenIdle: true`
 with `persistent: false` is refused at registration as
 `SleepWithoutPersistence`.
 
@@ -121,8 +121,8 @@ with `persistent: false` is refused at registration as
 on the channel that feeds a tasklet (3 attempts from a 50 ms base by default),
 and `retryMax(1)` fails fast.
 
-**A workflow tasklet's timers work as a stream tasklet's.** A firing runs as a
-pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-workflow)); only
+**A bounded tasklet's timers work as an unbounded tasklet's.** A firing runs as a
+pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-bounded-operator)); only
 inside a `compensate` hook do `timerAfter`, `timerAtEventTime` and
 `cancelTimer` throw an error beginning `TimersUnavailable`.
 
@@ -137,8 +137,8 @@ is what makes enabling worker threads a flag rather than a rewrite.
 
 ### The short form
 
-An operative of one tasklet can be one declaration: `defineStream` or
-`defineWorkflow` carrying that tasklet's `run` body in place of `channels`.
+An operator of one tasklet can be one declaration: `defineUnbounded` or
+`defineBounded` carrying that tasklet's `run` body in place of `channels`.
 The function's name is the kind. `factoryId` is required, `sink` is optional,
 `input` names the entry channel, and `codec` is the entry codec `c.input`
 takes. The tasklet's own fields (`initialState`, `applyChange`, `cells`,
@@ -147,7 +147,7 @@ reads) are written beside `run`.
 
 ```ts
 // upcase.mjs
-export const upcase = defineStream({
+export const upcase = defineUnbounded({
   factoryId: 'upcase',
   sink: 'out',
   codec: 'text',
@@ -155,7 +155,7 @@ export const upcase = defineStream({
 });
 
 // place.mjs
-export const place = defineWorkflow({
+export const place = defineBounded({
   factoryId: 'place',
   sink: 'placed',
   input: 'order',
@@ -171,19 +171,19 @@ await runner.registerFactory('./place.mjs');
 await runner.run();
 ```
 
-The generated operative is the one you would have written by hand with that
+The generated operator is the one you would have written by hand with that
 single tasklet: an entry channel named `input`, or the `input` field's value,
 decoded by `codec`; the tasklet, named `factoryId` verbatim, so its cells
 keep their state path when it grows into the full form; a plugin sink named by
-`sink`; and every class-level setting at its default. A workflow short form is
-a `once` workflow unless it writes `loopMode`, run once over its first
-message: `flz operative start --text '<payload>'`, or a start followed by
-`flz operative send`; a second message to a `once` instance is accepted and
+`sink`; and every class-level setting at its default. A bounded short form is
+a `once` bounded operator unless it writes `loopMode`, run once over its first
+message: `flz operator start --text '<payload>'`, or a start followed by
+`flz operator send`; a second message to a `once` instance is accepted and
 never read. With `loopMode: 'per_input'` it runs once per message and does
 not complete after the first:
 
 ```ts
-export const chat = defineWorkflow({
+export const chat = defineBounded({
   factoryId: 'chat',
   sink: 'replies',
   codec: 'text',
@@ -196,7 +196,7 @@ With no `sink` there is no plugin channel, so the tasklet has no output
 channel either: its `run` keeps state and returns nothing.
 
 ```ts
-export const counter = defineStream({
+export const counter = defineUnbounded({
   factoryId: 'counter',
   input: 'ticks',
   codec: 'text',
@@ -211,24 +211,24 @@ export const counter = defineStream({
 ```
 
 Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
-edge, an edge's retry ladder, and every class-level setting but a workflow's
+edge, an edge's retry ladder, and every class-level setting but a bounded operator's
 loop mode (the effectively-once tier, a correction window, a rollback mode, a
 maximum duration).
 
-The spec is built where `defineStream` or `defineWorkflow` runs, so a
+The spec is built where `defineUnbounded` or `defineBounded` runs, so a
 malformed short form is refused while the module loads rather than inside
 `run()`. Two refusals name themselves: `ShortFormWithTopology` (`run` beside
 `channels`), and `DuplicateFactoryId`, raised when the runner declares a second
-operative, of either kind, under a factory id it holds. A key written where it
+operator, of either kind, under a factory id it holds. A key written where it
 does not belong is refused naming the key: a class-level setting other than a
-workflow's `loopMode`, `name` or `kind` beside `run`, `sink`, `input`, `codec`
+bounded operator's `loopMode`, `name` or `kind` beside `run`, `sink`, `input`, `codec`
 or a tasklet field beside `channels`, and `kind`, `sink`, `input` or `codec` on
 a `defineTasklet`. There is no `SinkWithoutOutput`: a plain `.mjs` author runs
 no type checker and this SDK ships no build step, so a body that
 returns nothing cannot be seen here. The manifest leaves
 `shorthand_typed_output` off and the conformance row skips by name. For the same
 reason a `loopMode` or `rollbackMode` outside the declared values is refused
-where `defineWorkflow` runs, naming the value.
+where `defineBounded` runs, naming the value.
 
 ## The parallelism model, as arithmetic
 
@@ -298,7 +298,7 @@ not exported to JavaScript at all; it is driven from the SDK's own native
 threads, never the runtime's shared I/O threadpool. `complete`, `spawnWait`
 and `start` return promises whose blocking work
 runs on native threads the binding owns; `spawnRequest` and `spawnTryResult`
-never wait, so `ctx.spawnWorkflow` returns its handle synchronously and only
+never wait, so `ctx.spawnBounded` returns its handle synchronously and only
 the handle's `wait()` is a promise. A test over the addon's exported
 surface asserts this rather than leaving it to review.
 
@@ -334,15 +334,15 @@ passes through, a string is sent as UTF-8, and anything else as JSON. So a sink
 needs no codec for a string, bytes or a JSON value, and names one only to pick
 another format, `'json'` to quote a string or `'msgpack'`. A decoder or encoder
 function takes the place of a codec for anything else. A codec name outside the
-four does not type-check, and from JavaScript it is refused when the operative
+four does not type-check, and from JavaScript it is refused when the operator
 is declared, as is a codec given beside a function on one channel, naming the
-operative and the channel.
+operator and the channel.
 
 A JSON number is a double, so an integer above 2^53 loses precision on the way
 in and out. A `bigint`, `undefined` or a function has no JSON form and fails
 the emit naming the channel; `'msgpack'` carries a `bigint` at any width.
 
-A value passed between two tasklets of one operative never crosses a channel
+A value passed between two tasklets of one operator never crosses a channel
 codec: it stays MessagePack. An Elixir entry declared with no decoder hands its
 tasklet the binary instead, since an Elixir string is its binary, so the same
 bytes on an undeclared entry are an object here and a string there.
@@ -369,14 +369,14 @@ refused by name rather than decoded, and the reverse holds too.
 
 ## Local mode: run a graph with no controller
 
-`LocalOperative.start` takes the operative definition you deploy and runs its
+`LocalOperator.start` takes the operator definition you deploy and runs its
 declared graph in this process — no controller, no socket, no local-mode member
 on the definition:
 
 ```ts
-import { LocalOperative } from '@flezha/sdk';
+import { LocalOperator } from '@flezha/sdk';
 
-const run = LocalOperative.start(WordCount);
+const run = LocalOperator.start(WordCount);
 try {
   run.onSink('totals', (out) => console.log(out.payload.toString('utf8')));
   await run.feed('lines', 'the quick brown fox');

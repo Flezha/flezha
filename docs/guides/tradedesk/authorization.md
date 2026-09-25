@@ -84,7 +84,7 @@ runs unattended, and a key that lapsed would stop it at its next restart.
 > [`namespaces.md`](namespaces.md) creates next; a key can be issued before its
 > namespace exists. `--ttl never` is required, since without it the token gets
 > the default lifetime of one day and is refused. Keep the token: the runner in
-> [`stream_basics.md`](stream_basics.md) reads it from
+> [`unbounded_basics.md`](unbounded_basics.md) reads it from
 > `FLEZHA_NAMESPACE_SECRET`.
 > {: .step}
 
@@ -109,17 +109,17 @@ namespace. Only `admin@_system` reaches across namespaces.
 
 | Role | What it may do |
 |---|---|
-| `viewer` | read: operatives, plugins, cell state, audit, the schedule |
-| `app` | what an application does to its own work: start, stop and send to an operative, listen to it, enable and disable a plugin |
-| `operator` | everything `app` may, plus the rest of the operative lifecycle: the dead-letter queue, rewind, replay, rescale, schedules |
-| `admin` | everything `operator` may, plus tokens, roles, namespaces and quotas, and stopping the controller |
+| `viewer` | read: operators, plugins, cell state, audit, the schedule |
+| `app` | what an application does to its own work: start, stop and send to an operator, listen to it, enable and disable a plugin |
+| `ops` | everything `app` may, plus the rest of the operator lifecycle: the dead-letter queue, rewind, replay, rescale, schedules |
+| `admin` | everything `ops` may, plus tokens, roles, namespaces and quotas, and stopping the controller |
 | `runner` | connect a runner, and nothing else |
-| `spawner` | what a runner needs so that a tasklet can start a workflow: start and send, in its own namespace |
-| `stopper` | what a runner needs to stop its own operatives |
+| `spawner` | what a runner needs so that a tasklet can start a bounded operator: start and send, in its own namespace |
+| `stopper` | what a runner needs to stop its own operators |
 
 The key makes the runner `runner@trading`, which holds only `runner`.
-[`workflow_basics.md`](workflow_basics.md) binds `spawner` to it as well, when
-the stream operative starts its first workflow.
+[`bounded_basics.md`](bounded_basics.md) binds `spawner` to it as well, when
+the unbounded operator starts its first bounded operator.
 [`../../operations/authn_authz.md`](../../operations/authn_authz.md) has every
 verb and the role that grants it.
 

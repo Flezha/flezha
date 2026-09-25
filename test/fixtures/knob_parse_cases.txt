@@ -3,7 +3,7 @@
 # `type|input|expected`, one case per line. `expected` is the value the text
 # means, or `error` when the text is not a value of that type at all — a reader
 # answers its row's default for those, and the controller's boot refuses on
-# every type but `positive_int` and `bool`, because an operator who sets a knob
+# every type but `positive_int` and `bool`, because a user who sets a knob
 # and silently gets the default back has been told a knob exists that does
 # nothing.
 #

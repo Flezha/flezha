@@ -54,8 +54,8 @@ defmodule FlezhaTest.Helper.CreditTestHelper do
     channel_rows(runner_id) |> Enum.map(& &1.hb_credit_parked) |> Enum.max(fn -> 0 end)
   end
 
-  @doc "Wait for `operative_id`'s WalWriter registration under `tasklet`; returns the cell_id."
-  def wait_for_cell(operative_id, tasklet, timeout_ms) do
+  @doc "Wait for `operator_id`'s WalWriter registration under `tasklet`; returns the cell_id."
+  def wait_for_cell(operator_id, tasklet, timeout_ms) do
     registry = Flezha.State.Supervisor.registry_name()
 
     result =
@@ -63,14 +63,14 @@ defmodule FlezhaTest.Helper.CreditTestHelper do
         fn ->
           Registry.select(registry, [{{:"$1", :_, :_}, [], [:"$1"]}])
           |> Enum.find(fn
-            {^operative_id, ^tasklet, _pk} -> true
+            {^operator_id, ^tasklet, _pk} -> true
             _ -> false
           end)
         end,
         timeout_ms
       )
 
-    assert result, "no WalWriter registered for #{operative_id} — is the feed flowing?"
+    assert result, "no WalWriter registered for #{operator_id} — is the feed flowing?"
     result
   end
 

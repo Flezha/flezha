@@ -19,7 +19,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTierRecordsTest do
   describe "effectively-once tier records" do
     @tier_metadata %{
       "channel" => "out",
-      "flz.cell" => "MarketOperative/s1/k1",
+      "flz.cell" => "MarketOperator/s1/k1",
       "flz.seq" => "42.0",
       "flz.epoch" => "1",
       "flz.key" => "BTC/1m/1720000000"
@@ -38,7 +38,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTierRecordsTest do
       assert [%Kayrock.RecordBatch.RecordHeader{key: "flezha.dedup_key", value: dedup}] =
                record.headers
 
-      assert dedup == "MarketOperative/s1/k1/42.0/1"
+      assert dedup == "MarketOperator/s1/k1/42.0/1"
       refute dedup =~ "processor_"
       refute dedup =~ "compute_engine_"
     end
@@ -91,7 +91,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTierRecordsTest do
       assert :ok =
                ProducerWorker.enqueue(pid, "candle", %{
                  "channel" => "ohlc_out",
-                 "flz.cell" => "MarketOperative/ohlc/BTC-USD",
+                 "flz.cell" => "MarketOperator/ohlc/BTC-USD",
                  "flz.seq" => "42.0",
                  "flz.key" => "BTC/USD"
                })

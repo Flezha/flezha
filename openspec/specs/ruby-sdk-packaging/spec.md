@@ -25,7 +25,7 @@ The SDK SHALL publish a precompiled native gem per supported platform, each embe
 
 #### Scenario: The published gem is the tested gem
 - **WHEN** the end-to-end Ruby arm runs in CI
-- **THEN** it SHALL run against the cross-built gem produced by the same workflow, not against an ad-hoc local build
+- **THEN** it SHALL run against the cross-built gem produced by the same bounded operator, not against an ad-hoc local build
 
 ### Requirement: Schema version is negotiated before any controller connection
 
@@ -37,14 +37,14 @@ Context creation SHALL negotiate the activation schema version between the gem's
 
 ### Requirement: YJIT is enabled by default and reported at startup
 
-The runner entry point SHALL enable YJIT when the running Ruby supports it and the operator has not already decided, SHALL allow the operator to override that decision, and SHALL report the resulting JIT state in the runner's startup line so a measurement can never be ambiguous about it.
+The runner entry point SHALL enable YJIT when the running Ruby supports it and the user has not already decided, SHALL allow the user to override that decision, and SHALL report the resulting JIT state in the runner's startup line so a measurement can never be ambiguous about it.
 
 #### Scenario: Default-on and reported
-- **WHEN** the runner starts on a Ruby with YJIT available and no operator override
+- **WHEN** the runner starts on a Ruby with YJIT available and no user override
 - **THEN** YJIT SHALL be enabled and the startup line SHALL say so
 
-#### Scenario: The operator's decision wins
-- **WHEN** the operator has explicitly disabled YJIT
+#### Scenario: The user's decision wins
+- **WHEN** the user has explicitly disabled YJIT
 - **THEN** the SDK SHALL NOT enable it, and the startup line SHALL report it disabled
 
 ### Requirement: `Process.warmup` runs after declaration and before serving

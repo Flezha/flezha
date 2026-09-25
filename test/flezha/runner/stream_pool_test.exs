@@ -71,10 +71,10 @@ defmodule FlezhaTest.Runner.StreamPoolTest do
       on_exit(fn -> if Process.alive?(channel), do: GenServer.stop(channel) end)
 
       assert StreamPool.put_route(runner_id, "routed_op", self()) == :ok
-      assert :sys.get_state(channel).operative_mapping["routed_op"] == [self()]
+      assert :sys.get_state(channel).operator_mapping["routed_op"] == [self()]
 
       assert StreamPool.drop_route(runner_id, "routed_op") == :ok
-      refute Map.has_key?(:sys.get_state(channel).operative_mapping, "routed_op")
+      refute Map.has_key?(:sys.get_state(channel).operator_mapping, "routed_op")
     end
 
     test "for a session with no channels, change nothing and raise nothing" do

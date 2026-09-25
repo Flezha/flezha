@@ -20,7 +20,7 @@ defmodule FlezhaTest.OutboxCase do
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
   alias Flezha.Dlq.Store, as: DlqStore
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.SDK.RecordFrame
   alias Flezha.SDK.Wire
   alias Flezha.State.{InputLog, Outbox, Supervisor, TestHelpers, WalWriter}
@@ -48,7 +48,7 @@ defmodule FlezhaTest.OutboxCase do
         ]
 
       alias Flezha.Dlq.Store, as: DlqStore
-      alias Flezha.Operative.ClassRegistry
+      alias Flezha.Operator.ClassRegistry
       alias Flezha.SDK.{RecordFrame, Wire}
       alias Flezha.Service.CliManager
 
@@ -159,7 +159,7 @@ defmodule FlezhaTest.OutboxCase do
   end
 
   @doc """
-  Arm this process as the operative's Overwatch and start its writer — the two
+  Arm this process as the operator's Overwatch and start its writer — the two
   steps every dispatch test needs before the first append, because a dispatch
   with no resolvable Overwatch schedules a retry instead of a delivery.
   """

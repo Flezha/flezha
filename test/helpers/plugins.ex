@@ -61,7 +61,7 @@ defmodule Flezha.TestHelpers.Plugins do
           provider: #{first_mod},
           hooks: [{:on_input, []}],
           default_opts: %{},
-          scope: :operative
+          scope: :operator
         }
       ],
       dependencies: #{inspect(deps)}

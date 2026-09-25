@@ -64,7 +64,7 @@ defmodule Flezha.Convergence.Loop.Liveness do
       else: 1
   end
 
-  # The classifier's own defaults, with the one knob an operator whose
+  # The classifier's own defaults, with the one knob a user whose
   # Tasklets legitimately run long has to raise.
   defp classifier_opts() do
     case Config.get(:convergence_cell_stall_ms) do
@@ -84,7 +84,7 @@ defmodule Flezha.Convergence.Loop.Liveness do
       end)
 
     # Per-runner data-stream servers (StreamAcceptor-owned) — the layer
-    # that actually carries operative traffic, invisible to get_stats/1.
+    # that actually carries operator traffic, invisible to get_stats/1.
     data_drivers =
       LivenessCounters.driver_refs()
       |> Enum.flat_map(fn {{runner_id, type}, ref} ->
@@ -94,8 +94,8 @@ defmodule Flezha.Convergence.Loop.Liveness do
         end
       end)
 
-    %{channels: channels, operatives: operatives} = LivenessCounters.snapshot_all()
-    %{drivers: control_drivers ++ data_drivers, channels: channels, operatives: operatives}
+    %{channels: channels, operators: operators} = LivenessCounters.snapshot_all()
+    %{drivers: control_drivers ++ data_drivers, channels: channels, operators: operators}
   end
 
   defp maybe_emit_stall(:ok, last) when last != nil do
@@ -105,7 +105,7 @@ defmodule Flezha.Convergence.Loop.Liveness do
   defp maybe_emit_stall(:ok, nil), do: :ok
 
   defp maybe_emit_stall({layer, ctx}, last) when layer != last do
-    # Telemetry feeds the bus; the log line is what an operator greps during
+    # Telemetry feeds the bus; the log line is what a user greps during
     # an incident. A data-plane freeze that reaches the logs only at recovery
     # is the case this line exists for.
     Logger.warning(

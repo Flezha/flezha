@@ -13,7 +13,7 @@ defmodule Flezha.State.WalRewindTest do
   # async: false: writes Application env; a shared on-disk root; registered singletons.
   use FlezhaTest.Case, fixtures: [:tmp_app_data, :state_tree], async: false
 
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.SDK.Wire
 
   alias Flezha.State.{InputLog, Paths, RecordFrame, Supervisor, WalWriter}
@@ -189,7 +189,7 @@ defmodule Flezha.State.WalRewindTest do
   end
 
   describe "consumed_offset_at/2" do
-    test "is the input-log offset an operator replay re-forwards from", ctx do
+    test "is the input-log offset an manual replay re-forwards from", ctx do
       {:ok, pid} = Supervisor.find_or_start(ctx.cell_id)
       seed(pid, 0..5)
 

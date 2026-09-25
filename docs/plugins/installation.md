@@ -1,6 +1,6 @@
 # Installable plugins
 
-For operators who install plugin packages on a controller and for authors who build them.
+For users who install plugin packages on a controller and for authors who build them.
 A plugin package (`.fpz`) is a source archive: the controller validates it, compiles it,
 hot-loads the modules and records the install so it survives a restart — no release
 rebuild. This page covers the package format, the manifest, checksums and Ed25519 signing,
@@ -61,7 +61,7 @@ end
       provider: Flezha.Examples.HelloWorld,
       hooks: [{:on_input, []}],
       default_opts: %{greeting: "hello"},
-      scope: :operative
+      scope: :operator
     }
   ],
   dependencies: []
@@ -98,7 +98,7 @@ is rejected with `{:error, :non_literal_ast}`.
 Each `:provides` entry: `:id` (binary), `:provider` (a module listed in `:modules`),
 `:hooks` (non-empty list of `{hook :: atom, opts :: keyword}`, type-checked against the
 declaration for that hook's dispatch kind when the plugin is enabled), `:scope`
-(only `:operative`), and optional `:default_opts` (a map, the provider opts at enable).
+(only `:operator`), and optional `:default_opts` (a map, the provider opts at enable).
 Violations return `{:error, {:manifest_invalid, reason}}` naming the first one.
 
 ## Checksums
@@ -116,7 +116,7 @@ openssl pkey -in plugin_key.pem -pubout -out plugin_key.pub.pem
 openssl pkeyutl -sign -inkey plugin_key.pem -rawin -in CHECKSUMS.sha256 -out signature.sig
 ```
 
-Add `signature.sig` to the archive; the controller operator installs the public key:
+Add `signature.sig` to the archive; the controller user installs the public key:
 
 ```elixir
 config :flezha, :plugin_installer,
@@ -180,10 +180,10 @@ Any failure rolls back what was produced — directories, loaded modules, the ro
 `Flezha.Plugin.Installer.enable/2` calls `Flezha.Service.PluginManager.enable_plugin/2`
 once per provision with the live id `"<plugin_id>:<provision_id>"` and the provision's
 `:provider`, `:hooks` and `:default_opts` (merged with `opts[:overrides][provision_id]`).
-The target operative is `opts[:namespace]` / `opts[:operative_id]`, falling back to the
+The target operator is `opts[:namespace]` / `opts[:operator_id]`, falling back to the
 same keys inside the merged opts. `flz plugin enable <id>` passes no opts, so a provision
-enabled from the CLI must carry `:namespace` and `:operative_id` in its `default_opts` or
-the enable is refused ("plugin missing namespace or operative_id"). A provision that fails
+enabled from the CLI must carry `:namespace` and `:operator_id` in its `default_opts` or
+the enable is refused ("plugin missing namespace or operator_id"). A provision that fails
 disables the ones enabled earlier in the same call. Refusals: `:not_found`,
 `:already_enabled`, `:load_failed`.
 
@@ -199,7 +199,7 @@ The new package runs the install pipeline — its `:id` must match
 (`{:dependents_block, [...]}`) — into a sibling `<new_version>/` directory, with the row
 marked `:pending_upgrade`. If the old version was `:enabled`, its provisions are disabled
 and the installer waits up to 5 s for in-flight `:request` tasks under
-`Flezha.Operative.MessageHandlerTaskSup`. Old modules are purged, new ones loaded, and the
+`Flezha.Operator.MessageHandlerTaskSup`. Old modules are purged, new ones loaded, and the
 new manifest's provisions re-enabled. On success the old directory is deleted and the
 status returns to what it was; on failure the new directory is removed, the old row and
 beams restored from `<old_version>/ebin/`, and the old provisions re-enabled.

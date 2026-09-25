@@ -145,11 +145,11 @@ defmodule Flezha.Shutdown.CoordinatorTest do
   end
 
   describe "drain via Migration.drain/2 (processhub-deferred-migration)" do
-    defp stub_local_operatives() do
+    defp stub_local_operators() do
       stub(HubManager, :get_running_namespaces, fn -> ["default"] end)
       stub(ProcessHub, :is_alive?, fn _hub -> true end)
 
-      # First call (capture) reports the hosted operative; later calls (the
+      # First call (capture) reports the hosted operator; later calls (the
       # post-drain locally-empty wait) fall through to the stub: gone.
       expect(ProcessHub, :process_list, fn _hub, :local -> [{"op-1", self()}] end)
       stub(ProcessHub, :process_list, fn _hub, :local -> [] end)
@@ -160,7 +160,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
 
     test "the hub drains before its supervisor stops" do
       test_pid = self()
-      stub_local_operatives()
+      stub_local_operators()
 
       stub(ProcessHub.Service.Migration, :drain, fn _hub, opts ->
         assert Keyword.fetch!(opts, :timeout) > 0
@@ -181,7 +181,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
     end
 
     test "solo node (:no_target_nodes) skips migration and completes clean" do
-      stub_local_operatives()
+      stub_local_operators()
       stub(HubManager, :stop_hub_manager, fn -> :ok end)
       stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts -> {:error, :no_target_nodes} end)
 
@@ -202,7 +202,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
 
     test "a drain precondition failure degrades instead of wedging" do
       on_exit(NodeTestHelper.override_log_level(:warning))
-      stub_local_operatives()
+      stub_local_operators()
       stub(HubManager, :stop_hub_manager, fn -> :ok end)
       stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts -> {:error, :locked} end)
 
@@ -216,7 +216,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
 
     test "forced migrations are counted and logged, outcome stays clean" do
       on_exit(NodeTestHelper.override_log_level(:warning))
-      stub_local_operatives()
+      stub_local_operators()
       stub(HubManager, :stop_hub_manager, fn -> :ok end)
 
       stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts ->
@@ -246,7 +246,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
 
     test "a drain exceeding the budget times out to {:partial, still_local}" do
       test_pid = self()
-      stub_local_operatives()
+      stub_local_operators()
 
       # A drain that never returns inside the budget.
       stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts ->
@@ -264,7 +264,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
           assert {:partial, ["op-1"]} = Coordinator.shutdown(:cli, timeout_ms: 300)
         end)
 
-      # The operator's only signal that the budget was blown is this line.
+      # The user's only signal that the budget was blown is this line.
       assert log =~ "timeout phase=draining"
       assert log =~ "still_local=1"
 
@@ -275,12 +275,12 @@ defmodule Flezha.Shutdown.CoordinatorTest do
 
   # ---------- helpers ----------
 
-  # The one remedy-shaped action outside the heal primitives: an operator verb
+  # The one remedy-shaped action outside the heal primitives: an administration verb
   # the loop is told about and never chooses.
   describe "the drain is declared to the convergence loop" do
     test "the drain declares itself at quiesce, runs as the node walk's step, and clears with finalise" do
       become_loop()
-      stub_local_operatives()
+      stub_local_operators()
       stub(HubManager, :stop_hub_manager, fn -> :ok end)
 
       test_pid = self()

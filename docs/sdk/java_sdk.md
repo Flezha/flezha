@@ -6,10 +6,10 @@ dispatch, overflow, the retry→park ladder, the partition guard, timers and the
 effectively-once tier are one implementation, not two.
 
 Authoring surface: `@Tasklet` classes, with `@State` for their state, wired by
-a `StreamOperative` / `WorkflowOperative` in `channels(ChannelBuilder)`, the one
-graph body the `Operative` base declares for both kinds; the
+an `UnboundedOperator` / `BoundedOperator` in `channels(ChannelBuilder)`, the one
+graph body the `Operator` base declares for both kinds; the
 `Tasklet` interface the annotation processor implements for them; and the
-`@StreamOperative` / `@WorkflowOperative` short form. See
+`@UnboundedOperator` / `@BoundedOperator` short form. See
 [`authoring_contract.md`](authoring_contract.md) for what each tier expands to
 and [`state_persistence.md`](state_persistence.md) for the `StateHandle` / Kryo
 side.
@@ -81,21 +81,21 @@ during a drain cannot turn a clean drain into a crash.
 
 ## The short form
 
-A class annotated `@StreamOperative` or `@WorkflowOperative` is a whole
-operative: one class with one `run`, no hand-written operative beside it. The
+A class annotated `@UnboundedOperator` or `@BoundedOperator` is a whole
+operator: one class with one `run`, no hand-written operator beside it. The
 annotation names the kind, and the class you wrote is what you register:
-`registerFactory` resolves the `<Class>StreamOperative` or
-`<Class>WorkflowOperative` the processor generates beside `<Class>Tasklet`.
+`registerFactory` resolves the `<Class>UnboundedOperator` or
+`<Class>BoundedOperator` the processor generates beside `<Class>Tasklet`.
 
 ```java
-@StreamOperative(id = "upcase", sink = "out")
+@UnboundedOperator(id = "upcase", sink = "out")
 public class Upcase {
     public String run(String value) {
         return value.toUpperCase();
     }
 }
 
-@WorkflowOperative(id = "place", sink = "placed", input = "order")
+@BoundedOperator(id = "place", sink = "placed", input = "order")
 public class Place {
     public String run(String order) {
         return order;
@@ -108,23 +108,23 @@ Flezha.createRunner("default")
         .run();
 ```
 
-The generated operative is the one you would have written by hand with that
+The generated operator is the one you would have written by hand with that
 single tasklet: an entry channel named `input`, or the `input` element's
 value; the tasklet; a plugin sink named by `sink` when one is written; a
 `factoryId()` equal to `id`; `loopMode()` returning the `loopMode` element on
-`@WorkflowOperative`; and every other operative method at its interface
-default. A workflow short form is a `once` workflow unless it writes
+`@BoundedOperator`; and every other operator method at its interface
+default. A bounded short form is a `once` bounded operator unless it writes
 `loopMode`, run once over its first message:
-`flz operative start place --text '<payload>'`, or a start followed by
-`flz operative send`; a second message to a `once` instance is accepted and
+`flz operator start place --text '<payload>'`, or a start followed by
+`flz operator send`; a second message to a `once` instance is accepted and
 never read. `loopMode = LoopMode.PER_INPUT` runs `run` once per message, and
 the instance does not complete after the first. Both annotations also
 carry the tasklet's own elements, spelled as on `@Tasklet`: `key`, `emits`,
 `keys` with an `@CellsFor` method and `capacity`; and `onFull` for the entry
 channel.
 
-`sink` is optional. With none, the operative declares the entry channel and the
-tasklet and no plugin channel: the operative that only keeps state.
+`sink` is optional. With none, the operator declares the entry channel and the
+tasklet and no plugin channel: the operator that only keeps state.
 
 ```java
 @State
@@ -132,7 +132,7 @@ public class CounterState {
     public List<String> seen = new ArrayList<>();
 }
 
-@StreamOperative(id = "counter", input = "ticks")
+@UnboundedOperator(id = "counter", input = "ticks")
 public class Counter {
     public void run(String tick, CounterStateHandle state) {
         state.pushSeen(tick);
@@ -142,51 +142,51 @@ public class Counter {
 
 Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
 edge, an edge's retry ladder, the effectively-once tier, a correction window,
-any workflow setting other than the loop mode. Java names no entry codec: an
+any bounded setting other than the loop mode. Java names no entry codec: an
 entry decodes by its declared type, so the short form takes no `codec` element.
 
-`id` must be written: the factory id is an address an operator types, and a
+`id` must be written: the factory id is an address a user types, and a
 class rename must not move it. The written `id` also names the tasklet, so a
 Java tasklet's state is saved under the same name its Rust twin uses. An
 absent `id` fails compilation naming it, as does `kind`, `sink`, `input` or
 `onFull` written on a `@Tasklet`, which declares a tasklet only. Two refusals fail
 compilation, each message beginning with its own name: `ShortFormWithTopology`
-(an annotated class that also implements `StreamOperative` or
-`WorkflowOperative`) and `SinkWithoutOutput` (a `sink` on a `void` `run` with no
-`emits`). A second operative of either kind under a factory id the runner holds
+(an annotated class that also implements `UnboundedOperator` or
+`BoundedOperator`) and `SinkWithoutOutput` (a `sink` on a `void` `run` with no
+`emits`). A second operator of either kind under a factory id the runner holds
 fails `registerFactory` with `DuplicateFactoryId`.
 
-Nothing registers itself. There is no aggregator class: every operative a
+Nothing registers itself. There is no aggregator class: every operator a
 runner declares is one the application handed to `registerFactory`.
 
-## Workflows
+## Bounded operators
 
-A `WorkflowOperative` declares its graph in `channels`, on the builder a stream
-uses, and its kind is the interface it implements: `flz operative start` names
-the factory and nothing else. Retry is the edge's, as on a stream:
+A `BoundedOperator` declares its graph in `channels`, on the builder an unbounded operator
+uses, and its kind is the interface it implements: `flz operator start` names
+the factory and nothing else. Retry is the edge's, as on an unbounded operator:
 `.retryMax(n)` / `.retryBackoffMs(ms)` on the channel that feeds a tasklet
 (default 3 attempts, 50 ms), and `retryMax(0)` is refused as `RetryMaxZero`.
 
-A workflow carries none of a stream's delivery settings. The builder's
+A bounded operator carries none of an unbounded operator's delivery settings. The builder's
 `effectivelyOnce()`, checkpoint calls and `correctionWindow(ms)` reach the core
-as written, and `registerFactory` throws `WorkflowOperativeConfigurationException`
-naming `EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow` or
-`CorrectionWindowOnWorkflow`. `syncDurability()` is the workflow's own.
+as written, and `registerFactory` throws `BoundedOperatorConfigurationException`
+naming `EffectivelyOnceOnBounded`, `CheckpointOnBounded` or
+`CorrectionWindowOnBounded`. `syncDurability()` is the bounded operator's own.
 
 Both kind interfaces carry the two class settings: `persistenceEnabled()` (default
 `true`, read from the class whatever its tasklets' Change types) and
-`sleepWhenIdle()`, `false` on `StreamOperative` and `persistenceEnabled()` on
-`WorkflowOperative`. An instance whose class sleeps is evicted after
+`sleepWhenIdle()`, `false` on `UnboundedOperator` and `persistenceEnabled()` on
+`BoundedOperator`. An instance whose class sleeps is evicted after
 `FLEZHA_PARK_IDLE_MS` of idleness and wakes on its next message with its cells
 restored; declaring it with persistence off makes `registerFactory` throw naming
 `SleepWithoutPersistence`.
 
-A workflow
-tasklet registers timers as a stream tasklet does, and a firing runs as a pass
-of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-workflow)); only a
+A bounded operator
+tasklet registers timers as an unbounded tasklet does, and a firing runs as a pass
+of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-bounded-operator)); only a
 `compensate` hook's context carries no timer session, and there every timer
-call throws `TaskletException.TimersUnavailable`. A `spawnWorkflow` naming a stream factory reads
-`SpawnException.FactoryNotWorkflow`.
+call throws `TaskletException.TimersUnavailable`. A `spawnBounded` naming an unbounded factory reads
+`SpawnException.FactoryNotBounded`.
 
 ## Scope
 

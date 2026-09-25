@@ -87,7 +87,7 @@ struct Interpreter {
     roles: Vec<String>,
     mailbox: HashMap<String, usize>,
     class: Vec<String>,
-    workflow: bool,
+    bounded: bool,
     merge_group: u32,
 }
 
@@ -220,7 +220,7 @@ impl Interpreter {
 
     fn class_flag(&mut self, flag: &str, value: &str) {
         match flag {
-            "workflow" => self.workflow = true,
+            "bounded" => self.bounded = true,
             "persistent" | "effectively_once" | "checkpoint_ack" | "sync_durability"
             | "sleep_when_idle" => {
                 self.class.push(format!(r#""{flag}":true"#));
@@ -294,13 +294,9 @@ impl Interpreter {
             .collect();
 
         let class: String = self.class.iter().map(|f| format!(",{f}")).collect();
-        let workflow = if self.workflow {
-            r#","workflow":{}"#
-        } else {
-            ""
-        };
+        let bounded = if self.bounded { r#","bounded":{}"# } else { "" };
         format!(
-            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0"{class}{workflow},
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0"{class}{bounded},
                  "channels":[{}],"tasklets":[{}]}}"#,
             channels.join(","),
             tasklets.join(",")
@@ -371,20 +367,20 @@ fn every_fixture_row_answers_what_it_names() {
     );
 }
 
-/// A stream-only setting on a workflow is refused by the workflow's name, never
-/// by the stream rule that assumes the tier it would rest on.
+/// An unbounded-only setting on a bounded operator is refused by the bounded operator's name, never
+/// by the unbounded rule that assumes the tier it would rest on.
 #[test]
-fn a_stream_setting_on_a_workflow_is_refused_by_the_workflows_name() {
+fn a_stream_setting_on_a_bounded_is_refused_by_the_bounded_name() {
     let row = Row {
-        refusal: "CheckpointOnWorkflow".into(),
-        topology: "checkpoint_workflow".into(),
-        steps: "class.workflow; class.persistent; class.checkpoint_ack; entry(in); in.into(plain)"
+        refusal: "CheckpointOnBounded".into(),
+        topology: "checkpoint_bounded".into(),
+        steps: "class.bounded; class.persistent; class.checkpoint_ack; entry(in); in.into(plain)"
             .into(),
-        needs: "workflow".into(),
+        needs: "bounded".into(),
     };
-    let issues = check(record_of(&row)).expect_err("a checkpoint on a workflow is refused");
+    let issues = check(record_of(&row)).expect_err("a checkpoint on a bounded operator is refused");
     let names: Vec<&str> = issues.iter().map(TopologyIssue::name).collect();
-    assert_eq!(names, ["CheckpointOnWorkflow"]);
+    assert_eq!(names, ["CheckpointOnBounded"]);
 }
 
 /// Every named variant is produced by some row. `Declaration` is the residue

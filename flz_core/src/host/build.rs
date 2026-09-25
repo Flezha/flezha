@@ -15,21 +15,21 @@ use super::cell::{
     host_serialize_unreachable, HostPayload, HostTaskletFacts,
 };
 use super::decl::{
-    HostAckGranularity, HostBeyondWindow, HostCellModeDecl, HostChannelDecl, HostChannelKind,
-    HostCheckpointOutputs, HostClassDecl, HostClock, HostOverflow, HostRollbackMode,
-    HostTaskletDecl, HostWorkflowDecl,
+    HostAckGranularity, HostBeyondWindow, HostBoundedDecl, HostCellModeDecl, HostChannelDecl,
+    HostChannelKind, HostCheckpointOutputs, HostClassDecl, HostClock, HostOverflow,
+    HostRollbackMode, HostTaskletDecl,
 };
 use super::register::DerivedChannel;
+use crate::bounded::spec::{graph_order, BoundedSpec, GraphSeed, TaskDag};
+use crate::bounded::{LoopMode, RollbackMode};
 use crate::channel::{
     ChannelDescriptor, ChannelKind, EntryWrapFn, OverflowPolicy, RetryPolicy, TaskletId,
 };
 use crate::error::Error;
-use crate::operative::topology::{
+use crate::operator::topology::{
     AckGranularity, BeyondWindowPolicy, CellMode, CheckpointOutputs, CheckpointPolicy,
-    CorrectionPolicy, OperativeTopology, TaskletDescriptor,
+    CorrectionPolicy, OperatorTopology, TaskletDescriptor,
 };
-use crate::workflow::spec::{graph_order, GraphSeed, TaskDag, WorkflowSpec};
-use crate::workflow::{LoopMode, RollbackMode};
 
 /// The class facts every tasklet and the topology read, resolved once so
 /// they agree.
@@ -69,10 +69,10 @@ pub(super) fn resolve_class_facts(decl: &HostClassDecl, ack: HostAckGranularity)
         ack_granularity,
         compact_after_bytes: decl
             .compact_after_bytes
-            .unwrap_or(crate::operative::topology::DEFAULT_COMPACT_AFTER_BYTES),
+            .unwrap_or(crate::operator::topology::DEFAULT_COMPACT_AFTER_BYTES),
     }
 }
-/// Every channel descriptor, and the per-operative name index the runtime
+/// Every channel descriptor, and the per-operator name index the runtime
 /// resolves a channel by. The names are the DERIVED ones, so a `named`
 /// override reaches the runtime and the index at once.
 pub(super) fn build_channels(
@@ -272,19 +272,19 @@ fn host_facts(
     }
 }
 
-/// The workflow half: the chain's spec over the topology the stream half built.
-pub(super) fn workflow_spec(
+/// The bounded operator half: the chain's spec over the topology the unbounded half built.
+pub(super) fn bounded_spec(
     decl: &HostClassDecl,
-    workflow: &HostWorkflowDecl,
+    bounded: &HostBoundedDecl,
     dag: TaskDag,
     loop_mode: LoopMode,
-) -> WorkflowSpec {
-    WorkflowSpec {
+) -> BoundedSpec {
+    BoundedSpec {
         dag,
-        max_duration: workflow
+        max_duration: bounded
             .max_duration_ms
             .map(std::time::Duration::from_millis),
-        rollback_mode: rollback_of(workflow.rollback_mode),
+        rollback_mode: rollback_of(bounded.rollback_mode),
         loop_mode,
         sync_durability: decl.sync_durability,
     }
@@ -300,11 +300,11 @@ fn rollback_of(mode: HostRollbackMode) -> RollbackMode {
 /// Kahn toposort from every entry channel's consumers, refusing what the
 /// typed builder refuses: no entry channel, several outputs, cycles,
 /// disconnected tasklets.
-pub(super) fn build_host_dag(topology: &OperativeTopology) -> Result<TaskDag, Error> {
+pub(super) fn build_host_dag(topology: &OperatorTopology) -> Result<TaskDag, Error> {
     let entries = topology.entry_consumers();
     if entries.is_empty() {
         return Err(Error::Declaration(
-            "a structured workflow class declares an entry channel its messages arrive on"
+            "a structured bounded class declares an entry channel its messages arrive on"
                 .to_string(),
         ));
     }
@@ -327,9 +327,9 @@ pub(super) fn build_host_dag(topology: &OperativeTopology) -> Result<TaskDag, Er
     Ok(TaskDag::from_walk(walk, entries))
 }
 
-/// Producer → consumer pairs over the inter-task channels only: a workflow's
+/// Producer → consumer pairs over the inter-task channels only: a bounded operator's
 /// stages are wired to each other, never through the entry channel.
-fn inter_task_edges(topology: &OperativeTopology) -> Vec<(TaskletId, TaskletId)> {
+fn inter_task_edges(topology: &OperatorTopology) -> Vec<(TaskletId, TaskletId)> {
     let mut edges = Vec::new();
     for channel in &topology.channels {
         if channel.kind != ChannelKind::InterTasklet {
@@ -346,7 +346,7 @@ fn inter_task_edges(topology: &OperativeTopology) -> Vec<(TaskletId, TaskletId)>
 }
 
 /// No tasklet producing two channels: a stage has one output a child reads.
-fn refuse_several_outputs(topology: &OperativeTopology) -> Result<(), Error> {
+fn refuse_several_outputs(topology: &OperatorTopology) -> Result<(), Error> {
     for (task_id, _) in topology.tasklets.iter().enumerate() {
         let produced = topology
             .channels

@@ -97,7 +97,7 @@ inserted under a unique synthetic key, unchanged.
 
 #### Scenario: A tier-off keyed record updates its row on every emit
 
-- **WHEN** an operative on a `.keyed()` channel without the effectively-once tier
+- **WHEN** an operator on a `.keyed()` channel without the effectively-once tier
   emits twice for the same `flz.key`, stamped `flz.seq` `"4.0"` then `"5.0"`, with
   no `flz.epoch`
 - **THEN** the row for that key holds the second record's payload and `seq = "5.0"`
@@ -137,7 +137,7 @@ inserted under a unique synthetic key, unchanged.
 
 `init_provider/1` SHALL refuse an option key the provider does not offer, and SHALL refuse a tunable whose value it cannot interpret, before the sink worker or its connection pool is started. Both refusals SHALL be returned as `{:error, binary()}` naming the key or the option and the offered value.
 
-The strict option set SHALL be declared, so that the check runs on the path an operator's stored configuration travels. A plugin spec and a stored capability row reach `init_provider/1` without ever constructing the provider struct, so a check reachable only from the CLI string-map builder does not satisfy this requirement.
+The strict option set SHALL be declared, so that the check runs on the path a user's stored configuration travels. A plugin spec and a stored capability row reach `init_provider/1` without ever constructing the provider struct, so a check reachable only from the CLI string-map builder does not satisfy this requirement.
 
 The health threshold SHALL be validated at preparation and read as a plain value by the health probe. A conversion performed on the probe path is a conversion performed on every probe: when it raises, the probe's uncertainty handling reports `{:fail_open, …}`, which reads as healthy, so a single unreadable value disables that plugin's health verdict for as long as it stays configured — silently, and for ever.
 
@@ -157,7 +157,7 @@ The health threshold SHALL be validated at preparation and read as a plain value
 
 #### Scenario: Host-injected keys are still accepted
 
-- **GIVEN** a plugin enabled on an operative, so that the host merges its identity keys into the provider's opts
+- **GIVEN** a plugin enabled on an operator, so that the host merges its identity keys into the provider's opts
 - **WHEN** the plugin is enabled
 - **THEN** those keys SHALL be accepted, and the sink SHALL start exactly as it does today
 

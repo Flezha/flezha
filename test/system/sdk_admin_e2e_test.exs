@@ -1,7 +1,7 @@
 defmodule FlezhaTest.System.SdkAdminE2ETest do
   @moduledoc """
   let-an-application-administer-its-namespace §7: an application starts, feeds
-  and stops its own operatives with no operator credential, under enforcement,
+  and stops its own operators with no user credential, under enforcement,
   against a live runner.
 
   Nothing here calls the controller directly. Every act is issued by the
@@ -21,7 +21,7 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
   alias Flezha.Observability.Registry, as: ObservabilityRegistry
   alias Flezha.Observability.TestSinks
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -42,7 +42,7 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
     {:ok, _} = NamespaceStore.create(@ns, quotas: %{})
     {:ok, _} = NamespaceStore.create(@unbound_ns, quotas: %{})
 
-    # The whole operator story: one command, once per namespace. Nothing is
+    # The whole user story: one command, once per namespace. Nothing is
     # bound for `@unbound_ns`, which is what makes its refusal the default.
     :ok = RoleStore.bind("runner@" <> @ns, @ns, :app)
 
@@ -54,7 +54,7 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
     on_exit(fn ->
       for ns <- [@ns, @unbound_ns] do
         try do
-          OperativeManager.stop_all_operatives(ns)
+          OperatorManager.stop_all_operators(ns)
           FleetManager.stop_namespace(ns)
         catch
           _kind, _reason -> :ok
@@ -66,14 +66,14 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
   end
 
   describe "an application administers the namespace its connection proved" do
-    test "it starts an operative, sees it running, feeds it and stops it", %{secrets: secrets} do
+    test "it starts an operator, sees it running, feeds it and stops it", %{secrets: secrets} do
       script = [
-        call("Operative.start", [%{factory_id: "do_nothing"}]),
-        call("Operative.start", [%{id: "app_started", factory_id: "do_nothing"}]),
-        call("Operative.start", [%{id: "app_started", factory_id: "do_nothing"}]),
-        call("Operative.list_operatives", []),
-        call("Operative.send", ["app_started", "from-the-application", ""]),
-        call("Operative.stop", ["app_started"])
+        call("Operator.start", [%{factory_id: "do_nothing"}]),
+        call("Operator.start", [%{id: "app_started", factory_id: "do_nothing"}]),
+        call("Operator.start", [%{id: "app_started", factory_id: "do_nothing"}]),
+        call("Operator.list_operators", []),
+        call("Operator.send", ["app_started", "from-the-application", ""]),
+        call("Operator.stop", ["app_started"])
       ]
 
       {port, _runner_id} = drill(@ns, script, secrets)
@@ -81,84 +81,84 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
       answers = answers(port, 6)
 
       assert [unnamed, named, again, list, send, stop] = answers
-      assert {"Operative.start", "ok", unnamed} = unnamed
+      assert {"Operator.start", "ok", unnamed} = unnamed
       assert %{"id" => generated, "outcome" => "started"} = Jason.decode!(unnamed)
       assert generated =~ ~r/\Ado_nothing-[a-z2-7]{16}\z/
 
-      assert {"Operative.start", "ok", named} = named
+      assert {"Operator.start", "ok", named} = named
       assert Jason.decode!(named) == %{"id" => "app_started", "outcome" => "started"}
-      assert {"Operative.start", "ok", again} = again
+      assert {"Operator.start", "ok", again} = again
       assert Jason.decode!(again) == %{"id" => "app_started", "outcome" => "already_running"}
 
-      assert {"Operative.list_operatives", "ok", running} = list
+      assert {"Operator.list_operators", "ok", running} = list
       assert "app_started" in Jason.decode!(running)
       assert generated in Jason.decode!(running)
-      assert {"Operative.send", "ok", _delivered} = send
-      assert {"Operative.stop", "ok", _stopped} = stop
+      assert {"Operator.send", "ok", _delivered} = send
+      assert {"Operator.stop", "ok", _stopped} = stop
 
-      # The operator's own surface agrees: the operative the application
+      # The user's own surface agrees: the operator the application
       # started was the cluster's, and stopping it took it away.
-      assert {:ok, ids} = OperativeManager.get_operative_ids(@ns)
+      assert {:ok, ids} = OperatorManager.get_operator_ids(@ns)
       assert "app_started" not in ids
     end
 
     test "a start is recorded naming the requester, and a read is not", %{secrets: secrets} do
-      watch_operative_records()
+      watch_operator_records()
 
       {port, _runner_id} =
         drill(
           @ns,
           [
-            call("Operative.start", [%{id: "app_read_target", factory_id: "do_nothing"}]),
-            call("Operative.cell_state", ["app_read_target", "default"]),
+            call("Operator.start", [%{id: "app_read_target", factory_id: "do_nothing"}]),
+            call("Operator.cell_state", ["app_read_target", "default"]),
             call("PluginManager.list", [])
           ],
           secrets
         )
 
       assert [_start, state, plugins] = answers(port, 3)
-      assert {"Operative.cell_state", verdict, _} = state
+      assert {"Operator.cell_state", verdict, _} = state
       assert verdict in ["ok", "err"]
       assert {"PluginManager.list", "ok", _} = plugins
 
       # The start's record names the connection, not a token, and is the shape
-      # an operator-issued start writes.
+      # a user-issued start writes.
       record = TestSinks.receive_signal(&(&1.name == :start), 5_000)
       assert record, "the SDK-issued start wrote no audit record"
-      assert record.metadata.action == :"operative.start"
+      assert record.metadata.action == :"operator.start"
       assert record.metadata.namespace == @ns
       assert record.metadata.principal == "runner@" <> @ns
       assert record.metadata.caller_source == :sdk
-      assert record.metadata.operative == "app_read_target"
+      assert record.metadata.operator == "app_read_target"
 
       # And the two reads wrote nothing: their rows declare no audit.
       refute TestSinks.receive_signal(fn _signal -> true end, 500)
     end
 
-    test "a started operative outlives the runner that asked for it", %{secrets: secrets} do
+    test "a started operator outlives the runner that asked for it", %{secrets: secrets} do
       {port, runner_id} =
         drill(
           @ns,
-          [call("Operative.start", [%{id: "app_outlives", factory_id: "do_nothing"}])],
+          [call("Operator.start", [%{id: "app_outlives", factory_id: "do_nothing"}])],
           secrets
         )
 
-      assert [{"Operative.start", "ok", _}] = answers(port, 1)
-      assert {:ok, running} = OperativeManager.get_operative_ids(@ns)
+      assert [{"Operator.start", "ok", _}] = answers(port, 1)
+      assert {:ok, running} = OperatorManager.get_operator_ids(@ns)
       assert "app_outlives" in running
 
       NodeTestHelper.stop_runner(@ns, runner_id)
 
-      # Owned by the cluster, not by the connection: an operator still sees it.
-      assert {:ok, after_disconnect} = OperativeManager.get_operative_ids(@ns)
+      # Owned by the cluster, not by the connection: a user still sees it.
+      assert {:ok, after_disconnect} = OperatorManager.get_operator_ids(@ns)
       assert "app_outlives" in after_disconnect
     end
 
-    test "it enables a plugin on its own operative and disables it again", %{secrets: secrets} do
+    test "it enables a plugin on its own operator and disables it again", %{secrets: secrets} do
       plugin = %{
         id: "app_sink",
-        provider: "operative_stdout",
-        operative_id: "app_plugin_target",
+        provider: "operator_stdout",
+        operator_id: "app_plugin_target",
         hooks: [["on_output", %{}]]
       }
 
@@ -166,7 +166,7 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
         drill(
           @ns,
           [
-            call("Operative.start", [%{id: "app_plugin_target", factory_id: "do_nothing"}]),
+            call("Operator.start", [%{id: "app_plugin_target", factory_id: "do_nothing"}]),
             call("PluginManager.enable", ["app_sink", plugin]),
             call("PluginManager.list", []),
             call("PluginManager.disable", ["app_sink"])
@@ -182,7 +182,7 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
     end
   end
 
-  describe "the authority is granted, and revoked, by an operator" do
+  describe "the authority is granted, and revoked, by a user" do
     test "a namespace nobody bound refuses a start and names the missing grant", %{
       secrets: secrets
     } do
@@ -190,33 +190,33 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
         drill(
           @unbound_ns,
           [
-            call("Operative.start", [%{id: "unbound_start", factory_id: "do_nothing"}])
+            call("Operator.start", [%{id: "unbound_start", factory_id: "do_nothing"}])
           ],
           secrets
         )
 
-      assert [{"Operative.start", "err", reason}] = answers(port, 1)
+      assert [{"Operator.start", "err", reason}] = answers(port, 1)
       assert reason =~ "role_insufficient"
-      assert {:ok, ids} = OperativeManager.get_operative_ids(@unbound_ns)
+      assert {:ok, ids} = OperatorManager.get_operator_ids(@unbound_ns)
       assert "unbound_start" not in ids
     end
 
-    test "an over-quota namespace refuses the application exactly as it refuses an operator", %{
+    test "an over-quota namespace refuses the application exactly as it refuses a user", %{
       secrets: secrets
     } do
-      {:ok, _} = NamespaceStore.set_quotas(@ns, %{max_operatives: 0})
+      {:ok, _} = NamespaceStore.set_quotas(@ns, %{max_operators: 0})
       on_exit(fn -> {:ok, _} = NamespaceStore.set_quotas(@ns, %{}) end)
 
       {port, _runner_id} =
         drill(
           @ns,
-          [call("Operative.start", [%{id: "app_over_quota", factory_id: "do_nothing"}])],
+          [call("Operator.start", [%{id: "app_over_quota", factory_id: "do_nothing"}])],
           secrets
         )
 
-      assert [{"Operative.start", "err", reason}] = answers(port, 1)
+      assert [{"Operator.start", "err", reason}] = answers(port, 1)
       assert reason =~ "quota_exceeded"
-      assert reason =~ "max_operatives"
+      assert reason =~ "max_operators"
     end
 
     test "unbinding mid-session refuses the next call, with no reconnect", %{secrets: secrets} do
@@ -224,19 +224,19 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
         drill(
           @ns,
           [
-            call("Operative.list_operatives", []),
-            Map.put(call("Operative.list_operatives", []), :after_ms, 3_000)
+            call("Operator.list_operators", []),
+            Map.put(call("Operator.list_operators", []), :after_ms, 3_000)
           ],
           secrets
         )
 
       # The first call proves the binding is live; then it is taken away while
       # the connection stays open.
-      assert [{"Operative.list_operatives", "ok", _}] = answers(port, 1)
+      assert [{"Operator.list_operators", "ok", _}] = answers(port, 1)
       :ok = RoleStore.unbind("runner@" <> @ns)
       on_exit(fn -> :ok = RoleStore.bind("runner@" <> @ns, @ns, :app) end)
 
-      assert [_first, {"Operative.list_operatives", "err", reason}] = answers(port, 2)
+      assert [_first, {"Operator.list_operators", "err", reason}] = answers(port, 2)
       assert reason =~ "role_insufficient"
     end
   end
@@ -245,10 +245,10 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
 
   defp call(verb, args), do: %{verb: verb, args: args}
 
-  # Every record the operative service writes, forwarded to this test process.
+  # Every record the operator service writes, forwarded to this test process.
   # The audit assertion needs the record, not a count, so the sink is the one
-  # that hands signals back rather than the ring the operator's tooling reads.
-  defp watch_operative_records do
+  # that hands signals back rather than the ring the user's tooling reads.
+  defp watch_operator_records do
     sink = :"admin_records_#{:erlang.unique_integer([:positive])}"
 
     {:ok, _pid} =
@@ -258,7 +258,7 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
         config: %{
           counter_ref: :counters.new(1, [:atomics]),
           parent: self(),
-          sources: [:operative_service, :plugin_service]
+          sources: [:operator_service, :plugin_service]
         }
       })
 

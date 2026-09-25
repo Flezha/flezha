@@ -15,7 +15,7 @@ defmodule Flezha.Convergence.Verdict do
     * `:degraded` — the loop, in place (restart the plugin, resync the runner)
     * `:failed` — the loop, by rebinding: the runner is gone
     * `:unbound` — the loop, by binding
-    * `:parked` — an operator or a plugin fix; the loop does not touch it
+    * `:parked` — a user or a plugin fix; the loop does not touch it
     * `:suspended` — nobody until the committed boundary; planned, not a fault
     * `:unknown` — the next tick; an uncertain probe escalates nothing
 
@@ -26,7 +26,7 @@ defmodule Flezha.Convergence.Verdict do
   """
 
   @states [:healthy, :degraded, :failed, :unbound, :parked, :suspended, :unknown]
-  @kinds [:runner, :operative, :plugin, :channel, :driver]
+  @kinds [:runner, :operator, :plugin, :channel, :driver]
 
   # The one order. `:parked` is worst because it is the only state whose remedy
   # nobody in the system owns, and `:unknown` sits just above `:healthy`
@@ -40,7 +40,7 @@ defmodule Flezha.Convergence.Verdict do
     driver: [:healthy, :degraded, :unknown],
     channel: [:healthy, :degraded, :failed, :unknown],
     runner: [:healthy, :degraded, :failed, :unknown],
-    operative: @states
+    operator: @states
   }
 
   # Deepest first: a frozen WAL freezes the min-watermark and the outbox cursor
@@ -50,7 +50,7 @@ defmodule Flezha.Convergence.Verdict do
 
   @event [:flezha, :health, :verdict]
 
-  @type kind :: :runner | :operative | :plugin | :channel | :driver
+  @type kind :: :runner | :operator | :plugin | :channel | :driver
   @type state ::
           :healthy | :degraded | :failed | :unbound | :parked | :suspended | :unknown
   @type phase ::
@@ -141,10 +141,10 @@ defmodule Flezha.Convergence.Verdict do
   end
 
   @doc """
-  The operative's own lifecycle word, read from what the probe observed. The
-  one derivation of a phase in the tree: `info` reads it for an operative the
+  The operator's own lifecycle word, read from what the probe observed. The
+  one derivation of a phase in the tree: `info` reads it for an operator the
   loop has not judged yet, and the judge reads it for every one it has. An
-  observation that names no operative at all (`observed?: false`, which only
+  observation that names no operator at all (`observed?: false`, which only
   the judge's merged facts carry) has no phase to report.
   """
   @spec phase_of(map()) :: phase()
@@ -161,7 +161,7 @@ defmodule Flezha.Convergence.Verdict do
   end
 
   # The order `Probe.Judge` derives the state in, so the two answers cannot
-  # describe one operative differently.
+  # describe one operator differently.
   #
   # Each fact has two spellings, because two callers reach this: the probe's
   # merged facts, and an Overwatch's own state as `info` holds it. A caller
@@ -199,11 +199,11 @@ defmodule Flezha.Convergence.Verdict do
   end
 
   @doc """
-  The counts every operator surface reports, derived from the records so no
-  reader re-derives them: `bound` is every operative record that is neither
+  The counts every operations surface reports, derived from the records so no
+  reader re-derives them: `bound` is every operator record that is neither
   `unbound`, `failed` nor `unknown` and is not suspended — a dead binding is
   never counted as bound — `producing` is every `healthy` one (an IDLE
-  operative counts, a STUCK one does not), and `unknown` is the population the
+  operator counts, a STUCK one does not), and `unknown` is the population the
   loop could not read.
   """
   @spec counts(%{term() => t()}) :: %{
@@ -213,13 +213,13 @@ defmodule Flezha.Convergence.Verdict do
           unknown: non_neg_integer()
         }
   def counts(records) do
-    operatives = for {_s, %__MODULE__{subject: {:operative, _}} = r} <- records, do: r
+    operators = for {_s, %__MODULE__{subject: {:operator, _}} = r} <- records, do: r
 
     %{
-      intended: length(operatives),
-      bound: Enum.count(operatives, &bound?/1),
-      producing: Enum.count(operatives, &(&1.state == :healthy)),
-      unknown: Enum.count(operatives, &(&1.state == :unknown))
+      intended: length(operators),
+      bound: Enum.count(operators, &bound?/1),
+      producing: Enum.count(operators, &(&1.state == :healthy)),
+      unknown: Enum.count(operators, &(&1.state == :unknown))
     }
   end
 
@@ -269,8 +269,7 @@ defmodule Flezha.Convergence.Verdict do
          %{status: "recovering", reason: "tick_resuming", tick_age_ms: facts[:tick_age_ms]}}
 
       rebinding?(records, facts) ->
-        {:recovering,
-         Map.merge(%{status: "recovering", reason: "operatives_rebinding"}, sizes(c))}
+        {:recovering, Map.merge(%{status: "recovering", reason: "operators_rebinding"}, sizes(c))}
 
       Map.get(facts, :pending_restore, false) ->
         {:recovering, Map.merge(%{status: "recovering", reason: "restoring_registry"}, sizes(c))}
@@ -283,7 +282,7 @@ defmodule Flezha.Convergence.Verdict do
              reason: "durability_rpo_exceeded",
              rpo_breached_refs: length(facts[:rpo_breaches])
            },
-           Map.take(sizes(c), [:bound_operatives, :producing_operatives])
+           Map.take(sizes(c), [:bound_operators, :producing_operators])
          )}
 
       reasons != [] ->
@@ -312,15 +311,15 @@ defmodule Flezha.Convergence.Verdict do
 
   # Declared but not all bound, inside the grace: a restart window is a planned
   # recovery, not a fault, and a restart cannot re-bind a runner-orphaned
-  # operative. `:unbound` and `:failed` share the window — past it both fall
+  # operator. `:unbound` and `:failed` share the window — past it both fall
   # through to `degraded` with their own reason among the joined ones.
   #
-  # OPERATIVE records only. The grace is measured from unmet intent, and no
+  # OPERATOR records only. The grace is measured from unmet intent, and no
   # other kind can make intent unmet, so a failed runner or channel record
   # would hold the endpoint at `recovering` with no way out of it.
   defp rebinding?(records, facts) do
     Enum.any?(records, fn
-      {{:operative, _}, %__MODULE__{state: state}} -> state in [:unbound, :failed]
+      {{:operator, _}, %__MODULE__{state: state}} -> state in [:unbound, :failed]
       _ -> false
     end) and not past_grace?(facts)
   end
@@ -331,9 +330,9 @@ defmodule Flezha.Convergence.Verdict do
       reason: Enum.join(reasons, "+"),
       tick_age_ms: facts[:tick_age_ms],
       unmet_intent_ms: facts[:unmet_intent_ms],
-      stalled_operatives: subjects(records, &(reason_word(&1) == "output_stalled")),
-      stuck_operatives: Map.get(facts, :stuck, %{}),
-      plugin_degraded_operatives: plugin_degraded(records),
+      stalled_operators: subjects(records, &(reason_word(&1) == "output_stalled")),
+      stuck_operators: Map.get(facts, :stuck, %{}),
+      plugin_degraded_operators: plugin_degraded(records),
       intent_mismatch: Map.get(facts, :intent_mismatch, []),
       stale_sensors: Map.get(facts, :stale_sensors, []),
       data_plane_layer: pipeline_layer(facts[:data_plane])
@@ -373,7 +372,7 @@ defmodule Flezha.Convergence.Verdict do
   defp reason_word(%__MODULE__{subject: {:plugin, _}, state: :degraded}), do: "plugin_unhealthy"
   defp reason_word(%__MODULE__{state: :parked}), do: "parked"
   defp reason_word(%__MODULE__{state: :failed}), do: "dead_runner"
-  defp reason_word(%__MODULE__{state: :unbound}), do: "operatives_unbound"
+  defp reason_word(%__MODULE__{state: :unbound}), do: "operators_unbound"
 
   defp reason_word(%__MODULE__{state: :degraded, reason: reason}) do
     case reason do
@@ -389,17 +388,17 @@ defmodule Flezha.Convergence.Verdict do
   end
 
   defp subjects(records, pred) do
-    for {{:operative, {_ns, id}}, record} <- records, pred.(record), do: id
+    for {{:operator, {_ns, id}}, record} <- records, pred.(record), do: id
   end
 
   @doc """
-  The operatives whose declared plugins are missing, crashed or self-reported
+  The operators whose declared plugins are missing, crashed or self-reported
   unhealthy — derived from the records rather than kept as a second list.
   """
   @spec plugin_degraded(%{term() => t()}) :: [binary()]
   def plugin_degraded(records) do
     for(
-      {{:operative, {_ns, id}}, %__MODULE__{reason: {:plugin_unhealthy, _, _}}} <- records,
+      {{:operator, {_ns, id}}, %__MODULE__{reason: {:plugin_unhealthy, _, _}}} <- records,
       do: id
     )
     |> Enum.uniq()
@@ -408,14 +407,14 @@ defmodule Flezha.Convergence.Verdict do
 
   defp sizes(c) do
     %{
-      intended_operatives: c.intended,
-      bound_operatives: c.bound,
-      producing_operatives: c.producing,
-      unknown_operatives: c.unknown
+      intended_operators: c.intended,
+      bound_operators: c.bound,
+      producing_operators: c.producing,
+      unknown_operators: c.unknown
     }
   end
 
-  defp healthy_sizes(c), do: Map.drop(sizes(c), [:intended_operatives])
+  defp healthy_sizes(c), do: Map.drop(sizes(c), [:intended_operators])
 
   defp pick_recovery_state(facts) do
     states = Map.get(facts, :recovery_states, [])

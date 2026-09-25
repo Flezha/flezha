@@ -1,7 +1,7 @@
 //! The prepare crossing: a payload whose consumers need keys or an event time
 //! the core cannot derive from bytes is staged and crossed to the host as a
 //! [`schema::ActivationKind::KeyRequest`] before it is enqueued — an entry
-//! payload, or a workflow's released value on its way into a keyed tasklet.
+//! payload, or a bounded operator's released value on its way into a keyed tasklet.
 //! The invariant: an end-of-slice broadcast never overtakes a slice member
 //! still waiting on its answer.
 
@@ -12,8 +12,8 @@ use std::sync::Arc;
 use super::cell::HostPayload;
 use super::decl::HostClock;
 use crate::channel::ChannelDescriptor;
-use crate::operative::instance::OperativeInstance;
-use crate::operative::topology::{CellMode, OperativeTopology};
+use crate::operator::instance::OperatorInstance;
+use crate::operator::topology::{CellMode, OperatorTopology};
 use crate::poll_core::EnginePayload;
 use crate::schema;
 use crate::util::LockRecover;
@@ -51,7 +51,7 @@ pub struct StagedEntry {
     pub consumed_offset: Option<u64>,
     pub replay: bool,
     pub stream: Arc<flz_transport::transport::FlezhaStream>,
-    /// The workflow stage that owes this value until its answer addresses
+    /// The bounded stage that owes this value until its answer addresses
     /// it; `None` for an entry payload.
     pub stage: Option<usize>,
 }
@@ -59,7 +59,7 @@ pub struct StagedEntry {
 /// A batched prepare crossing, handed to the host as a
 /// [`schema::ActivationKind::KeyRequest`].
 pub struct PrepareCrossing {
-    pub instance: Arc<OperativeInstance>,
+    pub instance: Arc<OperatorInstance>,
     pub channel: crate::channel::ChannelId,
     pub want_keys: bool,
     pub want_event_time: bool,
@@ -73,7 +73,7 @@ pub struct PrepareCrossing {
 const PREPARE_BATCH_MAX: usize = 256;
 
 /// `(want_keys, want_event_time)`; `(false, false)` is no crossing.
-pub fn prepare_wants(topology: &OperativeTopology, channel: &ChannelDescriptor) -> (bool, bool) {
+pub fn prepare_wants(topology: &OperatorTopology, channel: &ChannelDescriptor) -> (bool, bool) {
     let mut want_keys = false;
     let mut want_event_time = false;
     for edge in &channel.consumers {
@@ -98,7 +98,7 @@ pub fn prepare_wants(topology: &OperativeTopology, channel: &ChannelDescriptor) 
 /// Stage payloads for one crossing on `channel`, or hand them all back when
 /// none of its consumers needs one.
 pub fn stage_prepare(
-    instance: &Arc<OperativeInstance>,
+    instance: &Arc<OperatorInstance>,
     channel_id: crate::channel::ChannelId,
     channel: &ChannelDescriptor,
     entries: Vec<StagedEntry>,
@@ -123,7 +123,7 @@ pub fn stage_prepare(
 
 /// The end-of-slice broadcast, deferred behind slice members still in the
 /// crossing.
-pub fn deferred_end_replay_slice(instance: &Arc<OperativeInstance>) {
+pub fn deferred_end_replay_slice(instance: &Arc<OperatorInstance>) {
     {
         let mut state = instance.host_prepare.lock_recover();
         if state.replay_staged > 0 {
@@ -136,7 +136,7 @@ pub fn deferred_end_replay_slice(instance: &Arc<OperativeInstance>) {
 
 /// Submit the channel's next crossing unless one is in flight.
 fn submit_next_crossing(
-    instance: &Arc<OperativeInstance>,
+    instance: &Arc<OperatorInstance>,
     channel_id: u32,
     want_keys: bool,
     want_event_time: bool,
@@ -247,7 +247,7 @@ fn answers_for(
 }
 
 fn deliver_prepared(
-    instance: &Arc<OperativeInstance>,
+    instance: &Arc<OperatorInstance>,
     channel_id: u32,
     channel: &ChannelDescriptor,
     entry: StagedEntry,
@@ -261,7 +261,7 @@ fn deliver_prepared(
         metadata: Vec::new(),
     });
     if let Some(node) = entry.stage {
-        return crate::workflow::crossed(instance, node, Ok((value, entry.stream)));
+        return crate::bounded::crossed(instance, node, Ok((value, entry.stream)));
     }
     crate::routing::route_to_consumers(
         instance,
@@ -275,10 +275,10 @@ fn deliver_prepared(
 }
 
 /// A failed prepare climbs its channel's ladder, one blocking re-crossing
-/// per attempt. Where the ladder would park an entry payload, a workflow
+/// per attempt. Where the ladder would park an entry payload, a bounded operator
 /// stage's value fails its stage instead: nothing is parked.
 fn spawn_prepare_ladder(
-    instance: Arc<OperativeInstance>,
+    instance: Arc<OperatorInstance>,
     channel_id: u32,
     want_keys: bool,
     want_event_time: bool,
@@ -319,7 +319,7 @@ fn spawn_prepare_ladder(
                 if let Err((error, _attempts)) =
                     crate::retry::climb_ladder(&label, channel.retry, first_error.message, attempt)
                 {
-                    crate::workflow::crossed(&instance, node, Err(error));
+                    crate::bounded::crossed(&instance, node, Err(error));
                 }
             }
             None => crate::retry::run_entrance_ladder(
@@ -338,7 +338,7 @@ fn spawn_prepare_ladder(
 /// Release the inflight gate, re-arm the next batch, fire a deferred
 /// broadcast once the last slice member resolved.
 fn finish_crossing(
-    instance: &Arc<OperativeInstance>,
+    instance: &Arc<OperatorInstance>,
     channel_id: u32,
     want_keys: bool,
     want_event_time: bool,

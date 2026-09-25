@@ -8,13 +8,13 @@ TBD - created by archiving change read-every-knob-once. Update Purpose after arc
 Every knob the controller reads SHALL be declared exactly once as a row of
 `Flezha.Config.Keys` — an environment variable, an application-env key, or both —
 carrying its name, application-env key, environment variable, type, default, the
-runtimes that read it, the operator surface that shows it and its documentation line.
+runtimes that read it, the operations surface that shows it and its documentation line.
 Every controller-side read SHALL go through `Flezha.Config.get/1` by row name;
 `config/runtime.exs` SHALL derive its `:flezha` configuration from the table rather than
 translate variables by hand; a keyword-list knob SHALL be a row per child key, never a
 raw read followed by a lookup. A read of a `FLEZHA_*` variable or a `:flezha` key outside
 the table's own files SHALL fail the seam test naming the file, the line and the row it
-should read. A variable whose NAME is itself an operator-supplied setting value (a secret
+should read. A variable whose NAME is itself a user-supplied setting value (a secret
 indirection) is not a knob and SHALL be exempt by shape.
 
 #### Scenario: A knob is added by writing one row
@@ -127,7 +127,7 @@ source reads that no row declares for that runtime SHALL fail the seam test.
 
 For every row with an environment variable, setting a non-default value SHALL be
 observable: through `config/runtime.exs` evaluated the way a release evaluates it, at the
-row's key; and, for a row that declares an operator surface, on that surface of a booted
+row's key; and, for a row that declares an operations surface, on that surface of a booted
 controller — `flz controller status`, `/healthz`, `flz observe` or the directory on disk.
 A row that no reader consults SHALL NOT exist: a variable set by `runtime.exs` and read by
 nothing is deleted with its documentation line rather than kept inert.
@@ -139,7 +139,7 @@ nothing is deleted with its documentation line rather than kept inert.
 - **THEN** every row's key holds the parsed value in both, and no row is skipped by an
   environment guard
 
-#### Scenario: A surfaced row is read back where the operator would read it
+#### Scenario: A surfaced row is read back where the user would read it
 
 - **WHEN** the drill boots a controller with `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS=120000` and
   `FLEZHA_HEALTHZ_BIND=127.0.0.2`
@@ -161,7 +161,7 @@ of `lib/flezha/config/keys.ex` and none of the four configuration layers already
 covers it. That is precisely why it rots quietly: no compile step and no suite
 reads an args file, and the reference has never mentioned one. A flag that ships
 undocumented is a behaviour change nobody can find, and a flag the reference
-claims the release sets when it does not is worse, because an operator will
+claims the release sets when it does not is worse, because a user will
 spend the afternoon overriding a default that was never there.
 
 #### Scenario: A flag is added to the release and not documented
@@ -176,24 +176,24 @@ spend the afternoon overriding a default that was never there.
 
 #### Scenario: A flag the reference discusses but does not present as shipped
 
-- **GIVEN** a flag the reference names only as an option an operator may set
+- **GIVEN** a flag the reference names only as an option a user may set
 - **WHEN** the VM-arguments gate runs
 - **THEN** the gate SHALL pass, because only flags presented as shipped are held against the templates
 
-### Requirement: An Operator SHALL Be Able to Override Any Shipped VM Argument Without Rebuilding, Through One Documented Route
+### Requirement: A User SHALL Be Able to Override Any Shipped VM Argument Without Rebuilding, Through One Documented Route
 
-An operator SHALL be able to change any VM argument the release ships by setting `ERL_FLAGS` in the process environment, and the configuration reference SHALL state the precedence rule that makes this work and SHALL state that `ELIXIR_ERL_OPTIONS` does not override a flag an args file sets.
+A user SHALL be able to change any VM argument the release ships by setting `ERL_FLAGS` in the process environment, and the configuration reference SHALL state the precedence rule that makes this work and SHALL state that `ELIXIR_ERL_OPTIONS` does not override a flag an args file sets.
 
 Three spellings exist and only two of them win, which is not guessable and was
 not written down. The rule is one sentence once measured: flags are concatenated
 and the last occurrence wins, `ELIXIR_ERL_OPTIONS` is placed before the args
 file, and `ERL_FLAGS` after it.
 
-#### Scenario: An operator overrides a shipped default
+#### Scenario: A user overrides a shipped default
 
 - **GIVEN** an args template that sets a scheduler count
 - **WHEN** the node is started with `ERL_FLAGS` setting a different scheduler count
-- **THEN** the node SHALL run with the operator's value
+- **THEN** the node SHALL run with the user's value
 
 #### Scenario: The route that does not work is documented as not working
 

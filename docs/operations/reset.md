@@ -1,6 +1,6 @@
 # Resetting Controller runtime data
 
-For operators who need a Controller to boot from a clean slate. `flz reset`
+For users who need a Controller to boot from a clean slate. `flz reset`
 clears the durable on-disk state under `app_data/` — every Cell's
 WAL/snapshot/outbox files and the ProcessHub durable registry, optionally the
 TLS material, parked DLQ records, schedules, the auth store, the audit trail,
@@ -49,7 +49,7 @@ somewhere reset cannot see, so reset never empties it.
 
 ## Clearing the auth store, the audit trail and plugins
 
-These three are data an operator keeps on purpose, so a plain reset keeps them
+These three are data a user keeps on purpose, so a plain reset keeps them
 and each has a flag of its own. `--all` clears all three.
 
 - **`--include-auth` removes every credential.** Every token, runner
@@ -57,7 +57,7 @@ and each has a flag of its own. `--all` clears all three.
   is gone. With authorization enabled (the prod default), the next start
   writes a fresh one-time token to `<auth_dir>/bootstrap.token` and names the
   path in its log. Until it is claimed the controller is in its fresh-install
-  posture: operator verbs are refused, and every runner is admitted with no
+  posture: administration verbs are refused, and every runner is admitted with no
   credential into any namespace but `_system` it names. Claim it at once with
   `flz auth bootstrap <token>`, above all when the reset was meant to revoke a
   leaked secret, then bind roles and issue runner credentials again.
@@ -80,7 +80,7 @@ The ladder's rungs, in order — the first that answers wins:
 3. `/run/flezha` — a Controller running as a system service.
 4. `app_data/sockets` — the repository fallback.
 
-Three consequences an operator should expect:
+Three consequences a user should expect:
 
 - **`--app-data-root` does not move the socket directory.** The two are
   resolved from different sources because the Controller resolves them from
@@ -140,7 +140,7 @@ flz reset [OPTIONS]
 written with a value: `--all=no` and `--yes=false` are refused as
 `Error: --all takes no value`, because a flag that is either written or not
 written cannot carry one, and reading it as written would clear what the
-operator asked to keep.
+user asked to keep.
 
 ## Live-node guard
 
@@ -215,7 +215,7 @@ reset complete in 41 ms
 
 With a remote durability backend configured, the next boot hydrates the
 control-plane stores and the registry cspec from the remote store before the
-hub starts, and the operatives it names re-hydrate their state at bind — the
+hub starts, and the operators it names re-hydrate their state at bind — the
 wiped state, and the record of what exists, comes straight back. To start
 fresh, set the backend to `none` for that boot or purge the remote
 prefix/table first. See
@@ -255,8 +255,8 @@ Back up first when in doubt: `tar -czf backup.tgz app_data/`.
 
 ## Out of scope
 
-- Scoped reset while the Controller is up ("wipe just operative X").
-- Trimming time-travel history: `flz state retention <operative_class> <hours>`.
+- Scoped reset while the Controller is up ("wipe just operator X").
+- Trimming time-travel history: `flz state retention <operator_class> <hours>`.
 - Cluster-wide reset: run `flz reset` on each node.
 - Purging the remote durability backend: shipped artifacts and manifests stay
   and re-hydrate on the next boot unless the backend is disabled or purged out

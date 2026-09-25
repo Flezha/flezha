@@ -3,7 +3,7 @@
 //! Right after `flz controller start --mode daemon` the node's distribution is
 //! not up, and `flzvm rpc` answers `--rpc-eval : RPC failed with reason
 //! :noconnection`, exit 1. The verb's whole job is to wait, so that answer is
-//! "not yet", inside the operator's timeout, while a node that answered its
+//! "not yet", inside the caller's timeout, while a node that answered its
 //! own verdict has already spent that timeout and is not asked again.
 //!
 //! The fixture is a `flzvm` that is unreachable for its first N calls and then
@@ -171,8 +171,8 @@ fn a_zero_timeout_asks_once_even_when_unreachable(shim: &Shim) {
 }
 
 /// A node that answered `recovering` already waited out the whole budget on
-/// its own clock; asking again would wait twice as long as the operator said.
-/// Its verdict still reaches the operator's stderr.
+/// its own clock; asking again would wait twice as long as the caller said.
+/// Its verdict still reaches the caller's stderr.
 fn a_reached_node_that_is_not_ready_is_asked_once(shim: &Shim) {
     let verdict = "boot await: recovering; unmet: hubs_recovered";
     let run = await_boot(shim, "30", 0, verdict, 1);

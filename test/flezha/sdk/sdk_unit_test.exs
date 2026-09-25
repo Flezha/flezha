@@ -27,7 +27,7 @@ defmodule Flezha.SDK.UnitTest do
   end
 
   defmodule EchoOp do
-    @behaviour Flezha.SDK.StreamOperative
+    @behaviour Flezha.SDK.UnboundedOperator
     def factory_id, do: "echo_op"
 
     def channels(c),
@@ -47,7 +47,7 @@ defmodule Flezha.SDK.UnitTest do
   end
 
   defmodule DynamicOp do
-    @behaviour Flezha.SDK.StreamOperative
+    @behaviour Flezha.SDK.UnboundedOperator
     def factory_id, do: "dyn_op"
 
     def channels(c) do
@@ -80,7 +80,7 @@ defmodule Flezha.SDK.UnitTest do
   end
 
   defmodule StaticOp do
-    @behaviour Flezha.SDK.StreamOperative
+    @behaviour Flezha.SDK.UnboundedOperator
     def factory_id, do: "static_op"
 
     def channels(c),
@@ -217,8 +217,8 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.into(KeyedTask)
     end
 
-    defmodule SyncStream do
-      def factory_id, do: "sync_stream"
+    defmodule SyncUnbounded do
+      def factory_id, do: "sync_unbounded"
       def sync_durability, do: true
 
       def channels(c),
@@ -226,7 +226,7 @@ defmodule Flezha.SDK.UnitTest do
     end
 
     assert {:KeyedChannelWithoutPluginWire, "echo"} = one_issue(KeyedNoWire)
-    assert {:SyncDurabilityOnStream, _} = one_issue(SyncStream)
+    assert {:SyncDurabilityOnUnbounded, _} = one_issue(SyncUnbounded)
   end
 
   test "the ctx refuses a keyless emit where a key is required, and a key where none is allowed" do
@@ -496,24 +496,24 @@ defmodule Flezha.SDK.UnitTest do
 
   # --- Codec ---
 
-  test "codec round-trips request/response and add-operative metadata" do
+  test "codec round-trips request/response and add-operator metadata" do
     bin = Codec.encode_response("ref-1", "success", [], <<>>)
 
     assert {:ok, %RunnerCommands.CommandResponse{reference_id: "ref-1", status: "success"}} =
              RunnerCommands.CommandResponse.decode(bin)
 
-    raw = Codec.encode_add_operative_response(%{"keyed" => "false"})
+    raw = Codec.encode_add_operator_response(%{"keyed" => "false"})
 
-    assert {:ok, %RunnerCommands.AddOperativeResponse{metadata: %{"keyed" => "false"}}} =
-             RunnerCommands.AddOperativeResponse.decode(raw)
+    assert {:ok, %RunnerCommands.AddOperatorResponse{metadata: %{"keyed" => "false"}}} =
+             RunnerCommands.AddOperatorResponse.decode(raw)
 
-    uf = Codec.encode_request("uf-1", Codec.update_factories_command([{"a", "d", "workflow"}]))
+    uf = Codec.encode_request("uf-1", Codec.update_factories_command([{"a", "d", "bounded"}]))
 
     assert {:ok,
             %RunnerCommands.CommandRequest{command: {:update_factories, %{factories: [decl]}}}} =
              Codec.decode_command(uf)
 
-    assert {decl.id, decl.kind} == {"a", "workflow"}
+    assert {decl.id, decl.kind} == {"a", "bounded"}
   end
 
   # --- KeyGroup / partition ---

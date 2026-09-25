@@ -4,21 +4,21 @@ use crate::help;
 use crate::rpc::{self, text};
 
 /// The Cell-scoped write verbs all name the same slot.
-const CELL: &[Positional] = &[Positional::required("<operative/tasklet/cell_key>")];
+const CELL: &[Positional] = &[Positional::required("<operator/tasklet/cell_key>")];
 
 pub(crate) const TABLE: Command = Command {
     path: "flz state",
     help: help::STATE,
     verbs: &[
         Verb::new("get", |read| scoped_verb(read, "state_get"))
-            .taking(&[Positional::required("<operative/tasklet[/cell_key]>")])
+            .taking(&[Positional::required("<operator/tasklet[/cell_key]>")])
             .reading(&[OUTPUT, JSON_SWITCH]),
         Verb::new("list", |read| scoped_verb(read, "state_list"))
-            .taking(&[Positional::required("<operative_class>")])
+            .taking(&[Positional::required("<operator_class>")])
             .reading(&[OUTPUT, JSON_SWITCH]),
         Verb::new("at", handle_at)
             .taking(&[
-                Positional::required("<operative/tasklet/cell_key>"),
+                Positional::required("<operator/tasklet/cell_key>"),
                 Positional::required("<seq | iso8601-timestamp>"),
             ])
             .reading(&[OUTPUT, JSON_SWITCH]),
@@ -27,7 +27,7 @@ pub(crate) const TABLE: Command = Command {
         })
         .taking(CELL),
         Verb::new("retention", handle_retention).taking(&[
-            Positional::required("<operative_class>"),
+            Positional::required("<operator_class>"),
             Positional::number("<hours>"),
         ]),
         Verb::new("delete", |read| {
@@ -39,10 +39,10 @@ pub(crate) const TABLE: Command = Command {
         })
         .taking(CELL),
         Verb::new("journal", |read| scoped_verb(read, "state_journal"))
-            .taking(&[Positional::required("<operative/instance>")])
+            .taking(&[Positional::required("<operator/instance>")])
             .reading(&[OUTPUT, JSON_SWITCH]),
         Verb::new("inbox", |read| scoped_verb(read, "state_inbox"))
-            .taking(&[Positional::required("<operative/instance>")])
+            .taking(&[Positional::required("<operator/instance>")])
             .reading(&[OUTPUT, JSON_SWITCH]),
     ],
     help_verbs: dispatch::HELP_VERBS,
@@ -68,7 +68,7 @@ fn handle_retention(read: &Reading) {
     rpc::run(
         "state_retention",
         &[
-            text(read.pos("<operative_class>")),
+            text(read.pos("<operator_class>")),
             text(read.pos("<hours>")),
         ],
         &[],

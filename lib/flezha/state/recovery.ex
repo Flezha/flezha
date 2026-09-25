@@ -20,7 +20,7 @@ defmodule Flezha.State.Recovery do
   require Logger
 
   alias Flezha.Config
-  alias Flezha.Operative.Replay
+  alias Flezha.Operator.Replay
   alias Flezha.Process.Cspec
   alias Flezha.Service.HubManager
   alias Flezha.State.Commands
@@ -35,13 +35,13 @@ defmodule Flezha.State.Recovery do
   end
 
   @doc """
-  Bind-driven WAL replay trigger. Called by `Flezha.Operative.Overwatch`
+  Bind-driven WAL replay trigger. Called by `Flezha.Operator.Overwatch`
   from `handle_continue(:after_bind, _)` with the Overwatch's own
   `runner_id` so the replay never depends on a class→runner lookup
   in the durable registry (the lookup that failed on cold boot and
   produced the silent "resync skipped reason=:output_stall" no-op).
 
-  This is the single state-restoration trigger for non-HotSwap operatives;
+  This is the single state-restoration trigger for non-HotSwap operators;
   every Overwatch bind unconditionally invokes it. The implementation
   is intentionally trivial — the heavy lifting lives in
   `Flezha.State.Commands.dispatch_restore_init_state/2`.
@@ -54,7 +54,7 @@ defmodule Flezha.State.Recovery do
   end
 
   @doc """
-  Resolve the `runner_id` currently owning `operative_class` from the
+  Resolve the `runner_id` currently owning `operator_class` from the
   ProcessHub registry. Returns `{:ok, runner_id}` or `{:error, term}`.
 
   The CLI `flz state rotate` surface is its only caller; the resync path
@@ -65,15 +65,15 @@ defmodule Flezha.State.Recovery do
     case HubManager.get_registry("default") do
       {:ok, registry} ->
         match =
-          Enum.find_value(registry, fn {_operative_id, entry} ->
+          Enum.find_value(registry, fn {_operator_id, entry} ->
             {cspec, _node_pids, metadata} = normalize_entry(entry)
             tag = Map.get(metadata, :tag)
 
-            if is_binary(tag) and operative_class(cspec) == rc, do: tag
+            if is_binary(tag) and operator_class(cspec) == rc, do: tag
           end)
 
         case match do
-          nil -> {:error, "no active runner owns operative_class=#{rc}"}
+          nil -> {:error, "no active runner owns operator_class=#{rc}"}
           eid -> {:ok, eid}
         end
 
@@ -124,34 +124,34 @@ defmodule Flezha.State.Recovery do
     end
   end
 
-  # The durable registry stores `{operative_id, {cspec, node_pids, metadata}}` (a
+  # The durable registry stores `{operator_id, {cspec, node_pids, metadata}}` (a
   # pre-namespace row may omit metadata). The owning runner is `metadata.tag`;
-  # the operative_class is the operative's `:operative_class` opt (default: its id), carried
-  # in the cspec's start args — mirror of `Reconciler.Probe.operative_from_cspec/1`.
+  # the operator_class is the operator's `:operator_class` opt (default: its id), carried
+  # in the cspec's start args — mirror of `Reconciler.Probe.operator_from_cspec/1`.
   defp normalize_entry({cspec, node_pids, metadata}), do: {cspec, node_pids, metadata}
   defp normalize_entry({cspec, node_pids}), do: {cspec, node_pids, %{}}
 
-  defp operative_class(cspec) do
+  defp operator_class(cspec) do
     case Cspec.start_arg(cspec) do
-      {:ok, arg} -> operative_class_from_arg(arg)
+      {:ok, arg} -> operator_class_from_arg(arg)
       :error -> nil
     end
   end
 
-  defp operative_class_from_arg(arg) do
+  defp operator_class_from_arg(arg) do
     case arg do
-      {_namespace, operative} when is_map(operative) ->
-        operative_class_of(operative)
+      {_namespace, operator} when is_map(operator) ->
+        operator_class_of(operator)
 
-      {_namespace, _runner_id, operative} when is_map(operative) ->
-        operative_class_of(operative)
+      {_namespace, _runner_id, operator} when is_map(operator) ->
+        operator_class_of(operator)
 
       _ ->
         nil
     end
   end
 
-  defp operative_class_of(operative) do
-    Keyword.get(Map.get(operative, :opts, []), :operative_class, Map.get(operative, :id))
+  defp operator_class_of(operator) do
+    Keyword.get(Map.get(operator, :opts, []), :operator_class, Map.get(operator, :id))
   end
 end

@@ -13,10 +13,10 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
 
   alias Flezha.AuthZ
   alias Flezha.AuthZ.{NamespaceStore, QuotaCounters, RoleStore, Scope, TokenStore}
-  alias Flezha.Operative.Builder
+  alias Flezha.Operator.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.CliManager
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -38,11 +38,11 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
     {:ok, _} = NamespaceStore.create(@ns_a, quotas: %{})
     {:ok, _} = NamespaceStore.create(@ns_b, quotas: %{})
 
-    # One operator per tenant, identity carried ONLY by a verified token.
-    :ok = RoleStore.bind("op-alpha", @ns_a, :operator)
-    :ok = RoleStore.bind("op-beta", @ns_b, :operator)
-    {:ok, token_a, _} = TokenStore.issue("op-alpha", @ns_a, :operator, 3_600)
-    {:ok, token_b, _} = TokenStore.issue("op-beta", @ns_b, :operator, 3_600)
+    # One user per tenant, identity carried ONLY by a verified token.
+    :ok = RoleStore.bind("op-alpha", @ns_a, :ops)
+    :ok = RoleStore.bind("op-beta", @ns_b, :ops)
+    {:ok, token_a, _} = TokenStore.issue("op-alpha", @ns_a, :ops, 3_600)
+    {:ok, token_b, _} = TokenStore.issue("op-beta", @ns_b, :ops, 3_600)
 
     # Live runners, one per namespace — connecting is itself the §3.1 check:
     # under enforcement a connect first proves its namespace with that
@@ -56,7 +56,7 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
     on_exit(fn ->
       for ns <- [@ns_a, @ns_b] do
         try do
-          OperativeManager.stop_all_operatives(ns)
+          OperatorManager.stop_all_operators(ns)
         catch
           _, _ -> :ok
         end
@@ -84,7 +84,7 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
   end
 
   test "a token-authenticated CLI round-trip resolves the tenant identity", %{token_a: token_a} do
-    assert {:ok, %{principal: "op-alpha", namespace: @ns_a, role: :operator}} =
+    assert {:ok, %{principal: "op-alpha", namespace: @ns_a, role: :ops}} =
              CliManager.authz_whoami(token: token_a)
   end
 
@@ -92,22 +92,21 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
     token_a: token_a,
     token_b: token_b
   } do
-    operative = %Builder{id: "alpha_op_stop_target", factory_id: "do_nothing"}
-    {:ok, _info} = OperativeManager.start_operative(@ns_a, operative)
+    operator = %Builder{id: "alpha_op_stop_target", factory_id: "do_nothing"}
+    {:ok, _info} = OperatorManager.start_operator(@ns_a, operator)
 
-    # tenant-beta's operator cannot stop tenant-alpha's operative...
+    # tenant-beta's user cannot stop tenant-alpha's operator...
     output =
       ExUnit.CaptureIO.capture_io(:stderr, fn ->
-        assert catch_exit(
-                 CliManager.operative_stop(@ns_a, "alpha_op_stop_target", token: token_b)
-               ) == {:shutdown, 1}
+        assert catch_exit(CliManager.operator_stop(@ns_a, "alpha_op_stop_target", token: token_b)) ==
+                 {:shutdown, 1}
       end)
 
     assert output =~ "refused"
 
-    # ...its own operator can.
+    # ...its own user can.
     ExUnit.CaptureIO.capture_io(fn ->
-      CliManager.operative_stop(@ns_a, "alpha_op_stop_target", token: token_a)
+      CliManager.operator_stop(@ns_a, "alpha_op_stop_target", token: token_a)
     end)
   end
 
@@ -116,22 +115,22 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
   } do
     output =
       ExUnit.CaptureIO.capture_io(:stderr, fn ->
-        assert catch_exit(CliManager.list_operatives(@ns_a, "text", token: token_b)) ==
+        assert catch_exit(CliManager.list_operators(@ns_a, "text", token: token_b)) ==
                  {:shutdown, 1}
       end)
 
     assert output =~ "refused"
   end
 
-  test "an over-quota namespace refuses a new operative allocation", %{token_b: _} do
-    {:ok, _} = NamespaceStore.set_quotas(@ns_b, %{max_operatives: 0})
+  test "an over-quota namespace refuses a new operator allocation", %{token_b: _} do
+    {:ok, _} = NamespaceStore.set_quotas(@ns_b, %{max_operators: 0})
 
     on_exit(fn -> {:ok, _} = NamespaceStore.set_quotas(@ns_b, %{}) end)
 
-    operative = %Builder{id: "beta_quota_refused", factory_id: "do_nothing"}
+    operator = %Builder{id: "beta_quota_refused", factory_id: "do_nothing"}
 
-    assert {:error, {:quota_exceeded, :max_operatives, %{limit: 0}}} =
-             OperativeManager.start_operative(@ns_b, operative)
+    assert {:error, {:quota_exceeded, :max_operators, %{limit: 0}}} =
+             OperatorManager.start_operator(@ns_b, operator)
   end
 
   test "a runner for a namespace at max_runners is refused observably", %{secret_a: secret_a} do

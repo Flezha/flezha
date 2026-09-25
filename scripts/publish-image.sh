@@ -2,7 +2,7 @@
 #
 # Publish a flezha controller image to Docker Hub.
 #
-# *Operator-driven, not invoked by CI.* Builds NATIVELY for the host CPU only
+# *User-driven, not invoked by CI.* Builds NATIVELY for the host CPU only
 # (no QEMU, no buildx --platform). Each invocation pushes a per-architecture
 # tag, then rebuilds the shared manifest list (`:latest` / `:latest-dev`) from
 # whichever per-arch tags currently exist on Docker Hub — so building on amd64

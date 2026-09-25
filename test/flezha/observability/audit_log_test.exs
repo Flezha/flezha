@@ -98,16 +98,16 @@ defmodule Flezha.Observability.AuditLogTest do
         Codec.encode(
           Signal.new(%{
             kind: :event,
-            source: :operative_service,
+            source: :operator_service,
             name: :stop,
             measurements: %{count: 1},
-            metadata: %{caller_source: :cli, principal: "alice", operative: "o1"}
+            metadata: %{caller_source: :cli, principal: "alice", operator: "o1"}
           })
         )
 
       assert {:ok, decoded} = Codec.decode(line)
       assert decoded["name"] == "stop"
-      assert decoded["metadata"]["operative"] == "o1"
+      assert decoded["metadata"]["operator"] == "o1"
       refute Map.has_key?(decoded["metadata"], "caller_roles")
     end
 

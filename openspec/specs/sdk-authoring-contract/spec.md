@@ -2,26 +2,26 @@
 
 ## Purpose
 
-The sdk-authoring-contract capability is the single, language-agnostic source of truth for SDK authoring sugar. It defines the canonical mapping from a sugared tasklet/operative declaration to the existing `StreamOperative`/`Tasklet`/`Change`/`Channel` trait (or interface) surface: signature → associated types, mutable-state parameter → `State`, `State` → `Change` derivation with an explicit hand-written boundary, explicit cell-mode opt-ins (single/static/dynamic), single-tasklet input-to-sink auto-wiring, and auto-registration. All sugar is pure expansion — it introduces no new runtime path, protocol message, or WAL change, and sugared tasklets compose with hand-written ones. The contract binds Rust, Java, and the forward-looking Python and Elixir SDKs so the same boilerplate collapses identically across every binding.
+The sdk-authoring-contract capability is the single, language-agnostic source of truth for SDK authoring sugar. It defines the canonical mapping from a sugared tasklet/operator declaration to the existing `UnboundedOperator`/`Tasklet`/`Change`/`Channel` trait (or interface) surface: signature → associated types, mutable-state parameter → `State`, `State` → `Change` derivation with an explicit hand-written boundary, explicit cell-mode opt-ins (single/static/dynamic), single-tasklet input-to-sink auto-wiring, and auto-registration. All sugar is pure expansion — it introduces no new runtime path, protocol message, or WAL change, and sugared tasklets compose with hand-written ones. The contract binds Rust, Java, and the forward-looking Python and Elixir SDKs so the same boilerplate collapses identically across every binding.
 ## Requirements
 ### Requirement: Sugar expands to existing trait surface
-The authoring sugar in every SDK SHALL be pure expansion over the existing `StreamOperative`/`Tasklet`/`Change`/`Channel` trait (or interface) surface. The generated code MUST be equivalent to a valid hand-written implementation, and MUST NOT introduce any new runtime path, protocol message, or WAL change.
+The authoring sugar in every SDK SHALL be pure expansion over the existing `UnboundedOperator`/`Tasklet`/`Change`/`Channel` trait (or interface) surface. The generated code MUST be equivalent to a valid hand-written implementation, and MUST NOT introduce any new runtime path, protocol message, or WAL change.
 
 #### Scenario: Generated code equals hand-written impl
 
 - **WHEN** a sugared tasklet is expanded by any SDK's macro or processor
-- **THEN** the result is a `Tasklet`/`StreamOperative` implementation that compiles and runs identically to the equivalent hand-written one
+- **THEN** the result is a `Tasklet`/`UnboundedOperator` implementation that compiles and runs identically to the equivalent hand-written one
 - **AND** no protobuf, controller, or WAL-format change is required for it to run
 
 #### Scenario: Sugared and raw tasklets interoperate
 
-- **WHEN** a stream operative contains one sugared tasklet and one hand-written tasklet wired together
-- **THEN** the operative builds and runs correctly with both tasklets participating
+- **WHEN** an unbounded operator contains one sugared tasklet and one hand-written tasklet wired together
+- **THEN** the operator builds and runs correctly with both tasklets participating
 
 #### Scenario: Eject to full impl is a paste
 
 - **WHEN** a user replaces a sugared tasklet with the code its sugar expands to
-- **THEN** the operative behaves identically with no other change required
+- **THEN** the operator behaves identically with no other change required
 
 ### Requirement: Canonical signature-to-types inference
 The contract SHALL define one canonical mapping from a sugared `run` declaration to the tasklet's associated types, and every SDK MUST implement it identically.
@@ -74,7 +74,7 @@ The declarations are named for the Cell, not the Tasklet. Static mode is declare
 
 #### Scenario: Dynamic keying is declared on the wiring
 
-- **WHEN** an operative wires a tasklet through an edge declaring a key function, and the tasklet declares optional idle-TTL / max-cells
+- **WHEN** an operator wires a tasklet through an edge declaring a key function, and the tasklet declares optional idle-TTL / max-cells
 - **THEN** the SDK SHALL produce a dynamic-mode tasklet against the existing runtime surface (lazily created Cells, empty static key list) with no new runtime path and no keying member on the tasklet itself
 
 #### Scenario: Static and dynamic declarations together are rejected
@@ -93,34 +93,34 @@ The declarations are named for the Cell, not the Tasklet. Static mode is declare
 - **THEN** it SHALL offer no `cell_key`-style hook, and declaring one SHALL fail at compile time (Rust) or annotation processing (Java) with an error directing the author to `key_by` on the wiring
 
 ### Requirement: Single-tasklet auto-wiring and registration
-The contract SHALL define exactly one topology that may be written short, a single tasklet from a controller input to at most one sink, and every SDK SHALL carry it for both operative kinds: Rust, Java, Python, Node, Ruby, PHP and Elixir. **The short form SHALL be an operative declaration**, written at the SDK's kind-named operative entry point, and SHALL NOT be a tasklet declaration that becomes an operative: `#[flezha::stream_operative]` / `#[flezha::workflow_operative]` in Rust, `@StreamOperative` / `@WorkflowOperative` in Java, `@flezha.stream_operative` / `@flezha.workflow_operative` in Python, `defineStream` / `defineWorkflow` in Node, a `Flezha::StreamOperative` / `Flezha::WorkflowOperative` subclass in Ruby, `#[Operative]` on a class extending `Flezha\StreamOperative` / `Flezha\WorkflowOperative` in PHP, `use Flezha.SDK.StreamOperative` / `use Flezha.SDK.WorkflowOperative` in Elixir.
+The contract SHALL define exactly one topology that may be written short, a single tasklet from a controller input to at most one sink, and every SDK SHALL carry it for both operator kinds: Rust, Java, Python, Node, Ruby, PHP and Elixir. **The short form SHALL be an operator declaration**, written at the SDK's kind-named operator entry point, and SHALL NOT be a tasklet declaration that becomes an operator: `#[flezha::unbounded_operator]` / `#[flezha::bounded_operator]` in Rust, `@UnboundedOperator` / `@BoundedOperator` in Java, `@flezha.unbounded_operator` / `@flezha.bounded_operator` in Python, `defineUnbounded` / `defineBounded` in Node, a `Flezha::UnboundedOperator` / `Flezha::BoundedOperator` subclass in Ruby, `#[Operator]` on a class extending `Flezha\UnboundedOperator` / `Flezha\BoundedOperator` in PHP, `use Flezha.SDK.UnboundedOperator` / `use Flezha.SDK.BoundedOperator` in Elixir.
 
-An operative declaration SHALL be a short form exactly when it carries its one tasklet's body **instead of** a topology body, a topology body being `channels`, the one name both kinds give it in every SDK. The body SHALL be named `run`, as every SDK names a tasklet's body. The kind SHALL be the entry point's own name (in PHP, the base class its `#[Operative]` class extends) and SHALL NOT be a key on the declaration. The identity SHALL be the operative's factory id, spelled as that SDK's full-form operative already spells it (`id` in Rust, Java and Python, `factoryId` in Node and PHP, `factory_id` in Ruby and Elixir), and SHALL be written by the author; an SDK that otherwise derives a name SHALL NOT derive a factory id. The declaration MAY carry a `sink`, an entry channel name `input`, and, in an SDK whose channel builder names an entry codec (Python, Node, Ruby, PHP), that SDK's `codec` with the builder's vocabulary.
+An operator declaration SHALL be a short form exactly when it carries its one tasklet's body **instead of** a topology body, a topology body being `channels`, the one name both kinds give it in every SDK. The body SHALL be named `run`, as every SDK names a tasklet's body. The kind SHALL be the entry point's own name (in PHP, the base class its `#[Operator]` class extends) and SHALL NOT be a key on the declaration. The identity SHALL be the operator's factory id, spelled as that SDK's full-form operator already spells it (`id` in Rust, Java and Python, `factoryId` in Node and PHP, `factory_id` in Ruby and Elixir), and SHALL be written by the author; an SDK that otherwise derives a name SHALL NOT derive a factory id. The declaration MAY carry a `sink`, an entry channel name `input`, and, in an SDK whose channel builder names an entry codec (Python, Node, Ruby, PHP), that SDK's `codec` with the builder's vocabulary.
 
-`sink` SHALL be optional. With a `sink`, the generated operative SHALL declare an entry channel, the tasklet, and a plugin sink of that name; with no `sink`, it SHALL declare the entry channel and the tasklet and no plugin channel, which is the topology a full-form operative already declares when its channel ends at a tasklet. `input` and `codec` SHALL be accepted whether or not a `sink` is written, because an entry channel exists either way.
+`sink` SHALL be optional. With a `sink`, the generated operator SHALL declare an entry channel, the tasklet, and a plugin sink of that name; with no `sink`, it SHALL declare the entry channel and the tasklet and no plugin channel, which is the topology a full-form operator already declares when its channel ends at a tasklet. `input` and `codec` SHALL be accepted whether or not a `sink` is written, because an entry channel exists either way.
 
-The generated operative SHALL otherwise be the operative an author would hand-write with that one tasklet: an entry channel named by `input`, or `input` when none is written, decoded by `codec` where one is written; the tasklet; a factory id equal to the written identity; and every class-level setting at the SDK's default for its kind. A workflow short form SHALL therefore be a `once` workflow unless it declares its loop mode, its entry channel receiving its first message, from a spawn, `flz operative send` or `flz operative start --text`, and its `init_values` being the tasklet's initial state as on a stream: the loop mode SHALL be accepted on a workflow short form in every SDK, in the spelling that SDK's full form gives the setting (`loop_mode` on the Rust attribute, `loopMode()` on `@WorkflowOperative`, `loopMode` on the Node definition, `loop_mode=` on the Python decorator, `loop_mode` in the Ruby class body, `#[Workflow(loopMode: ...)]` beside `#[Operative]` in PHP, `loop_mode:` on the Elixir `use`), and SHALL reach the generated operative as the full form's loop mode does. Every other class-level setting (the retry ladder is no longer one, being an edge's; a duration, persistence, the effectively-once tier, a correction window, rollback mode, synchronous durability) SHALL NOT be expressible on the short form; it is the full form, and where an SDK's spelling lets an author write one on a short form it SHALL be refused naming the setting. A loop mode or rollback mode outside the declared set (`once`, `per_input`, `chained`; `all_or_nothing`, `keep_progress`) SHALL be refused at declaration naming the value, in every SDK whose spelling can write one. The tasklet's own settings (cell keys and `cells_for`, mailbox capacity, clock, schema version, the state and change declarations) SHALL be accepted on the short form and SHALL reach the generated tasklet. A short-form key (`sink`, `input`, `codec`) or a tasklet setting written on a declaration that carries a topology body SHALL be refused rather than ignored.
+The generated operator SHALL otherwise be the operator an author would hand-write with that one tasklet: an entry channel named by `input`, or `input` when none is written, decoded by `codec` where one is written; the tasklet; a factory id equal to the written identity; and every class-level setting at the SDK's default for its kind. A bounded short form SHALL therefore be a `once` bounded operator unless it declares its loop mode, its entry channel receiving its first message, from a spawn, `flz operator send` or `flz operator start --text`, and its `init_values` being the tasklet's initial state as on an unbounded operator: the loop mode SHALL be accepted on a bounded short form in every SDK, in the spelling that SDK's full form gives the setting (`loop_mode` on the Rust attribute, `loopMode()` on `@BoundedOperator`, `loopMode` on the Node definition, `loop_mode=` on the Python decorator, `loop_mode` in the Ruby class body, `#[Bounded(loopMode: ...)]` beside `#[Operator]` in PHP, `loop_mode:` on the Elixir `use`), and SHALL reach the generated operator as the full form's loop mode does. Every other class-level setting (the retry ladder is no longer one, being an edge's; a duration, persistence, the effectively-once tier, a correction window, rollback mode, synchronous durability) SHALL NOT be expressible on the short form; it is the full form, and where an SDK's spelling lets an author write one on a short form it SHALL be refused naming the setting. A loop mode or rollback mode outside the declared set (`once`, `per_input`, `chained`; `all_or_nothing`, `keep_progress`) SHALL be refused at declaration naming the value, in every SDK whose spelling can write one. The tasklet's own settings (cell keys and `cells_for`, mailbox capacity, clock, schema version, the state and change declarations) SHALL be accepted on the short form and SHALL reach the generated tasklet. A short-form key (`sink`, `input`, `codec`) or a tasklet setting written on a declaration that carries a topology body SHALL be refused rather than ignored.
 
-The expansion SHALL produce an ordinary tasklet and an ordinary operative, and the generated tasklet's node name SHALL be the factory id verbatim, with no suffix, case change or decoration, because a tasklet's name is a durable component of every cell's state path. Where an SDK generates code, the two SHALL be separate types, and the author-facing name SHALL be the operative's, because that is what the declaration declares.
+The expansion SHALL produce an ordinary tasklet and an ordinary operator, and the generated tasklet's node name SHALL be the factory id verbatim, with no suffix, case change or decoration, because a tasklet's name is a durable component of every cell's state path. Where an SDK generates code, the two SHALL be separate types, and the author-facing name SHALL be the operator's, because that is what the declaration declares.
 
-Registration SHALL be explicit in every SDK: the author hands the declaration to the runner's `register_factory`, which reads its kind as it reads any operative's, and nothing is harvested, scanned or collected. No SDK SHALL require the author to name a generated artefact.
+Registration SHALL be explicit in every SDK: the author hands the declaration to the runner's `register_factory`, which reads its kind as it reads any operator's, and nothing is harvested, scanned or collected. No SDK SHALL require the author to name a generated artefact.
 
-An operative declaration carrying both a tasklet body and a topology body SHALL be refused. A written `sink` on a body the SDK can see declares no output SHALL be refused; an SDK whose tasklets declare no output type owes no such refusal and says so in its conformance manifest.
+An operator declaration carrying both a tasklet body and a topology body SHALL be refused. A written `sink` on a body the SDK can see declares no output SHALL be refused; an SDK whose tasklets declare no output type owes no such refusal and says so in its conformance manifest.
 
-#### Scenario: A stream short form is the hand-written single-tasklet stream
+#### Scenario: An unbounded short form is the hand-written single-tasklet stream
 
-- **WHEN** a stream operative declaration carries its identity, a `sink` and a tasklet body, and the author registers it
-- **THEN** the runner declares a stream operative wiring the controller input to the tasklet to the named sink, with every class setting at its default, and the declaration equals the one a hand-written single-tasklet stream produces
+- **WHEN** an unbounded operator declaration carries its identity, a `sink` and a tasklet body, and the author registers it
+- **THEN** the runner declares an unbounded operator wiring the controller input to the tasklet to the named sink, with every class setting at its default, and the declaration equals the one a hand-written single-tasklet stream produces
 
-#### Scenario: A workflow short form runs once on its first message
+#### Scenario: A bounded short form runs once on its first message
 
-- **WHEN** a workflow operative declaration carries its identity, a `sink` and a tasklet body, is registered, an instance is started, and one message is sent to it
+- **WHEN** a bounded operator declaration carries its identity, a `sink` and a tasklet body, is registered, an instance is started, and one message is sent to it
 - **THEN** the entry channel receives the message, the tasklet runs once, its output reaches the sink, and the instance completes
 
 #### Scenario: A short form with no sink declares an entry channel and a tasklet
 
-- **WHEN** a stream operative declaration carries its identity and a tasklet body and no `sink`
-- **THEN** the generated operative SHALL declare the entry channel and the tasklet and no plugin channel, and the declaration SHALL be accepted, as a full-form operative whose channel ends at a tasklet is accepted
+- **WHEN** an unbounded operator declaration carries its identity and a tasklet body and no `sink`
+- **THEN** the generated operator SHALL declare the entry channel and the tasklet and no plugin channel, and the declaration SHALL be accepted, as a full-form operator whose channel ends at a tasklet is accepted
 
 #### Scenario: An entry channel name and codec need no sink
 
@@ -142,45 +142,45 @@ An operative declaration carrying both a tasklet body and a topology body SHALL 
 - **WHEN** a short form, in an SDK whose spelling can write one, declares a class-level setting other than the loop mode, such as persistence off or a maximum duration
 - **THEN** the SDK SHALL refuse the declaration naming the setting
 
-#### Scenario: A workflow short form declares its loop mode
+#### Scenario: A bounded short form declares its loop mode
 
-- **WHEN** a workflow short form in any of the seven SDKs declares the `per_input` loop mode in that SDK's spelling, is registered, and two messages reach its entry channel
-- **THEN** the generated operative SHALL declare `loop_mode` `per_input`, the tasklet SHALL run once per message, and the instance SHALL not complete after the first
+- **WHEN** a bounded short form in any of the seven SDKs declares the `per_input` loop mode in that SDK's spelling, is registered, and two messages reach its entry channel
+- **THEN** the generated operator SHALL declare `loop_mode` `per_input`, the tasklet SHALL run once per message, and the instance SHALL not complete after the first
 
 #### Scenario: An unknown loop mode is refused at declaration
 
-- **WHEN** a Python workflow is decorated with `loop_mode="forever"`, or a workflow in any SDK whose spelling takes a string names a rollback mode outside the declared set
+- **WHEN** a Python bounded operator is decorated with `loop_mode="forever"`, or a bounded operator in any SDK whose spelling takes a string names a rollback mode outside the declared set
 - **THEN** the declaration SHALL be refused naming the value, and nothing SHALL reach the core
 
 #### Scenario: A short-form key beside a topology body is refused
 
-- **WHEN** an operative declaration carries a `channels` body and also a `sink`, an `input` or a `codec`
+- **WHEN** an operator declaration carries a `channels` body and also a `sink`, an `input` or a `codec`
 - **THEN** the SDK SHALL refuse the declaration rather than ignore the key
 
 #### Scenario: The kind is read from the entry point, not from a key
 
-- **WHEN** a short form is written at the stream entry point and another at the workflow entry point
-- **THEN** each SHALL be an operative of that kind, no declaration SHALL carry a `kind` key, and no declaration SHALL be able to name a kind that disagrees with its entry point
+- **WHEN** a short form is written at the unbounded entry point and another at the bounded entry point
+- **THEN** each SHALL be an operator of that kind, no declaration SHALL carry a `kind` key, and no declaration SHALL be able to name a kind that disagrees with its entry point
 
 #### Scenario: The auto-wired entry channel keeps its default name
 
 - **WHEN** a short form declares no entry channel name
-- **THEN** the generated operative's entry channel SHALL be named `input`
+- **THEN** the generated operator's entry channel SHALL be named `input`
 
 #### Scenario: The author names the auto-wired entry channel
 
 - **WHEN** a short form declares the entry channel name `prices`
-- **THEN** the generated operative's entry channel SHALL be named `prices`, and a frame whose metadata names `prices` SHALL reach it
+- **THEN** the generated operator's entry channel SHALL be named `prices`, and a frame whose metadata names `prices` SHALL reach it
 
 #### Scenario: A short form reads text where the builder names codecs
 
-- **WHEN** a Python, Node, Ruby or PHP short form declares the text codec and a frame is sent with `flz operative send --text`
+- **WHEN** a Python, Node, Ruby or PHP short form declares the text codec and a frame is sent with `flz operator send --text`
 - **THEN** the tasklet receives the text as a string, as the same codec on the builder's `input` delivers it
 
 #### Scenario: Registration is written by the author
 
 - **WHEN** a program declares a short form and never hands it to its runner
-- **THEN** the runner declares no operative for it
+- **THEN** the runner declares no operator for it
 
 #### Scenario: The author registers what the author wrote
 
@@ -189,7 +189,7 @@ An operative declaration carrying both a tasklet body and a topology body SHALL 
 
 #### Scenario: A tasklet body beside a topology body is refused
 
-- **WHEN** an operative declaration carries a tasklet body and also a `channels` body
+- **WHEN** an operator declaration carries a tasklet body and also a `channels` body
 - **THEN** the SDK SHALL refuse naming `ShortFormWithTopology`, at compile time where the language has one and at declaration or registration otherwise
 
 #### Scenario: A sink on a body with no output is refused
@@ -199,27 +199,27 @@ An operative declaration carrying both a tasklet body and a topology body SHALL 
 
 #### Scenario: Multi-tasklet topology stays explicit
 
-- **WHEN** an operative has more than one tasklet, any fan-out or multi-input edge, a keyed edge, or any class-level setting other than a workflow's loop mode
+- **WHEN** an operator has more than one tasklet, any fan-out or multi-input edge, a keyed edge, or any class-level setting other than a bounded operator's loop mode
 - **THEN** the SDK requires the full form and does not auto-wire
 
 #### Scenario: Duplicate factory id fails fast across kinds
 
-- **WHEN** a runner is handed a stream and a workflow, short or full, under one factory id
+- **WHEN** a runner is handed an unbounded and a bounded operator, short or full, under one factory id
 - **THEN** the second definition fails with an error naming `DuplicateFactoryId` and the colliding id
 
 #### Scenario: The same declaration in every SDK
 
-- **WHEN** the reference short-form fixtures `sugar_do_nothing`, `sugar_store_input`, `sugar_named_input`, `sugar_workflow` and `sugar_state_only` are authored in each SDK's test app
-- **THEN** each is one operative declaration carrying its factory id and a tasklet body (a `sink` on all but `sugar_state_only`, and `prices` or `order` for the named entries), no separate tasklet declaration and one registration call, and every runtime's declaration equals the reference golden
+- **WHEN** the reference short-form fixtures `sugar_do_nothing`, `sugar_store_input`, `sugar_named_input`, `sugar_bounded` and `sugar_state_only` are authored in each SDK's test app
+- **THEN** each is one operator declaration carrying its factory id and a tasklet body (a `sink` on all but `sugar_state_only`, and `prices` or `order` for the named entries), no separate tasklet declaration and one registration call, and every runtime's declaration equals the reference golden
 
 ### Requirement: Contract binds all current and future SDKs
-The contract SHALL be the single source of truth for authoring sugar across the Rust, Java, Elixir, Node, Ruby, PHP and Python SDKs and any future binding, including non-normative target sketches for bindings not yet built. Every SDK's stream and workflow authoring surfaces SHALL be rooted in the shared `Operative` base (see below). Beyond the sugar, every surface that more than one SDK carries SHALL change in lockstep: a change to the authoring or declaration surface (builder, ctx, the `HostClassDecl` keys), to the wire protocol or its metadata keys, to a default (overflow policy, retry ladder, mailbox capacity, heartbeat keys), or to a fixture that proves one of these (the regression and round-trip bench factories, the end-to-end runtime matrix) SHALL land in every SDK in the same change, or SHALL name in its spec delta the SDK it defers and the follow-up change that owes it. An SDK that carries a capability another SDK neither carries nor names as deferred is a defect of the change, not a backlog item. A performance change SHALL state in its notes which layer it changed (controller, shared kernel, or host SDK); a measurement taken with one runtime SHALL be reported as that runtime's number, and a claim that holds for every SDK SHALL be backed by the same bench run on each runtime that carries the tier.
+The contract SHALL be the single source of truth for authoring sugar across the Rust, Java, Elixir, Node, Ruby, PHP and Python SDKs and any future binding, including non-normative target sketches for bindings not yet built. Every SDK's unbounded and bounded authoring surfaces SHALL be rooted in the shared `Operator` base (see below). Beyond the sugar, every surface that more than one SDK carries SHALL change in lockstep: a change to the authoring or declaration surface (builder, ctx, the `HostClassDecl` keys), to the wire protocol or its metadata keys, to a default (overflow policy, retry ladder, mailbox capacity, heartbeat keys), or to a fixture that proves one of these (the regression and round-trip bench factories, the end-to-end runtime matrix) SHALL land in every SDK in the same change, or SHALL name in its spec delta the SDK it defers and the follow-up change that owes it. An SDK that carries a capability another SDK neither carries nor names as deferred is a defect of the change, not a backlog item. A performance change SHALL state in its notes which layer it changed (controller, shared kernel, or host SDK); a measurement taken with one runtime SHALL be reported as that runtime's number, and a claim that holds for every SDK SHALL be backed by the same bench run on each runtime that carries the tier.
 
 An SDK whose authoring surface is a set of factory functions, or a set of classes, rather than macros or annotations SHALL be bound by the same contract: the sketch names the mechanism, and the inference rules, the refusal set and the invocation context are the same.
 
-#### Scenario: Reference operative expands identically across SDKs
+#### Scenario: Reference operator expands identically across SDKs
 
-- **WHEN** the same reference stream operative is authored with each SDK's sugar
+- **WHEN** the same reference unbounded operator is authored with each SDK's sugar
 - **THEN** each expansion produces a structurally identical topology and associated-type mapping per this contract
 
 #### Scenario: Future bindings have a documented target
@@ -244,7 +244,7 @@ An SDK whose authoring surface is a set of factory functions, or a set of classe
 
 #### Scenario: The PHP binding is rooted in the shared base
 
-- **WHEN** a PHP stream or workflow operative is authored
+- **WHEN** a PHP unbounded or bounded operator is authored
 - **THEN** its declaration SHALL expand to the same topology and cell-mode mapping the contract defines for Rust and Java, with no PHP-specific runtime path, protocol message, or WAL change
 
 #### Scenario: An attribute-carried declaration is bound by the same rules
@@ -414,7 +414,7 @@ The mandatory authoring surface for the common hand-written case therefore reduc
 
 ### Requirement: Every SDK binding passes the shared conformance suite
 
-Every SDK binding SHALL ship a test app under `test/apps/<sdk>_runner/` with a conformance manifest (`sdk-conformance`), and SHALL pass the shared end-to-end suite under `FLEZHA_E2E_RUNTIME=<sdk>` for every capability its manifest does not defer. A capability listed under `deferred` SHALL match the SDK's documented scope matrix, and the documented matrix SHALL point at the manifest rather than restate it. The contract's reference-operative equivalence (§6 `static_cell`, §6.1 `rolling_window_twin`) SHALL be asserted against the controller-side golden declaration snapshot in the smoke tier, in addition to any SDK-local expansion test; an SDK whose expansion differs from the golden fails conformance, whatever its local test says.
+Every SDK binding SHALL ship a test app under `test/apps/<sdk>_runner/` with a conformance manifest (`sdk-conformance`), and SHALL pass the shared end-to-end suite under `FLEZHA_E2E_RUNTIME=<sdk>` for every capability its manifest does not defer. A capability listed under `deferred` SHALL match the SDK's documented scope matrix, and the documented matrix SHALL point at the manifest rather than restate it. The contract's reference-operator equivalence (§6 `static_cell`, §6.1 `rolling_window_twin`) SHALL be asserted against the controller-side golden declaration snapshot in the smoke tier, in addition to any SDK-local expansion test; an SDK whose expansion differs from the golden fails conformance, whatever its local test says.
 
 #### Scenario: A new binding is admitted by the suite, not by review
 - **WHEN** a new SDK's test app and manifest are added and `FLEZHA_E2E_RUNTIME=<sdk> mix test --include system` passes with every non-deferred capability green
@@ -511,12 +511,12 @@ requirement by one conformance run over every row, not by a set of tests of its 
 - **THEN** the record carries the flags as written and the reference check derives the
   acknowledgement granularity and judges its preconditions, with no per-SDK helper doing so
 
-### Requirement: Stream and workflow share an `Operative` authoring base
+### Requirement: Unbounded and bounded share an `Operator` authoring base
 
-Both authoring surfaces SHALL be rooted in a shared `Operative` base: in Java an
-interface that `StreamOperative` and `WorkflowOperative` both extend, and in Rust a
-sealed `Operative<K>` trait the SDK implements for every `StreamOperative` (as
-`Operative<StreamKind>`) and every `WorkflowOperative` (as `Operative<WorkflowKind>`), so
+Both authoring surfaces SHALL be rooted in a shared `Operator` base: in Java an
+interface that `UnboundedOperator` and `BoundedOperator` both extend, and in Rust a
+sealed `Operator<K>` trait the SDK implements for every `UnboundedOperator` (as
+`Operator<UnboundedKind>`) and every `BoundedOperator` (as `Operator<BoundedKind>`), so
 an author implements only the kind trait. The base's shared members SHALL be
 `factory_id()` and, in Java, `channels(ChannelBuilder)`: both kinds declare their graph in a
 body named `channels`, in every SDK, on the same builder, so the body is not kind-divergent
@@ -525,57 +525,57 @@ declares `channels` itself, because an author cannot implement the sealed base).
 persistence switch and the sleep setting belong to both kinds and SHALL be declared on both
 kind surfaces under one spelling each (on the base where the language lets the base carry a
 default that differs per kind, else on each kind trait); the kind-divergent surface (the
-workflow settings: loop mode, rollback mode, maximum duration, self-termination, synchronous
+bounded settings: loop mode, rollback mode, maximum duration, self-termination, synchronous
 durability) SHALL remain on the per-kind traits. There SHALL be no `tasklets` body in any SDK.
 
-Every SDK's runner handle SHALL register an operative of either kind through one method,
+Every SDK's runner handle SHALL register an operator of either kind through one method,
 `register_factory`, and remove it through one inverse, `unregister_factory` (`registerFactory` and
-`unregisterFactory` in Java, Node and PHP), both taking the same argument, short form or full: a Rust operative value (`register_factory(EchoOperative)`), a Java class, a Python
-operative, a Node module specifier, a Ruby class, a PHP class
-string, an Elixir module. The kind SHALL be read from the operative and never named by the
-call, from what already names it: the sealed `Operative<K>` impl in Rust, the kind interface
+`unregisterFactory` in Java, Node and PHP), both taking the same argument, short form or full: a Rust operator value (`register_factory(EchoOperator)`), a Java class, a Python
+operator, a Node module specifier, a Ruby class, a PHP class
+string, an Elixir module. The kind SHALL be read from the operator and never named by the
+call, from what already names it: the sealed `Operator<K>` impl in Rust, the kind interface
 in Java, the defining function in Node, the decorator in Python, the base class in Ruby and
-PHP, the `@behaviour` in Elixir (`Flezha.SDK.StreamOperative` or `Flezha.SDK.WorkflowOperative`,
+PHP, the `@behaviour` in Elixir (`Flezha.SDK.UnboundedOperator` or `Flezha.SDK.BoundedOperator`,
 set by the `use` macro or written by hand). `unregister_factory` SHALL undo a registration made before the runner starts in every SDK, and
 one made after start in every SDK whose runner can stop serving a started declaration; an SDK whose
 runner cannot SHALL reject a post-start call with an error that says so, never ignore it. Both SHALL be methods on the concrete runner handle (functions over the handle in
 Elixir), not free functions, static methods, or methods on a builder type, and SHALL be
-generic over the shared base where the host language expresses such a bound. An operative
+generic over the shared base where the host language expresses such a bound. An operator
 whose kind cannot be read, because it declares both kinds or neither, SHALL be refused at
-registration with an error beginning `AmbiguousOperativeKind` or `UnknownOperativeKind`; in
+registration with an error beginning `AmbiguousOperatorKind` or `UnknownOperatorKind`; in
 Rust, where such a type cannot be passed to `register_factory` at all, it is a compile error, and in Java a class implementing both kind interfaces does not compile against the base's single `channels`. A short form's kind is its entry point's name, so no short form can reach either refusal. The
-base SHALL NOT require unifying the sealed operative *instance* enum, which stays
-asymmetric. Adding a future operative kind SHALL require implementing the base and teaching
+base SHALL NOT require unifying the sealed operator *instance* enum, which stays
+asymmetric. Adding a future operator kind SHALL require implementing the base and teaching
 `register_factory` and `unregister_factory` the kind, without editing the existing two authoring surfaces
 and without adding a runner method.
 
-Where a host language groups types into namespaces or modules, both operative kinds
+Where a host language groups types into namespaces or modules, both operator kinds
 and the shared base SHALL be grouped together rather than split across namespaces, so
 that the grouping states the taxonomy the vocabulary already uses.
 
 #### Scenario: Both kinds register through one method
 
-- **WHEN** a stream operative and a workflow operative are each handed to the runner's `register_factory` / `registerFactory`
+- **WHEN** an unbounded operator and a bounded operator are each handed to the runner's `register_factory` / `registerFactory`
 - **THEN** both SHALL be declared, sharing `factory_id()`, and no call SHALL name a kind
 
 #### Scenario: A short form registers through the same method
 
 - **WHEN** a short form of either kind is handed to `register_factory` / `registerFactory`
-- **THEN** it SHALL be declared exactly as a full-form operative of that kind is, through the same method and with no kind named by the call
+- **THEN** it SHALL be declared exactly as a full-form operator of that kind is, through the same method and with no kind named by the call
 
 #### Scenario: Unregister takes what register took
 
-- **WHEN** an operative registered with `register_factory(x)` is removed with `unregister_factory(x)`
+- **WHEN** an operator registered with `register_factory(x)` is removed with `unregister_factory(x)`
 - **THEN** its factory id SHALL leave the runner's declared set, whatever its kind
 
-#### Scenario: An operative of both kinds is refused
+#### Scenario: An operator of both kinds is refused
 
-- **WHEN** an Elixir module declaring both `@behaviour Flezha.SDK.StreamOperative` and `@behaviour Flezha.SDK.WorkflowOperative` is handed to `register_factory/2`, or a Java class implementing both `StreamOperative` and `WorkflowOperative` is compiled
-- **THEN** the Elixir registration SHALL fail with an error beginning `AmbiguousOperativeKind` naming the module and nothing SHALL be declared, and the Java class SHALL fail to compile
+- **WHEN** an Elixir module declaring both `@behaviour Flezha.SDK.UnboundedOperator` and `@behaviour Flezha.SDK.BoundedOperator` is handed to `register_factory/2`, or a Java class implementing both `UnboundedOperator` and `BoundedOperator` is compiled
+- **THEN** the Elixir registration SHALL fail with an error beginning `AmbiguousOperatorKind` naming the module and nothing SHALL be declared, and the Java class SHALL fail to compile
 
 #### Scenario: Both kinds declare their graph in channels
 
-- **WHEN** a workflow class in Rust, Java or Elixir declares its graph in `channels` on the builder a stream uses, and the same class is rewritten with a `tasklets` body
+- **WHEN** a bounded class in Rust, Java or Elixir declares its graph in `channels` on the builder an unbounded operator uses, and the same class is rewritten with a `tasklets` body
 - **THEN** the first SHALL register and run, and the second SHALL fail: at compile time in Rust and Java (no such member), and in Elixir at `@before_compile` naming the missing `channels/1`
 
 #### Scenario: Both kinds carry the persistence switch and the sleep setting
@@ -585,26 +585,26 @@ that the grouping states the taxonomy the vocabulary already uses.
 
 #### Scenario: A new kind is added without editing the existing surfaces
 
-- **WHEN** a new operative kind is added by implementing `Operative` and teaching `register_factory` and `unregister_factory` to read it
+- **WHEN** a new operator kind is added by implementing `Operator` and teaching `register_factory` and `unregister_factory` to read it
 - **THEN** neither existing authoring surface SHALL require modification, and the runner SHALL gain no method
 
 #### Scenario: The instance enum stays asymmetric
 
-- **WHEN** the sealed operative instance representation is considered
-- **THEN** its variants MAY remain asymmetric, a rich stream instance against an id-only
-  workflow instance, and the `Operative` base SHALL NOT require inventing a common
+- **WHEN** the sealed operator instance representation is considered
+- **THEN** its variants MAY remain asymmetric, a rich unbounded instance against an id-only
+  bounded instance, and the `Operator` base SHALL NOT require inventing a common
   instance type
 
 #### Scenario: Both kinds are grouped in one namespace
 
 - **WHEN** a host language groups authoring types into namespaces, modules or packages
-- **THEN** the shared base and both operative kinds SHALL be reachable from one such
+- **THEN** the shared base and both operator kinds SHALL be reachable from one such
   grouping, and neither kind SHALL be the only one placed outside it
 
 ### Requirement: Short-form refusals carry one name per refusal in every SDK
 The three short-form refusals SHALL be named `ShortFormWithTopology`, `SinkWithoutOutput` and `DuplicateFactoryId` in every SDK, and the name SHALL appear verbatim in the error the author reads: the compile error text in Rust, Java and an Elixir `use` declaration, the declaration error's refusal list and message in Python, Node, Ruby and PHP, and the printed form of the registration error in Elixir. The names SHALL be listed in `docs/sdk/authoring_contract.md` §5, which the conformance check reads as the source of the row names.
 
-`SinkWithoutId`, `SinkWithoutKind` and `ShorthandKeyWithoutSink` SHALL NOT exist. A short form's identity is an operative's factory id, which every operative has always been required to carry, so the first is the full form's own rule; the kind is the entry point's name, so the second is unrepresentable; and `input` and `codec` are meaningful with no `sink`, so the third refuses nothing.
+`SinkWithoutId`, `SinkWithoutKind` and `ShorthandKeyWithoutSink` SHALL NOT exist. A short form's identity is an operator's factory id, which every operator has always been required to carry, so the first is the full form's own rule; the kind is the entry point's name, so the second is unrepresentable; and `input` and `codec` are meaningful with no `sink`, so the third refuses nothing.
 
 #### Scenario: A refusal is recognisable across languages
 
@@ -613,7 +613,7 @@ The three short-form refusals SHALL be named `ShortFormWithTopology`, `SinkWitho
 
 #### Scenario: The duplicate-id error is named, not only described
 
-- **WHEN** a runner is asked to define a second operative with a factory id it already holds
+- **WHEN** a runner is asked to define a second operator with a factory id it already holds
 - **THEN** the error contains `DuplicateFactoryId` and the id, in every SDK
 
 #### Scenario: A retired refusal name is gone from every SDK
@@ -623,64 +623,64 @@ The three short-form refusals SHALL be named `ShortFormWithTopology`, `SinkWitho
 
 ### Requirement: A setting that belongs to one kind is refused by name on the other
 
-Every SDK SHALL let what an author writes on a class reach the judgement of that class's kind, and SHALL never drop a setting because the kind does not carry it. A stream-only setting on a workflow class SHALL be refused at registration under the reference's name: the effectively-once tier as `EffectivelyOnceOnWorkflow`, any checkpoint setting (`checkpoint_ack`, `checkpoint_every`, `outputs_at_checkpoint`, its maximum delay) as `CheckpointOnWorkflow`, the correction window as `CorrectionWindowOnWorkflow`. A workflow-only setting on a stream class SHALL be refused the same way: synchronous durability as `SyncDurabilityOnStream`, and in PHP the `#[Workflow]` attribute on a class extending `Flezha\StreamOperative`, naming the attribute. The name SHALL appear verbatim in the error the author reads, in every SDK, whether the SDK judges the class itself (Rust, Elixir) or the shared core judges it (Java, Node, Python, Ruby, PHP); a host SDK raises it where it declares the class to the core, which in Node, Python, Ruby and PHP is the runner's start for a class registered before it. No SDK SHALL keep a per-kind gate that removes such a setting from the declaration before it is judged, and no SDK SHALL honour such a setting in its own runtime while withholding it from the declaration.
+Every SDK SHALL let what an author writes on a class reach the judgement of that class's kind, and SHALL never drop a setting because the kind does not carry it. An unbounded-only setting on a bounded class SHALL be refused at registration under the reference's name: the effectively-once tier as `EffectivelyOnceOnBounded`, any checkpoint setting (`checkpoint_ack`, `checkpoint_every`, `outputs_at_checkpoint`, its maximum delay) as `CheckpointOnBounded`, the correction window as `CorrectionWindowOnBounded`. A bounded-only setting on an unbounded class SHALL be refused the same way: synchronous durability as `SyncDurabilityOnUnbounded`, and in PHP the `#[Bounded operator]` attribute on a class extending `Flezha\UnboundedOperator`, naming the attribute. The name SHALL appear verbatim in the error the author reads, in every SDK, whether the SDK judges the class itself (Rust, Elixir) or the shared core judges it (Java, Node, Python, Ruby, PHP); a host SDK raises it where it declares the class to the core, which in Node, Python, Ruby and PHP is the runner's start for a class registered before it. No SDK SHALL keep a per-kind gate that removes such a setting from the declaration before it is judged, and no SDK SHALL honour such a setting in its own runtime while withholding it from the declaration.
 
-Synchronous durability SHALL have one spelling per SDK, the class-level one (`SYNC_DURABILITY` in Rust, `syncDurability()` in Java, the `syncDurability` definition field in Node, the `sync_durability` decorator keyword in Python, the `sync_durability` class-body flag in Ruby, `#[Workflow(syncDurability: true)]` in PHP, the `sync_durability` `use` option in Elixir). No channel builder SHALL carry a `sync_durability` call.
+Synchronous durability SHALL have one spelling per SDK, the class-level one (`SYNC_DURABILITY` in Rust, `syncDurability()` in Java, the `syncDurability` definition field in Node, the `sync_durability` decorator keyword in Python, the `sync_durability` class-body flag in Ruby, `#[Bounded(syncDurability: true)]` in PHP, the `sync_durability` `use` option in Elixir). No channel builder SHALL carry a `sync_durability` call.
 
-`compact_after_bytes` is a tasklet's setting and belongs to both kinds; it SHALL be accepted on a workflow as on a stream.
+`compact_after_bytes` is a tasklet's setting and belongs to both kinds; it SHALL be accepted on a bounded operator as on an unbounded operator.
 
-#### Scenario: The tier on a workflow is refused, not dropped
+#### Scenario: The tier on a bounded operator is refused, not dropped
 
-- **WHEN** a workflow class in any of the seven SDKs declares the effectively-once tier on its builder
-- **THEN** registration SHALL fail with an error containing `EffectivelyOnceOnWorkflow`, nothing SHALL be declared, and no SDK SHALL run the tier for that class
+- **WHEN** a bounded class in any of the seven SDKs declares the effectively-once tier on its builder
+- **THEN** registration SHALL fail with an error containing `EffectivelyOnceOnBounded`, nothing SHALL be declared, and no SDK SHALL run the tier for that class
 
-#### Scenario: A checkpoint setting on a workflow is refused by its own name
+#### Scenario: A checkpoint setting on a bounded operator is refused by its own name
 
-- **WHEN** a workflow class declares `checkpoint_every(500)` and nothing else stream-only
-- **THEN** registration SHALL fail with an error containing `CheckpointOnWorkflow`, and SHALL NOT report `CheckpointAckWithoutTier`
+- **WHEN** a bounded class declares `checkpoint_every(500)` and nothing else unbounded-only
+- **THEN** registration SHALL fail with an error containing `CheckpointOnBounded`, and SHALL NOT report `CheckpointAckWithoutTier`
 
-#### Scenario: A workflow attribute on a PHP stream class is refused
+#### Scenario: A bounded attribute on a PHP unbounded class is refused
 
-- **WHEN** a class extending `Flezha\StreamOperative` carries `#[Workflow(loopMode: LoopMode::PerInput)]`
-- **THEN** `registerFactory` SHALL throw `DeclarationException` naming `#[Workflow]` and the class, and nothing SHALL be declared
+- **WHEN** a class extending `Flezha\UnboundedOperator` carries `#[Bounded(loopMode: LoopMode::PerInput)]`
+- **THEN** `registerFactory` SHALL throw `DeclarationException` naming `#[Bounded operator]` and the class, and nothing SHALL be declared
 
 #### Scenario: The builder spelling of synchronous durability is gone
 
 - **WHEN** the Node, Python, Ruby and PHP channel builders are searched for a `sync_durability` / `syncDurability` method
-- **THEN** none carries one, and a Node workflow whose definition sets `syncDurability: true` declares `sync_durability` to the core
+- **THEN** none carries one, and a Node bounded operator whose definition sets `syncDurability: true` declares `sync_durability` to the core
 
 ### Requirement: The class declares its kind and the runner announces it
 
-The kind of an operative SHALL be a fact of its class alone, read by `register_factory` as the contract already requires, and SHALL be announced by the runner to the controller with the factory id: every factory entry the runner ships, in the connect init frame and in `UpdateFactories`, SHALL carry `kind`, exactly `"stream"` or `"workflow"`. Rust and Elixir SHALL fill it from the registered class; Java, Node, Python, Ruby and PHP announce through the shared core, which SHALL fill it from the registry the class declaration landed in, where it already fills `sdk_lang`. No start command, schedule or spawn SHALL name a kind to the controller; the controller reads the announced one.
+The kind of an operator SHALL be a fact of its class alone, read by `register_factory` as the contract already requires, and SHALL be announced by the runner to the controller with the factory id: every factory entry the runner ships, in the connect init frame and in `UpdateFactories`, SHALL carry `kind`, exactly `"unbounded"` or `"bounded"`. Rust and Elixir SHALL fill it from the registered class; Java, Node, Python, Ruby and PHP announce through the shared core, which SHALL fill it from the registry the class declaration landed in, where it already fills `sdk_lang`. No start command, schedule or spawn SHALL name a kind to the controller; the controller reads the announced one.
 
 #### Scenario: Every runtime announces the kind of every fixture
 
 - **WHEN** any of the seven test apps connects
-- **THEN** every factory entry it ships carries `kind`, `"workflow"` for every id its manifest lists under a workflow capability and `"stream"` for every other id
+- **THEN** every factory entry it ships carries `kind`, `"bounded"` for every id its manifest lists under a bounded capability and `"unbounded"` for every other id
 
 #### Scenario: A class's kind needs no flag at start
 
-- **WHEN** `flz operative start paper_order` names a factory a runner announced as a workflow
-- **THEN** a workflow instance SHALL start, with no `--kind` written and none accepted
+- **WHEN** `flz operator start paper_order` names a factory a runner announced as a bounded operator
+- **THEN** a bounded instance SHALL start, with no `--kind` written and none accepted
 
 ### Requirement: Persistence and sleeping are class settings of both kinds in every SDK
 
-Every SDK SHALL carry two class-level settings on a stream class and a workflow class alike,
+Every SDK SHALL carry two class-level settings on an unbounded class and a bounded class alike,
 each under one spelling per SDK, read by the SDK's own runtime and announced in the class
 declaration so the controller reads the same value:
 
 - the **persistence switch**, default on: `PERSISTENCE_ENABLED` on both Rust traits,
   `persistenceEnabled()` on both Java kind interfaces, `persistent` on Node's
-  `OperativeDefinition` and `WorkflowDefinition`, the `persistent` keyword of both Python
-  decorators, the `persistent` class-body flag in Ruby, `#[Operative(persistent:)]` in PHP, and
+  `OperatorDefinition` and `BoundedDefinition`, the `persistent` keyword of both Python
+  decorators, the `persistent` class-body flag in Ruby, `#[Operator(persistent:)]` in PHP, and
   `persistence_enabled/0` on both Elixir behaviours. Off, the runtime SHALL drain and discard the
-  class's change bytes and ship no state frame, for a stream as for a workflow, and the
+  class's change bytes and ship no state frame, for an unbounded operator as for a bounded operator, and the
   declaration SHALL say `persistent = false`; no SDK SHALL derive the switch from the
   tasklets' change types.
-- the **sleep setting**, `sleep_when_idle`, default the persistence switch for a workflow and
-  off for a stream: `SLEEP_WHEN_IDLE` on both Rust traits, `sleepWhenIdle()` on both Java kind
+- the **sleep setting**, `sleep_when_idle`, default the persistence switch for a bounded operator and
+  off for an unbounded operator: `SLEEP_WHEN_IDLE` on both Rust traits, `sleepWhenIdle()` on both Java kind
   interfaces, `sleepWhenIdle` on both Node definitions, the `sleep_when_idle` keyword of both
-  Python decorators, the `sleep_when_idle` class-body flag in Ruby, `#[Operative(sleepWhenIdle:)]`
+  Python decorators, the `sleep_when_idle` class-body flag in Ruby, `#[Operator(sleepWhenIdle:)]`
   in PHP, and the `sleep_when_idle` `use` option and optional callback on both Elixir
   behaviours. The declaration SHALL carry the resolved boolean. A class that declares sleeping
   with its persistence switch off SHALL be refused at registration as `SleepWithoutPersistence`,
@@ -690,19 +690,19 @@ declaration so the controller reads the same value:
 Neither setting is kind-divergent, so neither SHALL be refused on either kind, and a short form
 SHALL be unable to set either, as it can set no class-level setting.
 
-#### Scenario: A stream opts out of persistence in every SDK
+#### Scenario: An unbounded operator opts out of persistence in every SDK
 
-- **WHEN** a stream class in each of the seven SDKs declares persistence off and an instance of it records ten changes
+- **WHEN** an unbounded class in each of the seven SDKs declares persistence off and an instance of it records ten changes
 - **THEN** no `cell_state_change` frame SHALL reach the wire from any of the seven runtimes, and each declaration SHALL announce `persistent = false`
 
-#### Scenario: A stream declares sleeping in every SDK
+#### Scenario: An unbounded operator declares sleeping in every SDK
 
-- **WHEN** a stream class in each of the seven SDKs declares `sleep_when_idle`
+- **WHEN** an unbounded class in each of the seven SDKs declares `sleep_when_idle`
 - **THEN** each declaration SHALL announce `sleep_when_idle = true`, and an instance of it left idle past `FLEZHA_PARK_IDLE_MS` on that runtime SHALL sleep
 
-#### Scenario: A workflow that opts out of persistence does not sleep by default
+#### Scenario: A bounded operator that opts out of persistence does not sleep by default
 
-- **WHEN** a workflow class declares persistence off and leaves `sleep_when_idle` at its default
+- **WHEN** a bounded class declares persistence off and leaves `sleep_when_idle` at its default
 - **THEN** registration SHALL succeed, the declaration SHALL announce `sleep_when_idle = false`, and a waiting instance of it SHALL stay in memory
 
 #### Scenario: Sleeping without persistence is refused by name
@@ -712,15 +712,15 @@ SHALL be unable to set either, as it can set no class-level setting.
 
 ### Requirement: The timer contract holds in both kinds and no class-level wake exists
 
-The `on_timer` contract of section 3.4 of the authoring contract SHALL hold for a tasklet of a workflow operative exactly as for a tasklet of a stream operative, in every SDK: the four timer calls SHALL be available on the tasklet context in both kinds under the same names, `fired_at` SHALL be the scheduled timestamp and equal `ctx.now()` inside the hook, `timer_after` SHALL anchor on `ctx.now()`, and a registration made during a replay or a re-run SHALL be registered. What differs in a workflow SHALL be only what follows from the workflow's peculiarities, and the contract SHALL state it: a firing starts a pass at the tasklet that set the timer, or joins that tasklet's stage while it runs, or waits its turn behind the pass in flight; a `ONCE` instance ends with its one pass and a timer due after that never fires; a firing's removal is durable at its stage's commit. No SDK SHALL declare a class-level wake setting (`wake_after`, `wakeAfter`, `wake_after_ms`, `wakeAfterMs`): a workflow that must wake itself writes a timer in a tasklet. The `compensate` hook SHALL keep no timer session in either kind.
+The `on_timer` contract of section 3.4 of the authoring contract SHALL hold for a tasklet of a bounded operator exactly as for a tasklet of an unbounded operator, in every SDK: the four timer calls SHALL be available on the tasklet context in both kinds under the same names, `fired_at` SHALL be the scheduled timestamp and equal `ctx.now()` inside the hook, `timer_after` SHALL anchor on `ctx.now()`, and a registration made during a replay or a re-run SHALL be registered. What differs in a bounded operator SHALL be only what follows from the bounded operator's peculiarities, and the contract SHALL state it: a firing starts a pass at the tasklet that set the timer, or joins that tasklet's stage while it runs, or waits its turn behind the pass in flight; a `ONCE` instance ends with its one pass and a timer due after that never fires; a firing's removal is durable at its stage's commit. No SDK SHALL declare a class-level wake setting (`wake_after`, `wakeAfter`, `wake_after_ms`, `wakeAfterMs`): a bounded operator that must wake itself writes a timer in a tasklet. The `compensate` hook SHALL keep no timer session in either kind.
 
 #### Scenario: The same tasklet code arms a timer in both kinds
 
-- **WHEN** a tasklet whose `run` calls `timer_after` and whose `on_timer` emits is wired into a stream operative and, unchanged, into a `per_input` workflow operative
-- **THEN** both SHALL register the timer, both SHALL run `on_timer` at its scheduled time, and the workflow's firing SHALL open a pass at that tasklet
+- **WHEN** a tasklet whose `run` calls `timer_after` and whose `on_timer` emits is wired into an unbounded operator and, unchanged, into a `per_input` bounded operator
+- **THEN** both SHALL register the timer, both SHALL run `on_timer` at its scheduled time, and the bounded operator's firing SHALL open a pass at that tasklet
 
 #### Scenario: The retired wake setting is refused as an unknown setting
 
-- **WHEN** a workflow class in any SDK writes the wake setting in that SDK's old spelling
+- **WHEN** a bounded class in any SDK writes the wake setting in that SDK's old spelling
 - **THEN** the SDK SHALL refuse it as it refuses any unknown class setting (a compile error, a `TypeError`, a `NoMethodError`, an unknown attribute argument, a `CompileError`), and no declaration SHALL carry `wake_after_ms`
 

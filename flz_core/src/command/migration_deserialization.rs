@@ -1,8 +1,8 @@
-//! `MigrationDeserialization` — restore a StreamOperative instance's per-Tasklet /
+//! `MigrationDeserialization` — restore an UnboundedOperator instance's per-Tasklet /
 //! per-Cell state from a snapshot blob and register it locally.
 //! Reuses `apply_init_values` for the state-application path so a
 //! migrated instance ends up with byte-identical Cell state to the
-//! source instance produced by `serialize_operative_state`.
+//! source instance produced by `serialize_operator_state`.
 
 use super::{CommandAction, Reply};
 use crate::command::cell_state::apply_init_values;
@@ -12,13 +12,13 @@ use crate::runner::RunnerNode;
 impl CommandAction for MigrationDeserialization {
     fn handle(&self, runner: &mut RunnerNode, _message: &str, errors: &mut Vec<String>) -> Reply {
         // A hot-swap handover carries no partition identity: the destination's
-        // `AddOperative` ran first and already registered the instance with
+        // `AddOperator` ran first and already registered the instance with
         // its range, so this call resolves to that instance.
-        match runner.start_operative(
+        match runner.start_operator(
             self.factory_id.clone(),
-            self.operative_id.clone(),
-            crate::operative::instance::KeyGroupRange::UNPARTITIONED,
-            crate::workflow::Resume::default(),
+            self.operator_id.clone(),
+            crate::operator::instance::KeyGroupRange::UNPARTITIONED,
+            crate::bounded::Resume::default(),
         ) {
             Some(instance) => {
                 if !self.serialized_state.is_empty() {
@@ -46,7 +46,7 @@ impl CommandAction for MigrationDeserialization {
             }
             None => {
                 errors.push(format!(
-                    "StreamOperative class with factory_id {} is not registered",
+                    "UnboundedOperator class with factory_id {} is not registered",
                     self.factory_id
                 ));
                 Reply {

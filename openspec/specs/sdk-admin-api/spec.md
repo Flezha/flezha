@@ -5,18 +5,18 @@ TBD - created by archiving change let-an-application-administer-its-namespace. U
 ## Requirements
 ### Requirement: An application administers its own namespace from runner code
 
-The SDK SHALL offer, on the runner object rather than on a tasklet context, a surface by which ordinary application code administers the namespace its connection proved. The surface SHALL cover starting, stopping and sending to an operative, enabling and disabling a plugin, and reading operatives, plugins and cell state. It SHALL require no tasklet to be running and SHALL require the application to hold no credential of its own beyond what its connection already presented. Starting SHALL take the same specification `flz operative start` takes: the factory, and an id only when the application chooses one.
+The SDK SHALL offer, on the runner object rather than on a tasklet context, a surface by which ordinary application code administers the namespace its connection proved. The surface SHALL cover starting, stopping and sending to an operator, enabling and disabling a plugin, and reading operators, plugins and cell state. It SHALL require no tasklet to be running and SHALL require the application to hold no credential of its own beyond what its connection already presented. Starting SHALL take the same specification `flz operator start` takes: the factory, and an id only when the application chooses one.
 
-#### Scenario: An application starts an operative it implements
+#### Scenario: An application starts an operator it implements
 
-- **WHEN** application code on a connected runner asks to start an operative,
-  giving the same specification `flz operative start` takes
-- **THEN** the operative SHALL start in the namespace the connection proved
+- **WHEN** application code on a connected runner asks to start an operator,
+  giving the same specification `flz operator start` takes
+- **THEN** the operator SHALL start in the namespace the connection proved
 
-#### Scenario: An application starts an operative without naming it
+#### Scenario: An application starts an operator without naming it
 
-- **WHEN** application code asks to start an operative giving only its factory
-- **THEN** the operative SHALL start in the namespace the connection proved under a
+- **WHEN** application code asks to start an operator giving only its factory
+- **THEN** the operator SHALL start in the namespace the connection proved under a
   generated id
 
 #### Scenario: The call needs no tasklet
@@ -27,13 +27,13 @@ The SDK SHALL offer, on the runner object rather than on a tasklet context, a su
 #### Scenario: The SDK presents no expiring credential
 
 - **WHEN** an application uses the surface after running unattended for an
-  arbitrarily long time without operator intervention
+  arbitrarily long time without user intervention
 - **THEN** no credential held by the application SHALL have lapsed, and the call
   SHALL be judged exactly as it would have been on the first day
 
-### Requirement: The act is judged and recorded like any other operator act
+### Requirement: The act is judged and recorded like any other user act
 
-An SDK-issued act SHALL be judged at the same policy point, against the same declared row, in the same scope, and SHALL produce the same audit record as the operator-issued equivalent, naming the requesting principal. The controller SHALL reach the effect through the published consumer surface rather than through a path of its own, so that no second authority exists to keep in step.
+An SDK-issued act SHALL be judged at the same policy point, against the same declared row, in the same scope, and SHALL produce the same audit record as the user-issued equivalent, naming the requesting principal. The controller SHALL reach the effect through the published consumer surface rather than through a path of its own, so that no second authority exists to keep in step.
 
 #### Scenario: The same policy point judges it
 
@@ -44,20 +44,20 @@ An SDK-issued act SHALL be judged at the same policy point, against the same dec
 
 #### Scenario: The audit names the requester
 
-- **WHEN** an application starts an operative
+- **WHEN** an application starts an operator
 - **THEN** the audit record SHALL name the requesting runner's principal and the
-  namespace, and SHALL be indistinguishable in shape from an operator-issued one
+  namespace, and SHALL be indistinguishable in shape from a user-issued one
 
 #### Scenario: Quotas are enforced unchanged
 
-- **WHEN** an application asks to start an operative that would exceed the
-  namespace's `max_operatives`
-- **THEN** the call SHALL be refused with the same quota reason an operator would
+- **WHEN** an application asks to start an operator that would exceed the
+  namespace's `max_operators`
+- **THEN** the call SHALL be refused with the same quota reason a user would
   receive
 
 #### Scenario: A read writes no audit record
 
-- **WHEN** an application reads operatives, plugins or cell state
+- **WHEN** an application reads operators, plugins or cell state
 - **THEN** the read SHALL be authorized and SHALL write no audit record, matching
   the declaration its row already carries
 
@@ -93,19 +93,19 @@ An SDK caller SHALL NOT be able to install, upgrade or uninstall a plugin, stop 
   permitted or forbidden names
 - **THEN** none SHALL exist, because reachability follows the role's grant set
 
-### Requirement: A started operative outlives its requester
+### Requirement: A started operator outlives its requester
 
-An operative started through this surface SHALL be owned by the cluster and not by the connection that asked for it. It SHALL survive the requesting runner's disconnection and SHALL be visible and stoppable by an operator.
+An operator started through this surface SHALL be owned by the cluster and not by the connection that asked for it. It SHALL survive the requesting runner's disconnection and SHALL be visible and stoppable by a user.
 
 #### Scenario: The requesting runner disconnects
 
-- **WHEN** the runner whose application started an operative disconnects
-- **THEN** the operative SHALL continue, subject to the same rebinding rules as
-  one an operator started
+- **WHEN** the runner whose application started an operator disconnects
+- **THEN** the operator SHALL continue, subject to the same rebinding rules as
+  one a user started
 
-#### Scenario: An operator can see and stop it
+#### Scenario: A user can see and stop it
 
-- **WHEN** an operator lists and stops operatives in that namespace
+- **WHEN** a user lists and stops operators in that namespace
 - **THEN** one started from application code SHALL appear and SHALL stop
 
 ### Requirement: Every SDK carries the surface over one shared entry
@@ -127,21 +127,21 @@ Every SDK SHALL expose the surface, and the hosts that share `flz_core` SHALL re
 ### Requirement: Starting from application code SHALL answer the id and the outcome
 
 Every SDK's start call SHALL take the factory first and the id as an optional named argument, in
-the form its language has: `OperativeSpec::new(factory).id(..)` in Rust,
-`OperativeSpec.of(factory).id(..)` in Java, a keyword list in Elixir, keyword arguments in Python
+the form its language has: `OperatorSpec::new(factory).id(..)` in Rust,
+`OperatorSpec.of(factory).id(..)` in Java, a keyword list in Elixir, keyword arguments in Python
 and Ruby, named arguments in PHP and an options object in Node. A successful start SHALL answer one
-result carrying two fields, the same in every SDK: `id`, the id the operative runs under whether
+result carrying two fields, the same in every SDK: `id`, the id the operator runs under whether
 the application gave it or the controller generated it, and `outcome`, one of `started` and
 `already_running`. `already_running` SHALL be answered only for an id the application gave, when a
-live instance already holds it. The answer SHALL carry nothing else; where an operative runs is read
-through `flz operative info` or the read surface. A refused start SHALL be reported as each SDK
+live instance already holds it. The answer SHALL carry nothing else; where an operator runs is read
+through `flz operator info` or the read surface. A refused start SHALL be reported as each SDK
 reports a refused call today.
 
 #### Scenario: A start without an id answers the generated id
 
 - **WHEN** application code starts factory `echo` with no id
 - **THEN** the call SHALL answer `id` set to the generated id and `outcome` set to `started`, and
-  that id SHALL be the one `flz operative list` shows and a stop through the same surface accepts
+  that id SHALL be the one `flz operator list` shows and a stop through the same surface accepts
 
 #### Scenario: A start of a running id answers already running
 
@@ -152,14 +152,14 @@ reports a refused call today.
 
 #### Scenario: The answer has one shape in every SDK
 
-- **WHEN** each SDK's own suite starts an operative with and without an id through its wrapper
+- **WHEN** each SDK's own suite starts an operator with and without an id through its wrapper
 - **THEN** every SDK SHALL expose the same two fields, `id` and `outcome`, with the same outcome
   words, and no `node`, `runner_id` or `pid`
 
 #### Scenario: A refused start is reported as before
 
-- **WHEN** application code asks to start an operative that would exceed the namespace's
-  `max_operatives`
+- **WHEN** application code asks to start an operator that would exceed the namespace's
+  `max_operators`
 - **THEN** the call SHALL be refused with the quota reason, reported as that SDK reports any
   refused administration call
 

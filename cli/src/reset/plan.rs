@@ -17,7 +17,7 @@ use crate::args::OptSpec;
 pub(super) enum ClearMode {
     /// In scope on every run.
     Default,
-    /// In scope only when the operator passes this flag, which is also how the
+    /// In scope only when the caller passes this flag, which is also how the
     /// root is reported when they did not. The row is the only place a flag is
     /// paired with its root, and `--all` is every such row.
     OptIn(&'static OptSpec),
@@ -30,7 +30,7 @@ pub(super) enum ClearMode {
 /// command may unlink. The Controller resolves its data root and its socket
 /// directory from different sources, so reset does too, and the socket root is
 /// name-scoped for exactly that reason: the ladder may answer with a directory
-/// an operator named and shares.
+/// a caller named and shares.
 #[derive(Clone, Copy)]
 pub(super) enum Source {
     /// A subdirectory of the `app_data/` root this command was given. Every
@@ -148,7 +148,7 @@ impl Root {
         }
     }
 
-    /// How the root reads to an operator. The socket root names the rung
+    /// How the root reads to a caller. The socket root names the rung
     /// beside its path, so a run that cleared a runtime directory instead of
     /// `app_data/sockets/` shows the ladder answering rather than the command
     /// going wrong.
@@ -186,7 +186,7 @@ pub(super) fn build_plan(flags: &Flags) -> Vec<Root> {
         .collect()
 }
 
-/// The action for a root the operator did not ask for; `None` when it is in
+/// The action for a root the caller did not ask for; `None` when it is in
 /// scope.
 fn out_of_scope(mode: ClearMode, flags: &Flags) -> Option<Action> {
     match mode {
@@ -483,8 +483,8 @@ mod tests {
         ("plugins", "--include-plugins"),
     ];
 
-    /// Parked records, schedules, an operator's tokens, the audit trail and
-    /// installed plugins are data an operator resetting a box usually wants
+    /// Parked records, schedules, a caller's tokens, the audit trail and
+    /// installed plugins are data a caller resetting a box usually wants
     /// gone, and data someone may have kept deliberately: reset reaches each
     /// only through its own flag.
     #[test]

@@ -24,7 +24,7 @@ DESCRIPTION:
     Clearing app_data/auth/ removes every token (runner credentials
     included), every role binding and every namespace but _system. With
     authorization on and no remote durability backend, the next start
-    writes a fresh bootstrap token. Until it is claimed, operator verbs
+    writes a fresh bootstrap token. Until it is claimed, administration verbs
     are refused and every runner is admitted with no credential, into
     any namespace but _system it names: claim it at once.
 

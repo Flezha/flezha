@@ -91,7 +91,7 @@ defmodule Flezha.Plugin.Provider.File.Storage.S3 do
   defp object_url("/" <> _absolute, _root), do: nil
   defp object_url(path, root), do: if(url?(path), do: path, else: root <> "/" <> path)
 
-  # Refused at enable, where the operator reads it, rather than at the first
+  # Refused at enable, where the user reads it, rather than at the first
   # request a worker makes.
   defp require_settings(root) do
     settings = settings()

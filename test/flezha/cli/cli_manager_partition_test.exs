@@ -1,6 +1,6 @@
 defmodule Flezha.Service.CliManagerPartitionTest do
   @moduledoc """
-  The operator's view of a partition group: one row in `list`, per-member
+  The caller's view of a partition group: one row in `list`, per-member
   detail plus a read-time coverage check in `info`, a stop that reaches every
   member, and a keyed `state get` that resolves the owner by hash.
 
@@ -17,11 +17,11 @@ defmodule Flezha.Service.CliManagerPartitionTest do
 
   alias Flezha.Observability.RingBufferSink
   alias Flezha.Observability.TestSinks
-  alias Flezha.Operative.PartitionGroup
+  alias Flezha.Operator.PartitionGroup
   alias Flezha.Partition
   alias Flezha.Service.CliManager
   alias Flezha.Service.HubManager
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
 
   setup :set_mimic_global_until_exit
 
@@ -73,7 +73,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
       assert [%{health: :failed}] = CliManager.group_partition_rows(rows)
     end
 
-    test "leaves ungrouped operatives untouched" do
+    test "leaves ungrouped operators untouched" do
       rows = [plain_row("plain"), member_row("ohlc", 0, 2), member_row("ohlc", 1, 2)]
 
       assert [group, plain] = CliManager.group_partition_rows(rows)
@@ -83,16 +83,16 @@ defmodule Flezha.Service.CliManagerPartitionTest do
     end
   end
 
-  describe "operative info" do
+  describe "operator info" do
     defp info_output(rows) do
-      stub(HubManager, :operative_rows, fn _ns -> rows end)
-      stub(OperativeManager, :get_operative_ids, fn _ns -> {:ok, Enum.map(rows, & &1.id)} end)
+      stub(HubManager, :operator_rows, fn _ns -> rows end)
+      stub(OperatorManager, :get_operator_ids, fn _ns -> {:ok, Enum.map(rows, & &1.id)} end)
 
-      stub(OperativeManager, :get_overwatch_state, fn _ns, _id ->
+      stub(OperatorManager, :get_overwatch_state, fn _ns, _id ->
         {:error, :not_running}
       end)
 
-      capture_io(fn -> CliManager.operative_info("default") end)
+      capture_io(fn -> CliManager.operator_info("default") end)
     end
 
     test "renders each member's range and reports clean coverage" do
@@ -125,14 +125,14 @@ defmodule Flezha.Service.CliManagerPartitionTest do
     end
   end
 
-  describe "operative start rendering" do
+  describe "operator start rendering" do
     defp start(format, opts_json \\ "{}", opts),
-      do: CliManager.operative_start("default", "candles", "{}", format, opts_json, opts)
+      do: CliManager.operator_start("default", "candles", "{}", format, opts_json, opts)
 
     defp started_as(test_pid) do
-      stub(OperativeManager, :start_operative, fn _ns, op, opts ->
+      stub(OperatorManager, :start_operator, fn _ns, op, opts ->
         send(test_pid, {:started, op, opts})
-        {:ok, %{operative_id: op.id, runner_id: "r1", node: node(), pid: self()}}
+        {:ok, %{operator_id: op.id, runner_id: "r1", node: node(), pid: self()}}
       end)
     end
 
@@ -178,7 +178,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
     end
 
     test "a live duplicate start reports a no-op instead of erroring" do
-      stub(OperativeManager, :start_operative, fn _ns, _op, _opts -> :duplicate end)
+      stub(OperatorManager, :start_operator, fn _ns, _op, _opts -> :duplicate end)
 
       assert capture_io(fn -> start("text", id: "demo") end) ==
                "demo is already running, left untouched\n"
@@ -196,14 +196,14 @@ defmodule Flezha.Service.CliManagerPartitionTest do
 
       TestSinks.settle(RingBufferSink)
 
-      assert Enum.any?(RingBufferSink.query(:operative_service, boundary), fn signal ->
-               signal.name == :start and signal.metadata[:operative] == generated
+      assert Enum.any?(RingBufferSink.query(:operator_service, boundary), fn signal ->
+               signal.name == :start and signal.metadata[:operator] == generated
              end)
     end
 
     test "a stale-row refusal still exits as an error" do
-      stub(OperativeManager, :start_operative, fn _ns, _op, _opts ->
-        {:error, %{operative_id: "demo", node: node(), reason: "operative id already in use"}}
+      stub(OperatorManager, :start_operator, fn _ns, _op, _opts ->
+        {:error, %{operator_id: "demo", node: node(), reason: "operator id already in use"}}
       end)
 
       out =
@@ -211,8 +211,8 @@ defmodule Flezha.Service.CliManagerPartitionTest do
           assert catch_exit(start("text", id: "demo")) == {:shutdown, 1}
         end)
 
-      assert out =~ "starting operative"
-      assert out =~ "operative id already in use"
+      assert out =~ "starting operator"
+      assert out =~ "operator id already in use"
     end
 
     test "a converge reports started and already-running members distinctly" do
@@ -257,7 +257,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
 
       out = capture_io(fn -> start("text", ~s({"partitions": 3}), id: "ohlc") end)
 
-      assert out =~ "Operative ohlc started with 3 partitions:"
+      assert out =~ "Operator ohlc started with 3 partitions:"
       assert out =~ "  ohlc#p0"
     end
 
@@ -272,7 +272,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
       end)
 
       out = capture_io(fn -> start("text", ~s({"partitions": 3}), []) end)
-      assert out =~ "Operative candles-k7m2qzxw4pd3fn2a started with 3 partitions:"
+      assert out =~ "Operator candles-k7m2qzxw4pd3fn2a started with 3 partitions:"
 
       {json, warnings} =
         with_io(:stderr, fn -> capture_io(fn -> start("json", ~s({"partitions": 3}), []) end) end)
@@ -282,7 +282,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
     end
   end
 
-  describe "operative scale rendering" do
+  describe "operator scale rendering" do
     # The summary line reads the rescale result key by key, so a key the
     # producer stops returning raises on the success path rather than being
     # rendered blank.
@@ -301,16 +301,16 @@ defmodule Flezha.Service.CliManagerPartitionTest do
          }}
       end)
 
-      out = capture_io(fn -> CliManager.operative_scale("default", "ohlc", "3", "{}") end)
+      out = capture_io(fn -> CliManager.operator_scale("default", "ohlc", "3", "{}") end)
 
       assert out =~ "WARNING: more partitions than runners"
-      assert out =~ "Operative ohlc rescaled 2 -> 3"
+      assert out =~ "Operator ohlc rescaled 2 -> 3"
       assert out =~ "1 cells moved, 1 trees removed"
       assert out =~ "  ohlc#p0"
       refute out =~ "Sealed"
     end
 
-    test "a workflow group's rescale names the members it sealed" do
+    test "a bounded group's rescale names the members it sealed" do
       stub(PartitionGroup, :rescale, fn _ns, "orders", 3, _opts ->
         {:ok,
          %{
@@ -325,14 +325,14 @@ defmodule Flezha.Service.CliManagerPartitionTest do
          }}
       end)
 
-      out = capture_io(fn -> CliManager.operative_scale("default", "orders", "3", "{}") end)
+      out = capture_io(fn -> CliManager.operator_scale("default", "orders", "3", "{}") end)
 
       assert out =~ "Sealed orders#p0, orders#p1 at their latest committed iteration"
       assert out =~ "no rewind or rollback reaches a pass committed before this rescale"
     end
   end
 
-  describe "operative stop" do
+  describe "operator stop" do
     test "a group id stops every member" do
       members = for index <- 0..2, do: member_row("ohlc", index, 3)
       parent = self()
@@ -341,25 +341,25 @@ defmodule Flezha.Service.CliManagerPartitionTest do
         if id == "ohlc", do: Enum.map(members, &%{id: &1.id, partition: &1.partition}), else: []
       end)
 
-      stub(OperativeManager, :request_stop, fn _ns, id ->
+      stub(OperatorManager, :request_stop, fn _ns, id ->
         send(parent, {:stopped, id})
         :ok
       end)
 
-      out = capture_io(fn -> CliManager.operative_stop("default", "ohlc") end)
+      out = capture_io(fn -> CliManager.operator_stop("default", "ohlc") end)
 
-      assert out =~ "Operative group ohlc stopped (3 partitions)"
+      assert out =~ "Operator group ohlc stopped (3 partitions)"
       assert_receive {:stopped, "ohlc#p0"}, 100
       assert_receive {:stopped, "ohlc#p1"}, 100
       assert_receive {:stopped, "ohlc#p2"}, 100
     end
 
-    test "an ordinary operative takes the single-stop path" do
+    test "an ordinary operator takes the single-stop path" do
       stub(PartitionGroup, :members, fn _ns, _id -> [] end)
-      stub(OperativeManager, :request_stop, fn _ns, "plain" -> :ok end)
+      stub(OperatorManager, :request_stop, fn _ns, "plain" -> :ok end)
 
-      assert capture_io(fn -> CliManager.operative_stop("default", "plain") end) =~
-               "Operative has been stopped"
+      assert capture_io(fn -> CliManager.operator_stop("default", "plain") end) =~
+               "Operator has been stopped"
     end
 
     test "a failed member is named, never swallowed" do
@@ -369,14 +369,14 @@ defmodule Flezha.Service.CliManagerPartitionTest do
         Enum.map(members, &%{id: &1.id, partition: &1.partition})
       end)
 
-      stub(OperativeManager, :request_stop, fn _ns, id ->
+      stub(OperatorManager, :request_stop, fn _ns, id ->
         if id == "ohlc#p1", do: {:error, :wedged}, else: :ok
       end)
 
       out =
         capture_io(:stderr, fn ->
           try do
-            CliManager.operative_stop("default", "ohlc")
+            CliManager.operator_stop("default", "ohlc")
           catch
             :exit, _ -> :ok
           end
@@ -391,8 +391,8 @@ defmodule Flezha.Service.CliManagerPartitionTest do
     setup do
       members = for index <- 0..2, do: member_row("ohlc", index, 3)
 
-      stub(OperativeManager, :namespace_of, fn _id -> :error end)
-      stub(OperativeManager, :namespace_of_group, fn "ohlc" -> {:ok, "trading"} end)
+      stub(OperatorManager, :namespace_of, fn _id -> :error end)
+      stub(OperatorManager, :namespace_of_group, fn "ohlc" -> {:ok, "trading"} end)
 
       stub(PartitionGroup, :members, fn _ns, "ohlc" ->
         Enum.map(members, &%{id: &1.id, partition: &1.partition})
@@ -423,7 +423,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
     test "a keyed read goes to exactly the member owning the key's group" do
       parent = self()
 
-      stub(OperativeManager, :get_cell_state, fn "trading", id, _selector ->
+      stub(OperatorManager, :get_cell_state, fn "trading", id, _selector ->
         send(parent, {:read, id})
         {:ok, ~s({"candle":{"BTC-USD":{"high":42}}}), 7}
       end)
@@ -437,7 +437,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
     end
 
     test "a tasklet-level read fans out and merges the members' cells" do
-      stub(OperativeManager, :get_cell_state, fn "trading", id, _selector ->
+      stub(OperatorManager, :get_cell_state, fn "trading", id, _selector ->
         case id do
           "ohlc#p0" -> {:ok, ~s({"candle":{"SOL-USD":{"high":1}}}), 3}
           "ohlc#p1" -> {:ok, ~s({"candle":{"BTC-USD":{"high":2}}}), 9}

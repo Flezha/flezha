@@ -1,5 +1,5 @@
 # Which tags plain `mix test` skips is `FlezhaTest.Tiers`, one row per tier: the
-# tag, the workflow that runs it or the reason a person has to, what a host
+# tag, the bounded operator that runs it or the reason a person has to, what a host
 # needs first, and the anchor in `docs/sdk/conformance.md` that describes it.
 # That table is the one place a tier is declared; this file only reads it.
 #
@@ -45,15 +45,15 @@ System.at_exit(fn _status -> Enum.each(run_dirs, &File.rm_rf/1) end)
 # ProcessHub's `LoggerService.error/3` logs every `StartChildrenRequest`
 # failure at error level — useful in production, but multiple tests
 # intentionally drive failure paths (cross-node module-not-loaded during
-# peer redistribution after the prior test's operatives leak into the
-# global registry, `source_operative_not_found` in Sibling integration
+# peer redistribution after the prior test's operators leak into the
+# global registry, `source_operator_not_found` in Sibling integration
 # tests). Cap that single module's log level to `:none` in test env so
 # the console stays focused on actual ExUnit assertions.
 :ok = :logger.set_module_level(ProcessHub.Service.LoggerService, :none)
 
 Mimic.copy(KafkaEx)
-Mimic.copy(Flezha.Service.OperativeManager)
-Mimic.copy(Flezha.Service.OperativeManager.Placement)
+Mimic.copy(Flezha.Service.OperatorManager)
+Mimic.copy(Flezha.Service.OperatorManager.Placement)
 Mimic.copy(Flezha.Service.PluginManager)
 Mimic.copy(Flezha.Service.HubManager)
 Mimic.copy(Flezha.Runner.StreamChannel)
@@ -85,8 +85,8 @@ Mimic.copy(Flezha.State.InputLog)
 Mimic.copy(Flezha.State.WalTransfer)
 Mimic.copy(Flezha.State.TaskJournal)
 Mimic.copy(Flezha.State.Commands)
-Mimic.copy(Flezha.Operative.PartitionGroup)
-Mimic.copy(Flezha.Operative.ClassRegistry)
+Mimic.copy(Flezha.Operator.PartitionGroup)
+Mimic.copy(Flezha.Operator.ClassRegistry)
 Mimic.copy(Flezha.Convergence.Heal)
 Mimic.copy(Flezha.Convergence.Intent)
 Mimic.copy(Flezha.Convergence.Probe)

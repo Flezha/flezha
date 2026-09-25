@@ -2,7 +2,7 @@
 //!
 //! A reconnect to the controller that already holds a runner's bindings is a
 //! binding swap; a reconnect elsewhere is a fresh connect that leaves the
-//! previous controller to heal that runner's operatives on its own. So the
+//! previous controller to heal that runner's operators on its own. So the
 //! preference is for stability, not balance — and the remaining candidates are
 //! shuffled, so a restart that drops a whole fleet does not converge every
 //! runner onto one node.

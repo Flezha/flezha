@@ -8,7 +8,7 @@ defmodule Flezha.Service.CliManagerBootTest do
   status screen names no precondition the table does not carry — so a row added
   with no reader, or a reader inventing a key, fails here.
 
-  `boot await` is a container's healthcheck as well as an operator's wait, so
+  `boot await` is a container's healthcheck as well as a caller's wait, so
   both of its shapes are pinned: a single evaluation at `--timeout 0`, and a
   refusal that names what is still unmet rather than reporting success because
   the set of things to wait for happens to be empty.

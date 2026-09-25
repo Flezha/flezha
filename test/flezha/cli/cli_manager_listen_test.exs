@@ -1,11 +1,11 @@
 defmodule Flezha.Service.CliManager.ListenTest do
   @moduledoc """
-  `flz operative listen` and `flz operative send --await` on the controller,
+  `flz operator listen` and `flz operator send --await` on the controller,
   with the plugin manager and the delivery stubbed: what a frame prints as,
   what ends the loop, and that the listener is detached on every route out.
 
-  The live operative, the real forwarder and a partition group are
-  `test/system/operative_listen_e2e_test.exs`.
+  The live operator, the real forwarder and a partition group are
+  `test/system/operator_listen_e2e_test.exs`.
   """
   # async: false: Mimic global mode, because the verb runs in a process the test spawns.
   use ExUnit.Case, async: false
@@ -15,7 +15,7 @@ defmodule Flezha.Service.CliManager.ListenTest do
 
   alias Flezha.Plugin
   alias Flezha.Plugin.Provider.MonitoredIOForward
-  alias Flezha.Service.{CliManager, OperativeManager, PluginManager}
+  alias Flezha.Service.{CliManager, OperatorManager, PluginManager}
 
   setup :set_mimic_global_until_exit
 
@@ -32,7 +32,7 @@ defmodule Flezha.Service.CliManager.ListenTest do
       {:ok, "plugin disabled"}
     end)
 
-    stub(OperativeManager, :send_io_confirming, fn _op, _ns, _message, _metadata ->
+    stub(OperatorManager, :send_io_confirming, fn _op, _ns, _message, _metadata ->
       send(test, {:call, :deliver, nil})
       :ok
     end)
@@ -40,7 +40,7 @@ defmodule Flezha.Service.CliManager.ListenTest do
     %{parent: test}
   end
 
-  describe "operative_listen/5" do
+  describe "operator_listen/5" do
     test "text prints the channel, the payload and a keyed frame's stamps" do
       out =
         in_caller(fn ->
@@ -54,7 +54,7 @@ defmodule Flezha.Service.CliManager.ListenTest do
           })
 
           forward("again", %{"input_type" => "2"})
-          CliManager.operative_listen("ns", "op", "output", "text", duration_ms: 50)
+          CliManager.operator_listen("ns", "op", "output", "text", duration_ms: 50)
         end)
 
       assert out ==
@@ -68,7 +68,7 @@ defmodule Flezha.Service.CliManager.ListenTest do
         in_caller(fn ->
           forward("hello", %{"channel" => "echo", "flz.key" => "k"})
           forward(<<255, 0>>, %{"flz.key" => <<255>>})
-          CliManager.operative_listen("ns", "op", "output", "json", duration_ms: 50)
+          CliManager.operator_listen("ns", "op", "output", "json", duration_ms: 50)
         end)
 
       assert out |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1) == [
@@ -86,14 +86,14 @@ defmodule Flezha.Service.CliManager.ListenTest do
     end
 
     test "the forwarder is attached to the chain the direction names, then detached" do
-      in_caller(fn -> CliManager.operative_listen("", "op", "input", "text", duration_ms: 10) end)
+      in_caller(fn -> CliManager.operator_listen("", "op", "input", "text", duration_ms: 10) end)
 
       assert [{:enable, {id, plugin, listener}}, {:detach, id}] = calls()
 
       assert %Plugin{
                provider: MonitoredIOForward,
                namespace: "default",
-               operative_id: "op",
+               operator_id: "op",
                hooks: [{:on_input, []}],
                opts: %{recv_pid: ^listener, plugin_id: ^id}
              } = plugin
@@ -102,7 +102,7 @@ defmodule Flezha.Service.CliManager.ListenTest do
     test "a heartbeat is answered while the loop runs", %{parent: test} do
       in_caller(fn ->
         send(self(), {:heartbeat_keepalive, test})
-        CliManager.operative_listen("ns", "op", "output", "text", duration_ms: 50)
+        CliManager.operator_listen("ns", "op", "output", "text", duration_ms: 50)
       end)
 
       assert_received {:heartbeat_keepalive, :ok}
@@ -114,7 +114,7 @@ defmodule Flezha.Service.CliManager.ListenTest do
       listener =
         spawn(fn ->
           Process.group_leader(self(), leader)
-          CliManager.operative_listen("ns", "op", "output", "text", duration_ms: 60_000)
+          CliManager.operator_listen("ns", "op", "output", "text", duration_ms: 60_000)
         end)
 
       assert_receive {:call, :enable, {id, _plugin, ^listener}}
@@ -129,7 +129,7 @@ defmodule Flezha.Service.CliManager.ListenTest do
       listener =
         spawn(fn ->
           capture_io(fn ->
-            CliManager.operative_listen("ns", "op", "output", "text", duration_ms: 60_000)
+            CliManager.operator_listen("ns", "op", "output", "text", duration_ms: 60_000)
           end)
         end)
 
@@ -154,7 +154,7 @@ defmodule Flezha.Service.CliManager.ListenTest do
         stub(PluginManager, :enable_plugin, fn _id, _plugin -> answer end)
 
         {reason, err} =
-          refused(fn -> CliManager.operative_listen("ns", "op", "output", "text", []) end)
+          refused(fn -> CliManager.operator_listen("ns", "op", "output", "text", []) end)
 
         assert reason == {:shutdown, 1}
         assert err =~ "listening to 'op': "
@@ -169,7 +169,7 @@ defmodule Flezha.Service.CliManager.ListenTest do
             {"output", "xml", "format"}
           ] do
         {reason, err} =
-          refused(fn -> CliManager.operative_listen("ns", "op", direction, format, []) end)
+          refused(fn -> CliManager.operator_listen("ns", "op", direction, format, []) end)
 
         assert reason == {:shutdown, 1}
         assert err =~ "unknown #{word}"
@@ -179,29 +179,29 @@ defmodule Flezha.Service.CliManager.ListenTest do
     end
   end
 
-  describe "operative_send/5 with await_ms" do
+  describe "operator_send/5 with await_ms" do
     test "attaches before it delivers, prints the verdict, then what came back", %{parent: test} do
-      stub(OperativeManager, :send_io_confirming, fn "op", "ns", "hello", %{} ->
+      stub(OperatorManager, :send_io_confirming, fn "op", "ns", "hello", %{} ->
         send(test, {:call, :deliver, nil})
         forward("hello", %{"channel" => "echo"})
         :ok
       end)
 
-      out = in_caller(fn -> CliManager.operative_send("ns", "op", "hello", "", await_ms: 50) end)
+      out = in_caller(fn -> CliManager.operator_send("ns", "op", "hello", "", await_ms: 50) end)
 
       assert out == "Delivered to 'op'.\necho\thello\n"
       assert [:enable, :deliver, :detach] = Enum.map(calls(), &elem(&1, 0))
     end
 
     test "with nothing emitted it prints the verdict alone" do
-      out = in_caller(fn -> CliManager.operative_send("ns", "op", "hello", "", await_ms: 20) end)
+      out = in_caller(fn -> CliManager.operator_send("ns", "op", "hello", "", await_ms: 20) end)
 
       assert out == "Delivered to 'op'.\n"
       assert [:enable, :deliver, :detach] = Enum.map(calls(), &elem(&1, 0))
     end
 
     test "without it nothing is attached" do
-      out = in_caller(fn -> CliManager.operative_send("ns", "op", "hello", "", []) end)
+      out = in_caller(fn -> CliManager.operator_send("ns", "op", "hello", "", []) end)
 
       assert out == "Delivered to 'op'.\n"
       assert [{:deliver, nil}] = calls()

@@ -4,28 +4,28 @@ defmodule Flezha.Convergence.Heal do
   catalogue row reduces to a composition of these — adding a failure mode
   never adds a primitive, and adding a remedy is one entry in the table.
 
-      rebind_operative  resync_runner
+      rebind_operator  resync_runner
       start_plugin  stop_plugin  restart_plugin
       evict_runner  restart_runner
       reset_control_channel  publish_binding
 
-  None of them moves an operative between controllers. Which controller hosts
-  an operative is the namespace hub's decision alone
+  None of them moves an operator between controllers. Which controller hosts
+  an operator is the namespace hub's decision alone
   (`Flezha.Cluster.GroupedHashing`), and it only ever names a controller whose
-  fleet can run the operative's factory.
+  fleet can run the operator's factory.
 
   `execute/1` dispatches one planned op to its primitive and returns
   `:ok | :error` so the Loop can drive `Backoff`.
 
-    * `rebind_operative` — migrate a operative tagged to a dead/wrong runner (or
+    * `rebind_operator` — migrate an operator tagged to a dead/wrong runner (or
       not yet bound, or parked) onto an available one: flip the registry tag,
       fan its pid into the new runner's stream channels, replay the WAL.
     * `resync_runner` — re-run the `RestoreInitState` handshake for a
-      operative against the runner it is already bound to, or for ONE Cell
+      operator against the runner it is already bound to, or for ONE Cell
       against the runner a declared gap named. The rung below
-      `rebind_operative`: no placement decision, no migration, no handover —
+      `rebind_operator`: no placement decision, no migration, no handover —
       the remedy for a binding that is intact but has stopped agreeing.
-    * `start_plugin` / `stop_plugin` — reconcile a operative's running plugin
+    * `start_plugin` / `stop_plugin` — reconcile an operator's running plugin
       set against its declared cspec manifest.
     * `restart_plugin` — re-run a declared plugin's provider, whether it
       self-reported unhealthy or its subscriber crashed, so `activate/1`
@@ -43,17 +43,17 @@ defmodule Flezha.Convergence.Heal do
     * `reset_control_channel` — the controller-side reconnect request: clear a
       runner's `stream_ref` so its next data stream claims the channel, planned
       from a park whose bind reported the transport dead.
-    * `publish_binding` — re-write an operative's durable row and route from
+    * `publish_binding` — re-write an operator's durable row and route from
       the runner its Overwatch is bound to, planned from a registry write that
       named a stale runner.
   """
 
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Planner
-  alias Flezha.Operative.Overwatch
+  alias Flezha.Operator.Overwatch
   alias Flezha.Runner.{ControlUnit, FleetManager}
   alias Flezha.SDK.SafeCall
-  alias Flezha.Service.{HubManager, OperativeManager}
+  alias Flezha.Service.{HubManager, OperatorManager}
   alias Flezha.State.Recovery
 
   require Logger
@@ -63,7 +63,7 @@ defmodule Flezha.Convergence.Heal do
   # observation named. An op carrying a declared reason resets on that
   # reason's evidence instead (`Flezha.Convergence.Facts`).
   @table [
-    %{name: :rebind_operative, executor: "Overwatch {:runner_migrate, target}", evidence: :ok},
+    %{name: :rebind_operator, executor: "Overwatch {:runner_migrate, target}", evidence: :ok},
     %{
       name: :resync_runner,
       executor: "State.Recovery.resync_for_overwatch/2 | resync/2",
@@ -117,8 +117,8 @@ defmodule Flezha.Convergence.Heal do
     :error
   end
 
-  defp apply_primitive(:rebind_operative, %{namespace: namespace, target: operative_id} = op) do
-    on_operative(namespace, operative_id, &rebind_operative(op, &1))
+  defp apply_primitive(:rebind_operator, %{namespace: namespace, target: operator_id} = op) do
+    on_operator(namespace, operator_id, &rebind_operator(op, &1))
   end
 
   # One Cell, against the runner the declared gap or give-up named: the
@@ -134,13 +134,13 @@ defmodule Flezha.Convergence.Heal do
     end
   end
 
-  # Re-issue `RestoreInitState` for every persisted Cell of a operative against
+  # Re-issue `RestoreInitState` for every persisted Cell of an operator against
   # the runner it is ALREADY bound to — the same replay a rebind performs after
-  # migrating, without the migration. A operative with no live pid or no binding
+  # migrating, without the migration. An operator with no live pid or no binding
   # has nothing to resync; that is a failed heal, and the next tick reaches it
-  # through `rebind_operative` instead.
-  defp apply_primitive(:resync_runner, %{namespace: namespace, target: operative_id}) do
-    on_operative(namespace, operative_id, fn pid ->
+  # through `rebind_operator` instead.
+  defp apply_primitive(:resync_runner, %{namespace: namespace, target: operator_id}) do
+    on_operator(namespace, operator_id, fn pid ->
       case overwatch_snapshot(pid) do
         %{runner_id: runner_id} when is_binary(runner_id) ->
           Recovery.resync_for_overwatch(pid, runner_id)
@@ -151,7 +151,7 @@ defmodule Flezha.Convergence.Heal do
     end)
   end
 
-  # (re)subscribe a declared-but-missing plugin into the running operative via
+  # (re)subscribe a declared-but-missing plugin into the running operator via
   # the same `{:plugin_subscribe, ...}` path `flz plugin enable` uses (which
   # activates immediately since the SDK is already up).
   defp apply_primitive(:start_plugin, %{namespace: ns, target: rid, args: args}) do
@@ -170,7 +170,7 @@ defmodule Flezha.Convergence.Heal do
     plugin_call(ns, rid, &Overwatch.plugin_restart(&1, args.plugin_id, args.plugin))
   end
 
-  # Forcibly drop a dead/orphaned runner binding so its operatives become
+  # Forcibly drop a dead/orphaned runner binding so its operators become
   # misbound and rebind onto a live runner next tick. For a proved wedge this is
   # the rung above the restart: a process that did not exit.
   defp apply_primitive(:evict_runner, %{target: runner_id} = op) when is_binary(runner_id) do
@@ -183,7 +183,7 @@ defmodule Flezha.Convergence.Heal do
   # Terminal disconnect: the SDK shuts down gracefully and exits non-zero so its
   # orchestrator restarts the process. The first rung for a runner the
   # classifier proves wedged, gated on `proved_wedged?/1`: its session closes
-  # with the process, and the declared disconnect moves its operatives.
+  # with the process, and the declared disconnect moves its operators.
   defp apply_primitive(:restart_runner, %{target: runner_id, args: args} = op)
        when is_binary(runner_id) do
     if Planner.proved_wedged?(op) do
@@ -221,9 +221,9 @@ defmodule Flezha.Convergence.Heal do
 
   # The Overwatch publishes from its own process — the route it seeds points at
   # itself — so the primitive asks it to, under a call timeout.
-  defp apply_primitive(:publish_binding, %{namespace: namespace, target: operative_id}) do
-    on_operative(namespace, operative_id, fn pid ->
-      case SafeCall.bounded(pid, :publish_binding, Durations.get(:operative_call_timeout_ms)) do
+  defp apply_primitive(:publish_binding, %{namespace: namespace, target: operator_id}) do
+    on_operator(namespace, operator_id, fn pid ->
+      case SafeCall.bounded(pid, :publish_binding, Durations.get(:operator_call_timeout_ms)) do
         {:ok, :ok} -> :ok
         _ -> :error
       end
@@ -234,36 +234,36 @@ defmodule Flezha.Convergence.Heal do
   # crash here would take down the whole tick. Treat as a failed heal.
   defp apply_primitive(prim, _op) when prim in @primitives, do: :error
 
-  # Migrate a operative bound to a dead/wrong runner onto an available one.
+  # Migrate an operator bound to a dead/wrong runner onto an available one.
   # On success the Overwatch has published its own binding, the registry tag
   # and the target runner's route. Any failed step leaves the registry
-  # untouched and the operative degraded for the next tick under Backoff.
-  defp rebind_operative(%{namespace: namespace, target: operative_id} = op, pid) do
+  # untouched and the operator degraded for the next tick under Backoff.
+  defp rebind_operator(%{namespace: namespace, target: operator_id} = op, pid) do
     with %{factory_id: factory, runner_id: prev} <- overwatch_snapshot(pid),
          true <- factory != nil,
          false <- skip_rebind?(namespace, factory, prev, op),
-         {:ok, target} <- placed(OperativeManager.assign_runner(namespace, factory, operative_id)),
+         {:ok, target} <- placed(OperatorManager.assign_runner(namespace, factory, operator_id)),
          {:ok, :ok} <-
            SafeCall.bounded(pid, {:runner_migrate, target}, Durations.get(:migrate_timeout_ms)) do
       # Replay the per-Cell WAL into the new binding. The `runner_migrate`
       # above is a HotSwap handover, which only carries state when the previous
       # runner is alive to serialise it; when the previous runner died (the
       # common rebind trigger) the new runner's tasklet would otherwise init
-      # empty and the operative's persisted state is lost (state resets to 0).
+      # empty and the operator's persisted state is lost (state resets to 0).
       # resync routes a `RestoreInitState` handshake for each persisted
       # cell to `target`, rebuilding state from the durable WAL.
       _ = Recovery.resync_for_overwatch(pid, target)
 
-      emit_reconnected(namespace, operative_id, prev, target)
+      emit_reconnected(namespace, operator_id, prev, target)
       :ok
     else
-      # `skip_rebind?` returned true — a MISBOUND operative whose bound runner
+      # `skip_rebind?` returned true — a MISBOUND operator whose bound runner
       # is already active and owns the factory, so a stale-snapshot rebind
-      # would only disrupt a healthy operative. Safe no-op.
+      # would only disrupt a healthy operator. Safe no-op.
       true ->
         :ok
 
-      # No runner in the namespace can serve this operative's factory. That is
+      # No runner in the namespace can serve this operator's factory. That is
       # an unmet precondition, not a repair that failed: the ladder spaces out
       # attempts that could have worked, and charging a rung for one that could
       # not is what turns a wake with nothing to bind to into a longer wait.
@@ -278,7 +278,7 @@ defmodule Flezha.Convergence.Heal do
   # A misbound rebind is a safe no-op once the bound runner is back in the
   # live, factory-owning active set (a reconnect between snapshot and heal
   # time): re-reading the authoritative set here stops a detection slip from
-  # churning a healthy operative. An op whose reason PROVED the target is not
+  # churning a healthy operator. An op whose reason PROVED the target is not
   # producing is never skipped — that guard protects the healthy, and this
   # target is not — and neither is a parked one, whose runner is exactly the
   # one its bind failed on.
@@ -290,10 +290,10 @@ defmodule Flezha.Convergence.Heal do
       prev in FleetManager.runners_for_factory(namespace, factory)
   end
 
-  # Resolve the operative's live pid or fail the heal — the prologue every
-  # operative-scoped primitive shares.
-  defp on_operative(namespace, operative_id, fun) do
-    case HubManager.get_pid(namespace, operative_id) do
+  # Resolve the operator's live pid or fail the heal — the prologue every
+  # operator-scoped primitive shares.
+  defp on_operator(namespace, operator_id, fun) do
+    case HubManager.get_pid(namespace, operator_id) do
       {:ok, pid} when is_pid(pid) -> fun.(pid)
       _ -> :error
     end
@@ -302,8 +302,8 @@ defmodule Flezha.Convergence.Heal do
   # The three plugin primitives differ only in the verb they send; the call and
   # its bound belong to `Overwatch`. A heal reports `:ok | :error` — the reason
   # is already logged by the bounded call.
-  defp plugin_call(namespace, operative_id, verb) do
-    on_operative(namespace, operative_id, fn pid ->
+  defp plugin_call(namespace, operator_id, verb) do
+    on_operator(namespace, operator_id, fn pid ->
       case verb.(pid) do
         :ok -> :ok
         _ -> :error
@@ -314,13 +314,13 @@ defmodule Flezha.Convergence.Heal do
   # The reply is always the full `%Overwatch{}` struct — callers hand it to
   # `Overwatch`'s own functions (the consent gate) or read its fields.
   # The placement decision, told apart from the reads around it: `nil` is "no
-  # runner or node can serve this operative", the one failure that is an unmet
+  # runner or node can serve this operator", the one failure that is an unmet
   # precondition rather than a repair that failed.
   defp placed(nil), do: :unplaced
   defp placed(target), do: {:ok, target}
 
   defp overwatch_snapshot(pid) do
-    case SafeCall.bounded(pid, :get_overwatch_state, Durations.get(:operative_call_timeout_ms)) do
+    case SafeCall.bounded(pid, :get_overwatch_state, Durations.get(:operator_call_timeout_ms)) do
       {:ok, %Overwatch{} = ow} -> ow
       _ -> nil
     end
@@ -341,8 +341,8 @@ defmodule Flezha.Convergence.Heal do
     )
   end
 
-  defp emit_reconnected(namespace, operative_id, prev, target) do
-    meta = %{namespace: namespace, operative_id: operative_id, runner_id: target}
+  defp emit_reconnected(namespace, operator_id, prev, target) do
+    meta = %{namespace: namespace, operator_id: operator_id, runner_id: target}
 
     :telemetry.execute(
       [:flezha, :runner, :reconnected_reassigned],

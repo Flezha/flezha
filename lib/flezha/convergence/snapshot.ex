@@ -33,9 +33,9 @@ defmodule Flezha.Convergence.Snapshot do
 
   @default_current %{
     last_tick_at: nil,
-    stuck_operatives: %{},
+    stuck_operators: %{},
     intent_mismatch: [],
-    operative_health: %{}
+    operator_health: %{}
   }
 
   # ---------- public API ----------
@@ -60,33 +60,33 @@ defmodule Flezha.Convergence.Snapshot do
   end
 
   @doc """
-  The Loop's verdict record for `{namespace, operative_id}`, or `nil` for an
-  operative it has not judged yet (before the first tick, or a durable-registry
+  The Loop's verdict record for `{namespace, operator_id}`, or `nil` for an
+  operator it has not judged yet (before the first tick, or a durable-registry
   row with no live placement).
   """
   @spec verdict(String.t(), term()) :: Verdict.t() | nil
-  def verdict(namespace, operative_id), do: record({:operative, {namespace, operative_id}})
+  def verdict(namespace, operator_id), do: record({:operator, {namespace, operator_id}})
 
   @doc """
   The Loop's verdict record for any subject — a runner, a plugin, a channel or
-  a driver as well as an operative — or `nil` for one it has not judged. The
+  a driver as well as an operator — or `nil` for one it has not judged. The
   one read of the published health map, so no reader digs into the snapshot's
   shape for itself.
   """
   @spec record({Verdict.kind(), term()}) :: Verdict.t() | nil
   def record(subject) do
-    current() |> Map.get(:operative_health, %{}) |> Map.get(subject)
+    current() |> Map.get(:operator_health, %{}) |> Map.get(subject)
   end
 
   @doc """
-  Per-operative health for `{namespace, operative_id}`: the state of the one
-  verdict record the Loop published for it. `:unknown` for an operative it has
+  Per-operator health for `{namespace, operator_id}`: the state of the one
+  verdict record the Loop published for it. `:unknown` for an operator it has
   not judged. One of `:healthy | :degraded | :failed | :unbound | :parked |
   :suspended | :unknown`.
   """
-  @spec operative_health(String.t(), term()) :: Verdict.state()
-  def operative_health(namespace, operative_id) do
-    case verdict(namespace, operative_id) do
+  @spec operator_health(String.t(), term()) :: Verdict.state()
+  def operator_health(namespace, operator_id) do
+    case verdict(namespace, operator_id) do
       %Verdict{state: state} -> state
       _ -> :unknown
     end

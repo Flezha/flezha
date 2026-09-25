@@ -187,11 +187,11 @@ fn a_fan_out_holds_its_record_until_every_consumer_has_the_value() {
     assert!(shipped(&producer) > before);
 }
 
-/// A stream never completes: an effect asking to fails as the author's own
+/// An unbounded operator never completes: an effect asking to fails as the author's own
 /// non-retryable error, recording nothing, and an item that already failed
 /// keeps its verdict.
 #[test]
-fn a_stream_effect_carrying_a_completion_fails_non_retryable() {
+fn an_unbounded_effect_carrying_a_completion_fails_non_retryable() {
     let (_, mut asked) = work_and_effect(7, &[2]);
     asked.consumed_offset = Some(7);
     asked.event_time = 42;
@@ -202,7 +202,7 @@ fn a_stream_effect_carrying_a_completion_fails_non_retryable() {
         asked,
         schema::ItemEffect {
             verdict: schema::Verdict::NonRetryableError {
-                message: crate::workflow::COMPLETE_OUTSIDE_WORKFLOW.to_string()
+                message: crate::bounded::COMPLETE_OUTSIDE_BOUNDED.to_string()
             },
             consumed_offset: Some(7),
             event_time: 42,

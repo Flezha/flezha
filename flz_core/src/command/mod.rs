@@ -10,6 +10,7 @@ use crate::pb::command_request::Command;
 use crate::pb::{CommandRequest, CommandResponse};
 use crate::runner::RunnerNode;
 
+mod bounded_stop;
 mod cell_apply_state;
 pub mod cell_state;
 mod cell_status;
@@ -17,16 +18,15 @@ mod compact;
 mod credit;
 mod migration_deserialization;
 mod migration_serialization;
-mod operative_message;
-mod operative_start;
-mod operative_stop;
+mod operator_message;
+mod operator_start;
+mod operator_stop;
 mod park_ack;
 mod ping;
 mod restore;
 mod runner_assign;
 mod runner_disconnect;
 mod streams_connect;
-mod workflow_stop;
 
 /// One command's answer: the `CommandResponse` bytes under the handler's own
 /// payload id (the frame is stamped with the REQUEST's).
@@ -117,19 +117,19 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
     Ok(match command {
         Some(Command::AssignRunnerId(c)) => regular(c),
         Some(Command::ConnectSocket(c)) => regular(c),
-        Some(Command::AddOperative(c)) => regular(c),
-        Some(Command::RemOperative(c)) => regular(c),
+        Some(Command::AddOperator(c)) => regular(c),
+        Some(Command::RemOperator(c)) => regular(c),
         Some(Command::MigrationSerialization(c)) => regular(c),
         Some(Command::MigrationDeserialization(c)) => regular(c),
         Some(Command::CellState(c)) => regular(c),
         Some(Command::RunnerDisconnect(c)) => CommandActionType::RunnerDisconnect(Box::new(c)),
-        Some(Command::OperativeMessage(c)) => regular(c),
+        Some(Command::OperatorMessage(c)) => regular(c),
         Some(Command::CellApplyState(c)) => regular(c),
         Some(Command::RestoreInitState(c)) => regular(c),
         Some(Command::CompactCell(c)) => regular(c),
         Some(Command::CellMailboxStatus(c)) => regular(c),
         Some(Command::Ping(c)) => regular(c),
-        Some(Command::WorkflowStop(c)) => regular(c),
+        Some(Command::BoundedStop(c)) => regular(c),
         Some(Command::CreditWindowInit(c)) => regular(c),
         Some(Command::CreditGrant(c)) => regular(c),
         Some(Command::ParkPayloadAck(c)) => regular(c),
@@ -138,16 +138,16 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
         | Some(Command::CompactCellResponse(_))
         | Some(Command::RunnerReconnected(_))
         | Some(Command::ReassignRunnerId(_))
-        | Some(Command::WorkflowCompleted(_))
+        | Some(Command::BoundedCompleted(_))
         | Some(Command::CreditWindowAck(_))
         | Some(Command::TaskCommit(_))
         | Some(Command::IterCommit(_))
         | Some(Command::IterPark(_))
         | Some(Command::UpdateFactories(_))
-        | Some(Command::SpawnWorkflowRequest(_))
+        | Some(Command::SpawnBoundedRequest(_))
         | Some(Command::AdminRequest(_)) => CommandActionType::NotificationIgnore,
         Some(Command::RunnerShutdownAck(_)) => CommandActionType::AckSignal(Ok(String::new())),
-        Some(Command::SpawnWorkflowResponse(reply)) => CommandActionType::AckSignal(ack_result(
+        Some(Command::SpawnBoundedResponse(reply)) => CommandActionType::AckSignal(ack_result(
             crate::spawn::encode_ack(&reply.outcome, &reply.instance_id),
             reply.error,
         )),
@@ -343,7 +343,7 @@ mod tests {
         let request = CommandRequest {
             reference_id: "ref-shutdown".to_string(),
             command: Some(Command::RunnerShutdownAck(crate::pb::RunnerShutdownAck {
-                operative_id: "".to_string(),
+                operator_id: "".to_string(),
             })),
         };
 
@@ -361,8 +361,8 @@ mod tests {
         let reply = |outcome: &str, error: &str, instance_id: &str| {
             let bytes = CommandRequest {
                 reference_id: "ref-spawn".to_string(),
-                command: Some(Command::SpawnWorkflowResponse(
-                    crate::pb::SpawnWorkflowResponse {
+                command: Some(Command::SpawnBoundedResponse(
+                    crate::pb::SpawnBoundedResponse {
                         outcome: outcome.to_string(),
                         error: error.to_string(),
                         instance_id: instance_id.to_string(),

@@ -103,7 +103,7 @@ defmodule Flezha.Observability.Export.PrometheusRegistry do
 
   @doc """
   Read the count of truncations for a given source. Read by the tests that
-  pin the truncation rule; no operator-facing surface renders it.
+  pin the truncation rule; no user-facing surface renders it.
   """
   @spec truncation_count(atom()) :: non_neg_integer()
   def truncation_count(source) when is_atom(source) do
@@ -118,7 +118,7 @@ defmodule Flezha.Observability.Export.PrometheusRegistry do
   @doc """
   Read the count of label names this source had rewritten or dropped to keep
   the exposition well-formed. The rewrite itself is self-evident in the scrape
-  — the sanitized name is what an operator reads — so this is a counter, not an
+  — the sanitized name is what a user reads — so this is a counter, not an
   event per emit.
   """
   @spec coercion_count(atom()) :: non_neg_integer()

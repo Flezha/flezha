@@ -4,16 +4,16 @@
 TBD - created by archiving change add-php-sdk. Update Purpose after archive.
 ## Requirements
 ### Requirement: PHP SDK entry point and runner lifecycle
-The PHP SDK SHALL expose a runner handle created by `Flezha::createRunner(string $namespace)`, carrying declaration and lifecycle on one object, with `registerFactory()` registering an operative class of either kind (the kind is read from the class), `unregisterFactory()` as its inverse, `executor()` selecting the concurrency adapter, `start()` connecting, `awaitTermination()` blocking, and `run()` as `start()` + `awaitTermination()`.
+The PHP SDK SHALL expose a runner handle created by `Flezha::createRunner(string $namespace)`, carrying declaration and lifecycle on one object, with `registerFactory()` registering an operator class of either kind (the kind is read from the class), `unregisterFactory()` as its inverse, `executor()` selecting the concurrency adapter, `start()` connecting, `awaitTermination()` blocking, and `run()` as `start()` + `awaitTermination()`.
 
 The runner SHALL map onto the ABI lifecycle `flz_core_context_new(SCHEMA_VERSION)` → `flz_core_declare_class` per class → `flz_core_start(namespace)` → poll/complete → `flz_core_shutdown` → `flz_core_context_free`. Naming SHALL follow `docs/sdk/naming_conventions.md`, matching the Rust and Java surfaces.
 
-#### Scenario: A declared stream operative connects and is placed
+#### Scenario: A declared unbounded operator connects and is placed
 - **WHEN** a script calls `Flezha::createRunner('trading')->registerFactory(OrderTotals::class)->run()` against a live controller
-- **THEN** the runner SHALL connect, `AddOperative` SHALL place an instance of that class, and inputs routed to it SHALL reach the declared tasklet
+- **THEN** the runner SHALL connect, `AddOperator` SHALL place an instance of that class, and inputs routed to it SHALL reach the declared tasklet
 
-#### Scenario: Zero declared operative types is legal
-- **WHEN** a runner is started having declared no operative class
+#### Scenario: Zero declared operator types is legal
+- **WHEN** a runner is started having declared no operator class
 - **THEN** it SHALL connect successfully and remain connected, matching the Rust and Java behaviour for an empty factory list
 
 #### Scenario: Schema mismatch is refused before connecting
@@ -81,7 +81,7 @@ The PHP SDK SHALL serialize durable State and Change values as JSON produced by 
 Durable records SHALL be stamped `sdk_lang = SDK_LANG_PHP` with the PHP change-format id, declared through `HostClassDecl`'s existing `sdk_lang` / `change_format_id` fields.
 
 #### Scenario: State survives a restart
-- **WHEN** a cell accumulates State, the runner is stopped, and a new runner binds the same operative
+- **WHEN** a cell accumulates State, the runner is stopped, and a new runner binds the same operator
 - **THEN** the restored State SHALL equal the State at shutdown, folded from the change log through `fromArray()`
 
 #### Scenario: A renamed class still restores
@@ -98,15 +98,15 @@ Durable records SHALL be stamped `sdk_lang = SDK_LANG_PHP` with the PHP change-f
 
 #### Scenario: A record of another language is refused, not decoded
 - **WHEN** a PHP-hosted class is sent a `RestoreInitState` whose records carry another SDK's `sdk_lang`
-- **THEN** the core's host restore fold SHALL refuse before any body reaches the PHP codec, and the controller SHALL leave the operative unbound rather than cold-starting it
+- **THEN** the core's host restore fold SHALL refuse before any body reaches the PHP codec, and the controller SHALL leave the operator unbound rather than cold-starting it
 
 ### Requirement: Full host-class declaration
-The PHP SDK SHALL build the complete `HostClassDecl` JSON accepted by `flz_core_declare_class`: the channels graph (entry, inter-tasklet, plugin, with per-channel retry, overflow and plugin keying), cell modes, clock kinds, the effectively-once tier and ack granularity, the correction window, header lang and format bytes, and workflow lifecycle facts.
+The PHP SDK SHALL build the complete `HostClassDecl` JSON accepted by `flz_core_declare_class`: the channels graph (entry, inter-tasklet, plugin, with per-channel retry, overflow and plugin keying), cell modes, clock kinds, the effectively-once tier and ack granularity, the correction window, header lang and format bytes, and bounded lifecycle facts.
 
 A declaration the core refuses SHALL surface the core's error naming the offending field, and the class SHALL NOT be registered.
 
-#### Scenario: Declared facts reach AddOperativeResponse
-- **WHEN** a PHP class declares the effectively-once tier, a correction window and checkpoint ack-granularity, and the controller sends `AddOperative`
+#### Scenario: Declared facts reach AddOperatorResponse
+- **WHEN** a PHP class declares the effectively-once tier, a correction window and checkpoint ack-granularity, and the controller sends `AddOperator`
 - **THEN** the response metadata SHALL carry the same declarations the typed Rust path produces for an equivalent class
 
 #### Scenario: An unserviceable declaration is refused at declare time
@@ -129,7 +129,7 @@ The PHP SDK SHALL handle every command activation kind the core hands out: `Rest
 - **THEN** the SDK SHALL answer a `LiveStateRead` with the cell's current State as JSON, stamped with the change seq it was read at
 
 #### Scenario: A migration serializes and applies
-- **WHEN** an operative hot-swap migrates a PHP-hosted cell
+- **WHEN** an operator hot-swap migrates a PHP-hosted cell
 - **THEN** `MigrationSerialize` on the source and `ApplyState` on the destination SHALL round-trip the State
 
 ### Requirement: Cell modes and the prepare crossing
@@ -183,32 +183,32 @@ The PHP SDK SHALL support the producer-side edge surface — map, filter, flatMa
 - **THEN** the failure SHALL climb the channel's retry→park ladder rather than terminating the runner
 
 #### Scenario: Two channels merge into one tasklet
-- **WHEN** an operative declares `$c->merge()->from($ticks, fn ($t) => [...])->from($quotes, fn ($q) => [...])->keyBy(fn ($v) => $v['symbol'])->into(Detector::class)`
+- **WHEN** an operator declares `$c->merge()->from($ticks, fn ($t) => [...])->from($quotes, fn ($q) => [...])->keyBy(fn ($v) => $v['symbol'])->into(Detector::class)`
 - **THEN** registration SHALL succeed with one Detector node fed by two consumer edges, each applying its own mapping, a value from either entry SHALL reach `run` as the mapped value keyed by `symbol`, a duplicated source SHALL refuse with `DuplicateMergeSource` and a single source with `MergeTooFewSources`
 
 #### Scenario: The router delivers on a key's own traffic
 - **WHEN** `$c->routeLatest($config, $trades, fn ($t) => $t['symbol'])` is declared and the harness feeds a document, trades for `A` and `B`, the same document, then a trade for `A`
 - **THEN** exactly one `['A', $document]` and one `['B', $document]` SHALL be emitted, and the repeated document SHALL be inert
 
-### Requirement: Workflow operatives at parity
-The PHP SDK SHALL support workflow operatives as structured chains, where each stage partition arrives as a step activation and completion answers the driver's barrier. `Flezha\WorkflowOperative` SHALL carry no one-function `run`, and `Flezha\WorkflowCtx` SHALL NOT exist; a tasklet inside a workflow SHALL end its instance with `$ctx->complete($result)`, carried in its step answer.
+### Requirement: Bounded operators at parity
+The PHP SDK SHALL support bounded operators as structured chains, where each stage partition arrives as a step activation and completion answers the driver's barrier. `Flezha\BoundedOperator` SHALL carry no one-function `run`, and `Flezha\BoundedCtx` SHALL NOT exist; a tasklet inside a bounded operator SHALL end its instance with `$ctx->complete($result)`, carried in its step answer.
 
 Compensation hooks, loop modes, suspension and rewind SHALL be the core driver's existing machinery, reached through step activations; the SDK SHALL NOT implement a driver.
 
 #### Scenario: A structured chain completes in order
-- **WHEN** a workflow class declaring a multi-stage chain is spawned
+- **WHEN** a bounded class declaring a multi-stage chain is spawned
 - **THEN** each stage SHALL arrive as a step activation, and the instance SHALL report completion after the terminal stage
 
 #### Scenario: An aborted chain compensates in reverse
 - **WHEN** a stage fails after earlier stages committed
 - **THEN** the core SHALL hand out `CompensateRun` activations for the committed stages in reverse order
 
-#### Scenario: A tasklet ends its workflow
-- **WHEN** a tasklet of a `PerInput` workflow calls `$ctx->complete(['turns' => 4])` while handling a message
+#### Scenario: A tasklet ends its bounded operator
+- **WHEN** a tasklet of a `PerInput` bounded operator calls `$ctx->complete(['turns' => 4])` while handling a message
 - **THEN** the iteration SHALL commit and the instance SHALL complete with that result instead of waiting for the next message
 
 #### Scenario: A resumed chain skips journaled stages
-- **WHEN** a workflow instance is resumed after a crash mid-chain
+- **WHEN** a bounded instance is resumed after a crash mid-chain
 - **THEN** stages recorded as committed in the task-journal SHALL NOT re-run
 
 ### Requirement: Clean shutdown on an activation budget
@@ -222,12 +222,12 @@ The budget SHALL default to unlimited, and a clean shutdown SHALL leave unpolled
 
 #### Scenario: Recycling loses no work
 - **WHEN** a runner exits at its budget while inputs remain unconsumed
-- **THEN** a replacement runner binding the same operative SHALL receive those inputs
+- **THEN** a replacement runner binding the same operator SHALL receive those inputs
 
 ### Requirement: End-to-end parity is the acceptance gate
 The PHP SDK SHALL be gated by a runner application under `test/apps/php_runner`, declaring its launch line and its fixtures in a `conformance.json` manifest exactly as the Rust, Java and Elixir apps do, and driven by `php_sdk`-tagged suites in `test/system` selected by `FLEZHA_E2E_RUNTIME=php`.
 
-Coverage SHALL include timers, dynamic cells, compaction, DLQ park, effectively-once, live state read and workflow crash-resume — the same scenarios the Java arm asserts — and the manifest SHALL defer nothing, because this SDK claims full parity.
+Coverage SHALL include timers, dynamic cells, compaction, DLQ park, effectively-once, live state read and bounded crash-resume — the same scenarios the Java arm asserts — and the manifest SHALL defer nothing, because this SDK claims full parity.
 
 #### Scenario: The e2e matrix does not branch per runtime
 - **WHEN** a system suite asserts a capability on the Rust and Java runners
@@ -267,42 +267,42 @@ The SDK SHALL prove the set by one conformance run over every row of
 - **THEN** it authors the row with `$c->merge()->from(...)…->into(...)` rather than throwing, registration refuses with `MergeTooFewSources` or `DuplicateMergeSource`, and the manifest's `topology_surfaces` lists `merge`
 
 ### Requirement: The single-tasklet short form is four attribute arguments
-The short form SHALL be declared with the `#[Operative]` attribute a full-form operative already carries, on a class extending `Flezha\StreamOperative` or `Flezha\WorkflowOperative`, and SHALL NOT be declared with `#[Task]`, which SHALL accept none of `kind`, `sink`, `input` or `codec` and SHALL throw naming the argument and `#[Operative]` when one is given. `#[Operative]` SHALL accept `sink`, `input` and `codec` (a `ChannelCodec`) beside the `factoryId` it already requires; the kind is the base class the attributed class extends and SHALL NOT be an argument. `Flezha\OperativeKind` SHALL be deleted, its only readers being the removed `kind`.
+The short form SHALL be declared with the `#[Operator]` attribute a full-form operator already carries, on a class extending `Flezha\UnboundedOperator` or `Flezha\BoundedOperator`, and SHALL NOT be declared with `#[Task]`, which SHALL accept none of `kind`, `sink`, `input` or `codec` and SHALL throw naming the argument and `#[Operator]` when one is given. `#[Operator]` SHALL accept `sink`, `input` and `codec` (a `ChannelCodec`) beside the `factoryId` it already requires; the kind is the base class the attributed class extends and SHALL NOT be an argument. `Flezha\OperatorKind` SHALL be deleted, its only readers being the removed `kind`.
 
 A class SHALL be a short form exactly when it defines the tasklet body `run(mixed $input, Ctx $ctx): mixed` and does not override the topology body `channels`, which is the mechanism `Definition` already uses to read which hooks a class overrides; defining `run` and overriding `channels` SHALL throw `DeclarationException` naming `ShortFormWithTopology`, and doing neither SHALL throw naming the missing body. A short-form class MAY define the tasklet hooks a `Flezha\Tasklet` subclass defines (`state`, `applyChange`), which the generated tasklet takes.
 
-`sink` SHALL be optional. The class SHALL carry a generated operative of its base class's kind whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` argument's value) into a generated tasklet named `factoryId` and, when a `sink` is written, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A workflow short form MAY carry `#[Workflow(loopMode: ...)]` beside `#[Operative]` and SHALL be a `once` workflow when it does not, with every other workflow setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state; a `#[Workflow]` on a short form that sets any argument other than `loopMode`, or `persistent: false` on `#[Operative]`, SHALL throw `DeclarationException` naming the setting and the full form. The entry SHALL be decoded by `codec` where one is written, whether or not a `sink` is. An absent `factoryId` SHALL throw naming the required argument, and the SDK SHALL NOT derive one from the class.
+`sink` SHALL be optional. The class SHALL carry a generated operator of its base class's kind whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` argument's value) into a generated tasklet named `factoryId` and, when a `sink` is written, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A bounded short form MAY carry `#[Bounded(loopMode: ...)]` beside `#[Operator]` and SHALL be a `once` bounded operator when it does not, with every other bounded setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state; a `#[Bounded operator]` on a short form that sets any argument other than `loopMode`, or `persistent: false` on `#[Operator]`, SHALL throw `DeclarationException` naming the setting and the full form. The entry SHALL be decoded by `codec` where one is written, whether or not a `sink` is. An absent `factoryId` SHALL throw naming the required argument, and the SDK SHALL NOT derive one from the class.
 
-`Runner::registerFactory` SHALL accept such a class string and register the generated operative, throwing `DeclarationException` at registration with the refusal's name in its refusals and at the start of its message. A duplicate factory id SHALL throw with a message beginning `DuplicateFactoryId`. The PHP SDK owes no `SinkWithoutOutput`: `Flezha\Tasklet::run` is declared `: mixed` and PHP refuses an override narrowing that to `: void`, so a tasklet declaring no output cannot be written; the manifest SHALL NOT list `shorthand_typed_output`.
+`Runner::registerFactory` SHALL accept such a class string and register the generated operator, throwing `DeclarationException` at registration with the refusal's name in its refusals and at the start of its message. A duplicate factory id SHALL throw with a message beginning `DuplicateFactoryId`. The PHP SDK owes no `SinkWithoutOutput`: `Flezha\Tasklet::run` is declared `: mixed` and PHP refuses an override narrowing that to `: void`, so a tasklet declaring no output cannot be written; the manifest SHALL NOT list `shorthand_typed_output`.
 
-#### Scenario: An attributed class is a whole stream operative
+#### Scenario: An attributed class is a whole unbounded operator
 
-- **WHEN** a class extending `Flezha\StreamOperative` is attributed `#[Operative(factoryId: 'upcase', sink: 'out', codec: ChannelCodec::Text)]`, defines `run`, and the runner is given `registerFactory(Upcase::class)`
-- **THEN** the runner declares a stream operative `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and sink `out`, and no `Flezha\Tasklet` subclass exists for it
+- **WHEN** a class extending `Flezha\UnboundedOperator` is attributed `#[Operator(factoryId: 'upcase', sink: 'out', codec: ChannelCodec::Text)]`, defines `run`, and the runner is given `registerFactory(Upcase::class)`
+- **THEN** the runner declares an unbounded operator `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and sink `out`, and no `Flezha\Tasklet` subclass exists for it
 
-#### Scenario: An attributed class is a whole workflow operative
+#### Scenario: An attributed class is a whole bounded operator
 
-- **WHEN** a class extending `Flezha\WorkflowOperative` is attributed `#[Operative(factoryId: 'place', sink: 'placed', input: 'order', codec: ChannelCodec::Text)]` and defines `run`, the runner is given `registerFactory(Place::class)`, an instance is started, and one message is sent on `order`
+- **WHEN** a class extending `Flezha\BoundedOperator` is attributed `#[Operator(factoryId: 'place', sink: 'placed', input: 'order', codec: ChannelCodec::Text)]` and defines `run`, the runner is given `registerFactory(Place::class)`, an instance is started, and one message is sent on `order`
 - **THEN** `run` receives the message as text, its return value reaches `placed`, and the instance completes
 
-#### Scenario: A short-form workflow declares its loop mode
+#### Scenario: A short-form bounded operator declares its loop mode
 
-- **WHEN** a class extending `Flezha\WorkflowOperative` is attributed `#[Operative(factoryId: 'chat', sink: 'replies', codec: ChannelCodec::Text)]` and `#[Workflow(loopMode: LoopMode::PerInput)]`, defines `run`, is registered, and two messages reach its entry channel
+- **WHEN** a class extending `Flezha\BoundedOperator` is attributed `#[Operator(factoryId: 'chat', sink: 'replies', codec: ChannelCodec::Text)]` and `#[Bounded(loopMode: LoopMode::PerInput)]`, defines `run`, is registered, and two messages reach its entry channel
 - **THEN** the declaration carries `loop_mode` `per_input`, `run` runs once per message, and the instance does not complete after the first
 
 #### Scenario: A short form with no sink is declared
 
-- **WHEN** a class extending `Flezha\StreamOperative` is attributed `#[Operative(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]` and defines `run`, `state` and `applyChange`
-- **THEN** the operative declares `ticks` into the generated tasklet and no plugin channel
+- **WHEN** a class extending `Flezha\UnboundedOperator` is attributed `#[Operator(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]` and defines `run`, `state` and `applyChange`
+- **THEN** the operator declares `ticks` into the generated tasklet and no plugin channel
 
 #### Scenario: An input and codec need no sink
 
-- **WHEN** a class extending `Flezha\StreamOperative` is attributed `#[Operative(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]` with no `sink`
+- **WHEN** a class extending `Flezha\UnboundedOperator` is attributed `#[Operator(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]` with no `sink`
 - **THEN** `registerFactory` accepts it and the entry channel takes that name and codec
 
 #### Scenario: A run body beside a channels override is refused
 
-- **WHEN** an attributed operative class defines `run` and overrides `channels`
+- **WHEN** an attributed operator class defines `run` and overrides `channels`
 - **THEN** `registerFactory` throws `DeclarationException` naming `ShortFormWithTopology`
 
 #### Scenario: A tasklet cannot declare no output
@@ -313,34 +313,34 @@ A class SHALL be a short form exactly when it defines the tasklet body `run(mixe
 #### Scenario: A sink on a tasklet attribute is refused
 
 - **WHEN** a class is attributed `#[Task(name: 'upcase', sink: 'out')]`
-- **THEN** `registerFactory` throws naming `sink` and `#[Operative]`
+- **THEN** `registerFactory` throws naming `sink` and `#[Operator]`
 
 #### Scenario: A derived factory id is refused
 
-- **WHEN** a class extending `Flezha\StreamOperative` defines `run` and carries no `#[Operative]` attribute
-- **THEN** `registerFactory` throws naming the required `#[Operative(factoryId: ...)]`
+- **WHEN** a class extending `Flezha\UnboundedOperator` defines `run` and carries no `#[Operator]` attribute
+- **THEN** `registerFactory` throws naming the required `#[Operator(factoryId: ...)]`
 
 ### Requirement: A PHP class of either kind is judged on what it wrote
 
-`HostClassDecl::of` SHALL put every key the builder recorded on the wire for either kind, with no kind gate, so a stream-only builder call on a workflow reaches the core and is refused under its name (`EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow`, `CorrectionWindowOnWorkflow`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `DeclarationException` naming it. `#[Workflow]` on a class extending `Flezha\StreamOperative` SHALL be refused at `registerFactory` naming the attribute and the class, as the attribute's own documentation states. `#[Workflow]` SHALL carry no `retryAttempts`, `retryBackoffMs`, `barrierRetryAttempts` or `wakeAfterMs`, and the declaration SHALL carry no `wake_after_ms`; the builder SHALL carry no `syncDurability()` call, `#[Workflow(syncDurability: true)]` being the one spelling. A `Ctx` inside a workflow SHALL offer `timerAfter`, `timerAtEventTime` and `cancelTimer` exactly as inside a stream, and a tasklet's `onTimer` SHALL run on its firing in both kinds; only a `compensate` hook's `Ctx` SHALL throw an error naming `TimersUnavailable` from them.
+`HostClassDecl::of` SHALL put every key the builder recorded on the wire for either kind, with no kind gate, so an unbounded-only builder call on a bounded operator reaches the core and is refused under its name (`EffectivelyOnceOnBounded`, `CheckpointOnBounded`, `CorrectionWindowOnBounded`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `DeclarationException` naming it. `#[Bounded operator]` on a class extending `Flezha\UnboundedOperator` SHALL be refused at `registerFactory` naming the attribute and the class, as the attribute's own documentation states. `#[Bounded operator]` SHALL carry no `retryAttempts`, `retryBackoffMs`, `barrierRetryAttempts` or `wakeAfterMs`, and the declaration SHALL carry no `wake_after_ms`; the builder SHALL carry no `syncDurability()` call, `#[Bounded(syncDurability: true)]` being the one spelling. A `Ctx` inside a bounded operator SHALL offer `timerAfter`, `timerAtEventTime` and `cancelTimer` exactly as inside a stream, and a tasklet's `onTimer` SHALL run on its firing in both kinds; only a `compensate` hook's `Ctx` SHALL throw an error naming `TimersUnavailable` from them.
 
-#### Scenario: A tier call on a workflow reaches the core
+#### Scenario: A tier call on a bounded operator reaches the core
 
-- **WHEN** a class extending `Flezha\WorkflowOperative` calls `$c->effectivelyOnce()` in `channels`, the runner registers it and starts
-- **THEN** declaring it to the core throws `DeclarationException` naming `EffectivelyOnceOnWorkflow`, and the operative is not declared
+- **WHEN** a class extending `Flezha\BoundedOperator` calls `$c->effectivelyOnce()` in `channels`, the runner registers it and starts
+- **THEN** declaring it to the core throws `DeclarationException` naming `EffectivelyOnceOnBounded`, and the operator is not declared
 
-#### Scenario: A workflow attribute on a stream class is refused
+#### Scenario: A bounded attribute on an unbounded class is refused
 
-- **WHEN** a class extending `Flezha\StreamOperative` carries `#[Workflow(loopMode: LoopMode::PerInput)]`
-- **THEN** `registerFactory` throws `DeclarationException` naming `#[Workflow]` and the class
+- **WHEN** a class extending `Flezha\UnboundedOperator` carries `#[Bounded(loopMode: LoopMode::PerInput)]`
+- **THEN** `registerFactory` throws `DeclarationException` naming `#[Bounded operator]` and the class
 
 #### Scenario: The retired wake argument is refused
 
-- **WHEN** a class carries `#[Workflow(wakeAfterMs: 5000)]`
+- **WHEN** a class carries `#[Bounded(wakeAfterMs: 5000)]`
 - **THEN** PHP refuses the unknown named argument when the attribute is instantiated, and no declaration carries `wake_after_ms`
 
-#### Scenario: A timer inside a workflow tasklet fires
+#### Scenario: A timer inside a bounded tasklet fires
 
-- **WHEN** a tasklet of a running `PerInput` workflow calls `$ctx->timerAfter(300)` in `run`
+- **WHEN** a tasklet of a running `PerInput` bounded operator calls `$ctx->timerAfter(300)` in `run`
 - **THEN** the call returns the scheduled timestamp, the effect carries the timer op, and `onTimer` runs on that Cell at that timestamp, opening a pass at that tasklet
 

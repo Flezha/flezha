@@ -4,8 +4,8 @@ Flezha runs user-authored stateful compute across a fleet of runners, and mirror
 state change and every emitted output into a durable store on the controller. A runner is
 disposable: it holds state in memory, and the controller holds the truth. Flezha is
 polyglot: seven host SDKs (Rust, Java, Elixir, Node, Python, Ruby and PHP) implement the
-same operative contract against one shared kernel, so a fleet can mix languages and each
-team writes its operatives in the language it already uses.
+same operator contract against one shared kernel, so a fleet can mix languages and each
+team writes its operators in the language it already uses.
 
 This directory is the **architectural map** — the model, the invariants, and the diagrams. It
 tells you how the pieces compose. For the mechanism-level detail behind any box, follow the
@@ -16,8 +16,8 @@ links; the deep docs live in [`../resilience/`](../resilience/) and
 | --- | --- |
 | **This file** | Roles, the workload model, the eight kernel invariants, process topology, on-disk layout, the failure model |
 | [`kernel.md`](kernel.md) | The shared durable substrate: the input log, the atomic effect record, WAL + snapshot, the outbox, the watermark, output identity, the epoch rule, flow control, the remote durability tier, health |
-| [`stream_profile.md`](stream_profile.md) | Streaming: per-cell recovery, the dead-letter queue, late-input correction, checkpoint intervals, partitioned operatives |
-| [`workflow_profile.md`](workflow_profile.md) | Jobs and sessions: the tasklet tree, the task journal, the stage commit over the Cells' outbox, saga compensation, the durable loop, suspension, rewind |
+| [`stream_profile.md`](stream_profile.md) | Streaming: per-cell recovery, the dead-letter queue, late-input correction, checkpoint intervals, partitioned operators |
+| [`bounded_profile.md`](bounded_profile.md) | Jobs and sessions: the tasklet tree, the task journal, the stage commit over the Cells' outbox, saga compensation, the durable loop, suspension, rewind |
 | [`runner.md`](runner.md) | Inside a runner: the shared kernel, the poll boundary, per-cell exclusivity, and what each host SDK owns |
 
 ---
@@ -25,13 +25,13 @@ links; the deep docs live in [`../resilience/`](../resilience/) and
 ## Roles
 
 - **Controller** — the Elixir control plane (`lib/flezha/`). It is the source of truth: it
-  owns the durable store, routes input, decides where each operative runs, and heals the fleet.
+  owns the durable store, routes input, decides where each operator runs, and heals the fleet.
   It scales horizontally — several controller nodes cluster over Erlang distribution, and a
-  ProcessHub hub per namespace distributes operatives across them.
+  ProcessHub hub per namespace distributes operators across them.
 - **Runner** — the SDK process (any of the seven host languages) where user code runs. Runners **dial the
   controller**, never the reverse. They are disposable: state lives in memory, and the
   controller replicates it durably. Inside a runner there is one more split: transport,
-  ordering, durability, retries, timers and workflow runs live in a shared Rust kernel
+  ordering, durability, retries, timers and bounded runs live in a shared Rust kernel
   (`flz_core`), and the host SDK brings the authoring surface and the threads that run user
   code. See [`runner.md`](runner.md).
 - **Source adapter** — where input comes from (a websocket, a feed, an HTTP endpoint). A
@@ -39,7 +39,7 @@ links; the deep docs live in [`../resilience/`](../resilience/) and
 - **Sink adapter** — where output goes (Kafka, Postgres, anything). Also a pluggable edge.
 
 A **cell's durable state is node-local**. It is not replicated across controller nodes;
-cross-node state transfer happens through the live handover an operative migration performs,
+cross-node state transfer happens through the live handover an operator migration performs,
 and continuous cross-node WAL replication is a deliberate non-goal. What stands against losing
 a controller *with its disk* is the opt-in
 [remote durability tier](kernel.md#the-remote-durability-tier): immutable artifacts shipped to
@@ -60,7 +60,7 @@ flowchart LR
     end
     subgraph RUN["⚙️ Runner"]
         direction TB
-        subgraph OPV["Operative — the unit you start and stop"]
+        subgraph OPV["Operator — the unit you start and stop"]
             direction LR
             subgraph P1["Tasklet &quot;parse&quot;"]
                 direction TB
@@ -88,13 +88,13 @@ flowchart LR
     classDef leaf fill:#dcfce7,stroke:#166534,color:#111
 ```
 
-- **Operative** — the unit you start and stop. It has a **kind**, frozen at start:
-  `stream` (default) or `workflow`. An operative may be started with `--partitions N`,
+- **Operator** — the unit you start and stop. It has a **kind**, frozen at start:
+  `unbounded` (default) or `bounded`. An operator may be started with `--partitions N`,
   which materializes it as N ordinary instances (`<id>#p0..#p{N-1}`) splitting the key space
-  by key group — see [`stream_profile.md`](stream_profile.md#partitioned-operatives); a
-  workflow must loop `per_input`.
-- **Tasklet** — a typed stage inside an operative. Declares `Input`, `Output`, `State`,
-  `Change`, and `Clock` types, and lives as long as its operative.
+  by key group — see [`stream_profile.md`](stream_profile.md#partitioned-operators); a
+  bounded operator must loop `per_input`.
+- **Tasklet** — a typed stage inside an operator. Declares `Input`, `Output`, `State`,
+  `Change`, and `Clock` types, and lives as long as its operator.
 - **Cell** — one keyed instance of a tasklet. Durability is per cell: one WAL, one snapshot
   lineage, one outbox cursor. A cell exists whether or not its tasklet declares state and
   whether or not it carries a key; a single-mode tasklet holds one unkeyed cell.
@@ -140,7 +140,7 @@ flowchart TB
   name cold-starts fresh.
 
 Full vocabulary: [`../glossary.md`](../glossary.md). The SDK authoring surface:
-[`rust_operative_architecture.md`](../sdk/rust_operative_architecture.md).
+[`rust_operator_architecture.md`](../sdk/rust_operator_architecture.md).
 
 ---
 
@@ -184,14 +184,14 @@ flowchart TB
         INLOG[("💾 Input log<br/>offset-addressable<br/>effectively-once tier only")]:::store
         ROUTE["Routing · mailboxes · credit"]:::ctrl
         WAL[("💾 Cell WAL<br/>+ snapshots")]:::store
-        JRN[("💾 Task journal<br/>workflow step progress")]:::store
+        JRN[("💾 Task journal<br/>bounded operator step progress")]:::store
         OBX[("💾 Outbox cursor<br/>key + epoch")]:::store
-        REG["Registry — where each operative lives<br/>+ runner ownership"]:::ctrl
+        REG["Registry — where each operator lives<br/>+ runner ownership"]:::ctrl
     end
 
     subgraph EXEC["⚙️ RUNNER — user code, state in memory"]
         direction TB
-        OPV["Operative instance"]:::exec
+        OPV["Operator instance"]:::exec
         OPA["Tasklet A"]:::exec
         OPB["Tasklet B"]:::exec
         OPC["Tasklet C"]:::exec
@@ -210,7 +210,7 @@ flowchart TB
     OPV -->|"4 state change + output — under runner credit"| ROUTE
     ROUTE -->|"5 ONE atomic record, ONE fsync:<br/>state change + outputs + consumed offset"| WAL
     ROUTE -.->|"part of the same record"| OBX
-    ROUTE -->|"6 task commit — workflow only"| JRN
+    ROUTE -->|"6 task commit — bounded only"| JRN
     OBX -->|"7 flush AFTER the fsync"| SINK
     WAL -.->|"R restore state"| OPV
     JRN -.->|"R resume step"| OPV
@@ -226,18 +226,18 @@ flowchart TB
 **Read it as:** input is journaled durably (1–2) before it is forwarded, then routed to the
 runner (3). The runner sends back a state change and any outputs (4), under a byte credit
 it must hold. The controller writes state, outputs, and the consumed input offset as **one
-atomic record under one fsync** (5) — state and emitted effect can never tear apart. Workflow
-operatives additionally commit step progress to a task journal (6). Outputs reach the sink only
+atomic record under one fsync** (5) — state and emitted effect can never tear apart. Bounded operator
+operators additionally commit step progress to a task journal (6). Outputs reach the sink only
 after that record is durable (7). On a crash, the controller restores the cell's state and
-the workflow operative's step position (R).
+the bounded operator's step position (R).
 
 ## One kernel, two profiles
 
 ```mermaid
 flowchart TB
     subgraph PROF["PROFILES — two ways to use it"]
-        UNB["STREAM<br/>endless stream, no barrier, low latency<br/>change-by-change durability<br/>per-cell local recovery<br/>effectively-once tier is opt-in"]:::exec
-        BND["WORKFLOW<br/>tasklet tree with a barrier per tasklet<br/>task-boundary journal naming each stage's records<br/>saga compensation<br/>durable loop and suspension"]:::exec
+        UNB["UNBOUNDED<br/>endless stream, no barrier, low latency<br/>change-by-change durability<br/>per-cell local recovery<br/>effectively-once tier is opt-in"]:::exec
+        BND["BOUNDED<br/>tasklet tree with a barrier per tasklet<br/>task-boundary journal naming each stage's records<br/>saga compensation<br/>durable loop and suspension"]:::exec
     end
     subgraph KERN["SHARED KERNEL — durable compute"]
         K1[("Durable input log<br/>offset-addressable, adapter-independent")]:::store
@@ -247,7 +247,7 @@ flowchart TB
         K5["Single-owner write path<br/>bind is the fence"]:::ctrl
         K6["Controller as the durable front<br/>evict · rehydrate"]:::ctrl
     end
-    BEXTRA[("workflow only:<br/>task journal · saga")]:::store
+    BEXTRA[("bounded only:<br/>task journal · saga")]:::store
 
     UNB --> KERN
     BND --> KERN
@@ -258,9 +258,9 @@ flowchart TB
     classDef store fill:#e5e7eb,stroke:#374151,color:#111
 ```
 
-The WAL and the snapshot mechanism are **shared** — a workflow operative's cells persist
-exactly like a stream operative's, and a durable workflow's input goes through the same input
-log a stream on the effectively-once tier uses. What is workflow-specific is the task journal and
+The WAL and the snapshot mechanism are **shared** — a bounded operator's cells persist
+exactly like an unbounded operator's, and a durable bounded operator's input goes through the same input
+log an unbounded operator on the effectively-once tier uses. What is bounded-specific is the task journal and
 saga compensation.
 
 ---
@@ -285,8 +285,8 @@ log and each cell recovers from its own consumed offset.
 **4. Output identity, and the epoch rule.** Replay-stable output identity is
 `(flz.cell, flz.seq, flz.key)`; the durable outbox identity adds `flz.epoch`. A crash
 retry, a re-drive, or a runner takeover **keeps** the epoch — sink-side dedup absorbs the
-repeat. Only a deliberate correction or an operator replay **bumps** it, so the corrected
-output passes dedup and overwrites the stale row by natural key; a workflow rewind's re-run
+repeat. Only a deliberate correction or an manual replay **bumps** it, so the corrected
+output passes dedup and overwrites the stale row by natural key; a bounded operator rewind's re-run
 output passes as a newer record, on its higher `flz.seq`. See
 [`kernel.md`](kernel.md#the-epoch-rule).
 
@@ -300,15 +300,15 @@ per-write cost and a stale writer can never realign the log onto its own lineage
 **6. Flow control parks, it does not drop.** Runner→controller byte credit is minted on WAL
 **fsync** — durable drain, not append — so the un-fsynced buffer is hard-bounded by the window.
 A sender out of credit parks. Under the tier a second credit loop gates source ingestion on the
-minimum watermark across the operative's cells, so the slowest branch back-pressures the
+minimum watermark across the operator's cells, so the slowest branch back-pressures the
 source instead of growing the input log to disk-full. The controller→runner direction is
 deliberately **not** credit: it drops the newest frame past 8 MiB, because parking there would
-freeze a controller serving thousands of operatives behind one dead runner. See
+freeze a controller serving thousands of operators behind one dead runner. See
 [`kernel.md`](kernel.md#flow-control-the-three-loops).
 
 **7. The minimum watermark is the retention signal.** The controller tracks `min(consumed
-offset)` across an operative's cells and truncates the input log below it, subject to the
-correction hold window. A permanently-failing payload must never freeze it: after workflow
+offset)` across an operator's cells and truncates the input log below it, subject to the
+correction hold window. A permanently-failing payload must never freeze it: after bounded operator
 retries the cell parks the payload durably to the dead-letter queue and advances its offset.
 Data is never lost and never silently dropped. See
 [`stream_profile.md`](stream_profile.md#dead-letter-queue).
@@ -317,7 +317,7 @@ Data is never lost and never silently dropped. See
 "is work flowing" — is the WAL sequence advancing — with an *is it being fed?* precondition, so
 an idle cell (no input, flat is correct) is distinguished from a stuck one (fed but not
 advancing). An empty intended set is never vacuously healthy: durable state on disk for an
-operative absent from the live intent degrades health. The detectors are watched too: each
+operator absent from the live intent degrades health. The detectors are watched too: each
 periodic sensor stamps its own last completed pass, so one that wedges without crashing shows up
 as `sensor_stale` rather than silently switching detection off. See
 [`kernel.md`](kernel.md#health-and-liveness).
@@ -354,8 +354,8 @@ flowchart TB
         A1 --> A2 --> A3 --> A3a --> A3b --> A4 --> A5 --> A6 --> A7 --> A8 --> A9 --> A10 --> A11 --> A12 --> A13 --> A14
     end
 
-    subgraph PEROP["per operative instance"]
-        OW["Operative.Overwatch<br/>a ProcessHub child — binds a runner,<br/>owns plugins, ingests input, journals it"]:::exec
+    subgraph PEROP["per operator instance"]
+        OW["Operator.Overwatch<br/>a ProcessHub child — binds a runner,<br/>owns plugins, ingests input, journals it"]:::exec
     end
     subgraph PEREX["per runner session — a child of FleetSupervisor"]
         EX1["ControlUnit · ControlChannel"]:::exec
@@ -375,7 +375,7 @@ flowchart TB
     classDef store fill:#e5e7eb,stroke:#374151,color:#111
 ```
 
-`Flezha.Operative.Overwatch` is the per-operative-instance GenServer and the pivot of the whole
+`Flezha.Operator.Overwatch` is the per-operator-instance GenServer and the pivot of the whole
 control plane: it binds a runner, prepares and activates plugins, journals every inbound
 input, and receives every output on its way to a sink. `Flezha.State.WalWriter` is the
 per-cell durable writer. `Flezha.Convergence.Loop` is the **only** self-healer; it runs
@@ -383,7 +383,7 @@ per-cell durable writer. `Flezha.Convergence.Loop` is the **only** self-healer; 
 
 Placement uses two independent hashes that must not be conflated: ProcessHub's consistent
 hashing picks which **controller node** hosts the Overwatch, and a rendezvous hash over the
-operative id picks which **runner** it binds to.
+operator id picks which **runner** it binds to.
 
 ---
 
@@ -391,28 +391,28 @@ operative id picks which **runner** it binds to.
 
 A runner dials in, presents a **stable identity** that survives its own restarts, and the
 controller mints a per-connection **session token**. Stream routing and registry names key on the
-session token; which runner owns an operative keys on the stable identity. A reconnect under the
-same identity therefore moves no ownership, only the session each operative's Overwatch publishes
-its route on, and a runner's frame about an operative it does not own is refused and the runner
+session token; which runner owns an operator keys on the stable identity. A reconnect under the
+same identity therefore moves no ownership, only the session each operator's Overwatch publishes
+its route on, and a runner's frame about an operator it does not own is refused and the runner
 told to remove its copy ([`runner_identity.md`](../internals/runner_identity.md)).
 
 ```mermaid
 sequenceDiagram
     participant EX as ⚙️ Runner
     participant CTRL as 🧠 Controller
-    participant OW as 🧠 Overwatch (per operative)
+    participant OW as 🧠 Overwatch (per operator)
 
     EX->>CTRL: dial + connect_control_channel<br/>{namespace, stable_id, factories}
-    Note over CTRL: mint a session token for this connection<br/>if a prior session held this stable_id, fence it FIRST, then tell each of its operatives the new one
+    Note over CTRL: mint a session token for this connection<br/>if a prior session held this stable_id, fence it FIRST, then tell each of its operators the new one
     CTRL->>EX: AssignRunnerId
     CTRL->>EX: ConnectSocket {sockets_count}
     EX->>CTRL: open data streams — primary 0x01 in, secondary 0x02 out
 
-    Note over OW: convergence sees an unbound operative and binds it
+    Note over OW: convergence sees an unbound operator and binds it
     OW->>EX: Ping (proves the reply path is intact)
-    Note over OW: record this runner's stable identity as the operative's owner, before the start
-    OW->>EX: AddOperative {operative_id, factory_id, kind, init_values, resume_cell_count,<br/>partition_index · partition_count · key_group_from · key_group_to — partition members only}
-    EX-->>OW: AddOperativeResponse {metadata}
+    Note over OW: record this runner's stable identity as the operator's owner, before the start
+    OW->>EX: AddOperator {operator_id, factory_id, kind, init_values, resume_cell_count,<br/>partition_index · partition_count · key_group_from · key_group_to — partition members only}
+    EX-->>OW: AddOperatorResponse {metadata}
     Note over OW: decode_declarations — the ONE seam where the SDK declares capability:<br/>effectively_once · ack_granularity · correction_window_ms<br/>compensable_tasks · leaf_tasks · compact_after_bytes<br/>keyed (only when false) · durability (sync_remote)
     OW->>EX: RestoreInitState per persisted cell (snapshot + WAL tail)
     Note over OW,EX: only now does input flow
@@ -420,11 +420,11 @@ sequenceDiagram
 
 Those eight metadata keys are the complete set of SDK→controller declarations, and the shared
 runner core emits them for every host language — a Java class and a Rust class declaring the
-same thing send the same map. A class that declares nothing — a plain stream class — sends
+same thing send the same map. A class that declares nothing — a plain unbounded class — sends
 an empty map and the controller keeps every default. `keyed` is declared only when it is
 *false* (a keyless class cannot be partitioned, and the controller preflight uses that to
 refuse a repeat partitioned start without touching a runner); `durability=sync_remote` is a
-workflow class asking the [remote durability tier](kernel.md#the-remote-durability-tier) to
+bounded class asking the [remote durability tier](kernel.md#the-remote-durability-tier) to
 gate its barrier acks on the remote ship. Wire detail:
 [`protocol_spec.md`](../sdk/protocol_spec.md).
 
@@ -442,14 +442,14 @@ flowchart TB
     PH["process_hub/"]:::store
     AUD["audit/ · auth/ · certs/"]:::store
 
-    CLS["&lt;operative_class&gt;/"]:::store
-    IL["input.log<br/><i>durable input log — effectively-once tier, durable workflow</i>"]:::store
+    CLS["&lt;operator_class&gt;/"]:::store
+    IL["input.log<br/><i>durable input log — effectively-once tier, durable bounded operator</i>"]:::store
     DECL["effectively_once · checkpoint_ack<br/><i>declaration sidecars</i>"]:::store
     OPID["&lt;tasklet_id&gt;/"]:::store
     SEG["&lt;cell_key&gt;.wal<br/>&lt;cell_key&gt;.snap.&lt;seq&gt;<br/>&lt;cell_key&gt;.outbox.dedup"]:::store
 
     INST["&lt;instance_id&gt;/&lt;instance_id&gt;/"]:::store
-    JRN["task.journal<br/><i>workflow step progress</i>"]:::store
+    JRN["task.journal<br/><i>bounded operator step progress</i>"]:::store
 
     DLQE["&lt;class&gt;/&lt;tasklet&gt;/entries.jsonl + &lt;id&gt;.bin"]:::store
     PHR["&lt;hub_id&gt;/registry.dets"]:::store
@@ -471,13 +471,13 @@ flowchart TB
     classDef store fill:#e5e7eb,stroke:#374151,color:#111
 ```
 
-The path triple `(operative_class, tasklet_id, cell_key)` uniquely identifies a cell's
+The path triple `(operator_class, tasklet_id, cell_key)` uniquely identifies a cell's
 state. It does **not** include the runner id — a runner is an addressing concern, not a
 durability one, so a restarted runner pod inherits the state that was already on disk.
 
 The task journal rides the *same* WalWriter substrate as a cell, under one reserved cell key
 (`_task_journal`), which is why it sits at `<instance_id>/<instance_id>/` and is skipped by the
-cell scan. A workflow instance's class directory is its instance id, so its `input.log` sits at
+cell scan. A bounded instance's class directory is its instance id, so its `input.log` sits at
 `<instance_id>/input.log`. Root is configurable
 (`:state_root`, default `app_data/state`).
 
@@ -507,7 +507,7 @@ flowchart LR
     subgraph PROT["What closes it"]
         direction TB
         P1["WAL + snapshot — state mirrored to the controller"]:::prot
-        P2["fsync batching + credit — the un-fsynced buffer is window-workflow"]:::prot
+        P2["fsync batching + credit — the un-fsynced buffer is window-bounded"]:::prot
         P3["effectively-once tier — the flush is gated on the fsync"]:::prot
         P4["deterministic key + dedup at the sink"]:::prot
         P5["credit-grant flow control — park, never drop"]:::prot
@@ -549,12 +549,12 @@ the user's concern there. The effectively-once tier is what closes them.
 | Controller graceful restart with a live peer | none — peer sync | at-least-once |
 | Controller recovery-mode restart, sole node | none — DETS replay | at-least-once |
 | Whole-cluster cold boot | recovered from DETS + the on-disk WAL | n/a |
-| Workflow operative SIGKILL, durable | none past the last committed task | at-least-once |
-| Workflow operative SIGKILL, persistence opted out | full — re-runs from the top | at-least-once |
-| Controller dies with its disk, `backend: none` (default) | that node's operatives: total | n/a |
-| Controller dies with its disk, remote tier enabled | workflow `sync_remote`: none; otherwise ≤ one checkpoint / ship interval | effectively-once — replays absorbed by sink dedup |
+| Bounded operator SIGKILL, durable | none past the last committed task | at-least-once |
+| Bounded operator SIGKILL, persistence opted out | full — re-runs from the top | at-least-once |
+| Controller dies with its disk, `backend: none` (default) | that node's operators: total | n/a |
+| Controller dies with its disk, remote tier enabled | bounded operator `sync_remote`: none; otherwise ≤ one checkpoint / ship interval | effectively-once — replays absorbed by sink dedup |
 
-The full scenario matrix and the operator playbook are in
+The full scenario matrix and the user playbook are in
 [`../resilience/data_durability.md`](../resilience/data_durability.md).
 
 ---
@@ -563,8 +563,8 @@ The full scenario matrix and the operator playbook are in
 
 - The durable substrate every profile shares → [`kernel.md`](kernel.md)
 - Streaming workloads → [`stream_profile.md`](stream_profile.md)
-- Jobs, sagas, and agent sessions → [`workflow_profile.md`](workflow_profile.md)
+- Jobs, sagas, and agent sessions → [`bounded_profile.md`](bounded_profile.md)
 - Inside a runner, and writing a new SDK → [`runner.md`](runner.md)
 - Fault-tolerance mechanisms in depth → [`../resilience/overview.md`](../resilience/overview.md)
 - The wire protocol → [`protocol_spec.md`](../sdk/protocol_spec.md)
-- Authoring an operative → [`rust_operative_architecture.md`](../sdk/rust_operative_architecture.md)
+- Authoring an operator → [`rust_operator_architecture.md`](../sdk/rust_operator_architecture.md)

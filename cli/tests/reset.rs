@@ -12,7 +12,7 @@ const FLZ_BIN: &str = env!("CARGO_BIN_EXE_flz");
 const CONTROL_SOCKET: &str = "runner_control_channel.sock";
 const STREAM_SOCKET: &str = "primary_stream_runner-1.sock";
 /// A file in the socket directory that is not Flezha's to unlink.
-const OPERATOR_FILE: &str = "operator-notes.txt";
+const USER_FILE: &str = "user-notes.txt";
 
 /// Every subtree of the data root the layout declares. The socket directory is
 /// the ladder's, and is populated on its own.
@@ -79,7 +79,7 @@ fn await_refused(path: &Path) {
 fn populate_socket_dir(dir: &Path) {
     stale_control_socket(dir);
     drop(UnixListener::bind(dir.join(STREAM_SOCKET)).expect("bind"));
-    fs::write(dir.join(OPERATOR_FILE), vec![0u8; 5]).unwrap();
+    fs::write(dir.join(USER_FILE), vec![0u8; 5]).unwrap();
 }
 
 struct Fixture {
@@ -175,7 +175,7 @@ fn assert_kept(text: &str, path: &str, reason: &str) {
     );
 }
 
-/// `--all` reaches every root under the data root, the operator's tokens, the
+/// `--all` reaches every root under the data root, the caller's tokens, the
 /// audit trail and the installed plugins included. The log directory is named
 /// relative to wherever the command runs, so the run owns a working directory
 /// with a log in it.
@@ -278,8 +278,8 @@ fn unrelated_files_in_the_socket_directory_survive() {
     assert!(!f.socket_dir().join(CONTROL_SOCKET).exists());
     assert!(!f.socket_dir().join(STREAM_SOCKET).exists());
     assert!(
-        f.socket_dir().join(OPERATOR_FILE).exists(),
-        "a directory an operator named is not this command's to empty"
+        f.socket_dir().join(USER_FILE).exists(),
+        "a directory a caller named is not this command's to empty"
     );
     assert!(f.socket_dir().is_dir(), "the directory itself stays");
 }
@@ -536,7 +536,7 @@ fn app_data_root_does_not_move_the_socket_directory() {
 fn a_resolution_refusal_keeps_the_socket_root_and_clears_the_rest() {
     let f = Fixture::populated();
     // Two rungs are serving and nothing says which is meant: the ladder
-    // refuses rather than choosing a controller for the operator, and the
+    // refuses rather than choosing a controller for the caller, and the
     // refusal names both. The repository rung is relative to the working
     // directory, which is what makes the second one placeable.
     let xdg = TempDir::new().unwrap();

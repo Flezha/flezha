@@ -24,9 +24,9 @@ defmodule FlezhaTest.System.CheckpointBatchedOutputsE2ETest do
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
   import FlezhaTest.Helper.TierE2EHarness
 
-  alias Flezha.Operative.Builder
-  alias Flezha.Operative.ClassRegistry
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Operator.Builder
+  alias Flezha.Operator.ClassRegistry
+  alias Flezha.Service.OperatorManager
   alias Flezha.State.InputLog
 
   @moduletag timeout: 300_000
@@ -37,34 +37,34 @@ defmodule FlezhaTest.System.CheckpointBatchedOutputsE2ETest do
 
   test "an interval's outputs are held until it closes, and a quiet one closes on the delay" do
     namespace = unique("cp_batched")
-    operative_id = unique("checkpoint_batched_store")
+    operator_id = unique("checkpoint_batched_store")
     id_path = unique_id_path()
 
-    on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
+    on_exit(fn -> cleanup(namespace, operator_id, id_path) end)
 
     {_port, runner} = boot_runner(namespace, id_path)
 
     sink = %Flezha.Plugin{
       id: "tier_sink",
       namespace: namespace,
-      operative_id: operative_id,
+      operator_id: operator_id,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: self(), include_metadata: true},
       hooks: [{:on_output, []}]
     }
 
     builder = %Builder{
-      id: operative_id,
+      id: operator_id,
       factory_id: @factory,
       init_values: %{},
       opts: [plugins: [sink]]
     }
 
-    assert {:ok, info} = OperativeManager.start_operative(namespace, builder)
+    assert {:ok, info} = OperatorManager.start_operator(namespace, builder)
 
     assert info.runner_id == runner
 
-    assert wait_until(fn -> ClassRegistry.checkpoint_ack?(operative_id) end, 30_000),
+    assert wait_until(fn -> ClassRegistry.checkpoint_ack?(operator_id) end, 30_000),
            "the checkpoint ack-granularity declaration never reached the controller"
 
     # --- Phase 1: an open interval holds its outputs ------------------------
@@ -73,20 +73,20 @@ defmodule FlezhaTest.System.CheckpointBatchedOutputsE2ETest do
     # nothing from an open interval, so the hold is proved by what arrives:
     # phase 2's batch rides ONE record seq (an early flush would ride its own)
     # and phase 3's held output lands no earlier than the delay.
-    send_inputs(operative_id, namespace, ["k1:a", "k2:a", "k3:a"])
+    send_inputs(operator_id, namespace, ["k1:a", "k2:a", "k3:a"])
 
-    refute InputLog.watermark(operative_id),
+    refute InputLog.watermark(operator_id),
            "an open interval acknowledges nothing, exactly as under the default"
 
     # --- Phase 2: the checkpoint ships the whole interval as one batch -------
     # Offset 3 closes it. One record carries the interval's changes, all three
     # held outputs, and the offset that acknowledges every input folded in.
-    send_inputs(operative_id, namespace, ["commit:1"])
+    send_inputs(operator_id, namespace, ["commit:1"])
 
     assert await_changelog(%{"k1" => "k1=a", "k2" => "k2=a", "k3" => "k3=a"}, 30_000),
            "the checkpoint never flushed the interval's held outputs"
 
-    assert wait_until(fn -> InputLog.watermark(operative_id) == 3 end, 30_000),
+    assert wait_until(fn -> InputLog.watermark(operator_id) == 3 end, 30_000),
            "the closing record never acknowledged the interval's inputs"
 
     batch = drain_outputs()
@@ -116,7 +116,7 @@ defmodule FlezhaTest.System.CheckpointBatchedOutputsE2ETest do
     # so only `max_delay_ms` can close this interval — and it must, or the
     # output waits for an input that never comes.
     sent_at = System.monotonic_time(:millisecond)
-    send_inputs(operative_id, namespace, ["k4:a"])
+    send_inputs(operator_id, namespace, ["k4:a"])
 
     assert_receive {:message_forward, msg, md}, @max_delay_ms * 4
     held_ms = System.monotonic_time(:millisecond) - sent_at
@@ -127,7 +127,7 @@ defmodule FlezhaTest.System.CheckpointBatchedOutputsE2ETest do
     assert to_string(msg) == "k4=a"
     assert md["flz.key"] == "k4"
 
-    assert wait_until(fn -> InputLog.watermark(operative_id) == 4 end, 30_000),
+    assert wait_until(fn -> InputLog.watermark(operator_id) == 4 end, 30_000),
            "the delay closed the interval without acknowledging its input"
   end
 end

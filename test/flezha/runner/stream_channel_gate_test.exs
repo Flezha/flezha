@@ -165,7 +165,7 @@ defmodule FlezhaTest.Runner.StreamChannelGateTest do
     spawn(fn ->
       results =
         Enum.map(1..@frames, fn i ->
-          StreamChannel.io_in(name, "operative_#{i}", {payload, %{}})
+          StreamChannel.io_in(name, "operator_#{i}", {payload, %{}})
         end)
 
       send(test_pid, {:sender_done, Enum.frequencies(results)})

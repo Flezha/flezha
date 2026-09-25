@@ -53,7 +53,7 @@ struct FactoryInfo {
     /// The class's declared language, from the registry; `0` for a factory
     /// with no class, which the controller refuses to place.
     sdk_lang: u8,
-    /// `"stream"` or `"workflow"`, from the registry; empty for a factory
+    /// `"unbounded"` or `"bounded"`, from the registry; empty for a factory
     /// with no class.
     kind: &'static str,
 }
@@ -137,7 +137,7 @@ fn open_with_retry(
                 FAILED_SESSIONS.store(attempt, Ordering::Relaxed);
                 // Once, on entry to the retry loop: which of the four
                 // situations this is and what fixes it. Repeating it every
-                // backoff teaches the operator to skip the line that matters.
+                // backoff teaches the user to skip the line that matters.
                 if let Some(text) = diagnosis.first(connect_diagnosis) {
                     eprintln!("[flezha] {}", text);
                 }
@@ -496,7 +496,7 @@ fn send_init_msg(
     let factories: Vec<FactoryInfo> = factory_ids
         .iter()
         .map(|id| {
-            let (sdk_lang, kind) = crate::operative::registry::advertised_for_factory(id);
+            let (sdk_lang, kind) = crate::operator::registry::advertised_for_factory(id);
             FactoryInfo {
                 id: id.clone(),
                 description: None,
@@ -506,7 +506,7 @@ fn send_init_msg(
         })
         .collect();
 
-    // Loaded once per process (cached); the controller binds operatives to it.
+    // Loaded once per process (cached); the controller binds operators to it.
     let stable_id = crate::persistent_id::stable_id(&namespace, &factory_ids);
 
     let control_init_message = ControlInitMessage {

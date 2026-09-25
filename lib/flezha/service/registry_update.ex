@@ -13,7 +13,7 @@ defmodule Flezha.Service.RegistryUpdate do
   alias Flezha.Service.HubManager
 
   @doc """
-  Registry transform that re-tags an operative's owning runner. A partition
+  Registry transform that re-tags an operator's owning runner. A partition
   member's identity, read off the row's own cspec, rides the same write, so
   `HubManager.partition_members/2` stays an index lookup even for a row whose
   metadata was rebuilt.
@@ -33,7 +33,7 @@ defmodule Flezha.Service.RegistryUpdate do
     end
   end
 
-  @doc "Registry transform that rewrites an operative's cspec plugin manifest."
+  @doc "Registry transform that rewrites an operator's cspec plugin manifest."
   @spec rewrite_cspec_plugins(([{binary(), Plugin.t()}] -> [{binary(), Plugin.t()}])) ::
           (map(), keyword(), map() -> {map(), keyword(), map()})
   def rewrite_cspec_plugins(plugins_fn) do

@@ -3,10 +3,10 @@ defmodule Flezha.Boot.StatePathMigrator do
   One-shot, idempotent migrations of the per-Cell state tree, oldest
   layout first:
 
-    1. Legacy `{runner_id}/{operative_class}/{tasklet_id}/` → flat
-       `{operative_class}/{tasklet_id}/` (`auto-restore-on-boot`).
-    2. Flat `{operative_class}/...` → namespaced
-       `_system/{operative_class}/...` (`finish-platform-authn-authz`) —
+    1. Legacy `{runner_id}/{operator_class}/{tasklet_id}/` → flat
+       `{operator_class}/{tasklet_id}/` (`auto-restore-on-boot`).
+    2. Flat `{operator_class}/...` → namespaced
+       `_system/{operator_class}/...` (`finish-platform-authn-authz`) —
        one atomic `rename/2` per class dir, so an interrupted pass leaves
        whole classes either moved or not, and a re-run moves the rest.
 
@@ -21,8 +21,8 @@ defmodule Flezha.Boot.StatePathMigrator do
   Collision policy for pass 1: when two runner-keyed copies of the same
   Cell exist (because the runner_id rotated and both old + new
   survived), the file with the higher last-modified time wins; the loser
-  is preserved alongside as `<key>.<ext>.preserved-{old_runner_id}` so an
-  operator can inspect it.
+  is preserved alongside as `<key>.<ext>.preserved-{old_runner_id}` so a
+  user can inspect it.
   """
 
   alias Flezha.Identificator
@@ -142,14 +142,14 @@ defmodule Flezha.Boot.StatePathMigrator do
     full = Path.join(root, name)
 
     name != "_system" and File.dir?(full) and looks_like_runner_id?(name) and
-      contains_operative_class_subdir?(full)
+      contains_operator_class_subdir?(full)
   end
 
   defp looks_like_runner_id?(name) do
     Identificator.validate(:legacy_state_dir, name) == :ok
   end
 
-  defp contains_operative_class_subdir?(dir) do
+  defp contains_operator_class_subdir?(dir) do
     case File.ls(dir) do
       {:ok, names} ->
         Enum.any?(names, fn n ->
@@ -166,8 +166,8 @@ defmodule Flezha.Boot.StatePathMigrator do
     legacy_root = Path.join(root, runner_id)
 
     File.ls!(legacy_root)
-    |> Enum.reduce(acc, fn operative_class, acc ->
-      legacy_rc = Path.join(legacy_root, operative_class)
+    |> Enum.reduce(acc, fn operator_class, acc ->
+      legacy_rc = Path.join(legacy_root, operator_class)
 
       if File.dir?(legacy_rc) do
         File.ls!(legacy_rc)
@@ -177,7 +177,7 @@ defmodule Flezha.Boot.StatePathMigrator do
           if File.dir?(legacy_tasklet) do
             migrate_tasklet(
               runner_id,
-              operative_class,
+              operator_class,
               tasklet_id,
               legacy_tasklet,
               root,
@@ -199,8 +199,8 @@ defmodule Flezha.Boot.StatePathMigrator do
     end)
   end
 
-  defp migrate_tasklet(runner_id, operative_class, tasklet_id, legacy_tasklet, root, acc) do
-    flat_tasklet = Path.join([root, operative_class, tasklet_id])
+  defp migrate_tasklet(runner_id, operator_class, tasklet_id, legacy_tasklet, root, acc) do
+    flat_tasklet = Path.join([root, operator_class, tasklet_id])
     File.mkdir_p!(flat_tasklet)
 
     File.ls!(legacy_tasklet)

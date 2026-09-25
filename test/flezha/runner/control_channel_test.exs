@@ -1,7 +1,7 @@
 defmodule Flezha.Runner.ControlChannelSendControlTest do
   @moduledoc """
   Fails when: `ControlChannel.send_control/2` swallows transport failures and
-  always returns `{:ok, ref}`, so a operative talking to a reset/dead stream
+  always returns `{:ok, ref}`, so an operator talking to a reset/dead stream
   registers a reply ref that never resolves, then blocks and crashes instead
   of receiving a clean error and healing.
 
@@ -181,9 +181,9 @@ defmodule FlezhaTest.Runner.ControlChannelUpdateFactoriesTest do
              %RunnerCommands.FactoryDecl{
                id: "alpha",
                description: "the alpha factory",
-               kind: "workflow"
+               kind: "bounded"
              },
-             %RunnerCommands.FactoryDecl{id: "beta", description: "", kind: "stream"}
+             %RunnerCommands.FactoryDecl{id: "beta", description: "", kind: "unbounded"}
            ]
          }}
       )
@@ -201,8 +201,8 @@ defmodule FlezhaTest.Runner.ControlChannelUpdateFactoriesTest do
                {:ok, factories} = FleetManager.list_factories(@namespace)
 
                factories == [
-                 %{id: "alpha", description: "the alpha factory", kind: :workflow},
-                 %{id: "beta", description: nil, kind: :stream}
+                 %{id: "alpha", description: "the alpha factory", kind: :bounded},
+                 %{id: "beta", description: nil, kind: :unbounded}
                ]
              end,
              500,

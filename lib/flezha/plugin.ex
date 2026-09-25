@@ -1,16 +1,16 @@
 defmodule Flezha.Plugin do
   @moduledoc """
   Unified plugin struct used by every hook on a host (e.g.
-  `Flezha.Operative.Overwatch`).
+  `Flezha.Operator.Overwatch`).
 
   A hook is a point at which the host calls a plugin, named by the provider
   callback it runs. A single `%Flezha.Plugin{}` may have hooks on several
   points. Each entry in `hooks` is a `{hook_name, hook_opts}` tuple; the
   provider module MUST export a callback for each hook (e.g. `on_input/2`,
-  `on_message/2`, `on_operative_init/2`, ...).
+  `on_message/2`, `on_operator_init/2`, ...).
 
   At the boundary the name may be text or an atom and the opts a map or a
-  keyword list — the shapes the CLI, the operative-start spec, an installed
+  keyword list — the shapes the CLI, the operator-start spec, an installed
   package manifest and direct construction produce.
   `Flezha.Plugin.Extension.Table.canonicalise/2` reduces all of them to
   `{atom, keyword}` with typed values, which is what every later reader sees.
@@ -28,7 +28,7 @@ defmodule Flezha.Plugin do
           opts: map(),
           hooks: [hook()],
           namespace: atom() | binary() | nil,
-          operative_id: binary() | nil
+          operator_id: binary() | nil
         }
 
   @enforce_keys [:id, :provider]
@@ -38,7 +38,7 @@ defmodule Flezha.Plugin do
     opts: %{},
     hooks: [],
     namespace: nil,
-    operative_id: nil
+    operator_id: nil
   ]
 
   @doc """
@@ -156,7 +156,7 @@ defmodule Flezha.Plugin do
   Point this plugin at one member of a partition group.
 
   The one definition of what a fanned-out plugin instance is: the member's
-  operative id, the member's `#pK` appended to the plugin id (which is also
+  operator id, the member's `#pK` appended to the plugin id (which is also
   what keeps this node's plugin ids unique when two members land on it), and
   the member's partition opts merged in as integers. `plugin_id` is
   deliberately not injected — providers that key workers by it default to a
@@ -171,7 +171,7 @@ defmodule Flezha.Plugin do
     %__MODULE__{
       plugin
       | id: base_id(plugin.id) <> Flezha.Partition.member_suffix(identity.index),
-        operative_id: member_id,
+        operator_id: member_id,
         opts: Map.merge(plugin.opts, Flezha.Partition.provider_opts(identity))
     }
   end
@@ -184,7 +184,7 @@ defmodule Flezha.Plugin do
   end
 
   @doc """
-  This plugin with only the options an operator may write.
+  This plugin with only the options a user may write.
 
   A running plugin's opts carry what `init_provider/1` derived at start (the
   websocket source's live `subscription`, for one), and re-enabling a partition

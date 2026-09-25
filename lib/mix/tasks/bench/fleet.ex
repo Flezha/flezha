@@ -21,7 +21,7 @@ defmodule Mix.Tasks.Bench.Fleet do
   alias Flezha.Layout.Table, as: Layout
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.EventManager
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias Flezha.Service.PortPilot
   alias Flezha.State.Paths
   alias Mix.Tasks.Bench.Report
@@ -29,8 +29,8 @@ defmodule Mix.Tasks.Bench.Fleet do
   # Wide enough that no bench dimension meets a quota. Only the counts a bench can
   # drive are raised; the byte and rate ceilings keep their defaults.
   @bench_quotas %{
-    max_operatives: 1_000_000,
-    max_cells_per_operative: 1_000_000,
+    max_operators: 1_000_000,
+    max_cells_per_operator: 1_000_000,
     max_runners: 1_024
   }
 
@@ -125,7 +125,7 @@ defmodule Mix.Tasks.Bench.Fleet do
   # run that will not be enforced writes no catalog row and issues no credential.
   #
   # Quotas are wide enough that the bench never measures a ceiling: the defaults
-  # cap a namespace at 100 operatives, which `-n 100` sits exactly on.
+  # cap a namespace at 100 operators, which `-n 100` sits exactly on.
   defp ensure_namespace(namespace) do
     if AuthZ.enabled?() do
       case NamespaceStore.create(namespace, quotas: @bench_quotas, created_by_principal: "bench") do
@@ -262,7 +262,7 @@ defmodule Mix.Tasks.Bench.Fleet do
   @doc """
   Load every module of the controller and the libraries its start path runs
   through. A release boots with its code loaded; under `mix` the VM loads
-  lazily, so without this the first operative of a run pays tens of
+  lazily, so without this the first operator of a run pays tens of
   milliseconds of code loading that no deployed controller pays.
   """
   def preload_code do
@@ -275,15 +275,15 @@ defmodule Mix.Tasks.Bench.Fleet do
     :ok
   end
 
-  @doc "Stop every operative in `namespace`, disconnect its runners, drop the namespace."
+  @doc "Stop every operator in `namespace`, disconnect its runners, drop the namespace."
   def cleanup(namespace) do
     IO.puts("Cleaning up test environment...")
 
-    OperativeManager.stop_all_operatives(namespace)
+    OperatorManager.stop_all_operators(namespace)
 
     case Process.get(:bench_runners) do
       engines when is_list(engines) ->
-        # A fleet manager still tearing operatives down may not answer in
+        # A fleet manager still tearing operators down may not answer in
         # time; the namespace stop below retires the runners regardless.
         Enum.each(engines, fn engine_id ->
           try do

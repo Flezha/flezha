@@ -52,7 +52,7 @@ defmodule Flezha.State.TestHelpersTest do
     assert File.ls!(base) == []
   end
 
-  # Every writer, the bind-time restore and the operative teardown resolve
+  # Every writer, the bind-time restore and the operator teardown resolve
   # `Paths.state_root/0`, so a reset deriving a root of its own empties a
   # directory nothing wrote to and the previous test's Cell rehydrates on the
   # next bind. The identity is the one the suite really leaked on.
@@ -72,10 +72,10 @@ defmodule Flezha.State.TestHelpersTest do
 
     assert Paths.state_root() == root, "the writers resolve #{Paths.state_root()}, not #{root}"
 
-    cell_id = {"operative_2", "store_input_tasklet", "_"}
+    cell_id = {"operator_2", "store_input_tasklet", "_"}
     TestHelpers.write_wal_of_lang(cell_id, 0)
     # The second thing a rebind restores from, and it sits beside the WAL.
-    input_log = Paths.input_log_path("operative_2")
+    input_log = Paths.input_log_path("operator_2")
     File.write!(input_log, "queued-input")
     {:ok, writer} = Supervisor.find_or_start(cell_id)
 

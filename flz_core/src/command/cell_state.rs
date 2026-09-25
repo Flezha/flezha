@@ -14,8 +14,8 @@ use super::{CommandAction, Reply};
 use crate::cell::CellSlot;
 use crate::dynamic::DynamicCellRegistry;
 use crate::error::Error;
-use crate::operative::instance::OperativeInstance;
-use crate::operative::topology::TaskletDescriptor;
+use crate::operator::instance::OperatorInstance;
+use crate::operator::topology::TaskletDescriptor;
 use crate::pb::CellState;
 use crate::runner::RunnerNode;
 use crate::util::LockRecover;
@@ -34,7 +34,7 @@ pub const CELL_BUSY: &str = "cell_busy";
 /// answer: inside the 10 s serializer ceiling and the container's grace period.
 pub const SERIALIZE_GATE_WAIT: Duration = Duration::from_secs(5);
 
-/// Which Cells a read covers; both absent is the whole-operative walk.
+/// Which Cells a read covers; both absent is the whole-operator walk.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct StateSelector<'a> {
     pub tasklet: Option<&'a str>,
@@ -57,12 +57,12 @@ impl CommandAction for CellState {
             bytes,
         };
 
-        let instance = match runner.get_operative(&self.operative_id) {
+        let instance = match runner.get_operator(&self.operator_id) {
             Some(i) => i,
             None => {
                 errors.push(format!(
-                    "StreamOperative instance with id {} not found",
-                    self.operative_id
+                    "UnboundedOperator instance with id {} not found",
+                    self.operator_id
                 ));
                 return (reply(Vec::new()), HashMap::new());
             }
@@ -106,8 +106,8 @@ pub enum StatePurpose {
     Migration,
 }
 
-/// The whole-operative walk, which cannot be refused.
-pub fn serialize_operative_state(instance: &Arc<OperativeInstance>) -> Vec<u8> {
+/// The whole-operator walk, which cannot be refused.
+pub fn serialize_operator_state(instance: &Arc<OperatorInstance>) -> Vec<u8> {
     serialize_selected_state(instance, StateSelector::default(), StatePurpose::Migration)
         .map(|(payload, _seq)| payload)
         .unwrap_or_default()
@@ -118,7 +118,7 @@ pub fn serialize_operative_state(instance: &Arc<OperativeInstance>) -> Vec<u8> {
 /// exactly one Cell. In a walk a failing Cell is logged and omitted; a
 /// read that names one Cell answers its failure, never an empty object.
 pub fn serialize_selected_state(
-    instance: &Arc<OperativeInstance>,
+    instance: &Arc<OperatorInstance>,
     selector: StateSelector<'_>,
     purpose: StatePurpose,
 ) -> Result<(Vec<u8>, Option<u64>), Error> {
@@ -148,7 +148,7 @@ pub fn serialize_selected_state(
     if let Some(tasklet) = selector.tasklet {
         if !matched_tasklet {
             return Err(Error::State(format!(
-                "{}: operative `{}` has no Tasklet named `{}`",
+                "{}: operator `{}` has no Tasklet named `{}`",
                 TASKLET_NOT_FOUND, instance.instance_id, tasklet
             )));
         }
@@ -164,7 +164,7 @@ pub fn serialize_selected_state(
 
 /// One tasklet's state into `top`: a lookup for one key, a walk for all.
 fn collect_tasklet(
-    instance: &Arc<OperativeInstance>,
+    instance: &Arc<OperatorInstance>,
     tasklet_id: usize,
     selector: StateSelector<'_>,
     purpose: StatePurpose,
@@ -221,7 +221,7 @@ enum Keyset<'a> {
 }
 
 impl<'a> Keyset<'a> {
-    fn of(instance: &'a Arc<OperativeInstance>, tasklet_id: usize) -> Option<Self> {
+    fn of(instance: &'a Arc<OperatorInstance>, tasklet_id: usize) -> Option<Self> {
         if let Some(Some(registry)) = instance.dynamic_registries.get(tasklet_id) {
             return Some(Keyset::Dynamic(registry));
         }
@@ -285,7 +285,7 @@ fn collect(
             seqs.push(seq);
         }
         Err(e) => eprintln!(
-            "[flezha] serialize_operative_state: tasklet `{}` key `{}` failed: {}",
+            "[flezha] serialize_operator_state: tasklet `{}` key `{}` failed: {}",
             tasklet_desc.name, key, e
         ),
     }
@@ -346,7 +346,7 @@ fn missing_cell_refusal(evicted: bool, tasklet_name: &str, key: &str) -> Error {
 
 /// Apply an `init_values` JSON blob onto a fresh instance;
 /// empty is a no-op, an unknown tasklet or key is logged and skipped.
-pub fn apply_init_values(instance: &OperativeInstance, init_values: &str) -> Result<(), Error> {
+pub fn apply_init_values(instance: &OperatorInstance, init_values: &str) -> Result<(), Error> {
     if init_values.is_empty() {
         return Ok(());
     }
@@ -370,7 +370,7 @@ pub fn apply_init_values(instance: &OperativeInstance, init_values: &str) -> Res
 }
 
 /// One `init_values` entry onto its tasklet's Cells.
-fn apply_tasklet(instance: &OperativeInstance, tasklet_name: &str, tasklet_value: Value) {
+fn apply_tasklet(instance: &OperatorInstance, tasklet_name: &str, tasklet_value: Value) {
     let Some(&tasklet_id) = instance.topology.tasklet_name_to_id.get(tasklet_name) else {
         eprintln!(
             "[flezha] apply_init_values: ignoring unknown tasklet `{}`",
@@ -403,7 +403,7 @@ fn apply_tasklet(instance: &OperativeInstance, tasklet_name: &str, tasklet_value
 
 /// Static mode: `{cell_key: state, ...}`.
 fn apply_static(
-    instance: &OperativeInstance,
+    instance: &OperatorInstance,
     tasklet_id: u32,
     tasklet_desc: &TaskletDescriptor,
     tasklet_cells: &[Arc<CellSlot>],
@@ -447,7 +447,7 @@ fn apply_static(
 }
 
 fn apply_one(
-    tasklet_desc: &crate::operative::topology::TaskletDescriptor,
+    tasklet_desc: &crate::operator::topology::TaskletDescriptor,
     slot: &Arc<crate::cell::CellSlot>,
     value: &Value,
     tasklet_name: &str,
@@ -527,7 +527,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let started = std::time::Instant::now();
         std::thread::spawn(move || {
-            let _ = tx.send(serialize_operative_state(&instance));
+            let _ = tx.send(serialize_operator_state(&instance));
         });
         // The wedged Cell costs the gate bound; the consumer, healthy but
         // with no poller to answer its migration serialize, costs the host

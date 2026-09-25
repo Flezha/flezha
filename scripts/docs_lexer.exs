@@ -11,7 +11,7 @@ defmodule Flezha.Docs.Lexer do
   #
   # Ruby. The grammar marks a class name three ways by where it stands: being
   # defined, as a parent class and as a reference. ExDoc's theme colours the
-  # last two like an operator and like a keyword argument, so a class name gets
+  # last two like a user and like a keyword argument, so a class name gets
   # the colour of the first wherever it appears.
 
   @shell "Bourne Again Shell (bash)"

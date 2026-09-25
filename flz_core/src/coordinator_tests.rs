@@ -1,5 +1,5 @@
 //! The coordinator's tests: the heartbeat's self-report and the ladder a
-//! heartbeat that reaches nothing arms, and the workflow output a runner
+//! heartbeat that reaches nothing arms, and the bounded output a runner
 //! holds while it has no secondary.
 
 use super::*;
@@ -69,7 +69,7 @@ fn the_heartbeat_carries_every_overflow_counter() {
     }
 }
 
-/// An idle Operative's heartbeat is its only outbound signal; one that
+/// An idle Operator's heartbeat is its only outbound signal; one that
 /// reaches no stream must ask for a reconnect, or the stall is silent.
 #[test]
 fn heartbeat_reaching_no_stream_arms_the_reconnect_ladder() {
@@ -95,13 +95,13 @@ fn heartbeat_reaching_no_stream_arms_the_reconnect_ladder() {
     crate::state_sink::reset_for_test();
 }
 
-/// A removed workflow's Cells leave the flusher with it: an entry holds its
+/// A removed bounded operator's Cells leave the flusher with it: an entry holds its
 /// Cell's buffer, so one left behind is drained for the life of the process.
 #[test]
-fn a_stopped_workflow_leaves_no_cell_with_the_flusher() {
+fn a_stopped_bounded_leaves_no_cell_with_the_flusher() {
     let _env = crate::runner::env_test_guard();
     let factory = format!("flusher_stop_{}", std::process::id());
-    let class = crate::test_support::host_class::workflow_json(&factory, &["in"], 1)
+    let class = crate::test_support::host_class::bounded_json(&factory, &["in"], 1)
         .replace(r#""persistent":false"#, r#""persistent":true"#);
     crate::host::register_host_class_json(class.as_bytes()).expect("class registers");
     let mut node = RunnerNode::new("test-ns".to_string());
@@ -111,7 +111,7 @@ fn a_stopped_workflow_leaves_no_cell_with_the_flusher() {
     let flusher = crate::flusher::CellFlusher::instance();
     assert!(flusher.holds_class(&id), "its Cell was registered");
 
-    assert!(node.stop_operative(&id));
+    assert!(node.stop_operator(&id));
 
     assert!(!flusher.holds_class(&id), "its Cell left with it");
 }

@@ -14,7 +14,7 @@ defmodule Flezha.Schedule.Store do
 
   alias Flezha.DetsStore
   alias Flezha.Identificator
-  alias Flezha.Operative.Builder
+  alias Flezha.Operator.Builder
   alias Flezha.Plugin.SpecDecoder
   alias Flezha.Schedule.Cron
 
@@ -24,7 +24,7 @@ defmodule Flezha.Schedule.Store do
   @filename "schedules.dets"
 
   # A UTC slot renders as a fixed-width suffix; the composed cron instance
-  # id `<name>@<slot-iso>` must fit the operative id byte limit.
+  # id `<name>@<slot-iso>` must fit the operator id byte limit.
 
   @type entry :: %{
           required(:name) => binary(),
@@ -128,7 +128,7 @@ defmodule Flezha.Schedule.Store do
 
   # The name is embedded in instance ids as `<name>@<slot>`, so it must be
   # unambiguous there (no `@`, no whitespace, filesystem-safe) and short
-  # enough that every fire's composed id passes the operative id limit.
+  # enough that every fire's composed id passes the operator id limit.
   defp validate_name(name) when is_binary(name) do
     case Identificator.validate(:schedule_name, name) do
       :ok ->
@@ -139,7 +139,7 @@ defmodule Flezha.Schedule.Store do
          {:invalid_name,
           "schedule name must match [A-Za-z0-9][A-Za-z0-9_-]* and be at most " <>
             "#{Identificator.limit(:schedule_name)} bytes (`<name>@<slot>` must fit the " <>
-            "#{Identificator.limit(:operative)}-byte operative id limit)"}}
+            "#{Identificator.limit(:operator)}-byte operator id limit)"}}
     end
   end
 
@@ -172,7 +172,7 @@ defmodule Flezha.Schedule.Store do
   defp validate_init_values(_),
     do: {:error, {:invalid_init_values, "init_values must be a JSON object"}}
 
-  # The first message is stored as the text the operator wrote, validated as
+  # The first message is stored as the text the user wrote, validated as
   # the seed a firing makes of it.
   defp validate_first_message(text, channel) do
     case Builder.seed_input(text, channel) do

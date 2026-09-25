@@ -83,7 +83,7 @@ defmodule Flezha.State.WalWriter.Admission do
       :telemetry.execute(
         [:flezha, :state, :credit_anomaly],
         %{count: 1},
-        %{kind: :shed, operative: rc, tasklet: sh, key: pk, runner: runner_id}
+        %{kind: :shed, operator: rc, tasklet: sh, key: pk, runner: runner_id}
       )
     end
 
@@ -174,7 +174,7 @@ defmodule Flezha.State.WalWriter.Admission do
     :telemetry.execute(
       [:flezha, :state, :seq_gap],
       %{expected: expected, got: got},
-      %{operative: rc, tasklet: sh, key: pk}
+      %{operator: rc, tasklet: sh, key: pk}
     )
   end
 

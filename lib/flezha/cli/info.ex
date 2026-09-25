@@ -1,6 +1,6 @@
 defmodule Flezha.Service.Cli.Info do
   @moduledoc """
-  `flz operative info` and its renderers, including the partition-coverage
+  `flz operator info` and its renderers, including the partition-coverage
   report `Cli.Listing` also prints.
   """
 
@@ -12,98 +12,98 @@ defmodule Flezha.Service.Cli.Info do
   alias Flezha.SDK.KeyGroup
   alias Flezha.Service.Cli.Context
   alias Flezha.Service.HubManager
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias Flezha.State.Completion
   alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
 
-  @doc "Shows detailed information about operatives and their enabled plugins."
-  def operative_info(namespace, output_format, _call) do
+  @doc "Shows detailed information about operators and their enabled plugins."
+  def operator_info(namespace, output_format, _call) do
     namespace_display = Namespace.or_default(namespace)
 
     live =
-      case Flezha.list_operatives(namespace_display) do
-        {:ok, operatives} -> operatives
+      case Flezha.list_operators(namespace_display) do
+        {:ok, operators} -> operators
         _ -> []
       end
 
-    # A finished workflow operative is gone from the live registry but its
+    # A finished bounded operator is gone from the live registry but its
     # completion record is retained within the window — surface it too.
-    finished = finished_operatives(namespace_display, live)
+    finished = finished_operators(namespace_display, live)
 
     if live == [] and finished == [] do
-      handle_empty_operatives(namespace_display, output_format)
+      handle_empty_operators(namespace_display, output_format)
     else
-      handle_operative_info_output(live, finished, namespace_display, output_format)
+      handle_operator_info_output(live, finished, namespace_display, output_format)
     end
   end
 
-  defp handle_empty_operatives(namespace_display, "json") do
+  defp handle_empty_operators(namespace_display, "json") do
     result = %{
       namespace: namespace_display,
-      operatives: [],
-      message: "No operatives found"
+      operators: [],
+      message: "No operators found"
     }
 
     IO.puts(Jason.encode!(result))
   end
 
-  defp handle_empty_operatives(namespace_display, _) do
-    IO.puts("No operatives found for namespace '#{namespace_display}'.")
+  defp handle_empty_operators(namespace_display, _) do
+    IO.puts("No operators found for namespace '#{namespace_display}'.")
   end
 
-  defp handle_operative_info_output(live, finished, namespace_display, "json") do
+  defp handle_operator_info_output(live, finished, namespace_display, "json") do
     live_data =
-      Enum.map(live, fn operative_id ->
-        case OperativeManager.get_overwatch_state(namespace_display, operative_id) do
+      Enum.map(live, fn operator_id ->
+        case OperatorManager.get_overwatch_state(namespace_display, operator_id) do
           {:ok, state} ->
             %{
-              id: operative_id,
+              id: operator_id,
               runner_id: state.runner_id,
               namespace: state.namespace,
-              kind: operative_kind(state),
-              phase: operative_phase(namespace_display, operative_id, state),
-              health: Snapshot.operative_health(namespace_display, operative_id),
-              uptime_ms: operative_uptime_ms(state),
+              kind: operator_kind(state),
+              phase: operator_phase(namespace_display, operator_id, state),
+              health: Snapshot.operator_health(namespace_display, operator_id),
+              uptime_ms: operator_uptime_ms(state),
               default_input_type: state.default_input_type,
               plugins: format_plugins_json(state.extensions)
             }
 
           {:error, reason} ->
-            %{id: operative_id, error: Context.format_reason(reason)}
+            %{id: operator_id, error: Context.format_reason(reason)}
         end
       end)
 
-    finished_data = Enum.map(finished, fn {id, rec} -> finished_operative_json(id, rec) end)
+    finished_data = Enum.map(finished, fn {id, rec} -> finished_operator_json(id, rec) end)
 
     result = %{
       namespace: namespace_display,
-      operatives: live_data ++ finished_data,
+      operators: live_data ++ finished_data,
       groups: Enum.map(partition_groups(namespace_display), &group_report_json/1)
     }
 
     IO.puts(Jason.encode!(result))
   end
 
-  defp handle_operative_info_output(live, finished, namespace_display, _) do
-    IO.puts("Operative information for namespace '#{namespace_display}':")
+  defp handle_operator_info_output(live, finished, namespace_display, _) do
+    IO.puts("Operator information for namespace '#{namespace_display}':")
     IO.puts("")
 
     Enum.each(partition_groups(namespace_display), &display_group_report/1)
 
-    Enum.each(live, fn operative_id ->
-      case OperativeManager.get_overwatch_state(namespace_display, operative_id) do
+    Enum.each(live, fn operator_id ->
+      case OperatorManager.get_overwatch_state(namespace_display, operator_id) do
         {:ok, state} ->
-          display_operative_info(operative_id, state, namespace_display)
+          display_operator_info(operator_id, state, namespace_display)
 
         {:error, reason} ->
-          IO.puts("Operative: #{operative_id}")
+          IO.puts("Operator: #{operator_id}")
           IO.puts("  Error getting overwatch state: #{Context.format_reason(reason)}")
           IO.puts("")
       end
     end)
 
-    Enum.each(finished, fn {id, rec} -> display_finished_operative(id, rec) end)
+    Enum.each(finished, fn {id, rec} -> display_finished_operator(id, rec) end)
   end
 
   defp group_report_json(report) do
@@ -139,7 +139,7 @@ defmodule Flezha.Service.Cli.Info do
   # is what turns a missing member into a visible fault rather than a quietly
   # short list. The one grouping both group views read.
   def partition_groups(namespace) when is_binary(namespace),
-    do: namespace |> HubManager.operative_rows() |> Partition.groups()
+    do: namespace |> HubManager.operator_rows() |> Partition.groups()
 
   defp display_group_report(report) do
     IO.puts("Partition group: #{report.group} (#{length(report.members)}/#{report.declared})")
@@ -172,21 +172,21 @@ defmodule Flezha.Service.Cli.Info do
     IO.puts("")
   end
 
-  # Finished workflow operatives with a completion record still inside the
-  # retention window, keyed by the operative_class dir (== operative_id).
-  defp finished_operatives(namespace, live_ids) do
+  # Finished bounded operators with a completion record still inside the
+  # retention window, keyed by the operator_class dir (== operator_id).
+  defp finished_operators(namespace, live_ids) do
     now = System.system_time(:second)
 
-    Paths.operative_classes()
+    Paths.operator_classes()
     |> Enum.reject(&(&1 in live_ids))
-    |> Enum.flat_map(fn operative_id ->
-      case Completion.read(operative_id) do
+    |> Enum.flat_map(fn operator_id ->
+      case Completion.read(operator_id) do
         {:ok, %{namespace: ns, finished_at: fa} = rec}
         when ns == namespace and is_integer(fa) ->
           window =
-            PersistenceResolver.completed_retention_hours(operative_id)
+            PersistenceResolver.completed_retention_hours(operator_id)
 
-          if fa + window * 3600 >= now, do: [{operative_id, rec}], else: []
+          if fa + window * 3600 >= now, do: [{operator_id, rec}], else: []
 
         _ ->
           []
@@ -194,11 +194,11 @@ defmodule Flezha.Service.Cli.Info do
     end)
   end
 
-  defp finished_operative_json(operative_id, rec) do
+  defp finished_operator_json(operator_id, rec) do
     %{
-      id: operative_id,
+      id: operator_id,
       namespace: Map.get(rec, :namespace),
-      kind: "workflow",
+      kind: "bounded",
       phase: "finished",
       status: Map.get(rec, :status),
       error: nil_if_empty(Map.get(rec, :error)),
@@ -207,9 +207,9 @@ defmodule Flezha.Service.Cli.Info do
     }
   end
 
-  defp display_finished_operative(operative_id, rec) do
-    IO.puts("Operative: #{operative_id}")
-    IO.puts("  Kind: workflow")
+  defp display_finished_operator(operator_id, rec) do
+    IO.puts("Operator: #{operator_id}")
+    IO.puts("  Kind: bounded")
     IO.puts("  Phase: finished")
     IO.puts("  Status: #{Map.get(rec, :status)}")
 
@@ -228,25 +228,25 @@ defmodule Flezha.Service.Cli.Info do
   defp nil_if_empty(s) when is_binary(s) and byte_size(s) > 0, do: s
   defp nil_if_empty(_), do: nil
 
-  defp operative_kind(%{builder: %{kind: kind}}) when is_atom(kind), do: Atom.to_string(kind)
-  defp operative_kind(_), do: "stream"
+  defp operator_kind(%{builder: %{kind: kind}}) when is_atom(kind), do: Atom.to_string(kind)
+  defp operator_kind(_), do: "unbounded"
 
-  # The operative's own lifecycle state, read from the verdict record the
-  # convergence loop published for it — the same field `flz operative list`,
-  # `/healthz` and the console read, so no two surfaces describe one operative
-  # in contradictory words. An operative the loop has not judged yet still gets
+  # The operator's own lifecycle state, read from the verdict record the
+  # convergence loop published for it — the same field `flz operator list`,
+  # `/healthz` and the console read, so no two surfaces describe one operator
+  # in contradictory words. An operator the loop has not judged yet still gets
   # a phase, derived from its own state by the record module's one derivation.
-  defp operative_phase(namespace, operative_id, state) do
-    case Snapshot.verdict(namespace, operative_id) do
+  defp operator_phase(namespace, operator_id, state) do
+    case Snapshot.verdict(namespace, operator_id) do
       %Verdict{phase: phase} when not is_nil(phase) -> to_string(phase)
       _ -> to_string(Verdict.phase_of(state))
     end
   end
 
-  defp operative_uptime_ms(%{started_at: started}) when is_integer(started),
+  defp operator_uptime_ms(%{started_at: started}) when is_integer(started),
     do: max(0, System.system_time(:millisecond) - started)
 
-  defp operative_uptime_ms(_), do: nil
+  defp operator_uptime_ms(_), do: nil
 
   defp format_plugins_json(%{plugins: plugins} = extensions) do
     Enum.map(plugins, fn {plugin_id, plugin} ->
@@ -264,7 +264,7 @@ defmodule Flezha.Service.Cli.Info do
 
   defp format_plugins_json(_), do: []
 
-  # A provider's own operator-facing detail. Same shape as the health contract:
+  # A provider's own caller-facing detail. Same shape as the health contract:
   # the stored opts with the processes the table started injected, and a
   # provider that raises or has nothing to say reports nothing rather than
   # failing the whole listing.
@@ -295,14 +295,14 @@ defmodule Flezha.Service.Cli.Info do
   defp format_plugin_state_value(value) when is_binary(value), do: value
   defp format_plugin_state_value(value), do: inspect(value)
 
-  defp display_operative_info(operative_id, state, namespace) do
-    IO.puts("Operative: #{operative_id}")
-    IO.puts("  Kind: #{operative_kind(state)}")
-    IO.puts("  Phase: #{operative_phase(namespace, operative_id, state)}")
-    IO.puts("  Health: #{Snapshot.operative_health(namespace, operative_id)}")
+  defp display_operator_info(operator_id, state, namespace) do
+    IO.puts("Operator: #{operator_id}")
+    IO.puts("  Kind: #{operator_kind(state)}")
+    IO.puts("  Phase: #{operator_phase(namespace, operator_id, state)}")
+    IO.puts("  Health: #{Snapshot.operator_health(namespace, operator_id)}")
     IO.puts("  Runner ID: #{state.runner_id}")
     IO.puts("  Group ID: #{state.namespace}")
-    IO.puts("  Uptime (ms): #{operative_uptime_ms(state)}")
+    IO.puts("  Uptime (ms): #{operator_uptime_ms(state)}")
     IO.puts("  Default Input Type: #{state.default_input_type}")
     IO.puts("  Plugins:")
 

@@ -53,7 +53,7 @@ pub enum EnginePayload {
         items: Vec<ItemAttempt>,
     },
     /// A command interaction on one Cell. Its exclusivity is the enqueuer's
-    /// gate ([`PollCore::with_cell_exclusive`], or a workflow undo's held
+    /// gate ([`PollCore::with_cell_exclusive`], or a bounded operator undo's held
     /// gate); its completion answers `reply`, never releases a slot.
     Command {
         slot: Arc<CellSlot>,
@@ -434,10 +434,10 @@ impl PollCore {
             Wake::Retry(Arc::clone(&slot)),
         );
         self.notify_waiters();
-        // A workflow pass that failed or stopped never runs this retry: the
+        // A bounded operator pass that failed or stopped never runs this retry: the
         // stop may have looked for the wake before this attempt recorded it.
-        if slot.topology.workflow.is_some() && crate::workflow::pass_dead(&slot) {
-            crate::workflow::items_dropped(&slot, self.cancel_retry(&slot));
+        if slot.topology.bounded.is_some() && crate::bounded::pass_dead(&slot) {
+            crate::bounded::items_dropped(&slot, self.cancel_retry(&slot));
         }
         Answered::Released
     }
@@ -621,7 +621,7 @@ impl PollCore {
         }
     }
 
-    /// A workflow Cell's undo as a `CompensateRun` over its recorded outputs;
+    /// A bounded operator Cell's undo as a `CompensateRun` over its recorded outputs;
     /// the caller holds the Cell's gate until `reply` is answered.
     pub fn submit_undo(
         &self,

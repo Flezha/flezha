@@ -30,7 +30,7 @@ defmodule Flezha.State.RunnerRestartRealignTest do
 
   import Flezha.State.TestHelpers, only: [uniq: 0]
 
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.Runner.StreamChannel
   alias Flezha.SDK.Wire
@@ -76,7 +76,7 @@ defmodule Flezha.State.RunnerRestartRealignTest do
     # Realignment fires once on the first regressed Change, adopting the new
     # runner's epoch as the WAL's source of truth.
     assert_receive {:wal_realign, %{from_seq: 4, to_seq: 0}, meta}, 1_000
-    assert meta.operative == "TestOperative"
+    assert meta.operator == "TestOperator"
     assert meta.runner == "exec_new"
 
     # The WAL does not stay frozen at 5: it follows the new runner down to 3,
@@ -132,7 +132,7 @@ defmodule Flezha.State.RunnerRestartRealignTest do
     refute_received {:seq_gap, _, _}
   end
 
-  test "stale refusal is episode-workflow: one event, the counter tracks every refusal", ctx do
+  test "stale refusal is episode-bounded: one event, the counter tracks every refusal", ctx do
     owner = start_channel("exec_owner_" <> uniq())
     feed(owner, ctx, 0..2)
 
@@ -231,14 +231,14 @@ defmodule Flezha.State.RunnerRestartRealignTest do
 
   # Mark + register cleanup — the table is owned by the app's FleetManager and
   # outlives this test otherwise.
-  test "a session whose identity does not own the operative never realigns its WAL", ctx do
-    {operative, _tasklet, _key} = ctx.cell_id
+  test "a session whose identity does not own the operator never realigns its WAL", ctx do
+    {operator, _tasklet, _key} = ctx.cell_id
     feed(start_channel("exec_owner"), ctx, 0..4)
     assert WalWriter.last_persisted_seq(ctx.writer) == 4
     {:ok, _} = Snapshot.write_snapshot(ctx.cell_id, 3, ctx.header, "owner-snap")
 
-    :ok = ClassRegistry.put_overwatch(operative, self(), "exec_owner")
-    on_exit(fn -> ClassRegistry.delete(operative) end)
+    :ok = ClassRegistry.put_overwatch(operator, self(), "exec_owner")
+    on_exit(fn -> ClassRegistry.delete(operator) end)
     foreign = attach([:flezha, :runner, :foreign_frame_refused], ctx.parent, :foreign)
     on_exit(fn -> :telemetry.detach(foreign) end)
 
@@ -251,7 +251,7 @@ defmodule Flezha.State.RunnerRestartRealignTest do
     refute_received {:wal_realign, _, _}
 
     assert_received {:foreign, %{count: 1},
-                     %{runner_id: ^other, owner: "exec_owner", operative_id: ^operative}}
+                     %{runner_id: ^other, owner: "exec_owner", operator_id: ^operator}}
 
     refute_received {:foreign, _, _}
   end

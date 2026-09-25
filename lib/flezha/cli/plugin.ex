@@ -12,11 +12,11 @@ defmodule Flezha.Service.Cli.Plugin do
   alias Flezha.Service.PluginManager
 
   # The plain options an enable reads. The verb is open, so every other plain
-  # word an operator types arrives in the same document.
-  @read_options ["namespace", "operative_id"]
+  # word a caller types arrives in the same document.
+  @read_options ["namespace", "operator_id"]
 
   @doc """
-  The row a `plugin enable` is judged by: the namespace in the operator's
+  The row a `plugin enable` is judged by: the namespace in the caller's
   options, with the decoded provider, flags and options the body needs. A plain
   option the enable does not read is refused before anything is written.
   """
@@ -59,8 +59,8 @@ defmodule Flezha.Service.Cli.Plugin do
          id: plugin_id,
          provider: row.provider_mod,
          namespace: row.namespace,
-         operative_id:
-           Map.get(row.plugin_flags, "operative_id") || Map.get(row.opts, "operative_id"),
+         operator_id:
+           Map.get(row.plugin_flags, "operator_id") || Map.get(row.opts, "operator_id"),
          opts: provider_opts,
          hooks: hooks
        }}
@@ -95,7 +95,7 @@ defmodule Flezha.Service.Cli.Plugin do
   defp read_hooks([]), do: {:ok, []}
   defp read_hooks(written), do: Plugin.hooks(written)
 
-  # Dropping a word the operator typed would enable a plugin with less than was
+  # Dropping a word the caller typed would enable a plugin with less than was
   # written and still report success.
   defp refuse_unread_options(opts) do
     case opts |> Map.drop(@read_options) |> Map.keys() |> Enum.sort() do

@@ -1,13 +1,13 @@
 # runner-identity-and-session Specification
 
 ## Purpose
-Splits Runner identity into two values with distinct lifetimes: a **stable identity** owned and persisted by the SDK, presented on every connect and used by the Controller as the operative-binding key; and an ephemeral **session token** minted per accepted connection, used as the Registry-naming and data-stream routing key with nothing durable bound to it. This separation is what lets a reconnect re-point existing bindings instead of minting-evicting-reissuing, and it removes the concurrent-connect race by routing data streams per owning connection rather than through a shared "current runner" scalar.
+Splits Runner identity into two values with distinct lifetimes: a **stable identity** owned and persisted by the SDK, presented on every connect and used by the Controller as the operator-binding key; and an ephemeral **session token** minted per accepted connection, used as the Registry-naming and data-stream routing key with nothing durable bound to it. This separation is what lets a reconnect re-point existing bindings instead of minting-evicting-reissuing, and it removes the concurrent-connect race by routing data streams per owning connection rather than through a shared "current runner" scalar.
 ## Requirements
 ### Requirement: Runner identity is two layers — durable stable identity and ephemeral session token
 
 Runner identity SHALL be split into two values with distinct lifetimes:
 
-1. **Stable identity** — owned by the SDK, durable across process restarts, and used by the controller as the **operative-binding key**. It SHALL be created once on the runner's first boot, derived for readability as `"<namespace>-<profile_hash>-<random_suffix>"` (where `profile_hash` is a stable hash of the runner's declared factory set), and persisted at `FLEZHA_RUNNER_ID_PATH` via an atomic write. The SDK SHALL present it on **every** connect (initial and reconnect) in the control init message. The controller SHALL trust the presented stable identity as the binding key: the record of which runner an operative is bound to SHALL name the stable identity, SHALL be written by the operative's Overwatch alone, and SHALL be what every door that reads a frame naming the operative checks against.
+1. **Stable identity** — owned by the SDK, durable across process restarts, and used by the controller as the **operator-binding key**. It SHALL be created once on the runner's first boot, derived for readability as `"<namespace>-<profile_hash>-<random_suffix>"` (where `profile_hash` is a stable hash of the runner's declared factory set), and persisted at `FLEZHA_RUNNER_ID_PATH` via an atomic write. The SDK SHALL present it on **every** connect (initial and reconnect) in the control init message. The controller SHALL trust the presented stable identity as the binding key: the record of which runner an operator is bound to SHALL name the stable identity, SHALL be written by the operator's Overwatch alone, and SHALL be what every door that reads a frame naming the operator checks against.
 2. **Session token** — minted by the controller on every accepted connection, unique by construction, ephemeral. It SHALL be the controller-side Registry-naming key and the data-stream routing key. The controller SHALL return it to the SDK in the assign command, and nothing durable SHALL be bound to it. The controller SHALL record which stable identity each session token belongs to for the session's lifetime, so a channel and an Overwatch can read a session's identity without calling the process that admitted it.
 
 The boot-time hostname MAY be stamped into the stable identity's metadata for debuggability but SHALL NOT be load-bearing for identity (a container hostname is not stable across recreation). Identity SHALL NOT depend on any Kubernetes-specific node-name source; the same mechanism SHALL work identically under Kubernetes, plain Docker, and bare-host runs.
@@ -17,7 +17,7 @@ The boot-time hostname MAY be stamped into the stable identity's metadata for de
 - **GIVEN** a runner that booted, derived and persisted a stable identity at `FLEZHA_RUNNER_ID_PATH`
 - **WHEN** the process restarts with the persistence path intact
 - **THEN** it SHALL present the same stable identity on reconnect
-- **AND** the controller SHALL re-point that stable identity's bindings onto the new session token by telling each operative's Overwatch its new session, which SHALL publish its own tag and route; the ownership record SHALL be unchanged, because the identity is
+- **AND** the controller SHALL re-point that stable identity's bindings onto the new session token by telling each operator's Overwatch its new session, which SHALL publish its own tag and route; the ownership record SHALL be unchanged, because the identity is
 
 #### Scenario: session token is fresh per connection and is the routing key
 
@@ -39,14 +39,14 @@ The controller SHALL route each incoming data stream to the `StreamChannel`s of 
 
 ### Requirement: Same stable identity on two live sessions resolves newest-wins
 
-When a new session presents a stable identity that already has a currently-live session, the controller SHALL treat this as a takeover: it SHALL close the older session through the standard `{:runner_disconnected}` path and bind the stable identity's operatives to the newer session. The resolution SHALL be deterministic (newest wins), not dependent on an eviction race. A takeover SHALL be refused when the identity's live or keepalive-preserved session was admitted under a credential and the new connect presents a different one: the connect SHALL end as a handshake refusal naming the identity, counted on `[:flezha, :transport, :connect_rejected]`, and the pin SHALL be released only when the identity's last session leaves the roster. A connect that carries no per-runner credential (a certificate-proven or posture-off connect) SHALL NOT be pinned.
+When a new session presents a stable identity that already has a currently-live session, the controller SHALL treat this as a takeover: it SHALL close the older session through the standard `{:runner_disconnected}` path and bind the stable identity's operators to the newer session. The resolution SHALL be deterministic (newest wins), not dependent on an eviction race. A takeover SHALL be refused when the identity's live or keepalive-preserved session was admitted under a credential and the new connect presents a different one: the connect SHALL end as a handshake refusal naming the identity, counted on `[:flezha, :transport, :connect_rejected]`, and the pin SHALL be released only when the identity's last session leaves the roster. A connect that carries no per-runner credential (a certificate-proven or posture-off connect) SHALL NOT be pinned.
 
 #### Scenario: a fresh process takes over from a not-yet-closed prior session
 
 - **GIVEN** stable identity `S` has a live session `sess_old` whose connection has not yet been observed as closed
 - **WHEN** a new connection presents stable identity `S` and receives `sess_new`
 - **THEN** the controller SHALL close `sess_old` via the standard disconnect path
-- **AND** SHALL bind `S`'s operatives to `sess_new`
+- **AND** SHALL bind `S`'s operators to `sess_new`
 
 #### Scenario: a misconfiguration sharing one persistence path is contained
 
@@ -59,7 +59,7 @@ When a new session presents a stable identity that already has a currently-live 
 
 - **GIVEN** stable identity `S` admitted under credential `C1`, with a live or keepalive-preserved session
 - **WHEN** a connect presents `S` under credential `C2`
-- **THEN** the connect SHALL be refused naming `S`, `[:flezha, :transport, :connect_rejected]` SHALL count it, `S`'s operatives SHALL stay bound to the `C1` session, and the same connect after `S`'s last session has left the roster SHALL be admitted and pinned to `C2`
+- **THEN** the connect SHALL be refused naming `S`, `[:flezha, :transport, :connect_rejected]` SHALL count it, `S`'s operators SHALL stay bound to the `C1` session, and the same connect after `S`'s last session has left the roster SHALL be admitted and pinned to `C2`
 
 ### Requirement: The durable write path's owner binding follows takeover
 
@@ -79,7 +79,7 @@ SHALL only increment a counter.
 - **WHEN** a new session `sess_new` takes over `S`
 - **THEN** `sess_old`'s channels are unbound from every affected Cell's write path before `sess_new`'s are bound, and no Change from `sess_old` lands in any Cell WAL after the unbind
 
-#### Scenario: Refusal is episode-workflow telemetry
+#### Scenario: Refusal is episode-bounded telemetry
 
 - **WHEN** a superseded session forwards many Changes after losing its binding
 - **THEN** one `stale_writer_refused` event is emitted for the episode and a counter tracks the rest
@@ -176,50 +176,50 @@ with it.
 #### Scenario: The refusal names the namespace it belongs to
 
 - **WHEN** recovery-hook registration is refused
-- **THEN** the refusal SHALL identify the namespace, so an operator can tell one
+- **THEN** the refusal SHALL identify the namespace, so a user can tell one
   namespace's failure from a node-wide one
 
-### Requirement: A runner SHALL act only on the operatives bound to its stable identity
+### Requirement: A runner SHALL act only on the operators bound to its stable identity
 
-The controller SHALL record, for every running operative, the stable identity of the
-runner it is bound to, written by the operative's own Overwatch before the
-`AddOperative` that starts it on that runner, and removed when the operative ends; a
-suspended or unbound operative SHALL keep the identity it was last bound to until a
-bind names another, so what that runner sent before the operative left it still
+The controller SHALL record, for every running operator, the stable identity of the
+runner it is bound to, written by the operator's own Overwatch before the
+`AddOperator` that starts it on that runner, and removed when the operator ends; a
+suspended or unbound operator SHALL keep the identity it was last bound to until a
+bind names another, so what that runner sent before the operator left it still
 lands. A running migrate SHALL record the identity it is
 trying as pending until the runner answers, so that frames from either runner are
 accepted while the outcome is undecided. Every frame the controller reads that names
-an operative — an output frame, the seven cell-write payloads, `correction_request`,
-`WorkflowCompleted`, `IterPark`, `RunnerShutdownNotification`, `TaskCommit` and
+an operator — an output frame, the seven cell-write payloads, `correction_request`,
+`BoundedCompleted`, `IterPark`, `RunnerShutdownNotification`, `TaskCommit` and
 `IterCommit` — SHALL be accepted only when the record names the sending session's
-identity as the owner or as pending, or when no record exists for the operative. A
-frame the record refuses SHALL NOT act on the operative: it SHALL be counted on the
+identity as the owner or as pending, or when no record exists for the operator. A
+frame the record refuses SHALL NOT act on the operator: it SHALL be counted on the
 sending channel, reported on `[:flezha, :runner, :foreign_frame_refused]` with the
-runner, its identity, the recorded owner, the operative and the frame kind, and the
-sending runner SHALL be told `RemOperative` for that operative once per session. A
+runner, its identity, the recorded owner, the operator and the frame kind, and the
+sending runner SHALL be told `RemOperator` for that operator once per session. A
 refused durability barrier SHALL be acked with a non-empty error; a refused shutdown
 notification SHALL still be acked; a refused completion SHALL write no record and
 drive no teardown; a refused park SHALL journal nothing. A runner presenting no stable
-identity SHALL be its own session token for this rule. A route from an operative to
+identity SHALL be its own session token for this rule. A route from an operator to
 its Overwatch SHALL exist only in the channels of the session that owns it, written
 by the same publish that writes the registry tag and removed from the previously
 bound session's channels by it; no other mechanism SHALL seed a route.
 
 #### Scenario: A runner evicted while alive keeps its copy, and the copy is refused when it speaks
 
-- **GIVEN** operative `X` bound to runner A, which has armed a timer, and a second
+- **GIVEN** operator `X` bound to runner A, which has armed a timer, and a second
   runner B advertising the same factory
 - **WHEN** A is frozen, the controller is told A disconnected and moves `X` to B, B
   takes two more inputs, and A resumes and reconnects under the same stable identity
 - **THEN** the first frame A's copy of `X` sends SHALL be refused and reported with
-  A's new session and `X`, A SHALL be sent `RemOperative` for `X` once, no
+  A's new session and `X`, A SHALL be sent `RemOperator` for `X` once, no
   `[:flezha, :state, :wal_realign]` SHALL name A's new session, no output of A's copy
   SHALL reach `X`'s sinks, and `X`'s WAL SHALL keep the lineage B wrote
 
-#### Scenario: A control frame naming another runner's operative does nothing to it
+#### Scenario: A control frame naming another runner's operator does nothing to it
 
-- **GIVEN** operative `X` bound to runner A and a second session B in the namespace
-- **WHEN** B sends `WorkflowCompleted`, `IterPark` or `RunnerShutdownNotification`
+- **GIVEN** operator `X` bound to runner A and a second session B in the namespace
+- **WHEN** B sends `BoundedCompleted`, `IterPark` or `RunnerShutdownNotification`
   naming `X`
 - **THEN** `X` SHALL NOT be stopped, no completion record SHALL be written, no park
   SHALL be journaled for `X` or for an instance another namespace claims, `X` SHALL
@@ -232,15 +232,15 @@ bound session's channels by it; no other mechanism SHALL seed a route.
   runner A
 - **THEN** the response SHALL carry a non-empty error, the journal SHALL hold no entry
   for it, no inbox SHALL be truncated and no journal cut, and B SHALL be sent
-  `RemOperative` for the instance once
+  `RemOperator` for the instance once
 
-#### Scenario: A data frame from a runner that does not own the operative is refused
+#### Scenario: A data frame from a runner that does not own the operator is refused
 
 - **WHEN** session B's stream channel, holding no route for `X`, reads an output frame
   or a cell-write frame naming `X` while the record names runner A
 - **THEN** the frame SHALL NOT reach `X`'s Overwatch or its Cell's writer, the
   channel's `foreign_frame_refused` count SHALL rise, the event SHALL name B, A and
-  `X`, and a second frame SHALL raise the count without a second `RemOperative`
+  `X`, and a second frame SHALL raise the count without a second `RemOperator`
 
 #### Scenario: The owner's first output warms its route
 
@@ -251,15 +251,15 @@ bound session's channels by it; no other mechanism SHALL seed a route.
 
 #### Scenario: Both runners of a running migrate are accepted until it is decided
 
-- **GIVEN** operative `X` bound to runner A and a running migrate to runner B in
+- **GIVEN** operator `X` bound to runner A and a running migrate to runner B in
   flight
 - **WHEN** a frame from A or from B names `X` before B has answered the start
 - **THEN** the frame SHALL be accepted, and once the migrate is decided only the
   runner it ended on SHALL be
 
-#### Scenario: An operative nobody records is handled as before
+#### Scenario: An operator nobody records is handled as before
 
-- **WHEN** a frame names an operative for which no record exists on this node
+- **WHEN** a frame names an operator for which no record exists on this node
 - **THEN** an output SHALL be the counted `:unrouted` drop it is today, a cell
   write SHALL reach its writer under the session fence alone, and a control frame
   SHALL be handled as one whose Overwatch is absent

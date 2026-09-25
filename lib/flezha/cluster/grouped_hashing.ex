@@ -12,7 +12,7 @@ defmodule Flezha.Cluster.GroupedHashing do
   which is what `ProcessHub.Strategy.Distribution.ConsistentHashing` does.
 
   Nothing here names a namespace, a runner or a factory. Flezha passes an
-  operative's factory id as its group and `Flezha.Runner.FleetManager` declares
+  operator's factory id as its group and `Flezha.Runner.FleetManager` declares
   the factories its fleet can run, but that vocabulary stays outside.
 
   ## What holds one answer together on every node

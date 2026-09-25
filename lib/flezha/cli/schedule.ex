@@ -1,11 +1,11 @@
 defmodule Flezha.Service.Cli.Schedule do
   @moduledoc """
-  `flz schedule add | list | remove | run` — scheduled operative spawns.
+  `flz schedule add | list | remove | run` — scheduled operator spawns.
 
   Rendering only: the store and the hub are the effects the published
   `Flezha.Service.Schedule` wraps, and the authorization is each verb's row.
   `run` fires an instance directly, hub-free, and is judged as
-  `operative.start` where the instance starts — the stored row's namespace.
+  `operator.start` where the instance starts — the stored row's namespace.
   """
 
   alias Flezha.AuthZ.Namespace
@@ -44,7 +44,7 @@ defmodule Flezha.Service.Cli.Schedule do
 
     init_map = Context.json!(Keyword.get(opts, :init_values, ""), "--init-values")
 
-    with :ok <- schedule_workflow_only(ns, factory_id),
+    with :ok <- schedule_bounded_only(ns, factory_id),
          :ok <- schedule_check_plugins(plugins_json, ns, name),
          {:ok, entry} <-
            Store.add(%{
@@ -146,16 +146,16 @@ defmodule Flezha.Service.Cli.Schedule do
     instance_id = "#{entry.name}@manual-#{System.system_time(:second)}"
 
     case Job.spawn_instance(entry, instance_id) do
-      {:ok, %{operative_id: id}} -> IO.puts("Spawned #{id}")
+      {:ok, %{operator_id: id}} -> IO.puts("Spawned #{id}")
       :duplicate -> IO.puts("instance already running; no-op")
       {:error, reason} -> render_schedule_error(reason)
     end
   end
 
-  defp schedule_workflow_only(namespace, factory_id) do
+  defp schedule_bounded_only(namespace, factory_id) do
     case FleetManager.factory_kind(namespace, factory_id) do
-      {:ok, :stream} -> {:error, {:unschedulable_kind, factory_id}}
-      _workflow_or_unannounced -> :ok
+      {:ok, :unbounded} -> {:error, {:unschedulable_kind, factory_id}}
+      _bounded_or_unannounced -> :ok
     end
   catch
     :exit, _ -> :ok
@@ -216,7 +216,7 @@ defmodule Flezha.Service.Cli.Schedule do
   defp schedule_error_message({:invalid_name, msg}), do: "invalid schedule name: #{msg}"
 
   defp schedule_error_message({:unschedulable_kind, factory_id}),
-    do: "only a workflow factory is schedulable; factory #{factory_id} is a stream"
+    do: "only a bounded factory is schedulable; factory #{factory_id} is unbounded"
 
   defp schedule_error_message({:invalid_plugins, msg}), do: "invalid --plugins: #{msg}"
 

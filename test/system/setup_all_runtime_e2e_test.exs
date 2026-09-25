@@ -22,7 +22,7 @@ defmodule FlezhaTest.System.SetupAllRuntimeE2ETest do
 
   import FlezhaTest.Helper.NodeTestHelper, only: [ensure_port_dead: 1]
 
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.PortPilot
   alias FlezhaTest.Helper.NodeTestHelper

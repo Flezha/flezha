@@ -2,13 +2,13 @@ defmodule Flezha.AuthZ.Policy do
   @moduledoc """
   Compile-time role→action mapping.
 
-  Roles inherit upward: `admin` ⊇ `operator` ⊇ `app` ⊇ `viewer`, with three
+  Roles inherit upward: `admin` ⊇ `ops` ⊇ `app` ⊇ `viewer`, with three
   roles outside the hierarchy: `runner` grants only `runner.connect`, `spawner`
-  adds to it only `operative.start` and `operative.send`, which a
+  adds to it only `operator.start` and `operator.send`, which a
   tasklet-requested spawn needs and which also judge the administration
-  surface's start and send, and `stopper` adds to it only `operative.stop`.
-  `app` holds everything `spawner` and `stopper` do, and `operator` inherits
-  everything `app` adds except the connect. An operator credential is not a
+  surface's start and send, and `stopper` adds to it only `operator.stop`.
+  `app` holds everything `spawner` and `stopper` do, and `ops` inherits
+  everything `app` adds except the connect. An `ops` credential is not a
   runner.
 
   An identity holds a set of these roles, and `Flezha.AuthZ.authorize/3` allows
@@ -24,7 +24,7 @@ defmodule Flezha.AuthZ.Policy do
   # is here because the schedule registry names no business data — a viewer sees
   # what fires and when, not what any of it produced.
   @viewer_actions [
-    :"operative.list",
+    :"operator.list",
     :"plugin.list",
     :"plugin.info",
     :"audit.read",
@@ -43,35 +43,35 @@ defmodule Flezha.AuthZ.Policy do
   ]
 
   # What a tasklet-requested spawn performs: a start, or a delivery.
-  @spawn_actions [:"operative.start", :"operative.send"]
+  @spawn_actions [:"operator.start", :"operator.send"]
 
   # What a stop performs. Held apart from the spawn so `spawner` and `stopper`
   # combine, and so `app` is spelled from both rather than repeating either.
-  @stop_actions [:"operative.stop"]
+  @stop_actions [:"operator.stop"]
 
   # App adds the namespace-scoped lifecycle an application performs on its own
   # work, reading the frames that work carries, and nothing that destroys a
   # record or moves work it did not create.
-  # `operative.scale` is deliberately absent: rescaling moves live work between
-  # partitions, which is an operator's call over a whole namespace rather than
+  # `operator.scale` is deliberately absent: rescaling moves live work between
+  # partitions, which is a caller's call over a whole namespace rather than
   # an application's over its own instance.
   @app_extra @spawn_actions ++
-               @stop_actions ++ [:"operative.listen", :"plugin.enable", :"plugin.disable"]
+               @stop_actions ++ [:"operator.listen", :"plugin.enable", :"plugin.disable"]
 
-  # Operator adds the rest of the operative/plugin lifecycle, audit rotation,
+  # Ops adds the rest of the operator/plugin lifecycle, audit rotation,
   # observability mutate, schedule management, the dead-letter queue whole and
   # the records in flight. The DLQ reads and `state.records` sit here rather
   # than with the viewer reads because a parked payload or a journaled input is
   # the business record itself: whoever may read one may already replay or
   # destroy it, and no viewer workflow needs it.
-  @operator_extra [
-    :"operative.replay",
+  @ops_extra [
+    :"operator.replay",
     :"audit.rotate",
     :"observability.enable_source",
     :"observability.disable_source",
     :"state.rotate",
-    :"operative.scale",
-    :"operative.rewind",
+    :"operator.scale",
+    :"operator.rewind",
     :"dlq.list",
     :"dlq.show",
     :"dlq.replay",
@@ -106,19 +106,19 @@ defmodule Flezha.AuthZ.Policy do
   @viewer MapSet.new(@viewer_actions)
   @runner MapSet.new(@runner_actions)
   # `app` and `spawner` are the roles a runner principal is bound to, so each
-  # carries the connect that principal already held; `operator` takes app's
+  # carries the connect that principal already held; `ops` takes app's
   # extra actions without it, which is why the unions are written out rather
   # than chained through `@app`.
   @spawner MapSet.union(@runner, MapSet.new(@spawn_actions))
   @stopper MapSet.union(@runner, MapSet.new(@stop_actions))
   @app @viewer |> MapSet.union(@runner) |> MapSet.union(MapSet.new(@app_extra))
-  @operator MapSet.union(@viewer, MapSet.new(@app_extra ++ @operator_extra))
-  @admin MapSet.union(@operator, MapSet.new(@admin_extra))
+  @ops MapSet.union(@viewer, MapSet.new(@app_extra ++ @ops_extra))
+  @admin MapSet.union(@ops, MapSet.new(@admin_extra))
 
   @grants %{
     viewer: @viewer,
     app: @app,
-    operator: @operator,
+    ops: @ops,
     admin: @admin,
     runner: @runner,
     spawner: @spawner,
@@ -139,7 +139,7 @@ defmodule Flezha.AuthZ.Policy do
   @doc """
   True when `role` is one a runner's principal is bound to.
 
-  A runner proves its namespace with a `runner` credential, so the operator
+  A runner proves its namespace with a `runner` credential, so the administration
   surface issues no credential for any other role carrying the connect. The
   property is the grant itself, so a role added to the enumeration with
   `runner.connect` is refused a credential without any list being edited.

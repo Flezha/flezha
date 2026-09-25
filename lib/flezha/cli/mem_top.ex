@@ -1,6 +1,6 @@
 defmodule Flezha.Service.Cli.MemTop do
   @moduledoc """
-  `flz controller mem-top` — the operator-invoked memory inspector and its
+  `flz controller mem-top` — the caller-invoked memory inspector and its
   text and JSON renderers.
   """
 

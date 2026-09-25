@@ -1,6 +1,6 @@
 # SDK State Persistence
 
-For operative authors and SDK implementers: how a Tasklet's per-Cell state becomes
+For operator authors and SDK implementers: how a Tasklet's per-Cell state becomes
 durable in the Rust, Java and Elixir SDKs — the shared model (State, Change, snapshot +
 change-log restore, compaction, the persistence toggle, payload ids, the record header), then
 each SDK's authoring surface and test harness. The controller's on-disk layout, fsync
@@ -57,23 +57,23 @@ their place, carrying the outputs rather than preceding them.
 
 ### Persistence toggle
 
-One switch per class, for a stream and a workflow alike, frozen on the instance at start (a
+One switch per class, for an unbounded operator and a bounded operator alike, frozen on the instance at start (a
 change applies on the next stop + start). The runner announces it (`persistent = "false"` in the
-`AddOperative` response), so the controller reads the same value: an opted-out class of either
+`AddOperator` response), so the controller reads the same value: an opted-out class of either
 kind keeps no WAL or snapshot, is given no restore on a rebind, and answers a live Cell read with
 `{:error, :persistence_off}`. Beside it sits the sleep setting, which needs the switch on.
 
 | Surface | Rust | Java | Elixir |
 |---|---|---|---|
 | Persistence switch, both kinds | `PERSISTENCE_ENABLED` const on both traits, default `true` | `persistenceEnabled()` on both kind interfaces, default `true`, read from the class whatever its Tasklets' Change types | `persistence_enabled/0` on both behaviours (a `use` option), default `true` |
-| Sleep setting | `SLEEP_WHEN_IDLE`: `false` on `StreamOperative`, `PERSISTENCE_ENABLED` on `WorkflowOperative` | `sleepWhenIdle()`: `false` on `StreamOperative`, `persistenceEnabled()` on `WorkflowOperative` | `sleep_when_idle` (a `use` option or callback): `false` for a stream, `persistence_enabled/0` for a workflow |
+| Sleep setting | `SLEEP_WHEN_IDLE`: `false` on `UnboundedOperator`, `PERSISTENCE_ENABLED` on `BoundedOperator` | `sleepWhenIdle()`: `false` on `UnboundedOperator`, `persistenceEnabled()` on `BoundedOperator` | `sleep_when_idle` (a `use` option or callback): `false` for an unbounded operator, `persistence_enabled/0` for a bounded operator |
 | Sleeping with persistence off | refused as `SleepWithoutPersistence` | same | same |
-| Controller side | `:operative_persistence` (`%{class => bool}`) overrides the announced switch per class | same | same |
+| Controller side | `:operator_persistence` (`%{class => bool}`) overrides the announced switch per class | same | same |
 
 The Node, Python, Ruby and PHP SDKs carry the same two settings under their own spellings
 (`persistent` and `sleepWhenIdle` / `sleep_when_idle`); each SDK page lists them.
 
-Durable-vs-opted-out workflow guarantees: [`../resilience/workflow_operative.md`](../resilience/workflow_operative.md).
+Durable-vs-opted-out bounded operator guarantees: [`../resilience/bounded_operator.md`](../resilience/bounded_operator.md).
 
 ### Restoration flow (warm restart)
 
@@ -99,7 +99,7 @@ an arm per format, so an effect record is unwrapped in place — its enclosed ch
 fold under the enclosing record's version decision, its timer ops join the pending set, and
 its consumed offset and event time become the Cell's floor and high-water — while a
 snapshot header carrying that format is malformed. A refused fold leaves the Cell as it
-was and the controller parks the operative.
+was and the controller parks the operator.
 Rust folds in-process with postcard and verifies each record's header (`sdk_lang`,
 `schema_version`, `format_id`) and trailing CRC32, failing loud with
 `RestoreError::{LangMismatch, SchemaTooOld, SchemaFromTheFuture, HeaderInvalid,
@@ -139,7 +139,7 @@ and give-up are the controller's.
 | data, SDK → controller | `cell_effect_record` | effectively-once effect record (`format_id` 2: changes — enclosed in the writing SDK's own codec, postcard / Kryo / ETF — outputs, consumed offset, timers, dead-letter entry) |
 | data, SDK → controller | `cell_state_snapshot` | compaction snapshot body |
 | data, SDK → controller | `delete_cell_state` | dynamic-Cell eviction |
-| data, SDK → controller | `park_payload`, `compensation_intent`, `compensation_done` | DLQ park; workflow saga markers |
+| data, SDK → controller | `park_payload`, `compensation_intent`, `compensation_done` | DLQ park; bounded saga markers |
 | control, controller → SDK | `RestoreInitState` / `RestoreInitStateResponse` | warm restart (reply from the SDK) |
 | control, controller → SDK | `CompactCell` / `CompactCellResponse` | compaction (reply from the SDK) |
 | control, controller → SDK | `CellMailboxStatus` | legacy `full` / `open` back-pressure (pre-credit sessions) |
@@ -163,7 +163,7 @@ restore rejects any `sdk_lang` but its own before it reads the format byte:
 | Knob | Rust | Java | Elixir | Default |
 |---|---|---|---|---|
 | Schema version — bump on a non-additive Change-schema edit; a restore refuses a version above the running one or below the readable floor by name | `Tasklet::SCHEMA_VERSION` | `Tasklet.schemaVersion()` | `schema_version/0`, with `min_readable_schema_version/0` the floor | 1 |
-| Per-Cell WAL size at which the controller solicits a snapshot; `flz_core::persistence::DEFAULT_COMPACT_AFTER_BYTES`, in lockstep with the controller's `:default_compact_after_bytes`; every SDK ships the smallest value across the class's Tasklets in `AddOperative` metadata (`compact_after_bytes`) only when it differs from the default | `Tasklet::compact_after_bytes()` | `Tasklet.compactAfterBytes()` | `compact_after_bytes/0` | 8 MiB |
+| Per-Cell WAL size at which the controller solicits a snapshot; `flz_core::persistence::DEFAULT_COMPACT_AFTER_BYTES`, in lockstep with the controller's `:default_compact_after_bytes`; every SDK ships the smallest value across the class's Tasklets in `AddOperator` metadata (`compact_after_bytes`) only when it differs from the default | `Tasklet::compact_after_bytes()` | `Tasklet.compactAfterBytes()` | `compact_after_bytes/0` | 8 MiB |
 | Pending-timer cap; past it registration returns / throws `TimerCapExceeded` | `Tasklet::max_timers_per_cell()` | `Tasklet.maxTimersPerCell()` | `max_timers_per_cell/0` | 10 000 |
 | Flusher linger between drains | `FLEZHA_FLUSH_LINGER_MS` env (read once by the core) | same | none — records ship at dispatch end | 5 ms |
 
@@ -299,7 +299,7 @@ reference case).
 `CoalesceKey.fromHash(Object...)` hashes arbitrary values. `NoChange` cannot be
 instantiated. `Clock` permits `WallClock`, `LogicalClock` and `EventTimeFrom`; all three
 are wired. What Rust rejects at compile time is rejected at registration here
-(`StreamOperativeConfigurationException`): an `EventTimeFrom` Tasklet that does not
+(`UnboundedOperatorConfigurationException`): an `EventTimeFrom` Tasklet that does not
 override `eventTime(Input)` (`eventTimeExtractorMissing`), and a `LogicalClock` Tasklet
 with `Change = NoChange` (`unservableClock`).
 
@@ -328,7 +328,7 @@ the block generates `apply_change/2`, which declares the tasklet changeful,
 `state_from_json/1`, which turns a JSON object read back from the controller into the state
 term, and the recorders, each journaling through `Flezha.SDK.Ctx.apply/3`, the recorded
 mutation path. `compact_after_bytes` is the compaction threshold, and
-`StreamOperative.persistence_enabled/0` is the class toggle;
+`UnboundedOperator.persistence_enabled/0` is the class toggle;
 `schema_version/0` and `min_readable_schema_version/0` declare the version and the readable
 floor, and `migrate_state/2` / `migrate_change/2` read an older version's DECODED term into
 the running one — the body codec is the language's own, so there is no second codec to choose.
@@ -351,4 +351,4 @@ recorded changes is stated, not machine-checked.
 - [`poll_core.md`](poll_core.md) — the activation model the Java change bytes ride
 - [`cell_timers.md`](cell_timers.md) — timers as folded state
 - [`authoring_contract.md`](authoring_contract.md) — tiers, derived Change types, determinism
-- [`../resilience/workflow_operative.md`](../resilience/workflow_operative.md) — durable-by-default workflow classes
+- [`../resilience/bounded_operator.md`](../resilience/bounded_operator.md) — durable-by-default bounded classes

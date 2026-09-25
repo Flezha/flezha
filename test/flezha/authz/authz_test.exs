@@ -25,7 +25,7 @@ defmodule Flezha.AuthZTest do
     assert :ok =
              AuthZ.authorize(
                %{source: :internal},
-               :"operative.start",
+               :"operator.start",
                Scope.build("team-orders")
              )
   end
@@ -34,30 +34,30 @@ defmodule Flezha.AuthZTest do
     assert {:error, {:forbidden, :principal_not_bound}} =
              AuthZ.authorize(
                %{source: :cli, principal: nil},
-               :"operative.start",
+               :"operator.start",
                Scope.build("_system")
              )
   end
 
-  test "operator on bound namespace passes; cross-namespace denied without admin@_system" do
-    :ok = RoleStore.bind("alice", "team-orders", :operator)
+  test "ops on bound namespace passes; cross-namespace denied without admin@_system" do
+    :ok = RoleStore.bind("alice", "team-orders", :ops)
 
     ctx = %{source: :cli, principal: "alice"}
 
-    assert :ok = AuthZ.authorize(ctx, :"operative.start", Scope.build("team-orders"))
+    assert :ok = AuthZ.authorize(ctx, :"operator.start", Scope.build("team-orders"))
 
     assert {:error, {:forbidden, :namespace_mismatch}} =
-             AuthZ.authorize(ctx, :"operative.start", Scope.build("team-payments"))
+             AuthZ.authorize(ctx, :"operator.start", Scope.build("team-payments"))
   end
 
-  test "viewer denied operator actions" do
+  test "viewer denied ops actions" do
     :ok = RoleStore.bind("eve", "_system", :viewer)
     ctx = %{source: :cli, principal: "eve"}
 
-    assert :ok = AuthZ.authorize(ctx, :"operative.list", Scope.build("_system"))
+    assert :ok = AuthZ.authorize(ctx, :"operator.list", Scope.build("_system"))
 
     assert {:error, {:forbidden, :role_insufficient}} =
-             AuthZ.authorize(ctx, :"operative.start", Scope.build("_system"))
+             AuthZ.authorize(ctx, :"operator.start", Scope.build("_system"))
   end
 
   test "admin@_system can mutate other namespaces' auth state" do
@@ -89,7 +89,7 @@ defmodule Flezha.AuthZTest do
     assert :ok = AuthZ.authorize(ctx, :"runner.connect", Scope.build("team-orders"))
 
     assert {:error, {:forbidden, :role_insufficient}} =
-             AuthZ.authorize(ctx, :"operative.start", Scope.build("team-orders"))
+             AuthZ.authorize(ctx, :"operator.start", Scope.build("team-orders"))
 
     assert {:error, {:forbidden, :role_insufficient}} =
              AuthZ.authorize(ctx, :"audit.read", Scope.build("team-orders"))
@@ -107,7 +107,7 @@ defmodule Flezha.AuthZTest do
     :ok = RoleStore.bind("root", "_system", :admin)
     ctx = %{source: :cli, principal: "root"}
 
-    assert {:error, :invalid_scope} = AuthZ.authorize(ctx, :"operative.start", %{})
+    assert {:error, :invalid_scope} = AuthZ.authorize(ctx, :"operator.start", %{})
   end
 
   test "context with bound role overrides RoleStore" do
@@ -116,9 +116,9 @@ defmodule Flezha.AuthZTest do
     # path the CLI handshake will use after binding the verified
     # token.
     :ok = RoleStore.bind("alice", "_system", :viewer)
-    ctx = %{source: :cli, principal: "alice", role: :operator, namespace: "_system"}
+    ctx = %{source: :cli, principal: "alice", role: :ops, namespace: "_system"}
 
-    assert :ok = AuthZ.authorize(ctx, :"operative.start", Scope.build("_system"))
+    assert :ok = AuthZ.authorize(ctx, :"operator.start", Scope.build("_system"))
   end
 
   test "a stamped set grants when any role in it grants" do
@@ -129,14 +129,14 @@ defmodule Flezha.AuthZTest do
       roles: [:spawner, :stopper]
     }
 
-    assert :ok = AuthZ.authorize(ctx, :"operative.start", Scope.build("team-orders"))
-    assert :ok = AuthZ.authorize(ctx, :"operative.stop", Scope.build("team-orders"))
+    assert :ok = AuthZ.authorize(ctx, :"operator.start", Scope.build("team-orders"))
+    assert :ok = AuthZ.authorize(ctx, :"operator.stop", Scope.build("team-orders"))
 
     assert {:error, {:forbidden, :role_insufficient}} =
              AuthZ.authorize(ctx, :"plugin.enable", Scope.build("team-orders"))
 
     assert {:error, {:forbidden, :namespace_mismatch}} =
-             AuthZ.authorize(ctx, :"operative.stop", Scope.build("team-payments"))
+             AuthZ.authorize(ctx, :"operator.stop", Scope.build("team-payments"))
   end
 
   test "a stored set grants when any role in it grants" do
@@ -144,21 +144,21 @@ defmodule Flezha.AuthZTest do
     :ok = RoleStore.bind("carol", "team-orders", :stopper)
     ctx = %{source: :cli, principal: "carol"}
 
-    assert :ok = AuthZ.authorize(ctx, :"operative.start", Scope.build("team-orders"))
-    assert :ok = AuthZ.authorize(ctx, :"operative.stop", Scope.build("team-orders"))
+    assert :ok = AuthZ.authorize(ctx, :"operator.start", Scope.build("team-orders"))
+    assert :ok = AuthZ.authorize(ctx, :"operator.stop", Scope.build("team-orders"))
 
     assert {:error, {:forbidden, :role_insufficient}} =
              AuthZ.authorize(ctx, :"plugin.enable", Scope.build("team-orders"))
   end
 
   test "a credential's role is the whole of the caller's authority" do
-    # `alice` is an operator in the store and presents a viewer token: the
+    # `alice` holds `ops` in the store and presents a viewer token: the
     # token's role alone is judged, so the stop is refused.
-    :ok = RoleStore.bind("alice", "team-orders", :operator)
+    :ok = RoleStore.bind("alice", "team-orders", :ops)
     ctx = %{source: :cli, principal: "alice", role: :viewer, namespace: "team-orders"}
 
     assert {:error, {:forbidden, :role_insufficient}} =
-             AuthZ.authorize(ctx, :"operative.stop", Scope.build("team-orders"))
+             AuthZ.authorize(ctx, :"operator.stop", Scope.build("team-orders"))
   end
 
   test "held_roles/1 answers what each kind of caller is judged with" do
@@ -189,7 +189,7 @@ defmodule Flezha.AuthZTest do
     assert {:error, {:forbidden, :bootstrap_pending}} =
              AuthZ.authorize(
                %{source: :cli, principal: nil},
-               :"operative.start",
+               :"operator.start",
                Scope.build("anything")
              )
 
@@ -203,7 +203,7 @@ defmodule Flezha.AuthZTest do
       assert :ok =
                AuthZ.authorize(
                  %{source: :cli, principal: nil},
-                 :"operative.start",
+                 :"operator.start",
                  Scope.build("anything")
                )
     after

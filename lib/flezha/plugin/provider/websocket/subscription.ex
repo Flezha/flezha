@@ -28,7 +28,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
   # however late, can never be mistaken for a pending delta's.
   @reassert_req_id 0
 
-  # The source is a small document on an operator-controlled endpoint; both
+  # The source is a small document on a user-controlled endpoint; both
   # bounds are deliberately fixed rather than tunable, so a subscription source
   # cannot be configured into a slow-loris or an unbounded allocation.
   @max_body_bytes 1_048_576
@@ -164,7 +164,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
     end
   end
 
-  # The one bound that is not a declared row: its floor is an operator-settable
+  # The one bound that is not a declared row: its floor is a user-settable
   # duration, read here rather than frozen into the declaration at compile time.
   defp interval(value) do
     minimum = Durations.get(:ws_subscription_min_interval_ms)
@@ -500,7 +500,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
   end
 
   # The applied set is written to the plugin cspec — the same record the enable
-  # lives in — so a plugin restart, an operative handover and a controller
+  # lives in — so a plugin restart, an operator handover and a controller
   # restart all resume with what the socket actually holds. Written after the
   # commit, so a crash between send and acknowledgement degrades to a re-send
   # rather than to a subscription nobody remembers.

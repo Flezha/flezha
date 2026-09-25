@@ -14,7 +14,7 @@
 #
 # Build (from the repository root, after `rake native gem` in `sdk/ruby`):
 #   docker build -f docker/prod/Dockerfile.ruby-runner -t flezha-ruby-runner .
-# `APP_DIR` is the directory holding your operative classes and the entry point
+# `APP_DIR` is the directory holding your operator classes and the entry point
 # that registers them; it defaults to this repository's own test app, so the
 # image is buildable and runnable straight from a checkout.
 # Run (one runner per process; process count is the orchestrator's decision):
@@ -59,7 +59,7 @@ ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2
 
 WORKDIR /app
 
-# The operative classes and the entry point that registers them.
+# The operator classes and the entry point that registers them.
 ARG APP_DIR=sdk/ruby/test_app
 COPY ${APP_DIR}/ /app/
 

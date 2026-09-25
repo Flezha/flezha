@@ -63,7 +63,7 @@ fn open_poll<S: mio::event::Source + ?Sized>(
 
 /// Hand a bound wire to the one loop, or say why it could not bind. A caller
 /// that never answered `ready_tx` is how the NIF learns of the failure; this is
-/// the operator's copy of it.
+/// the user's copy of it.
 pub(crate) fn drive<T: Transport>(
     wire: io::Result<T>,
     stats: Arc<DriverStats>,

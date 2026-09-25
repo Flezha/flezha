@@ -384,13 +384,13 @@ fn start(namespace: String) -> Result<(), Error> {
 /// Start the declared class as a local run: no controller, no socket. The
 /// alternative to [`start`], never an addition. The host keeps driving its own
 /// poll loop, which is what runs the tasklets.
-fn local_start(factory_id: String, operative_id: String) -> Result<(), Error> {
+fn local_start(factory_id: String, operator_id: String) -> Result<(), Error> {
     let ruby = ruby();
     let ctx = context(&ruby)?;
     let refused = |r| raise(&ruby, r);
     let factory = veneer::c_string("factory id", &factory_id).map_err(refused)?;
-    let operative = veneer::c_string("operative id", &operative_id).map_err(refused)?;
-    veneer::local_start(ctx, &factory, &operative).map_err(refused)
+    let operator = veneer::c_string("operator id", &operator_id).map_err(refused)?;
+    veneer::local_start(ctx, &factory, &operator).map_err(refused)
 }
 
 /// Queue the declared sink `channel` for [`local_next_output`]. A channel the

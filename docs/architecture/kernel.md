@@ -2,8 +2,8 @@
 
 The kernel is the substrate both profiles share: how a state change becomes durable, how an
 output gets an identity, how back-pressure is applied, who is allowed to write, and how the
-system knows work is flowing. Everything here is profile-agnostic — a stream operative and
-a workflow operative persist a cell through exactly the same machinery.
+system knows work is flowing. Everything here is profile-agnostic — an unbounded operator and
+a bounded operator persist a cell through exactly the same machinery.
 
 - [The write path](#the-write-path)
 - [The WAL record](#the-wal-record)
@@ -75,7 +75,7 @@ never heard of the tier — the default costs nothing.
 
 ## The WAL record
 
-Every durable file in Flezha — a cell WAL, the input log, the workflow task journal — is the
+Every durable file in Flezha — a cell WAL, the input log, the bounded operator task journal — is the
 same framed, CRC-protected, append-only log.
 
 ```
@@ -98,7 +98,7 @@ A torn tail — a partial record from a crash mid-write — is detected by the C
 scan at open and truncated. `RecordFrame.fold_records/3` is the one place that walk lives; every
 reader (cell WAL, input log, task journal, retention rewriter, time-travel) goes through it.
 
-The workflow task journal reuses byte 0–3 of the header for its **epoch**, which is safe because
+The bounded operator task journal reuses byte 0–3 of the header for its **epoch**, which is safe because
 byte 9 is the format-id slot and the journal never writes a cell format id there. The input
 log writes an append timestamp into bytes 0–7 and deliberately forces byte 9 to zero, so an
 input record can never be mistaken for an effect record.
@@ -185,7 +185,7 @@ leading-run cursor advance, and the dropping of a report for an entry a resettle
 are all exactly as they are for single-record reports — a batch is the same facts delivered
 at once, which is what takes the per-output message count off the hot path.
 
-A checkpoint-ack operative may go one step further and batch the *records* too:
+A checkpoint-ack operator may go one step further and batch the *records* too:
 `outputs_at_checkpoint(max_delay_ms)` holds an interval's outputs with its changes so the
 whole interval is one WAL append, which the controller flushes as one dispatch batch after
 that record's fsync. That trades output latency for the append — bounded by `max_delay_ms`,
@@ -226,10 +226,10 @@ Compaction fires on whichever comes first:
 | WAL size | `:default_compact_after_bytes`, per-tasklet override | **8 MiB** |
 | WAL age (oldest unsnapshotted record) | `:compact_after_age_ms` | **300 000 ms** (`0` disables) |
 
-The age floor exists for low-throughput operatives, which would otherwise never reach the byte
+The age floor exists for low-throughput operators, which would otherwise never reach the byte
 trigger and would restore by folding a very long log. It is also a **correctness** constraint
 for late-input correction: an age floor shorter than the correction window destroys the very
-history a rewind needs a baseline inside, so a correcting operative refuses to start when the
+history a rewind needs a baseline inside, so a correcting operator refuses to start when the
 two are misconfigured.
 
 > **Restore ships the snapshot plus the whole tail.** There is no "send me only the range I am
@@ -247,7 +247,7 @@ sequenceDiagram
     participant EX as ⚙️ Runner (alive, state @ seq 5000)
     participant CTRL as 🧠 Controller (fresh — no local WAL)
 
-    Note over CTRL: an operative was placed here, but this node holds no WAL for it
+    Note over CTRL: an operator was placed here, but this node holds no WAL for it
     EX->>CTRL: cell_state_change (seq 5001)
     Note over CTRL: last_persisted_seq == -1 and the seq is not 0 —<br/>a cold takeover, not a fresh cell
 
@@ -274,7 +274,7 @@ Deeper detail, including the WAL record format and every configuration knob:
 ## The minimum watermark and retention
 
 Under the tier, each cell reports the input-log offset it has durably consumed. The
-**minimum** across an operative's cells is the only offset that is safely done everywhere.
+**minimum** across an operator's cells is the only offset that is safely done everywhere.
 
 ```mermaid
 flowchart TB
@@ -312,7 +312,7 @@ accumulating. The mechanism that *unfreezes* it is the dead-letter queue: after 
 the cell parks the poison payload durably and advances past it.
 
 The truncation floor is `min(watermark, the newest offset older than the hold window)`. The
-hold window (`:input_log_hold_window_ms`, default `0`) is what a correcting operative needs — it
+hold window (`:input_log_hold_window_ms`, default `0`) is what a correcting operator needs — it
 is the guarantee that the inputs a correction wants to replay are still on disk.
 
 The cut costs the retained tail, not the log: the input log keeps a sparse offset→position index
@@ -323,7 +323,7 @@ effectively-once ingest path, and housekeeping must not hold it, nor die because
 ## The remote durability tier
 
 Everything above is node-local, and by default that is the whole story: a controller that dies
-**with its disk** takes its operatives' state — and the registry record of their existence —
+**with its disk** takes its operators' state — and the registry record of their existence —
 with it. The remote durability tier is the answer, and a prod boot must choose one
 (`FLEZHA_DURABILITY_BACKEND`; unset refuses to start, explicit `none` is local-only and
 byte-identical to a build without the tier). It is **not** a pluggable WAL: the local
@@ -356,7 +356,7 @@ flowchart LR
 
 - **Ship triggers are the existing boundaries.** Compaction already produces the snapshot
   artifact; a checkpoint close already defines the stream interval; `IterCommit`/`TaskCommit`
-  already define the workflow commit points. One backstop timer (`ship_interval_ms`, default
+  already define the bounded operator commit points. One backstop timer (`ship_interval_ms`, default
   30 s) covers cells that hit none of them. No barrier alignment exists or is needed — the
   effect record already binds state and offset per cell, so every cell's shipped cut is
   independently consistent.
@@ -366,8 +366,8 @@ flowchart LR
   existing restore-and-replay path — there is no second restore implementation.
 - **The epoch fence extends outward.** The manifest's conditional write makes the remote store
   an external arbiter: a superseded controller fails its `put_if` and must stop shipping, so two
-  controllers can never both own an operative's remote lineage.
-- **Per-class sync mode.** A workflow class declaring `durability: :sync_remote` has its barrier
+  controllers can never both own an operator's remote lineage.
+- **Per-class sync mode.** A bounded class declaring `durability: :sync_remote` has its barrier
   acks gated on the remote ship — RPO 0, one LAN round-trip per barrier at Hz rates. Stream
   classes are refused sync: at ~100K changes/s it would be a lie. Async shipping never blocks
   the hot path; a stalled shipper raises the alarm-grade `[:flezha, :state, :rpo_exceeded]`
@@ -377,7 +377,7 @@ flowchart LR
 The backend contract is four blob operations — `put / get / list / put_if` — so backends store
 bytes and never re-implement WAL semantics. Boot ordering matters exactly once: on a fresh node
 the registry cspec is hydrated **before** the hub opens `registry.dets`, so the orphan reconcile
-can see the restored operatives; cell state then hydrates through the ordinary bind. Full
+can see the restored operators; cell state then hydrates through the ordinary bind. Full
 detail: [`remote_durability_tier.md`](../operations/remote_durability_tier.md).
 
 ---
@@ -420,7 +420,7 @@ batch and advances a per-cell progress row in **one transaction**, both guarded 
 seq)` monotonicity, so a re-drive or a stale epoch is a byte-exact no-op. The **Kafka** producer
 uses `flz.key` as the message key and carries the durable identity as a dedup header.
 
-The tier is opt-in per operative (`effectively_once()` on the channel builder), and it forces
+The tier is opt-in per operator (`effectively_once()` on the channel builder), and it forces
 every plugin-bound channel to be `.keyed()` — an unkeyed output has nothing for a sink to dedup
 on, so declaring the tier over one is refused at build time.
 
@@ -511,7 +511,7 @@ The distinction is a real honesty boundary, not a formality:
   Together they are a sufficient handle for exact append-only dedup.
 
 `flz.` is a reserved metadata namespace. A user emit carrying a `flz.`-prefixed key is rejected
-at emit time, so stamps cannot be forged or clobbered. A durable workflow's Cells write the same
+at emit time, so stamps cannot be forged or clobbered. A durable bounded operator's Cells write the same
 effect record and mint through the same controller-side function, so their outputs carry the
 same `flz.seq = <record seq>.<emit ordinal>` and `flz.epoch`.
 
@@ -529,7 +529,7 @@ flowchart TB
     end
     subgraph BUMP["BUMP the epoch — the new output passes dedup and overwrites"]
         B1["late-input correction"]:::sink
-        B2["flz operative replay"]:::sink
+        B2["flz operator replay"]:::sink
     end
     KEEP --> RULE["durable identity = (cell, seq, epoch)"]:::store
     BUMP --> RULE
@@ -545,7 +545,7 @@ what the world sees, so it reproduces the same identity and the sink swallows it
 correction *must* change what the world sees, so it raises the epoch and the sink lets it
 through.
 
-A workflow's `flz operative rewind` moves no output epoch. It bumps only the journal epoch,
+A bounded operator's `flz operator rewind` moves no output epoch. It bumps only the journal epoch,
 which keys the re-run's barriers; the re-run's output is a newer record of the same Cell, so its
 higher `flz.seq` passes the sink's guard under the unchanged epoch.
 
@@ -594,7 +594,7 @@ slow or dead runner we never wait.*
 receiver cannot keep up. Runner→controller (③) is exactly the right place for that: if the
 durable side cannot fsync fast enough, the runner *should* slow down. But
 controller→runner (②) is the opposite: parking there would block the **controller**, which
-serves thousands of other operatives, on one wedged runner. So that direction drops its newest
+serves thousands of other operators, on one wedged runner. So that direction drops its newest
 frame past 8 MiB and counts it. It is protection against a dead partner, not against load.
 
 A dropped input frame is **not** loss under the tier: it is already durable in the input log at
@@ -636,7 +636,7 @@ not got back. (Bytes that never enter the buffer at all — a deduplicated re-se
 a refused stale write — are released immediately instead, so every byte is accounted for exactly
 once.)
 
-The park is a workflow re-check loop, not an indefinite block, so a lost grant degrades to a
+The park is a bounded operator re-check loop, not an indefinite block, so a lost grant degrades to a
 retry rather than a freeze. A sender parked for more than 5 s logs once. `credit_parked` rides
 the runner's data heartbeat, so "fed but parked" is distinguishable from "wedged" from the
 outside.
@@ -648,7 +648,7 @@ protocol.
 
 ### The source→controller credit loop
 
-The input log holds its own credit ledger, for a tier stream and a durable workflow alike. An
+The input log holds its own credit ledger, for a tier unbounded operator and a durable bounded operator alike. An
 `append` debits it. When the ledger is exhausted the append is **parked** — the log defers its
 reply — and the minimum-watermark advance is what drains the ledger and unparks the waiters in
 arrival order.
@@ -660,7 +660,7 @@ park lands on the *source's* call and nothing else: the host keeps running its `
 chains, control calls and timers while credit is exhausted, and it is those chains' sink
 confirmations that advance the watermark and mint the credit. A host parked on its own log
 could never mint the credit it waits for — a sink outage longer than `window / ingest rate`
-would otherwise wedge an operative for good.
+would otherwise wedge an operator for good.
 
 This only back-pressures the actual source if the source adapter is *waiting* on that call, so
 under the tier the websocket provider switches from a fire-and-forget cast to a blocking call.
@@ -671,10 +671,10 @@ it stopped.
 
 ## Ownership and fencing
 
-An operative is owned by the stable identity of the runner it is bound to, and exactly one session
-of that identity may write its cells' WALs. The owner is recorded in the operative's
-`ClassRegistry` row, which its Overwatch writes before `AddOperative`, and every door a frame
-naming the operative comes through reads it. A reconnect under the same identity moves no
+An operator is owned by the stable identity of the runner it is bound to, and exactly one session
+of that identity may write its cells' WALs. The owner is recorded in the operator's
+`ClassRegistry` row, which its Overwatch writes before `AddOperator`, and every door a frame
+naming the operator comes through reads it. A reconnect under the same identity moves no
 ownership, only the session, and that takeover is ordered: **unbind the old session before binding
 the new one**, so an in-flight frame from the old session dies at the binding rather than in the
 writer.
@@ -700,13 +700,13 @@ sequenceDiagram
 ```
 
 Above the fences sits the **identity check**. `StreamChannel.Records.admit/3` refuses an output,
-a cell write, a `correction_request` or a control frame (`WorkflowCompleted`, `IterPark`,
-`RunnerShutdownNotification`, `TaskCommit`, `IterCommit`) when the operative's row names the
+a cell write, a `correction_request` or a control frame (`BoundedCompleted`, `IterPark`,
+`RunnerShutdownNotification`, `TaskCommit`, `IterCommit`) when the operator's row names the
 sending session's identity neither as owner nor as the pending target of a running migrate. A
 refusal acts on nothing: it is counted on the channel's `foreign_frame_refused` liveness slot,
-reported once per session and operative on `[:flezha, :runner, :foreign_frame_refused]`, and
-answered with `RemOperative`, so a copy kept by a runner that was evicted while still alive is told
-to stop the first time it speaks. An operative with no row is judged by the fences alone.
+reported once per session and operator on `[:flezha, :runner, :foreign_frame_refused]`, and
+answered with `RemOperator`, so a copy kept by a runner that was evicted while still alive is told
+to stop the first time it speaks. An operator with no row is judged by the fences alone.
 
 The identity check cannot tell a superseded session of the **same** identity from its successor.
 That is what the **two** fence layers below it are for, and the second is a per-write check:
@@ -737,10 +737,10 @@ every 5 s, and immediately on a declared event (an output stall, a runner connec
 ```mermaid
 flowchart LR
     I["<b>Intent</b><br/>what SHOULD run<br/>(the ProcessHub registry)"]:::ctrl
-    P["<b>Probe</b><br/>what DOES run<br/>(live runners, operative state,<br/>plugin health) — pure observer"]:::ctrl
+    P["<b>Probe</b><br/>what DOES run<br/>(live runners, operator state,<br/>plugin health) — pure observer"]:::ctrl
     D["<b>Diff</b><br/>pure comparison →<br/>unbound · misbound ·<br/>missing/extra/unhealthy plugins"]:::ctrl
     PL["<b>Planner</b><br/>ordered, backoff-filtered ops<br/>(≤ 20 per tick)"]:::ctrl
-    H["<b>Heal</b><br/>rebind_operative · resync_runner<br/>start_plugin · stop_plugin · restart_plugin<br/>evict_runner"]:::ctrl
+    H["<b>Heal</b><br/>rebind_operator · resync_runner<br/>start_plugin · stop_plugin · restart_plugin<br/>evict_runner"]:::ctrl
     S["<b>Snapshot</b><br/>the published health summary —<br/>read by /healthz and the CLI"]:::store
 
     I --> D
@@ -753,7 +753,7 @@ flowchart LR
     classDef store fill:#e5e7eb,stroke:#374151,color:#111
 ```
 
-Three guards keep it from over-reacting: an operative must be misbound for **two consecutive
+Three guards keep it from over-reacting: an operator must be misbound for **two consecutive
 ticks** before a rebind is issued; a failed read reports `:unknown` rather than "gone", and the
 diff skips it; and every `{primitive, target}` pair carries an exponential cooldown of
 **2 s → 5 s → 10 s → 15 s → 20 s → 30 s → 45 s → 60 s → 90 s → 120 s → 180 s → 300 s**, held at the top. The whole tick body is wrapped — an uncaught error is a skipped
@@ -775,7 +775,7 @@ flowchart TB
     ADV -->|"yes"| OK["PRODUCING → healthy"]:::prot
     ADV -->|"no"| STUCK["STUCK (wal_frozen) → degraded<br/>fed but not persisting"]:::risk
 
-    START --> INTENT{"INTENT MISMATCH?<br/>durable state on disk for an operative<br/>that is absent from the live intended set"}
+    START --> INTENT{"INTENT MISMATCH?<br/>durable state on disk for an operator<br/>that is absent from the live intended set"}
     INTENT -->|"yes"| MM["degraded, reason intent_mismatch<br/>200, not 503 — a pod restart cannot heal a wiped registry"]:::risk
     INTENT -->|"no"| OK2["ok"]:::prot
 
@@ -800,8 +800,8 @@ froze — the deepest wins, because one root cause freezes the shallower markers
 
 Each carries its own *is it being fed?* precondition — the input log must have *grown*, the
 output records must have *accumulated* — so an idle cell can never read as stuck. The
-consumed offset is read **per cell**, not as the operative's minimum: the minimum across
-cells *is* that watermark, so any frozen cell still freezes the operative's verdict, and
+consumed offset is read **per cell**, not as the operator's minimum: the minimum across
+cells *is* that watermark, so any frozen cell still freezes the operator's verdict, and
 the verdict names the cell actually responsible.
 
 The `State.Watchdog` sweeps every 10 s and runs four checks, of which the first two are the
@@ -816,15 +816,15 @@ detection off:
 | Compaction trigger | the WAL is past its size or age floor | `CompactCell` |
 | Compaction timeout | a requested snapshot has not arrived in 30 s | resync |
 
-The input-silence sweep is skipped for a checkpoint-ack operative, whose silence between
-checkpoints **is** its steady state, and for a workflow operative, which legitimately goes quiet
+The input-silence sweep is skipped for a checkpoint-ack operator, whose silence between
+checkpoints **is** its steady state, and for a bounded operator, which legitimately goes quiet
 between iterations. The convergence judge holds the same rule for the same observation: a flat
 marker with no input-side advance is idle, and idle is healthy.
 
 ### Stall localization
 
 When a stream does go silent, a separate classifier answers *which layer wedged*. It compares
-two consecutive snapshots of driver, channel, and operative counters and returns the **deepest**
+two consecutive snapshots of driver, channel, and operator counters and returns the **deepest**
 wedged layer, because a wedge downstream explains every symptom above it — then the pipeline
 heals that layer and the next tick surfaces whatever remains.
 
@@ -836,7 +836,7 @@ flowchart TB
     V4["④ runner_not_consuming<br/>the controller sends fine, nothing comes back"]:::risk
     V5["⑤ runner_pool_wedged"]:::risk
     V6["⑥ channel_not_sending<br/>the channel is fed but never calls send"]:::risk
-    V7["⑦ operative_not_forwarding<br/>the operative is fed but never forwards"]:::risk
+    V7["⑦ operator_not_forwarding<br/>the operator is fed but never forwards"]:::risk
     OK["no stall — :ok"]:::prot
 
     V1 -->|"not it"| V2 -->|"not it"| V3 -->|"not it"| V4 -->|"not it"| V5 -->|"not it"| V6 -->|"not it"| V7 -->|"not it"| OK
@@ -848,7 +848,7 @@ flowchart TB
 Each verdict carries an *is it being fed?* precondition of its own, so a quiet system does not
 read as a wedged one. It emits `[:flezha, :data_plane, :stall_localized]` on a **change** of
 verdict, and every verdict has exactly one consumer: a heal primitive where a BEAM-level remedy
-exists (wedged runner → evict, wedged connection → resync, wedged operative → rebind), and a
+exists (wedged runner → evict, wedged connection → resync, wedged operator → rebind), and a
 `/healthz` 503 where only a process restart does. Signals, the scope table, the `/proc` fallback,
 and the counter set:
 [`transport_liveness.md`](../internals/transport_liveness.md).
@@ -857,15 +857,15 @@ and the counter set:
 
 | Status | HTTP | Condition |
 | --- | --- | --- |
-| `healthy` | 200 | every hub is normal, and every bound operative is producing |
-| `recovering` | 200 | a hub is recovering, the registry is restoring, operatives are rebinding within the grace, or a tick is late |
-| `degraded` | 200 | operatives are output-stalled, stuck or plugin-unhealthy, an intent mismatch was detected, a data-plane wedge the pipeline owns was localized, or a periodic sensor stopped completing passes |
+| `healthy` | 200 | every hub is normal, and every bound operator is producing |
+| `recovering` | 200 | a hub is recovering, the registry is restoring, operators are rebinding within the grace, or a tick is late |
+| `degraded` | 200 | operators are output-stalled, stuck or plugin-unhealthy, an intent mismatch was detected, a data-plane wedge the pipeline owns was localized, or a periodic sensor stopped completing passes |
 | `unhealthy` | **503** | **only** when the convergence loop itself has stopped ticking, or the controller's own NIF driver thread is wedged and has stayed wedged |
 
 The endpoint holds no state — it reads the published convergence snapshot and nothing else.
 
 **503 is reserved for what a restart genuinely fixes.** A kubelet restart cannot re-bind an
-runner-orphaned operative, cannot repair a wiped registry, and cannot un-stall a data plane
+runner-orphaned operator, cannot repair a wiped registry, and cannot un-stall a data plane
 that is legitimately stopped — restarting the pod for any of those destroys a working controller
 to fix nothing. Two conditions qualify, and the test is the same for both: *nothing this
 controller can do reaches it*. A wedged convergence loop is one. A wedged **controller-fabric**
@@ -892,7 +892,7 @@ the predicate that decides it; adding a precondition is adding a row.
 | --- | --- |
 | `boot_sequence_complete` | the supervision tree has started and the boot sequence has finished |
 | `hubs_recovered` | no namespace hub is in ProcessHub's recovery state machine |
-| `durable_registry_loaded` | the durable registry holds no operative this controller has not reloaded |
+| `durable_registry_loaded` | the durable registry holds no operator this controller has not reloaded |
 
 `200` only on `:ready`; otherwise `503` with a JSON body naming the verdict
 (`booting` / `recovering`), the unmet row keys and the state of every row.

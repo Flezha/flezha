@@ -34,7 +34,7 @@ use crate::veneer::{self, shape, CtxPtr, Polled, Refusal};
 use crate::{FLZ_POLL_SHUTTING_DOWN, FLZ_STARVATION_OBSERVED};
 
 /// Poll timeout per turn. Bounds how fast a shutdown request is observed —
-/// documented as that bound, because it is what an operator waits out.
+/// documented as that bound, because it is what a user waits out.
 const POLL_TIMEOUT_MS: u64 = 250;
 
 /// The supervisor's park length. Only bounds how often it re-arms; the core
@@ -203,7 +203,7 @@ fn pick_loop(activation: &schema::Activation, loops: usize) -> usize {
     let target = &activation.target;
     let mut hash: u32 = 0x811c_9dc5;
     for byte in target
-        .operative
+        .operator
         .as_bytes()
         .iter()
         .chain(target.tasklet.to_be_bytes().iter())
@@ -331,7 +331,7 @@ fn start_fetcher() -> bool {
 ///
 /// This covers what the core can see — work queued with no thread inside
 /// `poll`, which for this host means a direct activation (a restore fold, a
-/// snapshot request, a workflow step) arriving while every fetcher is between
+/// snapshot request, a bounded operator step) arriving while every fetcher is between
 /// polls. It is not a substitute for the pool's growth rule: the core cannot
 /// see the host's completion queue, and this thread cannot see the core's.
 fn supervise_loop() {
@@ -595,25 +595,20 @@ pub(crate) fn set_log_callback(callback: Option<Function<JsLogLine, ()>>) -> Res
 mod tests {
     use super::*;
 
-    fn activation(operative: &str, tasklet: u32, key: Option<&str>) -> schema::Activation {
-        activation_of(
-            schema::ActivationKind::Work(vec![]),
-            operative,
-            tasklet,
-            key,
-        )
+    fn activation(operator: &str, tasklet: u32, key: Option<&str>) -> schema::Activation {
+        activation_of(schema::ActivationKind::Work(vec![]), operator, tasklet, key)
     }
 
     fn activation_of(
         kind: schema::ActivationKind,
-        operative: &str,
+        operator: &str,
         tasklet: u32,
         key: Option<&str>,
     ) -> schema::Activation {
         schema::Activation {
             token: 1,
             target: schema::CellRef {
-                operative: operative.to_string(),
+                operator: operator.to_string(),
                 tasklet,
                 cell_key: key.map(str::to_string),
             },

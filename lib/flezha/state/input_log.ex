@@ -2,8 +2,8 @@ defmodule Flezha.State.InputLog do
   @moduledoc """
   Per-instance offset-addressable journal of durable input.
 
-  An instance has durable input when it is a stream on the effectively-once
-  tier or a durable workflow; both journal through this one log. One GenServer
+  An instance has durable input when it is an unbounded operator on the effectively-once
+  tier or a durable bounded operator; both journal through this one log. One GenServer
   per instance journals every inbound payload (post-`:on_input`) at
   `<state_root>/<namespace>/<state key>/input.log` before the Overwatch
   forwards it, at strictly monotonic offsets, and answers once the record is
@@ -13,8 +13,8 @@ defmodule Flezha.State.InputLog do
   it unchanged. A payload whose `flz.msg_id` the log still retains is absorbed
   rather than journaled twice.
 
-  Retention is watermark-driven: each reporter's durable consumed-offset (a
-  stream Cell's effect record, a workflow's iteration commit under its
+  Retention is watermark-driven: each reporter's durable consumed-offset (an
+  unbounded Cell's effect record, a bounded operator's iteration commit under its
   journal's identity) is reported into a public ETS table
   (`record_consumed/3`) and the sweep truncates strictly below
   `min(watermark, now - hold_window)`. A reporter that consumed nothing holds
@@ -28,7 +28,7 @@ defmodule Flezha.State.InputLog do
   require Logger
 
   alias Flezha.Config.Durations
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.Process.Cspec
   alias Flezha.SDK.RecordFrame, as: Frame
   alias Flezha.SDK.SafeCall
@@ -69,10 +69,10 @@ defmodule Flezha.State.InputLog do
   @msg_id_key "flz.msg_id"
 
   # Source-ingestion credit (`credit-grant-flow-control` §source): appends
-  # debit the per-Operative ledger; min-watermark advances drain it (batched
+  # debit the per-Operator ledger; min-watermark advances drain it (batched
   # by the low watermark); at zero credit the append parks via a deferred
   # reply, which the Overwatch holds open on the source's call
-  # (`Flezha.Operative.Ingest`) — the websocket stops reading its socket until
+  # (`Flezha.Operator.Ingest`) — the websocket stops reading its socket until
   # credit mints, while the host keeps running the chains that mint it.
   # `consumed` is the log's own copy of its reporters' durable consumed-offsets:
   # the min-watermark that drains source credit is taken from it, so an advance
@@ -81,7 +81,7 @@ defmodule Flezha.State.InputLog do
   # within a few records and copy only the tail — the work is the tail, never
   # the log.
   defstruct [
-    :operative_class,
+    :operator_class,
     :path,
     :file_handle,
     :next_offset,
@@ -114,16 +114,16 @@ defmodule Flezha.State.InputLog do
 
   # ---------- Public API ----------
 
-  def child_spec(operative_class) do
+  def child_spec(operator_class) do
     Cspec.build(
-      {__MODULE__, operative_class},
-      {__MODULE__, :start_link, [operative_class]},
+      {__MODULE__, operator_class},
+      {__MODULE__, :start_link, [operator_class]},
       :worker_transient
     )
   end
 
-  def start_link(operative_class) do
-    GenServer.start_link(__MODULE__, operative_class, name: via(operative_class))
+  def start_link(operator_class) do
+    GenServer.start_link(__MODULE__, operator_class, name: via(operator_class))
   end
 
   @doc """
@@ -141,11 +141,11 @@ defmodule Flezha.State.InputLog do
   """
   @spec append(binary(), term(), map()) ::
           {:ok, non_neg_integer()} | {:duplicate, non_neg_integer()} | {:error, term()}
-  def append(operative_class, message, metadata),
-    do: do_append(operative_class, message, metadata, 2)
+  def append(operator_class, message, metadata),
+    do: do_append(operator_class, message, metadata, 2)
 
-  defp do_append(operative_class, message, metadata, attempts) do
-    reqids = append_async(operative_class, message, metadata, :gen_server.reqids_new(), :append)
+  defp do_append(operator_class, message, metadata, attempts) do
+    reqids = append_async(operator_class, message, metadata, :gen_server.reqids_new(), :append)
 
     case :gen_server.wait_response(reqids, :infinity, true) do
       {{:reply, reply}, :append, _} ->
@@ -153,10 +153,10 @@ defmodule Flezha.State.InputLog do
 
       # A restarting log's registry entry can briefly point at the dead pid.
       {{:error, {:noproc, _}}, :append, _} when attempts > 1 ->
-        do_append(operative_class, message, metadata, attempts - 1)
+        do_append(operator_class, message, metadata, attempts - 1)
 
       {{:error, {reason, log}}, :append, _} ->
-        exit({reason, {__MODULE__, :append, [operative_class, log]}})
+        exit({reason, {__MODULE__, :append, [operator_class, log]}})
     end
   end
 
@@ -171,15 +171,15 @@ defmodule Flezha.State.InputLog do
   """
   @spec append_async(binary(), term(), map(), :gen_server.request_id_collection(), term()) ::
           :gen_server.request_id_collection()
-  def append_async(operative_class, message, metadata, reqids, label) do
-    {:ok, pid} = Supervisor.find_or_start({operative_class, :input_log})
+  def append_async(operator_class, message, metadata, reqids, label) do
+    {:ok, pid} = Supervisor.find_or_start({operator_class, :input_log})
     request = {:append, encode_body(message, metadata), msg_id(metadata)}
     :gen_server.send_request(pid, request, label, reqids)
   end
 
   # Encode in the caller rather than in the server: every ingest process pays
   # its own serialization in parallel instead of queueing behind the one
-  # journal process that every operative of this class shares.
+  # journal process that every operator of this class shares.
   defp encode_body(message, metadata), do: :erlang.term_to_binary({message, metadata})
 
   # The sender's message id, `nil` for none: two identical payloads without an
@@ -193,8 +193,8 @@ defmodule Flezha.State.InputLog do
 
   @doc "Highest journaled offset, `-1` when the log is empty or absent."
   @spec last_offset(binary()) :: integer() | {:error, term()}
-  def last_offset(operative_class) do
-    {:ok, pid} = Supervisor.find_or_start({operative_class, :input_log})
+  def last_offset(operator_class) do
+    {:ok, pid} = Supervisor.find_or_start({operator_class, :input_log})
     call(pid, :last_offset)
   end
 
@@ -210,9 +210,9 @@ defmodule Flezha.State.InputLog do
   a log for one that never had any.
   """
   @spec tail(binary()) :: {:ok, integer(), integer()} | {:error, term()}
-  def tail(operative_class) do
-    case retained_last_offset(operative_class) do
-      last when is_integer(last) -> {:ok, watermark(operative_class) || -1, last}
+  def tail(operator_class) do
+    case retained_last_offset(operator_class) do
+      last when is_integer(last) -> {:ok, watermark(operator_class) || -1, last}
       {:error, _refusal} = refused -> refused
     end
   end
@@ -223,22 +223,22 @@ defmodule Flezha.State.InputLog do
   with no log.
   """
   @spec undelivered(binary()) :: [{non_neg_integer(), term(), map()}] | {:error, term()}
-  def undelivered(operative_class) do
-    case tail(operative_class) do
-      {:ok, floor, last} when last > floor -> read_range(operative_class, floor + 1, last)
+  def undelivered(operator_class) do
+    case tail(operator_class) do
+      {:ok, floor, last} when last > floor -> read_range(operator_class, floor + 1, last)
       {:ok, _floor, _last} -> []
       {:error, _refusal} = refused -> refused
     end
   end
 
-  defp retained_last_offset(operative_class) do
-    case Supervisor.lookup({operative_class, :input_log}) do
+  defp retained_last_offset(operator_class) do
+    case Supervisor.lookup({operator_class, :input_log}) do
       {:ok, pid} ->
         call(pid, :last_offset)
 
       :error ->
-        if File.exists?(Paths.input_log_path(operative_class)),
-          do: last_offset(operative_class),
+        if File.exists?(Paths.input_log_path(operator_class)),
+          do: last_offset(operator_class),
           else: -1
     end
   end
@@ -250,17 +250,17 @@ defmodule Flezha.State.InputLog do
   """
   @spec read_range(binary(), non_neg_integer(), non_neg_integer()) ::
           [{non_neg_integer(), term(), map()}] | {:error, term()}
-  def read_range(operative_class, from, to) when from <= to do
-    {:ok, pid} = Supervisor.find_or_start({operative_class, :input_log})
+  def read_range(operator_class, from, to) when from <= to do
+    {:ok, pid} = Supervisor.find_or_start({operator_class, :input_log})
     call(pid, {:read_range, from, to})
   end
 
   # ---------- Min-watermark tracker (public ETS, rebuildable cache) ----------
 
   @doc """
-  Report a reporter's durable consumed-offset: a stream Cell's when an effect
+  Report a reporter's durable consumed-offset: an unbounded Cell's when an effect
   record carrying `consumed_offset` becomes durable (and on boot repopulation
-  from the WAL tail), a durable workflow's under `Paths.journal_id/1` when an
+  from the WAL tail), a durable bounded operator's under `Paths.journal_id/1` when an
   iteration commit or a park carrying one becomes durable (and at every bind,
   from the journal).
 
@@ -276,9 +276,9 @@ defmodule Flezha.State.InputLog do
   value they all report into sees both.
   """
   @spec record_consumed(binary(), tuple(), non_neg_integer()) :: :ok
-  def record_consumed(operative_class, cell_id, offset) do
+  def record_consumed(operator_class, cell_id, offset) do
     ensure_watermark_table()
-    stored = advance_stored_offset({operative_class, cell_id}, offset)
+    stored = advance_stored_offset({operator_class, cell_id}, offset)
 
     # A watermark advance may free source credit; the log server drains the
     # ledger and unparks waiting appends. Async — this runs on the WalWriter's
@@ -286,7 +286,7 @@ defmodule Flezha.State.InputLog do
     # which reporter arrived last would decide whether parked appends are
     # released; it carries the offset now STORED, so the log's own copy of the
     # value tracks the value rather than the request.
-    notify_consumed(operative_class, cell_id, stored)
+    notify_consumed(operator_class, cell_id, stored)
   end
 
   # The offset now stored for `key` after applying `offset` to it. Reporters are
@@ -320,8 +320,8 @@ defmodule Flezha.State.InputLog do
       else: advance_stored_offset(key, offset)
   end
 
-  defp notify_consumed(operative_class, cell_id, offset) do
-    case Supervisor.lookup({operative_class, :input_log}) do
+  defp notify_consumed(operator_class, cell_id, offset) do
+    case Supervisor.lookup({operator_class, :input_log}) do
       {:ok, pid} -> GenServer.cast(pid, {:consumed, cell_id, offset})
       :error -> :ok
     end
@@ -337,16 +337,16 @@ defmodule Flezha.State.InputLog do
   truncate the very inputs the correction is about to replay.
   """
   @spec rewind_consumed(binary(), tuple(), non_neg_integer() | -1) :: :ok
-  def rewind_consumed(operative_class, cell_id, offset) do
+  def rewind_consumed(operator_class, cell_id, offset) do
     ensure_watermark_table()
 
     if offset < 0 do
-      :ets.delete(@watermarks, {operative_class, cell_id})
+      :ets.delete(@watermarks, {operator_class, cell_id})
     else
-      :ets.insert(@watermarks, {{operative_class, cell_id}, offset})
+      :ets.insert(@watermarks, {{operator_class, cell_id}, offset})
     end
 
-    notify_consumed(operative_class, cell_id, offset)
+    notify_consumed(operator_class, cell_id, offset)
   end
 
   @doc """
@@ -355,17 +355,17 @@ defmodule Flezha.State.InputLog do
   cannot be judged against a window.
   """
   @spec offset_before_time(binary(), integer()) :: non_neg_integer() | nil | {:error, term()}
-  def offset_before_time(operative_class, ts_ms) do
-    {:ok, pid} = Supervisor.find_or_start({operative_class, :input_log})
+  def offset_before_time(operator_class, ts_ms) do
+    {:ok, pid} = Supervisor.find_or_start({operator_class, :input_log})
     call(pid, {:offset_before_time, ts_ms})
   end
 
   @doc "Drop a hard-deleted Cell's watermark entry so it stops holding truncation."
   @spec forget_cell(binary(), tuple()) :: :ok
-  def forget_cell(operative_class, cell_id) do
+  def forget_cell(operator_class, cell_id) do
     ensure_watermark_table()
-    :ets.delete(@watermarks, {operative_class, cell_id})
-    notify_consumed(operative_class, cell_id, -1)
+    :ets.delete(@watermarks, {operator_class, cell_id})
+    notify_consumed(operator_class, cell_id, -1)
   end
 
   @doc """
@@ -374,8 +374,8 @@ defmodule Flezha.State.InputLog do
   and nothing truncates).
   """
   @spec watermark(binary()) :: non_neg_integer() | nil
-  def watermark(operative_class) do
-    case cell_offsets(operative_class) do
+  def watermark(operator_class) do
+    case cell_offsets(operator_class) do
       [] -> nil
       offsets -> offsets |> Enum.map(&elem(&1, 1)) |> Enum.min()
     end
@@ -389,19 +389,19 @@ defmodule Flezha.State.InputLog do
   Lookup-only on purpose. `last_offset/1` goes through `find_or_start/1`, and
   polling THAT from the convergence tick would create an input log — a file, a
   process, and a permanently frozen watermark the retention sweep would then warn
-  about — for every operative that never asked for one.
+  about — for every operator that never asked for one.
   """
   @spec cursors(binary()) ::
           %{tail: integer(), consumed: %{tuple() => non_neg_integer()}} | nil
-  def cursors(operative_class) do
-    case Supervisor.lookup({operative_class, :input_log}) do
+  def cursors(operator_class) do
+    case Supervisor.lookup({operator_class, :input_log}) do
       {:ok, pid} ->
         # A refused log has no tail to report — the prefix that verified is not
         # the log's end — so it degrades to the same WAL-seq-only classification
-        # a tier-off operative gets, rather than reporting a cursor that lies.
+        # a tier-off operator gets, rather than reporting a cursor that lies.
         case call(pid, :last_offset) do
           tail when is_integer(tail) ->
-            %{tail: tail, consumed: Map.new(cell_offsets(operative_class))}
+            %{tail: tail, consumed: Map.new(cell_offsets(operator_class))}
 
           {:error, _refusal} ->
             nil
@@ -424,7 +424,7 @@ defmodule Flezha.State.InputLog do
   end
 
   @impl true
-  def init(operative_class) do
+  def init(operator_class) do
     Process.flag(:trap_exit, true)
 
     # Same deferred-IO pattern as WalWriter: register instantly, open on
@@ -432,11 +432,11 @@ defmodule Flezha.State.InputLog do
     window = source_window_bytes()
 
     state = %__MODULE__{
-      operative_class: operative_class,
-      path: Paths.input_log_path(operative_class),
+      operator_class: operator_class,
+      path: Paths.input_log_path(operator_class),
       file_handle: nil,
       next_offset: 0,
-      ledger: CreditLedger.new("source:" <> operative_class, window, max(div(window, 2), 1)),
+      ledger: CreditLedger.new("source:" <> operator_class, window, max(div(window, 2), 1)),
       offset_sizes: :queue.new(),
       waiters: :queue.new(),
       consumed: %{},
@@ -462,7 +462,7 @@ defmodule Flezha.State.InputLog do
     {:ok, size} = :file.position(file, :eof)
 
     # Offsets reported before this log (re)started are in the published table.
-    consumed = Map.new(cell_offsets(state.operative_class))
+    consumed = Map.new(cell_offsets(state.operator_class))
 
     # Records written before this (re)start are not indexed: the first
     # truncation after a restart locates its floor from the start of the file,
@@ -577,7 +577,7 @@ defmodule Flezha.State.InputLog do
     :telemetry.execute(
       [:flezha, :state, :input_log_syncer_died],
       %{count: 1},
-      %{operative: state.operative_class, reason: reason}
+      %{operator: state.operator_class, reason: reason}
     )
 
     {:stop, {:input_log_syncer_died, reason}, state}
@@ -788,7 +788,7 @@ defmodule Flezha.State.InputLog do
 
   defp flush_records(state, iodata) do
     :ok = :file.write(state.file_handle, iodata)
-    FsyncBatcher.mark_dirty({state.operative_class, :input_log})
+    FsyncBatcher.mark_dirty({state.operator_class, :input_log})
     %{state | dirty: true}
   end
 
@@ -880,8 +880,8 @@ defmodule Flezha.State.InputLog do
     )
   end
 
-  defp via(operative_class) do
-    {:via, Elixir.Registry, {Supervisor.registry_name(), {operative_class, :input_log}}}
+  defp via(operator_class) do
+    {:via, Elixir.Registry, {Supervisor.registry_name(), {operator_class, :input_log}}}
   end
 
   # Offsets are strictly monotonic, so the walk is done the moment it passes
@@ -925,28 +925,28 @@ defmodule Flezha.State.InputLog do
   end
 
   @doc """
-  The operative's input-log hold window: the greater of the operator-configured
-  floor and the operative's own declared correction window.
+  The operator's input-log hold window: the greater of the user-configured
+  floor and the operator's own declared correction window.
 
   A correction over a 60 s window MEANS retaining 60 s of input log — that is the
-  definition of the declaration, not a policy to be negotiated with an operator.
-  So the declaration derives it, and an operator who configures a longer floor
+  definition of the declaration, not a policy to be negotiated with a user.
+  So the declaration derives it, and a user who configures a longer floor
   still gets theirs.
   """
   @spec hold_window_ms(binary()) :: non_neg_integer()
-  def hold_window_ms(operative_class) when is_binary(operative_class) do
+  def hold_window_ms(operator_class) when is_binary(operator_class) do
     configured = Durations.get(:input_log_hold_window_ms)
-    declared = ClassRegistry.correction_window_ms(operative_class) || 0
+    declared = ClassRegistry.correction_window_ms(operator_class) || 0
     max(configured, declared)
   end
 
   @doc false
   @spec cell_offsets(binary()) :: [{tuple(), integer()}]
-  def cell_offsets(operative_class) do
+  def cell_offsets(operator_class) do
     ensure_watermark_table()
 
     @watermarks
-    |> :ets.match({{operative_class, :"$1"}, :"$2"})
+    |> :ets.match({{operator_class, :"$1"}, :"$2"})
     |> Enum.filter(fn [cell_id, _offset] -> is_tuple(cell_id) end)
     |> Enum.map(fn [cell_id, offset] -> {cell_id, offset} end)
   end

@@ -48,7 +48,7 @@ defmodule Flezha.Plugin.Extension.Table do
             monitors: %{},
             timers: %{},
             host_pid: nil,
-            # Operative-level facts resolved at bind time (currently
+            # Operator-level facts resolved at bind time (currently
             # `:effectively_once`), merged into every provider's opts at
             # activation, including plugin-heal re-activations.
             activation_env: %{}
@@ -101,7 +101,7 @@ defmodule Flezha.Plugin.Extension.Table do
   that refused and the rows the halt left unattempted.
 
   This is the table's ONE subscribe: a single plugin is a list of one. A second
-  entry point is what let the bulk path park an operative with no plugin named
+  entry point is what let the bulk path park an operator with no plugin named
   while the single path answered honestly.
   """
   @spec bulk_subscribe(t(), [{binary(), Plugin.t()}]) ::
@@ -130,10 +130,10 @@ defmodule Flezha.Plugin.Extension.Table do
     end
   end
 
-  # The halt is the only point holding all three facts an operator needs: which
+  # The halt is the only point holding all three facts a user needs: which
   # plugin refused, what its provider was, and which rows the halt therefore
   # left unattempted. `invoke_activate/4` already reports phase 2 this way;
-  # phase 1 reported nothing at all, so a parked operative named no plugin.
+  # phase 1 reported nothing at all, so a parked operator named no plugin.
   defp log_halt(plugin_id, %Plugin{provider: provider}, reason, unattempted) do
     Logger.error(
       "[Extension.Table] prepare failed for plugin_id=#{plugin_id} " <>
@@ -149,8 +149,8 @@ defmodule Flezha.Plugin.Extension.Table do
   by `:on_input` / `:on_output` and is naturally quiescent until input
   arrives). Already-running plugins are skipped.
 
-  Invoked by operative hosts after `start_operative_sdk/2` returns `{:ok, _}` — see
-  `operative-extensions` "Two-phase plugin lifecycle gated on SDK readiness".
+  Invoked by operator hosts after `start_operator_sdk/2` returns `{:ok, _}` — see
+  `operator-extensions` "Two-phase plugin lifecycle gated on SDK readiness".
 
   An `activate/1` callback that fails or raises is logged at `:error` level and
   the plugin remains in `:prepared`. It is also RETURNED: the second element is
@@ -195,7 +195,7 @@ defmodule Flezha.Plugin.Extension.Table do
   # the first step.
   defp activate_plugin(table, plugin_id, %Plugin{provider: provider, opts: opts}) do
     if Code.ensure_loaded?(provider) do
-      # Operative-level facts resolved at bind time (currently
+      # Operator-level facts resolved at bind time (currently
       # `:effectively_once`), merged last so stored opts cannot spoof them.
       opts = Map.merge(opts || %{}, table.activation_env)
 
@@ -436,7 +436,7 @@ defmodule Flezha.Plugin.Extension.Table do
 
       entry ->
         ctx = %Ctx.Tick{
-          operative_id: Map.get(table.plugins, plugin_id).operative_id,
+          operator_id: Map.get(table.plugins, plugin_id).operator_id,
           namespace: Map.get(table.plugins, plugin_id).namespace,
           runner_id: nil,
           plugin_id: plugin_id
@@ -504,7 +504,7 @@ defmodule Flezha.Plugin.Extension.Table do
   from the manifest would silently discard it.
 
   The one restart path: the convergence loop's `restart_plugin` reaches it
-  through `Flezha.Operative.Plugins.restart/3`.
+  through `Flezha.Operator.Plugins.restart/3`.
   """
   @spec attempt_restart(t(), binary(), Plugin.t()) :: {:ok, t()} | {:error, term(), t()}
   def attempt_restart(%__MODULE__{} = table, plugin_id, %Plugin{} = declared) do
@@ -658,7 +658,7 @@ defmodule Flezha.Plugin.Extension.Table do
 
   # Preparation is: the declaration normalises the options, then the provider
   # interprets them. Nothing is started here for any provider, so a plugin on an
-  # operative whose SDK side never binds holds no process at all.
+  # operator whose SDK side never binds holds no process at all.
   defp run_init_provider(table, %Plugin{provider: provider, opts: opts} = plugin) do
     if Code.ensure_loaded?(provider) do
       case ProviderOptions.normalise_opts(
@@ -689,9 +689,9 @@ defmodule Flezha.Plugin.Extension.Table do
 
   defp settle_init(_plugin, other), do: {:error, {:invalid_init_provider_return, other}}
 
-  # The host operative's own identity, merged last so stored opts cannot spoof
+  # The host operator's own identity, merged last so stored opts cannot spoof
   # it, the same rule `bulk_activate/2` applies to `activation_env`. A provider
-  # whose destination is another operative needs it to refuse a self-target or a
+  # whose destination is another operator needs it to refuse a self-target or a
   # cross-namespace target at enable time; a provider that persists its own
   # committed state needs `:source_plugin_id` to name the cspec row to write.
   #
@@ -701,7 +701,7 @@ defmodule Flezha.Plugin.Extension.Table do
   defp with_host_identity(table, opts, %Plugin{} = plugin) do
     Map.merge(opts, %{
       source_namespace: plugin.namespace,
-      source_operative_id: plugin.operative_id,
+      source_operator_id: plugin.operator_id,
       source_plugin_id: plugin.id,
       overwatcher_pid: table.host_pid,
       subscribed_extensions: Enum.map(plugin.hooks, &elem(&1, 0))

@@ -21,7 +21,7 @@ pub(crate) const TABLE: Command = Command {
             .taking(&[
                 Positional::required("<principal>"),
                 Positional::required("<namespace>"),
-                Positional::required("<viewer|operator|admin|runner>"),
+                Positional::required("<viewer|ops|admin|runner>"),
             ])
             .reading(&[TTL]),
         Verb::new("revoke", |read| {
@@ -48,7 +48,7 @@ fn handle_issue(read: &Reading) {
         &[
             text(read.pos("<principal>")),
             text(read.pos("<namespace>")),
-            text(read.pos("<viewer|operator|admin|runner>")),
+            text(read.pos("<viewer|ops|admin|runner>")),
         ],
         &[("ttl", ttl_literal(read.opt(TTL.long)))],
         read.token(),

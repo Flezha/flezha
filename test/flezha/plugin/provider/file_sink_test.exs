@@ -57,7 +57,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
 
       # Its hold is answered once the park is durable.
       assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, 1}}}, 5_000
-      assert [%{"error" => error}] = DlqStore.list("test-operative")
+      assert [%{"error" => error}] = DlqStore.list("test-operator")
       assert error =~ "embedded_newline"
       assert File.read(file) == {:ok, ""}
     end
@@ -452,7 +452,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
                2_000
              )
 
-      # What `flz operative info` renders beneath the plugin.
+      # What `flz operator info` renders beneath the plugin.
       assert Sink.inspect_state(Map.put(prepared, :owned_pid, sink)) ==
                %{path: file, health: {:unhealthy, {:open_failed, {:symlink, file}}}}
 
@@ -509,7 +509,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
   end
 
   defp release(opts, message, metadata \\ %{"channel" => "out"}) do
-    ctx = %Ctx.IO{operative_id: "op", namespace: "ns", message: message, metadata: metadata}
+    ctx = %Ctx.IO{operator_id: "op", namespace: "ns", message: message, metadata: metadata}
     assert {:ok, ^ctx} = Sink.on_output(ctx, opts)
   end
 

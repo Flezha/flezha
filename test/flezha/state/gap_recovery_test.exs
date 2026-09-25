@@ -1,12 +1,12 @@
 defmodule Flezha.State.GapRecoveryTest do
   @moduledoc """
-  Defect B / `operative-state-persistence`: a persistence seq gap must
+  Defect B / `operator-state-persistence`: a persistence seq gap must
   trigger a `RestoreInitState` resync (and let the WAL advance again)
   rather than wedge the Cell forever with `{:error, {:gap}}`.
 
   Drives the production signature end-to-end: WAL frozen at
   `last_persisted_seq`, a gap arrives, the resync rewinds the SDK, and
-  the WAL resumes — a workflow, self-healed blip with telemetry.
+  the WAL resumes — a bounded, self-healed blip with telemetry.
   """
 
   # async: false: writes Application env; a shared on-disk root; registered singletons.
@@ -98,7 +98,7 @@ defmodule Flezha.State.GapRecoveryTest do
 
     # Gap is detected (expected 4, got 37) and telemetry is emitted.
     assert_receive {:seq_gap, %{expected: 4, got: 37}, meta}, 1_000
-    assert meta.operative == "TestOperative"
+    assert meta.operator == "TestOperator"
 
     # The writer declares the gap once, naming the runner; it resyncs nothing.
     cell_id = ctx.cell_id

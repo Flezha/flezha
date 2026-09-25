@@ -64,7 +64,7 @@ defmodule Flezha.Config.DurationRows do
     # How long a controller-side `flz` verb waits for the caller's node to
     # name its `:standard_error`, before it writes to the controller's own.
     # The caller has just called us, so this is a liveness bound, not a wait.
-    {:cli_operator_device_ms, :ms, 5_000, []},
+    {:cli_caller_device_ms, :ms, 5_000, []},
     # How long a streaming verb runs when its request names no window.
     {:cli_stream_window_ms, :ms, 30_000, []},
     {:runner_lookup_ms, :ms, 5_000, []},
@@ -72,7 +72,7 @@ defmodule Flezha.Config.DurationRows do
     {:runner_min_call_ms, :ms, 25, []},
     {:runner_poll_call_ms, :ms, 250, []},
     {:runner_poll_interval_ms, :ms, 50, []},
-    # How long the per-runner operative count a placement reads may go without
+    # How long the per-runner operator count a placement reads may go without
     # being rebuilt from the hub registry. Its own row rather than a borrowed
     # one: a cache's staleness bound and a lookup's timeout answer different
     # questions and move apart the moment either is tuned.
@@ -81,7 +81,7 @@ defmodule Flezha.Config.DurationRows do
      key: true, env: "FLEZHA_RUNNER_RETIRING_MARK_TTL_MS"},
     # How long this controller keeps declaring a factory to the namespace hub
     # after its last runner for it goes. A runner that comes back inside the
-    # grace moves no operative at all; past it, the hub reassigns them to a
+    # grace moves no operator at all; past it, the hub reassigns them to a
     # controller that can still run the factory. A disconnect the controller
     # asked for skips the grace. Measured on this box, kill to placeable again:
     # 125-185 ms for a Rust runner, 475-573 ms for a Java one, so five seconds
@@ -90,7 +90,7 @@ defmodule Flezha.Config.DurationRows do
     {:group_withdraw_grace_ms, :ms, 5_000, key: true, env: "FLEZHA_GROUP_WITHDRAW_GRACE_MS"},
     {:superseded_mark_ttl_ms, :ms, 600_000, []},
 
-    # ---- operatives: the calls the loop and the manager make ----------------
+    # ---- operators: the calls the loop and the manager make ----------------
     {:hub_await_recovery_ms, :ms, 60_000, []},
     {:hub_cross_node_request_ms, :ms, 10_000, []},
     # The declared-set rewrite a plugin mutation issues, and the same bound plus
@@ -106,7 +106,7 @@ defmodule Flezha.Config.DurationRows do
      key: {:migration_consent, :consent_timeout_ms}, env: "FLEZHA_MIGRATION_CONSENT_TIMEOUT_MS"},
     {:migration_retry_interval_ms, :ms, 2_000,
      key: {:migration_consent, :retry_interval_ms}, env: "FLEZHA_MIGRATION_RETRY_INTERVAL_MS"},
-    {:operative_call_timeout_ms, :ms, 1_000, []},
+    {:operator_call_timeout_ms, :ms, 1_000, []},
     {:overwatch_call_timeout_ms, :ms, 5_000, key: true},
     {:overwatch_ping_timeout_ms, :ms, 2_000, key: true, env: "FLEZHA_OVERWATCH_PING_TIMEOUT_MS"},
     {:overwatch_task_warn_ms, :ms, 2_000, key: true},
@@ -135,7 +135,7 @@ defmodule Flezha.Config.DurationRows do
 
     # ---- plugins -----------------------------------------------------------
     # Headroom above the Overwatch call for provider health probes: each
-    # plugin's probe is bounded on its own, and an operative's plugins are
+    # plugin's probe is bounded on its own, and an operator's plugins are
     # probed in series, so a few wedged ones still fit.
     {:health_probe_budget_ms, :ms, nil, derived: {:factor, :provider_probe_timeout_ms, 3}},
     {:http_listener_idle_ms, :ms, 5_000, []},
@@ -181,7 +181,7 @@ defmodule Flezha.Config.DurationRows do
     {:dlq_sweep_interval_ms, :ms, 3_600_000, key: {:dlq, :retention_check_interval_ms}},
     {:input_log_hold_window_ms, :ms, 0, key: true, env: "FLEZHA_INPUT_LOG_HOLD_WINDOW_MS"},
     {:outbox_resettle_ms, :ms, 60_000, key: true},
-    # The operator key keeps the `default_` prefix it was published under; the
+    # The user key keeps the `default_` prefix it was published under; the
     # row's name is the quantity.
     {:output_stall_timeout_ms, :ms, 60_000, key: :default_output_stall_timeout_ms},
     {:output_watchdog_interval_ms, :ms, 10_000,
@@ -219,14 +219,14 @@ defmodule Flezha.Config.DurationRows do
     {:shutdown_finalise_call_ms, :ms, 5_000, []},
     {:signal_handler_status_call_ms, :ms, 5_000, []},
     {:stop_release_timeout_ms, :ms, 15_000, []},
-    # A process teardown runs inside the operative stop, keeping 1 s of slack
+    # A process teardown runs inside the operator stop, keeping 1 s of slack
     # for the stop itself to answer.
     {:stop_process_budget_ms, :ms, nil, derived: {:headroom, :stop_release_timeout_ms, -1_000}},
 
     # ---- authentication and authorization ----------------------------------
     # How far ahead of an expiry a token is announced as expiring, and how often
     # the registry looks. A lapse is then a monitoring alert rather than the
-    # moment an operator discovers they cannot issue another credential.
+    # moment a user discovers they cannot issue another credential.
     {:token_expiry_warning_ms, :ms, 86_400_000,
      key: {:authn_authz, :token_expiry_warning_ms}, env: "FLEZHA_AUTHZ_TOKEN_EXPIRY_WARNING_MS"},
     {:token_expiry_check_interval_ms, :ms, 300_000,
@@ -249,9 +249,9 @@ defmodule Flezha.Config.DurationRows do
     {:data_heartbeat_ms, :ms, 10_000,
      env: "FLEZHA_DATA_HEARTBEAT_MS", runtimes: [:controller, :elixir_sdk, :rust]},
     {:sdk_commit_ack_ms, :ms, 30_000,
-     key: true, env: "FLEZHA_WORKFLOW_ACK_TIMEOUT_MS", runtimes: [:controller, :elixir_sdk, :rust]},
+     key: true, env: "FLEZHA_BOUNDED_ACK_TIMEOUT_MS", runtimes: [:controller, :elixir_sdk, :rust]},
     # A call into one of the runner's own control processes: the RunnerServer,
-    # an Operative, a local run. None of them runs author code on the answering
+    # an Operator, a local run. None of them runs author code on the answering
     # clause, so a wait here is a wedged process rather than a busy one.
     {:sdk_control_call_ms, :ms, 5_000, runtimes: [:elixir_sdk]},
     # A call into a Cell that answers from its queue rather than from its
@@ -272,7 +272,7 @@ defmodule Flezha.Config.DurationRows do
      derived: {:headroom, :control_unit_reply_timeout_ms, -1_000}, runtimes: [:elixir_sdk]},
     {:sdk_idle_probe_ms, :ms, 50, runtimes: [:elixir_sdk]},
     {:sdk_max_reap_interval_ms, :ms, 30_000, runtimes: [:elixir_sdk]},
-    # How long a rehydrated per-input workflow loop waits for the input-log tail
+    # How long a rehydrated per-input bounded loop waits for the input-log tail
     # its bind still owes before it may park: a park there would drop the tail.
     {:sdk_owed_inbox_wait_ms, :ms, 60_000, runtimes: [:elixir_sdk]},
     {:sdk_serialize_wait_ms, :ms, 5_000, runtimes: [:elixir_sdk]},

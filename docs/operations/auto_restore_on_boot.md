@@ -1,13 +1,13 @@
 # Auto-restore on boot
 
-For operators running a Controller whose disk survived a restart. Covers the on-disk layers a
+For users running a Controller whose disk survived a restart. Covers the on-disk layers a
 restart recovers from, the boot sequence, what the orphan reconcile starts and stops, the
 safety matrix per scenario, the `flz boot` surface, start authority, the knobs and the disable
 flag. Losing the disk itself is the [remote durability tier](remote_durability_tier.md)'s
 problem; with a backend configured, both layers below hydrate from it first.
 
-On boot the controller rehydrates the operative list from the durable ProcessHub registry and
-ships the on-disk WAL and snapshots to each runner, so Operatives resume from their last
+On boot the controller rehydrates the operator list from the durable ProcessHub registry and
+ships the on-disk WAL and snapshots to each runner, so Operators resume from their last
 persisted state. Recovery is an **orphan reconcile**: no marker file, no boot mode, no arming.
 
 ## Persistence layers
@@ -15,7 +15,7 @@ persisted state. Recovery is an **orphan reconcile**: no marker file, no boot mo
 | Layer | Path | Owner |
 |---|---|---|
 | ProcessHub durable registry (cspecs incl. `opts[:plugins]`) | `app_data/process_hub/<hub_id>/registry.dets` | `Flezha.Service.HubManager` (`registry_backend: {:durable_ets, …}`) |
-| Per-Cell WAL + snapshots | `app_data/state/<namespace>/<operative_class>/<tasklet_id>/<cell_key>.{wal,snap.<seq>,outbox.dedup}` | `Flezha.State.Supervisor` |
+| Per-Cell WAL + snapshots | `app_data/state/<namespace>/<operator_class>/<tasklet_id>/<cell_key>.{wal,snap.<seq>,outbox.dedup}` | `Flezha.State.Supervisor` |
 | Remote manifest + artifacts backing both (unless opted out) | Postgres / S3 / file, `FLEZHA_DURABILITY_BACKEND` | `Flezha.State.DurabilityTier` (`Shipper` out, `Hydrator` back) |
 
 ## Boot sequence
@@ -48,14 +48,14 @@ persisted state. Recovery is an **orphan reconcile**: no marker file, no boot mo
    waits for peers, never for runners: an orphan it starts before the orphan's runner connects
    is held unbound by its Overwatch and bound by the convergence rebind when a runner
    advertising its factory arrives.
-5. `Overwatch.init/1` rebuilds each Operative's plugin table from the cspec's `opts[:plugins]`.
-   On bind, `Flezha.Operative.Replay.restore_on_bind/2` enumerates the Cells on disk
+5. `Overwatch.init/1` rebuilds each Operator's plugin table from the cspec's `opts[:plugins]`.
+   On bind, `Flezha.Operator.Replay.restore_on_bind/2` enumerates the Cells on disk
    (hydrating from the remote tier first when local state is absent) and ships a
-   `RestoreInitState` for each — unless the Operative arrived via HotSwap with in-band state.
+   `RestoreInitState` for each — unless the Operator arrived via HotSwap with in-band state.
 6. `Flezha.Boot.Loader` finishes its sequence and the application records that fact; it does
    not wait for recovery, because readiness is not latched at boot. `Flezha.Boot.Readiness`
    folds the verdict live from its precondition table, so `/healthz` reports
-   `recovering` / `restoring_registry` until the registry is loaded and its Operatives bound,
+   `recovering` / `restoring_registry` until the registry is loaded and its Operators bound,
    and `/readyz`, `flz boot await` and the image `HEALTHCHECK` all answer not-ready for that
    whole window — then flip on their own once the hub reaches `:normal`, with no restart. The
    `declared_hubs_started` row holds the same window open until step 3 has finished, so a node
@@ -63,14 +63,14 @@ persisted state. Recovery is an **orphan reconcile**: no marker file, no boot mo
 
 ## A stopped namespace comes back
 
-The catalog is operator intent, so a namespace whose hub was torn down is given one again on
+The catalog is user intent, so a namespace whose hub was torn down is given one again on
 the next controller start while its catalog entry stands. `flz namespace delete <name>` is what
 makes a stop permanent. A clean state root therefore holds one `_system` hub and its registry
 directory after the first boot.
 
 The reverse does not happen mid-life: a hub this controller reclaims because it serves none of
-that namespace's operatives stays down until the next start, and does not hold readiness. The
-reclaim will not take a hub that is still recovering or that was declared to hold operatives —
+that namespace's operators stays down until the next start, and does not hold readiness. The
+reclaim will not take a hub that is still recovering or that was declared to hold operators —
 it deletes the registry directory, and boot-time creation puts hubs exactly where no runner has
 placed anything yet.
 
@@ -83,14 +83,14 @@ placed anything yet.
 | Single-node deployment | Yes, automatic | No peer can hand rows back; the first round starts the whole durable list. |
 | Runner pod restart with `runner_id` rotation | N/A | The controller never went down; the state layout has no `runner_id` component, so the new runner receives `RestoreInitState` from the same files. |
 | HotSwap migration, source runner alive | N/A | State travels in-band; `restore_on_bind/2` does not fire. Source files are left for the retention sweeper. |
-| HotSwap migration, source runner already dead | N/A | The handover is empty, so the destination pulls the Cell files over `:erpc` (`Flezha.State.WalTransfer.pull_operative/3`) and replays them — one-shot, not replication. A destination crash mid-flight leaves the source files intact and ProcessHub retries. |
+| HotSwap migration, source runner already dead | N/A | The handover is empty, so the destination pulls the Cell files over `:erpc` (`Flezha.State.WalTransfer.pull_operator/3`) and replays them — one-shot, not replication. A destination crash mid-flight leaves the source files intact and ProcessHub retries. |
 | Network partition during boot | Yes (suspect) | A brief duplicate-start window while healing; the hub's `PartitionTolerance.Divergence` strategy and the round's duplicate resolution settle it. Fragile environments can set `FLEZHA_AUTO_RESTORE_ENABLED=false`. |
 | Quorum loss (3 nodes, 2 die) | Only the survivor's gaps | Returning nodes start only what nothing in the cluster holds; the survivor stays authoritative for what it runs. |
 | Subset rejoin (cluster down, some nodes return) | Yes | **The one tolerated loss**: rows held only on non-returning nodes are gone — unless the remote tier is on, in which case their cspecs and state hydrate from the backend. |
 | Registry corruption | Empty replay | The file is rotated to `registry.dets.corrupt-<monotonic>`; boot continues empty. |
-| Operator restores an old `registry.dets` from backup | Per row | Its rows are declared intent again: the next round starts them. |
+| User restores an old `registry.dets` from backup | Per row | Its rows are declared intent again: the next round starts them. |
 
-## Operator surface
+## Operations surface
 
 ```bash
 flz boot status                # readiness verdict + preconditions, then per-namespace detail
@@ -115,7 +115,7 @@ Telemetry under `[:flezha, :boot, …]`, each with `%{hub_id, namespace}` metada
 | `:pre_recovery_replay` | Before the first round | `%{cspec_count, system_time}` |
 | `:recovery_complete` | After the first round | `%{child_count, succeeded, failed}`; `replay_outcome` metadata |
 | `:reconcile_round` | Every round | `%{candidates, orphans, started, duplicates, elapsed_ms}`; `first_round` metadata |
-| `:reconcile_duplicate` | One Operative seen on several nodes | `%{instance_count}`; `operative_id`, `kept_node`, `stopped_nodes` metadata |
+| `:reconcile_duplicate` | One Operator seen on several nodes | `%{instance_count}`; `operator_id`, `kept_node`, `stopped_nodes` metadata |
 
 `:recovery_complete` and `:reconcile_duplicate` reach the observability bus under the
 `:flezha_boot` source. `reconcile_duplicate` is an **alarm, not a metric** (ProcessHub already
@@ -124,13 +124,13 @@ at any other time a start bypassed the id claim, and it logs at `error`.
 
 ## Start authority
 
-The reconcile and the convergence Loop both start Operatives; neither is gated on the other
+The reconcile and the convergence Loop both start Operators; neither is gated on the other
 because every start resolves through one claim, `ProcessHub.Service.Distributor.compose_start_operation/3`
-(the reconcile from its round, flezha from `OperativeManager.start_operative/3` →
+(the reconcile from its round, flezha from `OperatorManager.start_operator/3` →
 `ProcessHub.start_child/3`): the registry id check, backstopped by the local
 `DistributedSupervisor`'s `{:already_started, pid}`. A start that loses the claim answers
 `:duplicate` after verifying the winner is live and does nothing to it. The CLI renders that
-as success — `flz operative start` against a live instance exits 0 as a no-op, `--partitions N`
+as success — `flz operator start` against a live instance exits 0 as a no-op, `--partitions N`
 over an existing group starts only the missing members, `flz plugin enable` on an attached
 plugin reports `already_enabled` — so re-running a cold-start script is the supported heal
 after a warm restart. A refused claim with **no** live winner (a stale registry row) stays a
@@ -153,7 +153,7 @@ a round reporting `started > 0` triggers one convergence tick that adopts what i
 `FLEZHA_AUTO_RESTORE_ENABLED=false` flips one predicate (`HubManager.durable_starts?/0`) that
 every auto-restore surface reads together: hubs start with `registry_backend: :ets` (nothing
 written to disk) and `auto_recovery: false` (no reconcile, straight to `:normal`), the hooks
-are not registered, and starts no longer declare durable intent — Operatives must be
+are not registered, and starts no longer declare durable intent — Operators must be
 re-registered after every boot. Roll back by flipping the variable and restarting; an existing
 `app_data/process_hub/` is ignored ([`flz reset`](reset.md) deletes it).
 

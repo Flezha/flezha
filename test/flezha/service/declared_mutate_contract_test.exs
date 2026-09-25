@@ -2,8 +2,8 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
   @moduledoc """
   Pins the one piece of `process_hub` Flezha reaches for that is not part of its
   public API: the coordinator's `{:declared_mutate, {:add, [spec]}}` call, which
-  `Flezha.Service.OperativeManager.Init.redeclare_plugins/2` uses to rewrite an
-  operative's declared child spec in place.
+  `Flezha.Service.OperatorManager.Init.redeclare_plugins/2` uses to rewrite an
+  operator's declared child spec in place.
 
   Flezha needs it because the declared set is written at start and at stop and
   has no update path, while a plugin is enabled between the two. The registry
@@ -26,13 +26,13 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
   alias Flezha.Plugin
   alias Flezha.Process.Cspec
   alias Flezha.Service.HubManager
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias Flezha.Service.PluginManager
   alias FlezhaTest.Helper.HubRegistryTestHelper
   alias ProcessHub.Service.DeclaredChildren
 
   @namespace "declared_mutate_contract_ns"
-  @operative_id "declared_mutate_op"
+  @operator_id "declared_mutate_op"
 
   setup %{tmp: tmp_dir} do
     Application.put_env(:flezha, :auto_restore_enabled, true)
@@ -54,7 +54,7 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
     assert :ok = HubManager.await_recovery_complete([hub_id], 5_000)
 
     :ok =
-      HubRegistryTestHelper.start_durable(@namespace, @operative_id,
+      HubRegistryTestHelper.start_durable(@namespace, @operator_id,
         recorded_runner: nil,
         opts: []
       )
@@ -67,16 +67,16 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
   # silent no-op that only shows up on the next restart.
   test "an enable reaches the declared entry, starting and stopping nothing",
        %{hub_id: hub_id} do
-    before_pid = HubManager.get_pid(@namespace, @operative_id)
+    before_pid = HubManager.get_pid(@namespace, @operator_id)
     enable("contract_plugin")
 
     assert ["contract_plugin"] = declared_plugin_ids(hub_id)
 
-    assert declared_ids(hub_id) == [@operative_id],
+    assert declared_ids(hub_id) == [@operator_id],
            "the upsert added or removed an entry instead of replacing one"
 
-    assert HubManager.get_pid(@namespace, @operative_id) == before_pid,
-           "re-declaring restarted the operative; it must touch no process"
+    assert HubManager.get_pid(@namespace, @operator_id) == before_pid,
+           "re-declaring restarted the operator; it must touch no process"
   end
 
   # fails when: a re-declare merges instead of replacing, so a disable can never
@@ -94,7 +94,7 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
   # from the record a restart rebuilds from. The registry row merges concurrent
   # transforms inside the registry; the declared write must copy from it, and
   # re-check, rather than compute its own list.
-  test "concurrent enables on one operative all reach the declared entry",
+  test "concurrent enables on one operator all reach the declared entry",
        %{hub_id: hub_id} do
     ids = for i <- 1..8, do: "racing_plugin_#{i}"
 
@@ -105,19 +105,19 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
     assert declared_plugin_ids(hub_id) == Enum.sort(ids),
            "a concurrent enable was lost from the declared entry"
 
-    assert {:ok, row} = HubManager.operative_plugins(@namespace, @operative_id)
+    assert {:ok, row} = HubManager.operator_plugins(@namespace, @operator_id)
     assert row |> Enum.map(&elem(&1, 0)) |> Enum.sort() == Enum.sort(ids)
   end
 
-  # fails when: an undeclared operative gets a declaration invented for it, which
-  # would let a plugin write resurrect an operative a stop removed for good.
-  test "an operative with no declared entry is refused rather than declared" do
-    assert {:error, :operative_not_declared} =
-             OperativeManager.redeclare_plugins(@namespace, "never_declared_op")
+  # fails when: an undeclared operator gets a declaration invented for it, which
+  # would let a plugin write resurrect an operator a stop removed for good.
+  test "an operator with no declared entry is refused rather than declared" do
+    assert {:error, :operator_not_declared} =
+             OperatorManager.redeclare_plugins(@namespace, "never_declared_op")
   end
 
   # fails when: a controller running with auto-restore off is told its plugin is
-  # durable. That mode declares nothing at operative start either, so the write
+  # durable. That mode declares nothing at operator start either, so the write
   # must persist nothing and still succeed, rather than fail or promise a
   # durability the deployment has switched off.
   test "durable starts disabled: the re-declare writes nothing and still succeeds",
@@ -125,7 +125,7 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
     Application.put_env(:flezha, :auto_restore_enabled, false)
     on_exit(fn -> Application.put_env(:flezha, :auto_restore_enabled, true) end)
 
-    assert :ok = OperativeManager.redeclare_plugins(@namespace, @operative_id)
+    assert :ok = OperatorManager.redeclare_plugins(@namespace, @operator_id)
     assert [] = declared_plugin_ids(hub_id)
   end
 
@@ -137,7 +137,7 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
         opts: %{},
         hooks: [{:on_output, []}],
         namespace: @namespace,
-        operative_id: @operative_id
+        operator_id: @operator_id
       )
 
     assert {:ok, _} = PluginManager.enable_plugin(plugin_id, plugin)
@@ -145,15 +145,15 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
 
   defp declared_plugin_ids(hub_id) do
     %{children: children} = DeclaredChildren.declared_children(hub_id)
-    {:ok, arg} = children |> Enum.find(&(&1.id == @operative_id)) |> Cspec.start_arg()
+    {:ok, arg} = children |> Enum.find(&(&1.id == @operator_id)) |> Cspec.start_arg()
 
-    operative =
+    operator =
       case arg do
-        {_ns, operative} -> operative
-        {_ns, _runner, operative} -> operative
+        {_ns, operator} -> operator
+        {_ns, _runner, operator} -> operator
       end
 
-    operative.opts |> Keyword.get(:plugins, []) |> Enum.map(&elem(&1, 0)) |> Enum.sort()
+    operator.opts |> Keyword.get(:plugins, []) |> Enum.map(&elem(&1, 0)) |> Enum.sort()
   end
 
   defp declared_ids(hub_id) do

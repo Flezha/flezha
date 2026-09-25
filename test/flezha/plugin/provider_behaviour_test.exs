@@ -22,7 +22,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
   alias Flezha.Plugin.Provider.Filter
   alias Flezha.Plugin.Provider.HttpPoll
   alias Flezha.Plugin.Provider.Kafka
-  alias Flezha.Plugin.Provider.OperativeForward
+  alias Flezha.Plugin.Provider.OperatorForward
   alias Flezha.Plugin.Provider.Postgres
   alias Flezha.Plugin.Provider.StdOut
   alias Flezha.Plugin.Provider.Websocket
@@ -93,7 +93,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     # still reach it.
     for {provider, name, required} <- [
           {HttpPoll, "http_poll", %{"url" => "u", "channel" => "c"}},
-          {OperativeForward, "operative_forward", %{"target_operative_id" => "b"}},
+          {OperatorForward, "operator_forward", %{"target_operator_id" => "b"}},
           {Websocket, "websocket", %{"uri" => "wss://example.com"}}
         ] do
       test "#{name} refuses an unknown option through build/1" do
@@ -117,7 +117,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
   describe "one conversion table, on both paths" do
     # KI-62 was filed against the older shape, where `build/1` was the only
     # caller of the conversion table and a `%Flezha.Plugin{}` carrying typed
-    # opts crossed it uncoerced, so an operator's `--plugins` spec was checked
+    # opts crossed it uncoerced, so a user's `--plugins` spec was checked
     # by nothing. The declaration is now read on both paths, and the same value
     # earns the same sentence either way.
     test "a value the declaration refuses is refused on the spec path too" do
@@ -219,9 +219,9 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
   describe "the strict option set is enforced on the init_provider/1 path too" do
     test "an option the provider does not offer is refused before init_provider/1" do
       assert {:error, message} =
-               prepare(OperativeForward, %{
-                 target_operative_id: "b",
-                 source_operative_id: "a",
+               prepare(OperatorForward, %{
+                 target_operator_id: "b",
+                 source_operator_id: "a",
                  source_namespace: :default,
                  nope: 1
                })
@@ -237,22 +237,22 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     # step later, which is only reached because the option check passed.
     test "a re-prepare's own resolved keys are accepted, or every plugin heal is refused" do
       assert {:error, message} =
-               prepare(OperativeForward, %{
-                 target_operative_id: "a",
-                 source_operative_id: "a",
+               prepare(OperatorForward, %{
+                 target_operator_id: "a",
+                 source_operator_id: "a",
                  source_namespace: :default,
                  plugin_id: "a->a",
                  routes: []
                })
 
-      assert message =~ "is the operative itself"
+      assert message =~ "is the operator itself"
     end
   end
 
   describe "a partition member's injected opts reach every strict provider" do
     # `Plugin.for_partition/3` merges `Partition.provider_opts/1` into EVERY
     # plugin's opts of a group member, so a strict allow-list that omits them
-    # refuses every enable on a partitioned operative rather than one bad
+    # refuses every enable on a partitioned operator rather than one bad
     # config. This is the failure `host_opts/0`'s own doc names — "a key added
     # to the host side and missed in one provider's private copy turns that
     # provider's every enable into a refusal" — for a second set of keys, and
@@ -260,7 +260,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     # copies.
     #
     # `mix test` alone cannot see the consequence: the only end-to-end coverage
-    # is `partitioned_operatives_e2e_test.exs`, which is `@moduletag :system`
+    # is `partitioned_operators_e2e_test.exs`, which is `@moduletag :system`
     # and excluded by default. These two run in the default suite.
     @partition_opts Flezha.Partition.provider_opts(%{index: 1, count: 3, range: {85, 169}})
 
@@ -268,23 +268,23 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
       for {id, module} <- Flezha.Plugin.Providers.all(), Code.ensure_loaded?(module) do
         assert :ok == module.validate_opts(@partition_opts),
                "provider `#{id}` refuses a partition member's own injected opts, so every " <>
-                 "plugin on a partitioned operative fails to enable"
+                 "plugin on a partitioned operator fails to enable"
       end
     end
 
-    test "operative_forward gets past the option check on the path a group start uses" do
+    test "operator_forward gets past the option check on the path a group start uses" do
       opts =
         Map.merge(@partition_opts, %{
-          target_operative_id: "a",
-          source_operative_id: "a",
+          target_operator_id: "a",
+          source_operator_id: "a",
           source_namespace: :default
         })
 
-      assert {:error, message} = prepare(OperativeForward, opts)
+      assert {:error, message} = prepare(OperatorForward, opts)
 
       # The target check, one step AFTER the option check, reached only because
       # the injected keys were accepted.
-      assert message =~ "is the operative itself"
+      assert message =~ "is the operator itself"
       refute message =~ "unknown option"
     end
   end
@@ -325,7 +325,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
       opts =
         pg_opts(%{
           source_namespace: "ns",
-          source_operative_id: "op",
+          source_operator_id: "op",
           source_plugin_id: "p",
           effectively_once: false
         })
@@ -382,14 +382,14 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     @moduledoc false
 
     # A provider offering the entry-side spelling and never declaring that it
-    # feeds the operative — the shape the `channel_in` refusal exists for, and
+    # feeds the operator — the shape the `channel_in` refusal exists for, and
     # one no first-party provider can produce, because both that declare the row
     # also feed.
     use Flezha.Plugin.ProviderBehaviour,
       options: [channel_in: [type: :names, doc: "Entry channel"]]
   end
 
-  describe "a provider declares whether it feeds the operative" do
+  describe "a provider declares whether it feeds the operator" do
     test "the providers whose worker injects declare it, and no other does" do
       feeding =
         for {id, module} <- Flezha.Plugin.Providers.all(),
@@ -397,15 +397,15 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
             do: id
 
       assert Enum.sort(feeding) == [
-               "operative_file_source",
-               "operative_http_poll",
-               "operative_websocket"
+               "operator_file_source",
+               "operator_http_poll",
+               "operator_websocket"
              ]
     end
 
     test "it cannot be inferred from the callback list" do
       # The Kafka producer subscribes to `on_input` and feeds nothing: it
-      # publishes what the operative ingested.
+      # publishes what the operator ingested.
       assert :on_input in Kafka.Producer.__provider__().extensions
       refute Kafka.Producer.__provider__().feeds
     end
@@ -449,12 +449,12 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     end
 
     # A row can declare itself required and nothing can declare a PAIR required,
-    # so both operator surfaces would otherwise read "optional" for an option the
+    # so both user surfaces would otherwise read "optional" for an option the
     # enable refuses to do without. Both render the row's own `doc:`, which is
     # where the rule is written.
-    test "both operator surfaces say the entry channel is required" do
+    test "both user surfaces say the entry channel is required" do
       for text <- [
-            HttpPoll.help("operative_http_poll"),
+            HttpPoll.help("operator_http_poll"),
             ProviderOptions.render_options_table(HttpPoll)
           ] do
         assert text =~ "Required, unless `channel_in` names it"
@@ -474,7 +474,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     test "a spelling for a job the plugin was not wired for is refused" do
       assert {:error, message} = normalised(NoFeedSource, %{channel_in: "us"})
       assert message =~ "no_feed_source names channel_in"
-      assert message =~ "does not feed the operative"
+      assert message =~ "does not feed the operator"
     end
 
     test "`channel` on a plugin doing neither job is refused" do
@@ -621,7 +621,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
   end
 
   describe "the help screen offers what the enable takes" do
-    # Driven through the verb, because the id an operator copies from the screen
+    # Driven through the verb, because the id a user copies from the screen
     # is the one the verb was asked for, and the module behind it cannot know it.
     test "every provider's screen names its registered id and lists its public options only" do
       checked =
@@ -651,7 +651,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
 
       # An empty table, or one without the provider that declares internal rows,
       # would pass every assertion above.
-      assert "operative_websocket" in checked
+      assert "operator_websocket" in checked
     end
   end
 

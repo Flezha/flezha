@@ -368,11 +368,11 @@ pub fn start<'a>(env: &'a Env, namespace: String) -> Result<Object<'a>> {
 /// alternative to [`start`], never an addition. The host keeps driving its
 /// own fetchers, which is what runs the tasklets.
 #[napi]
-pub fn local_start(factory_id: String, operative_id: String) -> Result<()> {
+pub fn local_start(factory_id: String, operator_id: String) -> Result<()> {
     let ctx = context()?;
     let factory = veneer::c_string("factory id", &factory_id)?;
-    let operative = veneer::c_string("operative id", &operative_id)?;
-    Ok(veneer::local_start(ctx, &factory, &operative)?)
+    let operator = veneer::c_string("operator id", &operator_id)?;
+    Ok(veneer::local_start(ctx, &factory, &operator)?)
 }
 
 /// Queue the declared sink `channel` for [`local_next_output`]. A channel the

@@ -7,13 +7,13 @@ defmodule Flezha.Shutdown.Step do
   discovers every declaring module and folds the steps of one scope in their
   declared order, each once, each bounded, so no stop path names a step and a
   new resource with a teardown is one new step. Scopes nest downward: a
-  `:node` drain moves every operative, a `:namespace` stop takes its runners,
-  plugins and hub, an `:operative` stop takes one operative's children, disk
+  `:node` drain moves every operator, a `:namespace` stop takes its runners,
+  plugins and hub, an `:operator` stop takes one operator's children, disk
   and quota, and a `:process` teardown is what the Overwatch itself owes when
   it exits.
   """
 
-  @type scope :: :process | :operative | :namespace | :node
+  @type scope :: :process | :operator | :namespace | :node
 
   @typedoc """
   One step: its scope, its order within that scope (unique), a name for the

@@ -93,7 +93,7 @@ pub static DROPS_NEWEST_TOTAL: AtomicU64 = AtomicU64::new(0);
 pub static DROPS_OLDEST_TOTAL: AtomicU64 = AtomicU64::new(0);
 
 /// Queued inputs a restore discarded, process-wide; on the heartbeat because
-/// it is the operator's one handle on what a rebind threw away.
+/// it is the user's one handle on what a rebind threw away.
 pub static RESTORE_DISCARDED_INPUTS: AtomicU64 = AtomicU64::new(0);
 
 pub fn dispatches_completed() -> u64 {
@@ -129,10 +129,10 @@ pub struct CellSlot {
     pub dispatcher: Arc<dyn TaskletDispatcher>,
     pub tasklet_id: TaskletId,
     pub cell_key: Option<Arc<str>>,
-    /// The operative INSTANCE id — what a schema address names.
+    /// The operator INSTANCE id — what a schema address names.
     pub instance_id: Arc<str>,
-    pub instance: Weak<crate::operative::instance::OperativeInstance>,
-    pub topology: Arc<crate::operative::topology::OperativeTopology>,
+    pub instance: Weak<crate::operator::instance::OperatorInstance>,
+    pub topology: Arc<crate::operator::topology::OperatorTopology>,
     /// Whoever is owed this mailbox's next free slot under `DropNothing`,
     /// served one per successful pop.
     pub waiters: Waiters,
@@ -161,7 +161,7 @@ pub struct CellSlot {
     pub replay_open: AtomicBool,
     /// `replay_buffer.len()` as one relaxed load, for the drain's hot path.
     pub replay_depth: AtomicU64,
-    /// Wire identity `(operative instance, tasklet, cell_key)` per
+    /// Wire identity `(operator instance, tasklet, cell_key)` per
     /// `flusher::encode_cell_identity`; the controller routes on it.
     pub cell_identity: Arc<Vec<u8>>,
     /// `util::monotonic_ms` of the last successful push; the idle clock of
@@ -311,7 +311,7 @@ impl CellSlot {
     }
 
     /// Drop queued input only where the controller re-forwards it from a
-    /// durable log (the effectively-once tier, durable workflows); anywhere
+    /// durable log (the effectively-once tier, durable bounded operators); anywhere
     /// else the mailbox is the input's only copy. Returns the count, added to
     /// [`RESTORE_DISCARDED_INPUTS`].
     pub fn discard_queued_input_on_restore(&self) -> usize {
@@ -365,7 +365,7 @@ pub trait TaskletDispatcher: Send + Sync + 'static {
     }
 
     /// Append timer ops committed outside an invocation to this Cell's
-    /// record stream and ship them at once: a workflow firing's removal, at
+    /// record stream and ship them at once: a bounded operator firing's removal, at
     /// its stage's commit.
     fn write_timer_ops(&self, slot: &Arc<CellSlot>, ops: Vec<crate::timer::TimerOp>);
 
@@ -390,7 +390,7 @@ pub trait TaskletDispatcher: Send + Sync + 'static {
         state: &mut Box<dyn Any + Send>,
         flush_buffer: &mut Box<dyn crate::flusher::FlushableBuffer>,
         timers: &mut crate::timer::PendingTimers,
-        instance: &Weak<crate::operative::instance::OperativeInstance>,
+        instance: &Weak<crate::operator::instance::OperatorInstance>,
     ) -> ItemDisposition;
 
     fn tasklet_id(&self) -> TaskletId;
@@ -401,7 +401,7 @@ pub trait TaskletDispatcher: Send + Sync + 'static {
 
     fn is_event_time(&self) -> bool;
 
-    fn correction_policy(&self) -> Option<crate::operative::topology::CorrectionPolicy>;
+    fn correction_policy(&self) -> Option<crate::operator::topology::CorrectionPolicy>;
 
     /// `instance/tasklet/key`, the string the `flz.cell` stamp carries.
     fn cell_label(&self) -> &str;
@@ -411,7 +411,7 @@ pub trait TaskletDispatcher: Send + Sync + 'static {
     /// extractor can produce.
     fn event_time_of(&self, payload: &CellPayload) -> Option<u64>;
 
-    /// A workflow undo served in process: `compensate` over the outputs this
+    /// A bounded operator undo served in process: `compensate` over the outputs this
     /// Cell recorded forward, its emits through the Cell's own sink. A host
     /// serves the `CompensateRun` activation itself and never reaches this.
     fn compensate(&self, slot: &Arc<CellSlot>, outputs: Vec<Arc<dyn Any + Send + Sync>>) {
@@ -457,7 +457,7 @@ pub struct SlotParts {
 }
 
 /// Every rendering of "which Cell is this", derived once. The WAL identity
-/// is keyed by the INSTANCE id: two operatives of one factory never share a
+/// is keyed by the INSTANCE id: two operators of one factory never share a
 /// WAL.
 pub fn slot_parts(instance_id: &str, tasklet_name: &str, cell_key: Option<&str>) -> SlotParts {
     SlotParts {

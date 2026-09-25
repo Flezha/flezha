@@ -1,13 +1,13 @@
 defmodule Flezha.Service.Cli.FailureStreamTest do
   @moduledoc """
-  Everything a `flz` verb says that is not its answer reaches the operator on
-  stderr — the operator's, on whichever node the verb ran and from whichever
+  Everything a `flz` verb says that is not its answer reaches the caller on
+  stderr — the caller's, on whichever node the verb ran and from whichever
   process says it — and none of it reaches the data.
 
-  An operator who pipes a verb's output into a file or another program is
+  A caller who pipes a verb's output into a file or another program is
   collecting the answer, not the failure. Before the fold the stream was a
   per-call argument and 29 of the 65 sites took its `:stdio` default, so a
-  script reading `flz operative stop` collected the error text as if it were
+  script reading `flz operator stop` collected the error text as if it were
   the answer.
 
   The in-process drives below cannot see which node a device belongs to,
@@ -26,11 +26,11 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
   @call %{opts: []}
 
   # One real failure per family that renders one. Each is reached with the
-  # controller as this suite boots it: no runner, no operative, no plugin.
+  # controller as this suite boots it: no runner, no operator, no plugin.
   defp failures do
     [
-      {"operative", fn -> Cli.Operative.operative_stop("default", "no-such-op-xyz", @call) end},
-      {"operative", fn -> Cli.Operative.cell_state("default", "no-such-op-xyz", @call) end},
+      {"operator", fn -> Cli.Operator.operator_stop("default", "no-such-op-xyz", @call) end},
+      {"operator", fn -> Cli.Operator.cell_state("default", "no-such-op-xyz", @call) end},
       {"plugin", fn -> Cli.Plugin.disable_plugin("no-such-plugin-xyz", @call) end},
       {"state", fn -> Cli.State.state_retention("some_class", "not-a-number", @call) end},
       {"observe", fn -> Cli.Observe.observability_render_enable("no-such-source-xyz", @call) end},
@@ -78,7 +78,7 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
     test "keeps the device, the write and the exit to itself" do
       exported = Cli.Context.__info__(:functions)
 
-      for name <- [:cli_error!, :operator_stderr, :puts, :cli_exit] do
+      for name <- [:cli_error!, :caller_stderr, :puts, :cli_exit] do
         refute Keyword.has_key?(exported, name),
                "a Cli.* module can say how a failure is said while #{name} is exported"
       end
@@ -116,9 +116,9 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
 
   describe "a progress line from another process" do
     # `flz controller stop`'s lines are emitted by the shutdown coordinator, so
-    # the handler runs outside the rpc process and cannot resolve the operator
+    # the handler runs outside the rpc process and cannot resolve the caller
     # itself. It writes through the notifier bound on the way in.
-    test "reaches the operator through the notifier bound at attach" do
+    test "reaches the caller through the notifier bound at attach" do
       notify = Cli.Context.notifier()
 
       err =

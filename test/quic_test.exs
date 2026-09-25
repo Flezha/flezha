@@ -2,12 +2,12 @@ defmodule FlezhaQuicTest do
   alias Flezha.Payloader
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.EventManager
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias Flezha.State.Paths
-  alias FlezhaTest.Fixtures.OperativeFixture
+  alias FlezhaTest.Fixtures.OperatorFixture
   alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
-  alias FlezhaTest.Helper.OperativeTestHelper
+  alias FlezhaTest.Helper.OperatorTestHelper
 
   use ExUnit.Case
   use Flezha.Constant
@@ -16,11 +16,11 @@ defmodule FlezhaQuicTest do
 
   @quic_namespace "quic_test_namespace"
 
-  @test_operative_factory "do_nothing"
+  @test_operator_factory "do_nothing"
   @test_store_input_factory "store_input"
 
   setup_all do
-    # This module's operatives carry FIXED ids, so the Cells they persist
+    # This module's operators carry FIXED ids, so the Cells they persist
     # outlive the run. On the next run the same identity binds, the bind-time
     # restore correctly rebuilds it from that WAL, and the state assertions
     # below see the PREVIOUS run's inputs on top of their own. Clear this
@@ -42,7 +42,7 @@ defmodule FlezhaQuicTest do
 
   setup _context do
     on_exit(fn ->
-      OperativeManager.stop_all_operatives(@quic_namespace)
+      OperatorManager.stop_all_operators(@quic_namespace)
     end)
 
     :ok
@@ -54,33 +54,33 @@ defmodule FlezhaQuicTest do
     Enum.each(res, &assert(is_binary(&1)))
   end
 
-  test "operative creation over QUIC" do
-    operative = %Flezha.Operative.Builder{
-      id: "quic_operative_test",
-      factory_id: @test_operative_factory
+  test "operator creation over QUIC" do
+    operator = %Flezha.Operator.Builder{
+      id: "quic_operator_test",
+      factory_id: @test_operator_factory
     }
 
-    {status, info} = OperativeManager.start_operative(@quic_namespace, operative)
+    {status, info} = OperatorManager.start_operator(@quic_namespace, operator)
 
     assert status === :ok,
-           "start_operative failed: #{inspect(info)}"
+           "start_operator failed: #{inspect(info)}"
 
-    assert info[:operative_id] === "quic_operative_test"
+    assert info[:operator_id] === "quic_operator_test"
     assert is_pid(info[:pid])
     assert is_binary(info[:runner_id])
   end
 
   test "end-to-end message flow over QUIC" do
-    operative_id = "quic_msg_flow_test"
+    operator_id = "quic_msg_flow_test"
 
     {:ok, _info} =
-      operative_id
-      |> OperativeFixture.get(@test_operative_factory)
-      |> OperativeFixture.start(@quic_namespace)
-      |> OperativeFixture.attach_output_msg(@quic_namespace)
+      operator_id
+      |> OperatorFixture.get(@test_operator_factory)
+      |> OperatorFixture.start(@quic_namespace)
+      |> OperatorFixture.attach_output_msg(@quic_namespace)
 
-    assert OperativeTestHelper.send_sync_io(
-             operative_id,
+    assert OperatorTestHelper.send_sync_io(
+             operator_id,
              @quic_namespace,
              "quic_hello",
              %{},
@@ -88,25 +88,25 @@ defmodule FlezhaQuicTest do
            ) === "quic_hello"
   end
 
-  test "operative state retrieval over QUIC" do
-    operative_id = "quic_state_test"
+  test "operator state retrieval over QUIC" do
+    operator_id = "quic_state_test"
 
     {:ok, _info} =
-      operative_id
-      |> OperativeFixture.get(@test_store_input_factory)
-      |> OperativeFixture.start(@quic_namespace)
-      |> OperativeFixture.attach_output_msg(@quic_namespace)
+      operator_id
+      |> OperatorFixture.get(@test_store_input_factory)
+      |> OperatorFixture.start(@quic_namespace)
+      |> OperatorFixture.attach_output_msg(@quic_namespace)
 
-    OperativeTestHelper.send_sync_io(operative_id, @quic_namespace, "quic_state_1", %{},
+    OperatorTestHelper.send_sync_io(operator_id, @quic_namespace, "quic_state_1", %{},
       timeout: :quic
     )
 
-    OperativeTestHelper.send_sync_io(operative_id, @quic_namespace, "quic_state_2", %{},
+    OperatorTestHelper.send_sync_io(operator_id, @quic_namespace, "quic_state_2", %{},
       timeout: :quic
     )
 
     {:ok, json_state} =
-      OperativeManager.get_cell_state(@quic_namespace, operative_id)
+      OperatorManager.get_cell_state(@quic_namespace, operator_id)
 
     cell_state = Payloader.json_to_map(json_state)
 
@@ -119,16 +119,16 @@ defmodule FlezhaQuicTest do
   end
 
   test "sync IO round-trip over QUIC" do
-    operative_id = "quic_sync_io_test"
+    operator_id = "quic_sync_io_test"
 
     {:ok, _info} =
-      operative_id
-      |> OperativeFixture.get(@test_operative_factory)
-      |> OperativeFixture.start(@quic_namespace)
-      |> OperativeFixture.attach_output_msg(@quic_namespace)
+      operator_id
+      |> OperatorFixture.get(@test_operator_factory)
+      |> OperatorFixture.start(@quic_namespace)
+      |> OperatorFixture.attach_output_msg(@quic_namespace)
 
     result =
-      OperativeTestHelper.send_sync_io(operative_id, @quic_namespace, "quic_echo", %{},
+      OperatorTestHelper.send_sync_io(operator_id, @quic_namespace, "quic_echo", %{},
         timeout: :quic
       )
 

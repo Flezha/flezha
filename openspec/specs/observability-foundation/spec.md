@@ -9,7 +9,7 @@ The observability-foundation capability provides the Flezha Controller's first-c
 The observability subsystem SHALL define exactly one signal envelope structure used by all producers and all consumers. The structure SHALL include the fields `kind`, `source`, `name`, `measurements`, `metadata`, and `ts`. The field `kind` SHALL be one of the atoms `:metric`, `:event`, `:log`, or `:trace_span`. The structure SHALL be exposed as a module struct under the foundation namespace and SHALL be the only on-bus signal shape.
 
 #### Scenario: Constructing a metric signal
-- **WHEN** a producer constructs a signal with `kind: :metric`, `source: :flezha_state`, `name: :wal_backpressure`, `measurements: %{count: 1, bytes: 16_384}`, `metadata: %{operative: "orders", tasklet: 3}`
+- **WHEN** a producer constructs a signal with `kind: :metric`, `source: :flezha_state`, `name: :wal_backpressure`, `measurements: %{count: 1, bytes: 16_384}`, `metadata: %{operator: "orders", tasklet: 3}`
 - **THEN** the resulting struct SHALL be accepted by the bus without error and SHALL carry a monotonic-time `ts` field set automatically when not supplied
 
 #### Scenario: Rejecting an unknown signal kind
@@ -173,15 +173,15 @@ Every `[:flezha, ...]` event NAME written anywhere in the controller SHALL be a 
 The mapping SHALL also name, in the other direction, every mapped event nothing in the controller writes any more, each with the reason its line stays, and the suite SHALL assert that set exactly so a dead key can neither appear nor be resurrected unnoticed.
 
 #### Scenario: Bridged event becomes a signal
-- **WHEN** code calls `:telemetry.execute([:flezha, :state, :wal, :backpressure], %{bytes: 1024}, %{operative: "r1"})`
-- **THEN** a signal with `kind: :event`, `source: :flezha_state`, `name: :wal_backpressure`, `measurements.bytes: 1024`, `metadata.operative: "r1"` SHALL appear on the bus
+- **WHEN** code calls `:telemetry.execute([:flezha, :state, :wal, :backpressure], %{bytes: 1024}, %{operator: "r1"})`
+- **THEN** a signal with `kind: :event`, `source: :flezha_state`, `name: :wal_backpressure`, `measurements.bytes: 1024`, `metadata.operator: "r1"` SHALL appear on the bus
 
 #### Scenario: Websocket re-subscribe event is bridged
 - **WHEN** code calls `:telemetry.execute([:flezha, :plugin, :websocket, :resubscribe], %{data_silence_ms: 120_000}, %{plugin_id: "wss://ws.kraken.com"})`
 - **THEN** a signal sourced from the websocket provider carrying `measurements.data_silence_ms: 120_000` and `metadata.plugin_id: "wss://ws.kraken.com"` SHALL appear on the bus
 
 #### Scenario: Persistence stall/gap events are bridged
-- **WHEN** code calls `:telemetry.execute([:flezha, :state, :output_stall], %{stalled_ms: 60_000, last_seq: 100}, %{operative: "btc_kraken", tasklet: "ohlc", key: "1m"})`
+- **WHEN** code calls `:telemetry.execute([:flezha, :state, :output_stall], %{stalled_ms: 60_000, last_seq: 100}, %{operator: "btc_kraken", tasklet: "ohlc", key: "1m"})`
 - **THEN** a signal sourced from the state subsystem carrying the stalled duration, last seq, and Cell metadata SHALL appear on the bus
 - **AND** the same bridging SHALL hold for `[:flezha, :state, :seq_gap]` and `[:flezha, :state, :compaction_timeout]`
 
@@ -194,8 +194,8 @@ The mapping SHALL also name, in the other direction, every mapped event nothing 
 - **THEN** a signal for it SHALL appear on the bus, mapped from the detector table's declaration, and the bridge module's hand-kept half SHALL hold no line for it
 
 #### Scenario: A verdict transition is bridged
-- **WHEN** an operative's verdict record changes state from `healthy` to `parked`
-- **THEN** a signal named `verdict` sourced from the health seam SHALL appear on the bus with metadata `kind: :operative`, the operative id, `state: :parked` and the park reason, and no signal SHALL appear while the state holds
+- **WHEN** an operator's verdict record changes state from `healthy` to `parked`
+- **THEN** a signal named `verdict` sourced from the health seam SHALL appear on the bus with metadata `kind: :operator`, the operator id, `state: :parked` and the park reason, and no signal SHALL appear while the state holds
 
 #### Scenario: An event nobody bridges fails the suite
 - **WHEN** a `:telemetry.execute` of a `[:flezha, ...]` event is added to the controller and the event is neither a key of the merged mapping nor a member of the unexported list
@@ -215,7 +215,7 @@ The mapping SHALL also name, in the other direction, every mapped event nothing 
 
 ### Requirement: Service-API surface
 
-The foundation SHALL provide a service-API module `Flezha.Service.Observability` callable from both the CLI (via `Flezha.Service.CliManager`) and the future Phoenix UI directly, without routing through `CliManager`. The module SHALL expose at minimum `subscribe/2`, `query/2`, `list_sources/0`, `list_sinks/0`, `enable_source/1`, `disable_source/1`. Every public function SHALL accept a `caller_context` argument as its first or last positional argument AND SHALL be authorized through `Flezha.AuthZ.authorize/3` when `:authn_authz, :enabled` is `true`. Read tasklets (`list_sources`, `list_sinks`, `query`, `subscribe`) SHALL require at least the `viewer` role on the caller's bound namespace; mutate tasklets (`enable_source`, `disable_source`) SHALL require at least `operator`. Read tasklets SHALL filter results to the caller's bound namespace; results for other namespaces SHALL NOT be returned.
+The foundation SHALL provide a service-API module `Flezha.Service.Observability` callable from both the CLI (via `Flezha.Service.CliManager`) and the future Phoenix UI directly, without routing through `CliManager`. The module SHALL expose at minimum `subscribe/2`, `query/2`, `list_sources/0`, `list_sinks/0`, `enable_source/1`, `disable_source/1`. Every public function SHALL accept a `caller_context` argument as its first or last positional argument AND SHALL be authorized through `Flezha.AuthZ.authorize/3` when `:authn_authz, :enabled` is `true`. Read tasklets (`list_sources`, `list_sinks`, `query`, `subscribe`) SHALL require at least the `viewer` role on the caller's bound namespace; mutate tasklets (`enable_source`, `disable_source`) SHALL require at least `ops`. Read tasklets SHALL filter results to the caller's bound namespace; results for other namespaces SHALL NOT be returned.
 
 #### Scenario: CLI calls service API through CliManager
 - **WHEN** the CLI invokes a `list_sources` request that reaches `Flezha.Service.CliManager`
@@ -302,7 +302,7 @@ The producer-side emit function SHALL be allocation-light: it SHALL accept `meas
 - **THEN** the emit SHALL not enqueue any sink mailbox message and SHALL not insert into any ETS table
 
 #### Scenario: Emit accepts map measurements without conversion
-- **WHEN** a producer emits with `measurements: %{count: 1}` and `metadata: %{operative: "r"}`
+- **WHEN** a producer emits with `measurements: %{count: 1}` and `metadata: %{operator: "r"}`
 - **THEN** the signal SHALL be delivered without the producer being required to convert the maps to lists or keyword lists
 
 ### Requirement: A name that cannot be rendered in the exposition SHALL be refused where it is declared

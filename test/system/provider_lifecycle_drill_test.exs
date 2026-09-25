@@ -1,12 +1,12 @@
 defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   @moduledoc """
   Every provider, through the real enable and the real disable, on a live
-  operative bound to a live runner.
+  operator bound to a live runner.
 
   The table is `Flezha.Plugin.Providers.all()`, so a provider added to the
   system is driven here by name or fails the drill. Each row names its upstream:
   a scripted broker client for Kafka, a TCP origin for the poller, a websocket
-  fixture for the socket, a second operative for the forward, the test process
+  fixture for the socket, a second operator for the forward, the test process
   for the two message forwards, nothing for the transforms. A test asserts every
   row HAS a fixture, so a new provider cannot escape the drill by being absent
   from a list.
@@ -18,13 +18,13 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   token path is `multi_tenant_e2e_test`'s. Per row:
 
     * enable, and read the phase and the `[:flezha, :plugin, :phase]` events;
-    * read `Table.health/1` and `flz operative info`'s plugin block in process;
+    * read `Table.health/1` and `flz operator info`'s plugin block in process;
     * kill the worker and assert the declared restart value's outcome;
     * disable, and assert the family registry holds nothing for the plugin.
 
   What the in-suite conformance drill
   (`test/flezha/plugin/provider_lifecycle_test.exs`) proves against a fake
-  worker, this proves against the real one, through the operator's own verbs.
+  worker, this proves against the real one, through the user's own verbs.
 
   Tagged `:system`; run with
   `mix test --include system test/system/provider_lifecycle_drill_test.exs`.
@@ -37,14 +37,14 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   import FlezhaTest.Helper.TierE2EHarness,
     only: [boot_runner: 3, stop_namespace: 1, unique_id_path: 1]
 
-  alias Flezha.Operative.Overwatch
+  alias Flezha.Operator.Overwatch
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Provider
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.Providers
   alias Flezha.Service.CliManager
   alias Flezha.Service.HubManager
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias Flezha.Service.PluginManager
 
   @moduletag timeout: 300_000
@@ -62,7 +62,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
         {:test_process,
          %{
            recv_pid: ctx.sink_name,
-           operative_id: ctx.operative_id,
+           operator_id: ctx.operator_id,
            namespace: ctx.namespace,
            heartbeat_interval: 60_000
          }},
@@ -71,7 +71,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
       Provider.File.Source => {:file, %{path: "drill_source.ndjson", channel: "drill"}},
       Provider.File.Sink => {:file, %{path: "drill_sink.ndjson"}},
       Provider.Websocket => {:websocket, %{uri: ctx.ws_uri, idle_timeout_ms: 0}},
-      Provider.OperativeForward => {:second_operative, %{target_operative_id: ctx.target_id}},
+      Provider.OperatorForward => {:second_operator, %{target_operator_id: ctx.target_id}},
       Provider.Kafka.Producer =>
         {:scripted_broker, %{hosts: [{"127.0.0.1", 9092}], topic: "drill", idempotent: false}},
       Provider.Postgres =>
@@ -102,10 +102,10 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     sink = spawn_link(fn -> Process.sleep(:infinity) end)
     Process.register(sink, sink_name)
 
-    operative_id = start_operative(namespace, "drill_op")
-    # The forward's destination: a second operative in the same namespace, which
+    operator_id = start_operator(namespace, "drill_op")
+    # The forward's destination: a second operator in the same namespace, which
     # is the only shape that provider accepts.
-    target_id = start_operative(namespace, "drill_target")
+    target_id = start_operator(namespace, "drill_target")
 
     on_exit(fn -> stop_namespace(namespace) end)
 
@@ -128,7 +128,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     %{
       namespace: namespace,
       sink_name: sink_name,
-      operative_id: operative_id,
+      operator_id: operator_id,
       target_id: target_id,
       origin_url: "http://127.0.0.1:1/drill",
       ws_uri: "ws://127.0.0.1:1/drill"
@@ -155,7 +155,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
 
   test "the published enable reaches the same lifecycle as the CLI verb", ctx do
     # `PluginManager.enable/3` is the surface a consumer calls; it must reach the
-    # same table, the same phase and the same worker as the operator's verb.
+    # same table, the same phase and the same worker as the user's verb.
     plugin_id = "drill-published-#{System.unique_integer([:positive])}"
 
     assert {:ok, _} =
@@ -165,7 +165,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
                  id: plugin_id,
                  provider: Provider.Filter,
                  namespace: ctx.namespace,
-                 operative_id: ctx.operative_id,
+                 operator_id: ctx.operator_id,
                  opts: %{regex_pattern: ".*"},
                  hooks: [{:on_input, []}]
                ],
@@ -192,9 +192,9 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   end
 
   # One plugin option decides the entry channel every inbound frame of a socket
-  # is injected on, so two plugins on one operative must not be able to feed the
-  # same channel by accident. Driven through the operator's own verb on the live
-  # operative: what the socket process is started with is the whole of what this
+  # is injected on, so two plugins on one operator must not be able to feed the
+  # same channel by accident. Driven through the user's own verb on the live
+  # operator: what the socket process is started with is the whole of what this
   # decides, and delivering a frame that names a channel to that channel is the
   # runner's, pinned in `flz_core/src/routing_tests.rs`.
   test "each websocket plugin feeds the channel its own option names", ctx do
@@ -203,7 +203,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
       {%{channel: "feed_b"}, :on_interval, "feed_b", nil},
       {%{channel_in: "requests", channel_out: "responses"}, :on_output, "requests",
        ["responses"]},
-      # The operator's own comma-separated spelling, through the real verb: one
+      # The user's own comma-separated spelling, through the real verb: one
       # filter naming two channels, resolved to the set the dispatch reads.
       {%{channel_in: "requests", channel_out: "alerts,audit"}, :on_output, "requests",
        ["alerts", "audit"]}
@@ -220,14 +220,14 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
           %{"name" => Atom.to_string(extension), "opts" => subscription_opts(extension)}
         ])
 
-      scope = %{"namespace" => ctx.namespace, "operative_id" => ctx.operative_id}
+      scope = %{"namespace" => ctx.namespace, "operator_id" => ctx.operator_id}
 
       # The verb prints its own confirmation; this test asserts on the table.
       assert {:ok, _printed} =
                ExUnit.CaptureIO.with_io(fn ->
                  CliManager.enable_plugin(
                    plugin_id,
-                   "operative_websocket",
+                   "operator_websocket",
                    Jason.encode!(opts),
                    Jason.encode!(scope)
                  )
@@ -249,17 +249,17 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     end
   end
 
-  defp start_operative(namespace, label) do
+  defp start_operator(namespace, label) do
     id = "#{label}_#{System.unique_integer([:positive])}"
 
-    builder = %Flezha.Operative.Builder{
+    builder = %Flezha.Operator.Builder{
       id: id,
       factory_id: "do_nothing",
       init_values: %{},
       opts: [plugins: []]
     }
 
-    {:ok, _} = OperativeManager.start_operative(namespace, builder)
+    {:ok, _} = OperatorManager.start_operator(namespace, builder)
     id
   end
 
@@ -270,7 +270,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     extension = hd(provider.__provider__().extensions)
 
     # The CLI's two JSON arguments: the flags carry the provider's own options
-    # and the extensions it subscribes to; the operator options carry the scope.
+    # and the extensions it subscribes to; the user options carry the scope.
     flags =
       opts
       |> with_plugin_id(provider, plugin_id)
@@ -279,7 +279,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
         %{"name" => Atom.to_string(extension), "opts" => subscription_opts(extension)}
       ])
 
-    scope = %{"namespace" => ctx.namespace, "operative_id" => ctx.operative_id}
+    scope = %{"namespace" => ctx.namespace, "operator_id" => ctx.operator_id}
 
     # The verb prints and answers `:ok`; a refusal exits `{:shutdown, 1}`, which is
     # what makes an unasserted return safe to ignore here.
@@ -385,19 +385,19 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     end
   end
 
-  # `flz operative info` in process: the namespace's block names the enabled
-  # plugin, which is the surface an operator reads a plugin's own state on.
+  # `flz operator info` in process: the namespace's block names the enabled
+  # plugin, which is the surface a user reads a plugin's own state on.
   defp assert_info_block(ctx, plugin_id) do
     output =
       ExUnit.CaptureIO.capture_io(fn ->
-        CliManager.operative_info(ctx.namespace, "text", [])
+        CliManager.operator_info(ctx.namespace, "text", [])
       end)
 
-    assert output =~ plugin_id, "flz operative info does not name the enabled plugin"
+    assert output =~ plugin_id, "flz operator info does not name the enabled plugin"
   end
 
   # A provider that declares `plugin_id` is told the id it was enabled under,
-  # which is what an operator writes as `--Xplugin_id`. One that does not
+  # which is what a user writes as `--Xplugin_id`. One that does not
   # declare it would refuse the key, so it is not offered.
   defp with_plugin_id(opts, provider, plugin_id) do
     if Keyword.has_key?(provider.__provider__().options, :plugin_id),
@@ -414,7 +414,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   ## The fixture harness
 
   defp plugin_table(ctx) do
-    {:ok, pid} = HubManager.get_pid(ctx.namespace, ctx.operative_id)
+    {:ok, pid} = HubManager.get_pid(ctx.namespace, ctx.operator_id)
     %Overwatch{extensions: table} = :sys.get_state(pid)
     table
   end
@@ -427,7 +427,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     end)
   end
 
-  # The CLI carries every option as a string, which is the path an operator
+  # The CLI carries every option as a string, which is the path a user
   # actually uses and the one the declaration converts.
   defp cli_opts(opts), do: Map.new(opts, fn {k, v} -> {Atom.to_string(k), stringify(v)} end)
 

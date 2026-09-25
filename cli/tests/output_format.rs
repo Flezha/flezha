@@ -73,41 +73,41 @@ const CASES: &[(&[&str], Want)] = &[
         &["cluster", "status", "--output", "yaml"],
         Refused("unknown output format"),
     ),
-    // `flz runner list` and `flz operative list` share `cluster status`'s
+    // `flz runner list` and `flz operator list` share `cluster status`'s
     // reader, so the switch has to reach them too.
     (
         &["runner", "list", "--json"],
         Rpc("Flezha.Service.CliManager.list_runners(\"\", \"json\", [])"),
     ),
     (
-        &["operative", "list", "--output", "json"],
-        Rpc("Flezha.Service.CliManager.list_operatives(\"\", \"json\", [])"),
+        &["operator", "list", "--output", "json"],
+        Rpc("Flezha.Service.CliManager.list_operators(\"\", \"json\", [])"),
     ),
-    // `flz operative listen`: output by default, the window always carried.
+    // `flz operator listen`: output by default, the window always carried.
     (
-        &["operative", "listen", "op"],
-        Rpc(r#"Flezha.Service.CliManager.operative_listen("", "op", "output", "text", [duration_ms: 30000])"#),
-    ),
-    (
-        &["operative", "listen", "op", "--input", "--json", "--duration-ms", "500", "-n", "prod"],
-        Rpc(r#"Flezha.Service.CliManager.operative_listen("prod", "op", "input", "json", [duration_ms: 500])"#),
+        &["operator", "listen", "op"],
+        Rpc(r#"Flezha.Service.CliManager.operator_listen("", "op", "output", "text", [duration_ms: 30000])"#),
     ),
     (
-        &["operative", "listen", "op", "--duration", "5"],
+        &["operator", "listen", "op", "--input", "--json", "--duration-ms", "500", "-n", "prod"],
+        Rpc(r#"Flezha.Service.CliManager.operator_listen("prod", "op", "input", "json", [duration_ms: 500])"#),
+    ),
+    (
+        &["operator", "listen", "op", "--duration", "5"],
         Refused("unknown argument '--duration'"),
     ),
     (
-        &["operative", "listen", "op", "extra"],
+        &["operator", "listen", "op", "extra"],
         Refused("unknown argument 'extra'"),
     ),
     // `--await` rides the options list only when written.
     (
-        &["operative", "send", "op", "--text", "hi"],
-        Rpc(r#"Flezha.Service.CliManager.operative_send("", "op", "hi", "", [])"#),
+        &["operator", "send", "op", "--text", "hi"],
+        Rpc(r#"Flezha.Service.CliManager.operator_send("", "op", "hi", "", [])"#),
     ),
     (
-        &["operative", "send", "op", "--text", "hi", "--await", "2000"],
-        Rpc(r#"Flezha.Service.CliManager.operative_send("", "op", "hi", "", [await_ms: 2000])"#),
+        &["operator", "send", "op", "--text", "hi", "--await", "2000"],
+        Rpc(r#"Flezha.Service.CliManager.operator_send("", "op", "hi", "", [await_ms: 2000])"#),
     ),
     // `flz audit` — the `--json` dialect.
     (
@@ -176,12 +176,12 @@ const CASES: &[(&[&str], Want)] = &[
         Rpc("Flezha.Service.CliManager.list_namespaces(\"json\", [])"),
     ),
     (
-        &["state", "list", "MarketOperative", "--json"],
-        Rpc("Flezha.Service.CliManager.state_list(\"MarketOperative\", \"json\", [])"),
+        &["state", "list", "MarketOperator", "--json"],
+        Rpc("Flezha.Service.CliManager.state_list(\"MarketOperator\", \"json\", [])"),
     ),
     (
-        &["state", "list", "MarketOperative", "--output", "json"],
-        Rpc("Flezha.Service.CliManager.state_list(\"MarketOperative\", \"json\", [])"),
+        &["state", "list", "MarketOperator", "--output", "json"],
+        Rpc("Flezha.Service.CliManager.state_list(\"MarketOperator\", \"json\", [])"),
     ),
     // `flz plugin list` — the format flag renders; `--installed` chooses the
     // collection. Neither may do the other's job.
@@ -204,7 +204,7 @@ const CASES: &[(&[&str], Want)] = &[
     // `flz plugin enable` passes its options on rather than rendering them,
     // and reads them through the second scanner. An option's four spellings
     // are one option there too: a short flag written with `=` is what the
-    // operator typed.
+    // caller typed.
     (
         &["plugin", "enable", "p", "prov", "--output=json"],
         Rpc(
@@ -325,7 +325,7 @@ const CASES: &[(&[&str], Want)] = &[
         Refused("--ttl requires a value"),
     ),
     (
-        &["operative", "scale", "g", "2", "--timeout"],
+        &["operator", "scale", "g", "2", "--timeout"],
         Refused("--timeout requires a value"),
     ),
     // The identity readers: a default that is another namespace, or another
@@ -336,7 +336,7 @@ const CASES: &[(&[&str], Want)] = &[
     ),
     (&["token", "list", "--token"], Refused("--token requires a value")),
     (
-        &["operative", "start", "fac", "--id"],
+        &["operator", "start", "fac", "--id"],
         Refused("--id requires a value"),
     ),
     (
@@ -359,12 +359,12 @@ const CASES: &[(&[&str], Want)] = &[
         &["cluster", "status", "--json", "--output"],
         Refused("--output requires a value"),
     ),
-    // A value the operator wrote and left empty IS a value: it is not refused,
+    // A value the caller wrote and left empty IS a value: it is not refused,
     // and `json`'s own rule for an empty value still answers `{}`.
     (
-        &["operative", "start", "fac", "--init-values", ""],
+        &["operator", "start", "fac", "--init-values", ""],
         Rpc(
-            "Flezha.Service.CliManager.operative_start(\"\", \"fac\", \"{}\", \"text\", \"{}\", [])",
+            "Flezha.Service.CliManager.operator_start(\"\", \"fac\", \"{}\", \"text\", \"{}\", [])",
         ),
     ),
     // A NUMBER the reader cannot parse is the same request as one nobody
@@ -417,10 +417,10 @@ const CASES: &[(&[&str], Want)] = &[
         Refused("invalid --duration-ms value 'abc'"),
     ),
     // The two verbs that never parsed at all: they shipped the word the
-    // operator typed to the controller as a JSON string.
+    // caller typed to the controller as a JSON string.
     (
         &[
-            "operative",
+            "operator",
             "start",
             "fac",
             "--id",
@@ -431,41 +431,41 @@ const CASES: &[(&[&str], Want)] = &[
             "4",
         ],
         Rpc(
-            r#"Flezha.Service.CliManager.operative_start("", "fac", "{}", "text", "{\"snapshot_interval\": \"5\", \"partitions\": \"4\"}", [id: "op"])"#,
+            r#"Flezha.Service.CliManager.operator_start("", "fac", "{}", "text", "{\"snapshot_interval\": \"5\", \"partitions\": \"4\"}", [id: "op"])"#,
         ),
     ),
     (
-        &["operative", "start", "fac", "--partitions", "abc"],
+        &["operator", "start", "fac", "--partitions", "abc"],
         Refused("invalid --partitions value 'abc'"),
     ),
     (
-        &["operative", "start", "fac", "--snapshot-interval", "abc"],
+        &["operator", "start", "fac", "--snapshot-interval", "abc"],
         Refused("invalid --snapshot-interval value 'abc'"),
     ),
     (
-        &["operative", "scale", "g", "2"],
-        Rpc("Flezha.Service.CliManager.operative_scale(\"\", \"g\", \"2\", \"{}\", [])"),
+        &["operator", "scale", "g", "2"],
+        Rpc("Flezha.Service.CliManager.operator_scale(\"\", \"g\", \"2\", \"{}\", [])"),
     ),
     (
-        &["operative", "scale", "g", "2", "--timeout", "5000"],
+        &["operator", "scale", "g", "2", "--timeout", "5000"],
         Rpc(
-            r#"Flezha.Service.CliManager.operative_scale("", "g", "2", "{\"timeout_ms\": \"5000\"}", [])"#,
+            r#"Flezha.Service.CliManager.operator_scale("", "g", "2", "{\"timeout_ms\": \"5000\"}", [])"#,
         ),
     ),
     (
-        &["operative", "scale", "g", "2", "--timeout", "abc"],
+        &["operator", "scale", "g", "2", "--timeout", "abc"],
         Refused("invalid --timeout value 'abc'"),
     ),
     // A number written as a POSITIONAL is the same request as one written as
     // an option, and was the one spelling KI-176's reader never saw. Until it
-    // did, `flz operative scale g abc --timeout abc` refused the flag and
+    // did, `flz operator scale g abc --timeout abc` refused the flag and
     // forwarded the word — one verb answering one typo two ways.
     (
-        &["operative", "scale", "g", "abc"],
+        &["operator", "scale", "g", "abc"],
         Refused("invalid <partitions> value 'abc'"),
     ),
     (
-        &["operative", "scale", "g", "abc", "--timeout", "abc"],
+        &["operator", "scale", "g", "abc", "--timeout", "abc"],
         Refused("invalid <partitions> value 'abc'"),
     ),
     (
@@ -524,74 +524,74 @@ const CASES: &[(&[&str], Want)] = &[
         Refused("invalid --timeout-ms value 'abc'"),
     ),
     (
-        &["operative", "rewind", "op", "--to-iteration", "abc"],
+        &["operator", "rewind", "op", "--to-iteration", "abc"],
         Refused("invalid --to-iteration value 'abc'"),
     ),
     (
         &["reset", "--dry-run", "--probe-timeout-ms", "abc", NO_ROOT],
         Refused("invalid --probe-timeout-ms value 'abc'"),
     ),
-    // `flz operative start` carries `--id` and `--plugins` in the options
+    // `flz operator start` carries `--id` and `--plugins` in the options
     // list, and only when written; the two verbs whose credential once rode a
     // JSON document or nowhere at all now end with the same list as every
     // other.
     (
-        &["operative", "start", "fac", "--id", "op", "--plugins", "[]"],
-        Rpc(r#"Flezha.Service.CliManager.operative_start("", "fac", "{}", "text", "{}", [id: "op", plugins: "[]"])"#),
+        &["operator", "start", "fac", "--id", "op", "--plugins", "[]"],
+        Rpc(r#"Flezha.Service.CliManager.operator_start("", "fac", "{}", "text", "{}", [id: "op", plugins: "[]"])"#),
     ),
     // A start without an id carries no id at all: the controller generates it.
     (
-        &["operative", "start", "echo"],
-        Rpc(r#"Flezha.Service.CliManager.operative_start("", "echo", "{}", "text", "{}", [])"#),
+        &["operator", "start", "echo"],
+        Rpc(r#"Flezha.Service.CliManager.operator_start("", "echo", "{}", "text", "{}", [])"#),
     ),
     (
-        &["operative", "start", "echo", "-i", "my_echo"],
-        Rpc(r#"Flezha.Service.CliManager.operative_start("", "echo", "{}", "text", "{}", [id: "my_echo"])"#),
+        &["operator", "start", "echo", "-i", "my_echo"],
+        Rpc(r#"Flezha.Service.CliManager.operator_start("", "echo", "{}", "text", "{}", [id: "my_echo"])"#),
     ),
     (
-        &["operative", "start", "echo", "-o", "json"],
-        Rpc(r#"Flezha.Service.CliManager.operative_start("", "echo", "{}", "json", "{}", [])"#),
+        &["operator", "start", "echo", "-o", "json"],
+        Rpc(r#"Flezha.Service.CliManager.operator_start("", "echo", "{}", "json", "{}", [])"#),
     ),
     (
-        &["operative", "start", "echo", "--json", "--init-values", r#"{"a":1}"#],
-        Rpc(r#"Flezha.Service.CliManager.operative_start("", "echo", "{\"a\":1}", "json", "{}", [])"#),
+        &["operator", "start", "echo", "--json", "--init-values", r#"{"a":1}"#],
+        Rpc(r#"Flezha.Service.CliManager.operator_start("", "echo", "{\"a\":1}", "json", "{}", [])"#),
     ),
     // A first message rides the options list as text, with the entry channel
     // it names; a channel with no message names nothing.
     (
-        &["operative", "start", "paper_order", "--text", r#"{"symbol":"AAPL"}"#, "--channel", "order"],
-        Rpc(r#"Flezha.Service.CliManager.operative_start("", "paper_order", "{}", "text", "{}", [text: "{\"symbol\":\"AAPL\"}", channel: "order"])"#),
+        &["operator", "start", "paper_order", "--text", r#"{"symbol":"AAPL"}"#, "--channel", "order"],
+        Rpc(r#"Flezha.Service.CliManager.operator_start("", "paper_order", "{}", "text", "{}", [text: "{\"symbol\":\"AAPL\"}", channel: "order"])"#),
     ),
     (
-        &["operative", "start", "echo", "-t", "hello"],
-        Rpc(r#"Flezha.Service.CliManager.operative_start("", "echo", "{}", "text", "{}", [text: "hello"])"#),
+        &["operator", "start", "echo", "-t", "hello"],
+        Rpc(r#"Flezha.Service.CliManager.operator_start("", "echo", "{}", "text", "{}", [text: "hello"])"#),
     ),
     (
-        &["operative", "start", "echo", "--channel", "order"],
+        &["operator", "start", "echo", "--channel", "order"],
         Refused("--channel names the entry channel of --text"),
     ),
     (
-        &["operative", "start", "my_echo", "echo"],
+        &["operator", "start", "my_echo", "echo"],
         Refused("unknown argument 'echo'"),
     ),
     // The spellings the rule retired are refused, not dropped: a start that
-    // ignored them would run without the values the operator wrote.
+    // ignored them would run without the values the caller wrote.
     (
-        &["operative", "start", "echo", "-iv", r#"{"a":1}"#],
+        &["operator", "start", "echo", "-iv", r#"{"a":1}"#],
         Refused("unknown argument '-iv'"),
     ),
     (
-        &["operative", "start", "echo", "--init_values", r#"{"a":1}"#],
+        &["operator", "start", "echo", "--init_values", r#"{"a":1}"#],
         Refused("unknown argument '--init_values'"),
     ),
     // The kind is the factory's, announced by its runner: a written one is an
     // option neither verb declares.
     (
-        &["operative", "start", "echo", "--kind", "stream"],
+        &["operator", "start", "echo", "--kind", "unbounded"],
         Refused("unknown argument '--kind'"),
     ),
     (
-        &["schedule", "add", "n", "--cron", "* * * * *", "--tz", "UTC", "--factory", "f", "--kind", "workflow"],
+        &["schedule", "add", "n", "--cron", "* * * * *", "--tz", "UTC", "--factory", "f", "--kind", "bounded"],
         Refused("unknown argument '--kind'"),
     ),
     (
@@ -603,15 +603,15 @@ const CASES: &[(&[&str], Want)] = &[
         Rpc(r#"Flezha.Service.CliManager.upgrade_plugin("p", "/x.fpz", [token: "t"])"#),
     ),
     (
-        &["operative", "scale", "g", "2", "--token", "t"],
-        Rpc(r#"Flezha.Service.CliManager.operative_scale("", "g", "2", "{}", [token: "t"])"#),
+        &["operator", "scale", "g", "2", "--token", "t"],
+        Rpc(r#"Flezha.Service.CliManager.operator_scale("", "g", "2", "{}", [token: "t"])"#),
     ),
     (
         &["audit", "stats", "--token", "t"],
         Rpc(r#"Flezha.Service.CliManager.audit_log_render_stats("text", [token: "t"])"#),
     ),
     // `flz schedule` — `add`'s flags travel as one keyword list in which an
-    // absent flag is absent, `--plugins` stays the text the operator wrote
+    // absent flag is absent, `--plugins` stays the text the caller wrote
     // whatever it parses as, and `run` carries the token like its siblings.
     (
         &["schedule", "run", "digest"],
@@ -690,17 +690,17 @@ const TOKEN_BEARERS: &[&[&str]] = &[
     &["observe", "tail", "beam_vm"],
     &["observe", "enable", "s"],
     &["observe", "disable", "s"],
-    &["operative", "start", "fac"],
-    &["operative", "scale", "g", "2"],
-    &["operative", "stop", "op"],
-    &["operative", "state", "op"],
-    &["operative", "list"],
-    &["operative", "info"],
-    &["operative", "listen", "op"],
-    &["operative", "send", "op", "--text", "hi", "--await", "500"],
-    &["operative", "send", "op", "--text", "hi"],
-    &["operative", "rewind", "op", "--to-iteration", "1"],
-    &["operative", "replay", "a/b/c", "--from", "1"],
+    &["operator", "start", "fac"],
+    &["operator", "scale", "g", "2"],
+    &["operator", "stop", "op"],
+    &["operator", "state", "op"],
+    &["operator", "list"],
+    &["operator", "info"],
+    &["operator", "listen", "op"],
+    &["operator", "send", "op", "--text", "hi", "--await", "500"],
+    &["operator", "send", "op", "--text", "hi"],
+    &["operator", "rewind", "op", "--to-iteration", "1"],
+    &["operator", "replay", "a/b/c", "--from", "1"],
     &["plugin", "install", "/x.fpz"],
     &["plugin", "upgrade", "p", "/x.fpz"],
     &["plugin", "uninstall", "p"],
@@ -742,12 +742,12 @@ const TOKEN_BEARERS: &[&[&str]] = &[
     &["token", "list"],
 ];
 
-/// One invocation, thirty-two runs: `operative start` built its options from a
+/// One invocation, thirty-two runs: `operator start` built its options from a
 /// `HashMap`, and `RandomState` seeds itself per process, so the key order was
-/// a property of the run rather than of what the operator typed (KI-177). One
+/// a property of the run rather than of what the caller typed (KI-177). One
 /// flip is enough to fail this; on the defect it flipped within two runs.
 const REPEATED: &[&str] = &[
-    "operative",
+    "operator",
     "start",
     "fac",
     "--id",

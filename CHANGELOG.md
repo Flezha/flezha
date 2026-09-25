@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+### Changed (BREAKING): Operative is Operator; the kinds are unbounded and bounded
+
+The unit a runner hosts is an **Operator**, and its two kinds are **unbounded** (no run reaches
+an end; it stops only from outside) and **bounded** (every run ends). The words name the run, not
+the input: a `per_input` bounded operator reads an unbounded input in bounded runs. Tasklet and
+Cell keep their names. There is no alias or compatibility shim anywhere.
+
+What breaks, all at once:
+
+- SDKs: `StreamOperative`/`WorkflowOperative` are `UnboundedOperator`/`BoundedOperator`,
+  `LocalOperative` is `LocalOperator`, `spawn_workflow` is `spawn_bounded`,
+  `define_stream`/`define_workflow` (`defineStream`/`defineWorkflow`) are
+  `define_unbounded`/`define_bounded`, `use Flezha.SDK.StreamOperative` is
+  `use Flezha.SDK.UnboundedOperator`, and every `Operative*` type in all seven SDKs is
+  `Operator*`.
+- The wire: `AddOperative`, `RemOperative`, `OperativeMessage`, `operative_id`,
+  `WorkflowCompleted`, `WorkflowStop` and `SpawnWorkflow*` are `AddOperator`, `RemOperator`,
+  `OperatorMessage`, `operator_id`, `BoundedCompleted`, `BoundedStop` and `SpawnBounded*`, with
+  every tag number unchanged. The kind literal on `AddOperator` is `""` (the unbounded default),
+  `"unbounded"` or `"bounded"`; `"stream"` and `"workflow"` are refused as unknown kinds. The
+  class announcement's `workflow` key is `bounded`.
+- The CLI verb tree is `flz operator start|stop|list|info|scale|send|listen|replay|rewind`, and
+  `list` and `info` print the kind as `bounded` or `unbounded`.
+- Environment: `FLEZHA_WORKFLOW_*` is `FLEZHA_BOUNDED_*`, `FLEZHA_PERSISTENCE_OPERATIVE` is
+  `FLEZHA_PERSISTENCE_OPERATOR`, `FLEZHA_BENCH_MSGS_PER_OPERATIVE` is
+  `FLEZHA_BENCH_MSGS_PER_OPERATOR`.
+- Telemetry events, metric names, `/healthz` fields (`bound_operators`, `producing_operators`,
+  `stuck_operators`), the AuthZ actions (`operator.start`, `operator.send`, `operator.stop`, ...),
+  the plugin hook `on_operator_init`, the provider ids (`operator_forward`, ...) and the
+  dead-letter path component (`app_data/dlq/<operator_class>/`) follow the same rename.
+- The AuthZ role `operator` is **`ops`**; `operator` is refused as an unknown role.
+
+The naming gates for the retired names (`check-kind-naming.sh`, `check-tasklet-cell-naming.sh`
+and their lists) are removed.
+
+Upgrade: the kind and the class names are persisted, so stop the controller and wipe runtime
+data (`flz controller stop && flz reset --yes`), redeploy the controller and every runner
+together, and bind roles again with `ops` where they said `operator`.
+
 ### Changed: a workflow stage commits through its Cells' own records
 
 A durable workflow Cell writes the same effect record a stream Cell on the effectively-once tier

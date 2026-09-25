@@ -1,14 +1,15 @@
 # Flezha Glossary
 
-The vocabulary every other document assumes, for operative authors, operators and contributors.
-In one sentence: **a Controller orchestrates Operatives across Runners; each Operative contains
-Tasklets; each Tasklet contains Cells.** Entries are short and point at the document that
+The vocabulary every other document assumes, for operator authors, users and contributors.
+In one sentence: **a Controller orchestrates Operators across Runners; each Operator contains
+Tasklets; each Tasklet contains Cells.** A runner hosts operators; an operator is the unit you
+start. Entries are short and point at the document that
 owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins.
 
 ## Roles
 
 - **Controller** — the Elixir control plane (`lib/flezha/`) and the source of truth: it owns the
-  durable store, routes input, places every operative and heals the fleet. Nodes cluster over
+  durable store, routes input, places every operator and heals the fleet. Nodes cluster over
   Erlang distribution, with one ProcessHub hub per namespace (`Flezha.Service.HubManager`).
 - **Runner** — the SDK process (Rust, Java, Node, Ruby, PHP, Python or Elixir) where user code runs. It dials the
   controller, never the reverse, and is disposable because every state change is mirrored to the
@@ -17,9 +18,9 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **Stable identity vs session token** — the SDK persists a **stable identity**
   (`FLEZHA_RUNNER_ID_PATH`, default `/var/lib/flezha-runner/id`) that survives restarts; the
   controller mints a **session token** per connection (`AssignRunnerId`) and routes on it, while an
-  operative's owner is the stable identity, so a reconnect re-points each operative's session
+  operator's owner is the stable identity, so a reconnect re-points each operator's session
   without moving its ownership. See [`internals/runner_identity.md`](internals/runner_identity.md).
-- **Namespace** — the hard tenancy boundary: every operative, tasklet, state path, audit record
+- **Namespace** — the hard tenancy boundary: every operator, tasklet, state path, audit record
   and signal carries one (`Flezha.AuthZ.Namespace`); `_system` is the singleton compatibility
   namespace. A runner connects into one namespace; the CLI selects one with `--namespace`.
 - **Cluster directory** — the `:pg`-backed map of which nodes hold runners for which factories and
@@ -33,28 +34,31 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 
 ## Workload model
 
-- **Operative** — the unit you start and stop (`flz operative start|stop|list|info`), registered
-  under a **factory id** (`factory_id()` on both Rust traits, `factoryId()` on Java's `Operative` base),
-  with a **kind**, `stream` or `workflow`, that its class declares and its runner announces with
+- **Operator** — the unit you start and stop (`flz operator start|stop|list|info`), registered
+  under a **factory id** (`factory_id()` on both Rust traits, `factoryId()` on Java's `Operator` base),
+  with a **kind**, `unbounded` or `bounded`, that its class declares and its runner announces with
   the factory id; a start names only the factory, and the kind is frozen for the instance's life.
   No behaviour is attached to the kind: persistence and sleeping are class settings of both.
 - **Sleeping**: an instance whose class declares `sleep_when_idle` (on by default for a durable
-  workflow, off for a stream) and has been idle for `FLEZHA_PARK_IDLE_MS` ships `IterPark`, is
+  bounded operator, off for an unbounded operator) and has been idle for `FLEZHA_PARK_IDLE_MS` ships `IterPark`, is
   evicted from its runner (`suspended`) and wakes on its next message with its Cells restored.
   Refused as `SleepWithoutPersistence` on a class whose persistence is off.
-- **Stream operative** — the always-on kind: an endless input, no barrier, per-cell recovery.
-  Implements `StreamOperative`. See [`architecture/stream_profile.md`](architecture/stream_profile.md).
-- **Workflow operative** — the terminating kind: a DAG of tasklets run level by level behind a
+- **Bounded / unbounded** — the two kinds, which describe the run, not the input. Bounded: every
+  run reaches a terminal state; unbounded: no run does, and the operator stops only from outside.
+  A `per_input` bounded operator reads an unbounded input in bounded runs.
+- **Unbounded operator** — the always-on kind: an endless input, no barrier, per-cell recovery.
+  Implements `UnboundedOperator`. See [`architecture/stream_profile.md`](architecture/stream_profile.md).
+- **Bounded operator** — the terminating kind: a DAG of tasklets run level by level behind a
   commit barrier, with an inbox, saga compensation, a durable loop and suspension. Implements
-  `WorkflowOperative`; ends on chain completion, a tasklet's `ctx.complete(result)`, a loop
-  that runs out of work, `max_duration` or `flz operative stop`. See
-  [`architecture/workflow_profile.md`](architecture/workflow_profile.md).
-- **Tasklet** — a typed stage inside an operative, declaring `Input`, `Output`, `State`,
+  `BoundedOperator`; ends on chain completion, a tasklet's `ctx.complete(result)`, a loop
+  that runs out of work, `max_duration` or `flz operator stop`. See
+  [`architecture/bounded_profile.md`](architecture/bounded_profile.md).
+- **Tasklet** — a typed stage inside an operator, declaring `Input`, `Output`, `State`,
   `Change` and `Clock` types. A tasklet has exactly one output channel, is wired to the others by
-  channels, and lives as long as its operative: it is fed, never called and returned from.
+  channels, and lives as long as its operator: it is fed, never called and returned from.
 - **Cell** — one keyed instance of a tasklet and the unit of durability, idle eviction and
   compaction: its own mailbox, state, WAL, snapshot lineage and outbox cursor. Identified by
-  `(operative_class, tasklet_id, cell_key)` and stored under
+  `(operator_class, tasklet_id, cell_key)` and stored under
   `<state_root>/<namespace>/<class>/<tasklet_id>/<cell_key>.*`. A cell exists whether or not its
   tasklet declares state and whether or not it carries a key: a single-mode tasklet holds one
   unkeyed cell.
@@ -73,43 +77,43 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **Merge** — two or more channels subscribed to one tasklet, each with a pure mapping into its
   sum-type `Input`. Per-source FIFO is kept, nothing is ordered across sources, and mappings run
   identically on live delivery and replay. See [`sdk/multi_input_tasklets.md`](sdk/multi_input_tasklets.md).
-- **`route_latest`** — delivers an operative-wide document to each keyed cell on that key's own
+- **`route_latest`** — delivers an operator-wide document to each keyed cell on that key's own
   traffic, never as a remembered-set fan-out.
-- **Partition** — one member of a partitioned operative, a stream or a `per_input` workflow: an
+- **Partition** — one member of a partitioned operator, an unbounded operator or a `per_input` bounded operator: an
   ordinary instance `<id>#pK` with its own Overwatch, registry row, binding, input log, state tree,
-  plugins and DLQ identity, and for a workflow its own journal and pass sheet.
-  `flz operative start <factory> --id <id> --partitions N` starts N; `flz operative scale <group> M`
-  rescales. See [`sdk/partitioned_operatives.md`](sdk/partitioned_operatives.md).
+  plugins and DLQ identity, and for a bounded operator its own journal and pass sheet.
+  `flz operator start <factory> --id <id> --partitions N` starts N; `flz operator scale <group> M`
+  rescales. See [`sdk/partitioned_operators.md`](sdk/partitioned_operators.md).
 - **Key group** — one of 256 buckets a routing key hashes into, `fnv1a128(key) mod 256`
   (`flz_core/src/util.rs`, identical in every SDK). A partition owns a contiguous range carried on
-  `AddOperative`; the SDK **key-group guard** parks the first frame whose key falls outside it.
-- **Group** — the logical operative N partitions make up, named by the base id, of either kind. No
-  group record is stored: the single `flz operative list` row and `info`'s coverage check derive
-  from the members. A workflow group has no end, result or rollback of its own; each member has.
+  `AddOperator`; the SDK **key-group guard** parks the first frame whose key falls outside it.
+- **Group** — the logical operator N partitions make up, named by the base id, of either kind. No
+  group record is stored: the single `flz operator list` row and `info`'s coverage check derive
+  from the members. A bounded operator group has no end, result or rollback of its own; each member has.
 - **Timer (per-cell)** — a deadline a tasklet registers on its own cell. An **event-time**
   timer fires when the cell's event-time high-water crosses it, a **processing-time** timer from
   the deferred-wake list (the BEAM's timer service in the Elixir SDK). `on_timer` receives the
   scheduled timestamp; the pending set is folded
-  state, so a crash-resume owes exactly the timers it owed. In a workflow a firing opens a pass
+  state, so a crash-resume owes exactly the timers it owed. In a bounded operator a firing opens a pass
   at the tasklet that set it. See [`sdk/cell_timers.md`](sdk/cell_timers.md).
 - **Plugin** — a `%Flezha.Plugin{}` binding a **provider** module to one or more **hooks** on a
   host such as the Overwatch (`:on_input`, `:on_output`, `:on_message`, ...); installed from a
-  `.fpz` (`flz plugin install`), attached per operative (`flz plugin enable|disable`).
+  `.fpz` (`flz plugin install`), attached per operator (`flz plugin enable|disable`).
   See [`plugins/lifecycle.md`](plugins/lifecycle.md).
 - **Hook**: a named point at which the platform calls a plugin, named by the provider callback it
   runs: `on_input`, `on_output`, `on_interval`, `on_message`, `on_snapshot`, `on_terminate`, and
-  `on_operative_init` at operative start only. Chosen with `--hook=<name>` on `flz plugin enable`,
+  `on_operator_init` at operator start only. Chosen with `--hook=<name>` on `flz plugin enable`,
   with its options written `--<name>.<key>=<value>`, or under `"hooks"` in a plugin spec and
   `hooks:` in a package manifest. `on_interval` needs `interval_ms`; there is no default. A
-  plugin with no hooks still feeds its operative through its provider's own worker: hooks decide
+  plugin with no hooks still feeds its operator through its provider's own worker: hooks decide
   only when the platform calls the plugin.
-- **Operative-to-operative messaging** — one operative's output delivered into another's input
-  stream by the `OperativeForward` plugin on the source (same namespace, no self-targeting),
+- **Operator-to-operator messaging** — one operator's output delivered into another's input
+  stream by the `OperatorForward` plugin on the source (same namespace, no self-targeting),
   retried until the target confirms. The guarantee is derived: a source whose Cells record effects
-  (an effectively-once stream or a durable workflow) gets effectively-once across the hop, any
-  other at-least-once. See [`plugins/operative_forward.md`](plugins/operative_forward.md).
-- **`:on_message`** — the synchronous request/reply hook (`OperativeMessage` /
-  `OperativeMessageResponse` on the control channel, `flz operative send`), as opposed to data
+  (an effectively-once unbounded operator or a durable bounded operator) gets effectively-once across the hop, any
+  other at-least-once. See [`plugins/operator_forward.md`](plugins/operator_forward.md).
+- **`:on_message`** — the synchronous request/reply hook (`OperatorMessage` /
+  `OperatorMessageResponse` on the control channel, `flz operator send`), as opposed to data
   flow into the input stream. See [`plugins/message_handlers.md`](plugins/message_handlers.md).
 - **First-party source plugins** — `HttpPoll` feeds an entry channel from a URL, injecting the
   body only when its SHA-256 changes plus one seed per (re)start, so consumers must be idempotent
@@ -128,9 +132,9 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   `{changes, outputs, consumed_offset, dlq, event_time}`, appended and fsynced as a unit so
   state, output, progress and a park can never tear apart.
 - **Input log** — the offset-addressable durable log every input is normalised into for an
-  instance with durable input, a stream under the tier or a durable workflow
+  instance with durable input, an unbounded operator under the tier or a durable bounded operator
   (`Flezha.State.InputLog`): one per instance, append before forward, stamped `flz.offset`,
-  deduplicated by `flz.msg_id`, and each reporter (a Cell, or a workflow's journal) recovers
+  deduplicated by `flz.msg_id`, and each reporter (a Cell, or a bounded operator's journal) recovers
   from its own consumed offset.
 - **At-least-once / effectively-once** — the default tier adds no latency and permits a duplicate
   output on replay; `effectively_once()` on the channel builder turns on the input log, the
@@ -145,21 +149,21 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   flush, `outbox_flushed_seq` advances on the sink's confirmation of the `flz.ack` token,
   `outbox_epoch` names the lineage. A restart re-drives what was durable but unconfirmed.
 - **Output identity** — the replay-stable stamps on a keyed output: `flz.cell`, `flz.seq`,
-  `flz.key`, and `flz.epoch` for a Cell that records effects (the tier, a durable workflow). `flz.` is reserved; a user emit carrying one is rejected.
+  `flz.key`, and `flz.epoch` for a Cell that records effects (the tier, a durable bounded operator). `flz.` is reserved; a user emit carrying one is rejected.
 - **Epoch** — the lineage counter in the outbox identity. An accident (crash retry, takeover,
   re-drive, `flz dlq replay`) **keeps** it so the sink swallows the repeat; a deliberate correction
-  (late-input correction, `flz operative replay`) **bumps** it so the new output passes
-  dedup and overwrites by natural key. A workflow rewind bumps only the journal epoch; its re-run's
+  (late-input correction, `flz operator replay`) **bumps** it so the new output passes
+  dedup and overwrites by natural key. A bounded operator rewind bumps only the journal epoch; its re-run's
   output is a newer record and passes on its higher `flz.seq`.
-- **Owner / fence / realign** — an operative's **owner** is the stable identity its ownership
-  record names (the `ClassRegistry` row its Overwatch writes before `AddOperative`); a frame about
-  the operative from a runner of any other identity is refused, counted as `foreign_frame_refused`
-  and answered with `RemOperative`. Within that identity exactly one session writes a cell's WAL:
+- **Owner / fence / realign** — an operator's **owner** is the stable identity its ownership
+  record names (the `ClassRegistry` row its Overwatch writes before `AddOperator`); a frame about
+  the operator from a runner of any other identity is refused, counted as `foreign_frame_refused`
+  and answered with `RemOperator`. Within that identity exactly one session writes a cell's WAL:
   a takeover is newest-wins and unbinds the old session first, so its stream channels flip
   `fenced?` and the WAL writer refuses an append from a superseded session token before any realign
   decision.
   **Realign** is the writer adopting a current runner's non-contiguous sequence and bumping the epoch.
-- **Minimum watermark** — `min(consumed offset)` across an operative's cells, advanced only
+- **Minimum watermark** — `min(consumed offset)` across an operator's cells, advanced only
   from the post-fsync path. It is the input-log retention floor and what mints source credit, so
   a permanently-failing payload must never freeze it.
 - **Credit / credit grant** — byte-credit flow control (`Flezha.State.CreditLedger`): the
@@ -172,40 +176,40 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   before the cell advances; a **credit park** waits for a grant; a **key-group park** refuses a
   mis-routed key; an **`IterPark`** asks for an idle instance of either kind to sleep.
 - **Dead-letter queue (DLQ)** — the controller's durable store for poison payloads
-  (`Flezha.Dlq.Store`, `app_data/dlq/<operative_class>/<tasklet_id>/`): retry, park durably,
+  (`Flezha.Dlq.Store`, `app_data/dlq/<operator_class>/<tasklet_id>/`): retry, park durably,
   advance. Entries are idempotent on their origin, retention is 30 days and 4 GiB, the surface is
-  `flz dlq list|show|replay|drop`; workflows abort-and-compensate instead. See [`resilience/data_durability.md`](resilience/data_durability.md).
+  `flz dlq list|show|replay|drop`; bounded operators abort-and-compensate instead. See [`resilience/data_durability.md`](resilience/data_durability.md).
 - **Late-input correction** — a declared `correction_window()` lets an event behind the event-time
   high-water mark rewind the cell to a baseline, replay the retained slice in event-time order
   and republish under a bumped epoch. Requires the tier, an `EventTimeFrom` clock and keyed plugin
   channels; the window raises the input-log hold window and the snapshot age floor to meet itself.
-- **Live read vs time-travel read** — `flz state get <operative/tasklet[/cell_key]>` asks the
+- **Live read vs time-travel read** — `flz state get <operator/tasklet[/cell_key]>` asks the
   runner holding the cell for its in-memory value (possibly ahead of what is durable, stamped
-  with its `change_seq`) and refuses when nothing holds it; `flz state at <operative/tasklet/
+  with its `change_seq`) and refuses when nothing holds it; `flz state at <operator/tasklet/
   cell_key> <seq|timestamp>` answers from the controller's WAL. See [`internals/state_persistence.md`](internals/state_persistence.md).
 - **Remote durability tier** — shipping durable artifacts to Postgres or S3 so a controller that
   dies with its disk is recoverable (`Flezha.State.DurabilityTier`); a production boot must choose
   a backend (`FLEZHA_DURABILITY_BACKEND`; `none` is local-only); local files stay authoritative.
   An **artifact** is one immutable shipped blob; the per-reference **manifest** naming a cut's
   artifacts is written last, so a torn upload is invisible. See [`operations/remote_durability_tier.md`](operations/remote_durability_tier.md).
-- **Synchronous durability** — a workflow class declaring `SYNC_DURABILITY` / `syncDurability()`
+- **Synchronous durability** — a bounded class declaring `SYNC_DURABILITY` / `syncDurability()`
   (its one class-level spelling in each SDK) has each commit barrier's ack gated on the remote
-  ship (RPO 0). Stream classes are refused it (`SyncDurabilityOnStream`).
+  ship (RPO 0). Unbounded classes are refused it (`SyncDurabilityOnUnbounded`).
 - **RPO breach** — local progress unshipped past `rpo_target_ms` (default 120 s): alarm-grade
   `[:flezha, :state, :rpo_exceeded]`, shown by `flz controller status` and `/healthz`. A
   **supersession** (`[:flezha, :state, :claim_superseded]`) is routine on every migration, not a breach.
 - **Declared set (durable operator intent)** — what should be running, as ProcessHub's declared
-  children per namespace hub (`Flezha.Convergence.Intent`, via `HubManager.declared_operatives/1`).
-  A wiped runtime registry does not empty it; a deliberate `flz operative stop` removes its entry.
+  children per namespace hub (`Flezha.Convergence.Intent`, via `HubManager.declared_operators/1`).
+  A wiped runtime registry does not empty it; a deliberate `flz operator stop` removes its entry.
 - **Orphan reconcile / start authority** — ProcessHub's round converging running children toward
   the declared set through the one idempotent start authority (the registry claim in ProcessHub's
-  `Distributor`, reached identically by the reconcile and by `OperativeManager.start_operative/3`).
+  `Distributor`, reached identically by the reconcile and by `OperatorManager.start_operator/3`).
   The loser answers `:duplicate` after checking the winner is live; `[:flezha, :boot,
   :reconcile_duplicate]` outside a partition recovery means a start bypassed the claim. See [`internals/process_hub.md`](internals/process_hub.md).
 
-## Workflow vocabulary
+## Bounded operator vocabulary
 
-- **Task journal** — the per-instance append-only journal of workflow progress
+- **Task journal** — the per-instance append-only journal of bounded operator progress
   (`<state_root>/<namespace>/<instance_id>/<instance_id>/task.journal`, `Flezha.State.TaskJournal`)
   on the WAL substrate under a reserved cell key. Its entries (`task_committed`,
   `iter_committed`, `compensated`, `rewound`) are markers, folded, never truncated; a stage entry
@@ -217,11 +221,11 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   the stage; the controller waits until those records are durable, journals the stage and acks,
   and only then do its outputs reach its children and its plugin outputs leave. Siblings commit independently. A committed
   tasklet is never re-run.
-- **Pass sheet** — a workflow instance's run state in the runner core (iteration, tasklets in
+- **Pass sheet** — a bounded instance's run state in the runner core (iteration, tasklets in
   flight and done, outputs held for their commit, completion), advanced by events on the thread
   that brings each one; the in-memory form of what the task journal describes.
-- **Outbox (workflow)**: a workflow Cell's plugin output is written in its own effect record
-  and leaves through that Cell writer's outbox, the one a tier stream Cell uses, once the durable
+- **Outbox (bounded operator)**: a bounded operator Cell's plugin output is written in its own effect record
+  and leaves through that Cell writer's outbox, the one a tier unbounded operator Cell uses, once the durable
   stage marker naming the record has been acked. It carries the stream's identity
   (`flz.cell`, `flz.seq = <record seq>.<emit ordinal>`, `flz.epoch`, `flz.key`, metadata). A
   record no marker names is dropped, so a failed stage delivers nothing.
@@ -233,8 +237,8 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   (one iteration per message) or `Chained` (the first message, then iteration N+1 seeded by
   N's terminal output into that message's chain). The **iteration boundary**
   (`IterCommit`) is where suspension, the keep-progress unit and rewind attach.
-- **Durable input (workflow)** — a durable workflow instance's input, journaled to its input
-  log before it is forwarded, as a tier stream's is, and deduplicated by a `flz.msg_id` the log
+- **Durable input (bounded operator)** — a durable bounded instance's input, journaled to its input
+  log before it is forwarded, as a tier unbounded operator's is, and deduplicated by a `flz.msg_id` the log
   still retains; a message without an id is never a duplicate. Its iteration commits move the
   log's watermark, and `flz state inbox` renders it. The driver's own queue of arrived messages
   is still called its inbox.
@@ -242,20 +246,20 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   (`IterPark`, recorded first) while the Overwatch and registry entry remain; a new message or its
   wake deadline, the earliest pending processing-time Cell timer, rehydrates it through the
   ordinary bind path.
-- **Rewind** — `flz operative rewind <instance> --to-iteration N` appends a `rewound` marker at
+- **Rewind** — `flz operator rewind <instance> --to-iteration N` appends a `rewound` marker at
   epoch + 1, compensates the tasklets above N in reverse and resumes waiting. It is
   undo-and-continue: inputs are not replayed, and a tasklet that wrote plugin output without a
-  `compensate` hook refuses it. See [`resilience/workflow_operative.md`](resilience/workflow_operative.md).
+  `compensate` hook refuses it. See [`resilience/bounded_operator.md`](resilience/bounded_operator.md).
 
 ## Runner internals
 
 - **Poll core (`flz_core`)** — the one Rust kernel every host SDK drives through
   `poll() → Activation` / `complete(ActivationResult)`: transport, per-cell ordering, effect
-  records, the retry→park ladder, timers, credit, routing and workflow runs. Rust consumes
+  records, the retry→park ladder, timers, credit, routing and bounded runs. Rust consumes
   it as a crate; Java, Node, Ruby and Python through compiled veneers over the C ABI
   (`flz_core_ffi`); PHP through that same ABI directly, with `ext-ffi` and no veneer of its own. The Elixir SDK is
   its own core and inherits nothing from it. See [`sdk/poll_core.md`](sdk/poll_core.md).
-- **Host class** — an operative class declared through the C ABI as data
+- **Host class** — an operator class declared through the C ABI as data
   (`flz_core_declare_class`, JSON, unknown fields refused); its user code runs host-side and is
   reached only through activations. Java, Node, Ruby, PHP and Python classes are host classes; typed
   Rust classes are not.
@@ -263,7 +267,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   for the same cell (**per-cell exclusivity**, why user code needs no locks): an input batch
   with timer firings, one of five host-participating commands (restore fold, snapshot, live read,
   apply-state, migration serialize), a **prepare crossing** (`KeyRequest`, batched keying) or a
-  workflow step. The result carries change bytes, outputs, consumed offset, timer ops and a
+  bounded operator step. The result carries change bytes, outputs, consumed offset, timer ops and a
   verdict (`ok | retryable_error | non_retryable_error`).
 - **Overflow policy** — what a channel discards when the consumer Cell's bounded mailbox is
   full, and the only question the enum answers: `DropNothing` (nothing — the producer waits for
@@ -273,9 +277,9 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   Cell is withheld further work until the push lands; on an entry channel the shared transport
   reader stalls, which carries the backpressure to the controller. Neither discards anything,
   which is what the author declared. Declared per channel with `.on_full(...)` / `.onFull(...)`
-  and frozen at registration — an authoring declaration, never operator config. Not to be confused
+  and frozen at registration — an authoring declaration, never configuration. Not to be confused
   with the Kafka producer's `:queue_overflow`, the observability bus's per-sink `overflow:`, or
-  the transport write buffer: separate mechanisms. `:queue_overflow` is operator config and
+  the transport write buffer: separate mechanisms. `:queue_overflow` is configuration and
   answers the same question about a producer queue, so it spells its three values the same way
   (`:drop_nothing` / `:drop_newest` / `:drop_oldest`); the bus's `overflow:` is `:drop | :block`
   and keeps its own vocabulary.
@@ -290,22 +294,22 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   `0x02` carries state changes, outputs and the data heartbeat back). See [`sdk/protocol_spec.md`](sdk/protocol_spec.md).
 
 - **Served group** — a factory a controller declares to a namespace's hub because its own fleet
-  can run it. An operative's group is its factory id, and the hub places the operative among the
-  controllers serving that group and no others, so an operative is never assigned to a controller
+  can run it. An operator's group is its factory id, and the hub places the operator among the
+  controllers serving that group and no others, so an operator is never assigned to a controller
   that cannot run it. A controller serves a factory while `placeable_runners/3` answers for it,
   which excludes a runner advertising the factory at a language other than the established one.
-  `Flezha.Cluster.GroupedHashing` is the distribution strategy that reads the table; an operative
+  `Flezha.Cluster.GroupedHashing` is the distribution strategy that reads the table; an operator
   with no factory carries no group and is placed over every controller in the hub.
 - **Withdrawal grace** — how long a controller keeps declaring a factory after its last runner for
   it goes (`FLEZHA_GROUP_WITHDRAW_GRACE_MS`, default 5 s). A runner back inside the grace moves no
-  operative at all; past it the hub reassigns them to a controller that can still run the factory,
+  operator at all; past it the hub reassigns them to a controller that can still run the factory,
   through the migration-consent gate with handover. A disconnect the controller asked for
   (`flz runner disconnect`, a namespace stop) withdraws at once. While no controller serves a
-  factory its operatives stay where they are, alive and unbound.
+  factory its operators stay where they are, alive and unbound.
 
 ## Control-plane liveness
 
-- **Overwatch** — `Flezha.Operative.Overwatch`, the controller-side process owning one operative
+- **Overwatch** — `Flezha.Operator.Overwatch`, the controller-side process owning one operator
   instance: it binds a runner, owns the plugins, journals every input and receives every output
   on its way to a sink.
 - **Convergence loop** — `Flezha.Convergence.Loop`, the controller's only self-healer. Every 5 s
@@ -316,11 +320,11 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   `LivenessCounters` emit facts and invoke no remedy; `Convergence.Loop` is the actor.
 - **Producing-liveness** — health asks "is work flowing" with an *is it being fed?* precondition:
   an idle cell is healthy, a fed-but-flat one is stuck (`wal_frozen`, `watermark_frozen`,
-  `outbox_flat`; the deepest wins). An **intent mismatch** (state on disk for an operative absent
+  `outbox_flat`; the deepest wins). An **intent mismatch** (state on disk for an operator absent
   from the declared set) is `200 degraded`, never `503`: a restart cannot heal a wiped registry.
 - **Stall localization** — `StallClassifier` compares two counter snapshots and returns the deepest
   wedged layer (`driver_loop_frozen` → `nif_queue_backing_up` → `socket_write_blocked` →
-  `runner_not_consuming` → `runner_pool_wedged` → `channel_not_sending` → `operative_not_forwarding`),
+  `runner_not_consuming` → `runner_pool_wedged` → `channel_not_sending` → `operator_not_forwarding`),
   emitting `[:flezha, :data_plane, :stall_localized]` on a change. See [`internals/transport_liveness.md`](internals/transport_liveness.md).
 - **Fabric wedge** — a stall inside the controller's own NIF driver thread (`driver_loop_frozen`,
   `nif_queue_backing_up`) that no BEAM-level heal reaches; sustained for `FLEZHA_FABRIC_503_POLLS`
@@ -343,10 +347,10 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 
 - **Enforcement posture** — `Flezha.AuthZ.enforcement_posture/0`: `:open` (the explicit
   `FLEZHA_AUTHZ_ENABLED=false` opt-out, warned every boot), `:bootstrap_pending` (`admin@_system`
-  not yet claimed; operator verbs refuse naming `flz auth bootstrap` while dataflow continues) or
+  not yet claimed; administration verbs refuse naming `flz auth bootstrap` while dataflow continues) or
   `:enforced`. Enforcement is the production default.
 - **Principal / role / token** — a **principal** is a verified identity string
-  (`Flezha.AuthZ.Principal`); a **role** is one of `viewer`, `app`, `operator`, `admin`,
+  (`Flezha.AuthZ.Principal`); a **role** is one of `viewer`, `app`, `ops`, `admin`,
   `runner`, `spawner`, `stopper` (`flz role bind|unbind|list`), and an identity holds a
   SET of roles in ONE namespace, an action being allowed when any of them grants it;
   a **token** is a scoped credential (`flz token issue|revoke|list`) presented as
@@ -354,10 +358,10 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   [`operations/authn_authz.md`](operations/authn_authz.md).
 - **Transport-bound principal** — identity minted from the authenticated connection, never from a
   caller-supplied value: the verified token for CLI callers, `runner@<namespace>` for runner
-  connections (role `runner` until an operator binds it, to `spawner` and `stopper` for
+  connections (role `runner` until a user binds it, to `spawner` and `stopper` for
   example; a connection holds only bound roles that grant `runner.connect`).
   `source: :internal` is reachable only from inside the controller BEAM.
-- **Namespace claim** — the `Flezha.State.Paths` record that one operative class's durable
+- **Namespace claim** — the `Flezha.State.Paths` record that one operator class's durable
   state belongs to one namespace (`<state_root>/<namespace>/<class>/`): recorded at bind,
   derivable from disk, refused on conflict; a class under `_system` is adopted by the first claimant.
 - **Break-glass (emergency rebootstrap)** — with the controller stopped, `flz auth rebootstrap`
@@ -368,14 +372,16 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 
 ## Disambiguating "Operator"
 
-In Flezha an **operator** is a person running the controller — the audience of the `operations/`
-documents, the subject of "operator verbs" and "operator replay", and the `operator` AuthZ role.
-It never means the SDK process: that is a **Runner**. "Operator intervention" means the human.
+In Flezha an **operator** is the unit a runner hosts and you start: an instance of a class of the
+bounded or the unbounded kind. It never means the SDK process, which is a **Runner**, and never
+the person running the controller: guides address that person as "you", and authorization text
+names them "the caller" or "the principal". The AuthZ role for day-to-day operations is `ops`.
+ProcessHub's internal ring-node "operator" is ProcessHub's own word and is not this term.
 
 ## See also
 
 - [`architecture/README.md`](architecture/README.md) — roles, the workload model, the eight kernel invariants.
-- [`sdk/rust_operative_architecture.md`](sdk/rust_operative_architecture.md) — Operative/Tasklet/Cell authoring.
+- [`sdk/rust_operator_architecture.md`](sdk/rust_operator_architecture.md) — Operator/Tasklet/Cell authoring.
 - [`sdk/protocol_spec.md`](sdk/protocol_spec.md) — the wire protocol between Runners and the Controller.
 - [`internals/process_hub.md`](internals/process_hub.md) — ProcessHub picks a node, the node picks a Runner.
 - [`resilience/overview.md`](resilience/overview.md) — what survives what.

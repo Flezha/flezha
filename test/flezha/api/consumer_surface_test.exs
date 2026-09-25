@@ -3,7 +3,7 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
   `flezha_ui` is this platform's console and reaches the controller by runtime
   name over `:erpc`. Its `mix.exs` does not depend on this project, so no
   compiler sees both sides and a rename here compiles clean in both trees,
-  failing only on an operator's machine — which is how six names came to be
+  failing only on a user's machine — which is how six names came to be
   called that this tree does not answer.
 
   `docs/api/consumers/flezha_ui.txt` records what the console calls, and this
@@ -35,17 +35,21 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
   # tasklet/cell rename takes off the entries that still use the old names.
   #
   # module-naming-record:begin
-  # tasklet-cell-naming-record:begin
   @unresolved_today %{
     {Flezha.AuthZ.RoleStore, :list_for_namespace, 1} => :withdrawn,
     {Flezha.Dlq.Store, :procedures, 1} => :withdrawn,
     {Flezha.Operative.Kind, :capabilities, 1} => :withdrawn,
     {Flezha.Operative.Kind, :known?, 1} => :moved,
     {Flezha.Operative.Lifecycle, :rewind, 2} => :moved,
+    {Flezha.Operative.PartitionGroup, :rescale, 4} => :moved,
     {Flezha.Service.CliManager, :cluster_status_recovery, 2} => :withdrawn,
     {Flezha.Service.ConfigManager, :get_provider_info, 0} => :withdrawn,
+    {Flezha.Service.HubManager, :operative_plugins, 1} => :withdrawn,
+    {Flezha.Service.HubManager, :operative_rows, 1} => :withdrawn,
     {Flezha.Service.Identificator, :hub, 1} => :moved,
     {Flezha.Service.OperativeManager, :get_entity_state, 3} => :withdrawn,
+    {Flezha.Service.OperativeManager, :get_operative_pid, 2} => :withdrawn,
+    {Flezha.Service.OperativeManager, :get_overwatch_state, 2} => :moved,
     {Flezha.Service.PluginHelper, :enable_io_listener, 4} => :withdrawn,
     {Flezha.State.PersistenceResolver, :workflow_completed_retention_hours, 1} => :withdrawn,
     {Flezha.State.ProcInbox, :last_offset, 1} => :moved,
@@ -53,10 +57,12 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
     {Flezha.State.ProcJournal, :committed_iterations, 1} => :moved,
     {Flezha.State.ProcJournal, :consumed_offset, 1} => :moved,
     {Flezha.State.ProcJournal, :read, 1} => :moved,
-    {Flezha.State.Registry, :operative_classes, 0} => :moved
+    {Flezha.State.Registry, :operative_classes, 0} => :withdrawn,
+    {Flezha, :list_operatives, 1} => :withdrawn,
+    {Flezha, :start_operative, 2} => :withdrawn,
+    {Flezha, :stop_operative, 2} => :withdrawn
   }
 
-  # tasklet-cell-naming-record:end
   # module-naming-record:end
 
   setup_all do
@@ -112,13 +118,13 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
     [{_entry, _verdict} = pair | _] =
       Enum.filter(ctx.unresolved, fn {{m, f, a, _}, _} ->
         # module-naming-record:begin
-        {m, f, a} == {Flezha.State.Registry, :operative_classes, 0}
+        {m, f, a} == {Flezha.Service.OperativeManager, :get_overwatch_state, 2}
         # module-naming-record:end
       end)
 
     line = RpcSurface.explain(pair)
     assert line =~ "MOVED"
-    assert line =~ "Flezha.State.Paths"
+    assert line =~ "Flezha.Service.OperatorManager"
     assert line =~ "node_manager.ex:"
   end
 

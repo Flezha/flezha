@@ -63,7 +63,7 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :state, :wal_realign] => {:flezha_state, :wal_realign, :event},
     [:flezha, :state, :stale_writer_refused] => {:flezha_state, :stale_writer_refused, :event},
     # Remote durability tier. Every alarm it documents was a Logger line until
-    # these entries existed — including `rpo_exceeded`, which the operator guide
+    # these entries existed — including `rpo_exceeded`, which the user guide
     # calls alarm-grade and reports through `/healthz`.
     [:flezha, :state, :rpo_exceeded] => {:flezha_durability, :rpo_exceeded, :event},
     [:flezha, :state, :ship_fenced] => {:flezha_durability, :ship_fenced, :event},
@@ -82,14 +82,14 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :dlq, :retention_dropped] =>
       {:flezha_dlq, :dlq_dropped_by_retention_total, :metric},
     [:flezha, :dlq, :usage] => {:flezha_dlq, :dlq_usage, :metric},
-    [:flezha, :plugin, :operative_forward, :shipped] =>
-      {:flezha_operative_forward, :delivered, :metric},
-    [:flezha, :plugin, :operative_forward, :retried] =>
-      {:flezha_operative_forward, :retry, :metric},
-    [:flezha, :plugin, :operative_forward, :queue_depth] =>
-      {:flezha_operative_forward, :queue_depth, :metric},
-    [:flezha, :plugin, :operative_forward, :overflowed] =>
-      {:flezha_operative_forward, :saturated, :event},
+    [:flezha, :plugin, :operator_forward, :shipped] =>
+      {:flezha_operator_forward, :delivered, :metric},
+    [:flezha, :plugin, :operator_forward, :retried] =>
+      {:flezha_operator_forward, :retry, :metric},
+    [:flezha, :plugin, :operator_forward, :queue_depth] =>
+      {:flezha_operator_forward, :queue_depth, :metric},
+    [:flezha, :plugin, :operator_forward, :overflowed] =>
+      {:flezha_operator_forward, :saturated, :event},
     [:flezha, :plugin, :http_poll, :shipped] => {:flezha_http_poll, :injected, :metric},
     [:flezha, :plugin, :http_poll, :unchanged] => {:flezha_http_poll, :unchanged, :metric},
     [:flezha, :plugin, :http_poll, :failed] => {:flezha_http_poll, :failed, :event},
@@ -103,7 +103,7 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :plugin, :file_sink, :failed] => {:flezha_file_sink, :failed, :event},
     # The kafka producer's family, under the same derived prefix as every other
     # provider. Counts are metrics; a failure, a topic creation and a worker
-    # swap are events an operator reads one at a time.
+    # swap are events a user reads one at a time.
     [:flezha, :plugin, :kafka, :shipped] => {:flezha_kafka, :shipped, :metric},
     [:flezha, :plugin, :kafka, :retried] => {:flezha_kafka, :retried, :metric},
     [:flezha, :plugin, :kafka, :overflowed] => {:flezha_kafka, :overflowed, :metric},
@@ -114,7 +114,7 @@ defmodule Flezha.Observability.TelemetryBridge do
     # The plugin lifecycle's one event: every phase a plugin enters or leaves,
     # from the table's one transition function.
     [:flezha, :plugin, :phase] => {:flezha_plugin, :phase, :event},
-    [:flezha, :operative, :parked] => {:flezha_operative, :operative_parked_total, :metric},
+    [:flezha, :operator, :parked] => {:flezha_operator, :operator_parked_total, :metric},
     # The backoff table's two events: every wait a ladder takes and every reset
     # a success records, whichever site walks the row.
     [:flezha, :backoff, :wait] => {:flezha_convergence, :backoff_wait, :metric},
@@ -175,7 +175,7 @@ defmodule Flezha.Observability.TelemetryBridge do
   # grouped under the reason it has none. A ratchet: the suite pins the total,
   # so an event may leave a group and none may join.
   @unexported %{
-    # One signal per durable workflow commit, at the data plane's rate, with
+    # One signal per durable bounded operator commit, at the data plane's rate, with
     # `task_idx` and `iter` unique to each. The commit's outcome rides the ack
     # the SDK observes and the durability counters, not a per-commit event.
     commit_path: [
@@ -199,7 +199,7 @@ defmodule Flezha.Observability.TelemetryBridge do
     ],
     # An action the controller took, or a step it completed, and never a fault
     # it detected, which is the line the mapping draws. Each is already
-    # answered by an operator surface that reports the resulting state: the
+    # answered by an operations surface that reports the resulting state: the
     # convergence snapshot, `/healthz`, `flz boot await`, the schedule listing.
     # Where one of these has a failing sibling, the sibling IS mapped
     # (`wal_pull_failed`, `spawn_failed`, `compaction_failed`).
@@ -209,16 +209,16 @@ defmodule Flezha.Observability.TelemetryBridge do
       [:flezha, :correction, :completed],
       [:flezha, :correction, :retention_derived],
       [:flezha, :hub, :pid_removed],
-      [:flezha, :operative, :requested_spawn],
+      [:flezha, :operator, :requested_spawn],
       [:flezha, :schedule, :dormant],
       [:flezha, :schedule, :fired],
       [:flezha, :state, :compaction_completed],
       [:flezha, :state, :schema_migration],
       [:flezha, :state, :wal_moved],
       [:flezha, :state, :wal_pulled],
-      [:flezha, :workflow, :completed],
-      [:flezha, :workflow, :rehydrating],
-      [:flezha, :workflow, :rewind]
+      [:flezha, :bounded, :completed],
+      [:flezha, :bounded, :rehydrating],
+      [:flezha, :bounded, :rewind]
     ]
   }
 

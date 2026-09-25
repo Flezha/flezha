@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The `flz` command line is an operator-facing surface: how an option may be spelled, what a
+The `flz` command line is a user-facing surface: how an option may be spelled, what a
 subcommand list must name, and that every screen is pinned by a capture. These rules were
 enforced by habit and by three goldens, and stated in no specification — which is why an
 option spelling and a subcommand list could each contradict nothing.
@@ -12,7 +12,7 @@ option spelling and a subcommand list could each contradict nothing.
 Every `flz` option SHALL be read in all four of `--long=value`, `--long value`,
 `-s=value` and `-s value`, and a short alias SHALL resolve to its long key in each of
 them. A reader that recognises an option in one spelling and not another SHALL NOT
-exist: an option the operator typed is either read or refused with the flag named,
+exist: an option the user typed is either read or refused with the flag named,
 never dropped in silence.
 
 A bare word containing `=` and no leading `-` is a positional argument and SHALL NOT
@@ -34,7 +34,7 @@ below.
 
 A `flz` help screen carrying a `COMMANDS:` or `SUBCOMMANDS:` block SHALL list in that
 block every subcommand the command answers, `help` included. A command that answers a
-verb its own screen does not name leaves the operator to discover it elsewhere, which
+verb its own screen does not name leaves the user to discover it elsewhere, which
 is what a help screen exists to prevent.
 
 A screen that documents whole invocations, or options rather than subcommands, carries
@@ -49,9 +49,9 @@ no such block and is not governed by this requirement.
 ### Requirement: Every help screen SHALL be pinned byte for byte by a capture
 
 Each screen `flz` prints SHALL be captured from the binary and compared byte for byte
-by the test suite, so that any change to operator-visible text is deliberate and
+by the test suite, so that any change to user-visible text is deliberate and
 visible in a diff. The screens are hand-aligned, so a renderer that computes a column
-would silently change what an operator sees; the capture is what makes the text
+would silently change what a user sees; the capture is what makes the text
 editable at all.
 
 The set of captures and the set of screens SHALL be equal, so that a screen cannot
@@ -72,8 +72,8 @@ stop being checked without the suite saying so.
 A repeatable plugin setting SHALL be read from `X<key>=<value>` as well as from
 `--X<key>=<value>` and `--X<key> <value>`, on every surface that takes settings —
 `flz plugin enable`, `flz namespace create` and `flz namespace set-quota`. The bare
-spelling is what the CLI's own help screens and usage lines teach, and a setting an
-operator typed that reaches no request is a plugin configured with nothing and told
+spelling is what the CLI's own help screens and usage lines teach, and a setting a
+user typed that reaches no request is a plugin configured with nothing and told
 nothing.
 
 A word is a setting when, and only when, it is spelled `X<key>=<value>` with a
@@ -84,9 +84,9 @@ key does not begin with `X` SHALL remain a positional argument.
 
 #### Scenario: The documented invocation carries its settings
 
-- **WHEN** `flz plugin enable operative_kafka_producer my_provider Xhosts=kafka:9092 Xtopic=my_topic` is run
+- **WHEN** `flz plugin enable operator_kafka_producer my_provider Xhosts=kafka:9092 Xtopic=my_topic` is run
 - **THEN** the enable request SHALL carry the settings `hosts` and `topic` with the
-  values the operator typed, identically to the `--Xhosts=` / `--Xtopic=` spelling
+  values the user typed, identically to the `--Xhosts=` / `--Xtopic=` spelling
 
 #### Scenario: A bare setting does not eat the next word
 
@@ -103,7 +103,7 @@ spelling advertised and not read is an instruction that silently does nothing, w
 is worse than one that is refused.
 
 The plugin-setting family SHALL be checked mechanically: the test suite SHALL scan the
-operator-visible text for every settings-shaped token it prints and assert the parser
+user-visible text for every settings-shaped token it prints and assert the parser
 reads each one back with the key and value the text shows, so that an example added to
 a screen is covered by the check without anyone remembering to extend it.
 
@@ -113,11 +113,11 @@ a screen is covered by the check without anyone remembering to extend it.
   not read
 - **THEN** the suite SHALL fail, naming the text it came from and the token
 
-### Requirement: A verb whose effect the operator's words choose SHALL refuse a word it cannot act on
+### Requirement: A verb whose effect the user's words choose SHALL refuse a word it cannot act on
 
 `flz boot await` and `flz reset` SHALL refuse an argument they do not recognise, naming the
 argument on stderr, exiting non-zero and reaching no controller call. These two verbs are
-the ones where guessing is worse than stopping: one blocks the operator for as long as its
+the ones where guessing is worse than stopping: one blocks the user for as long as its
 option says, the other deletes state. A typed word neither can act on means the run about to
 happen is not the run that was asked for.
 
@@ -155,12 +155,12 @@ verb is a decision recorded in that verb's row.
 
 ### Requirement: An option written with no value SHALL be refused, never defaulted
 
-Every `flz` option that takes a value SHALL be refused when the operator writes it with
+Every `flz` option that takes a value SHALL be refused when the user writes it with
 nothing after it, naming the flag on stderr, exiting non-zero and reaching no controller
 call. An option that is absent and an option written with no value are different requests:
-the first asks for the default, the second asks for a value the operator did not supply.
+the first asks for the default, the second asks for a value the user did not supply.
 A reader that cannot tell them apart answers the second with the first, in silence, and the
-operator is told nothing, which is the failure "either read or refused with the flag named"
+user is told nothing, which is the failure "either read or refused with the flag named"
 already forbids for a spelling and must equally forbid for a value.
 
 The distinction SHALL be carried by the option scanner rather than re-derived by each
@@ -168,7 +168,7 @@ reader. A scanner that answers only *value* or *nothing* forces every caller to 
 of the two it was handed, and a refusal written at each call site is the same sentence
 copied once per option.
 
-A value the operator wrote and left empty is a value that was supplied, not a value that is
+A value the user wrote and left empty is a value that was supplied, not a value that is
 missing: an option given an explicitly empty argument SHALL NOT be refused by this rule, and
 the reader's own rule for an empty value applies.
 
@@ -200,14 +200,14 @@ the reader's own rule for an empty value applies.
 Every `flz` option whose value is a number SHALL refuse a value it cannot read, naming the
 option and the value on stderr, exiting non-zero and reaching no controller call. Dropping
 the value instead leaves the reader answering with its default, which is the request the
-operator did not make: a `--limit` that will not parse becomes every record, a `--duration-ms`
+user did not make: a `--limit` that will not parse becomes every record, a `--duration-ms`
 that will not parse becomes the thirty-second default, and neither is distinguishable from an
 option nobody typed.
 
 Passing the unread value on to the controller is not an answer either. A value the command
 line can see is wrong is refused where the option's name is still known, rather than sent on
 as a string for something further away to reject in words that name neither the option nor
-the operator's spelling of it.
+the user's spelling of it.
 
 The parse SHALL be carried by the option scanner rather than re-derived by each reader, for
 the reason the neighbouring requirement gives: the refusal names the option, and the option's
@@ -225,7 +225,7 @@ words; only "this is not a number" is shared.
 
 #### Scenario: A non-numeric value is not passed on to the controller
 
-- **WHEN** `flz operative scale g 2 --timeout abc` is run
+- **WHEN** `flz operator scale g 2 --timeout abc` is run
 - **THEN** the run SHALL be refused, and no request carrying `abc` as a timeout SHALL be
   built
 
@@ -251,13 +251,13 @@ not the change under test.
 
 #### Scenario: Repeated identical invocations produce identical requests
 
-- **WHEN** `flz operative start fac --id op --snapshot-interval 5 --partitions 4` is run
+- **WHEN** `flz operator start fac --id op --snapshot-interval 5 --partitions 4` is run
   repeatedly against the same binary
 - **THEN** every run SHALL produce the same `CliManager` expression, byte for byte
 
 #### Scenario: A start without an id builds one request
 
-- **WHEN** `flz operative start fac --snapshot-interval 5` is run repeatedly against the
+- **WHEN** `flz operator start fac --snapshot-interval 5` is run repeatedly against the
   same binary
 - **THEN** every run SHALL produce the same `CliManager` expression, byte for byte, because
   the id is generated by the controller and not by the CLI
@@ -267,11 +267,11 @@ not the change under test.
 A positional argument the CLI reads as a number SHALL be refused by the same
 reader every numeric option goes through, and SHALL NOT be forwarded to the
 controller unread. A verb SHALL NOT answer the same typo two ways depending on
-whether the operator wrote the value as an option or as a positional.
+whether the user wrote the value as an option or as a positional.
 
 #### Scenario: A word is written where a positional number is expected
 
-- **WHEN** an operator writes a non-numeric word in a positional slot the verb
+- **WHEN** a user writes a non-numeric word in a positional slot the verb
   reads as a number
 - **THEN** the CLI SHALL refuse it locally, naming the argument and the value, and
   SHALL NOT reach the controller
@@ -286,7 +286,7 @@ whether the operator wrote the value as an option or as a positional.
 
 #### Scenario: One verb refuses both spellings in one invocation
 
-- **WHEN** an operator writes an unreadable number as a positional and as an
+- **WHEN** a user writes an unreadable number as a positional and as an
   option in the same invocation
 - **THEN** the verb SHALL refuse rather than refuse the option and forward the
   positional
@@ -299,13 +299,13 @@ whose optional flags were spelled as positional arguments with defaults SHALL ca
 them in that list instead, so that the credential is always the last slot and a new
 optional flag has somewhere to go. A verb whose only free argument is a JSON document
 SHALL keep the document and gain the list beside it. This rule governs the request the
-CLI builds, not the spelling of the operator-facing flags. `flz operative start` SHALL
+CLI builds, not the spelling of the user-facing flags. `flz operator start` SHALL
 read a first message as `send` spells it, `--text`/`-t` with an optional `--channel`/`-c`,
-for both operative kinds, and SHALL carry `text` and `channel` in the options list as text;
+for both operator kinds, and SHALL carry `text` and `channel` in the options list as text;
 the controller SHALL deliver that message as the instance's first input on the mechanism a
 tasklet's spawn uses, and an instance started without `--text` SHALL wait for `send`.
 `--channel` without `--text` SHALL be refused by the verb. `--init-values` SHALL mean initial
-state per tasklet for both kinds. `flz operative start` and `flz schedule add` SHALL declare
+state per tasklet for both kinds. `flz operator start` and `flz schedule add` SHALL declare
 no `kind` option: the kind is the factory's, announced by its runner, and a written `--kind`
 SHALL be refused as an unknown option by the same rule that refuses any option a verb does not
 declare. The help screens of both verbs, pinned by their captures, SHALL NOT mention `--kind`.
@@ -316,47 +316,47 @@ declare. The help screens of both verbs, pinned by their captures, SHALL NOT men
 - **THEN** the request SHALL end with an options list, empty when no token or request
   id is given, and the controller SHALL apply the defaults it applies today
 
-#### Scenario: `operative start` carries its trailing flags in the list
+#### Scenario: `operator start` carries its trailing flags in the list
 
-- **WHEN** `flz operative start <factory> --id <op> --plugins '[…]'` is run
+- **WHEN** `flz operator start <factory> --id <op> --plugins '[…]'` is run
 - **THEN** the request SHALL carry `id` and `plugins` in the options list, as text
   where the controller reads text, SHALL carry no `kind` entry, and SHALL carry no
   positional placeholder for an absent flag
 
-#### Scenario: `operative start` carries a first message
+#### Scenario: `operator start` carries a first message
 
-- **WHEN** `flz operative start paper_order --text '{"symbol":"AAPL"}' --channel order` is run
-  for a factory its runner announced as a workflow
+- **WHEN** `flz operator start paper_order --text '{"symbol":"AAPL"}' --channel order` is run
+  for a factory its runner announced as a bounded operator
 - **THEN** the options list SHALL carry `text` and `channel` as text, the instance SHALL
-  receive that message as its first input on `order`, and a `once` workflow SHALL run its
+  receive that message as its first input on `order`, and a `once` bounded operator SHALL run its
   pass over it
 
-#### Scenario: `operative start` without a message starts an instance that waits
+#### Scenario: `operator start` without a message starts an instance that waits
 
-- **WHEN** `flz operative start paper_order` is run and
-  `flz operative send <id> --text '{"symbol":"AAPL"}'` follows
+- **WHEN** `flz operator start paper_order` is run and
+  `flz operator send <id> --text '{"symbol":"AAPL"}'` follows
 - **THEN** the options list SHALL carry no `text` entry, the instance SHALL wait for its
   first message, and the send SHALL be that message
 
-#### Scenario: `operative start` without an id carries none
+#### Scenario: `operator start` without an id carries none
 
-- **WHEN** `flz operative start <factory>` is run with no `--id`
+- **WHEN** `flz operator start <factory>` is run with no `--id`
 - **THEN** the options list SHALL carry no `id` entry, and the request SHALL carry no
   positional placeholder for it
 
 #### Scenario: A written kind is an unknown option on both verbs
 
-- **WHEN** `flz operative start echo --kind stream` or
-  `flz schedule add n --cron "* * * * *" --tz UTC --factory f --kind workflow` is run
+- **WHEN** `flz operator start echo --kind stream` or
+  `flz schedule add n --cron "* * * * *" --tz UTC --factory f --kind bounded` is run
 - **THEN** the CLI SHALL refuse `--kind` as an option the verb does not declare, SHALL build
-  no request, and `flz operative start --help` and `flz schedule --help` SHALL match their
+  no request, and `flz operator start --help` and `flz schedule --help` SHALL match their
   captures with no `--kind` line
 
 #### Scenario: One rule, one test
 
 - **WHEN** the CLI's request-shape test runs over every verb the wire contract exports
 - **THEN** it SHALL assert the trailing list for every verb from one table, so that a
-  verb added without the list fails the test rather than the operator
+  verb added without the list fails the test rather than the user
 
 ### Requirement: Every verb SHALL declare its positional arguments and its options once
 
@@ -365,7 +365,7 @@ arguments it takes and every option it reads — the long spelling, the short al
 kind of value and whether it is required — and every reader, refusal, arity check and
 usage line for that verb SHALL be derived from that row rather than written beside it. A
 verb that reads a word the row does not declare, or prints a word the row does not
-declare, is a grammar the operator cannot discover from the surface that teaches it.
+declare, is a grammar the user cannot discover from the surface that teaches it.
 
 The row is the only place a verb's grammar is written down. Help screens stay hand-aligned
 text pinned by their captures, and SHALL be checked against the row rather than generated
@@ -391,12 +391,12 @@ verb whose screen it is, and every option the row declares SHALL appear in that 
   positionals and options the row declares, and SHALL be the same text the verb's help
   screen shows
 
-### Requirement: An option SHALL be read wherever the operator writes it
+### Requirement: An option SHALL be read wherever the user writes it
 
 Every `flz` option SHALL be read wherever it appears in the argument list, and the
 positional arguments SHALL be the words that remain once the declared options and their
 values are taken out. A verb SHALL NOT decide which words are options by their position,
-because an operator who writes a flag before the subject of the command then has the flag
+because a user who writes a flag before the subject of the command then has the flag
 itself taken as the subject: the request that reaches the controller is one nobody asked
 for, and the refusal that comes back names the wrong thing.
 
@@ -405,9 +405,9 @@ except where the verb's row declares that it refuses unrecognised words.
 
 #### Scenario: A credential written before the subject still authenticates
 
-- **WHEN** `flz operative stop --token <token> op1` is run
-- **THEN** the request SHALL name `op1` as the operative and carry `<token>` in its
-  options list, identically to `flz operative stop op1 --token <token>`
+- **WHEN** `flz operator stop --token <token> op1` is run
+- **THEN** the request SHALL name `op1` as the operator and carry `<token>` in its
+  options list, identically to `flz operator stop op1 --token <token>`
 
 #### Scenario: A namespace written before the subject reaches the request
 
@@ -418,17 +418,17 @@ except where the verb's row declares that it refuses unrecognised words.
 
 ### Requirement: A refusal or a rendered error SHALL be written to stderr
 
-Every refusal and every error a `flz` verb renders SHALL be written to the stderr of the process the operator ran, whatever the verb's family, and the stream SHALL NOT be a per-call argument. An operator who pipes a verb's output into a file or another program is collecting the answer, not the failure; a failure written to stdout is a failure inside the data, and a failure written to the controller's own stderr is a failure the operator never sees at all.
+Every refusal and every error a `flz` verb renders SHALL be written to the stderr of the process the user ran, whatever the verb's family, and the stream SHALL NOT be a per-call argument. A user who pipes a verb's output into a file or another program is collecting the answer, not the failure; a failure written to stdout is a failure inside the data, and a failure written to the controller's own stderr is a failure the user never sees at all.
 
-A verb body evaluated on the controller SHALL resolve the device it writes to from its caller, and SHALL NOT name a local stream. A named stream selects the device registered under that name on the node the body is running on, which for every controller-side verb is the controller's log rather than the operator's terminal.
+A verb body evaluated on the controller SHALL resolve the device it writes to from its caller, and SHALL NOT name a local stream. A named stream selects the device registered under that name on the node the body is running on, which for every controller-side verb is the controller's log rather than the user's terminal.
 
 The verb's success output stays on stdout and its exit code does not change: what changes is the stream a failure is written to, and the node that stream belongs to.
 
 A refused verb SHALL exit with a reason that halts the calling process non-zero without printing a language-level exit trace over the sentence the verb has just rendered. The exit code SHALL be the one this surface already uses.
 
-#### Scenario: An operative failure is not in the data
+#### Scenario: An operator failure is not in the data
 
-- **WHEN** a `flz operative` verb fails and its stdout is captured separately from its
+- **WHEN** a `flz operator` verb fails and its stdout is captured separately from its
   stderr
 - **THEN** the error text SHALL appear on stderr and stdout SHALL carry none of it
 
@@ -455,7 +455,7 @@ A refused verb SHALL exit with a reason that halts the calling process non-zero 
 
 `flz namespace list` SHALL answer from the durable namespace catalog, the same store `flz namespace create`, `delete`, `show` and `set-quota` write, and SHALL report for each namespace whether a hub for it is running on this controller. A namespace created a moment earlier SHALL therefore appear, whether or not anything is running in it.
 
-The verb's declared row SHALL be unchanged: the same verb name, the same action and the same scope it binds today. Only the data the body reads changes, so no operator gains or loses the ability to run it.
+The verb's declared row SHALL be unchanged: the same verb name, the same action and the same scope it binds today. Only the data the body reads changes, so no user gains or loses the ability to run it.
 
 A caller that is not an admin in the system namespace SHALL see only the namespace it is bound to, through the same filter the other catalog-reading verbs use.
 
@@ -463,13 +463,13 @@ The command's help text SHALL describe what it now answers, rather than naming r
 
 #### Scenario: A created namespace is listed
 
-- **WHEN** an operator runs `flz namespace create billing` and then `flz namespace list`
+- **WHEN** a user runs `flz namespace create billing` and then `flz namespace list`
 - **THEN** `billing` SHALL appear in the output
 
 #### Scenario: The output says what is running
 
 - **GIVEN** a catalog holding two namespaces, one of which has a live hub on this controller
-- **WHEN** an operator runs `flz namespace list`
+- **WHEN** a user runs `flz namespace list`
 - **THEN** both SHALL appear, and the output SHALL distinguish the one with a live hub from the one without
 
 #### Scenario: A namespace-scoped caller sees its own namespace only
@@ -490,15 +490,15 @@ lowercase words joined by single dashes, and SHALL have either no short spelling
 repeats the long spelling) or a short spelling of one dash and one letter. An option spelled
 with an underscore, and a short spelling of two or more letters, SHALL NOT be declared. A
 two-letter short spelling reads as two one-letter flags run together, and an underscore in one
-long spelling among dashed ones is a spelling the operator has to remember as the exception.
+long spelling among dashed ones is a spelling the user has to remember as the exception.
 
 The rule SHALL be enforced by a CLI test that walks every option every verb row declares,
-so that an option added with a non-conforming spelling fails the test rather than reaching an
-operator.
+so that an option added with a non-conforming spelling fails the test rather than reaching a
+user.
 
 #### Scenario: The initial values option is kebab-case
 
-- **WHEN** `flz operative start echo --init-values '{"count": 1}'` or
+- **WHEN** `flz operator start echo --init-values '{"count": 1}'` or
   `flz schedule add n --cron "* * * * *" --tz UTC --factory f --init-values '{}'` is run
 - **THEN** the request SHALL carry the initial values, and `--init_values` and `-iv` SHALL
   NOT be read as that option
@@ -515,12 +515,12 @@ operator.
 
 #### Scenario: An option may have no short spelling
 
-- **WHEN** `flz operative rewind my_wf --to-iteration 3` or
-  `flz operative start echo --snapshot-interval 500` is run
+- **WHEN** `flz operator rewind my_loop --to-iteration 3` or
+  `flz operator start echo --snapshot-interval 500` is run
 - **THEN** the option SHALL be read, and neither option SHALL have a short spelling
 
 #### Scenario: `-i` names the id on start
 
-- **WHEN** `flz operative start echo -i my_echo` is run
+- **WHEN** `flz operator start echo -i my_echo` is run
 - **THEN** the request SHALL carry the id `my_echo`, identically to `--id my_echo`
 

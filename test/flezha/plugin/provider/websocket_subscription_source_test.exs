@@ -456,7 +456,7 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
       cspec = %{
         id: "op-1",
         start:
-          {Flezha.Operative.Overwatch, :start_link,
+          {Flezha.Operator.Overwatch, :start_link,
            [{"default", %{opts: [plugins: [{"ws_plugin", plugin}]]}}]}
       }
 
@@ -466,8 +466,8 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
           RegistryUpdate.put_plugin_opt("ws_plugin", :applied_subscriptions, ["a", "b"])
         )
 
-      {_m, _f, [{_ns, operative}]} = rewritten.start
-      [{"ws_plugin", restored}] = operative.opts[:plugins]
+      {_m, _f, [{_ns, operator}]} = rewritten.start
+      [{"ws_plugin", restored}] = operator.opts[:plugins]
       assert restored.opts[:applied_subscriptions] == ["a", "b"]
     end
 

@@ -21,7 +21,7 @@ test/flezha/transport/socket/support_test.exs
 test/flezha/transport/transport_auth_test.exs
 
 # `@artifact_dir` is `test/load/artifacts`, a DURABLE output directory the run
-# writes its memory series into for the operator to read afterwards. A fixture
+# writes its memory series into for the user to read afterwards. A fixture
 # row would delete it with the test.
 test/load/memory_drift_test.exs
 

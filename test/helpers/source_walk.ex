@@ -28,7 +28,7 @@ defmodule FlezhaTest.Helper.SourceWalk do
 
   @doc """
   Every file under `roots`, whatever its extension, in a stable order: for a
-  gate that reads documents and workflows as well as code. A root that is a
+  gate that reads documents and bounded operators as well as code. A root that is a
   file is itself.
   """
   @spec tree([binary()]) :: [binary()]

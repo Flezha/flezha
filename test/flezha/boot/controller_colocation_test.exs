@@ -3,7 +3,7 @@ defmodule FlezhaTest.Boot.ControllerColocationTest do
   Several controllers on one machine, each owning its own resources
   (`controller-instance-isolation`).
 
-  The two ways an operator reaches the arrangement by accident are the two
+  The two ways a user reaches the arrangement by accident are the two
   guards here: a socket directory another controller is listening in, which
   clearing would strip of its control socket and every attached runner's
   stream socket, and a state root another controller is writing, which is two
@@ -110,7 +110,7 @@ defmodule FlezhaTest.Boot.ControllerColocationTest do
     assert {:error, message} = Native.lock_state_root(root)
     assert message =~ "held by pid #{holder_os_pid}"
 
-    # And the refusal an operator meets names the root and the variable.
+    # And the refusal a user meets names the root and the variable.
     refusal = assert_raise(RuntimeError, fn -> StateRootLock.claim!(root) end).message
 
     assert refusal =~ Path.expand(root)

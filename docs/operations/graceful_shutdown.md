@@ -1,6 +1,6 @@
 # Graceful controller shutdown
 
-For operators running a Controller: the three shutdown phases, how busy Operatives defer
+For users running a Controller: the three shutdown phases, how busy Operators defer
 their migration, the knobs and the orchestrator grace period they pair with,
 `flz controller stop`, telemetry and status, the third-SIGTERM override and the disable flag.
 
@@ -32,10 +32,10 @@ correctly on both the privileged and unprivileged paths.
 ## Phases
 
 1. **Quiesce** marks the node quiescing (`Flezha.Shutdown.quiesced?/2`, ETS-backed) and declares `{:node_draining, deadline}` to the convergence loop, which then plans nothing onto this node:
-   `Flezha.Service.OperativeManager.start_operative/3` answers `{:error, :shutting_down}` and
-   `Flezha.Runner.FleetManager` refuses new runner connections. Running Operatives and
+   `Flezha.Service.OperatorManager.start_operator/3` answers `{:error, :shutting_down}` and
+   `Flezha.Runner.FleetManager` refuses new runner connections. Running Operators and
    connected runners are not touched.
-2. **Drain** migrates every locally hosted Operative to a peer **while it is still alive**:
+2. **Drain** migrates every locally hosted Operator to a peer **while it is still alive**:
    one `Flezha.Service.HubManager.drain_hub/2` per running namespace hub, concurrently, each
    calling `ProcessHub.Service.Migration.drain/2` — children move through the migration-consent
    gate (live `HotSwap{handover: true}` handover) and whatever still defers at the deadline is
@@ -54,7 +54,7 @@ correctly on both the privileged and unprivileged paths.
 
 The sequence is bounded by `:flezha, :graceful_shutdown_timeout_ms`. On expiry: ERROR log,
 `[:flezha, :shutdown, :timeout]`, the hub is stopped, finalise runs, and the call returns
-`{:partial, [operative_ids]}`. Shutdown never wedges on a drain precondition.
+`{:partial, [operator_ids]}`. Shutdown never wedges on a drain precondition.
 
 ## Migration consent
 
@@ -65,7 +65,7 @@ while a move would tear mid-critical work:
 | Busy signal                         | Safe barrier (Overwatch calls `Migration.signal_migration_ready/1`) |
 | ----------------------------------- | ------------------------------------------------------------ |
 | Late-input correction pending       | The correction transaction completes                         |
-| Durable workflow not suspended      | Suspension at a committed iteration boundary                 |
+| Durable bounded operator not suspended      | Suspension at a committed iteration boundary                 |
 | Effectively-once outbox not flushed | Consent is re-queried on the next retry tick                 |
 
 A deferring child is parked in the hub's deferred list, re-queried every `retry_interval_ms`
@@ -77,7 +77,7 @@ Overwatch inside a synchronous correction transaction defers without special han
 | ----------------------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------- |
 | `:migration_consent, :consent_timeout_ms` | `FLEZHA_MIGRATION_CONSENT_TIMEOUT_MS` | `5000`                                                                                    |
 | `:migration_consent, :retry_interval_ms`  | `FLEZHA_MIGRATION_RETRY_INTERVAL_MS`  | `2000`                                                                                    |
-| `:migration_consent, :max_defer_ms`       | `FLEZHA_MIGRATION_MAX_DEFER_MS`       | `graceful_shutdown_timeout_ms` — a deferring Operative never outlives the shutdown window |
+| `:migration_consent, :max_defer_ms`       | `FLEZHA_MIGRATION_MAX_DEFER_MS`       | `graceful_shutdown_timeout_ms` — a deferring Operator never outlives the shutdown window |
 
 ## Configuration
 
@@ -106,8 +106,8 @@ waiting; `--force` skips quiesce and drain and runs finalise only.
 
 | Exit | Meaning                                                                                 |
 | ---- | --------------------------------------------------------------------------------------- |
-| 0    | Clean shutdown (every Operative migrated to a peer, or `--force` finalised cleanly)      |
-| 1    | Partial drain: the timeout elapsed with Operatives still local at finalise              |
+| 0    | Clean shutdown (every Operator migrated to a peer, or `--force` finalised cleanly)      |
+| 1    | Partial drain: the timeout elapsed with Operators still local at finalise              |
 | 2    | Already shutting down, or the coordinator is not running; the in-flight outcome applies |
 | 3    | Controller socket unreachable (controller not running, or wrong socket path)           |
 
@@ -127,7 +127,7 @@ Under `[:flezha, :shutdown, …]`; each phase boundary also logs a `[shutdown] �
 | `:phase_started`   | `%{}`                                             | `%{phase: :quiesce \| :drain \| :finalise}`                                  |
 | `:phase_completed` | `%{duration_ms}`                                  | `%{phase}`                                                                   |
 | `:drain_progress`  | `%{migrated, forced, remaining_hubs, elapsed_ms}` | `%{namespace}`, one per completed hub                                        |
-| `:timeout`         | `%{}`                                             | `%{phase, still_local: [operative_ids]}`                                     |
+| `:timeout`         | `%{}`                                             | `%{phase, still_local: [operator_ids]}`                                     |
 | `:complete`        | `%{duration_ms}`                                  | `%{outcome: :clean \| :partial \| :forced, reason}`                          |
 
 ## Who owns SIGTERM
@@ -147,7 +147,7 @@ drain, never to one that ignores SIGTERM. Taking ownership also means `sigquit` 
 ## The third-SIGTERM override
 
 If the drain wedges (a peer not progressing), `Flezha.Shutdown.SignalHandler` escalates on
-repeated operator-issued signals: the first SIGTERM starts graceful shutdown and then
+repeated user-issued signals: the first SIGTERM starts graceful shutdown and then
 `:init.stop()`; the second is logged and ignored; the third logs a WARNING and calls
 `:erlang.halt(143)` immediately. The orchestrator grace period is the wall-clock backstop.
 

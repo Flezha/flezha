@@ -42,10 +42,10 @@ defmodule Flezha.State.WalWriter.State do
     # The outbox: FIFO of effect-record entries awaiting the gated
     # `:on_output` dispatch (`%{seq, outputs, consumed_offset, dlq,
     # committed?}`, dispatchable once `seq <= outbox_durable_seq` and
-    # committed), what commits an entry (`:record`, its own fsync, a stream
-    # Cell's; or `:stage`, the workflow stage marker naming it), the flush
+    # committed), what commits an entry (`:record`, its own fsync, an unbounded
+    # operator's Cell's; or `:stage`, the bounded stage marker naming it), the flush
     # cursor, the realign epoch, and the retry timer armed while the
-    # operative's Overwatch is not yet resolvable.
+    # operator's Overwatch is not yet resolvable.
     :pending_outbox,
     :commit_unit,
     :outbox_durable_seq,
@@ -53,7 +53,7 @@ defmodule Flezha.State.WalWriter.State do
     :outbox_epoch,
     :timers,
     # Dispatched but not yet confirmed by the sinks: the per-entry tallies
-    # (`Flezha.State.Outbox` keys) and, for a stream writer, the dispatch-order
+    # (`Flezha.State.Outbox` keys) and, for an unbounded operator writer, the dispatch-order
     # queue of `{seq, at}` the cursor drains in. The cursor may only reach a seq
     # once every earlier one has left this queue, which is what stops an
     # out-of-order confirmation from advancing it past unconfirmed output.
@@ -76,7 +76,7 @@ defmodule Flezha.State.WalWriter.State do
     :durable_waiters,
     # `header => seq` of every record still in the file, for a log whose
     # appends dedup on their header (a record log's barrier).
-    # Built from the file on the first keyed append, never for a stream WAL.
+    # Built from the file on the first keyed append, never for an unbounded operator WAL.
     :header_index,
     # The record this writer's file refused (`Flezha.State.RecordFrame`), or
     # `nil`. Set, the writer stays alive and answers every request that would

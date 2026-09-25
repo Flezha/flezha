@@ -5,7 +5,7 @@ use crate::rpc::{self, text};
 
 /// The enumeration, spelled once: both verbs read the same label, so a role
 /// added to it cannot reach one of them and miss the other.
-const ROLE: &str = "<viewer|app|operator|admin|runner|spawner|stopper>";
+const ROLE: &str = "<viewer|app|ops|admin|runner|spawner|stopper>";
 
 pub(crate) const TABLE: Command = Command {
     path: "flz role",

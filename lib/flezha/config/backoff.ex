@@ -8,7 +8,7 @@ defmodule Flezha.Config.Backoff do
   attempt and held at the last) or a geometric `base`/`cap` (`base · 2^(n−1)`),
   whether the wait is jittered, how the attempt count resets, and the attempt at which the
   site gives up. `base` and `cap` may name a `Flezha.Config.Durations` row
-  instead of a number, so an operator's knob is the ladder's bound without the
+  instead of a number, so a user's knob is the ladder's bound without the
   ladder holding a second copy of it.
 
   Three ways in, one arithmetic:
@@ -235,7 +235,7 @@ defmodule Flezha.Config.Backoff do
     %{b | entries: Map.put(entries, key, {attempt + 1, now + delay})}
   end
 
-  # A bound is a number, the name of the duration row an operator tunes, or
+  # A bound is a number, the name of the duration row a user tunes, or
   # absent on a rung row.
   defp bound(nil), do: nil
   defp bound(name) when is_atom(name), do: Durations.get(name)

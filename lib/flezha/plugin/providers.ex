@@ -21,22 +21,22 @@ defmodule Flezha.Plugin.Providers do
   @installed_key {__MODULE__, :installed}
 
   @first_party %{
-    "operative_kafka_producer" => Provider.Kafka.Producer,
-    "operative_postgres" => Provider.Postgres,
-    "operative_websocket" => Provider.Websocket,
-    "operative_http_poll" => Provider.HttpPoll,
-    "operative_file_source" => Provider.File.Source,
-    "operative_file_sink" => Provider.File.Sink,
-    "operative_beam_msg" => Provider.BeamMsgForward,
-    "operative_stdout" => Provider.StdOut,
-    "operative_io_filter" => Provider.Filter,
+    "operator_kafka_producer" => Provider.Kafka.Producer,
+    "operator_postgres" => Provider.Postgres,
+    "operator_websocket" => Provider.Websocket,
+    "operator_http_poll" => Provider.HttpPoll,
+    "operator_file_source" => Provider.File.Source,
+    "operator_file_sink" => Provider.File.Sink,
+    "operator_beam_msg" => Provider.BeamMsgForward,
+    "operator_stdout" => Provider.StdOut,
+    "operator_io_filter" => Provider.Filter,
     "monitored_io_forward" => Provider.MonitoredIOForward,
-    "operative_forward" => Provider.OperativeForward,
+    "operator_forward" => Provider.OperatorForward,
     # An `:on_message` provider that forwards a `{:flezha_request, key, payload,
-    # reply_to, ref}` envelope to the SDK-side operative. Attach at operative
+    # reply_to, ref}` envelope to the SDK-side operator. Attach at operator
     # start with a hook keyed on the handler key, e.g.
     # `["on_message", {"key": "fetch_init_state"}]`.
-    "operative_message_forward" => Provider.MessageForward
+    "operator_message_forward" => Provider.MessageForward
   }
 
   @doc "Every provider id to its module, first-party rows and installed ones."

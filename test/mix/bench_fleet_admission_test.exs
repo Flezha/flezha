@@ -23,7 +23,7 @@ defmodule Mix.Tasks.Bench.FleetAdmissionTest do
 
   defp frame(secret), do: %{"namespace" => @namespace, "namespace_secret" => secret}
 
-  # Issuing a credential is the task telling an operator what it just did, so
+  # Issuing a credential is the task telling a user what it just did, so
   # the test that provokes the line owns it: captured, and asserted rather than
   # discarded, because a capture nobody reads would also pass if the line moved.
   defp issue_credential do

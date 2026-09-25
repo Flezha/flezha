@@ -1,6 +1,6 @@
-defmodule Flezha.Api.OperatorVerbGateTest do
+defmodule Flezha.Api.AdministrationVerbGateTest do
   @moduledoc """
-  The operator verbs that reach a store with no authorization behind them.
+  The administration verbs that reach a store with no authorization behind them.
 
   `Flezha.AuthZ.authorize/3` refuses an action `Flezha.AuthZ.Action` does not
   name, so a verb whose action was never added is not merely ungated — it is
@@ -20,18 +20,18 @@ defmodule Flezha.Api.OperatorVerbGateTest do
   alias Flezha.Schedule.Store, as: ScheduleStore
   alias Flezha.Service.Dlq
   alias Flezha.Service.Schedule
-  alias Flezha.Service.Workflow
+  alias Flezha.Service.Bounded
   alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.ScheduleTestHelper
 
-  # No operative of this class runs and none has state on disk, so
+  # No operator of this class runs and none has state on disk, so
   # `Flezha.State.Paths.namespace_of_class/1` resolves it to the system
   # namespace — which is the scope the DLQ verbs are judged in below.
-  @class "GateTestOperative"
+  @class "GateTestOperator"
   @payload "parked-business-data"
 
   @unbound %{source: :ui}
-  @operator %{source: :ui, principal: "op@_system", role: :operator, namespace: "_system"}
+  @ops %{source: :ui, principal: "op@_system", role: :ops, namespace: "_system"}
   @viewer %{source: :ui, principal: "vw@_system", role: :viewer, namespace: "_system"}
 
   setup do
@@ -41,7 +41,7 @@ defmodule Flezha.Api.OperatorVerbGateTest do
 
     {:ok, entry_ref} =
       DlqStore.append(%{
-        operative_class: @class,
+        operator_class: @class,
         tasklet_id: "task",
         cell_key: "k",
         channel: "input",
@@ -61,19 +61,19 @@ defmodule Flezha.Api.OperatorVerbGateTest do
   describe "a caller with no identity, under enforcement" do
     test "is handed no payload bytes by the entry read", ctx do
       assert Flezha.AuthZ.enforcement_posture() == :enforced
-      assert {:ok, _entry, @payload} = Dlq.get(ctx.entry_ref, @operator)
+      assert {:ok, _entry, @payload} = Dlq.get(ctx.entry_ref, @ops)
       refute inspect(Dlq.get(ctx.entry_ref, @unbound)) =~ @payload
     end
   end
 
   describe "the role the action is granted to" do
     test "still reads the dead-letter queue", ctx do
-      assert {:ok, entries} = Dlq.list(nil, @operator)
-      assert Enum.any?(entries, &(&1["operative_class"] == @class))
-      assert {:ok, _entries} = Dlq.list(@class, @operator)
-      assert {:ok, _entry, @payload} = Dlq.get(ctx.entry_ref, @operator)
-      assert {:ok, _stats} = Dlq.stats(@operator)
-      assert {:ok, _tasklets} = Dlq.tasklets(nil, @operator)
+      assert {:ok, entries} = Dlq.list(nil, @ops)
+      assert Enum.any?(entries, &(&1["operator_class"] == @class))
+      assert {:ok, _entries} = Dlq.list(@class, @ops)
+      assert {:ok, _entry, @payload} = Dlq.get(ctx.entry_ref, @ops)
+      assert {:ok, _stats} = Dlq.stats(@ops)
+      assert {:ok, _tasklets} = Dlq.tasklets(nil, @ops)
     end
 
     test "still manages schedules, and a viewer still lists them" do
@@ -81,18 +81,18 @@ defmodule Flezha.Api.OperatorVerbGateTest do
       assert {:ok, _statuses} = Schedule.statuses(@viewer)
 
       assert {:ok, added} =
-               Schedule.add(ScheduleTestHelper.entry_fields(%{name: "op-job"}), @operator)
+               Schedule.add(ScheduleTestHelper.entry_fields(%{name: "op-job"}), @ops)
 
-      refute refused?(Schedule.assert_entry(added, @operator))
-      refute refused?(Schedule.retract("op-job", @operator))
-      assert Schedule.remove("op-job", @operator) == :ok
+      refute refused?(Schedule.assert_entry(added, @ops))
+      refute refused?(Schedule.retract("op-job", @ops))
+      assert Schedule.remove("op-job", @ops) == :ok
     end
 
     test "still reaches the two verbs that move live work" do
       # Neither target exists, so both answer their own refusal — what matters
       # is that neither is an authorization refusal.
-      refute refused?(Workflow.rescale("_system", "gate-group", 2, [], @operator))
-      refute refused?(Workflow.rewind("_system", @class, 1, @operator))
+      refute refused?(Bounded.rescale("_system", "gate-group", 2, [], @ops))
+      refute refused?(Bounded.rewind("_system", @class, 1, @ops))
     end
 
     test "a viewer is refused the dead-letter reads and the schedule mutations", ctx do

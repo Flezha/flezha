@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The plugin-installation capability gives runners a Jenkins-style runtime plugin lifecycle for Flezha: install from a signed/checksummed archive, compile and hot-load on the running agent, enable, disable, upgrade, and uninstall — all without rebuilding the release. A plugin package (`*.fpz`) ships `manifest.exs`, `src/*.ex` or `src/*.erl`, a `CHECKSUMS.sha256` file, and an optional detached Ed25519 signature; the agent compiles and loads modules exactly once at install time, persists the installed catalog in DETS (`installed_plugins.dets` in the layout's plugin subtree, `app_data/plugins/` by default), and re-hydrates every `:enabled`/`:disabled` package's modules into the VM before `Flezha.Service.PluginManager` starts, so no operative bind can replay a persisted subscription against a module that is not loaded. The capability defines the package format, manifest schema, checksum and signature verification rules, install/upgrade/uninstall/enable/disable semantics, dependency resolution, module-collision guards, on-disk layout, catalog persistence, boot-time hydration ordering, the `Flezha.Plugin.Installer` public service API shared by CLI and the planned Phoenix UI, recovery interaction, supervision tree ordering, and the configuration surface (`:flezha, :plugin_installer`).
+The plugin-installation capability gives runners a Jenkins-style runtime plugin lifecycle for Flezha: install from a signed/checksummed archive, compile and hot-load on the running agent, enable, disable, upgrade, and uninstall — all without rebuilding the release. A plugin package (`*.fpz`) ships `manifest.exs`, `src/*.ex` or `src/*.erl`, a `CHECKSUMS.sha256` file, and an optional detached Ed25519 signature; the agent compiles and loads modules exactly once at install time, persists the installed catalog in DETS (`installed_plugins.dets` in the layout's plugin subtree, `app_data/plugins/` by default), and re-hydrates every `:enabled`/`:disabled` package's modules into the VM before `Flezha.Service.PluginManager` starts, so no operator bind can replay a persisted subscription against a module that is not loaded. The capability defines the package format, manifest schema, checksum and signature verification rules, install/upgrade/uninstall/enable/disable semantics, dependency resolution, module-collision guards, on-disk layout, catalog persistence, boot-time hydration ordering, the `Flezha.Plugin.Installer` public service API shared by CLI and the planned Phoenix UI, recovery interaction, supervision tree ordering, and the configuration surface (`:flezha, :plugin_installer`).
 ## Requirements
 ### Requirement: Plugin package format
 
@@ -49,7 +49,7 @@ The archive MUST NOT contain any other top-level files or directories. The archi
 - `id`: binary matching `~r/^[a-z0-9][a-z0-9_]*$/` and no longer than 64 characters
 - `version`: binary parseable by `Version.parse/1` (SemVer)
 - `modules`: non-empty list of atoms — every module the package defines
-- `provides`: list of maps, each with `id` (binary, unique within the manifest), `provider` (atom, present in `modules`), `hooks` (list of `{atom, keyword}`), `default_opts` (map), and `scope` (atom, `:operative` only in this release)
+- `provides`: list of maps, each with `id` (binary, unique within the manifest), `provider` (atom, present in `modules`), `hooks` (list of `{atom, keyword}`), `default_opts` (map), and `scope` (atom, `:operator` only in this release)
 - `dependencies`: list of `{plugin_id, constraint}` where `constraint` is a Version-compatible requirement string (e.g. `">= 1.0.0"`, `"~> 2.3"`); MAY be `[]`
 
 The manifest MUST be evaluated inside a restricted binding that disables `import`, `require`, and `use`, and its abstract syntax tree MUST contain only literal nodes (maps, lists, tuples, atoms, binaries, integers, module aliases). The installer MUST reject any manifest whose AST contains function calls or variable references.
@@ -260,8 +260,8 @@ A plugin whose `ebin/` is missing or whose `.beam` fails to load MUST have its c
 row's `status` updated to `:load_failed` but MUST NOT prevent other plugins from loading.
 
 #### Scenario: Enabled plugin's modules loaded before any subscription replay
-- **WHEN** the agent starts with one `:enabled` plugin in the catalog and a persisted subscription for it in the owning operative's ProcessHub child spec
-- **THEN** the plugin's modules MUST be present in the VM before `Flezha.Operative.Plugins.prepare/2` re-subscribes that entry at the operative's bind
+- **WHEN** the agent starts with one `:enabled` plugin in the catalog and a persisted subscription for it in the owning operator's ProcessHub child spec
+- **THEN** the plugin's modules MUST be present in the VM before `Flezha.Operator.Plugins.prepare/2` re-subscribes that entry at the operator's bind
 
 #### Scenario: Disabled plugin's modules loaded at boot
 - **WHEN** the agent starts with one `:disabled` plugin in the catalog
@@ -413,7 +413,7 @@ compiled-in plugins exist.
 
 #### Scenario: Installer ready before any subscription replay
 - **WHEN** the agent is starting with `plugin_installer_enabled: true`
-- **THEN** every `:enabled` and `:disabled` plugin's modules MUST be loaded into the VM (or marked `:load_failed`) BEFORE `Flezha.Service.PluginManager` starts, so no operative bind can replay a subscription against a module that has not been loaded yet
+- **THEN** every `:enabled` and `:disabled` plugin's modules MUST be loaded into the VM (or marked `:load_failed`) BEFORE `Flezha.Service.PluginManager` starts, so no operator bind can replay a subscription against a module that has not been loaded yet
 
 #### Scenario: Loader init failure prevents Installer start
 - **WHEN** `Loader.init/1` fails (e.g. because the Store is in a bad state)
@@ -423,10 +423,10 @@ compiled-in plugins exist.
 
 The Installer SHALL publish the set of known installed plugin ids via a queryable
 function (`Flezha.Plugin.Installer.installed_ids/0`). A plugin enable is persisted by
-`Flezha.Service.PluginManager.enable_plugin/2` into the owning operative's ProcessHub
-child spec (`opts[:plugins]`) and replayed when that operative binds:
-`Flezha.Operative.Overwatch.init/1` → `handle_continue({:bind_runner, …})` →
-`Flezha.Operative.Lifecycle.complete_init/4` → `Flezha.Operative.Plugins.prepare/2` →
+`Flezha.Service.PluginManager.enable_plugin/2` into the owning operator's ProcessHub
+child spec (`opts[:plugins]`) and replayed when that operator binds:
+`Flezha.Operator.Overwatch.init/1` → `handle_continue({:bind_runner, …})` →
+`Flezha.Operator.Lifecycle.complete_init/4` → `Flezha.Operator.Plugins.prepare/2` →
 `Flezha.Plugin.Extension.Table.bulk_subscribe/2`. `Flezha.Plugin.Installer.enable/2`
 drives its own enables through `enable_provisions/3`, one `%Flezha.Plugin{}` per
 manifest `provides` entry, so an installed package's subscriptions reach that same
@@ -436,39 +436,39 @@ A persisted subscription whose provider module is not in the VM — the package 
 uninstalled while the controller was down, or its beams are `:load_failed` — MUST NOT
 be subscribed. `Flezha.Plugin.Extension.Table.run_init_provider/1` answers
 `{:error, {:module_not_loaded, provider}}`; `bulk_subscribe/2` halts at that entry, so
-entries after it in the same operative's list are not attempted; `Plugins.prepare/2`
-fails the bind, and `Flezha.Operative.Lifecycle.park/2` records the reason in the
+entries after it in the same operator's list are not attempted; `Plugins.prepare/2`
+fails the bind, and `Flezha.Operator.Lifecycle.park/2` records the reason in the
 Overwatch's `init_error`, which `Flezha.Convergence.Probe` publishes as `parked?: true`.
-The operative stays alive and parked, holding no upstream resources, until the
-divergence is repaired. What the operator sees is that boolean: neither the plugin id
+The operator stays alive and parked, holding no upstream resources, until the
+divergence is repaired. What the user sees is that boolean: neither the plugin id
 nor the provider module reaches a log line or a telemetry event.
 
-#### Scenario: Orphaned persisted subscription parks the operative
-- **WHEN** an operative's persisted child spec carries a subscription for plugin id `x` whose `%Flezha.Plugin{}.provider` is `MyOrg.X`, and `MyOrg.X` is not loaded (`Installer.installed_ids/0` does not contain `x`)
+#### Scenario: Orphaned persisted subscription parks the operator
+- **WHEN** an operator's persisted child spec carries a subscription for plugin id `x` whose `%Flezha.Plugin{}.provider` is `MyOrg.X`, and `MyOrg.X` is not loaded (`Installer.installed_ids/0` does not contain `x`)
 - **THEN** `Table.bulk_subscribe/2` MUST answer `{:error, {"x", {:module_not_loaded, MyOrg.X}}}`, the entry MUST NOT be subscribed, entries after it MUST NOT be attempted, and the Overwatch MUST park with that reason in `init_error` (`Convergence.Probe` reports `parked?: true`)
 
 #### Scenario: Installed plugin's persisted subscription re-subscribes at bind
-- **WHEN** an operative's persisted child spec carries a subscription for plugin id `k` whose provider is loaded (the package is `:enabled` in the installer catalog)
-- **THEN** `Flezha.Operative.Plugins.prepare/2` MUST subscribe that entry at bind exactly as it does a compiled-in plugin's, and `Plugins.activate/1` MUST then transition it to `:running`
+- **WHEN** an operator's persisted child spec carries a subscription for plugin id `k` whose provider is loaded (the package is `:enabled` in the installer catalog)
+- **THEN** `Flezha.Operator.Plugins.prepare/2` MUST subscribe that entry at bind exactly as it does a compiled-in plugin's, and `Plugins.activate/1` MUST then transition it to `:running`
 
 ### Requirement: Settings payload schema uses canonical names
 
-The plugin settings payload (the JSON serialized at `cli_manager.ex` and on disk) SHALL use field names: `operative_id`, `runner_id`, `controller_id`. Fields previously named `processor_id`, `compute_engine_id`, or `agent_id` SHALL be renamed in the schema; reading a settings file with the legacy field names SHALL return an error.
+The plugin settings payload (the JSON serialized at `cli_manager.ex` and on disk) SHALL use field names: `operator_id`, `runner_id`, `controller_id`. Fields previously named `processor_id`, `compute_engine_id`, or `agent_id` SHALL be renamed in the schema; reading a settings file with the legacy field names SHALL return an error.
 
 #### Scenario: Modern settings round-trip
-- **WHEN** a plugin is installed with payload referencing `operative_id` and `runner_id`
+- **WHEN** a plugin is installed with payload referencing `operator_id` and `runner_id`
 - **THEN** the on-disk settings file SHALL contain those exact field names; reloading the Controller MUST produce the same in-memory plugin state
 
 #### Scenario: Legacy field names rejected
 - **WHEN** an on-disk settings file contains a field named `processor_id` or `compute_engine_id`
-- **THEN** the loader MUST return an error identifying the offending field; the operator is expected to re-author the settings
+- **THEN** the loader MUST return an error identifying the offending field; the user is expected to re-author the settings
 
-### Requirement: Disabling an operative's plugins SHALL bound every call it makes and SHALL NOT exit
+### Requirement: Disabling an operator's plugins SHALL bound every call it makes and SHALL NOT exit
 
-`PluginManager` SHALL treat a call into an operative's process as bounded and
+`PluginManager` SHALL treat a call into an operator's process as bounded and
 failable: a timeout, a dead target or any other exit SHALL be a value the handler
 acts on, and SHALL NOT terminate `PluginManager` itself. A teardown walking many
-operatives SHALL continue past one that cannot be reached, and SHALL report which
+operators SHALL continue past one that cannot be reached, and SHALL report which
 ones it could not disable.
 
 The bound SHALL be applied through the one bounded-call seam rather than a
@@ -476,23 +476,23 @@ The bound SHALL be applied through the one bounded-call seam rather than a
 smaller than the bound the caller of `PluginManager` applies, so the two do not
 give up at the same instant.
 
-A teardown that walks many operatives SHALL fan out under one bound rather than
+A teardown that walks many operators SHALL fan out under one bound rather than
 call them one at a time, so that the walk's cost is one bound and not one bound
-per unreachable operative. The fan-out SHALL NOT relocate work that owns
+per unreachable operator. The fan-out SHALL NOT relocate work that owns
 caller-scoped state: a step that creates an ETS table, unlinks a process or
 seeds a route naming the caller SHALL run in the calling process.
 
-#### Scenario: An operative is too busy to answer its unsubscribe
+#### Scenario: An operator is too busy to answer its unsubscribe
 
-- **WHEN** an operative's process does not answer `plugin_unsubscribe` inside the bound
-- **THEN** `PluginManager` SHALL stay alive, SHALL record that operative as not
+- **WHEN** an operator's process does not answer `plugin_unsubscribe` inside the bound
+- **THEN** `PluginManager` SHALL stay alive, SHALL record that operator as not
   disabled, and SHALL continue with the rest
 
-#### Scenario: A teardown of many operatives finishes its walk
+#### Scenario: A teardown of many operators finishes its walk
 
-- **WHEN** `stop_all_operatives/1` disables plugins for every operative in a namespace
+- **WHEN** `stop_all_operators/1` disables plugins for every operator in a namespace
   and one of them cannot be reached
-- **THEN** every other operative SHALL still be stopped and its state directory
+- **THEN** every other operator SHALL still be stopped and its state directory
   handled, and the walk SHALL NOT abandon the remainder
 
 #### Scenario: The durable row and the in-memory table do not disagree on a failure
@@ -501,12 +501,12 @@ seeds a route naming the caller SHALL run in the calling process.
 - **THEN** the two SHALL be reconciled rather than left in disagreement, so a
   restart does not read a plugin as both disabled and installed
 
-#### Scenario: Many unreachable operatives cost one bound, not one each
+#### Scenario: Many unreachable operators cost one bound, not one each
 
-- **GIVEN** a namespace whose operatives include several whose processes do not answer
+- **GIVEN** a namespace whose operators include several whose processes do not answer
 - **WHEN** the namespace is torn down
 - **THEN** the plugin-disable walk SHALL complete within one bound plus slack,
-  SHALL name every operative it could not disable, and `PluginManager` SHALL be
+  SHALL name every operator it could not disable, and `PluginManager` SHALL be
   the same running process afterwards
 
 ### Requirement: An installed package's provisions SHALL be rows of the provider table
@@ -531,13 +531,13 @@ or hold a second list of its own.
 - **THEN** its provider rows SHALL remain in the table and its modules loaded,
   and only its subscriptions SHALL be dropped
 
-### Requirement: Hook names use canonical Operative vocabulary
+### Requirement: Hook names use canonical Operator vocabulary
 
-Plugin installation SHALL accept hook specs that reference hooks by their canonical names. The init-state hook is `:on_operative_init` (formerly `:on_processor_init`); other hook names that previously contained "processor" SHALL likewise use "operative". A manifest provision SHALL declare its hooks under the `hooks` key. Settings serialization SHALL persist the new names; reading a settings file that contains `:on_processor_init` SHALL produce an explicit error suggesting the user re-author the settings (no silent translation).
+Plugin installation SHALL accept hook specs that reference hooks by their canonical names. The init-state hook is `:on_operator_init` (formerly `:on_processor_init`); other hook names that previously contained "processor" SHALL likewise use "operator". A manifest provision SHALL declare its hooks under the `hooks` key. Settings serialization SHALL persist the new names; reading a settings file that contains `:on_processor_init` SHALL produce an explicit error suggesting the user re-author the settings (no silent translation).
 
-#### Scenario: Plugin hooks on_operative_init
-- **WHEN** a plugin provision is installed with `hooks: [{:on_operative_init, [position: 0]}]`
-- **THEN** the installation MUST succeed and the persisted settings file SHALL serialize the hook name as `on_operative_init`
+#### Scenario: Plugin hooks on_operator_init
+- **WHEN** a plugin provision is installed with `hooks: [{:on_operator_init, [position: 0]}]`
+- **THEN** the installation MUST succeed and the persisted settings file SHALL serialize the hook name as `on_operator_init`
 
 #### Scenario: A provision without a hooks key is refused
 - **WHEN** a manifest provision declares its hooks under any key other than `hooks`, or declares none
@@ -545,5 +545,5 @@ Plugin installation SHALL accept hook specs that reference hooks by their canoni
 
 #### Scenario: Settings file with legacy hook name fails loud
 - **WHEN** the settings file contains a hook on `:on_processor_init`
-- **THEN** plugin loading MUST return `{:error, {:unknown_hook, :on_processor_init}}` and SHALL NOT fall back to `:on_operative_init` silently
+- **THEN** plugin loading MUST return `{:error, {:unknown_hook, :on_processor_init}}` and SHALL NOT fall back to `:on_operator_init` silently
 

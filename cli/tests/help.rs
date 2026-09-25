@@ -2,7 +2,7 @@
 //!
 //! The text is hand-aligned and not uniform across screens — `flz schedule
 //! help` sets two description columns inside one block — so it cannot be
-//! re-derived "correctly" without changing what an operator sees. The golden
+//! re-derived "correctly" without changing what a caller sees. The golden
 //! files are captured from the binary, not written by hand, and they are what
 //! proves a rendering change is deliberate.
 
@@ -37,9 +37,9 @@ const SCREENS: &[(&str, &[&str])] = &[
     ("observe-tail", &["observe", "tail", "--help"]),
     ("observe-enable", &["observe", "enable", "--help"]),
     ("observe-disable", &["observe", "disable", "--help"]),
-    ("operative", &["operative", "help"]),
-    ("operative-start", &["operative", "start", "--help"]),
-    ("operative-listen", &["operative", "listen", "--help"]),
+    ("operator", &["operator", "help"]),
+    ("operator-start", &["operator", "start", "--help"]),
+    ("operator-listen", &["operator", "listen", "--help"]),
     ("plugin", &["plugin", "help"]),
     ("reset", &["reset", "help"]),
     ("role", &["role", "help"]),

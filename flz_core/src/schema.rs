@@ -26,7 +26,7 @@ pub struct Activation {
 /// pre-keying work.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CellRef {
-    pub operative: String,
+    pub operator: String,
     pub tasklet: TaskletId,
     pub cell_key: Option<String>,
 }
@@ -152,7 +152,7 @@ pub struct ItemEffect {
     /// The host called `ctx.checkpoint()`.
     pub checkpoint: bool,
     pub dlq: Option<DlqEntry>,
-    /// The host called `ctx.complete(result)`: inside a workflow the instance
+    /// The host called `ctx.complete(result)`: inside a bounded operator the instance
     /// ends after the iteration commits; a stream refuses it.
     pub complete: Option<Vec<u8>>,
 }
@@ -167,8 +167,8 @@ pub enum Verdict {
         message: String,
     },
     /// The host's entry decoder rejected the payload: only an entry channel's
-    /// decoder answers this. A stream parks the item as a non-retryable error;
-    /// a workflow parks the message once the stage's ladder exhausts and goes
+    /// decoder answers this. An unbounded operator parks the item as a non-retryable error;
+    /// a bounded operator parks the message once the stage's ladder exhausts and goes
     /// on waiting instead of ending.
     Unreadable {
         message: String,
@@ -291,7 +291,7 @@ mod tests {
         let a = Activation {
             token: 7,
             target: CellRef {
-                operative: "inst".into(),
+                operator: "inst".into(),
                 tasklet: 2,
                 cell_key: Some("k1".into()),
             },
@@ -355,7 +355,7 @@ mod fixture_tests {
         Activation {
             token: 42,
             target: CellRef {
-                operative: "op-1".into(),
+                operator: "op-1".into(),
                 tasklet: 3,
                 cell_key: Some("k".into()),
             },
@@ -476,7 +476,7 @@ mod fixture_tests {
             let act = Activation {
                 token: 1,
                 target: CellRef {
-                    operative: "o".into(),
+                    operator: "o".into(),
                     tasklet: 0,
                     cell_key: None,
                 },

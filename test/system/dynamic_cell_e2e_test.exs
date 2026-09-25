@@ -3,7 +3,7 @@ defmodule FlezhaTest.System.DynamicCellE2ETest do
   End-to-end proof for dynamic cell mode against a live runner of the
   selected SDK runtime: an input for a fresh key lazily creates a Cell whose state is
   shipped (controller writes a WAL file) at the identity
-  `{operative_id, tasklet, key}`; after the 200 ms TTL the reaper evicts it,
+  `{operator_id, tasklet, key}`; after the 200 ms TTL the reaper evicts it,
   ships `delete_cell_state`, and the controller drops the files — the SDK
   reaper → delete-RPC → agent-handler path with no other end-to-end coverage.
 
@@ -20,10 +20,10 @@ defmodule FlezhaTest.System.DynamicCellE2ETest do
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
-  alias Flezha.Operative.Builder
+  alias Flezha.Operator.Builder
   alias Flezha.Payloader
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias Flezha.State.Paths
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -36,7 +36,7 @@ defmodule FlezhaTest.System.DynamicCellE2ETest do
   setup do
     on_exit(fn ->
       try do
-        OperativeManager.stop_all_operatives(@namespace)
+        OperatorManager.stop_all_operators(@namespace)
       catch
         _, _ -> :ok
       end
@@ -79,28 +79,28 @@ defmodule FlezhaTest.System.DynamicCellE2ETest do
       NodeTestHelper.ensure_port_dead(port)
 
       try do
-        OperativeManager.stop_all_operatives(namespace)
+        OperatorManager.stop_all_operators(namespace)
         FleetManager.stop_namespace(namespace)
       catch
         _, _ -> :ok
       end
     end)
 
-    operative_id = "dyn_read_e2e_#{System.unique_integer([:positive])}"
+    operator_id = "dyn_read_e2e_#{System.unique_integer([:positive])}"
     key = "k#{System.unique_integer([:positive])}"
     other = "#{key}b"
 
-    builder = %Builder{id: operative_id, factory_id: @factory, init_values: %{}, opts: []}
-    assert {:ok, info} = OperativeManager.start_operative(namespace, builder)
+    builder = %Builder{id: operator_id, factory_id: @factory, init_values: %{}, opts: []}
+    assert {:ok, info} = OperatorManager.start_operator(namespace, builder)
     assert info.runner_id == ce_id
-    OperativeManager.send_io(operative_id, namespace, "#{key}:hello", %{"input_type" => "2"})
-    OperativeManager.send_io(operative_id, namespace, "#{other}:bye", %{"input_type" => "2"})
+    OperatorManager.send_io(operator_id, namespace, "#{key}:hello", %{"input_type" => "2"})
+    OperatorManager.send_io(operator_id, namespace, "#{other}:bye", %{"input_type" => "2"})
 
-    assert wait_until(fn -> cell_keys(namespace, operative_id) == [key, other] end, 15_000),
+    assert wait_until(fn -> cell_keys(namespace, operator_id) == [key, other] end, 15_000),
            "both keys should be live before the read is narrowed"
 
     assert {:ok, json, seq} =
-             OperativeManager.get_cell_state(namespace, operative_id, %{
+             OperatorManager.get_cell_state(namespace, operator_id, %{
                tasklet: @tasklet,
                cell_key: key
              })
@@ -113,7 +113,7 @@ defmodule FlezhaTest.System.DynamicCellE2ETest do
     assert is_integer(seq), "a single-Cell read reports the change_seq it was serialized at"
 
     assert {:error, refusal} =
-             OperativeManager.get_cell_state(namespace, operative_id, %{
+             OperatorManager.get_cell_state(namespace, operator_id, %{
                tasklet: @tasklet,
                cell_key: "never-seen"
              })
@@ -126,8 +126,8 @@ defmodule FlezhaTest.System.DynamicCellE2ETest do
   # dynamic Cell's state never reaches disk there. That gap predates edge
   # keying (it was reached identically through the deleted `cellKey` hook)
   # and closing it is a Java durability change, not an authoring-surface one.
-  defp cell_keys(namespace, operative_id) do
-    with {:ok, json} <- OperativeManager.get_cell_state(namespace, operative_id),
+  defp cell_keys(namespace, operator_id) do
+    with {:ok, json} <- OperatorManager.get_cell_state(namespace, operator_id),
          %{@tasklet => by_key} when is_map(by_key) <-
            Payloader.json_to_map(json) do
       by_key |> Map.keys() |> Enum.sort()
@@ -137,31 +137,31 @@ defmodule FlezhaTest.System.DynamicCellE2ETest do
   end
 
   defp run_dynamic_cell_case do
-    # 200 ms idle TTL so the operative's reaper evicts + ships
+    # 200 ms idle TTL so the operator's reaper evicts + ships
     # delete_cell_state within the test (default is no eviction).
     {port, ce_id} =
       NodeTestHelper.start_runner_port(@namespace, env: [{"DYN_TEST_TTL_MS", "200"}])
 
     on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)
 
-    operative_id = "dyn_e2e_#{System.unique_integer([:positive])}"
+    operator_id = "dyn_e2e_#{System.unique_integer([:positive])}"
     key = "k#{System.unique_integer([:positive])}"
-    cell_id = {operative_id, @tasklet, key}
+    cell_id = {operator_id, @tasklet, key}
 
-    builder = %Builder{id: operative_id, factory_id: @factory, init_values: %{}, opts: []}
-    assert {:ok, info} = OperativeManager.start_operative(@namespace, builder)
+    builder = %Builder{id: operator_id, factory_id: @factory, init_values: %{}, opts: []}
+    assert {:ok, info} = OperatorManager.start_operator(@namespace, builder)
     assert info.runner_id == ce_id
     # An input for a never-seen key: the edge's key function names the Cell,
     # the SDK lazily creates it, runs it, and ships the Change. The controller
     # writes a WAL file — at the identity the trait hook names.
-    OperativeManager.send_io(operative_id, @namespace, "#{key}:hello", %{"input_type" => "2"})
+    OperatorManager.send_io(operator_id, @namespace, "#{key}:hello", %{"input_type" => "2"})
 
     assert wait_until(fn -> File.exists?(Paths.wal_path(cell_id)) end, 15_000),
            "controller never wrote a WAL file for the lazily-created Cell"
 
     # A filtered input reaches no Cell at all — there is no keyless-drop path
     # to fall through any more.
-    OperativeManager.send_io(operative_id, @namespace, "drop", %{"input_type" => "2"})
+    OperatorManager.send_io(operator_id, @namespace, "drop", %{"input_type" => "2"})
 
     # No further input for the live key: after the 200 ms idle TTL the reaper
     # evicts the Cell and ships delete_cell_state; the controller removes

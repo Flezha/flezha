@@ -41,7 +41,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule TierStoreOp do
     @moduledoc false
-    @behaviour Flezha.SDK.StreamOperative
+    @behaviour Flezha.SDK.UnboundedOperator
     def factory_id, do: "tier_store"
 
     def channels(c),
@@ -59,7 +59,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule CheckpointBatchedOp do
     @moduledoc false
-    @behaviour Flezha.SDK.StreamOperative
+    @behaviour Flezha.SDK.UnboundedOperator
     def factory_id, do: "checkpoint_batched_store"
 
     def channels(c) do
@@ -77,7 +77,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule CheckpointStoreOp do
     @moduledoc false
-    @behaviour Flezha.SDK.StreamOperative
+    @behaviour Flezha.SDK.UnboundedOperator
     def factory_id, do: "checkpoint_store"
 
     def channels(c),
@@ -94,7 +94,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule CheckpointEveryOp do
     @moduledoc false
-    @behaviour Flezha.SDK.StreamOperative
+    @behaviour Flezha.SDK.UnboundedOperator
     def factory_id, do: "checkpoint_every"
 
     def channels(c),
@@ -111,7 +111,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule CheckpointHeldOp do
     @moduledoc false
-    @behaviour Flezha.SDK.StreamOperative
+    @behaviour Flezha.SDK.UnboundedOperator
     def factory_id, do: "checkpoint_held"
 
     def channels(c),
@@ -151,7 +151,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule TierTimerOp do
     @moduledoc false
-    @behaviour Flezha.SDK.StreamOperative
+    @behaviour Flezha.SDK.UnboundedOperator
     def factory_id, do: "tier_timer_op"
 
     def channels(c),
@@ -206,7 +206,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule TierEdgeOp do
     @moduledoc false
-    @behaviour Flezha.SDK.StreamOperative
+    @behaviour Flezha.SDK.UnboundedOperator
     def factory_id, do: "tier_edge"
 
     def channels(c) do
@@ -237,7 +237,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule StatelessTierOp do
     @moduledoc false
-    @behaviour Flezha.SDK.StreamOperative
+    @behaviour Flezha.SDK.UnboundedOperator
     def factory_id, do: "stateless_tier"
 
     def channels(c),
@@ -279,7 +279,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule CorrectionOp do
     @moduledoc false
-    @behaviour Flezha.SDK.StreamOperative
+    @behaviour Flezha.SDK.UnboundedOperator
     def factory_id, do: "correction_probe"
 
     def channels(c),
@@ -296,7 +296,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule CorrectionDropOp do
     @moduledoc false
-    @behaviour Flezha.SDK.StreamOperative
+    @behaviour Flezha.SDK.UnboundedOperator
     def factory_id, do: "correction_probe_drop"
 
     def channels(c),
@@ -314,7 +314,7 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule TierStoreNoPersistOp do
     @moduledoc false
-    @behaviour Flezha.SDK.StreamOperative
+    @behaviour Flezha.SDK.UnboundedOperator
     def factory_id, do: "tier_store_nopersist"
     def persistence_enabled, do: false
     defdelegate channels(c), to: TierStoreOp

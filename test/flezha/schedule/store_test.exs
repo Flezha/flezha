@@ -38,7 +38,7 @@ defmodule Flezha.Schedule.StoreTest do
 
   test "the plugin spec round-trips verbatim and defaults to none" do
     spec =
-      ~s([{"id":"reports","provider":"operative_kafka_producer","hooks":["on_output"]}])
+      ~s([{"id":"reports","provider":"operator_kafka_producer","hooks":["on_output"]}])
 
     assert {:ok, entry} = Store.add(fields(%{plugins: spec}))
     assert entry.plugins == spec
@@ -72,7 +72,7 @@ defmodule Flezha.Schedule.StoreTest do
 
     assert {:error, {:invalid_name, _}} = Store.add(fields(%{name: "has spaces"}))
     assert {:error, {:invalid_name, _}} = Store.add(fields(%{name: "a@b"}))
-    # 12 bytes composes `<name>@<slot>` beyond the 32-byte operative id limit.
+    # 12 bytes composes `<name>@<slot>` beyond the 32-byte operator id limit.
     assert {:error, {:invalid_name, msg}} = Store.add(fields(%{name: "daily_digest"}))
     assert msg =~ "at most 11 bytes"
     assert {:error, {:invalid_factory, _}} = Store.add(fields(%{factory_id: ""}))
@@ -91,14 +91,14 @@ defmodule Flezha.Schedule.StoreTest do
     assert Store.list() == []
   end
 
-  test "the longest accepted name composes ids within the operative id limit" do
+  test "the longest accepted name composes ids within the operator id limit" do
     name = String.duplicate("a", 11)
     assert {:ok, _} = Store.add(fields(%{name: name}))
 
-    assert :ok = Identificator.validate(:operative, "#{name}@2026-07-27T05:00:00Z")
+    assert :ok = Identificator.validate(:operator, "#{name}@2026-07-27T05:00:00Z")
 
     assert :ok =
-             Identificator.validate(:operative, "#{name}@manual-#{System.system_time(:second)}")
+             Identificator.validate(:operator, "#{name}@manual-#{System.system_time(:second)}")
   end
 
   test "entries survive a store restart" do

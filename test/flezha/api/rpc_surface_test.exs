@@ -12,7 +12,7 @@ defmodule Flezha.Api.RpcSurfaceTest do
   describe "a name this tree still answers" do
     test "resolves" do
       entries = [
-        {Flezha.State.Paths, :operative_classes, 0, "control"},
+        {Flezha.State.Paths, :operator_classes, 0, "control"},
         {Flezha.Service.Cli.Listing, :cluster_status, 3, "control"}
       ]
 
@@ -27,15 +27,15 @@ defmodule Flezha.Api.RpcSurfaceTest do
       # reports; the name is data here, not a use.
       # module-naming-record:begin
       assert {:moved, [Flezha.State.Paths | _]} =
-               verdict({Flezha.State.Registry, :operative_classes, 0, "ui:910"})
+               verdict({Flezha.State.Registry, :operator_classes, 0, "ui:910"})
 
       # module-naming-record:end
 
       assert {:moved, [Flezha.Identificator | _]} =
                verdict({Flezha.Service.Identificator, :hub, 1, "ui:1560"})
 
-      assert {:moved, [Flezha.Operative.Migration | _]} =
-               verdict({Flezha.Operative.Lifecycle, :rewind, 2, "ui:990"})
+      assert {:moved, [Flezha.Operator.Migration | _]} =
+               verdict({Flezha.Operator.Lifecycle, :rewind, 2, "ui:990"})
     end
 
     test "a function made private is reported as privatised, not as present" do
@@ -51,7 +51,7 @@ defmodule Flezha.Api.RpcSurfaceTest do
       # and no search by name and arity can reach a name that changed.
       assert :withdrawn =
                verdict(
-                 {Flezha.State.PersistenceResolver, :workflow_completed_retention_hours, 1,
+                 {Flezha.State.PersistenceResolver, :bounded_completed_retention_hours, 1,
                   "ui:926"}
                )
 

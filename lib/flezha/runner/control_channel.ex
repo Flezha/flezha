@@ -77,7 +77,7 @@ defmodule Flezha.Runner.ControlChannel do
 
         # Propagate the transport result instead of always returning {:ok, ref}.
         # A reset/dead stream replies {:error, :no_connection_available}; the
-        # caller (ControlUnit) must then surface a clean error to the operative
+        # caller (ControlUnit) must then surface a clean error to the operator
         # rather than registering a reply ref that will never resolve.
         #
         # A channel that dies or stalls mid-call must answer its caller, not
@@ -260,8 +260,8 @@ defmodule Flezha.Runner.ControlChannel do
         {ack, log_label} = Requests.runner_shutdown(state, notif)
         emit_control_request(state, reference_id, ack, log_label)
 
-      {:workflow_completed, %{} = completed, _reference_id} ->
-        Requests.workflow_completed(state, completed)
+      {:bounded_completed, %{} = completed, _reference_id} ->
+        Requests.bounded_completed(state, completed)
 
       {barrier, %{} = commit, reference_id} when barrier in [:task_commit, :iter_commit] ->
         Requests.barrier(state, barrier, commit, reference_id)
@@ -272,8 +272,8 @@ defmodule Flezha.Runner.ControlChannel do
       {:update_factories, %{} = update, _reference_id} ->
         Requests.update_factories(state, update)
 
-      {:spawn_workflow_request, %{} = request, reference_id} ->
-        Requests.spawn_workflow(state, request, reference_id)
+      {:spawn_bounded_request, %{} = request, reference_id} ->
+        Requests.spawn_bounded(state, request, reference_id)
 
       {:admin_request, %{} = request, reference_id} ->
         Requests.admin(state, request, reference_id)
@@ -420,12 +420,12 @@ defmodule Flezha.Runner.ControlChannel do
   # `:not_sdk_initiated`.
   @sdk_initiated_commands [
     :runner_shutdown_notification,
-    :workflow_completed,
+    :bounded_completed,
     :task_commit,
     :iter_commit,
     :iter_park,
     :update_factories,
-    :spawn_workflow_request,
+    :spawn_bounded_request,
     :admin_request
   ]
 

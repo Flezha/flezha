@@ -1,7 +1,7 @@
 defmodule FlezhaTest.Plugin.Provider.WebsocketChannelTest do
   @moduledoc """
   The websocket plugin's INPUT-side channel: the entry channel its inbound
-  frames are injected on, named by an option rather than by a key an operator
+  frames are injected on, named by an option rather than by a key a user
   had to hide inside the general metadata bag.
 
   Driven at the same seam the other websocket test files use — the provider
@@ -107,8 +107,8 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketChannelTest do
       assert message =~ "names \"us\""
     end
 
-    # The filter half is a set, and an operator reads back what they typed.
-    test "a filter of several names is named in the operator's own spelling" do
+    # The filter half is a set, and a user reads back what they typed.
+    test "a filter of several names is named in the user's own spelling" do
       assert {:error, message} =
                prepared(
                  %{channel_out: "alerts,audit", payload_metadata: %{"channel" => "eu"}},
@@ -133,7 +133,7 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketChannelTest do
     setup :stub_sink
 
     defp ctx(metadata) do
-      %Ctx.IO{operative_id: "op", namespace: :default, message: "out", metadata: metadata}
+      %Ctx.IO{operator_id: "op", namespace: :default, message: "out", metadata: metadata}
     end
 
     test "one `channel` names the entry channel and the output filter",
@@ -189,11 +189,11 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketChannelTest do
 
   # `Table.attempt_restart/3` falls back to the convergence loop's DECLARED
   # manifest for a plugin the table does not hold, and the teardown asks the
-  # provider for its declared worker keys from those raw operator options: no
+  # provider for its declared worker keys from those raw user options: no
   # host key merged, no row default filled. `Workers.declared_keys/3` turns a
   # raise there into an empty key list, so a worker its own supervisor restarted
   # under that key would never be stopped.
-  describe "the declared worker keys are readable from raw operator options" do
+  describe "the declared worker keys are readable from raw user options" do
     test "a map that was never normalised still answers a worker spec" do
       raw = %{uri: @uri, plugin_id: "ws_raw", channel: "prices"}
 

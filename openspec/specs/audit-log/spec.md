@@ -22,7 +22,7 @@ The system SHALL provide a Sink `Flezha.Observability.AuditLog.Sink` that implem
 
 ### Requirement: Configurable subscription allow-list
 
-The sink SHALL apply a configured `(source, name | :any)` allow-list inside its handler. Signals not matching the allow-list SHALL be discarded without being written. The default allow-list SHALL be derived, not written by hand: it SHALL include `{:flezha_shutdown, :any}`, `{:flezha_plugin_installer, :any}`, `{:platform_authz, :any}`, and `{source, :any}` for every audit source the operator-verb declaration table names — at minimum `:observability_service` and `:audit_log` — so that a verb declared with an audit reaches the durable log by construction and no verb's audit can be volatile. Operators SHALL be able to extend it via `:audit_log, :extra_subscriptions` runtime config.
+The sink SHALL apply a configured `(source, name | :any)` allow-list inside its handler. Signals not matching the allow-list SHALL be discarded without being written. The default allow-list SHALL be derived, not written by hand: it SHALL include `{:flezha_shutdown, :any}`, `{:flezha_plugin_installer, :any}`, `{:platform_authz, :any}`, and `{source, :any}` for every audit source the user-verb declaration table names — at minimum `:observability_service` and `:audit_log` — so that a verb declared with an audit reaches the durable log by construction and no verb's audit can be volatile. Users SHALL be able to extend it via `:audit_log, :extra_subscriptions` runtime config.
 
 #### Scenario: Default allow-list captures observability-service audit events
 - **WHEN** the audit subsystem is enabled and a caller invokes `Flezha.Service.Observability.disable_source/2`
@@ -40,15 +40,15 @@ The sink SHALL apply a configured `(source, name | :any)` allow-list inside its 
 - **WHEN** a signal arrives at the sink whose `(source, name)` pair is not in the allow-list AND does not match an `:any` wildcard for that source
 - **THEN** no record SHALL be written for that signal AND the file size SHALL NOT change
 
-#### Scenario: Operator-extended allow-list is honoured
+#### Scenario: User-extended allow-list is honoured
 - **WHEN** the application boots with `:audit_log, :extra_subscriptions: [{:my_source, :critical}]` and a signal `(source: :my_source, name: :critical)` is emitted
 - **THEN** a record for that signal SHALL appear in `audit-current.jsonl`
 
 #### Scenario: A declared audit source is durable by construction
-- **WHEN** an operator verb declared with an audit on a source — a `schedule add` on `:schedule_service`, a `dlq drop` on `:dlq_service` — succeeds with the audit subsystem enabled and no `:extra_subscriptions` configured
+- **WHEN** an administration verb declared with an audit on a source — a `schedule add` on `:schedule_service`, a `dlq drop` on `:dlq_service` — succeeds with the audit subsystem enabled and no `:extra_subscriptions` configured
 - **THEN** within one second exactly one record for it SHALL appear in `audit-current.jsonl`, carrying `metadata.action`, `metadata.outcome`, the verified `caller.principal` and the resolved `namespace`
 
-#### Scenario: One record shape for an operator's act
+#### Scenario: One record shape for a user's act
 - **WHEN** the same verb is audited after an invocation from the terminal and after one from the published service API
 - **THEN** both records SHALL carry the same `source`, `name` and metadata keys, differing only in `caller.source` and the actor
 
@@ -138,7 +138,7 @@ The system SHALL maintain a small binary catalog `app_data/audit/INDEX` containi
 
 ### Requirement: Service-API surface
 
-The system SHALL provide a service module `Flezha.Service.AuditLog` callable from both the CLI (via thin wrappers on `Flezha.Service.CliManager`) and the planned Phoenix UI directly, without routing through CliManager. The module SHALL expose at minimum `list_files/1`, `read/2`, `tail/2`, `stats/1`, `rotate/1`. Every public function SHALL accept a `caller_context` argument with the same shape and validation as `Flezha.Service.Observability` (`source` in `[:cli, :ui, :sdk, :internal]`). When `:authn_authz, :enabled` is `true` every public function SHALL call `Flezha.AuthZ.authorize/3` before any side effect. Read tasklets (`list_files`, `read`, `tail`, `stats`) SHALL require at least `viewer`; `rotate` SHALL require at least `operator`. Read tasklets SHALL filter returned records to those whose `namespace` field matches the caller's bound namespace, except that `admin@_system` SHALL see all records across all namespaces.
+The system SHALL provide a service module `Flezha.Service.AuditLog` callable from both the CLI (via thin wrappers on `Flezha.Service.CliManager`) and the planned Phoenix UI directly, without routing through CliManager. The module SHALL expose at minimum `list_files/1`, `read/2`, `tail/2`, `stats/1`, `rotate/1`. Every public function SHALL accept a `caller_context` argument with the same shape and validation as `Flezha.Service.Observability` (`source` in `[:cli, :ui, :sdk, :internal]`). When `:authn_authz, :enabled` is `true` every public function SHALL call `Flezha.AuthZ.authorize/3` before any side effect. Read tasklets (`list_files`, `read`, `tail`, `stats`) SHALL require at least `viewer`; `rotate` SHALL require at least `ops`. Read tasklets SHALL filter returned records to those whose `namespace` field matches the caller's bound namespace, except that `admin@_system` SHALL see all records across all namespaces.
 
 #### Scenario: list_files returns catalog entries
 - **WHEN** the caller invokes `Flezha.Service.AuditLog.list_files(%{source: :cli, principal: "alice", namespace: "_system", role: :viewer})` and three rotated files exist
@@ -169,7 +169,7 @@ The system SHALL provide a service module `Flezha.Service.AuditLog` callable fro
 - **THEN** the call SHALL return `{:ok, %{...}}` with at minimum `current_file`, `current_file_bytes`, `total_bytes`, `total_files`, `oldest_ts_us`, `record_count`, `drop_count`
 
 #### Scenario: rotate forces immediate rotation
-- **WHEN** an `operator` caller invokes `rotate(ctx)`
+- **WHEN** an `ops` caller invokes `rotate(ctx)`
 - **THEN** the active file SHALL be rotated immediately AND the call SHALL return `{:ok, %{rotated_to: filename}}` AND a fresh empty active file SHALL be opened
 
 #### Scenario: Missing caller_context source is rejected
@@ -186,30 +186,30 @@ The system SHALL provide a service module `Flezha.Service.AuditLog` callable fro
 
 ### Requirement: `flz audit` CLI verb family
 
-The system SHALL provide a `flz audit` CLI command tree exposing the audit-log service API to operators. At minimum the verbs `list`, `tail`, `read <file>`, `stats`, `rotate` SHALL be implemented. Every verb SHALL build a `caller_context` with `source: :cli` and route through `Flezha.Service.CliManager.audit_log_*` wrappers. Text output SHALL be the default; `--json` SHALL render machine-parseable output (newline-delimited JSON for `tail` and `read`).
+The system SHALL provide a `flz audit` CLI command tree exposing the audit-log service API to users. At minimum the verbs `list`, `tail`, `read <file>`, `stats`, `rotate` SHALL be implemented. Every verb SHALL build a `caller_context` with `source: :cli` and route through `Flezha.Service.CliManager.audit_log_*` wrappers. Text output SHALL be the default; `--json` SHALL render machine-parseable output (newline-delimited JSON for `tail` and `read`).
 
 #### Scenario: `flz audit list` shows catalog
-- **WHEN** the operator runs `flz audit list`
+- **WHEN** the user runs `flz audit list`
 - **THEN** one row per catalog entry SHALL be printed with at minimum filename, first ts, last ts, record count, size
 
 #### Scenario: `flz audit read` applies filters
-- **WHEN** the operator runs `flz audit read audit-20260518T071455Z-1.jsonl --source observability_service --since 1h --limit 50`
+- **WHEN** the user runs `flz audit read audit-20260518T071455Z-1.jsonl --source observability_service --since 1h --limit 50`
 - **THEN** the command SHALL print up to `50` records matching the filters, one per line, sorted by `ts_us` ascending
 
 #### Scenario: `flz audit tail` streams live
-- **WHEN** the operator runs `flz audit tail --json` and a record is subsequently written
+- **WHEN** the user runs `flz audit tail --json` and a record is subsequently written
 - **THEN** the command SHALL print the record as a single JSON line within the same scheduler tick
 
 #### Scenario: `flz audit rotate` forces rotation
-- **WHEN** the operator runs `flz audit rotate`
+- **WHEN** the user runs `flz audit rotate`
 - **THEN** the command SHALL print the new rotated filename on success, exit zero, AND the next `flz audit list` SHALL include the new entry
 
 #### Scenario: `flz audit stats` shows snapshot
-- **WHEN** the operator runs `flz audit stats`
+- **WHEN** the user runs `flz audit stats`
 - **THEN** the command SHALL print current file path, current file size, total bytes, total file count, oldest record ts, record count, and drop count
 
 #### Scenario: `flz audit *` against disabled audit emits clear error
-- **WHEN** the operator runs any `flz audit *` verb while audit is disabled
+- **WHEN** the user runs any `flz audit *` verb while audit is disabled
 - **THEN** the command SHALL exit with non-zero status and a stderr message naming the disabled flag and how to enable it (`FLEZHA_AUDIT_ENABLED=true` or `:audit_log, :enabled: true`)
 
 ### Requirement: Audit reads are themselves auditable
@@ -226,14 +226,14 @@ Every public function of `Flezha.Service.AuditLog` SHALL emit an `:event` signal
 
 ### Requirement: Gzipped rotated files are readable
 
-The Reader SHALL transparently support reading rotated files whose names end in `.jsonl.gz`. The Reader SHALL detect the suffix and stream-decompress via `:zlib` before line-splitting. The writer itself SHALL NOT compress rotated files — operators that wish to compress old files do so out-of-band.
+The Reader SHALL transparently support reading rotated files whose names end in `.jsonl.gz`. The Reader SHALL detect the suffix and stream-decompress via `:zlib` before line-splitting. The writer itself SHALL NOT compress rotated files — users that wish to compress old files do so out-of-band.
 
 #### Scenario: Reading a gzipped rotated file
-- **WHEN** the operator manually `gzip`s a rotated file and then runs `flz audit read audit-...-1.jsonl.gz --limit 10`
+- **WHEN** the user manually `gzip`s a rotated file and then runs `flz audit read audit-...-1.jsonl.gz --limit 10`
 - **THEN** the command SHALL return the first `10` records as if the file were uncompressed
 
 #### Scenario: Catalog tracks gzipped files
-- **WHEN** the operator `gzip`s a rotated file in-place and the next retention sweep runs
+- **WHEN** the user `gzip`s a rotated file in-place and the next retention sweep runs
 - **THEN** the `INDEX` SHALL be updated to reflect the new filename (`.jsonl.gz` suffix) AND `flz audit list` SHALL show it
 
 ### Requirement: Runtime configuration knobs and env-var overrides
@@ -270,7 +270,7 @@ Metadata SHALL be rendered by one rule for every sink, and a binary that is not
 valid UTF-8 SHALL be rendered rather than passed through to an encoder that raises
 on it. The audit log SHALL NOT be able to fail on a record it produced itself.
 
-#### Scenario: An operative's metadata carries a non-UTF-8 binary
+#### Scenario: An operator's metadata carries a non-UTF-8 binary
 
 - **WHEN** a signal's metadata holds a binary for which `String.valid?/1` is false
 - **THEN** the shared typed rule SHALL render it the way the text renderer already

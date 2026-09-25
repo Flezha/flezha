@@ -6,7 +6,7 @@ defmodule Flezha.MixProject do
       app: :flezha,
       version: "0.1.0",
       elixir: "~> 1.17",
-      description: "Distributed stateful operatives — durable stream and workflow compute",
+      description: "Distributed stateful operators — durable unbounded and bounded compute",
       source_url: "https://github.com/flezha/flezha",
       package: [
         licenses: ["MPL-2.0", "Apache-2.0"],
@@ -139,14 +139,14 @@ defmodule Flezha.MixProject do
         "docs/guides/guides.md",
         "docs/guides/controller_deployment.md",
         "docs/guides/runner_deployment.md",
-        "docs/guides/running_operatives.md",
+        "docs/guides/running_operators.md",
         "docs/guides/sources_and_sinks.md",
         "docs/guides/stop_everything.md",
         "docs/guides/cli.md",
         "docs/guides/tradedesk/authorization.md",
         "docs/guides/tradedesk/namespaces.md",
-        "docs/guides/tradedesk/workflow_basics.md",
-        "docs/guides/tradedesk/stream_basics.md",
+        "docs/guides/tradedesk/bounded_basics.md",
+        "docs/guides/tradedesk/unbounded_basics.md",
         "docs/guides/tradedesk/durability.md",
         "docs/guides/tradedesk/plugins.md",
         "docs/guides/tradedesk/partitioning.md",
@@ -163,7 +163,7 @@ defmodule Flezha.MixProject do
         "docs/plugins/websocket_subscription.md",
         "docs/plugins/kafka_producer.md",
         "docs/plugins/postgres_sink.md",
-        "docs/plugins/operative_forward.md",
+        "docs/plugins/operator_forward.md",
         "docs/plugins/installation.md",
         "docs/troubleshooting/controller_will_not_start.md",
         "docs/troubleshooting/runner_cannot_connect.md",
@@ -180,15 +180,15 @@ defmodule Flezha.MixProject do
         "Guide Part 1: First steps": [
           "docs/guides/controller_deployment.md",
           "docs/guides/runner_deployment.md",
-          "docs/guides/running_operatives.md",
+          "docs/guides/running_operators.md",
           "docs/guides/sources_and_sinks.md",
           "docs/guides/stop_everything.md"
         ],
         "Guide Part 2: Going further": [
           "docs/guides/tradedesk/authorization.md",
           "docs/guides/tradedesk/namespaces.md",
-          "docs/guides/tradedesk/workflow_basics.md",
-          "docs/guides/tradedesk/stream_basics.md",
+          "docs/guides/tradedesk/bounded_basics.md",
+          "docs/guides/tradedesk/unbounded_basics.md",
           "docs/guides/tradedesk/durability.md",
           "docs/guides/tradedesk/plugins.md",
           "docs/guides/tradedesk/partitioning.md"
@@ -250,7 +250,7 @@ defmodule Flezha.MixProject do
       docs: [&register_highlighters/1, "docs"],
       # Build the WebSocket testnet bundle that several `mix test` cases
       # reach for over WS (`flezha_test.exs` "websocket plugin connection
-      # start", "beam msg forward plugin connection start", "operative flow
+      # start", "beam msg forward plugin connection start", "operator flow
       # generation -> beam msg forward"). The bundle output at
       # `test/apps/testnet/dist/index.js` is not in git; without this
       # alias those cases skip with a clear message rather than crash
@@ -270,7 +270,7 @@ defmodule Flezha.MixProject do
         "cmd test/scripts/plugin_persistence.sh"
       ],
       # Opt-in dev-compose smoke test for `ship-fresh-state-on-sdk-shutdown`.
-      # Boots the controller + rust runner, starts an operative, sends SIGTERM
+      # Boots the controller + rust runner, starts an operator, sends SIGTERM
       # to the rust container, then asserts the controller's
       # `Overwatch.state.snapshot` was populated by the SDK's
       # `RunnerShutdownNotification`. Both periodic-enabled and
@@ -375,7 +375,7 @@ defmodule Flezha.MixProject do
   end
 
   # Mix's own closing message names `bin/<release name>`, which the rename
-  # above has just moved to `bin/flzvm`, so it hands the operator a path that
+  # above has just moved to `bin/flzvm`, so it hands the user a path that
   # does not exist. `:quiet` suppresses it (announcing is all Mix has left to
   # do once the steps return) and this prints the two real binaries instead.
   defp announce_binaries(release) do
@@ -389,7 +389,7 @@ defmodule Flezha.MixProject do
           # To start the controller
           #{path}/bin/flzvm start
 
-          # The operator CLI
+          # The user CLI
           #{path}/bin/flz --help
 
       Once the controller is running:

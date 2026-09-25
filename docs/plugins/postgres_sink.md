@@ -4,7 +4,7 @@ Transactional PostgreSQL sink (`:io_binding`). Per flush batch, ONE database
 transaction upserts every record into `flezha_records`, keyed by `flz.key`, and
 advances the per-Cell `flezha_sink_progress` watermark row. That single
 transaction is the guarantee: effectively-once into the database for tier
-operatives, plain inserts for everything else. See
+operators, plain inserts for everything else. See
 [`../resilience/data_durability.md`](../resilience/data_durability.md),
 "Delivery semantics".
 
@@ -85,5 +85,5 @@ escalates.
 The sink worker is this provider's declared worker: the extension table starts it
 at activation, under the provider's own family, keyed by `plugin_id`, with
 `restart: :permanent`. A `:prepared` plugin holds no connection and no process,
-so a sink on an operative whose SDK side never binds costs nothing. See
+so a sink on an operator whose SDK side never binds costs nothing. See
 [`lifecycle.md`](lifecycle.md).

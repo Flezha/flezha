@@ -49,7 +49,7 @@ It SHALL process one activation at a time, which is correct for tasklet bodies t
 - **THEN** the activation SHALL complete normally and the runner SHALL process the next one afterwards, with no warning and no degraded mode
 
 ### Requirement: SwooleExecutor gives one runner every core
-The SDK SHALL ship a `SwooleExecutor` that runs the poll loop on a pool of `Swoole\Thread`s over one shared `FlzContext`, so a single runner — and therefore a single operative's tasklet class — uses more than one core.
+The SDK SHALL ship a `SwooleExecutor` that runs the poll loop on a pool of `Swoole\Thread`s over one shared `FlzContext`, so a single runner — and therefore a single operator's tasklet class — uses more than one core.
 
 Each thread SHALL bootstrap the runner's entry script, rebuild the PHP-side tasklet registry, and attach to the existing context by its address, without re-declaring classes to the core: `flz_core_declare_class` is per context, not per thread. The entry script is therefore re-entered, and the SDK SHALL document that it must be safe to `require` — in particular that it carries no `#!` line, which is stripped only from the script PHP was invoked with.
 
@@ -65,8 +65,8 @@ The pool SHALL grow on the core's own signal rather than a guess: a supervisor S
 - **WHEN** every running thread is inside a tasklet body while further work is queued
 - **THEN** the supervisor SHALL observe starvation and start another thread, up to the configured maximum
 
-#### Scenario: One operative uses more than one core
-- **WHEN** a single dynamic-cell operative receives inputs across many keys under `SwooleExecutor`
+#### Scenario: One operator uses more than one core
+- **WHEN** a single dynamic-cell operator receives inputs across many keys under `SwooleExecutor`
 - **THEN** activations for distinct cells SHALL execute simultaneously on distinct threads
 
 #### Scenario: A missing runtime produces an instruction

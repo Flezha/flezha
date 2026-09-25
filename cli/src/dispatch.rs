@@ -8,7 +8,7 @@
 //!
 //! A verb's grammar is a field of the same row: what it takes positionally,
 //! which options it reads, whether it refuses a word it does not recognise.
-//! `args::read` is the only thing that reads the operator's words, and a
+//! `args::read` is the only thing that reads the caller's words, and a
 //! handler is given its answer and nothing else — there is no argument list to
 //! fall back on, so a verb cannot read a word its row does not declare.
 
@@ -25,7 +25,7 @@ pub(crate) enum Body {
     Table(&'static Command),
 }
 
-/// One verb: what the operator may type, and what runs when they do. Every
+/// One verb: what the caller may type, and what runs when they do. Every
 /// reader, refusal, arity check and usage line for the verb is derived from
 /// this row and written beside it nowhere.
 pub(crate) struct Verb {
@@ -57,7 +57,7 @@ impl Verb {
         }
     }
 
-    /// A verb that is itself a table: `flz operative` before `stop`.
+    /// A verb that is itself a table: `flz operator` before `stop`.
     pub(crate) const fn table(name: &'static str, table: &'static Command) -> Self {
         Verb {
             name,
@@ -82,9 +82,9 @@ impl Verb {
     }
 
     /// Refuse a word this row does not declare: an option it does not read, or
-    /// a plain word no positional takes. Five verbs do: two block the operator
+    /// a plain word no positional takes. Five verbs do: two block the caller
     /// for as long as their options say, one deletes state, and two start
-    /// operatives, which a misspelled option would start without the setting
+    /// operators, which a misspelled option would start without the setting
     /// it meant.
     pub(crate) const fn strict(mut self) -> Self {
         self.strict = true;
@@ -114,7 +114,7 @@ impl Verb {
 }
 
 pub(crate) struct Command {
-    /// What a usage line calls this command — `flz operative`.
+    /// What a usage line calls this command — `flz operator`.
     pub(crate) path: &'static str,
     /// The screen `help` prints, and the one a bare invocation falls back to.
     pub(crate) help: Help,
@@ -158,7 +158,7 @@ fn unrecognised(cmd: &'static Command, word: &str) -> String {
     format!("Error: Invalid argument '{}'. Use {}.", word, offered)
 }
 
-/// One verb: read the operator's words against its row, answer a request for
+/// One verb: read the caller's words against its row, answer a request for
 /// the screen, and otherwise run it.
 fn leaf(cmd: &'static Command, verb: &'static Verb, handler: fn(&Reading), argv: &[String]) {
     let reading = args::or_refuse(args::read(cmd.path, verb, argv));
@@ -274,7 +274,7 @@ mod tests {
     /// fails when: an option is spelled with an underscore or anything but
     /// dashed lowercase words, or carries a short spelling that is not one dash
     /// and one letter. `-si` reads as `-s -i`, and one `--init_values` among
-    /// dashed options is the spelling an operator has to remember as the
+    /// dashed options is the spelling a caller has to remember as the
     /// exception.
     #[test]
     fn every_option_is_kebab_case_with_at_most_a_one_letter_short_spelling() {
@@ -421,7 +421,7 @@ mod tests {
         for (path, verb) in leaves() {
             for spec in verb.options {
                 if matches!(spec.kind, Kind::Switch) {
-                    // The refusal an operator reads is pinned here rather than
+                    // The refusal a caller reads is pinned here rather than
                     // per verb: one sentence, every switch in the tree.
                     wrong.extend(refusal_for(
                         path,
@@ -544,7 +544,7 @@ mod tests {
     }
 
     /// fails when: a screen or a usage line prints an option spelling no row
-    /// declares, so an operator types a word the verb will not read. The
+    /// declares, so a caller types a word the verb will not read. The
     /// screens stay hand-aligned bytes; this checks them against the
     /// declaration rather than generating them from it.
     #[test]

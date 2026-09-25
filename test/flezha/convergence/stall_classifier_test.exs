@@ -318,17 +318,17 @@ defmodule Flezha.Convergence.StallClassifierTest do
     assert StallClassifier.classify(curr, prev) == :ok
   end
 
-  test "operative_not_forwarding: operative fed but forwarded flat (not all filtered)" do
-    prev = snapshot(operatives: [operative(io_in_received: 10, forwarded: 10, filtered_nil: 0)])
-    curr = snapshot(operatives: [operative(io_in_received: 30, forwarded: 10, filtered_nil: 2)])
+  test "operator_not_forwarding: operator fed but forwarded flat (not all filtered)" do
+    prev = snapshot(operators: [operator(io_in_received: 10, forwarded: 10, filtered_nil: 0)])
+    curr = snapshot(operators: [operator(io_in_received: 30, forwarded: 10, filtered_nil: 2)])
 
-    assert {:operative_not_forwarding, ctx} = StallClassifier.classify(curr, prev)
-    assert ctx.operative_id == "operative-1"
+    assert {:operator_not_forwarding, ctx} = StallClassifier.classify(curr, prev)
+    assert ctx.operator_id == "operator-1"
   end
 
-  test "operative_not_forwarding does NOT fire when on_input filters everything" do
-    prev = snapshot(operatives: [operative(io_in_received: 10, forwarded: 0, filtered_nil: 10)])
-    curr = snapshot(operatives: [operative(io_in_received: 30, forwarded: 0, filtered_nil: 30)])
+  test "operator_not_forwarding does NOT fire when on_input filters everything" do
+    prev = snapshot(operators: [operator(io_in_received: 10, forwarded: 0, filtered_nil: 10)])
+    curr = snapshot(operators: [operator(io_in_received: 30, forwarded: 0, filtered_nil: 30)])
 
     assert StallClassifier.classify(curr, prev) == :ok
   end
@@ -359,7 +359,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
       runner_not_consuming: :runner,
       runner_pool_wedged: :runner,
       channel_not_sending: :connection,
-      operative_not_forwarding: :operative
+      operator_not_forwarding: :operator
     }
 
     for {layer, scope} <- scopes do
@@ -410,7 +410,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
       # The reported age rides the verdict so a false positive — a genuinely
       # long Tasklet — is diagnosable from the log line alone.
       assert ctx.oldest_ms == 600_000
-      assert StallClassifier.layer_scope(:cell_dispatch_stalled) == :operative
+      assert StallClassifier.layer_scope(:cell_dispatch_stalled) == :operator
     end
 
     test "does NOT fire below the threshold, nor with nothing outstanding" do
@@ -502,7 +502,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
     %{
       drivers: Keyword.get(opts, :drivers, []),
       channels: Keyword.get(opts, :channels, []),
-      operatives: Keyword.get(opts, :operatives, [])
+      operators: Keyword.get(opts, :operators, [])
     }
   end
 
@@ -563,9 +563,9 @@ defmodule Flezha.Convergence.StallClassifierTest do
     snapshot(channels: [channel([name: :scp] ++ sent), channel([name: :scs] ++ beat)])
   end
 
-  defp operative(opts) do
+  defp operator(opts) do
     %{
-      operative_id: Keyword.get(opts, :operative_id, "operative-1"),
+      operator_id: Keyword.get(opts, :operator_id, "operator-1"),
       io_in_received: Keyword.get(opts, :io_in_received, 0),
       forwarded: Keyword.get(opts, :forwarded, 0),
       filtered_nil: Keyword.get(opts, :filtered_nil, 0)
@@ -579,7 +579,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
     defp marker(overrides) do
       Map.merge(
         %{
-          operative_id: "btc",
+          operator_id: "btc",
           cell: {"task", "k1"},
           last_change_seen_at: @now,
           last_advance_at: @now
@@ -588,7 +588,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
       )
     end
 
-    test "idle operative (no input, flat markers) classifies IDLE" do
+    test "idle operator (no input, flat markers) classifies IDLE" do
       m =
         marker(
           last_change_seen_at: @now - 2 * @grace,
@@ -677,7 +677,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
 
       idle_other =
         marker(
-          operative_id: "eth",
+          operator_id: "eth",
           last_change_seen_at: @now - 2 * @grace,
           last_advance_at: @now - 2 * @grace
         )

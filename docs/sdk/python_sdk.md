@@ -3,7 +3,7 @@
 The `flezha` package is a poll host over `flz_core`, the runner kernel the
 Rust, Java, Node and Ruby SDKs also drive. The kernel owns transport, ordering,
 per-cell exclusivity, durability, retries, timers, credit, routing and
-workflow runs. This package supplies threads and user code, and nothing else —
+bounded runs. This package supplies threads and user code, and nothing else —
 [`poll_core.md` → "The core decides, the SDK brings the threads"](poll_core.md#the-core-decides-the-sdk-brings-the-threads).
 
 - **Package**: `flezha` (PyPI).
@@ -90,12 +90,12 @@ class Upcase:
 upcase = flezha.tasklet(Upcase)
 
 
-@flezha.stream_operative("upcase")
-def upcase_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("upcase")
+def upcase_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(upcase).sink("out")
 
 
-flezha.create_runner("default").register_factory(upcase_operative).run()
+flezha.create_runner("default").register_factory(upcase_operator).run()
 ```
 
 A tasklet is a function when it is a transform and a class when it has state,
@@ -114,8 +114,8 @@ def test_price() -> None:
 
 ### The short form
 
-`@flezha.stream_operative` and `@flezha.workflow_operative` declare a whole
-single-tasklet operative when they decorate a tasklet's body instead of a
+`@flezha.unbounded_operator` and `@flezha.bounded_operator` declare a whole
+single-tasklet operator when they decorate a tasklet's body instead of a
 channels body: one declaration, no `flezha.tasklet` beside it. The decorator
 names the kind. `id` is the factory id and is always written; `sink`, `input`
 and `codec` (the entry codec `Channels.input` takes) are optional, and so are
@@ -123,12 +123,12 @@ the tasklet's own keywords (`cell_keys`, `clock`, `mailbox_capacity`,
 `schema_version` and the rest `flezha.tasklet` takes, except `name`).
 
 ```python
-@flezha.stream_operative(id="upcase", sink="out", codec="text")
+@flezha.unbounded_operator(id="upcase", sink="out", codec="text")
 def upcase(value: str) -> str:
     return value.upper()
 
 
-@flezha.workflow_operative(id="place", sink="placed", input="order", codec="text")
+@flezha.bounded_operator(id="place", sink="placed", input="order", codec="text")
 def place(order: str) -> str:
     return order
 
@@ -142,11 +142,11 @@ methods are the hooks. A function is a channels body when it takes one
 parameter annotated `flezha.Channels`, or not annotated at all; any other
 function is a tasklet body.
 
-With no `sink`, the operative declares its entry channel and the tasklet and
-no plugin channel, which is how an operative that only keeps state is written:
+With no `sink`, the operator declares its entry channel and the tasklet and
+no plugin channel, which is how an operator that only keeps state is written:
 
 ```python
-@flezha.stream_operative(id="counter", input="ticks", codec="text")
+@flezha.unbounded_operator(id="counter", input="ticks", codec="text")
 class Counter:
     def run(self, value: str, ctx: flezha.Ctx[Seen]) -> None:
         ctx.change(Bumped(by=1))
@@ -158,42 +158,42 @@ class Counter:
         state.count += change.by
 ```
 
-The generated operative is the one you would have written by hand with that
+The generated operator is the one you would have written by hand with that
 single tasklet: an entry channel named `input` (or the `input` keyword's
 value) decoded by `codec`, the tasklet, a plugin sink named by `sink` when one
 is written, a factory id equal to `id`, and every class-level setting at its
 default. The tasklet is named `id` verbatim, so growing out of the short form
 keeps every cell's state where it was, and `upcase.tasklet` wires it into
-another operative's channels body. A workflow short form is a `once` workflow,
-run once over its first message: `flz operative start --text '<payload>'`, or
-a start followed by `flz operative send`; a second message to a `once`
+another operator's channels body. A bounded short form is a `once` bounded operator,
+run once over its first message: `flz operator start --text '<payload>'`, or
+a start followed by `flz operator send`; a second message to a `once`
 instance is accepted and never read. `loop_mode="per_input"` (or `"chained"`)
 is the one class setting a short form keeps, so a loop is still one
 declaration:
 
 ```python
-@flezha.workflow_operative(id="chat", sink="replies", codec="text", loop_mode="per_input")
+@flezha.bounded_operator(id="chat", sink="replies", codec="text", loop_mode="per_input")
 def chat(turn: str) -> str:
     return turn
 ```
 
 Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
 edge, an edge's retry budget, any other class setting. The short form declares
-none of them, and nothing is harvested: an operative a runner declares is one
+none of them, and nothing is harvested: an operator a runner declares is one
 you registered.
 
 Three refusals name themselves. `ShortFormWithTopology` (a class with `run`
 that also declares `channels`) and `SinkWithoutOutput` (a `sink` on a body with
 no return annotation, or `None`) are raised where the decorator runs, and
-`DuplicateFactoryId` where a second operative under one factory id is
+`DuplicateFactoryId` where a second operator under one factory id is
 registered. A missing `id`, a class-level setting other than `loop_mode` on a
 short form, and `sink`, `input`, `codec` or a tasklet keyword on a channels
 body are refused where the decorator runs too, as is `kind`, `sink`, `input`
 or `codec` on `flezha.tasklet`.
 
-### Workflow settings
+### Bounded settings
 
-A workflow declares its graph in a channels body exactly as a stream does, and
+A bounded operator declares its graph in a channels body exactly as an unbounded operator does, and
 retries a failing tasklet on the edge that feeds it: `retry_max` and
 `retry_backoff_ms` on the channel (3 attempts, 50 ms base by default), so
 `retry_max(1)` is fail-fast. The decorator's own keywords are `persistent`,
@@ -204,23 +204,23 @@ the keyword and the value where the decorator runs.
 
 Every builder call reaches the core whatever the kind, and a setting of the
 other kind is refused under its own name when the runner declares its
-operatives, before it connects: `effectively_once()` on a workflow as
-`EffectivelyOnceOnWorkflow`, any checkpoint call as
-`CheckpointOnWorkflow`, `correction_window` as `CorrectionWindowOnWorkflow`,
-and `sync_durability=True` on `@flezha.stream_operative` as
-`SyncDurabilityOnStream`. The decorator keyword is the one spelling of
+operators, before it connects: `effectively_once()` on a bounded operator as
+`EffectivelyOnceOnBounded`, any checkpoint call as
+`CheckpointOnBounded`, `correction_window` as `CorrectionWindowOnBounded`,
+and `sync_durability=True` on `@flezha.unbounded_operator` as
+`SyncDurabilityOnUnbounded`. The decorator keyword is the one spelling of
 synchronous durability; `Channels` has no such call.
 
 Both decorators take `persistent` (default `True`) and `sleep_when_idle`, which
-defaults to `persistent` on a workflow and to `False` on a stream;
+defaults to `persistent` on a bounded operator and to `False` on an unbounded operator;
 `sleep_when_idle=True` with `persistent=False` is refused as
-`SleepWithoutPersistence` when the runner declares its operatives.
+`SleepWithoutPersistence` when the runner declares its operators.
 
-A workflow tasklet registers timers as a stream tasklet does, and a firing
-runs as a pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-workflow));
+A bounded tasklet registers timers as an unbounded tasklet does, and a firing
+runs as a pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-bounded-operator));
 only inside a `compensate` hook do `ctx.timer_after`, `ctx.timer_at_event_time`
-and `ctx.cancel_timer` raise an `EmitError` naming `TimersUnavailable`. A `ctx.spawn_workflow` naming a stream factory
-resolves its handle to `SpawnFactoryNotWorkflowError`.
+and `ctx.cancel_timer` raise an `EmitError` naming `TimersUnavailable`. A `ctx.spawn_bounded` naming an unbounded factory
+resolves its handle to `SpawnFactoryNotBoundedError`.
 
 ### Type hints are the declaration
 
@@ -291,14 +291,14 @@ codec for a string, bytes or a JSON value, and names one only to pick another
 format, `"json"` to quote a string or `"msgpack"`. A `decode=` or `encode=`
 callable takes the place of a codec for anything else. A codec name outside the
 four, or a codec named beside a callable on one channel, is refused when the
-operative is declared, naming the operative and the channel.
+operator is declared, naming the operator and the channel.
 
 Python's integers survive JSON at any width. A `datetime`, a set, a dataclass,
 `NaN` or an infinity has no JSON form, so sending one to a sink that names no
 codec fails the emit naming the channel; `codec="msgpack"` or an encoder carries
 it.
 
-A value passed between two tasklets of one operative never crosses a channel
+A value passed between two tasklets of one operator never crosses a channel
 codec: it stays MessagePack. An Elixir entry declared with no decoder hands its
 tasklet the binary instead, since an Elixir string is its binary, so the same
 bytes on an undeclared entry are a `dict` here and a string there.
@@ -321,7 +321,7 @@ a later change cannot reintroduce it.
 
 The default host is a base pool of Python threads, each looping
 `poll → dispatch → complete` **on itself**, plus one supervisor thread parked in
-the core's starvation wait. It is `sdk/rust/src/operative/poll_pool.rs`
+the core's starvation wait. It is `sdk/rust/src/operator/poll_pool.rs`
 transliterated, and it reads that host's environment rather than inventing a
 vocabulary:
 
@@ -450,14 +450,14 @@ everywhere in one change.
 
 ## Local mode: run a graph with no controller
 
-`LocalOperative.start` takes the operative you deploy and runs its declared
+`LocalOperator.start` takes the operator you deploy and runs its declared
 graph in this process — no controller, no socket, no local-mode member on the
 class:
 
 ```python
-from flezha import LocalOperative
+from flezha import LocalOperator
 
-with LocalOperative.start(word_count) as run:
+with LocalOperator.start(word_count) as run:
     run.on_sink("totals", lambda out: print(out.payload.decode()))
     run.feed("lines", "the quick brown fox")
     run.run_until_idle(10_000)

@@ -4,7 +4,7 @@
 //! Every verb here delegates to the sibling `flzvm` binary. A verb that
 //! answers 0 after that spawn failed is reporting a success it did not earn,
 //! and a script cannot tell it from a success (KI-79). A release that was
-//! never built is an ordinary operator condition and takes an ordinary
+//! never built is an ordinary caller condition and takes an ordinary
 //! refusal naming the path, not a Rust panic (KB-277).
 
 mod common;
@@ -52,25 +52,25 @@ impl Refusing {
 
 /// The five verbs of KI-79. Their `match status` had no `exit()` in either
 /// failure arm, so `main` returned normally and the process exited 0 — while
-/// `operative send`, six lines away, exited 1 from the identical match.
+/// `operator send`, six lines away, exited 1 from the identical match.
 fn no_refusal_is_reported_as_success(cli: &Refusing) -> Vec<String> {
     cli.wrong(&[
-        (&["operative", "stop", "op1"], 1),
-        (&["operative", "rewind", "op1", "--to-iteration", "3"], 1),
-        (&["operative", "replay", "a/b/c", "--from", "5"], 1),
-        (&["operative", "state", "op1"], 1),
+        (&["operator", "stop", "op1"], 1),
+        (&["operator", "rewind", "op1", "--to-iteration", "3"], 1),
+        (&["operator", "replay", "a/b/c", "--from", "5"], 1),
+        (&["operator", "state", "op1"], 1),
         (&["controller", "start"], 1),
     ])
 }
 
 /// One verb per surviving exit-code dialect, so a later refactor of the 34
-/// spawn sites cannot quietly move an operator-visible code.
+/// spawn sites cannot quietly move a caller-visible code.
 fn every_dialect_keeps_its_code(cli: &Refusing) -> Vec<String> {
     cli.wrong(&[
         // The reference arm KI-79's fix was copied from.
-        (&["operative", "send", "op1", "--text", "hi"], 1),
+        (&["operator", "send", "op1", "--text", "hi"], 1),
         // 17 sites: diagnose, then exit 1.
-        (&["operative", "list"], 1),
+        (&["operator", "list"], 1),
         // 5 sites: propagate the child's code.
         (&["boot", "status"], 7),
         // 2 sites: exit 3, silently.
@@ -82,7 +82,7 @@ fn every_dialect_keeps_its_code(cli: &Refusing) -> Vec<String> {
 
 /// One verb per dialect again, with nothing to spawn: each names the path it
 /// looked for, says nothing about a backtrace, and exits with the code its
-/// policy falls back to. `audit list` and `operative stop` already diagnosed
+/// policy falls back to. `audit list` and `operator stop` already diagnosed
 /// their own spawn, so they are the control arm that the shared sentence did
 /// not move a code.
 fn a_missing_flzvm_is_refused_rather_than_panicked() -> Vec<String> {
@@ -92,9 +92,9 @@ fn a_missing_flzvm_is_refused_rather_than_panicked() -> Vec<String> {
     let cases: &[(&[&str], i32)] = &[
         (&["dlq", "list", "--token", "t"], 1),
         (&["controller", "status"], 3),
-        (&["operative", "list"], 1),
+        (&["operator", "list"], 1),
         (&["audit", "list"], 3),
-        (&["operative", "stop", "op1"], 1),
+        (&["operator", "stop", "op1"], 1),
     ];
 
     cases

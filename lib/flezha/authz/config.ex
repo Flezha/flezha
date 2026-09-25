@@ -2,7 +2,7 @@ defmodule Flezha.AuthZ.Config do
   @moduledoc """
   The authn/authz settings, read through the one table.
 
-  Every one is a row of `Flezha.Config.Keys`, so the precedence an operator
+  Every one is a row of `Flezha.Config.Keys`, so the precedence a caller
   reads about — the environment variable over the configuration file over the
   default — is the boot translation's, and this module answers the settled
   value rather than re-deriving it. What it adds is the vocabulary: a token

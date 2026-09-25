@@ -5,44 +5,44 @@ defmodule Flezha.AuthZ.PolicyTest do
 
   describe "grants?/2" do
     test "viewer has read-only verbs" do
-      for a <- [:"operative.list", :"audit.read", :"observability.query"] do
+      for a <- [:"operator.list", :"audit.read", :"observability.query"] do
         assert Policy.grants?(:viewer, a)
       end
     end
 
-    test "viewer cannot start operatives or mutate" do
-      for a <- [:"operative.start", :"plugin.install", :"state.retention", :"authz.token_issue"] do
+    test "viewer cannot start operators or mutate" do
+      for a <- [:"operator.start", :"plugin.install", :"state.retention", :"authz.token_issue"] do
         refute Policy.grants?(:viewer, a)
       end
     end
 
-    test "operator inherits viewer plus operative/plugin lifecycle and observability mutate" do
-      assert Policy.grants?(:operator, :"operative.list")
-      assert Policy.grants?(:operator, :"operative.start")
-      assert Policy.grants?(:operator, :"plugin.enable")
-      assert Policy.grants?(:operator, :"observability.enable_source")
-      refute Policy.grants?(:operator, :"plugin.install")
-      refute Policy.grants?(:operator, :"authz.token_issue")
+    test "ops inherits viewer plus operator/plugin lifecycle and observability mutate" do
+      assert Policy.grants?(:ops, :"operator.list")
+      assert Policy.grants?(:ops, :"operator.start")
+      assert Policy.grants?(:ops, :"plugin.enable")
+      assert Policy.grants?(:ops, :"observability.enable_source")
+      refute Policy.grants?(:ops, :"plugin.install")
+      refute Policy.grants?(:ops, :"authz.token_issue")
     end
 
-    test "admin inherits operator plus auth-state mutation and the controller-wide settings" do
-      assert Policy.grants?(:admin, :"operative.start")
+    test "admin inherits ops plus auth-state mutation and the controller-wide settings" do
+      assert Policy.grants?(:admin, :"operator.start")
       assert Policy.grants?(:admin, :"plugin.install")
       assert Policy.grants?(:admin, :"authz.token_issue")
       assert Policy.grants?(:admin, :"authz.namespace_create")
       assert Policy.grants?(:admin, :"state.retention")
-      refute Policy.grants?(:operator, :"state.retention")
+      refute Policy.grants?(:ops, :"state.retention")
     end
 
     test "app is viewer plus the lifecycle an application runs on its own work" do
-      for a <- [:"operative.list", :"plugin.list", :"state.get"],
+      for a <- [:"operator.list", :"plugin.list", :"state.get"],
           do: assert(Policy.grants?(:app, a))
 
       for a <- [
-            :"operative.start",
-            :"operative.stop",
-            :"operative.send",
-            :"operative.listen",
+            :"operator.start",
+            :"operator.stop",
+            :"operator.send",
+            :"operator.listen",
             :"plugin.enable",
             :"plugin.disable"
           ] do
@@ -51,10 +51,10 @@ defmodule Flezha.AuthZ.PolicyTest do
     end
 
     test "listening is granted from app upward, and apart from the plugin rights" do
-      for role <- [:app, :operator, :admin], do: assert(Policy.grants?(role, :"operative.listen"))
+      for role <- [:app, :ops, :admin], do: assert(Policy.grants?(role, :"operator.listen"))
 
       for role <- [:viewer, :spawner, :stopper, :runner],
-          do: refute(Policy.grants?(role, :"operative.listen"))
+          do: refute(Policy.grants?(role, :"operator.listen"))
     end
 
     test "app destroys no record and moves no work it did not create" do
@@ -63,9 +63,9 @@ defmodule Flezha.AuthZ.PolicyTest do
             :"dlq.replay",
             :"state.rotate",
             :"state.delete",
-            :"operative.rewind",
-            :"operative.replay",
-            :"operative.scale",
+            :"operator.rewind",
+            :"operator.replay",
+            :"operator.scale",
             :"plugin.install",
             :"controller.stop",
             :"authz.token_issue"
@@ -74,12 +74,12 @@ defmodule Flezha.AuthZ.PolicyTest do
       end
     end
 
-    test "app is a strict subset of operator but for the connect a runner already held" do
+    test "app is a strict subset of ops but for the connect a runner already held" do
       app = Enum.filter(Action.all(), &Policy.grants?(:app, &1))
-      operator = Enum.filter(Action.all(), &Policy.grants?(:operator, &1))
+      ops = Enum.filter(Action.all(), &Policy.grants?(:ops, &1))
 
-      assert app -- operator == [:"runner.connect"]
-      assert operator -- app != []
+      assert app -- ops == [:"runner.connect"]
+      assert ops -- app != []
     end
 
     test "no role but app gained an action" do
@@ -87,7 +87,7 @@ defmodule Flezha.AuthZ.PolicyTest do
       # drifts into one of them fails here rather than in an audit.
       assert Enum.filter(Action.all(), &Policy.grants?(:runner, &1)) == [:"runner.connect"]
 
-      for {role, gained} <- [viewer: [], operator: [], admin: []] do
+      for {role, gained} <- [viewer: [], ops: [], admin: []] do
         assert Enum.filter(Action.all(), &(Policy.grants?(role, &1) and &1 == :"runner.connect")) ==
                  gained
       end
@@ -95,7 +95,7 @@ defmodule Flezha.AuthZ.PolicyTest do
 
     test "spawner holds the connect and the two rights a requested spawn needs, and nothing else" do
       assert Enum.filter(Action.all(), &Policy.grants?(:spawner, &1)) ==
-               [:"operative.start", :"operative.send", :"runner.connect"]
+               [:"operator.start", :"operator.send", :"runner.connect"]
     end
 
     test "app holds every spawner grant" do
@@ -106,7 +106,7 @@ defmodule Flezha.AuthZ.PolicyTest do
 
     test "stopper holds the connect and the stop, and nothing else" do
       assert Enum.filter(Action.all(), &Policy.grants?(:stopper, &1)) ==
-               [:"operative.stop", :"runner.connect"]
+               [:"operator.stop", :"runner.connect"]
     end
 
     test "app holds every stopper grant" do
@@ -119,13 +119,13 @@ defmodule Flezha.AuthZ.PolicyTest do
       assert Policy.grants?(:runner, :"runner.connect")
       assert Enum.filter(Action.all(), &Policy.grants?(:runner, &1)) == [:"runner.connect"]
 
-      for a <- [:"operative.start", :"operative.list", :"audit.read", :"observability.query"] do
+      for a <- [:"operator.start", :"operator.list", :"audit.read", :"observability.query"] do
         refute Policy.grants?(:runner, a)
       end
     end
 
     test "unknown role denies everything" do
-      refute Policy.grants?(:superuser, :"operative.start")
+      refute Policy.grants?(:superuser, :"operator.start")
     end
   end
 
@@ -140,13 +140,13 @@ defmodule Flezha.AuthZ.PolicyTest do
     assert Enum.filter(Role.all(), &Policy.runner_principal_role?/1) |> Enum.sort() ==
              [:app, :runner, :spawner, :stopper]
 
-    for role <- [:viewer, :operator, :admin], do: refute(Policy.runner_principal_role?(role))
+    for role <- [:viewer, :ops, :admin], do: refute(Policy.runner_principal_role?(role))
   end
 
   test "cross_namespace_admin_action?/1 covers auth-state mutations" do
     assert Policy.cross_namespace_admin_action?(:"authz.namespace_create")
     assert Policy.cross_namespace_admin_action?(:"authz.token_issue")
-    refute Policy.cross_namespace_admin_action?(:"operative.start")
+    refute Policy.cross_namespace_admin_action?(:"operator.start")
     refute Policy.cross_namespace_admin_action?(:"audit.read")
   end
 end

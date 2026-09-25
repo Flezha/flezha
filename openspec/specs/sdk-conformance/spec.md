@@ -25,7 +25,7 @@ Each SDK's test app directory `test/apps/<sdk>_runner/` SHALL contain `conforman
 
 `pool_wedge` becomes required because a host that cannot be wedged on demand cannot prove it recovers: the fixture is what exercises the abandon path, the worker replacement and the classifier's verdict on that SDK rather than on Rust alone.
 
-`state_persistence` joins the required set the same way: the record stream, the restore fold, the compaction snapshot, the live read and the credit window live once in the shared core for six SDKs and are re-expressed in the Elixir SDK's own core against the kernel's rules, so the last deferrer carries it and the gate's inverse direction promotes it. `keyed_channels`, `dynamic_cell` and `schema_evolution` join it the same way: the identity stamps, the idle reaper with its cap and trace, and the per-Tasklet schema declaration with its migrations live once in the shared core for six SDKs and are re-expressed in the Elixir SDK's own core, so the last deferrer carries them and the gate's inverse direction promotes them. `cell_timers` joins the same way: the pending set, its ops as records in the Cell's own log, the two firing paths and the clock kinds live once in the shared core for six SDKs and are re-expressed in the Elixir SDK's own core. `effectively_once` joins the same way: the staged interval, the effect record, the checkpoint close, the tier-on park and the deterministic-effects contract live once in the shared core for six SDKs and are re-expressed in the Elixir SDK's own core. `correction_window` joins the same way, and it is the smallest of the five because the controller half is SDK-blind and already complete: the lateness classification against the Cell's event-time high-water, the correction request, the replay-slice buffer and its event-time ordering live once in the shared core for six SDKs and are re-expressed in the Elixir SDK's own core, so the last deferrer carries it and the gate's inverse direction promotes it. A capability the Elixir SDK still defers — `workflow` — stays out of the set until its own change lands, by name.
+`state_persistence` joins the required set the same way: the record stream, the restore fold, the compaction snapshot, the live read and the credit window live once in the shared core for six SDKs and are re-expressed in the Elixir SDK's own core against the kernel's rules, so the last deferrer carries it and the gate's inverse direction promotes it. `keyed_channels`, `dynamic_cell` and `schema_evolution` join it the same way: the identity stamps, the idle reaper with its cap and trace, and the per-Tasklet schema declaration with its migrations live once in the shared core for six SDKs and are re-expressed in the Elixir SDK's own core, so the last deferrer carries them and the gate's inverse direction promotes them. `cell_timers` joins the same way: the pending set, its ops as records in the Cell's own log, the two firing paths and the clock kinds live once in the shared core for six SDKs and are re-expressed in the Elixir SDK's own core. `effectively_once` joins the same way: the staged interval, the effect record, the checkpoint close, the tier-on park and the deterministic-effects contract live once in the shared core for six SDKs and are re-expressed in the Elixir SDK's own core. `correction_window` joins the same way, and it is the smallest of the five because the controller half is SDK-blind and already complete: the lateness classification against the Cell's event-time high-water, the correction request, the replay-slice buffer and its event-time ordering live once in the shared core for six SDKs and are re-expressed in the Elixir SDK's own core, so the last deferrer carries it and the gate's inverse direction promotes it. A capability the Elixir SDK still defers — `bounded` — stays out of the set until its own change lands, by name.
 
 The required set SHALL be a declaration a person writes, never a value computed from the manifests, and the gate SHALL enforce the two directions separately because their remedies differ: a manifest that defers a required capability SHALL fail naming that manifest and the required set, and a capability no manifest defers that is absent from the required set SHALL fail naming the capability and the declaration it belongs in. A capability therefore cannot leave the required set as a side effect of a manifest edit — an SDK that genuinely cannot carry one defers it by name and removes it from the required set in the same change, and both halves are read by a reviewer.
 
@@ -107,11 +107,11 @@ A fixture that implements the same scenario SHALL register the same factory id i
 
 ### Requirement: Scenarios are tagged by capability; deferred capabilities and unsupported transports skip by name
 
-The capability vocabulary SHALL be one list in the harness (`runner_lifecycle`, `connect_discovery`, `graph_builder`, `liveness`, `pool_wedge`, `retry_ladder`, `state_persistence`, `effectively_once`, `cell_timers`, `correction_window`, `keyed_channels`, `workflow`, `dynamic_cell`, `partitioned`, `schema_evolution`, `shorthand`). A capability MAY carry no fixtures in any manifest, when the scenarios that prove it need no fixture of their own; whether a capability may be deferred is a separate question from whether it carries fixtures, and `pool_wedge` is both required and fixture-carrying — a host that cannot be wedged on demand cannot prove it recovers. Every module under `test/system/` SHALL carry `@moduletag capability: <atom>` from the vocabulary; a test MAY override it with `@tag capability:`. For the selected runtime, `test_helper.exs` SHALL exclude every test whose capability the runtime's manifest defers and every test tagged with a transport the manifest does not list, and SHALL print one line naming the runtime, the manifest path, the deferred capabilities and the skipped transports. A capability the manifest does not defer SHALL run and SHALL pass; there is no third state. A capability no module or test under `test/system/` is tagged for SHALL be deferred by every manifest, so that a capability carried under `fixtures` is one at least one scenario proves: claiming a capability and covering it cannot diverge, and an SDK that carries the mechanism proves it rather than resting on the SDK's own unit tests.
+The capability vocabulary SHALL be one list in the harness (`runner_lifecycle`, `connect_discovery`, `graph_builder`, `liveness`, `pool_wedge`, `retry_ladder`, `state_persistence`, `effectively_once`, `cell_timers`, `correction_window`, `keyed_channels`, `bounded`, `dynamic_cell`, `partitioned`, `schema_evolution`, `shorthand`). A capability MAY carry no fixtures in any manifest, when the scenarios that prove it need no fixture of their own; whether a capability may be deferred is a separate question from whether it carries fixtures, and `pool_wedge` is both required and fixture-carrying — a host that cannot be wedged on demand cannot prove it recovers. Every module under `test/system/` SHALL carry `@moduletag capability: <atom>` from the vocabulary; a test MAY override it with `@tag capability:`. For the selected runtime, `test_helper.exs` SHALL exclude every test whose capability the runtime's manifest defers and every test tagged with a transport the manifest does not list, and SHALL print one line naming the runtime, the manifest path, the deferred capabilities and the skipped transports. A capability the manifest does not defer SHALL run and SHALL pass; there is no third state. A capability no module or test under `test/system/` is tagged for SHALL be deferred by every manifest, so that a capability carried under `fixtures` is one at least one scenario proves: claiming a capability and covering it cannot diverge, and an SDK that carries the mechanism proves it rather than resting on the SDK's own unit tests.
 
 #### Scenario: A deferred capability skips visibly
-- **WHEN** `FLEZHA_E2E_RUNTIME=elixir mix test --include system` is run and the Elixir manifest defers `workflow`
-- **THEN** no test tagged `capability: :workflow` runs, and the run's output contains a line naming `elixir`, `test/apps/elixir_runner/conformance.json` and `workflow`
+- **WHEN** `FLEZHA_E2E_RUNTIME=elixir mix test --include system` is run and the Elixir manifest defers `bounded`
+- **THEN** no test tagged `capability: :bounded` runs, and the run's output contains a line naming `elixir`, `test/apps/elixir_runner/conformance.json` and `bounded`
 
 #### Scenario: A capability that is neither deferred nor passing fails the run
 - **WHEN** a runtime's manifest does not defer `retry_ladder` and its runner does not park a poison payload
@@ -181,19 +181,19 @@ Where this requirement names a document, it SHALL name the path that document oc
 
 ### Requirement: The live factory set matches the manifest
 
-The smoke tier SHALL assert that the factory ids the controller lists for a freshly connected runner (`FleetManager.list_factories/1`) equal the union of the runtime's manifest `fixtures`, and that the kind the controller recorded for each id is `workflow` for every id the manifest lists under a workflow capability (`workflow` and the workflow half of `shorthand`, `sugar_workflow`) and `stream` for every other id.
+The smoke tier SHALL assert that the factory ids the controller lists for a freshly connected runner (`FleetManager.list_factories/1`) equal the union of the runtime's manifest `fixtures`, and that the kind the controller recorded for each id is `bounded` for every id the manifest lists under a bounded capability (`bounded` and the bounded half of `shorthand`, `sugar_bounded`) and `unbounded` for every other id.
 
 #### Scenario: The manifest and the app disagree
 - **WHEN** a manifest lists `session_timeout` under `cell_timers` and the app registers `java_session_timeout`
 - **THEN** the smoke tier fails naming the id present in the manifest and absent from the runner, and vice versa
 
 #### Scenario: A runtime announcing the wrong kind fails the smoke tier
-- **WHEN** a runtime announces `commit_block_workflow` as a stream, or announces any factory with an empty kind
+- **WHEN** a runtime announces `commit_block_bounded` as an unbounded operator, or announces any factory with an empty kind
 - **THEN** the smoke tier fails naming the runtime, the id and the kind it expected
 
 ### Requirement: The declared surface matches a golden snapshot
 
-The smoke tier SHALL bind one fixture per declaration key the controller reads (`static_cell`, `rolling_window_twin`, `tier_store`, `checkpoint_batched_store`, `candle`, `commit_block_workflow`, `saga_block_workflow`, `store_input`), capture the `AddOperativeResponse.metadata` map as decoded at `ClassRegistry.decode_declarations/1`, and assert it equals the committed golden file `test/fixtures/declarations/<fixture>.json` — key set and values. It SHALL further bind one keyed fixture, deliver one input, and assert the set of identity-stamp keys on the sink output (`flz.cell`, `flz.seq`, `flz.key`) equals the committed golden. Each snapshot test SHALL carry the capability of the declaration it pins. Goldens SHALL be regenerated only with `FLEZHA_E2E_SNAPSHOT=update` under the reference runtime; any other runtime SHALL refuse the update.
+The smoke tier SHALL bind one fixture per declaration key the controller reads (`static_cell`, `rolling_window_twin`, `tier_store`, `checkpoint_batched_store`, `candle`, `commit_block_bounded`, `saga_block_bounded`, `store_input`), capture the `AddOperatorResponse.metadata` map as decoded at `ClassRegistry.decode_declarations/1`, and assert it equals the committed golden file `test/fixtures/declarations/<fixture>.json` — key set and values. It SHALL further bind one keyed fixture, deliver one input, and assert the set of identity-stamp keys on the sink output (`flz.cell`, `flz.seq`, `flz.key`) equals the committed golden. Each snapshot test SHALL carry the capability of the declaration it pins. Goldens SHALL be regenerated only with `FLEZHA_E2E_SNAPSHOT=update` under the reference runtime; any other runtime SHALL refuse the update.
 
 #### Scenario: A differing default is a diff
 - **WHEN** an SDK's `tier_store` declares `effectively_once` with a value or key spelling that differs from `test/fixtures/declarations/tier_store.json`
@@ -209,7 +209,7 @@ The smoke tier SHALL bind one fixture per declaration key the controller reads (
 
 ### Requirement: Every SDK test app honours the test-app contract
 
-A test app SHALL take its namespace from the first command-line argument; SHALL end its own OS process when the port the harness manages it by goes away, whether that reaches it as end-of-file on standard input or as a standard-input read that can no longer answer one — a read error is the close arriving by another road, never a reason to stop watching; SHALL honour the harness-injected environment (`FLEZHA_SOCKET_FILES_PATH`, `FLEZHA_TRANSPORT`, `FLEZHA_CA_CERT_PATH`, `FLEZHA_QUIC_ADDRESSES`, and whatever its own manifest template renders); SHALL, in every workflow fixture that participates in a crash-resume scenario, suspend the parked activation **without occupying the host's dispatch capacity** until `FLEZHA_WORKFLOW_E2E_RELEASE` is present in the environment; and SHALL cap its own logging at error level unless overridden. Its manifest's `build` commands SHALL be the only commands needed to produce its artifacts.
+A test app SHALL take its namespace from the first command-line argument; SHALL end its own OS process when the port the harness manages it by goes away, whether that reaches it as end-of-file on standard input or as a standard-input read that can no longer answer one — a read error is the close arriving by another road, never a reason to stop watching; SHALL honour the harness-injected environment (`FLEZHA_SOCKET_FILES_PATH`, `FLEZHA_TRANSPORT`, `FLEZHA_CA_CERT_PATH`, `FLEZHA_QUIC_ADDRESSES`, and whatever its own manifest template renders); SHALL, in every bounded fixture that participates in a crash-resume scenario, suspend the parked activation **without occupying the host's dispatch capacity** until `FLEZHA_BOUNDED_E2E_RELEASE` is present in the environment; and SHALL cap its own logging at error level unless overridden. Its manifest's `build` commands SHALL be the only commands needed to produce its artifacts.
 
 The parked activation's obligation is the same on every host and its spelling is not: a host whose manifest declares a worker-pool dispatch model SHALL park a pool worker and SHALL NOT park the driver thread; a host whose manifest declares an event-loop dispatch model SHALL suspend the activation and yield the loop; and a host whose manifest declares a process-per-cell dispatch model SHALL block the parked Cell's own process, which occupies no shared capacity because the host schedules one process per Cell and the driver is a process of its own. A synchronous hold on an event-loop host is a violation of this requirement, not an implementation of it: it freezes every other activation the loop owns, which is the wedge signature a different capability's fixture exists to produce. In every case the runner SHALL keep answering control pings while a fixture is parked, and a sibling tasklet the driver has not yet reached SHALL remain dispatchable.
 
@@ -229,20 +229,20 @@ A test app SHALL NOT read `FLEZHA_QUIC_ADDRESS`; the harness renders `FLEZHA_QUI
 - **WHEN** the same read error reaches an app whose runtime is already starting or stopping
 - **THEN** the app does not end the process itself, and the runtime's own exit status and report stand
 
-#### Scenario: The release gate holds a workflow mid-run
-- **WHEN** a crash-resume scenario starts a workflow fixture without `FLEZHA_WORKFLOW_E2E_RELEASE` set
+#### Scenario: The release gate holds a bounded operator mid-run
+- **WHEN** a crash-resume scenario starts a bounded fixture without `FLEZHA_BOUNDED_E2E_RELEASE` set
 - **THEN** the fixture's blocking tasklet does not complete until the runner is respawned with the variable set, and the runner keeps answering control pings meanwhile
 
 #### Scenario: An event-loop host parks without holding its loop
-- **WHEN** a test app whose manifest declares an event-loop dispatch model reaches the release gate in a workflow fixture and the variable is absent
+- **WHEN** a test app whose manifest declares an event-loop dispatch model reaches the release gate in a bounded fixture and the variable is absent
 - **THEN** the activation suspends and the loop is yielded, so the runner answers control pings and dispatches other activations, and an app that instead holds the loop synchronously fails this requirement
 
 #### Scenario: A host with a selectable dispatch model owes the obligation under every member
-- **WHEN** a test app's manifest names a `dispatch.env` variable that selects between dispatch models — `FLEZHA_PYTHON_EXECUTOR` and `FLEZHA_RUBY_EXECUTOR` are the two — and a workflow fixture reaches the release gate under any value that variable takes
+- **WHEN** a test app's manifest names a `dispatch.env` variable that selects between dispatch models — `FLEZHA_PYTHON_EXECUTOR` and `FLEZHA_RUBY_EXECUTOR` are the two — and a bounded fixture reaches the release gate under any value that variable takes
 - **THEN** the same fixture spelling satisfies the parking obligation for the model actually in force, parking one pool worker under a pool member and yielding under a loop or fiber member, and a spelling that satisfies only the model the manifest names by default fails this requirement
 
 #### Scenario: A thread-pool host parks a worker rather than a timer
-- **WHEN** a test app whose manifest declares the `thread-pool` dispatch model reaches the release gate in a workflow fixture and the variable is absent
+- **WHEN** a test app whose manifest declares the `thread-pool` dispatch model reaches the release gate in a bounded fixture and the variable is absent
 - **THEN** the calling pool worker parks off the processor with no timer and no spin, the runner keeps answering control pings from the threads the core owns, and the pool grows on the core's starvation signal so a sibling the driver has not yet reached is dispatched
 
 #### Scenario: The retired QUIC variable is not honoured
@@ -251,12 +251,12 @@ A test app SHALL NOT read `FLEZHA_QUIC_ADDRESS`; the harness renders `FLEZHA_QUI
 
 #### Scenario: A process-per-cell host parks the Cell's own process
 
-- **WHEN** a test app whose manifest declares the `process-per-cell` dispatch model reaches the release gate in a workflow fixture and the variable is absent
+- **WHEN** a test app whose manifest declares the `process-per-cell` dispatch model reaches the release gate in a bounded fixture and the variable is absent
 - **THEN** the parked Cell's own process blocks with no timer and no spin, and the runner keeps answering control pings while its driver dispatches a sibling tasklet the parked one does not feed — a host that instead parked the driver would stall every stage of the chain
 
 ### Requirement: The suite has a smoke tier and a full tier
 
-`test/system/sdk_smoke_e2e_test.exs` (tags `:system`, `:sdk_smoke`, capability `runner_lifecycle`) SHALL exercise, for the selected runtime across every transport its manifest lists: handshake and `AssignRunnerId`, `ConnectSocket`, add/remove operative lifecycle, end-to-end data flow, `PipeToOperative` routing, in-runtime migration, reconnect under controller restart, the live-factory-set assertion and the golden snapshots. `FLEZHA_E2E_RUNTIME=<sdk> mix test --include sdk_smoke` SHALL complete without any other tag. `--include system` SHALL run the full suite including the smoke tier.
+`test/system/sdk_smoke_e2e_test.exs` (tags `:system`, `:sdk_smoke`, capability `runner_lifecycle`) SHALL exercise, for the selected runtime across every transport its manifest lists: handshake and `AssignRunnerId`, `ConnectSocket`, add/remove operator lifecycle, end-to-end data flow, `PipeToOperator` routing, in-runtime migration, reconnect under controller restart, the live-factory-set assertion and the golden snapshots. `FLEZHA_E2E_RUNTIME=<sdk> mix test --include sdk_smoke` SHALL complete without any other tag. `--include system` SHALL run the full suite including the smoke tier.
 
 #### Scenario: The smoke tier is the inner loop for a new SDK
 - **WHEN** `FLEZHA_E2E_RUNTIME=<sdk> mix test --include sdk_smoke` is run against an SDK whose manifest defers every capability but `runner_lifecycle`
@@ -264,7 +264,7 @@ A test app SHALL NOT read `FLEZHA_QUIC_ADDRESS`; the harness renders `FLEZHA_QUI
 
 ### Requirement: CI runs two runtimes nightly and any runtime on demand
 
-`nightly-e2e.yml` SHALL run the `:system` and `:multi_node` suites as a matrix over `runtime: [rust, java]` with `fail-fast: false`, one job per runtime, `FLEZHA_E2E_RUNTIME` set from the matrix. It SHALL accept a `workflow_dispatch` input `runtime` with values `rust`, `java`, `elixir`, `all` (default `all`) that selects the matrix. Per-pull-request workflows SHALL NOT spawn runners for more than one runtime; the static gate SHALL be their only addition. `java-sdk.yml` SHALL run `FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke` in place of the removed `mix test.java_sdk`.
+`nightly-e2e.yml` SHALL run the `:system` and `:multi_node` suites as a matrix over `runtime: [rust, java]` with `fail-fast: false`, one job per runtime, `FLEZHA_E2E_RUNTIME` set from the matrix. It SHALL accept a `workflow_dispatch` input `runtime` with values `rust`, `java`, `elixir`, `all` (default `all`) that selects the matrix. Per-pull-request bounded operators SHALL NOT spawn runners for more than one runtime; the static gate SHALL be their only addition. `java-sdk.yml` SHALL run `FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke` in place of the removed `mix test.java_sdk`.
 
 #### Scenario: A nightly Java failure is attributed
 - **WHEN** the nightly `java` job fails and the `rust` job passes
@@ -307,13 +307,13 @@ migration refuses instead of producing state.
 
 ### Requirement: The wedge scenario proves detection and recovery on every SDK
 
-The suite SHALL carry a scenario, driven by each SDK's `pool_wedge` fixture, that occupies the runner's dispatch capacity and asserts the full chain on the runtime under test: the runner's heartbeat reports handout liveness; the classifier mints the expected verdict; the planner issues the expected remedy; and the affected operative resumes producing afterwards.
+The suite SHALL carry a scenario, driven by each SDK's `pool_wedge` fixture, that occupies the runner's dispatch capacity and asserts the full chain on the runtime under test: the runner's heartbeat reports handout liveness; the classifier mints the expected verdict; the planner issues the expected remedy; and the affected operator resumes producing afterwards.
 
-The scenario SHALL additionally cover the abandon path — a fixture whose Tasklet aborts its worker rather than returning an error — and assert that the cell is served again without operator action and without a duplicate execution of the item that killed the worker.
+The scenario SHALL additionally cover the abandon path — a fixture whose Tasklet aborts its worker rather than returning an error — and assert that the cell is served again without user action and without a duplicate execution of the item that killed the worker.
 
 #### Scenario: A wedged pool is detected and remedied on each runtime
 - **WHEN** the wedge fixture occupies the runner's dispatch capacity under `FLEZHA_E2E_RUNTIME=<sdk>`
-- **THEN** the heartbeat SHALL report the outstanding activation, the classifier SHALL mint the wedge verdict, the plan SHALL issue its remedy, and the operative SHALL produce again once the remedy lands
+- **THEN** the heartbeat SHALL report the outstanding activation, the classifier SHALL mint the wedge verdict, the plan SHALL issue its remedy, and the operator SHALL produce again once the remedy lands
 
 #### Scenario: A worker killed mid-dispatch recovers without losing the cell
 - **WHEN** the fixture aborts the worker holding an activation
@@ -349,19 +349,19 @@ An SDK that persists nothing SHALL still declare a value: the byte identifies th
 
 ### Requirement: An interop scenario proves the placement guard
 
-The suite SHALL carry an `interop`-tagged scenario that starts two SDK runners of different languages in one namespace, both advertising a factory id the reference manifest gives to both, and asserts that placement never crosses languages: an operative of that factory established at one language SHALL be placed only on the runner of that language, and killing that runner SHALL leave the operative unbound with a language reason rather than rebinding onto the other runner.
+The suite SHALL carry an `interop`-tagged scenario that starts two SDK runners of different languages in one namespace, both advertising a factory id the reference manifest gives to both, and asserts that placement never crosses languages: an operator of that factory established at one language SHALL be placed only on the runner of that language, and killing that runner SHALL leave the operator unbound with a language reason rather than rebinding onto the other runner.
 
 The scenario SHALL be the only place two SDKs coexist in a run; the one-runtime-per-run rule stands everywhere else, and the shared factory ids that exist for cross-runtime measurement SHALL NOT be changed to avoid the collision — the guard is what makes them safe.
 
 #### Scenario: Placement does not cross languages
 - **GIVEN** a Rust runner and a Java runner in one namespace, both advertising `bench_echo`, with `bench_echo` established at the Rust language
-- **WHEN** an operative of `bench_echo` is started
+- **WHEN** an operator of `bench_echo` is started
 - **THEN** it SHALL be placed on the Rust runner
 
 #### Scenario: A dead runner does not hand its factory to the other language
-- **GIVEN** the operative above running on the Rust runner
+- **GIVEN** the operator above running on the Rust runner
 - **WHEN** the Rust runner is killed while the Java runner stays connected
-- **THEN** the operative SHALL NOT bind to the Java runner, and the refusal reason SHALL name the language mismatch
+- **THEN** the operator SHALL NOT bind to the Java runner, and the refusal reason SHALL name the language mismatch
 
 ### Requirement: The connect-discovery contract is a capability and a pinned fixture
 
@@ -441,35 +441,35 @@ An SDK whose reader takes the version directly from its own build system — whe
 - **WHEN** the declaration key list gains the version key and one SDK's builder does not emit it
 - **THEN** that SDK's declaration-key test SHALL fail naming the key, and every other SDK's SHALL stay green
 
-### Requirement: The Elixir SDK carries the workflow kind
+### Requirement: The Elixir SDK carries the bounded kind
 
-The Elixir SDK SHALL accept a class declared with `kind: :workflow` and drive it to
+The Elixir SDK SHALL accept a class declared with `kind: :bounded` and drive it to
 completion, and its conformance manifest SHALL defer no capability. The Elixir SDK is
-its own core and inherits nothing from `flz_core`, so it re-expresses the workflow
+its own core and inherits nothing from `flz_core`, so it re-expresses the bounded operator
 mechanism rather than binding to it; the observable contract is nonetheless identical to
 every other SDK's, because the same `test/system/` scenarios prove all of them.
 
 The manifest flip is the last act of the port: a manifest that declares a capability its
 fixtures cannot drive is a declaration the gate believes and no scenario checks.
 
-#### Scenario: A workflow class is accepted rather than refused
+#### Scenario: A bounded class is accepted rather than refused
 
-- **WHEN** the controller sends `AddOperative` with `kind: "workflow"` to an Elixir runner
+- **WHEN** the controller sends `AddOperator` with `kind: "bounded"` to an Elixir runner
 - **THEN** the runner registers the class and drives it, where today it answers
-  `{:error, "workflow kind is not supported by the Elixir stream SDK"}`
+  `{:error, "bounded kind is not supported by the Elixir stream SDK"}`
 
 #### Scenario: The Elixir manifest defers nothing
 
 - **WHEN** `test/sdk_conformance/gate_test.exs` compares `test/apps/elixir_runner/conformance.json`
   against the reference manifest
 - **THEN** its `deferred` list is empty and its fixture ids are the reference's nineteen
-  workflow ids in the reference's order, so every `capability: :workflow` scenario runs
+  bounded ids in the reference's order, so every `capability: :bounded` scenario runs
   under `FLEZHA_E2E_RUNTIME=elixir` rather than skipping by name
 
 #### Scenario: A fan-out reaches every consumer on the durable path
 
-- **WHEN** an Elixir workflow class declares one producing tasklet whose output channel
-  carries two consumers, and `workflow_crash_resume_e2e_test.exs:180` drives it
+- **WHEN** an Elixir bounded class declares one producing tasklet whose output channel
+  carries two consumers, and `bounded_crash_resume_e2e_test.exs:180` drives it
 - **THEN** all five payloads are delivered, and removing either arm of the fan-out makes
   that test fail with three payloads where five are asserted — the negative control every
   other SDK's port ran, which is what distinguishes a fan-out that works from one that is
@@ -506,7 +506,7 @@ name. A row a runtime refuses at run time SHALL boot for real, whichever the lan
 #### Scenario: A compile-time refusal is cited, and the citation is checked
 
 - **WHEN** the Rust app is booted under `FLEZHA_REFUSAL_FIXTURE=shorthand_with_topology`
-- **THEN** it exits non-zero printing `ShortFormWithTopology` and `sdk/rust/tests/ui/operative_with_hand_written_impl.rs`, the compile-fail fixture whose own text names the refusal because rustc's conflicting-impl error cannot, and the drill fails if that file is absent or does not contain the name
+- **THEN** it exits non-zero printing `ShortFormWithTopology` and `sdk/rust/tests/ui/operator_with_hand_written_impl.rs`, the compile-fail fixture whose own text names the refusal because rustc's conflicting-impl error cannot, and the drill fails if that file is absent or does not contain the name
 
 #### Scenario: An Elixir `use` refusal is cited the same way
 
@@ -516,7 +516,7 @@ name. A row a runtime refuses at run time SHALL boot for real, whichever the lan
 #### Scenario: A runtime refusal boots on every runtime
 
 - **WHEN** any runtime's app is booted under `FLEZHA_REFUSAL_FIXTURE=shorthand_duplicate_id`
-- **THEN** it defines the row's stream and workflow under one id, dies on the second, and its output contains `DuplicateFactoryId`
+- **THEN** it defines the row's unbounded and bounded under one id, dies on the second, and its output contains `DuplicateFactoryId`
 
 ### Requirement: Every SDK's declaration output is compared against the shared expected set in one run
 
@@ -546,7 +546,7 @@ frame, and no SDK SHALL choose that answer at the write site. The classes and
 their policies SHALL be the same three in every runtime — a control frame is
 refused or counted and never held; a durable record is held in a bounded ring,
 drop-oldest counted, and replayed in write order on the next bound stream; a
-plugin or workflow output is held already framed so its channel and identity
+plugin or bounded output is held already framed so its channel and identity
 stamps survive the replay — with the shared core carrying them for the Rust,
 Java, Node, Python, Ruby and PHP SDKs and the Elixir SDK carrying its own,
 because it inherits nothing from `flz_core`.
@@ -594,7 +594,7 @@ connection on the way out.
 #### Scenario: SIGTERM ends every runtime the same way
 
 - **WHEN** a runner of the runtime under test is sent SIGTERM mid-activation
-- **THEN** it SHALL ship `RunnerShutdownNotification` for each of its operatives,
+- **THEN** it SHALL ship `RunnerShutdownNotification` for each of its operators,
   exit with the declared status, and open no new control connection
 
 #### Scenario: A closed standard input ends the runner
@@ -773,9 +773,9 @@ end-to-end.
 - **THEN** the gate SHALL fail on the missing manifest as it would for any absent test app, naming the path
 
 ### Requirement: The short form is a required capability every manifest carries and every app spells
-`shorthand` SHALL be in the required set. Every manifest SHALL list it under `fixtures` with exactly the reference's ids, `sugar_do_nothing`, `sugar_store_input`, `sugar_named_input`, `sugar_workflow` and `sugar_state_only`, and those ids SHALL NOT appear under `graph_builder` or `workflow`. Every test app SHALL declare each of the five through its SDK's short form, which is **one operative declaration** at the kind-named operative entry point carrying its factory id and a tasklet body (a `sink` on all but `sugar_state_only`, and a text entry codec where the SDK's builder names codecs), and SHALL register each with one call; no app SHALL declare a tasklet beside them, and no app SHALL name a generated artefact in its registration call. `test/system/shorthand_e2e_test.exs` SHALL be tagged `capability: :shorthand` and SHALL drive all five fixtures on the selected runtime. Goldens under `test/fixtures/declarations/` SHALL pin `sugar_do_nothing`, `sugar_named_input`, `sugar_workflow` and `sugar_state_only`.
+`shorthand` SHALL be in the required set. Every manifest SHALL list it under `fixtures` with exactly the reference's ids, `sugar_do_nothing`, `sugar_store_input`, `sugar_named_input`, `sugar_bounded` and `sugar_state_only`, and those ids SHALL NOT appear under `graph_builder` or `bounded`. Every test app SHALL declare each of the five through its SDK's short form, which is **one operator declaration** at the kind-named operator entry point carrying its factory id and a tasklet body (a `sink` on all but `sugar_state_only`, and a text entry codec where the SDK's builder names codecs), and SHALL register each with one call; no app SHALL declare a tasklet beside them, and no app SHALL name a generated artefact in its registration call. `test/system/shorthand_e2e_test.exs` SHALL be tagged `capability: :shorthand` and SHALL drive all five fixtures on the selected runtime. Goldens under `test/fixtures/declarations/` SHALL pin `sugar_do_nothing`, `sugar_named_input`, `sugar_bounded` and `sugar_state_only`.
 
-`sugar_state_only` SHALL be a stream short form with the entry channel `ticks`, no `sink`, and a body that records its input in declared state. It has no sink frame to observe, so its proof SHALL be the cell state read back through the live cell-state query rather than a sink assertion.
+`sugar_state_only` SHALL be an unbounded short form with the entry channel `ticks`, no `sink`, and a body that records its input in declared state. It has no sink frame to observe, so its proof SHALL be the cell state read back through the live cell-state query rather than a sink assertion.
 
 The refusal table SHALL carry one row per short-form refusal with the step `shorthand(<id>|-, <sink>|-, <input>|-)` (and the `.noout` modifier for a body declaring no output), needing the surface `shorthand`, and `shorthand_typed_output` for the row only an SDK that can read a body's output type at declaration time can write. The rows SHALL be `shorthand_with_topology` and `shorthand_sink_without_output`. The `shorthand_omittable_sink` surface SHALL be removed from the `needs` vocabulary and from every manifest, because a sink is optional in every SDK's short form and no spelling has to omit a key that rides it. Every manifest SHALL list `shorthand` under `topology_surfaces`. A row whose `needs` begins with `shorthand` SHALL be exempt from the pairing with `flz_core`'s issue variants; its name SHALL instead be one the authoring contract lists.
 
@@ -791,23 +791,23 @@ The refusal table SHALL carry one row per short-form refusal with the step `shor
 
 #### Scenario: The named entry channel is reached by name on every runtime
 
-- **WHEN** the scenario injects a frame naming channel `prices` on a `sugar_named_input` operative under any runtime
+- **WHEN** the scenario injects a frame naming channel `prices` on a `sugar_named_input` operator under any runtime
 - **THEN** the sink `sugar_named_input_sink` carries the input's bytes
 
 #### Scenario: The default entry channel is reached on every runtime
 
-- **WHEN** the scenario injects a frame on channel `input` of a `sugar_do_nothing` operative
+- **WHEN** the scenario injects a frame on channel `input` of a `sugar_do_nothing` operator
 - **THEN** `sugar_do_nothing_echo` carries the input's bytes
 
-#### Scenario: A workflow short form completes on every runtime
+#### Scenario: A bounded short form completes on every runtime
 
-- **WHEN** the scenario starts `sugar_workflow` under any runtime and sends it one message on `order`
-- **THEN** `sugar_workflow_placed` carries the message's bytes and the instance completes with status `ok`
+- **WHEN** the scenario starts `sugar_bounded` under any runtime and sends it one message on `order`
+- **THEN** `sugar_bounded_placed` carries the message's bytes and the instance completes with status `ok`
 
 #### Scenario: A sinkless short form is proven by its state on every runtime
 
-- **WHEN** the scenario injects a frame on channel `ticks` of a `sugar_state_only` operative under any runtime
-- **THEN** the operative declares no plugin channel, and the live cell-state query answers a state carrying that input
+- **WHEN** the scenario injects a frame on channel `ticks` of a `sugar_state_only` operator under any runtime
+- **THEN** the operator declares no plugin channel, and the live cell-state query answers a state carrying that input
 
 #### Scenario: A row an untyped SDK cannot write skips by name
 
@@ -826,39 +826,39 @@ The refusal table SHALL carry one row per short-form refusal with the step `shor
 
 ### Requirement: Kind-only settings are refusal rows every builder reaches
 
-The refusal table (`test/fixtures/reference_topologies.txt`) SHALL carry the rows `EffectivelyOnceOnWorkflow`, `CorrectionWindowOnWorkflow`, `CheckpointOnWorkflow` (a workflow class writing `class.checkpoint_every(500)`) and `SyncDurabilityOnStream`, and every runtime SHALL drive them through its real boot as it drives every other row. The `raw_class_flags` surface SHALL leave the `needs` vocabulary and every manifest, because every builder can now write the three workflow rows, which SHALL need the `workflow` surface instead. The one remaining named skip is `SyncDurabilityOnStream` on a runtime whose typed stream builder cannot spell synchronous durability (Rust, Java), recorded as a skip by name as today: the row keeps `needs: sync_durability`, which the five manifests whose stream class can spell the class-level setting list and the Rust and Java manifests do not. The `commit_block_chain` twin SHALL declare no tier: its steps SHALL drop `class.effectively_once`, and the `commit_block_workflow` and `saga_block_workflow` goldens under `test/fixtures/declarations/` SHALL carry no `effectively_once` key and no `retry_attempts`, `retry_backoff_ms`, `barrier_retry_attempts` or `wake_after_ms` key. `test/fixtures/host_class_decl_keys.txt` SHALL list no `workflow.retry_attempts`, `workflow.retry_backoff_ms`, `workflow.barrier_retry_attempts` or `workflow.wake_after_ms`.
+The refusal table (`test/fixtures/reference_topologies.txt`) SHALL carry the rows `EffectivelyOnceOnBounded`, `CorrectionWindowOnBounded`, `CheckpointOnBounded` (a bounded class writing `class.checkpoint_every(500)`) and `SyncDurabilityOnUnbounded`, and every runtime SHALL drive them through its real boot as it drives every other row. The `raw_class_flags` surface SHALL leave the `needs` vocabulary and every manifest, because every builder can now write the three bounded rows, which SHALL need the `bounded` surface instead. The one remaining named skip is `SyncDurabilityOnUnbounded` on a runtime whose typed stream builder cannot spell synchronous durability (Rust, Java), recorded as a skip by name as today: the row keeps `needs: sync_durability`, which the five manifests whose unbounded class can spell the class-level setting list and the Rust and Java manifests do not. The `commit_block_chain` twin SHALL declare no tier: its steps SHALL drop `class.effectively_once`, and the `commit_block_bounded` and `saga_block_bounded` goldens under `test/fixtures/declarations/` SHALL carry no `effectively_once` key and no `retry_attempts`, `retry_backoff_ms`, `barrier_retry_attempts` or `wake_after_ms` key. `test/fixtures/host_class_decl_keys.txt` SHALL list no `bounded.retry_attempts`, `bounded.retry_backoff_ms`, `bounded.barrier_retry_attempts` or `bounded.wake_after_ms`.
 
-#### Scenario: A builder that drops a stream-only setting fails the drill
+#### Scenario: A builder that drops an unbounded-only setting fails the drill
 
-- **WHEN** a runtime's builder builds the `eo_workflow` row and its declaration reaches the core without `effectively_once`
+- **WHEN** a runtime's builder builds the `eo_bounded` row and its declaration reaches the core without `effectively_once`
 - **THEN** the drill fails naming the runtime and the row, because the boot did not refuse
 
 #### Scenario: The checkpoint row is driven on every runtime
 
-- **WHEN** any runtime's app is booted under `FLEZHA_REFUSAL_FIXTURE=checkpoint_workflow`
-- **THEN** it exits non-zero and its output contains `CheckpointOnWorkflow`
+- **WHEN** any runtime's app is booted under `FLEZHA_REFUSAL_FIXTURE=checkpoint_bounded`
+- **THEN** it exits non-zero and its output contains `CheckpointOnBounded`
 
 #### Scenario: A retired surface is gone from every manifest
 
 - **WHEN** the seven manifests and the `needs` vocabulary are read
-- **THEN** none names `raw_class_flags`, the three workflow rows need `workflow`, and only the Rust and Java manifests lack `sync_durability`, skipping `SyncDurabilityOnStream` by that name
+- **THEN** none names `raw_class_flags`, the three bounded rows need `bounded`, and only the Rust and Java manifests lack `sync_durability`, skipping `SyncDurabilityOnUnbounded` by that name
 
 #### Scenario: The wake key is gone from every declaration
 
 - **WHEN** the declaration goldens and `host_class_decl_keys.txt` are read
 - **THEN** none carries `wake_after_ms`, and a host runtime that puts it on the wire fails the declaration-key gate naming the key
 
-### Requirement: A keyed workflow tasklet is a fixture every manifest carries
+### Requirement: A keyed bounded tasklet is a fixture every manifest carries
 
-Every SDK test app SHALL register `keyed_block_workflow` and `keyed_saga_workflow`, and every
-manifest SHALL list both under `workflow` in the reference's order. `keyed_block_workflow`
-SHALL be a durable workflow whose entry channel takes a comma-separated key list, whose first
+Every SDK test app SHALL register `keyed_block_bounded` and `keyed_saga_bounded`, and every
+manifest SHALL list both under `bounded` in the reference's order. `keyed_block_bounded`
+SHALL be a durable bounded operator whose entry channel takes a comma-separated key list, whose first
 tasklet splits it into one value per key, whose second tasklet is reached by a `key_by` on
 that value, declares no static keys, commits one idempotent change per Cell and declares a
-compensation hook, and whose third tasklet blocks until `FLEZHA_WORKFLOW_E2E_RELEASE` is set.
-`keyed_saga_workflow` SHALL be the same chain with a third tasklet that fails. The scenarios
-that drive them SHALL live in `test/system/workflow_control_flow_e2e_test.exs` and
-`test/system/workflow_crash_resume_e2e_test.exs`, tagged `capability: :workflow` and pinned to
+compensation hook, and whose third tasklet blocks until `FLEZHA_BOUNDED_E2E_RELEASE` is set.
+`keyed_saga_bounded` SHALL be the same chain with a third tasklet that fails. The scenarios
+that drive them SHALL live in `test/system/bounded_control_flow_e2e_test.exs` and
+`test/system/bounded_crash_resume_e2e_test.exs`, tagged `capability: :bounded` and pinned to
 no runtime, and SHALL assert through the controller: the keyed Cells the instance persisted
 (its durable Cell set, read while the pass blocks, so a blocking tasklet's runner is never
 asked a live question), `Replay.resume_cell_count/2` before the kill, each keyed Cell's WAL record count
@@ -867,7 +867,7 @@ compensation-done markers.
 
 #### Scenario: N keys run N Cells on every runtime
 
-- **WHEN** `keyed_block_workflow` is started under any of the seven runtimes without the
+- **WHEN** `keyed_block_bounded` is started under any of the seven runtimes without the
   release and sent `a,b,c`, and its keyed stage has committed
 - **THEN** while the third tasklet blocks, the controller holds a durable Cell of the keyed
   tasklet for each of `a`, `b` and `c` and no other, and the journal's `task_committed` entry
@@ -875,7 +875,7 @@ compensation-done markers.
 
 #### Scenario: A crash restores the keyed Cells before the pass resumes
 
-- **WHEN** `keyed_block_workflow` is started without the release, the runner is killed once
+- **WHEN** `keyed_block_bounded` is started without the release, the runner is killed once
   `Replay.resume_cell_count/2` reports the three keyed Cells and the keyed stage is journaled,
   and a runner with the release is bound
 - **THEN** the instance completes `ok`, each keyed Cell's WAL holds exactly one record, the
@@ -883,18 +883,18 @@ compensation-done markers.
 
 #### Scenario: A failure compensates once per key
 
-- **WHEN** `keyed_saga_workflow` is started under any runtime and sent `a,b,c`
+- **WHEN** `keyed_saga_bounded` is started under any runtime and sent `a,b,c`
 - **THEN** the instance completes `error`, a compensation-done marker exists for each of the
   three keyed Cells and no other Cell of the keyed tasklet, and the first tasklet, which
   declares no hook, is not compensated
 
-### Requirement: Timers inside a workflow are proven on every runtime
+### Requirement: Timers inside a bounded operator are proven on every runtime
 
-Every manifest SHALL list two fixtures under `workflow`, registered under the same ids in every test app: `timer_loop_workflow`, a `per_input` workflow `in -> tick -> relay -> out` whose `tick` registers a processing-time timer of the delay its message names (`after:<ms>`), sleeps for the duration a `slow:<ms>` message names, emits `armed:<at>` from `run` and `fired:<at>` from `on_timer`, and whose `relay` prefixes what it receives with `relay:` onto the sink; and `event_timer_workflow`, a `per_input` workflow whose entry-fed tasklet declares an event-time clock read from the message, registers `timer_at_event_time` at the message's event time plus 100 and emits `fired:<at>` from `on_timer`, onto a sink. A `test/system/` module tagged `capability: :workflow` SHALL drive both on every runtime and assert: a firing reaches the sink through `relay` with no second message; a firing due while a `slow` pass runs reaches the sink after that pass's output; an instance parked under a short `FLEZHA_PARK_IDLE_MS` with a timer pending is reported `suspended` with the timer's timestamp as its park record's wake deadline, rehydrates at it and the firing reaches the sink; a runner killed with a timer pending and restarted fires it; an event-time timer fires ahead of the message that advanced the high-water. The interim timer-in-workflow refusal scenario and its fixture SHALL NOT exist.
+Every manifest SHALL list two fixtures under `bounded`, registered under the same ids in every test app: `timer_loop_bounded`, a `per_input` bounded operator `in -> tick -> relay -> out` whose `tick` registers a processing-time timer of the delay its message names (`after:<ms>`), sleeps for the duration a `slow:<ms>` message names, emits `armed:<at>` from `run` and `fired:<at>` from `on_timer`, and whose `relay` prefixes what it receives with `relay:` onto the sink; and `event_timer_bounded`, a `per_input` bounded operator whose entry-fed tasklet declares an event-time clock read from the message, registers `timer_at_event_time` at the message's event time plus 100 and emits `fired:<at>` from `on_timer`, onto a sink. A `test/system/` module tagged `capability: :bounded` SHALL drive both on every runtime and assert: a firing reaches the sink through `relay` with no second message; a firing due while a `slow` pass runs reaches the sink after that pass's output; an instance parked under a short `FLEZHA_PARK_IDLE_MS` with a timer pending is reported `suspended` with the timer's timestamp as its park record's wake deadline, rehydrates at it and the firing reaches the sink; a runner killed with a timer pending and restarted fires it; an event-time timer fires ahead of the message that advanced the high-water. The interim timer-in-bounded refusal scenario and its fixture SHALL NOT exist.
 
 #### Scenario: The processing-time fixture is driven on every runtime
 
-- **WHEN** `timer_loop_workflow` is started under any runtime and `after:300` is sent
+- **WHEN** `timer_loop_bounded` is started under any runtime and `after:300` is sent
 - **THEN** the sink SHALL receive `relay:armed:<at>` and, about 300 ms later with nothing else sent, `relay:fired:<at>` with the same `<at>`
 
 #### Scenario: A firing waits behind a running pass on every runtime
@@ -909,31 +909,31 @@ Every manifest SHALL list two fixtures under `workflow`, registered under the sa
 
 #### Scenario: The event-time fixture is driven on every runtime
 
-- **WHEN** `event_timer_workflow` receives a message with event time 1000 and then one with event time 1150
+- **WHEN** `event_timer_bounded` receives a message with event time 1000 and then one with event time 1150
 - **THEN** the sink SHALL receive `fired:1100` before whatever the second message produces, on every runtime
 
-### Requirement: A keyed per-input workflow is a fixture every manifest carries and proves partitioned
+### Requirement: A keyed per-input bounded operator is a fixture every manifest carries and proves partitioned
 
-Every SDK test app SHALL register `keyed_loop_workflow`, and every manifest SHALL list it under
-`workflow` and under `partitioned` in the reference's order. `keyed_loop_workflow` SHALL be a
-durable `per_input` workflow with one entry channel `trades` whose entry edge declares `key_by`
+Every SDK test app SHALL register `keyed_loop_bounded`, and every manifest SHALL list it under
+`bounded` and under `partitioned` in the reference's order. `keyed_loop_bounded` SHALL be a
+durable `per_input` bounded operator with one entry channel `trades` whose entry edge declares `key_by`
 over the message's symbol (the text before the first `:`), one tasklet that counts the
 messages it has seen for its key in declared state and emits `<symbol>:<count>` on a sink
-named `keyed_loop_workflow_out`, and no compensation hook. The refusal of a `once` workflow SHALL
-be proven on `echo_workflow`, the `once` fixture every manifest already carries, so no fixture
+named `keyed_loop_bounded_out`, and no compensation hook. The refusal of a `once` bounded operator SHALL
+be proven on `echo_bounded`, the `once` fixture every manifest already carries, so no fixture
 exists for a refusal alone. The scenarios that drive them SHALL live in
-`test/system/partitioned_operatives_e2e_test.exs`, tagged `capability: :partitioned` and pinned
+`test/system/partitioned_operators_e2e_test.exs`, tagged `capability: :partitioned` and pinned
 to no runtime, and SHALL assert through the controller: the members' rows and ranges, each
 member's journal, each key's Cell under its owner, the dead-letter listing for a mis-route, and
 the coverage report.
 
 #### Scenario: Messages by key reach their member and each member commits its own passes
 
-- **WHEN** `keyed_loop_workflow` is started with `--partitions 2` under any of the seven runtimes
+- **WHEN** `keyed_loop_bounded` is started with `--partitions 2` under any of the seven runtimes
   and five messages for three keys are sent, each to the member owning its key
 - **THEN** each key's Cell exists under its owner and nowhere else, each member's journal holds
   one committed iteration per message it received, the sink carries `<symbol>:<count>` per
-  message, and `flz operative info` reports the group `2/2` with full coverage
+  message, and `flz operator info` reports the group `2/2` with full coverage
 
 #### Scenario: A mis-routed key parks and opens no pass on every runtime
 
@@ -951,21 +951,21 @@ the coverage report.
   seal, `<group>#p2` commits its first pass as iteration 0, and coverage shows all 256 groups
   owned once
 
-#### Scenario: A once workflow is refused partitions on every runtime
+#### Scenario: A once bounded operator is refused partitions on every runtime
 
-- **WHEN** `echo_workflow` is started with `--partitions 2` under any runtime
+- **WHEN** `echo_bounded` is started with `--partitions 2` under any runtime
 - **THEN** the first member's bind is refused with `PartitionsWithoutPerInputLoop` and not with
   the keyless refusal, the group is rolled back with no member left running, and a second
   attempt is refused before any member starts
 
-### Requirement: A workflow's keyed output is a fixture every manifest carries
+### Requirement: A bounded operator's keyed output is a fixture every manifest carries
 
-Every SDK test app SHALL register `outbox_block_workflow` as a durable workflow whose first
+Every SDK test app SHALL register `outbox_block_bounded` as a durable bounded operator whose first
 tasklet emits once on a keyed sink channel with a key and one user metadata pair and commits an
 idempotent change in the same invocation, and whose second tasklet blocks until
-`FLEZHA_WORKFLOW_E2E_RELEASE` is set; every manifest SHALL list it under `workflow` in the
+`FLEZHA_BOUNDED_E2E_RELEASE` is set; every manifest SHALL list it under `bounded` in the
 reference's order. The scenarios that drive it SHALL live in
-`test/system/workflow_crash_resume_e2e_test.exs`, tagged `capability: :workflow` and pinned to
+`test/system/bounded_crash_resume_e2e_test.exs`, tagged `capability: :bounded` and pinned to
 no runtime, and SHALL assert through the controller: that the first tasklet's Cell WAL holds one
 effect record carrying the change and the output; that the `task_committed` entry names that
 record's seq and channel and carries no payload; that the sink received the output once, after
@@ -974,9 +974,9 @@ and the metadata pair; and that a rebind with the Cell's flush cursor moved back
 same output with identical stamps. A second scenario SHALL raise `FLEZHA_FLUSH_LINGER_MS` on the
 runner and assert, on every host runtime, that the record precedes the entry naming it.
 
-#### Scenario: A workflow output carries its identity on every runtime
+#### Scenario: A bounded output carries its identity on every runtime
 
-- **WHEN** `outbox_block_workflow` is started under any of the seven runtimes with the release set and sent one message
+- **WHEN** `outbox_block_bounded` is started under any of the seven runtimes with the release set and sent one message
 - **THEN** the sink receives exactly one frame carrying `flz.key`, the metadata pair and `channel`, its `flz.seq` equals the first tasklet's record seq with ordinal `0`, and `flz state journal` shows the stage naming that seq and channel and no `outbox` or `flushes` line
 
 #### Scenario: A crash before the flush re-drives with identical stamps
@@ -986,6 +986,6 @@ runner and assert, on every host runtime, that the record precedes the entry nam
 
 #### Scenario: The record precedes the marker under a long linger
 
-- **WHEN** `outbox_block_workflow` runs on a host runtime with `FLEZHA_FLUSH_LINGER_MS=20000` and the first tasklet commits
+- **WHEN** `outbox_block_bounded` runs on a host runtime with `FLEZHA_FLUSH_LINGER_MS=20000` and the first tasklet commits
 - **THEN** the Cell WAL holds the record before the journal holds `task_committed(0)`, and the entry names that record's seq
 

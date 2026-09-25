@@ -209,7 +209,7 @@ defmodule Flezha.State.WalWriter do
 
   @doc """
   Highest input-log offset consumed at or below `seq` (`-1` when none) — the
-  point an operator replay from that baseline must re-forward the input log
+  point an manual replay from that baseline must re-forward the input log
   from.
   """
   @spec consumed_offset_at(GenServer.server(), non_neg_integer()) :: integer() | {:error, term()}
@@ -235,7 +235,7 @@ defmodule Flezha.State.WalWriter do
     do: :gen_server.send_request(server, {:await_durable, seq}, label, reqids)
 
   @doc """
-  A workflow Cell's records `first..last` are named by a stage marker that is
+  A bounded operator Cell's records `first..last` are named by a stage marker that is
   now durable: release their outputs (`Flezha.State.WalWriter.Settlement`).
   """
   @spec commit_records(GenServer.server(), non_neg_integer(), non_neg_integer()) :: :ok
@@ -243,7 +243,7 @@ defmodule Flezha.State.WalWriter do
     do: GenServer.cast(server, {:commit_records, first, last})
 
   @doc """
-  At a workflow bind, re-derive which of this Cell's queued outputs are
+  At a bounded operator bind, re-derive which of this Cell's queued outputs are
   committed from the instance's `TaskJournal.committed_records/1`, dropping the
   rest: what the rebound runner interrupted, and what a rewind unwound.
   """
@@ -254,7 +254,7 @@ defmodule Flezha.State.WalWriter do
 
   @doc """
   Live outbox status (`flz state outbox`): the cursors, the entries owed a
-  dispatch (`pending`), those held for a workflow stage marker (`held`) and
+  dispatch (`pending`), those held for a bounded stage marker (`held`) and
   those in the plugin chain awaiting confirmation (`awaiting`).
   """
   @spec outbox_status(GenServer.server(), timeout()) :: map()
@@ -300,7 +300,7 @@ defmodule Flezha.State.WalWriter do
   # would be restarted straight back into the same file (`restart: :transient`),
   # and the read-only status calls below still answer, so the watchdog and the
   # convergence loop keep seeing the Cell. The refusal is what leaves the
-  # operative unbound: the restore assembled from this file refuses too.
+  # operator unbound: the restore assembled from this file refuses too.
   @impl true
   def handle_call(request, _from, %{refusal: {_, _, _} = refusal} = state)
       when request == :fsync
@@ -552,7 +552,7 @@ defmodule Flezha.State.WalWriter do
   end
 
   # Overwatch was not yet resolvable when durable outbox entries arrived
-  # (cold-boot re-drive before the operative bound): retry the gated flush.
+  # (cold-boot re-drive before the operator bound): retry the gated flush.
   @impl true
   def handle_info(:outbox_retry, state) do
     before = state.outbox_flushed_seq

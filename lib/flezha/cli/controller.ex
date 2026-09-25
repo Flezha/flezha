@@ -54,9 +54,9 @@ defmodule Flezha.Service.Cli.Controller do
     end
   end
 
-  # The phase lines the operator watches come from an attached handler, so the
+  # The phase lines the caller watches come from an attached handler, so the
   # detach must survive every exit from the drive — including a coordinator
-  # that is already gone — and the way to reach the operator is bound here
+  # that is already gone — and the way to reach the caller is bound here
   # rather than in the handler, which runs in whichever process emitted the
   # event.
   defp with_progress_handler(drive) do
@@ -208,14 +208,14 @@ defmodule Flezha.Service.Cli.Controller do
     :ok
   end
 
-  # Remote durability tier, as an operator reads it: which backend is
+  # Remote durability tier, as a caller reads it: which backend is
   # configured, how many references are past their RPO target, and how many are
   # now shipped by another controller. A stalled shipper must be visible here
   # rather than only by inspecting the backend.
   #
   # A superseded count is not an alarm on its own — a handover produces one —
   # but a count that keeps climbing on a node that should still own its
-  # operatives is how a placement problem shows up here.
+  # operators is how a placement problem shows up here.
   defp durability_status() do
     %{
       durability_backend: DurabilityTier.configured_backend(),

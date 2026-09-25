@@ -13,7 +13,7 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
 
   Durable `State` and `Change` bodies are per-SDK below the shared 16-byte
   envelope (serde-postcard in Rust, Kryo in Java), and a restore ships them
-  verbatim to whichever runner bound the Cell. So: an operative of a factory
+  verbatim to whichever runner bound the Cell. So: an operator of a factory
   established at one language is placed only on a runner of that language, and
   killing that runner leaves it unbound with a language reason rather than
   rerouting onto the other runtime.
@@ -34,10 +34,10 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
 
   @moduletag skip: FlezhaTest.Tiers.skip_unless_included(:interop)
 
-  alias Flezha.Operative.Builder
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.Builder
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias Flezha.Service.PortPilot
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -63,7 +63,7 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
       # FleetManager holding a namespace whose ETS table is gone — which the
       # next cleanup tick walks and dies on.
       for step <- [
-            fn -> OperativeManager.stop_all_operatives(@namespace) end,
+            fn -> OperatorManager.stop_all_operators(@namespace) end,
             fn -> FleetManager.stop_namespace(@namespace) end,
             fn -> Enum.each([rust_port, java_port], &Port.close/1) end,
             fn -> ClassRegistry.delete_established(@namespace, @shared_factory) end
@@ -106,9 +106,9 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
       opts: []
     }
 
-    assert {:ok, _} = OperativeManager.start_operative(@namespace, placed)
+    assert {:ok, _} = OperatorManager.start_operator(@namespace, placed)
 
-    assert OperativeManager.assign_runner(@namespace, @shared_factory, placed.id) ==
+    assert OperatorManager.assign_runner(@namespace, @shared_factory, placed.id) ==
              ctx.rust_runner
 
     # -- the reroute off a dead runner reads the same filter --
@@ -127,7 +127,7 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
 
     # -- and the refusal names the language, never "does not exist" --
     {:error, reason} =
-      OperativeManager.start_operative(@namespace, %Builder{
+      OperatorManager.start_operator(@namespace, %Builder{
         id: "cross_sdk_refused_#{System.unique_integer([:positive])}",
         factory_id: @shared_factory,
         opts: []

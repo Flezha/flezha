@@ -2,7 +2,7 @@
 
 A poll host over `flz_core`, through `ext-ffi`. The SDK contains no kernel
 code: transport, framing, ordering, per-cell exclusivity, durability,
-retries, the retry→park ladder, timers, credit, routing, workflow runs
+retries, the retry→park ladder, timers, credit, routing, bounded runs
 and reconnect all live in the core. This package brings the authoring surface,
 the codec for user types, the concurrency host and idiomatic errors.
 
@@ -69,13 +69,13 @@ that has them downloads nothing.
 ## Authoring
 
 ```php
-use Flezha\Attribute\Operative;
+use Flezha\Attribute\Operator;
 use Flezha\Attribute\Task;
 use Flezha\Ctx;
 use Flezha\Flezha;
 use Flezha\Graph\Builder;
 use Flezha\Tasklet;
-use Flezha\StreamOperative;
+use Flezha\UnboundedOperator;
 
 #[Task(dynamicCells: true)]
 final class OrderTotals extends Tasklet
@@ -98,8 +98,8 @@ final class OrderTotals extends Tasklet
     }
 }
 
-#[Operative(factoryId: 'order_totals')]
-final class OrderTotalsOperative extends StreamOperative
+#[Operator(factoryId: 'order_totals')]
+final class OrderTotalsOperator extends UnboundedOperator
 {
     public static function channels(Builder $c): void
     {
@@ -110,7 +110,7 @@ final class OrderTotalsOperative extends StreamOperative
     }
 }
 
-Flezha::createRunner('default')->registerFactory(OrderTotalsOperative::class)->run();
+Flezha::createRunner('default')->registerFactory(OrderTotalsOperator::class)->run();
 ```
 
 A `#[Task]` attribute carries the scalar declarations; the methods carry the
@@ -125,8 +125,8 @@ the Rust builder's compile-time refusals.
 
 ### What each kind takes
 
-A class extending `WorkflowOperative` carries its driver settings in
-`#[Workflow]`: the loop mode, the rollback mode, a maximum duration, a wake
+A class extending `BoundedOperator` carries its driver settings in
+`#[Bounded operator]`: the loop mode, the rollback mode, a maximum duration, a wake
 deadline and `syncDurability: true`, the one spelling of synchronous
 durability. Retry is the edge's for both kinds: `retryMax` and
 `retryBackoffMs` on the channel that feeds a tasklet, three attempts from a
@@ -134,34 +134,34 @@ durability. Retry is the edge's for both kinds: `retryMax` and
 
 A setting of one kind written on the other is refused by name, never dropped.
 The builder's `effectivelyOnce()`, checkpoint calls and `correctionWindow()`
-reach the core from a workflow too, which refuses them as
-`EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow` and
-`CorrectionWindowOnWorkflow` when the runner starts. `#[Workflow]` on a class
-extending `StreamOperative` is refused at `registerFactory`, naming the
-attribute and the class, and as `SyncDurabilityOnStream` when it sets
+reach the core from a bounded operator too, which refuses them as
+`EffectivelyOnceOnBounded`, `CheckpointOnBounded` and
+`CorrectionWindowOnBounded` when the runner starts. `#[Bounded operator]` on a class
+extending `UnboundedOperator` is refused at `registerFactory`, naming the
+attribute and the class, and as `SyncDurabilityOnUnbounded` when it sets
 `syncDurability: true`.
 
-`#[Operative]` carries the two settings of both kinds: `persistent` (default
-`true`) and `sleepWhenIdle`, which defaults to `persistent` on a workflow and
-to `false` on a stream. `sleepWhenIdle: true` with `persistent: false` is
+`#[Operator]` carries the two settings of both kinds: `persistent` (default
+`true`) and `sleepWhenIdle`, which defaults to `persistent` on a bounded operator and
+to `false` on an unbounded operator. `sleepWhenIdle: true` with `persistent: false` is
 refused as `SleepWithoutPersistence` when the runner starts.
 
-A workflow tasklet registers timers as a stream tasklet does, and a firing
-runs as a pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-workflow));
+A bounded tasklet registers timers as an unbounded tasklet does, and a firing
+runs as a pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-bounded-operator));
 only inside a `compensate` hook do `timerAfter`, `timerAtEventTime` and
 `cancelTimer` throw naming `TimersUnavailable`.
 
 ### The short form
 
-An operative class that defines its one tasklet's `run` instead of
-`channels()` is a whole operative: one class, no tasklet class beside it. The
-kind is the class it extends, and `#[Operative]` names the channels around that
+An operator class that defines its one tasklet's `run` instead of
+`channels()` is a whole operator: one class, no tasklet class beside it. The
+kind is the class it extends, and `#[Operator]` names the channels around that
 tasklet: `sink` is the plugin sink its output reaches, `input` the entry
 channel, and `codec` the entry codec the builder's `input` takes.
 
 ```php
-#[Operative(factoryId: 'upcase', sink: 'out', codec: ChannelCodec::Text)]
-final class Upcase extends StreamOperative
+#[Operator(factoryId: 'upcase', sink: 'out', codec: ChannelCodec::Text)]
+final class Upcase extends UnboundedOperator
 {
     public function run(mixed $input, Ctx $ctx): mixed
     {
@@ -169,8 +169,8 @@ final class Upcase extends StreamOperative
     }
 }
 
-#[Operative(factoryId: 'place', sink: 'placed', input: 'order', codec: ChannelCodec::Text)]
-final class Place extends WorkflowOperative
+#[Operator(factoryId: 'place', sink: 'placed', input: 'order', codec: ChannelCodec::Text)]
+final class Place extends BoundedOperator
 {
     public function run(mixed $input, Ctx $ctx): mixed
     {
@@ -184,24 +184,24 @@ Flezha::createRunner('default')
     ->run();
 ```
 
-The generated operative is the one you would have written by hand with that
+The generated operator is the one you would have written by hand with that
 single tasklet: an entry channel named `input` (or the `input` argument's
 value) decoded by `codec`, the tasklet, a plugin sink named by `sink`, a
 factory id equal to `factoryId`, and every class-level setting at its default.
 The tasklet is named `factoryId` verbatim, so the full form that wires a
 tasklet of that name keeps every cell where it was. It runs the class's
 `run` and takes whichever hooks the class defines (`state`, `applyChange`, ...),
-and a `#[Task]` on the class carries its settings, all but `name`. A workflow
-short form is a `once` workflow, run once over its first message:
-`flz operative start --text '<payload>'`, or a start followed by
-`flz operative send`; a second message to a `once` instance is accepted and
-never read. `#[Workflow(loopMode: ...)]` beside `#[Operative]` sets its loop
+and a `#[Task]` on the class carries its settings, all but `name`. A bounded operator
+short form is a `once` bounded operator, run once over its first message:
+`flz operator start --text '<payload>'`, or a start followed by
+`flz operator send`; a second message to a `once` instance is accepted and
+never read. `#[Bounded(loopMode: ...)]` beside `#[Operator]` sets its loop
 mode, the one class-level setting a short form takes:
 
 ```php
-#[Operative(factoryId: 'chat', sink: 'replies', codec: ChannelCodec::Text)]
-#[Workflow(loopMode: LoopMode::PerInput)]
-final class Chat extends WorkflowOperative
+#[Operator(factoryId: 'chat', sink: 'replies', codec: ChannelCodec::Text)]
+#[Bounded(loopMode: LoopMode::PerInput)]
+final class Chat extends BoundedOperator
 {
     public function run(mixed $input, Ctx $ctx): mixed
     {
@@ -210,13 +210,13 @@ final class Chat extends WorkflowOperative
 }
 ```
 
-`sink` is optional. Without one, the operative declares its entry channel into
-the tasklet and no plugin channel, which is all an operative that only keeps
+`sink` is optional. Without one, the operator declares its entry channel into
+the tasklet and no plugin channel, which is all an operator that only keeps
 state needs:
 
 ```php
-#[Operative(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]
-final class Counter extends StreamOperative
+#[Operator(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]
+final class Counter extends UnboundedOperator
 {
     public function state(?string $cellKey): mixed
     {
@@ -239,25 +239,25 @@ final class Counter extends StreamOperative
 
 Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
 edge, a retry ladder, the effectively-once tier, a correction window, and every
-class-level setting but a workflow's loop mode. A short form writing another
-one, `persistent: false`, `sleepWhenIdle` or a `#[Workflow]` argument other
+class-level setting but a bounded operator's loop mode. A short form writing another
+one, `persistent: false`, `sleepWhenIdle` or a `#[Bounded operator]` argument other
 than `loopMode`, is refused at `registerFactory` naming the setting and the
 full form.
 
-The factory id is always written: it is an address an operator types, and a
-class rename must not move it, so a class with no `#[Operative]` is refused as
-any operative is. `registerFactory`, where this SDK places every refusal,
+The factory id is always written: it is an address a user types, and a
+class rename must not move it, so a class with no `#[Operator]` is refused as
+any operator is. `registerFactory`, where this SDK places every refusal,
 refuses a class defining both `run` and `channels()` naming
 `ShortFormWithTopology`, and one defining neither naming both. A second
-operative of either kind under a factory id the runner holds is refused naming
+operator of either kind under a factory id the runner holds is refused naming
 `DuplicateFactoryId`. `#[Task]` takes no `kind`, `sink`, `input` or `codec`,
-and a tasklet carrying one is refused naming `#[Operative]`. `#[Task]` on a
+and a tasklet carrying one is refused naming `#[Operator]`. `#[Task]` on a
 class defining `channels()` is refused too: a full form's tasklet settings go
 on its tasklet classes. A hook a short form defines is held to the signature
 `Tasklet` gives it, and one PHP would refuse on a tasklet is refused naming
 the hook. There is no
 `SinkWithoutOutput`: `run` is declared `: mixed` on both `Tasklet` and
-`Operative`, and PHP forbids an override narrowing that to `: void`, so a body
+`Operator`, and PHP forbids an override narrowing that to `: void`, so a body
 declaring no output cannot be written at all. The manifest leaves
 `shorthand_typed_output` off and the conformance row skips by name.
 
@@ -283,7 +283,7 @@ string is sent as it is and anything else as JSON. So a sink needs no codec for
 a string or a JSON value, and names one only to quote a string, with
 `ChannelCodec::Json`. A decoder or encoder callable takes the place of a codec
 for anything else, and a codec given beside a callable on one channel is refused
-when the operative is declared, naming the operative and the channel. PHP ships
+when the operator is declared, naming the operator and the channel. PHP ships
 no MessagePack library, so the enum has no MessagePack case.
 
 A JSON integer outside PHP's 64-bit range decodes as a `float`. `NAN`, `INF`, a
@@ -291,7 +291,7 @@ string that is not valid UTF-8 or an object that is not `Codable` has no JSON
 form, and sending one to a sink that names no codec fails the emit naming the
 channel.
 
-A value passed between two tasklets of one operative never crosses a channel
+A value passed between two tasklets of one operator never crosses a channel
 codec: it stays JSON. An Elixir entry declared with no decoder hands its
 tasklet the binary instead, so the same bytes on an undeclared entry are an
 array here and a string there.
@@ -352,18 +352,18 @@ makes the mutate-only-through-changes rule safe. Put it in your suite.
 
 The SDK starts exactly one runner per process and never forks, spawns,
 supervises or recycles. **N processes are N runners**, which is what the
-controller's placement already spreads operatives across, and it keeps this
+controller's placement already spreads operators across, and it keeps this
 layer agnostic between Kubernetes, systemd and a supervisor's own process
 management.
 
 ## Local mode: run a graph with no controller
 
-`LocalOperative::start` takes the operative class you deploy and runs its
+`LocalOperator::start` takes the operator class you deploy and runs its
 declared graph in this process — no controller, no socket, no local-mode member
 on the class:
 
 ```php
-$run = LocalOperative::start(WordCountOperative::class);
+$run = LocalOperator::start(WordCountOperator::class);
 
 try {
     $run->onSink('totals', static fn (SinkOutput $out) => print($out->payload . PHP_EOL));
@@ -507,11 +507,11 @@ non-thread-safe (NTS) build every distribution ships. A tasklet body that
 performs blocking I/O is *correct*, not degraded: the body runs, the activation
 completes, the next one is polled. Scale by replicas, and get per-process
 failure isolation — a dead process drops one runner and the controller
-re-places only its operatives.
+re-places only its operators.
 
-**`SwooleExecutor`** — opt in when a *single* operative must exceed one core.
-An operative binds to exactly one runner, and an NTS PHP process runs one
-thread of PHP, so a few large CPU-bound operatives cap at one core each; this
+**`SwooleExecutor`** — opt in when a *single* operator must exceed one core.
+An operator binds to exactly one runner, and an NTS PHP process runs one
+thread of PHP, so a few large CPU-bound operators cap at one core each; this
 is what lifts that. It needs:
 
 - a thread-safe (**ZTS**) PHP build,
@@ -537,19 +537,19 @@ say so.** Measured with `mix bench --runtime php`, arms interleaved on one
 
 | shape | `SyncExecutor` | `SwooleExecutor` | ratio |
 | --- | ---: | ---: | ---: |
-| 20 operatives × 200 (`regression`) | 97,752 msg/s | 83,815 / 70,921 msg/s | **0.86 / 0.73** |
-| 1 operative × 6,000 (`dynamic`, 8 keys) | 32,026 msg/s | 35,143 msg/s | **1.10** |
+| 20 operators × 200 (`regression`) | 97,752 msg/s | 83,815 / 70,921 msg/s | **0.86 / 0.73** |
+| 1 operator × 6,000 (`dynamic`, 8 keys) | 32,026 msg/s | 35,143 msg/s | **1.10** |
 
-The many-operative shape is *slower* under threads, and correctly so: those
-operatives already spread across runner processes, one loop keeps up, the pool
+The many-operator shape is *slower* under threads, and correctly so: those
+operators already spread across runner processes, one loop keeps up, the pool
 never starves and so never grows past one thread — leaving the supervisor's
-wait as pure overhead. The single-operative shape is where the pool has
+wait as pure overhead. The single-operator shape is where the pool has
 something to do, and it is the only one of the two that a `SyncExecutor` cannot
 scale by adding processes.
 
 Both numbers are bounded by a fixture whose body does almost no work, so they
 measure the *seam*, not the ceiling: the wider the tasklet body, the more of
-the host's cores a single operative can reach, which is the claim the executor
+the host's cores a single operator can reach, which is the claim the executor
 exists for. Take your own measurement with your own body before sizing on
 either row.
 
@@ -593,7 +593,7 @@ both rules against the parsed source rather than the prose.
 
 - **Under `SyncExecutor` one runner uses one core.** An NTS PHP process runs
   one thread of PHP code, so cores come from running more processes. That is
-  fine at the thousands-of-small-operatives scale this targets, and it is
+  fine at the thousands-of-small-operators scale this targets, and it is
   exactly the ceiling `SwooleExecutor` removes for a few large CPU-bound ones.
 - **No event-loop executor**, in this change or a planned next one. Threads
   supersede one for the case that matters, and the seam takes a user-written
@@ -620,7 +620,7 @@ both rules against the parsed source rather than the prose.
 The manifest at `test/apps/php_runner/conformance.json` defers nothing: every
 capability is carried with the reference's fixtures, the persistence, schema
 evolution and effectively-once set in `test/apps/php_runner/fixtures_state.php`,
-the workflow set in `fixtures_workflow.php` and `fixtures_workflow_loop.php`, and
+the bounded operator set in `fixtures_bounded.php` and `fixtures_bounded_loop.php`, and
 the rest in `fixtures.php` and `fixtures_probe.php`.
 
 ## Diagnostics
@@ -630,7 +630,7 @@ selects what the default logger writes to standard error. A host that wants
 PSR-3, spans or structured fields passes its own `Flezha\Logger` subclass to
 `->logger(...)`; there is no logging dependency.
 
-The runner observes shutdown three ways, because a harness, an operator and the
+The runner observes shutdown three ways, because a harness, a user and the
 controller each have their own: end of file on standard input, `SIGINT` /
 `SIGTERM`, and the core's own stop — which every loop sees as "shutting down"
 from its next poll. All three drain in-flight activations before the process

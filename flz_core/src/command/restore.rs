@@ -25,13 +25,13 @@ impl CommandAction for RestoreInitState {
             Some(slot) => Some(restore_into_slot(slot, self, errors)),
             None => self.ack_without_slot(errors),
         };
-        // A workflow's gate counts every frame its bind shipped — applied,
+        // A bounded operator's gate counts every frame its bind shipped — applied,
         // refused by the cap, or naming a tasklet the class dropped — so it
         // never stalls on one, and takes the saga markers the controller
         // persisted: an undo in flight finishes (intent), a Cell already
         // undone is skipped (done).
         if let Some(instance) = &instance {
-            crate::workflow::restore_landed(
+            crate::bounded::restore_landed(
                 instance,
                 &self.cell_id,
                 self.has_compensation_intent,

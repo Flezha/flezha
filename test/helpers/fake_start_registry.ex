@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Helper.FakeStartRegistry do
   @moduledoc """
-  A stand-in for the durable operative registry, for suites that drive the real
+  A stand-in for the durable operator registry, for suites that drive the real
   start and stop paths without a hub.
 
   `ProcessHub.start_child`'s `:ets.insert_new` **is** the atomic id claim the
@@ -23,12 +23,12 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
 
   defmodule Instance do
     @moduledoc """
-    The stand-in operative: it answers what the start, stop and read paths call
+    The stand-in operator: it answers what the start, stop and read paths call
     on an Overwatch, and records every ingested payload.
 
     It follows the process that installed the registry rather than linking to
     whoever started it, because a start may resolve inside a `Task` and a real
-    operative outlives its starter.
+    operator outlives its starter.
     """
     use GenServer
 
@@ -75,8 +75,8 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
   Options:
 
     * `:runners` — the namespace's active runners (default three)
-    * `:seed` — builders to pre-register as already-running operatives
-    * `:kind` — the kind every factory is established at (default `:stream`)
+    * `:seed` — builders to pre-register as already-running operators
+    * `:kind` — the kind every factory is established at (default `:unbounded`)
   """
   @spec install(keyword()) :: :ets.tid()
   def install(opts \\ []) do
@@ -89,7 +89,7 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
 
     stub(HubManager, :hub_alive?, fn _ -> true end)
     stub(HubManager, :get_pid, fn _ns, id -> pid_of(registry, id) end)
-    stub(HubManager, :operative_rows, fn _ns -> rows(registry) end)
+    stub(HubManager, :operator_rows, fn _ns -> rows(registry) end)
 
     stub(HubManager, :partition_members, fn _ns, group ->
       registry
@@ -117,14 +117,14 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
         :taken ->
           %ProcessHub.StartResult{
             started: [],
-            errors: [{child_spec.id, {:error, "operative id already in use"}}]
+            errors: [{child_spec.id, {:error, "operator id already in use"}}]
           }
       end
     end)
 
     # The hub stop: drop each row BEFORE terminating its instance — the
     # remove-before-terminate ordering the real stop path gives — and answer
-    # the StopResult `OperativeManager.Teardown.hub_stop_children/3` reads.
+    # the StopResult `OperatorManager.Teardown.hub_stop_children/3` reads.
     stub(ProcessHub, :stop_children, fn _hub, ids, _opts ->
       stopped = Enum.map(ids, fn id -> stop_and_forget(registry, id) end)
 
@@ -139,7 +139,7 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
     stub(FleetManager, :factory_kind, fn ns, factory ->
       if FleetManager.runners_for_factory(ns, factory) == [],
         do: {:error, :no_such_factory},
-        else: {:ok, Keyword.get(opts, :kind, :stream)}
+        else: {:ok, Keyword.get(opts, :kind, :unbounded)}
     end)
 
     stub(FleetManager, :active_runners, fn _ns -> runners end)
@@ -180,16 +180,16 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
     pid
   end
 
-  @doc "The live pid registered under `operative_id`."
+  @doc "The live pid registered under `operator_id`."
   @spec pid_of(:ets.tid(), binary()) :: {:ok, pid()} | {:error, binary()}
-  def pid_of(registry, operative_id) do
-    case :ets.lookup(registry, operative_id) do
-      [{^operative_id, pid, _builder}] -> {:ok, pid}
+  def pid_of(registry, operator_id) do
+    case :ets.lookup(registry, operator_id) do
+      [{^operator_id, pid, _builder}] -> {:ok, pid}
       [] -> {:error, "no pid found"}
     end
   end
 
-  @doc "The registry rows, in the shape `HubManager.operative_rows/1` answers."
+  @doc "The registry rows, in the shape `HubManager.operator_rows/1` answers."
   @spec rows(:ets.tid()) :: [map()]
   def rows(registry) do
     registry

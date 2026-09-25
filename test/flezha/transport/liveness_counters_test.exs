@@ -30,16 +30,16 @@ defmodule Flezha.Transport.LivenessCountersTest do
     assert row.last_send_ms == 1234
   end
 
-  test "operative counters advance and surface in snapshot" do
-    operative = "operative_#{System.unique_integer([:positive])}"
-    ref = LivenessCounters.register_operative(operative)
+  test "operator counters advance and surface in snapshot" do
+    operator = "operator_#{System.unique_integer([:positive])}"
+    ref = LivenessCounters.register_operator(operator)
 
-    LivenessCounters.bump_operative(ref, :io_in_received)
-    LivenessCounters.bump_operative(ref, :forwarded)
-    LivenessCounters.bump_operative(ref, :filtered_nil)
-    LivenessCounters.bump_operative(ref, :io_in_received)
+    LivenessCounters.bump_operator(ref, :io_in_received)
+    LivenessCounters.bump_operator(ref, :forwarded)
+    LivenessCounters.bump_operator(ref, :filtered_nil)
+    LivenessCounters.bump_operator(ref, :io_in_received)
 
-    row = find_operative(operative)
+    row = find_operator(operator)
     assert row.io_in_received == 2
     assert row.forwarded == 1
     assert row.filtered_nil == 1
@@ -48,17 +48,17 @@ defmodule Flezha.Transport.LivenessCountersTest do
   test "nil ref is a no-op (parked/unregistered callers)" do
     assert LivenessCounters.bump_channel(nil, :io_in_received) == :ok
     assert LivenessCounters.set_channel(nil, :last_send_ms, 1) == :ok
-    assert LivenessCounters.bump_operative(nil, :forwarded) == :ok
+    assert LivenessCounters.bump_operator(nil, :forwarded) == :ok
   end
 
   test "snapshot prunes entries whose owner has died" do
-    operative = "operative_dead_#{System.unique_integer([:positive])}"
+    operator = "operator_dead_#{System.unique_integer([:positive])}"
 
     parent = self()
 
     {:ok, pid} =
       Task.start(fn ->
-        LivenessCounters.register_operative(operative)
+        LivenessCounters.register_operator(operator)
         send(parent, :registered)
 
         receive do
@@ -67,7 +67,7 @@ defmodule Flezha.Transport.LivenessCountersTest do
       end)
 
     assert_receive :registered, 1_000
-    assert find_operative(operative) != nil
+    assert find_operator(operator) != nil
 
     ref = Process.monitor(pid)
     send(pid, :go)
@@ -75,7 +75,7 @@ defmodule Flezha.Transport.LivenessCountersTest do
 
     # First snapshot prunes the dead owner's entry.
     LivenessCounters.snapshot_all()
-    assert find_operative(operative) == nil
+    assert find_operator(operator) == nil
   end
 
   # The collapse is owned by the slot layout so the two readers cannot
@@ -167,9 +167,9 @@ defmodule Flezha.Transport.LivenessCountersTest do
     |> Enum.find(fn c -> c.runner_id == exec and c.name == name end)
   end
 
-  defp find_operative(operative) do
-    LivenessCounters.snapshot_all().operatives
-    |> Enum.find(fn r -> r.operative_id == operative end)
+  defp find_operator(operator) do
+    LivenessCounters.snapshot_all().operators
+    |> Enum.find(fn r -> r.operator_id == operator end)
   end
 
   # The declaration is the seam, so the test that keeps it honest asks the
@@ -180,7 +180,7 @@ defmodule Flezha.Transport.LivenessCountersTest do
   describe "the declaration is complete" do
     test "every slot declares the surface that reads it" do
       undeclared =
-        for row <- LivenessCounters.channel_rows() ++ LivenessCounters.operative_rows(),
+        for row <- LivenessCounters.channel_rows() ++ LivenessCounters.operator_rows(),
             Keyword.get(row, :surface, []) == [],
             do: Keyword.fetch!(row, :name)
 
@@ -190,7 +190,7 @@ defmodule Flezha.Transport.LivenessCountersTest do
     end
 
     test "every declared surface is one the readers understand" do
-      for row <- LivenessCounters.channel_rows() ++ LivenessCounters.operative_rows(),
+      for row <- LivenessCounters.channel_rows() ++ LivenessCounters.operator_rows(),
           surface <- Keyword.fetch!(row, :surface) do
         assert match?({kind, _} when kind in [:metric, :verdict, :telemetry, :internal], surface),
                "#{inspect(Keyword.fetch!(row, :name))} declares #{inspect(surface)}, which no " <>

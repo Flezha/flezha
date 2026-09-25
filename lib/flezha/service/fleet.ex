@@ -6,7 +6,7 @@ defmodule Flezha.Service.Fleet do
 
   Every public function takes a `Flezha.Service.CallerContext` as its last
   argument, binds a row of `Flezha.AuthZ.Verbs`, and answers data. A fleet read
-  is an operative-topology read — the row `flz runner list` binds — scoped to
+  is an operator-topology read — the row `flz runner list` binds — scoped to
   the namespace asked about rather than to one the caller declares.
 
   The two runner reads are named so they cannot be confused, because the console

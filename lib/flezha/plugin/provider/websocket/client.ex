@@ -83,7 +83,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
   makes a socket with no inbound data an ordinary configuration, so the floor
   applies to every websocket plugin.
 
-  The interval is read from the plugin's own `ws_opts` where an operator set
+  The interval is read from the plugin's own `ws_opts` where a user set
   one, so the floor follows the interval actually in force.
   """
   @spec idle_window(map()) :: non_neg_integer()
@@ -113,7 +113,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
 
   # The socket-level reconnect is the `:ws_reconnect` row: the library walks
   # the schedule, and the row is what says where it starts and where it stops.
-  # An operator's own `ws_opts` still wins — the row is the default, not a
+  # A user's own `ws_opts` still wins — the row is the default, not a
   # ceiling.
   defp reconnect_opts(ws_opts) do
     row = Backoff.ladder(:ws_reconnect)
@@ -149,7 +149,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
           last_error: nil,
           source_plugin_id: opts.source_plugin_id,
           source_namespace: opts.source_namespace,
-          source_operative_id: opts.source_operative_id
+          source_operator_id: opts.source_operator_id
         })
     end
   end

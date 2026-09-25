@@ -64,7 +64,7 @@ defmodule Flezha.State.TestHelpers do
   The root the claim replaces is put back, not deleted. `config/runtime.exs`
   sets `:state_root` for every test run; deleting the key drops the rest of the
   run onto the declared default, which is the checkout's `app_data/state`, and
-  a live operative's WAL then lands in the working tree.
+  a live operator's WAL then lands in the working tree.
   """
   @spec tmp_app_data_dir() :: binary()
   def tmp_app_data_dir() do
@@ -246,13 +246,13 @@ defmodule Flezha.State.TestHelpers do
 
   @doc """
   Reset all per-Cell state: terminate every live `WalWriter` and wipe
-  the on-disk `state_root`. Integration tests reuse operative ids across cases;
-  now that restore actually rehydrates a operative from its WAL on (re)bind,
+  the on-disk `state_root`. Integration tests reuse operator ids across cases;
+  now that restore actually rehydrates an operator from its WAL on (re)bind,
   leftover state from a prior test would leak into the next one. Call from a
   `setup` block so each test starts from empty cells.
 
   The root comes from `Paths.state_root/0` — the one resolver the writers, the
-  bind-time restore and the operative teardown all use. Deriving it here from
+  bind-time restore and the operator teardown all use. Deriving it here from
   the application env alone would empty a different directory the moment a
   teardown deleted `:state_root`, because the resolver's fall-back is the
   checkout-relative default. (`FLEZHA_STATE_DIR` does not separate the two
@@ -433,7 +433,7 @@ defmodule Flezha.State.TestHelpers do
   """
   @spec sample_cell_id(binary()) :: Paths.cell_id()
   def sample_cell_id(suffix \\ "p1") do
-    {"TestOperative", "TestTasklet", suffix}
+    {"TestOperator", "TestTasklet", suffix}
   end
 
   @doc """

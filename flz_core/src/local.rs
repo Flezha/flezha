@@ -1,7 +1,7 @@
-//! Running a declared operative graph in this process, with no controller.
+//! Running a declared operator graph in this process, with no controller.
 //!
-//! A [`LocalRun`] adds no engine. It builds the `OperativeInstance` a deployed
-//! runner builds, feeds it through the [`OperativeDispatchHandle::dispatch`]
+//! A [`LocalRun`] adds no engine. It builds the `OperatorInstance` a deployed
+//! runner builds, feeds it through the [`OperatorDispatchHandle::dispatch`]
 //! a stream reader uses, and takes sink output where production frames it —
 //! a [`FlezhaStream::Local`] whose writes are parsed in process instead of
 //! reaching a socket. Cell lifecycle, key resolution, routing, mailboxes,
@@ -31,11 +31,11 @@ use flz_transport::transport::FlezhaStream;
 
 use crate::channel::ChannelKind;
 use crate::error::Error;
-use crate::operative::instance::OperativeInstance;
-use crate::operative::registry::OperativeRegistry;
-use crate::operative::topology::ChannelLookup;
+use crate::operator::instance::OperatorInstance;
+use crate::operator::registry::OperatorRegistry;
+use crate::operator::topology::ChannelLookup;
 use crate::poll_core::PollCore;
-use crate::routing::OperativeDispatchHandle;
+use crate::routing::OperatorDispatchHandle;
 use crate::util::LockRecover;
 
 /// What every local run states before it does any work. Emitted by the core,
@@ -119,10 +119,10 @@ impl SinkTable {
     }
 }
 
-/// One operative graph running in this process.
+/// One operator graph running in this process.
 pub struct LocalRun {
-    instance: Arc<OperativeInstance>,
-    dispatch: OperativeDispatchHandle,
+    instance: Arc<OperatorInstance>,
+    dispatch: OperatorDispatchHandle,
     stream: Arc<FlezhaStream>,
     sinks: Arc<SinkTable>,
 }
@@ -131,9 +131,9 @@ impl LocalRun {
     /// Start the class already registered under `factory_id`. Refuses before
     /// building anything when the declaration asks for something only a
     /// controller can answer.
-    pub fn start(factory_id: &str, operative_id: &str) -> Result<Self, Error> {
+    pub fn start(factory_id: &str, operator_id: &str) -> Result<Self, Error> {
         refuse_controller_only(factory_id)?;
-        let instance = OperativeInstance::of_class(factory_id, operative_id)?;
+        let instance = OperatorInstance::of_class(factory_id, operator_id)?;
         let sinks = Arc::new(SinkTable::default());
         let frames = Arc::clone(&sinks);
         let stream = Arc::new(FlezhaStream::Local(Arc::new(move |frame: &[u8]| {
@@ -143,13 +143,13 @@ impl LocalRun {
         // branching: the change log, the fold and the effect path all still
         // run, and their frames are discarded at the outbound edge.
         crate::state_sink::install_global_sink(Arc::new(|_payload_id: &str, _frame: &[u8]| Ok(())));
-        let registry = Arc::new(OperativeRegistry::new());
+        let registry = Arc::new(OperatorRegistry::new());
         registry.register(Arc::clone(&instance));
         NOTICES_EMITTED.fetch_add(1, Ordering::Relaxed);
         eprintln!("{NON_DURABILITY_NOTICE}");
         Ok(LocalRun {
             instance,
-            dispatch: OperativeDispatchHandle { registry },
+            dispatch: OperatorDispatchHandle { registry },
             stream,
             sinks,
         })
@@ -194,13 +194,13 @@ impl LocalRun {
             std::thread::sleep(Duration::from_millis(1));
         }
         Err(Error::Routing(format!(
-            "operative `{}` was still working after {budget:?}",
+            "operator `{}` was still working after {budget:?}",
             self.instance.instance_id
         )))
     }
 
     /// The live instance, for a caller that wants to read its Cells.
-    pub fn instance(&self) -> &Arc<OperativeInstance> {
+    pub fn instance(&self) -> &Arc<OperatorInstance> {
         &self.instance
     }
 
@@ -224,7 +224,7 @@ impl LocalRun {
     }
 
     /// The declared channel of that kind; the refusal names the channel and
-    /// the operative, because a name nothing matches is otherwise a value
+    /// the operator, because a name nothing matches is otherwise a value
     /// that vanishes. The lookup is the topology's own, shared with the
     /// dispatch path so a feed and a frame off the wire cannot disagree about
     /// what a name means.
@@ -233,11 +233,11 @@ impl LocalRun {
         match topology.channel_of_kind(channel, kind) {
             ChannelLookup::Found(..) => Ok(()),
             ChannelLookup::WrongKind(declared) => Err(Error::Routing(format!(
-                "operative `{}` channel `{channel}` is {declared:?}, not {kind:?}",
+                "operator `{}` channel `{channel}` is {declared:?}, not {kind:?}",
                 self.instance.instance_id
             ))),
             ChannelLookup::Undeclared => Err(Error::Routing(format!(
-                "operative `{}` has no channel `{channel}`; it declares {kind:?} {:?}",
+                "operator `{}` has no channel `{channel}`; it declares {kind:?} {:?}",
                 self.instance.instance_id,
                 topology.declared_names(kind)
             ))),
@@ -254,18 +254,18 @@ impl Drop for LocalRun {
 /// What a declaration can ask for that only a controller answers. Each is
 /// refused by name rather than run as a graph whose work would go nowhere.
 /// Partitioning is absent from this list because it is absent from the
-/// declaration: a member's key-group range arrives with `AddOperative`, so a
+/// declaration: a member's key-group range arrives with `AddOperator`, so a
 /// local run is unpartitioned by construction.
 fn refuse_controller_only(factory_id: &str) -> Result<(), Error> {
-    let class = crate::operative::registry::get_class(factory_id);
-    let workflow = class
+    let class = crate::operator::registry::get_class(factory_id);
+    let bounded = class
         .as_ref()
-        .is_some_and(|topology| topology.workflow.is_some());
+        .is_some_and(|topology| topology.bounded.is_some());
     let tier = class.is_some_and(|topology| topology.effectively_once);
-    let (capability, why) = if workflow {
+    let (capability, why) = if bounded {
         (
-            "a workflow",
-            "a workflow's messages come from the controller's input log, and its \
+            "a bounded operator",
+            "a bounded operator's messages come from the controller's input log, and its \
           commit barriers are durable",
         )
     } else if tier {

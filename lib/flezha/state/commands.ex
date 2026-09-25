@@ -2,17 +2,17 @@ defmodule Flezha.State.Commands do
   @moduledoc """
   The controller->SDK control commands that carry durable state.
 
-  Restoring a Cell, pulling a snapshot, threading a workflow instance's
+  Restoring a Cell, pulling a snapshot, threading a bounded instance's
   task-journal onto its bind, and telling a Tasklet its target Cell's
   mailbox is full are all one thing: a control command the State subsystem
-  issues on behalf of an operative it does not own a process for. Its callers —
+  issues on behalf of an operator it does not own a process for. Its callers —
   `Watchdog`, `Recovery`, `WalWriter`, `Runner.ControlChannel`,
   `Service.CliManager` — are none of them an Overwatch and none of them holding
-  operative state.
+  operator state.
 
   Each cell-scoped function takes the controller-side `runner_id` and a
-  structured `cell_id` triple `{operative_class, tasklet_id, cell_key}`.
-  `task_journal_state/1` is the instance-scoped sibling: a workflow instance's
+  structured `cell_id` triple `{operator_class, tasklet_id, cell_key}`.
+  `task_journal_state/1` is the instance-scoped sibling: a bounded instance's
   journal is not per-Cell, which is why it rides the bind rather than a
   per-Cell restore.
   """
@@ -89,7 +89,7 @@ defmodule Flezha.State.Commands do
         :telemetry.execute(
           [:flezha, :state, :schema_migration],
           %{count: 1},
-          %{operative: rc, tasklet: sh, key: pk, runner: runner_id}
+          %{operator: rc, tasklet: sh, key: pk, runner: runner_id}
         )
 
         Logger.info(
@@ -127,7 +127,7 @@ defmodule Flezha.State.Commands do
 
       # The Cell's own WAL refused a record. Shipping the records before it
       # would restore the Cell from a change log that was cut short and call
-      # it whole; the reason is text, so the awaited path parks the operative
+      # it whole; the reason is text, so the awaited path parks the operator
       # the way an SDK-reported refusal does.
       {:error, _reason} = refused ->
         refused
@@ -140,17 +140,17 @@ defmodule Flezha.State.Commands do
   # ---------- task journal ----------
 
   @doc """
-  Workflow task-journal crash-resume: the instance's committed task state, threaded
-  onto `AddOperative.task_journal` so the resumed driver skips the journaled
+  Bounded operator task-journal crash-resume: the instance's committed task state, threaded
+  onto `AddOperator.task_journal` so the resumed driver skips the journaled
   tasklets, seeds the next one from the journaled handoff, and enters the
   iteration after the last committed one.
 
   It rides the bind rather than a per-Cell `RestoreInitState` because it is
-  instance-scoped: a durable workflow class with no per-Cell state ships no
+  instance-scoped: a durable bounded class with no per-Cell state ships no
   restore at all, and would otherwise resume at iteration 0 on every wake.
 
-  `nil` when the instance has no journal — a fresh spawn, a stream
-  operative, an opted-out class.
+  `nil` when the instance has no journal — a fresh spawn, an unbounded operator
+  operator, an opted-out class.
   """
   @spec task_journal_state(binary()) :: RunnerCommands.TaskJournalState.t() | nil
   def task_journal_state(instance_id) do
@@ -289,7 +289,7 @@ defmodule Flezha.State.Commands do
       :telemetry.execute(
         [:flezha, :state, :compaction_failed],
         %{},
-        %{operative: rc, tasklet: sh, key: pk, runner: runner_id, reason: :no_snapshot}
+        %{operator: rc, tasklet: sh, key: pk, runner: runner_id, reason: :no_snapshot}
       )
 
       Watchdog.compaction_failed(cell_id)

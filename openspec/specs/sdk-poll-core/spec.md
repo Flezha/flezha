@@ -21,7 +21,7 @@ use.
 
 ### Requirement: Per-cell exclusivity by handout
 
-The core SHALL NOT hand out two activations for the same `(operative_instance,
+The core SHALL NOT hand out two activations for the same `(operator_instance,
 tasklet, cell_key)` concurrently: a cell with an outstanding (polled,
 uncompleted) activation SHALL NOT appear in any other poll result until its completion
 arrives. This restates the existing single-active-drainer invariant at the boundary.
@@ -39,7 +39,7 @@ The core SHALL NOT reclaim an outstanding activation on a timer or deadline. A
 long-running activation and a lost handout are indistinguishable at the
 boundary, and re-handing on a deadline would re-execute work the
 effectively-once tier promises once. Recovery from a handout a host lost despite
-the above is the controller's operative rebind, which resumes from durable
+the above is the controller's operator rebind, which resumes from durable
 state.
 
 #### Scenario: Same cell never outstanding twice
@@ -124,14 +124,14 @@ retry→park ladder.
 
 A host receiving an input SHALL apply the consuming edge's transform chain only
 when the payload reached it untransformed — an **entry** payload, whose producer
-is the wire, or a **workflow stage's** released value. A `KeyRequest` carries
+is the wire, or a **bounded stage's** released value. A `KeyRequest` carries
 entry payloads only, so the prepare crossing SHALL always apply the chain.
 
-For a **workflow stage** activation the shape is different, because the core does
-not route a workflow stage's output on `(edge, key)` at emit time: it holds the released
+For a **bounded stage** activation the shape is different, because the core does
+not route a bounded stage's output on `(edge, key)` at emit time: it holds the released
 value on the instance's pass sheet, journals it per producing channel, and on the stage's
 commit ack delivers it to every child's cells (a static consumer's declared cells all receive
-it, and the host keeps the ones `cells_for` names). A host completing a workflow stage SHALL
+it, and the host keeps the ones `cells_for` names). A host completing a bounded stage SHALL
 therefore emit **exactly one edge output per released value**, naming the **producing channel**,
 carrying the value **untransformed and unkeyed** — one emit SHALL NOT become one
 output per consumer, whatever the channel's consumer count. Each consumer edge's
@@ -150,30 +150,30 @@ before the chain.
 - **WHEN** an entry-channel input arrives for a consumer reached only via a keyed edge
 - **THEN** the core SHALL obtain the key via a `KeyRequest` activation before enqueueing to any cell mailbox, and no keyless drop path SHALL exist
 
-#### Scenario: A workflow stage emits once per released value
-- **WHEN** a host workflow tasklet emits one value on a producing channel that declares two consumers
+#### Scenario: A bounded stage emits once per released value
+- **WHEN** a host bounded tasklet emits one value on a producing channel that declares two consumers
 - **THEN** the completion SHALL carry exactly one edge output for that value, and the stage's held batch SHALL hold one value — not one per consumer — so the journaled handoff, every downstream node's input batch and every downstream plugin output SHALL be identical to the single-consumer case
 
-#### Scenario: A stream inter-tasklet transform applies exactly once
-- **WHEN** a `map` declared on an inter-tasklet edge between two stream tasklets carries a value from the producing activation to the consuming one
+#### Scenario: An unbounded inter-tasklet transform applies exactly once
+- **WHEN** a `map` declared on an inter-tasklet edge between two unbounded tasklets carries a value from the producing activation to the consuming one
 - **THEN** the consuming tasklet SHALL receive the value with the map applied exactly once, and no host SHALL compose the chain with itself at delivery
 
-#### Scenario: A typed workflow edge applies on the worker, before the hold
-- **WHEN** a Rust workflow tasklet emits a value on a channel whose consumer edge declares a `map` and whose consumer declares static `cell_keys`
+#### Scenario: A typed bounded edge applies on the worker, before the hold
+- **WHEN** a Rust bounded tasklet emits a value on a channel whose consumer edge declares a `map` and whose consumer declares static `cell_keys`
 - **THEN** the map and `cells_for` SHALL run on the worker completing that item, the held output SHALL name the consumer cells, and the thread that later releases it on the commit ack SHALL run neither
 
 ### Requirement: Host classes reach full capability
 
 The host layer (`flz_core::host`) SHALL support, for byte-level host
 classes, everything the typed Rust host can declare: single, static, and
-dynamic cell modes (dynamic with idle-TTL eviction and the workflow
+dynamic cell modes (dynamic with idle-TTL eviction and the bounded operator
 evicted-keys trace), the effectively-once tier and checkpoint
 ack-granularity (completions carrying `consumed_offset` / `checkpoint`
 drive the same effect-record and interval semantics), late-input
 correction (window declaration, admission classification, slice replay),
 per-cell timers of both kinds, and inter-tasklet edges whose values
 cross as bytes routed on `(edge, key)`. Class declarations SHALL carry
-these facts and the core SHALL populate `AddOperative` response metadata
+these facts and the core SHALL populate `AddOperator` response metadata
 from them exactly as the typed path does.
 
 #### Scenario: A dynamic host class routes by key and evicts idle cells
@@ -196,21 +196,21 @@ prepare crossing (the widened `KeyRequest`): per payload the host SHALL
 return the key and/or the extracted event time, and the core SHALL resolve
 the crossing before any mailbox enqueue. The question SHALL be asked
 wherever a keyless payload meets a consumer that needs keys, on an entry
-channel as today and on an inter-tasklet channel of a workflow instance,
+channel as today and on an inter-tasklet channel of a bounded instance,
 whose host releases a value untransformed and unkeyed for the consumer to
 apply the edge on delivery: the core SHALL stage such a value for the
 crossing on its channel, live or re-seeded from the journal, and SHALL
 address it to the keyed consumer's Cells from the answer, minting them as
-a stream's are minted. A payload that already carries its keys SHALL
+an unbounded operator's are minted. A payload that already carries its keys SHALL
 cross nothing. A staged value SHALL count as an item the RECEIVING stage
 still owes, so that stage cannot settle ahead of it; the live release and
 the journal re-seed are then one mechanism, because both arrive at the
 receiving stage.
 Admission, classification, the high-water, and due-timer generation remain
 core-side; a prepare failure enters the input channel's retry→park ladder,
-and where that ladder would park a workflow instance's value it SHALL
+and where that ladder would park a bounded instance's value it SHALL
 fail the receiving stage instead, and nothing SHALL be parked, as the two
-other park sites do for a workflow.
+other park sites do for a bounded operator.
 
 #### Scenario: Event time arrives before admission
 - **WHEN** an input for an event-time-clocked host class is received
@@ -220,21 +220,21 @@ other park sites do for a workflow.
 - **WHEN** the host answers a prepare batch with a failure for one payload
 - **THEN** that payload SHALL climb the channel's retry→park ladder and no keyless-drop path SHALL exist
 
-#### Scenario: A host workflow's release is keyed by the crossing
-- **WHEN** a Java, Node, Python, Ruby or PHP workflow's first tasklet releases three values into a tasklet reached by `keyBy`
+#### Scenario: A host bounded operator's release is keyed by the crossing
+- **WHEN** a Java, Node, Python, Ruby or PHP bounded operator's first tasklet releases three values into a tasklet reached by `keyBy`
 - **THEN** the core stages the three payloads for one crossing on the inter-tasklet channel, the host answers each value's key by running the edge's chain, three Cells are minted from the answers, and the keyed stage settles only after the three are addressed and have run
 
-#### Scenario: A resumed host workflow re-seeds its keyed consumer the same way
-- **WHEN** a host workflow whose keyed tasklet is the first uncommitted stage is resumed from its journal
+#### Scenario: A resumed host bounded operator re-seeds its keyed consumer the same way
+- **WHEN** a host bounded operator whose keyed tasklet is the first uncommitted stage is resumed from its journal
 - **THEN** the journaled handoff crosses for its keys as the live release did, and the pass resumes on the same Cells the crash left behind
 
 #### Scenario: A crossing that fails terminally fails the stage
 - **WHEN** a host answers every re-attempt for one released value with a non-retryable error
-- **THEN** the receiving stage of the workflow instance fails without committing, compensation starts from there, and nothing is parked to the dead-letter queue
+- **THEN** the receiving stage of the bounded instance fails without committing, compensation starts from there, and nothing is parked to the dead-letter queue
 
-### Requirement: Workflow lifecycles run under poll
+### Requirement: Bounded operator lifecycles run under poll
 
-Workflow classes of BOTH language paths SHALL run their stages through the poll seam as
+Bounded classes of BOTH language paths SHALL run their stages through the poll seam as
 ordinary cell work: a stage's items are admitted to its cells' mailboxes through the stream's
 routing (`deliver_to_consumer`: single, static and dynamic delivery, the static form's host
 branch included), handed out as `Work` activations under per-cell exclusivity, fairness and the
@@ -242,7 +242,7 @@ in-flight cap, and retried on the core's per-item ladder. A cell's inter-tasklet
 be held on the instance's pass sheet at the routing seam, post-transform and addressed to its
 consumer cells, and SHALL be released into those mailboxes only on the producer stage's commit
 ack. A cell's plugin output SHALL NOT be held on the sheet: it is settled into the cell's effect
-record with the item's state changes, through the one settle path a stream cell uses, and the
+record with the item's state changes, through the one settle path an unbounded cell uses, and the
 record is framed and sent on the worker that settles the item, before the stage's barrier; the
 barrier names each cell's last record of the stage by seq. A stage SHALL be done when every item
 admitted for it has settled, counted, and SHALL
@@ -252,45 +252,45 @@ exist per instance. Saga compensation crosses as the `CompensateRun` activation,
 recorded outputs, for both language paths, with its completion an event on the sheet and its
 undo output settled into the compensating cell's own record; the
 task-journal, durable loop, suspension and rewind semantics are unchanged. Every
-workflow class declares tasklets, so every workflow host class runs through work activations; a
+bounded class declares tasklets, so every bounded operator host class runs through work activations; a
 completion MAY carry a tasklet's completion request, which the sheet folds at the iteration
 seal.
 
-#### Scenario: A host step completion ends its workflow
+#### Scenario: A host step completion ends its bounded operator
 
-- **WHEN** a workflow host class's tasklet answers its activation with a completion request and a result
-- **THEN** the sheet SHALL seal the iteration on the pass's last ack and drive the same `WorkflowCompleted` teardown the typed path produces, carrying that result
+- **WHEN** a bounded operator host class's tasklet answers its activation with a completion request and a result
+- **THEN** the sheet SHALL seal the iteration on the pass's last ack and drive the same `BoundedCompleted` teardown the typed path produces, carrying that result
 
 #### Scenario: A stage commits on its last item and releases on the ack
 
-- **WHEN** a durable structured workflow class's stage has every admitted item settled
+- **WHEN** a durable structured bounded class's stage has every admitted item settled
 - **THEN** the worker that settled the last one SHALL send `TaskCommit` for that stage naming each cell's record, the stage's children SHALL receive their input only once the controller acks it, and a crash-resume SHALL skip journaled tasks exactly as the driver suites pin
 
 #### Scenario: A cell's record leaves on the worker, ahead of the barrier
 
-- **WHEN** a durable workflow cell's item settles with a change and a plugin output
+- **WHEN** a durable bounded cell's item settles with a change and a plugin output
 - **THEN** the worker that settled it frames and sends the cell's effect record before any barrier for that stage is sent, and the barrier carries that record's seq for the cell
 
-#### Scenario: A workflow step costs no thread beyond the one running it
+#### Scenario: A bounded operator step costs no thread beyond the one running it
 
-- **WHEN** a Java or a Rust workflow class runs a stage
+- **WHEN** a Java or a Rust bounded class runs a stage
 - **THEN** the only thread occupied by that stage SHALL be the SDK thread running the code; no
   core thread SHALL wait for its reply, and its answer SHALL advance the sheet on the thread
   that completes it
 
 #### Scenario: Stage work takes its fair turn under the cap
 
-- **WHEN** a workflow stage's items are admitted while stream cells on the same runner have work
+- **WHEN** a bounded stage's items are admitted while unbounded cells on the same runner have work
   queued and the in-flight cap is reached
 - **THEN** the stage's cells SHALL be handed out in the ready queue's order like any cell, and
   SHALL NOT be served ahead of queued cell work or outside the cap
 
-#### Scenario: A host workflow's static cells receive their items
+#### Scenario: A host bounded operator's static cells receive their items
 
-- **WHEN** a Java, Node, Python, Ruby or PHP workflow tasklet declares static `cell_keys` and a
+- **WHEN** a Java, Node, Python, Ruby or PHP bounded tasklet declares static `cell_keys` and a
   stage releases a value to it
 - **THEN** every declared cell SHALL be offered the value and each host cell SHALL run the ones
-  `cells_for` names, exactly as a stream tasklet of that host with the same keys does
+  `cells_for` names, exactly as an unbounded tasklet of that host with the same keys does
 
 #### Scenario: A sibling failure compensates a committed sibling
 
@@ -309,13 +309,13 @@ holdback, the cell's exclusivity gates stay held across the window exactly as
 they are across an in-line backoff, and the release-then-reclaim runs when the
 entry comes due. An instance's deadlines SHALL be entries on the same list, keyed by instance
 and deadline kind so re-arming replaces: the idle deadline (`FLEZHA_PARK_IDLE_MS`) of any
-instance whose class declares `sleep_when_idle`, and a workflow's `max_duration`, commit-ack
+instance whose class declares `sleep_when_idle`, and a bounded operator's `max_duration`, commit-ack
 re-send and restore-gate cap. A promoted deadline SHALL decide over what the instance holds
-(the pass sheet under its lock for a workflow, the cells' mailboxes, holdbacks, buffers and
+(the pass sheet under its lock for a bounded operator, the cells' mailboxes, holdbacks, buffers and
 timers for either kind) and act without waiting; a deadline that no longer applies SHALL be a
 no-op, and an idle deadline that finds the instance busy or its cells active more recently than
 the window SHALL re-arm rather than sleep. The idle deadline SHALL be armed once per bind (and,
-for a workflow, when its sheet enters `Waiting`) and never per admitted input. No thread SHALL
+for a bounded operator, when its sheet enters `Waiting`) and never per admitted input. No thread SHALL
 sleep out a backoff delay or an instance deadline, and no dedicated thread SHALL exist to
 service the list.
 
@@ -342,7 +342,7 @@ service the list.
 - **THEN** pollers SHALL observe shutdown immediately, with no backoff sleep
   left to run out
 
-#### Scenario: A workflow deadline that no longer applies does nothing
+#### Scenario: A bounded deadline that no longer applies does nothing
 
 - **WHEN** a `PerInput` instance's idle deadline comes due after a message already started
   its next pass, or a commit-ack deadline comes due after the ack arrived
@@ -356,9 +356,9 @@ service the list.
 - **THEN** the poller promoting the deadline SHALL send `IterPark` and mark the instance parked,
   and no thread SHALL have waited out the idle window
 
-#### Scenario: A due idle deadline parks a stream without a thread
+#### Scenario: A due idle deadline parks an unbounded operator without a thread
 
-- **WHEN** a stream instance whose class declares `sleep_when_idle` has had no cell activity for `FLEZHA_PARK_IDLE_MS`, every cell's mailbox, holdback and flush buffer is empty, no retry or timer wake names one of its cells, and no input tail is owed
+- **WHEN** an unbounded instance whose class declares `sleep_when_idle` has had no cell activity for `FLEZHA_PARK_IDLE_MS`, every cell's mailbox, holdback and flush buffer is empty, no retry or timer wake names one of its cells, and no input tail is owed
 - **THEN** the poller promoting the deadline SHALL send `IterPark` with iteration `0` and remove the instance, and no thread SHALL have waited out the idle window
 
 #### Scenario: Recent activity re-arms instead of sleeping
@@ -378,9 +378,9 @@ activations (default 1024, env `FLEZHA_MAX_INFLIGHT_ACTIVATIONS`), enforced at
 work handout: when the limit is reached, `poll` SHALL NOT hand out cell work,
 and a completion that drops the count below the limit SHALL resume handout.
 The limit SHALL NOT gate direct command activations (restore folds, snapshot
-requests, live state reads, the workflow undo's `CompensateRun`, prepare crossings: these
+requests, live state reads, the bounded operator undo's `CompensateRun`, prepare crossings: these
 answer a rendezvous or an event, never a queued work item) nor the inline-serve
-deadlock-avoidance path. A workflow stage's cell work is cell work and SHALL be counted and
+deadlock-avoidance path. A bounded stage's cell work is cell work and SHALL be counted and
 capped like any other.
 
 The core SHALL expose starvation — runnable work exists, no thread is inside
@@ -414,9 +414,9 @@ every `poll` pass promotes what has come due.
   waiting in `poll`) and the limit is not reached
 - **THEN** a host thread parked in the starvation wait SHALL be woken
 
-#### Scenario: A workflow stage is counted against the cap
+#### Scenario: A bounded stage is counted against the cap
 
-- **WHEN** the outstanding work count is at the limit and a workflow stage's items are admitted
+- **WHEN** the outstanding work count is at the limit and a bounded stage's items are admitted
 - **THEN** the stage's cells SHALL wait in the ready queue like any cell, and SHALL be handed
   out only as completions bring the count below the limit
 
@@ -578,7 +578,7 @@ behind it. Reaching the bound SHALL be reported.
 ### Requirement: A host encodes an output without allocating a buffer per value
 
 A host that must encode a value into bytes to hand the core an edge output SHALL reuse one
-encode buffer per thread rather than allocate a buffer, a stream or a reader for each value, and
+encode buffer per thread rather than allocate a buffer, an unbounded operator or a reader for each value, and
 SHALL NOT copy the encoder's own output a second time before handing it over. The only copy the
 host MAY make is the one that transfers ownership of the finished bytes out of a reused buffer,
 because a later encode overwrites that buffer.
@@ -617,9 +617,9 @@ requirement.
 - **THEN** that host SHALL hand those bytes over unchanged and SHALL NOT introduce a buffer, a
   copy or a conversion to satisfy this requirement
 
-### Requirement: A running workflow instance holds no thread of its own
+### Requirement: A running bounded instance holds no thread of its own
 
-A workflow instance SHALL own no thread and SHALL wait on no thread. Its position in the pass
+A bounded instance SHALL own no thread and SHALL wait on no thread. Its position in the pass
 SHALL be data on the instance (the pass sheet: iteration, stages in flight and done, held
 outputs, completion, phase) guarded by one per-instance lock, and every transition SHALL be made
 by the thread that brings the event: the worker that settles a stage's last item marks the stage
@@ -635,9 +635,9 @@ one representation: the sheet is what the journal's resume state describes.
 
 The reason is one mechanism: after a proper sleep the only duty a per-instance thread would
 have is to hold a stage number, and a mechanism whose sole purpose is to hold one number beside
-the mechanism every stream runs on is a parallel implementation. `sdk/rust/benches/workflow_scaling.rs`
+the mechanism every unbounded operator runs on is a parallel implementation. `sdk/rust/benches/bounded_scaling.rs`
 stays as the regression gate: after this change ten thousand awake instances SHALL NOT cost more
-resident memory than the envelope recorded in `docs/resilience/workflow_operative.md`, and a
+resident memory than the envelope recorded in `docs/resilience/bounded_operator.md`, and a
 population waiting in any state SHALL consume no measurable CPU, because no wait polls.
 
 #### Scenario: A waiting population costs no CPU
@@ -655,14 +655,14 @@ population waiting in any state SHALL consume no measurable CPU, because no wait
 
 #### Scenario: The probe answers the question on demand
 
-- **WHEN** the per-instance cost of a workflow is re-opened
+- **WHEN** the per-instance cost of a bounded operator is re-opened
 - **THEN** the probe SHALL report resident and virtual cost per instance, thread count per
   instance, CPU while waiting, start and teardown latency, and an unrelated instance's latency
   beside the population, for a population blocked mid-stage and for one waiting for input
 
 #### Scenario: A stop reaches an instance with no thread to interrupt
 
-- **WHEN** `WorkflowStop` arrives while an instance waits for a message, waits for an ack, or
+- **WHEN** `BoundedStop` arrives while an instance waits for a message, waits for an ack, or
   has a cell in a retry backoff
 - **THEN** the reader that brings it SHALL end the wait at once: a waiting instance ends
   `cancelled`, an owed ack is dropped and compensation starts, a pending backoff is disarmed and

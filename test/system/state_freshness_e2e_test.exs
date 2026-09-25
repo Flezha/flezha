@@ -3,7 +3,7 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
   End-to-end SIGTERM verification for `ship-fresh-state-on-sdk-shutdown`.
 
   Spins up a real runner subprocess for the run's selected runtime, registers
-  an operative with `snapshot_interval: 0` (so the controller has no periodic capture and
+  an operator with `snapshot_interval: 0` (so the controller has no periodic capture and
   the only path to populate `Overwatch.state.snapshot` is the SDK's
   shutdown notification), then sends SIGTERM to the OS pid and asserts
   the controller's snapshot is populated within the 2 s ack window.
@@ -15,15 +15,15 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
       mix test --include system test/system/state_freshness_e2e_test.exs
 
   The complementary unit-level coverage lives in
-  `test/operative/overwatch_external_snapshot_test.exs` and
+  `test/operator/overwatch_external_snapshot_test.exs` and
   `test/flezha/runner/control_channel_shutdown_notification_test.exs`.
   """
 
   use FlezhaTest.SystemCase, capability: :state_persistence
 
-  alias Flezha.Operative.Builder
+  alias Flezha.Operator.Builder
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "state_freshness_e2e"
@@ -33,7 +33,7 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
   setup do
     on_exit(fn ->
       try do
-        OperativeManager.stop_all_operatives(@namespace)
+        OperatorManager.stop_all_operators(@namespace)
       catch
         _, _ -> :ok
       end
@@ -54,10 +54,10 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
 
     {:os_pid, os_pid} = :erlang.port_info(port, :os_pid)
 
-    operative_id = "freshness_e2e_#{System.unique_integer([:positive])}"
+    operator_id = "freshness_e2e_#{System.unique_integer([:positive])}"
 
     builder = %Builder{
-      id: operative_id,
+      id: operator_id,
       factory_id: @factory,
       init_values: %{},
       # Disabled-snapshot — flezha_market-shape. The only path for
@@ -68,16 +68,16 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
       opts: [snapshot_interval: 0]
     }
 
-    assert {:ok, info} = OperativeManager.start_operative(@namespace, builder)
+    assert {:ok, info} = OperatorManager.start_operator(@namespace, builder)
     assert info.runner_id == ce_id
 
-    {:ok, overwatch_pid} = OperativeManager.get_operative_pid(@namespace, operative_id)
+    {:ok, overwatch_pid} = OperatorManager.get_operator_pid(@namespace, operator_id)
     pre_state = :sys.get_state(overwatch_pid)
 
     assert pre_state.snapshot == nil,
            "precondition: snapshot must be nil before SIGTERM (snapshot_interval=0)"
 
-    # Drive a few inputs so the SDK's per-operative state has something
+    # Drive a few inputs so the SDK's per-operator state has something
     # distinguishable from the empty initial state. The `store_input`
     # factory appends each text input to `state.text_inputs`; the SDK's
     # graceful-shutdown serializer then ships JSON containing those
@@ -85,25 +85,25 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
     # empty-initial-state JSON, which is true but uninteresting — it
     # would not catch a regression where the notification fires before
     # processing in-flight inputs.
-    inputs_sent = ["alpha-#{operative_id}", "beta-#{operative_id}", "gamma-#{operative_id}"]
+    inputs_sent = ["alpha-#{operator_id}", "beta-#{operator_id}", "gamma-#{operator_id}"]
 
     Enum.each(inputs_sent, fn line ->
-      OperativeManager.send_io(operative_id, @namespace, line, %{"input_type" => "2"})
+      OperatorManager.send_io(operator_id, @namespace, line, %{"input_type" => "2"})
     end)
 
-    # Inputs travel via primary stream and the operative's `run` runs
+    # Inputs travel via primary stream and the operator's `run` runs
     # async in the SDK's worker pool: the live state read shows them applied
     # before SIGTERM is sent.
     assert NodeTestHelper.wait_until(
              fn ->
-               case OperativeManager.get_cell_state(@namespace, operative_id) do
+               case OperatorManager.get_cell_state(@namespace, operator_id) do
                  {:ok, json} -> Enum.all?(inputs_sent, &String.contains?(json, &1))
                  _ -> false
                end
              end,
              15_000
            ),
-           "the inputs never reached the operative's state"
+           "the inputs never reached the operator's state"
 
     {_, 0} =
       System.cmd("kill", ["-TERM", Integer.to_string(os_pid)], stderr_to_stdout: true)
@@ -120,8 +120,8 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
     # initial state) would fail one of these.
     decoded = Jason.decode!(snapshot)
     assert is_map(decoded)
-    # Operative state serializes as `%{tasklet_name => tasklet_state}`;
-    # this single-tasklet operative has exactly one entry.
+    # Operator state serializes as `%{tasklet_name => tasklet_state}`;
+    # this single-tasklet operator has exactly one entry.
     assert map_size(decoded) == 1
     inner = decoded |> Map.values() |> hd()
     assert Map.has_key?(inner, "text_inputs")
@@ -131,8 +131,8 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
     assert is_list(received_inputs)
 
     # The snapshot SHALL reflect the state at SIGTERM time — i.e. the
-    # inputs we sent must be present (in some order; operative input
-    # ordering is sticky per operative, so they appear in send order).
+    # inputs we sent must be present (in some order; operator input
+    # ordering is sticky per operator, so they appear in send order).
     assert Enum.sort(received_inputs) == Enum.sort(inputs_sent),
            "graceful-shutdown snapshot did not include all sent inputs.\n" <>
              "  sent:     #{inspect(inputs_sent)}\n" <>

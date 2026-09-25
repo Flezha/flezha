@@ -6,7 +6,7 @@ defmodule Flezha.Config.RuntimeDrillTest do
   type, sets every one of them in the environment, and evaluates the file the
   release evaluates at boot — `config/runtime.exs`, entered the way the release
   enters it. A knob added to the table is covered here with no test edit; a
-  knob an operator can set and never observe fails.
+  knob a user can set and never observe fails.
   """
   # async: false: the OS environment is process-global. The drill sets every
   # documented variable at once, so `:system_env` is what puts the run's own
@@ -51,8 +51,8 @@ defmodule Flezha.Config.RuntimeDrillTest do
     assert config[:flezha][:state_root] == Environment.per_run(token).state_root
     assert config[:flezha][:socket_files_path] == Environment.per_run(token).socket_files_path
 
-    System.put_env("FLEZHA_STATE_DIR", "/tmp/an-operator-said-so")
-    assert read!(:test)[:flezha][:state_root] == "/tmp/an-operator-said-so"
+    System.put_env("FLEZHA_STATE_DIR", "/tmp/an-user-said-so")
+    assert read!(:test)[:flezha][:state_root] == "/tmp/an-user-said-so"
   end
 
   test "a peer's resources are its own and its socket directory holds any data socket" do

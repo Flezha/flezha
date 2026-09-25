@@ -2,16 +2,16 @@
 
 ## Purpose
 
-The rust-sdk-tasklet-macros capability is the Rust realization of the SDK authoring contract. It provides the `#[flezha::tasklet]` attribute macro (signature-to-types inference, `&mut` state inference, cell/mailbox/clock opt-ins, static and dynamic modes), the `#[derive(flezha::State)]` derive (field-granular `Change` enum + `apply_change` journaled through the existing WAL), and the `flezha::operative!` declarative macro for linear pipelines, each naming the type the author registers explicitly. All macros expand to the existing `StreamOperative`/`Tasklet`/`Change`/`Channel` traits with zero engine, protocol, or WAL change; macro-generated and hand-written tasklets compose in the same operative.
+The rust-sdk-tasklet-macros capability is the Rust realization of the SDK authoring contract. It provides the `#[flezha::tasklet]` attribute macro (signature-to-types inference, `&mut` state inference, cell/mailbox/clock opt-ins, static and dynamic modes), the `#[derive(flezha::State)]` derive (field-granular `Change` enum + `apply_change` journaled through the existing WAL), and the `flezha::operator!` declarative macro for linear pipelines, each naming the type the author registers explicitly. All macros expand to the existing `UnboundedOperator`/`Tasklet`/`Change`/`Channel` traits with zero engine, protocol, or WAL change; macro-generated and hand-written tasklets compose in the same operator.
 ## Requirements
 ### Requirement: `#[flezha::tasklet]` attribute macro
 
-The Rust SDK SHALL provide a `#[flezha::tasklet]` attribute macro applied to a single `run` function that generates a complete `Tasklet` implementation conforming to the authoring contract. The attribute SHALL declare a tasklet and nothing else: it SHALL NOT accept `kind`, `sink`, `input` or `on_full`, which describe an operative and its entry channel, and SHALL fail to compile naming the key and directing the author to `#[flezha::stream_operative]` or `#[flezha::workflow_operative]` when one is written. The generated tasklet's `name()` SHALL be the `id` when one is written.
+The Rust SDK SHALL provide a `#[flezha::tasklet]` attribute macro applied to a single `run` function that generates a complete `Tasklet` implementation conforming to the authoring contract. The attribute SHALL declare a tasklet and nothing else: it SHALL NOT accept `kind`, `sink`, `input` or `on_full`, which describe an operator and its entry channel, and SHALL fail to compile naming the key and directing the author to `#[flezha::unbounded_operator]` or `#[flezha::bounded_operator]` when one is written. The generated tasklet's `name()` SHALL be the `id` when one is written.
 
 #### Scenario: Stateless tasklet collapses to a function
 
 - **WHEN** `#[flezha::tasklet(id = "do_nothing")]` annotates `fn do_nothing(input: String) -> Vec<u8>`
-- **THEN** the macro generates a `Default` tasklet type `DoNothing`, a `Tasklet` impl with `Input = String`, `Output = Vec<u8>`, `State = ()`, `Change = NoChange`, `Clock = WallClock`, `Config = ()`, `name`, `init_state`, and a `run` wrapper that emits the returned value, and no operative impl
+- **THEN** the macro generates a `Default` tasklet type `DoNothing`, a `Tasklet` impl with `Input = String`, `Output = Vec<u8>`, `State = ()`, `Change = NoChange`, `Clock = WallClock`, `Config = ()`, `name`, `init_state`, and a `run` wrapper that emits the returned value, and no operator impl
 
 #### Scenario: Stateful tasklet infers State from the mutable parameter
 
@@ -21,9 +21,9 @@ The Rust SDK SHALL provide a `#[flezha::tasklet]` attribute macro applied to a s
 #### Scenario: Generated tasklet type is referenceable in channels
 
 - **WHEN** a tasklet is generated from `fn static_entry(..)`
-- **THEN** a PascalCase tasklet type (e.g. `StaticEntry`) is produced that can be named in an explicit `channels()` body of an operative of either kind via `.from`/`.into`
+- **THEN** a PascalCase tasklet type (e.g. `StaticEntry`) is produced that can be named in an explicit `channels()` body of an operator of either kind via `.from`/`.into`
 
-#### Scenario: An operative key on a tasklet is refused
+#### Scenario: An operator key on a tasklet is refused
 
 - **WHEN** `#[flezha::tasklet(id = "do_nothing", sink = "echo")]`, or the same with `kind`, `input` or `on_full`, annotates a run function
 - **THEN** the macro fails to compile naming the key and the short-form attribute that carries it
@@ -71,23 +71,23 @@ The Rust SDK SHALL provide a `#[derive(flezha::State)]` derive that generates a 
 - **WHEN** a mutation cannot be expressed as a field-granular change
 - **THEN** the SDK requires a hand-written `Change` and the derive does not silently produce incorrect journaling
 
-### Requirement: `flezha::operative!` linear-pipeline macro
+### Requirement: `flezha::operator!` linear-pipeline macro
 
-The Rust SDK SHALL provide a `flezha::operative!` declarative macro that declares a named operative type for a strictly linear pipeline and lowers to a normal `channels()` body. The macro SHALL begin with the type it declares, `pub struct Name;` (any visibility), and that type SHALL implement `StreamOperative` so it is registered with `runner.register_factory(Name)`. The pipeline's `input` head SHALL accept an optional channel name in the same position the `plugin` terminator takes one, and SHALL lower to the entry channel name `input` when none is written.
+The Rust SDK SHALL provide a `flezha::operator!` declarative macro that declares a named operator type for a strictly linear pipeline and lowers to a normal `channels()` body. The macro SHALL begin with the type it declares, `pub struct Name;` (any visibility), and that type SHALL implement `UnboundedOperator` so it is registered with `runner.register_factory(Name)`. The pipeline's `input` head SHALL accept an optional channel name in the same position the `plugin` terminator takes one, and SHALL lower to the entry channel name `input` when none is written.
 
 #### Scenario: Linear pipeline removes the channels block
 
-- **WHEN** `flezha::operative!{ pub struct StaticCell; id: "static_cell", pipeline: input::<String> -> StaticEntry -> StaticDownstream -> plugin::<Vec<u8>>("test_kafka") }` is written
-- **THEN** `StaticCell` implements `StreamOperative` wiring input → `StaticEntry` → `StaticDownstream` → the `test_kafka` plugin, whose entry channel is named `input`, and `runner.register_factory(StaticCell)` registers it
+- **WHEN** `flezha::operator!{ pub struct StaticCell; id: "static_cell", pipeline: input::<String> -> StaticEntry -> StaticDownstream -> plugin::<Vec<u8>>("test_kafka") }` is written
+- **THEN** `StaticCell` implements `UnboundedOperator` wiring input → `StaticEntry` → `StaticDownstream` → the `test_kafka` plugin, whose entry channel is named `input`, and `runner.register_factory(StaticCell)` registers it
 
 #### Scenario: The pipeline head names its entry channel
 
 - **WHEN** a pipeline head is written `input::<String>("prices")`
-- **THEN** the generated operative's entry channel SHALL be named `prices`
+- **THEN** the generated operator's entry channel SHALL be named `prices`
 
 #### Scenario: Non-linear graph is rejected
 
-- **WHEN** an `operative!` pipeline expresses fan-out or multi-input
+- **WHEN** an `operator!` pipeline expresses fan-out or multi-input
 - **THEN** the macro fails to compile with a message directing the author to an explicit `channels()` body
 
 #### Scenario: An empty entry channel name is rejected
@@ -97,12 +97,12 @@ The Rust SDK SHALL provide a `flezha::operative!` declarative macro that declare
 
 ### Requirement: Sugared and raw tasklets compose
 
-An operative SHALL be able to mix macro-generated tasklets and hand-written tasklets.
+An operator SHALL be able to mix macro-generated tasklets and hand-written tasklets.
 
-#### Scenario: Mixed operative builds and runs
+#### Scenario: Mixed operator builds and runs
 
-- **WHEN** an operative wires a `#[flezha::tasklet]`-generated tasklet to a hand-written `impl Tasklet` tasklet
-- **THEN** the operative compiles, registers, and processes input through both tasklets correctly
+- **WHEN** an operator wires a `#[flezha::tasklet]`-generated tasklet to a hand-written `impl Tasklet` tasklet
+- **THEN** the operator compiles, registers, and processes input through both tasklets correctly
 
 ### Requirement: Map-aware `#[derive(flezha::State)]` journaling mutators
 
@@ -160,105 +160,105 @@ An operative SHALL be able to mix macro-generated tasklets and hand-written task
 - **WHEN** `#[flezha::tasklet(init = …)]` is applied to a `run` with no `&mut State` parameter
 - **THEN** expansion emits a `compile_error!` stating `init` requires a state parameter
 
-### Requirement: `#[flezha::stream_operative]` and `#[flezha::workflow_operative]` short-form attributes
+### Requirement: `#[flezha::unbounded_operator]` and `#[flezha::bounded_operator]` short-form attributes
 
-The Rust SDK SHALL provide two attribute macros applied to a single `run` function that declare a whole single-tasklet operative of the kind the attribute names: `#[flezha::stream_operative]` and `#[flezha::workflow_operative]`. Each SHALL require an `id`, SHALL accept an optional `sink` naming a plugin channel, an optional `input` naming the entry channel, naming it `input` when the key is absent, and an optional `on_full` setting that entry channel's overflow policy. `#[flezha::workflow_operative]` SHALL additionally accept an optional `loop_mode` key taking `"once"`, `"per_input"` or `"chained"`, which the generated operative SHALL return from `loop_mode()`, and SHALL fail to compile naming any other value; `#[flezha::stream_operative]` SHALL refuse the key naming the workflow attribute. No other class-level setting SHALL be a key of either attribute. The kind SHALL NOT be expressible as a key. Two attributes are taken rather than one `#[flezha::operative]` because `flezha::operative!` is already a `#[proc_macro]` of that name in the same module (`sdk/rust/macros/src/lib.rs:42`).
+The Rust SDK SHALL provide two attribute macros applied to a single `run` function that declare a whole single-tasklet operator of the kind the attribute names: `#[flezha::unbounded_operator]` and `#[flezha::bounded_operator]`. Each SHALL require an `id`, SHALL accept an optional `sink` naming a plugin channel, an optional `input` naming the entry channel, naming it `input` when the key is absent, and an optional `on_full` setting that entry channel's overflow policy. `#[flezha::bounded_operator]` SHALL additionally accept an optional `loop_mode` key taking `"once"`, `"per_input"` or `"chained"`, which the generated operator SHALL return from `loop_mode()`, and SHALL fail to compile naming any other value; `#[flezha::unbounded_operator]` SHALL refuse the key naming the bounded attribute. No other class-level setting SHALL be a key of either attribute. The kind SHALL NOT be expressible as a key. Two attributes are taken rather than one `#[flezha::operator]` because `flezha::operator!` is already a `#[proc_macro]` of that name in the same module (`sdk/rust/macros/src/lib.rs:42`).
 
-Each attribute SHALL emit **two** types: the operative type under the author's PascalCase name (`Echo` for `fn echo`), implementing `StreamOperative` or `WorkflowOperative`, each with `channels()`, with `factory_id()` equal to the `id` and every other operative item at its trait default; and the tasklet type beside it under that name suffixed `Tasklet` (`EchoTasklet`), carrying the `Tasklet` impl the `#[flezha::tasklet]` attribute would generate for the same function. The generated tasklet's `name()` SHALL be the `id` verbatim. `EchoTasklet` SHALL be nameable in another operative's `channels()` body, of either kind.
+Each attribute SHALL emit **two** types: the operator type under the author's PascalCase name (`Echo` for `fn echo`), implementing `UnboundedOperator` or `BoundedOperator`, each with `channels()`, with `factory_id()` equal to the `id` and every other operator item at its trait default; and the tasklet type beside it under that name suffixed `Tasklet` (`EchoTasklet`), carrying the `Tasklet` impl the `#[flezha::tasklet]` attribute would generate for the same function. The generated tasklet's `name()` SHALL be the `id` verbatim. `EchoTasklet` SHALL be nameable in another operator's `channels()` body, of either kind.
 
 With a `sink`, the generated topology SHALL wire the entry channel into the tasklet and the tasklet to that plugin sink. With no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A `sink` on a run function with a unit return and no `emits` SHALL fail to compile with a message beginning `SinkWithoutOutput`.
 
-#### Scenario: A stream short form emits an operative and a tasklet
+#### Scenario: An unbounded short form emits an operator and a tasklet
 
-- **WHEN** `#[flezha::stream_operative(id = "do_nothing", sink = "echo")]` annotates `fn do_nothing(input: String) -> Vec<u8>`
-- **THEN** the macro generates `DoNothing` implementing `StreamOperative` with `factory_id()` `do_nothing` and a `channels()` body wiring `input` into `DoNothingTasklet` and `DoNothingTasklet` to the `echo` plugin sink, and `DoNothingTasklet` implementing `Tasklet` with `Input = String`, `Output = Vec<u8>`, `State = ()`, `Change = NoChange`, `Clock = WallClock`, `Config = ()` and `name()` `do_nothing`
+- **WHEN** `#[flezha::unbounded_operator(id = "do_nothing", sink = "echo")]` annotates `fn do_nothing(input: String) -> Vec<u8>`
+- **THEN** the macro generates `DoNothing` implementing `UnboundedOperator` with `factory_id()` `do_nothing` and a `channels()` body wiring `input` into `DoNothingTasklet` and `DoNothingTasklet` to the `echo` plugin sink, and `DoNothingTasklet` implementing `Tasklet` with `Input = String`, `Output = Vec<u8>`, `State = ()`, `Change = NoChange`, `Clock = WallClock`, `Config = ()` and `name()` `do_nothing`
 
-#### Scenario: The operative takes the author's name
+#### Scenario: The operator takes the author's name
 
 - **WHEN** a short form is registered
-- **THEN** `runner.register_factory(DoNothing)` SHALL register the operative, and `DoNothing` SHALL NOT implement `Tasklet`
+- **THEN** `runner.register_factory(DoNothing)` SHALL register the operator, and `DoNothing` SHALL NOT implement `Tasklet`
 
-#### Scenario: A workflow short form implements the workflow trait
+#### Scenario: A bounded short form implements the bounded operator trait
 
-- **WHEN** `#[flezha::workflow_operative(id = "place", sink = "placed", input = "order")]` annotates `fn place(order: String) -> String`
-- **THEN** `Place` implements `WorkflowOperative` with `factory_id()` `place` and a `channels()` body wiring `order` into `PlaceTasklet` and `PlaceTasklet` to the `placed` plugin sink, every other workflow item at its default, and `runner.register_factory(Place)` registers it
+- **WHEN** `#[flezha::bounded_operator(id = "place", sink = "placed", input = "order")]` annotates `fn place(order: String) -> String`
+- **THEN** `Place` implements `BoundedOperator` with `factory_id()` `place` and a `channels()` body wiring `order` into `PlaceTasklet` and `PlaceTasklet` to the `placed` plugin sink, every other bounded item at its default, and `runner.register_factory(Place)` registers it
 
-#### Scenario: A workflow short form declares its loop mode
+#### Scenario: A bounded short form declares its loop mode
 
-- **WHEN** `#[flezha::workflow_operative(id = "chat", sink = "replies", loop_mode = "per_input")]` annotates `fn chat(message: String) -> String`, `Chat` is registered, and two messages reach its entry channel
+- **WHEN** `#[flezha::bounded_operator(id = "chat", sink = "replies", loop_mode = "per_input")]` annotates `fn chat(message: String) -> String`, `Chat` is registered, and two messages reach its entry channel
 - **THEN** `Chat::loop_mode()` is `LoopMode::PerInput`, the tasklet runs once per message, and the instance does not complete after the first
 
 #### Scenario: An unknown loop mode does not compile
 
-- **WHEN** `#[flezha::workflow_operative(id = "chat", loop_mode = "forever")]` annotates a run function
+- **WHEN** `#[flezha::bounded_operator(id = "chat", loop_mode = "forever")]` annotates a run function
 - **THEN** the macro fails to compile naming `loop_mode` and the three accepted values
 
 #### Scenario: A short form with no sink wires only the entry channel
 
-- **WHEN** `#[flezha::stream_operative(id = "counter", input = "ticks")]` annotates `fn counter(input: String, state: &mut CounterState)`
-- **THEN** `Counter`'s `channels()` body wires `ticks` into `CounterTasklet` and declares no plugin sink, and the operative registers and runs
+- **WHEN** `#[flezha::unbounded_operator(id = "counter", input = "ticks")]` annotates `fn counter(input: String, state: &mut CounterState)`
+- **THEN** `Counter`'s `channels()` body wires `ticks` into `CounterTasklet` and declares no plugin sink, and the operator registers and runs
 
 #### Scenario: A stateful short form infers State from the mutable parameter
 
-- **WHEN** `#[flezha::stream_operative(id = "store_input", sink = "sink")]` annotates `fn store_input(input: String, state: &mut StoreInputState) -> String`
+- **WHEN** `#[flezha::unbounded_operator(id = "store_input", sink = "sink")]` annotates `fn store_input(input: String, state: &mut StoreInputState) -> String`
 - **THEN** `StoreInputTasklet`'s `Tasklet` impl sets `State = StoreInputState` and routes mutations through the existing state-handle path
 
 #### Scenario: The generated tasklet is nameable in another topology
 
-- **WHEN** `EchoTasklet` is named in a hand-written `channels()` body of a different operative
-- **THEN** it wires as any tasklet does, and `Echo`'s own operative is declared only if `Echo` is also registered
+- **WHEN** `EchoTasklet` is named in a hand-written `channels()` body of a different operator
+- **THEN** it wires as any tasklet does, and `Echo`'s own operator is declared only if `Echo` is also registered
 
 #### Scenario: The attribute keeps the default entry channel name
 
-- **WHEN** `#[flezha::stream_operative(id = "do_nothing", sink = "echo")]` declares no `input` key
-- **THEN** the generated operative's entry channel SHALL be named `input`
+- **WHEN** `#[flezha::unbounded_operator(id = "do_nothing", sink = "echo")]` declares no `input` key
+- **THEN** the generated operator's entry channel SHALL be named `input`
 
 #### Scenario: The attribute names the generated entry channel
 
-- **WHEN** `#[flezha::stream_operative(id = "do_nothing", sink = "echo", input = "prices")]` annotates a run function
-- **THEN** the generated operative's entry channel SHALL be named `prices`
+- **WHEN** `#[flezha::unbounded_operator(id = "do_nothing", sink = "echo", input = "prices")]` annotates a run function
+- **THEN** the generated operator's entry channel SHALL be named `prices`
 
 #### Scenario: A sink on a unit return is refused
 
-- **WHEN** `#[flezha::stream_operative(id = "drain", sink = "out")]` annotates a run function with a unit return and no `emits`
+- **WHEN** `#[flezha::unbounded_operator(id = "drain", sink = "out")]` annotates a run function with a unit return and no `emits`
 - **THEN** the macro fails to compile with a message beginning `SinkWithoutOutput`
 
 #### Scenario: An empty entry channel name is rejected
 
-- **WHEN** `#[flezha::stream_operative(id = "do_nothing", sink = "echo", input = "")]` annotates a run function
+- **WHEN** `#[flezha::unbounded_operator(id = "do_nothing", sink = "echo", input = "")]` annotates a run function
 - **THEN** the macro fails to compile, stating that an entry channel name may not be empty
 
 #### Scenario: A topology body beside a short form does not compile
 
-- **WHEN** a type carrying a short-form attribute also has a hand-written `StreamOperative` or `WorkflowOperative` impl
+- **WHEN** a type carrying a short-form attribute also has a hand-written `UnboundedOperator` or `BoundedOperator` impl
 - **THEN** compilation fails, and the compile-fail fixture pinning it cites `ShortFormWithTopology`
 
-### Requirement: The Rust workflow trait carries the stream's body and none of the stream's settings
+### Requirement: The Rust bounded operator trait carries the unbounded operator's body and none of its settings
 
-`WorkflowOperative` SHALL declare `fn channels(c: &ChannelBuilder);`, required as `StreamOperative::channels` is, and SHALL declare no `tasklets`, `retry_attempts`, `retry_backoff`, `barrier_retry_attempts` or `wake_after` item; its items SHALL be `factory_id`, `channels`, `max_duration`, `self_terminating`, `loop_mode`, `rollback_mode`, `PERSISTENCE_ENABLED` and `SYNC_DURABILITY`. `build_spec` SHALL refuse a workflow whose `channels` set the builder's `effectively_once`, any checkpoint flag or the correction window, with `BuildWorkflowError` variants named `EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow` and `CorrectionWindowOnWorkflow`, and `ZeroRetryBackoff` SHALL NOT exist. A workflow cell SHALL write no effect record: the collecting path SHALL carry no effectively-once branch, and `workflow_metadata` in the shared core SHALL advertise no `effectively_once` for a workflow class. The step ladder SHALL take the consuming edge's `RetryPolicy` from the partition's dispatcher, as the stream ladders do, and the barrier re-send count SHALL be a constant beside the acknowledgement timeout. The `TaskletCtx` a workflow cell's `run` and `on_timer` receive SHALL carry the same timer session a stream cell's does, so `timer_after`, `timer_at_event_time`, `cancel_processing_time_timer` and `cancel_event_time_timer` answer as in a stream; only a `compensate` hook's context SHALL answer `TaskletError::TimersUnavailable`. `sdk/rust/public-api.txt` SHALL record the new signature and none of the removed items.
+`BoundedOperator` SHALL declare `fn channels(c: &ChannelBuilder);`, required as `UnboundedOperator::channels` is, and SHALL declare no `tasklets`, `retry_attempts`, `retry_backoff`, `barrier_retry_attempts` or `wake_after` item; its items SHALL be `factory_id`, `channels`, `max_duration`, `self_terminating`, `loop_mode`, `rollback_mode`, `PERSISTENCE_ENABLED` and `SYNC_DURABILITY`. `build_spec` SHALL refuse a bounded operator whose `channels` set the builder's `effectively_once`, any checkpoint flag or the correction window, with `BuildBoundedError` variants named `EffectivelyOnceOnBounded`, `CheckpointOnBounded` and `CorrectionWindowOnBounded`, and `ZeroRetryBackoff` SHALL NOT exist. A bounded cell SHALL write no effect record: the collecting path SHALL carry no effectively-once branch, and `bounded_metadata` in the shared core SHALL advertise no `effectively_once` for a bounded class. The step ladder SHALL take the consuming edge's `RetryPolicy` from the partition's dispatcher, as the stream ladders do, and the barrier re-send count SHALL be a constant beside the acknowledgement timeout. The `TaskletCtx` a bounded cell's `run` and `on_timer` receive SHALL carry the same timer session an unbounded cell's does, so `timer_after`, `timer_at_event_time`, `cancel_processing_time_timer` and `cancel_event_time_timer` answer as in an unbounded operator; only a `compensate` hook's context SHALL answer `TaskletError::TimersUnavailable`. `sdk/rust/public-api.txt` SHALL record the new signature and none of the removed items.
 
-#### Scenario: A workflow writes channels and no retry knob
+#### Scenario: A bounded operator writes channels and no retry knob
 
-- **WHEN** a type implements `WorkflowOperative` with `fn channels(c: &ChannelBuilder)` wiring `c.input::<String>("in").retry_max(2).into(Flaky)` and `Flaky` fails on every attempt
+- **WHEN** a type implements `BoundedOperator` with `fn channels(c: &ChannelBuilder)` wiring `c.input::<String>("in").retry_max(2).into(Flaky)` and `Flaky` fails on every attempt
 - **THEN** the class registers, the cell runs exactly twice before the instance aborts and compensates, and a type writing `fn retry_attempts() -> u32` in the same impl fails to compile
 
-#### Scenario: The tier on a workflow is refused by the SDK
+#### Scenario: The tier on a bounded operator is refused by the SDK
 
-- **WHEN** a `WorkflowOperative`'s `channels` calls `c.effectively_once()`
-- **THEN** `register_factory` answers `BuildWorkflowError::EffectivelyOnceOnWorkflow`, nothing is registered, and no `AddOperativeResponse` for that class could carry `effectively_once`
+- **WHEN** a `BoundedOperator`'s `channels` calls `c.effectively_once()`
+- **THEN** `register_factory` answers `BuildBoundedError::EffectivelyOnceOnBounded`, nothing is registered, and no `AddOperatorResponse` for that class could carry `effectively_once`
 
 #### Scenario: A stale body does not compile
 
-- **WHEN** a type implements `WorkflowOperative` with `fn tasklets(c: &ChannelBuilder)` and no `channels`
+- **WHEN** a type implements `BoundedOperator` with `fn tasklets(c: &ChannelBuilder)` and no `channels`
 - **THEN** compilation fails naming the missing `channels` and the unknown `tasklets`
 
 #### Scenario: The retired wake item does not compile
 
-- **WHEN** a type implements `WorkflowOperative` with `fn wake_after() -> Option<Duration>`
+- **WHEN** a type implements `BoundedOperator` with `fn wake_after() -> Option<Duration>`
 - **THEN** compilation fails naming `wake_after` as not a member of the trait
 
-#### Scenario: A timer inside a workflow tasklet fires
+#### Scenario: A timer inside a bounded tasklet fires
 
-- **WHEN** a tasklet of a running `PerInput` workflow calls `ctx.timer_after(Duration::from_millis(300))` in `run`
+- **WHEN** a tasklet of a running `PerInput` bounded operator calls `ctx.timer_after(Duration::from_millis(300))` in `run`
 - **THEN** the call answers `Ok(at)`, and `on_timer` runs on that cell with `fired_at == at`, opening a pass at that tasklet
 

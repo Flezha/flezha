@@ -22,7 +22,7 @@ defmodule Flezha.Config.KeysSeamTest do
   ]
 
   # A read of a NAMED knob: a literal `FLEZHA_*` or a module attribute holding
-  # one. `System.get_env(value)` where the value is data an operator wrote into
+  # one. `System.get_env(value)` where the value is data a user wrote into
   # a setting — a password variable's name — is not a knob and no row can
   # declare it, so the shape lets a lowercase argument through.
   @elixir_read ~r/System\.get_env\("FLEZHA_|System\.get_env\(@|Application\.(get_env|fetch_env!?)\(:flezha/
@@ -230,20 +230,20 @@ defmodule Flezha.Config.KeysSeamTest do
       assert understated == []
     end
 
-    test "every variable the published table names is a row, and every operator row is published" do
+    test "every variable the published table names is a row, and every user row is published" do
       published = for {_where, var, _field} <- documented_defaults(), into: MapSet.new(), do: var
 
       # Layer 1 of the published table is what `config/runtime.exs` translates:
       # every row a controller reads. An SDK's, the CLI's and the shell
       # wrappers' names are published with their own surfaces.
-      operator_rows =
+      config_rows =
         for {_name, row} <- Keys.rows(),
             row.env,
             :controller in row.runtimes,
             into: MapSet.new(),
             do: row.env
 
-      assert MapSet.difference(operator_rows, published) |> MapSet.to_list() == []
+      assert MapSet.difference(config_rows, published) |> MapSet.to_list() == []
     end
   end
 
@@ -400,7 +400,7 @@ defmodule Flezha.Config.KeysSeamTest do
 
   defp renderings(row), do: [Keys.render_default(row)]
 
-  # A row whose default is one value an operator can read back. A derivation, a
+  # A row whose default is one value a user can read back. A derivation, a
   # per-run resource and a value computed at boot are published as prose.
   defp comparable?(row) do
     is_nil(row.derived) and is_nil(row.per_run) and

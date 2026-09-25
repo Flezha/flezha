@@ -6,10 +6,10 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
   handler invocation.
   """
 
-  alias Flezha.Operative.Builder
+  alias Flezha.Operator.Builder
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Ctx
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias FlezhaTest.Helper.NodeTestHelper
 
   use ExUnit.Case
@@ -56,13 +56,13 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
   end
 
   setup do
-    on_exit(fn -> OperativeManager.stop_all_operatives(@namespace) end)
+    on_exit(fn -> OperatorManager.stop_all_operators(@namespace) end)
     :ok
   end
 
-  defp start_operative(id) do
-    operative = %Builder{id: id, factory_id: @factory}
-    assert {:ok, %{pid: pid}} = OperativeManager.start_operative(@namespace, operative)
+  defp start_operator(id) do
+    operator = %Builder{id: id, factory_id: @factory}
+    assert {:ok, %{pid: pid}} = OperatorManager.start_operator(@namespace, operator)
     pid
   end
 
@@ -70,7 +70,7 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
     plugin = %Plugin{
       id: plugin_id,
       namespace: @namespace,
-      operative_id: "ignored-by-direct-enable",
+      operator_id: "ignored-by-direct-enable",
       provider: provider,
       opts: opts,
       hooks: [{:on_message, [key: key]}]
@@ -91,20 +91,20 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
   end
 
   test "valid key routes to plugin and replies {:ok, bytes}" do
-    pid = start_operative("mh_dispatch_ok")
+    pid = start_operator("mh_dispatch_ok")
     :ok = enable_handler(pid, "plugin-ok", "echo", OkProvider)
 
     assert {:ok, "ok:hi"} = request(pid, "echo", "hi")
   end
 
   test "unknown key replies {:error, {:unknown_key, :on_message, key}}" do
-    pid = start_operative("mh_dispatch_unknown")
+    pid = start_operator("mh_dispatch_unknown")
 
     assert {:error, {:unknown_key, :on_message, "nope"}} = request(pid, "nope", <<>>)
   end
 
   test "long-running handler runs off-Overwatch and does not block IO casts" do
-    pid = start_operative("mh_dispatch_nonblocking")
+    pid = start_operator("mh_dispatch_nonblocking")
     :ok = enable_handler(pid, "plugin-slow", "slow", SlowProvider)
 
     ref = make_ref()
@@ -126,7 +126,7 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
   end
 
   test "duplicate key returns conflict and keeps existing handler" do
-    pid = start_operative("mh_dispatch_conflict")
+    pid = start_operator("mh_dispatch_conflict")
     :ok = enable_handler(pid, "plugin-a", "shared", OkProvider)
 
     assert {:error, {:key_conflict, :on_message, "shared"}} =
@@ -136,7 +136,7 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
   end
 
   test "handler that raises surfaces as {:error, {:exception, _, _}} and Overwatch stays up" do
-    pid = start_operative("mh_dispatch_raise")
+    pid = start_operator("mh_dispatch_raise")
     :ok = enable_handler(pid, "plugin-raise", "boom", RaisingProvider)
     :ok = enable_handler(pid, "plugin-ok", "ok", OkProvider)
 
@@ -147,17 +147,17 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
   end
 
   test "handler returning {:error, reason} is propagated verbatim" do
-    pid = start_operative("mh_dispatch_error")
+    pid = start_operator("mh_dispatch_error")
     :ok = enable_handler(pid, "plugin-err", "err", ErrorProvider)
 
     assert {:error, :deliberate} = request(pid, "err", <<>>)
   end
 
   test "sending after the old Overwatch pid dies surfaces as caller timeout" do
-    pid = start_operative("mh_dispatch_dead_pid")
+    pid = start_operator("mh_dispatch_dead_pid")
     :ok = enable_handler(pid, "plugin-ok", "echo", OkProvider)
 
-    :ok = OperativeManager.stop_operative(@namespace, "mh_dispatch_dead_pid")
+    :ok = OperatorManager.stop_operator(@namespace, "mh_dispatch_dead_pid")
     refute Process.alive?(pid)
 
     assert {:error, :test_timeout} = request(pid, "echo", "x", 100)

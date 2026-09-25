@@ -14,7 +14,7 @@ defmodule Flezha.State.Restore do
   cold start), `terminal_seq_hint = 0` and both bodies are empty.
   """
 
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.SDK.RecordFrame
   alias Flezha.State.{Paths, Snapshot}
 
@@ -93,15 +93,15 @@ defmodule Flezha.State.Restore do
   end
 
   @doc """
-  The SDK language stamped across `operative_class`'s durable state, or `nil`
+  The SDK language stamped across `operator_class`'s durable state, or `nil`
   when the class has none on disk.
 
   The first Cell that answers wins: a class is written by one SDK, so a
   second read would only confirm the first.
   """
   @spec class_sdk_lang(binary()) :: byte() | nil
-  def class_sdk_lang(operative_class) when is_binary(operative_class) do
-    operative_class
+  def class_sdk_lang(operator_class) when is_binary(operator_class) do
+    operator_class
     |> Paths.cells_of()
     |> Enum.find_value(&sdk_lang/1)
   end
@@ -153,17 +153,17 @@ defmodule Flezha.State.Restore do
 
   @doc """
   Establish the language of `factory_id` in `namespace` from the bytes
-  `operative_class` actually wrote, correcting a value some runner established
+  `operator_class` actually wrote, correcting a value some runner established
   by advertising first.
 
   The header is the authority wherever durable state exists. A class with
   nothing on disk records nothing. Called from the bind, the one seam holding
-  both the factory id and the operative's on-disk class.
+  both the factory id and the operator's on-disk class.
   """
   @spec establish_sdk_lang_from_state(binary(), binary(), binary()) :: :ok
-  def establish_sdk_lang_from_state(namespace, factory_id, operative_class)
-      when is_binary(namespace) and is_binary(factory_id) and is_binary(operative_class) do
-    case class_sdk_lang(operative_class) do
+  def establish_sdk_lang_from_state(namespace, factory_id, operator_class)
+      when is_binary(namespace) and is_binary(factory_id) and is_binary(operator_class) do
+    case class_sdk_lang(operator_class) do
       nil ->
         :ok
 

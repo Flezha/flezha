@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The auto-restore-on-boot capability provides automatic, operator-free recovery of the Flezha cluster's running state across controller restarts, full-cluster cold boots, ProcessHub redistribution, and runner pod restarts. It activates ProcessHub's `durable-registry` and `coordinator-bootstrap-recovery` capabilities per namespace, registers Flezha-side hooks that surface the replay lifecycle to observability, and wires per-Cell WAL/snapshot restoration into the data-stream attach path. Registry-dependent services gate on recovery completion rather than on the replay hooks. The capability subsumes the prior `cluster-snapshot-restore` and `plugin-subscription-persistence` capabilities — boot-survival no longer requires operator-driven snapshot/restore CLI nor a parallel plugin-subscription store.
+The auto-restore-on-boot capability provides automatic, user-free recovery of the Flezha cluster's running state across controller restarts, full-cluster cold boots, ProcessHub redistribution, and runner pod restarts. It activates ProcessHub's `durable-registry` and `coordinator-bootstrap-recovery` capabilities per namespace, registers Flezha-side hooks that surface the replay lifecycle to observability, and wires per-Cell WAL/snapshot restoration into the data-stream attach path. Registry-dependent services gate on recovery completion rather than on the replay hooks. The capability subsumes the prior `cluster-snapshot-restore` and `plugin-subscription-persistence` capabilities — boot-survival no longer requires user-driven snapshot/restore CLI nor a parallel plugin-subscription store.
 ## Requirements
 ### Requirement: Configure ProcessHub for durable registry and auto-recovery per namespace
 
@@ -18,7 +18,7 @@ The recovery configuration SHALL carry only the keys `ProcessHub.Service.Recover
 
 The grace SHALL be the cap on the first reconcile round rather than the path every boot takes. The round opens on peer evidence, so a controller whose hubs have no peers leaves `:recovering` once the cluster settle window has elapsed, and `:process_hub_reconcile_grace_ms` bounds only the case where a connected peer never delivers its registry data. Its `45_000` default is sized for a peer that is itself still booting, which is the slowest answer a healthy cluster produces, and is no longer tied to ProcessHub's `sync_interval` or to any runner handshake window.
 
-An operative whose runner has not connected when its start is placed SHALL be started unbound and rebound by the convergence loop, rather than waited for. The placement records no runner, the Overwatch holds the operative, and the binding happens when a runner advertising its factory connects. No configuration value SHALL be sized as a runner handshake window, because none of them waits for a runner.
+An operator whose runner has not connected when its start is placed SHALL be started unbound and rebound by the convergence loop, rather than waited for. The placement records no runner, the Overwatch holds the operator, and the binding happens when a runner advertising its factory connects. No configuration value SHALL be sized as a runner handshake window, because none of them waits for a runner.
 
 The kill-switch `:flezha, :auto_restore_enabled` (env var `FLEZHA_AUTO_RESTORE_ENABLED`, default `true`) SHALL gate the `auto_recovery` field: when `false`, pass `auto_recovery: false` to `ProcessHub.child_spec` so ProcessHub transitions immediately to `:normal` and never reconciles.
 
@@ -45,7 +45,7 @@ The atom in the registry-backend tuple MUST resolve to a real backend module via
 
 #### Scenario: A boot that skips replay leaves the on-disk registry intact
 
-- **GIVEN** a registry file holding at least one operative row
+- **GIVEN** a registry file holding at least one operator row
 - **WHEN** the backend is opened with `recovery_replay: false` (the marker-present boot), then closed, then reopened with `recovery_replay: true`
 - **THEN** the first open exposes no rows as live state
 - **AND** the reopen still finds every row that was on disk before it
@@ -57,7 +57,7 @@ The atom in the registry-backend tuple MUST resolve to a real backend module via
 - **THEN** `ProcessHub.Initializer.setup_storage/2` returns successfully for `:default_hub`
 - **AND** the connect starts the namespace's hub and the runner's session completes its handshake
 - **AND** the controller does not crash, the BEAM does not exit, and the agent stays Ready
-- **AND** a subsequent `bin/flz operative list` returns exit 0 (empty list on first boot)
+- **AND** a subsequent `bin/flz operator list` returns exit 0 (empty list on first boot)
 
 #### Scenario: A controller with no peers is ready in seconds
 
@@ -91,60 +91,60 @@ When the kill-switch `:flezha, :auto_restore_enabled` is `false`, ProcessHub doe
 
 ### Requirement: Cell state restoration fires on first stream attach
 
-When a Cell's data stream attaches to a `StreamChannel` AND the owning Operative has `persistence_enabled = true` AND `Restore.assemble_payload/1` returns a payload with non-empty `snapshot_bytes` OR non-empty `change_log_bytes` AND the Operative did NOT arrive via HotSwap, the controller SHALL invoke `Flezha.State.Commands.dispatch_restore_init_state/2` for that Cell exactly once per Operative-startup BEFORE allowing input frames to flow.
+When a Cell's data stream attaches to a `StreamChannel` AND the owning Operator has `persistence_enabled = true` AND `Restore.assemble_payload/1` returns a payload with non-empty `snapshot_bytes` OR non-empty `change_log_bytes` AND the Operator did NOT arrive via HotSwap, the controller SHALL invoke `Flezha.State.Commands.dispatch_restore_init_state/2` for that Cell exactly once per Operator-startup BEFORE allowing input frames to flow.
 
-The Operative's `arrived_via_hotswap?` flag SHALL be set to `true` by `Overwatch.alter_handover_state/2` on the destination of a HotSwap migration. When this flag is set, `Flezha.State.Commands.dispatch_restore_init_state/2` SHALL NOT fire — the in-band handover state stands.
+The Operator's `arrived_via_hotswap?` flag SHALL be set to `true` by `Overwatch.alter_handover_state/2` on the destination of a HotSwap migration. When this flag is set, `Flezha.State.Commands.dispatch_restore_init_state/2` SHALL NOT fire — the in-band handover state stands.
 
-This works identically across: ProcessHub-driven cold-boot replay, fresh `flz operative start`, ProcessHub redistribution, AddOperative reissue after runner restart.
+This works identically across: ProcessHub-driven cold-boot replay, fresh `flz operator start`, ProcessHub redistribution, AddOperator reissue after runner restart.
 
 #### Scenario: ProcessHub replay + Cell stream attach ships RestoreInitState
 
-- **GIVEN** ProcessHub's persistent registry is replayed; a Operative is started; a runner connects and is assigned
-- **WHEN** the SDK opens a data stream for a Cell that has on-disk WAL records under `app_data/state/{operative_class}/{tasklet_id}/{cell_key}.wal`
+- **GIVEN** ProcessHub's persistent registry is replayed; an Operator is started; a runner connects and is assigned
+- **WHEN** the SDK opens a data stream for a Cell that has on-disk WAL records under `app_data/state/{operator_class}/{tasklet_id}/{cell_key}.wal`
 - **THEN** the controller ships `RestoreInitState{cell_id, snapshot_bytes, change_log_bytes}` over the control channel BEFORE forwarding any input frames
 
 #### Scenario: HotSwap-arrived Cell skips dispatch
 
-- **GIVEN** a Operative arrives via HotSwap carrying a non-empty serialized state; `arrived_via_hotswap? = true`
+- **GIVEN** an Operator arrives via HotSwap carrying a non-empty serialized state; `arrived_via_hotswap? = true`
 - **WHEN** the Cell's data stream attaches
 - **THEN** `dispatch_restore_init_state/2` SHALL NOT fire; the in-band handover state is the basis for going-forward processing
 
 #### Scenario: HotSwap-arrived Cell with an EMPTY handover does not skip dispatch
 
-- **GIVEN** a Operative migrates while its source runner is already gone, so `prepare_handover_state/1` has no runner to serialize from and ships an empty payload
+- **GIVEN** an Operator migrates while its source runner is already gone, so `prepare_handover_state/1` has no runner to serialize from and ships an empty payload
 - **WHEN** `alter_handover_state/2` runs on the destination
 - **THEN** `arrived_via_hotswap?` SHALL remain `false` — an empty handover carries nothing to double-apply, and the on-disk state is the only surviving copy
 - **AND** neither the bind-time restore nor the `kick_restore` repair SHALL be suppressed
 
 ### Requirement: A migration whose handover is empty SHALL pull the source controller's Cell files
 
-`state_root` is node-local and MUST NOT be assumed shared. `prepare_handover_state/1` sources the operative's state from its **runner**, falling back only to the final state a runner handed its Overwatch on a graceful shutdown, which a later bind of the operative to any runner discards. A migration triggered by a runner's death therefore ships an empty payload unless that runner left such a state and no runner has been bound since, and the source controller's disk then holds the only surviving copy.
+`state_root` is node-local and MUST NOT be assumed shared. `prepare_handover_state/1` sources the operator's state from its **runner**, falling back only to the final state a runner handed its Overwatch on a graceful shutdown, which a later bind of the operator to any runner discards. A migration triggered by a runner's death therefore ships an empty payload unless that runner left such a state and no runner has been bound since, and the source controller's disk then holds the only surviving copy.
 
-`prepare_handover_state/1` SHALL stamp `source_node` on the handover map. When `alter_handover_state/2` receives an empty payload and a `source_node` other than this node, the destination SHALL pull every durable file of the operative from that node via `Flezha.State.WalTransfer.pull_operative/3` and then run the ordinary per-Cell replay, both through `Flezha.Operative.Replay.dispatch_restore/3`, the step every bind's restore runs. An operative's durable files are its Cells' file sets and, for a workflow instance, its journal and its durable input log, which SHALL travel together: a journal pulled without its log would seed the instance's floor in an empty offset space, under which no retained input is ever owed. The same pull SHALL serve a partition member placed on a node other than the one its group was last assembled on.
+`prepare_handover_state/1` SHALL stamp `source_node` on the handover map. When `alter_handover_state/2` receives an empty payload and a `source_node` other than this node, the destination SHALL pull every durable file of the operator from that node via `Flezha.State.WalTransfer.pull_operator/3` and then run the ordinary per-Cell replay, both through `Flezha.Operator.Replay.dispatch_restore/3`, the step every bind's restore runs. An operator's durable files are its Cells' file sets and, for a bounded instance, its journal and its durable input log, which SHALL travel together: a journal pulled without its log would seed the instance's floor in an empty offset space, under which no retained input is ever owed. The same pull SHALL serve a partition member placed on a node other than the one its group was last assembled on.
 
 The pull SHALL be:
 
 1. **Destination-driven.** The source only answers reads (`Paths.durable_refs/1`, `manifest/1`, `read_chunk/3` over `:erpc`), so a source that dies mid-transfer fails the pull instead of stranding a partial file on the destination.
 2. **Atomic per file.** Chunks are written to a `.transferring` sibling, fsynced, then renamed onto the destination path. Any failure removes the artefact and leaves that Cell cold — never half-restored.
 3. **Scoped by the reference's own file set.** A requested name is resolved against the file set the reference names, `Flezha.State.Paths.cell_files/1` for a Cell or the journal's reserved identity and the input log's one path for the log, never joined onto the state directory, so a peer cannot read arbitrary paths off the node.
-4. **Ahead of the bind's resume read, and never over state already here.** A bind whose operative names a foreign `state_source_node` pulls before it reads the instance's journal, restore count and input-log tail, so a workflow member resumes from what arrived; a node that already holds any of the instance's durable files pulls nothing, so a later restore never overwrites newer progress with the copy the source was left holding. The migration's pull runs off the Overwatch loop, since the copy is bounded by file size.
-5. **Non-fatal.** A Cell that cannot be pulled is skipped; the operative keeps the Cells that did land. Telemetry: `[:flezha, :state, :wal_pulled]` / `[:flezha, :state, :wal_pull_failed]`.
+4. **Ahead of the bind's resume read, and never over state already here.** A bind whose operator names a foreign `state_source_node` pulls before it reads the instance's journal, restore count and input-log tail, so a bounded operator member resumes from what arrived; a node that already holds any of the instance's durable files pulls nothing, so a later restore never overwrites newer progress with the copy the source was left holding. The migration's pull runs off the Overwatch loop, since the copy is bounded by file size.
+5. **Non-fatal.** A Cell that cannot be pulled is skipped; the operator keeps the Cells that did land. Telemetry: `[:flezha, :state, :wal_pulled]` / `[:flezha, :state, :wal_pull_failed]`.
 
 Source-side files SHALL NOT be deleted at migration completion; the Retention sweeper reaps orphans.
 
-This is one-shot transfer at migration time, NOT replication: a controller that dies together with its disk takes its operatives' state with it.
+This is one-shot transfer at migration time, NOT replication: a controller that dies together with its disk takes its operators' state with it.
 
-#### Scenario: Controller loses all runners — operatives migrate with their state
+#### Scenario: Controller loses all runners — operators migrate with their state
 
-- **GIVEN** controller A hosting operative `p1` with Cell state on A's local disk and no snapshot of `p1` held by its Overwatch; peer controller B with a runner for `p1`'s factory
+- **GIVEN** controller A hosting operator `p1` with Cell state on A's local disk and no snapshot of `p1` held by its Overwatch; peer controller B with a runner for `p1`'s factory
 - **WHEN** A's last runner disconnects and, after the withdrawal grace, A stops serving `p1`'s factory, so the hub's redistribution assigns `p1` to B
 - **THEN** `p1` migrates to B through the consent gate
 - **AND** because A's runner is gone the handover payload is empty, so B pulls `p1`'s Cell files from A and replays them
 - **AND** `p1` resumes on B with its pre-migration state; A's files remain on A until Retention sweeps them
 
-#### Scenario: A durable workflow migrates with its journal and log
+#### Scenario: A durable bounded operator migrates with its journal and log
 
-- **GIVEN** controller A hosting a durable `per_input` workflow instance with three committed iterations and one retained input above its floor, and peer controller B with a runner for its factory
+- **GIVEN** controller A hosting a durable `per_input` bounded instance with three committed iterations and one retained input above its floor, and peer controller B with a runner for its factory
 - **WHEN** A's last runner disconnects and the hub assigns the instance to B
 - **THEN** B pulls the instance's Cells, its `task.journal` and its `input.log` from A, byte for byte, and A's copies stay for Retention
 
@@ -166,26 +166,26 @@ This is one-shot transfer at migration time, NOT replication: a controller that 
 - **WHEN** the destination handles the error
 - **THEN** the `.transferring` artefact SHALL be removed and the destination path SHALL NOT exist
 
-### Requirement: State-directory cleanup ONLY on explicit operative stop
+### Requirement: State-directory cleanup ONLY on explicit operator stop
 
-State files under `app_data/state/{operative_class}/{tasklet_id}/{cell_key}.{wal,snap.N,outbox.dedup}` SHALL be removed ONLY when `Flezha.Service.OperativeManager.stop_operative/2` is called by an operator. ProcessHub's `child_unregistered_hook` (which fires on HotSwap source-side, redistribution-away, etc.) SHALL NOT delete state files.
+State files under `app_data/state/{operator_class}/{tasklet_id}/{cell_key}.{wal,snap.N,outbox.dedup}` SHALL be removed ONLY when `Flezha.Service.OperatorManager.stop_operator/2` is called by a user. ProcessHub's `child_unregistered_hook` (which fires on HotSwap source-side, redistribution-away, etc.) SHALL NOT delete state files.
 
-`stop_operative/2` SHALL: (a) call `ProcessHub.stop_children/3` (which fires the existing hooks → cspec deletion via persistent registry); (b) on success, recursively delete `app_data/state/{operative_class}/{tasklet_id}/` for each tasklet. Skip with WARN log if any `.tmp` or `.rewriting` file is present.
+`stop_operator/2` SHALL: (a) call `ProcessHub.stop_children/3` (which fires the existing hooks → cspec deletion via persistent registry); (b) on success, recursively delete `app_data/state/{operator_class}/{tasklet_id}/` for each tasklet. Skip with WARN log if any `.tmp` or `.rewriting` file is present.
 
 The Retention sweeper handles long-term orphans via `time_travel_retention_hours`.
 
 #### Scenario: HotSwap source-side does NOT delete state files
 
-- **GIVEN** operative `p1` running on controller A with WAL files
+- **GIVEN** operator `p1` running on controller A with WAL files
 - **WHEN** ProcessHub HotSwap migrates `p1` to controller B
 - **AND** A's `child_unregistered_hook` fires after the source process terminates
 - **THEN** A's persistent-registry row is removed by ProcessHub; A's `app_data/state/...` files SHALL still exist
-- **AND** B's persistent-registry row is written by ProcessHub's `post_children_start_hook`; B's WAL is populated by WAL-follows-operative
+- **AND** B's persistent-registry row is written by ProcessHub's `post_children_start_hook`; B's WAL is populated by WAL-follows-operator
 
-#### Scenario: flz operative stop deletes state files
+#### Scenario: flz operator stop deletes state files
 
-- **WHEN** the runner runs `flz operative stop default p1`
-- **THEN** `OperativeManager.stop_operative/2` calls `ProcessHub.stop_children/3`; on success, recursively deletes `app_data/state/MarketOperative/btc/...`
+- **WHEN** the runner runs `flz operator stop default p1`
+- **THEN** `OperatorManager.stop_operator/2` calls `ProcessHub.stop_children/3`; on success, recursively deletes `app_data/state/MarketOperator/btc/...`
 - **AND** if any `.tmp` or `.rewriting` file is present, deletion is skipped with a WARN log
 
 ### Requirement: Single explicitly-tolerated data-loss case
@@ -209,7 +209,7 @@ Ungraceful kill (SIGKILL of a controller without orchestration giving it time to
 
 The CLI SHALL provide:
 
-- `flz boot status` — for each namespace hub, print: hub_id, ProcessHub `recovery_state`, persistent-registry row count, last replay outcome (telemetry-aggregated), pending pull-on-attach transfers. It SHALL additionally print the readiness verdict and one line per unmet readiness precondition, so an operator can see which precondition is holding the node.
+- `flz boot status` — for each namespace hub, print: hub_id, ProcessHub `recovery_state`, persistent-registry row count, last replay outcome (telemetry-aggregated), pending pull-on-attach transfers. It SHALL additionally print the readiness verdict and one line per unmet readiness precondition, so a user can see which precondition is holding the node.
 - `flz boot await [--timeout=N]` — block until the readiness verdict is `:ready`, or the timeout elapses. It SHALL read the verdict rather than iterating hubs itself, and SHALL exit non-zero when the timeout elapses with the verdict below `:ready`, naming the unmet preconditions. A timeout of zero SHALL evaluate the verdict once and return, so the same verb serves a container healthcheck.
 
 `flz boot await` SHALL NOT report success on the grounds that the set of things to wait for is empty. A controller that has not yet created its namespace hubs SHALL be reported as not ready.
@@ -249,27 +249,27 @@ The option reader SHALL be unchanged: `--timeout`, `--timeout=`, `-t` and `-t=` 
 - **WHEN** the runner runs `flz boot import-legacy-snapshot /path/to/snap.flz`
 - **THEN** the CLI refuses it as an unrecognised subcommand, names the verbs `flz boot` does accept, and exits non-zero
 
-### Requirement: Recovery replay SHALL NOT resurrect operatives onto dead nodes
+### Requirement: Recovery replay SHALL NOT resurrect operators onto dead nodes
 
 ProcessHub recovery replay (`Flezha.Service.HubManager.alter_child_data/2`) SHALL drop
 any `{node, pid}` entries that reference nodes absent from the live cluster when it
-rewrites a operative's child-spec to an active runner, so the replayed operative is placed on a
+rewrites an operator's child-spec to an active runner, so the replayed operator is placed on a
 live node rather than being treated as "already running" on a gone node. This complements
 the generic ProcessHub `post_node_leave` reaping (see `controller-leadership`) and is
 defense-in-depth for the case where reaping has not yet fired at replay time.
 
 #### Scenario: Stale dead-node pid does not block respawn
-- **GIVEN** a operative's persisted registry entry lists a pid on a node that is no longer in the cluster
+- **GIVEN** an operator's persisted registry entry lists a pid on a node that is no longer in the cluster
 - **WHEN** recovery replay runs `alter_child_data`
-- **THEN** the dead-node entry SHALL be dropped and the operative SHALL be (re)started on a live node + live runner
-- **AND** the operative SHALL resume producing rather than remaining registered-but-silent on the dead node
+- **THEN** the dead-node entry SHALL be dropped and the operator SHALL be (re)started on a live node + live runner
+- **AND** the operator SHALL resume producing rather than remaining registered-but-silent on the dead node
 
 ### Requirement: Recovery and on-demand hub creation SHALL be gated on cluster formation
 
 Recovery-triggering hub creation SHALL occur only after the cluster is formed (or the
 bounded degrade-to-solo timeout has elapsed), so a hub is never created on a
 not-yet-clustered node and then diverge from its peers. After the gate, the reconciler
-owns post-replay convergence (rebind, reissue) so a operative that replay started
+owns post-replay convergence (rebind, reissue) so an operator that replay started
 but did not bring to production is still healed.
 
 The gate SHALL be one seam that every hub-creating path waits on, and no path SHALL write its own wait: boot-time creation of the declared set, on-demand creation for a connecting runner, and the schedule hub's own creation SHALL all reach the cluster through it. Boot-time creation SHALL wait on the gate once for the whole declared set rather than once per namespace, because cluster formation is a property of the node and not of a namespace. The wait SHALL stay synchronous for the on-demand path, which runs inside the fleet manager's own call and must answer that caller rather than defer it.
@@ -277,7 +277,7 @@ The gate SHALL be one seam that every hub-creating path waits on, and no path SH
 #### Scenario: Replay on a freshly-clustered node converges
 - **GIVEN** a controller that has just joined the cluster and replayed its registry
 - **WHEN** the reconciler runs after `post_recovery_replay`
-- **THEN** every replayed operative SHALL be driven to a producing state on a live runner, or marked `FAILED` if no runner can serve it
+- **THEN** every replayed operator SHALL be driven to a producing state on a live runner, or marked `FAILED` if no runner can serve it
 
 #### Scenario: No hub is created before the gate clears
 - **GIVEN** a node whose cluster has not formed and whose degrade-to-solo window has not elapsed
@@ -304,14 +304,14 @@ Registry-dependent services SHALL gate their readiness on `HubManager.await_reco
 - **THEN** the predicate treats auto-restore as enabled and returns a boolean without raising
 - **AND** the Loop tick completes normally.
 
-### Requirement: A sole-instance restart preserves operatives with no operator step
+### Requirement: A sole-instance restart preserves operators with no user step
 
-A plain restart of the sole controller SHALL preserve its operative list. The durable registry is never wiped to force a peer sync, so the first reconcile round finds every operative missing from the cluster and starts it, and `/healthz` SHALL honestly report `recovering`/`restoring_registry` until rebound. There SHALL be no arming step and no restart variant that discards the list on purpose.
+A plain restart of the sole controller SHALL preserve its operator list. The durable registry is never wiped to force a peer sync, so the first reconcile round finds every operator missing from the cluster and starts it, and `/healthz` SHALL honestly report `recovering`/`restoring_registry` until rebound. There SHALL be no arming step and no restart variant that discards the list on purpose.
 
-#### Scenario: a plain sole-instance restart preserves the operative list
-- **GIVEN** a sole controller has operatives bound
+#### Scenario: a plain sole-instance restart preserves the operator list
+- **GIVEN** a sole controller has operators bound
 - **WHEN** the controller restarts, with nothing armed beforehand
-- **THEN** the first reconcile round replays the operative list from the durable registry, `/healthz` reports `recovering` until rebound, and the operatives return.
+- **THEN** the first reconcile round replays the operator list from the durable registry, `/healthz` reports `recovering` until rebound, and the operators return.
 
 ### Requirement: The controller SHALL publish one readiness verdict, folded from a declared precondition table
 
@@ -397,7 +397,7 @@ The controller entrypoint SHALL wait for the control socket, and SHALL then wait
 The controller SHALL create a hub at boot for every namespace it already holds evidence for, so that on-demand creation by a connecting runner is the exception rather than the only rule. The evidence SHALL be derived from exactly two sources, and no namespace name SHALL be written into that derivation:
 
 - every directory under the configured process-hub registry root that holds a hub registry file, mapped back to its namespace, which is durable state the node must recover;
-- every entry of the durable namespace catalog, which is operator intent.
+- every entry of the durable namespace catalog, which is user intent.
 
 The union of the two is the node's **declared set**. A namespace in neither source SHALL still receive a hub when a runner connects for it, through the unchanged on-demand path.
 
@@ -409,7 +409,7 @@ The registry-root walk that produces the first source SHALL be the same walk tha
 
 #### Scenario: A restarted controller recovers before any runner attaches
 
-- **GIVEN** a controller whose disk holds a durable registry for a namespace with operatives, and no runner connected
+- **GIVEN** a controller whose disk holds a durable registry for a namespace with operators, and no runner connected
 - **WHEN** the controller starts
 - **THEN** that namespace SHALL have a live hub, and its durable registry SHALL replay, without waiting for a runner to connect
 
@@ -445,9 +445,9 @@ The registry-root walk that produces the first source SHALL be the same walk tha
 
 ### Requirement: A vacancy reclaim SHALL NOT destroy an unreplayed registry
 
-A hub SHALL be reclaimed as vacant only when this node holds none of its operatives, its declared set is empty, AND its recovery has reached a terminal state. Reclaiming a hub deletes its registry directory, so each of those three is a reason not to.
+A hub SHALL be reclaimed as vacant only when this node holds none of its operators, its declared set is empty, AND its recovery has reached a terminal state. Reclaiming a hub deletes its registry directory, so each of those three is a reason not to.
 
-This is what boot-time creation makes reachable, because it puts hubs exactly where runners are not, and a live-placement read is blind in both of the windows that follow. A hub does not load its durable registry into the live registry when it starts: the rows stay on disk until the reconcile runs, a whole reconcile grace later, and every live read answers "empty" until then. After the reconcile the rows are back but nothing has placed them, because placing an operative needs a runner and there is none. A reclaim keyed on live placement alone would therefore delete, seconds or a grace after boot, the durable state boot-time creation exists to recover.
+This is what boot-time creation makes reachable, because it puts hubs exactly where runners are not, and a live-placement read is blind in both of the windows that follow. A hub does not load its durable registry into the live registry when it starts: the rows stay on disk until the reconcile runs, a whole reconcile grace later, and every live read answers "empty" until then. After the reconcile the rows are back but nothing has placed them, because placing an operator needs a runner and there is none. A reclaim keyed on live placement alone would therefore delete, seconds or a grace after boot, the durable state boot-time creation exists to recover.
 
 A hub whose recovery has settled and whose declared set is empty SHALL still be reclaimed, so a node whose fleet does not serve a namespace still leaves that namespace's cluster.
 
@@ -457,15 +457,15 @@ A hub whose recovery has settled and whose declared set is empty SHALL still be 
 - **WHEN** the vacancy reclaim runs for that namespace
 - **THEN** the hub SHALL still be running and its registry directory SHALL still be on disk
 
-#### Scenario: A declared operative keeps its hub after recovery settles
+#### Scenario: A declared operator keeps its hub after recovery settles
 
-- **GIVEN** a controller whose hub was declared to hold an operative, with recovery settled, no runner to place it on and nothing running it
+- **GIVEN** a controller whose hub was declared to hold an operator, with recovery settled, no runner to place it on and nothing running it
 - **WHEN** the vacancy reclaim runs for that namespace
 - **THEN** the hub SHALL still be running and its registry directory SHALL still be on disk
 
 #### Scenario: A settled empty hub is still reclaimed
 
-- **GIVEN** a hub whose recovery has reached a terminal state, declared to hold nothing, holding no operatives of this node and serving no runners
+- **GIVEN** a hub whose recovery has reached a terminal state, declared to hold nothing, holding no operators of this node and serving no runners
 - **WHEN** the vacancy reclaim runs for it
 - **THEN** the hub SHALL be stopped, as before
 
@@ -475,7 +475,7 @@ The readiness precondition table SHALL carry a row that is unmet while boot-time
 
 The row SHALL be decided live on every read, so a hub that starts on a later retry SHALL flip the node to ready with no restart and no second boot. It SHALL fail closed with the rest of the table: a fact that cannot be read counts as unmet, never as met. It SHALL be answerable while the supervision tree is still coming up, so reading it SHALL NOT wait on the creating process, whose own first act is to wait on the cluster gate for up to the formation window.
 
-What the row answers SHALL be whether the declared set has been created, not whether every hub is still running. A hub the node later reclaims because it serves none of that namespace's operatives is a deliberate teardown: nothing brings such a hub back, so a row that refused for it would hold a healthy controller out of rotation for the rest of its life.
+What the row answers SHALL be whether the declared set has been created, not whether every hub is still running. A hub the node later reclaims because it serves none of that namespace's operators is a deliberate teardown: nothing brings such a hub back, so a row that refused for it would hold a healthy controller out of rotation for the rest of its life.
 
 The row SHALL read the same kill-switch that governs boot-time creation, so a node that creates no hubs at boot is not held unready waiting for hubs it will never create.
 
@@ -501,56 +501,56 @@ The health verdict SHALL NOT be derived from this row. A node holding readiness 
 
 #### Scenario: A hub reclaimed as vacant does not hold the node unready
 
-- **GIVEN** a controller that created its declared set at boot, and one of those namespaces whose hub it has since reclaimed because it serves none of that namespace's operatives
+- **GIVEN** a controller that created its declared set at boot, and one of those namespaces whose hub it has since reclaimed because it serves none of that namespace's operators
 - **WHEN** the readiness verdict is read
 - **THEN** that namespace SHALL NOT hold it, and the node SHALL stay ready
 
-### Requirement: A declared operative with no runner SHALL be held unbound, not crash-restarted
+### Requirement: A declared operator with no runner SHALL be held unbound, not crash-restarted
 
-A declared operative whose bind finds no runner advertising its factory SHALL remain alive and unbound, recording the outcome on its own state, and SHALL NOT stop. Its rebind SHALL be owned by the convergence loop alone, on the backoff ladder the loop already keys for an unbound operative, so no supervisor restart runs as a second retry mechanism beside it. The Controller SHALL NOT depend on the operative's death to report a bind that found no runner: a start request whose caller is waiting SHALL still be refused, from the operative's recorded outcome rather than from its exit.
+A declared operator whose bind finds no runner advertising its factory SHALL remain alive and unbound, recording the outcome on its own state, and SHALL NOT stop. Its rebind SHALL be owned by the convergence loop alone, on the backoff ladder the loop already keys for an unbound operator, so no supervisor restart runs as a second retry mechanism beside it. The Controller SHALL NOT depend on the operator's death to report a bind that found no runner: a start request whose caller is waiting SHALL still be refused, from the operator's recorded outcome rather than from its exit.
 
-The held operative SHALL bind without operator action once a runner advertising its factory connects, through the full initialisation path a never-bound operative requires, never through the handover path that assumes a previous runner holds its state.
+The held operator SHALL bind without user action once a runner advertising its factory connects, through the full initialisation path a never-bound operator requires, never through the handover path that assumes a previous runner holds its state.
 
-Holding SHALL be bounded by nothing but the arrival of a runner: a namespace whose runners never return holds its operatives indefinitely, reported unbound on every operator surface, and SHALL NOT exhaust its distributed supervisor's restart intensity however many operatives it declares.
+Holding SHALL be bounded by nothing but the arrival of a runner: a namespace whose runners never return holds its operators indefinitely, reported unbound on every operations surface, and SHALL NOT exhaust its distributed supervisor's restart intensity however many operators it declares.
 
-#### Scenario: A restored operative in a runnerless namespace stays alive
+#### Scenario: A restored operator in a runnerless namespace stays alive
 
-- **WHEN** a controller restores a declared operative into a namespace no runner serves, and its bind wait expires
-- **THEN** the operative SHALL still be alive after the wait, its supervisor SHALL record no restart for it, and no crash report SHALL be written
+- **WHEN** a controller restores a declared operator into a namespace no runner serves, and its bind wait expires
+- **THEN** the operator SHALL still be alive after the wait, its supervisor SHALL record no restart for it, and no crash report SHALL be written
 
-#### Scenario: Thousands of held operatives do not take the namespace down
+#### Scenario: Thousands of held operators do not take the namespace down
 
-- **WHEN** a namespace declares more operatives than its distributed supervisor's restart intensity permits and no runner serves any of them
-- **THEN** every operative SHALL still be alive after every bind wait has expired, and the namespace's supervision tree SHALL still be running
+- **WHEN** a namespace declares more operators than its distributed supervisor's restart intensity permits and no runner serves any of them
+- **THEN** every operator SHALL still be alive after every bind wait has expired, and the namespace's supervision tree SHALL still be running
 
-#### Scenario: A held operative binds when a runner arrives
+#### Scenario: A held operator binds when a runner arrives
 
-- **WHEN** a runner advertising the factory of a held operative connects to its namespace
-- **THEN** the convergence loop SHALL bind that operative through the full initialisation path, and the operative SHALL report healthy without operator action
+- **WHEN** a runner advertising the factory of a held operator connects to its namespace
+- **THEN** the convergence loop SHALL bind that operator through the full initialisation path, and the operator SHALL report healthy without user action
 
 #### Scenario: A waiting start request is still refused
 
-- **WHEN** an operator starts an operative in a namespace whose runner disappears between admission and bind
-- **THEN** the start SHALL be refused with the bind's own reason, and the operative SHALL NOT be left running unbound
+- **WHEN** a user starts an operator in a namespace whose runner disappears between admission and bind
+- **THEN** the start SHALL be refused with the bind's own reason, and the operator SHALL NOT be left running unbound
 
 ### Requirement: Declared-set-write-first ordering for plugin mutations
 
 `Flezha.Service.PluginManager.enable_plugin/2`, `disable_plugin/1` and `persist_plugin_opt/5` SHALL commit the plugin mutation to the hub's declared-children set BEFORE issuing the runtime `:plugin_subscribe`/`:plugin_unsubscribe` to the Overwatch. The declared set is named here deliberately: the hub keeps two records of a child, and an auto-recovery hub never replays its process registry from disk, so the declared set is the only one a restart reads. A mutation held only in the registry row is lost by the restart it was written to survive.
 
-The declared-set mutation SHALL be issued through the single start authority (`Flezha.Service.OperativeManager`), per `durable-operator-intent`, and never by the plugin manager reaching into the hub's declared-set API directly. An operative with no declared entry SHALL be refused rather than have one invented for it, so a plugin mutation can never resurrect an operative a stop removed for good.
+The declared-set mutation SHALL be issued through the single start authority (`Flezha.Service.OperatorManager`), per `durable-operator-intent`, and never by the plugin manager reaching into the hub's declared-set API directly. An operator with no declared entry SHALL be refused rather than have one invented for it, so a plugin mutation can never resurrect an operator a stop removed for good.
 
 Where durable starts are disabled, the declared set holds nothing at start either, so the mutation SHALL succeed without writing rather than fail or promise durability it cannot give.
 
 If the durable write fails, the runtime mutation SHALL NOT be issued and the caller SHALL receive the propagated error. A hub that refuses the write because its declared list is parked SHALL be reported as a refusal naming the reason; an enable SHALL NOT answer success while persisting nothing.
 
-If the runtime mutation fails after a successful durable write, and the controller is still running to observe it, the enable SHALL roll back: every durable record the enable wrote SHALL be removed along with the in-memory claim, so a failed enable leaves no entry behind on any surface. A controller that dies between the two runs no rollback, so its write stands and `Lifecycle.complete_init/4` subscribes the plugin from the restored spec on the next start. Self-healing on next start; no operator action needed.
+If the runtime mutation fails after a successful durable write, and the controller is still running to observe it, the enable SHALL roll back: every durable record the enable wrote SHALL be removed along with the in-memory claim, so a failed enable leaves no entry behind on any surface. A controller that dies between the two runs no rollback, so its write stands and `Lifecycle.complete_init/4` subscribes the plugin from the restored spec on the next start. Self-healing on next start; no user action needed.
 
 #### Scenario: Crash between the durable write and the runtime subscribe self-heals on restart
 
-- **GIVEN** a operative `p1` running; `enable_plugin("kafka_p1", %Plugin{...})` succeeds in committing the plugin to the declared set; the controller VM crashes before the runtime `:plugin_subscribe` is issued
+- **GIVEN** an operator `p1` running; `enable_plugin("kafka_p1", %Plugin{...})` succeeds in committing the plugin to the declared set; the controller VM crashes before the runtime `:plugin_subscribe` is issued
 - **WHEN** the controller restarts and the reconcile round starts `p1` from its declared entry, which includes `kafka_p1` in `opts[:plugins]`
 - **AND** `p1`'s Overwatch is restored (via ProcessHub's recovery path or peer-redistribution)
-- **THEN** `Lifecycle.complete_init/4` reads `operative.opts[:plugins]` and `Plugins.prepare/2` subscribes `kafka_p1`; the plugin is live without any operator action
+- **THEN** `Lifecycle.complete_init/4` reads `operator.opts[:plugins]` and `Plugins.prepare/2` subscribes `kafka_p1`; the plugin is live without any user action
 
 #### Scenario: Durable write fails — runtime mutation aborted
 
@@ -560,7 +560,7 @@ If the runtime mutation fails after a successful durable write, and the controll
 
 #### Scenario: Durable starts disabled — the mutation persists nothing and says so
 
-- **GIVEN** a controller running with auto-restore disabled, which declares nothing at operative start
+- **GIVEN** a controller running with auto-restore disabled, which declares nothing at operator start
 - **WHEN** `enable_plugin/2` is called
 - **THEN** no declared-set write is attempted, the runtime subscribe proceeds, and the caller is not told the plugin is durable
 
@@ -570,7 +570,7 @@ If the runtime mutation fails after a successful durable write, and the controll
 - **WHEN** the enable rolls back
 - **THEN** every durable record that enable wrote is removed as well as the in-memory claim
 - **AND** a later restart SHALL NOT resurrect a plugin whose enable never succeeded
-- **AND** the rollback SHALL NOT run on the teardown path, where removing the entry would erase a migrating operative's whole plugin manifest
+- **AND** the rollback SHALL NOT run on the teardown path, where removing the entry would erase a migrating operator's whole plugin manifest
 
 ### Requirement: `flz boot await` SHALL wait for a controller it cannot reach yet
 
@@ -589,7 +589,7 @@ timeout of zero SHALL ask exactly once.
 #### Scenario: A controller started a moment ago is waited for
 
 - **GIVEN** a controller launched with `flz controller start --mode daemon` whose distribution is not up yet
-- **WHEN** the operator runs `flz boot await --timeout 30`
+- **WHEN** the user runs `flz boot await --timeout 30`
 - **THEN** the CLI asks again until the controller answers, prints nothing while it cannot reach it, and exits with the controller's verdict
 - **AND** its first request asks the controller for 30 000 ms and every later one for less than the one before
 
@@ -608,11 +608,11 @@ timeout of zero SHALL ask exactly once.
 - **WHEN** `flz boot await --timeout 0` cannot reach a controller
 - **THEN** the CLI asks exactly once and exits 1
 
-### Requirement: A last-runner loss withdraws this controller's groups and the hub moves the operatives
+### Requirement: A last-runner loss withdraws this controller's groups and the hub moves the operators
 
-When this controller's last placeable runner for a factory disconnects, `Flezha.Runner.FleetManager` SHALL declare the disconnect, SHALL run no migration of its own, and SHALL withdraw the factory's group from the namespace hub as `operative-placement` states: after `group_withdraw_grace_ms`, or at once for a retiring runner. The withdrawal SHALL be the only thing that moves the operatives: the hub's redistribution reassigns each to a controller still serving the factory and moves it through ProcessHub's migration-consent gate with live handover (`migration_strategy: HotSwap{handover: true}`), as a controller join does. A child that defers SHALL stay put until it consents or reaches `max_defer_time`, when it SHALL be force-moved through the existing best-effort handover. When no controller serves the factory the operatives SHALL stay on this node, unbound. The `FleetManager` call handling the disconnect SHALL NOT block on any move. No `Migration.drain/2` SHALL run, so this node's place in the distribution is never held open by a drain marker: a runner reconnecting inside the grace is a placement candidate at once, and one reconnecting after it serves the group again at once.
+When this controller's last placeable runner for a factory disconnects, `Flezha.Runner.FleetManager` SHALL declare the disconnect, SHALL run no migration of its own, and SHALL withdraw the factory's group from the namespace hub as `operator-placement` states: after `group_withdraw_grace_ms`, or at once for a retiring runner. The withdrawal SHALL be the only thing that moves the operators: the hub's redistribution reassigns each to a controller still serving the factory and moves it through ProcessHub's migration-consent gate with live handover (`migration_strategy: HotSwap{handover: true}`), as a controller join does. A child that defers SHALL stay put until it consents or reaches `max_defer_time`, when it SHALL be force-moved through the existing best-effort handover. When no controller serves the factory the operators SHALL stay on this node, unbound. The `FleetManager` call handling the disconnect SHALL NOT block on any move. No `Migration.drain/2` SHALL run, so this node's place in the distribution is never held open by a drain marker: a runner reconnecting inside the grace is a placement candidate at once, and one reconnecting after it serves the group again at once.
 
-Once this node's fleet no longer advertises the namespace AND this node hosts none of the namespace's operatives, the convergence loop SHALL reclaim the hub here through `Flezha.Service.HubManager.stop_hub_if_vacant/1`, so a controller that cannot host is not handed children by the distribution. That guard SHALL be node-local: a peer's operatives never keep this node's hub alive, and this node's own — running or durably suspended — always do. A later runner connect starts the hub again, so the reclaim costs a returning runner nothing.
+Once this node's fleet no longer advertises the namespace AND this node hosts none of the namespace's operators, the convergence loop SHALL reclaim the hub here through `Flezha.Service.HubManager.stop_hub_if_vacant/1`, so a controller that cannot host is not handed children by the distribution. That guard SHALL be node-local: a peer's operators never keep this node's hub alive, and this node's own — running or durably suspended — always do. A later runner connect starts the hub again, so the reclaim costs a returning runner nothing.
 
 `ProcessHub.Service.Migration.drain/2` remains the function graceful shutdown and the namespace stop reach through the single seam `Flezha.Service.HubManager.drain_hub/2`, callable from `lib/flezha/shutdown/` only. `drain_hub/2` SHALL wait for the local children to actually be gone before its caller proceeds — the migration start requests are async and HotSwap stops a local child only AFTER the remote start succeeds — by monitoring the hub's local children, never by polling.
 
@@ -620,12 +620,12 @@ Once this node's fleet no longer advertises the namespace AND this node hosts no
 
 - **GIVEN** controller A lost its last runner for a namespace and the withdrawal grace is running
 - **WHEN** a runner reconnects to A before it elapses
-- **THEN** no drain marker SHALL be holding A out of the distribution, no group SHALL have been withdrawn, and A's operatives SHALL be rebound to the runner rather than moved
+- **THEN** no drain marker SHALL be holding A out of the distribution, no group SHALL have been withdrawn, and A's operators SHALL be rebound to the runner rather than moved
 
-#### Scenario: The hub moves the operatives, and the vacated hub is reclaimed
+#### Scenario: The hub moves the operators, and the vacated hub is reclaimed
 
 - **GIVEN** controller A whose last runner for a namespace disconnects, with peer controller B serving the same factories
 - **WHEN** the grace elapses
 - **THEN** A SHALL withdraw its groups in one announcement, each child SHALL move to B through the consent gate with handover, no `Migration.drain/2` SHALL run, and the `FleetManager` call handling the disconnect SHALL NOT have blocked
-- **AND** once A hosts none of the namespace's operatives, the loop SHALL stop A's hub, so B is the only node left in the namespace's cluster
+- **AND** once A hosts none of the namespace's operators, the loop SHALL stop A's hub, so B is the only node left in the namespace's cluster
 

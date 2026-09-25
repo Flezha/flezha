@@ -155,17 +155,17 @@ defmodule Flezha.Service.HubManagerStarterTest do
       assert File.regular?(registry_file(namespace))
     end
 
-    test "leaves a hub declared to hold operatives, even once recovery settles" do
+    test "leaves a hub declared to hold operators, even once recovery settles" do
       Application.put_env(:flezha, :hub_runner_assign_wait_ms, 0)
       namespace = leave_registry_on_disk()
       run_starter()
       start_durable(namespace, "declared_op")
 
       # The second window: the reconcile has run, so the rows are back, but
-      # nothing has placed them — placing an operative needs a runner and this
+      # nothing has placed them — placing an operator needs a runner and this
       # controller has none, which is the state the whole change is about.
       Snapshot.observe_recovery(Identificator.hub(namespace), :normal)
-      assert HubManager.declared_operatives(namespace) != []
+      assert HubManager.declared_operators(namespace) != []
 
       HubManager.stop_hub_if_vacant(namespace)
 
@@ -174,14 +174,14 @@ defmodule Flezha.Service.HubManagerStarterTest do
     end
 
     test "outlives real ticks once recovery settles on its own, with no runner" do
-      # The previous boot declared an operative whose runner never comes back.
+      # The previous boot declared an operator whose runner never comes back.
       seed_wait = TestHelpers.override_env(:hub_runner_assign_wait_ms, 0)
       namespace = leave_registry_on_disk(&start_durable(&1, "declared_op"))
       seed_wait.()
 
       # A 50 ms grace opens each boot's first round before the 2 s settle
       # window. The replay keeps its full placement wait, so the ticks below
-      # meet a declared operative that nothing has placed yet.
+      # meet a declared operator that nothing has placed yet.
       Application.put_env(:flezha, :process_hub_reconcile_grace_ms, 50)
 
       # Settled and holding nothing: the same ticks must reclaim this one, or
@@ -288,7 +288,7 @@ defmodule Flezha.Service.HubManagerStarterTest do
 
   # The state a restarted controller is in: a registry on disk with no hub
   # over it.
-  defp leave_registry_on_disk(seed \\ &inject_parked_operative/1) do
+  defp leave_registry_on_disk(seed \\ &inject_parked_operator/1) do
     namespace = unique("registry-only")
     {:ok, _} = ensure_hub(namespace)
     seed.(namespace)
@@ -298,8 +298,8 @@ defmodule Flezha.Service.HubManagerStarterTest do
     namespace
   end
 
-  defp inject_parked_operative(namespace),
-    do: inject_operative(namespace, "durable_op", [{node(), spawn(&NodeTestHelper.park/0)}])
+  defp inject_parked_operator(namespace),
+    do: inject_operator(namespace, "durable_op", [{node(), spawn(&NodeTestHelper.park/0)}])
 
   # `handle_continue(:bootstrap, _)` runs before any call is served, so an
   # answered call is the first batch finished.

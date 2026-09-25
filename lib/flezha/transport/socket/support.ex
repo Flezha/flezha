@@ -44,7 +44,7 @@ defmodule Flezha.Socket.Support do
   @doc """
   The absolute socket directory this controller established. Resolved once
   through the shared ladder and held in `:socket_files_path`; a value already
-  configured there (an operator's, or a test's) is used as it stands.
+  configured there (a user's, or a test's) is used as it stands.
 
   Always absolute: a relative socket path is resolved against each process's own
   working directory, so a controller and a runner started from two directories
@@ -121,7 +121,7 @@ defmodule Flezha.Socket.Support do
     end
   end
 
-  # Owner-only unless the operator has widened the boundary to one named group,
+  # Owner-only unless the user has widened the boundary to one named group,
   # which is warned on every boot for as long as it is set.
   defp apply_access_boundary(path) do
     case Config.get(:socket_dir_group) do

@@ -2,16 +2,16 @@
 
 ## Purpose
 
-The java-sdk-tasklet-annotations capability is the Java realization of the SDK authoring contract. It provides an annotation processor for `@Tasklet` / `@State` / `@CellsFor` (and `@CellKey` for dynamic mode) that generates the six `*Type()` getters, `name`, `initState`, the `Tasklet` implementation, `applyChange`, and — for a `@Tasklet` declaring a `sink` — the short form's `<Class>StreamOperative` or `<Class>WorkflowOperative`, which the application registers with `FlezhaRunner.registerFactory`. The processor mirrors the Rust SDK's signature-to-types, state, cell mode, and single-tasklet short-form inference rules so an equivalent operative expands to a structurally identical topology across both SDKs. Multi-tasklet topology stays explicitly declared in a `channels()` method, and all generated code targets the existing trait/interface surface with no engine, protocol, or WAL change.
+The java-sdk-tasklet-annotations capability is the Java realization of the SDK authoring contract. It provides an annotation processor for `@Tasklet` / `@State` / `@CellsFor` (and `@CellKey` for dynamic mode) that generates the six `*Type()` getters, `name`, `initState`, the `Tasklet` implementation, `applyChange`, and — for a `@Tasklet` declaring a `sink` — the short form's `<Class>UnboundedOperator` or `<Class>BoundedOperator`, which the application registers with `FlezhaRunner.registerFactory`. The processor mirrors the Rust SDK's signature-to-types, state, cell mode, and single-tasklet short-form inference rules so an equivalent operator expands to a structurally identical topology across both SDKs. Multi-tasklet topology stays explicitly declared in a `channels()` method, and all generated code targets the existing trait/interface surface with no engine, protocol, or WAL change.
 ## Requirements
 ### Requirement: `@Tasklet` annotation processor
 
-The Java SDK SHALL provide an annotation processor that generates a complete `Tasklet` implementation from an `@Tasklet`-annotated class with a `run` method, conforming to the authoring contract. The generated tasklet's `name()` SHALL be the `id` element when one is written, and the class name in snake_case otherwise. The annotation SHALL declare a tasklet and nothing else: it SHALL NOT carry `kind`, `sink` or `input`, which belong to an operative declaration, and the processor SHALL fail compilation naming the member and directing the author to `@StreamOperative` or `@WorkflowOperative` when one is written. The processor SHALL generate no operative class from `@Tasklet` and SHALL NOT generate an aggregate registration class.
+The Java SDK SHALL provide an annotation processor that generates a complete `Tasklet` implementation from an `@Tasklet`-annotated class with a `run` method, conforming to the authoring contract. The generated tasklet's `name()` SHALL be the `id` element when one is written, and the class name in snake_case otherwise. The annotation SHALL declare a tasklet and nothing else: it SHALL NOT carry `kind`, `sink` or `input`, which belong to an operator declaration, and the processor SHALL fail compilation naming the member and directing the author to `@UnboundedOperator` or `@BoundedOperator` when one is written. The processor SHALL generate no operator class from `@Tasklet` and SHALL NOT generate an aggregate registration class.
 
 #### Scenario: Stateless tasklet generates type getters and impl
 
 - **WHEN** a class `SingleMode` annotated `@Tasklet(id = "single_mode")` declares `String run(String input)`
-- **THEN** the processor generates the six `*Type()` getters, `name` returning `single_mode`, `initState`, a `Tasklet` implementation with `Input = String` and `Output = String`, and no operative class
+- **THEN** the processor generates the six `*Type()` getters, `name` returning `single_mode`, `initState`, a `Tasklet` implementation with `Input = String` and `Output = String`, and no operator class
 
 #### Scenario: Stateful tasklet infers State from the run parameter
 
@@ -21,7 +21,7 @@ The Java SDK SHALL provide an annotation processor that generates a complete `Ta
 #### Scenario: Generated tasklet is referenceable in channels
 
 - **WHEN** an `@Tasklet` class `StaticEntry` is processed
-- **THEN** its generated `Tasklet` type can be named in a hand-written `channels()` body of an operative of either kind via `from`/`into`
+- **THEN** its generated `Tasklet` type can be named in a hand-written `channels()` body of an operator of either kind via `from`/`into`
 
 #### Scenario: A written id is the tasklet's name
 
@@ -33,7 +33,7 @@ The Java SDK SHALL provide an annotation processor that generates a complete `Ta
 - **WHEN** a class `StaticDownstream` is annotated `@Tasklet` with no `id`
 - **THEN** the generated tasklet is named `static_downstream`, as before
 
-#### Scenario: An operative member on a tasklet is refused
+#### Scenario: An operator member on a tasklet is refused
 
 - **WHEN** a class annotated `@Tasklet(id = "do_nothing", sink = "echo")`, or the same with `kind` or `input`, is compiled
 - **THEN** the processor SHALL fail compilation naming the member and the short-form annotation that carries it
@@ -85,9 +85,9 @@ The Java SDK SHALL support a `@CellsFor` method annotation and `@Tasklet` attrib
 
 The Java processor SHALL apply the same signature-to-types, state, and auto-wiring inference rules as the Rust SDK, per the authoring contract.
 
-#### Scenario: Equivalent operative matches the Rust expansion
+#### Scenario: Equivalent operator matches the Rust expansion
 
-- **WHEN** the reference operative is authored with Java annotations and with Rust macros
+- **WHEN** the reference operator is authored with Java annotations and with Rust macros
 - **THEN** both expand to a structurally identical topology and associated-type mapping
 
 ### Requirement: Map-aware `@State` `@Journal` mutators
@@ -122,10 +122,10 @@ The `@Tasklet` annotation processor SHALL accept a `run` method returning `Optio
 - **WHEN** a `@Tasklet` `run` returns `Optional<Output>`
 - **THEN** the generated tasklet emits on present and emits nothing on empty, without the author referencing the tasklet context
 
-#### Scenario: Generated operative matches the hand-written twin
+#### Scenario: Generated operator matches the hand-written twin
 
 - **WHEN** a keyed-collection tasklet authored with `@State` + `@Tasklet` returning `Optional<Output>` is processed
-- **THEN** the generated operative processes input identically to a hand-written twin and `replayEquals()` is empty
+- **THEN** the generated operator processes input identically to a hand-written twin and `replayEquals()` is empty
 
 ### Requirement: `@InitState` method on `@Tasklet`
 
@@ -141,66 +141,66 @@ The `@Tasklet` annotation processor SHALL recognise an `@InitState`-annotated me
 - **WHEN** `@InitState` is declared on a `@Tasklet` class whose `run` has no `@State` handle parameter
 - **THEN** the processor emits an error stating `@InitState` requires a stateful run, and generates no init delegation
 
-### Requirement: `@StreamOperative` and `@WorkflowOperative` carry the short form
+### Requirement: `@UnboundedOperator` and `@BoundedOperator` carry the short form
 
-The Java SDK SHALL provide annotations `@StreamOperative` and `@WorkflowOperative` in `com.flezha.sdk.authoring`, applied to a class with exactly one public method named `run`, declaring a whole single-tasklet operative of the kind the annotation names. Each SHALL require a non-empty `id`, SHALL accept an optional `sink` and an optional `input` defaulting to the empty string, which the processor SHALL lower to the entry channel name `input`, and SHALL NOT accept a `kind` member. `@WorkflowOperative` SHALL additionally accept `loopMode()`, a `LoopMode` defaulting to `ONCE`, which the generated operative SHALL return from its `loopMode()`; no other class-level setting SHALL be a member of either annotation. `com.flezha.sdk.authoring.OperativeKind` SHALL be deleted, its only readers being the removed `kind`.
+The Java SDK SHALL provide annotations `@UnboundedOperator` and `@BoundedOperator` in `com.flezha.sdk.authoring`, applied to a class with exactly one public method named `run`, declaring a whole single-tasklet operator of the kind the annotation names. Each SHALL require a non-empty `id`, SHALL accept an optional `sink` and an optional `input` defaulting to the empty string, which the processor SHALL lower to the entry channel name `input`, and SHALL NOT accept a `kind` member. `@BoundedOperator` SHALL additionally accept `loopMode()`, a `LoopMode` defaulting to `ONCE`, which the generated operator SHALL return from its `loopMode()`; no other class-level setting SHALL be a member of either annotation. `com.flezha.sdk.authoring.OperatorKind` SHALL be deleted, its only readers being the removed `kind`.
 
-The processor SHALL generate `<Class>Tasklet`, whose `name()` is the written `id` verbatim, and `<Class>StreamOperative implements StreamOperative` or `<Class>WorkflowOperative implements WorkflowOperative`, each with `channels()`, whose `factoryId()` is that `id`, whose topology body wires the entry channel into `<Class>Tasklet` and, when a `sink` is written, `<Class>Tasklet` to that plugin sink, and whose every other operative method is at its interface default. With no `sink`, the topology body SHALL declare the entry channel and the tasklet and no plugin channel. The processor SHALL register nothing and SHALL NOT generate an aggregate registration class. An empty or absent `id` SHALL fail compilation naming the required member. A `sink` on a class whose `run` returns `void` and declares no `emits` SHALL fail compilation with a message beginning `SinkWithoutOutput`. An annotated class that also implements `StreamOperative` or `WorkflowOperative` SHALL fail compilation with a message beginning `ShortFormWithTopology`.
+The processor SHALL generate `<Class>Tasklet`, whose `name()` is the written `id` verbatim, and `<Class>UnboundedOperator implements UnboundedOperator` or `<Class>BoundedOperator implements BoundedOperator`, each with `channels()`, whose `factoryId()` is that `id`, whose topology body wires the entry channel into `<Class>Tasklet` and, when a `sink` is written, `<Class>Tasklet` to that plugin sink, and whose every other operator method is at its interface default. With no `sink`, the topology body SHALL declare the entry channel and the tasklet and no plugin channel. The processor SHALL register nothing and SHALL NOT generate an aggregate registration class. An empty or absent `id` SHALL fail compilation naming the required member. A `sink` on a class whose `run` returns `void` and declares no `emits` SHALL fail compilation with a message beginning `SinkWithoutOutput`. An annotated class that also implements `UnboundedOperator` or `BoundedOperator` SHALL fail compilation with a message beginning `ShortFormWithTopology`.
 
-`FlezhaRunner.registerFactory` and `unregisterFactory` SHALL accept a class annotated `@StreamOperative` or `@WorkflowOperative` and resolve its generated operative by the processor's naming rule, so the author registers the class they wrote. Resolution SHALL be per class, with no aggregate class written in the processor's last round.
+`FlezhaRunner.registerFactory` and `unregisterFactory` SHALL accept a class annotated `@UnboundedOperator` or `@BoundedOperator` and resolve its generated operator by the processor's naming rule, so the author registers the class they wrote. Resolution SHALL be per class, with no aggregate class written in the processor's last round.
 
-#### Scenario: An annotated class is a whole stream operative
+#### Scenario: An annotated class is a whole unbounded operator
 
-- **WHEN** a class `Echo` with `String run(String s)` is annotated `@StreamOperative(id = "echo", sink = "out")` and the runner is given `registerFactory(Echo.class)`
-- **THEN** the runner declares a stream operative `echo` with entry channel `input` and sink `out`, backed by a generated tasklet named `echo`
+- **WHEN** a class `Echo` with `String run(String s)` is annotated `@UnboundedOperator(id = "echo", sink = "out")` and the runner is given `registerFactory(Echo.class)`
+- **THEN** the runner declares an unbounded operator `echo` with entry channel `input` and sink `out`, backed by a generated tasklet named `echo`
 
-#### Scenario: An annotated class is a whole workflow operative
+#### Scenario: An annotated class is a whole bounded operator
 
-- **WHEN** a class `Place` is annotated `@WorkflowOperative(id = "place", sink = "placed", input = "order")`, is registered, an instance is started, and one message is sent on `order`
-- **THEN** `run` receives the message on `order`, its return value reaches `placed`, and the instance completes as a `once` workflow
+- **WHEN** a class `Place` is annotated `@BoundedOperator(id = "place", sink = "placed", input = "order")`, is registered, an instance is started, and one message is sent on `order`
+- **THEN** `run` receives the message on `order`, its return value reaches `placed`, and the instance completes as a `once` bounded operator
 
-#### Scenario: A short-form workflow declares its loop mode
+#### Scenario: A short-form bounded operator declares its loop mode
 
-- **WHEN** a class is annotated `@WorkflowOperative(id = "chat", sink = "replies", loopMode = LoopMode.PER_INPUT)`, is registered, and two messages reach its entry channel
-- **THEN** the generated operative's `loopMode()` returns `PER_INPUT`, `run` runs once per message, and the instance does not complete after the first
+- **WHEN** a class is annotated `@BoundedOperator(id = "chat", sink = "replies", loopMode = LoopMode.PER_INPUT)`, is registered, and two messages reach its entry channel
+- **THEN** the generated operator's `loopMode()` returns `PER_INPUT`, `run` runs once per message, and the instance does not complete after the first
 
 #### Scenario: A short form with no sink is declared
 
-- **WHEN** a class is annotated `@StreamOperative(id = "counter", input = "ticks")` and registered
-- **THEN** the generated operative declares `ticks` into the generated tasklet and no plugin channel
+- **WHEN** a class is annotated `@UnboundedOperator(id = "counter", input = "ticks")` and registered
+- **THEN** the generated operator declares `ticks` into the generated tasklet and no plugin channel
 
 #### Scenario: The author registers the class they wrote
 
 - **WHEN** `registerFactory(Echo.class)` is called for an annotated class
-- **THEN** the generated operative is declared, and the author never names `EchoStreamOperative`
+- **THEN** the generated operator is declared, and the author never names `EchoUnboundedOperator`
 
 #### Scenario: Nothing registers itself
 
 - **WHEN** an application declares annotated short-form classes and never calls `registerFactory` for them
-- **THEN** its runner declares no operative for them, and no `com.flezha.generated.GeneratedStreamOperatives` class exists
+- **THEN** its runner declares no operator for them, and no `com.flezha.generated.GeneratedUnboundedOperators` class exists
 
 #### Scenario: The generated entry channel keeps its default name
 
-- **WHEN** a class annotated `@StreamOperative(id = "echo", sink = "out")` declares no `input` element
-- **THEN** the generated operative's entry channel SHALL be named `input`
+- **WHEN** a class annotated `@UnboundedOperator(id = "echo", sink = "out")` declares no `input` element
+- **THEN** the generated operator's entry channel SHALL be named `input`
 
 #### Scenario: The annotation names the generated entry channel
 
-- **WHEN** a class is annotated `@StreamOperative(id = "echo", sink = "out", input = "prices")`
-- **THEN** the generated operative's entry channel SHALL be named `prices`
+- **WHEN** a class is annotated `@UnboundedOperator(id = "echo", sink = "out", input = "prices")`
+- **THEN** the generated operator's entry channel SHALL be named `prices`
 
 #### Scenario: An annotation with no id is refused
 
-- **WHEN** a class `Upcase` is annotated `@StreamOperative(sink = "out")` with no `id`
+- **WHEN** a class `Upcase` is annotated `@UnboundedOperator(sink = "out")` with no `id`
 - **THEN** the processor SHALL fail compilation naming the required `id`, and SHALL NOT derive a factory id from the class name
 
-#### Scenario: An annotated class implementing an operative interface is refused
+#### Scenario: An annotated class implementing an operator interface is refused
 
-- **WHEN** a class annotated `@StreamOperative` also implements `StreamOperative`
+- **WHEN** a class annotated `@UnboundedOperator` also implements `UnboundedOperator`
 - **THEN** the processor SHALL fail compilation with a message beginning `ShortFormWithTopology`
 
 #### Scenario: A sink on a void run is refused
 
-- **WHEN** a class annotated `@StreamOperative(id = "drain", sink = "out")` declares `void run(String s)` with no `emits`
+- **WHEN** a class annotated `@UnboundedOperator(id = "drain", sink = "out")` declares `void run(String s)` with no `emits`
 - **THEN** the processor SHALL fail compilation with a message beginning `SinkWithoutOutput`
 

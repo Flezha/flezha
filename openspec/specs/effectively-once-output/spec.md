@@ -3,24 +3,24 @@
 ## Purpose
 TBD - created by archiving change effectively-once-output. Update Purpose after archive.
 ## Requirements
-### Requirement: Per-operative opt-in tier with cost-free default
+### Requirement: Per-operator opt-in tier with cost-free default
 
-The SDK SHALL provide a per-operative `effectively_once` declaration carried in
-operative metadata and resolved by the controller. The tier SHALL default to OFF.
+The SDK SHALL provide a per-operator `effectively_once` declaration carried in
+operator metadata and resolved by the controller. The tier SHALL default to OFF.
 With the tier off, every ingest, emit, WAL, and plugin-dispatch path SHALL be
 byte-identical to pre-change behaviour with no added per-message work. Building an
-opted-in operative with any plugin-bound channel not declared `.keyed()` SHALL
+opted-in operator with any plugin-bound channel not declared `.keyed()` SHALL
 fail with a typed error.
 
 #### Scenario: Default off is cost-free
 
-- **WHEN** an operative without the tier processes messages
+- **WHEN** an operator without the tier processes messages
 - **THEN** wire frames, WAL records, and plugin dispatch are identical to the
   pre-change implementation and the dispatch bench shows no regression
 
 #### Scenario: Unkeyed sink channel rejected under the tier
 
-- **WHEN** an operative declares `effectively_once()` and has a plugin-bound
+- **WHEN** an operator declares `effectively_once()` and has a plugin-bound
   channel without `.keyed()`
 - **THEN** the build fails with a typed error naming the channel
 
@@ -29,7 +29,7 @@ fail with a typed error.
 In tier mode the SDK SHALL ship an invocation's state change(s), plugin emits,
 and consumed input offset as ONE `cell_effect_record` on the reliable state
 sink, and the controller SHALL persist it as ONE WAL record covered by ONE fsync
-window. A Cell of a durable workflow class SHALL ship the same record for every
+window. A Cell of a durable bounded class SHALL ship the same record for every
 invocation, with no consumed offset, and the controller SHALL persist it the same way.
 
 State and offset are the pair that SHALL never tear: no record SHALL make a
@@ -38,11 +38,11 @@ it, and none SHALL advance the offset without that state. Under the default
 per-input granularity the record's offset is the invocation's own input; under
 `checkpoint` ack-granularity it is the offset of the input that closed the
 interval, and the record carries every change the interval accumulated. For a
-workflow Cell the pair is state and stage: no `task_committed` entry SHALL be
+bounded operator Cell the pair is state and stage: no `task_committed` entry SHALL be
 durable without every record it names being durable first.
 
 Outputs are not part of that pair. A record MAY carry outputs with no offset —
-which is how a checkpoint-mode operative's mid-interval emits reach their
+which is how a checkpoint-mode operator's mid-interval emits reach their
 plugins without acknowledging an input whose state is not durable yet. Such
 outputs are emitted again when the interval replays, and the keyed-sink dedup
 the tier requires absorbs them.
@@ -62,20 +62,20 @@ the tier requires absorbs them.
 
 #### Scenario: A stage marker is never durable ahead of its state
 
-- **WHEN** the controller crashes at any point between a workflow Cell's effect record arriving and its stage's `task_committed` entry being acked
+- **WHEN** the controller crashes at any point between a bounded operator Cell's effect record arriving and its stage's `task_committed` entry being acked
 - **THEN** after restart the journal holds the entry only if the Cell's WAL holds the record it names
 
 #### Scenario: Emits leave the primary stream in tier mode
 
-- **WHEN** an opted-in operative's invocation emits on a keyed channel
+- **WHEN** an opted-in operator's invocation emits on a keyed channel
 - **THEN** the output travels inside the effect record on the reliable sink, and
   no output frame for it appears on the primary stream
 
 ### Requirement: Fsync-gated outbox flush
 
-For tier operatives and for durable workflow operatives the controller SHALL invoke the
+For tier operators and for durable bounded operators the controller SHALL invoke the
 `:on_output` plugin chain for an output only after its effect record is fsynced and the kind's
-commit unit has committed it: for a stream Cell the record's fsync is the commit; for a workflow
+commit unit has committed it: for an unbounded operator Cell the record's fsync is the commit; for a bounded operator
 Cell the commit is the durable `task_committed` or `compensated` entry that names the record
 within its Cell's range, and the commit worker SHALL mark that range committed on the Cell's
 writer after the entry's ack. Each outbox entry SHALL carry the durable identity `(flz.cell, outbox_seq, epoch)`
@@ -84,12 +84,12 @@ plus `flz.key` when the channel is keyed and the author's metadata, for both kin
 the `flz.seq` exactness boundary: `outbox_seq` SHALL be a sufficient handle for exact append-only
 dedup.
 
-A workflow Cell's entries SHALL stay queued, on disk, until a marker names them; an entry that
+A bounded operator Cell's entries SHALL stay queued, on disk, until a marker names them; an entry that
 no marker will name, because the stage was interrupted and re-run, failed, or was unwound by a
 rewind, SHALL be dropped without reaching the chain: by the Cell's next committed range, which
 starts above it, or at the instance's next bind, which re-derives the committed ranges from the
 journal's live entries. An entry already handed to the chain SHALL be left to its
-confirmation. A workflow instance's teardown SHALL wait, bounded, until every Cell writer of
+confirmation. A bounded instance's teardown SHALL wait, bounded, until every Cell writer of
 the instance reports no entry pending and none awaiting confirmation.
 
 The controller SHALL bound the entries one Cell has inside the plugin chain
@@ -97,7 +97,7 @@ unconfirmed to `outbox_inflight_max` (default 1 000) — the window is the set o
 dispatched entries still awaiting completion, nothing else — and SHALL refill
 it on every event that can open it: an fsync that makes further entries
 durable, a committed range that admits further entries, and a completed confirmation that frees a slot. The periodic retry
-tick SHALL be a backstop for an operative that was not yet bound at dispatch
+tick SHALL be a backstop for an operator that was not yet bound at dispatch
 time, never the pump that drains a burst.
 
 #### Scenario: No flush before durable point
@@ -107,7 +107,7 @@ time, never the pump that drains a burst.
 
 #### Scenario: No flush before the stage marker
 
-- **WHEN** a workflow Cell's effect record is durable and its stage's `task_committed` entry is not yet acked
+- **WHEN** a bounded operator Cell's effect record is durable and its stage's `task_committed` entry is not yet acked
 - **THEN** its outputs have not been dispatched to any plugin, and they are dispatched once the entry naming the record is acked
 
 #### Scenario: A failed stage delivers nothing
@@ -117,7 +117,7 @@ time, never the pump that drains a burst.
 
 #### Scenario: Durable identity on every flushed output
 
-- **WHEN** an output is dispatched to the plugin chain in tier mode or from a durable workflow Cell
+- **WHEN** an output is dispatched to the plugin chain in tier mode or from a durable bounded operator Cell
 - **THEN** its metadata carries `flz.cell`, the durable `outbox_seq`, the
   epoch, `channel`, `flz.key` when the channel is keyed, and the author's metadata
 
@@ -132,11 +132,11 @@ time, never the pump that drains a burst.
 ### Requirement: Restart re-drives unflushed outbox entries
 
 The controller SHALL maintain a per-Cell `outbox_flushed_seq` cursor that
-never runs ahead of what the external sink has confirmed delivered, for a tier stream Cell and
-a durable workflow Cell alike. An
-in-memory hand-off (a cast to the operative or an async admission into a
+never runs ahead of what the external sink has confirmed delivered, for a tier unbounded operator Cell and
+a durable bounded operator Cell alike. An
+in-memory hand-off (a cast to the operator or an async admission into a
 plugin queue) SHALL NOT advance the cursor. On restart the controller SHALL
-re-drive every durable outbox entry above the cursor, in order; a workflow Cell's writer SHALL
+re-drive every durable outbox entry above the cursor, in order; a bounded operator Cell's writer SHALL
 release only the re-driven entries a live journal entry names, SHALL drop those below the last
 range it names that no entry names, and SHALL hold the rest until the instance's bind, which
 drops them. The writer SHALL learn that its Cell commits by stage from the class registry,
@@ -166,7 +166,7 @@ outputs are never lost and never applied twice at a conforming sink.
 - **THEN** the same outputs are re-dispatched with identical identity and the
   sink deduplicates them
 
-#### Scenario: A workflow's committed output re-drives, its uncommitted output does not
+#### Scenario: A bounded operator's committed output re-drives, its uncommitted output does not
 
 - **WHEN** the controller crashes after journaling `task_committed(A)` naming A's Cell record at seq 3 but before dispatching its output, while B's Cell holds a record at seq 1 that no entry names, then restarts and the instance rebinds
 - **THEN** A's output is dispatched with its original identity and confirmed once, and B's record's output is dropped from the queue and never dispatched
@@ -228,7 +228,7 @@ superseded are unchanged by batching.
 
 #### Scenario: A crashed chain run leaves its entry owed
 
-- **WHEN** the operative host crashes while running an output's chain, after
+- **WHEN** the operator host crashes while running an output's chain, after
   a sink held the token
 - **THEN** no settlement is reported, the entry stays pending with its holds
   unanswered, and the resettle re-dispatches its outputs under identical
@@ -284,7 +284,7 @@ The reason is that an edge output is the one output kind with no durable copy: `
 
 With the ordering correct, at-least-once edge delivery composes into effectively-once without a second mechanism: the edge payload carries the producer's input offset, the consumer's own effect record acknowledges that offset, and the consumer's restored floor skips a re-emitted duplicate. A fan-out invocation SHALL hold its record until **every** consumer's push has landed; a replay after a partial fan-out re-emits to all consumers and each one's own floor decides whether it is a duplicate.
 
-A workflow Cell's edge output is the one edge output with a durable copy: it is held on the instance's pass sheet and journaled as the stage's handoff in the `task_committed` entry, and its consumers are fed from that entry on resume. A workflow Cell's record therefore carries no offset and SHALL NOT be held for an edge delivery: it ships as soon as the item settles, and the flusher's deferred-push gate never applies to it.
+A bounded operator Cell's edge output is the one edge output with a durable copy: it is held on the instance's pass sheet and journaled as the stage's handoff in the `task_committed` entry, and its consumers are fed from that entry on resume. A bounded operator Cell's record therefore carries no offset and SHALL NOT be held for an edge delivery: it ships as soon as the item settles, and the flusher's deferred-push gate never applies to it.
 
 This requirement binds the host (C-ABI) resolution path, where an activation's outputs are reported at completion and were previously folded before being routed. The typed in-process path emits during the invocation, before the effect block is assembled, and already satisfies it. The Elixir SDK, whose Cell ships its own records and whose router is one process that blocks on a full consumer, holds an invocation's effect record in a FIFO until its router reports every edge push admitted and ships the FIFO in seq order, never gating its own queue — a gated Cell and a router blocked on it would wait on each other; a replacement after an untrappable kill loses the held records, whose offsets were never durable, and the controller's re-forward reproduces them.
 
@@ -303,49 +303,49 @@ This requirement binds the host (C-ABI) resolution path, where an activation's o
 - **WHEN** an invocation emits to three consumers, two pushes land, and the runner dies before the third
 - **THEN** the invocation's offset SHALL NOT be durable, and after restart all three consumers SHALL end in the state they would have reached had the invocation completed once
 
-#### Scenario: A workflow Cell's record is not held for its edge output
+#### Scenario: A bounded operator Cell's record is not held for its edge output
 
-- **WHEN** a workflow Cell emits towards the next stage and its item settles
+- **WHEN** a bounded operator Cell emits towards the next stage and its item settles
 - **THEN** its effect record ships at once, the edge value waits on the pass sheet for the stage's commit ack, and a crash before that ack re-seeds the consumer from the journaled handoff rather than from a re-run of the producer
 
 #### Scenario: The Elixir Cell holds its record until the edge is admitted
 - **WHEN** a tier-mode Elixir Tasklet emits towards a consumer whose mailbox of one is full and whose dispatch is held
 - **THEN** the producer's effect record for that input is not on the stream while the push waits, and ships as soon as the consumer admits it
 
-### Requirement: A durable workflow Cell writes the effect record without declaring the tier
+### Requirement: A durable bounded operator Cell writes the effect record without declaring the tier
 
-A Cell of a durable workflow class SHALL settle every invocation into one `cell_effect_record`
-exactly as a Cell of a tier stream class does: its state changes, its plugin outputs as
+A Cell of a durable bounded class SHALL settle every invocation into one `cell_effect_record`
+exactly as a Cell of a tier unbounded class does: its state changes, its plugin outputs as
 `OutputRecord {channel, key, metadata, payload}`, its timer ops, no consumed offset (the
 iteration commit carries the pass's offset), no dead-letter park (an exhausted ladder fails the
 stage). The record SHALL be framed and sent on the worker that settles the item, before the
-stage's barrier is sent, never left to the flusher's linger. A workflow class SHALL NOT declare
+stage's barrier is sent, never left to the flusher's linger. A bounded class SHALL NOT declare
 `effectively_once`; the record is what its durability means. A stage that ran a Cell and
 produced no change and no output SHALL write no record for it, and the stage marker SHALL name
 that Cell with no seq.
 
-There SHALL be one settle path for a workflow Cell's item on every SDK: a retryable failure
+There SHALL be one settle path for a bounded operator Cell's item on every SDK: a retryable failure
 holds the attempt's changes until the item resolves and ships them with the resolving attempt,
 and an attempt that exhausts the ladder ships the held changes in a record carrying no output,
 so the Cell's WAL matches the host's memory on every path.
 
 #### Scenario: One record per invocation, before the barrier
 
-- **WHEN** a durable workflow tasklet's Cell applies two changes and emits once on a keyed channel with metadata `{"trace": "t1"}`
+- **WHEN** a durable bounded tasklet's Cell applies two changes and emits once on a keyed channel with metadata `{"trace": "t1"}`
 - **THEN** exactly one `cell_effect_record` frame for that Cell leaves the runner before the stage's `TaskCommit`, its body carrying both changes and one output with the channel, the key, the metadata and the payload, and no `cell_state_change` frame is sent for the invocation
 
-#### Scenario: A host workflow Cell's record leaves ahead of its barrier
+#### Scenario: A host bounded operator Cell's record leaves ahead of its barrier
 
-- **WHEN** a Java workflow tasklet commits a state change and the runner's flush linger is raised to 20 s
+- **WHEN** a Java bounded tasklet commits a state change and the runner's flush linger is raised to 20 s
 - **THEN** the Cell's effect record reaches the controller before its stage's `TaskCommit`, and the controller's journal never holds a `task_committed` entry naming a record the Cell's WAL does not hold
 
 #### Scenario: A failed attempt's changes ship with the attempt that resolves
 
-- **WHEN** a workflow Cell's attempt applies a change and fails retryably, and the next attempt succeeds
+- **WHEN** a bounded operator Cell's attempt applies a change and fails retryably, and the next attempt succeeds
 - **THEN** one record ships carrying both attempts' changes, and no record shipped between the two
 
-#### Scenario: A workflow class cannot declare the tier
+#### Scenario: A bounded class cannot declare the tier
 
-- **WHEN** a workflow class declares `effectively_once` in any SDK
-- **THEN** registration is refused naming `EffectivelyOnceOnWorkflow`, and a durable workflow class that declares nothing writes effect records
+- **WHEN** a bounded class declares `effectively_once` in any SDK
+- **THEN** registration is refused naming `EffectivelyOnceOnBounded`, and a durable bounded class that declares nothing writes effect records
 

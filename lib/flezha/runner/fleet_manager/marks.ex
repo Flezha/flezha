@@ -11,7 +11,7 @@ defmodule Flezha.Runner.FleetManager.Marks do
   call, because a channel asking `FleetManager` whether its own close was
   expected would be asking the process that is tearing it down.
 
-  A session's identity is what an operative's ownership record names, so a
+  A session's identity is what an operator's ownership record names, so a
   channel and an Overwatch read it here without calling the process that
   admitted the session. The same table remembers what a session has already
   been refused for, so a refusal is reported, and a copy told to stop, once.
@@ -36,7 +36,7 @@ defmodule Flezha.Runner.FleetManager.Marks do
   # correctness, this decides only what gets reported.
   @retiring_table :flezha_retiring_runners
   # Each live session's stable identity, keyed by the session token, and one
-  # `{session, subject}` row per operative or Cell the session was refused for.
+  # `{session, subject}` row per operator or Cell the session was refused for.
   @identity_table :flezha_session_identities
 
   @doc """
@@ -76,7 +76,7 @@ defmodule Flezha.Runner.FleetManager.Marks do
   end
 
   @doc """
-  Whether this is `session`'s first refusal for `subject`, an operative or a
+  Whether this is `session`'s first refusal for `subject`, an operator or a
   Cell: true once per session and subject, across every channel of the
   session, so a refusal is reported once however many frames repeat it.
   """

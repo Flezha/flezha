@@ -5,11 +5,11 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   back.
 
   **Seq-addressed** references are read as a range of WAL records —
-  `{:cell, cell_id}` (a Cell's WAL and snapshots; a workflow instance's
+  `{:cell, cell_id}` (a Cell's WAL and snapshots; a bounded instance's
   task-journal is this shape too, under `Paths`'s reserved cell key) and
-  `{:input_log, operative_class}`. **Whole-payload** ones are the
+  `{:input_log, operator_class}`. **Whole-payload** ones are the
   files they name, packed by `pack/1`: `{:cspec, {hub_id, writer}}`, `{:dlq,
-  {operative_class, tasklet_id}}` and `{:control, {store, writer}}`, each
+  {operator_class, tasklet_id}}` and `{:control, {store, writer}}`, each
   keyed by its writer or claim-fenced because their replicas are per-node.
 
   Record bundles are read at ship time and re-framed, never copied as file byte
@@ -48,7 +48,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   @doc "Local WAL path of `ref`, or `nil` for a whole-file reference."
   @spec wal_path(ref()) :: binary() | nil
   def wal_path({:cell, cell_id}), do: Paths.wal_path(cell_id)
-  def wal_path({:input_log, operative_class}), do: Paths.input_log_path(operative_class)
+  def wal_path({:input_log, operator_class}), do: Paths.input_log_path(operator_class)
   def wal_path(_ref), do: nil
 
   @doc """
@@ -69,8 +69,8 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   def payload_files({:cspec, {hub_id, _writer}}),
     do: present(Layout.file(:process_hub, hub_id), [Layout.hub_registry_file()])
 
-  def payload_files({:dlq, {operative_class, tasklet_id}}) do
-    root = Dlq.Store.task_dir(operative_class, tasklet_id)
+  def payload_files({:dlq, {operator_class, tasklet_id}}) do
+    root = Dlq.Store.task_dir(operator_class, tasklet_id)
 
     case File.ls(root) do
       {:ok, names} -> present(root, names)
@@ -113,21 +113,21 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   end
 
   @doc """
-  Every parked-failure set of `operative_class` with a directory on this node.
+  Every parked-failure set of `operator_class` with a directory on this node.
 
   Deliberately not filtered by `has_local_state?/1`: an emptied set has to stay
-  in the sweep so its remote entry stops naming a blob whose entries the operator
+  in the sweep so its remote entry stops naming a blob whose entries the user
   has since resolved.
   """
   @spec dlq_refs(binary()) :: [ref()]
-  def dlq_refs(operative_class) when is_binary(operative_class),
-    do: operative_class |> Dlq.Store.tasklets() |> Enum.map(&{:dlq, &1})
+  def dlq_refs(operator_class) when is_binary(operator_class),
+    do: operator_class |> Dlq.Store.tasklets() |> Enum.map(&{:dlq, &1})
 
   @doc """
-  Every operative class with parked failures on this node.
+  Every operator class with parked failures on this node.
 
   Unioned with the classes that have Cell state, because the two sets differ:
-  a stopped operative keeps its parked failures, and losing them on a disk death
+  a stopped operator keeps its parked failures, and losing them on a disk death
   is exactly what shipping them prevents.
   """
   @spec dlq_classes() :: [binary()]
@@ -151,7 +151,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
 
   @doc """
   The on-disk state key `ref` lives under — the directory name that
-  `DurabilityTier.refs_of_state_key/1` enumerates from, and the unit an operative is
+  `DurabilityTier.refs_of_state_key/1` enumerates from, and the unit an operator is
   adopted as.
   """
   @spec state_key(ref()) :: binary()
@@ -186,7 +186,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   intended and which have already run.
 
   They are presence-only files that no state change implies, and the resumed
-  workflow driver reads them off `RestoreInitState` to decide whether to
+  bounded driver reads them off `RestoreInitState` to decide whether to
   compensate or resume forward. A recovery that restored the data without them
   resumes forward past a rollback it owes, so they travel on the manifest
   rather than as blobs.

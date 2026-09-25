@@ -17,8 +17,8 @@ Day-to-day work needs only the host triple, from `scripts/build-native.sh`. See
 
 ## Failure recovery volume
 
-The controller recovers its own operatives and their plugins on boot from
-ProcessHub's durable registry — the enable is written into the operative's
+The controller recovers its own operators and their plugins on boot from
+ProcessHub's durable registry — the enable is written into the operator's
 child spec (`Flezha.Service.PluginManager.enable_plugin/2`), so one record
 carries both. Per-Cell state comes from the WAL and snapshot files beside it.
 
@@ -33,7 +33,7 @@ Two directories must therefore survive a container restart, and the prod
 If you override either path, make sure the new location is (a) persistent
 across container restarts and (b) owned by the non-root `flezha` user
 (uid 1000) that the image runs as. Without persistence the controller comes
-up empty and waits for SDK clients to reissue `AddOperative` and
+up empty and waits for SDK clients to reissue `AddOperator` and
 `enable_plugin`.
 
 Set `FLEZHA_AUTO_RESTORE_ENABLED=false` to disable the boot-time replay while

@@ -36,11 +36,11 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
   alias Flezha.Plugin.Provider.Websocket
   alias Flezha.SDK.Channels
   alias Flezha.SDK.Knob
-  alias Flezha.SDK.Operative.Inbox
-  alias Flezha.Service.OperativeManager.Init
+  alias Flezha.SDK.Operator.Inbox
+  alias Flezha.Service.OperatorManager.Init
   alias Flezha.State.Watchdog
   alias FlezhaTest.Helper.ProviderPrepare
-  alias FlezhaTest.Helper.SdkOperativeHarness
+  alias FlezhaTest.Helper.SdkOperatorHarness
   alias FlezhaTest.Helper.WebsocketServer
   alias FlezhaTest.Kafka.ProducerFakes
 
@@ -66,7 +66,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
     file_flush:
       "test/flezha/plugin/provider/file_sink_test.exs drives it: a failed write drops nothing and retries on its timer",
     forward_deliver:
-      "test/flezha/plugin/provider/operative_forward_test.exs — an unconfirmed delivery retries",
+      "test/flezha/plugin/provider/operator_forward_test.exs — an unconfirmed delivery retries",
     durability_ship: "test/flezha/state/durability_tier_test.exs — a refused ship retries",
     schedule_spawn:
       "test/flezha/schedule/job_test.exs — a failed spawn retries until the next slot",
@@ -198,7 +198,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
   end
 
   defp heal_device() do
-    key = {:rebind_operative, "drill_#{System.unique_integer([:positive])}"}
+    key = {:rebind_operator, "drill_#{System.unique_integer([:positive])}"}
 
     Enum.reduce(1..4, Backoff.new(:heal), fn _, table ->
       Backoff.update(table, key, :error, 0)
@@ -243,7 +243,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
 
   defp no_response_device() do
     id = "drill_#{System.unique_integer([:positive])}"
-    operative = %{id: id, factory_id: "drill_factory", opts: %{}}
+    operator = %{id: id, factory_id: "drill_factory", opts: %{}}
 
     stub(ProcessHub, :start_child, fn _hub, _spec, _opts -> :drill_future end)
 
@@ -251,7 +251,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
       %ProcessHub.StartResult{started: [], errors: [{id, :no_response}]}
     end)
 
-    spawn(fn -> Init.init_operative(false, "drill_ns", operative) end)
+    spawn(fn -> Init.init_operator(false, "drill_ns", operator) end)
     :ok
   end
 
@@ -273,9 +273,9 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
     def run(_input, _state, _ctx), do: {:error, "backoff drill: always fails"}
   end
 
-  defmodule FailingOperative do
+  defmodule FailingOperator do
     @moduledoc false
-    @behaviour Flezha.SDK.StreamOperative
+    @behaviour Flezha.SDK.UnboundedOperator
     def factory_id, do: "backoff_drill"
 
     def channels(c) do
@@ -289,7 +289,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
   end
 
   defp sdk_retry_device() do
-    %{op: op} = SdkOperativeHarness.start_operative(FailingOperative)
+    %{op: op} = SdkOperatorHarness.start_operator(FailingOperator)
     Inbox.input(op, "in", "payload", %{})
     :ok
   end

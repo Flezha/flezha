@@ -30,7 +30,7 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
   # The seam's own shape: every spelling the tree used to judge a topology with,
   # before the fold put the verdict in one place. A file outside @seam_files
   # that matches one of these is deciding the same thing a second time.
-  @shape ~r/push\(TopologyIssue::|Err\(TopologyIssue::|linkIssues\.push\(|link_issues\.append\(|@link_issues <<|linkIssues\[\] =|EdgeAlreadyWired: already feeds|amendCheckpoint\(|_amend_checkpoint\(|checkpoint_policy\(|\{:invalid_topology,|new StreamOperativeConfigurationException\(/
+  @shape ~r/push\(TopologyIssue::|Err\(TopologyIssue::|linkIssues\.push\(|link_issues\.append\(|@link_issues <<|linkIssues\[\] =|EdgeAlreadyWired: already feeds|amendCheckpoint\(|_amend_checkpoint\(|checkpoint_policy\(|\{:invalid_topology,|new UnboundedOperatorConfigurationException\(/
 
   @roots [
     "flz_core/src",
@@ -54,7 +54,7 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
     "flz_core/src/host/issue.rs",
     "sdk/elixir/lib/flezha/sdk/topology.ex",
     "sdk/elixir/lib/flezha/sdk/channels.ex",
-    "sdk/elixir/lib/flezha/sdk/workflow/spec.ex"
+    "sdk/elixir/lib/flezha/sdk/bounded/spec.ex"
   ]
 
   # Java's refusal type, matched because the shape names its constructor. These
@@ -62,13 +62,13 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
   # already reached; none of them decides whether a topology is legal. The list
   # only ever shrinks: an entry that stops matching is removed, never re-dated.
   @carries_a_verdict [
-    "sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/operative/StreamOperativeConfigurationException.java",
+    "sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/operator/UnboundedOperatorConfigurationException.java",
     "sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/core/HostClassDeclaration.java",
-    "sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/operative/builder/StreamOperativeTopologyBuilder.java"
+    "sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/operator/builder/UnboundedOperatorTopologyBuilder.java"
   ]
 
   # The residue of the text refusals the vocabulary has not named yet
-  # (the language byte, the SDK version, the workflow ladder, the DAG leaf, the
+  # (the language byte, the SDK version, the bounded operator ladder, the DAG leaf, the
   # index arities). It is deliberately the ONE variant with no fixture row: a
   # declaration is never refused with no verdict at all, and every refusal that
   # earns a name earns a row with it.
@@ -301,7 +301,7 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
           {"HostClassDecl", "class"},
           {"HostChannelDecl", "channel"},
           {"HostTaskletDecl", "tasklet"},
-          {"HostWorkflowDecl", "workflow"}
+          {"HostBoundedDecl", "bounded"}
         ],
         key <- struct_fields(body, struct),
         into: MapSet.new() do

@@ -1,23 +1,23 @@
 # Data and State Durability
 
-The reference for **where Flezha can lose operative state or output, where it cannot, and how
-to operate so a planned action never loses data**, for operators and operative authors. It
+The reference for **where Flezha can lose operator state or output, where it cannot, and how
+to operate so a planned action never loses data**, for users and operator authors. It
 covers the scenario matrix, the hard-kill gap, the delivery semantics (at-least-once by
-default, the effectively-once tier), the durable input log and a workflow's stage commit, the cross-hop
+default, the effectively-once tier), the durable input log and a bounded operator's stage commit, the cross-hop
 guarantee, timers, the dead-letter queue, late-input correction, the remote durability tier
-and the operator playbook. Operative *placement* recovery is
+and the user playbook. Operator *placement* recovery is
 [`../internals/process_hub.md`](../internals/process_hub.md); the WAL substrate itself is
 [`../internals/state_persistence.md`](../internals/state_persistence.md).
 
 ## The two things that can be lost
 
-1. **Operative state** — the accumulated in-memory state of an operative. The authoritative
-   live copy is on the operative's **one bound runner**; it is backed up **asynchronously** to a
+1. **Operator state** — the accumulated in-memory state of an operator. The authoritative
+   live copy is on the operator's **one bound runner**; it is backed up **asynchronously** to a
    per-Cell **WAL on the controller** (the runner streams `cell_state_change` frames, the
    controller batches the fsync, ~5 ms).
-2. **Output** — what an operative emits. Output is routed **through the controller** (the
-   `:on_output` plugin chain → Kafka / Postgres / HTTP / another operative). It is
-   **at-least-once** by default; an operative that declares `effectively_once()` gets the
+2. **Output** — what an operator emits. Output is routed **through the controller** (the
+   `:on_output` plugin chain → Kafka / Postgres / HTTP / another operator). It is
+   **at-least-once** by default; an operator that declares `effectively_once()` gets the
    **effectively-once tier** below.
 
 The core invariant: **on a graceful stop no state is lost; on a hard kill a small best-effort
@@ -27,7 +27,7 @@ Between the two sits the wire itself, and what a runner does when it refuses a f
 by the frame's declared **guarantee class**, never at the write site. A change record, a
 snapshot, an eviction's delete, a saga marker, a park payload and the shutdown state ship are
 `durable`: held in a bounded drop-oldest ring, the shed counted, replayed in write order on the
-next bound stream. A plugin or workflow emit is `output`: held already framed, so a keyed
+next bound stream. A plugin or bounded operator emit is `output`: held already framed, so a keyed
 output's channel and identity stamps survive the replay. A control frame is refused to its
 caller and never held, because the reconnect re-issues the request it belonged to, and the data
 heartbeat is held by nothing at all — it reports a moment that has passed. The seam is
@@ -36,32 +36,32 @@ heartbeat is held by nothing at all — it reports a moment that has passed. The
 names is refused at the call rather than given a default. See
 [`../sdk/protocol_spec.md`](../sdk/protocol_spec.md) §7.
 
-A third durable artifact is the operative's **plugin manifest**: it lives in the registry cspec
-and is written cluster-wide (`propagate: true`), so an operative restarted from any node
+A third durable artifact is the operator's **plugin manifest**: it lives in the registry cspec
+and is written cluster-wide (`propagate: true`), so an operator restarted from any node
 re-attaches its full plugin set and the convergence loop re-adds anything missing.
 
 ## Scenario matrix
 
-| Scenario | Operative state | Output | Why / how |
+| Scenario | Operator state | Output | Why / how |
 | --- | --- | --- | --- |
-| **Graceful runner stop** (SIGTERM / rolling deploy / `disconnect()` / `Drop`) | **No loss** | At-least-once | The SDK (`flz_core/src/shutdown.rs`) serializes each operative's final state, ships it, and waits for `RunnerShutdownAck` before exiting. |
-| **Single runner SIGKILL** under load | **Brief best-effort loss** | At-least-once | No drain; the operative rebinds and restores from the controller WAL, which may lag the last few changes. |
+| **Graceful runner stop** (SIGTERM / rolling deploy / `disconnect()` / `Drop`) | **No loss** | At-least-once | The SDK (`flz_core/src/shutdown.rs`) serializes each operator's final state, ships it, and waits for `RunnerShutdownAck` before exiting. |
+| **Single runner SIGKILL** under load | **Brief best-effort loss** | At-least-once | No drain; the operator rebinds and restores from the controller WAL, which may lag the last few changes. |
 | **All runners SIGKILL'd at once** under load | **Brief best-effort loss** | At-least-once | Same WAL-restore path with no live copy anywhere, so the lag is reliably exposed. |
 | **Runner OOM / container crash / node death** | **Brief best-effort loss** | At-least-once | Same as SIGKILL — no drain runs. |
 | **Controller graceful restart / rolling deploy with a live peer** | **No loss** | At-least-once | The new instance syncs the registry from the surviving peer; runners stay connected. |
-| **Controller plain restart, sole instance** | **No loss** | At-least-once | The first reconcile round replays the operative list from the durable registry; `/healthz` reports `recovering` until rebound. No operator step. |
+| **Controller plain restart, sole instance** | **No loss** | At-least-once | The first reconcile round replays the operator list from the durable registry; `/healthz` reports `recovering` until rebound. No user step. |
 | **Whole cluster down → cold start** | Recovered from the durable registry | n/a | No peer survives, so the reconcile's difference is the whole list and disk is the only record. |
-| **Operative migrated to a controller with no local WAL** (node loss, redistribution, lost hostPath), runner live | **No loss** | At-least-once | The WAL is node-local (with the remote tier, hydrated from the manifest). Absent both, the first `cell_state_change` into an empty WAL triggers a rate-limited `CompactCell` **pull**: the runner ships a full snapshot that becomes the baseline. The controller never pushes an empty `RestoreInitState`. See [`../internals/state_persistence.md`](../internals/state_persistence.md) "Baseline recovery: push vs pull". |
+| **Operator migrated to a controller with no local WAL** (node loss, redistribution, lost hostPath), runner live | **No loss** | At-least-once | The WAL is node-local (with the remote tier, hydrated from the manifest). Absent both, the first `cell_state_change` into an empty WAL triggers a rate-limited `CompactCell` **pull**: the runner ships a full snapshot that becomes the baseline. The controller never pushes an empty `RestoreInitState`. See [`../internals/state_persistence.md`](../internals/state_persistence.md) "Baseline recovery: push vs pull". |
 | **Node rejoins a live cluster** | Synced from peers; local durable copy kept | n/a | The reconcile's difference against live peers is empty, so the node starts nothing. The on-disk copy is never discarded to force that. |
 | **Kafka broker down, runners alive** | No loss | Buffered, resumes | The producer reconnects; the queue drains when the broker returns. |
 | **Sustained overload** (changes outpace fsync) | **No loss** | At-least-once | Credit-grant flow control: the sender's byte window (`:wal_high_watermark_bytes`, 16 MiB) is minted back only on WAL fsync, so an exhausted window *parks* the SDK's flush path — park, never drop. A shed on a credit session emits `[:flezha, :state, :credit_anomaly]`. |
-| **Workflow operative runner SIGKILL** (durable, the default) | **No loss** of a committed tasklet; an uncommitted one re-runs | Never lost; released only after its stage commits | Respawns on a new runner, restores committed Cell state behind the restore-before-run gate, and resumes at the **first un-journaled tasklet**: `task.journal` records each completed tasklet, the effect records its Cells wrote and its handoff, and an entry is appended only once every record it names is durable, so committed tasks are skipped, not redone, over state that is on disk. Inspect with `flz state journal`. |
-| **Looping workflow operative runner SIGKILL** (durable) | **No loss** of a committed tasklet | Never lost; released only after its stage commits | Resumes at the iteration after the last `iter_committed`; the in-flight one re-runs from its own last committed task. Unconsumed input is still in the instance's durable input log. |
-| **Input sent to a suspended / crashed / migrating workflow instance** (durable) | **No loss** | n/a | Appended to the instance's durable input log (`input.log`) before forwarding, delivered on rehydrate; a suspended instance is woken by the append. |
-| **Input sent to a sleeping stream instance** (its class declares `sleep_when_idle`) | **No loss** | n/a | Appended to the instance's input log before forwarding; the append wakes it, its Cells are restored before the log's tail is re-forwarded, and the message is folded once. |
+| **Bounded operator runner SIGKILL** (durable, the default) | **No loss** of a committed tasklet; an uncommitted one re-runs | Never lost; released only after its stage commits | Respawns on a new runner, restores committed Cell state behind the restore-before-run gate, and resumes at the **first un-journaled tasklet**: `task.journal` records each completed tasklet, the effect records its Cells wrote and its handoff, and an entry is appended only once every record it names is durable, so committed tasks are skipped, not redone, over state that is on disk. Inspect with `flz state journal`. |
+| **Looping bounded operator runner SIGKILL** (durable) | **No loss** of a committed tasklet | Never lost; released only after its stage commits | Resumes at the iteration after the last `iter_committed`; the in-flight one re-runs from its own last committed task. Unconsumed input is still in the instance's durable input log. |
+| **Input sent to a suspended / crashed / migrating bounded instance** (durable) | **No loss** | n/a | Appended to the instance's durable input log (`input.log`) before forwarding, delivered on rehydrate; a suspended instance is woken by the append. |
+| **Input sent to a sleeping unbounded instance** (its class declares `sleep_when_idle`) | **No loss** | n/a | Appended to the instance's input log before forwarding; the append wakes it, its Cells are restored before the log's tail is re-forwarded, and the message is folded once. |
 | **Controller redeploy while an instance of either kind is suspended** | **No loss** | n/a | Suspension is durable state (the park record in the class directory + input log + snapshots): the instance is rediscovered from disk, stays evicted, and rehydrates on the next input or its wake deadline. |
-| **Workflow operative runner SIGKILL** (persistence opted out) | **Full: re-runs from the top** | At-least-once | No WAL; the operative re-runs from the top on its next message and the messages waiting in its memory are lost. Idempotent by author contract, or don't opt out. |
-| **Workflow operative SIGKILL mid-compensation** (durable) | Compensation resumes | n/a | Compensation-intent / -done markers ride the restore; the respawn finishes the outstanding undo hooks and skips the done ones. |
+| **Bounded operator runner SIGKILL** (persistence opted out) | **Full: re-runs from the top** | At-least-once | No WAL; the operator re-runs from the top on its next message and the messages waiting in its memory are lost. Idempotent by author contract, or don't opt out. |
+| **Bounded operator SIGKILL mid-compensation** (durable) | Compensation resumes | n/a | Compensation-intent / -done markers ride the restore; the respawn finishes the outstanding undo hooks and skips the done ones. |
 | **Poison payload** (fails every retry) | **No loss** | Cell continues | Retry-then-park: after `retry_max` attempts the payload is parked durably to the DLQ *before* the Cell advances. Only retention (30 d / 4 GiB, loud) ever discards it. |
 
 ## Why output can briefly get ahead of state (the hard-kill gap)
@@ -69,8 +69,8 @@ re-attaches its full plugin set and the convergence loop re-adds anything missin
 The runner streams **output frames** and **state-change frames** independently, and the
 controller emits default-tier output before the matching state is fsynced. On a hard kill,
 output can outlive the durable state (Kafka holds `total=135`, the WAL holds `128`) and the
-restored operative comes back slightly stale. The default tier does **not** close this with
-per-record acking; planned stops drain to zero loss, and an operative that needs the gap closed
+restored operator comes back slightly stale. The default tier does **not** close this with
+per-record acking; planned stops drain to zero loss, and an operator that needs the gap closed
 declares the effectively-once tier.
 
 **The fsync window.** The WAL writer does not fsync per record: `State.FsyncBatcher` casts one
@@ -90,8 +90,8 @@ refused. The bytes are left exactly as they are, the process that owns the file 
 refuses to serve rather than being restarted into the same file, and the refusal is reported once
 at `error` severity plus one `[:flezha, :state, :record_frame, :refused]` telemetry event naming
 the file, the last seq that verified and the byte offset. The Cell's restore payload is refused
-the same way, so the operative is left unbound rather than binding on the records that happened to
-precede the failure — the fate "a refused restore" already has. Recovery is an operator decision
+the same way, so the operator is left unbound rather than binding on the records that happened to
+precede the failure — the fate "a refused restore" already has. Recovery is a user decision
 with the bytes still in hand: hydrate from the remote durability tier, take a peer's copy, or
 inspect the file.
 
@@ -115,7 +115,7 @@ controller's outbox lineage. A conforming sink reads a keyed default-tier record
 and orders by `flz.seq`; a *regressing* seq from a Cell that cold-started without a baseline
 is refused rather than guessed. The epoch, bumped by a WAL realign or a stream correction,
 resolves that and exists only where the controller's outbox mints the identity: under the tier
-and on a durable workflow's Cells.
+and on a durable bounded operator's Cells.
 
 Nothing journals a default-tier input, which also decides the fate of input queued in a
 Cell's mailbox when a restore lands: with no log to re-forward from, the queue is the only
@@ -123,7 +123,7 @@ copy, so the restore keeps it. Under the tier the restore discards it
 (`discard_queued_input_on_restore`) because the input log re-forwards it.
 
 **Nothing drops by default.** `DropNothing` is the default overflow policy for every channel
-kind in both SDKs and the FFI host; an operative that prefers to shed declares
+kind in both SDKs and the FFI host; an operator that prefers to shed declares
 `.on_full(DropNewest)` or `.on_full(DropOldest)`. The Kafka producer's `:queue_overflow` defaults to
 `:drop_nothing` for every record. Non-keyed channels are plain at-least-once.
 
@@ -153,9 +153,9 @@ effectively-once*. Every plugin-bound channel must be `.keyed()` (refused at bui
 otherwise), and the tier is built by the shared runner core, so Rust and Java earn the same
 guarantee.
 
-- **Durable input log.** `Flezha.Operative.Ingest.ingest/4` appends every inbound payload to a
+- **Durable input log.** `Flezha.Operator.Ingest.ingest/4` appends every inbound payload to a
   per-instance `input.log` before forwarding, stamped `flz.offset`; the log answers once the
-  record is synced. It is the one durable input log, shared with a durable workflow (below). The
+  record is synced. It is the one durable input log, shared with a durable bounded operator (below). The
   host never waits on the log (`InputLog.append_async/5`): the input is forwarded when the log
   answers, and a zero-credit park lands on the source's call alone. A repeat of a `flz.msg_id`
   the log still retains is absorbed; a message without an id is always appended. Retention
@@ -201,20 +201,20 @@ guarantee.
   one cast and settles it with one report; a sink confirms a completed batch with one report
   naming every entry (a park stays per record). A chain that crashes mid-batch settles nothing,
   and the resettle re-drives every pending entry under identical identity.
-- **Conforming sinks out of the box.** The **Postgres** sink (`operative_postgres`,
+- **Conforming sinks out of the box.** The **Postgres** sink (`operator_postgres`,
   `Flezha.Plugin.Provider.Postgres`) upserts every record of a flush batch into
   `flezha_records` (keyed by `flz.key`, else the durable identity) and advances the per-Cell
   `flezha_sink_progress` row in ONE transaction; every upsert is guarded by `(epoch, seq)`
   monotonicity, so re-drives and stale epochs are no-ops, and the commit is what confirms the
   batch. An unreachable database delays the flush (retry with backoff; callers park past
-  `queue_max`, 10 000) — delayed, never dropped. The schema is operator-owned by default
+  `queue_max`, 10 000) — delayed, never dropped. The schema is user-owned by default
   (`auto_create: false` fails `health/1` naming the missing tables); a commit stall past
   `unhealthy_after_ms` (30 000) escalates on the plugin-health → convergence path. Unstamped
-  records become plain inserts. The **Kafka** producer (`operative_kafka_producer`) uses
+  records become plain inserts. The **Kafka** producer (`operator_kafka_producer`) uses
   `flz.key` as the message key and carries the durable identity in the `flezha.dedup_key`
   header; see [`../plugins/kafka_producer.md`](../plugins/kafka_producer.md).
 - **The websocket sink is not a conforming sink, and does not claim to be.** A plugin bound as
-  an output (`operative_websocket`, `Flezha.Plugin.Provider.Websocket`) ships each dispatched
+  an output (`operator_websocket`, `Flezha.Plugin.Provider.Websocket`) ships each dispatched
   payload as a frame on the connection it already holds, and answers the hold by its declared
   `sink_ack_mode`: `"none"` (default) confirms when the frame reaches the established socket,
   which is **at-most-once** past that point; `"required"` confirms only when an inbound frame
@@ -224,19 +224,19 @@ guarantee.
   `flz.cell` and `flz.seq` in the frame template, and the consumer that tracks the last
   sequence it has applied per cell is the only place the dedup can work. Frames are queued
   while the socket is down (`sink_queue_max`, 10 000; callers park at the bound) and a frame
-  whose retry budget is spent parks in the dead-letter store. An enable on a tier operative
-  warns rather than refusing: the operative's internal guarantee is unchanged and only its
+  whose retry budget is spent parks in the dead-letter store. An enable on a tier operator
+  warns rather than refusing: the operator's internal guarantee is unchanged and only its
   websocket hop is best-effort. See
   [`../plugins/websocket_subscription.md`](../plugins/websocket_subscription.md).
-- **Source back-pressure.** Ingestion debits a per-operative source credit window
+- **Source back-pressure.** Ingestion debits a per-operator source credit window
   (`:source_credit_window_bytes`, default = `:wal_high_watermark_bytes`); the min-watermark
   advance mints it back. At zero credit the source adapter's ingest call parks (a websocket
   stops reading its socket), bounding input-log growth against a stalled Cell. A sink outage
   longer than `window / ingest rate` delays ingestion; it never wedges it.
-- **Cost-free default.** Operatives without the flag keep every path byte-identical. Under the
+- **Cost-free default.** Operators without the flag keep every path byte-identical. Under the
   tier a slow or unreachable sink backs the outbox up on disk, never in memory.
-- **Workflow operatives** do not declare the tier (`EffectivelyOnceOnWorkflow`): a durable
-  workflow's Cells write the same effect record as their ordinary durability, released at the
+- **Bounded operators** do not declare the tier (`EffectivelyOnceOnBounded`): a durable
+  bounded operator's Cells write the same effect record as their ordinary durability, released at the
   stage commit below.
 
 Wire shapes: [`../sdk/protocol_spec.md`](../sdk/protocol_spec.md) "Output identity stamps" and
@@ -244,7 +244,7 @@ Wire shapes: [`../sdk/protocol_spec.md`](../sdk/protocol_spec.md) "Output identi
 
 ### Ack granularity: per input, or per checkpoint
 
-The tier acknowledges an input by making its state durable. An operative that folds *many*
+The tier acknowledges an input by making its state durable. An operator that folds *many*
 inputs into one coherent push — a window that only closes on its boundary — declares
 `checkpoint_ack()` beside `effectively_once()` (`checkpointAck()` in Java) and calls
 `ctx.checkpoint()` where its state is coherent:
@@ -269,35 +269,35 @@ inputs into one coherent push — a window that only closes on its boundary — 
   absorbs the re-emitted outputs. A restore discards the open interval.
 
 **The interval is the knob you size the system with**: the input-log retention floor, the
-recovery work after a crash, and the cadence at which source credit is minted. An operative
+recovery work after a crash, and the cadence at which source credit is minted. An operator
 that never checkpoints stops truncating its input log and eventually parks its own source.
 `checkpoint_ack()` without `effectively_once()` is refused at build time
 (`CheckpointAckWithoutTier` / `checkpointAckWithoutTier()`), and the controller's dataflow-stop
 watchdog skips a checkpoint class — silence between checkpoints is its steady state.
 
-## Workflow operatives: one record, released at the stage commit
+## Bounded operators: one record, released at the stage commit
 
-A **durable structured** workflow operative (tasklets declared, the default
+A **durable structured** bounded operator (tasklets declared, the default
 `PERSISTENCE_ENABLED`) never lets a tasklet's plugin output escape before that tasklet is
 durable. The commit path, crash-resume and journal layout are in
-[`workflow_operative.md`](workflow_operative.md); this is the flush contract.
+[`bounded_operator.md`](bounded_operator.md); this is the flush contract.
 
-- **One record per invocation.** A workflow Cell writes the `cell_effect_record` a tier stream
+- **One record per invocation.** A bounded operator Cell writes the `cell_effect_record` a tier unbounded operator
   Cell writes: its state changes and its plugin outputs (channel, key, the author's metadata,
   payload) in one record under one fsync, with no consumed offset (the iteration's
   `iter_committed` carries it). The runner sends the record as the item settles, before the
-  stage's barrier, never on the flush linger. A workflow class does not declare the tier; the
+  stage's barrier, never on the flush linger. A bounded class does not declare the tier; the
   record is what its durability means.
 - **Records, then the marker, then the ack.** The barrier's `TaskCommit` names, per Cell, the
   range of records it wrote in the stage and the plugin channels they wrote on, and carries no
   output. The controller appends the `task_committed` entry only after every named record is
   durable on its Cell's writer, so a durable marker always implies durable records. A record
-  that is refused or not durable within `FLEZHA_WORKFLOW_ACK_TIMEOUT_MS` fails the barrier. A
+  that is refused or not durable within `FLEZHA_BOUNDED_ACK_TIMEOUT_MS` fails the barrier. A
   barrier re-sent under the same reference id is answered from the existing entry, or joins
   the wait of the copy still waiting.
 - **One outbox.** The Cell writer's outbox serves both kinds: same `{:cursor, seq}` key,
-  dedup-file cursor, confirmation tally, resettle and restart re-drive. A stream Cell's entry is
-  committed by its own fsync; a workflow Cell's entry is **held** until a durable stage marker
+  dedup-file cursor, confirmation tally, resettle and restart re-drive. An unbounded Cell's entry is
+  committed by its own fsync; a bounded operator Cell's entry is **held** until a durable stage marker
   names its record, and the commit worker releases the named range after the ack. Compute is
   not coupled to sink health: the next tasklet runs while the flush lands.
 - **A failed stage leaks nothing.** A held entry that no marker will name (a stage interrupted
@@ -316,35 +316,35 @@ durable. The commit path, crash-resume and journal layout are in
 - **Keys.** Each flushed frame carries the stream's identity: `flz.cell`,
   `flz.seq = <record seq>.<emit ordinal>`, `flz.epoch` (the Cell's realign epoch), `channel`,
   `flz.key` when the channel is keyed, and the author's metadata. `emit_keyed` and emit with
-  metadata work in a workflow tasklet in every SDK.
+  metadata work in a bounded tasklet in every SDK.
 - **The epoch rule.** A crash re-drive keeps every stamp, so a dedup sink absorbs the repeat. A
-  deliberate [rewind](workflow_operative.md#rewind-taking-a-loop-back-to-a-committed-iteration)
+  deliberate [rewind](bounded_operator.md#rewind-taking-a-loop-back-to-a-committed-iteration)
   leaves `flz.epoch` alone: a re-run's output is a newer record of the same Cell, so its
   `flz.seq` sorts above the unwound run's and an `(epoch, seq)`-guarded sink overwrites.
 - **Compensation rides the same path.** A `compensate` hook's output is a newer record of the
   compensating Cell, named by the `compensated` entry and released once that entry is durable;
   its seq is above the forward output's, so an undo never collides with it.
 - **Persistence off.** An opted-out class writes no record and no journal; its outputs go
-  straight to the wire with channel, key and metadata, as a tier-off stream's do.
+  straight to the wire with channel, key and metadata, as a tier-off unbounded operator's do.
 
 **Guarantee.** Never lost, never leaked before commit, and **at-least-once with stable keys** on
 the re-drive window (between a sink's confirmation and the flush cursor's write); a
 dedup-capable sink absorbs that duplicate exactly. Inspect what an instance's stages name with
-`flz state journal <operative/instance>` (each stage's `ran:` lines name the Cell's records and
+`flz state journal <operator/instance>` (each stage's `ran:` lines name the Cell's records and
 channels) and what a Cell still owes or holds for a stage with
-`flz state outbox <operative/tasklet/key>` (`outbox_lag`, `held_for_stage`).
+`flz state outbox <operator/tasklet/key>` (`outbox_lag`, `held_for_stage`).
 
-## Workflow operatives: the same durable input log
+## Bounded operators: the same durable input log
 
-The input half of the same story. A durable workflow instance's input goes through the one
+The input half of the same story. A durable bounded instance's input goes through the one
 durable input log the tier uses (above), keyed by the instance id: appended **before** it is
 forwarded, answered once synced, stamped `flz.offset`, and an append that fails is not
 forwarded. A crash after the append re-delivers on rehydrate (at-least-once *into* the
-operative, exactly-once *completion* via the consumed offset). A repeat of a `flz.msg_id` the
+operator, exactly-once *completion* via the consumed offset). A repeat of a `flz.msg_id` the
 log still retains is absorbed, so an at-least-once sender cannot produce a duplicate turn,
 while a message without an id is always appended.
 
-What differs is the reporter. A workflow's Cells report no consumed offset; its journal does,
+What differs is the reporter. A bounded operator's Cells report no consumed offset; its journal does,
 under its own reserved identity: each durable iteration commit (and a park that dead-lettered a
 message unread) reports the offset it consumed into the log's watermark, and every bind seeds
 that row from the highest offset any committed iteration consumed, and from the park record
@@ -352,40 +352,40 @@ while the instance sleeps. The watermark is the
 instance's floor: retention reclaims below it, the bind re-forwards the retained records above
 it, and a rewind never lowers it, so a deferred truncation costs disk, never a re-delivery.
 
-**Source credit applies too.** A durable workflow's appends debit the same per-instance
+**Source credit applies too.** A durable bounded operator's appends debit the same per-instance
 `:source_credit_window_bytes` window, drained as iterations commit, so a sender that has the
 window's worth of input (16 MiB by default) owed by one instance parks until the instance
 commits an iteration, instead of growing the log without bound.
 
 **Guarantee.** Input sent to a suspended, crashed or migrating durable instance is **never
-lost**. Inspect with `flz state inbox <operative/instance>`, which renders the log of either
+lost**. Inspect with `flz state inbox <operator/instance>`, which renders the log of either
 kind. An opted-out class keeps its waiting messages in memory only. Mechanics:
-[`workflow_operative.md`](workflow_operative.md) "Durable loop and suspension".
+[`bounded_operator.md`](bounded_operator.md) "Durable loop and suspension".
 
 ## Sleeping instances
 
 Sleeping when idle is a class setting of both kinds, `sleep_when_idle`: on by default for a
-workflow whose persistence is on, off for a stream, and refused as `SleepWithoutPersistence` on a
+bounded operator whose persistence is on, off for an unbounded operator, and refused as `SleepWithoutPersistence` on a
 class whose persistence is off. An instance whose Cells hold nothing queued, in flight, retrying,
 unflushed or timed, idle for `FLEZHA_PARK_IDLE_MS` (default ten minutes), ships `IterPark` and is
-evicted; the controller writes its park record first. A workflow sleeps only at a committed
-boundary, a stream at iteration `0`.
+evicted; the controller writes its park record first. A bounded operator sleeps only at a committed
+boundary, an unbounded operator at iteration `0`.
 
-A stream that sleeps keeps durable input: every message is appended to its input log before it
+An unbounded operator that sleeps keeps durable input: every message is appended to its input log before it
 is forwarded, one append per message. Its Cells report no consumed offset, so its floor is what
 the controller forwarded to a bound runner, reported by the Overwatch after each forward and kept
 in the park record while it sleeps. The log therefore retains only what arrived while nobody
 could take it, and an input already handed to the runner is the runner's, as for any plain
 stream. The bind that wakes it restores every persisted Cell, awaited, before it re-forwards
-that tail. A stream that does not declare the setting pays nothing.
+that tail. An unbounded operator that does not declare the setting pays nothing.
 
 **Guarantee.** A message sent to a sleeping instance of either kind wakes it and is delivered
-once, across a controller restart while it sleeps. A sleeping workflow stopped by an operator is
-woken to end `cancelled`; a sleeping stream's stop removes it, as a stream's stop always does.
+once, across a controller restart while it sleeps. A sleeping bounded operator stopped by a user is
+woken to end `cancelled`; a sleeping unbounded operator's stop removes it, as an unbounded operator's stop always does.
 
-## Operative to operative: the cross-hop delivery guarantee
+## Operator to operator: the cross-hop delivery guarantee
 
-`Flezha.Plugin.Provider.OperativeForward` delivers one operative's output into another's input
+`Flezha.Plugin.Provider.OperatorForward` delivers one operator's output into another's input
 stream with **no** new identity scheme, dedup store, ledger or wire format. Three existing parts
 assemble the guarantee: the source's outbox stamps `flz.seq` / `flz.key` / `flz.epoch` and makes
 the record durable; the plugin's worker holds the record and retries until the target confirms;
@@ -395,11 +395,11 @@ is offset-addressed in that log.
 **The guarantee is derived, never configured** — there is no delivery-mode option, because a
 source with no outbox has nothing to re-send from:
 
-| Source operative | Across the hop |
+| Source operator | Across the hop |
 | --- | --- |
-| effectively-once stream | effectively-once |
-| durable workflow | effectively-once |
-| plain stream (no outbox) | at-least-once, best effort — no de-duplication |
+| effectively-once unbounded operator | effectively-once |
+| durable bounded operator | effectively-once |
+| plain unbounded operator (no outbox) | at-least-once, best effort — no de-duplication |
 
 **A partitioned target adds a routing precondition.** Forwarding into a partition group routes
 by `hash(flz.key)` to the owning member; a message *without* `flz.key` (an emit on an unkeyed
@@ -408,10 +408,10 @@ channel, from either kind) is **parked to the source's DLQ** with
 cursor may pass.
 
 **In-flight items survive a controller restart.** The Cell writer's outbox gates its cursor on
-the sink, for a durable workflow and an effectively-once stream alike: it keeps each dispatched
+the sink, for a durable bounded operator and an effectively-once unbounded operator alike: it keeps each dispatched
 entry in its confirmation tally and re-drives everything above the persisted
-`outbox_flushed_seq` on restore. A plain stream keeps retry-until-confirmed within the worker's lifetime only. Verdicts,
-refusals and telemetry: [`../plugins/operative_forward.md`](../plugins/operative_forward.md).
+`outbox_flushed_seq` on restore. A plain unbounded operator keeps retry-until-confirmed within the worker's lifetime only. Verdicts,
+refusals and telemetry: [`../plugins/operator_forward.md`](../plugins/operator_forward.md).
 
 ## Per-Cell timers: folded state, not a scheduler
 
@@ -435,17 +435,17 @@ a `format_id = 3` record under `cell_state_change` (a postcard `Vec<TimerOp>`) o
 
 ## Dead-letter queue: poison payloads park, never drop
 
-A permanently-failing (poison) payload in a Stream operative is never silently discarded. A
+A permanently-failing (poison) payload in an Unbounded operator is never silently discarded. A
 failing invocation — returned error or panic/exception, same policy in both SDKs — is retried
 up to the channel's `retry_max` (default 3 attempts, exponential backoff with jitter); authors
 mark an error non-retryable with `TaskletError::non_retryable` /
 `TaskletException.NonRetryable` to park immediately. An unroutable forward into a partition
 group, the SDK's out-of-range key-group guard, and a frame naming a channel that is not one of the
-Operative's entry channels park with no invocation failure at all; the last of those parks under
-the name the frame asked for, with an error naming the entry channels the Operative does declare,
+Operator's entry channels park with no invocation failure at all; the last of those parks under
+the name the frame asked for, with an error naming the entry channels the Operator does declare,
 and after one attempt, because the same declared set answers every re-attempt. After
 exhaustion the payload is **durably parked** to the controller's DLQ store
-(`app_data/dlq/<operative_class>/<tasklet_id>/`, JSONL index + payload blobs) and only then
+(`app_data/dlq/<operator_class>/<tasklet_id>/`, JSONL index + payload blobs) and only then
 does the Cell advance:
 
 - **Tier off:** the SDK ships a `park_payload` frame and holds the Cell until the controller
@@ -455,9 +455,9 @@ does the Cell advance:
   Parking advances the consumed offset past the poison, so the min-watermark resumes and a
   credit-parked source resumes granting.
 
-Operator surface: `flz dlq list | show | replay | drop`. All four are `operator` verbs and take
+Operations surface: `flz dlq list | show | replay | drop`. All four are `ops` verbs and take
 `--token` (or `FLEZHA_TOKEN`) — a parked payload is the failed business record held verbatim, so
-reading one is as privileged as discarding it. A verb naming an operative class is authorized in
+reading one is as privileged as discarding it. A verb naming an operator class is authorized in
 that class's namespace; one that names none reads across every namespace and is authorized in
 `_system`. Replay is explicit-only and re-enters the
 ordinary input path (fresh output identity — it journals as a new input); a failing replay
@@ -465,9 +465,9 @@ re-parks with `generation` incremented; `drop` is audited. Retention bounds the 
 AND size (30 d / 4 GiB, more restrictive wins); a retention deletion is genuine loss and is
 loud: `[:flezha, :dlq, :retention_dropped]`, exported as `dlq_dropped_by_retention_total`.
 
-**Workflow equivalence.** The DLQ applies to Stream operatives only. A workflow Cell runs the
+**Bounded operator equivalence.** The DLQ applies to Unbounded operators only. A bounded operator Cell runs the
 same first rung — retried in place, non-retryable errors skipping the ladder (see
-[Cell retry](workflow_operative.md#cell-retry-the-rung-before-the-abort)) — but its terminal
+[Cell retry](bounded_operator.md#cell-retry-the-rung-before-the-abort)) — but its terminal
 escape is not a park: the tasklet fails, AbortAll fires and saga compensation unwinds.
 
 ## Late-input correction: fix the past, and the sinks fix themselves
@@ -540,19 +540,19 @@ rather than bumping twice.
 `ProcessAsArrival` (the default — declaring a window never silently starts discarding data) or
 `Drop`. Neither advances the high-water, so a very old event cannot drag the window backward.
 
-**Operator replay.** `flz operative replay <operative/tasklet/key> --from <seq|timestamp>`
+**Manual replay.** `flz operator replay <operator/tasklet/key> --from <seq|timestamp>`
 runs the same transaction with the baseline chosen instead of derived: deploy a fix, heal the
 recent past. A target older than retention is refused with `outside_retention`, naming the
 earliest available point.
 
 **Limits.** A correction overwrites the keys it re-emits; it does not retract keys it no longer
 emits (impossible for event-time-bucketed keys, possible for others — treat the sink as
-append-with-overwrite). A downstream operative sees corrected outputs as ordinary keyed updates
+append-with-overwrite). A downstream operator sees corrected outputs as ordinary keyed updates
 and does not itself rewind. The window is bounded by retention by construction.
 
 ## Remote durability tier: surviving the loss of a controller's disk
 
-Everything above is local. A controller that dies **with its disk** takes its operatives' state
+Everything above is local. A controller that dies **with its disk** takes its operators' state
 and the registry record of their existence with it; `WalTransfer` is a one-shot pull at
 migration time, not replication. A production boot must choose: with `FLEZHA_DURABILITY_BACKEND`
 unset the controller refuses to start, and `FLEZHA_DURABILITY_BACKEND=none` is byte-identical
@@ -561,14 +561,14 @@ to a build without the tier (`durability_posture: local_only`).
 When enabled, immutable artifacts — snapshots, WAL record bundles, task-journal suffixes, the
 durable input log, the registry cspec, parked DLQ records, the authz and schedule stores —
 ship to a Postgres, S3-compatible or file backend at boundaries that already exist (checkpoint
-close, compaction, workflow commit barriers, a park or a drop) plus one backstop timer
+close, compaction, bounded operator commit barriers, a park or a drop) plus one backstop timer
 (`ship_interval_ms`, 30 s). The manifest is written last, so a torn upload is invisible to
 recovery, which hydrates the artifacts into the local layout and runs the ordinary restore path.
 
 | Kind | Mode | Loss when the disk is gone |
 | --- | --- | --- |
-| Workflow | declared `SYNC_DURABILITY` | **none** — the barrier is remote before it is acked |
-| Workflow | default | at most the work since the last shipped barrier |
+| Bounded operator | declared `SYNC_DURABILITY` | **none** — the barrier is remote before it is acked |
+| Bounded operator | default | at most the work since the last shipped barrier |
 | Stream | checkpoint-ack | at most the current, unclosed interval |
 | Stream | per-input | at most one `ship_interval_ms` |
 
@@ -579,24 +579,24 @@ and `/healthz` (`degraded, reason: durability_rpo_exceeded`). Configuration, lin
 across two controllers and the kill-the-disk drill:
 [`../operations/remote_durability_tier.md`](../operations/remote_durability_tier.md).
 
-## How to avoid loss: operator playbook
+## How to avoid loss: user playbook
 
 - **Deploy and upgrade runners with a graceful stop, never a kill.** Send SIGTERM (or a
   `flz`-driven `disconnect`) and set the orchestrator grace period
   (`terminationGracePeriodSeconds` / `stop_grace_period`) **longer than the drain** (ack budget
-  2 s per operative in parallel, serializer cap 10 s). Roll one node at a time so a peer is
+  2 s per operator in parallel, serializer cap 10 s). Roll one node at a time so a peer is
   always live.
 - **Restart the controller correctly.** Multi-node: bring the new instance up *before* stopping
-  the old one. Sole instance: plain restart; the first reconcile round replays the operative
+  the old one. Sole instance: plain restart; the first reconcile round replays the operator
   list from the durable registry once `FLEZHA_PROCESS_HUB_CLUSTER_SETTLE_MS` (2 000) has passed
   with no peer to wait for. `FLEZHA_PROCESS_HUB_RECONCILE_GRACE_MS` (45 000) only caps the wait
   on a connected peer that never answers.
 - **Make sinks idempotent where exactly-once matters.** Declare the channel `.keyed()` so
-  re-emits carry identical `flz.key` / `flz.seq` stamps to upsert on, or opt the operative into
+  re-emits carry identical `flz.key` / `flz.seq` stamps to upsert on, or opt the operator into
   `effectively_once()` — the Kafka and Postgres plugins conform out of the box.
 - **Never treat the on-disk registry as the live source of truth** in code or ops; it is
   what the orphan reconcile replays on a cold start.
-- **Workflow operatives are durable and at-least-once by default.** Author each tasklet and
+- **Bounded operators are durable and at-least-once by default.** Author each tasklet and
   compensation idempotently, or opt the class out of persistence for a fire-and-forget job that
   must re-run from a clean slate.
 
@@ -608,9 +608,9 @@ across two controllers and the kill-the-disk drill:
   `CMD`/entrypoint, or `setpriv`/`gosu` dropping privileges by `exec`). A wrapper that forks the
   binary and force-kills it on SIGTERM — notably `su` ("Session terminated, killing shell") —
   silently degrades a graceful stop to a hard kill.
-- Expecting the operative list back instantly after a sole-controller restart: `/healthz`
+- Expecting the operator list back instantly after a sole-controller restart: `/healthz`
   reads `recovering` until the first reconcile round, about two seconds on a controller with
-  no peers, and then until the replayed operatives are bound to runners again. An operative
+  no peers, and then until the replayed operators are bound to runners again. An operator
   whose runner has not reconnected is held unbound and bound when it does; that is the design,
   not a fault.
 - Assuming output is exactly-once: it is at-least-once by default. Dedup downstream or opt into
@@ -619,7 +619,7 @@ across two controllers and the kill-the-disk drill:
 ## See also
 
 - [`overview.md`](overview.md) — the map of every resilience mechanism and its owning doc
-- [`workflow_operative.md`](workflow_operative.md) — commit path, crash-resume, suspension, retention
+- [`bounded_operator.md`](bounded_operator.md) — commit path, crash-resume, suspension, retention
 - [`../architecture/kernel.md`](../architecture/kernel.md) — the write path, the effect record, the epoch rule, flow control
 - [`../internals/state_persistence.md`](../internals/state_persistence.md) — WAL layout, snapshots, retention knobs
 - [`../operations/remote_durability_tier.md`](../operations/remote_durability_tier.md) — surviving the loss of a disk

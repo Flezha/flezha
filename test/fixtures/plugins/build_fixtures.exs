@@ -223,7 +223,7 @@ defmodule BuildFixtures do
           provider: #{hd(mods)},
           hooks: [{:on_input, []}],
           default_opts: %{},
-          scope: :operative
+          scope: :operator
         }
       ],
       dependencies: #{inspect(deps)}

@@ -4,7 +4,7 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
   GenServer that keeps the remote receiver alive. The table starts it at
   activation and monitors it — if it dies the plugin is disabled.
 
-  Required opts: `:recv_pid`, `:plugin_id`, `:operative_id`, `:namespace`.
+  Required opts: `:recv_pid`, `:plugin_id`, `:operator_id`, `:namespace`.
   Optional: `:heartbeat_interval` (ms, default 5000).
   """
 
@@ -24,7 +24,7 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
         required: true,
         doc: "The plugin id the heartbeat disables, with every member a group fanned it out to"
       ],
-      operative_id: [type: :string, required: true, doc: "The operative this binding belongs to"],
+      operator_id: [type: :string, required: true, doc: "The operator this binding belongs to"],
       namespace: [type: :any, required: true, doc: "The namespace this binding belongs to"],
       heartbeat_interval: [
         type: :int,

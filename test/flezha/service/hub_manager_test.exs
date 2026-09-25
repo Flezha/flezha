@@ -2,9 +2,9 @@ defmodule Flezha.Service.HubManagerTest do
   @moduledoc """
   Asserts the cspec-mutation contract for
   `Flezha.Service.HubManager.rewrite_cspec_plugins/2` and
-  `Flezha.Service.HubManager.operative_plugins/2`.
+  `Flezha.Service.HubManager.operator_plugins/2`.
 
-  After the `auto-restore-on-boot` change, `update_operative_plugins/3` was
+  After the `auto-restore-on-boot` change, `update_operator_plugins/3` was
   collapsed into `Flezha.Service.PluginManager` (which writes through
   `ProcessHub.Service.ProcessRegistry.update/3` directly). The pure
   transformer `rewrite_cspec_plugins/2` survived in `HubManager` so
@@ -18,7 +18,7 @@ defmodule Flezha.Service.HubManagerTest do
 
   use ExUnit.Case, async: false
 
-  alias Flezha.Operative.Builder
+  alias Flezha.Operator.Builder
   alias Flezha.Plugin
   alias Flezha.Service.HubManager
   alias ProcessHub.Service.Recovery, as: HubRecovery
@@ -26,7 +26,7 @@ defmodule Flezha.Service.HubManagerTest do
 
   @namespace "default"
 
-  defp operative_builder(opts) do
+  defp operator_builder(opts) do
     %Builder{
       id: "ignored",
       factory_id: "do_nothing",
@@ -38,7 +38,7 @@ defmodule Flezha.Service.HubManagerTest do
   defp cspec(start_arg) do
     %{
       id: "ignored",
-      start: {Flezha.Operative.Overwatch, :start_link, [start_arg]},
+      start: {Flezha.Operator.Overwatch, :start_link, [start_arg]},
       restart: :transient
     }
   end
@@ -50,12 +50,12 @@ defmodule Flezha.Service.HubManagerTest do
       opts: opts,
       hooks: [{:on_output, []}],
       namespace: @namespace,
-      operative_id: "ignored"
+      operator_id: "ignored"
     )
   end
 
   defp extract_plugins(rewritten) do
-    {Flezha.Operative.Overwatch, :start_link, [arg]} = rewritten.start
+    {Flezha.Operator.Overwatch, :start_link, [arg]} = rewritten.start
 
     builder =
       case arg do
@@ -108,7 +108,7 @@ defmodule Flezha.Service.HubManagerTest do
 
     @tag :tmp_dir
     test "a boot that skips replay leaves the on-disk registry intact", %{tmp_dir: tmp_dir} do
-      # Fails when a whole-cluster cold boot comes up with zero operatives and
+      # Fails when a whole-cluster cold boot comes up with zero operators and
       # no way back: the boot that declines to replay must not erase the only
       # on-disk record a later recovery boot reads.
       hub_id = :registry_survives_skipped_replay_hub
@@ -201,7 +201,7 @@ defmodule Flezha.Service.HubManagerTest do
 
   describe "rewrite_cspec_plugins/2" do
     test "appends a plugin to a cspec with empty opts[:plugins]" do
-      builder = operative_builder(plugins: [])
+      builder = operator_builder(plugins: [])
       cs = cspec({@namespace, "ce_1", builder})
       new_plugin = plugin("plug_x", %{a: 1})
 
@@ -220,7 +220,7 @@ defmodule Flezha.Service.HubManagerTest do
       b = plugin("b")
       c = plugin("c")
 
-      builder = operative_builder(plugins: [{"a", a}, {"b", b}, {"c", c}])
+      builder = operator_builder(plugins: [{"a", a}, {"b", b}, {"c", c}])
       cs = cspec({@namespace, "ce_1", builder})
 
       rewritten =
@@ -231,8 +231,8 @@ defmodule Flezha.Service.HubManagerTest do
       assert Enum.map(extract_plugins(rewritten), fn {id, _} -> id end) == ["a", "c"]
     end
 
-    test "handles the {namespace, operative} start-args shape" do
-      builder = operative_builder(plugins: [])
+    test "handles the {namespace, operator} start-args shape" do
+      builder = operator_builder(plugins: [])
       cs = cspec({@namespace, builder})
 
       rewritten =
@@ -242,12 +242,12 @@ defmodule Flezha.Service.HubManagerTest do
 
       assert [{"only", _}] = extract_plugins(rewritten)
       # The 2-tuple shape is preserved.
-      assert {Flezha.Operative.Overwatch, :start_link, [{@namespace, %Builder{}}]} =
+      assert {Flezha.Operator.Overwatch, :start_link, [{@namespace, %Builder{}}]} =
                rewritten.start
     end
 
-    test "handles the {namespace, runner_id, operative} start-args shape" do
-      builder = operative_builder(plugins: [])
+    test "handles the {namespace, runner_id, operator} start-args shape" do
+      builder = operator_builder(plugins: [])
       cs = cspec({@namespace, "ce_42", builder})
 
       rewritten =
@@ -259,13 +259,13 @@ defmodule Flezha.Service.HubManagerTest do
 
       # The runner_id position must survive the rewrite. Losing it
       # would break alter_child_data's invariants on the next restart.
-      assert {Flezha.Operative.Overwatch, :start_link, [{@namespace, "ce_42", %Builder{}}]} =
+      assert {Flezha.Operator.Overwatch, :start_link, [{@namespace, "ce_42", %Builder{}}]} =
                rewritten.start
     end
 
     @tag :bench
     test "1000 sequential cspec rewrites stay under the documented latency budget" do
-      builder = operative_builder(plugins: [])
+      builder = operator_builder(plugins: [])
       cs = cspec({@namespace, "ce_1", builder})
 
       times =

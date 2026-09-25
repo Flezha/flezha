@@ -13,7 +13,7 @@ defmodule Mix.Tasks.Bench.FleetTest do
   describe "parse_runtime/3" do
     test "no argument is the default fleet" do
       assert Fleet.parse_runtime(nil) == :rust
-      assert Fleet.parse_runtime(nil, :workflow) == :rust
+      assert Fleet.parse_runtime(nil, :bounded) == :rust
     end
 
     test "every runtime with a manifest is accepted when no capability is needed" do
@@ -33,16 +33,16 @@ defmodule Mix.Tasks.Bench.FleetTest do
       end
     end
 
-    test ":workflow accepts exactly the runtimes whose manifest does not defer it" do
+    test ":bounded accepts exactly the runtimes whose manifest does not defer it" do
       {accepted, refused} =
         Enum.split_with(PortPilot.runtimes(), fn runtime ->
-          "workflow" not in (PortPilot.manifest(runtime)["deferred"] || [])
+          "bounded" not in (PortPilot.manifest(runtime)["deferred"] || [])
         end)
 
       assert Enum.sort(accepted) == [:elixir, :java, :node, :php, :python, :ruby, :rust]
 
       for runtime <- accepted do
-        assert Fleet.parse_runtime(Atom.to_string(runtime), :workflow) == runtime
+        assert Fleet.parse_runtime(Atom.to_string(runtime), :bounded) == runtime
       end
 
       # Every SDK now carries every capability, so the deferral refusal has no

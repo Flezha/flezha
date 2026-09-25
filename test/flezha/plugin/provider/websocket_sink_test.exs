@@ -125,7 +125,7 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
 
     defp ctx(message, metadata) do
       %Ctx.IO{
-        operative_id: "op",
+        operator_id: "op",
         namespace: :default,
         message: message,
         metadata: metadata
@@ -461,7 +461,7 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
 
     # The other half of a source-only enable: the inbound path belongs to the
     # declared worker, not to a subscription, so a plugin bound in neither
-    # direction still feeds its operative what arrives on the socket.
+    # direction still feeds its operator what arrives on the socket.
     test "still ingests what arrives on its socket" do
       assert {:ok, ingested} = Client.handle_in({:text, "frame"}, state(sink!(%{}, [])))
 
@@ -481,20 +481,20 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
       :ok
     end
 
-    test "fires on a tier operative, and the enable succeeds" do
+    test "fires on a tier operator, and the enable succeeds" do
       log =
         capture_log(fn ->
           assert {:ok, opts} = prepared(%{effectively_once: true})
           assert %Sink{} = opts.sink
         end)
 
-      assert log =~ "effectively-once operative"
+      assert log =~ "effectively-once operator"
       assert log =~ ~s(sink_ack_mode="none")
     end
 
-    test "does not fire on a plain operative" do
+    test "does not fire on a plain operator" do
       log = capture_log(fn -> assert {:ok, _opts} = prepared() end)
-      refute log =~ "effectively-once operative"
+      refute log =~ "effectively-once operator"
     end
 
     test "does not fire for a plugin bound in neither direction" do
@@ -504,7 +504,7 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
           assert opts.sink == nil
         end)
 
-      refute log =~ "effectively-once operative"
+      refute log =~ "effectively-once operator"
     end
   end
 

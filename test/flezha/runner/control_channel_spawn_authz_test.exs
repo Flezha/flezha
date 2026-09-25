@@ -1,14 +1,14 @@
 defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
   @moduledoc """
-  A tasklet-requested workflow spawn (`ctx.spawn_workflow`) is judged like
+  A tasklet-requested bounded spawn (`ctx.spawn_bounded`) is judged like
   any other act, as the identity its connection proved: a start against the
-  `operative_start` row, which records it, and a delivery to a running instance
-  against `spawn_deliver`, the `operative.send` right with no record of a
+  `operator_start` row, which records it, and a delivery to a running instance
+  against `spawn_deliver`, the `operator.send` right with no record of a
   permitted delivery. Every refusal is audited. `spawner` is the role that
   grants those two rights in its own namespace and nothing else.
 
   The frame is the one every SDK sends, written into a real control channel;
-  the start runs the real `OperativeManager` path over `FakeStartRegistry`, so
+  the start runs the real `OperatorManager` path over `FakeStartRegistry`, so
   nothing between the frame and the registry claim is stubbed.
   """
   # async: false: writes Application env and a shared on-disk auth root;
@@ -28,12 +28,12 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
   alias Flezha.Cluster.Directory
   alias Flezha.Observability.RingBufferSink
   alias Flezha.Observability.TestSinks
-  alias Flezha.Operative.Builder
+  alias Flezha.Operator.Builder
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Session
   alias Flezha.Service.Admin
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.ControlFrameTestHelper, as: ControlFrame
   alias FlezhaTest.Helper.FakeStartRegistry
@@ -47,7 +47,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
   setup :set_mimic_global_until_exit
 
   setup do
-    registry = FakeStartRegistry.install(runners: ["runner-1"], kind: :workflow)
+    registry = FakeStartRegistry.install(runners: ["runner-1"], kind: :bounded)
 
     test_pid = self()
 
@@ -74,7 +74,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
     }
   end
 
-  test "an identity that may not start an operative is refused, and nothing starts", ctx do
+  test "an identity that may not start an operator is refused, and nothing starts", ctx do
     assert Flezha.AuthZ.enabled?()
     assert RoleStore.lookup(@principal) == :error
     since = System.monotonic_time(:microsecond)
@@ -86,11 +86,11 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
 
     # The reply is written after the resolution, so nothing can start behind it.
     assert FakeStartRegistry.started() == []
-    refute OperativeManager.exist?(@ns, ctx.instance_id)
+    refute OperatorManager.exist?(@ns, ctx.instance_id)
 
     assert [denial] = AuthTestHelper.await_platform_authz_events(:authorization_denied, since)
     assert denial.metadata.principal == @principal
-    assert denial.metadata.action == :"operative.start"
+    assert denial.metadata.action == :"operator.start"
     assert denial.metadata.reason == :role_insufficient
   end
 
@@ -139,7 +139,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
 
     record = NodeTestHelper.wait_until(fn -> audit_record(:start, boundary) end, 2_000, 25)
     assert record.metadata.outcome == :error
-    assert record.metadata.operative == nil
+    assert record.metadata.operator == nil
   end
 
   test "an identity that may not send is refused a delivery to a running instance", ctx do
@@ -154,7 +154,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
 
     assert [denial] = AuthTestHelper.await_platform_authz_events(:authorization_denied, since)
     assert denial.metadata.principal == @principal
-    assert denial.metadata.action == :"operative.send"
+    assert denial.metadata.action == :"operator.send"
     assert denial.metadata.reason == :role_insufficient
   end
 
@@ -174,12 +174,12 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
     refute audit_record(:send, boundary)
   end
 
-  test "a spawner may not stop an operative or enable or disable a plugin" do
+  test "a spawner may not stop an operator or enable or disable a plugin" do
     :ok = RoleStore.bind(@principal, @ns, :spawner)
     assert Session.runner_caller_context(@ns).roles == [:spawner]
 
     for {verb, args} <- [
-          {"Operative.stop", ~s(["o1"])},
+          {"Operator.stop", ~s(["o1"])},
           {"PluginManager.enable", ~s(["p1", {"id": "p1"}])},
           {"PluginManager.disable", ~s(["p1"])}
         ] do
@@ -195,7 +195,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
     # did not hold would answer `role_insufficient` instead.
     assert {:error, {:forbidden, :namespace_mismatch}} =
              Verb.run(
-               :operative_start,
+               :operator_start,
                Session.runner_caller_context(@ns),
                ["team-other", ctx.instance_id],
                start
@@ -238,7 +238,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
   end
 
   defp run_instance(%{registry: registry, instance_id: instance_id}) do
-    builder = %Builder{id: instance_id, factory_id: @factory, kind: :workflow, init_values: %{}}
+    builder = %Builder{id: instance_id, factory_id: @factory, kind: :bounded, init_values: %{}}
     FakeStartRegistry.insert(registry, self(), builder)
   end
 
@@ -246,8 +246,8 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
     payload =
       ControlFrame.encode_request(
         "ref-spawn",
-        {:spawn_workflow_request,
-         %RunnerCommands.SpawnWorkflowRequest{
+        {:spawn_bounded_request,
+         %RunnerCommands.SpawnBoundedRequest{
            instance_id: instance_id,
            factory_id: @factory,
            payload: "p1",
@@ -263,7 +263,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
 
     %RunnerCommands.CommandRequest{
       reference_id: reference_id,
-      command: {:spawn_workflow_response, response}
+      command: {:spawn_bounded_response, response}
     } = ControlFrame.decode_request(framed)
 
     {reference_id, response}
@@ -271,18 +271,18 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
 
   defp assert_start_recorded(boundary, instance_id) do
     record = NodeTestHelper.wait_until(fn -> audit_record(:start, boundary) end, 2_000, 25)
-    assert record, "the permitted start wrote no :start record on :operative_service"
+    assert record, "the permitted start wrote no :start record on :operator_service"
 
-    assert record.metadata.action == :"operative.start"
+    assert record.metadata.action == :"operator.start"
     assert record.metadata.namespace == @ns
     assert record.metadata.principal == @principal
     assert record.metadata.caller_source == :sdk
-    assert record.metadata.operative == instance_id
+    assert record.metadata.operator == instance_id
     assert record.metadata.outcome == :ok
   end
 
   defp audit_record(name, boundary) do
-    :operative_service
+    :operator_service
     |> RingBufferSink.query(boundary)
     |> Enum.find(&(&1.name == name))
   end

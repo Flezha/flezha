@@ -2,7 +2,7 @@ defmodule FlezhaTest.Helper.PostgresSink do
   @moduledoc """
   Shared fixtures for the Postgres sink suites: connection to the
   `postgres-sink` docker service (localhost:5433 by default) and the
-  sink's fixed default schema, as an operator would pre-create it.
+  sink's fixed default schema, as a user would pre-create it.
   """
 
   @doc "Provider / `Postgrex` connection opts from the standard env vars."

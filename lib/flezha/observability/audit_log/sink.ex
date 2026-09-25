@@ -31,7 +31,7 @@ defmodule Flezha.Observability.AuditLog.Sink do
   @sink_name :audit_log
   @default_high_watermark 10_000
 
-  # The system pairs. Every source an operator verb's row declares joins them
+  # The system pairs. Every source an administration verb's row declares joins them
   # at boot, so a declared audit is durable by construction.
   @system_allow_list [
     {:flezha_shutdown, :any},

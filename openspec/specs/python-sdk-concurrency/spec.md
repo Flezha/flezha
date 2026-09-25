@@ -43,10 +43,10 @@ The SDK SHALL NOT offer a pool configuration that omits the starvation superviso
 
 ### Requirement: Every blocking core call releases the GIL
 
-The binding SHALL release the global interpreter lock for the duration of every blocking core call — `poll`, `wait_starvation`, `complete` and the workflow inbox receive — so that no blocking core call prevents another Python thread from running. The binding SHALL NOT hold a Rust lock across arbitrary Python execution.
+The binding SHALL release the global interpreter lock for the duration of every blocking core call — `poll`, `wait_starvation`, `complete` and the bounded operator inbox receive — so that no blocking core call prevents another Python thread from running. The binding SHALL NOT hold a Rust lock across arbitrary Python execution.
 
-#### Scenario: A blocked workflow receive does not freeze the interpreter
-- **WHEN** a workflow stage waits on the inbox for several seconds
+#### Scenario: A blocked bounded operator receive does not freeze the interpreter
+- **WHEN** a bounded stage waits on the inbox for several seconds
 - **THEN** other Python threads, including fetchers, SHALL continue to execute Python code throughout the wait
 
 #### Scenario: A blocked poll does not freeze the interpreter
@@ -101,14 +101,14 @@ Handlers SHALL be ordinary synchronous callables by default. The SDK SHALL detec
 
 ### Requirement: The SDK spawns no processes and refuses use after a fork
 
-The SDK SHALL NOT fork, spawn or supervise processes; process count SHALL be the orchestrator's decision, and each process SHALL be one runner. The SDK SHALL record the process that started the core and SHALL raise, naming the rule, on any core call made from a different process. The documented entrypoint order SHALL be: declare classes, fork if the operator forks at all, then start in the child.
+The SDK SHALL NOT fork, spawn or supervise processes; process count SHALL be the orchestrator's decision, and each process SHALL be one runner. The SDK SHALL record the process that started the core and SHALL raise, naming the rule, on any core call made from a different process. The documented entrypoint order SHALL be: declare classes, fork if the user forks at all, then start in the child.
 
 #### Scenario: A core call after a fork is refused loudly
 - **WHEN** a process forks after the core has been started and the child calls into the core
 - **THEN** the SDK SHALL raise an error naming the fork rule, rather than wedging or silently failing to serve
 
 #### Scenario: Fork-then-start is supported
-- **WHEN** an operator declares classes in the parent, forks, and starts the core in each child
+- **WHEN** a user declares classes in the parent, forks, and starts the core in each child
 - **THEN** each child SHALL serve as an independent runner
 
 ### Requirement: A free-threaded build tier ships, and per-interpreter state keeps sub-interpreters reachable

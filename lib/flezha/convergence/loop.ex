@@ -30,7 +30,7 @@ defmodule Flezha.Convergence.Loop do
 
   require Logger
 
-  # A operative must be misbound for this many consecutive ticks before it is
+  # An operator must be misbound for this many consecutive ticks before it is
   # migrated, so a brief runner blip cannot trigger a full-namespace
   # migration + WAL replay.
   @misbound_min_ticks 2
@@ -123,10 +123,10 @@ defmodule Flezha.Convergence.Loop do
 
   @doc false
   def handle_telemetry([:flezha, :state, :output_stall], _measurements, metadata, _loop_pid) do
-    operative_id = Map.get(metadata, :operative_instance)
+    operator_id = Map.get(metadata, :operator_instance)
 
-    if is_binary(operative_id),
-      do: Facts.declare({:output_stall, operative_id, Map.take(metadata, [:runner_id])})
+    if is_binary(operator_id),
+      do: Facts.declare({:output_stall, operator_id, Map.take(metadata, [:runner_id])})
 
     :ok
   catch
@@ -151,7 +151,7 @@ defmodule Flezha.Convergence.Loop do
 
   # One declaration: a known key refreshes its time and costs no tick, a new
   # key ticks at once when its kind says so, a counter-fact clears its fact,
-  # and a runner arriving in a namespace releases the ladders of the operatives
+  # and a runner arriving in a namespace releases the ladders of the operators
   # it could take — the world changed, so they are retried at once.
   defp declared(%State{} = state, kind, target, args) do
     now = System.monotonic_time(:millisecond)
@@ -164,7 +164,7 @@ defmodule Flezha.Convergence.Loop do
   # A counter-fact is the evidence its fact's ladder was waiting for, so it
   # releases the key as well as dropping the fact — `settle_facts/3` never sees
   # a fact cleared this way. A runner connecting releases the keys of every
-  # operative in its namespace waiting for a runner it could serve: the world
+  # operator in its namespace waiting for a runner it could serve: the world
   # changed, which is what the deleted per-attempt runner re-resolution used to
   # buy.
   defp release(%State{} = state, kind, target, :cleared, now) do
@@ -175,7 +175,7 @@ defmodule Flezha.Convergence.Loop do
   end
 
   defp release(%State{} = state, :runner_connected, {namespace, runner_id}, _what, now) do
-    waiting = waiting_operatives(state, namespace)
+    waiting = waiting_operators(state, namespace)
     servable = servable_factories(namespace, runner_id, waiting)
 
     backoff =
@@ -194,23 +194,23 @@ defmodule Flezha.Convergence.Loop do
 
   defp release(%State{} = state, _kind, _target, _what, _now), do: state
 
-  # Every operative in `namespace` whose next step is a binding — parked,
+  # Every operator in `namespace` whose next step is a binding — parked,
   # unbound, or misbound to a runner that is gone — with the factory the judge
   # read for it, so the release path and the Diff agree on who is waiting.
   #
   # The last tick's records are the whole answer: a key only reaches a rung
   # through `execute_plan/2`, which runs inside a tick after `judge/4` has
-  # written that tick's records, so an operative with a cooldown to release
+  # written that tick's records, so an operator with a cooldown to release
   # always has a record here.
-  defp waiting_operatives(%State{} = state, namespace) do
-    for {{:operative, {ns, id}}, %Verdict{state: judged, facts: facts}} <- state.verdicts,
+  defp waiting_operators(%State{} = state, namespace) do
+    for {{:operator, {ns, id}}, %Verdict{state: judged, facts: facts}} <- state.verdicts,
         ns == namespace,
         judged in Diff.awaiting_binding(),
         into: %{},
         do: {id, Map.get(facts, :factory_id)}
   end
 
-  # A runner releases an operative it could take, and one whose factory nobody
+  # A runner releases an operator it could take, and one whose factory nobody
   # could resolve. This guard stops the needless work; it is not what makes the
   # release safe — an advertisement can change between here and the plan, so
   # the rebind is what refuses to charge a rung for an attempt that had no
@@ -219,7 +219,7 @@ defmodule Flezha.Convergence.Loop do
   defp release?(nil, _servable), do: true
   defp release?(factory, servable), do: MapSet.member?(servable, factory)
 
-  # Which of the waiting operatives' factories this runner advertises, in one
+  # Which of the waiting operators' factories this runner advertises, in one
   # bounded read. A refusal answers `:unknown`, and so does a runner that has
   # advertised nothing yet — an SDK may send its factories on a later frame,
   # and "has told us nothing" must not read as "serves nothing". Both release
@@ -274,7 +274,7 @@ defmodule Flezha.Convergence.Loop do
     :telemetry.execute(
       [:flezha, :convergence, :tick],
       %{
-        operatives_total: length(intent.operatives),
+        operators_total: length(intent.operators),
         actions_issued: issued,
         duration_ms: elapsed
       },
@@ -332,15 +332,15 @@ defmodule Flezha.Convergence.Loop do
   end
 
   # The divergence this tick will act on: diffed over the recovery-ready
-  # operatives only — a namespace mid-replay is skipped, so no heal runs
+  # operators only — a namespace mid-replay is skipped, so no heal runs
   # against a half-restored registry — then streak-gated and stripped of the
   # plugins an enable already has in flight.
   defp plan_delta(%State{} = state, intent, reality) do
     ready = RecoveryGate.ready_namespaces(intent)
-    heal_operatives = Enum.filter(intent.operatives, &MapSet.member?(ready, &1.namespace))
+    heal_operators = Enum.filter(intent.operators, &MapSet.member?(ready, &1.namespace))
 
     delta =
-      Diff.compute(%Intent{operatives: heal_operatives}, reality, state.verdicts, state.facts)
+      Diff.compute(%Intent{operators: heal_operators}, reality, state.verdicts, state.facts)
 
     {streaks, delta} = apply_misbound_streak(state.misbound_streaks, delta)
 
@@ -352,7 +352,7 @@ defmodule Flezha.Convergence.Loop do
   defp signals(%State{} = state) do
     %{
       facts: state.facts,
-      stuck: state.stuck_operatives,
+      stuck: state.stuck_operators,
       stall_verdict: state.stall_verdict,
       runner_facts: state.runner_facts,
       liveness: state.prev_liveness
@@ -376,15 +376,15 @@ defmodule Flezha.Convergence.Loop do
   defp tick_failed_telemetry() do
     :telemetry.execute(
       [:flezha, :convergence, :tick],
-      %{operatives_total: 0, actions_issued: 0},
+      %{operators_total: 0, actions_issued: 0},
       %{state: :error}
     )
   end
 
   # A hub on a node whose fleet does not serve its namespace, holding none of
-  # its operatives here, is reclaimed: the node leaves that namespace's cluster
+  # its operators here, is reclaimed: the node leaves that namespace's cluster
   # rather than being handed children it cannot host. Idempotent, and it stops
-  # nothing while a local operative is still there — which is what makes it
+  # nothing while a local operator is still there — which is what makes it
   # safe to run beside the plan that is still moving them off.
   defp reclaim_vacant_hubs(%{active_runners: active}) do
     for {namespace, runners} <- active,
@@ -395,13 +395,13 @@ defmodule Flezha.Convergence.Loop do
     :ok
   end
 
-  # A operative must be misbound for @misbound_min_ticks consecutive ticks before
-  # it is migrated. Operatives not misbound this tick drop out of the streak map
-  # (reset), so a operative seen bound again clears immediately. A declared
+  # An operator must be misbound for @misbound_min_ticks consecutive ticks before
+  # it is migrated. Operators not misbound this tick drop out of the streak map
+  # (reset), so an operator seen bound again clears immediately. A declared
   # disconnect is a closed session the fleet manager observed, not a probe
   # miss, so it is not gated by the streak.
   @doc false
-  def apply_misbound_streak(streaks, %Diff{misbound_operatives: misbound} = delta) do
+  def apply_misbound_streak(streaks, %Diff{misbound_operators: misbound} = delta) do
     new_streaks =
       Enum.reduce(misbound, %{}, fn {ref, _dead, _reason}, acc ->
         Map.put(acc, ref, Map.get(streaks, ref, 0) + 1)
@@ -412,7 +412,7 @@ defmodule Flezha.Convergence.Loop do
         reason != :probe or Map.get(new_streaks, ref) >= @misbound_min_ticks
       end)
 
-    {new_streaks, %{delta | misbound_operatives: ready}}
+    {new_streaks, %{delta | misbound_operators: ready}}
   end
 
   # Drop the facts reality shows repaired or that outlived their grace, and
@@ -455,7 +455,7 @@ defmodule Flezha.Convergence.Loop do
 
     if fresh != [] do
       Logger.warning(
-        "[convergence] plugin-degraded operatives #{inspect(fresh)} — declared plugins missing or unhealthy; healing"
+        "[convergence] plugin-degraded operators #{inspect(fresh)} — declared plugins missing or unhealthy; healing"
       )
     end
 

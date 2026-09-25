@@ -15,6 +15,6 @@ OPTIONS:
 
 EXIT CODES:
     0   Clean shutdown (or `--force` finalised cleanly)
-    1   Partial drain (timeout elapsed; some Operatives still local)
+    1   Partial drain (timeout elapsed; some Operators still local)
     2   Already shutting down (the in-flight outcome is reported)
     3   Controller not reachable on the CLI socket

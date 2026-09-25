@@ -4,7 +4,7 @@ defmodule Flezha.Dlq.Entry do
   through.
 
   Four writers park a payload: the runner-side settlement, the outbox, the
-  records path and the operative-forward provider. Each used to hand
+  records path and the operator-forward provider. Each used to hand
   `Flezha.Dlq.Store` a map it built by hand, in three shapes, and a writer that
   forgot a key wrote a partial row that only failed later, at read time. The
   keys and the directory layout on disk are exactly what they were; what is new
@@ -19,7 +19,7 @@ defmodule Flezha.Dlq.Entry do
   the runner-driven records path, which acks the park by that id.
   """
   @type t() :: %__MODULE__{
-          operative_class: binary(),
+          operator_class: binary(),
           tasklet_id: binary(),
           cell_key: binary(),
           channel: binary(),
@@ -31,7 +31,7 @@ defmodule Flezha.Dlq.Entry do
         }
 
   defstruct [
-    :operative_class,
+    :operator_class,
     :tasklet_id,
     :cell_key,
     :channel,
@@ -44,7 +44,7 @@ defmodule Flezha.Dlq.Entry do
 
   # The identity of the parked payload. Without all four an entry cannot be
   # listed, replayed or attributed, so it is refused rather than written.
-  @required [:operative_class, :tasklet_id, :cell_key, :channel]
+  @required [:operator_class, :tasklet_id, :cell_key, :channel]
 
   @doc """
   Build one entry, refusing a missing required field. `:error` is stringified

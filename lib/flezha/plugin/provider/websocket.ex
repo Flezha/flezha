@@ -1,7 +1,7 @@
 defmodule Flezha.Plugin.Provider.Websocket do
   @moduledoc """
   First-party Websocket provider (`:io_binding`). Its declared worker is a Fresh
-  connection the table starts at activation; inbound frames reach the operative
+  connection the table starts at activation; inbound frames reach the operator
   through the host's one inject.
 
   A two-tier watchdog separates CONNECTION liveness from DATA liveness: every
@@ -36,7 +36,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
   # The two "milliseconds, non-negative, 0 disables" knobs and their fallbacks,
   # in one table. Both are clamped rather than refused and both fall back on a
-  # value that names no number: a socket knob an operator mistyped must not take
+  # value that names no number: a socket knob a user mistyped must not take
   # the connection down with it.
   @ms_defaults [
     idle_timeout_ms: @default_idle_timeout_ms,
@@ -121,7 +121,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
         doc: "`\"required\"` answers the outbox hold on the upstream's ack instead of at handoff"
       ],
       # The set this plugin last committed, read back from the cspec on a
-      # restart rather than an option an operator writes.
+      # restart rather than an option a user writes.
       applied_subscriptions: [type: :any, internal: true],
       # The reconcile plan `init_provider/1` derives from the rows above.
       subscription: [type: :any, internal: true],
@@ -183,7 +183,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
   # `init_provider/1` validates and normalises config; it does NOT open the
   # upstream WebSocket. The TLS handshake and the subscribe round trip are the
   # worker's, started by `Flezha.Plugin.Extension.Table` at activation once the
-  # operative's SDK side has confirmed bound. See `operative-extensions`
+  # operator's SDK side has confirmed bound. See `operator-extensions`
   # "Two-phase plugin lifecycle gated on SDK readiness".
   @impl true
   def init_provider(opts) do
@@ -219,7 +219,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
         :ok
 
       option ->
-        # The filter half is a SET of names. An operator reads back the spelling
+        # The filter half is a SET of names. A user reads back the spelling
         # they wrote — `"alerts,audit"` — never the list the resolution holds.
         {:error,
          "websocket payload_metadata names channel #{inspect(bag)} and a channel option " <>
@@ -230,15 +230,15 @@ defmodule Flezha.Plugin.Provider.Websocket do
   defp one_channel_writer(_opts), do: :ok
 
   # Warn, never refuse. A durable sink alongside a live websocket view is the
-  # standard topology, and refusing it would push operators into a worse one.
-  # Refusing would also claim more than this change can honour: the operative's
+  # standard topology, and refusing it would push users into a worse one.
+  # Refusing would also claim more than this change can honour: the operator's
   # internal guarantee is untouched and only the websocket hop is best-effort.
   defp warn_best_effort_hop(opts, %Sink{} = sink, plugin_id) do
     if opts[:effectively_once] do
       Logger.warning(
         "[Plugin.Provider.Websocket] plugin_id=#{inspect(plugin_id)} ships output from an " <>
-          "effectively-once operative with sink_ack_mode=#{inspect(sink.ack_mode)}; the " <>
-          "operative's internal guarantee is unchanged, its websocket output hop is not " <>
+          "effectively-once operator with sink_ack_mode=#{inspect(sink.ack_mode)}; the " <>
+          "operator's internal guarantee is unchanged, its websocket output hop is not " <>
           "effectively-once"
       )
     end
@@ -255,7 +255,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
   effectively-once tier the socket process confirms an injected input by calling
   the Overwatch without a deadline, and the Overwatch is the process running
   this chain: a synchronous send in this direction closes that cycle and hangs
-  the operative permanently. The bounded wait is what keeps the cycle open, and
+  the operator permanently. The bounded wait is what keeps the cycle open, and
   a frame that outlives it is still safely in the socket's hands.
   """
   @impl true
@@ -316,7 +316,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
          :applied_subscriptions,
          :source_plugin_id,
          :source_namespace,
-         :source_operative_id
+         :source_operator_id
        ])
        |> Map.put(:sync_ingest?, opts[:effectively_once] || false)
        |> Map.put(:payload_metadata, ingest_metadata(opts))}
@@ -325,7 +325,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
   # The resolved entry channel rides the bag every injection already carries, so
   # the socket holds one map and the frame path stays one send. Nothing can
-  # overwrite the operator's own "channel" key: naming it both ways is refused
+  # overwrite the user's own "channel" key: naming it both ways is refused
   # when the plugin is enabled.
   #
   # Both keys are read by access, never by pattern: the teardown path asks for
@@ -381,9 +381,9 @@ defmodule Flezha.Plugin.Provider.Websocket do
   end
 
   @doc """
-  The reconcile loop's operator-facing state: the applied set, the outcome of
+  The reconcile loop's user-facing state: the applied set, the outcome of
   the last reconcile and the last error. `nil` for a plugin with no
-  subscription source — there is nothing an operator needs to see about a
+  subscription source — there is nothing a user needs to see about a
   static one that its configuration does not already say.
   """
   @impl ProviderBehaviour
@@ -410,7 +410,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
   # stored opts; reporting that beats reporting nothing.
   # Same key set as `subscription_report/1`: one callback must not report a
   # different shape depending on whether its process happened to answer, or an
-  # operator reads a missing field as a missing capability.
+  # user reads a missing field as a missing capability.
   defp last_known(opts, reason) do
     %{
       applied: opts[:applied_subscriptions] || [],

@@ -14,8 +14,8 @@ use dashmap::DashMap;
 use crate::cell::CellSlot;
 use crate::channel::{BuildCellArgs, TaskletId};
 use crate::flusher::CellFlusher;
-use crate::operative::instance::OperativeInstance;
-use crate::operative::topology::OperativeTopology;
+use crate::operator::instance::OperatorInstance;
+use crate::operator::topology::OperatorTopology;
 use crate::state_sink;
 
 const ENV_REAP_INTERVAL_MS: &str = "FLEZHA_REAP_INTERVAL_MS";
@@ -39,8 +39,8 @@ pub struct DynamicCellRegistry {
     evicted: Mutex<VecDeque<String>>,
     tasklet_id: TaskletId,
     max_cells: usize,
-    topology: Arc<OperativeTopology>,
-    instance: Weak<OperativeInstance>,
+    topology: Arc<OperatorTopology>,
+    instance: Weak<OperatorInstance>,
     instance_id: Arc<str>,
     persistence_enabled: bool,
 }
@@ -50,8 +50,8 @@ impl DynamicCellRegistry {
     pub fn new(
         tasklet_id: TaskletId,
         max_cells: usize,
-        topology: Arc<OperativeTopology>,
-        instance: Weak<OperativeInstance>,
+        topology: Arc<OperatorTopology>,
+        instance: Weak<OperatorInstance>,
         instance_id: Arc<str>,
         persistence_enabled: bool,
     ) -> Self {
@@ -90,13 +90,13 @@ impl DynamicCellRegistry {
     }
 
     /// Evict every Cell idle longer than `idle_ttl`, each under its drain
-    /// gate with an empty mailbox; a workflow's only between passes, and
+    /// gate with an empty mailbox; a bounded operator's only between passes, and
     /// never one a rollback could still reach.
     pub fn reap_sweep(&self, idle_ttl: Duration) {
         let now = crate::util::monotonic_ms();
         let ttl_ms = idle_ttl.as_millis() as i64;
         let held = match self.instance.upgrade() {
-            Some(instance) => match crate::workflow::reap_holds(&instance) {
+            Some(instance) => match crate::bounded::reap_holds(&instance) {
                 Some(held) => held,
                 None => return,
             },

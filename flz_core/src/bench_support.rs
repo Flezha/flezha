@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use flz_transport::transport::FlezhaStream;
 
-use crate::runner::OperativeDispatchHandle;
+use crate::runner::OperatorDispatchHandle;
 use crate::schema::ItemEffect;
 pub use crate::test_support::stream_pair;
 use crate::util::LockRecover;
@@ -53,7 +53,7 @@ pub fn drained_pair() -> Arc<FlezhaStream> {
 /// by the item's index within its id (one element feeds them all), and
 /// `index_mark`, when given, stamps that index under its own key.
 pub fn fan_in(
-    handle: &OperativeDispatchHandle,
+    handle: &OperatorDispatchHandle,
     ids: &[String],
     per_id: usize,
     payloads: &[&[u8]],

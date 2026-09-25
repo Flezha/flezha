@@ -170,7 +170,7 @@ defmodule Flezha.Service.Cli.Observe do
     )
   end
 
-  # The registry IS the allow-list: a source name the operator typed is read
+  # The registry IS the allow-list: a source name the caller typed is read
   # against what is registered, never with `String.to_atom/1`, which would mint
   # an atom the node then keeps for ever for every typo.
   defp registered_source!(written) do

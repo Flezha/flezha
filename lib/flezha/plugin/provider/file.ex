@@ -1,8 +1,8 @@
 defmodule Flezha.Plugin.Provider.File do
   @moduledoc """
-  A file as an operative's input and as its output: `File.Source` (provider id
-  `operative_file_source`) reads one line per entry frame, and `File.Sink`
-  (`operative_file_sink`) writes one line per record.
+  A file as an operator's input and as its output: `File.Source` (provider id
+  `operator_file_source`) reads one line per entry frame, and `File.Sink`
+  (`operator_file_sink`) writes one line per record.
 
   What both directions share lives here: the preparation that resolves a
   plugin's `path` inside `FLEZHA_FILE_PLUGIN_ROOT`, a folder or an `s3://`
@@ -30,7 +30,7 @@ defmodule Flezha.Plugin.Provider.File do
     A file, or an S3 object, read onto an entry channel (`:io_binding`), one
     line per frame, followed as it grows.
 
-    Each line is injected through the operative's confirming ingest, and the
+    Each line is injected through the operator's confirming ingest, and the
     byte offset where the last delivered line ended is committed through the
     plugin's persisted option `offset`, so a plugin restart, a move to another
     controller and a controller restart all resume after the last committed
@@ -117,7 +117,7 @@ defmodule Flezha.Plugin.Provider.File do
             "Age of the last settled poll past which the reader is idle; 0 derives it from `poll_interval_ms`"
         ],
         # The committed offset, written back by the reader and read on every
-        # restart path, rather than an option an operator writes.
+        # restart path, rather than an option a user writes.
         offset: [type: :int, min: 0, internal: true]
       ],
       worker: [module: ReadWorker, restart: :temporary]
@@ -131,7 +131,7 @@ defmodule Flezha.Plugin.Provider.File do
     Validate and resolve. Reads nothing: the worker opens the file at
     activation. The root check is a bounded run of `lstat`s under a folder root
     and makes no request under an S3 one, done here so a refusal reaches the
-    operator who typed the path.
+    user who typed the path.
     """
     @impl true
     def init_provider(opts) do
@@ -147,7 +147,7 @@ defmodule Flezha.Plugin.Provider.File do
     def on_terminate(%Ctx.Terminate{}, _opts), do: :ok
 
     @doc """
-    Health verdict from the reader: a stop names the offset an operator must
+    Health verdict from the reader: a stop names the offset a user must
     look at, a missing file names the path, a failure run reaching
     `failure_threshold` names its error, and a reader whose last settled poll is
     older than the idle window says how old. A file that does not grow is
@@ -169,7 +169,7 @@ defmodule Flezha.Plugin.Provider.File do
       )
     end
 
-    @doc "What `flz operative info` shows beneath the plugin: the path and its verdict."
+    @doc "What `flz operator info` shows beneath the plugin: the path and its verdict."
     @impl true
     def inspect_state(opts), do: %{path: opts.path, health: health(opts)}
 
@@ -283,7 +283,7 @@ defmodule Flezha.Plugin.Provider.File do
     Validate and resolve the path. Opens nothing: the worker does, at
     activation. What the layout needs first, a directory made or a layout the
     storage cannot carry refused, is the storage's
-    (`File.Storage.prepare_sink/1`), done here so a refusal reaches the operator
+    (`File.Storage.prepare_sink/1`), done here so a refusal reaches the user
     who typed it.
     """
     @impl true
@@ -325,7 +325,7 @@ defmodule Flezha.Plugin.Provider.File do
       )
     end
 
-    @doc "What `flz operative info` shows beneath the plugin: the path and its verdict."
+    @doc "What `flz operator info` shows beneath the plugin: the path and its verdict."
     @impl true
     def inspect_state(opts), do: %{path: opts.path, health: health(opts)}
 

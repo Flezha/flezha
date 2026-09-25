@@ -1,6 +1,6 @@
 defmodule Flezha.Service.Cli.Listing do
   @moduledoc """
-  `flz namespace list`, `flz list runners | operatives` and `flz cluster
+  `flz namespace list`, `flz list runners | operators` and `flz cluster
   status`. The first answers the durable catalog; the rest read live state.
   """
 
@@ -25,8 +25,8 @@ defmodule Flezha.Service.Cli.Listing do
     running = MapSet.new(HubManager.get_running_namespaces())
 
     # `unbound: :all`: the verb is `:caller`-scoped, and a caller with no
-    # namespace here is an ungated deployment's operator. Narrowing it to
-    # `_system` would hide the namespaces that operator just created.
+    # namespace here is an ungated deployment's caller. Narrowing it to
+    # `_system` would hide the namespaces that caller just created.
     NamespaceStore.list()
     |> Enum.map(& &1.name)
     |> Namespace.visible(call.context, :all)
@@ -93,25 +93,25 @@ defmodule Flezha.Service.Cli.Listing do
   end
 
   @doc """
-  Lists a namespace's operatives with the reconciler's per-operative health, assigned
+  Lists a namespace's operators with the reconciler's per-operator health, assigned
   runner, and live node. Reads the durable registry, so it surfaces FAILED
-  operatives (whose only placement is a dead node) and is multi-node-safe — it no
-  longer crashes on a operative registered across nodes.
+  operators (whose only placement is a dead node) and is multi-node-safe — it no
+  longer crashes on an operator registered across nodes.
   """
-  def list_operatives(namespace, output_format, _call) do
+  def list_operators(namespace, output_format, _call) do
     namespace_display = Namespace.or_default(namespace)
 
     namespace_display
-    |> HubManager.operative_rows()
+    |> HubManager.operator_rows()
     |> group_partition_rows()
     |> render_list(output_format, %{
       json: fn rows ->
-        %{namespace: namespace_display, operatives: Enum.map(rows, &operative_json/1)}
+        %{namespace: namespace_display, operators: Enum.map(rows, &operator_json/1)}
       end,
-      empty: "No operatives found for namespace '#{namespace_display}'.",
-      header: "Operatives in namespace '#{namespace_display}':",
+      empty: "No operators found for namespace '#{namespace_display}'.",
+      header: "Operators in namespace '#{namespace_display}':",
       columns: [
-        {"OPERATIVE", 34, &to_string(&1.id)},
+        {"OPERATOR", 34, &to_string(&1.id)},
         {"HEALTH", 10, &to_string(&1.health)},
         {"PARTS", 8, &Context.label_or(&1[:partitions], "-")},
         {"NODE", 22, &Context.label_or(&1.node, "(unplaced)")},
@@ -123,9 +123,9 @@ defmodule Flezha.Service.Cli.Listing do
   @doc """
   Collapse a partition group's member rows into one logical row.
 
-  A pure function between `HubManager.operative_rows/1` and the renderers, so
+  A pure function between `HubManager.operator_rows/1` and the renderers, so
   the group view is recomputed from the rows on every read — there is no stored
-  group record that could disagree with them. Ungrouped operatives pass
+  group record that could disagree with them. Ungrouped operators pass
   through untouched, which is why `cluster_status` (whose per-node counts are
   per-process facts) simply does not call this.
   """
@@ -161,7 +161,7 @@ defmodule Flezha.Service.Cli.Listing do
     rows |> Enum.map(& &1.health) |> Enum.max_by(&Verdict.rank/1)
   end
 
-  defp operative_json(row) do
+  defp operator_json(row) do
     %{
       id: row.id,
       health: row.health,
@@ -172,16 +172,16 @@ defmodule Flezha.Service.Cli.Listing do
   end
 
   @doc """
-  Cluster topology for operators: the elected leader, whether this node is the
-  leader, each node's live operative count, any unplaced (FAILED) operatives, and a
+  Cluster topology for callers: the elected leader, whether this node is the
+  leader, each node's live operator count, any unplaced (FAILED) operators, and a
   health rollup. Composes `HubManager` registry access with the reconciler's
-  `Leader` so a split view (one node sees operatives, its peer sees none) is
+  `Leader` so a split view (one node sees operators, its peer sees none) is
   visible at a glance.
   """
   def cluster_status(namespace, output_format, _call) do
     namespace_display = Namespace.or_default(namespace)
     nodes = HubManager.get_hub_nodes(namespace_display, true)
-    rows = HubManager.operative_rows(namespace_display)
+    rows = HubManager.operator_rows(namespace_display)
     counts = Enum.frequencies_by(rows, & &1.node)
     health = Enum.frequencies_by(rows, & &1.health)
     recovery_per_node = Controller.recovery_map(namespace_display, nodes)
@@ -210,13 +210,13 @@ defmodule Flezha.Service.Cli.Listing do
         Enum.map(s.nodes, fn n ->
           %{
             node: to_string(n),
-            operative_count: Map.get(s.counts, n, 0),
+            operator_count: Map.get(s.counts, n, 0),
             leader: n == s.leader,
             recovery_state: Map.get(s.recovery_per_node, n, :unknown)
           }
         end),
-      unplaced_operatives: Map.get(s.counts, nil, 0),
-      operative_health: s.health
+      unplaced_operators: Map.get(s.counts, nil, 0),
+      operator_health: s.health
     }
 
     IO.puts(Jason.encode!(result))
@@ -237,20 +237,20 @@ defmodule Flezha.Service.Cli.Listing do
         marker = if n == s.leader, do: " [leader]", else: ""
         rs = Map.get(s.recovery_per_node, n, :unknown)
 
-        IO.puts("    #{n}: #{Map.get(s.counts, n, 0)} operative(s) recovery_state=#{rs}#{marker}")
+        IO.puts("    #{n}: #{Map.get(s.counts, n, 0)} operator(s) recovery_state=#{rs}#{marker}")
       end)
     end
 
     case Map.get(s.counts, nil, 0) do
       0 -> :ok
-      unplaced -> IO.puts("    (unplaced): #{unplaced} operative(s)")
+      unplaced -> IO.puts("    (unplaced): #{unplaced} operator(s)")
     end
 
     IO.puts("")
-    IO.puts("  Operative health: #{health_summary(s.health)}")
+    IO.puts("  Operator health: #{health_summary(s.health)}")
   end
 
-  defp health_summary(health) when map_size(health) == 0, do: "no operatives"
+  defp health_summary(health) when map_size(health) == 0, do: "no operators"
 
   defp health_summary(health) do
     health

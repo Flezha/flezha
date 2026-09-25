@@ -207,11 +207,11 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   end
 
   # One hub's drain verdict → `{migrated, forced}`. Every error degrades to
-  # the no-peer path: the operatives terminate with the hub supervisor and
+  # the no-peer path: the operators terminate with the hub supervisor and
   # the next boot restores them from on-disk WAL/snapshot — never a wedge.
   defp fold_drain_outcome(ns, {:ok, %{migrated: migrated, forced: forced}}) do
     if forced > 0 do
-      Logger.warning("[shutdown] drain ns=#{ns} force-migrated #{forced} deferred operative(s)")
+      Logger.warning("[shutdown] drain ns=#{ns} force-migrated #{forced} deferred operator(s)")
     end
 
     {migrated, forced}
@@ -228,14 +228,14 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   defp fold_drain_outcome(ns, {:error, reason}) do
     Logger.warning(
       "[shutdown] drain ns=#{ns} degraded (#{inspect(reason)}); " <>
-        "local operatives terminate and restore on next boot"
+        "local operators terminate and restore on next boot"
     )
 
     {0, 0}
   end
 
   @doc """
-  Migrate every locally-hosted operative of `namespace` to a peer controller
+  Migrate every locally-hosted operator of `namespace` to a peer controller
   through the migration-consent gate (live HotSwap handover), then wait for the
   local children to actually be gone.
 
@@ -316,7 +316,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
     end
   end
 
-  # The declared set's off-cluster copy rides the durability tier the operator
+  # The declared set's off-cluster copy rides the durability tier the user
   # already configured: one remote-storage path, every tier backend
   # (`:postgres`, `:s3`, `:local_path`, custom) works unchanged. No tier, no
   # remote copy: `nil` keeps the feature local-only, exactly as before the
@@ -331,7 +331,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
 
   @doc false
   def registry_backend_config(hub_id) do
-    # When auto-restore is disabled (test mode + any operator who flips
+    # When auto-restore is disabled (test mode + any user who flips
     # the kill-switch), there is no point persisting the registry to
     # disk — the DETS file would only become test-isolation noise. ETS
     # gives us identical in-memory semantics with no on-disk residue.
@@ -355,7 +355,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   end
 
   # `max_defer_ms` nil = derive from the shutdown budget, so a deferring
-  # operative can never outlive the graceful-shutdown window.
+  # operator can never outlive the graceful-shutdown window.
   @doc false
   def consent_settings do
     %ProcessHub.Strategy.Migration.MigrationConsent{

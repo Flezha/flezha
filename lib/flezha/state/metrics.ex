@@ -113,7 +113,7 @@ defmodule Flezha.State.Metrics do
   @doc """
   Build the per-Cell metrics list — keyed structurally rather than
   flattened to a metric name. Useful for the CLI (`flz state list`) and
-  the `flz operative info` extension.
+  the `flz operator info` extension.
   """
   @spec by_cell() :: [{Paths.cell_id(), %{atom() => integer()}}]
   def by_cell(), do: snapshot_all()
@@ -132,10 +132,10 @@ defmodule Flezha.State.Metrics do
     end
   end
 
-  defp flatten({{_ce, operative_class, tasklet_id, cell_key}, counters}) do
+  defp flatten({{_ce, operator_class, tasklet_id, cell_key}, counters}) do
     prefix =
       "flezha.cell." <>
-        operative_class <> "." <> tasklet_id <> "." <> Paths.encode_cell_key(cell_key)
+        operator_class <> "." <> tasklet_id <> "." <> Paths.encode_cell_key(cell_key)
 
     Enum.map(counters, fn {name, value} ->
       {prefix <> "." <> Atom.to_string(name), value}

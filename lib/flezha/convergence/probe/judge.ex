@@ -7,7 +7,7 @@ defmodule Flezha.Convergence.Probe.Judge do
   `%Flezha.Convergence.Verdict{}`. `Flezha.Convergence.Probe.judge/2` is the
   public name.
 
-  The rule order for an operative is the health map's clause order and the
+  The rule order for an operator is the health map's clause order and the
   classifier's deepest-wins, made one list: an unobserved reader wins, then
   suspension, then no binding, then a binding the roster does not hold, then a
   park, then the deepest of a stall, a stuck marker or a plugin that is not
@@ -56,7 +56,7 @@ defmodule Flezha.Convergence.Probe.Judge do
   end
 
   # A `:by_scope` reader speaks about drivers and channels ONLY: runner and
-  # operative subjects come from readers that answered, and blanking those on
+  # operator subjects come from readers that answered, and blanking those on
   # this reader's failure would hide facts that were read.
   defp mark_unreadable(bad, %{kind: :by_scope, id: id}, why) do
     Enum.reduce([:driver, :channel], bad, &Map.put(&2, &1, {id, why}))
@@ -83,15 +83,15 @@ defmodule Flezha.Convergence.Probe.Judge do
   end
 
   # A declared plugin that is not running, crashed, or self-reported unhealthy
-  # is its operative's divergence too — the plugin keeps its own record and the
-  # operative carries the deepest one as a fact, so both surfaces agree without
+  # is its operator's divergence too — the plugin keeps its own record and the
+  # operator carries the deepest one as a fact, so both surfaces agree without
   # either re-reading the other.
   defp roll_up_plugins(observations) do
     issues =
       for {{:plugin, {ns, rid, plugin_id}}, facts} <- observations,
           why = plugin_issue(facts),
           reduce: %{} do
-        acc -> Map.put_new(acc, {:operative, {ns, rid}}, {:plugin_unhealthy, plugin_id, why})
+        acc -> Map.put_new(acc, {:operator, {ns, rid}}, {:plugin_unhealthy, plugin_id, why})
       end
 
     Enum.reduce(issues, observations, fn {subject, issue}, acc ->
@@ -138,18 +138,18 @@ defmodule Flezha.Convergence.Probe.Judge do
   defp wedge_threshold(layer) do
     case StallClassifier.layer_scope(layer) do
       :fabric -> :driver_freeze_ms
-      :operative -> :cell_stall_ms
+      :operator -> :cell_stall_ms
       _ -> :stall_ms
     end
   end
 
-  # An uncertain probe is `unknown` for the operator and escalates nothing.
+  # An uncertain probe is `unknown` for the user and escalates nothing.
   defp decide(_kind, _facts, {id, why}), do: {:unknown, {:unobserved, {id, why}}}
 
-  defp decide(:operative, facts, nil) do
+  defp decide(:operator, facts, nil) do
     cond do
       not Map.get(facts, :observed?, true) or Map.get(facts, :bound_runner) == :unknown ->
-        {:unknown, {:unobserved, :operative_state}}
+        {:unknown, {:unobserved, :operator_state}}
 
       Map.get(facts, :suspended?, false) ->
         {:suspended, :evicted_at_boundary}
@@ -248,7 +248,7 @@ defmodule Flezha.Convergence.Probe.Judge do
     end
   end
 
-  defp phase(:operative, facts), do: Verdict.phase_of(Map.put_new(facts, :observed?, false))
+  defp phase(:operator, facts), do: Verdict.phase_of(Map.put_new(facts, :observed?, false))
 
   defp phase(:plugin, facts) do
     cond do

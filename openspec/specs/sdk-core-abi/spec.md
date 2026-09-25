@@ -68,7 +68,7 @@ core SHALL NOT require thread affinity from the host.
 
 The converse binds the host. A host whose unit of concurrency cannot migrate between threads, such
 as an event loop, SHALL keep every blocking ABI entry point off that thread. The blocking entry
-points are the poll, the starvation wait, the completion, the workflow receive, the spawn result
+points are the poll, the starvation wait, the completion, the bounded operator receive, the spawn result
 read with a nonzero timeout, and the runner start, and such a host SHALL reach them only from threads
 whose blocking cannot stall its dispatch. The spawn request, and the spawn result read with a timeout
 of zero, never wait and MAY be called from any thread.
@@ -100,7 +100,7 @@ this capability, not a backlog item.
 
 Every host language binding SHALL be built from this crate and SHALL be a one-to-one veneer over its
 entry points, including a binding added under its own feature on the crate. A binding SHALL NOT
-re-express dispatch, ordering, overflow, the retry ladder, durability or the workflow driver, SHALL
+re-express dispatch, ordering, overflow, the retry ladder, durability or the bounded driver, SHALL
 NOT reach a kernel capability the C ABI does not expose, and SHALL NOT alter the artifacts the other
 bindings consume when its feature is enabled.
 
@@ -138,7 +138,7 @@ kind, correction window and beyond-window policy, delivery tier
 (effectively-once, checkpoint ack-granularity), inter-tasklet channels
 with edge ids and keying markers, per-channel retry and overflow
 policies, the record-header lang/format bytes, the declaring SDK's own
-version, persistence, and workflow
+version, persistence, and bounded operator
 lifecycle facts (loop mode, rollback mode, retry, wake-after,
 compensable tasks). Timer caps stay host-layer policy — in both SDKs the
 cap is enforced where the registration API lives, not in the core. A declaration
@@ -161,13 +161,13 @@ SDK wrote a record and a value the kernel supplies answers a different question.
 The core — not the veneer — SHALL perform the packing, so that every SDK's header
 carries one packing rather than one per language. The core SHALL stamp the packed
 value into every durable header it writes for that class, and SHALL NOT publish it
-in the operative's declaration metadata: it describes the writing runtime, not the
+in the operator's declaration metadata: it describes the writing runtime, not the
 class, and a shared golden snapshot of that metadata could not hold a value that
 differs per SDK.
 
 #### Scenario: A full declaration round-trips into controller metadata
-- **WHEN** a shim declares a checkpoint-ack, correction-windowed, dynamic-mode class through the ABI and the controller sends `AddOperative`
-- **THEN** the `AddOperativeResponse` metadata SHALL carry the same declarations the typed Rust path would produce for an identical class
+- **WHEN** a shim declares a checkpoint-ack, correction-windowed, dynamic-mode class through the ABI and the controller sends `AddOperator`
+- **THEN** the `AddOperatorResponse` metadata SHALL carry the same declarations the typed Rust path would produce for an identical class
 
 #### Scenario: An unsupported declaration is refused loudly
 - **WHEN** a shim declares a field combination the host layer cannot serve
@@ -183,7 +183,7 @@ differs per SDK.
 
 #### Scenario: The declared version reaches the header and nothing else
 - **GIVEN** a veneer that declared its classes with a version different from the kernel's own package version
-- **WHEN** a Cell of that class writes a durable record and the controller reads the operative's declaration metadata
+- **WHEN** a Cell of that class writes a durable record and the controller reads the operator's declaration metadata
 - **THEN** bytes 1:5 of the record SHALL carry the declared version, and the declaration metadata SHALL NOT carry it
 
 #### Scenario: The advertisement reads the declared value from the core
@@ -196,13 +196,13 @@ differs per SDK.
 Every capability the widened host layer supports SHALL be exercisable
 through `flz_core_ffi` alone — the five command activation kinds, the
 prepare crossing, cell modes, tiers, timers, inter-tasklet routing,
-and workflow lifecycles. The CI scenario suite SHALL grow to drive at least:
+and bounded operator lifecycles. The CI scenario suite SHALL grow to drive at least:
 a restore fold, a live state read, a keyed dynamic route via the prepare
-crossing, an effectively-once completion with offsets, and a workflow
+crossing, an effectively-once completion with offsets, and a bounded operator
 tasklet's `complete` ending its instance, all through the C entry points,
 failing if any required surface is missing. A step answer SHALL carry a
 tasklet's completion request and its result, and no entry point SHALL exist
-for a one-function workflow body, which no host declares.
+for a one-function bounded body, which no host declares.
 
 Every shim is a consumer of the C entry points, never a fork of them —
 whether it is a language veneer built from this crate (the JNI veneer behind
@@ -245,8 +245,8 @@ exported symbols the way a veneer's exports are.
 - **WHEN** a shim-based host completes an activation whose emit blocks on a full `DropNothing` consumer mailbox, and the inline-drain hook the in-process Rust host installs is unavailable to it
 - **THEN** the core SHALL report the condition through `flz_core_wait_starvation`, so a host that services that wait can recover without a per-host kernel path
 
-#### Scenario: A step answer ends its workflow
-- **WHEN** a host answers a workflow step activation whose tasklet called `ctx.complete(result)`
+#### Scenario: A step answer ends its bounded operator
+- **WHEN** a host answers a bounded operator step activation whose tasklet called `ctx.complete(result)`
 - **THEN** the core SHALL end the instance with that result once the iteration commits, with no host-side path of its own
 
 ### Requirement: The restore crossing carries each record's stamped schema version
@@ -378,7 +378,7 @@ crate's source.
 ### Requirement: A spawn is a request and a result read through a handle
 
 The C ABI SHALL expose a tasklet's spawn as two entry points and SHALL NOT expose a blocking
-spawn-and-wait entry (`flz_core_spawn_workflow` is removed):
+spawn-and-wait entry (`flz_core_spawn_bounded` is removed):
 
 - `flz_core_spawn_request(ctx, factory_id, id, payload, if_running, handle_out)` SHALL send the
   request and return a handle number without waiting for the controller. An empty `id` SHALL ask the
@@ -387,7 +387,7 @@ spawn-and-wait entry (`flz_core_spawn_workflow` is removed):
 - `flz_core_spawn_result(ctx, handle, timeout_ms, out)` SHALL answer pending, or the resolved result
   carrying the instance id the request resolved to and the outcome (`spawned`, `delivered` or
   `skipped_on_replay`), or the failure (`already_running`, `factory_unknown`,
-  `factory_not_workflow`, `refused` with its reason, `timeout`, `unavailable`) the way every
+  `factory_not_bounded`, `refused` with its reason, `timeout`, `unavailable`) the way every
   other entry reports a failure. A timeout of zero
   SHALL never wait, including while another thread's read of the same handle is waiting. A handle
   read to resolution SHALL answer every later read the same while its activation is outstanding.
@@ -411,11 +411,11 @@ released rather than wait.
 - **WHEN** a handle's request is refused and the host completes the activation without reading the handle
 - **THEN** the reaper SHALL log the refusal once, naming the instance id (empty when none was given), the factory id and the reason, and a later `flz_core_spawn_result` on that handle SHALL answer that it was released
 
-#### Scenario: A stream factory is a named failure through the ABI
-- **WHEN** the controller answers a request with outcome `factory_not_workflow`
-- **THEN** `flz_core_spawn_result` SHALL report the failure `factory_not_workflow`, distinct from `factory_unknown` and from `refused`, and every veneer SHALL surface it under that name
+#### Scenario: An unbounded factory is a named failure through the ABI
+- **WHEN** the controller answers a request with outcome `factory_not_bounded`
+- **THEN** `flz_core_spawn_result` SHALL report the failure `factory_not_bounded`, distinct from `factory_unknown` and from `refused`, and every veneer SHALL surface it under that name
 
 #### Scenario: The blocking spawn entry is gone
 - **WHEN** the ABI surface fixture is compared with the exported symbols
-- **THEN** it SHALL list `flz_core_spawn_request` and `flz_core_spawn_result` and SHALL NOT list `flz_core_spawn_workflow`
+- **THEN** it SHALL list `flz_core_spawn_request` and `flz_core_spawn_result` and SHALL NOT list `flz_core_spawn_bounded`
 

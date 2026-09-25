@@ -3,9 +3,9 @@ defmodule FlezhaTest.Runner.FleetManagerGhostTest do
   Regression coverage for the stream ghost-runner accumulation that
   appeared under rapid repeated runner kill/restart (chaos soak): a dead
   runner whose control channel closed was never removed from the active
-  set when the disconnect handler's operative-reroute side effects raised
+  set when the disconnect handler's operator-reroute side effects raised
   (`:noproc`/`ArgumentError` against a hub mid-restart), so
-  `active_runners/1` kept reporting corpses and operatives got assigned to a
+  `active_runners/1` kept reporting corpses and operators got assigned to a
   dead node.
 
   These tests drive `Flezha.Runner.FleetManager` directly with synthetic
@@ -21,7 +21,7 @@ defmodule FlezhaTest.Runner.FleetManagerGhostTest do
   use ExUnit.Case, async: false
 
   # A namespace with no running ProcessHub so the reroute side effects
-  # (`HubManager.runner_operatives/2` → ETS match on an undefined table) raise,
+  # (`HubManager.runner_operators/2` → ETS match on an undefined table) raise,
   # exercising the crash-proof eviction path.
   @namespace "ghost_test_namespace_#{System.unique_integer([:positive])}"
 
@@ -124,14 +124,14 @@ end
 defmodule Flezha.Runner.FleetManagerHubLifecycleTest do
   @moduledoc """
   A namespace hub outlives its runner while it still holds registered
-  (durably-suspended) operatives. `runner_cleanup` reaps the dead runner ref but
-  must NOT `stop_hub` while operatives remain — otherwise a parked fleet whose
+  (durably-suspended) operators. `runner_cleanup` reaps the dead runner ref but
+  must NOT `stop_hub` while operators remain — otherwise a parked fleet whose
   sole runner restarts loses every Overwatch and its durable registry, breaking
-  the "still addressable" promise (workflow_operative.md). When the registry is
+  the "still addressable" promise (bounded_operator.md). When the registry is
   empty, cleanup still tears the hub down.
 
   Drives `FleetManager` directly with a synthetic `:inactive` runner against a
-  real (but operative-less) ProcessHub, injecting a registry row the way
+  real (but operator-less) ProcessHub, injecting a registry row the way
   `HubManagerRegistryTest` does — no SDK / no runner process needed.
   """
   # async: false: writes Application env; the live controller and its fleet.
@@ -154,18 +154,18 @@ defmodule Flezha.Runner.FleetManagerHubLifecycleTest do
     :ok
   end
 
-  test "cleanup preserves a hub that still holds a registered operative" do
+  test "cleanup preserves a hub that still holds a registered operator" do
     ns = fresh_ns("keep")
     {:ok, _} = ensure_hub(ns)
     on_exit(fn -> HubManager.stop_hub(ns) end)
 
-    inject_operative(ns, "parked-1")
-    assert HubManager.registered_operatives?(ns)
+    inject_operator(ns, "parked-1")
+    assert HubManager.registered_operators?(ns)
 
     seed_inactive(ns, "dead_runner")
     cleanup_now()
 
-    assert HubManager.hub_alive?(ns) === true, "hub torn down despite a registered operative"
+    assert HubManager.hub_alive?(ns) === true, "hub torn down despite a registered operator"
     refute Map.has_key?(runner_map(ns), "dead_runner"), "dead runner ref must still be reaped"
   end
 
@@ -174,7 +174,7 @@ defmodule Flezha.Runner.FleetManagerHubLifecycleTest do
     {:ok, _} = ensure_hub(ns)
     on_exit(fn -> HubManager.stop_hub(ns) end)
 
-    refute HubManager.registered_operatives?(ns)
+    refute HubManager.registered_operators?(ns)
 
     seed_inactive(ns, "dead_runner")
     cleanup_now()
@@ -216,7 +216,7 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
 
   Durable `State`/`Change` bodies are per-SDK below the shared 16-byte
   envelope, and a restore ships those bodies verbatim to whichever runner bound
-  the Cell. So placement must never hand a factory's operative to a runner of
+  the Cell. So placement must never hand a factory's operator to a runner of
   another language. The guard lives in the ONE filter every placement path
   reads (`placeable_runners/3`), which is what these tests drive through
   `runners_for_factory/3`.
@@ -225,7 +225,7 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
   Rust class and a Java class is legitimate and must keep working.
   """
 
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Factories
   alias Flezha.State.Paths
@@ -291,7 +291,7 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
       :ok = FleetStateHelper.sync(ns, "rust_runner", [])
 
       assert FleetManager.runners_for_factory(ns, id) == [],
-             "an operative must stay unbound rather than reroute onto a runner " <>
+             "an operator must stay unbound rather than reroute onto a runner " <>
                "that cannot read its state"
     end
 
@@ -392,18 +392,18 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
 
       id = factory("stateful")
       forget(ns, [id])
-      operative = "#{id}-0"
-      cell = {operative, "p0", "k"}
+      operator = "#{id}-0"
+      cell = {operator, "p0", "k"}
       StateTestHelpers.write_wal_of_lang(cell, @java)
 
-      assert cell in Paths.cells_of(operative), "fixture: #{base}"
-      assert Restore.class_sdk_lang(operative) == @java
+      assert cell in Paths.cells_of(operator), "fixture: #{base}"
+      assert Restore.class_sdk_lang(operator) == @java
       assert Restore.class_sdk_lang("never_written") == nil
 
       # A Rust runner got there first and established the factory wrongly.
       ClassRegistry.put_established(ns, id, :sdk_lang, @rust)
 
-      :ok = Restore.establish_sdk_lang_from_state(ns, id, operative)
+      :ok = Restore.establish_sdk_lang_from_state(ns, id, operator)
 
       assert ClassRegistry.established(ns, id, :sdk_lang) == @java,
              "the bytes on disk outrank whichever runner advertised first"
@@ -435,7 +435,7 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
       assert log =~ "java_runner"
       assert log =~ id
 
-      # Stored so operator tooling can see it, excluded from placement.
+      # Stored so user tooling can see it, excluded from placement.
       {:ok, factories} = FleetManager.list_factories(ns)
       assert Enum.any?(factories, &(&1.id == id))
       assert FleetManager.runners_for_factory(ns, id) == ["rust_runner"]
@@ -446,37 +446,37 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
     test "the first announcement establishes it, and a start reads it", %{namespace: ns} do
       id = factory("paper_order")
       forget(ns, [id])
-      FleetStateHelper.seed(ns, %{"r1" => [{id, @rust, :workflow}]})
+      FleetStateHelper.seed(ns, %{"r1" => [{id, @rust, :bounded}]})
 
-      assert ClassRegistry.established(ns, id, :kind) == :workflow
-      assert FleetManager.factory_kind(ns, id) == {:ok, :workflow}
-      assert {:ok, [%{id: ^id, kind: :workflow}]} = FleetManager.list_factories(ns)
+      assert ClassRegistry.established(ns, id, :kind) == :bounded
+      assert FleetManager.factory_kind(ns, id) == {:ok, :bounded}
+      assert {:ok, [%{id: ^id, kind: :bounded}]} = FleetManager.list_factories(ns)
     end
 
     test "a runner announcing the other kind is stored, logged and never placed",
          %{namespace: ns} do
       id = factory("prices")
       forget(ns, [id])
-      FleetStateHelper.seed(ns, %{"r1" => [{id, @rust, :stream}], "r2" => []})
+      FleetStateHelper.seed(ns, %{"r1" => [{id, @rust, :unbounded}], "r2" => []})
       event = [:flezha, :runner, :factory_kind_conflict]
       ref = :telemetry_test.attach_event_handlers(self(), [event])
 
       log =
         ExUnit.CaptureLog.capture_log(fn ->
-          :ok = FleetStateHelper.sync(ns, "r2", [{id, @rust, :workflow}])
+          :ok = FleetStateHelper.sync(ns, "r2", [{id, @rust, :bounded}])
         end)
 
       assert log =~ "r2"
-      assert log =~ "as kind workflow"
+      assert log =~ "as kind bounded"
 
       assert_received {^event, ^ref, %{count: 1},
-                       %{factory: ^id, established: :stream, advertised: :workflow}}
+                       %{factory: ^id, established: :unbounded, advertised: :bounded}}
 
       assert FleetManager.runners_for_factory(ns, id) == ["r1"]
 
       :ok = FleetStateHelper.sync(ns, "r1", [])
-      assert FleetManager.placement_refusal(ns, id) == {:kind, :stream}
-      assert FleetManager.factory_kind(ns, id) == {:error, {:kind, :stream}}
+      assert FleetManager.placement_refusal(ns, id) == {:kind, :unbounded}
+      assert FleetManager.factory_kind(ns, id) == {:error, {:kind, :unbounded}}
     end
 
     test "a runner announcing no kind never places", %{namespace: ns} do
@@ -505,7 +505,7 @@ defmodule FlezhaTest.Runner.FleetManagerSyncFactoriesTest do
   replacement of one runner's declared factory list composed from the existing
   removal + store paths. Idempotent on redelivery, scoped to the sending
   runner, legal with an empty set, and warning — not blocking — when a dropped
-  factory still has controller-known operatives bound to that runner (the
+  factory still has controller-known operators bound to that runner (the
   suspended-instance removal hole's tripwire).
 
   Drives the live `Flezha.Runner.FleetManager` with synthetic state, mirroring
@@ -588,12 +588,12 @@ defmodule FlezhaTest.Runner.FleetManagerSyncFactoriesTest do
     assert "r1" in FleetManager.active_runners(@namespace)
   end
 
-  test "a dropped factory with controller-known bound operatives logs a warning" do
+  test "a dropped factory with controller-known bound operators logs a warning" do
     seed(%{"r1" => ["a", "b"]})
 
     set_mimic_global_until_exit()
 
-    Mimic.stub(HubManager, :operative_rows, fn @namespace ->
+    Mimic.stub(HubManager, :operator_rows, fn @namespace ->
       [
         %{id: "suspended_op", health: :unknown, runner: "r1", factory: "b", node: nil},
         %{id: "other_op", health: :unknown, runner: "r1", factory: "a", node: nil}
@@ -612,12 +612,12 @@ defmodule FlezhaTest.Runner.FleetManagerSyncFactoriesTest do
     refute log =~ "other_op", "factories still declared must not be warned about"
   end
 
-  test "a suspended (unbound) operative warns only when no other runner has the factory" do
+  test "a suspended (unbound) operator warns only when no other runner has the factory" do
     seed(%{"r1" => ["b"], "r2" => ["b"]})
 
     set_mimic_global_until_exit()
 
-    Mimic.stub(HubManager, :operative_rows, fn @namespace ->
+    Mimic.stub(HubManager, :operator_rows, fn @namespace ->
       [%{id: "parked_op", health: :unknown, runner: nil, factory: "b", node: nil}]
     end)
 
@@ -639,7 +639,7 @@ defmodule FlezhaTest.Runner.FleetManagerSyncFactoriesTest do
     assert loud =~ "parked_op"
   end
 
-  test "dropping a factory with no controller-known operatives is silent" do
+  test "dropping a factory with no controller-known operators is silent" do
     seed(%{"r1" => ["a", "b"]})
 
     log =
@@ -737,7 +737,7 @@ defmodule FlezhaTest.Runner.FleetManagerServedGroupsTest do
   @moduledoc """
   What this controller declares to a namespace hub as the groups it serves.
 
-  The hub places an operative among the controllers serving its factory, so the
+  The hub places an operator among the controllers serving its factory, so the
   fleet manager declares exactly the factories `placeable_runners/3` answers
   for — the same filter the runner choice reads. A factory becoming placeable
   is declared at once; one that stops being placeable is held for
@@ -805,7 +805,7 @@ defmodule FlezhaTest.Runner.FleetManagerServedGroupsTest do
     FleetStateHelper.sync(ns, "r1", ["alpha"])
 
     # Still declared inside the grace: a runner back before it elapses moves
-    # no operative at all.
+    # no operator at all.
     assert GroupedHashing.served_groups(hub_id) |> Enum.sort() == ["alpha", "beta"]
     assert declared(hub_id, ["alpha"])
   end

@@ -16,8 +16,8 @@ COMMANDS:
     help       Show help for a specific plugin provider
 
 HOOKS:
-    A hook is a point at which the operative calls its plugin, named by the
-    callback the provider defines: on_input sends every payload the operative
+    A hook is a point at which the operator calls its plugin, named by the
+    callback the provider defines: on_input sends every payload the operator
     ingests, on_output every payload it emits, on_interval runs on a timer.
     `flz plugin help <provider_id>` lists the hooks a provider has.
 
@@ -26,10 +26,10 @@ HOOKS:
     it needs `--on_interval.interval_ms=<ms>`.
 
     An enable naming no hook has no hooks. A plugin that only receives still
-    feeds its operative: its connection is held by the provider's own worker,
+    feeds its operator: its connection is held by the provider's own worker,
     which no hook governs.
 
-    The enable reads --namespace, --operative_id, --hook and the X-prefixed
+    The enable reads --namespace, --operator_id, --hook and the X-prefixed
     provider settings, and refuses any other option.
 
 EXAMPLES:
@@ -41,9 +41,9 @@ EXAMPLES:
     flz plugin upgrade kafka_ingest /path/to/kafka_ingest-1.1.0.fpz
     flz plugin uninstall kafka_ingest
     # Legacy provider enable (compile-time providers):
-    flz plugin enable ws_out operative_websocket --operative_id my_op \
+    flz plugin enable ws_out operator_websocket --operator_id my_op \
         --Xuri=ws://localhost:4500 --hook=on_output --on_output.position=0
     # Source only: it injects what arrives and sends nothing back.
-    flz plugin enable ws_in operative_websocket --operative_id my_op \
+    flz plugin enable ws_in operator_websocket --operator_id my_op \
         --Xuri=ws://localhost:4500
     flz plugin disable ws_out

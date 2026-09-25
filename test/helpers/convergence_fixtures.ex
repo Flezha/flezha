@@ -13,7 +13,7 @@ defmodule FlezhaTest.Helper.ConvergenceFixtures do
 
   @doc """
   A verdict-record map from `{subject, state}` or `{subject, state, opts}`
-  entries — the published snapshot's `operative_health` shape, for a test that
+  entries — the published snapshot's `operator_health` shape, for a test that
   wants to drive a READER rather than the judge.
   """
   @spec verdicts([{tuple(), atom()} | {tuple(), atom(), keyword()}]) ::
@@ -33,14 +33,14 @@ defmodule FlezhaTest.Helper.ConvergenceFixtures do
   @doc """
   The six-key map `Probe.snapshot/0` answers, for a test that stubs the probe.
 
-  Only the operatives and the active set ever differ between tests; the other
+  Only the operators and the active set ever differ between tests; the other
   four are what an idle tick reads, so a key added to the real snapshot is
   added here once instead of in every module that stubs one.
   """
   @spec snapshot(map(), map()) :: map()
-  def snapshot(operatives, active_runners) do
+  def snapshot(operators, active_runners) do
     %{
-      operatives: operatives,
+      operators: operators,
       active_runners: active_runners,
       placement: %{},
       recovery: %{},

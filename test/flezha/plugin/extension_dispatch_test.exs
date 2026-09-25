@@ -22,7 +22,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
 
   @catalog Host.build_catalog(
              [
-               {:on_operative_init, :fold, Ctx.Init},
+               {:on_operator_init, :fold, Ctx.Init},
                {:on_input, :transform, Ctx.IO},
                {:on_snapshot, :fanout, Ctx.Snapshot},
                {:on_message, :request, Ctx.Msg},
@@ -40,7 +40,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
       ]
 
     @impl true
-    def on_operative_init(%Ctx.Init{} = ctx, _opts) do
+    def on_operator_init(%Ctx.Init{} = ctx, _opts) do
       {:ok, %Ctx.Init{ctx | accumulated: Map.put(ctx.accumulated, :a, 1)}}
     end
   end
@@ -54,7 +54,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
       ]
 
     @impl true
-    def on_operative_init(%Ctx.Init{} = ctx, _opts) do
+    def on_operator_init(%Ctx.Init{} = ctx, _opts) do
       {:ok, %Ctx.Init{ctx | accumulated: Map.put(ctx.accumulated, :b, 2)}}
     end
   end
@@ -68,7 +68,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
       ]
 
     @impl true
-    def on_operative_init(_ctx, _opts), do: {:error, :boom}
+    def on_operator_init(_ctx, _opts), do: {:error, :boom}
   end
 
   defmodule TimerPing do
@@ -81,7 +81,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
 
     @impl true
     def on_interval(%Ctx.Tick{} = ctx, opts) do
-      send(Map.fetch!(opts, :pid), {:tick, ctx.operative_id})
+      send(Map.fetch!(opts, :pid), {:tick, ctx.operator_id})
       :ok
     end
   end
@@ -133,7 +133,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
 
     @impl true
     def on_snapshot(%Ctx.Snapshot{} = ctx, opts) do
-      send(Map.fetch!(opts, :pid), {:fanout_called, ctx.operative_id})
+      send(Map.fetch!(opts, :pid), {:fanout_called, ctx.operator_id})
       :ok
     end
   end
@@ -173,9 +173,9 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
   describe ":fold dispatch" do
     test "empty returns ctx unchanged (fast path)" do
       table = Table.new(@catalog)
-      ctx = %Ctx.Init{operative_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
+      ctx = %Ctx.Init{operator_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
 
-      assert {:ok, ^ctx} = Extension.run(table, :on_operative_init, ctx)
+      assert {:ok, ^ctx} = Extension.run(table, :on_operator_init, ctx)
     end
 
     test "single subscriber merges its accumulated" do
@@ -186,13 +186,13 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
           id: "a",
           provider: FoldA,
           opts: %{},
-          hooks: [{:on_operative_init, []}]
+          hooks: [{:on_operator_init, []}]
         })
 
-      ctx = %Ctx.Init{operative_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
+      ctx = %Ctx.Init{operator_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
 
       assert {:ok, %Ctx.Init{accumulated: %{a: 1}}} =
-               Extension.run(table, :on_operative_init, ctx)
+               Extension.run(table, :on_operator_init, ctx)
     end
 
     test "two subscribers chain in position order" do
@@ -203,7 +203,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
           id: "a",
           provider: FoldA,
           opts: %{},
-          hooks: [{:on_operative_init, [position: 0]}]
+          hooks: [{:on_operator_init, [position: 0]}]
         })
 
       {:ok, table} =
@@ -211,13 +211,13 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
           id: "b",
           provider: FoldB,
           opts: %{},
-          hooks: [{:on_operative_init, [position: 1]}]
+          hooks: [{:on_operator_init, [position: 1]}]
         })
 
-      ctx = %Ctx.Init{operative_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
+      ctx = %Ctx.Init{operator_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
 
       assert {:ok, %Ctx.Init{accumulated: %{a: 1, b: 2}}} =
-               Extension.run(table, :on_operative_init, ctx)
+               Extension.run(table, :on_operator_init, ctx)
     end
 
     test "on_error: :fail halts chain" do
@@ -228,11 +228,11 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
           id: "e",
           provider: FoldErr,
           opts: %{},
-          hooks: [{:on_operative_init, [on_error: :fail]}]
+          hooks: [{:on_operator_init, [on_error: :fail]}]
         })
 
-      ctx = %Ctx.Init{operative_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
-      assert {:error, :boom} = Extension.run(table, :on_operative_init, ctx)
+      ctx = %Ctx.Init{operator_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
+      assert {:error, :boom} = Extension.run(table, :on_operator_init, ctx)
     end
 
     test "on_error: :empty skips failure" do
@@ -243,7 +243,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
           id: "e",
           provider: FoldErr,
           opts: %{},
-          hooks: [{:on_operative_init, [on_error: :empty]}]
+          hooks: [{:on_operator_init, [on_error: :empty]}]
         })
 
       {:ok, table} =
@@ -251,20 +251,20 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
           id: "b",
           provider: FoldB,
           opts: %{},
-          hooks: [{:on_operative_init, [position: 1]}]
+          hooks: [{:on_operator_init, [position: 1]}]
         })
 
-      ctx = %Ctx.Init{operative_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
+      ctx = %Ctx.Init{operator_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
 
       assert {:ok, %Ctx.Init{accumulated: %{b: 2}}} =
-               Extension.run(table, :on_operative_init, ctx)
+               Extension.run(table, :on_operator_init, ctx)
     end
   end
 
   describe ":transform dispatch" do
     test "empty returns ctx unchanged" do
       table = Table.new(@catalog)
-      ctx = %Ctx.IO{operative_id: "p", namespace: :n, message: "x", metadata: %{}}
+      ctx = %Ctx.IO{operator_id: "p", namespace: :n, message: "x", metadata: %{}}
 
       assert {:ok, ^ctx} = Extension.run(table, :on_input, ctx)
     end
@@ -280,7 +280,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
           hooks: [{:on_input, []}]
         })
 
-      ctx = %Ctx.IO{operative_id: "p", namespace: :n, message: "hi", metadata: %{}}
+      ctx = %Ctx.IO{operator_id: "p", namespace: :n, message: "hi", metadata: %{}}
       assert {:ok, %Ctx.IO{message: "HI"}} = Extension.run(table, :on_input, ctx)
     end
 
@@ -295,7 +295,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
           hooks: [{:on_input, [position: 0]}]
         })
 
-      ctx = %Ctx.IO{operative_id: "p", namespace: :n, message: "x", metadata: %{}}
+      ctx = %Ctx.IO{operator_id: "p", namespace: :n, message: "x", metadata: %{}}
       assert {:skip, :rate_limited} = Extension.run(table, :on_input, ctx)
     end
 
@@ -318,7 +318,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
           hooks: [{:on_input, [position: 1]}]
         })
 
-      ctx = %Ctx.IO{operative_id: "p", namespace: :n, message: "hi", metadata: %{}}
+      ctx = %Ctx.IO{operator_id: "p", namespace: :n, message: "hi", metadata: %{}}
 
       log =
         capture_log(fn ->
@@ -335,7 +335,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
   describe ":fanout dispatch" do
     test "empty returns :ok without invoking anything" do
       table = Table.new(@catalog)
-      ctx = %Ctx.Snapshot{operative_id: "p", namespace: :n, snapshot: nil}
+      ctx = %Ctx.Snapshot{operator_id: "p", namespace: :n, snapshot: nil}
 
       assert :ok = Extension.run(table, :on_snapshot, ctx)
     end
@@ -359,7 +359,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
           hooks: [{:on_snapshot, []}]
         })
 
-      ctx = %Ctx.Snapshot{operative_id: "p", namespace: :n, snapshot: nil}
+      ctx = %Ctx.Snapshot{operator_id: "p", namespace: :n, snapshot: nil}
 
       log =
         capture_log(fn ->
@@ -385,7 +385,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
         payload: <<>>,
         reply_to: self(),
         ref: ref,
-        operative_id: "p",
+        operator_id: "p",
         namespace: "n"
       }
 
@@ -411,7 +411,7 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
         payload: "hi",
         reply_to: self(),
         ref: ref,
-        operative_id: "p",
+        operator_id: "p",
         namespace: "n"
       }
 

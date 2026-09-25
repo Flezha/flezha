@@ -1,25 +1,25 @@
 defmodule Mix.Tasks.Bench do
   use Mix.Task
   alias Flezha.Config
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias Flezha.Service.PluginManager
   alias Mix.Tasks.Bench.Fleet
   alias Mix.Tasks.Bench.Report
 
-  @shortdoc "Run performance tests for Flezha operatives"
+  @shortdoc "Run performance tests for Flezha operators"
   @moduledoc """
-  Run performance tests for Flezha operatives.
+  Run performance tests for Flezha operators.
 
   ## Usage
 
-      mix bench --num-operatives 1000 --messages-per-operative 1000
+      mix bench --num-operators 1000 --messages-per-operator 1000
       mix bench --runtime java -n 100 -m 1000
       mix bench --runtime rust --shape cell --pool-sizes 1,8
 
   ## Options
 
-    * `--num-operatives` / `-n` - Number of operatives to create (default: 100)
-    * `--messages-per-operative` / `-m` - Number of messages to send per operative (default: 100)
+    * `--num-operators` / `-n` - Number of operators to create (default: 100)
+    * `--messages-per-operator` / `-m` - Number of messages to send per operator (default: 100)
     * `--runtime` / `-r` - Which SDK to benchmark: `rust` (default), or any
       other SDK with a test-app manifest. Each is launched from that manifest
       (`test/apps/<runtime>_runner/conformance.json`, `bench` profile), which
@@ -30,13 +30,13 @@ defmodule Mix.Tasks.Bench do
       fixed at `8 × 20_000` so the numbers stay comparable across runs, swept
       across the comma-list in
       `--pool-sizes`), or `dynamic` (the dynamic cell-mode shape, factory
-      `dynamic_cell`, lazy per-key Cells with 8 keys/operative,
+      `dynamic_cell`, lazy per-key Cells with 8 keys/operator,
       dimensions from `-n` / `-m`).
     * `--pool-sizes` - Comma-separated worker-pool sizes (default: `"1,8"`),
       only honored when `--shape cell`. Each value spawns a fresh
       Rust runner binary with `FLEZHA_WORKER_POOL_SIZE=<N>` and
       reports throughput per-size; the scaling ratio is carried in the report.
-    * `--warmup` / `-w` - Untimed messages per operative sent (and their
+    * `--warmup` / `-w` - Untimed messages per operator sent (and their
       responses drained) before the measured phase, so one-time runner
       cold-start — class loading, JIT, lazy codec init — stays out of the
       numbers (default: 10, `0` disables).
@@ -70,8 +70,8 @@ defmodule Mix.Tasks.Bench do
   @bench_namespace "bench"
 
   @switches [
-    num_operatives: :integer,
-    messages_per_operative: :integer,
+    num_operators: :integer,
+    messages_per_operator: :integer,
     runtime: :string,
     shape: :string,
     pool_sizes: :string,
@@ -79,8 +79,8 @@ defmodule Mix.Tasks.Bench do
   ]
 
   @aliases [
-    n: :num_operatives,
-    m: :messages_per_operative,
+    n: :num_operators,
+    m: :messages_per_operator,
     r: :runtime,
     w: :warmup
   ]
@@ -93,16 +93,16 @@ defmodule Mix.Tasks.Bench do
     pool_sizes = parse_pool_sizes(opts[:pool_sizes])
     warmup = max(opts[:warmup] || 10, 0)
 
-    {num_operatives, messages_per_operative} = dimensions_for_shape(shape, opts)
+    {num_operators, messages_per_operator} = dimensions_for_shape(shape, opts)
 
     Process.put(:bench_runtime, runtime)
 
-    open_report(runtime, shape, pool_sizes, warmup, {num_operatives, messages_per_operative})
+    open_report(runtime, shape, pool_sizes, warmup, {num_operators, messages_per_operator})
 
     # A run killed mid-flight (a timeout, Ctrl-C) never reaches the `after`
-    # block, so its operatives stay in the hub's declared set and their state
+    # block, so its operators stay in the hub's declared set and their state
     # dirs stay on disk. The convergence loop then spends every later run trying
-    # to restore dead operatives, which slows operative creation and quietly
+    # to restore dead operators, which slows operator creation and quietly
     # skews the numbers. `@bench_namespace` is this task's own scratch namespace,
     # so reset it before the controller boots and can restore anything. The
     # `default` namespace is left alone — it may hold runners this task reuses.
@@ -113,17 +113,17 @@ defmodule Mix.Tasks.Bench do
 
     case shape do
       :regression ->
-        run_default_shape(runtime, num_operatives, messages_per_operative, :regression, warmup)
+        run_default_shape(runtime, num_operators, messages_per_operator, :regression, warmup)
 
       :dynamic ->
-        run_default_shape(runtime, num_operatives, messages_per_operative, :dynamic, warmup)
+        run_default_shape(runtime, num_operators, messages_per_operator, :dynamic, warmup)
 
       :cell ->
-        run_cell_shape(num_operatives, messages_per_operative, pool_sizes, warmup)
+        run_cell_shape(num_operators, messages_per_operator, pool_sizes, warmup)
     end
   end
 
-  defp open_report(runtime, shape, pool_sizes, warmup, {num_operatives, messages_per_operative}) do
+  defp open_report(runtime, shape, pool_sizes, warmup, {num_operators, messages_per_operator}) do
     Report.open(
       "mix bench",
       [
@@ -133,9 +133,9 @@ defmodule Mix.Tasks.Bench do
         {"transport", to_string(Config.get(:transport))},
         {"shape", to_string(shape)},
         {"durability", durability_backend()},
-        {"operatives", to_string(num_operatives)},
-        {"messages/operative", to_string(messages_per_operative)},
-        {"warmup/operative", to_string(warmup)}
+        {"operators", to_string(num_operators)},
+        {"messages/operator", to_string(messages_per_operator)},
+        {"warmup/operator", to_string(warmup)}
       ] ++
         if(shape == :cell, do: [{"pool sizes", Enum.join(pool_sizes, ",")}], else: []) ++
         [{"mix env", to_string(Mix.env())}]
@@ -148,7 +148,7 @@ defmodule Mix.Tasks.Bench do
   # `:dynamic` reuses the same harness with the `dynamic_cell`
   # factory and keyed inputs (see `input_for_shape/3`).
 
-  defp run_default_shape(runtime, num_operatives, messages_per_operative, shape, warmup) do
+  defp run_default_shape(runtime, num_operators, messages_per_operator, shape, warmup) do
     namespace =
       cond do
         runtime != :rust ->
@@ -167,7 +167,7 @@ defmodule Mix.Tasks.Bench do
       Report.emit(%{durability: durability_backend()})
 
       metrics =
-        run_performance_test(namespace, num_operatives, messages_per_operative, shape, warmup)
+        run_performance_test(namespace, num_operators, messages_per_operator, shape, warmup)
 
       Report.finish(report_name(shape), %{metrics: metrics})
     after
@@ -179,7 +179,7 @@ defmodule Mix.Tasks.Bench do
 
   # ----- Shape: cell (new — sweeps pool sizes, emits scaling summary) -----
 
-  defp run_cell_shape(num_operatives, messages_per_operative, pool_sizes, warmup) do
+  defp run_cell_shape(num_operators, messages_per_operator, pool_sizes, warmup) do
     results =
       Enum.map(pool_sizes, fn pool ->
         # Always bring up a fresh bench namespace per pool size — the default
@@ -194,8 +194,8 @@ defmodule Mix.Tasks.Bench do
           metrics =
             run_performance_test(
               @bench_namespace,
-              num_operatives,
-              messages_per_operative,
+              num_operators,
+              messages_per_operator,
               :cell,
               warmup
             )
@@ -281,15 +281,15 @@ defmodule Mix.Tasks.Bench do
   defp factory_for_shape(:dynamic), do: "dynamic_cell"
 
   defp dimensions_for_shape(:regression, opts) do
-    {opts[:num_operatives] || 100, opts[:messages_per_operative] || 100}
+    {opts[:num_operators] || 100, opts[:messages_per_operator] || 100}
   end
 
   defp dimensions_for_shape(:dynamic, opts) do
-    {opts[:num_operatives] || 100, opts[:messages_per_operative] || 100}
+    {opts[:num_operators] || 100, opts[:messages_per_operator] || 100}
   end
 
   defp dimensions_for_shape(:cell, opts) do
-    if opts[:num_operatives] || opts[:messages_per_operative] do
+    if opts[:num_operators] || opts[:messages_per_operator] do
       IO.warn(
         "--shape cell ignores -n/-m; dimensions are fixed at 8 × 20_000 so the " <>
           "numbers stay comparable across runs. Use --shape regression for " <>
@@ -300,20 +300,20 @@ defmodule Mix.Tasks.Bench do
     {8, 20_000}
   end
 
-  defp run_performance_test(namespace, num_operatives, test_messages_per_operative, shape, warmup) do
+  defp run_performance_test(namespace, num_operators, test_messages_per_operator, shape, warmup) do
     factory = factory_for_shape(shape)
-    IO.puts("Starting #{num_operatives} operatives (factory=#{factory})...")
+    IO.puts("Starting #{num_operators} operators (factory=#{factory})...")
 
-    {creation_us, operative_infos} = start_operatives(namespace, factory, num_operatives)
-    plugin_setup_us = enable_forwarders(namespace, operative_infos)
-    warmup_us = warmup_pass(operative_infos, shape, warmup)
+    {creation_us, operator_infos} = start_operators(namespace, factory, num_operators)
+    plugin_setup_us = enable_forwarders(namespace, operator_infos)
+    warmup_us = warmup_pass(operator_infos, shape, warmup)
 
-    total_messages = length(operative_infos) * test_messages_per_operative
+    total_messages = length(operator_infos) * test_messages_per_operator
 
-    IO.puts("Sending #{total_messages} inputs (#{test_messages_per_operative} per operative)...")
+    IO.puts("Sending #{total_messages} inputs (#{test_messages_per_operator} per operator)...")
 
     {send_us, _} =
-      :timer.tc(fn -> send_inputs(operative_infos, shape, test_messages_per_operative) end)
+      :timer.tc(fn -> send_inputs(operator_infos, shape, test_messages_per_operator) end)
 
     expected_responses = expected_responses(shape, total_messages)
 
@@ -322,7 +322,7 @@ defmodule Mix.Tasks.Bench do
 
     metrics =
       metrics(%{
-        operatives: length(operative_infos),
+        operators: length(operator_infos),
         total_messages: total_messages,
         expected_responses: expected_responses,
         creation_us: creation_us,
@@ -334,7 +334,7 @@ defmodule Mix.Tasks.Bench do
 
     print_results(metrics, warmup)
 
-    OperativeManager.stop_all_operatives(namespace)
+    OperatorManager.stop_all_operators(namespace)
 
     if total_messages == 0 do
       exit("No messages were processed")
@@ -343,23 +343,23 @@ defmodule Mix.Tasks.Bench do
     metrics
   end
 
-  defp start_operatives(namespace, factory, num_operatives) do
+  defp start_operators(namespace, factory, num_operators) do
     {elapsed, infos} =
       :timer.tc(fn ->
-        Flezha.Parallel.map(1..num_operatives, fn i ->
-          operative_id = "flow_test_#{i}"
+        Flezha.Parallel.map(1..num_operators, fn i ->
+          operator_id = "flow_test_#{i}"
 
-          operative = %Flezha.Operative.Builder{
-            id: operative_id,
+          operator = %Flezha.Operator.Builder{
+            id: operator_id,
             factory_id: factory
           }
 
-          case OperativeManager.start_operative(namespace, operative) do
+          case OperatorManager.start_operator(namespace, operator) do
             {:ok, info} ->
-              {operative_id, info}
+              {operator_id, info}
 
             error ->
-              IO.puts("Failed to start operative #{operative_id}: #{inspect(error)}")
+              IO.puts("Failed to start operator #{operator_id}: #{inspect(error)}")
               nil
           end
         end)
@@ -371,7 +371,7 @@ defmodule Mix.Tasks.Bench do
     # and reports a timeout instead of the refusal that actually stopped it.
     if infos == [] do
       Mix.raise(
-        "no operatives started — every start was refused. The refusal is logged above; " <>
+        "no operators started — every start was refused. The refusal is logged above; " <>
           "a placement refusal naming an sdk_lang means this namespace's factory state " <>
           "disagrees with the runners you started."
       )
@@ -380,18 +380,18 @@ defmodule Mix.Tasks.Bench do
     {elapsed, infos}
   end
 
-  defp enable_forwarders(namespace, operative_infos) do
+  defp enable_forwarders(namespace, operator_infos) do
     recv_pid = self()
 
     {elapsed, _} =
       :timer.tc(fn ->
-        Flezha.Parallel.map(operative_infos, fn {operative_id, _info} ->
+        Flezha.Parallel.map(operator_infos, fn {operator_id, _info} ->
           PluginManager.enable_plugin(
-            operative_id <> "_beam_msg_forward",
+            operator_id <> "_beam_msg_forward",
             %Flezha.Plugin{
-              id: operative_id <> "_beam_msg_forward",
+              id: operator_id <> "_beam_msg_forward",
               namespace: namespace,
-              operative_id: operative_id,
+              operator_id: operator_id,
               provider: Flezha.Plugin.Provider.BeamMsgForward,
               opts: %{recv_pid: recv_pid},
               hooks: [{:on_output, []}]
@@ -399,11 +399,11 @@ defmodule Mix.Tasks.Bench do
           )
 
           PluginManager.enable_plugin(
-            operative_id <> "_stdout_plugin",
+            operator_id <> "_stdout_plugin",
             %Flezha.Plugin{
-              id: operative_id <> "_stdout_plugin",
+              id: operator_id <> "_stdout_plugin",
               namespace: namespace,
-              operative_id: operative_id,
+              operator_id: operator_id,
               provider: Flezha.Plugin.Provider.StdOut,
               opts: %{},
               hooks: []
@@ -415,14 +415,14 @@ defmodule Mix.Tasks.Bench do
     elapsed
   end
 
-  defp warmup_pass(_operative_infos, _shape, warmup) when warmup <= 0, do: nil
+  defp warmup_pass(_operator_infos, _shape, warmup) when warmup <= 0, do: nil
 
-  defp warmup_pass(operative_infos, shape, warmup) do
-    warmup_total = length(operative_infos) * warmup
+  defp warmup_pass(operator_infos, shape, warmup) do
+    warmup_total = length(operator_infos) * warmup
 
     {elapsed, _} =
       :timer.tc(fn ->
-        send_inputs(operative_infos, shape, warmup)
+        send_inputs(operator_infos, shape, warmup)
         await_responses(expected_responses(shape, warmup_total), "warmup")
       end)
 
@@ -437,10 +437,10 @@ defmodule Mix.Tasks.Bench do
     end_to_end_us = w.send_us + w.receive_us
 
     %{
-      operatives: w.operatives,
+      operators: w.operators,
       inputs_dispatched: w.total_messages,
       responses_received: w.expected_responses,
-      operative_creation_ms: rounded_ms(w.creation_us),
+      operator_creation_ms: rounded_ms(w.creation_us),
       plugin_setup_ms: rounded_ms(w.plugin_setup_us),
       warmup_ms: w.warmup_us && rounded_ms(w.warmup_us),
       send_ms: rounded_ms(w.send_us),
@@ -462,7 +462,7 @@ defmodule Mix.Tasks.Bench do
     Report.section(
       "totals",
       Report.kv([
-        {"operatives", Integer.to_string(m.operatives)},
+        {"operators", Integer.to_string(m.operators)},
         {"inputs dispatched", Report.rate(m.inputs_dispatched)},
         {"responses received", Report.rate(m.responses_received)}
       ])
@@ -494,11 +494,11 @@ defmodule Mix.Tasks.Bench do
   defp phases_section(m, warmup) do
     phases =
       [
-        {"operative creation", m.operative_creation_ms, ""},
+        {"operator creation", m.operator_creation_ms, ""},
         {"plugin setup", m.plugin_setup_ms, ""}
       ] ++
         if(m.warmup_ms,
-          do: [{"warmup", m.warmup_ms, "#{warmup}/operative, excluded from the windows below"}],
+          do: [{"warmup", m.warmup_ms, "#{warmup}/operator, excluded from the windows below"}],
           else: []
         ) ++
         [
@@ -516,12 +516,12 @@ defmodule Mix.Tasks.Bench do
     )
   end
 
-  defp send_inputs(operative_infos, shape, messages_per_operative) do
-    Enum.each(operative_infos, fn {operative_id, %{pid: operative_pid}} ->
-      for msg_num <- 1..messages_per_operative do
+  defp send_inputs(operator_infos, shape, messages_per_operator) do
+    Enum.each(operator_infos, fn {operator_id, %{pid: operator_pid}} ->
+      for msg_num <- 1..messages_per_operator do
         GenServer.cast(
-          operative_pid,
-          {:io_in, input_for_shape(shape, operative_id, msg_num), %{}}
+          operator_pid,
+          {:io_in, input_for_shape(shape, operator_id, msg_num), %{}}
         )
       end
     end)
@@ -555,14 +555,14 @@ defmodule Mix.Tasks.Bench do
   # so each dispatched input produces one `:on_output` event.
   defp expected_responses(:dynamic, total_messages), do: total_messages
 
-  # Per-shape wire input. The dynamic shape prefixes a workflow key
-  # (`k0`..`k7`) so a steady burst exercises 8 dynamic Cells per operative
+  # Per-shape wire input. The dynamic shape prefixes a bounded key
+  # (`k0`..`k7`) so a steady burst exercises 8 dynamic Cells per operator
   # without tripping the soft cap; other shapes are key-agnostic.
-  defp input_for_shape(:dynamic, operative_id, msg_num) do
-    "k#{rem(msg_num, 8)}:test_msg_#{operative_id}_#{msg_num}"
+  defp input_for_shape(:dynamic, operator_id, msg_num) do
+    "k#{rem(msg_num, 8)}:test_msg_#{operator_id}_#{msg_num}"
   end
 
-  defp input_for_shape(_shape, operative_id, msg_num) do
-    "test_msg_#{operative_id}_#{msg_num}"
+  defp input_for_shape(_shape, operator_id, msg_num) do
+    "test_msg_#{operator_id}_#{msg_num}"
   end
 end

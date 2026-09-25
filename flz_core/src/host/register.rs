@@ -13,18 +13,18 @@ use std::sync::Arc;
 use flz_transport::service::payloader::MAX_METADATA_FIELD_LEN;
 
 use super::build::{
-    build_channels, build_host_dag, build_tasklets, resolve_class_facts, workflow_spec,
+    bounded_spec, build_channels, build_host_dag, build_tasklets, resolve_class_facts,
 };
 use super::chains::derive_channels;
 use super::decl::{
-    HostAckGranularity, HostCellModeDecl, HostChannelKind, HostCheckpointOutputs, HostClassDecl,
-    HostClock, HostLoopMode, HostOverflow, HostTaskletDecl, HostWorkflowDecl,
+    HostAckGranularity, HostBoundedDecl, HostCellModeDecl, HostChannelKind, HostCheckpointOutputs,
+    HostClassDecl, HostClock, HostLoopMode, HostOverflow, HostTaskletDecl,
 };
 use super::issue::{render_issues, TopologyIssue};
+use crate::bounded::spec::{graph_order, GraphSeed, TaskDag};
+use crate::bounded::LoopMode;
 use crate::error::Error;
-use crate::operative::topology::OperativeTopology;
-use crate::workflow::spec::{graph_order, GraphSeed, TaskDag};
-use crate::workflow::LoopMode;
+use crate::operator::topology::OperatorTopology;
 
 /// Hard upper bound on a per-Cell mailbox: ~1M items is past sanity for any
 /// expected workload, and a capacity above it is a typo, not a posture.
@@ -146,7 +146,7 @@ fn derive_ack_granularity(decl: &HostClassDecl) -> HostAckGranularity {
     }
 }
 
-/// One namespace per operative for channels, one for nodes: a derived name,
+/// One namespace per operator for channels, one for nodes: a derived name,
 /// a `named(...)` override and an entry name all collide here. A name also has
 /// to fit the frame it rides, and this is where the author can still be told.
 fn refuse_names(
@@ -197,7 +197,7 @@ fn refuse_class_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) {
         issues.push(TopologyIssue::Declaration(format!(
             "sdk_lang: {} is not an allocated SDK language; every class declares \
              the byte its SDK holds in the allocation table (flz_core::header), \
-             because the controller places an operative only on a runner of its \
+             because the controller places an operator only on a runner of its \
              factory's language",
             decl.sdk_lang
         )));
@@ -223,11 +223,11 @@ fn refuse_class_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) {
     }
     // Each kind is judged on its own settings; a setting of the other kind is
     // refused by its own name rather than by the rule that assumes its kind.
-    match &decl.workflow {
-        Some(_) => refuse_workflow_facts(decl, issues),
+    match &decl.bounded {
+        Some(_) => refuse_bounded_facts(decl, issues),
         None => {
             if decl.sync_durability {
-                issues.push(TopologyIssue::SyncDurabilityOnStream {
+                issues.push(TopologyIssue::SyncDurabilityOnUnbounded {
                     factory_id: decl.factory_id.clone(),
                 });
             }
@@ -236,15 +236,15 @@ fn refuse_class_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) {
     }
 }
 
-fn refuse_workflow_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) {
+fn refuse_bounded_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) {
     if decl.effectively_once {
-        issues.push(TopologyIssue::EffectivelyOnceOnWorkflow);
+        issues.push(TopologyIssue::EffectivelyOnceOnBounded);
     }
     if decl.correction_window_ms.is_some() {
-        issues.push(TopologyIssue::CorrectionWindowOnWorkflow);
+        issues.push(TopologyIssue::CorrectionWindowOnBounded);
     }
     if derive_ack_granularity(decl) == HostAckGranularity::Checkpoint {
-        issues.push(TopologyIssue::CheckpointOnWorkflow);
+        issues.push(TopologyIssue::CheckpointOnBounded);
     }
     if decl.sync_durability && !decl.persistent {
         issues.push(TopologyIssue::Declaration(
@@ -362,7 +362,7 @@ fn refuse_channel(decl: &HostClassDecl, channel: &DerivedChannel, issues: &mut V
 /// inter_task channel with no consumer is NOT one of them: it is a leaf's
 /// retained output — what the typed SDK's `sealed()` declares, what a saga
 /// archive leaf's undo reverses, what a handoff-chained loop feeds back — and
-/// the workflow run, not another tasklet, is what reads it.
+/// the bounded run, not another tasklet, is what reads it.
 fn refuse_channel_ends(channel: &DerivedChannel, issues: &mut Vec<TopologyIssue>) {
     let text = match channel.kind {
         HostChannelKind::Entry if channel.producer.is_some() => {
@@ -514,7 +514,7 @@ fn register(derived: Derived) -> Result<(), Error> {
     let (channels, name_to_id) = build_channels(&decl, &derived_channels);
     let (tasklets, tasklet_name_to_id) =
         build_tasklets(&decl, &class, &channels, &derived_channels);
-    let mut topology = OperativeTopology {
+    let mut topology = OperatorTopology {
         sdk_lang: decl.sdk_lang,
         channels,
         name_to_id,
@@ -526,12 +526,12 @@ fn register(derived: Derived) -> Result<(), Error> {
         effectively_once: decl.effectively_once,
         correction: class.correction,
         ack_granularity: class.ack_granularity,
-        workflow: None,
+        bounded: None,
     };
-    if let Some(workflow) = &decl.workflow {
-        topology.workflow = Some(structured_workflow(&decl, workflow, &topology)?);
+    if let Some(bounded) = &decl.bounded {
+        topology.bounded = Some(structured_bounded(&decl, bounded, &topology)?);
     }
-    crate::operative::registry::register_class(class.factory_id, Arc::new(topology));
+    crate::operator::registry::register_class(class.factory_id, Arc::new(topology));
     Ok(())
 }
 
@@ -549,11 +549,11 @@ fn register(derived: Derived) -> Result<(), Error> {
 /// vocabulary, because it never passes through here.
 fn refuse_loop_terminal_without_handoff(
     decl: &HostClassDecl,
-    workflow: &HostWorkflowDecl,
-    topology: &OperativeTopology,
+    bounded: &HostBoundedDecl,
+    topology: &OperatorTopology,
     dag: &TaskDag,
 ) -> Result<(), Error> {
-    if !decl.persistent || workflow.loop_mode != HostLoopMode::Chained {
+    if !decl.persistent || bounded.loop_mode != HostLoopMode::Chained {
         return Ok(());
     }
     match dag.terminal_without_handoff(topology) {
@@ -571,13 +571,13 @@ fn refuse_loop_terminal_without_handoff(
 
 /// A structured chain: its DAG from the topology, a chained loop decided
 /// against it.
-fn structured_workflow(
+fn structured_bounded(
     decl: &HostClassDecl,
-    workflow: &HostWorkflowDecl,
-    topology: &OperativeTopology,
-) -> Result<crate::workflow::spec::WorkflowSpec, Error> {
+    bounded: &HostBoundedDecl,
+    topology: &OperatorTopology,
+) -> Result<crate::bounded::spec::BoundedSpec, Error> {
     let dag = build_host_dag(topology)?;
-    if workflow.loop_mode == HostLoopMode::Chained {
+    if bounded.loop_mode == HostLoopMode::Chained {
         if let Some((channel_id, branching)) = dag.branching_chain() {
             return Err(Error::Declaration(format!(
                 "a handoff-chained loop needs exactly one terminal tasklet per chain; the \
@@ -590,11 +590,11 @@ fn structured_workflow(
             )));
         }
     }
-    refuse_loop_terminal_without_handoff(decl, workflow, topology, &dag)?;
-    let loop_mode = match workflow.loop_mode {
+    refuse_loop_terminal_without_handoff(decl, bounded, topology, &dag)?;
+    let loop_mode = match bounded.loop_mode {
         HostLoopMode::Once => LoopMode::Once,
         HostLoopMode::PerInput => LoopMode::PerInput,
         HostLoopMode::Chained => LoopMode::Chained,
     };
-    Ok(workflow_spec(decl, workflow, dag, loop_mode))
+    Ok(bounded_spec(decl, bounded, dag, loop_mode))
 }

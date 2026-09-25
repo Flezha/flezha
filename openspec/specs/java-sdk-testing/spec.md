@@ -6,7 +6,7 @@ Defines the testing strategy for the Java SDK: unit test coverage of the protoco
 ## Requirements
 ### Requirement: Unit Test Coverage for Protocol Layer
 
-The Java SDK SHALL include JUnit 5 unit tests that cover every component of the protocol and runtime layer: binary framing (frame build / parse, partial reads, incomplete headers, incomplete payloads, multiple frames per read, oversized payload ids, empty metadata), metadata serialization (round-trip, boundary lengths of 0 and 255, missing metadata, the reserved `channel` key), protobuf encode/decode for every `CommandRequest` oneof and `CommandResponse` shape, command dispatch for every command variant (success and error paths, including the `OperativeMessage` canonical-unsupported response), Operative registration (duplicate factoryId, missing factoryId lookup, before/after `newInstance` gating, wiring-mismatch rejection, entry-channel-type rejection, unwired-channel rejection, static-mode and dynamic-mode default-impl detection), Tasklet dispatch (single-mode cell allocation, static-mode cell fan-out, sticky per-cell ordering, parallel cell execution, inter-tasklet reference-equality, plugin-bound serialization + channel-name metadata attachment, `emitWithMeta` rejection on inter-tasklet channels, reserved-key drop), operative-instance lifecycle (add via `AddOperative`, remove via `RemOperative`, state serialize via `CellState`, migrate serialize via `MigrationSerialization`, migrate deserialize via `MigrationDeserialization`), and the reconnect state machine (intentional vs unexpected disconnect, backoff schedule).
+The Java SDK SHALL include JUnit 5 unit tests that cover every component of the protocol and runtime layer: binary framing (frame build / parse, partial reads, incomplete headers, incomplete payloads, multiple frames per read, oversized payload ids, empty metadata), metadata serialization (round-trip, boundary lengths of 0 and 255, missing metadata, the reserved `channel` key), protobuf encode/decode for every `CommandRequest` oneof and `CommandResponse` shape, command dispatch for every command variant (success and error paths, including the `OperatorMessage` canonical-unsupported response), Operator registration (duplicate factoryId, missing factoryId lookup, before/after `newInstance` gating, wiring-mismatch rejection, entry-channel-type rejection, unwired-channel rejection, static-mode and dynamic-mode default-impl detection), Tasklet dispatch (single-mode cell allocation, static-mode cell fan-out, sticky per-cell ordering, parallel cell execution, inter-tasklet reference-equality, plugin-bound serialization + channel-name metadata attachment, `emitWithMeta` rejection on inter-tasklet channels, reserved-key drop), operator-instance lifecycle (add via `AddOperator`, remove via `RemOperator`, state serialize via `CellState`, migrate serialize via `MigrationSerialization`, migrate deserialize via `MigrationDeserialization`), and the reconnect state machine (intentional vs unexpected disconnect, backoff schedule).
 
 Line coverage of the `flezha-sdk-runtime` and `flezha-sdk-api` modules SHALL reach ≥ 85%. That number is produced by JaCoCo's `report` goal, which the `coverage` profile in `sdk/java/pom.xml` binds to the `verify` phase, so `mvn -f sdk/java/pom.xml -P coverage verify` is the command that measures it; `mvn ... test` runs the suite and writes no coverage report. No Maven goal enforces the floor — the profile binds no `check` execution — so it is met by writing tests, not by a failing build.
 
@@ -22,11 +22,11 @@ Line coverage of the `flezha-sdk-runtime` and `flezha-sdk-api` modules SHALL rea
 
 #### Scenario: Each java-sdk requirement has at least one unit test
 - **WHEN** the unit test suite is enumerated
-- **THEN** for every requirement under the `java-sdk` spec there SHALL be at least one JUnit test whose `@DisplayName` or class name references the requirement's scenario, including the new `Operative Registration`, `Tasklet Interface and Per-Cell Dispatch`, and `Sticky Per-Cell Ordering Under ThreadPool Dispatch` requirements
+- **THEN** for every requirement under the `java-sdk` spec there SHALL be at least one JUnit test whose `@DisplayName` or class name references the requirement's scenario, including the new `Operator Registration`, `Tasklet Interface and Per-Cell Dispatch`, and `Sticky Per-Cell Ordering Under ThreadPool Dispatch` requirements
 
 #### Scenario: Old API tests removed
-- **WHEN** the unit test suite is enumerated for tests referencing `OperativeHandler`, `OperativeRunner.THREAD_SPAWN`, `FactoryRegistry.registerFactory`, `FactoryMetadata`, `InputTransformer`, or `OutputTransformer`
-- **THEN** the count SHALL be zero — every such test is either deleted or rewritten against the new `StreamOperative` / `Tasklet` surface
+- **WHEN** the unit test suite is enumerated for tests referencing `OperatorHandler`, `OperatorRunner.THREAD_SPAWN`, `FactoryRegistry.registerFactory`, `FactoryMetadata`, `InputTransformer`, or `OutputTransformer`
+- **THEN** the count SHALL be zero — every such test is either deleted or rewritten against the new `UnboundedOperator` / `Tasklet` surface
 
 ### Requirement: JNI Bridge Tests
 
@@ -46,7 +46,7 @@ The `flezha-sdk-native` module SHALL include dedicated JNI bridge tests that exe
 
 ### Requirement: Reference Java Compute Engine Test App
 
-The Java reference test app at `test/apps/java_runner/` SHALL implement its fixtures using the Java SDK's `StreamOperative` / `WorkflowOperative` / `Tasklet` API. The built jar MUST accept the namespace as its first command-line argument and keep the process alive until stdin closes, matching `rust_runner`'s behavior and the shared test-app contract. The factory ids it registers SHALL be exactly the union of the `fixtures` in `test/apps/java_runner/conformance.json`, and for every capability that manifest does not defer the ids SHALL equal the Rust reference manifest's for that capability — the same id, sink channel names, output bytes and declared options. No registered id SHALL carry a `java_` prefix and no id SHALL be absent from the reference. The legacy `EchoMessageOperative` (and any other `operative-message-handlers`-driven factory) SHALL NOT be present; its inclusion is deferred until `operative-message-handlers` ships per-Tasklet `handleMessage`.
+The Java reference test app at `test/apps/java_runner/` SHALL implement its fixtures using the Java SDK's `UnboundedOperator` / `BoundedOperator` / `Tasklet` API. The built jar MUST accept the namespace as its first command-line argument and keep the process alive until stdin closes, matching `rust_runner`'s behavior and the shared test-app contract. The factory ids it registers SHALL be exactly the union of the `fixtures` in `test/apps/java_runner/conformance.json`, and for every capability that manifest does not defer the ids SHALL equal the Rust reference manifest's for that capability — the same id, sink channel names, output bytes and declared options. No registered id SHALL carry a `java_` prefix and no id SHALL be absent from the reference. The legacy `EchoMessageOperator` (and any other `operator-message-handlers`-driven factory) SHALL NOT be present; its inclusion is deferred until `operator-message-handlers` ships per-Tasklet `handleMessage`.
 
 #### Scenario: Java test app builds and runs
 - **WHEN** `scripts/build-dist.sh` produces `dist/java_runner.jar` and `java -jar dist/java_runner.jar my_namespace` is run while the agent is up
@@ -57,8 +57,8 @@ The Java reference test app at `test/apps/java_runner/` SHALL implement its fixt
 - **THEN** the two SHALL be equal sets, and for every non-deferred capability the Java manifest's ids SHALL equal the Rust manifest's
 
 #### Scenario: Java test app uses the new Tasklet / TaskletCtx API exclusively
-- **WHEN** the Java test app's source files are scanned for `import com.flezha.sdk.OperativeHandler`, `com.flezha.sdk.FactoryRegistry`, `com.flezha.sdk.OperativeSettings`, `com.flezha.sdk.OperativeResult`, `com.flezha.sdk.OperativeRunner`, `com.flezha.sdk.InputTransformer`, or `com.flezha.sdk.OutputTransformer`
-- **THEN** zero matches SHALL be found — the test app's classes use only `StreamOperative`, `Tasklet`, `TaskletCtx`, `ChannelBuilder`, and `FlezhaRunner.registerFactory`
+- **WHEN** the Java test app's source files are scanned for `import com.flezha.sdk.OperatorHandler`, `com.flezha.sdk.FactoryRegistry`, `com.flezha.sdk.OperatorSettings`, `com.flezha.sdk.OperatorResult`, `com.flezha.sdk.OperatorRunner`, `com.flezha.sdk.InputTransformer`, or `com.flezha.sdk.OutputTransformer`
+- **THEN** zero matches SHALL be found — the test app's classes use only `UnboundedOperator`, `Tasklet`, `TaskletCtx`, `ChannelBuilder`, and `FlezhaRunner.registerFactory`
 
 ### Requirement: Elixir Integration Harness Supports Java Runtime
 
@@ -78,38 +78,38 @@ The Java reference test app at `test/apps/java_runner/` SHALL implement its fixt
 
 ### Requirement: Integration Test Matrix
 
-The shared smoke tier `test/system/sdk_smoke_e2e_test.exs` SHALL exercise the selected runtime against the unchanged Elixir agent across every transport its manifest lists. The tier SHALL cover: handshake + `AssignRunnerId`, `ConnectSocket`, add-remove operative lifecycle, end-to-end data flow through an operative (`PipeToAgent`), `PipeToOperative` routing, migration (serialize + deserialize on a second node), unexpected-disconnect auto-reconnect, the live-factory-set assertion and the golden declaration snapshots. There SHALL be no Java-specific matrix file and no `:java_sdk` tag.
+The shared smoke tier `test/system/sdk_smoke_e2e_test.exs` SHALL exercise the selected runtime against the unchanged Elixir agent across every transport its manifest lists. The tier SHALL cover: handshake + `AssignRunnerId`, `ConnectSocket`, add-remove operator lifecycle, end-to-end data flow through an operator (`PipeToAgent`), `PipeToOperator` routing, migration (serialize + deserialize on a second node), unexpected-disconnect auto-reconnect, the live-factory-set assertion and the golden declaration snapshots. There SHALL be no Java-specific matrix file and no `:java_sdk` tag.
 
 #### Scenario: Smoke tier runs under mix test for the Java runtime
 - **WHEN** a developer runs `FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke`
-- **THEN** every transport entry in the Java manifest SHALL run, and each SHALL assert that operative output received by the agent matches the expected value
+- **THEN** every transport entry in the Java manifest SHALL run, and each SHALL assert that operator output received by the agent matches the expected value
 
 #### Scenario: Java-runtime reconnect under agent restart
 - **WHEN** the smoke tier restarts the agent while a Java test compute engine is running
-- **THEN** the Java SDK SHALL reconnect automatically, receive a fresh compute engine id, be re-issued operative add commands, and resume correct stream I/O
+- **THEN** the Java SDK SHALL reconnect automatically, receive a fresh compute engine id, be re-issued operator add commands, and resume correct stream I/O
 
-#### Scenario: Java-runtime migration preserves operative state
-- **WHEN** an operative holding non-trivial state is migrated between two Java compute engines via `MigrationSerialization` + `MigrationDeserialization`
-- **THEN** the operative's serialized state on the destination SHALL be bytewise equal to the serialized state on the source
+#### Scenario: Java-runtime migration preserves operator state
+- **WHEN** an operator holding non-trivial state is migrated between two Java compute engines via `MigrationSerialization` + `MigrationDeserialization`
+- **THEN** the operator's serialized state on the destination SHALL be bytewise equal to the serialized state on the source
 
 ### Requirement: CI Enforces the Full Java SDK Test Suite
 
-The project CI workflow SHALL run the Java SDK unit tests, the JNI bridge tests, and the shared smoke tier under `FLEZHA_E2E_RUNTIME=java` on every pull request that touches `sdk/java/**`, `flz_transport/**`, `test/apps/java_runner/**`, or `test/helpers/node_test_helper.ex`; the nightly end-to-end workflow SHALL run the full `:system` suite under `FLEZHA_E2E_RUNTIME=java` as its own matrix job. Failures in any of these SHALL block the PR or mark the nightly job red. After this change merges, every CI matrix entry, integration test, and smoke-tier invocation previously tagged `OPERATIVE_MVP_JAVA_PENDING` SHALL be re-enabled (the tag is grep-and-untagged in one pass; see `operative-mvp-java/design.md` Decision 11). Tests tagged `OPERATIVE_MESSAGE_HANDLERS_PENDING` SHALL remain disabled until `operative-message-handlers` ships.
+The project CI workflow SHALL run the Java SDK unit tests, the JNI bridge tests, and the shared smoke tier under `FLEZHA_E2E_RUNTIME=java` on every pull request that touches `sdk/java/**`, `flz_transport/**`, `test/apps/java_runner/**`, or `test/helpers/node_test_helper.ex`; the nightly end-to-end bounded operator SHALL run the full `:system` suite under `FLEZHA_E2E_RUNTIME=java` as its own matrix job. Failures in any of these SHALL block the PR or mark the nightly job red. After this change merges, every CI matrix entry, integration test, and smoke-tier invocation previously tagged `OPERATOR_MVP_JAVA_PENDING` SHALL be re-enabled (the tag is grep-and-untagged in one pass; see `operator-mvp-java/design.md` Decision 11). Tests tagged `OPERATOR_MESSAGE_HANDLERS_PENDING` SHALL remain disabled until `operator-message-handlers` ships.
 
 #### Scenario: PR touching flz_transport runs the full Java suite
 - **WHEN** a pull request modifies a file under `flz_transport/src/`
-- **THEN** CI SHALL run both the Rust SDK tests and the full Java SDK test suite (unit + JNI + the smoke tier under `FLEZHA_E2E_RUNTIME=java`) — neither suite SHALL be skipped on the basis of `OPERATIVE_MVP_JAVA_PENDING`
+- **THEN** CI SHALL run both the Rust SDK tests and the full Java SDK test suite (unit + JNI + the smoke tier under `FLEZHA_E2E_RUNTIME=java`) — neither suite SHALL be skipped on the basis of `OPERATOR_MVP_JAVA_PENDING`
 
 #### Scenario: Failing Java integration test blocks merge
 - **WHEN** any scenario of the smoke tier fails under `FLEZHA_E2E_RUNTIME=java`
 - **THEN** the CI check for that workflow SHALL report a failure and the PR merge SHALL be blocked until the scenario passes
 
-#### Scenario: No OPERATIVE_MVP_JAVA_PENDING tags remain post-merge
-- **WHEN** the repository is grep-searched for the literal string `OPERATIVE_MVP_JAVA_PENDING` after this change merges
+#### Scenario: No OPERATOR_MVP_JAVA_PENDING tags remain post-merge
+- **WHEN** the repository is grep-searched for the literal string `OPERATOR_MVP_JAVA_PENDING` after this change merges
 - **THEN** zero matches SHALL be found across `.github/`, `test/`, `lib/mix/`, `mix.exs`, and `sdk/java/**`
 
-#### Scenario: OPERATIVE_MESSAGE_HANDLERS_PENDING tags persist post-merge
-- **WHEN** the repository is grep-searched for the literal string `OPERATIVE_MESSAGE_HANDLERS_PENDING` after this change merges
+#### Scenario: OPERATOR_MESSAGE_HANDLERS_PENDING tags persist post-merge
+- **WHEN** the repository is grep-searched for the literal string `OPERATOR_MESSAGE_HANDLERS_PENDING` after this change merges
 - **THEN** the matches SHALL match the pre-change set — this change does NOT re-enable message-handler tests
 
 ### Requirement: TaskletTestHarness in flezha-sdk-testing artifact
@@ -231,48 +231,48 @@ The Java test compute-engine application SHALL live at `test/apps/java_runner/` 
 
 #### Scenario: Integration test runs from new path
 - **WHEN** the Java SDK integration matrix is run
-- **THEN** the matrix MUST locate the test app at `test/apps/java_runner/`, build it, and exercise the Controller↔Runner flow including Operative registration, Tasklet execution, Cell state persistence, and survive-restart behavior
+- **THEN** the matrix MUST locate the test app at `test/apps/java_runner/`, build it, and exercise the Controller↔Runner flow including Operator registration, Tasklet execution, Cell state persistence, and survive-restart behavior
 
 ### Requirement: Test naming reflects canonical role vocabulary
 
-Java SDK integration test class names and test descriptions SHALL use canonical vocabulary (Controller, Runner, Operative, Tasklet, Cell). Existing test classes whose names contain `Processor`, `Operator`, or `ComputeEngine` SHALL be renamed accordingly.
+Java SDK integration test class names and test descriptions SHALL use canonical vocabulary (Controller, Runner, Operator, Tasklet, Cell). Existing test classes whose names contain `Processor`, `User`, or `ComputeEngine` SHALL be renamed accordingly.
 
 #### Scenario: Test class names compile after rename
 - **WHEN** `mvn -f sdk/java test` is run
-- **THEN** all integration test classes SHALL compile and run; no class name SHALL contain `Processor`, `Operator`, or `ComputeEngine`
+- **THEN** all integration test classes SHALL compile and run; no class name SHALL contain `Processor`, `User`, or `ComputeEngine`
 
-### Requirement: Reference Java test app registers a Workflow Operative
+### Requirement: Reference Java test app registers a Bounded Operator
 
-The Java reference test app at `test/apps/java_runner/` SHALL register at least one `WorkflowOperative` class via `Flezha.registerWorkflow(...)`, mirroring the workflow operative that `test/apps/rust_runner/` registers (an `EchoOperative` that emits its `args` as plugin output and returns success). The workflow operative SHALL be a hand-written `WorkflowOperative` implementation (no annotation-processor sugar in v1). Registering the workflow operative SHALL NOT disturb the test app's stream operative registrations or its run-until-stdin-closes behavior.
+The Java reference test app at `test/apps/java_runner/` SHALL register at least one `BoundedOperator` class via `Flezha.registerBounded(...)`, mirroring the bounded operator that `test/apps/rust_runner/` registers (an `EchoOperator` that emits its `args` as plugin output and returns success). The bounded operator SHALL be a hand-written `BoundedOperator` implementation (no annotation-processor sugar in v1). Registering the bounded operator SHALL NOT disturb the test app's unbounded operator registrations or its run-until-stdin-closes behavior.
 
-#### Scenario: Java test app registers a workflow operative factory
+#### Scenario: Java test app registers a bounded operator factory
 
-- **WHEN** the Java test app starts and registers its operatives
-- **THEN** it SHALL call `Flezha.registerWorkflow(EchoOperative.class)`, and the handshake `factory_ids` SHALL include the workflow operative's factory id alongside the stream operative factory ids
+- **WHEN** the Java test app starts and registers its operators
+- **THEN** it SHALL call `Flezha.registerBounded(EchoOperator.class)`, and the handshake `factory_ids` SHALL include the bounded operator's factory id alongside the unbounded operator factory ids
 
-#### Scenario: Java and Rust test apps expose the same workflow operative factory
+#### Scenario: Java and Rust test apps expose the same bounded operator factory
 
-- **WHEN** the workflow operative factory ids registered by the Java test app are compared to those registered by `test/apps/rust_runner/`
-- **THEN** both SHALL expose the mirrored echo workflow-operative factory id, so the same `flz operative start … --kind workflow` exercises either runtime
+- **WHEN** the bounded operator factory ids registered by the Java test app are compared to those registered by `test/apps/rust_runner/`
+- **THEN** both SHALL expose the mirrored echo bounded-operator factory id, so the same `flz operator start … --kind bounded` exercises either runtime
 
-### Requirement: Integration matrix exercises a run-once Java workflow operative over both transports
+### Requirement: Integration matrix exercises a run-once Java bounded operator over both transports
 
-The Elixir↔Java integration suite SHALL exercise a run-once Java workflow operative against the unchanged Elixir controller across both transports (`{transport: [:uds, :quic]}`). The suite SHALL assert, per transport: the workflow operative's `run` executes exactly once with the first message sent to the instance; emitted output reaches a bound plugin; a `WorkflowCompleted{status:"ok"}` is received and the workflow operative is torn down and absent from the durable registry; and a deliberately-failing workflow operative emits `WorkflowCompleted{status:"error"}` with its message and is likewise deregistered without retry.
+The Elixir↔Java integration suite SHALL exercise a run-once Java bounded operator against the unchanged Elixir controller across both transports (`{transport: [:uds, :quic]}`). The suite SHALL assert, per transport: the bounded operator's `run` executes exactly once with the first message sent to the instance; emitted output reaches a bound plugin; a `BoundedCompleted{status:"ok"}` is received and the bounded operator is torn down and absent from the durable registry; and a deliberately-failing bounded operator emits `BoundedCompleted{status:"error"}` with its message and is likewise deregistered without retry.
 
-#### Scenario: Run-once Java workflow operative completes and is torn down over UDS
+#### Scenario: Run-once Java bounded operator completes and is torn down over UDS
 
-- **WHEN** the suite starts an `EchoOperative` on a Java runner over UDS with a bound output plugin and sends it the message `hi`
-- **THEN** the workflow operative SHALL run once, its emitted output SHALL reach the plugin, the controller SHALL receive `WorkflowCompleted{status:"ok"}`, and the workflow operative SHALL be removed from the durable registry
+- **WHEN** the suite starts an `EchoOperator` on a Java runner over UDS with a bound output plugin and sends it the message `hi`
+- **THEN** the bounded operator SHALL run once, its emitted output SHALL reach the plugin, the controller SHALL receive `BoundedCompleted{status:"ok"}`, and the bounded operator SHALL be removed from the durable registry
 
-#### Scenario: Run-once Java workflow operative completes and is torn down over QUIC
+#### Scenario: Run-once Java bounded operator completes and is torn down over QUIC
 
 - **WHEN** the same scenario runs over QUIC
-- **THEN** the same assertions SHALL hold, exercising the full handshake + workflow operative spawn + run-once + emit + completion path on QUIC
+- **THEN** the same assertions SHALL hold, exercising the full handshake + bounded operator spawn + run-once + emit + completion path on QUIC
 
-#### Scenario: A failing Java workflow operative reports a terminal error
+#### Scenario: A failing Java bounded operator reports a terminal error
 
-- **WHEN** the suite starts a workflow operative whose `run` throws over either transport
-- **THEN** the controller SHALL receive `WorkflowCompleted{status:"error"}` carrying the throwable's message, the workflow operative SHALL be deregistered without retry, and no operative process SHALL remain
+- **WHEN** the suite starts a bounded operator whose `run` throws over either transport
+- **THEN** the controller SHALL receive `BoundedCompleted{status:"error"}` carrying the throwable's message, the bounded operator SHALL be deregistered without retry, and no operator process SHALL remain
 
 ### Requirement: TaskletTestHarness replayEquals replays against the captured initial snapshot
 

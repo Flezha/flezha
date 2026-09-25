@@ -7,9 +7,9 @@ report that is the machine contract CI reads.
 ## Requirements
 ### Requirement: Every bench run opens with a header that situates its numbers
 
-Every bench task (`mix bench`, `mix bench.roundtrip`, `mix bench.workflow`) SHALL print, before any measurement, a header composed of three blocks rendered by one shared module:
+Every bench task (`mix bench`, `mix bench.roundtrip`, `mix bench.bounded`) SHALL print, before any measurement, a header composed of three blocks rendered by one shared module:
 
-* **run** — the SDK runtime and its dispatch model (from the manifest's `dispatch` key, with the current value of each env var it names), the transport, whether the runner is embedded or spawned (derived from the transport, not declared), the workload shape, the durability backend, the dimensions (operatives, messages per operative, warmup), and `MIX_ENV`.
+* **run** — the SDK runtime and its dispatch model (from the manifest's `dispatch` key, with the current value of each env var it names), the transport, whether the runner is embedded or spawned (derived from the transport, not declared), the workload shape, the durability backend, the dimensions (operators, messages per operator, warmup), and `MIX_ENV`.
 * **system** — CPU model and logical core count, total memory, 1-minute load average, CPU governor, OTP release, Elixir version, the launched runtime's own toolchain version, and the git SHA with a dirty flag.
 * **artifacts** — for each launched runtime: the resolved artifact path, its mtime and size, whether that path was the profile's first choice or a fallback, and whether the manifest `build` command ran or was skipped.
 
@@ -43,7 +43,7 @@ The run SHALL proceed in every case. No condition SHALL abort a bench, because a
 
 ### Requirement: Results render as aligned tables with fixed precision
 
-Bench results SHALL be rendered as aligned plain-text tables by the shared module: a header row, a single horizontal rule, and space-aligned columns. Tables SHALL NOT use box-drawing borders or colour, because the documented comparison workflow pipes bench output through `tee` and `diff` and the output is read on terminals that are not reliably UTF-8.
+Bench results SHALL be rendered as aligned plain-text tables by the shared module: a header row, a single horizontal rule, and space-aligned columns. Tables SHALL NOT use box-drawing borders or colour, because the documented comparison bounded operator pipes bench output through `tee` and `diff` and the output is read on terminals that are not reliably UTF-8.
 
 Durations SHALL be rendered in milliseconds by the shared module's formatter and rates as integers. No float SHALL reach output text by interpolation: Elixir renders a float of magnitude 1000 or more that lands on a round value in scientific notation, so a window that measures a whole number of milliseconds prints `1.0e3` where a reader and a `diff` expect `1000.0`. One decimal place is the default and what every table uses; a row whose own resolution needs more SHALL ask the shared formatter for the decimals it needs, and SHALL NOT keep a rounding rule of its own.
 
@@ -69,7 +69,7 @@ A value that a bench ships as a **number** SHALL stay a number. The JSON report'
 
 A bench SHALL report the **end-to-end** rate — total messages over the window from the first input dispatched to the last response received — as its headline throughput, and SHALL report the receive-window rate beside it. Each row SHALL name its window in the row label, because the two differ by the send window and are not interchangeable.
 
-The metric `Average time per operative` SHALL be removed. It divides total elapsed time across four unrelated phases by a count of concurrently-running operatives and does not measure a per-operative cost.
+The metric `Average time per operator` SHALL be removed. It divides total elapsed time across four unrelated phases by a count of concurrently-running operators and does not measure a per-operator cost.
 
 #### Scenario: Both rates are reported and distinguishable
 - **WHEN** a regression bench sends 1,000,000 messages, spending 7664.9 ms sending and 2841.7 ms receiving
@@ -77,7 +77,7 @@ The metric `Average time per operative` SHALL be removed. It divides total elaps
 
 #### Scenario: The meaningless average is gone
 - **WHEN** any bench shape completes
-- **THEN** no output line and no report field reports total elapsed time divided by operative count
+- **THEN** no output line and no report field reports total elapsed time divided by operator count
 
 ### Requirement: Every bench run writes a structured report, and CI reads that report
 
@@ -111,8 +111,8 @@ Every bench task SHALL decide which `--runtime` values it accepts by reading the
 
 #### Scenario: A task is asked for a runtime whose manifest defers the capability it measures
 
-- **WHEN** `mix bench.workflow --runtime node` is run and `test/apps/node_runner/conformance.json` lists `workflow` under `deferred`
-- **THEN** the task SHALL refuse by naming `workflow` and the manifest path, and SHALL NOT name a hard-coded set of runtimes in the refusal
+- **WHEN** `mix bench.bounded --runtime node` is run and `test/apps/node_runner/conformance.json` lists `bounded` under `deferred`
+- **THEN** the task SHALL refuse by naming `bounded` and the manifest path, and SHALL NOT name a hard-coded set of runtimes in the refusal
 
 #### Scenario: A new SDK gains a test app
 
@@ -128,7 +128,7 @@ Every bench task SHALL decide which `--runtime` values it accepts by reading the
 
 `docs/operations/benchmarking.md` SHALL state, for each bench instrument, whether that instrument's first run of a series is a result, and SHALL record the measurement that establishes it. A floor, a comparison or a regression verdict SHALL be computed from plateau samples only, and the number of plateau samples SHALL be reported beside the figure, as SHALL the number of runs discarded before the plateau.
 
-The rule SHALL be stated per instrument rather than per machine, because it was measured to differ between instruments on one box: five consecutive runs of one identical arm of `mix bench.workflow --scenario chain` read a 303 % spread with run 1 at roughly four times the plateau, while the same five-run series on `mix bench.extension` put run 1 within 3.6 % of its plateau.
+The rule SHALL be stated per instrument rather than per machine, because it was measured to differ between instruments on one box: five consecutive runs of one identical arm of `mix bench.bounded --scenario chain` read a 303 % spread with run 1 at roughly four times the plateau, while the same five-run series on `mix bench.extension` put run 1 within 3.6 % of its plateau.
 
 Discarding a warm-up SHALL NOT be read as making a row comparable. A row whose measured noise floor exceeds the effect being claimed is a direction and SHALL NOT be run as a gate, and a document that states a settling protocol SHALL say so beside it.
 
@@ -160,7 +160,7 @@ Every measured noise floor SHALL be recorded in tracked repository documentation
 
 A comparison between two runtimes SHALL use one untimed warm-up value on every arm, sized so the slowest-warming runtime in the comparison reaches steady state, and SHALL state that value and its dimensions in the report. A warm-up sized for a runtime that starts cold in microseconds measures a just-in-time-compiled runtime before its hottest tier engages and reports that difference as though it were the effect being claimed — a failure mode a same-runtime A/B cannot have, because there the warm-up is symmetric whatever its value.
 
-The harness default is ten untimed messages per operative (`lib/mix/tasks/bench.ex`), sized for a natively compiled runner, and the merge gate's dimensions are chosen to gate rather than to compare. A cross-runtime comparison SHALL therefore state its own warm-up and dimensions rather than inherit either.
+The harness default is ten untimed messages per operator (`lib/mix/tasks/bench.ex`), sized for a natively compiled runner, and the merge gate's dimensions are chosen to gate rather than to compare. A cross-runtime comparison SHALL therefore state its own warm-up and dimensions rather than inherit either.
 
 Where a workload carries more than one throughput window, the comparison SHALL report every window and SHALL take its verdict only from a window whose measured spread is smaller than the difference claimed — including when that is not the window CI gates. Which window is the quieter one is a measured property of the workload, not a property of what the window means.
 
@@ -184,13 +184,13 @@ beside them.
 
 #### Scenario: A rate is small enough to reach scientific notation
 
-- **WHEN** a bench prints a rate, a per-sleeper size or a per-workflow count whose
+- **WHEN** a bench prints a rate, a per-sleeper size or a per-bounded count whose
   float would render as `1.0e3`
 - **THEN** it SHALL be formatted by the same helper the duration fields use
 
 ### Requirement: A shipped document SHALL NOT document a task the repository excludes
 
-A tracked operator document SHALL only document commands whose source ships. Where a
+A tracked user document SHALL only document commands whose source ships. Where a
 task is deliberately kept out of the repository, the shipped documentation SHALL NOT
 instruct a reader to run it.
 
@@ -227,9 +227,9 @@ resource in every environment.
 - **THEN** the controller creates its sockets in that directory, exactly as it would outside
   `mix test`
 
-### Requirement: Published operator documentation SHALL NOT drive material the repository excludes
+### Requirement: Published user documentation SHALL NOT drive material the repository excludes
 
-A tracked operator document SHALL NOT instruct a reader to run a task, script or stack whose source this repository deliberately keeps out of version control, without saying so at the point of instruction. A fresh clone does not have that material, so the instruction fails with an unknown task and the reader cannot tell a missing dependency from a documentation error.
+A tracked user document SHALL NOT instruct a reader to run a task, script or stack whose source this repository deliberately keeps out of version control, without saying so at the point of instruction. A fresh clone does not have that material, so the instruction fails with an unknown task and the reader cannot tell a missing dependency from a documentation error.
 
 Where such a harness is described because its results are quoted elsewhere, the document SHALL mark the section as describing development material the repository does not carry, and SHALL state any published fact it depends on rather than sending the reader to the excluded file for it.
 

@@ -31,7 +31,7 @@ Process multiplicity SHALL be the orchestrator's concern — Kubernetes replicas
 
 #### Scenario: More processes means more runners
 - **WHEN** an orchestrator starts several runner processes for one namespace on one host
-- **THEN** each SHALL register as its own runner, and the controller SHALL spread operatives across them by its existing placement
+- **THEN** each SHALL register as its own runner, and the controller SHALL spread operators across them by its existing placement
 
 #### Scenario: The SDK exposes no worker-count knob
 - **WHEN** the SDK's command-line surface is inspected
@@ -89,7 +89,7 @@ This obtain-one shape is the split that bundling every triple is recorded as owi
 
 #### Scenario: A platform with no release and a failed fetch refuse differently
 - **WHEN** installation meets a platform no release publishes a binary for, or a fetch of a published binary that fails
-- **THEN** the first SHALL direct the operator to build the binary for that platform and the second to retry or fetch by hand, in messages that do not share wording
+- **THEN** the first SHALL direct the user to build the binary for that platform and the second to retry or fetch by hand, in messages that do not share wording
 
 ### Requirement: The package is developed and tested from its own tree
 

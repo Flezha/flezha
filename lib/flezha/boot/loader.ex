@@ -71,7 +71,7 @@ defmodule Flezha.Boot.Loader do
   opened, whether that directory holds anything, the folder file plugins may use,
   and how a runner attaches.
 
-  Every line on every boot, not only the boot that establishes it. The operator
+  Every line on every boot, not only the boot that establishes it. The user
   who ran the first boot already knows; the population these lines are for is
   whoever inherits the node afterwards, and a once-only line is invisible to
   them. `flz controller status` answers the same questions later, so neither
@@ -100,7 +100,7 @@ defmodule Flezha.Boot.Loader do
   # in the directory the previous run was started from, and this line plus the
   # one above it is what says so.
   defp cold_start_line() do
-    if Paths.operative_classes() == [] do
+    if Paths.operator_classes() == [] do
       "[flezha] that directory holds no durable state: this controller is starting cold"
     end
   end
@@ -108,7 +108,7 @@ defmodule Flezha.Boot.Loader do
   @doc """
   How a runner reaches this controller: the absolute socket directory and the
   assignment that attaches to it, plus the QUIC listen address when QUIC is
-  enabled. Logged once the sequence completes so an operator never has to
+  enabled. Logged once the sequence completes so a user never has to
   find the documentation. `nil` when this node listens on no runner transport.
   """
   @spec attach_line() :: String.t() | nil

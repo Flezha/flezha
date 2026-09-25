@@ -1,5 +1,5 @@
 //! What a probe of a socket directory finds and how it is told to an
-//! operator: one `stat` and one connect per candidate, four failures with four
+//! user: one `stat` and one connect per candidate, four failures with four
 //! different fixes never collapsed into one, and the diagnosis every SDK logs
 //! as one line and `flz runner check` prints one fact per line. `AccessDenied`
 //! is deliberately not "live": a directory this user cannot traverse must not
@@ -55,7 +55,7 @@ impl Reach {
         )
     }
 
-    /// The remedy an operator applies, in the words of the situation. A
+    /// The remedy a user applies, in the words of the situation. A
     /// controller that answered has none.
     pub fn fix(&self) -> Option<String> {
         let fix = match self {

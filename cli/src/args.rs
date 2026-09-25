@@ -3,7 +3,7 @@
 //! A row declares its positionals, its options (the long spelling, the short
 //! alias, the kind of value, whether it is required, the knob that answers it)
 //! and whether it refuses a word it does not recognise. `read` walks the
-//! operator's words once against that row: every option is taken wherever it
+//! caller's words once against that row: every option is taken wherever it
 //! stands, and the positionals are the words that remain. So the reader, the
 //! refusal, the arity check and the usage line are all derived from the row,
 //! and none of them is written beside a verb.
@@ -45,7 +45,7 @@ pub(crate) fn resolve_spelling<'a>(arg: &'a str, long_key: &str, short_key: &str
     }
 }
 
-/// One number, one refusal, whichever way the operator spelled it. A value
+/// One number, one refusal, whichever way the caller spelled it. A value
 /// standing in a positional slot is the same request as one behind a flag, and
 /// a verb that reads only the flag answers one typo two ways; `key` is what the
 /// verb's usage line calls the argument, so the refusal names what was typed.
@@ -55,7 +55,7 @@ pub(crate) fn read_number<T: FromStr>(key: &str, written: &str) -> Result<T, Str
         .map_err(|_| format!("Error: invalid {} value '{}'", key, written))
 }
 
-/// A refusal the operator sees, and the exit that follows it: the one place a
+/// A refusal the caller sees, and the exit that follows it: the one place a
 /// reader in this crate turns a refusal into an exit code, for the handlers
 /// that answer `()` and cannot propagate one.
 pub(crate) fn or_refuse<T>(read: Result<T, String>) -> T {
@@ -93,7 +93,7 @@ pub(crate) enum Kind {
 
 /// One option a verb declares: its two spellings, what its value is called,
 /// whether the verb refuses to run without it, and the environment variable
-/// that answers when the operator writes no flag.
+/// that answers when the caller writes no flag.
 pub(crate) struct OptSpec {
     pub(crate) long: &'static str,
     pub(crate) short: &'static str,
@@ -165,7 +165,7 @@ impl OptSpec {
         self
     }
 
-    /// The knob that answers this option when the operator writes no flag —
+    /// The knob that answers this option when the caller writes no flag —
     /// the one place in this crate that name is read.
     pub(crate) const fn answered_by(mut self, name: &'static str) -> Self {
         self.env = Some(name);
@@ -250,7 +250,7 @@ pub(crate) const UNIVERSAL: &[OptSpec] = &[
 
 /// The options more than one verb shares, spelled once each.
 pub(crate) const NAMESPACE: OptSpec = OptSpec::text("--namespace", "-n", "<namespace>");
-/// The document an operative starts from, on a start and on every firing of a
+/// The document an operator starts from, on a start and on every firing of a
 /// schedule.
 pub(crate) const INIT_VALUES: OptSpec = OptSpec::text("--init-values", "--init-values", "<json>");
 pub(crate) const OUTPUT: OptSpec =
@@ -259,14 +259,14 @@ pub(crate) const OUTPUT: OptSpec =
 /// the two meet, so they cannot mean different things on different verbs.
 pub(crate) const JSON_SWITCH: OptSpec = OptSpec::switch("--json", "--json");
 /// The window a bounded stream runs for, and how long it runs when the
-/// operator names none. Two verbs tail; one option, one default.
+/// caller names none. Two verbs tail; one option, one default.
 pub(crate) const DURATION_MS: OptSpec =
     OptSpec::number("--duration-ms", "--duration-ms", "<milliseconds>");
 pub(crate) const DEFAULT_WINDOW_MS: u64 = 30_000;
 pub(crate) const APP_DATA_ROOT: OptSpec =
     OptSpec::text("--app-data-root", "--app-data-root", "<path>")
         .answered_by("FLEZHA_APP_DATA_ROOT");
-/// The `app_data/` root when the operator named none. One spelling: two verbs
+/// The `app_data/` root when the caller named none. One spelling: two verbs
 /// read this root, and a default written twice is a default that drifts.
 pub(crate) const APP_DATA_ROOT_DEFAULT: &str = "./app_data";
 
@@ -279,11 +279,11 @@ pub(crate) fn app_data_root(read: &Reading) -> PathBuf {
     )
 }
 
-/// Every option a row declares, in declaration order, with what the operator
+/// Every option a row declares, in declaration order, with what the caller
 /// wrote for it.
 type Slots = Vec<(&'static str, Option<String>)>;
 
-/// The operator's words, read once against one verb's declaration: every
+/// The caller's words, read once against one verb's declaration: every
 /// positional it declared, every option it declared, and the settings document
 /// it declared it carries.
 pub(crate) struct Reading {
@@ -302,7 +302,7 @@ impl Reading {
 
     /// The positional in the slot at `index`, for the verbs that share a
     /// handler and name the same slot differently — `flz state list` calls it
-    /// an operative class and `flz state inbox` an instance.
+    /// an operator class and `flz state inbox` an instance.
     pub(crate) fn positional_at(&self, index: usize) -> &str {
         self.positionals[index].1.as_deref().unwrap_or_default()
     }
@@ -446,7 +446,7 @@ fn optional_unless(required: bool, written: String) -> String {
 }
 
 /// The one walk. `path` is what a usage line calls the command
-/// (`flz operative`); `argv` is what the operator wrote after the verb's own
+/// (`flz operator`); `argv` is what the caller wrote after the verb's own
 /// name. Options are read wherever they stand, the positionals are the words
 /// that remain, and the refusals are the row's rather than each verb's own.
 pub(crate) fn read(path: &str, verb: &'static Verb, argv: &[String]) -> Result<Reading, String> {
@@ -488,7 +488,7 @@ pub(crate) fn read(path: &str, verb: &'static Verb, argv: &[String]) -> Result<R
     })
 }
 
-/// One pass over the operator's words: every declared option taken wherever it
+/// One pass over the caller's words: every declared option taken wherever it
 /// stands, and what is left over — the plain words the positionals will be, the
 /// settings the row does not read, and whether a screen was asked for.
 fn scan(

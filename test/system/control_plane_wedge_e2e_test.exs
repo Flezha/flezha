@@ -14,9 +14,9 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
   import FlezhaTest.Helper.TierE2EHarness,
     only: [boot_runner: 3, peek_outputs: 0, produces?: 5, unique_id_path: 1]
 
-  alias Flezha.Operative.Builder
+  alias Flezha.Operator.Builder
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
 
   @factory "wedge_probe"
   @heartbeat_ms 300
@@ -27,7 +27,7 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
 
     on_exit(fn ->
       try do
-        OperativeManager.stop_all_operatives(namespace)
+        OperatorManager.stop_all_operators(namespace)
       catch
         _, _ -> :ok
       end
@@ -52,17 +52,17 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
   @tag timeout: 180_000
   test "a worker aborted mid-dispatch recovers without losing its cell",
        %{namespace: namespace} do
-    {operative_id, _port, _runner} = probe_on_its_own_runner(namespace, "aborted")
+    {operator_id, _port, _runner} = probe_on_its_own_runner(namespace, "aborted")
 
-    assert produces?(operative_id, namespace, "one", "ok:one", 60_000),
-           "the operative never produced before the abort"
+    assert produces?(operator_id, namespace, "one", "ok:one", 60_000),
+           "the operator never produced before the abort"
 
     # The fixture ends this activation as violently as its host allows.
-    OperativeManager.send_io(operative_id, namespace, "abort", %{"input_type" => "2"})
+    OperatorManager.send_io(operator_id, namespace, "abort", %{"input_type" => "2"})
 
-    # No operator action, no rebind: a pool that did not come back to size, or
+    # No user action, no rebind: a pool that did not come back to size, or
     # a cell left holding an unanswered handout, would never serve this.
-    assert produces?(operative_id, namespace, "two", "ok:two", 120_000),
+    assert produces?(operator_id, namespace, "two", "ok:two", 120_000),
            "the cell was never served again after its worker was aborted"
 
     # And the aborting item never ran twice: it produced at most once, whether
@@ -75,33 +75,33 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
 
   # ---------- helpers ----------
 
-  # A fresh runner and a `wedge_probe` operative bound to it, with the outputs
+  # A fresh runner and a `wedge_probe` operator bound to it, with the outputs
   # forwarded to the calling test. Every drill starts here: the interesting
   # part of each is what happens to that pair afterwards.
   defp probe_on_its_own_runner(namespace, label, opts \\ []) do
-    operative_id = "#{label}_#{System.unique_integer([:positive])}"
+    operator_id = "#{label}_#{System.unique_integer([:positive])}"
 
     {port, runner_id} =
       boot_runner(namespace, unique_id_path("wedge_e2e"), [env: heartbeat_env()] ++ opts)
 
     assert {:ok, %{runner_id: ^runner_id}} =
-             OperativeManager.start_operative(namespace, builder(operative_id, self()))
+             OperatorManager.start_operator(namespace, builder(operator_id, self()))
 
-    {operative_id, port, runner_id}
+    {operator_id, port, runner_id}
   end
 
-  defp builder(operative_id, recv_pid) do
+  defp builder(operator_id, recv_pid) do
     sink = %Flezha.Plugin{
       id: "wedge_sink",
       namespace: nil,
-      operative_id: operative_id,
+      operator_id: operator_id,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: recv_pid, include_metadata: true},
       hooks: [{:on_output, []}]
     }
 
     %Builder{
-      id: operative_id,
+      id: operator_id,
       factory_id: @factory,
       init_values: %{},
       opts: [plugins: [sink]]

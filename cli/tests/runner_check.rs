@@ -73,7 +73,7 @@ fn the_access_denied_output_is_the_diagnosis_a_runner_would_print() {
 
     assert!(!output.status.success(), "{}", text);
     assert!(text.contains("access denied"), "{}", text);
-    // Same probe, same words — the operator's check and the runner's log agree.
+    // Same probe, same words — the caller's check and the runner's log agree.
     assert!(text.contains(&verdict.fix().unwrap()), "{}", text);
     assert!(text.contains("FLEZHA_SOCKET_DIR_GROUP"), "{}", text);
 }

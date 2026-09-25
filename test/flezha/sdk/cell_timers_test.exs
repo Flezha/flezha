@@ -9,10 +9,10 @@ defmodule Flezha.SDK.CellTimersTest do
   """
   use ExUnit.Case, async: true
 
-  import FlezhaTest.Helper.SdkOperativeHarness
+  import FlezhaTest.Helper.SdkOperatorHarness
 
-  alias Flezha.SDK.{Counters, Cell, Operative, Timers}
-  alias Flezha.SDK.Operative.Inbox
+  alias Flezha.SDK.{Counters, Cell, Operator, Timers}
+  alias Flezha.SDK.Operator.Inbox
 
   alias FlezhaTest.Helper.SdkPersistenceFixtures.{
     CancelOp,
@@ -42,12 +42,12 @@ defmodule Flezha.SDK.CellTimersTest do
   end
 
   test "a processing-time timer fires with no input: on_timer's change, its removal and its output leave in order, now equal to the scheduled time" do
-    %{op: op, counters: counters} = start_operative(TimerOp)
+    %{op: op, counters: counters} = start_operator(TimerOp)
     Inbox.input(op, "in", "0", %{})
 
     # Two dispatches, six frames: the input's change, its arm and its output,
     # then the firing's change, the fired timer's removal and its output. The
-    # Cell writes its own records and hands its outputs to the Operative, so
+    # Cell writes its own records and hands its outputs to the Operator, so
     # the firing's records may overtake the input's output — asserted per
     # dispatch below, never by position in the arrival.
     arrival = Enum.map(frames(6), &kind/1)
@@ -81,7 +81,7 @@ defmodule Flezha.SDK.CellTimersTest do
   end
 
   test "event-time timers fire ascending before the input that crossed the high-water; a quiet Cell fires nothing" do
-    %{op: op} = start_operative(EventTimerOp)
+    %{op: op} = start_operator(EventTimerOp)
     for input <- ~w(arm:100 arm:200 arm:300 50), do: Inbox.input(op, "in", input, %{})
     assert [{"op-1", "tick@50", _}] = frames(1)
 
@@ -98,7 +98,7 @@ defmodule Flezha.SDK.CellTimersTest do
 
   test "a firing holds the Cell: an input pushed while on_timer runs is dispatched after it" do
     Process.register(self(), :timer_gate_probe)
-    %{op: op} = start_operative(GatedTimerOp)
+    %{op: op} = start_operator(GatedTimerOp)
     pid = cell!(op, "gated_timer")
     Inbox.input(op, "in", "arm", %{})
     assert [{"op-1", "armed", _}] = frames(1)
@@ -110,7 +110,7 @@ defmodule Flezha.SDK.CellTimersTest do
   end
 
   test "a poison firing parks once with its removal committed, and does not fire again after release" do
-    %{op: op} = start_operative(PoisonTimerOp)
+    %{op: op} = start_operator(PoisonTimerOp)
     Inbox.input(op, "in", "arm", %{})
     [_r0, r1] = frames(2)
     assert {1, [%{scheduled_at: at}], _} = timer_ops(r1)
@@ -128,14 +128,14 @@ defmodule Flezha.SDK.CellTimersTest do
   end
 
   test "a Tasklet without on_timer/4 parks the firing naming the tasklet and the callback" do
-    %{op: op} = start_operative(NoHandlerOp)
+    %{op: op} = start_operator(NoHandlerOp)
     Inbox.input(op, "in", "arm", %{})
     assert_receive {:"$gen_cast", {:park, _pid, _identity, %{error: error, attempts: 1}}}, 2_000
     assert error == "tasklet `no_handler` registered a timer but does not export on_timer/4"
   end
 
   test "a restore over a log with overdue timers fires them at once, ascending" do
-    %{op: op} = start_operative(TimerOp)
+    %{op: op} = start_operator(TimerOp)
     pid = cell!(op, "timer")
 
     log =
@@ -150,7 +150,7 @@ defmodule Flezha.SDK.CellTimersTest do
   end
 
   test "a cancelled timer is disarmed, and a stale due message fires nothing" do
-    %{op: op, counters: counters} = start_operative(CancelOp)
+    %{op: op, counters: counters} = start_operator(CancelOp)
     pid = cell!(op, "cancel")
     Inbox.input(op, "in", "arm", %{})
     [_r0, r1] = frames(2)
@@ -172,7 +172,7 @@ defmodule Flezha.SDK.CellTimersTest do
   end
 
   test "a replacement after an untrappable kill re-arms from the slot and fires" do
-    %{op: op} = start_operative(KillableTimerOp)
+    %{op: op} = start_operator(KillableTimerOp)
     Inbox.input(op, "in", "arm", %{})
     [r0] = frames(1)
     assert {0, [%{scheduled_at: at}], _} = timer_ops(r0)
@@ -187,24 +187,24 @@ defmodule Flezha.SDK.CellTimersTest do
   end
 
   test "an evicted Cell's timer goes with it, and its successor starts with none" do
-    %{op: op, counters: counters} = start_operative(TtlTimerOp)
+    %{op: op, counters: counters} = start_operator(TtlTimerOp)
     Inbox.input(op, "in", "k1:arm", %{})
     [_r0, _r1] = frames(2)
     assert_receive {:timers, %{count: 1}, %{event: :registered}}, 1_000
     assert Counters.timers_armed(counters) == 1
-    {:ok, pid} = Operative.lookup(op, "ttl_timer", "k1")
+    {:ok, pid} = Operator.lookup(op, "ttl_timer", "k1")
     assert_evicted(pid, {"op-1", "ttl_timer", "k1"})
     assert Counters.timers_armed(counters) == 0
 
     Inbox.input(op, "in", "k1:again", %{})
     [_r0, r1] = frames(2)
     assert {1, [%{register: true}], _} = timer_ops(r1)
-    {:ok, fresh} = Operative.lookup(op, "ttl_timer", "k1")
+    {:ok, fresh} = Operator.lookup(op, "ttl_timer", "k1")
     assert Timers.size(:sys.get_state(fresh).timers.pending) == 1
   end
 
   test "past the cap a registration is refused naming the tasklet and the bound, reported, with the set unchanged" do
-    %{op: op, counters: counters} = start_operative(CappedTimersOp)
+    %{op: op, counters: counters} = start_operator(CappedTimersOp)
     Inbox.input(op, "in", "1", %{})
     assert [{"op-1", "{:ok, " <> _, _}] = frames(1)
     Inbox.input(op, "in", "2", %{})

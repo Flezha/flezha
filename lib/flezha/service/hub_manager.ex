@@ -27,10 +27,10 @@ defmodule Flezha.Service.HubManager do
   defdelegate await_cluster_gate(), to: Lifecycle
   defdelegate consent_settings(), to: Lifecycle
   defdelegate cspec_partition(arg1), to: Rows
-  defdelegate declared_operatives(arg1), to: Rows
+  defdelegate declared_operators(arg1), to: Rows
   defdelegate drain_hub(arg1, arg2), to: Lifecycle
   defdelegate durable_starts?(), to: Rows
-  defdelegate get_all_operatives(arg1), to: Rows
+  defdelegate get_all_operators(arg1), to: Rows
   defdelegate get_hub_nodes(arg1, arg2 \\ false), to: Rows
   defdelegate get_pid(arg1, arg2), to: Rows
   defdelegate get_registry(arg1), to: Rows
@@ -39,18 +39,18 @@ defmodule Flezha.Service.HubManager do
   defdelegate live_node(arg1), to: Rows
   defdelegate live_pid(arg1), to: Rows
   defdelegate migration_strategy(), to: Lifecycle
-  defdelegate operative_plugins(arg1), to: Rows
-  defdelegate operative_plugins(arg1, arg2), to: Rows
-  defdelegate operative_rows(arg1), to: Rows
-  defdelegate operative_runner_tag(arg1, arg2), to: Placement
-  defdelegate operative_set_runner(arg1, arg2, arg3), to: Placement
+  defdelegate operator_plugins(arg1), to: Rows
+  defdelegate operator_plugins(arg1, arg2), to: Rows
+  defdelegate operator_rows(arg1), to: Rows
+  defdelegate operator_runner_tag(arg1, arg2), to: Placement
+  defdelegate operator_set_runner(arg1, arg2, arg3), to: Placement
   defdelegate partition_members(arg1, arg2), to: Placement
   defdelegate recovery_state(arg1), to: Lifecycle
-  defdelegate registered_operatives?(arg1), to: Rows
+  defdelegate registered_operators?(arg1), to: Rows
   defdelegate registry_dump(arg1), to: Rows
   defdelegate registry_backend_config(arg1), to: Lifecycle
   defdelegate rewrite_cspec_plugins(arg1, arg2), to: Rows
-  defdelegate runner_operatives(arg1, arg2), to: Placement
+  defdelegate runner_operators(arg1, arg2), to: Placement
   defdelegate with_live_hub_id(arg1, arg2, arg3), to: Rows
 
   # Bounds one whole start request: WorkerQueue kills it at this deadline and
@@ -58,7 +58,7 @@ defmodule Flezha.Service.HubManager do
   # registry update. Every wait on the child-start path must fit inside it.
 
   # Deliberately off the `<namespace>_hub` convention: `Identificator.hub_id?/1` filters it
-  # out, so every operative-oriented walker (Convergence, RecoveryGate,
+  # out, so every operator-oriented walker (Convergence, RecoveryGate,
   # ShutdownCoordinator, the CLI, metrics) ignores it.
   @schedule_hub_id :flz_schedules
 
@@ -118,7 +118,7 @@ defmodule Flezha.Service.HubManager do
     Supervisor.delete_child(__MODULE__, hub_id)
 
     # `stop_hub/1` is the explicit "tear this namespace down" path
-    # (operator-initiated, or last-runner cleanup deciding the
+    # (user-initiated, or last-runner cleanup deciding the
     # namespace has gone away). Clean the persistent registry so a
     # later `start_hub/1` for the same namespace starts empty rather
     # than resurrecting children that were intentionally torn down.
@@ -164,14 +164,14 @@ defmodule Flezha.Service.HubManager do
 
   @doc """
   Reclaim a namespace hub on THIS node, but only when the namespace is neither
-  declared here nor holding any of this node's operatives.
+  declared here nor holding any of this node's operators.
 
-  Tearing down a hub that still holds durably-suspended operatives would kill
+  Tearing down a hub that still holds durably-suspended operators would kill
   their Overwatches and wipe the durable registry, stranding a parked fleet
   across a runner restart — so runner cleanup and the loop's vacancy reclaim go
-  through this guard. A peer's operatives are that peer's business: the reclaim
+  through this guard. A peer's operators are that peer's business: the reclaim
   is node-local, which is what lets a controller whose fleet does not serve a
-  namespace leave that namespace's cluster while the operatives the hub moved
+  namespace leave that namespace's cluster while the operators the hub moved
   off it keep running elsewhere.
 
   **What it was declared to hold counts too, and so does a recovery that has
@@ -185,7 +185,7 @@ defmodule Flezha.Service.HubManager do
   the first reconcile round runs, and every live read answers "empty" until
   then, so an unsettled recovery is what says "wait".
   After the reconcile the rows are back but nothing has placed them, because
-  placing an operative needs a runner and there is none; the declared set is
+  placing an operator needs a runner and there is none; the declared set is
   what says "this node was told to hold these", whether or not anything
   currently runs them.
 
@@ -194,7 +194,7 @@ defmodule Flezha.Service.HubManager do
   directory, and a node whose fleet does not serve a namespace still leaves
   that namespace's cluster.
 
-  The explicit `stop_hub/1` teardown (operator `stop_namespace`, the shutdown
+  The explicit `stop_hub/1` teardown (user `stop_namespace`, the shutdown
   plan's namespace step) is intentionally unguarded.
   """
   def stop_hub_if_vacant(namespace) do
@@ -203,8 +203,8 @@ defmodule Flezha.Service.HubManager do
   end
 
   defp holds_anything?(namespace) do
-    Rows.local_operatives?(namespace) or
-      Rows.declared_operatives(namespace) != [] or
+    Rows.local_operators?(namespace) or
+      Rows.declared_operators(namespace) != [] or
       unsettled?(namespace)
   end
 
@@ -254,15 +254,15 @@ defmodule Flezha.Service.HubManager do
       synchronization_strategy: %ProcessHub.Strategy.Synchronization.PubSub{},
       redundancy_strategy: %ProcessHub.Strategy.Redundancy.Singularity{},
       partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.Divergence{},
-      # An operative's group is its factory id, and a controller serves the
-      # factories its fleet can run, so an operative is only ever assigned to a
-      # controller that can run it. An operative with no factory has no group
+      # An operator's group is its factory id, and a controller serves the
+      # factories its fleet can run, so an operator is only ever assigned to a
+      # controller that can run it. An operator with no factory has no group
       # and is hashed over every controller in the hub.
       distribution_strategy: %GroupedHashing{},
       migration_strategy: Lifecycle.migration_strategy(),
       registry_backend: Lifecycle.registry_backend_config(hub_id),
       auto_recovery: Lifecycle.auto_recovery_config(),
-      # Operative startup involves multiple GenServer hops and socket communication
+      # Operator startup involves multiple GenServer hops and socket communication
       # to the compute engine (Rust), so the default 5s is too tight.
       cross_node_request_timeout: Durations.get(:hub_cross_node_request_ms),
       hooks:
@@ -296,7 +296,7 @@ defmodule Flezha.Service.HubManager do
   # off — nothing lands under `:process_hub_registry_root`, which keeps
   # `unstarted_hub_has_registry?/0` (and thus `/healthz`) clean.
   #
-  # No `child_data_alter` hook: a schedule's start args are not an operative's,
+  # No `child_data_alter` hook: a schedule's start args are not an operator's,
   # so the hook would log every schedule start as unrecognised. No
   # `child_registered` hook either — schedules have no runner binding to
   # reassert.
@@ -321,41 +321,41 @@ defmodule Flezha.Service.HubManager do
   end
 
   @doc """
-  True when auto-restore is enabled and the durable registry holds operatives
+  True when auto-restore is enabled and the durable registry holds operators
   this (re)started controller has not loaded back into live, bound
   processes yet — closing the post-restart "vacuously healthy" hole.
   Covers both an on-disk `registry.dets` for a hub that has not started
   (`unstarted_hub_has_registry?/0`) and a running hub whose replayed DETS
-  rows outnumber the live-bound operatives (`running_hub_operatives_unbound?/0`).
+  rows outnumber the live-bound operators (`running_hub_operators_unbound?/0`).
   Used by `/healthz` to report `recovering` instead of `healthy` until the
   registry is fully reloaded and bound.
   """
   @spec durable_registry_pending?() :: boolean()
   def durable_registry_pending?() do
     Rows.durable_starts?() and
-      (running_hub_operatives_unbound?() or unstarted_hub_has_registry?())
+      (running_hub_operators_unbound?() or unstarted_hub_has_registry?())
   end
 
-  # Running hub whose durable registry declares more operatives than are
-  # currently bound to a live pid — operatives replayed from DETS but not yet
+  # Running hub whose durable registry declares more operators than are
+  # currently bound to a live pid — operators replayed from DETS but not yet
   # reseated onto a reconnected runner.
-  defp running_hub_operatives_unbound?() do
+  defp running_hub_operators_unbound?() do
     Enum.any?(list_running_hub_ids(), fn hub_id ->
       namespace = Identificator.namespace_from_hub(hub_id)
 
       namespace != nil and
-        Rows.durable_operative_count(hub_id) > length(Rows.get_all_operatives(namespace))
+        Rows.durable_operator_count(hub_id) > length(Rows.get_all_operators(namespace))
     end)
   end
 
   @doc """
-  Operative ids present in the durable registries of running hubs — durable
+  Operator ids present in the durable registries of running hubs — durable
   evidence of intent consumed by the convergence intent-mismatch check.
   """
-  @spec durable_operative_ids() :: MapSet.t()
-  def durable_operative_ids() do
+  @spec durable_operator_ids() :: MapSet.t()
+  def durable_operator_ids() do
     list_running_hub_ids()
-    |> Enum.flat_map(&Rows.durable_operative_keys/1)
+    |> Enum.flat_map(&Rows.durable_operator_keys/1)
     |> MapSet.new()
   end
 
@@ -363,7 +363,7 @@ defmodule Flezha.Service.HubManager do
   Every namespace this node already holds evidence for, from two sources and
   no namespace name written into the derivation: a registry directory under
   the process-hub root, which is durable state it must recover, and an entry
-  in the durable namespace catalog, which is operator intent.
+  in the durable namespace catalog, which is user intent.
 
   The auto-restore kill-switch governs it. A node told not to bring things
   back by itself has an empty declared set, which is what makes both readers —

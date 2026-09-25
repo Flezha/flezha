@@ -69,7 +69,7 @@ SHALL refuse to start, naming the resolved state root and the holder.
 
 #### Scenario: A single controller is unaffected
 - **WHEN** one controller boots, runs and restarts normally
-- **THEN** the lock is acquired on each boot with no operator action
+- **THEN** the lock is acquired on each boot with no user action
 
 #### Scenario: The lock and the data name one directory
 - **WHEN** a controller boots with a relative state root configured
@@ -79,12 +79,12 @@ SHALL refuse to start, naming the resolved state root and the holder.
 
 The documentation SHALL state that co-locating or adding controllers provides capacity and
 isolation and SHALL NOT be relied on to survive the loss of a controller with its disk: the hub's
-redundancy strategy runs each operative on exactly one node with no replicas, and cross-controller
+redundancy strategy runs each operator on exactly one node with no replicas, and cross-controller
 state transfer requires the source controller to be alive to serve it. It SHALL name the remote
 durability tier as the mechanism that does survive that loss.
 
 This statement SHALL appear both where co-location is documented and on the remote durability
-tier's page, so an operator reaching the question from either direction meets it.
+tier's page, so a user reaching the question from either direction meets it.
 
 #### Scenario: The co-location documentation names the limit
 - **WHEN** the documentation describing several controllers on one machine is read
@@ -130,7 +130,7 @@ A controller SHALL report the absolute path of its resolved state root on every 
 and SHALL state explicitly when that directory holds no durable state, so that a cold
 start is never silent. The report SHALL name the environment variable that overrides
 the root. The same resolved path SHALL be readable from `flz controller status` while the
-controller runs, so that a controller SHALL NOT depend on the operator having observed a
+controller runs, so that a controller SHALL NOT depend on the user having observed a
 boot to know where its durable state lives.
 
 #### Scenario: The state root is named on every boot
@@ -147,7 +147,7 @@ boot to know where its durable state lives.
 
 #### Scenario: The state root is readable without watching a boot
 
-- **WHEN** an operator runs `flz controller status` against a running controller
+- **WHEN** a user runs `flz controller status` against a running controller
 - **THEN** the output names the absolute state root in use, alongside the durability
   posture it already reports
 
@@ -156,6 +156,6 @@ boot to know where its durable state lives.
 - **WHEN** a controller using the default relative state root is restarted from a
   different working directory
 - **THEN** the boot names an absolute state root differing from the previous boot's,
-  and reports it as empty, so the operator can see which directory the durable state
+  and reports it as empty, so the user can see which directory the durable state
   is in
 

@@ -51,7 +51,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
       assert AuthZ.enforcement_posture() == :bootstrap_pending
 
       assert :ok =
-               AuthZ.authorize(%{source: :internal}, :"operative.start", Scope.build("default"))
+               AuthZ.authorize(%{source: :internal}, :"operator.start", Scope.build("default"))
 
       runner_ctx = FleetManager.runner_caller_context("team-orders")
       assert :ok = AuthZ.authorize(runner_ctx, :"runner.connect", Scope.build("team-orders"))
@@ -80,9 +80,9 @@ defmodule Flezha.AuthZ.EnforcementTest do
   describe "principals from the authenticated transport (§3)" do
     test "a verified token resolves to the CLI principal" do
       claim!()
-      {:ok, raw, _} = TokenStore.issue("operator-1", "team-orders", :operator, 3600)
+      {:ok, raw, _} = TokenStore.issue("caller-1", "team-orders", :ops, 3600)
 
-      assert {:ok, %{principal: "operator-1", namespace: "team-orders", role: :operator}} =
+      assert {:ok, %{principal: "caller-1", namespace: "team-orders", role: :ops}} =
                CliManager.authz_whoami(token: raw)
     end
 

@@ -76,7 +76,7 @@ defmodule Flezha.Service.CliManager do
     row: &Cli.Plugin.plugin_row/1
 
   verb dlq_drop(entry_ref, opts \\ []), to: Cli.Dlq, row: &Cli.Dlq.locate/1
-  verb dlq_list(operative_class \\ "", opts \\ []), to: Cli.Dlq, row: &Cli.Dlq.class_row/1
+  verb dlq_list(operator_class \\ "", opts \\ []), to: Cli.Dlq, row: &Cli.Dlq.class_row/1
   verb dlq_replay(entry_ref, opts \\ []), to: Cli.Dlq, row: &Cli.Dlq.locate/1
   verb dlq_show(entry_ref, opts \\ []), to: Cli.Dlq, row: &Cli.Dlq.locate/1
 
@@ -85,7 +85,7 @@ defmodule Flezha.Service.CliManager do
     verb: :plugin_enable,
     row: &Cli.Plugin.enable_row/1
 
-  verb cell_state(namespace, operative_id, opts \\ []), to: Cli.Operative
+  verb cell_state(namespace, operator_id, opts \\ []), to: Cli.Operator
   verb group_partition_rows(rows), to: Cli.Listing
   verb install_plugin(path, opts \\ []), to: Cli.Plugin
   verb installed_plugin?(plugin_id, opts \\ []), to: Cli.Plugin, verb: :plugin_info
@@ -94,7 +94,7 @@ defmodule Flezha.Service.CliManager do
   verb installer_enable_plugin(plugin_id, opts \\ []), to: Cli.Plugin
   verb list_installed_plugins(format \\ "text", opts \\ []), to: Cli.Plugin
   verb list_namespaces(format \\ "text", opts \\ []), to: Cli.Listing
-  verb list_operatives(namespace, format \\ "text", opts \\ []), to: Cli.Listing
+  verb list_operators(namespace, format \\ "text", opts \\ []), to: Cli.Listing
   verb list_plugins(opts \\ []), to: Cli.Plugin, verb: :plugin_list
   verb list_runners(namespace, format \\ "text", opts \\ []), to: Cli.Listing
 
@@ -118,29 +118,29 @@ defmodule Flezha.Service.CliManager do
     to: Cli.Observe,
     verb: :observability_tail
 
-  verb operative_info(namespace, format \\ "text", opts \\ []), to: Cli.Info
+  verb operator_info(namespace, format \\ "text", opts \\ []), to: Cli.Info
 
-  verb operative_listen(namespace, operative_id, direction, format, opts \\ []),
-    to: Cli.Operative
+  verb operator_listen(namespace, operator_id, direction, format, opts \\ []),
+    to: Cli.Operator
 
-  verb operative_replay(namespace, path, from, opts \\ []),
+  verb operator_replay(namespace, path, from, opts \\ []),
     to: Cli.State,
     row: &Cli.State.replay_row/1
 
-  verb operative_rewind(namespace, operative_id, to_iter, opts \\ []),
-    to: Cli.Operative
+  verb operator_rewind(namespace, operator_id, to_iter, opts \\ []),
+    to: Cli.Operator
 
-  verb operative_scale(namespace, group_id, target, opts_json \\ "{}", opts \\ []),
-    to: Cli.Operative
+  verb operator_scale(namespace, group_id, target, opts_json \\ "{}", opts \\ []),
+    to: Cli.Operator
 
-  verb operative_send(namespace, operative_id, message, channel, opts \\ []),
-    to: Cli.Operative
+  verb operator_send(namespace, operator_id, message, channel, opts \\ []),
+    to: Cli.Operator
 
-  verb operative_start(namespace, factory_id, init_values, format, opts_json \\ "{}", opts \\ []),
-    to: Cli.Operative,
-    target: &Flezha.Service.OperativeManager.start_target/2
+  verb operator_start(namespace, factory_id, init_values, format, opts_json \\ "{}", opts \\ []),
+    to: Cli.Operator,
+    target: &Flezha.Service.OperatorManager.start_target/2
 
-  verb operative_stop(namespace, operative_id, opts \\ []), to: Cli.Operative
+  verb operator_stop(namespace, operator_id, opts \\ []), to: Cli.Operator
   verb plugin_help(provider_id, opts \\ []), to: Cli.Plugin, verb: :plugin_info
   verb schedule_add(name, opts \\ []), to: Cli.Schedule
   verb schedule_list(opts \\ []), to: Cli.Schedule
@@ -162,12 +162,12 @@ defmodule Flezha.Service.CliManager do
     to: Cli.Journal,
     row: &Cli.Journal.instance_row/1
 
-  verb state_list(operative_class, format \\ "text", opts \\ []),
+  verb state_list(operator_class, format \\ "text", opts \\ []),
     to: Cli.State,
     row: &Cli.State.class_row/1
 
   verb state_outbox(path, opts \\ []), to: Cli.State, row: &Cli.State.outbox_row/1
-  verb state_retention(operative_class, hours, opts \\ []), to: Cli.State
+  verb state_retention(operator_class, hours, opts \\ []), to: Cli.State
   verb state_rotate(path, opts \\ []), to: Cli.State, row: &Cli.State.rotate_row/1
   verb uninstall_plugin(plugin_id, opts \\ []), to: Cli.Plugin
   verb upgrade_plugin(plugin_id, path, opts \\ []), to: Cli.Plugin

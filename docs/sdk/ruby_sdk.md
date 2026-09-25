@@ -2,7 +2,7 @@
 
 The `flezha` gem is a poll host over `flz_core`, the runner kernel the Rust,
 Java and Node SDKs also drive. The kernel owns transport, ordering, per-cell
-exclusivity, durability, retries, timers, credit, routing and the workflow
+exclusivity, durability, retries, timers, credit, routing and the bounded operator
 driver. This gem supplies threads and user code, and nothing else —
 [`poll_core.md` → "The core decides, the SDK brings the threads"](poll_core.md#the-core-decides-the-sdk-brings-the-threads).
 
@@ -53,7 +53,7 @@ class Upcase < Flezha::Tasklet
   end
 end
 
-class UpcaseOperative < Flezha::StreamOperative
+class UpcaseOperator < Flezha::UnboundedOperator
   factory_id "upcase"
   channels do |c|
     c.input("input", codec: :text)
@@ -62,7 +62,7 @@ class UpcaseOperative < Flezha::StreamOperative
   end
 end
 
-Flezha.create_runner("default").register_factory(UpcaseOperative).run
+Flezha.create_runner("default").register_factory(UpcaseOperator).run
 ```
 
 Which optional hooks a tasklet declares is read from the methods it defines —
@@ -76,16 +76,16 @@ same reasons, as the Rust builder's `TopologyIssue`.
 
 ### The short form
 
-A `Flezha::StreamOperative` or `Flezha::WorkflowOperative` subclass that
-defines `run` instead of `channels` is a whole operative: the class carries its
+A `Flezha::UnboundedOperator` or `Flezha::BoundedOperator` subclass that
+defines `run` instead of `channels` is a whole operator: the class carries its
 one tasklet's body, and no `Flezha::Tasklet` stands beside it. The base
 class is the kind. `factory_id` is required; `sink`, `input` and `codec` are
 optional, each its own call, and `codec` is the entry codec the builder's
 `input` takes. A `sink` written on a `Flezha::Tasklet` is refused, naming the
-two operative bases.
+two operator bases.
 
 ```ruby
-class Upcase < Flezha::StreamOperative
+class Upcase < Flezha::UnboundedOperator
   factory_id "upcase"
   sink "out"
   codec :text
@@ -93,7 +93,7 @@ class Upcase < Flezha::StreamOperative
   def run(value, _ctx) = value.upcase
 end
 
-class Place < Flezha::WorkflowOperative
+class Place < Flezha::BoundedOperator
   factory_id "place"
   sink "placed"
   input "order"
@@ -105,20 +105,20 @@ end
 Flezha.create_runner("default").register_factory(Upcase).register_factory(Place).run
 ```
 
-The generated operative is the one you would have written by hand with that
+The generated operator is the one you would have written by hand with that
 single tasklet: an entry channel named `input`, or the `input` value,
 decoded by `codec`, the tasklet, a plugin sink named by `sink` when one is
 written, a factory id equal to `factory_id`, and every class-level setting at
 its default. The tasklet is named after the factory id, so a full form that
-names its tasklet the same keeps every cell where it was. A workflow short
-form is a `once` workflow, run once over its first message: `flz operative
-start --text '<payload>'`, or a start followed by `flz operative send`; a
+names its tasklet the same keeps every cell where it was. A bounded operator short
+form is a `once` bounded operator, run once over its first message: `flz operator
+start --text '<payload>'`, or a start followed by `flz operator send`; a
 second message to a `once` instance is accepted and never read.
 `loop_mode :per_input` (or `:chained`) is the one class setting a short form
 keeps, so a loop is still one class:
 
 ```ruby
-class Chat < Flezha::WorkflowOperative
+class Chat < Flezha::BoundedOperator
   factory_id "chat"
   sink "replies"
   codec :text
@@ -128,11 +128,11 @@ class Chat < Flezha::WorkflowOperative
 end
 ```
 
-With no `sink`, the operative declares the entry channel and the tasklet and
-no plugin channel: the operative that only keeps state.
+With no `sink`, the operator declares the entry channel and the tasklet and
+no plugin channel: the operator that only keeps state.
 
 ```ruby
-class Counter < Flezha::StreamOperative
+class Counter < Flezha::UnboundedOperator
   factory_id "counter"
   input "ticks"
   codec :text
@@ -158,17 +158,17 @@ edge, an edge's retry budget, any other class setting. A class setting other
 than `loop_mode` written on a short form is refused rather than ignored, and
 so is a `sink`, `input`, `codec` or tasklet setting written beside `channels`.
 
-`factory_id` must be written: the factory id is an address an operator types,
+`factory_id` must be written: the factory id is an address a user types,
 and a class rename must not move it. A class without one is refused at
 `register_factory`, where this SDK places every refusal. So is a class defining
 both `run` and `channels`, naming `ShortFormWithTopology`, and one defining
-neither. A second operative under a factory id the runner already holds, short
+neither. A second operator under a factory id the runner already holds, short
 or full, fails naming `DuplicateFactoryId` when the runner declares its
 classes.
 
-### Workflow settings
+### Bounded settings
 
-A workflow declares its graph in `channels` exactly as a stream does, and
+A bounded operator declares its graph in `channels` exactly as an unbounded operator does, and
 retries a failing tasklet on the edge that feeds it: `retry_max` and
 `retry_backoff_ms` on the channel (3 attempts, 50 ms base by default), so
 `retry_max(1)` is fail-fast. Its class body declares `loop_mode` (`:once`,
@@ -180,23 +180,23 @@ form alike.
 
 Every builder call reaches the core whatever the kind, and a setting of the
 other kind is refused under its own name when the runner declares its
-classes: `effectively_once` on a workflow as `EffectivelyOnceOnWorkflow`, any
-checkpoint call as `CheckpointOnWorkflow`, `correction_window` as
-`CorrectionWindowOnWorkflow`, and `sync_durability` in a
-`Flezha::StreamOperative` body as `SyncDurabilityOnStream`. The class-body
+classes: `effectively_once` on a bounded operator as `EffectivelyOnceOnBounded`, any
+checkpoint call as `CheckpointOnBounded`, `correction_window` as
+`CorrectionWindowOnBounded`, and `sync_durability` in a
+`Flezha::UnboundedOperator` body as `SyncDurabilityOnUnbounded`. The class-body
 flag is the one spelling of synchronous durability; the builder has no such
 call.
 
 Both kinds' class bodies take `persistent` (default `true`) and the
-`sleep_when_idle` flag, which defaults to `persistent` on a workflow and to off
-on a stream; `sleep_when_idle` with `persistent false` is refused as
+`sleep_when_idle` flag, which defaults to `persistent` on a bounded operator and to off
+on an unbounded operator; `sleep_when_idle` with `persistent false` is refused as
 `SleepWithoutPersistence` when the runner declares its classes.
 
-A workflow tasklet registers timers as a stream tasklet does, and a firing
-runs as a pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-workflow));
+A bounded tasklet registers timers as an unbounded tasklet does, and a firing
+runs as a pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-bounded-operator));
 only inside a `compensate` hook do `ctx.timer_after`, `ctx.timer_at_event_time`
-and `ctx.cancel_timer` raise a `Flezha::EmitError` naming `TimersUnavailable`. A `ctx.spawn_workflow` naming a stream factory
-resolves its handle to `Flezha::SpawnError::FactoryNotWorkflow`.
+and `ctx.cancel_timer` raise a `Flezha::EmitError` naming `TimersUnavailable`. A `ctx.spawn_bounded` naming an unbounded factory
+resolves its handle to `Flezha::SpawnError::FactoryNotBounded`.
 
 ### Channel payloads
 
@@ -224,7 +224,7 @@ Ruby's integers survive JSON at any width. A `Float` that is `NaN` or infinite,
 or a `String` that is not valid UTF-8, cannot be sent as JSON and fails the emit
 naming the channel.
 
-A value passed between two tasklets of one operative never crosses a channel
+A value passed between two tasklets of one operator never crosses a channel
 codec: it stays MessagePack. An Elixir entry declared with no decoder hands its
 tasklet the binary instead, since an Elixir string is its binary, so the same
 bytes on an undeclared entry are a `Hash` here and a string there.
@@ -272,7 +272,7 @@ transport, flusher, the runner loop — and `fork(2)` does not carry them, so a
 child would connect to nothing and serve nothing. The SDK records the process
 that started the core and raises, naming this rule, on any core call from
 another process; a documented rule alone would not survive contact with Puma
-cluster mode. `Runner#boot` and `Runner#run` both take the core, so an operator
+cluster mode. `Runner#boot` and `Runner#run` both take the core, so a user
 who forks starts one in each child.
 
 `Runner#run` is `Runner#boot` followed by `Runner#await_termination`, which
@@ -284,12 +284,12 @@ each process is one runner — which is what HRW placement spreads across.
 
 ## Local mode: run a graph with no controller
 
-`Flezha::LocalOperative.start` takes the operative class you deploy and runs
+`Flezha::LocalOperator.start` takes the operator class you deploy and runs
 its declared graph in this process — no controller, no socket, no local-mode
 member on the class:
 
 ```ruby
-run = Flezha::LocalOperative.start(WordCount)
+run = Flezha::LocalOperator.start(WordCount)
 begin
   run.on_sink("totals") { |output| puts output.payload }
   run.feed("lines", "the quick brown fox")
@@ -325,7 +325,7 @@ refused at startup, naming it. Walk-through:
   1024), regardless of pool size. The pool is a servicing detail, never the
   concurrency bound.
 - **The lever for CPU-bound handlers is process count, not thread count**:
-  run more runner processes, and start the operative with `--partitions N` so
+  run more runner processes, and start the operator with `--partitions N` so
   its keys spread across them.
 
 Worked example. Handlers that spend 90% of their time on I/O and 10% on Ruby,
@@ -424,7 +424,7 @@ bare mutable global holds any of it.
 The manifest at `test/apps/ruby_runner/conformance.json` defers nothing: every
 capability is carried with the reference's fixtures, the persistence, schema
 evolution and effectively-once set in `test/apps/ruby_runner/fixtures_state.rb`,
-the workflow set in `fixtures_workflow.rb`, and the rest in `fixtures.rb`.
+the bounded operator set in `fixtures_bounded.rb`, and the rest in `fixtures.rb`.
 
 ## The runner image
 

@@ -9,7 +9,7 @@
 # "block" is ordinary English and a common programming term, so this gate
 # matches only the policy's own identifiers and literals rather than the word.
 # `block_parker`, `BLOCK_PARK_TIMEOUT`, `pushes_blocked_total`, the
-# `*_block_workflow` fixtures and every blocking call name the parking
+# `*_block_bounded` fixtures and every blocking call name the parking
 # mechanism, which still exists on the entry path and is honestly named: all
 # are out of scope by construction, not by exemption.
 #

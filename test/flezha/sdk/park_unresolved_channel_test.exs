@@ -1,11 +1,11 @@
 defmodule Flezha.SDK.ParkUnresolvedChannelTest do
   @moduledoc """
-  A frame naming a channel the operative does not declare is parked with the
+  A frame naming a channel the operator does not declare is parked with the
   name it asked for, never delivered to whichever entry channel happens to be
   first. A frame naming no channel keeps taking the first declared entry, which
   is the source-plugin default and not a misconfiguration.
 
-  The frames are cast straight through `Flezha.SDK.Operative.Inbox.input/4`,
+  The frames are cast straight through `Flezha.SDK.Operator.Inbox.input/4`,
   which is how one arrives off the wire; `Flezha.SDK.Local.feed/3` refuses an
   undeclared channel before it gets that far, so going through it would test
   the guard rather than the dispatch.
@@ -13,9 +13,9 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
   use ExUnit.Case, async: true
 
   alias Flezha.SDK.{Channels, Ctx, Cell}
-  alias Flezha.SDK.Operative.Inbox
+  alias Flezha.SDK.Operator.Inbox
   alias Flezha.SDK.Wire
-  import FlezhaTest.Helper.SdkOperativeHarness
+  import FlezhaTest.Helper.SdkOperatorHarness
 
   defmodule TaskA do
     @behaviour Flezha.SDK.Tasklet
@@ -42,7 +42,7 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
   # Two declared entry channels: "prices" (the first, and where an unresolved
   # name used to land) and "volumes".
   defmodule TwoEntryOp do
-    @behaviour Flezha.SDK.StreamOperative
+    @behaviour Flezha.SDK.UnboundedOperator
     def factory_id, do: "q2_two_entry_op"
 
     def channels(c) do
@@ -64,7 +64,7 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
   # and NOT in the order a map's keys come back: "volumes" sorts after
   # "prices", so the first declared and the alphabetically first differ.
   defmodule ReverseOrderOp do
-    @behaviour Flezha.SDK.StreamOperative
+    @behaviour Flezha.SDK.UnboundedOperator
     def factory_id, do: "q2_reverse_order_op"
 
     def channels(c) do
@@ -85,7 +85,7 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
   # A class that declares no entry channel at all: nothing to resolve, and
   # nothing to default to.
   defmodule NoEntryOp do
-    @behaviour Flezha.SDK.StreamOperative
+    @behaviour Flezha.SDK.UnboundedOperator
     def factory_id, do: "q2_no_entry_op"
     def channels(c), do: c
   end
@@ -114,14 +114,14 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
   end
 
   test "a frame naming an undeclared channel is parked under that name, not rerouted" do
-    %{op: op} = start_operative(TwoEntryOp, runner: self())
+    %{op: op} = start_operator(TwoEntryOp, runner: self())
 
     body = park(op, "not_prices", "misrouted-bytes")
 
     assert body.channel == "not_prices", "the row carries the name the frame asked for"
 
     assert body.error ==
-             "no entry channel `not_prices`; the operative declares: prices, volumes"
+             "no entry channel `not_prices`; the operator declares: prices, volumes"
 
     assert body.payload == "misrouted-bytes", "the payload bytes are kept"
     assert body.attempts == 1, "the park is immediate"
@@ -131,23 +131,23 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
   end
 
   # `named/2` gives TaskA's output channel the name "a". It is a declared name
-  # of this operative, and it is not an entry channel, so a frame asking for it
+  # of this operator, and it is not an entry channel, so a frame asking for it
   # parks exactly as an undeclared name does — the same answer `flz_core` gives
   # through its kind-aware lookup.
   test "a frame naming a declared channel of another kind is parked too" do
-    %{op: op} = start_operative(TwoEntryOp, runner: self())
+    %{op: op} = start_operator(TwoEntryOp, runner: self())
 
     body = park(op, "a", "wrong-kind-bytes")
 
     assert body.channel == "a"
-    assert body.error == "no entry channel `a`; the operative declares: prices, volumes"
+    assert body.error == "no entry channel `a`; the operator declares: prices, volumes"
 
     settled(op, "task_a")
     refute_received {:flz_data, _id, _payload_id, _frame, _meta}
   end
 
   test "a frame naming no channel still reaches the first declared entry channel" do
-    %{op: op} = start_operative(TwoEntryOp, runner: self())
+    %{op: op} = start_operator(TwoEntryOp, runner: self())
 
     Inbox.input(op, nil, "defaulted", %{})
 
@@ -158,7 +158,7 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
   end
 
   test "a frame naming a declared channel reaches that one, not the first" do
-    %{op: op} = start_operative(TwoEntryOp, runner: self())
+    %{op: op} = start_operator(TwoEntryOp, runner: self())
 
     Inbox.input(op, "volumes", "named", %{})
 
@@ -166,10 +166,10 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
     refute_received {:"$gen_cast", {:park, _, _, _}}
   end
 
-  test "an operative declaring no entry channel parks with its own reason" do
-    %{op: op} = start_operative(NoEntryOp, runner: self())
+  test "an operator declaring no entry channel parks with its own reason" do
+    %{op: op} = start_operator(NoEntryOp, runner: self())
 
-    assert park(op, nil, "nowhere-to-go").error == "the operative declares no entry channel"
+    assert park(op, nil, "nowhere-to-go").error == "the operator declares no entry channel"
   end
 
   # A metadata value is capped at 255 bytes on the wire, and that is exactly
@@ -180,7 +180,7 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
   # Elixir SDK must too. `Map.keys/1` on `entries` comes back in TERM order,
   # which is why the default reads off `entry_order` instead.
   test "a frame naming no channel reaches the first DECLARED entry channel, not the first sorted" do
-    %{op: op} = start_operative(ReverseOrderOp, runner: self())
+    %{op: op} = start_operator(ReverseOrderOp, runner: self())
 
     Inbox.input(op, nil, "defaulted", %{})
 
@@ -189,14 +189,14 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
   end
 
   test "a requested name that would climb out of a directory never reaches the identity" do
-    %{op: op} = start_operative(TwoEntryOp, runner: self())
+    %{op: op} = start_operator(TwoEntryOp, runner: self())
 
     # `park/3` asserts the identity slot; this pins the row's attribution.
     assert park(op, "../../../../etc", "climbing-bytes").channel == "../../../../etc"
   end
 
   test "a requested name at the metadata cap parks rather than raising on the identity" do
-    %{op: op} = start_operative(TwoEntryOp, runner: self())
+    %{op: op} = start_operator(TwoEntryOp, runner: self())
     longest = String.duplicate("n", 255)
 
     assert park(op, longest, "long-name-bytes").channel == longest

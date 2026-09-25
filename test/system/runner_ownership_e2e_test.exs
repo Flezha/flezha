@@ -1,13 +1,13 @@
 defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
   @moduledoc """
-  A runner may act only on the operatives the controller has handed it, and a
-  copy it keeps after the controller moved the operative elsewhere is refused
+  A runner may act only on the operators the controller has handed it, and a
+  copy it keeps after the controller moved the operator elsewhere is refused
   the moment it speaks.
 
   The fault is injected the way it happens in production: runner A is frozen
-  (SIGSTOP), the controller judges it dead and moves its operative to runner B,
+  (SIGSTOP), the controller judges it dead and moves its operator to runner B,
   then A resumes, reconnects under the same stable identity, and its copy of
-  the operative fires the timer it armed before the freeze. The timer is
+  the operator fires the timer it armed before the freeze. The timer is
   durable, so B restores it and fires it too, at the same deadline and with the
   same output: the output cannot tell the two runners apart. What does is
   whether the controller admits the copy's frames, which it must refuse by
@@ -31,10 +31,10 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
 
   alias Flezha.Convergence.Loop
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
-  alias Flezha.Operative.Builder
+  alias Flezha.Operator.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.StreamPool
-  alias Flezha.Service.{EventManager, HubManager, OperativeManager}
+  alias Flezha.Service.{EventManager, HubManager, OperatorManager}
   alias Flezha.State.{Paths, WalWriter}
   alias Flezha.Transport.LivenessCounters
   alias FlezhaTest.Helper.Telemetry
@@ -70,7 +70,7 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
         ]
       )
 
-    id = start_operative(namespace)
+    id = start_operator(namespace)
     assert bound_runner(namespace, id) == runner_a
 
     {_port_b, runner_b} =
@@ -84,12 +84,12 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
     seq_on_a = await_seq_change(cell, -1)
 
     # The controller judges A dead while the process is alive, and moves the
-    # operative to B.
+    # operator to B.
     signal(os_pid(port_a), "-STOP")
     :ok = GenServer.call(FleetManager, {:runner_disconnected, namespace, runner_a})
 
     assert wait_until(fn -> bound_runner(namespace, id) == runner_b end, 30_000),
-           "the operative never moved to the surviving runner"
+           "the operator never moved to the surviving runner"
 
     # The owner advances the lineage by two records.
     send_input(namespace, id, "t2")
@@ -119,14 +119,14 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
     assert realigned == [], "the copy's frames realigned the owner's WAL: #{inspect(realigned)}"
 
     # Nothing of the copy was admitted: its session routed no output for the
-    # operative, so none reached the operative's sinks, and the owner's lineage
+    # operator, so none reached the operator's sinks, and the owner's lineage
     # was never rewound. B's own firing of the restored timer may advance it.
     assert routed_by(runner_a2, id) == [], "the copy's session routed outputs for #{id}"
     assert last_persisted_seq(cell) >= owner_seq, "the owner's WAL lineage was rewound"
 
     # The copy's frames are counted, and it is reported and told to stop once.
     assert refused_frames(runner_a2) >= 1
-    assert [%{operative_id: ^id}] = refusals(runner_a2)
+    assert [%{operator_id: ^id}] = refusals(runner_a2)
 
     # The owner keeps its lineage and keeps advancing it.
     persisted = last_persisted_seq(cell)
@@ -134,11 +134,11 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
     assert await_seq_change(cell, persisted) > persisted
   end
 
-  test "a reconnect under the same stable identity re-points the operative's Overwatch",
+  test "a reconnect under the same stable identity re-points the operator's Overwatch",
        %{namespace: namespace} do
     id_path = unique_id_path("own_restart")
     {_port_a, runner_a} = boot_runner(namespace, id_path, [])
-    id = start_operative(namespace, "do_nothing")
+    id = start_operator(namespace, "do_nothing")
     assert bound_runner(namespace, id) == runner_a
     start_loop()
 
@@ -147,7 +147,7 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
     assert runner_a2 != runner_a
 
     assert wait_until(
-             fn -> HubManager.operative_runner_tag(namespace, id) == runner_a2 end,
+             fn -> HubManager.operator_runner_tag(namespace, id) == runner_a2 end,
              10_000
            ),
            "the registry tag never moved to the new session"
@@ -165,7 +165,7 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
   # The channels of `runner`'s session that hold a route to `id`.
   defp routed_by(runner, id) do
     for pid <- StreamPool.channel_pids(runner),
-        Map.has_key?(:sys.get_state(pid).operative_mapping, id),
+        Map.has_key?(:sys.get_state(pid).operator_mapping, id),
         do: pid
   end
 
@@ -179,29 +179,29 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
     messages
   end
 
-  defp start_operative(namespace, factory \\ "session_timeout") do
+  defp start_operator(namespace, factory \\ "session_timeout") do
     id = "owned_#{System.unique_integer([:positive])}"
 
     sink = %Flezha.Plugin{
       id: "ownership_sink_#{id}",
       namespace: namespace,
-      operative_id: id,
+      operator_id: id,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: self(), include_metadata: true},
       hooks: [{:on_output, []}]
     }
 
     builder = %Builder{id: id, factory_id: factory, init_values: %{}, opts: [plugins: [sink]]}
-    assert {:ok, _} = OperativeManager.start_operative(namespace, builder)
+    assert {:ok, _} = OperatorManager.start_operator(namespace, builder)
     id
   end
 
   defp send_input(namespace, id, input),
-    do: OperativeManager.send_io(id, namespace, input, %{"input_type" => "2"})
+    do: OperatorManager.send_io(id, namespace, input, %{"input_type" => "2"})
 
   defp await_cell(id) do
     assert wait_until(fn -> Paths.cells_of(id) != [] end, 30_000),
-           "the operative persisted no cell"
+           "the operator persisted no cell"
 
     [cell] = Paths.cells_of(id)
     cell
@@ -222,7 +222,7 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
   end
 
   defp bound_runner(namespace, id) do
-    with {:ok, pid} <- OperativeManager.get_operative_pid(namespace, id),
+    with {:ok, pid} <- OperatorManager.get_operator_pid(namespace, id),
          %{runner_id: runner_id} <- :sys.get_state(pid) do
       runner_id
     else

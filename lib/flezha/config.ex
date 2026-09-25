@@ -3,7 +3,7 @@ defmodule Flezha.Config do
   The one reader of a configuration knob.
 
   Every name is a row of `Flezha.Config.Keys`; this module answers what a site
-  gets for one: the operator's application-env override, else the row's
+  gets for one: the user's application-env override, else the row's
   derivation over another row, else its declared default. It never reads the OS
   environment — `Flezha.Config.Environment` translated the variables into keys
   at boot, and after that the key is the only source, so one process cannot

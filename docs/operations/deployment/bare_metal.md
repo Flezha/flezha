@@ -194,7 +194,7 @@ is followed with no reconfiguration, and an entry that fails to resolve is one
 failed candidate rather than a fatal error. A runner that has connected once
 dials that address first on every later attempt — reconnecting to the same
 controller is a binding swap, reconnecting elsewhere strands the previous
-controller's operatives until its own convergence loop heals them — and orders
+controller's operators until its own convergence loop heals them — and orders
 the remaining candidates randomly so a fleet-wide restart does not converge on
 one node.
 
@@ -253,17 +253,17 @@ Two guards make a missed variable a refusal rather than damage:
 A second controller buys capacity and isolation. It is **not** a failover
 target, and adding one is not a substitute for the remote durability tier:
 
-- The hub's redundancy strategy is `Singularity` — each operative runs on
+- The hub's redundancy strategy is `Singularity` — each operator runs on
   exactly one node, with no replicas — so no peer shadows another's
-  operatives.
+  operators.
 - Cross-controller state transfer (`Flezha.State.WalTransfer`) is
   destination-driven over `:erpc` against the source node, so a controller that
   died with its disk answers nothing and the adopting controller starts cold.
 
-A controller that dies with its disk takes its operatives' state, and the
+A controller that dies with its disk takes its operators' state, and the
 registry record of their existence, with it. The mechanism that survives that
 is the remote durability tier: see
-[`../remote_durability_tier.md`](../remote_durability_tier.md). An operator running
+[`../remote_durability_tier.md`](../remote_durability_tier.md). A user running
 two controllers believing they cover each other is worse off than one running a
 single controller with the tier on.
 

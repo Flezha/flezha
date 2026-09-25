@@ -63,7 +63,7 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
   end
 
   defp emit(opts, payload, metadata) do
-    ctx = %Ctx.IO{operative_id: "op", namespace: "ns", message: payload, metadata: metadata}
+    ctx = %Ctx.IO{operator_id: "op", namespace: "ns", message: payload, metadata: metadata}
     {:ok, _} = Postgres.on_output(ctx, opts)
   end
 
@@ -227,7 +227,7 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
     emit(opts, "tier-off", keyed_stamps(cell, "9.0", "k1"))
     assert wait_until(fn -> progress(db) == [[cell, "9.0", 0]] end, 10_000)
 
-    # Epoch 1 beats epoch 0 whatever the seq — the operative turned the tier on.
+    # Epoch 1 beats epoch 0 whatever the seq — the operator turned the tier on.
     emit(opts, "tier-on", stamps(cell, "1.0", "1", "k1"))
 
     assert wait_until(
@@ -290,7 +290,7 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
            ),
            "the records were not retained through a failed attempt: #{inspect(SinkWorker.stats(pid))}"
 
-    # Operator creates the schema out of band → the next retry commits all.
+    # User creates the schema out of band → the next retry commits all.
     create_tables!(db)
 
     assert wait_until(fn -> length(rows(db)) == 2 end, 15_000),

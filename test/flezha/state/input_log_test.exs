@@ -14,9 +14,9 @@ defmodule Flezha.State.InputLogTest do
   import ExUnit.CaptureLog
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, wait_until: 3]
 
-  alias Flezha.Operative.Ingest
-  alias Flezha.Operative.Overwatch
-  alias Flezha.Operative.Replay
+  alias Flezha.Operator.Ingest
+  alias Flezha.Operator.Overwatch
+  alias Flezha.Operator.Replay
   alias Flezha.Plugin.Extension.Table
   alias Flezha.State.{FsyncBatcher, InputLog, Paths, RecordFrame, Supervisor, TestHelpers}
   alias Flezha.State.InputLog.Sweep
@@ -174,7 +174,7 @@ defmodule Flezha.State.InputLogTest do
 
     assert_receive {^ref, %{size_bytes: size}, meta}
     assert size > 0
-    assert meta.operative == class
+    assert meta.operator == class
     assert meta.lagging_cell == {class, "task", "slow"}
   end
 
@@ -184,14 +184,14 @@ defmodule Flezha.State.InputLogTest do
     struct!(
       %Overwatch{
         id: class,
-        builder: %Flezha.Operative.Builder{id: class, factory_id: "f"},
+        builder: %Flezha.Operator.Builder{id: class, factory_id: "f"},
         extensions: Table.new(Overwatch.__extensions_catalog__())
       },
       overrides
     )
   end
 
-  test "tier-off operative journals nothing and forwards untouched", %{class: class} do
+  test "tier-off operator journals nothing and forwards untouched", %{class: class} do
     state = overwatch(class, effectively_once: false)
 
     payload = {"message", %{"input_type" => "2"}}
@@ -200,7 +200,7 @@ defmodule Flezha.State.InputLogTest do
     refute class in Sweep.all_classes()
   end
 
-  test "tier-on operative journals before forward and stamps flz.offset", %{class: class} do
+  test "tier-on operator journals before forward and stamps flz.offset", %{class: class} do
     test_pid = self()
 
     stub(Flezha.Runner.StreamChannel, :io_in, fn _channel, ^class, payload ->
@@ -331,14 +331,14 @@ defmodule Flezha.State.InputLogTest do
       assert {:ok, 1} = Task.await(parked, 2_000)
     end
 
-    test "one starved operative parks only its own dispatch", %{class: class} do
+    test "one starved operator parks only its own dispatch", %{class: class} do
       healthy = class <> "_healthy"
 
       {:ok, 0} = InputLog.append(class, "m0", %{})
       starved = Task.async(fn -> InputLog.append(class, "m1", %{}) end)
       refute Task.yield(starved, 150)
 
-      # The healthy operative's ledger is independent: appends keep flowing.
+      # The healthy operator's ledger is independent: appends keep flowing.
       {:ok, 0} = InputLog.append(healthy, "h0", %{})
       InputLog.record_consumed(healthy, {healthy, "task", "a"}, 0)
       {:ok, 1} = InputLog.append(healthy, "h1", %{})
@@ -350,7 +350,7 @@ defmodule Flezha.State.InputLogTest do
   end
 
   describe "the hold window derives from the declared correction window" do
-    alias Flezha.Operative.ClassRegistry
+    alias Flezha.Operator.ClassRegistry
 
     setup do
       ClassRegistry.ensure_table()
@@ -364,12 +364,12 @@ defmodule Flezha.State.InputLogTest do
       Application.put_env(:flezha, :input_log_hold_window_ms, 0)
       :ok = ClassRegistry.put_correction_window(class, 60_000)
 
-      # The declaration alone must reach the floor: the operator-configured
+      # The declaration alone must reach the floor: the user-configured
       # window defaults to 0, so nothing else would raise it.
       assert InputLog.hold_window_ms(class) == 60_000
     end
 
-    test "a more generous operator floor wins" do
+    test "a more generous user floor wins" do
       class = "corrector-#{System.unique_integer([:positive])}"
       Application.put_env(:flezha, :input_log_hold_window_ms, 300_000)
       :ok = ClassRegistry.put_correction_window(class, 60_000)
@@ -410,7 +410,7 @@ defmodule Flezha.State.InputLogTest do
       assert InputLog.cursors(class) == nil
 
       # Lookup-only: polling this from the convergence tick must never conjure a
-      # file, a process, or a watermark for an operative that never asked for one.
+      # file, a process, or a watermark for an operator that never asked for one.
       assert Supervisor.lookup({class, :input_log}) == :error
       refute File.exists?(Paths.input_log_path(class))
     end
@@ -716,7 +716,7 @@ defmodule Flezha.State.InputLogTest do
     end
 
     test "two reporters resolve to the higher offset, whichever arrives last", %{class: class} do
-      # One class per case: `watermark/1` is the minimum across an operative's
+      # One class per case: `watermark/1` is the minimum across an operator's
       # Cells, so a shared class would answer for the slowest of the three.
       ascending = class <> "_asc"
       InputLog.record_consumed(ascending, {ascending, "task", "a"}, 3)
@@ -812,7 +812,7 @@ defmodule Flezha.State.InputLogTest do
       if Process.alive?(log), do: :erlang.trace(log, false, [:send])
 
       assert dead_syncs() == 0
-      assert_receive {^died, %{operative: ^class, reason: :killed}}, 500
+      assert_receive {^died, %{operator: ^class, reason: :killed}}, 500
       assert Process.alive?(:sys.get_state(await_live_log(class)).syncer)
       assert InputLog.last_offset(class) == 10
     end

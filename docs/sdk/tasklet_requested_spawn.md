@@ -1,8 +1,8 @@
 # Tasklet-requested spawn
 
-For operative authors. `ctx.spawn_workflow` (Rust, Python, Ruby), `ctx.spawnWorkflow` (Java,
-Node), `$ctx->spawnWorkflow` (PHP) and `Flezha.SDK.Ctx.spawn_workflow/4` (Elixir) let a running
-tasklet — in a stream or a workflow operative — spawn-or-feed a workflow instance in its own
+For operator authors. `ctx.spawn_bounded` (Rust, Python, Ruby), `ctx.spawnBounded` (Java,
+Node), `$ctx->spawnBounded` (PHP) and `Flezha.SDK.Ctx.spawn_bounded/4` (Elixir) let a running
+tasklet — in an unbounded or a bounded operator — spawn-or-feed a bounded instance in its own
 namespace with one call. This page is the contract: what the verb does, returns, refuses and
 inherits.
 
@@ -10,8 +10,8 @@ inherits.
 
 | | |
 |---|---|
-| Callable from | any `Tasklet::run` — stream or workflow |
-| Target kind | **workflow** only (convergence owns stream lifecycles) |
+| Callable from | any `Tasklet::run` — unbounded or bounded |
+| Target kind | **bounded operator** only (convergence owns stream lifecycles) |
 | Namespace | the requester's, always — the wire carries no namespace field |
 | Verb | spawn-**or**-deliver on `(namespace, instance_id)`; with no id, always a spawn under a generated one |
 | Blocking | never: the call returns a handle before the controller decides, in every SDK |
@@ -21,54 +21,54 @@ inherits.
 The factory and the payload come first; the id and the policy are optional named arguments:
 
 ```rust
-let job = ctx.spawn_workflow("triage", input.as_bytes().to_vec());
-let one = ctx.spawn_workflow_with(
-    "triage",                              // workflow factory id
+let job = ctx.spawn_bounded("triage", input.as_bytes().to_vec());
+let one = ctx.spawn_bounded_with(
+    "triage",                              // bounded factory id
     input.as_bytes().to_vec(),             // first input on a spawn, one more on a delivery
     SpawnOptions::id(format!("triage@{subject}")).if_running(IfRunning::Deliver),
 );
 ```
 
 ```java
-SpawnHandle job = ctx.spawnWorkflow("triage", input.getBytes(UTF_8));
-SpawnHandle one = ctx.spawnWorkflow("triage", input.getBytes(UTF_8),
+SpawnHandle job = ctx.spawnBounded("triage", input.getBytes(UTF_8));
+SpawnHandle one = ctx.spawnBounded("triage", input.getBytes(UTF_8),
         SpawnOptions.id("triage@" + subject).ifRunning(IfRunning.DELIVER));
 ```
 
 ```elixir
-job = spawn_workflow(ctx, "triage", input)
-one = spawn_workflow(ctx, "triage", input, id: "triage@" <> subject, if_running: :deliver)
+job = spawn_bounded(ctx, "triage", input)
+one = spawn_bounded(ctx, "triage", input, id: "triage@" <> subject, if_running: :deliver)
 ```
 
 ```python
-job = ctx.spawn_workflow("triage", payload)
-one = ctx.spawn_workflow("triage", payload, id=f"triage@{subject}", if_running="deliver")
+job = ctx.spawn_bounded("triage", payload)
+one = ctx.spawn_bounded("triage", payload, id=f"triage@{subject}", if_running="deliver")
 ```
 
 ```ruby
-job = ctx.spawn_workflow("triage", payload)
-one = ctx.spawn_workflow("triage", payload, id: "triage@#{subject}", if_running: "deliver")
+job = ctx.spawn_bounded("triage", payload)
+one = ctx.spawn_bounded("triage", payload, id: "triage@#{subject}", if_running: "deliver")
 ```
 
 ```php
-$job = $ctx->spawnWorkflow('triage', $payload);
-$one = $ctx->spawnWorkflow('triage', $payload, id: "triage@{$subject}", ifRunning: 'deliver');
+$job = $ctx->spawnBounded('triage', $payload);
+$one = $ctx->spawnBounded('triage', $payload, id: "triage@{$subject}", ifRunning: 'deliver');
 ```
 
 ```js
-const job = ctx.spawnWorkflow('triage', payload);
-const one = ctx.spawnWorkflow('triage', payload, { id: `triage@${subject}`, ifRunning: 'deliver' });
+const job = ctx.spawnBounded('triage', payload);
+const one = ctx.spawnBounded('triage', payload, { id: `triage@${subject}`, ifRunning: 'deliver' });
 ```
 
 Rust and Java build the options only from an id, so a policy without an id cannot be written
 there; the other five raise an argument error at the call and send nothing.
 
-Worked example: `sdk/rust/examples/spawn_workflow_worker.rs`.
+Worked example: `sdk/rust/examples/spawn_bounded_worker.rs`.
 
 ## One verb: spawn-or-deliver
 
 The existence check and the delivery race in any caller that has `spawn` and `send` as two
-calls; one verb resolves the race in the controller's operative registry:
+calls; one verb resolves the race in the controller's operator registry:
 
 | The id is | `IfRunning::Deliver` | `IfRunning::Error` |
 |---|---|---|
@@ -99,13 +99,13 @@ is a restart, not a spawn, and is not re-seeded.
 |---|---|
 | `AlreadyRunning` | the id is taken and the request said `Error` |
 | `FactoryUnknown` | no connected runner **on any cluster node** registers that factory |
-| `FactoryNotWorkflow` | the factory's runners announced it as a stream; decided from the fleet's record before anything is placed (`factory_not_workflow` where an SDK spells outcomes as strings) |
-| `Refused(reason)` | authorization is on and `runner@<namespace>` holds no role that grants the spawn: bind it with `flz role bind runner@<namespace> spawner <namespace>`, which also lets that connection call `Operative.start` and `Operative.send` on the [administration surface](admin.md) and nothing else ([`authn_authz.md`](../operations/authn_authz.md)); quota exhausted; controller shutting down; start failed |
+| `FactoryNotBounded` | the factory's runners announced it as an unbounded operator; decided from the fleet's record before anything is placed (`factory_not_bounded` where an SDK spells outcomes as strings) |
+| `Refused(reason)` | authorization is on and `runner@<namespace>` holds no role that grants the spawn: bind it with `flz role bind runner@<namespace> spawner <namespace>`, which also lets that connection call `Operator.start` and `Operator.send` on the [administration surface](admin.md) and nothing else ([`authn_authz.md`](../operations/authn_authz.md)); quota exhausted; controller shutting down; start failed |
 | `Timeout` | no answer within 30 s |
 | `Unavailable` | no control plane to request on |
 
-A start is judged the way `flz operative start` is and recorded the same way; a delivery
-is judged as `operative.send` and recorded only when refused, because it happens once per
+A start is judged the way `flz operator start` is and recorded the same way; a delivery
+is judged as `operator.send` and recorded only when refused, because it happens once per
 event.
 
 Factory resolution is cluster-wide: a controller node with no runner for the factory routes
@@ -141,14 +141,14 @@ a generated id existed only in the controller's answer to the live run.
 
 ## Inheritance and limits
 
-The request resolves on the path `flz operative start` uses, so the spawned instance is an
-ordinary workflow operative: namespace quota (`max_operatives`,
-`max_cells_per_operative`), durable input log, loop and suspension, `WorkflowCompleted`
-teardown, retention, `flz operative list`. There is no separate registry, no spawn journal, no
+The request resolves on the path `flz operator start` uses, so the spawned instance is an
+ordinary bounded operator: namespace quota (`max_operators`,
+`max_cells_per_operator`), durable input log, loop and suspension, `BoundedCompleted`
+teardown, retention, `flz operator list`. There is no separate registry, no spawn journal, no
 scheduling (that is `flz schedule`), no cross-namespace reach.
 
 - **A buggy requester can spawn in a loop.** The namespace quota is the backstop;
-  `[:flezha, :operative, :requested_spawn]` carries `namespace`, `instance_id` (the id the
+  `[:flezha, :operator, :requested_spawn]` carries `namespace`, `instance_id` (the id the
   request resolved to), `factory_id` and `outcome` per request for rate alerting. There is no
   per-requester rate limit.
 - **A runner partitioned from its controller fails async**, like any control-plane send.
@@ -166,8 +166,8 @@ A caller that needs at most one instance, or the id on replay, passes its own id
 
 ## See also
 
-- [`protocol_spec.md`](protocol_spec.md) — `SpawnWorkflowRequest` / `SpawnWorkflowResponse`
-- [`../resilience/workflow_operative.md`](../resilience/workflow_operative.md) — the spawned
+- [`protocol_spec.md`](protocol_spec.md) — `SpawnBoundedRequest` / `SpawnBoundedResponse`
+- [`../resilience/bounded_operator.md`](../resilience/bounded_operator.md) — the spawned
   instance's lifecycle
-- [`../plugins/operative_forward.md`](../plugins/operative_forward.md) — feeding an existing
-  operative as configuration
+- [`../plugins/operator_forward.md`](../plugins/operator_forward.md) — feeding an existing
+  operator as configuration

@@ -1,10 +1,10 @@
-defmodule FlezhaTest.Runner.ControlUnitAddOperativeTest do
+defmodule FlezhaTest.Runner.ControlUnitAddOperatorTest do
   @moduledoc """
-  The resuming bind's two instance-scoped fields on `AddOperative`, both stamped
-  onto the operative's opts by `Flezha.Operative.Lifecycle`.
+  The resuming bind's two instance-scoped fields on `AddOperator`, both stamped
+  onto the operator's opts by `Flezha.Operator.Lifecycle`.
 
   `task_journal` rides the bind rather than a per-Cell `RestoreInitState`
-  because it is instance-scoped: a durable workflow class with no per-Cell
+  because it is instance-scoped: a durable bounded class with no per-Cell
   state ships no restore at all, so a journal delivered there would never arrive
   and the driver would resume at iteration 0 on every wake.
   """
@@ -14,12 +14,12 @@ defmodule FlezhaTest.Runner.ControlUnitAddOperativeTest do
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Identificator
-  alias Flezha.Operative.Builder
+  alias Flezha.Operator.Builder
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
   alias FlezhaTest.Helper.NodeTestHelper
 
-  @namespace "ctrl-unit-add-operative-test"
+  @namespace "ctrl-unit-add-operator-test"
 
   setup :set_mimic_global_until_exit
 
@@ -39,13 +39,13 @@ defmodule FlezhaTest.Runner.ControlUnitAddOperativeTest do
     %{runner_id: runner_id}
   end
 
-  defp start_operative(runner_id, opts) do
-    operative = %Builder{id: "op-1", factory_id: "f", kind: :workflow, opts: opts}
-    # The reply only lands on the AddOperative response, which never arrives here.
+  defp start_operator(runner_id, opts) do
+    operator = %Builder{id: "op-1", factory_id: "f", kind: :bounded, opts: opts}
+    # The reply only lands on the AddOperator response, which never arrives here.
     catch_exit(
       GenServer.call(
         Identificator.control_unit(runner_id),
-        {:start_operative, operative},
+        {:start_operator, operator},
         50
       )
     )
@@ -55,17 +55,17 @@ defmodule FlezhaTest.Runner.ControlUnitAddOperativeTest do
     runner_id: runner_id
   } do
     journal = %RunnerCommands.TaskJournalState{iter: 7, consumed_offset: 3}
-    start_operative(runner_id, resume_cell_count: 0, task_journal: journal)
+    start_operator(runner_id, resume_cell_count: 0, task_journal: journal)
 
-    assert_receive {:sent, {:add_operative, add}}, 500
+    assert_receive {:sent, {:add_operator, add}}, 500
     assert add.resume_cell_count == 0
     assert add.task_journal == journal
   end
 
   test "a fresh bind carries no journal", %{runner_id: runner_id} do
-    start_operative(runner_id, [])
+    start_operator(runner_id, [])
 
-    assert_receive {:sent, {:add_operative, add}}, 500
+    assert_receive {:sent, {:add_operator, add}}, 500
     assert add.resume_cell_count == 0
     assert add.task_journal == nil
   end
@@ -135,7 +135,7 @@ end
 
 defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
   @moduledoc """
-  Partition identity on the `AddOperative` wire.
+  Partition identity on the `AddOperator` wire.
 
   The SDK's mis-route guard is armed by these four fields and nothing else, so
   a member whose bind loses them starts accepting keys it does not own — which
@@ -149,8 +149,8 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Identificator
-  alias Flezha.Operative.Builder
-  alias Flezha.Operative.Migration
+  alias Flezha.Operator.Builder
+  alias Flezha.Operator.Migration
   alias Flezha.Partition
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
@@ -176,24 +176,24 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
     %{runner_id: runner_id}
   end
 
-  defp add_operative(runner_id, opts) do
-    operative = %Builder{id: "ohlc#p1", factory_id: "candles", kind: :stream, opts: opts}
+  defp add_operator(runner_id, opts) do
+    operator = %Builder{id: "ohlc#p1", factory_id: "candles", kind: :unbounded, opts: opts}
 
     catch_exit(
       GenServer.call(
         Identificator.control_unit(runner_id),
-        {:start_operative, operative},
+        {:start_operator, operator},
         50
       )
     )
 
-    assert_receive {:sent, {:add_operative, add}}, 500
+    assert_receive {:sent, {:add_operator, add}}, 500
     add
   end
 
   test "a member's bind carries its index, count and owned range", %{runner_id: runner_id} do
     [_p0, range, _p2] = Partition.ranges(3)
-    add = add_operative(runner_id, Partition.member_opts("ohlc", 1, 3, range))
+    add = add_operator(runner_id, Partition.member_opts("ohlc", 1, 3, range))
 
     assert add.partition_index == 1
     assert add.partition_count == 3
@@ -203,7 +203,7 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
   test "an unpartitioned bind encodes byte-identically to a partition-free build", %{
     runner_id: runner_id
   } do
-    add = add_operative(runner_id, [])
+    add = add_operator(runner_id, [])
 
     assert add.partition_index == 0
     assert add.partition_count == 0
@@ -212,11 +212,11 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
 
     # The four fields are all zero, so proto3 emits none of them: the frame is
     # exactly the one a pre-partition controller produced.
-    {:ok, encoded, _size} = RunnerCommands.AddOperative.encode(add)
+    {:ok, encoded, _size} = RunnerCommands.AddOperator.encode(add)
 
     {:ok, reference, _ref_size} =
-      RunnerCommands.AddOperative.encode(%RunnerCommands.AddOperative{
-        operative_id: add.operative_id,
+      RunnerCommands.AddOperator.encode(%RunnerCommands.AddOperator{
+        operator_id: add.operator_id,
         factory_id: add.factory_id,
         init_values: add.init_values,
         kind: add.kind,
@@ -228,7 +228,7 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
   end
 
   test "a one-member group is unpartitioned on the wire", %{runner_id: runner_id} do
-    add = add_operative(runner_id, Partition.member_opts("ohlc", 0, 1, {0, 255}))
+    add = add_operator(runner_id, Partition.member_opts("ohlc", 0, 1, {0, 255}))
 
     assert add.partition_count == 0
     assert add.key_group_to == 0
@@ -237,23 +237,23 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
   test "the migrate-time bind re-arms the guard" do
     [_p0, range, _p2] = Partition.ranges(3)
 
-    state = %Flezha.Operative.Overwatch{
+    state = %Flezha.Operator.Overwatch{
       id: "ohlc#p1",
       factory_id: "candles",
       namespace: @namespace,
       builder: %Builder{
         id: "ohlc#p1",
         factory_id: "candles",
-        kind: :workflow,
+        kind: :bounded,
         opts: [{:plugins, []} | Partition.member_opts("ohlc", 1, 3, range)]
       }
     }
 
-    migrated = Migration.migrate_operative(state)
+    migrated = Migration.migrate_operator(state)
 
-    # The kind travels with the migrate: a workflow instance re-added as a
-    # stream class is refused by the runner and never heals.
-    assert migrated.kind == :workflow
+    # The kind travels with the migrate: a bounded instance re-added as a
+    # unbounded class is refused by the runner and never heals.
+    assert migrated.kind == :bounded
 
     assert Partition.identity(migrated.opts) == %{
              group: "ohlc",
@@ -267,12 +267,12 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
   end
 end
 
-defmodule FlezhaTest.Runner.ControlUnitWorkflowStopTest do
+defmodule FlezhaTest.Runner.ControlUnitBoundedStopTest do
   @moduledoc """
-  §5a.1/§6.2: the cooperative external-stop send. `ControlUnit.workflow_stop/2`
-  ships a `WorkflowStop` command over the control channel — distinct from the hard
-  `RemOperative` the stream stop uses. Fire-and-forget: the SDK trips its
-  cancellation token and the teardown follows on `WorkflowCompleted`.
+  §5a.1/§6.2: the cooperative external-stop send. `ControlUnit.bounded_stop/2`
+  ships a `BoundedStop` command over the control channel — distinct from the hard
+  `RemOperator` the stream stop uses. Fire-and-forget: the SDK trips its
+  cancellation token and the teardown follows on `BoundedCompleted`.
   """
 
   # async: false: Mimic global mode; Mimic stubs; registered runner channels.
@@ -286,11 +286,11 @@ defmodule FlezhaTest.Runner.ControlUnitWorkflowStopTest do
   alias Flezha.Runner.ControlUnit
   alias FlezhaTest.Helper.NodeTestHelper
 
-  @namespace "ctrl-unit-workflow-stop-test"
+  @namespace "ctrl-unit-bounded-stop-test"
 
   setup :set_mimic_global_until_exit
 
-  test "workflow_stop/2 sends a WorkflowStop command (cooperative), not RemOperative" do
+  test "bounded_stop/2 sends a BoundedStop command (cooperative), not RemOperator" do
     test_pid = self()
     runner_id = "exec-bs-#{System.unique_integer([:positive])}"
 
@@ -303,32 +303,32 @@ defmodule FlezhaTest.Runner.ControlUnitWorkflowStopTest do
     {:ok, pid} = ControlUnit.start_link({@namespace, runner_id})
     on_exit(fn -> NodeTestHelper.ensure_stopped(pid, :normal, 1_000) end)
 
-    assert :ok = ControlUnit.workflow_stop(runner_id, "op-1")
+    assert :ok = ControlUnit.bounded_stop(runner_id, "op-1")
 
-    assert_receive {:sent, {:workflow_stop, %RunnerCommands.WorkflowStop{operative_id: "op-1"}}},
+    assert_receive {:sent, {:bounded_stop, %RunnerCommands.BoundedStop{operator_id: "op-1"}}},
                    500
 
     # Cooperative stop must NOT use the hard removal command.
-    refute_received {:sent, {:rem_operative, _}}
+    refute_received {:sent, {:rem_operator, _}}
   end
 
-  test "workflow_stop/2 returns {:error, :no_control_unit} when the runner is gone" do
+  test "bounded_stop/2 returns {:error, :no_control_unit} when the runner is gone" do
     missing = "exec-missing-#{System.unique_integer([:positive])}"
     assert GenServer.whereis(Identificator.control_unit(missing)) == nil
-    assert {:error, :no_control_unit} = ControlUnit.workflow_stop(missing, "op-1")
+    assert {:error, :no_control_unit} = ControlUnit.bounded_stop(missing, "op-1")
   end
 end
 
-defmodule FlezhaTest.Runner.AddOperativeResponseTest do
+defmodule FlezhaTest.Runner.AddOperatorResponseTest do
   @moduledoc """
-  The SDK declares its class-level capabilities in the `AddOperative` response
-  metadata (`AddOperativeResponse.raw_data`) — the effectively-once tier and the
+  The SDK declares its class-level capabilities in the `AddOperator` response
+  metadata (`AddOperatorResponse.raw_data`) — the effectively-once tier and the
   chain positions that can compensate. The controller resolves absent, empty, or
   undecodable metadata to the defaults.
   """
   use ExUnit.Case, async: true
 
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.ClassRegistry
 
   defp declarations(metadata), do: ClassRegistry.decode_declarations(encode(metadata))
 
@@ -383,7 +383,7 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
   end
 
   test "keyless is declared only when true — a keyed class says nothing" do
-    # `partitioned-operatives`: the SDK announces `keyed: "false"` for a class
+    # `partitioned-operators`: the SDK announces `keyed: "false"` for a class
     # with no keyed entry-fed tasklet, so the controller can refuse a
     # partitioned start of it before touching a runner. A keyed class declares
     # nothing, which is what keeps its response byte-identical.
@@ -434,7 +434,7 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
     assert declarations(%{"other" => "x"}).compensable_tasks == nil
   end
 
-  test "a workflow's loop mode resolves to an atom, and anything else to none" do
+  test "a bounded operator's loop mode resolves to an atom, and anything else to none" do
     assert declarations(%{"loop_mode" => "per_input"}).loop_mode == :per_input
     assert declarations(%{"loop_mode" => "once"}).loop_mode == :once
     assert declarations(%{"loop_mode" => "chained"}).loop_mode == :chained
@@ -443,7 +443,7 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
   end
 
   test "leaf positions resolve to a list — the tree's completion rule" do
-    # A→(B,C): the operative is done when tasks 1 and 2 have committed.
+    # A→(B,C): the operator is done when tasks 1 and 2 have committed.
     assert declarations(%{"leaf_tasks" => "1,2"}).leaf_tasks == [1, 2]
     # A linear chain's single terminal is the degenerate case.
     assert declarations(%{"leaf_tasks" => "1"}).leaf_tasks == [1]
@@ -454,7 +454,7 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
 
   defp encode(metadata) do
     {:ok, iodata, _size} =
-      Protox.encode(%RunnerCommands.AddOperativeResponse{metadata: metadata})
+      Protox.encode(%RunnerCommands.AddOperatorResponse{metadata: metadata})
 
     IO.iodata_to_binary(iodata)
   end
@@ -465,7 +465,7 @@ defmodule FlezhaTest.Runner.ControlUnitPingTimeoutTest do
   The overwatch ping timeout is one knob on two layers, and the published
   contract names both: the `:overwatch_ping_timeout_ms` application key
   `Flezha.Runner.ControlUnit` reads, and the `FLEZHA_OVERWATCH_PING_TIMEOUT_MS`
-  variable `config/runtime.exs` resolves it from at boot. An operator who sets
+  variable `config/runtime.exs` resolves it from at boot. A user who sets
   the variable and gets the default back has been told a knob exists that does
   nothing.
   """

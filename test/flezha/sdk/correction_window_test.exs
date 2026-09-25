@@ -10,11 +10,11 @@ defmodule Flezha.SDK.CorrectionWindowTest do
 
   alias Flezha.SDK.{Channels, Ctx, Cell, Hold, Record, Spawn}
   alias Flezha.SDK.Cell.{State, Tier}
-  alias Flezha.SDK.Operative.Inbox
+  alias Flezha.SDK.Operator.Inbox
   alias Flezha.SDK.Wire
   alias FlezhaTest.Helper.SdkTierFixtures.{CorrectionDropOp, CorrectionOp, CorrectionTask}
 
-  import FlezhaTest.Helper.SdkOperativeHarness
+  import FlezhaTest.Helper.SdkOperatorHarness
 
   @window 600_000
   @task "correction_tasklet"
@@ -31,7 +31,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
     defdelegate event_time_of(input), to: CorrectionTask
 
     def run(input, s, ctx) do
-      handle = Ctx.spawn_workflow(ctx, "worker", input, id: "w-" <> input)
+      handle = Ctx.spawn_bounded(ctx, "worker", input, id: "w-" <> input)
       Ctx.emit_keyed(ctx, "fold", inspect(Spawn.try_result(handle)))
       {:ok, Ctx.apply(ctx, s, Ctx.now(ctx))}
     end
@@ -39,7 +39,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
 
   defmodule SpawningCorrectionOp do
     @moduledoc false
-    @behaviour Flezha.SDK.StreamOperative
+    @behaviour Flezha.SDK.UnboundedOperator
     def factory_id, do: "spawning_correction_probe"
 
     def channels(c),
@@ -144,7 +144,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
   end
 
   test "a late input inside the window is withheld, and one correction request carries its event time" do
-    %{op: op} = start_operative(CorrectionOp)
+    %{op: op} = start_operator(CorrectionOp)
 
     push(op, "300000:a", 0)
     assert [{0, [300_000]}] == frames(1) |> Enum.map(&folds/1)
@@ -158,7 +158,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
   end
 
   test "a beyond-window arrival is processed and does NOT drag the high-water backwards" do
-    %{op: op} = start_operative(CorrectionOp)
+    %{op: op} = start_operator(CorrectionOp)
 
     push(op, "1000000:a", 0)
     assert [{0, [1_000_000]}] == frames(1) |> Enum.map(&folds/1)
@@ -175,7 +175,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
   end
 
   test "a beyond-window input under the drop policy is neither processed nor recorded" do
-    %{op: op} = start_operative(CorrectionDropOp)
+    %{op: op} = start_operator(CorrectionDropOp)
 
     push(op, "1000000:a", 0)
     assert [{0, [1_000_000]}] == frames(1) |> Enum.map(&folds/1)
@@ -187,7 +187,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
 
   describe "the replayed slice" do
     test "is held to its end marker and folded in event-time order, not arrival order" do
-      %{op: op} = start_operative(CorrectionOp)
+      %{op: op} = start_operator(CorrectionOp)
 
       push(op, "300000:seed", 0)
       assert [{0, [300_000]}] == frames(1) |> Enum.map(&folds/1)
@@ -203,7 +203,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
     end
 
     test "orders ties by ascending input-log offset" do
-      %{op: op} = start_operative(CorrectionOp)
+      %{op: op} = start_operator(CorrectionOp)
 
       push(op, "300000:seed", 0)
       assert [{0, [300_000]}] == frames(1) |> Enum.map(&folds/1)
@@ -220,7 +220,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
     end
 
     test "an input enqueued behind the end marker folds after every member" do
-      %{op: op} = start_operative(CorrectionOp)
+      %{op: op} = start_operator(CorrectionOp)
 
       push(op, "300000:seed", 0)
       assert [{0, [300_000]}] == frames(1) |> Enum.map(&folds/1)
@@ -234,7 +234,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
     end
 
     test "a replayed member does not lower the event-time high-water" do
-      %{op: op} = start_operative(CorrectionOp)
+      %{op: op} = start_operator(CorrectionOp)
 
       push(op, "300000:seed", 0)
       assert [{0, [300_000]}] == frames(1) |> Enum.map(&folds/1)
@@ -251,7 +251,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
     end
 
     test "the broadcast reaches a Cell that buffered nothing without stalling it" do
-      %{op: op} = start_operative(CorrectionOp)
+      %{op: op} = start_operator(CorrectionOp)
 
       push(op, "300000:seed", 0)
       assert [{0, [300_000]}] == frames(1) |> Enum.map(&folds/1)
@@ -262,7 +262,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
     end
 
     test "a restore discards a buffered slice" do
-      %{op: op} = start_operative(CorrectionOp)
+      %{op: op} = start_operator(CorrectionOp)
 
       push(op, "300000:seed", 0)
       assert [{0, [300_000]}] == frames(1) |> Enum.map(&folds/1)
@@ -281,7 +281,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
     end
 
     test "a spawn issues nothing from a replayed member, and once from the same input live" do
-      %{op: op} = start_operative(SpawningCorrectionOp)
+      %{op: op} = start_operator(SpawningCorrectionOp)
 
       push(op, "100:a", 0)
       assert [live] = frames(1)
@@ -304,7 +304,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
     do: frame |> effect() |> elem(1) |> Map.fetch!(:outputs) |> Enum.map(& &1.payload)
 
   test "a Cell of a correction class still reports its tasklet name" do
-    %{op: op} = start_operative(CorrectionOp)
+    %{op: op} = start_operator(CorrectionOp)
     push(op, "1:a", 0)
     assert [_] = frames(1)
     assert is_pid(cell!(op, @task))

@@ -1,11 +1,11 @@
-// A worked operative: one cell per user, journaled state, an idle timer, and
+// A worked operator: one cell per user, journaled state, an idle timer, and
 // an emit on close.
 //
 // Everything the SDK asks an author to know is here — the change fold, the
 // deterministic clock, keying on the wiring, and a timer that closes a session
 // when its user goes quiet.
 
-import { defineStream, defineTasklet } from '@flezha/sdk';
+import { defineUnbounded, defineTasklet } from '@flezha/sdk';
 
 /** Milliseconds of silence after which a session is closed. */
 const IDLE_MS = 30_000n;
@@ -66,7 +66,7 @@ export const Session = defineTasklet({
   },
 });
 
-export default defineStream({
+export default defineUnbounded({
   factoryId: 'sessions',
   channels: (c) => {
     // Neither channel names a codec: the activity event is read as JSON, and

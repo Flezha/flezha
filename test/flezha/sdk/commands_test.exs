@@ -7,10 +7,10 @@ defmodule Flezha.SDK.CommandsTest do
   """
   use ExUnit.Case, async: true
 
-  import FlezhaTest.Helper.SdkOperativeHarness
+  import FlezhaTest.Helper.SdkOperatorHarness
 
   alias Flezha.SDK.{Codec, Commands, Counters, Credit, Cell, Hold, Park, Record}
-  alias Flezha.SDK.Operative.Inbox
+  alias Flezha.SDK.Operator.Inbox
   alias Flezha.SDK.RunnerServer.State, as: ServerState
   alias Flezha.SDK.Wire
   alias FlezhaTest.Helper.NodeTestHelper
@@ -29,7 +29,7 @@ defmodule Flezha.SDK.CommandsTest do
   end
 
   defp server_state(op, credit),
-    do: %ServerState{operatives: %{"op-1" => {op, "f"}}, credit: credit}
+    do: %ServerState{operators: %{"op-1" => {op, "f"}}, credit: credit}
 
   defp respond do
     me = self()
@@ -73,7 +73,7 @@ defmodule Flezha.SDK.CommandsTest do
     test "a Cell parks on the window and its record leaves on the grant; the heartbeat counter moves" do
       {credit, counters} = credit()
       Credit.arm(credit, "s1", 1)
-      %{op: op} = start_operative(CounterOp, credit: credit)
+      %{op: op} = start_operator(CounterOp, credit: credit)
       Inbox.input(op, "in", "1", %{})
       assert NodeTestHelper.wait_until(fn -> Counters.credit_parked(counters) == 1 end, 2_000)
       refute_received {:flz_data, _, "cell_state_change", _, _}
@@ -85,14 +85,14 @@ defmodule Flezha.SDK.CommandsTest do
 
   describe "the commands" do
     test "the live read answers the Decision-10 shape with the seq of one Cell, and refuses by name" do
-      %{op: op} = start_operative(CounterOp)
+      %{op: op} = start_operator(CounterOp)
       Inbox.input(op, "in", "3", %{})
       [_, _] = frames(2)
       s = server_state(op, nil)
 
       Commands.dispatch(
         :cell_state,
-        %{operative_id: "op-1", tasklet: "", cell_key: ""},
+        %{operator_id: "op-1", tasklet: "", cell_key: ""},
         respond(),
         s
       )
@@ -102,7 +102,7 @@ defmodule Flezha.SDK.CommandsTest do
 
       Commands.dispatch(
         :cell_state,
-        %{operative_id: "op-1", tasklet: "", cell_key: "k"},
+        %{operator_id: "op-1", tasklet: "", cell_key: "k"},
         respond(),
         s
       )
@@ -112,7 +112,7 @@ defmodule Flezha.SDK.CommandsTest do
 
       Commands.dispatch(
         :cell_state,
-        %{operative_id: "op-1", tasklet: "nope", cell_key: ""},
+        %{operator_id: "op-1", tasklet: "nope", cell_key: ""},
         respond(),
         s
       )
@@ -121,7 +121,7 @@ defmodule Flezha.SDK.CommandsTest do
 
       Commands.dispatch(
         :cell_state,
-        %{operative_id: "op-1", tasklet: "counter", cell_key: "k"},
+        %{operator_id: "op-1", tasklet: "counter", cell_key: "k"},
         respond(),
         s
       )
@@ -130,25 +130,25 @@ defmodule Flezha.SDK.CommandsTest do
 
       Commands.dispatch(
         :cell_state,
-        %{operative_id: "op-9", tasklet: "", cell_key: ""},
+        %{operator_id: "op-9", tasklet: "", cell_key: ""},
         respond(),
         s
       )
 
-      assert_receive {:replied, "error", ["StreamOperative instance with id op-9 not found"],
+      assert_receive {:replied, "error", ["UnboundedOperator instance with id op-9 not found"],
                       <<>>, %{}},
                      2_000
     end
 
     test "a keyed node reads as a map by key, narrowed by the selector, with the seq only for one Cell" do
-      %{op: op} = start_operative(DynCounterOp)
+      %{op: op} = start_operator(DynCounterOp)
       for input <- ~w(1 2 3), do: Inbox.input(op, "in", input, %{})
       [_, _, _, _, _, _] = frames(6)
       s = server_state(op, nil)
 
       Commands.dispatch(
         :cell_state,
-        %{operative_id: "op-1", tasklet: "", cell_key: ""},
+        %{operator_id: "op-1", tasklet: "", cell_key: ""},
         respond(),
         s
       )
@@ -161,7 +161,7 @@ defmodule Flezha.SDK.CommandsTest do
 
       Commands.dispatch(
         :cell_state,
-        %{operative_id: "op-1", tasklet: "counter", cell_key: "k1"},
+        %{operator_id: "op-1", tasklet: "counter", cell_key: "k1"},
         respond(),
         s
       )
@@ -169,13 +169,13 @@ defmodule Flezha.SDK.CommandsTest do
       assert_receive {:replied, "success", [], json, %{"flz.change_seq" => "2"}}, 2_000
       assert Jason.decode!(json) == %{"counter" => %{"k1" => %{"value" => 4}}}
 
-      Commands.dispatch(:migration_serialization, %{operative_id: "op-1"}, respond(), s)
+      Commands.dispatch(:migration_serialization, %{operator_id: "op-1"}, respond(), s)
       assert_receive {:replied, "success", [], json, %{}}, 2_000
       assert Jason.decode!(json)["counter"]["k0"] == %{"value" => 2}
     end
 
     test "a restore that migrated answers migrated, and the compaction behind it snapshots at the running version" do
-      %{op: op} = start_operative(CounterV2Op)
+      %{op: op} = start_operator(CounterV2Op)
       s = server_state(op, nil)
       identity = Park.identity("op-1", "counter", "")
       snapshot = Record.encode_body(%{value: 4})
@@ -209,7 +209,7 @@ defmodule Flezha.SDK.CommandsTest do
     end
 
     test "the live read of an evicted key names eviction, and of a never-seen key names absence" do
-      %{op: op} = start_operative(TtlOp)
+      %{op: op} = start_operator(TtlOp)
       Inbox.input(op, "in", "5", %{})
       [_, _] = frames(2)
       assert_receive {:flz_data, _, "delete_cell_state", _, _}, 2_000
@@ -217,7 +217,7 @@ defmodule Flezha.SDK.CommandsTest do
 
       Commands.dispatch(
         :cell_state,
-        %{operative_id: "op-1", tasklet: "ttl", cell_key: "k5"},
+        %{operator_id: "op-1", tasklet: "ttl", cell_key: "k5"},
         respond(),
         s
       )
@@ -230,7 +230,7 @@ defmodule Flezha.SDK.CommandsTest do
 
       Commands.dispatch(
         :cell_state,
-        %{operative_id: "op-1", tasklet: "ttl", cell_key: "zz"},
+        %{operator_id: "op-1", tasklet: "ttl", cell_key: "zz"},
         respond(),
         s
       )
@@ -239,7 +239,7 @@ defmodule Flezha.SDK.CommandsTest do
     end
 
     test "restore and compaction answer through the commands with their protobuf replies" do
-      %{op: op} = start_operative(CounterOp)
+      %{op: op} = start_operator(CounterOp)
       s = server_state(op, nil)
       id = Park.identity("op-1", "counter", "")
       snap = Record.encode_body(%{value: 10})
@@ -315,7 +315,7 @@ defmodule Flezha.SDK.CommandsTest do
     end
 
     test "init_values and a migration's state apply through state_from_json, per declared key" do
-      %{op: op} = start_operative(StaticCounterOp)
+      %{op: op} = start_operator(StaticCounterOp)
 
       assert :ok =
                Commands.apply_json(
@@ -329,12 +329,12 @@ defmodule Flezha.SDK.CommandsTest do
       assert :ok = Commands.apply_json(op, "op-1", "")
       assert {:error, "init_values: not a JSON object"} = Commands.apply_json(op, "op-1", "[1]")
 
-      %{op: single} = start_operative(CounterOp)
+      %{op: single} = start_operator(CounterOp)
       s = server_state(single, nil)
 
       Commands.dispatch(
         :cell_apply_state,
-        %{operative_id: "op-1", factory_id: "f", state_binary: ~s({"counter":{"value":8}})},
+        %{operator_id: "op-1", factory_id: "f", state_binary: ~s({"counter":{"value":8}})},
         respond(),
         s
       )
@@ -345,7 +345,7 @@ defmodule Flezha.SDK.CommandsTest do
 
     test "the credit commands arm and grant the window and ack the session" do
       {credit, _counters} = credit()
-      s = %ServerState{operatives: %{}, credit: credit}
+      s = %ServerState{operators: %{}, credit: credit}
 
       Commands.dispatch(
         :credit_window_init,
@@ -387,12 +387,12 @@ defmodule Flezha.SDK.CommandsTest do
         {:ok, %{reference_id: ref, command: {:runner_shutdown_notification, notif}}} =
           Codec.decode_command(bin)
 
-        send(test, {:notified, notif.operative_id, notif.serialized_state})
+        send(test, {:notified, notif.operator_id, notif.serialized_state})
 
         if ack? do
           ack =
             {:runner_shutdown_ack,
-             %RunnerCommands.RunnerShutdownAck{operative_id: notif.operative_id}}
+             %RunnerCommands.RunnerShutdownAck{operator_id: notif.operator_id}}
 
           Flezha.Transport.Stream.send_frame(
             ctrl,
@@ -414,8 +414,8 @@ defmodule Flezha.SDK.CommandsTest do
   end
 
   describe "the shutdown" do
-    test "a stop ships every operative's Decision-10 state, waits for the acks and returns" do
-      %{op: op} = start_operative(CounterOp)
+    test "a stop ships every operator's Decision-10 state, waits for the acks and returns" do
+      %{op: op} = start_operator(CounterOp)
       Inbox.input(op, "in", "3", %{})
       [_, _] = frames(2)
       {sdk, ctrl} = runner_side()
@@ -428,7 +428,7 @@ defmodule Flezha.SDK.CommandsTest do
                  %ServerState{
                    control_handle: sdk,
                    control: Hold.new(),
-                   operatives: %{"op-1" => {op, "f"}}
+                   operators: %{"op-1" => {op, "f"}}
                  },
                  2_000
                )
@@ -441,7 +441,7 @@ defmodule Flezha.SDK.CommandsTest do
     test "an ack that never comes ends the wait at the deadline with the reference's line" do
       :ok = :logger.set_module_level(Commands, :warning)
       on_exit(fn -> :logger.unset_module_level(Commands) end)
-      %{op: op} = start_operative(CounterOp)
+      %{op: op} = start_operator(CounterOp)
       {sdk, ctrl} = runner_side()
       controller_side(ctrl, false)
 
@@ -452,7 +452,7 @@ defmodule Flezha.SDK.CommandsTest do
                      %ServerState{
                        control_handle: sdk,
                        control: Hold.new(),
-                       operatives: %{"op-1" => {op, "f"}}
+                       operators: %{"op-1" => {op, "f"}}
                      },
                      200
                    )
@@ -462,14 +462,14 @@ defmodule Flezha.SDK.CommandsTest do
       assert_received {:notified, "op-1", _json}
     end
 
-    test "with no connection or no operative there is nothing to ship" do
+    test "with no connection or no operator there is nothing to ship" do
       assert :ok =
                Commands.shutdown(
-                 %ServerState{control_handle: nil, operatives: %{"x" => {self(), "f"}}},
+                 %ServerState{control_handle: nil, operators: %{"x" => {self(), "f"}}},
                  10
                )
 
-      assert :ok = Commands.shutdown(%ServerState{control_handle: :closed, operatives: %{}}, 10)
+      assert :ok = Commands.shutdown(%ServerState{control_handle: :closed, operators: %{}}, 10)
     end
   end
 end

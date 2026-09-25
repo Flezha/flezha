@@ -13,19 +13,19 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
   alias Flezha.Identificator
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias Flezha.State.DurabilityTier.Backend.Postgres, as: PostgresBackend
   alias Flezha.State.Outbox
   alias Flezha.State.Paths
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.PostgresSink
 
-  def send_inputs(operative_id, namespace, inputs, metadata \\ %{}) do
+  def send_inputs(operator_id, namespace, inputs, metadata \\ %{}) do
     for input <- inputs do
-      OperativeManager.send_io(
-        operative_id,
+      OperatorManager.send_io(
+        operator_id,
         namespace,
         input,
         Map.put(metadata, "input_type", "2")
@@ -40,13 +40,13 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   scale. The restart must re-drive every durable output with its original
   identity.
   """
-  def stale_cursor_and_crash_writers(operative_id, cell_id) do
+  def stale_cursor_and_crash_writers(operator_id, cell_id) do
     case Flezha.State.Supervisor.lookup(cell_id) do
       {:ok, pid} -> Process.exit(pid, :kill)
       :error -> :ok
     end
 
-    case Flezha.State.Supervisor.lookup({operative_id, :input_log}) do
+    case Flezha.State.Supervisor.lookup({operator_id, :input_log}) do
       {:ok, pid} -> Process.exit(pid, :kill)
       :error -> :ok
     end
@@ -80,13 +80,13 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   Kill the Overwatch so its supervised replacement re-binds, without waiting
   for the replacement to be observable.
 
-  For a workflow operative the replacement is what `force_fresh_rebind/2`
+  For a bounded operator the replacement is what `force_fresh_rebind/2`
   cannot wait on: a resumed chain can run to completion and deregister between
   two polls, so "a live replacement pid" is a state the test may legitimately
   never see. The terminal completion record is the thing to wait on instead.
   """
-  def kill_overwatch(namespace, operative_id) do
-    {:ok, pid} = OperativeManager.get_operative_pid(namespace, operative_id)
+  def kill_overwatch(namespace, operator_id) do
+    {:ok, pid} = OperatorManager.get_operator_pid(namespace, operator_id)
     Process.exit(pid, :kill)
     :ok
   end
@@ -96,13 +96,13 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   inputs sent before that would race the restart (a real source blocks or
   retries; `send_io` is fire-and-forget).
   """
-  def force_fresh_rebind(namespace, operative_id) do
-    {:ok, old_pid} = OperativeManager.get_operative_pid(namespace, operative_id)
+  def force_fresh_rebind(namespace, operator_id) do
+    {:ok, old_pid} = OperatorManager.get_operator_pid(namespace, operator_id)
     Process.exit(old_pid, :kill)
 
     assert wait_until(
              fn ->
-               case OperativeManager.get_operative_pid(namespace, operative_id) do
+               case OperatorManager.get_operator_pid(namespace, operator_id) do
                  {:ok, pid} -> pid != old_pid and Process.alive?(pid)
                  _ -> false
                end
@@ -142,21 +142,21 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   end
 
   @doc """
-  Destroy every local durable byte one operative owns — its Cell WALs,
+  Destroy every local durable byte one operator owns — its Cell WALs,
   snapshots, task-journal, input log and class sidecars — and
   evict its in-memory class declarations.
 
-  Scoped to the operative's own class directory rather than the whole state
+  Scoped to the operator's own class directory rather than the whole state
   root: the suite shares one controller, so wiping the root would take other
-  tests' state with it. For the operative under drill the effect is identical —
+  tests' state with it. For the operator under drill the effect is identical —
   nothing of it survives locally, and only the remote manifest can bring it
   back.
   """
-  def destroy_local_state(operative_id) do
+  def destroy_local_state(operator_id) do
     reserved =
       Enum.map(
         Paths.reserved_cell_keys(),
-        &{operative_id, operative_id, &1}
+        &{operator_id, operator_id, &1}
       )
 
     # `delete_cell/1` is the existing hard-delete: it stops the writer, drops
@@ -164,17 +164,17 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
     # be graceful — a killed writer is transient-restarted, and the replacement
     # would hold an open handle to the unlinked file while hydration writes a
     # new one underneath it.
-    for cell_id <- Paths.cells_of(operative_id) ++ reserved do
+    for cell_id <- Paths.cells_of(operator_id) ++ reserved do
       Flezha.State.Supervisor.delete_cell(cell_id)
     end
 
-    case Flezha.State.Supervisor.lookup({operative_id, :input_log}) do
+    case Flezha.State.Supervisor.lookup({operator_id, :input_log}) do
       {:ok, pid} -> GenServer.stop(pid, :normal, 5_000)
       :error -> :ok
     end
 
-    File.rm_rf!(Paths.class_dir(operative_id))
-    ClassRegistry.delete(operative_id)
+    File.rm_rf!(Paths.class_dir(operator_id))
+    ClassRegistry.delete(operator_id)
     :ok
   catch
     :exit, _ -> :ok
@@ -186,14 +186,14 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   end
 
   @doc """
-  Stop every operative and every runner a namespace holds, tolerating a manager
+  Stop every operator and every runner a namespace holds, tolerating a manager
   that is already gone. The teardown every system-tier module owes its
   namespace: a leaked Overwatch or runner outlives the module and the next one
   boots into it.
   """
   @spec stop_namespace(binary()) :: :ok
   def stop_namespace(namespace) do
-    for stop <- [&OperativeManager.stop_all_operatives/1, &FleetManager.stop_namespace/1] do
+    for stop <- [&OperatorManager.stop_all_operators/1, &FleetManager.stop_namespace/1] do
       try do
         stop.(namespace)
       catch
@@ -209,7 +209,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   end
 
   @doc """
-  A prefixed id under the operative-id cap. The prefix gives, never the counter:
+  A prefixed id under the operator-id cap. The prefix gives, never the counter:
   three call sites compute their prefix, so no rule about call sites can hold
   the bound, and a reserved digit count would only move the cliff. Truncation
   engages only where the id would otherwise be refused, so an id that fits is
@@ -221,7 +221,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   @spec unique(binary(), integer()) :: binary()
   def unique(prefix, counter) do
     suffix = "_" <> Integer.to_string(counter)
-    binary_slice(prefix, 0, max(Identificator.limit(:operative) - byte_size(suffix), 0)) <> suffix
+    binary_slice(prefix, 0, max(Identificator.limit(:operator) - byte_size(suffix), 0)) <> suffix
   end
 
   @doc """
@@ -236,12 +236,12 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
     Path.join(dir, "runner.id")
   end
 
-  # `operative_id` is unused: the namespace is this scenario's alone, so its whole
+  # `operator_id` is unused: the namespace is this scenario's alone, so its whole
   # state tree goes and every class under it with it. It stays in the signature
   # because every caller names what it created.
-  def cleanup(namespace, _operative_id, id_path) do
+  def cleanup(namespace, _operator_id, id_path) do
     try do
-      OperativeManager.stop_all_operatives(namespace)
+      OperatorManager.stop_all_operators(namespace)
     catch
       _, _ -> :ok
     end
@@ -261,15 +261,15 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   end
 
   @doc """
-  Return once every Cell of `operative_id` has a transactional outbox that
+  Return once every Cell of `operator_id` has a transactional outbox that
   owes nothing: each durable entry dispatched and confirmed by its sinks.
   Everything the sink will ever forward for the inputs so far is in the
   caller's mailbox after this.
   """
-  def await_outbox_drained(operative_id, timeout_ms \\ 30_000) do
+  def await_outbox_drained(operator_id, timeout_ms \\ 30_000) do
     NodeTestHelper.wait_until(
       fn ->
-        case Paths.cells_of(operative_id) do
+        case Paths.cells_of(operator_id) do
           [] -> false
           cells -> Enum.all?(cells, &outbox_drained?/1)
         end
@@ -305,25 +305,25 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   @doc """
   Feed `input` until `expected` comes back on the sink, or the deadline passes.
 
-  One frame is not enough to prove an operative cannot produce: a freshly bound
-  operative's sink plugin activates asynchronously, and an emit that beats its
+  One frame is not enough to prove an operator cannot produce: a freshly bound
+  operator's sink plugin activates asynchronously, and an emit that beats its
   subscription is dropped with nothing to re-drive it. A drill asserts that the
-  operative CAN produce, never that one particular frame sufficed — so the
+  operator CAN produce, never that one particular frame sufficed — so the
   input is re-sent, exactly as a real producer would.
   """
   @spec produces?(binary(), binary(), binary(), binary(), non_neg_integer()) :: boolean()
-  def produces?(operative_id, namespace, input, expected, timeout) do
+  def produces?(operator_id, namespace, input, expected, timeout) do
     deadline = System.monotonic_time(:millisecond) + timeout
-    feed_until(operative_id, namespace, input, expected, deadline)
+    feed_until(operator_id, namespace, input, expected, deadline)
   end
 
-  defp feed_until(operative_id, namespace, input, expected, deadline) do
-    OperativeManager.send_io(operative_id, namespace, input, %{"input_type" => "2"})
+  defp feed_until(operator_id, namespace, input, expected, deadline) do
+    OperatorManager.send_io(operator_id, namespace, input, %{"input_type" => "2"})
 
     cond do
       await_output(expected, 1_000) -> true
       System.monotonic_time(:millisecond) >= deadline -> false
-      true -> feed_until(operative_id, namespace, input, expected, deadline)
+      true -> feed_until(operator_id, namespace, input, expected, deadline)
     end
   end
 

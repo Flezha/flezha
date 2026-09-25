@@ -2,7 +2,7 @@ defmodule FlezhaTest.System.CellTimersE2ETest do
   @moduledoc """
   End-to-end proof for per-Cell timers (`cell-timers`) against a live
   runner: an input arms an idle deadline, the quiet period
-  elapses, the Operative's timer wheel fires it, and `on_timer`'s Change shows
+  elapses, the Operator's timer wheel fires it, and `on_timer`'s Change shows
   up in the Cell's state — with no further input to carry it.
 
   That last clause is the whole point. Every other stream path in the system
@@ -20,10 +20,10 @@ defmodule FlezhaTest.System.CellTimersE2ETest do
 
   use FlezhaTest.SystemCase, capability: :cell_timers
 
-  alias Flezha.Operative.Builder
+  alias Flezha.Operator.Builder
   alias Flezha.Payloader
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.TierE2EHarness
 
@@ -49,35 +49,35 @@ defmodule FlezhaTest.System.CellTimersE2ETest do
     {port, ce_id} = start_runner(namespace)
     on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)
 
-    operative_id = "timer_e2e_#{System.unique_integer([:positive])}"
-    assert {:ok, info} = start_operative(namespace, operative_id)
+    operator_id = "timer_e2e_#{System.unique_integer([:positive])}"
+    assert {:ok, info} = start_operator(namespace, operator_id)
     assert info.runner_id == ce_id
-    await_readable(namespace, operative_id)
+    await_readable(namespace, operator_id)
 
-    OperativeManager.send_io(operative_id, namespace, "hello", %{"input_type" => "2"})
+    OperatorManager.send_io(operator_id, namespace, "hello", %{"input_type" => "2"})
 
     assert NodeTestHelper.wait_until(
-             fn -> touched(namespace, operative_id) == ["hello"] end,
+             fn -> touched(namespace, operator_id) == ["hello"] end,
              15_000,
              100
            ),
            "the input must reach the Cell before the deadline is asserted on"
 
     assert NodeTestHelper.wait_until(
-             fn -> closed_at(namespace, operative_id) != [] end,
+             fn -> closed_at(namespace, operator_id) != [] end,
              15_000,
              100
            ),
-           "the idle timer must fire with no further input, got #{inspect(state_of(namespace, operative_id))}"
+           "the idle timer must fire with no further input, got #{inspect(state_of(namespace, operator_id))}"
 
-    [fired_at] = closed_at(namespace, operative_id)
+    [fired_at] = closed_at(namespace, operator_id)
 
     assert is_integer(fired_at) and fired_at > 0,
            "`on_timer` records the SCHEDULED timestamp it was handed"
   end
 
   # Re-seat the Cell from disk while the timer is still pending. Killing the
-  # Overwatch drives a fresh bind: the controller re-issues `AddOperative`,
+  # Overwatch drives a fresh bind: the controller re-issues `AddOperator`,
   # which rebuilds the SDK-side instance — new slots, new wheel, no in-memory
   # pending set — and then `RestoreInitState`. So the only thing that can still
   # close the session is a timer folded back out of the change log.
@@ -86,30 +86,30 @@ defmodule FlezhaTest.System.CellTimersE2ETest do
     {port, _ce_id} = start_runner(namespace)
     on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)
 
-    operative_id = "timer_crash_e2e_#{System.unique_integer([:positive])}"
-    assert {:ok, _info} = start_operative(namespace, operative_id)
-    await_readable(namespace, operative_id)
+    operator_id = "timer_crash_e2e_#{System.unique_integer([:positive])}"
+    assert {:ok, _info} = start_operator(namespace, operator_id)
+    await_readable(namespace, operator_id)
 
-    OperativeManager.send_io(operative_id, namespace, "hello", %{"input_type" => "2"})
+    OperatorManager.send_io(operator_id, namespace, "hello", %{"input_type" => "2"})
 
     assert NodeTestHelper.wait_until(
-             fn -> touched(namespace, operative_id) == ["hello"] end,
+             fn -> touched(namespace, operator_id) == ["hello"] end,
              15_000,
              100
            ),
-           "the registration must be durable before the Cell is re-seated; state=#{inspect(state_of(namespace, operative_id))}"
+           "the registration must be durable before the Cell is re-seated; state=#{inspect(state_of(namespace, operator_id))}"
 
-    TierE2EHarness.force_fresh_rebind(namespace, operative_id)
+    TierE2EHarness.force_fresh_rebind(namespace, operator_id)
 
     assert NodeTestHelper.wait_until(
-             fn -> touched(namespace, operative_id) == ["hello"] end,
+             fn -> touched(namespace, operator_id) == ["hello"] end,
              30_000,
              100
            ),
            "the restore must rebuild the Cell before its timer is asserted on"
 
     assert NodeTestHelper.wait_until(
-             fn -> closed_at(namespace, operative_id) != [] end,
+             fn -> closed_at(namespace, operator_id) != [] end,
              30_000,
              100
            ),
@@ -119,9 +119,9 @@ defmodule FlezhaTest.System.CellTimersE2ETest do
   # `send_io` is fire-and-forget: an input sent before the Cell is live is
   # simply gone (this class has no input log and no durable inbox), and the
   # timer that input would have armed with it.
-  defp await_readable(namespace, operative_id) do
+  defp await_readable(namespace, operator_id) do
     assert NodeTestHelper.wait_until(
-             fn -> state_of(namespace, operative_id) != nil end,
+             fn -> state_of(namespace, operator_id) != nil end,
              30_000,
              100
            ),
@@ -131,7 +131,7 @@ defmodule FlezhaTest.System.CellTimersE2ETest do
   defp start_runner(namespace) do
     on_exit(fn ->
       try do
-        OperativeManager.stop_all_operatives(namespace)
+        OperatorManager.stop_all_operators(namespace)
         FleetManager.stop_namespace(namespace)
       catch
         _, _ -> :ok
@@ -143,10 +143,10 @@ defmodule FlezhaTest.System.CellTimersE2ETest do
     )
   end
 
-  defp start_operative(namespace, operative_id) do
+  defp start_operator(namespace, operator_id) do
     result =
-      OperativeManager.start_operative(namespace, %Builder{
-        id: operative_id,
+      OperatorManager.start_operator(namespace, %Builder{
+        id: operator_id,
         factory_id: @factory,
         init_values: %{},
         opts: []
@@ -155,8 +155,8 @@ defmodule FlezhaTest.System.CellTimersE2ETest do
     result
   end
 
-  defp state_of(namespace, operative_id) do
-    case OperativeManager.get_cell_state(namespace, operative_id) do
+  defp state_of(namespace, operator_id) do
+    case OperatorManager.get_cell_state(namespace, operator_id) do
       {:ok, json} ->
         case Payloader.json_to_map(json) do
           %{@tasklet => cell} -> cell
@@ -168,15 +168,15 @@ defmodule FlezhaTest.System.CellTimersE2ETest do
     end
   end
 
-  defp touched(namespace, operative_id) do
-    case state_of(namespace, operative_id) do
+  defp touched(namespace, operator_id) do
+    case state_of(namespace, operator_id) do
       %{"touched" => t} -> t
       _ -> nil
     end
   end
 
-  defp closed_at(namespace, operative_id) do
-    case state_of(namespace, operative_id) do
+  defp closed_at(namespace, operator_id) do
+    case state_of(namespace, operator_id) do
       %{"closedAt" => c} when is_list(c) -> c
       %{"closed_at" => c} when is_list(c) -> c
       _ -> []

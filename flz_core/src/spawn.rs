@@ -1,7 +1,7 @@
-//! Tasklet-requested spawn of a workflow operative
+//! Tasklet-requested spawn of a bounded operator
 //! (`tasklet-requested-spawn`).
 //!
-//! [`request`] ships one `SpawnWorkflowRequest` on the control plane and hands
+//! [`request`] ships one `SpawnBoundedRequest` on the control plane and hands
 //! the caller a [`SpawnHandle`] at once. The request never blocks the
 //! tasklet and its failure is never the tasklet's failure: everything the
 //! controller decides comes back through the handle, and a handle nobody reads
@@ -115,8 +115,8 @@ pub enum SpawnError {
     #[error("no connected runner registers factory `{0}`")]
     FactoryUnknown(String),
 
-    #[error("factory `{0}` is a stream, and only a workflow is spawned")]
-    FactoryNotWorkflow(String),
+    #[error("factory `{0}` is unbounded, and only a bounded operator is spawned")]
+    FactoryNotBounded(String),
 
     #[error("the controller refused the spawn: {0}")]
     Refused(String),
@@ -133,7 +133,7 @@ impl SpawnError {
         match self {
             SpawnError::AlreadyRunning(_) => "already_running",
             SpawnError::FactoryUnknown(_) => "factory_unknown",
-            SpawnError::FactoryNotWorkflow(_) => "factory_not_workflow",
+            SpawnError::FactoryNotBounded(_) => "factory_not_bounded",
             SpawnError::Refused(_) => "refused",
             SpawnError::Timeout => "timeout",
             SpawnError::Unavailable => "unavailable",
@@ -307,7 +307,7 @@ impl Drop for SpawnHandle {
 }
 
 /// Map a controller reply onto the public result. `already_running`,
-/// `factory_unknown` and `factory_not_workflow` arrive as outcomes rather than
+/// `factory_unknown` and `factory_not_bounded` arrive as outcomes rather than
 /// errors because they are the controller's decision, not a failed exchange.
 fn interpret(
     instance_id: &str,
@@ -326,9 +326,7 @@ fn interpret(
         "delivered" => SpawnOutcome::Delivered,
         "already_running" => return Err(SpawnError::AlreadyRunning(id.to_string())),
         "factory_unknown" => return Err(SpawnError::FactoryUnknown(factory_id.to_string())),
-        "factory_not_workflow" => {
-            return Err(SpawnError::FactoryNotWorkflow(factory_id.to_string()))
-        }
+        "factory_not_bounded" => return Err(SpawnError::FactoryNotBounded(factory_id.to_string())),
         other => return Err(SpawnError::Refused(format!("unknown outcome `{other}`"))),
     };
     Ok(SpawnResult {
@@ -339,7 +337,7 @@ fn interpret(
 
 fn warn(instance_id: &str, factory_id: &str, error: &SpawnError) {
     crate::shutdown::say(&format!(
-        "[flezha] spawn_workflow(factory `{factory_id}`, id `{instance_id}`) failed: {error}"
+        "[flezha] spawn_bounded(factory `{factory_id}`, id `{instance_id}`) failed: {error}"
     ));
 }
 
@@ -391,15 +389,14 @@ pub fn request(
         return SpawnHandle::resolved(id, factory_id, Ok(skipped));
     }
 
-    let reference_id = format!("spawn-workflow-{}-{}", id, crate::util::nonce_suffix());
-    let command = crate::pb::command_request::Command::SpawnWorkflowRequest(
-        crate::pb::SpawnWorkflowRequest {
+    let reference_id = format!("spawn-bounded-{}-{}", id, crate::util::nonce_suffix());
+    let command =
+        crate::pb::command_request::Command::SpawnBoundedRequest(crate::pb::SpawnBoundedRequest {
             instance_id: id.clone(),
             factory_id: factory_id.clone(),
             payload,
             if_running: if_running.as_wire().to_string(),
-        },
-    );
+        });
 
     let deadline = Instant::now() + SPAWN_RESULT_TIMEOUT;
     match crate::shutdown::ask(reference_id.clone(), command) {
@@ -479,9 +476,9 @@ mod tests {
             Err(SpawnError::FactoryUnknown("worker".to_string()))
         );
         assert_eq!(
-            answer(Ok(encode_ack("factory_not_workflow", ""))),
-            Err(SpawnError::FactoryNotWorkflow("worker".to_string())),
-            "a stream factory is its own answer, neither unknown nor refused"
+            answer(Ok(encode_ack("factory_not_bounded", ""))),
+            Err(SpawnError::FactoryNotBounded("worker".to_string())),
+            "an unbounded factory is its own answer, neither unknown nor refused"
         );
     }
 
@@ -570,7 +567,7 @@ mod tests {
         let words: Vec<&str> = [
             SpawnError::AlreadyRunning("w1".to_string()),
             SpawnError::FactoryUnknown("worker".to_string()),
-            SpawnError::FactoryNotWorkflow("worker".to_string()),
+            SpawnError::FactoryNotBounded("worker".to_string()),
             SpawnError::Refused("quota".to_string()),
             SpawnError::Timeout,
             SpawnError::Unavailable,
@@ -583,7 +580,7 @@ mod tests {
             [
                 "already_running",
                 "factory_unknown",
-                "factory_not_workflow",
+                "factory_not_bounded",
                 "refused",
                 "timeout",
                 "unavailable"

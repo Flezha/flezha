@@ -1,7 +1,7 @@
 defmodule Flezha.Service.Cli.State do
   @moduledoc """
   `flz state get | list | at | rotate | delete | outbox | retention` and
-  `flz operative replay` — the Cell-scoped state reads and writes.
+  `flz operator replay` — the Cell-scoped state reads and writes.
 
   Every verb here is judged in the namespace that holds the Cell: the row a
   path or a class resolves to, read only for a bound caller whose role grants
@@ -9,13 +9,13 @@ defmodule Flezha.Service.Cli.State do
   """
 
   alias Flezha.Config
-  alias Flezha.Operative.ClassRegistry
-  alias Flezha.Operative.Lookup
-  alias Flezha.Operative.PartitionGroup
-  alias Flezha.Operative.Replay
+  alias Flezha.Operator.ClassRegistry
+  alias Flezha.Operator.Lookup
+  alias Flezha.Operator.PartitionGroup
+  alias Flezha.Operator.Replay
   alias Flezha.Partition
   alias Flezha.Service.Cli.Context
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias Flezha.State.Commands
   alias Flezha.State.DurabilityTier
   alias Flezha.State.InputLog
@@ -30,8 +30,8 @@ defmodule Flezha.Service.Cli.State do
   # ---------- The rows ----------
 
   @doc "The row a `state list` is judged by: the class's namespace."
-  def class_row([operative_class | _]),
-    do: {:ok, %{namespace: OperativeManager.namespace_of_class(operative_class)}}
+  def class_row([operator_class | _]),
+    do: {:ok, %{namespace: OperatorManager.namespace_of_class(operator_class)}}
 
   @doc """
   The row a `state at | rotate | outbox` is judged by: a Cell with persisted
@@ -44,9 +44,8 @@ defmodule Flezha.Service.Cli.State do
 
   defp cell_row([path_string | _], verb) do
     case parse_state_path(path_string) do
-      {:ok, {operative_class, _, _} = cell_id} ->
-        {:ok,
-         %{namespace: OperativeManager.namespace_of_class(operative_class), cell_id: cell_id}}
+      {:ok, {operator_class, _, _} = cell_id} ->
+        {:ok, %{namespace: OperatorManager.namespace_of_class(operator_class), cell_id: cell_id}}
 
       {:error, reason} ->
         Context.fail!("#{verb}: #{reason}")
@@ -60,19 +59,19 @@ defmodule Flezha.Service.Cli.State do
   def split_row([path_string | _]) do
     case String.split(path_string, "/", parts: 3) do
       [rc, sh, pk] ->
-        {:ok, %{namespace: OperativeManager.namespace_of_class(rc), cell_id: {rc, sh, pk}}}
+        {:ok, %{namespace: OperatorManager.namespace_of_class(rc), cell_id: {rc, sh, pk}}}
 
       _ ->
         Context.fail!(
-          "state delete: expected <operative>/<tasklet>/<cell_key>; got #{path_string}"
+          "state delete: expected <operator>/<tasklet>/<cell_key>; got #{path_string}"
         )
     end
   end
 
-  @doc "The row a `state get` is judged by: the live Operative's namespace and the members that hold the key."
+  @doc "The row a `state get` is judged by: the live Operator's namespace and the members that hold the key."
   def live_row([path_string | _]) do
-    with {:ok, {operative_id, tasklet, cell_key}} <- parse_live_path(path_string),
-         {:ok, namespace, targets} <- resolve_state_targets(operative_id, cell_key) do
+    with {:ok, {operator_id, tasklet, cell_key}} <- parse_live_path(path_string),
+         {:ok, namespace, targets} <- resolve_state_targets(operator_id, cell_key) do
       {:ok, %{namespace: namespace, targets: targets, tasklet: tasklet, cell_key: cell_key}}
     else
       {:error, reason} ->
@@ -80,12 +79,11 @@ defmodule Flezha.Service.Cli.State do
     end
   end
 
-  @doc "The row an `operative replay` is judged by: the Cell's class namespace."
+  @doc "The row an `operator replay` is judged by: the Cell's class namespace."
   def replay_row([_namespace, path_string | _]) do
     case parse_state_path(path_string) do
-      {:ok, {operative_class, _, _} = cell_id} ->
-        {:ok,
-         %{namespace: OperativeManager.namespace_of_class(operative_class), cell_id: cell_id}}
+      {:ok, {operator_class, _, _} = cell_id} ->
+        {:ok, %{namespace: OperatorManager.namespace_of_class(operator_class), cell_id: cell_id}}
 
       {:error, reason} ->
         Context.fail!("replay: #{Context.format_reason(reason)}")
@@ -95,7 +93,7 @@ defmodule Flezha.Service.Cli.State do
   # ---------- The verbs ----------
 
   @doc """
-  `flz state get <operative/tasklet[/cell_key]>` — the CURRENT in-memory
+  `flz state get <operator/tasklet[/cell_key]>` — the CURRENT in-memory
   state of one live Cell (or of one Tasklet's Cells), as JSON, with the
   `change_seq` it was read at.
 
@@ -117,29 +115,29 @@ defmodule Flezha.Service.Cli.State do
     end
   end
 
-  # The read resolves against the namespace that actually holds the Operative
+  # The read resolves against the namespace that actually holds the Operator
   # rather than assuming `default`.
   #
-  # A partition group id names no operative — it names N — so a keyed read
+  # A partition group id names no operator — it names N — so a keyed read
   # resolves the one member owning the key's group, and a tasklet-level read
   # fans out over every member and merges: each holds only its own share.
-  defp resolve_state_targets(operative_id, cell_key) do
-    case OperativeManager.namespace_of(operative_id) do
+  defp resolve_state_targets(operator_id, cell_key) do
+    case OperatorManager.namespace_of(operator_id) do
       {:ok, namespace} ->
-        {:ok, namespace, [operative_id]}
+        {:ok, namespace, [operator_id]}
 
       :error ->
-        with {:ok, namespace} <- group_namespace(operative_id),
-             members = PartitionGroup.members(namespace, operative_id) do
+        with {:ok, namespace} <- group_namespace(operator_id),
+             members = PartitionGroup.members(namespace, operator_id) do
           {:ok, namespace, owning_members(members, cell_key)}
         end
     end
   end
 
-  defp group_namespace(operative_id) do
-    case OperativeManager.namespace_of_group(operative_id) do
+  defp group_namespace(operator_id) do
+    case OperatorManager.namespace_of_group(operator_id) do
       {:ok, namespace} -> {:ok, namespace}
-      :error -> {:error, {:no_operative, operative_id}}
+      :error -> {:error, {:no_operator, operator_id}}
     end
   end
 
@@ -152,8 +150,8 @@ defmodule Flezha.Service.Cli.State do
     end
   end
 
-  defp read_cell_state(namespace, [operative_id], tasklet, cell_key) do
-    OperativeManager.get_cell_state(namespace, operative_id, %{
+  defp read_cell_state(namespace, [operator_id], tasklet, cell_key) do
+    OperatorManager.get_cell_state(namespace, operator_id, %{
       tasklet: tasklet,
       cell_key: cell_key
     })
@@ -165,7 +163,7 @@ defmodule Flezha.Service.Cli.State do
     |> Enum.filter(&match?({:ok, _json, _seq}, &1))
     |> case do
       [] ->
-        {:error, {:no_operative, hd(targets)}}
+        {:error, {:no_operator, hd(targets)}}
 
       reads ->
         merged =
@@ -187,24 +185,24 @@ defmodule Flezha.Service.Cli.State do
 
   defp deep_merge(_left, right), do: right
 
-  # `<operative>/<tasklet>[/<cell_key>]` for a LIVE read. No on-disk check,
+  # `<operator>/<tasklet>[/<cell_key>]` for a LIVE read. No on-disk check,
   # unlike `parse_state_path/1`: a resident Cell may have no WAL yet, and a
   # persistence-disabled one never will.
   defp parse_live_path(path_string) do
     case String.split(path_string, "/", parts: 3) do
-      [operative, tasklet, cell_key] when operative != "" and tasklet != "" ->
-        {:ok, {operative, tasklet, cell_key}}
+      [operator, tasklet, cell_key] when operator != "" and tasklet != "" ->
+        {:ok, {operator, tasklet, cell_key}}
 
-      [operative, tasklet] when operative != "" and tasklet != "" ->
-        {:ok, {operative, tasklet, nil}}
+      [operator, tasklet] when operator != "" and tasklet != "" ->
+        {:ok, {operator, tasklet, nil}}
 
       _ ->
-        {:error, {:bad_path, "expected <operative>/<tasklet>[/<cell_key>]; got #{path_string}"}}
+        {:error, {:bad_path, "expected <operator>/<tasklet>[/<cell_key>]; got #{path_string}"}}
     end
   end
 
-  # Same ceiling the workflow handoff uses — a whole-Tasklet read of a big
-  # Operative is the way to blow it, and naming the narrowing selector is the
+  # Same ceiling the bounded operator handoff uses — a whole-Tasklet read of a big
+  # Operator is the way to blow it, and naming the narrowing selector is the
   # way out.
   defp within_read_ceiling(json) do
     limit = PersistenceResolver.wal_high_watermark_bytes()
@@ -233,8 +231,8 @@ defmodule Flezha.Service.Cli.State do
 
   defp render_state_get_error({:bad_path, message}), do: message
 
-  defp render_state_get_error({:no_operative, operative_id}),
-    do: "no running operative `#{operative_id}` in any namespace"
+  defp render_state_get_error({:no_operator, operator_id}),
+    do: "no running operator `#{operator_id}` in any namespace"
 
   defp render_state_get_error({:not_resident, :suspended}),
     do:
@@ -243,7 +241,7 @@ defmodule Flezha.Service.Cli.State do
 
   defp render_state_get_error({:not_resident, :unbound}),
     do:
-      "the Operative is not bound to a runner, so nothing holds its state — " <>
+      "the Operator is not bound to a runner, so nothing holds its state — " <>
         "read its durable state with `flz state at`"
 
   defp render_state_get_error(:persistence_off),
@@ -254,7 +252,7 @@ defmodule Flezha.Service.Cli.State do
   defp render_state_get_error({:oversized_state, bytes}),
     do:
       "the selected state is #{bytes} bytes, over the :wal_high_watermark_bytes " <>
-        "ceiling — narrow the read with <operative>/<tasklet>/<cell_key>"
+        "ceiling — narrow the read with <operator>/<tasklet>/<cell_key>"
 
   defp render_state_get_error(reason) when is_binary(reason) do
     # SDK refusals lead with a canonical token; the not-resident family points
@@ -269,13 +267,13 @@ defmodule Flezha.Service.Cli.State do
   defp render_state_get_error(reason), do: Context.format_reason(reason)
 
   @doc """
-  `flz state list <operative_class>` — print one row per Cell under
-  `<operative_class>` with `wal_seq`, `snapshot_seq`, `wal_bytes`.
+  `flz state list <operator_class>` — print one row per Cell under
+  `<operator_class>` with `wal_seq`, `snapshot_seq`, `wal_bytes`.
   """
-  def state_list(operative_class, output_format, _call) do
+  def state_list(operator_class, output_format, _call) do
     rows =
       for {{rc, sh, pk} = pid, counters} <- Metrics.snapshot_all(),
-          rc == operative_class do
+          rc == operator_class do
         wal_bytes =
           case :file.read_file_info(Paths.wal_path(pid)) do
             {:ok, info} -> elem(info, 1)
@@ -283,7 +281,7 @@ defmodule Flezha.Service.Cli.State do
           end
 
         %{
-          operative_class: rc,
+          operator_class: rc,
           tasklet_id: sh,
           cell_key: pk,
           wal_seq: counters.wal_seq,
@@ -297,10 +295,10 @@ defmodule Flezha.Service.Cli.State do
 
     case output_format do
       "json" ->
-        IO.puts(Jason.encode!(%{operative_class: operative_class, cells: rows}))
+        IO.puts(Jason.encode!(%{operator_class: operator_class, cells: rows}))
 
       _ ->
-        IO.puts("Cells under operative #{operative_class}:\n")
+        IO.puts("Cells under operator #{operator_class}:\n")
         Enum.each(rows, &print_state_row/1)
     end
   end
@@ -317,8 +315,8 @@ defmodule Flezha.Service.Cli.State do
   end
 
   @doc """
-  `flz state at <operative/tasklet/cell> <seq | timestamp>` — point-in-time
-  query. Resolves the path string into a `(runner_id, operative,
+  `flz state at <operator/tasklet/cell> <seq | timestamp>` — point-in-time
+  query. Resolves the path string into a `(runner_id, operator,
   tasklet, cell_key)` by scanning the on-disk state tree (one match
   expected; ambiguous paths print all matches and exit non-zero).
   """
@@ -354,7 +352,7 @@ defmodule Flezha.Service.Cli.State do
   end
 
   @doc """
-  `flz state rotate <operative/tasklet/cell>` — force a compaction by
+  `flz state rotate <operator/tasklet/cell>` — force a compaction by
   dispatching a `CompactCell` to the SDK.
   """
   def state_rotate(_path_string, %{row: %{cell_id: {rc, sh, pk}}}) do
@@ -371,10 +369,10 @@ defmodule Flezha.Service.Cli.State do
   end
 
   @doc """
-  `flz state delete <operative/tasklet/key>` — hard-delete one Cell's
+  `flz state delete <operator/tasklet/key>` — hard-delete one Cell's
   persisted state (WAL + snapshots + outbox-dedup). Idempotent: deleting
   a cell with no on-disk state still succeeds. This is the
-  operator-driven, confirmation-returning counterpart to the SDK reaper's
+  caller-driven, confirmation-returning counterpart to the SDK reaper's
   fire-and-forget `delete_cell_state` send (Decision 8).
   """
   def state_delete(_path_string, %{row: %{cell_id: {rc, sh, pk}}}) do
@@ -383,10 +381,10 @@ defmodule Flezha.Service.Cli.State do
   end
 
   @doc """
-  `flz state outbox <operative/tasklet/key>`: outbox status for one Cell
-  (effectively-once tier or durable workflow): durable seq, flush cursor,
-  epoch, undispatched lag, the entries a workflow Cell holds until its stage
-  commits, and the operative's input-log min-watermark.
+  `flz state outbox <operator/tasklet/key>`: outbox status for one Cell
+  (effectively-once tier or durable bounded operator): durable seq, flush cursor,
+  epoch, undispatched lag, the entries a bounded operator Cell holds until its stage
+  commits, and the operator's input-log min-watermark.
   """
   def state_outbox(_path_string, %{row: %{cell_id: {rc, sh, pk} = cell_id}}) do
     status =
@@ -412,22 +410,22 @@ defmodule Flezha.Service.Cli.State do
   end
 
   @doc """
-  `flz operative replay <operative/tasklet/key> --from <seq|ts>` — re-run a
+  `flz operator replay <operator/tasklet/key> --from <seq|ts>` — re-run a
   Cell's retained inputs from a point in the past through the current code.
 
-  The same transaction a late input triggers automatically, with the operator
+  The same transaction a late input triggers automatically, with the caller
   choosing the baseline instead of a late event: rewind the Cell there, bump
   the epoch, and replay the input log forward. A conforming keyed sink overwrites
   the stale rows by natural key, which is what makes "deploy a fix, heal the
   recent past" a single verb rather than a migration.
 
-  A Cell of a workflow is refused before anything is rewound.
+  A Cell of a bounded operator is refused before anything is rewound.
   """
-  def operative_replay(_namespace, path_string, from_string, %{row: %{cell_id: cell_id}}) do
-    {operative_class, _, _} = cell_id
+  def operator_replay(_namespace, path_string, from_string, %{row: %{cell_id: cell_id}}) do
+    {operator_class, _, _} = cell_id
 
-    with :ok <- replayable(operative_class),
-         {:ok, overwatch} <- resolve_replay_overwatch(operative_class),
+    with :ok <- replayable(operator_class),
+         {:ok, overwatch} <- resolve_replay_overwatch(operator_class),
          {:ok, target_seq} <- resolve_replay_seq(cell_id, from_string) do
       Replay.replay_from(overwatch, cell_id, target_seq)
 
@@ -436,12 +434,12 @@ defmodule Flezha.Service.Cli.State do
           "bumped epoch; a keyed sink overwrites the stale rows by natural key."
       )
     else
-      {:error, :workflow_cell} ->
+      {:error, :bounded_cell} ->
         Context.fail!(
-          "replay: #{path_string} is a Cell of a workflow. A workflow's baseline is a " <>
+          "replay: #{path_string} is a Cell of a bounded operator. A bounded operator's baseline is a " <>
             "committed iteration in its journal, and its commit records carry no consumed " <>
             "offset at a WAL seq, so there is no baseline to rewind to. Use " <>
-            "`flz operative rewind` to take a loop back."
+            "`flz operator rewind` to take a loop back."
         )
 
       {:error, %{kind: :outside_retention, earliest_available: earliest}} ->
@@ -455,17 +453,17 @@ defmodule Flezha.Service.Cli.State do
     end
   end
 
-  defp replayable(operative_class) do
-    case ClassRegistry.get(operative_class) do
-      :workflow -> {:error, :workflow_cell}
+  defp replayable(operator_class) do
+    case ClassRegistry.get(operator_class) do
+      :bounded -> {:error, :bounded_cell}
       _stream -> :ok
     end
   end
 
-  defp resolve_replay_overwatch(operative_class) do
-    case Lookup.overwatch(operative_class) do
+  defp resolve_replay_overwatch(operator_class) do
+    case Lookup.overwatch(operator_class) do
       {:ok, pid} -> {:ok, pid}
-      {:error, _reason} -> {:error, {:not_running, operative_class}}
+      {:error, _reason} -> {:error, {:not_running, operator_class}}
     end
   end
 
@@ -479,19 +477,19 @@ defmodule Flezha.Service.Cli.State do
   end
 
   @doc """
-  `flz state retention <operative_class> <hours>` — set runtime retention
-  for `<operative_class>`. Persisted across the next Application boot only
+  `flz state retention <operator_class> <hours>` — set runtime retention
+  for `<operator_class>`. Persisted across the next Application boot only
   if the runner separately writes it to runtime.exs.
   """
-  def state_retention(operative_class, hours_string, _call) do
+  def state_retention(operator_class, hours_string, _call) do
     case Context.integer!(hours_string, "<hours>") do
       hours when hours >= 0 ->
         current = Config.get(:time_travel_retention_hours)
-        updated = Map.put(current, operative_class, hours)
+        updated = Map.put(current, operator_class, hours)
         Application.put_env(:flezha, :time_travel_retention_hours, updated, persistent: true)
 
         IO.puts(
-          "retention[#{operative_class}] = #{hours} hours (in-memory; persist via runtime.exs)"
+          "retention[#{operator_class}] = #{hours} hours (in-memory; persist via runtime.exs)"
         )
 
       _ ->
@@ -502,7 +500,7 @@ defmodule Flezha.Service.Cli.State do
   defp parse_state_path(path_string) do
     case String.split(path_string, "/", parts: 3) do
       [rc, sh, pk] ->
-        # A controller that adopted this operative may hold it only remotely.
+        # A controller that adopted this operator may hold it only remotely.
         # The manifest is per-Cell, so answering about one key fetches one
         # key's artifacts — never the whole Tasklet. Inert with no backend.
         if has_persisted_state?(rc, sh, pk) or hydrated_state?(rc, sh, pk) do
@@ -512,7 +510,7 @@ defmodule Flezha.Service.Cli.State do
         end
 
       _ ->
-        {:error, "expected <operative>/<tasklet>/<cell_key>; got #{path_string}"}
+        {:error, "expected <operator>/<tasklet>/<cell_key>; got #{path_string}"}
     end
   end
 

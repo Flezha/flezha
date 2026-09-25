@@ -1,13 +1,13 @@
 defmodule Flezha.Runner.StreamChannel.Records do
   @moduledoc """
-  The operative route cache, the ownership check, the durable-record fan-out
+  The operator route cache, the ownership check, the durable-record fan-out
   and the credit handshake.
 
   Every frame a runner sends on a Cell's write path arrives here: state
   changes, snapshots, deletions, compensation records, corrections and parks.
   Each is routed to the Cell's own writer. A frame from a session the
   takeover fence marked superseded is refused rather than written, and so is
-  one from a runner the operative's ownership record does not name
+  one from a runner the operator's ownership record does not name
   (`admit/3`), the check the control channel's requests are judged by too.
 
   Invariant: credit is granted per window and debited per record, so a runner
@@ -23,9 +23,9 @@ defmodule Flezha.Runner.StreamChannel.Records do
 
   alias Flezha.Config.Durations
   alias Flezha.Dlq.Store, as: DlqStore
-  alias Flezha.Operative.ClassRegistry
-  alias Flezha.Operative.Lookup
-  alias Flezha.Operative.Replay
+  alias Flezha.Operator.ClassRegistry
+  alias Flezha.Operator.Lookup
+  alias Flezha.Operator.Replay
   alias Flezha.Process.Watch
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
@@ -42,38 +42,37 @@ defmodule Flezha.Runner.StreamChannel.Records do
   require Logger
 
   @doc """
-  Write one operative's route into the cache: `operative_mapping` is what
+  Write one operator's route into the cache: `operator_mapping` is what
   `route/2` reads first, in front of `ClassRegistry` — which refuses a dead
   pid. A cache that is not invalidated by the death of the process it caches
   always wins that race, so the frame is cast into a dead process and lost
   with no drop counted. Every writer goes through here or `drop_route/2`,
   which monitor what the cache gains and demonitor what it loses.
   """
-  def put_route(state, operative_id, pids) do
-    state = drop_route(state, operative_id)
+  def put_route(state, operator_id, pids) do
+    state = drop_route(state, operator_id)
 
     %{
       state
-      | operative_mapping: Map.put(state.operative_mapping, operative_id, pids),
-        route_monitors:
-          Enum.reduce(pids, state.route_monitors, &Watch.watch(&2, &1, operative_id))
+      | operator_mapping: Map.put(state.operator_mapping, operator_id, pids),
+        route_monitors: Enum.reduce(pids, state.route_monitors, &Watch.watch(&2, &1, operator_id))
     }
   end
 
-  @doc "Forget one operative's route, releasing the monitors only it held."
-  def drop_route(state, operative_id) do
-    {pids, mapping} = Map.pop(state.operative_mapping, operative_id, [])
+  @doc "Forget one operator's route, releasing the monitors only it held."
+  def drop_route(state, operator_id) do
+    {pids, mapping} = Map.pop(state.operator_mapping, operator_id, [])
 
     %{
       state
-      | operative_mapping: mapping,
+      | operator_mapping: mapping,
         route_monitors:
-          Enum.reduce(pids, state.route_monitors, &Watch.unwatch(&2, &1, operative_id))
+          Enum.reduce(pids, state.route_monitors, &Watch.unwatch(&2, &1, operator_id))
     }
   end
 
   @doc """
-  A cached Overwatch died: forget every operative routing to it, so the next
+  A cached Overwatch died: forget every operator routing to it, so the next
   frame resolves through `ClassRegistry` and reaches the live replacement.
 
   Frames enqueued after the death sit behind the `:DOWN` in the same mailbox,
@@ -81,8 +80,8 @@ defmodule Flezha.Runner.StreamChannel.Records do
   target was still alive, which no design can save.
   """
   def forget_pid(state, pid) do
-    {operative_ids, monitors} = Watch.forget(state.route_monitors, pid)
-    Enum.reduce(operative_ids, %{state | route_monitors: monitors}, &drop_route(&2, &1))
+    {operator_ids, monitors} = Watch.forget(state.route_monitors, pid)
+    Enum.reduce(operator_ids, %{state | route_monitors: monitors}, &drop_route(&2, &1))
   end
 
   @doc """
@@ -91,16 +90,16 @@ defmodule Flezha.Runner.StreamChannel.Records do
 
   A route exists only in the owner session's channels, so a hit in the stream's
   mapping is the ownership check and costs nothing more. A miss is judged by
-  the operative's ownership record: the owner's or the pending runner's first
+  the operator's ownership record: the owner's or the pending runner's first
   output, which can beat the publish that seeds the route, is routed through
   the record's Overwatch and the route cached; a frame from any other runner
-  is refused (`admit/3`). A frame for an operative nobody records, or whose
+  is refused (`admit/3`). A frame for an operator nobody records, or whose
   recorded Overwatch is gone, is the only true drop, and it is counted.
   """
-  def route(state, operative_id) do
-    case Map.get(state.operative_mapping, operative_id, []) do
+  def route(state, operator_id) do
+    case Map.get(state.operator_mapping, operator_id, []) do
       [] ->
-        warm_route(state, operative_id)
+        warm_route(state, operator_id)
 
       [pid] ->
         {{:ok, pid}, state}
@@ -113,14 +112,14 @@ defmodule Flezha.Runner.StreamChannel.Records do
         # produced 22 frames/s on unchosen runners. Route to the
         # first pid only and surface the misuse via telemetry.
         Logger.error(
-          "[stream_channel] fan-out warning for operative=#{inspect(operative_id)}: " <>
+          "[stream_channel] fan-out warning for operator=#{inspect(operator_id)}: " <>
             "expected one pid, got #{length(pids)}: #{inspect(pids)}"
         )
 
         :telemetry.execute(
           [:flezha, :stream, :fanout_warning],
           %{count: 1, pid_count: length(pids)},
-          %{operative_id: operative_id, runner_id: state.runner_id}
+          %{operator_id: operator_id, runner_id: state.runner_id}
         )
 
         {{:ok, first}, state}
@@ -129,67 +128,67 @@ defmodule Flezha.Runner.StreamChannel.Records do
 
   # The liveness check runs on a miss only: per frame it costs a measurable
   # share of the output path.
-  defp warm_route(state, operative_id) do
-    case ownership(state, operative_id, :output) do
+  defp warm_route(state, operator_id) do
+    case ownership(state, operator_id, :output) do
       {:owner, pid} ->
         if Process.alive?(pid),
-          do: {{:ok, pid}, put_route(state, operative_id, [pid])},
-          else: {unrouted(state, operative_id), state}
+          do: {{:ok, pid}, put_route(state, operator_id, [pid])},
+          else: {unrouted(state, operator_id), state}
 
       :unrecorded ->
-        {unrouted(state, operative_id), state}
+        {unrouted(state, operator_id), state}
 
       :refused ->
         {:drop, state}
     end
   end
 
-  defp unrouted(state, operative_id) do
+  defp unrouted(state, operator_id) do
     :telemetry.execute(
       [:flezha, :stream, :drop],
       %{count: 1},
-      %{operative_id: operative_id, runner_id: state.runner_id, reason: :unrouted}
+      %{operator_id: operator_id, runner_id: state.runner_id, reason: :unrouted}
     )
 
     :drop
   end
 
   @doc """
-  Whether the session behind `state` may act on the operative whose class is
-  `operative_class` (its id, unless it declared a class): the session's stable
+  Whether the session behind `state` may act on the operator whose class is
+  `operator_class` (its id, unless it declared a class): the session's stable
   identity is the owner or the pending identity the ownership record names, or
   no record exists on this node. `kind` names the frame in the report.
 
   A refusal is counted on the channel every time. The event, the warning and
-  the `RemOperative` that stops the sender's copy go out once per session and
-  operative, however many of the session's channels the copy speaks on.
+  the `RemOperator` that stops the sender's copy go out once per session and
+  operator, however many of the session's channels the copy speaks on.
   """
   @spec admit(map(), binary(), atom()) :: boolean()
-  def admit(state, operative_class, kind),
-    do: ownership(state, operative_class, kind) != :refused
+  def admit(state, operator_class, kind),
+    do: ownership(state, operator_class, kind) != :refused
 
-  # The one read of the ownership record: the session owns the operative (as
+  # The one read of the ownership record: the session owns the operator (as
   # owner or pending) and the record names its Overwatch, no record exists on
   # this node, or the frame is refused.
-  defp ownership(state, operative_class, kind) do
-    case ClassRegistry.owner(operative_class) do
+  defp ownership(state, operator_class, kind) do
+    case ClassRegistry.owner(operator_class) do
       {:ok, pid, owner, pending} ->
         if state.identity in [owner, pending],
           do: {:owner, pid},
-          else: refuse(state, operative_class, owner, kind)
+          else: refuse(state, operator_class, owner, kind)
 
       :error ->
         :unrecorded
     end
   end
 
-  defp refuse(state, operative_class, owner, kind) do
+  defp refuse(state, operator_class, owner, kind) do
     LivenessCounters.bump_channel(state.liveness_ref, :foreign_frame_refused)
 
-    if Marks.first_refusal?(state.runner_id, operative_class) do
+    if Marks.first_refusal?(state.runner_id, operator_class) do
       Logger.warning(
         "[runner] #{state.runner_id} (identity #{state.identity}) sent #{kind} for " <>
-          "#{inspect(operative_class)}, which is bound to #{inspect(owner)}; refused, and the " <>
+          "#{inspect(operator_class)}, which is bound to #{inspect(owner)}; refused, and the " <>
           "runner is told to remove its copy"
       )
 
@@ -200,27 +199,27 @@ defmodule Flezha.Runner.StreamChannel.Records do
           runner_id: state.runner_id,
           identity: state.identity,
           owner: owner,
-          operative_id: operative_class,
+          operator_id: operator_class,
           kind: kind
         }
       )
 
-      ControlUnit.stop_operative_async(state.runner_id, operative_class)
+      ControlUnit.stop_operator_async(state.runner_id, operator_class)
     end
 
     :refused
   end
 
-  # Emit `output_stall` for each mapped operative, naming the runner whose
+  # Emit `output_stall` for each mapped operator, naming the runner whose
   # stream stalled: the stall is about that binding, and the loop drops it once
-  # the operative is bound elsewhere. A sleeping instance is not mapped to any
+  # the operator is bound elsewhere. A sleeping instance is not mapped to any
   # runner, so it is never flagged.
-  def emit_output_stall(runner_id, operative_mapping) do
-    for {operative_id, _} <- operative_mapping do
+  def emit_output_stall(runner_id, operator_mapping) do
+    for {operator_id, _} <- operator_mapping do
       :telemetry.execute(
         [:flezha, :state, :output_stall],
         %{count: 1},
-        %{operative_instance: operative_id, runner_id: runner_id}
+        %{operator_instance: operator_id, runner_id: runner_id}
       )
     end
   end
@@ -228,7 +227,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
   # Persistence frames are handed to the per-cell WalWriter via a
   # non-blocking cast: the writer appends, drives seq-gap resync, and writes
   # snapshots (an fsync) in its own process, so disk/recovery latency never
-  # stalls this channel — which also carries the operative's output frames.
+  # stalls this channel — which also carries the operator's output frames.
   # The per-Cell queue that keeps a slow Cell from stalling siblings on
   # this stream is each WalWriter's own mailbox: the cast demuxes here and
   # queues there, so only the shared credit window couples Cells.
@@ -280,15 +279,15 @@ defmodule Flezha.Runner.StreamChannel.Records do
   end
 
   # The DLQ append (an fsync) runs in the store process, never here — this
-  # channel also carries the operative's output frames. The ack closure
+  # channel also carries the operator's output frames. The ack closure
   # runs in the store process after the fsync; `send_control_async` is a
   # cast, so it cannot block the store either.
   def handle_correction_request(state, frame) do
-    with {:ok, %{cell_id: {operative_class, _, _} = cell_id, body: body}} <-
+    with {:ok, %{cell_id: {operator_class, _, _} = cell_id, body: body}} <-
            Wire.decode_frame(frame),
          {:ok, target} <- Wire.decode_correction_request(body),
-         true <- admit(state, operative_class, :correction_request),
-         {:ok, overwatch} <- Lookup.overwatch(operative_class) do
+         true <- admit(state, operator_class, :correction_request),
+         {:ok, overwatch} <- Lookup.overwatch(operator_class) do
       Replay.request_correction(overwatch, cell_id, target)
     else
       false ->
@@ -332,7 +331,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
       :telemetry.execute(
         [:flezha, :state, :stale_writer_refused],
         %{count: 1},
-        %{operative: rc, tasklet: sh, key: pk, session: state.runner_id}
+        %{operator: rc, tasklet: sh, key: pk, session: state.runner_id}
       )
     end
 
@@ -352,9 +351,9 @@ defmodule Flezha.Runner.StreamChannel.Records do
   # Returns `{credit_opts_for_append, state}` or `{:shed, state}` for a
   # frame overrunning an exhausted ledger (protocol violation — the seq gap
   # it leaves drives the existing resync repair).
-  def credit_admit(%{credit: nil} = state, operative_class, _size) do
+  def credit_admit(%{credit: nil} = state, operator_class, _size) do
     if credit_enabled?() do
-      {%{}, offer_credit_window(state, operative_class)}
+      {%{}, offer_credit_window(state, operator_class)}
     else
       {%{}, state}
     end
@@ -380,14 +379,14 @@ defmodule Flezha.Runner.StreamChannel.Records do
   # Offer `CreditWindowInit` for this attach. Runs on the FIRST state-change
   # frame rather than at stream bind so the offer is guaranteed to originate
   # from the channel on the actual state path, and so the window can resolve
-  # per-Operative from that frame's class. The offer rides the ControlUnit's
+  # per-Operator from that frame's class. The offer rides the ControlUnit's
   # request/reply machinery in a Task: the SDK's ack comes back as the
   # CommandResponse raw_data; a pre-credit SDK never replies and the call
   # timeout degrades the session to `:legacy`.
-  def offer_credit_window(state, operative_class) do
+  def offer_credit_window(state, operator_class) do
     session = Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
-    window = PersistenceResolver.credit_window_bytes(operative_class)
-    # Unset means half the window, and the window is resolved per operative
+    window = PersistenceResolver.credit_window_bytes(operator_class)
+    # Unset means half the window, and the window is resolved per operator
     # class, so the halving is the site's rather than a row's.
     low = Config.get(:credit_low_watermark_bytes) || div(window, 2)
 

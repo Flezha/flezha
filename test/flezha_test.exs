@@ -2,13 +2,13 @@ defmodule FlezhaTest do
   alias Flezha.Identificator
   alias Flezha.Payloader
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias Flezha.Service.PluginManager
   alias Flezha.State.TestHelpers
   alias Flezha.Testnet
-  alias FlezhaTest.Fixtures.OperativeFixture
+  alias FlezhaTest.Fixtures.OperatorFixture
   alias FlezhaTest.Helper.NodeTestHelper
-  alias FlezhaTest.Helper.OperativeTestHelper
+  alias FlezhaTest.Helper.OperatorTestHelper
   alias ProcessHub.Constant.Hook
 
   use ExUnit.Case
@@ -21,7 +21,7 @@ defmodule FlezhaTest do
   @node_name NodeTestHelper.node_name()
 
   @test_store_input_factory "store_input"
-  @test_operative_factory "do_nothing"
+  @test_operator_factory "do_nothing"
   @test_compare_filter_factory "compare_filter"
 
   # WS-dependent tests below connect to a Node.js testnet daemon at
@@ -37,13 +37,13 @@ defmodule FlezhaTest do
   end
 
   setup _context do
-    # Restore now rehydrates a operative from its WAL on (re)bind, so leftover
-    # per-Cell state from an earlier test that reused the same operative_id
+    # Restore now rehydrates an operator from its WAL on (re)bind, so leftover
+    # per-Cell state from an earlier test that reused the same operator_id
     # would leak in. Start each test from empty cells.
     TestHelpers.reset_all_cells()
 
     on_exit(fn ->
-      OperativeManager.stop_all_operatives(@default_namespace)
+      OperatorManager.stop_all_operators(@default_namespace)
       FleetManager.stop_namespace(@temp_namespace)
     end)
 
@@ -56,54 +56,54 @@ defmodule FlezhaTest do
     Enum.each(res, &assert(is_binary(&1)))
   end
 
-  @tag :operative_start
-  test "operative adding" do
-    operative = %Flezha.Operative.Builder{
-      id: "default_operative_test",
-      factory_id: @test_operative_factory
+  @tag :operator_start
+  test "operator adding" do
+    operator = %Flezha.Operator.Builder{
+      id: "default_operator_test",
+      factory_id: @test_operator_factory
     }
 
-    {status, info} = OperativeManager.start_operative(@default_namespace, operative)
+    {status, info} = OperatorManager.start_operator(@default_namespace, operator)
 
     assert status === :ok,
-           "start_operative failed: #{inspect(info)}"
+           "start_operator failed: #{inspect(info)}"
 
-    assert info[:operative_id] === "default_operative_test"
+    assert info[:operator_id] === "default_operator_test"
     assert info[:node] === @node_name
     assert is_pid(info[:pid])
     assert is_binary(info[:runner_id])
   end
 
-  test "operative removing" do
-    operative_id = "default_operative_stop_test"
+  test "operator removing" do
+    operator_id = "default_operator_stop_test"
 
-    {:ok, %{pid: _operative_pid}} =
-      operative_id
-      |> OperativeFixture.get(@test_store_input_factory)
-      |> OperativeFixture.start()
+    {:ok, %{pid: _operator_pid}} =
+      operator_id
+      |> OperatorFixture.get(@test_store_input_factory)
+      |> OperatorFixture.start()
 
-    assert :ok === OperativeManager.stop_operative(@default_namespace, operative_id)
+    assert :ok === OperatorManager.stop_operator(@default_namespace, operator_id)
 
     assert NodeTestHelper.wait_until(
-             fn -> not OperativeManager.exist?(@default_namespace, operative_id) end,
+             fn -> not OperatorManager.exist?(@default_namespace, operator_id) end,
              5_000
            ),
-           "the stopped operative is still registered"
+           "the stopped operator is still registered"
   end
 
-  test "operative adding non existing factory" do
-    operative_id = "non_existing_factory_err"
+  test "operator adding non existing factory" do
+    operator_id = "non_existing_factory_err"
 
-    operative = %Flezha.Operative.Builder{
-      id: operative_id,
+    operator = %Flezha.Operator.Builder{
+      id: operator_id,
       factory_id: "non_existing_factory"
     }
 
-    {status, %{operative_id: pid, node: node, reason: reason}} =
-      OperativeManager.start_operative(@default_namespace, operative)
+    {status, %{operator_id: pid, node: node, reason: reason}} =
+      OperatorManager.start_operator(@default_namespace, operator)
 
     assert status === :error
-    assert pid === operative_id
+    assert pid === operator_id
     assert node === @node_name
     # An unknown factory is refused cluster-wide now: no local runner
     # advertises it and the cluster directory names no capable peer either.
@@ -115,20 +115,20 @@ defmodule FlezhaTest do
   @tag :websocket_plugin
   @tag :testnet
   test "websocket plugin connection start" do
-    operative_id = "websocket_plugin_test"
+    operator_id = "websocket_plugin_test"
 
-    operative = %Flezha.Operative.Builder{
-      id: operative_id,
-      factory_id: @test_operative_factory
+    operator = %Flezha.Operator.Builder{
+      id: operator_id,
+      factory_id: @test_operator_factory
     }
 
-    {:ok, _} = OperativeManager.start_operative(@default_namespace, operative)
+    {:ok, _} = OperatorManager.start_operator(@default_namespace, operator)
 
     res =
       PluginManager.enable_plugin("websocket_plugin", %Flezha.Plugin{
         id: "websocket_plugin",
         namespace: @default_namespace,
-        operative_id: operative_id,
+        operator_id: operator_id,
         provider: Flezha.Plugin.Provider.Websocket,
         opts: %{
           uri: Testnet.ws_uri(),
@@ -147,20 +147,20 @@ defmodule FlezhaTest do
 
   @tag :testnet
   test "beam msg forward plugin connection start" do
-    operative_id = "beam_msg_forw_plugin_test"
+    operator_id = "beam_msg_forw_plugin_test"
 
-    operative = %Flezha.Operative.Builder{
-      id: operative_id,
-      factory_id: @test_operative_factory
+    operator = %Flezha.Operator.Builder{
+      id: operator_id,
+      factory_id: @test_operator_factory
     }
 
-    {:ok, _} = OperativeManager.start_operative(@default_namespace, operative)
+    {:ok, _} = OperatorManager.start_operator(@default_namespace, operator)
 
     res =
       PluginManager.enable_plugin("beam_msg_forward", %Flezha.Plugin{
         id: "beam_msg_forward",
         namespace: @default_namespace,
-        operative_id: operative_id,
+        operator_id: operator_id,
         provider: Flezha.Plugin.Provider.BeamMsgForward,
         opts: %{recv_pid: self()},
         hooks: [{:on_output, []}]
@@ -169,25 +169,25 @@ defmodule FlezhaTest do
     assert res === {:ok, "plugin enabled"}
   end
 
-  @tag :operative_flow_msg_forward
+  @tag :operator_flow_msg_forward
   @tag :testnet
-  test "operative flow generation -> beam msg forward" do
-    operative_id = "data_flow_test"
+  test "operator flow generation -> beam msg forward" do
+    operator_id = "data_flow_test"
 
-    operative = %Flezha.Operative.Builder{
-      id: operative_id,
+    operator = %Flezha.Operator.Builder{
+      id: operator_id,
       factory_id: @test_compare_filter_factory,
       init_values: %{
         "compare_filter_tasklet" => %{"comparable" => "hello world", "inverted" => false}
       }
     }
 
-    {:ok, _} = OperativeManager.start_operative(@default_namespace, operative)
+    {:ok, _} = OperatorManager.start_operator(@default_namespace, operator)
 
     PluginManager.enable_plugin("beam_msg_forward", %Flezha.Plugin{
       id: "beam_msg_forward",
       namespace: @default_namespace,
-      operative_id: operative_id,
+      operator_id: operator_id,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: self()},
       hooks: [{:on_output, []}]
@@ -196,7 +196,7 @@ defmodule FlezhaTest do
     PluginManager.enable_plugin("websocket_plugin", %Flezha.Plugin{
       id: "websocket_plugin",
       namespace: @default_namespace,
-      operative_id: operative_id,
+      operator_id: operator_id,
       provider: Flezha.Plugin.Provider.Websocket,
       opts: %{
         uri: Testnet.ws_uri(),
@@ -221,20 +221,20 @@ defmodule FlezhaTest do
   end
 
   @tag :get_cell_state
-  test "get operative state" do
-    operative_id = "get_state_test"
+  test "get operator state" do
+    operator_id = "get_state_test"
 
-    {:ok, %{pid: _operative_pid}} =
-      operative_id
-      |> OperativeFixture.get(@test_store_input_factory)
-      |> OperativeFixture.start()
-      |> OperativeFixture.attach_output_msg()
+    {:ok, %{pid: _operator_pid}} =
+      operator_id
+      |> OperatorFixture.get(@test_store_input_factory)
+      |> OperatorFixture.start()
+      |> OperatorFixture.attach_output_msg()
 
-    OperativeTestHelper.send_sync_io(operative_id, @default_namespace, "state_1", %{})
-    OperativeTestHelper.send_sync_io(operative_id, @default_namespace, "state_2", %{})
+    OperatorTestHelper.send_sync_io(operator_id, @default_namespace, "state_1", %{})
+    OperatorTestHelper.send_sync_io(operator_id, @default_namespace, "state_2", %{})
 
     {:ok, json_state} =
-      OperativeManager.get_cell_state(@default_namespace, operative_id)
+      OperatorManager.get_cell_state(@default_namespace, operator_id)
 
     cell_state = Payloader.json_to_map(json_state)
 
@@ -246,20 +246,20 @@ defmodule FlezhaTest do
            }
   end
 
-  @tag :operative_migration
-  test "operative migration" do
+  @tag :operator_migration
+  test "operator migration" do
     {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:anode1)
 
-    operative_id = "operative_migration_test"
+    operator_id = "operator_migration_test"
 
-    {:ok, %{pid: _operative_pid, node: pnode}} =
-      operative_id
-      |> OperativeFixture.get(@test_store_input_factory)
-      |> OperativeFixture.start()
-      |> OperativeFixture.attach_output_msg()
+    {:ok, %{pid: _operator_pid, node: pnode}} =
+      operator_id
+      |> OperatorFixture.get(@test_store_input_factory)
+      |> OperatorFixture.start()
+      |> OperatorFixture.attach_output_msg()
 
-    OperativeTestHelper.send_sync_io(operative_id, @default_namespace, "test_state_1", %{})
-    OperativeTestHelper.send_sync_io(operative_id, @default_namespace, "test_state_2", %{})
+    OperatorTestHelper.send_sync_io(operator_id, @default_namespace, "test_state_1", %{})
+    OperatorTestHelper.send_sync_io(operator_id, @default_namespace, "test_state_2", %{})
 
     test_state = %{
       "store_input_tasklet" => %{
@@ -271,17 +271,17 @@ defmodule FlezhaTest do
     PluginManager.enable_plugin("stdout_plugin", %Flezha.Plugin{
       id: "stdout_plugin",
       namespace: @default_namespace,
-      operative_id: operative_id,
+      operator_id: operator_id,
       provider: Flezha.Plugin.Provider.StdOut,
       opts: %{},
       hooks: [{:on_output, []}]
     })
 
     {:ok, json_state} =
-      OperativeManager.get_cell_state(@default_namespace, operative_id)
+      OperatorManager.get_cell_state(@default_namespace, operator_id)
 
     {:ok, old_overwatch_state} =
-      OperativeManager.get_overwatch_state(@default_namespace, operative_id)
+      OperatorManager.get_overwatch_state(@default_namespace, operator_id)
 
     cell_state = Payloader.json_to_map(json_state)
 
@@ -319,10 +319,10 @@ defmodule FlezhaTest do
     )
 
     {:ok, json_state} =
-      OperativeManager.get_cell_state(@default_namespace, operative_id)
+      OperatorManager.get_cell_state(@default_namespace, operator_id)
 
     {:ok, new_overwatch_state} =
-      OperativeManager.get_overwatch_state(@default_namespace, operative_id)
+      OperatorManager.get_overwatch_state(@default_namespace, operator_id)
 
     cell_state = Payloader.json_to_map(json_state)
 

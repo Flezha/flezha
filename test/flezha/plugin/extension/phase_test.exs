@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Plugin.Extension.PhaseTest do
   @moduledoc """
-  The two-phase plugin lifecycle (capability `operative-extensions`,
+  The two-phase plugin lifecycle (capability `operator-extensions`,
   "Two-phase plugin lifecycle gated on SDK readiness"). A plugin enters the
   `:prepared` phase on `Table.bulk_subscribe/2`; `bulk_activate/2` starts its
   declared worker and calls `activate/1`, moving it to `:running`. A provider
@@ -8,8 +8,8 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
   silently.
   """
 
-  alias Flezha.Operative.Overwatch
-  alias Flezha.Operative.Plugins
+  alias Flezha.Operator.Overwatch
+  alias Flezha.Operator.Plugins
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
@@ -455,7 +455,7 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
       assert log =~ "healthy"
     end
 
-    test "prepare/2 carries the failing plugin id into the reason the operative parks on",
+    test "prepare/2 carries the failing plugin id into the reason the operator parks on",
          %{entries: entries} do
       state = %Overwatch{id: "op1", namespace: "default", extensions: Table.new(@catalog)}
 
@@ -468,8 +468,8 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
 
     # Fails when: a record an earlier build wrote, whose hooks sit under
     # `subscriptions`, starts its plugin with no hooks instead of parking the
-    # operative on it. No reader of the old field exists, by design.
-    test "a record in the earlier shape parks the operative on that plugin" do
+    # operator on it. No reader of the old field exists, by design.
+    test "a record in the earlier shape parks the operator on that plugin" do
       earlier =
         %Plugin{id: "earlier", provider: ReportingInitProvider, opts: %{report_to: self()}}
         |> Map.delete(:hooks)

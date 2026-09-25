@@ -2,7 +2,7 @@ defmodule Flezha.Plugin.Extension.Ctx.Msg do
   @moduledoc """
   Context struct for the `:on_message` extension (kind: `:request`). The
   `key` field selects which subscriber handles the request — a string, as the
-  hook's `key` sub-option is, so an operator-chosen key is never
+  hook's `key` sub-option is, so a user-chosen key is never
   interned. `reply_to` and `ref` form the reply envelope.
   """
 
@@ -11,7 +11,7 @@ defmodule Flezha.Plugin.Extension.Ctx.Msg do
           payload: binary(),
           reply_to: pid(),
           ref: reference(),
-          operative_id: String.t(),
+          operator_id: String.t(),
           namespace: atom() | String.t(),
           runner_id: String.t() | nil
         }
@@ -21,7 +21,7 @@ defmodule Flezha.Plugin.Extension.Ctx.Msg do
     :payload,
     :reply_to,
     :ref,
-    :operative_id,
+    :operator_id,
     :namespace,
     :runner_id
   ]

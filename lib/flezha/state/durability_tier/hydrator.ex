@@ -1,7 +1,7 @@
 defmodule Flezha.State.DurabilityTier.Hydrator do
   @moduledoc """
   Rebuilds local durable files from the remote manifest, so a controller with an
-  empty state directory can adopt an operative that lived on a node whose disk
+  empty state directory can adopt an operator that lived on a node whose disk
   is gone — and, at boot, can come back as itself rather than as a blank
   cluster.
 
@@ -25,29 +25,29 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   alias Flezha.State.{InputLog, Outbox, Paths, TaskJournal}
 
   @doc """
-  Hydrate every shipped reference of `operative_class` whose local files are
+  Hydrate every shipped reference of `operator_class` whose local files are
   absent. Called from the bind-time restore enumeration, so a fresh controller
-  binding a remote-only operative finds its Cells, task-journal, input log and
+  binding a remote-only operator finds its Cells, task-journal, input log and
   parked failures on disk by the time it enumerates them.
   """
-  @spec hydrate_operative(module(), keyword(), binary()) :: :ok
-  def hydrate_operative(module, opts, operative_class) when is_binary(operative_class) do
-    hydrate_prefix(module, opts, Manifest.prefix(:cell, [operative_class]))
+  @spec hydrate_operator(module(), keyword(), binary()) :: :ok
+  def hydrate_operator(module, opts, operator_class) when is_binary(operator_class) do
+    hydrate_prefix(module, opts, Manifest.prefix(:cell, [operator_class]))
 
     # The input log is class-level, so it sits outside the per-Cell prefix
     # above and has to be asked for by name. Without it a hydrated Cell
     # comes back with its consumed floor intact and no log to replay from —
     # the next input lands at offset 0, below the floor, and is silently
     # skipped as already-consumed.
-    hydrate_ref(module, opts, {:input_log, operative_class})
+    hydrate_ref(module, opts, {:input_log, operator_class})
 
-    # Parked failures belong to the operative that produced them, so they come
+    # Parked failures belong to the operator that produced them, so they come
     # back with it rather than at boot: a replacement controller's `flz dlq`
-    # sees the inherited parks from the moment it binds the operative.
+    # sees the inherited parks from the moment it binds the operator.
     hydrate_prefix(
       module,
       opts,
-      Manifest.prefix(:dlq, [Dlq.Store.path_component(operative_class)])
+      Manifest.prefix(:dlq, [Dlq.Store.path_component(operator_class)])
     )
 
     :ok
@@ -60,20 +60,20 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   it names — no full-Tasklet fetch to answer a question about one key.
   """
   @spec hydrate_cells(module(), keyword(), binary(), binary(), [binary()]) :: :ok
-  def hydrate_cells(module, opts, operative_class, tasklet_id, cell_keys) do
+  def hydrate_cells(module, opts, operator_class, tasklet_id, cell_keys) do
     Enum.each(cell_keys, fn cell_key ->
-      ref = {:cell, {operative_class, tasklet_id, cell_key}}
+      ref = {:cell, {operator_class, tasklet_id, cell_key}}
       hydrate_ref(module, opts, ref)
     end)
   end
 
   @doc """
   Hydrate every shipped registry cspec whose local file is absent — the record
-  of which operatives exist and how they are configured.
+  of which operators exist and how they are configured.
 
   Must complete before any hub starts: ProcessHub opens `registry.dets` at hub
   start, so a cspec that lands afterwards is invisible to the orphan reconcile
-  and the operatives it names are never started.
+  and the operators it names are never started.
   """
   @spec hydrate_cspecs() :: :ok
   def hydrate_cspecs(), do: hydrate_replicas(Manifest.prefix(:cspec))
@@ -191,7 +191,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
           emit(:hydrated, ref, manifest)
 
         # A referenced artifact the store does not hold is a CORRUPT LINEAGE, not
-        # a transport problem, and the two call for opposite operator responses:
+        # a transport problem, and the two call for opposite user responses:
         # one waits for the backend, the other must be acted on while some node
         # still has a local copy to re-ship from. Degrading it into a silent cold
         # start is what made this class of damage discoverable only on recovery

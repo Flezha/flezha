@@ -61,7 +61,7 @@ shared by both decode paths.
 
 #### Scenario: One configured limit governs both sides
 
-- **WHEN** an operator sets `FLEZHA_MAX_FRAME_BYTES`
+- **WHEN** a user sets `FLEZHA_MAX_FRAME_BYTES`
 - **THEN** both the runner payloader and the controller frame buffer enforce
   that same value, and with the variable unset both enforce the same default
 

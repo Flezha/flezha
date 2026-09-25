@@ -1,14 +1,14 @@
 # rust-sdk-dispatch Specification
 
 ## Purpose
-This capability covers the Rust SDK's Operative/Tasklet/Cell dispatch path: sticky per-Cell ordering invariants under ThreadPool dispatch, dispatch throughput reporting on the reference workload, the per-message dispatch-overhead budget, live Operative-instance registry concurrency, reconnect semantics across transient and intentional disconnects, command-dispatch byte-stability for surviving wire commands, the per-Cell flusher's single-thread linger drain (with toggle-aware semantics for `persistence_enabled = false`), the workflow `state.apply` hot-path cost, drain-time coalescing, the public `TaskletTestHarness` testing surface, and the 16-byte version header stamped on persisted Changes.
+This capability covers the Rust SDK's Operator/Tasklet/Cell dispatch path: sticky per-Cell ordering invariants under ThreadPool dispatch, dispatch throughput reporting on the reference workload, the per-message dispatch-overhead budget, live Operator-instance registry concurrency, reconnect semantics across transient and intentional disconnects, command-dispatch byte-stability for surviving wire commands, the per-Cell flusher's single-thread linger drain (with toggle-aware semantics for `persistence_enabled = false`), the bounded operator `state.apply` hot-path cost, drain-time coalescing, the public `TaskletTestHarness` testing surface, and the 16-byte version header stamped on persisted Changes.
 ## Requirements
 ### Requirement: Sticky Per-Cell Ordering Under ThreadPool Dispatch
 
-Under the SDK's ThreadPool dispatch (the only dispatch mode in v1; see the REMOVED requirement below), the Rust SDK SHALL guarantee that for any single `(operative_instance, tasklet, cell)` triple, two invocations of that Tasklet's `run(...)` method on that Cell never execute concurrently, and invocations observe their inputs in the exact order those inputs were enqueued onto the Cell's mailbox. This invariant MUST hold regardless of worker-pool size, number of concurrent Operative instances, number of Cells per Tasklet, or transport (UDS/QUIC).
+Under the SDK's ThreadPool dispatch (the only dispatch mode in v1; see the REMOVED requirement below), the Rust SDK SHALL guarantee that for any single `(operator_instance, tasklet, cell)` triple, two invocations of that Tasklet's `run(...)` method on that Cell never execute concurrently, and invocations observe their inputs in the exact order those inputs were enqueued onto the Cell's mailbox. This invariant MUST hold regardless of worker-pool size, number of concurrent Operator instances, number of Cells per Tasklet, or transport (UDS/QUIC).
 
 #### Scenario: Same cell never runs concurrently under load
-- **WHEN** 10,000 inputs targeting the same `(operative_instance, tasklet, cell_key)` triple arrive back-to-back on one or more entry channels while the SDK uses a 16-thread worker pool
+- **WHEN** 10,000 inputs targeting the same `(operator_instance, tasklet, cell_key)` triple arrive back-to-back on one or more entry channels while the SDK uses a 16-thread worker pool
 - **THEN** at any wall-clock instant, at most one thread SHALL be inside that Cell's `run(...)` method
 
 #### Scenario: Different cells of same tasklet may run concurrently
@@ -20,16 +20,16 @@ Under the SDK's ThreadPool dispatch (the only dispatch mode in v1; see the REMOV
 - **THEN** the Cell's State SHALL end with `["a", "b", "c"]` in exactly that order
 
 #### Scenario: Ordering holds across multiple entry streams
-- **WHEN** the agent opens 4 entry connections for a single Operative instance and the same Cell receives interleaved inputs from all 4
+- **WHEN** the agent opens 4 entry connections for a single Operator instance and the same Cell receives interleaved inputs from all 4
 - **THEN** `run(...)` calls for that Cell SHALL still be non-overlapping, though the interleaving order between streams is not constrained by this requirement
 
 ### Requirement: Per-Message Dispatch-Overhead Budget
 
 The Rust SDK's dispatch hot path — from a completed frame being delivered by the transport layer to the targeted Cell's `Tasklet::run(...)` being entered — SHALL consume no more than **4 synchronization operations per message** (where a synchronization operation is a mutex lock, atomic CAS, channel send, or equivalent memory-ordering primitive). Counted under single-threaded contention on a Tasklet with `cell_keys() == []` (single-cell mode), exercising the entry-channel → registry → mailbox → drain path.
 
-The 4-op budget covers: (1) registry / topology lookup for the entry channel ID → Operative instance pointer (one DashMap read or equivalent); (2) mailbox enqueue (`crossbeam::queue::ArrayQueue::try_push`, one logical step counted as one op even though its lock-free implementation may use a CAS on the tail plus a release-store on the slot); (3) `pushes_total` counter increment (one Relaxed atomic); (4) inflight CAS (one atomic compare-exchange).
+The 4-op budget covers: (1) registry / topology lookup for the entry channel ID → Operator instance pointer (one DashMap read or equivalent); (2) mailbox enqueue (`crossbeam::queue::ArrayQueue::try_push`, one logical step counted as one op even though its lock-free implementation may use a CAS on the tail plus a release-store on the slot); (3) `pushes_total` counter increment (one Relaxed atomic); (4) inflight CAS (one atomic compare-exchange).
 
-The budget rises from 3 to 4 ops compared with the prior unbounded-mailbox shape (`crossbeam::queue::SegQueue` push without success counter). The added op is the success counter introduced by `operative-bounded-mailbox`; the underlying push transition from SegQueue to ArrayQueue is counted as the same logical step (one mailbox enqueue) and does not on its own raise the budget.
+The budget rises from 3 to 4 ops compared with the prior unbounded-mailbox shape (`crossbeam::queue::SegQueue` push without success counter). The added op is the success counter introduced by `operator-bounded-mailbox`; the underlying push transition from SegQueue to ArrayQueue is counted as the same logical step (one mailbox enqueue) and does not on its own raise the budget.
 
 For static-mode tasklets, the additional per-input cost of cell fan-out (HashMap lookup per cell key, one mailbox enqueue + one counter increment + one inflight CAS per target cell) is intrinsic to the workload and counted separately — it is not part of the per-message budget. The fan-out formula updates from `3 + N × 2` to `4 + N × 3` where N is the cell fan-out width.
 
@@ -47,34 +47,34 @@ The 4-op invariant is an analytical bound enforced by code review, consistent wi
 
 ### Requirement: Live Registry Concurrent Access
 
-The live Operative-instance registry used by the Rust SDK SHALL support concurrent reads from many threads without inter-reader blocking, and writes (Operative instance create / destroy) SHALL NOT block readers for longer than a single tasklet's critical section. Operative classes are declared via `FlezhaRunner::register_factory(operative)` for either kind, callable before and after `.start()`/`.run()` on a runner obtained from `Flezha::create_runner(namespace)`; the class registries SHALL be overwrite-on-insert and SHALL support `unregister_class` for on-demand removal. `AddOperative` / `RemOperative` wire commands add and remove Operative instances by what the wire calls `operative_id` (mapped to the SDK's `operative_instance_id`); lookup by that id returns an `Arc<StreamInstance>` or equivalent handle. Workflow instances SHALL record their `factory_id` so live instances of a factory are attributable during a removal check.
+The live Operator-instance registry used by the Rust SDK SHALL support concurrent reads from many threads without inter-reader blocking, and writes (Operator instance create / destroy) SHALL NOT block readers for longer than a single tasklet's critical section. Operator classes are declared via `FlezhaRunner::register_factory(operator)` for either kind, callable before and after `.start()`/`.run()` on a runner obtained from `Flezha::create_runner(namespace)`; the class registries SHALL be overwrite-on-insert and SHALL support `unregister_class` for on-demand removal. `AddOperator` / `RemOperator` wire commands add and remove Operator instances by what the wire calls `operator_id` (mapped to the SDK's `operator_instance_id`); lookup by that id returns an `Arc<OperatorInstance>` or equivalent handle. Bounded instances SHALL record their `factory_id` so live instances of a factory are attributable during a removal check.
 
 The "registry" name carries forward from the pre-change implementation; what's stored in it is unchanged by this requirement. The concurrency guarantees are unchanged.
 
 #### Scenario: 100 reader threads do not stall on a single writer
-- **WHEN** 100 threads each perform 10,000 registry lookups while a 101st thread registers and removes Operative instances in a loop
+- **WHEN** 100 threads each perform 10,000 registry lookups while a 101st thread registers and removes Operator instances in a loop
 - **THEN** no reader thread observes a latency spike greater than 1 millisecond attributable to the writer
 
 #### Scenario: Registry preserves the declaration contract
-- **WHEN** user code calls `.register_factory(R)` on a `FlezhaRunner` and later `AddOperative` triggers an Operative instance creation
-- **THEN** the resulting `StreamInstance` SHALL be looked up by id and have its entry channels routable exactly as the spec requires, observable via the `operative-tasklet-cell-model` capability's scenarios
+- **WHEN** user code calls `.register_factory(R)` on a `FlezhaRunner` and later `AddOperator` triggers an Operator instance creation
+- **THEN** the resulting `OperatorInstance` SHALL be looked up by id and have its entry channels routable exactly as the spec requires, observable via the `operator-tasklet-cell-model` capability's scenarios
 
-#### Scenario: Post-start removal is serialized with AddOperative
-- **WHEN** an `unregister_factory` request and an `AddOperative` command for the same factory race
-- **THEN** both SHALL be processed on the coordinator loop in some serial order — either the add lands first and the removal returns `Err(FlezhaError::OperativeTypeInUse { .. })`, or the removal lands first and the add fails as an unknown factory — with no interleaving where the removal succeeds while an instance exists
+#### Scenario: Post-start removal is serialized with AddOperator
+- **WHEN** an `unregister_factory` request and an `AddOperator` command for the same factory race
+- **THEN** both SHALL be processed on the coordinator loop in some serial order — either the add lands first and the removal returns `Err(FlezhaError::OperatorTypeInUse { .. })`, or the removal lands first and the add fails as an unknown factory — with no interleaving where the removal succeeds while an instance exists
 
 ### Requirement: Reconnect Semantics Preserved
 
-Across a control-channel reconnect the Rust SDK SHALL preserve its `operative_registry`, shared I/O streams, and `runner_id` (no clear-and-reassign window where frames are dropped). In addition:
+Across a control-channel reconnect the Rust SDK SHALL preserve its `operator_registry`, shared I/O streams, and `runner_id` (no clear-and-reassign window where frames are dropped). In addition:
 
 1. **Live-sink resolution** — the per-Cell state send path (`CellStateSink`) SHALL resolve the *live* secondary stream on every call rather than caching a stream handle, so a reconnect's freshly-wired stream is used without re-registering Cells.
-2. **Reconnect ring** — when no sink is installed or a write fails (the reconnect window), **every frame the runner writes on the data plane** SHALL be buffered in one bounded ring (drop-oldest on overflow) and replayed when the fresh stream is wired, so nothing produced mid-reconnect is silently lost. This covers the durable records the flusher ships and the plugin outputs an operative emits: a plugin output arrives already framed with metadata that identifies its channel and its Cell, so it is replayed onto the live secondary as it stands rather than re-framed.
+2. **Reconnect ring** — when no sink is installed or a write fails (the reconnect window), **every frame the runner writes on the data plane** SHALL be buffered in one bounded ring (drop-oldest on overflow) and replayed when the fresh stream is wired, so nothing produced mid-reconnect is silently lost. This covers the durable records the flusher ships and the plugin outputs an operator emits: a plugin output arrives already framed with metadata that identifies its channel and its Cell, so it is replayed onto the live secondary as it stands rather than re-framed.
 3. **Broken-pipe flood → control reconnect** — sustained write failures (a flood within a short window) SHALL trigger a full control-channel reconnect via the coordinator rather than spinning on a dead stream, whichever writer saw them.
 4. **A shed frame is counted** — when the ring is full and drops its oldest entry, the runner SHALL count it on the process-wide drop-oldest counter its heartbeat already reports, and report the number lost when the stream recovers. A frame that is ultimately not delivered is never silent.
 
 #### Scenario: state changes produced during a reconnect are not lost
 - **GIVEN** the secondary stream drops and the SDK is reconnecting
-- **WHEN** the operative produces state changes before the new stream is wired
+- **WHEN** the operator produces state changes before the new stream is wired
 - **THEN** the frames are buffered in the reconnect ring and replayed once the new sink is installed, preserving seq order.
 
 #### Scenario: a broken-pipe flood drives a control reconnect
@@ -83,7 +83,7 @@ Across a control-channel reconnect the Rust SDK SHALL preserve its `operative_re
 - **THEN** the SDK requests a full control-channel reconnect from the coordinator instead of continuing to write to the dead stream.
 
 #### Scenario: a plugin output whose write fails is held and replayed
-- **GIVEN** an operative emits to a plugin sink on a stream the controller has closed
+- **GIVEN** an operator emits to a plugin sink on a stream the controller has closed
 - **WHEN** the write fails
 - **THEN** the frame is buffered in the same reconnect ring rather than discarded, the failure feeds the same flood ladder, and the next installed sink delivers the frame byte-for-byte on the live secondary.
 
@@ -94,38 +94,38 @@ Across a control-channel reconnect the Rust SDK SHALL preserve its `operative_re
 
 ### Requirement: Command Dispatch Behavior Preserved Byte-for-Byte for Surviving Commands
 
-Every `CommandRequest` variant that survives the cutover (`AssignRunnerId`, `ConnectSocket`, `AddOperative`, `RemOperative`, `RunnerDisconnect`) SHALL produce a `CommandResponse` byte-for-byte identical to the pre-change implementation for every input that exercised a given path before the change. New error paths MAY be introduced only if pre-change code hit them via panics; otherwise these command responses MUST NOT change.
+Every `CommandRequest` variant that survives the cutover (`AssignRunnerId`, `ConnectSocket`, `AddOperator`, `RemOperator`, `RunnerDisconnect`) SHALL produce a `CommandResponse` byte-for-byte identical to the pre-change implementation for every input that exercised a given path before the change. New error paths MAY be introduced only if pre-change code hit them via panics; otherwise these command responses MUST NOT change.
 
-`CellState` and `MigrationSerialization` are EXCLUDED from this byte-identical guarantee per `operative-mvp-rust/design.md` Decision 10: their on-the-wire JSON state-blob shape changes from `<state>` to `{"<tasklet_name>": <state>}` (or, for static-mode tasklets, `{"<tasklet_name>": {"<cell_key>": <state>, ...}, ...}`). This is acceptable because (a) state migration is umbrella Non-Goal 2 and tracked in `operative-state-migration`, (b) the umbrella's hard-cutover policy means no production scenario crosses old-SDK and new-SDK state blobs, and (c) the new shape is documented in `docs/sdk/protocol_spec.md`.
+`CellState` and `MigrationSerialization` are EXCLUDED from this byte-identical guarantee per `operator-mvp-rust/design.md` Decision 10: their on-the-wire JSON state-blob shape changes from `<state>` to `{"<tasklet_name>": <state>}` (or, for static-mode tasklets, `{"<tasklet_name>": {"<cell_key>": <state>, ...}, ...}`). This is acceptable because (a) state migration is umbrella Non-Goal 2 and tracked in `operator-state-migration`, (b) the umbrella's hard-cutover policy means no production scenario crosses old-SDK and new-SDK state blobs, and (c) the new shape is documented in `docs/sdk/protocol_spec.md`.
 
-`OperativeMessage` and `OperativeMessageResponse` continue to exist on the wire and the agent side; the SDK side responds with a canonical "unsupported" error for every request until `operative-message-handlers` adds per-Tasklet `handle_message` (see `operative-mvp-rust/design.md` Decision 9). This is byte-equivalent to today's behavior for any operative that did not implement the optional `handle_message` callback.
+`OperatorMessage` and `OperatorMessageResponse` continue to exist on the wire and the agent side; the SDK side responds with a canonical "unsupported" error for every request until `operator-message-handlers` adds per-Tasklet `handle_message` (see `operator-mvp-rust/design.md` Decision 9). This is byte-equivalent to today's behavior for any operator that did not implement the optional `handle_message` callback.
 
-#### Scenario: AddOperative with init_values produces same response shape
-- **WHEN** the agent sends `AddOperative{operative_id:"p1", factory_id:"market", init_values:"{\"symbol\":\"BTC\"}"}` and the identical command is sent to both pre- and post-change SDK builds where `"market"` is registered via the new `register_stream::<MarketOperative>()` (post-change) or `register_factory("market", ...)` (pre-change)
-- **THEN** both SDKs SHALL return a `CommandResponse` with the same `reference_id`, `status="success"`, and `errors=[]` (the `raw_data` bytes are not part of this requirement because the post-change `init_values` semantics are per-Tasklet, see the `operative-tasklet-cell-model` capability)
+#### Scenario: AddOperator with init_values produces same response shape
+- **WHEN** the agent sends `AddOperator{operator_id:"p1", factory_id:"market", init_values:"{\"symbol\":\"BTC\"}"}` and the identical command is sent to both pre- and post-change SDK builds where `"market"` is registered via the new `register_stream::<MarketOperator>()` (post-change) or `register_factory("market", ...)` (pre-change)
+- **THEN** both SDKs SHALL return a `CommandResponse` with the same `reference_id`, `status="success"`, and `errors=[]` (the `raw_data` bytes are not part of this requirement because the post-change `init_values` semantics are per-Tasklet, see the `operator-tasklet-cell-model` capability)
 
 #### Scenario: RunnerDisconnect closes sockets identically
 - **WHEN** `RunnerDisconnect{}` is sent under both implementations
 - **THEN** both SDKs SHALL close their primary control stream and return identical `CommandResponse` bytes
 
-#### Scenario: OperativeMessage returns canonical unsupported error pre-operative-message-handlers
-- **WHEN** an agent sends `OperativeMessage{operative_id:"p1", payload:<...>}` to a v1 SDK
-- **THEN** the SDK SHALL respond with `OperativeMessageResponse{ payload: "", error: "operative does not support handle_message" }`
+#### Scenario: OperatorMessage returns canonical unsupported error pre-operator-message-handlers
+- **WHEN** an agent sends `OperatorMessage{operator_id:"p1", payload:<...>}` to a v1 SDK
+- **THEN** the SDK SHALL respond with `OperatorMessageResponse{ payload: "", error: "operator does not support handle_message" }`
 
 ### Requirement: Per-Cell flusher single-thread linger drain
 
-The Rust SDK SHALL spawn at most one `CellFlusher` OS thread per process. The thread SHALL be lazy-initialized via `OnceLock` on the first `FlezhaRunner::register_factory(operative)` call that declares a Tasklet with a non-`NoChange` Change type. Programs that declare only `NoChange` Tasklets SHALL NOT spawn a flusher thread.
+The Rust SDK SHALL spawn at most one `CellFlusher` OS thread per process. The thread SHALL be lazy-initialized via `OnceLock` on the first `FlezhaRunner::register_factory(operator)` call that declares a Tasklet with a non-`NoChange` Change type. Programs that declare only `NoChange` Tasklets SHALL NOT spawn a flusher thread.
 
 The flusher SHALL run an infinite loop that on each iteration: (a) sleeps for `linger_ms` milliseconds (default 5; configurable via env var `FLEZHA_FLUSH_LINGER_MS`); (b) iterates the registered Cells; (c) for each Cell, attempts to acquire the buffer's `Mutex`, and on success calls `FlushableBuffer::drain_to_frames` which: applies coalescing, builds wire frames, releases the lock; (d) for each frame, invokes the Cell's `send_frame` function pointer.
 
 #### Scenario: NoChange-only program does not spawn flusher
 
-- **WHEN** a Rust process calls `.register_factory(R)` for an Operative whose Tasklets all have `Change = NoChange`
+- **WHEN** a Rust process calls `.register_factory(R)` for an Operator whose Tasklets all have `Change = NoChange`
 - **THEN** no `CellFlusher` thread SHALL be spawned, observable via thread-count assertions in the test (`std::thread::available_parallelism` baseline + assertion that no `flezha-flusher` named thread exists)
 
 #### Scenario: First non-NoChange declaration starts the flusher
 
-- **WHEN** a Rust process calls `.register_factory(R)` for an Operative containing a Tasklet with `Change = MyChange`
+- **WHEN** a Rust process calls `.register_factory(R)` for an Operator containing a Tasklet with `Change = MyChange`
 - **THEN** exactly one OS thread named `flezha-flusher` SHALL be spawned for the lifetime of the process
 
 ### Requirement: Toggle-aware drain semantics for persistence_enabled = false
@@ -136,12 +136,12 @@ When `true`, the flusher SHALL invoke `send_frame` for each frame and propagate 
 
 #### Scenario: Toggle-off drain discards without wire I/O
 
-- **WHEN** an Operative with `persistence_enabled = false` records 10 Changes via `state.apply(...)` and the flusher's linger elapses
+- **WHEN** an Operator with `persistence_enabled = false` records 10 Changes via `state.apply(...)` and the flusher's linger elapses
 - **THEN** the Cell's flush buffer SHALL be empty after the tick AND the Cell's `send_frame` function SHALL NOT have been invoked AND the Cell's `change_seq` SHALL have advanced by the post-coalesce record count
 
 #### Scenario: Toggle-on drain invokes send_frame per frame
 
-- **WHEN** an Operative with `persistence_enabled = true` records 10 Changes (no coalescing) via `state.apply(...)` and the flusher's linger elapses
+- **WHEN** an Operator with `persistence_enabled = true` records 10 Changes (no coalescing) via `state.apply(...)` and the flusher's linger elapses
 - **THEN** the Cell's `send_frame` function SHALL have been invoked exactly 10 times with frame bytes built from `[cell_id][seq: u64 BE][header: 16B][change_bytes][crc32: u32 BE]`
 
 #### Scenario: send_frame failure preserves seq monotonicity
@@ -279,17 +279,17 @@ The header SHALL be stamped in `HeaderTemplate::stamp(change_bytes: &[u8]) -> [u
 - **WHEN** the `RestoreError` variants this requirement names are looked up in `flz_core`
 - **THEN** each SHALL exist, so no scenario here can be satisfied by no code at all
 
-### Requirement: Public Rust SDK API uses canonical Operative/Runner vocabulary
+### Requirement: Public Rust SDK API uses canonical Operator/Runner vocabulary
 
-The Rust SDK SHALL expose its top-level dispatch types under the names `RunnerNode` (formerly `ComputeEngineNode`) and provide a method `get_operatives()` (formerly `get_processors()`) returning the registered Operatives on the current Runner. The module path SHALL be `sdk/rust/src/runner/` (formerly `sdk/rust/src/compute_engine/`). Generated protobuf types SHALL reflect the renamed messages: `AssignRunnerId`, `RunnerDisconnect`, `AddOperative`, `RemOperative`, `CellState`, `CellApplyState`, `OperativeMessage`, `OperativeMessageResponse`, plus existing `RestoreInitState`, `CompactCell`, `CellMailboxStatus`.
+The Rust SDK SHALL expose its top-level dispatch types under the names `RunnerNode` (formerly `ComputeEngineNode`) and provide a method `get_operators()` (formerly `get_processors()`) returning the registered Operators on the current Runner. The module path SHALL be `sdk/rust/src/runner/` (formerly `sdk/rust/src/compute_engine/`). Generated protobuf types SHALL reflect the renamed messages: `AssignRunnerId`, `RunnerDisconnect`, `AddOperator`, `RemOperator`, `CellState`, `CellApplyState`, `OperatorMessage`, `OperatorMessageResponse`, plus existing `RestoreInitState`, `CompactCell`, `CellMailboxStatus`.
 
 #### Scenario: Public types compile under new names
 - **WHEN** a downstream Rust crate depends on `flezha-sdk` and writes `use flezha_sdk::runner::RunnerNode;`
 - **THEN** the import MUST resolve and the compiler MUST accept it; an import via the legacy path `flezha_sdk::compute_engine::ComputeEngineNode` MUST NOT compile
 
-#### Scenario: get_operatives returns the local Operative registry
-- **WHEN** a Rust SDK Runner has Operatives `r1` and `r2` registered locally
-- **THEN** `runner_node.get_operatives()` MUST return a collection containing exactly `r1` and `r2`; the legacy method `get_processors()` MUST NOT be exposed
+#### Scenario: get_operators returns the local Operator registry
+- **WHEN** a Rust SDK Runner has Operators `r1` and `r2` registered locally
+- **THEN** `runner_node.get_operators()` MUST return a collection containing exactly `r1` and `r2`; the legacy method `get_processors()` MUST NOT be exposed
 
 ### Requirement: Generated payload-id constants use canonical names
 
@@ -301,31 +301,31 @@ The Rust SDK's payload-id constants (those that map to the binary framing's `pay
 
 ### Requirement: Test fixtures' Tasklets exercise the output channel path
 
-The test fixtures under `test/apps/rust_runner/src/main.rs` SHALL emit at least one output frame per input received, via `TaskletCtx::output(channel, value, metadata)`, on Operatives exercised by the controller's plugin tests with an `:on_output` hook. Specifically:
+The test fixtures under `test/apps/rust_runner/src/main.rs` SHALL emit at least one output frame per input received, via `TaskletCtx::output(channel, value, metadata)`, on Operators exercised by the controller's plugin tests with an `:on_output` hook. Specifically:
 
-- `StoreInputOperative::StoreInputTasklet::run` SHALL emit the input string on a sink Channel (named `"output"`) after applying the `PushText` change.
-- `CompareFilterOperative::CompareFilterTasklet::run` SHALL emit the input string on a sink Channel when `state.comparable == input` (matching the existing test's expectation of `"hello world"` round-tripping through the filter).
+- `StoreInputOperator::StoreInputTasklet::run` SHALL emit the input string on a sink Channel (named `"output"`) after applying the `PushText` change.
+- `CompareFilterOperator::CompareFilterTasklet::run` SHALL emit the input string on a sink Channel when `state.comparable == input` (matching the existing test's expectation of `"hello world"` round-tripping through the filter).
 
-This requirement covers fixture behavior only; it does not change the SDK's `Tasklet` trait, the dispatch contract, or any wire format. A future production Operative may emit no outputs and remain conformant to the SDK's other requirements.
+This requirement covers fixture behavior only; it does not change the SDK's `Tasklet` trait, the dispatch contract, or any wire format. A future production Operator may emit no outputs and remain conformant to the SDK's other requirements.
 
-#### Scenario: StoreInputOperative round-trips input via :on_output
+#### Scenario: StoreInputOperator round-trips input via :on_output
 
-- **WHEN** the controller's `BeamMsgForward` plugin is enabled with `hooks: [{:on_output, []}]` against a `StoreInputOperative` instance and the test sends `"state_1"` to the operative
+- **WHEN** the controller's `BeamMsgForward` plugin is enabled with `hooks: [{:on_output, []}]` against a `StoreInputOperator` instance and the test sends `"state_1"` to the operator
 - **THEN** the test SHALL receive `{:message_forward, "state_1"}` within 2 seconds (UDS) or 5 seconds (QUIC)
 
-#### Scenario: CompareFilterOperative round-trips matching input via :on_output
+#### Scenario: CompareFilterOperator round-trips matching input via :on_output
 
-- **WHEN** a `CompareFilterOperative` instance is initialized with `comparable = "hello world"` and the test sends `"hello world"` to the operative
+- **WHEN** a `CompareFilterOperator` instance is initialized with `comparable = "hello world"` and the test sends `"hello world"` to the operator
 - **THEN** the test SHALL receive `{:message_forward, "hello world"}` within 2 seconds
 
 ### Requirement: `RunnerReconnected` control message defined and emitted
 
-The SDK SHALL emit an `RunnerReconnected { previous_id, new_id, reason }` control frame as the first message after re-establishing the control stream, and SHALL emit a single structured reconnect log line. The controller SHALL use this frame to compute the binding delta: a stable reconnect under the same id is a zero-frame no-op; a controller-side reassignment during the disconnect window triggers `ReassignRunnerId { new_id }` and a re-issue of the operative set. `reason` SHALL be one of the transport-edge causes (e.g. broken pipe, read/write error, keepalive timeout, controller-requested).
+The SDK SHALL emit an `RunnerReconnected { previous_id, new_id, reason }` control frame as the first message after re-establishing the control stream, and SHALL emit a single structured reconnect log line. The controller SHALL use this frame to compute the binding delta: a stable reconnect under the same id is a zero-frame no-op; a controller-side reassignment during the disconnect window triggers `ReassignRunnerId { new_id }` and a re-issue of the operator set. `reason` SHALL be one of the transport-edge causes (e.g. broken pipe, read/write error, keepalive timeout, controller-requested).
 
 #### Scenario: a stable reconnect is a zero-delta no-op
 - **GIVEN** the SDK reconnects within the disconnect window holding the same `runner_id`
 - **WHEN** it sends `RunnerReconnected{previous_id == current, new_id == current}`
-- **THEN** the controller's bindings already agree and no `AddOperative`/`RemOperative` frames are issued.
+- **THEN** the controller's bindings already agree and no `AddOperator`/`RemOperator` frames are issued.
 
 ### Requirement: Node-local persisted runner id announced as `previous_runner_id`
 
@@ -334,23 +334,23 @@ On a fresh process start (not a reconnect) the SDK SHALL load its node-local per
 #### Scenario: a restarted process reclaims its bindings
 - **GIVEN** an SDK process held `runner_id = default_X` and persisted it locally
 - **WHEN** the process is killed and a fresh process starts, reads `default_X`, and announces it as `previous_runner_id`
-- **THEN** the controller evicts the stale `default_X` binding before the new bind, so no operative is left bound to the dead process.
+- **THEN** the controller evicts the stale `default_X` binding before the new bind, so no operator is left bound to the dead process.
 
 ### Requirement: Rust SDK Entry Point
 
-The Rust SDK SHALL provide `Flezha::create_runner(namespace: impl Into<String>) -> Result<FlezhaRunner, FlezhaError>` as the single entry point, returning a concrete `FlezhaRunner` directly — there SHALL be no separate `RunnerBuilder` type. Creating a runner SHALL NOT connect, claim the process singleton slot, or spawn any thread. Calling `.start(&self)` MUST connect to the controller's control socket, send the handshake init message per `docs/sdk/protocol_spec.md` §5.2 carrying the runner's currently-declared factory set (possibly empty), wait for `AssignRunnerId`, and return `Ok(&Self)` for chaining. The started runner SHALL expose `namespace()` (replacing `id()` — the controller-assigned per-session token lives on the runner thread and rotates across reconnects, so it is never the handle's identity) and `operatives()`. `.run(&self)` SHALL be sugar for `.start()` followed by `await_termination()`, never an independent implementation. This requirement mirrors `java-sdk`'s "Java SDK Entry Point" requirement — the two SDKs' entry-point behavior is intentionally identical.
+The Rust SDK SHALL provide `Flezha::create_runner(namespace: impl Into<String>) -> Result<FlezhaRunner, FlezhaError>` as the single entry point, returning a concrete `FlezhaRunner` directly — there SHALL be no separate `RunnerBuilder` type. Creating a runner SHALL NOT connect, claim the process singleton slot, or spawn any thread. Calling `.start(&self)` MUST connect to the controller's control socket, send the handshake init message per `docs/sdk/protocol_spec.md` §5.2 carrying the runner's currently-declared factory set (possibly empty), wait for `AssignRunnerId`, and return `Ok(&Self)` for chaining. The started runner SHALL expose `namespace()` (replacing `id()` — the controller-assigned per-session token lives on the runner thread and rotates across reconnects, so it is never the handle's identity) and `operators()`. `.run(&self)` SHALL be sugar for `.start()` followed by `await_termination()`, never an independent implementation. This requirement mirrors `java-sdk`'s "Java SDK Entry Point" requirement — the two SDKs' entry-point behavior is intentionally identical.
 
 #### Scenario: Successful connection returns a live handle
-- **WHEN** an SDK user calls `Flezha::create_runner("my_app")?.register_factory(MarketOperative)?.start()` (binding the runner with `let`) with the controller running
+- **WHEN** an SDK user calls `Flezha::create_runner("my_app")?.register_factory(MarketOperator)?.start()` (binding the runner with `let`) with the controller running
 - **THEN** the call blocks until the connect handshake completes, and the runner's `namespace()` returns `"my_app"`
 
 #### Scenario: Controller unavailable triggers exponential backoff retries
 - **WHEN** an SDK user calls `.start()` on a runner and the controller's control socket is not yet listening
 - **THEN** the SDK SHALL retry the connect with exponential backoff starting at 200 ms and capped at 30 s, and succeed once the controller becomes available
 
-#### Scenario: start() with zero defined operative types is legal
-- **WHEN** `.start()` is called on a `FlezhaRunner` with no `.register_factory(...)` calls, whatever short-form or `operative!` types the binary contains
-- **THEN** the runner SHALL connect successfully with an empty factory list in the handshake init message, and operative types MAY be defined later on the live runner
+#### Scenario: start() with zero defined operator types is legal
+- **WHEN** `.start()` is called on a `FlezhaRunner` with no `.register_factory(...)` calls, whatever short-form or `operator!` types the binary contains
+- **THEN** the runner SHALL connect successfully with an empty factory list in the handshake init message, and operator types MAY be defined later on the live runner
 
 #### Scenario: RunnerBuilder does not compile
 - **WHEN** user code references `flezha::RunnerBuilder`, `Flezha::new_runner`, `RunnerStartError`, or `RunnerError`
@@ -358,13 +358,13 @@ The Rust SDK SHALL provide `Flezha::create_runner(namespace: impl Into<String>) 
 
 ### Requirement: Runner declaration and connection failures surface as typed Results
 
-Every fallible call on the entry-point chain SHALL return `Result<_, FlezhaError>` — one unified public error type (`thiserror`-derived) so `Flezha::create_runner(ns)?.register_factory(A)?.run()?` compiles under a single `?`. `FlezhaError` SHALL carry at least: `InvalidNamespace`, `AlreadyRunning { namespace }`, `ConnectFailed(String)`, `InvalidTopology(#[from] TopologyBuildError)`, `InvalidWorkflow(#[from] BuildWorkflowError)`, `DuplicateFactoryId { factory_id }`, `NotDefined { factory_id }`, `OperativeTypeInUse { factory_id, live_instances }`, `NotStarted`, `RunnerUnavailable(String)`. An invalid topology (duplicate channel names, unwired channels, missing `cells_for` overrides, etc.) SHALL be reported as a typed `Err` at the call site, not a panic; a consumer whose `Input` does not match the channel payload SHALL instead be refused by the compiler at the `.into::<S>()` call site, so `TopologyIssue` SHALL carry no runtime type-mismatch variant; connect-handshake failures (socket error, or the confirmation channel closing unexpectedly) SHALL be `Err(FlezhaError::ConnectFailed(..))`, not a panic. The per-issue topology enum formerly named `BuildTopologyError` SHALL be renamed `TopologyIssue`, resolving its collision with the per-kind `TopologyBuildError`; Java throws the identically-named failure classes per naming rule 6.
+Every fallible call on the entry-point chain SHALL return `Result<_, FlezhaError>` — one unified public error type (`thiserror`-derived) so `Flezha::create_runner(ns)?.register_factory(A)?.run()?` compiles under a single `?`. `FlezhaError` SHALL carry at least: `InvalidNamespace`, `AlreadyRunning { namespace }`, `ConnectFailed(String)`, `InvalidTopology(#[from] TopologyBuildError)`, `InvalidBounded(#[from] BuildBoundedError)`, `DuplicateFactoryId { factory_id }`, `NotDefined { factory_id }`, `OperatorTypeInUse { factory_id, live_instances }`, `NotStarted`, `RunnerUnavailable(String)`. An invalid topology (duplicate channel names, unwired channels, missing `cells_for` overrides, etc.) SHALL be reported as a typed `Err` at the call site, not a panic; a consumer whose `Input` does not match the channel payload SHALL instead be refused by the compiler at the `.into::<S>()` call site, so `TopologyIssue` SHALL carry no runtime type-mismatch variant; connect-handshake failures (socket error, or the confirmation channel closing unexpectedly) SHALL be `Err(FlezhaError::ConnectFailed(..))`, not a panic. The per-issue topology enum formerly named `BuildTopologyError` SHALL be renamed `TopologyIssue`, resolving its collision with the per-kind `TopologyBuildError`; Java throws the identically-named failure classes per naming rule 6.
 
-`operatives()` SHALL return `Result<HashMap<String, Arc<StreamInstance>>, FlezhaError>` — `Err(FlezhaError::NotStarted)` on a never-started runner, never a panic; the internal snapshot path SHALL contain no `expect`/`unwrap` reachable from it.
+`operators()` SHALL return `Result<HashMap<String, Arc<OperatorInstance>>, FlezhaError>` — `Err(FlezhaError::NotStarted)` on a never-started runner, never a panic; the internal snapshot path SHALL contain no `expect`/`unwrap` reachable from it.
 
 #### Scenario: Invalid topology is reported as a Result, not a panic
-- **WHEN** an Operative declares the same channel name twice
-- **THEN** `.register_factory(ThatOperative)` SHALL return `Err(FlezhaError::InvalidTopology(..))` carrying the `TopologyIssue::DuplicateChannel` diagnosis naming the channel — the call SHALL NOT panic
+- **WHEN** an Operator declares the same channel name twice
+- **THEN** `.register_factory(ThatOperator)` SHALL return `Err(FlezhaError::InvalidTopology(..))` carrying the `TopologyIssue::DuplicateChannel` diagnosis naming the channel — the call SHALL NOT panic
 
 #### Scenario: A payload type mismatch is a compile error
 - **WHEN** user code wires a consumer whose `Tasklet::Input` is not the channel's payload type
@@ -378,8 +378,8 @@ Every fallible call on the entry-point chain SHALL return `Result<_, FlezhaError
 - **WHEN** user code writes `Flezha::create_runner("ns")?.register_factory(A)?.register_factory(B)?.run()?` in a function returning `Result<(), FlezhaError>`
 - **THEN** it SHALL compile without intermediate `map_err` calls
 
-#### Scenario: operatives() on a never-started runner
-- **WHEN** code calls `.operatives()` on a runner created but never started
+#### Scenario: operators() on a never-started runner
+- **WHEN** code calls `.operators()` on a runner created but never started
 - **THEN** the call SHALL return `Err(FlezhaError::NotStarted)` and SHALL NOT panic
 
 ### Requirement: Runner process singleton guard
@@ -429,9 +429,9 @@ The Rust SDK SHALL allow at most one runner to be **started** per process. `Flez
 - **WHEN** code calls `.await_termination()` on a runner created but never started
 - **THEN** the call SHALL return `Err(FlezhaError::NotStarted)` immediately and SHALL NOT block
 
-### Requirement: On-demand operative type declaration and removal (Rust)
+### Requirement: On-demand operator type declaration and removal (Rust)
 
-`FlezhaRunner` SHALL provide `register_factory(operative)` and its inverse `unregister_factory(operative)`, each generic as `fn register_factory<O: Operative<K>, K>(&self, operative: O) -> Result<&Self, FlezhaError>` over the sealed `Operative<K>` trait the SDK implements for every `StreamOperative` and every `WorkflowOperative`, so one method takes an operative of either kind, passed as a value, and dispatches on the kind the trait impl names; both are legal before and after `.start()`. There SHALL be no `define_stream`, `define_workflow`, `remove_stream` or `remove_workflow`. The declared factory set SHALL be per-runner, starting empty each generation and holding exactly what `register_factory` and `unregister_factory` put in it; nothing SHALL be merged into it at `.start()`. A post-start `register_factory` or `unregister_factory` SHALL update the process-global class registries and ship the runner's full current factory set to the controller via the `UpdateFactories` control message (see the `runner-factory-sync` capability); the reconnect init frame SHALL serialize the same per-runner set, so reconnect naturally resyncs post-start mutations. `unregister_factory` SHALL return `Err(FlezhaError::NotDefined { .. })` for an undefined factory and `Err(FlezhaError::OperativeTypeInUse { factory_id, live_instances })` when live instances of the factory exist, leaving the type defined. Duplicate definition of the same factory id on one runner, of either kind, SHALL return `Err(FlezhaError::DuplicateFactoryId { .. })`, whose display SHALL begin with `DuplicateFactoryId`.
+`FlezhaRunner` SHALL provide `register_factory(operator)` and its inverse `unregister_factory(operator)`, each generic as `fn register_factory<O: Operator<K>, K>(&self, operator: O) -> Result<&Self, FlezhaError>` over the sealed `Operator<K>` trait the SDK implements for every `UnboundedOperator` and every `BoundedOperator`, so one method takes an operator of either kind, passed as a value, and dispatches on the kind the trait impl names; both are legal before and after `.start()`. There SHALL be no `define_unbounded`, `define_bounded`, `remove_stream` or `remove_bounded`. The declared factory set SHALL be per-runner, starting empty each generation and holding exactly what `register_factory` and `unregister_factory` put in it; nothing SHALL be merged into it at `.start()`. A post-start `register_factory` or `unregister_factory` SHALL update the process-global class registries and ship the runner's full current factory set to the controller via the `UpdateFactories` control message (see the `runner-factory-sync` capability); the reconnect init frame SHALL serialize the same per-runner set, so reconnect naturally resyncs post-start mutations. `unregister_factory` SHALL return `Err(FlezhaError::NotDefined { .. })` for an undefined factory and `Err(FlezhaError::OperatorTypeInUse { factory_id, live_instances })` when live instances of the factory exist, leaving the type defined. Duplicate definition of the same factory id on one runner, of either kind, SHALL return `Err(FlezhaError::DuplicateFactoryId { .. })`, whose display SHALL begin with `DuplicateFactoryId`.
 
 #### Scenario: Pre-start unregister shapes the init frame
 - **WHEN** user code registers A and B on an unstarted runner, unregisters B, then starts
@@ -439,34 +439,34 @@ The Rust SDK SHALL allow at most one runner to be **started** per process. `Flez
 
 #### Scenario: Post-start register ships UpdateFactories
 - **WHEN** user code calls `.register_factory(C)` on a started runner already declaring A
-- **THEN** the SDK SHALL send an `UpdateFactories` control message carrying the full set {A, C}, and a subsequent `AddOperative{factory_id: C}` SHALL succeed
+- **THEN** the SDK SHALL send an `UpdateFactories` control message carrying the full set {A, C}, and a subsequent `AddOperator{factory_id: C}` SHALL succeed
 
 #### Scenario: Post-start remove with live instances refuses
 - **GIVEN** a started runner with one live instance of factory `"market"`
-- **WHEN** user code calls `.unregister_factory(MarketOperative)`
-- **THEN** the call SHALL return `Err(FlezhaError::OperativeTypeInUse { factory_id: "market", live_instances: 1 })` and the type SHALL remain defined
+- **WHEN** user code calls `.unregister_factory(MarketOperator)`
+- **THEN** the call SHALL return `Err(FlezhaError::OperatorTypeInUse { factory_id: "market", live_instances: 1 })` and the type SHALL remain defined
 
 #### Scenario: Removing an undefined factory
 - **WHEN** user code calls `.unregister_factory(X)` and X's factory id is not in the runner's declared set
 - **THEN** the call SHALL return `Err(FlezhaError::NotDefined { .. })`
 
 #### Scenario: One method registers either kind
-- **WHEN** user code calls `.register_factory(EchoOperative)` for a `StreamOperative` and `.register_factory(PlaceOrder)` for a `WorkflowOperative` on one runner
-- **THEN** both factory ids SHALL be in the declared set, the first in the stream class registry and the second in the workflow class registry
+- **WHEN** user code calls `.register_factory(EchoOperator)` for an `UnboundedOperator` and `.register_factory(PlaceOrder)` for a `BoundedOperator` on one runner
+- **THEN** both factory ids SHALL be in the declared set, the first in the unbounded class registry and the second in the bounded class registry
 
 #### Scenario: A type of both kinds does not compile
-- **WHEN** a type implements both `StreamOperative` and `WorkflowOperative` and is passed to `.register_factory(...)`
+- **WHEN** a type implements both `UnboundedOperator` and `BoundedOperator` and is passed to `.register_factory(...)`
 - **THEN** compilation SHALL fail, because the kind parameter cannot be inferred
 
 #### Scenario: A duplicate across kinds is refused, never skipped
-- **WHEN** user code calls `.register_factory(A)` for a stream and then `.register_factory(B)` for a workflow where both declare factory id `plain`
+- **WHEN** user code calls `.register_factory(A)` for an unbounded operator and then `.register_factory(B)` for a bounded operator where both declare factory id `plain`
 - **THEN** the second call SHALL return `Err(FlezhaError::DuplicateFactoryId { .. })`, the declared set SHALL still hold only A, and the process-global registry entry for `plain` SHALL still be A's
 
 ### Requirement: A restore SHALL NOT silently discard un-recoverable queued input
 
 A restore SHALL discard a Cell's queued input only where the Controller will re-forward it. Where the Controller will not re-forward it, the queued input SHALL NOT be silently destroyed.
 
-`restore_into_slot` today clears the mailbox on every restore, justified by the claim that every queued input "is durable in the input log the controller is about to re-forward". That claim holds only for classes whose inputs are journaled before forwarding — `Ingest.journal_input/2` journals for the effectively-once tier and for durable workflow instances, and passes every other operative through untouched. A plain stateful stream operative, which is the default configuration, has no such log.
+`restore_into_slot` today clears the mailbox on every restore, justified by the claim that every queued input "is durable in the input log the controller is about to re-forward". That claim holds only for classes whose inputs are journaled before forwarding — `Ingest.journal_input/2` journals for the effectively-once tier and for durable bounded instances, and passes every other operator through untouched. A plain stateful unbounded operator, which is the default configuration, has no such log.
 
 #### Scenario: Journaled input may be discarded
 - **GIVEN** a Cell whose class journals its inputs before forwarding
@@ -532,21 +532,21 @@ The frame SHALL carry a payload-id constant defined alongside the sink's other p
 
 ### Requirement: The Rust SDK SHALL take the task-journal from the bind
 
-`start_workflow_resumable` SHALL accept the instance's task-journal alongside the
-restore count and SHALL pass it to `WorkflowInstance::new`, so the resume state is
+`start_bounded_resumable` SHALL accept the instance's task-journal alongside the
+restore count and SHALL pass it to `BoundedInstance::new`, so the resume state is
 present before the driver is spawned. The `RestoreInitState` handler SHALL NOT
 carry the journal — that frame is per-Cell and is not shipped for a class with
 no persisted Cell.
 
 #### Scenario: A resuming bind with no Cell restores still resumes at its iteration
 
-- **GIVEN** a durable workflow class whose tasklets hold no per-Cell state, so no `RestoreInitState` is shipped
-- **WHEN** the controller binds it with `AddOperative.task_journal`
+- **GIVEN** a durable bounded class whose tasklets hold no per-Cell state, so no `RestoreInitState` is shipped
+- **WHEN** the controller binds it with `AddOperator.task_journal`
 - **THEN** the driver SHALL enter the journaled iteration and skip the tasklets committed in it
 
 #### Scenario: A fresh bind carries no journal
 
-- **WHEN** `AddOperative` arrives with no `task_journal`
+- **WHEN** `AddOperator` arrives with no `task_journal`
 - **THEN** `task_journal_resume()` SHALL be `None` and the chain SHALL run from the top
 
 ### Requirement: The worker pool grows under starvation and shrinks when idle
@@ -636,23 +636,23 @@ consumer.
 - **THEN** the reader parks on the consumer's parker until the pool pops a
   slot, and no tasklet runs on the reader thread
 
-### Requirement: A workflow output whose write fails SHALL be held for the reconnect ring
+### Requirement: A bounded output whose write fails SHALL be held for the reconnect ring
 
-A plugin-bound workflow output whose write to the secondary stream fails SHALL be
+A plugin-bound bounded output whose write to the secondary stream fails SHALL be
 held in the same reconnect ring a failed plugin-emit write uses, and SHALL be
 replayed when a stream is next bound. It SHALL NOT be reported only to stderr and
-discarded, and a write the host cannot hold SHALL be counted where an operator
+discarded, and a write the host cannot hold SHALL be counted where a user
 reads counts, never dropped in silence.
 
-#### Scenario: The secondary stream is closed when a workflow emits
+#### Scenario: The secondary stream is closed when a bounded operator emits
 
-- **WHEN** `write_workflow_output` finds no stream, or its write returns an error
+- **WHEN** `write_bounded_output` finds no stream, or its write returns an error
 - **THEN** the framed output SHALL enter the reconnect ring rather than being
   printed and dropped, and SHALL be delivered once a stream binds
 
 #### Scenario: A held output keeps the identity it was framed with
 
-- **WHEN** a held workflow output is replayed after a rebind
+- **WHEN** a held bounded output is replayed after a rebind
 - **THEN** it SHALL carry the metadata it was framed with, so a keyed or
   identity-stamped output is not replayed with an empty metadata map
 
@@ -660,7 +660,7 @@ reads counts, never dropped in silence.
 
 The Rust SDK's builder state SHALL write the same declaration record an erased host
 writes — closures held aside per chain, never in the record — SHALL take its verdict from
-`flz_core::host::register::check`, and SHALL materialise its typed `OperativeTopology`
+`flz_core::host::register::check`, and SHALL materialise its typed `OperatorTopology`
 from the derived declaration, attaching closures by channel and chain. `TopologyIssue`
 SHALL be the core's type, re-exported; the builder SHALL raise no variant of its own. The
 compile-time edge refusals and their `tests/ui` fixtures SHALL stay as they are.
@@ -678,7 +678,7 @@ compile-time edge refusals and their `tests/ui` fixtures SHALL stay as they are.
 
 ### Requirement: Dispatch Throughput Reported on Reference Workload
 
-The regression bench (`100 operatives × 1 tasklet × 1 cell × 10K msg`, no-op Tasklet, UDS transport, default worker-pool size; see `operative-architecture/design.md` Decision 16), invokable via `mix bench --runtime rust --shape regression -n 100 -m 10000`, SHALL report the Rust SDK's message-processing throughput and SHALL NOT be held to an absolute throughput number: no floor is recorded for it, and no CI job fails because a rate is low.
+The regression bench (`100 operators × 1 tasklet × 1 cell × 10K msg`, no-op Tasklet, UDS transport, default worker-pool size; see `operator-architecture/design.md` Decision 16), invokable via `mix bench --runtime rust --shape regression -n 100 -m 10000`, SHALL report the Rust SDK's message-processing throughput and SHALL NOT be held to an absolute throughput number: no floor is recorded for it, and no CI job fails because a rate is low.
 
 The bench SHALL report the **end-to-end** window (first input dispatched to last response received) as its headline throughput and the **receive** window (send loop returning to last response received) beside it, and SHALL name the window on every rate it reports. The two are not interchangeable, since they differ by the send window, and a figure quoted without its window is not attributable. Both SHALL be written to the run's structured report, as `metrics.throughput_msg_per_sec` and `metrics.receive_window_msg_per_sec`.
 
@@ -698,6 +698,6 @@ The `bench-regression` GitHub Actions job SHALL run that bench, SHALL read both 
 - **THEN** the job SHALL fail
 
 #### Scenario: Cell-stress bench scales with worker pool size
-- **WHEN** the cell-stress bench (`8 operatives × 4 tasklets × 8 cells × 20K msg/operative`, fan-out per input to all 8 cells of the entry tasklet; invoked via `mix bench --shape cell --pool-sizes 1,8`) is run on an 8-core host
+- **WHEN** the cell-stress bench (`8 operators × 4 tasklets × 8 cells × 20K msg/operator`, fan-out per input to all 8 cells of the entry tasklet; invoked via `mix bench --shape cell --pool-sizes 1,8`) is run on an 8-core host
 - **THEN** the throughput at pool size 8 SHALL be at least 4× the throughput at pool size 1, demonstrating that cell-mode dispatch is not the bottleneck
 - **AND** the `bench-cell-scaling` CI job SHALL read the measured ratio from the run's structured report and report it to the PR check output without blocking the merge (informational gate)

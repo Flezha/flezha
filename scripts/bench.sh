@@ -4,7 +4,7 @@
 # Picks the SDK runtime, transport, workload shape, and dimensions.
 # Everything is optional; the defaults are the merge-blocking CI gate's runtime,
 # transport and shape (rust + uds + regression). Its dimensions are not: CI runs
-# -n 100 -m 10000, where this script defaults to 100 operatives x 100 msg.
+# -n 100 -m 10000, where this script defaults to 100 operators x 100 msg.
 #
 # Quick examples:
 #   ./scripts/bench.sh                                # rust + uds, default dims
@@ -51,8 +51,8 @@ RUNTIME="rust"
 TRANSPORT="uds"
 SHAPE=""
 POOL_SIZES=""
-NUM_OPERATIVES=100
-MESSAGES_PER_OPERATIVE=100
+NUM_OPERATORS=100
+MESSAGES_PER_OPERATOR=100
 WARMUP=""
 MIX_ENV_OVERRIDE="${MIX_ENV:-prod}"
 
@@ -68,14 +68,14 @@ Options:
                                      Bench shape (default: regression).
                                      `cell` ignores -n/-m and uses the
                                      8x4x8x20k stress workload. `dynamic` drives
-                                     the dynamic_cell operative (lazy
-                                     per-key Cells, 8 keys/operative), honors -n/-m.
+                                     the dynamic_cell operator (lazy
+                                     per-key Cells, 8 keys/operator), honors -n/-m.
       --pool-sizes <list>            Comma-separated worker-pool sizes for
                                      --shape cell (default: 1,8)
-  -n, --num-operatives <N>               Operative count for regression shape (default: 100)
-  -m, --messages-per-operative <N>       Messages per operative for regression shape
+  -n, --num-operators <N>               Operator count for regression shape (default: 100)
+  -m, --messages-per-operator <N>       Messages per operator for regression shape
                                      (default: 100)
-  -w, --warmup <N>                   Untimed warmup messages per operative before
+  -w, --warmup <N>                   Untimed warmup messages per operator before
                                      the measured phase (default: 10, 0 disables)
   -h, --help                         Show this help
 
@@ -100,8 +100,8 @@ while [[ $# -gt 0 ]]; do
         -t|--transport)       TRANSPORT="$2"; shift 2 ;;
         -s|--shape)           SHAPE="$2"; shift 2 ;;
         --pool-sizes)         POOL_SIZES="$2"; shift 2 ;;
-        -n|--num-operatives)      NUM_OPERATIVES="$2"; shift 2 ;;
-        -m|--messages-per-operative) MESSAGES_PER_OPERATIVE="$2"; shift 2 ;;
+        -n|--num-operators)      NUM_OPERATORS="$2"; shift 2 ;;
+        -m|--messages-per-operator) MESSAGES_PER_OPERATOR="$2"; shift 2 ;;
         -w|--warmup)          WARMUP="$2"; shift 2 ;;
         -h|--help)            usage; exit 0 ;;
         *) echo "Unknown option: $1"; usage; exit 1 ;;
@@ -139,7 +139,7 @@ ARGS=(--runtime "$RUNTIME")
 if [[ "$SHAPE" == "cell" ]]; then
     [[ -n "$POOL_SIZES" ]] && ARGS+=(--pool-sizes "$POOL_SIZES")
 else
-    ARGS+=(--num-operatives "$NUM_OPERATIVES" --messages-per-operative "$MESSAGES_PER_OPERATIVE")
+    ARGS+=(--num-operators "$NUM_OPERATORS" --messages-per-operator "$MESSAGES_PER_OPERATOR")
 fi
 
 export FLEZHA_TRANSPORT="$TRANSPORT"

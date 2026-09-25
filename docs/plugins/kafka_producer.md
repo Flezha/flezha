@@ -1,7 +1,7 @@
 # Kafka producer plugin
 
-For operators attaching `Flezha.Plugin.Provider.Kafka.Producer` (provider id
-`operative_kafka_producer`) and for anyone consuming what it writes. The plugin hooks
+For users attaching `Flezha.Plugin.Provider.Kafka.Producer` (provider id
+`operator_kafka_producer`) and for anyone consuming what it writes. The plugin hooks
 `:on_input` or `:on_output` and publishes chain messages to one Kafka
 `(topic, partition)` with retries, linger batching, a bounded in-process queue, an
 optional idempotent producer session and a window of in-flight requests. This page is the
@@ -29,7 +29,7 @@ The plugin:
   a free slot of the `:max_in_flight` window; a batch that fails retriably halts new sends
   and is resent with everything behind it, in order, under its original sequence numbers.
 - Caps buffering at `:queue_max` records and applies `:queue_overflow` when full —
-  `:drop_nothing` by default, so nothing is dropped unless an operator chose a drop mode.
+  `:drop_nothing` by default, so nothing is dropped unless a user chose a drop mode.
 - Under `:idempotent = true` uses Produce v5+ with per-partition sequence numbers, acks a
   `:duplicate_sequence_number` as delivered, and on a fence
   (`:out_of_order_sequence_number`, `:invalid_producer_epoch`) re-initialises the producer
@@ -43,12 +43,12 @@ record reports only through telemetry (below), and a synchronous `enqueue/4` cal
 
 ## Effectively-once records
 
-Records from an `effectively_once()` operative carry the outbox identity stamps
+Records from an `effectively_once()` operator carry the outbox identity stamps
 `flz.cell`, `flz.seq` (`<record WAL seq>.<emit ordinal>`) and `flz.epoch`. For them the
 plugin uses `flz.key` (the emitting Cell's key, or `emit_keyed`'s) as the Kafka message
 key — stable partitioning across replays, latest-value semantics on compacted topics — and
 writes the full identity as the record header
-`flezha.dedup_key = <flz.cell>/<outbox seq>/<epoch>` (e.g. `MarketOperative/s1/k1/42.0/1`).
+`flezha.dedup_key = <flz.cell>/<outbox seq>/<epoch>` (e.g. `MarketOperator/s1/k1/42.0/1`).
 Records without the stamps use `flz.key`, else a caller-stamped `flezha.dedup_key`, else
 `kafka_msg_key` as the message key and carry no header.
 
@@ -100,20 +100,20 @@ identical key, header and partition:
 <!-- provider-options:end -->
 
 `channel` names the channel this plugin is attached to; the producer only acts on the
-records passing through the operative, so on it that means "produce only records whose
+records passing through the operator, so on it that means "produce only records whose
 metadata names this channel". `channel_out` is the explicit spelling of the same
-restriction, for an operator writing one vocabulary across every provider. Writing both,
+restriction, for a user writing one vocabulary across every provider. Writing both,
 or writing either on a plugin with neither an `on_input` nor an `on_output` hook, is
 refused when the plugin is enabled, because nothing would read it. There is no
-`channel_in`: the producer never feeds the operative.
+`channel_in`: the producer never feeds the operator.
 
 Either spelling takes several names, comma-separated, and produces the records of all of
-them: `--Xchannel alerts,audit` on an operative that also produces `metrics` produces the
+them: `--Xchannel alerts,audit` on an operator that also produces `metrics` produces the
 first two and leaves the third to pass through the chain untouched.
 
 ```
-flz plugin enable alerts operative_kafka_producer \
-  --operative_id=op1 \
+flz plugin enable alerts operator_kafka_producer \
+  --operator_id=op1 \
   --hook=on_output \
   --Xhosts=broker-1:9092 \
   --Xtopic=alerts \
@@ -202,7 +202,7 @@ bounded queue, not the host's mailbox, is the back-pressure boundary.
 
 A chain-admitted record that ultimately fails emits one
 `[:flezha, :plugin, :kafka, :failed]` per record with `caller: :async`. Telemetry
-is the channel by which operators observe permanent failures of chain-admitted records —
+is the channel by which users observe permanent failures of chain-admitted records —
 not logs, not the chain return value:
 
 ```elixir
@@ -318,8 +318,8 @@ the head of the queue; the duplicate bound is the window, as above.
 ## CLI
 
 ```bash
-flz plugin enable trades-producer operative_kafka_producer \
-  --operative_id=trades \
+flz plugin enable trades-producer operator_kafka_producer \
+  --operator_id=trades \
   --hook=on_output \
   --Xhosts=kafka:9092 \
   --Xtopic=trades \
@@ -329,7 +329,7 @@ flz plugin enable trades-producer operative_kafka_producer \
 ```
 
 The hook is what makes this a producer: `--hook=on_output` publishes what the
-operative emits, and `--hook=on_input` publishes what it ingests instead. An
+operator emits, and `--hook=on_input` publishes what it ingests instead. An
 enable that names no hook publishes nothing.
 
 ## See also

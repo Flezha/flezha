@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # Per-Cell state-persistence smoke test (engagement-only).
 #
-# Verifies the data-plane half of the `operative-state-persistence`
-# contract (see `docs/internals/state_persistence.md`): with an operative
+# Verifies the data-plane half of the `operator-state-persistence`
+# contract (see `docs/internals/state_persistence.md`): with an operator
 # running, plugins attached, and inputs flowing, the controller writes
 # WAL files under the namespaced layout
-# `app_data/state/<namespace>/<operative_class>/<tasklet_id>/<cell_key>.wal`
-# and `flz state list <operative_class>` surfaces the live cell.
+# `app_data/state/<namespace>/<operator_class>/<tasklet_id>/<cell_key>.wal`
+# and `flz state list <operator_class>` surfaces the live cell.
 #
-# `operative_class` is NOT the factory id: `Overwatch.operative_class/1`
-# falls back to the operative's own id, so the class level on disk — and
-# the argument `flz state list` takes — is the operative id, while
-# `flz operative start` takes the factory id. The script keeps them in
+# `operator_class` is NOT the factory id: `Overwatch.operator_class/1`
+# falls back to the operator's own id, so the class level on disk — and
+# the argument `flz state list` takes — is the operator id, while
+# `flz operator start` takes the factory id. The script keeps them in
 # two variables because they are two different names for two different
 # things.
 #
@@ -22,10 +22,10 @@
 #
 # Out of scope (deliberately, see end-of-script PASS notes):
 #   * Full controller-side BEAM down/up cycle. The controller does
-#     not auto-recreate operatives after its own BEAM restart in this
+#     not auto-recreate operators after its own BEAM restart in this
 #     dev setup, so a stop/start of the whole stack would intentionally
-#     leave us with "No operatives found" until someone re-issues
-#     `flz operative start`. The SDK-side `RestoreInitState` handshake
+#     leave us with "No operators found" until someone re-issues
+#     `flz operator start`. The SDK-side `RestoreInitState` handshake
 #     does work for runner-only restarts; that flavor of test
 #     belongs next to `plugin_persistence.sh`.
 #   * `flz state at` / `flz state get` / `flz state rotate`. An older note
@@ -56,14 +56,14 @@
 # Knobs (env vars):
 #   REJOIN_TIMEOUT_S       per-step poll deadline (default 300)
 #   FLEZHA_KEEP_STACK=1    leave compose stack up post-mortem
-#   FACTORY_ID             factory the operative is started from (default:
-#                          store_input, matching `StoreInputOperative::
+#   FACTORY_ID             factory the operator is started from (default:
+#                          store_input, matching `StoreInputOperator::
 #                          factory_id()` in `test/apps/rust_runner/src/main.rs`)
-#   FLEZHA_PERSISTENCE_OPERATIVE  operative id, which is also its state class
-#                          on disk (default: sp_test_operative)
+#   FLEZHA_PERSISTENCE_OPERATOR  operator id, which is also its state class
+#                          on disk (default: sp_test_operator)
 #   FLEZHA_DEMO_NAMESPACE  namespace for the rust runner (default: default)
 #   INPUT_WAIT_S           seconds to let testnet drive inputs into
-#                          the operative before assertions (default 8)
+#                          the operator before assertions (default 8)
 #
 # Keeping it honest:
 #   This script is NOT wired into CI — it needs a Docker daemon, a Kafka
@@ -81,11 +81,11 @@ REJOIN_TIMEOUT_S="${REJOIN_TIMEOUT_S:-300}"
 DEMO_NAMESPACE="${FLEZHA_DEMO_NAMESPACE:-default}"
 INPUT_WAIT_S="${INPUT_WAIT_S:-8}"
 
-# The factory `flz operative start` instantiates, and the operative id it
+# The factory `flz operator start` instantiates, and the operator id it
 # is instantiated under. The id is ALSO the class level of the on-disk
 # state layout and the argument `flz state list` takes — see the header.
 FACTORY_ID="${FACTORY_ID:-store_input}"
-OPERATIVE_ID="${FLEZHA_PERSISTENCE_OPERATIVE:-sp_test_operative}"
+OPERATOR_ID="${FLEZHA_PERSISTENCE_OPERATOR:-sp_test_operator}"
 PLUGIN_WS_ID="sp_test_ws"
 PLUGIN_KAFKA_ID="sp_test_kafka"
 
@@ -373,10 +373,10 @@ note "waiting for initial runner handshake"
 INITIAL_CE_ID="$(wait_for_any_ce_id)"
 note "initial runner_id: ${INITIAL_CE_ID}"
 
-# --- Phase 1: start operative + attach plugins --------------------------------
+# --- Phase 1: start operator + attach plugins --------------------------------
 
-note "starting operative ${OPERATIVE_ID}"
-flz operative start "${OPERATIVE_ID}" "${FACTORY_ID}" \
+note "starting operator ${OPERATOR_ID}"
+flz operator start "${OPERATOR_ID}" "${FACTORY_ID}" \
   -n "${DEMO_NAMESPACE}" \
   --init_values '{"binary_inputs": [], "text_inputs": ["FIRST"]}'
 
@@ -411,44 +411,44 @@ controller_sh '
 
 # `--X…` flags are PROVIDER options and reach `init_provider/1`; a provider
 # with a strict allow-list refuses every key it does not own. Attachment
-# (`--operative_id`) is a plain CLI option and `--hook` names what the plugin
+# (`--operator_id`) is a plain CLI option and `--hook` names what the plugin
 # sends; the enable refuses any other plain option. The websocket plugin is a
 # source here, so it has no hook.
 note "enabling websocket plugin ${PLUGIN_WS_ID}"
-flz plugin enable "${PLUGIN_WS_ID}" operative_websocket \
-  --operative_id="${OPERATIVE_ID}" \
+flz plugin enable "${PLUGIN_WS_ID}" operator_websocket \
+  --operator_id="${OPERATOR_ID}" \
   --Xuri="ws://localhost:4500" \
   --Xpost_connect='{"payload":{"type":"text","message":"{\"event_type\":\"subscribe\",\"event_data\":{\"default_message\":\"hello world\",\"interval\":500}}"}}'
 
 note "enabling kafka producer plugin ${PLUGIN_KAFKA_ID}"
-flz plugin enable "${PLUGIN_KAFKA_ID}" operative_kafka_producer \
-  --operative_id="${OPERATIVE_ID}" \
+flz plugin enable "${PLUGIN_KAFKA_ID}" operator_kafka_producer \
+  --operator_id="${OPERATOR_ID}" \
   --hook=on_output \
   --Xhosts=kafka:9092 \
-  --Xtopic="${OPERATIVE_ID}.test.v1"
+  --Xtopic="${OPERATOR_ID}.test.v1"
 
-# Let the WS plugin drive inputs into the operative so apply_change runs
+# Let the WS plugin drive inputs into the operator so apply_change runs
 # and the WAL/outbox actually grow before we make the assertions.
 note "letting testnet drive inputs for ${INPUT_WAIT_S}s so WAL/snapshots fill"
 sleep "${INPUT_WAIT_S}"
 
 # The runtime, not the RPC return codes: `flz plugin enable` answers as soon
-# as the cspec is persisted, so only these reads prove the operative and its
+# as the cspec is persisted, so only these reads prove the operator and its
 # plugins are actually live. `set -e` already aborted on a failed enable.
-await_flz_output "operative '${OPERATIVE_ID}' is listed" "${OPERATIVE_ID}" 30 \
-  operative list -n "${DEMO_NAMESPACE}"
+await_flz_output "operator '${OPERATOR_ID}' is listed" "${OPERATOR_ID}" 30 \
+  operator list -n "${DEMO_NAMESPACE}"
 
-await_flz_output "plugin '${PLUGIN_WS_ID}' is in 'flz operative info'" "${PLUGIN_WS_ID}" 30 \
-  operative info -n "${DEMO_NAMESPACE}"
+await_flz_output "plugin '${PLUGIN_WS_ID}' is in 'flz operator info'" "${PLUGIN_WS_ID}" 30 \
+  operator info -n "${DEMO_NAMESPACE}"
 
-await_flz_output "'flz state list ${OPERATIVE_ID}' reports cells" '"cell_key"' 30 \
-  state list "${OPERATIVE_ID}" --output json
+await_flz_output "'flz state list ${OPERATOR_ID}' reports cells" '"cell_key"' 30 \
+  state list "${OPERATOR_ID}" --output json
 
 # The namespaced layout itself, not merely "some file exists": a WAL under
-# `<state_root>/<namespace>/<operative_class>/<tasklet_id>/<key>.wal` is
+# `<state_root>/<namespace>/<operator_class>/<tasklet_id>/<key>.wal` is
 # what `Flezha.State.Paths.class_dir/1` promises, and asserting the shape
 # is what catches the layout moving out from under the contract.
-CLASS_DIR="${STATE_DIR}/${DEMO_NAMESPACE}/${OPERATIVE_ID}"
+CLASS_DIR="${STATE_DIR}/${DEMO_NAMESPACE}/${OPERATOR_ID}"
 note "verifying the namespaced WAL layout under ${CLASS_DIR}"
 mapfile -t WAL_FILES < <(find "${CLASS_DIR}" -mindepth 2 -maxdepth 2 -type f -name '*.wal' 2>/dev/null)
 if [ "${#WAL_FILES[@]}" -eq 0 ]; then
@@ -460,14 +460,14 @@ note "${#WAL_FILES[@]} WAL file(s) in the expected layout:"
 printf '  %s\n' "${WAL_FILES[@]}"
 
 note "PASS: per-Cell state persistence is engaged"
-note "  operative='${OPERATIVE_ID}' (factory='${FACTORY_ID}') in namespace '${DEMO_NAMESPACE}'"
+note "  operator='${OPERATOR_ID}' (factory='${FACTORY_ID}') in namespace '${DEMO_NAMESPACE}'"
 note "  plugins enabled=${PLUGIN_WS_ID},${PLUGIN_KAFKA_ID} (presence asserted for ${PLUGIN_WS_ID})"
 note ""
 note "Scope notes:"
 note "  * This script verifies the data-plane WAL is being written under the"
 note "    namespaced layout and that 'flz state list' surfaces the live cell."
 note "  * It does NOT exercise a controller-side BEAM restart. The controller"
-note "    does not auto-recreate operatives after its own BEAM restarts (only"
+note "    does not auto-recreate operators after its own BEAM restarts (only"
 note "    SDK/runner restarts trigger the SDK-side RestoreInitState handshake"
 note "    while the controller stays up). Follow-up testing of runner-only"
 note "    restart belongs alongside test/scripts/plugin_persistence.sh."

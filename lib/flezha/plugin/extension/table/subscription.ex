@@ -34,7 +34,7 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
   # declare it refused rather than unknown, which is the answer callers read.
   @position_refused {:refused, :position_not_applicable}
 
-  # The whole sub-option vocabulary, by dispatch kind: every name an operator
+  # The whole sub-option vocabulary, by dispatch kind: every name a user
   # may write and the type its value carries. Coercion and refusal both read
   # it, so a new sub-option is declared in the module that validates it.
   @sub_opt_types %{
@@ -52,7 +52,7 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
     raise "@sub_opt_types declares no sub-options for #{inspect(@undeclared_kinds)}"
   end
 
-  # What a sub-option means when the operator omits it — read by the validator
+  # What a sub-option means when the user omits it — read by the validator
   # and by the dispatch chain, so it is written once.
   @sub_opt_defaults [timeout_ms: 5_000, on_error: "fail"]
 
@@ -67,9 +67,9 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
   type.
 
   A hook name may arrive as text or as an atom, and sub-opts as a map or
-  a keyword list — the shapes the CLI, the operative-start spec, an installed
+  a keyword list — the shapes the CLI, the operator-start spec, an installed
   package manifest and direct construction produce. Both are resolved against
-  a declaration rather than interned, so operator text never creates an atom;
+  a declaration rather than interned, so user text never creates an atom;
   a name that resolves to nothing is refused.
 
   `subscribe/3` runs it, so the table stores canonical values and a provider

@@ -15,7 +15,7 @@ defmodule Flezha.Config.Environment do
   back to the row's default on text that is not a value of the type, because
   `"0"` already means "unset" everywhere and a flag nobody spelled is not a
   flag. Every other type refuses at boot, naming the variable, the value and
-  the type: an operator who sets a knob and silently gets the default back has
+  the type: a user who sets a knob and silently gets the default back has
   been told a knob exists that does nothing.
   """
 
@@ -40,7 +40,7 @@ defmodule Flezha.Config.Environment do
 
   @doc """
   The whole `:flezha` application environment `config/runtime.exs` writes at
-  boot: every row an operator's variable, this environment's default or the
+  boot: every row a user's variable, this environment's default or the
   run's own derivation supplies a value for. A row nothing supplied keeps its
   declared default, answered by `value/1` on read rather than copied here.
   """
@@ -104,7 +104,7 @@ defmodule Flezha.Config.Environment do
   def parse(%{type: type}, raw), do: parse_type(type, String.trim(raw))
 
   # What the environment supplies for one row, in precedence order: the
-  # operator's variable, then this run's own derivation, then this
+  # user's variable, then this run's own derivation, then this
   # environment's default. `:none` means nothing did — the row keeps its
   # declared default and no key is written.
   defp chosen(row, env_map, config_env, derived) do
@@ -139,7 +139,7 @@ defmodule Flezha.Config.Environment do
   end
 
   # A row whose value the boot translation writes even when nothing supplied
-  # one, so the key an operator inspects is the value the code reads. A
+  # one, so the key a user inspects is the value the code reads. A
   # derivation stays a derivation (its parent may still move), a `{:late, …}`
   # is answered when it is read rather than frozen at boot, and a key another
   # config file fills is left alone.
@@ -162,7 +162,7 @@ defmodule Flezha.Config.Environment do
   # already means "unset" in every runtime (`flz_core::util::env_parse_positive`,
   # `FlezhaEnv.parsePositive`), and a flag nobody spelled is not a flag. Every
   # other type refuses at boot, naming the variable, the value and the type —
-  # an operator who sets a knob and silently gets the default back has been
+  # a user who sets a knob and silently gets the default back has been
   # told a knob exists that does nothing.
   defp from_env!(row, raw) do
     case parse(row, raw) do

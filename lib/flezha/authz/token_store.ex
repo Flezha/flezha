@@ -15,7 +15,7 @@ defmodule Flezha.AuthZ.TokenStore do
   with (`Flezha.AuthZ.RunnerProof`), and it is the one kind this registry
   refuses to give an expiry: the holder is an unattended process, and a
   credential that lapses fails it at a restart rather than at a convenient
-  moment. A namespace may hold as many live runner entries as an operator
+  moment. A namespace may hold as many live runner entries as a caller
   issues, which is what makes a rotation "issue, roll the fleet, retire the
   old one" rather than a cutover. Revoking one closes the sessions it
   authenticated, because nothing else would ever evict them.
@@ -23,7 +23,7 @@ defmodule Flezha.AuthZ.TokenStore do
   Every entry that does have an expiry is announced before it reaches it: the
   registry sweeps on `:token_expiry_check_interval_ms` and emits
   `:token_expiring` once for each entry inside `:token_expiry_warning_ms` of
-  lapsing, so a lapse is a monitoring alert rather than the moment an operator
+  lapsing, so a lapse is a monitoring alert rather than the moment a caller
   discovers they can no longer issue a credential.
   """
 
@@ -65,7 +65,7 @@ defmodule Flezha.AuthZ.TokenStore do
 
   @doc """
   Issue a new token. Returns `{:ok, raw_token, entry}` on success;
-  the raw token is the value to hand to the operator. Subsequent
+  the raw token is the value to hand to the caller. Subsequent
   reads of the store SHALL NOT recover the raw value.
   """
   @spec issue(binary(), binary(), Role.t(), pos_integer() | :never, keyword()) ::
@@ -287,7 +287,7 @@ defmodule Flezha.AuthZ.TokenStore do
 
   # A revoked runner credential leaves live control channels behind it, and a
   # credential with no expiry has nothing that would otherwise evict them. Only
-  # a runner entry can have authenticated a session, so no operator revoke pays
+  # a runner entry can have authenticated a session, so no caller revoke pays
   # for a fleet call. Driven from the client function rather than the store's
   # own `handle_call`, so the eviction never runs inside this GenServer.
   defp close_authenticated_sessions({:ok, %{role: :runner, token_hash: hash}} = revoked) do

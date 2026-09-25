@@ -124,7 +124,7 @@ than being discovered by a consumer at runtime.
 ### Requirement: A published function SHALL bind a declared verb
 
 Every published service function that takes a caller context SHALL bind one row of
-the operator-verb declaration and apply it through the one seam, so that the console
+the user-verb declaration and apply it through the one seam, so that the console
 and the terminal are judged by the same action, in the same scope, with the same audit.
 A published function SHALL NOT decide its own action, scope or audit inline, and a
 terminal verb body SHALL reach an effect the published function wraps rather than the

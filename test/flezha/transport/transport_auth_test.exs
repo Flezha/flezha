@@ -101,7 +101,7 @@ defmodule Flezha.Transport.TransportAuthTest do
 
   describe "the attach line" do
     test "names the absolute socket directory and the assignment that reaches it" do
-      # An operator can paste the line: the directory it names is absolute
+      # A user can paste the line: the directory it names is absolute
       # even when the configured value is not.
       on_exit(TestHelpers.override_env(:socket_files_path, "app_data/attach_sockets"))
       resolved = Support.socket_dir()

@@ -8,7 +8,7 @@ defmodule Flezha.Convergence.Loop.State do
   struct is the one thing all four genuinely share.
 
   Field groups, in order: the two resolved intervals and the tick timer; the
-  heal backoff; the declared facts and the per-operative streak the tick
+  heal backoff; the declared facts and the per-operator streak the tick
   carries between ticks; the data-plane and producing-liveness verdicts; and
   the intent-mismatch evidence cache.
   """
@@ -29,9 +29,9 @@ defmodule Flezha.Convergence.Loop.State do
             # {kind, target} => %{at, args}: everything a site declared through
             # `Flezha.Convergence.Facts.declare/1` that is not yet repaired.
             facts: %{},
-            # {namespace, operative_id} => consecutive ticks observed misbound.
+            # {namespace, operator_id} => consecutive ticks observed misbound.
             misbound_streaks: %{},
-            # operative_ids whose declared plugins were missing or self-reported
+            # operator_ids whose declared plugins were missing or self-reported
             # unhealthy on the last tick. Reported to /healthz as degraded;
             # kept only to log set transitions, not steady state.
             plugin_degraded: [],
@@ -51,15 +51,15 @@ defmodule Flezha.Convergence.Loop.State do
             # one health answer every surface reads, and what lets a state that
             # holds keep its `since_ms` instead of being re-stamped every tick.
             verdicts: %{},
-            # operative_id => %{detail:, cell:} producing-liveness STUCK
+            # operator_id => %{detail:, cell:} producing-liveness STUCK
             # verdicts (fed but progress markers flat past grace). Report-only:
             # healing stays on the output-stall ladder.
-            stuck_operatives: %{},
+            stuck_operators: %{},
             # [{taken_at_ms, tier-cursor markers}] — grace-window baselines for
             # the classifier's cursor-delta checks. Holds only Cells with
             # effectively-once tier cursors (empty until that tier lands).
             progress_history: [],
-            # Operatives with durable state evidence but no live intent — the
+            # Operators with durable state evidence but no live intent — the
             # wiped-registry witness /healthz degrades on.
             intent_mismatch: [],
             # {state-root mtime, first-level dir listing} cache.

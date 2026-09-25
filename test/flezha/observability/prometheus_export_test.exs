@@ -194,7 +194,7 @@ defmodule Flezha.Observability.PrometheusExportTest do
 
     test "a tuple metadata value renders instead of killing the registry" do
       # The shape two live TelemetryBridge paths carry today: the WAL writer's
-      # 3-tuple cell id, and operative-forward's {:unreachable, _} reason.
+      # 3-tuple cell id, and operator-forward's {:unreachable, _} reason.
       source = metric_source(:wal_tuple)
       registry = Process.whereis(PrometheusRegistry)
 
@@ -212,7 +212,7 @@ defmodule Flezha.Observability.PrometheusExportTest do
     end
 
     test "the registry owns five ETS tables and a poison signal wipes none of them" do
-      # This is the part of the defect an operator feels: `init/1` creates all
+      # This is the part of the defect a user feels: `init/1` creates all
       # five named tables in the registry process, so its death took every
       # counter, gauge and histogram since boot with it.
       healthy = metric_source(:healthy_before)
@@ -372,7 +372,7 @@ defmodule Flezha.Observability.PrometheusExportTest do
       # Driven, not inferred: four registry crashes in ~0.5 s exceed
       # `Supervisor.init/2`'s default 3-in-5 s and took the listener, the sink
       # and the registry down with the supervisor — export dying exactly when
-      # back-pressure means an operator needs it.
+      # back-pressure means a user needs it.
       #
       # Started unnamed via the module's own `init/1`, so this is the real
       # child list and the real restart intensity; the app's own

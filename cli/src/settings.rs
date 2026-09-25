@@ -177,7 +177,7 @@ const SHORT_KEYS: &[(&str, &str)] = &[("n", "namespace"), ("o", "output")];
 /// consults it: the readers are the option-row gate, which exempts these words,
 /// and the test below, which proves each still reaches a document.
 #[cfg(test)]
-pub(crate) const SETTING_KEYS: &[&str] = &["--hook", "--namespace", "--operative_id"];
+pub(crate) const SETTING_KEYS: &[&str] = &["--hook", "--namespace", "--operator_id"];
 
 /// The plain `--key value` options of a plugin enable, with `namespace`
 /// defaulted to `"default"`. Both spellings of a setting are skipped:
@@ -360,7 +360,7 @@ mod tests {
 
     /// The option scanner of a plugin enable reads the same four forms as
     /// `extract_param`: a short flag written with `=` is the option the
-    /// operator typed, and a bare `key=value` word is a positional argument.
+    /// caller typed, and a bare `key=value` word is a positional argument.
     #[test]
     fn extract_opts_reads_all_four_forms() {
         for form in [
@@ -383,7 +383,7 @@ mod tests {
     }
 
     /// fails when: a plain-word settings key the screens teach reaches neither
-    /// of the two documents a plugin enable sends, so an operator types a word
+    /// of the two documents a plugin enable sends, so a caller types a word
     /// the verb drops. No row claims these — that is what lets the settings
     /// document own them — so this is what stands in for a row's guarantee.
     #[test]
@@ -417,7 +417,7 @@ mod tests {
         );
     }
 
-    /// Every settings-shaped token in a piece of operator-visible text: a
+    /// Every settings-shaped token in a piece of caller-visible text: a
     /// word spelled `X<key>=<value>`, with or without its dashes, freed of the
     /// brackets a usage line wraps it in.
     fn advertised_settings(text: &str) -> Vec<&str> {

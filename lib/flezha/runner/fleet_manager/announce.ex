@@ -12,7 +12,7 @@ defmodule Flezha.Runner.FleetManager.Announce do
     * the `:pg` capability groups of `Flezha.Cluster.Directory`, which say which
       nodes hold a runner for a factory,
     * the served groups of each namespace hub, which say which controllers the
-      hub may place an operative of that factory on.
+      hub may place an operator of that factory on.
 
   Desired-state diff, not refcounts: a group stays published while ANY runner on
   this node still backs it. A crashed fleet manager's `:pg` memberships are
@@ -54,7 +54,7 @@ defmodule Flezha.Runner.FleetManager.Announce do
 
   @doc """
   Stop declaring `factories` to `namespace`'s hub, which reassigns their
-  operatives to the controllers still serving them. One call, so the whole
+  operators to the controllers still serving them. One call, so the whole
   withdrawal is one announcement and one redistribution pass.
 
   A hub that is gone took its group table with it, so the factories leave this
@@ -115,7 +115,7 @@ defmodule Flezha.Runner.FleetManager.Announce do
 
   # A factory becoming placeable is declared at once. One that stops being
   # placeable is held for `group_withdraw_grace_ms`, because a runner back
-  # inside the grace moves no operative at all; a disconnect this controller
+  # inside the grace moves no operator at all; a disconnect this controller
   # asked for carries no such hope and withdraws immediately.
   defp sync_served_groups(state, immediate_withdrawal?) do
     Enum.reduce(served_namespaces(state), state, fn namespace, state ->

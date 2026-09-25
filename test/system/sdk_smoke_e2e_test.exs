@@ -7,7 +7,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
       FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke
 
   Handshake and `AssignRunnerId`, `ConnectSocket`, add/remove lifecycle,
-  end-to-end data flow, `PipeToOperative` routing, migration, reconnect after a
+  end-to-end data flow, `PipeToOperator` routing, migration, reconnect after a
   disconnect — plus the two assertions that make the manifest binding: the
   factory ids the controller lists for a fresh runner equal the union of the
   manifest's `fixtures`, and each declaration the controller decodes equals its
@@ -21,9 +21,9 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
   use Mimic
   import FlezhaTest.Helper.TierE2EHarness, only: [unique: 1, unique_id_path: 1]
 
-  alias Flezha.Operative.Builder
+  alias Flezha.Operator.Builder
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias FlezhaTest.Helper.DeclarationSnapshot
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -33,14 +33,14 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
   # The tier drives only `runner_lifecycle` fixtures, so it runs to completion
   # on an SDK that defers every other capability; each snapshot below carries
   # the capability of the declaration it pins.
-  @test_operative_factory "do_nothing"
+  @test_operator_factory "do_nothing"
   @test_filter_factory "compare_filter"
 
-  # Stream operatives that request workflow spawns: the workflow capability
+  # Unbounded operators that request bounded spawns: the bounded capability
   # lists them because its scenarios drive them, not because they are one.
   @stream_requesters ~w(spawn_requester spawn_once_requester)
-  # The workflow half of the shorthand capability.
-  @workflow_short_forms ~w(sugar_workflow sugar_workflow_per_input)
+  # The bounded operator half of the shorthand capability.
+  @bounded_short_forms ~w(sugar_bounded sugar_bounded_per_input)
 
   # A namespace per test: these scenarios start, kill and migrate runners, and
   # a neighbour's teardown must never be able to reach into one of them.
@@ -90,7 +90,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
                "the runner registers fixtures the manifest does not list"
 
         for %{id: id, kind: kind} <- live do
-          expected = if workflow_fixture?(id), do: :workflow, else: :stream
+          expected = if bounded_fixture?(id), do: :bounded, else: :unbounded
 
           assert kind == expected,
                  "#{NodeTestHelper.runtime()} announced #{id} as #{inspect(kind)}, " <>
@@ -98,32 +98,32 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
         end
       end
 
-      @tag scenario: "AddOperative + data flow"
-      test "AddOperative + send input + observe output", ctx do
+      @tag scenario: "AddOperator + data flow"
+      test "AddOperator + send input + observe output", ctx do
         NodeTestHelper.start_runner(ctx.namespace, transport: ctx.transport)
 
-        operative_id = unique("smoke_flow")
+        operator_id = unique("smoke_flow")
 
         assert {:ok, _info} =
-                 OperativeManager.start_operative(ctx.namespace, %Builder{
-                   id: operative_id,
-                   factory_id: @test_operative_factory,
-                   opts: [plugins: [sink(ctx.namespace, operative_id)]]
+                 OperatorManager.start_operator(ctx.namespace, %Builder{
+                   id: operator_id,
+                   factory_id: @test_operator_factory,
+                   opts: [plugins: [sink(ctx.namespace, operator_id)]]
                  })
 
-        OperativeManager.send_io(operative_id, ctx.namespace, "hello", %{"input_type" => "2"})
+        OperatorManager.send_io(operator_id, ctx.namespace, "hello", %{"input_type" => "2"})
 
         assert_receive {:message_forward, payload}, 30_000
         assert to_string(payload) == "hello"
       end
 
-      @tag scenario: "PipeToOperative local"
-      test "PipeToOperative routes locally when target exists", ctx do
+      @tag scenario: "PipeToOperator local"
+      test "PipeToOperator routes locally when target exists", ctx do
         NodeTestHelper.start_runner(ctx.namespace, transport: ctx.transport)
 
-        for factory <- [@test_operative_factory, @test_filter_factory] do
+        for factory <- [@test_operator_factory, @test_filter_factory] do
           assert {:ok, _} =
-                   OperativeManager.start_operative(ctx.namespace, %Builder{
+                   OperatorManager.start_operator(ctx.namespace, %Builder{
                      id: unique("pipe_#{factory}"),
                      factory_id: factory
                    })
@@ -134,7 +134,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
       # tasklet model exists for. Registration alone has always passed: a
       # per-edge model declares a second channel for the sink, so the plugin
       # frame names the SINK rather than the producing channel and the durable
-      # handoff a workflow journals is the wrong one. The channel name on the
+      # handoff a bounded journals is the wrong one. The channel name on the
       # frame is what makes that visible from the controller.
       @tag capability: :graph_builder,
            skip: FlezhaTest.SystemCase.deferral(:graph_builder),
@@ -154,16 +154,16 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
           System.cmd("kill", ["-TERM", Integer.to_string(os_pid)], stderr_to_stdout: true)
         end)
 
-        operative_id = unique("smoke_hybrid")
+        operator_id = unique("smoke_hybrid")
 
         assert {:ok, _} =
-                 OperativeManager.start_operative(ctx.namespace, %Builder{
-                   id: operative_id,
+                 OperatorManager.start_operator(ctx.namespace, %Builder{
+                   id: operator_id,
                    factory_id: "hybrid_channel",
-                   opts: [plugins: [sink(ctx.namespace, operative_id, include_metadata: true)]]
+                   opts: [plugins: [sink(ctx.namespace, operator_id, include_metadata: true)]]
                  })
 
-        OperativeManager.send_io(operative_id, ctx.namespace, "42", %{
+        OperatorManager.send_io(operator_id, ctx.namespace, "42", %{
           "channel" => "input",
           "input_type" => "2"
         })
@@ -184,7 +184,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
       end
 
       @tag scenario: "migration"
-      test "an operative migrates between two runners of the same runtime", ctx do
+      test "an operator migrates between two runners of the same runtime", ctx do
         # Distinct identity files: an SDK that persists its stable id would
         # otherwise hand both processes the same one, and the second connect
         # would retire the first rather than join it.
@@ -197,23 +197,23 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
           end
 
         assert first != second
-        operative_id = unique("smoke_migrate")
+        operator_id = unique("smoke_migrate")
 
         assert {:ok, info} =
-                 OperativeManager.start_operative(ctx.namespace, %Builder{
-                   id: operative_id,
-                   factory_id: @test_operative_factory
+                 OperatorManager.start_operator(ctx.namespace, %Builder{
+                   id: operator_id,
+                   factory_id: @test_operator_factory
                  })
 
         target = Enum.find([first, second], &(&1 != info.runner_id))
 
-        # The migrate the loop's `rebind_operative` drives: a HotSwap handover
-        # the operative confirms before its binding flips.
-        {:ok, pid} = OperativeManager.get_operative_pid(ctx.namespace, operative_id)
+        # The migrate the loop's `rebind_operator` drives: a HotSwap handover
+        # the operator confirms before its binding flips.
+        {:ok, pid} = OperatorManager.get_operator_pid(ctx.namespace, operator_id)
         assert :ok = GenServer.call(pid, {:runner_migrate, target}, 60_000)
 
         assert {:ok, %{runner_id: ^target}} =
-                 OperativeManager.get_overwatch_state(ctx.namespace, operative_id)
+                 OperatorManager.get_overwatch_state(ctx.namespace, operator_id)
       end
 
       # QUIC's controller-side session teardown does not fire
@@ -250,16 +250,16 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
 
     test "a keyed output carries the identity stamps its golden pins", ctx do
       NodeTestHelper.start_runner(ctx.namespace)
-      operative_id = unique("stamps")
+      operator_id = unique("stamps")
 
       assert {:ok, _} =
-               OperativeManager.start_operative(ctx.namespace, %Builder{
-                 id: operative_id,
+               OperatorManager.start_operator(ctx.namespace, %Builder{
+                 id: operator_id,
                  factory_id: "partition_relay",
-                 opts: [plugins: [sink(ctx.namespace, operative_id, include_metadata: true)]]
+                 opts: [plugins: [sink(ctx.namespace, operator_id, include_metadata: true)]]
                })
 
-      OperativeManager.send_io(operative_id, ctx.namespace, "k1:one", %{
+      OperatorManager.send_io(operator_id, ctx.namespace, "k1:one", %{
         "channel" => "in",
         "input_type" => "2"
       })
@@ -280,11 +280,11 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
   # The runner's stdout until `needle` appears. A hybrid channel's consumer
   # tasklet holds no state and answers nothing, so what it prints is its only
   # observable effect — and every SDK's fixture prints the same line.
-  # A fixture of the workflow kind: a workflow short form, or one the workflow
+  # A fixture of the bounded kind: a bounded short form, or one the bounded operator
   # capability lists that is not a stream requester.
-  defp workflow_fixture?(id) do
-    workflows = Map.get(NodeTestHelper.fixtures(), "workflow", []) -- @stream_requesters
-    id in workflows or id in @workflow_short_forms
+  defp bounded_fixture?(id) do
+    bounded = Map.get(NodeTestHelper.fixtures(), "bounded", []) -- @stream_requesters
+    id in bounded or id in @bounded_short_forms
   end
 
   defp runner_said(port, needle, budget \\ 30_000) do
@@ -293,11 +293,11 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
 
   # Subscribed to every output channel, so it needs no channel name — only an
   # id unique in the namespace the tests share.
-  defp sink(namespace, operative_id, opts \\ []) do
+  defp sink(namespace, operator_id, opts \\ []) do
     %Flezha.Plugin{
-      id: "smoke_sink_#{operative_id}",
+      id: "smoke_sink_#{operator_id}",
       namespace: namespace,
-      operative_id: operative_id,
+      operator_id: operator_id,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: self(), include_metadata: Keyword.get(opts, :include_metadata, false)},
       hooks: [{:on_output, []}]

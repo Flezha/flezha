@@ -246,7 +246,7 @@ pub fn ca_cert_path() -> String {
 /// Client certificate presented to a QUIC server that requires peer
 /// authentication. Defaults to the controller-generated pair so a local
 /// runner sharing `app_data/` authenticates out of the box; remote runners
-/// point these at operator-provisioned certs.
+/// point these at user-provisioned certs.
 pub fn quic_client_cert_path() -> String {
     env_string("FLEZHA_QUIC_CLIENT_CERT", "app_data/certs/client.pem")
 }
@@ -291,7 +291,7 @@ mod tests {
         assert!(!would_overflow_write_buffer(512, 512, cap));
         assert!(would_overflow_write_buffer(512, 513, cap));
 
-        // Already at the cap: every further frame is dropped — workflow, not 1:1.
+        // Already at the cap: every further frame is dropped — bounded, not 1:1.
         assert!(would_overflow_write_buffer(cap, 1, cap));
         assert!(would_overflow_write_buffer(cap, 4096, cap));
     }
@@ -366,7 +366,7 @@ mod tests {
         assert!(refusal.contains(RETIRED_QUIC_ADDRESS_VAR), "{}", refusal);
         assert!(refusal.contains(QUIC_ADDRESSES_VAR), "{}", refusal);
 
-        // Set alongside the replacement it is simply ignored: an operator
+        // Set alongside the replacement it is simply ignored: a user
         // mid-migration is not stopped by the variable they already replaced.
         assert!(parse_quic_addresses(Some("a.example"), Some("127.0.0.1:4433")).is_ok());
     }

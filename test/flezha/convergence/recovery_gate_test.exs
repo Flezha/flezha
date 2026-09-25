@@ -167,11 +167,11 @@ defmodule Flezha.Convergence.RecoveryGateTest do
   end
 
   defp intent_for(namespaces) do
-    operatives =
+    operators =
       Enum.map(namespaces, fn ns ->
-        %{namespace: ns, operative_id: "r_#{ns}", factory_id: nil, plugins: []}
+        %{namespace: ns, operator_id: "r_#{ns}", factory_id: nil, plugins: []}
       end)
 
-    %Intent{operatives: operatives}
+    %Intent{operators: operators}
   end
 end

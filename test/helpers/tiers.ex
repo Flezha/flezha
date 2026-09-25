@@ -72,7 +72,7 @@ defmodule FlezhaTest.Tiers do
       self_skip: false
     },
     %{
-      tag: :workflow_crash_resume,
+      tag: :bounded_crash_resume,
       runs_in: :workflow,
       workflow: "nightly-e2e.yml",
       reason: nil,

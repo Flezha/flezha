@@ -1,6 +1,6 @@
 # Controller state persistence
 
-How the controller keeps an Operative's per-Cell state durable: the on-disk layout, the
+How the controller keeps an Operator's per-Cell state durable: the on-disk layout, the
 `WalWriter` + `FsyncBatcher` substrate, snapshots and retention, runner→controller flow control,
 the live and time-travel read paths, and what recovery does at every crash window. Written for
 contributors working in `lib/flezha/state/`. The guarantee-level picture (write path, effect
@@ -24,24 +24,24 @@ decided.
 <state_root>/                        # :flezha, :state_root, else app_data/state
   .layout                            # namespaced-layout marker
   {namespace}/                       # `_system` holds pre-namespace state
-    {operative_class}/
+    {operator_class}/
       kind  effectively_once  checkpoint_ack  compact_after_bytes ...   # class sidecars
-      input.log                      # durable input log (effectively-once tier, durable workflow)
-      completion.record              # a finished workflow operative
+      input.log                      # durable input log (effectively-once tier, durable bounded operator)
+      completion.record              # a finished bounded operator
       {tasklet_id}/
         {cell_key}.wal
         {cell_key}.snap.{seq}
         {cell_key}.outbox.dedup
         {cell_key}.comp_intent       # saga compensation markers; presence is
         {cell_key}.comp_done         # the signal (empty files)
-    {instance_id}/{instance_id}/     # one workflow instance, whose class dir is its id
+    {instance_id}/{instance_id}/     # one bounded instance, whose class dir is its id
       task.journal                   # step progress
 ```
 
-The triple `(operative_class, tasklet_id, cell_key)` identifies a Cell's state and is all
+The triple `(operator_class, tasklet_id, cell_key)` identifies a Cell's state and is all
 the wire carries. The namespace level is resolved at ONE seam, `Flezha.State.Paths.class_dir/1`:
 a claims ETS table (`:flezha_state_namespaces`, keyed `{state_root, class}`) → the on-disk layout
-→ `_system`. An Operative records the claim when it binds; a class owned by another namespace
+→ `_system`. An Operator records the claim when it binds; a class owned by another namespace
 refuses with `{:namespace_conflict, class, owner}`, which makes cross-namespace state hijack
 impossible at the path seam; a class found under `_system` is adopted (one atomic rename) by the
 first real claimant; `Paths.delete_files/1` releases the claim once the class directory is
@@ -50,11 +50,11 @@ gone. `Flezha.Boot.StatePathMigrator` runs at `Application.start/2` and lifts an
 never part of the layout: a restarted runner's state ships to it on attach via `RestoreInitState`.
 
 `cell_key` is URL-safe base64 with a leading `_` when it contains characters outside
-`[A-Za-z0-9_.-]` (`Paths.encode_cell_key/1` / `decode_cell_key/1`). A workflow instance's
+`[A-Za-z0-9_.-]` (`Paths.encode_cell_key/1` / `decode_cell_key/1`). A bounded instance's
 `task.journal` rides the same `WalWriter` + `FsyncBatcher` substrate under one reserved key
 (`_task_journal`; `Paths.journal_id/1`), writes no dedup side-file, and is skipped by
 `Paths.scan_dir/1` along with `.tmp`, `.rewriting` and unknown suffixes, so nothing surfaces as
-a phantom Cell. A workflow's input lives in the class-level `input.log`, the same file a stream
+a phantom Cell. A bounded operator's input lives in the class-level `input.log`, the same file an unbounded operator
 on the effectively-once tier writes.
 
 ## Module map
@@ -70,27 +70,27 @@ on the effectively-once tier writes.
 | `Flezha.State.RecordLog` / `SeqIndex` | Append/read for the reserved journal over `WalWriter.append_next/3` (assigns the seq, writes and fsyncs in one call); the sparse seq→position index (one sample per 256 records, pure — no file I/O) shared by the WAL writer and the input log so a prefix cut copies the tail as bytes. |
 | `Flezha.State.FsyncBatcher` | One shared GenServer casting `:fsync` to every dirty writer per tick. |
 | `Flezha.State.Snapshot` | Snapshot file lifecycle (`.tmp → fsync → rename → truncate`). |
-| `Flezha.State.Outbox` | Per-Cell dedup file (`last_persisted_seq`, `outbox_flushed_seq`, realign `epoch`; advanced at fsync cadence, repaired at boot from the WAL scan) and the delivery-confirmation seam (`dispatch/2`, `token/2,3`, `hold/1`, `settled/1`, `confirm/1`, `park/4`). The owner is always the Cell's writer, for a stream Cell and a workflow Cell alike: a stream's entry is committed by its record's fsync, a workflow's is held until a durable stage marker names its record (`commit_unit: :stage`, read at boot from the class registry). |
-| `Flezha.State.InputLog` / `CreditLedger` | Durable input for either kind (a stream on the effectively-once tier, a durable workflow): the per-instance ingest journal (`<key>/input.log`), answered once synced, with its `flz.msg_id` index; the min-watermark the log owns over its reporters (Cells, or a workflow's journal identity; `consumed: %{reporter => offset}` in its state, the ETS table the published view); `tail/1` (floor and last offset, no record read); truncation below `min(watermark, now - hold_window)` once the prefix exceeds the cut threshold; and the pure byte ledger (`admit/2`, `drain/2`) behind both source credit and the state-stream window. |
-| `Flezha.State.PersistenceResolver` | Per-class knobs: operator map → instance metadata → SDK declaration → global default. |
+| `Flezha.State.Outbox` | Per-Cell dedup file (`last_persisted_seq`, `outbox_flushed_seq`, realign `epoch`; advanced at fsync cadence, repaired at boot from the WAL scan) and the delivery-confirmation seam (`dispatch/2`, `token/2,3`, `hold/1`, `settled/1`, `confirm/1`, `park/4`). The owner is always the Cell's writer, for an unbounded operator Cell and a bounded operator Cell alike: an unbounded operator's entry is committed by its record's fsync, a bounded operator's is held until a durable stage marker names its record (`commit_unit: :stage`, read at boot from the class registry). |
+| `Flezha.State.InputLog` / `CreditLedger` | Durable input for either kind (an unbounded operator on the effectively-once tier, a durable bounded operator): the per-instance ingest journal (`<key>/input.log`), answered once synced, with its `flz.msg_id` index; the min-watermark the log owns over its reporters (Cells, or a bounded operator's journal identity; `consumed: %{reporter => offset}` in its state, the ETS table the published view); `tail/1` (floor and last offset, no record read); truncation below `min(watermark, now - hold_window)` once the prefix exceeds the cut threshold; and the pure byte ledger (`admit/2`, `drain/2`) behind both source credit and the state-stream window. |
+| `Flezha.State.PersistenceResolver` | Per-class knobs: user map → instance metadata → SDK declaration → global default. |
 | `Flezha.State.Commands` / `Recovery` / `Restore` | Control-channel round-trips (`dispatch_restore_init_state/2`, `dispatch_compact_cell/2`, `notify_cell_backpressure/2`); `resync/2` (push `RestoreInitState` or pull `CompactCell`); assembly of the restore payload (latest snapshot + WAL tail + compensation markers). |
 | `Flezha.State.Watchdog` | Sensor: compaction triggers and timeouts, output stalls, disk-quota and RPO alarms. |
-| `Flezha.State.Retention` / `Completion` | Sweeper for time-travel retention, finished workflows (`completion.record`) and input logs. |
+| `Flezha.State.Retention` / `Completion` | Sweeper for time-travel retention, finished bounded operators (`completion.record`) and input logs. |
 | `Flezha.State.TimeTravel` | Point-in-time query behind `flz state at`. |
-| `Flezha.State.TaskJournal` | Workflow step journal over the reserved writer: the markers `task_committed`, `iter_committed`, `compensated` and `rewound`, the committed record ranges per Cell a writer and a bind re-derive (`committed_records/1`), the channels the rewind guard reads (`staged_channels_above/2`), and the reporter of each consumed offset into the input log's watermark (`release_input/2`). It holds no output: the Cells' writers own delivery. |
+| `Flezha.State.TaskJournal` | Bounded operator step journal over the reserved writer: the markers `task_committed`, `iter_committed`, `compensated` and `rewound`, the committed record ranges per Cell a writer and a bind re-derive (`committed_records/1`), the channels the rewind guard reads (`staged_channels_above/2`), and the reporter of each consumed offset into the input log's watermark (`release_input/2`). It holds no output: the Cells' writers own delivery. |
 | `Flezha.State.WalTransfer` | Destination-pulled copy of one Cell's files between controllers. |
 | `Flezha.State.DurabilityTier` (+ `Shipper`, `Hydrator`, `Manifest`, `Backend`) | Opt-in remote artifact shipping and hydration; `backend: :none` wires nothing. See [`../operations/remote_durability_tier.md`](../operations/remote_durability_tier.md). |
 
 ## Cross-controller transfer
 
-`state_root` is node-local and never assumed shared, so durable state pins an Operative to the
+`state_root` is node-local and never assumed shared, so durable state pins an Operator to the
 controller whose disk holds it. A HotSwap handover normally carries state in-band, but
-`Flezha.Operative.Handover.prepare/1` (via `Overwatch.prepare_handover_state/1`) sources it from
+`Flezha.Operator.Handover.prepare/1` (via `Overwatch.prepare_handover_state/1`) sources it from
 the runner, so a migration triggered by that runner's death (the hub's own redistribution, after
 a controller loses its last runner for a factory and withdraws it) ships an empty payload. The handover stamps `source_node`; on an
-empty payload the destination runs `WalTransfer.pull_operative/3` against that node before the
+empty payload the destination runs `WalTransfer.pull_operator/3` against that node before the
 ordinary replay. The pull carries every durable file of the instance, one reference at a time:
-each Cell's file set (`{:cell, cell_id}`), a workflow's journal under its reserved identity, and
+each Cell's file set (`{:cell, cell_id}`), a bounded operator's journal under its reserved identity, and
 the instance's input log (`{:input_log, class}`), because a journal without its log would seed
 the floor in an empty offset space. It runs only while this node holds none of those files, so a
 later restore never overwrites newer progress with the copy the source was left holding. The
@@ -104,20 +104,20 @@ directory, so a peer cannot read arbitrary paths. Telemetry `[:flezha, :state, :
 `[:flezha, :state, :wal_pull_failed]`. Source files stay; the Retention sweeper reaps orphans.
 
 **Partition rescale.** `WalTransfer.move_cell/3` is the same machinery pointed at a different
-Operative class: each Cell whose owner changes moves into the new member's tree under the same
+Operator class: each Cell whose owner changes moves into the new member's tree under the same
 tasklet and key — an atomic rename per file on one controller, the pull with `:as` across
 controllers with the source deleted only after every file landed. A member that keeps its id
-but sits on another controller is gathered the same way, and a workflow member's journal and
+but sits on another controller is gathered the same way, and a bounded operator member's journal and
 input log move with its Cells under its own id. The stop that precedes the moves preserves the
 files but closes the member's writers and its input log on the node it ran on, so the restarted
-member opens the files where the move left them. A surviving workflow member's stop first seals
+member opens the files where the move left them. A surviving bounded operator member's stop first seals
 its journal (`TaskJournal.cut/2` with `seal: true`) at its latest committed iteration. The
-move is atomic per Cell, so re-running `flz operative scale` after a crash moves nothing twice;
+move is atomic per Cell, so re-running `flz operator scale` after a crash moves nothing twice;
 the rescale stamps `state_source_node` on the new members' opts so a member placed elsewhere
 pulls its class tree before its bind reads its resume state
-([`../sdk/partitioned_operatives.md`](../sdk/partitioned_operatives.md)). All of this is
+([`../sdk/partitioned_operators.md`](../sdk/partitioned_operators.md)). All of this is
 one-shot at migration time, not replication: a controller that dies together with its disk takes
-its Operatives' state with it unless the remote durability tier is enabled.
+its Operators' state with it unless the remote durability tier is enabled.
 
 ## WAL record format
 
@@ -286,7 +286,7 @@ The `Watchdog` sweep triggers compaction on size or age (`flz state rotate` manu
 the writer's in-memory accounting, sharing the in-flight `compactions` map as the re-enqueue
 guard, and emitting `[:flezha, :state, :compaction_trigger]` with `trigger: :size | :age`:
 
-- **Size** — un-snapshotted bytes past `PersistenceResolver.compact_after_bytes/2`: an operator
+- **Size** — un-snapshotted bytes past `PersistenceResolver.compact_after_bytes/2`: a user
   `:compact_after_bytes => %{class => bytes}` map, else the SDK's declared `compact_after_bytes()`
   (persisted as a class sidecar), else `:default_compact_after_bytes` (8 MiB).
 - **Age** — the oldest un-snapshotted record is older than
@@ -329,14 +329,14 @@ resets the strike.
   snapshot with mtime `≤ now - retention_hours * 3600` is kept, older ones reaped, and the WAL
   keeps `seq > kept_seq`. The rewrite is `cell.wal.rewriting → rename`, so a mid-rewrite crash
   leaves the original intact; a writer with nothing below the cut answers at once.
-- **Finished workflows** — a class whose `completion.record` is older than
+- **Finished bounded operators** — a class whose `completion.record` is older than
   `PersistenceResolver.completed_retention_hours/1` (default 72 h) loses its retained
   state and record.
 - **Input logs** — `InputLog.Sweep.run/1` per state key, for either kind: a cast that truncates
   below `min(watermark, now - hold_window)`, rewriting the file only once the prefix below the
   floor exceeds `:record_log_cut_after_bytes`, and emits
   `[:flezha, :state, :input_log_frozen_watermark]` when the log grows while the watermark stays
-  put. A `once` workflow never commits an iteration, so its log goes with its class directory
+  put. A `once` bounded operator never commits an iteration, so its log goes with its class directory
   under finished-job retention.
 
 ## Flow control
@@ -384,20 +384,20 @@ session emits `[:flezha, :state, :credit_anomaly]` (kind `:shed`) and is an aler
 ## Live read (`flz state get`)
 
 ```text
-flz state get <operative>/<tasklet>[/<cell_key>] [--output text|json]
+flz state get <operator>/<tasklet>[/<cell_key>] [--output text|json]
 ```
 
 The current in-memory value of one live Cell, or of every Cell of one Tasklet, as JSON with
 the `change_seq` it was read at. An author does nothing extra: the mechanism is the `CellState`
 command every SDK answers for migration and handover, narrowed by two optional selector fields;
 the selector-less form is the handover shape and is unchanged byte for byte. A single-mode
-Tasklet reads as `<operative>/<tasklet>`, a static one as `<operative>/<tasklet>/<declared key>`,
-a dynamic one (`.key_by` / `.keyBy` on the wiring) as `<operative>/<tasklet>/<live key>`. Work
+Tasklet reads as `<operator>/<tasklet>`, a static one as `<operator>/<tasklet>/<declared key>`,
+a dynamic one (`.key_by` / `.keyBy` on the wiring) as `<operator>/<tasklet>/<live key>`. Work
 is proportional to the selector: a keyed read is one lookup, a Tasklet read serializes every
 live Cell of it.
 
-`Flezha.Service.CliManager.state_get/3` resolves the namespace holding the Operative
-(`OperativeManager.namespace_of/2`), authorizes as `:"state.get"` (viewer level, like `state.list`
+`Flezha.Service.CliManager.state_get/3` resolves the namespace holding the Operator
+(`OperatorManager.namespace_of/2`), authorizes as `:"state.get"` (viewer level, like `state.list`
 and `state.at`) and issues the round-trip. The seq rides the reply frame's `flz.change_seq`
 metadata, present only when the selector names exactly one Cell, so the JSON body keeps the
 shape the handover caller already decodes. Both SDKs sort object keys, so an equivalent state
@@ -420,10 +420,10 @@ read. Every refusal exits non-zero with the reason on stderr; the non-resident f
 |---|---|---|
 | `cell_evicted` | idle-evicted; eviction is destructive, so no durable value exists either | SDK |
 | `cell_not_found` | that Tasklet holds no Cell by that key | SDK |
-| `tasklet_not_found` | the Operative declares no Tasklet by that name | SDK |
+| `tasklet_not_found` | the Operator declares no Tasklet by that name | SDK |
 | `cell_key_without_tasklet` | a key given with no Tasklet to scope it (a key is unique only within its Tasklet) | SDK |
 | `{:not_resident, :suspended}` | the instance is suspended at a committed boundary and holds no runner resources | controller |
-| `{:not_resident, :unbound}` | the Operative is not bound to a runner; refused rather than waiting for a bind | controller |
+| `{:not_resident, :unbound}` | the Operator is not bound to a runner; refused rather than waiting for a bind | controller |
 | `:persistence_off` | the class declares persistence off, so its Cells hold no durable state | controller |
 | `{:oversized_state, bytes}` | the reply exceeds `:wal_high_watermark_bytes` | controller |
 
@@ -432,9 +432,9 @@ so the SDK keeps a bounded FIFO (1024 keys, `flz_core` `EVICTED_TRACE_CAP`) of w
 evicted; past the cap the answer degrades to `cell_not_found`, the safe direction.
 
 **Size bound.** The reply is bounded by `:wal_high_watermark_bytes` (16 MiB), the ceiling the
-workflow handoff uses; there is no separate key. Over it the read is refused naming the byte count
+bounded operator handoff uses; there is no separate key. Over it the read is refused naming the byte count
 and the narrowing selector: `state get: the selected state is 20971520 bytes, over the
-:wal_high_watermark_bytes ceiling — narrow the read with <operative>/<tasklet>/<cell_key>`.
+:wal_high_watermark_bytes ceiling — narrow the read with <operator>/<tasklet>/<cell_key>`.
 
 **Output.** Text prints `change_seq:` and `state:`; `--output json` (or its switch spelling
 `--json`) prints
@@ -445,15 +445,15 @@ no single version and prints `change_seq: -` (JSON `null`).
 
 ```elixir
 # Narrowed read: {:ok, json, change_seq} | {:error, reason}
-OperativeManager.get_cell_state("trading", "ohlc", %{tasklet: "candle", cell_key: "BTCUSD@1m"})
-# Whole Operative, seq-less: {:ok, json} — the migration/handover shape
-OperativeManager.get_cell_state("trading", "ohlc")
+OperatorManager.get_cell_state("trading", "ohlc", %{tasklet: "candle", cell_key: "BTCUSD@1m"})
+# Whole Operator, seq-less: {:ok, json} — the migration/handover shape
+OperatorManager.get_cell_state("trading", "ohlc")
 # The CLI verb itself: path parsing, authz, rendering
 CliManager.state_get("ohlc/candle/BTCUSD@1m", "json")
 ```
 
 **Cost.** One control round-trip plus one state-lock acquisition, bounded by one invocation: a
-point read for operators and low-rate readers, not a serving API and not a subscription — a
+point read for users and low-rate readers, not a serving API and not a subscription — a
 high-rate path is a sink (`.sink(...)` into Kafka or Postgres). Worked examples:
 `sdk/rust/examples/live_state_read.rs`,
 `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/state/`.
@@ -470,11 +470,11 @@ high-rate path is a sink (`.sink(...)` into Kafka or Postgres). Worked examples:
 ## Time-travel CLI
 
 ```text
-flz state list <operative_class>                                         # viewer
-flz state at <operative/tasklet/cell_key> <seq | iso8601-timestamp>      # viewer
-flz state rotate <operative/tasklet/cell_key>                            # operator
-flz state retention <operative_class> <hours>                            # admin
-flz state delete <operative/tasklet/cell_key>                            # admin
+flz state list <operator_class>                                         # viewer
+flz state at <operator/tasklet/cell_key> <seq | iso8601-timestamp>      # viewer
+flz state rotate <operator/tasklet/cell_key>                            # ops
+flz state retention <operator_class> <hours>                            # admin
+flz state delete <operator/tasklet/cell_key>                            # admin
 ```
 
 The verbs live in `cli/src/state.rs` and RPC into `Flezha.Service.CliManager.state_*`.
@@ -496,7 +496,7 @@ default none) has its idle, persistence-enabled Cells evicted by the SDK reaper,
 stream bound holds the frame for the rebind instead of losing it. The reaper waits for no reply
 and the controller writes none. `StreamChannel` honours it only for a class
 with the `:dynamic_cells?` capability — any other kind gets a warning and is ignored, so a
-durable workflow's state is never dropped out from under it — and routes it to
+durable bounded operator's state is never dropped out from under it — and routes it to
 `Flezha.State.Supervisor.delete_cell/1`, which closes the writer, drops the `FsyncBatcher` dirty
 mark, unlinks every path in `Paths.cell_files/1` (`Paths.delete_files/1`) and drops the
 Cell's input-log watermark entry (`InputLog.forget_cell/2`). The delete is idempotent. A later
@@ -515,7 +515,7 @@ recreate. `flz state delete` calls the same function and prints a confirmation.
 ## Self-healing sensors: `Watchdog` + `Recovery`
 
 The Watchdog sweeps every `:output_watchdog_interval_ms` (default 10 000 ms; `0` disables the
-timer) and is a sensor: it emits, and the convergence Loop owns every operative-level remedy. Each
+timer) and is a sensor: it emits, and the convergence Loop owns every operator-level remedy. Each
 completed sweep stamps `Flezha.Convergence.Snapshot.observe_sensor(:watchdog, at, period)`; a
 wedged Watchdog stops stamping and `/healthz` reports `200 degraded, reason: sensor_stale` within
 one poll. The mark is written by the sensor, never polled from it.
@@ -526,7 +526,7 @@ one poll. The mark is written by the sensor, never polled from it.
 - **Output staleness** — a Cell still receiving Changes whose persisted seq froze past
   `PersistenceResolver.output_stall_timeout_ms/1` (default 60 000 ms, `0` disables) emits
   `[:flezha, :state, :output_stall]` and nothing else; the remedy is the Loop's ladder
-  (`resync_runner` → `rebind_operative`, [`convergence_loop.md`](convergence_loop.md)). An idle
+  (`resync_runner` → `rebind_operator`, [`convergence_loop.md`](convergence_loop.md)). An idle
   Cell is not flagged.
 - **Compaction timeout** — stays with the Watchdog because it owns the handshake end to end.
 - **Disk quota and RPO** — latched `[:flezha, :state, :disk_quota_breach]` (the namespace's
@@ -551,13 +551,13 @@ the episode and releases the ladder.
 ## What a restore does to queued input
 
 A `RestoreInitState` lands on a Cell that may hold inputs in its mailbox — a rebind does not
-stop the runner, and `AddOperative` is idempotent. The queue survives only when the controller
+stop the runner, and `AddOperator` is idempotent. The queue survives only when the controller
 cannot hand it back: classes whose inputs are journaled before forwarding — the effectively-once
-tier and durable workflow instances, both through the one input log — have the mailbox **cleared**,
+tier and durable bounded instances, both through the one input log — have the mailbox **cleared**,
 because the queue is a subset of the log the controller re-forwards and keeping it would
 double-apply it and, in a correction, re-order it behind the replayed slice. Every other class,
-including a plain stateful stream operative (the default), **keeps** its queue:
-`Flezha.Operative.Ingest` forwards those inputs un-journaled
+including a plain stateful unbounded operator (the default), **keeps** its queue:
+`Flezha.Operator.Ingest` forwards those inputs un-journaled
 ([`../resilience/data_durability.md`](../resilience/data_durability.md)), so the mailbox is their
 only copy. The rule lives once, in `CellSlot::discard_queued_input_on_restore`
 (`flz_core/src/cell.rs`); discards ship as `restore_discarded_inputs` in `data_heartbeat`
@@ -582,28 +582,28 @@ pays nothing. Refusals emit `[:flezha, :state, :stale_writer_refused]` once per 
 episode, count into `stale_writer_refused_total`, release any credit debit immediately and never
 spawn a resync.
 
-Before any of that, a Change from a runner whose stable identity the operative's ownership record
+Before any of that, a Change from a runner whose stable identity the operator's ownership record
 does not name, as owner or as the target of a running migrate, is refused at the `StreamChannel`
 (`Flezha.Runner.StreamChannel.Records.admit/3`) and never reaches the writer, so it cannot realign
 it. The refusal counts into the channel's `foreign_frame_refused` slot, emits
-`[:flezha, :runner, :foreign_frame_refused]` once per session and operative, and tells that runner
-to remove its copy. A Change for an operative with no ownership record on this node reaches the
+`[:flezha, :runner, :foreign_frame_refused]` once per session and operator, and tells that runner
+to remove its copy. A Change for an operator with no ownership record on this node reaches the
 writer under the session fence alone.
 
 ## Persisted `runner_id` is advisory
 
-The `runner_id` in an operative-binding record (replayed into `Flezha.Operative.Overwatch.init/1`
-from ProcessHub's durable registry at boot) names the runner the Operative was bound to before
+The `runner_id` in an operator-binding record (replayed into `Flezha.Operator.Overwatch.init/1`
+from ProcessHub's durable registry at boot) names the runner the Operator was bound to before
 this controller process started. On every cold start
-`handle_continue({:bind_runner, stale_runner_id, operative}, _)` runs `Lifecycle.bind/3`, which
-re-resolves a live runner via `OperativeManager.assign_runner/3`; the persisted value feeds only
-the `rebound from stale runner X to live Y` log line. `AddOperative`, `:ping_runner` and
-`start_operative_sdk` target the re-resolved runner, and the bounded-retry governor re-resolves on
+`handle_continue({:bind_runner, stale_runner_id, operator}, _)` runs `Lifecycle.bind/3`, which
+re-resolves a live runner via `OperatorManager.assign_runner/3`; the persisted value feeds only
+the `rebound from stale runner X to live Y` log line. `AddOperator`, `:ping_runner` and
+`start_operator_sdk` target the re-resolved runner, and the bounded-retry governor re-resolves on
 every attempt. The source of truth for the live binding is ProcessHub's registry.
 
 ## Configuration knobs
 
-All under `:flezha`. Per-class maps are `%{<OperativeClass> => value}` and resolve operator map →
+All under `:flezha`. Per-class maps are `%{<OperatorClass> => value}` and resolve user map →
 instance metadata → SDK declaration → global default.
 
 | Key | Default | Meaning |
@@ -619,7 +619,7 @@ instance metadata → SDK declaration → global default.
 | `:credit_low_watermark_bytes` | `window / 2` | Grant trigger. |
 | `:outbox_inflight_max` | `1_000` | Effect records inside the plugin chain unconfirmed, per Cell of either kind, before the flush waits. |
 | `:outbox_resettle_ms` | `60_000` | Re-dispatch an entry whose chain run never reported back. |
-| `:sdk_commit_ack_ms` | `30_000` (`FLEZHA_WORKFLOW_ACK_TIMEOUT_MS`) | The commit worker's deadline for the effect records a workflow barrier names to become durable; past it the barrier fails with `record_not_durable`. The runner's barrier re-send reads the same variable. |
+| `:sdk_commit_ack_ms` | `30_000` (`FLEZHA_BOUNDED_ACK_TIMEOUT_MS`) | The commit worker's deadline for the effect records a bounded operator barrier names to become durable; past it the barrier fails with `record_not_durable`. The runner's barrier re-send reads the same variable. |
 | `:record_log_cut_after_bytes` | `64 * 1024` | Released bytes before the journal or an input log rewrites to cut its prefix. |
 | `:default_compact_after_bytes` | `8 * 1024 * 1024` (`FLEZHA_COMPACT_AFTER_BYTES`) | Size trigger; `:compact_after_bytes` map overrides per class. |
 | `:compact_after_age_ms` | `300_000` (`FLEZHA_COMPACT_AFTER_AGE_MS`; `0` in `:test`) | Age trigger; `0` disables; raised to a declared correction window. |
@@ -628,25 +628,25 @@ instance metadata → SDK declaration → global default.
 | `:output_stall_timeout_ms` / `:default_output_stall_timeout_ms` | `%{}` / `60_000` | Output-staleness window; `0` disables. |
 | `:time_travel_retention_check_interval_ms` | `60_000` (`FLEZHA_RETENTION_CHECK_INTERVAL_MS`) | Retention tick. |
 | `:time_travel_retention_hours` / `:default_time_travel_retention_hours` | `%{}` / `6` | Snapshot history kept; `0` keeps only the latest. |
-| `:workflow_completed_retention_hours` / `:default_workflow_completed_retention_hours` | `%{}` / `72` (`FLEZHA_WORKFLOW_RETENTION_HOURS`) | Finished workflow data kept before the sweeper reclaims it. |
+| `:bounded_completed_retention_hours` / `:default_bounded_completed_retention_hours` | `%{}` / `72` (`FLEZHA_BOUNDED_RETENTION_HOURS`) | Finished bounded operator data kept before the sweeper reclaims it. |
 | `:input_log_hold_window_ms` | `0` (`FLEZHA_INPUT_LOG_HOLD_WINDOW_MS`) | Floor on how long a consumed input stays in `input.log`; a declared correction window raises it. |
-| `:operative_persistence` | `%{}` (default: the class's announced switch) | Per-class persistence on/off, overriding what a class of either kind announces. |
+| `:operator_persistence` | `%{}` (default: the class's announced switch) | Per-class persistence on/off, overriding what a class of either kind announces. |
 | `:sync_durability` | `%{}` (default: the SDK declaration) | Per-class: commit barriers wait for the remote tier. |
 
 ## Smoke check (manual)
 
 `test/scripts/state_persistence.sh` is the executable check for the data-plane
 half of this capability: it brings up the dev compose stack, starts an
-operative on the `store_input` factory, attaches the websocket and Kafka
+operator on the `store_input` factory, attaches the websocket and Kafka
 plugins, lets the testnet drive inputs, then asserts the namespaced WAL layout
-(`<state_root>/<namespace>/<operative_class>/<tasklet_id>/<key>.wal`) and
-that `flz state list <operative_class>` reports the live cell. It wipes
+(`<state_root>/<namespace>/<operator_class>/<tasklet_id>/<key>.wal`) and
+that `flz state list <operator_class>` reports the live cell. It wipes
 `app_data/state/` and its compose volumes on every run, so a green result is
 evidence about the contract and not about leftovers.
 
 **It is NOT wired into CI, and nothing else runs it.** It needs a Docker
 daemon, a Kafka broker and a full in-container `cargo build` + `mix release`,
-none of which the `elixir`, `naming`, `docker` or `nightly-e2e` workflows
+none of which the `elixir`, `naming`, `docker` or `nightly-e2e` bounded operators
 carry. Measured cost: **2.5-4 min** for a green run from wiped volumes (four
 consecutive green runs: 2m20s, 3m36s, 3m37s, 4m08s). `cleanup` runs `down -v`,
 so the `cargo build` and `mix release` inside the container are paid every

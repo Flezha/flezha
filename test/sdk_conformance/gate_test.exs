@@ -71,11 +71,11 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   # change that owes it in its manifest and comes off this map in the same
   # commit.
   @admin_verbs ~w(
-    Operative.start
-    Operative.stop
-    Operative.send
-    Operative.list_operatives
-    Operative.cell_state
+    Operator.start
+    Operator.stop
+    Operator.send
+    Operator.list_operators
+    Operator.cell_state
     PluginManager.enable
     PluginManager.disable
     PluginManager.list
@@ -91,13 +91,13 @@ defmodule FlezhaTest.SdkConformance.GateTest do
     elixir: "sdk/elixir/lib/flezha/sdk/admin.ex"
   }
 
-  # Names the workflow authoring surface retired: a workflow declares its graph
-  # in `channels` and its retry ladder on the edge, as a stream does, and Node's
-  # stream function is `defineStream`. Each pattern is the spelling a
+  # Names the bounded operator authoring surface retired: a bounded operator declares its graph
+  # in `channels` and its retry ladder on the edge, as an unbounded operator does, and Node's
+  # stream function is `defineUnbounded`. Each pattern is the spelling a
   # definition or a use would take, never prose.
-  @retired_workflow_names [
+  @retired_bounded_names [
     {"a `tasklets` body", ~r/\b(?:fn|def|void)\s+tasklets\s*\(/},
-    {"`defineOperative`", ~r/\bdefineOperative\b/},
+    {"`defineOperator`", ~r/\bdefineOperator\b/},
     {"a class-level retry knob",
      ~r/\b(?:retry_attempts|retryAttempts|barrier_retry_attempts|barrierRetryAttempts)\b|\bfn retry_backoff\(|\bretryBackoff\(/},
     {"`ZeroRetryBackoff`", ~r/\bZeroRetryBackoff\b/}
@@ -133,7 +133,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
                             [
                               Mix.Tasks.Bench,
                               Mix.Tasks.Bench.Roundtrip,
-                              Mix.Tasks.Bench.Workflow
+                              Mix.Tasks.Bench.Bounded
                             ],
                             &Code.ensure_loaded?/1
                           )
@@ -786,15 +786,15 @@ defmodule FlezhaTest.SdkConformance.GateTest do
     end
   end
 
-  describe "the workflow authoring surface" do
-    test "no SDK reintroduces a name the workflow surface retired" do
+  describe "the bounded authoring surface" do
+    test "no SDK reintroduces a name the bounded surface retired" do
       files =
         SourceWalk.files(@authoring_roots, ~w(.rs .java .ex .exs .ts .js .mjs .py .rb .php))
 
       assert length(files) > 100, "read only #{length(files)} files; a root moved"
 
       for {file, line, number} <- SourceWalk.code_lines(files),
-          {name, pattern} <- @retired_workflow_names,
+          {name, pattern} <- @retired_bounded_names,
           line =~ pattern do
         fail("#{file}:#{number} reintroduces #{name}: #{String.trim(line)}")
       end
@@ -816,7 +816,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
         fail(
           "#{@heartbeat_site} builds #{Enum.join(Enum.sort(unmirrored), ", ")}, which the " <>
             "controller holds no liveness slot for: the runner pays for them on the wire and " <>
-            "they reach no operator surface"
+            "they reach no operations surface"
         )
       end
     end
@@ -824,7 +824,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
     test "the Elixir SDK's heartbeat carries exactly the keys the controller mirrors" do
       # The Elixir SDK is its own core and declares its own key set: `flz_core`'s
       # says nothing about what it sends. A key the controller holds a slot for
-      # and this runtime omits is an operator surface that is correct for six
+      # and this runtime omits is an operations surface that is correct for six
       # SDKs and blank for the seventh; a key it sends and nothing mirrors is
       # paid for on the wire and read by no one.
       declared = MapSet.new(Flezha.SDK.Counters.heartbeat_keys())

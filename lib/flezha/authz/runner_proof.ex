@@ -30,7 +30,7 @@ defmodule Flezha.AuthZ.RunnerProof do
   certificate names no namespace" and the secret is asked instead. The secret is
   a `:runner` entry of `Flezha.AuthZ.TokenStore`: the registry that already
   hashes, lists, rotates and revokes a credential, holding as many live runner
-  entries per namespace as an operator issues.
+  entries per namespace as a caller issues.
 
   Nothing is proven while enforcement is off. The posture is the one gate:
   under `:open` the frame's namespace is taken as it always was, so a
@@ -142,7 +142,7 @@ defmodule Flezha.AuthZ.RunnerProof do
     end
   end
 
-  # The refusal names both namespaces, so an operator reading it knows which
+  # The refusal names both namespaces, so a caller reading it knows which
   # credential was presented and which namespace was asked for.
   defp agree(claimed, %{namespace: proven} = proof) do
     if claimed == proven do

@@ -126,7 +126,7 @@ defmodule Flezha.State.Outbox do
   end
 
   @doc """
-  Hand one dispatch pass's stamped outputs to the operative's `:on_output`
+  Hand one dispatch pass's stamped outputs to the operator's `:on_output`
   chain as one cast — the one place a durable output leaves an outbox.
   """
   @spec dispatch(pid(), [output()]) :: :ok
@@ -240,7 +240,7 @@ defmodule Flezha.State.Outbox do
          {:ok, %{owner: {rc, sh, pk}}} <- decode(token) do
       entry =
         DlqEntry.new!(%{
-          operative_class: rc,
+          operator_class: rc,
           tasklet_id: sh,
           cell_key: pk,
           channel: Map.get(metadata, "channel", ""),
@@ -337,14 +337,14 @@ defmodule Flezha.State.Outbox do
   # ---------- output identity ----------
 
   @doc """
-  Canonical label of a Cell identity — `<operative_class>/<tasklet_id>/<cell_key>`,
+  Canonical label of a Cell identity — `<operator_class>/<tasklet_id>/<cell_key>`,
   the value carried by the `flz.cell` output stamp. Accepts the decoded triple
   or the on-wire identity bytes (undecodable bytes fall back to lowercase hex, so a
   corrupt identity is still traceable rather than fatal).
   """
   @spec cell_label({binary(), binary(), binary()} | binary()) :: binary()
-  def cell_label({operative_class, tasklet_id, cell_key}),
-    do: "#{operative_class}/#{tasklet_id}/#{cell_key}"
+  def cell_label({operator_class, tasklet_id, cell_key}),
+    do: "#{operator_class}/#{tasklet_id}/#{cell_key}"
 
   def cell_label(cell_id) when is_binary(cell_id) do
     case Wire.decode_cell_id(cell_id) do
@@ -359,8 +359,8 @@ defmodule Flezha.State.Outbox do
   conforming sink deduplicates on (`Flezha.Plugin.Provider.Postgres`,
   `Flezha.Plugin.Provider.Kafka`).
 
-  The one durable outbox mints it, for a stream Cell under the
-  effectively-once tier and a durable workflow Cell alike
+  The one durable outbox mints it, for an unbounded operator Cell under the
+  effectively-once tier and a durable bounded operator Cell alike
   (`Flezha.State.WalWriter`, `seq` = `<record seq>.<emit_ordinal>`). `seq` is
   a numeric dotted sequence so a sink can order it; `key` is omitted when the
   output carries no natural key.

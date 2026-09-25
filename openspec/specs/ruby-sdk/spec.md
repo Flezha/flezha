@@ -5,14 +5,14 @@ TBD - created by archiving change ruby-sdk. Update Purpose after archive.
 ## Requirements
 ### Requirement: The Ruby SDK is a poll host over `flz_core`
 
-The Ruby SDK SHALL drive `flz_core` through the poll boundary and SHALL contain no kernel code: transport, framing, ordering, per-cell exclusivity, durability, retries, the retry→park ladder, timers, credit, routing, the workflow driver and reconnect SHALL remain in the core. The SDK's responsibilities SHALL be limited to the authoring surface, the codec for user types, the threading host, and idiomatic errors.
+The Ruby SDK SHALL drive `flz_core` through the poll boundary and SHALL contain no kernel code: transport, framing, ordering, per-cell exclusivity, durability, retries, the retry→park ladder, timers, credit, routing, the bounded driver and reconnect SHALL remain in the core. The SDK's responsibilities SHALL be limited to the authoring surface, the codec for user types, the threading host, and idiomatic errors.
 
 #### Scenario: No kernel surface is reimplemented in Ruby
-- **WHEN** the gem's source is inspected for a retry ladder, an outbox, a WAL writer, a credit window or a workflow driver
+- **WHEN** the gem's source is inspected for a retry ladder, an outbox, a WAL writer, a credit window or a bounded driver
 - **THEN** none SHALL exist; every such behaviour SHALL be reached by calling the core
 
 #### Scenario: The runner connects, serves and shuts down through the core
-- **WHEN** a Ruby runner starts, binds an operative, processes input, fires a timer and receives a shutdown
+- **WHEN** a Ruby runner starts, binds an operator, processes input, fires a timer and receives a shutdown
 - **THEN** every step SHALL be driven by `poll` / `complete` against the core, and the runner SHALL exit with in-flight activations completed or reported
 
 ### Requirement: Runner entry point and lifecycle
@@ -20,7 +20,7 @@ The Ruby SDK SHALL drive `flz_core` through the poll boundary and SHALL contain 
 The SDK SHALL expose one entry point that declares classes, claims a runner slot and serves until shutdown. Declaration SHALL complete before the first `poll`. Shutdown SHALL be observable from a signal, from closed stdin (the e2e teardown contract), and from a controller-requested shutdown, and SHALL drain in-flight activations before the process exits.
 
 #### Scenario: Declaration precedes serving
-- **WHEN** the entry point is invoked with two declared operative classes
+- **WHEN** the entry point is invoked with two declared operator classes
 - **THEN** both class declarations SHALL reach the core before any activation is polled
 
 #### Scenario: Closed stdin ends the runner
@@ -29,18 +29,18 @@ The SDK SHALL expose one entry point that declares classes, claims a runner slot
 
 ### Requirement: Class-based authoring surface with explicit registration
 
-Operatives and tasklets SHALL be authored as Ruby classes. The SDK SHALL NOT scan packages, walk load paths, or autoload to discover them; the author SHALL name the classes that participate. A declaration that cannot be resolved to a valid topology SHALL be refused at registration time with an error naming the offending class and method — registration-time refusal replaces the Rust SDK's compile-time refusal. A tasklet's body SHALL be its `run` method, the name every SDK gives a tasklet's body; a tasklet class defining `process` and no `run` SHALL be refused at registration naming `run`.
+Operators and tasklets SHALL be authored as Ruby classes. The SDK SHALL NOT scan packages, walk load paths, or autoload to discover them; the author SHALL name the classes that participate. A declaration that cannot be resolved to a valid topology SHALL be refused at registration time with an error naming the offending class and method — registration-time refusal replaces the Rust SDK's compile-time refusal. A tasklet's body SHALL be its `run` method, the name every SDK gives a tasklet's body; a tasklet class defining `process` and no `run` SHALL be refused at registration naming `run`.
 
 #### Scenario: An undeclared class never runs
 - **WHEN** a tasklet class is defined but not registered
 - **THEN** it SHALL NOT be declared to the core, and no activation SHALL reach it
 
 #### Scenario: A bad topology is refused by name
-- **WHEN** a registered tasklet emits to a channel no tasklet consumes and the operative is not sealed on that edge
+- **WHEN** a registered tasklet emits to a channel no tasklet consumes and the operator is not sealed on that edge
 - **THEN** registration SHALL raise naming the class, the method and the channel; no controller connection SHALL be attempted
 
 #### Scenario: A tasklet's body is its run method
-- **WHEN** a `Flezha::Tasklet` subclass defines `run(input, ctx)` and an operative wires it
+- **WHEN** a `Flezha::Tasklet` subclass defines `run(input, ctx)` and an operator wires it
 - **THEN** each input SHALL reach `run`, and its return value SHALL be the tasklet's output
 
 #### Scenario: The old body method is refused
@@ -49,18 +49,18 @@ Operatives and tasklets SHALL be authored as Ruby classes. The SDK SHALL NOT sca
 
 ### Requirement: The authoring surface carries the shared vocabulary at full parity
 
-The Ruby authoring surface SHALL carry both operative kinds — stream and workflow — and the shared vocabulary the reference SDK carries: the graph/wiring DSL with `key_by` and transforms, `ctx` emits, `ctx.now` and `ctx.stable_id`, cell state and change journaling, static and dynamic cell modes, per-cell timers, tiers including effectively-once, multi-input tasklets, tasklet-requested spawn, workflow chains, loops, suspension and rewind. A capability the Ruby SDK does not carry SHALL be named as deferred in its conformance manifest together with the follow-up that owes it; silent absence SHALL be a defect.
+The Ruby authoring surface SHALL carry both operator kinds — unbounded and bounded — and the shared vocabulary the reference SDK carries: the graph/wiring DSL with `key_by` and transforms, `ctx` emits, `ctx.now` and `ctx.stable_id`, cell state and change journaling, static and dynamic cell modes, per-cell timers, tiers including effectively-once, multi-input tasklets, tasklet-requested spawn, bounded operator chains, loops, suspension and rewind. A capability the Ruby SDK does not carry SHALL be named as deferred in its conformance manifest together with the follow-up that owes it; silent absence SHALL be a defect.
 
 #### Scenario: The manifest defers nothing at v1
 - **WHEN** `test/apps/ruby_runner/conformance.json` is compared against the Rust reference manifest
 - **THEN** its `deferred` list SHALL be empty and its fixture set SHALL equal the reference's
 
-#### Scenario: A workflow class runs a durable chain
-- **WHEN** a Ruby workflow operative runs a chained loop with a suspension and is resumed after a runner restart
+#### Scenario: A bounded class runs a durable chain
+- **WHEN** a Ruby bounded operator runs a chained loop with a suspension and is resumed after a runner restart
 - **THEN** the journal SHALL drive resume without re-running a committed tasklet
 
 #### Scenario: Two channels merge into one tasklet
-- **WHEN** an operative declares `c.merge.from(ticks) { |t| … }.from(quotes) { |q| … }.key_by { |v| v[:symbol] }.into(Detector)`
+- **WHEN** an operator declares `c.merge.from(ticks) { |t| … }.from(quotes) { |q| … }.key_by { |v| v[:symbol] }.into(Detector)`
 - **THEN** registration SHALL succeed with one Detector node fed by two consumer edges, each applying its own mapping, a value from either entry SHALL reach `run` as the mapped value keyed by `symbol`, a duplicated source SHALL refuse with `DuplicateMergeSource` and a single source with `MergeTooFewSources`
 
 #### Scenario: One input becomes three deliveries
@@ -121,31 +121,31 @@ The SDK SHALL prove the set by one conformance run over every row of
 - **THEN** it authors the row with `c.merge.from(...)…into(...)` rather than raising, registration refuses with `MergeTooFewSources` or `DuplicateMergeSource`, and the manifest's `topology_surfaces` lists `merge`
 
 ### Requirement: The single-tasklet short form is a class-body declaration
-The short form SHALL be a `Flezha::StreamOperative` or `Flezha::WorkflowOperative` subclass, the same base a full-form operative subclasses, and SHALL NOT be a `Flezha::Tasklet` subclass; `Flezha::Tasklet` SHALL lose its `sink` class-body declaration and SHALL raise naming the operative base when one is written. The class body SHALL declare `factory_id "name"`, as a full-form operative already does, and MAY declare `sink "name"`, `input "name"` and `codec :text`, each its own class-body call so that none rides another. The kind is the base class and SHALL NOT be a keyword.
+The short form SHALL be a `Flezha::UnboundedOperator` or `Flezha::BoundedOperator` subclass, the same base a full-form operator subclasses, and SHALL NOT be a `Flezha::Tasklet` subclass; `Flezha::Tasklet` SHALL lose its `sink` class-body declaration and SHALL raise naming the operator base when one is written. The class body SHALL declare `factory_id "name"`, as a full-form operator already does, and MAY declare `sink "name"`, `input "name"` and `codec :text`, each its own class-body call so that none rides another. The kind is the base class and SHALL NOT be a keyword.
 
-Such a class SHALL be a short form exactly when it defines `run` and not `channels`; defining both SHALL be refused, and defining neither SHALL be refused naming the missing body. `sink` SHALL be optional. The class SHALL carry a generated operative of its base's kind whose factory id is `factory_id`, wiring an entry channel named `input` (or the `input` value) into a generated tasklet named `factory_id` and, when a `sink` is declared, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A workflow short form MAY declare `loop_mode :per_input` (or `:once`, `:chained`) in its class body and SHALL be a `once` workflow when it does not, with every other workflow setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state; any other class setting written on a short form SHALL be refused naming it. The entry SHALL be decoded by `codec` where one is declared, whether or not a `sink` is.
+Such a class SHALL be a short form exactly when it defines `run` and not `channels`; defining both SHALL be refused, and defining neither SHALL be refused naming the missing body. `sink` SHALL be optional. The class SHALL carry a generated operator of its base's kind whose factory id is `factory_id`, wiring an entry channel named `input` (or the `input` value) into a generated tasklet named `factory_id` and, when a `sink` is declared, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A bounded short form MAY declare `loop_mode :per_input` (or `:once`, `:chained`) in its class body and SHALL be a `once` bounded operator when it does not, with every other bounded setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state; any other class setting written on a short form SHALL be refused naming it. The entry SHALL be decoded by `codec` where one is declared, whether or not a `sink` is.
 
-`Runner#register_factory` SHALL accept such a class and register the generated operative; the refusals SHALL be raised there, at registration, as the Ruby contract places every refusal: `Flezha::DeclarationError` whose refusals and message begin with `ShortFormWithTopology`. A class with no `factory_id` SHALL be refused naming the required declaration, and SHALL NOT take a factory id from the class constant. The Ruby SDK cannot see a tasklet's output type, owes no `SinkWithoutOutput`, and SHALL NOT list `shorthand_typed_output` in its manifest. A duplicate factory id SHALL raise with a message beginning `DuplicateFactoryId`.
+`Runner#register_factory` SHALL accept such a class and register the generated operator; the refusals SHALL be raised there, at registration, as the Ruby contract places every refusal: `Flezha::DeclarationError` whose refusals and message begin with `ShortFormWithTopology`. A class with no `factory_id` SHALL be refused naming the required declaration, and SHALL NOT take a factory id from the class constant. The Ruby SDK cannot see a tasklet's output type, owes no `SinkWithoutOutput`, and SHALL NOT list `shorthand_typed_output` in its manifest. A duplicate factory id SHALL raise with a message beginning `DuplicateFactoryId`.
 
-#### Scenario: An operative class with a run body is a whole stream operative
+#### Scenario: An operator class with a run body is a whole unbounded operator
 
-- **WHEN** `class Upcase < Flezha::StreamOperative` declares `factory_id "upcase"`, `sink "out"`, `codec :text` and `run`, and the runner is given `register_factory(Upcase)`
-- **THEN** the runner declares a stream operative `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and sink `out`, and no `Flezha::Tasklet` subclass exists for it
+- **WHEN** `class Upcase < Flezha::UnboundedOperator` declares `factory_id "upcase"`, `sink "out"`, `codec :text` and `run`, and the runner is given `register_factory(Upcase)`
+- **THEN** the runner declares an unbounded operator `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and sink `out`, and no `Flezha::Tasklet` subclass exists for it
 
-#### Scenario: An operative class with a run body is a whole workflow operative
+#### Scenario: An operator class with a run body is a whole bounded operator
 
-- **WHEN** `class Place < Flezha::WorkflowOperative` declares `factory_id "place"`, `sink "placed"`, `input "order"`, `codec :text` and `run`, the runner is given `register_factory(Place)`, an instance is started, and one message is sent on `order`
+- **WHEN** `class Place < Flezha::BoundedOperator` declares `factory_id "place"`, `sink "placed"`, `input "order"`, `codec :text` and `run`, the runner is given `register_factory(Place)`, an instance is started, and one message is sent on `order`
 - **THEN** `run` receives the message as text, its return value reaches `placed`, and the instance completes
 
-#### Scenario: A short-form workflow declares its loop mode
+#### Scenario: A short-form bounded operator declares its loop mode
 
-- **WHEN** `class Chat < Flezha::WorkflowOperative` declares `factory_id "chat"`, `sink "replies"`, `codec :text`, `loop_mode :per_input` and `run`, is registered, and two messages reach its entry channel
+- **WHEN** `class Chat < Flezha::BoundedOperator` declares `factory_id "chat"`, `sink "replies"`, `codec :text`, `loop_mode :per_input` and `run`, is registered, and two messages reach its entry channel
 - **THEN** the declaration carries `loop_mode` `per_input`, `run` runs once per message, and the instance does not complete after the first
 
 #### Scenario: A short form with no sink is declared
 
 - **WHEN** a class declares `factory_id "counter"`, `input "ticks"`, `codec :text`, `initial_state`, `apply_change` and `run`, with no `sink`
-- **THEN** the operative declares `ticks` into the generated tasklet and no plugin channel
+- **THEN** the operator declares `ticks` into the generated tasklet and no plugin channel
 
 #### Scenario: An input and codec need no sink
 
@@ -154,35 +154,35 @@ Such a class SHALL be a short form exactly when it defines `run` and not `channe
 
 #### Scenario: A channels body beside a run body is refused
 
-- **WHEN** a `Flezha::StreamOperative` subclass defines both `channels` and `run`
+- **WHEN** a `Flezha::UnboundedOperator` subclass defines both `channels` and `run`
 - **THEN** `register_factory` raises `Flezha::DeclarationError` naming `ShortFormWithTopology`
 
 #### Scenario: A sink on a tasklet is refused
 
 - **WHEN** a `Flezha::Tasklet` subclass declares `sink "out"`
-- **THEN** loading it raises naming `Flezha::StreamOperative` and `Flezha::WorkflowOperative`
+- **THEN** loading it raises naming `Flezha::UnboundedOperator` and `Flezha::BoundedOperator`
 
 #### Scenario: A derived factory id is refused
 
-- **WHEN** a `Flezha::StreamOperative` subclass declares `sink "out"` and `run` and no `factory_id`
+- **WHEN** a `Flezha::UnboundedOperator` subclass declares `sink "out"` and `run` and no `factory_id`
 - **THEN** `register_factory` raises `Flezha::DeclarationError` naming the required `factory_id`, and no controller connection is attempted
 
-### Requirement: A Ruby workflow class carries what its builder recorded
+### Requirement: A Ruby bounded class carries what its builder recorded
 
-`Flezha::WorkflowOperative#build_spec` SHALL build the `ClassSpec` from every flag the builder recorded, exactly as the stream's does, and `to_host_class_decl` SHALL put every recorded key on the wire for either kind, so a stream-only builder call on a workflow reaches the core and is refused under its name (`EffectivelyOnceOnWorkflow`, `CheckpointOnWorkflow`, `CorrectionWindowOnWorkflow`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `Flezha::DeclarationError` naming it. `Flezha::WorkflowOperative` SHALL declare no `retry_attempts`, `retry_backoff_ms`, `barrier_retry_attempts` or `wake_after_ms` setting, and the declaration SHALL carry no `wake_after_ms`; the builder SHALL carry no `sync_durability` call, the class-body flag being the one spelling. A `Ctx` inside a workflow SHALL offer `timer_after`, `timer_at_event_time` and `cancel_timer` exactly as inside a stream, and a tasklet's `on_timer` SHALL run on its firing in both kinds; only a `compensate` hook's `Ctx` SHALL raise an error naming `TimersUnavailable` from them.
+`Flezha::BoundedOperator#build_spec` SHALL build the `ClassSpec` from every flag the builder recorded, exactly as the unbounded operator's does, and `to_host_class_decl` SHALL put every recorded key on the wire for either kind, so an unbounded-only builder call on a bounded operator reaches the core and is refused under its name (`EffectivelyOnceOnBounded`, `CheckpointOnBounded`, `CorrectionWindowOnBounded`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `Flezha::DeclarationError` naming it. `Flezha::BoundedOperator` SHALL declare no `retry_attempts`, `retry_backoff_ms`, `barrier_retry_attempts` or `wake_after_ms` setting, and the declaration SHALL carry no `wake_after_ms`; the builder SHALL carry no `sync_durability` call, the class-body flag being the one spelling. A `Ctx` inside a bounded operator SHALL offer `timer_after`, `timer_at_event_time` and `cancel_timer` exactly as inside a stream, and a tasklet's `on_timer` SHALL run on its firing in both kinds; only a `compensate` hook's `Ctx` SHALL raise an error naming `TimersUnavailable` from them.
 
-#### Scenario: A tier call on a workflow reaches the core
+#### Scenario: A tier call on a bounded operator reaches the core
 
-- **WHEN** a `Flezha::WorkflowOperative` subclass's `channels` block calls `c.effectively_once`, the runner registers it and starts
-- **THEN** declaring it to the core raises naming `EffectivelyOnceOnWorkflow`, and the operative is not declared
+- **WHEN** a `Flezha::BoundedOperator` subclass's `channels` block calls `c.effectively_once`, the runner registers it and starts
+- **THEN** declaring it to the core raises naming `EffectivelyOnceOnBounded`, and the operator is not declared
 
 #### Scenario: A retired setting is refused
 
-- **WHEN** a `Flezha::WorkflowOperative` subclass writes `retry_attempts 5` or `wake_after_ms 5000` in its class body
+- **WHEN** a `Flezha::BoundedOperator` subclass writes `retry_attempts 5` or `wake_after_ms 5000` in its class body
 - **THEN** loading it raises `NoMethodError`, the setting no longer being declared
 
-#### Scenario: A timer inside a workflow tasklet fires
+#### Scenario: A timer inside a bounded tasklet fires
 
-- **WHEN** a tasklet of a running `per_input` workflow calls `ctx.timer_after(300)` in `run`
+- **WHEN** a tasklet of a running `per_input` bounded operator calls `ctx.timer_after(300)` in `run`
 - **THEN** the call returns the scheduled timestamp, the effect carries the timer op, and `on_timer` runs on that Cell at that timestamp, opening a pass at that tasklet
 

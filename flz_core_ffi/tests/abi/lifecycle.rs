@@ -62,7 +62,7 @@ fn c_abi_full_scenario() {
     restores_and_applies_the_offset_floor(ctx, &controller, &stream);
     a_live_read_answers_with_the_host_json(ctx, &controller);
     a_keyed_dynamic_route_crosses_for_its_key(ctx, &controller, &stream);
-    a_workflow_tasklet_completes_through_the_abi(ctx, &controller);
+    a_bounded_tasklet_completes_through_the_abi(ctx, &controller);
     crate::shutdown::shutdown_ships_state_then_wakes_the_poller(ctx, &controller);
 
     unsafe { flz_core_context_free(ctx) };
@@ -119,7 +119,7 @@ pub(crate) fn socket_dir() -> std::path::PathBuf {
     dir
 }
 
-/// Declare the pass-through class, connect, and add the operative through the
+/// Declare the pass-through class, connect, and add the operator through the
 /// real control path.
 pub(crate) fn declares_and_starts(ctx: *mut FlzContext, controller: &Controller) {
     let decl = br#"{
@@ -148,13 +148,13 @@ pub(crate) fn declares_and_starts(ctx: *mut FlzContext, controller: &Controller)
 
     controller.send(
         "ref-add-1",
-        flz_core::pb::command_request::Command::AddOperative(flz_core::pb::AddOperative {
-            operative_id: "abi_probe".to_string(),
+        flz_core::pb::command_request::Command::AddOperator(flz_core::pb::AddOperator {
+            operator_id: "abi_probe".to_string(),
             factory_id: "abi_probe".to_string(),
             ..Default::default()
         }),
     );
-    controller.await_success("AddOperative response", "ref-add-1");
+    controller.await_success("AddOperator response", "ref-add-1");
 }
 
 /// Route two entry payloads into the instance the runner built, and take the
@@ -164,7 +164,7 @@ pub(crate) fn routes_two_entry_payloads(
     stream: &Arc<FlezhaStream>,
 ) -> schema::Activation {
     let instance =
-        flz_core::runner::live_instance("abi_probe").expect("AddOperative built the instance");
+        flz_core::runner::live_instance("abi_probe").expect("AddOperator built the instance");
     let entry = instance.topology.channel(0).expect("entry channel");
     for payload in [b"alpha".to_vec(), b"beta".to_vec()] {
         // The channel's own entry wrapper — the same one the wire path runs.
@@ -334,13 +334,13 @@ fn declares_the_effectively_once_class(ctx: *mut FlzContext, controller: &Contro
     );
     controller.send(
         "ref-add-eff",
-        flz_core::pb::command_request::Command::AddOperative(flz_core::pb::AddOperative {
-            operative_id: "eff-1".to_string(),
+        flz_core::pb::command_request::Command::AddOperator(flz_core::pb::AddOperator {
+            operator_id: "eff-1".to_string(),
             factory_id: "abi_eff".to_string(),
             ..Default::default()
         }),
     );
-    controller.await_success("AddOperative eff response", "ref-add-eff");
+    controller.await_success("AddOperator eff response", "ref-add-eff");
 }
 
 /// On-disk WAL records: seq 1 a plain (host-codec) change, seq 2 an effect
@@ -406,7 +406,7 @@ fn restores_from_a_snapshot_and_a_wal(ctx: *mut FlzContext, controller: &Control
     let (status, act) = abi_poll(ctx, 5_000);
     assert_eq!(status, FLZ_POLL_ACTIVATION, "restore fold hands out");
     let act = act.unwrap();
-    assert_eq!(act.target.operative, "eff-1");
+    assert_eq!(act.target.operator, "eff-1");
     let schema::ActivationKind::RestoreFold(fold) = &act.kind else {
         panic!("expected a restore fold, got {:?}", act.kind);
     };
@@ -495,7 +495,7 @@ fn a_live_read_answers_with_the_host_json(ctx: *mut FlzContext, controller: &Con
     controller.send(
         "ref-read-1",
         flz_core::pb::command_request::Command::CellState(flz_core::pb::CellState {
-            operative_id: "eff-1".to_string(),
+            operator_id: "eff-1".to_string(),
             ..Default::default()
         }),
     );
@@ -533,7 +533,7 @@ fn a_keyed_dynamic_route_crosses_for_its_key(
     declares_the_dynamic_class(ctx, controller);
     let instance = flz_core::runner::live_instance("dyn-1").expect("dyn instance");
     let entry = instance.topology.channel(0).expect("entry channel");
-    // The wire-dispatch staging seam (the same call `OperativeDispatchHandle::
+    // The wire-dispatch staging seam (the same call `OperatorDispatchHandle::
     // dispatch` makes): a keyed consumer holds the payload for the crossing.
     let staged = flz_core::host::stage_prepare(
         &instance,
@@ -578,7 +578,7 @@ fn the_keyed_input_reaches_its_own_cell(ctx: *mut FlzContext) {
     let (status, act) = abi_poll(ctx, 2_000);
     assert_eq!(status, FLZ_POLL_ACTIVATION, "keyed input dispatches");
     let act = act.unwrap();
-    assert_eq!(act.target.operative, "dyn-1");
+    assert_eq!(act.target.operator, "dyn-1");
     assert_eq!(
         act.target.cell_key.as_deref(),
         Some("k1"),
@@ -606,37 +606,43 @@ fn declares_the_dynamic_class(ctx: *mut FlzContext, controller: &Controller) {
     );
     controller.send(
         "ref-add-dyn",
-        flz_core::pb::command_request::Command::AddOperative(flz_core::pb::AddOperative {
-            operative_id: "dyn-1".to_string(),
+        flz_core::pb::command_request::Command::AddOperator(flz_core::pb::AddOperator {
+            operator_id: "dyn-1".to_string(),
             factory_id: "abi_dyn".to_string(),
             ..Default::default()
         }),
     );
-    controller.await_success("AddOperative dyn response", "ref-add-dyn");
+    controller.await_success("AddOperator dyn response", "ref-add-dyn");
 }
 
-fn a_workflow_tasklet_completes_through_the_abi(ctx: *mut FlzContext, controller: &Controller) {
-    declares_the_workflow_class(ctx, controller);
-    // A workflow's input is a message on its entry channel, as a stream's is.
+fn a_bounded_tasklet_completes_through_the_abi(ctx: *mut FlzContext, controller: &Controller) {
+    declares_the_bounded_class(ctx, controller);
+    // A bounded operator's input is a message on its entry channel, as an unbounded operator's is.
     let registry = flz_core::coordinator::LIVE_REGISTRY
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .clone()
         .expect("a runner registry is live");
-    assert!(registry.contains("wf-1"), "AddOperative built the workflow");
-    flz_core::runner::OperativeDispatchHandle { registry }.dispatch(
+    assert!(
+        registry.contains("wf-1"),
+        "AddOperator built the bounded operator"
+    );
+    flz_core::runner::OperatorDispatchHandle { registry }.dispatch(
         "wf-1",
         b"seed".to_vec(),
         &Default::default(),
-        flz_core::workflow::unwired_stream(),
+        flz_core::bounded::unwired_stream(),
     );
     let (status, act) = abi_poll(ctx, 5_000);
-    assert_eq!(status, FLZ_POLL_ACTIVATION, "the workflow's step hands out");
+    assert_eq!(
+        status, FLZ_POLL_ACTIVATION,
+        "the bounded operator's step hands out"
+    );
     let act = act.unwrap();
-    assert_eq!(act.target.operative, "wf-1");
+    assert_eq!(act.target.operator, "wf-1");
     assert!(
         matches!(act.kind, schema::ActivationKind::Work(_)),
-        "a workflow step is ordinary work, got {:?}",
+        "a bounded step is ordinary work, got {:?}",
         act.kind
     );
     abi_complete(
@@ -650,14 +656,14 @@ fn a_workflow_tasklet_completes_through_the_abi(ctx: *mut FlzContext, controller
         },
     );
 
-    controller.await_frame("WorkflowCompleted teardown", |captured| {
+    controller.await_frame("BoundedCompleted teardown", |captured| {
         captured.iter().find_map(|(id, m)| {
             (id == "control_command"
                 && flz_core::pb::CommandRequest::decode(m.as_slice()).is_ok_and(|r| {
                     matches!(
                         r.command,
-                        Some(flz_core::pb::command_request::Command::WorkflowCompleted(ref c))
-                            if c.operative_id == "wf-1"
+                        Some(flz_core::pb::command_request::Command::BoundedCompleted(ref c))
+                            if c.operator_id == "wf-1"
                                 && c.status == "ok"
                                 && c.result == b"done".to_vec()
                     )
@@ -667,13 +673,13 @@ fn a_workflow_tasklet_completes_through_the_abi(ctx: *mut FlzContext, controller
     });
 }
 
-fn declares_the_workflow_class(ctx: *mut FlzContext, controller: &Controller) {
+fn declares_the_bounded_class(ctx: *mut FlzContext, controller: &Controller) {
     let decl = br#"{
-        "factory_id": "abi_workflow",
+        "factory_id": "abi_bounded",
         "sdk_lang": 1,"sdk_version":"0.1.0",
         "channels": [{"name": "in", "kind": "entry", "chains": [[{"link": "into", "tasklet": 0}]]}],
-        "tasklets": [{"name": "wf_step"}],
-        "workflow": {}
+        "tasklets": [{"name": "bounded_step"}],
+        "bounded": {}
     }"#;
     assert_eq!(
         unsafe { flz_core_declare_class(ctx, decl.as_ptr(), decl.len()) },
@@ -681,12 +687,12 @@ fn declares_the_workflow_class(ctx: *mut FlzContext, controller: &Controller) {
     );
     controller.send(
         "ref-add-wf",
-        flz_core::pb::command_request::Command::AddOperative(flz_core::pb::AddOperative {
-            operative_id: "wf-1".to_string(),
-            factory_id: "abi_workflow".to_string(),
-            kind: "workflow".to_string(),
+        flz_core::pb::command_request::Command::AddOperator(flz_core::pb::AddOperator {
+            operator_id: "wf-1".to_string(),
+            factory_id: "abi_bounded".to_string(),
+            kind: "bounded".to_string(),
             ..Default::default()
         }),
     );
-    controller.await_success("AddOperative workflow response", "ref-add-wf");
+    controller.await_success("AddOperator bounded response", "ref-add-wf");
 }

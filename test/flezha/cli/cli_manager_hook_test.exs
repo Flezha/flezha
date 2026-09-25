@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Service.CliManagerHookTest do
   @moduledoc """
-  Guards the operator-facing hook vocabulary: the `--hook=NAME
+  Guards the caller-facing hook vocabulary: the `--hook=NAME
   --NAME.key=value` and `--plugins` spec paths that carry every value as text.
 
   Fails when: a sub-option declared as text does not reach `Extension.Table` as
@@ -12,7 +12,7 @@ defmodule FlezhaTest.Service.CliManagerHookTest do
   # reports the halt at error level; the refusal is asserted as a return value.
   @moduletag :capture_log
 
-  alias Flezha.Operative.Overwatch
+  alias Flezha.Operator.Overwatch
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension
   alias Flezha.Plugin.Extension.Ctx
@@ -26,7 +26,7 @@ defmodule FlezhaTest.Service.CliManagerHookTest do
     use Flezha.Plugin.ProviderBehaviour
 
     @impl true
-    def on_operative_init(ctx, _opts), do: {:ok, ctx}
+    def on_operator_init(ctx, _opts), do: {:ok, ctx}
     @impl true
     def on_input(ctx, _opts), do: {:ok, ctx}
     @impl true
@@ -73,7 +73,7 @@ defmodule FlezhaTest.Service.CliManagerHookTest do
 
   # Fails when: an enable that names no hook reaches the provider bound in a
   # direction nobody asked for. The websocket's `on_input` and `on_output` are
-  # the same send, so a source made an echo ships every payload the operative
+  # the same send, so a source made an echo ships every payload the operator
   # ingests back out on the socket it arrived on.
   test "a source-only enable has no hooks, allocates no sink and ships nothing" do
     plugin_id = "cli_source_only_#{System.unique_integer([:positive])}"
@@ -94,7 +94,7 @@ defmodule FlezhaTest.Service.CliManagerHookTest do
 
     refute Extension.active?(table, :on_input)
 
-    ctx = %Ctx.IO{operative_id: "op", namespace: :default, message: "in", metadata: %{}}
+    ctx = %Ctx.IO{operator_id: "op", namespace: :default, message: "in", metadata: %{}}
 
     assert {:ok, ^ctx} = Extension.run(table, :on_input, ctx)
     refute_receive {:shipped, _, _}, 200
@@ -114,7 +114,7 @@ defmodule FlezhaTest.Service.CliManagerHookTest do
       subs =
         cli_hooks([
           hook("on_interval", %{"interval_ms" => "5000"}),
-          hook("on_operative_init", %{"on_error" => "empty", "timeout_ms" => "1000"}),
+          hook("on_operator_init", %{"on_error" => "empty", "timeout_ms" => "1000"}),
           hook("on_message", %{"key" => "orders"}),
           hook("on_terminate", %{})
         ])
@@ -125,13 +125,13 @@ defmodule FlezhaTest.Service.CliManagerHookTest do
 
       assert stored == [
                {:on_interval, [interval_ms: 5_000]},
-               {:on_operative_init, [timeout_ms: 1_000, on_error: "empty"]},
+               {:on_operator_init, [timeout_ms: 1_000, on_error: "empty"]},
                {:on_message, [key: "orders"]},
                {:on_terminate, []}
              ]
     end
 
-    test "an ordered kind lands at the position the operator typed" do
+    test "an ordered kind lands at the position the caller typed" do
       subs = cli_hooks([hook("on_input", %{"position" => "0"})])
 
       {:ok, table} = subscribe(subs)
@@ -168,7 +168,7 @@ defmodule FlezhaTest.Service.CliManagerHookTest do
         payload: "hi",
         reply_to: self(),
         ref: ref,
-        operative_id: "p",
+        operator_id: "p",
         namespace: "n"
       }
 
@@ -183,11 +183,11 @@ defmodule FlezhaTest.Service.CliManagerHookTest do
         Jason.encode!([
           %{
             "id" => "spec_p",
-            "provider" => "operative_stdout",
+            "provider" => "operator_stdout",
             "opts" => %{},
             "hooks" => [
               %{"name" => "on_interval", "opts" => %{"interval_ms" => "5000"}},
-              %{"name" => "on_operative_init", "opts" => %{"position" => "0"}},
+              %{"name" => "on_operator_init", "opts" => %{"position" => "0"}},
               %{"name" => "on_message", "opts" => %{"key" => "orders"}},
               "on_terminate"
             ]
@@ -201,7 +201,7 @@ defmodule FlezhaTest.Service.CliManagerHookTest do
 
       assert subs == [
                {:on_interval, [interval_ms: 5_000]},
-               {:on_operative_init, [position: 0]},
+               {:on_operator_init, [position: 0]},
                {:on_message, [key: "orders"]},
                {:on_terminate, []}
              ]
@@ -212,7 +212,7 @@ defmodule FlezhaTest.Service.CliManagerHookTest do
     test "hooks written under another key are refused" do
       spec =
         Jason.encode!([
-          %{"id" => "old", "provider" => "operative_stdout", "subscriptions" => ["on_output"]}
+          %{"id" => "old", "provider" => "operator_stdout", "subscriptions" => ["on_output"]}
         ])
 
       assert SpecDecoder.decode(spec, "default", "spec_op") == {:error, {:invalid_hook, :empty}}
@@ -223,7 +223,7 @@ defmodule FlezhaTest.Service.CliManagerHookTest do
         Jason.encode!([
           %{
             "id" => "spec_bad",
-            "provider" => "operative_stdout",
+            "provider" => "operator_stdout",
             "opts" => %{},
             "hooks" => [%{"name" => "on_input", "opts" => %{"position" => "first"}}]
           }

@@ -3,8 +3,8 @@ defmodule Flezha.Service.HubManagerRegistryTest do
   Multi-node-safe registry access.
 
   Pattern-matching a single-element `[{_node, pid}]` registry entry raises
-  `FunctionClauseError` the moment a operative is registered on more than one
-  node, which is the `flz operative list` crash. These tests exercise the shared
+  `FunctionClauseError` the moment an operator is registered on more than one
+  node, which is the `flz operator list` crash. These tests exercise the shared
   `HubManager.live_pid/1` resolver and inject a synthetic two-node registry entry
   to assert the consumers select the live/local pid instead of crashing.
   """
@@ -61,46 +61,46 @@ defmodule Flezha.Service.HubManagerRegistryTest do
       :ok
     end
 
-    test "get_all_operatives/1 returns the live/local pid for a operative registered on two nodes" do
+    test "get_all_operators/1 returns the live/local pid for an operator registered on two nodes" do
       dead_node_pid = spawn(&NodeTestHelper.park/0)
       local_pid = self()
 
-      inject_operative(@namespace, "operative_mn", [
+      inject_operator(@namespace, "operator_mn", [
         {:dead@nohost, dead_node_pid},
         {node(), local_pid}
       ])
 
-      operatives = HubManager.get_all_operatives(@namespace)
+      operators = HubManager.get_all_operators(@namespace)
 
-      assert {"operative_mn", got_pid} =
-               Enum.find(operatives, fn {id, _} -> id == "operative_mn" end)
+      assert {"operator_mn", got_pid} =
+               Enum.find(operators, fn {id, _} -> id == "operator_mn" end)
 
       assert got_pid == local_pid
     end
 
-    test "get_all_operatives/1 omits a operative that has only dead-node entries" do
-      inject_operative(@namespace, "operative_dead", [{:dead@nohost, spawn(fn -> :ok end)}])
+    test "get_all_operators/1 omits an operator that has only dead-node entries" do
+      inject_operator(@namespace, "operator_dead", [{:dead@nohost, spawn(fn -> :ok end)}])
 
-      operatives = HubManager.get_all_operatives(@namespace)
+      operators = HubManager.get_all_operators(@namespace)
 
-      assert Enum.find(operatives, fn {id, _} -> id == "operative_dead" end) == nil
+      assert Enum.find(operators, fn {id, _} -> id == "operator_dead" end) == nil
     end
 
-    test "flz operative list (Flezha.list_operatives/1) lists a multi-node operative without crashing" do
-      # Backs `flz operative list` via OperativeManager.get_operative_ids → get_all_operatives.
+    test "flz operator list (Flezha.list_operators/1) lists a multi-node operator without crashing" do
+      # Backs `flz operator list` via OperatorManager.get_operator_ids → get_all_operators.
       dead_node_pid = spawn(&NodeTestHelper.park/0)
 
-      inject_operative(@namespace, "operative_cli_mn", [
+      inject_operator(@namespace, "operator_cli_mn", [
         {:dead@nohost, dead_node_pid},
         {node(), self()}
       ])
 
-      assert {:ok, ids} = Flezha.list_operatives(@namespace)
-      assert "operative_cli_mn" in ids
+      assert {:ok, ids} = Flezha.list_operators(@namespace)
+      assert "operator_cli_mn" in ids
     end
   end
 
-  describe "operative_rows/1 health surface" do
+  describe "operator_rows/1 health surface" do
     @health_ns "mn_health_test"
 
     setup do
@@ -117,26 +117,26 @@ defmodule Flezha.Service.HubManagerRegistryTest do
 
     test "reflects the Convergence Loop's classified health, not the absent metadata key" do
       # `metadata[:health]` is a key nothing ever writes, so reading it reports
-      # `:unknown` forever even for a producing operative. `operative_rows/1`
-      # must read the loop's published per-operative health instead.
-      inject_operative(@health_ns, "operative_health", [{node(), self()}])
+      # `:unknown` forever even for a producing operator. `operator_rows/1`
+      # must read the loop's published per-operator health instead.
+      inject_operator(@health_ns, "operator_health", [{node(), self()}])
 
       Snapshot.publish(%{
-        operative_health:
+        operator_health:
           FlezhaTest.Helper.ConvergenceFixtures.verdicts([
-            {{:operative, {@health_ns, "operative_health"}}, :healthy}
+            {{:operator, {@health_ns, "operator_health"}}, :healthy}
           ])
       })
 
-      row = Enum.find(HubManager.operative_rows(@health_ns), &(&1.id == "operative_health"))
+      row = Enum.find(HubManager.operator_rows(@health_ns), &(&1.id == "operator_health"))
       assert row.health == :healthy
     end
 
-    test "a operative the loop has not yet observed reports :unknown, not a crash" do
-      inject_operative(@health_ns, "operative_unseen", [{node(), self()}])
-      Snapshot.publish(%{operative_health: %{}})
+    test "an operator the loop has not yet observed reports :unknown, not a crash" do
+      inject_operator(@health_ns, "operator_unseen", [{node(), self()}])
+      Snapshot.publish(%{operator_health: %{}})
 
-      row = Enum.find(HubManager.operative_rows(@health_ns), &(&1.id == "operative_unseen"))
+      row = Enum.find(HubManager.operator_rows(@health_ns), &(&1.id == "operator_unseen"))
       assert row.health == :unknown
     end
   end
@@ -152,7 +152,7 @@ defmodule Flezha.Service.HubManagerRegistryTest do
       # `durable_registry_pending?/0` reads EVERY running hub, so an unbound row
       # left by an earlier file answers for this one. Retire those hubs first —
       # and bring them back afterwards: `default` is shared suite-wide, and
-      # leaving it down makes every later `start_operative` fail
+      # leaving it down makes every later `start_operator` fail
       # `Validator.valid_namespace/1` with "no runners in namespace default".
       retired =
         HubManager.get_running_namespaces()
@@ -166,7 +166,7 @@ defmodule Flezha.Service.HubManagerRegistryTest do
 
       # Empty root so the unstarted-hub on-disk branch can never fire from
       # residue left by other suites — these assertions isolate the
-      # running-hub `dump`-vs-`get_all_operatives` discriminator.
+      # running-hub `dump`-vs-`get_all_operators` discriminator.
       Application.put_env(:flezha, :process_hub_registry_root, root)
       Application.put_env(:flezha, :auto_restore_enabled, true)
 
@@ -175,17 +175,17 @@ defmodule Flezha.Service.HubManagerRegistryTest do
       :ok
     end
 
-    test "false when every durable operative is bound to a live pid" do
-      inject_operative(@pending_ns, "operative_bound", [{node(), self()}])
+    test "false when every durable operator is bound to a live pid" do
+      inject_operator(@pending_ns, "operator_bound", [{node(), self()}])
 
       refute HubManager.durable_registry_pending?()
     end
 
-    test "true when a durable operative has no live pid (replayed but not yet reseated)" do
+    test "true when a durable operator has no live pid (replayed but not yet reseated)" do
       # The DETS row survives a restart with a stale node entry, so `dump/1`
-      # counts it while `get_all_operatives/1` (live-pid filtered) drops it — the
+      # counts it while `get_all_operators/1` (live-pid filtered) drops it — the
       # registry-loaded-but-unbound window.
-      inject_operative(@pending_ns, "operative_unbound", [{:dead@nohost, spawn(fn -> :ok end)}])
+      inject_operator(@pending_ns, "operator_unbound", [{:dead@nohost, spawn(fn -> :ok end)}])
 
       assert HubManager.durable_registry_pending?()
     end

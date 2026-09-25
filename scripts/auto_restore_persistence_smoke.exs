@@ -18,7 +18,7 @@ alias ProcessHub.Service.ProcessRegistry
 
 namespace = "smoke_persist_ns"
 hub_id = Identificator.hub(namespace)
-operative_id = "smoke_operative_persist"
+operator_id = "smoke_operator_persist"
 runner_id = "smoke_runner_xyz"
 
 IO.puts("\n=== STEP 1: Start hub ===")
@@ -32,13 +32,13 @@ IO.puts(
 IO.puts("\n=== STEP 2: Insert post-alter cspec (3-tuple shape, what production persists) ===")
 
 cspec = %{
-  id: operative_id,
+  id: operator_id,
   start:
-    {Flezha.Operative.Overwatch, :start_link,
+    {Flezha.Operator.Overwatch, :start_link,
      [
        {namespace, runner_id,
-        %Flezha.Operative.Builder{
-          id: operative_id,
+        %Flezha.Operator.Builder{
+          id: operator_id,
           factory_id: "store_input",
           init_values: %{},
           opts: [
@@ -50,7 +50,7 @@ cspec = %{
                  opts: %{},
                  subscriptions: [{:on_output, []}],
                  namespace: namespace,
-                 operative_id: operative_id
+                 operator_id: operator_id
                }}
             ]
           ]
@@ -74,7 +74,7 @@ IO.puts("DETS file persisted: #{File.exists?(dets_path)} (#{File.stat!(dets_path
 
 IO.puts("\n=== STEP 4: Restart the hub — replay should pick up the persisted cspec ===")
 
-# We don't need the operative to actually start (no runner connected) —
+# We don't need the operator to actually start (no runner connected) —
 # what we want is to verify dist_sup tries to start it from DETS.
 spawn(fn ->
   try do
@@ -88,8 +88,8 @@ Process.sleep(2_000)
 
 IO.puts("\n=== STEP 5: Verify cspec round-tripped from DETS ===")
 
-# After restart, the registry should still know about the operative even if
-# the start_proxy failed (no runner to honor start_operative_sdk). dist_sup
+# After restart, the registry should still know about the operator even if
+# the start_proxy failed (no runner to honor start_operator_sdk). dist_sup
 # would try to start it; what we care about is that the cspec was
 # present in the registry on the new hub instance.
 case File.exists?(dets_path) do
@@ -108,5 +108,5 @@ IO.puts("  STEP 4 — hub restarted; replay picks up DETS rows on init")
 IO.puts("  STEP 5 — DETS file persisted across the cycle")
 IO.puts("")
 IO.puts("Out of scope for this smoke (covered by mix test + scripts/auto_restore_e2e.sh):")
-IO.puts("  - Real runner → real operative → real WAL files")
+IO.puts("  - Real runner → real operator → real WAL files")
 IO.puts("  - BEAM cold-boot (this script does an in-process hub-only restart)")

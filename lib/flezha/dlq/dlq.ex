@@ -12,7 +12,7 @@ defmodule Flezha.Service.Dlq do
 
   The reads carry actions of their own: `dlq.list` for the three listings and
   `dlq.show` for the one that answers payload bytes. Both are granted to the
-  operator, alongside the drop that destroys the same record — a parked payload
+  user, alongside the drop that destroys the same record — a parked payload
   is the failed business record held verbatim, so reading one is at least as
   privileged as discarding it.
 
@@ -29,10 +29,10 @@ defmodule Flezha.Service.Dlq do
   alias Flezha.Config.Durations
   alias Flezha.AuthZ.Namespace
   alias Flezha.Dlq.Store
-  alias Flezha.Operative.Lookup
+  alias Flezha.Operator.Lookup
   alias Flezha.Plugin.Host
   alias Flezha.Service.CallerContext
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
 
   @type caller_context :: CallerContext.t()
   @type entry :: map()
@@ -47,8 +47,8 @@ defmodule Flezha.Service.Dlq do
 
   @doc "Parked entries, nearest-to-expiry first; `nil` for every class."
   @spec list(String.t() | nil, caller_context()) :: {:ok, [entry()]} | {:error, term()}
-  verb list(operative_class, caller_context), verb: :dlq_list, row: &class_scope/1 do
-    {:ok, Store.list(operative_class)}
+  verb list(operator_class, caller_context), verb: :dlq_list, row: &class_scope/1 do
+    {:ok, Store.list(operator_class)}
   end
 
   @doc "One entry and its payload bytes, or `nil` bytes when it carries none."
@@ -64,11 +64,11 @@ defmodule Flezha.Service.Dlq do
     {:ok, Store.stats()}
   end
 
-  @doc "The `{operative_class, tasklet_id}` pairs that hold parked entries."
+  @doc "The `{operator_class, tasklet_id}` pairs that hold parked entries."
   @spec tasklets(String.t() | nil, caller_context()) ::
           {:ok, [{String.t(), String.t()}]} | {:error, term()}
-  verb tasklets(operative_class, caller_context), verb: :dlq_list, row: &class_scope/1 do
-    {:ok, Store.tasklets(operative_class)}
+  verb tasklets(operator_class, caller_context), verb: :dlq_list, row: &class_scope/1 do
+    {:ok, Store.tasklets(operator_class)}
   end
 
   # ---------- Mutations ----------
@@ -83,7 +83,7 @@ defmodule Flezha.Service.Dlq do
   end
 
   @doc """
-  Re-dispatch a parked payload to its operative through the ordinary input
+  Re-dispatch a parked payload to its operator through the ordinary input
   path.
 
   A clean replay removes the entry; a failing one re-parks it with `generation`
@@ -104,19 +104,19 @@ defmodule Flezha.Service.Dlq do
   def entry_row(entry_ref) do
     with {:ok, entry, payload} <- Store.get(entry_ref) do
       {:ok,
-       %{namespace: class_namespace(entry["operative_class"]), entry: entry, payload: payload}}
+       %{namespace: class_namespace(entry["operator_class"]), entry: entry, payload: payload}}
     end
   end
 
   @doc false
   @spec class_row(String.t() | nil) :: {:ok, map()}
-  def class_row(operative_class), do: {:ok, %{namespace: class_namespace(operative_class)}}
+  def class_row(operator_class), do: {:ok, %{namespace: class_namespace(operator_class)}}
 
   @doc false
   @spec redrive(String.t(), entry(), binary() | nil) :: {:ok, replay_outcome()} | {:error, term()}
   def redrive(entry_ref, entry, payload) do
     with :ok <- replayable(payload),
-         {:ok, overwatch} <- resolve_overwatch(entry["operative_class"]) do
+         {:ok, overwatch} <- resolve_overwatch(entry["operator_class"]) do
       generation_before = entry["generation"] || 1
       :ok = Store.mark_replaying(entry_ref)
       Host.inject(overwatch, payload, %{"channel" => entry["channel"]}, :fire_and_forget)
@@ -125,31 +125,31 @@ defmodule Flezha.Service.Dlq do
   end
 
   defp locate([entry_ref]), do: entry_row(entry_ref)
-  defp class_scope([operative_class]), do: class_row(operative_class)
+  defp class_scope([operator_class]), do: class_row(operator_class)
 
   # A verb that names a class is judged in that class's namespace; one that
   # names none reads across every namespace, which is a `_system` read.
   defp class_namespace(nil), do: Namespace.system_name()
-  defp class_namespace(operative_class), do: OperativeManager.namespace_of_class(operative_class)
+  defp class_namespace(operator_class), do: OperatorManager.namespace_of_class(operator_class)
 
   defp replayable(nil), do: {:error, :payload_not_replayable}
   defp replayable(_payload), do: :ok
 
-  defp resolve_overwatch(operative_class) do
-    case Lookup.overwatch(operative_class) do
+  defp resolve_overwatch(operator_class) do
+    case Lookup.overwatch(operator_class) do
       {:ok, pid} -> {:ok, pid}
-      {:error, _reason} -> resolve_overwatch_cluster(operative_class)
+      {:error, _reason} -> resolve_overwatch_cluster(operator_class)
     end
   end
 
   # The class registry is node-local; a target hosted on a peer resolves
   # through the routed pid lookup and the re-injection cast rides distribution.
-  defp resolve_overwatch_cluster(operative_class) do
-    with {:ok, namespace} <- OperativeManager.namespace_of(operative_class),
-         {:ok, pid} <- OperativeManager.get_operative_pid(namespace, operative_class) do
+  defp resolve_overwatch_cluster(operator_class) do
+    with {:ok, namespace} <- OperatorManager.namespace_of(operator_class),
+         {:ok, pid} <- OperatorManager.get_operator_pid(namespace, operator_class) do
       {:ok, pid}
     else
-      _ -> {:error, :operative_not_running}
+      _ -> {:error, :operator_not_running}
     end
   end
 

@@ -11,7 +11,7 @@
 #   3. Trap SIGTERM/SIGINT and delegate to `flz controller stop`, which
 #      drives the BEAM's shutdown coordinator.
 #
-# The controller recovers its own operatives and plugins on boot from
+# The controller recovers its own operators and plugins on boot from
 # ProcessHub's durable registry and the per-Cell WAL under
 # FLEZHA_PROCESS_HUB_REGISTRY_ROOT and FLEZHA_STATE_DIR. This script
 # neither writes nor reads any cluster-wide snapshot file.

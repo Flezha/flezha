@@ -25,7 +25,7 @@ a handle whose channel already carries a plugin sink.
 
 #### Scenario: A filter costs no Tasklet
 
-- **WHEN** an operative declares `c.input(Trade.class, "trades").filter(t -> t.qty() > 1.0).into(CandleTasklet.class)` (Java) or the equivalent in any other SDK
+- **WHEN** an operator declares `c.input(Trade.class, "trades").filter(t -> t.qty() > 1.0).into(CandleTasklet.class)` (Java) or the equivalent in any other SDK
 - **THEN** registration SHALL succeed with a topology containing exactly ONE Tasklet node (`CandleTasklet`), and inputs failing the predicate SHALL NOT reach it
 
 #### Scenario: A transform reshapes the channel's payload type
@@ -35,22 +35,22 @@ a handle whose channel already carries a plugin sink.
 
 #### Scenario: One input may yield several values
 
-- **WHEN** a stream declares `.flatMap(Slot.class, t -> TIMEFRAMES.stream().map(tf -> new Slot(t, tf)))` over four timeframes
+- **WHEN** an unbounded operator declares `.flatMap(Slot.class, t -> TIMEFRAMES.stream().map(tf -> new Slot(t, tf)))` over four timeframes
 - **THEN** each input SHALL produce four values delivered independently to the consumer
 
 #### Scenario: A dangling transform chain is refused
 
-- **WHEN** a stream declares `.map(...)` and the resulting handle is never wired to a Tasklet, whether it is left unwired or is followed only by a plugin sink
+- **WHEN** an unbounded operator declares `.map(...)` and the resulting handle is never wired to a Tasklet, whether it is left unwired or is followed only by a plugin sink
 - **THEN** definition SHALL fail with an error naming the dangling stream
 
 #### Scenario: A second edge key is refused rather than replacing the first
 
-- **WHEN** a stream declares two edge keys before one `.into(...)`
+- **WHEN** an unbounded operator declares two edge keys before one `.into(...)`
 - **THEN** definition SHALL fail naming the channel, and SHALL NOT silently keep either key
 
 #### Scenario: A transform after the key it would feed is refused
 
-- **WHEN** a stream declares an edge key and then a transform, and wires the result into a Tasklet
+- **WHEN** an unbounded operator declares an edge key and then a transform, and wires the result into a Tasklet
 - **THEN** definition SHALL fail naming the channel, because the key is evaluated on the final post-transform value and so must be the last link
 
 #### Scenario: A transform behind an attached plugin sink is refused
@@ -79,7 +79,7 @@ the deleted `cell_key` trait hook produced.
 
 #### Scenario: Keying is visible in the wiring
 
-- **WHEN** an operative declares `c.input(Trade.class, "trades").keyBy(Trade::symbol).into(CandleTasklet.class)`
+- **WHEN** an operator declares `c.input(Trade.class, "trades").keyBy(Trade::symbol).into(CandleTasklet.class)`
 - **THEN** inputs SHALL be routed to the Cell named by `symbol`, and `CandleTasklet` SHALL declare no keying member of any kind
 
 #### Scenario: Each value of a fan-out is keyed independently
@@ -121,7 +121,7 @@ continue to be journaled per source channel unchanged.
 
 #### Scenario: Replay reproduces transformed state
 
-- **WHEN** a Tasklet behind an edge carrying a transform and a key processes inputs and the operative warm-restarts
+- **WHEN** a Tasklet behind an edge carrying a transform and a key processes inputs and the operator warm-restarts
 - **THEN** replay SHALL restore the same journaled state per Cell as live processing produced
 
 #### Scenario: The key sees the transformed value
@@ -135,17 +135,17 @@ Transform and key closures SHALL be pure and total: they re-run on replay, and a
 closure that observed ambient state or produced a different value would rebuild a
 state the live run never had. A closure that panics or throws SHALL NOT terminate
 the routing thread; the failure SHALL ride the channel's existing retry-then-DLQ
-ladder — the same ladder a failing entry-channel parse rides — and on a workflow
-chain SHALL be contained so the operative still terminates observably.
+ladder — the same ladder a failing entry-channel parse rides — and on a bounded operator
+chain SHALL be contained so the operator still terminates observably.
 
 #### Scenario: A throwing transform does not kill routing
 
 - **WHEN** a `map` closure throws on one input
 - **THEN** the routing thread SHALL survive, the input SHALL be retried per the channel's retry policy and parked to the DLQ on exhaustion, and subsequent inputs SHALL continue to be routed
 
-#### Scenario: A throwing transform on a workflow chain terminates observably
+#### Scenario: A throwing transform on a bounded chain terminates observably
 
-- **WHEN** a transform closure on a workflow operative's inter-tasklet edge throws
+- **WHEN** a transform closure on a bounded operator's inter-tasklet edge throws
 - **THEN** the chain SHALL abort through its existing compensate path and emit its terminal frame rather than stranding the instance
 
 ### Requirement: Transform and key declarations SHALL be validated at definition time
@@ -195,12 +195,12 @@ four, because `Tasklet<Input = T>` is checked at compile time.
 
 #### Scenario: Java map carries the token
 
-- **WHEN** a Java operative declares `.map(Ticker.class, Ticker::from)`
+- **WHEN** a Java operator declares `.map(Ticker.class, Ticker::from)`
 - **THEN** the resulting stream's declared payload type SHALL be `Ticker` and wiring a consumer whose `Input` is not `Ticker` SHALL fail registration naming both types
 
 #### Scenario: Rust map infers
 
-- **WHEN** a Rust operative declares `.map(Ticker::from).into::<P>()` where `P::Input` is not `Ticker`
+- **WHEN** a Rust operator declares `.map(Ticker::from).into::<P>()` where `P::Input` is not `Ticker`
 - **THEN** the program SHALL fail to compile
 
 ### Requirement: The definition-time refusals are rows of the reference fixture

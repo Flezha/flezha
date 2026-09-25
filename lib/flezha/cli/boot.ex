@@ -5,8 +5,8 @@ defmodule Flezha.Service.Cli.Boot do
 
   Both verbs read `Flezha.Boot.Readiness` and neither re-derives readiness from
   hub state, so the CLI, `GET /readyz` and the container layer cannot disagree.
-  `boot_status/1` keeps the per-hub recovery table, which is the detail an
-  operator needs once a precondition has been named as unmet.
+  `boot_status/1` keeps the per-hub recovery table, which is the detail a
+  caller needs once a precondition has been named as unmet.
   """
 
   alias Flezha.Boot.Readiness

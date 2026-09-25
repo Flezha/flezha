@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The observability-export capability provides built-in `Sink` implementations that fan observability signals out of the BEAM to external collectors. It ships two opt-in exporters: a hand-rolled `:gen_tcp`-based Prometheus text-exposition endpoint (`Flezha.Observability.Export.PrometheusSink` + `PrometheusHttp`) bound to `127.0.0.1` by default and accepting only `GET /metrics` and `GET /`, and an OTLP/HTTP protobuf exporter (`Flezha.Observability.Export.OtlpSink` + `OtlpCodec` + `OtlpClient`) that batches `:metric`, `:event`, `:log`, and `:trace_span` signals to a configured endpoint with bounded exponential backoff. Both sinks run under a dedicated `Flezha.Observability.Export.Supervisor` (`:one_for_one`) added as the last child of `Flezha.Observability.Supervisor`, honour per-exporter enable flags, and remain OFF by default. Operational events (`:otlp_batch_flushed`, `:otlp_batch_dropped`, `:prometheus_scrape`, `:prometheus_label_truncated`) are emitted onto a declarative `:observability_export` source so they participate in the foundation's bus / sink fan-out. The Prometheus sink uses the foundation's `:drop` overflow policy; the OTLP sink uses `:block` so operators turning it on accept workflow producer back-pressure rather than silent loss.
+The observability-export capability provides built-in `Sink` implementations that fan observability signals out of the BEAM to external collectors. It ships two opt-in exporters: a hand-rolled `:gen_tcp`-based Prometheus text-exposition endpoint (`Flezha.Observability.Export.PrometheusSink` + `PrometheusHttp`) bound to `127.0.0.1` by default and accepting only `GET /metrics` and `GET /`, and an OTLP/HTTP protobuf exporter (`Flezha.Observability.Export.OtlpSink` + `OtlpCodec` + `OtlpClient`) that batches `:metric`, `:event`, `:log`, and `:trace_span` signals to a configured endpoint with bounded exponential backoff. Both sinks run under a dedicated `Flezha.Observability.Export.Supervisor` (`:one_for_one`) added as the last child of `Flezha.Observability.Supervisor`, honour per-exporter enable flags, and remain OFF by default. Operational events (`:otlp_batch_flushed`, `:otlp_batch_dropped`, `:prometheus_scrape`, `:prometheus_label_truncated`) are emitted onto a declarative `:observability_export` source so they participate in the foundation's bus / sink fan-out. The Prometheus sink uses the foundation's `:drop` overflow policy; the OTLP sink uses `:block` so users turning it on accept bounded producer back-pressure rather than silent loss.
 ## Requirements
 ### Requirement: Prometheus exporter sink
 
@@ -205,7 +205,7 @@ text rule's answer and cross inspected, so that the raw bytes appear nowhere in
 the encoded message.
 
 Two renderers of one format answering differently is the failure this states away:
-the audit log and `flz observe tail --json` are both JSON, an operator may read
+the audit log and `flz observe tail --json` are both JSON, a user may read
 them side by side, and a list rendered as an array in one and as the string
 `"[1, 2, 3]"` in the other is one question answered twice.
 
@@ -282,7 +282,7 @@ The Prometheus registry SHALL render a valid text exposition for any `:metric`
 signal, whatever the types and spellings in its metadata map. Recording a signal
 SHALL NOT raise, because the registry owns the exporter's aggregation tables and
 its death discards every counter, gauge and histogram accumulated since boot —
-a loss an operator reads as a counter reset, and one that arrives precisely when
+a loss a user reads as a counter reset, and one that arrives precisely when
 the system is under the load that makes export worth having.
 
 The terms it receives are ordinary telemetry, not misuse. `Signal.new/1`
@@ -321,7 +321,7 @@ under the condition it reports is not observability.
 
 #### Scenario: A metric signal carrying a tuple does not kill the registry
 
-- **GIVEN** the `[:flezha, :state, :wal, :backpressure]` telemetry event, whose metadata carries `cell_id` as an `{operative_class, tasklet_id, cell_key}` tuple
+- **GIVEN** the `[:flezha, :state, :wal, :backpressure]` telemetry event, whose metadata carries `cell_id` as an `{operator_class, tasklet_id, cell_key}` tuple
 - **WHEN** it reaches the Prometheus registry through the telemetry bridge
 - **THEN** the registry process SHALL remain alive, its aggregation tables SHALL survive, and the metric SHALL appear in the exposition with a readable rendering of the tuple
 

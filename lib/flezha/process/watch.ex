@@ -5,7 +5,7 @@ defmodule Flezha.Process.Watch do
   `:DOWN` back, and a demonitor-and-flush when the last interest in that pid
   goes away.
 
-  A watcher declares the TAGS it keyed on a pid — a stream ref, an operative
+  A watcher declares the TAGS it keyed on a pid — a stream ref, an operator
   id, a subscription — and gets them back when the pid dies. The REACTION
   stays with the watcher: this module never decides what a death means.
 

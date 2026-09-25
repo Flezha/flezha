@@ -35,7 +35,7 @@ defmodule Flezha.DetsStore do
       every mutation syncs before its call returns.
     * `:corrupt_suffix` — which clock names a rotated file, `:second`
       (`<name>.corrupt-<unix_ts>`) or `:monotonic`. Both are published
-      recovery instructions, so a store keeps the one its operators read.
+      recovery instructions, so a store keeps the one its users read.
   """
   @spec open(atom(), String.t(), keyword()) :: {:ok, atom()} | {:error, term()}
   def open(table_name, path, opts \\ []) when is_atom(table_name) do

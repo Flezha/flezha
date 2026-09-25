@@ -7,10 +7,10 @@ defmodule Flezha.Convergence.Loop.Summary do
   its own counts from them with `Verdict.counts/1` — the published map carries
   no second copy — so a dead binding can never be counted as bound on one
   surface and not on another. This is the one site that writes
-  `operative_health` into the published snapshot.
+  `operator_health` into the published snapshot.
 
   `bound < intended` is a recovery window, not a fault: after a restart the
-  controller is up while its operatives are not yet rebound. The unmet-intent
+  controller is up while its operators are not yet rebound. The unmet-intent
   clock runs only while that holds and nothing is recovering.
   """
 
@@ -21,13 +21,13 @@ defmodule Flezha.Convergence.Loop.Summary do
   def publish(%Intent{}, reality, %State{} = state) do
     counts = Verdict.counts(state.verdicts)
 
-    # After a restart the durable registry may hold operatives that are not yet
+    # After a restart the durable registry may hold operators that are not yet
     # bound to a live pid — either the hub has not started (lazy on runner
     # reconnect) or it has replayed its DETS rows but the stale pids are dead.
     # In that window `Intent` is short of the durable set, so `bound < intended`
     # cannot catch it (it compares two already-shrunken counts). Surfacing the
     # registry-vs-loaded signal lets `/healthz` report `recovering` instead of
-    # vacuously `healthy` until every durable operative is reloaded and bound.
+    # vacuously `healthy` until every durable operator is reloaded and bound.
     pending_restore = HubManager.durable_registry_pending?()
 
     # Unmet-intent clock: runs while `bound < intended` and not recovering.
@@ -43,11 +43,11 @@ defmodule Flezha.Convergence.Loop.Summary do
 
     Snapshot.publish(%{
       last_tick_at: now,
-      stuck_operatives: state.stuck_operatives,
+      stuck_operators: state.stuck_operators,
       intent_mismatch: state.intent_mismatch,
       pending_restore: pending_restore,
       unmet_intent_ms: unmet_intent_since && now - unmet_intent_since,
-      operative_health: state.verdicts,
+      operator_health: state.verdicts,
       data_plane_layer: StallClassifier.layer(state.stall_verdict),
       data_plane_streak: state.stall_streak
     })

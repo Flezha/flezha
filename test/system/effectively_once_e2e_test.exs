@@ -1,7 +1,7 @@
 defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
   @moduledoc """
   §6.1 end-to-end proof for `effectively-once-output` against a live Rust
-  runner: a source drives a tier operative (`tier_store`, declared
+  runner: a source drives a tier operator (`tier_store`, declared
   `effectively_once()`) whose keyed outputs land on a conforming changelog
   sink (BeamMsgForward with metadata → upsert by `flz.key`, dedup ledger by
   the durable identity). The runner is SIGKILLed mid-stream while inputs
@@ -20,10 +20,10 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
   import FlezhaTest.Helper.TierE2EHarness
 
-  alias Flezha.Operative.Builder
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.Builder
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias Flezha.State.InputLog
 
   @moduletag timeout: 300_000
@@ -33,11 +33,11 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
 
   test "kills at each phase boundary converge the changelog sink to the no-crash state" do
     namespace = unique("eff_once")
-    operative_id = unique("tier_store")
+    operator_id = unique("tier_store")
     id_path = unique_id_path()
-    cell_id = {operative_id, @tasklet, ""}
+    cell_id = {operator_id, @tasklet, ""}
 
-    on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
+    on_exit(fn -> cleanup(namespace, operator_id, id_path) end)
 
     # --- Phase 0: boot, bind, sink ------------------------------------------
     {port_a, exec_a} = boot_runner(namespace, id_path)
@@ -47,32 +47,32 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
     sink = %Flezha.Plugin{
       id: "tier_sink",
       namespace: namespace,
-      operative_id: operative_id,
+      operator_id: operator_id,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: self(), include_metadata: true},
       hooks: [{:on_output, []}]
     }
 
     builder = %Builder{
-      id: operative_id,
+      id: operator_id,
       factory_id: @factory,
       init_values: %{},
       opts: [plugins: [sink]]
     }
 
-    assert {:ok, info} = OperativeManager.start_operative(namespace, builder)
+    assert {:ok, info} = OperatorManager.start_operator(namespace, builder)
 
     assert info.runner_id == exec_a
 
     # The SDK-declared tier must have been resolved at bind.
     assert wait_until(
-             fn -> ClassRegistry.effectively_once?(operative_id) end,
+             fn -> ClassRegistry.effectively_once?(operator_id) end,
              30_000
            ),
            "the tier declaration never reached the controller"
 
     # --- Phase 1: clean stream ------------------------------------------------
-    send_inputs(operative_id, namespace, ["k1:a", "k2:a", "k1:b"])
+    send_inputs(operator_id, namespace, ["k1:a", "k2:a", "k1:b"])
     assert await_changelog(%{"k1" => "k1=b", "k2" => "k2=a"}, 30_000)
 
     # --- Phase 2: runner SIGKILL mid-stream ---------------------------------
@@ -80,13 +80,13 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
 
     # Inputs while no runner is alive: journaled, undeliverable — the
     # rebind's journal replay must recover them.
-    send_inputs(operative_id, namespace, ["k2:b", "k3:a"])
+    send_inputs(operator_id, namespace, ["k2:b", "k3:a"])
 
     {_port_b, exec_b} = boot_runner(namespace, id_path)
     assert exec_b != exec_a
 
     assert wait_until(fn -> exec_a not in FleetManager.active_runners(namespace) end, 30_000)
-    force_fresh_rebind(namespace, operative_id)
+    force_fresh_rebind(namespace, operator_id)
 
     assert await_changelog(
              %{"k1" => "k1=b", "k2" => "k2=b", "k3" => "k3=a"},
@@ -95,21 +95,21 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
            "journaled inputs were not replayed after the runner kill"
 
     # --- Phase 3: controller state-layer crash with a staled cursor ----------
-    # Brutally kill the operative's writers (bypassing terminate/2) and stale
+    # Brutally kill the operator's writers (bypassing terminate/2) and stale
     # the flush cursor, then force a rebind: the restart must RE-DRIVE every
     # durable output with its original identity, and the sink must converge
     # to the same changelog regardless.
-    stale_cursor_and_crash_writers(operative_id, cell_id)
-    force_fresh_rebind(namespace, operative_id)
+    stale_cursor_and_crash_writers(operator_id, cell_id)
+    force_fresh_rebind(namespace, operator_id)
 
-    send_inputs(operative_id, namespace, ["k1:c"])
+    send_inputs(operator_id, namespace, ["k1:c"])
 
     expected_final = %{"k1" => "k1=c", "k2" => "k2=b", "k3" => "k3=a"}
     assert await_changelog(expected_final, 60_000)
 
     # Once the outbox owes nothing, run the conformance audit over EVERYTHING
     # the sink ever received (including re-driven duplicates).
-    assert await_outbox_drained(operative_id), "the outbox never drained"
+    assert await_outbox_drained(operator_id), "the outbox never drained"
     outputs = drain_outputs([])
 
     assert changelog(outputs) == expected_final,
@@ -133,7 +133,7 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
 
     # And the input-log watermark advanced past every consumed offset (all
     # six inputs durably consumed → retention can truncate).
-    assert wait_until(fn -> (InputLog.watermark(operative_id) || -1) >= 5 end, 30_000),
+    assert wait_until(fn -> (InputLog.watermark(operator_id) || -1) >= 5 end, 30_000),
            "min watermark never caught up to the consumed inputs"
   end
 end

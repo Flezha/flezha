@@ -216,7 +216,7 @@ defmodule Flezha.Shutdown.SignalHandler do
   defp handle_signal(signal, %__MODULE__{count: c} = state) when c >= 2 do
     Logger.warning("[shutdown] forced halt requested via third #{signal}")
     # `halt/1` does not flush the Logger, and this WARN is the only record
-    # an operator gets of a forced halt.
+    # a user gets of a forced halt.
     Logger.flush()
     :erlang.halt(143)
     {:noreply, state}

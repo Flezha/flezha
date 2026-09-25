@@ -24,7 +24,7 @@ pub enum Error {
     /// A key this partition member does not own.
     #[error("{0}")]
     Partition(String),
-    /// A state read or apply the operative cannot serve.
+    /// A state read or apply the operator cannot serve.
     #[error("{0}")]
     State(String),
     /// A control connection that could not be opened.

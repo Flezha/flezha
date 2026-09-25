@@ -2,7 +2,7 @@ defmodule Flezha.Service.CliManagerRpcSurfaceTest do
   @moduledoc """
   `flz` builds `Flezha.Service.CliManager.<fun>(...)` as a *string* and sends it
   to `flzvm rpc`, so a missing or renamed delegation compiles clean on both
-  sides and fails only on an operator's machine. This test reads the names out
+  sides and fails only on a caller's machine. This test reads the names out
   of `cli/src` and hands them to `FlezhaTest.Helper.RpcSurface`, which is the
   one resolver both name-resolved consumers share.
 

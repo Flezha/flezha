@@ -5,7 +5,7 @@ defmodule FlezhaTest.Helper.FleetStateHelper do
   runners advertising these factories".
   """
 
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Factories
 
@@ -14,7 +14,7 @@ defmodule FlezhaTest.Helper.FleetStateHelper do
   # runner matches is unplaceable by design, so a helper that seeded neither
   # would make every fleet test a test of the refusal path.
   @default_lang 1
-  @default_kind :stream
+  @default_kind :unbounded
 
   @doc """
   Seed `namespace` with `%{runner_id => [factory_id]}`, all `:active`.
@@ -60,10 +60,10 @@ defmodule FlezhaTest.Helper.FleetStateHelper do
   end
 
   @doc """
-  The per-runner operative count `FleetManager` last handed placements out of.
+  The per-runner operator count `FleetManager` last handed placements out of.
 
   Read from its state rather than through an API: nothing in the controller asks
-  the fleet for this — the operator-facing count is the observability source's,
+  the fleet for this — the user-facing count is the observability source's,
   read straight from the hub registry.
   """
   def loads(namespace) do

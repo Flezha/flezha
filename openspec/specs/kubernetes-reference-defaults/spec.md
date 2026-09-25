@@ -4,7 +4,7 @@
 TBD - created by archiving change harden-kubernetes-reference-defaults. Update Purpose after archive.
 ## Requirements
 ### Requirement: Reference workloads declare resource requests and limits
-Every container in the reference manifests (`kubernetes/flezha-daemonset.yaml` controller container and `kubernetes/service-template.yaml` runner container) SHALL declare CPU and memory `requests` and `limits` with conservative, documented defaults that an operator can tune. No reference workload container SHALL ship without resource bounds.
+Every container in the reference manifests (`kubernetes/flezha-daemonset.yaml` controller container and `kubernetes/service-template.yaml` runner container) SHALL declare CPU and memory `requests` and `limits` with conservative, documented defaults that a user can tune. No reference workload container SHALL ship without resource bounds.
 
 #### Scenario: Controller container has resource bounds
 - **WHEN** `kubernetes/flezha-daemonset.yaml` is applied
@@ -20,7 +20,7 @@ The controller container SHALL declare a `startupProbe`, a `livenessProbe`, and 
 
 Liveness and readiness are different questions and SHALL NOT share one endpoint. The `livenessProbe` and the `startupProbe` SHALL read the health endpoint, which answers success throughout a planned recovery so the kubelet does not restart a controller mid-replay. The `readinessProbe` SHALL read the readiness endpoint, which answers failure for exactly that same window, so a pod that has not finished coming up is not routed to.
 
-A readiness probe SHALL NOT report a controller ready on the grounds that nothing is yet running on it. A controller in its first tick — no namespace hub created, no operative bound, nothing restored — SHALL read as not ready.
+A readiness probe SHALL NOT report a controller ready on the grounds that nothing is yet running on it. A controller in its first tick — no namespace hub created, no operator bound, nothing restored — SHALL read as not ready.
 
 #### Scenario: Probes present and self-contained
 
@@ -86,7 +86,7 @@ The reference manifests SHALL NOT hardcode environment-specific assumptions for 
 - **THEN** the persistent-state volume path/type is parameterized (not a fixed host directory baked into the only supported path), and the README explains the CSI/local-PV option alongside `hostPath` with their trade-offs
 
 ### Requirement: Reference manifests are correct and environment-agnostic
-The reference manifests SHALL be free of YAML/scheduling defects and SHALL NOT embed any environment-specific identifiers (node hostnames, single-cluster IPs, or architecture pins beyond the multi-arch image). The `service-template.yaml` `podAntiAffinity` SHALL use a valid `operator` key in its `matchExpressions`.
+The reference manifests SHALL be free of YAML/scheduling defects and SHALL NOT embed any environment-specific identifiers (node hostnames, single-cluster IPs, or architecture pins beyond the multi-arch image). The `service-template.yaml` `podAntiAffinity` SHALL use a valid `ops` key in its `matchExpressions`.
 
 #### Scenario: podAntiAffinity expression is valid
 - **WHEN** `kubernetes/service-template.yaml` is applied

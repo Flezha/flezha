@@ -3,13 +3,13 @@ use crate::dispatch::{self, Command, Missing, Verb};
 use crate::help;
 use crate::rpc::{self, text};
 
-const ENTRY_REF: &[Positional] = &[Positional::required("<operative/tasklet/entry-id>")];
+const ENTRY_REF: &[Positional] = &[Positional::required("<operator/tasklet/entry-id>")];
 
 pub(crate) const TABLE: Command = Command {
     path: "flz dlq",
     help: help::DLQ,
     verbs: &[
-        Verb::new("list", handle_list).taking(&[Positional::optional("<operative_class>")]),
+        Verb::new("list", handle_list).taking(&[Positional::optional("<operator_class>")]),
         Verb::new("show", |read| {
             rpc::one_arg(read, ENTRY_REF[0].name, "dlq_show", rpc::PROPAGATE)
         })
@@ -31,7 +31,7 @@ pub(crate) const TABLE: Command = Command {
 fn handle_list(read: &Reading) {
     rpc::run(
         "dlq_list",
-        &[text(read.pos("<operative_class>"))],
+        &[text(read.pos("<operator_class>"))],
         &[],
         read.token(),
         rpc::PROPAGATE,

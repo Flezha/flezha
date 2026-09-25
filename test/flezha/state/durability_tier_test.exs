@@ -17,7 +17,7 @@ defmodule Flezha.State.DurabilityTierTest do
 
   alias Flezha.AuthZ.{AuthState, NamespaceStore, QuotaCounters, RoleStore, TokenStore}
   alias Flezha.Dlq
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.Service.Cli.Controller, as: ControllerCli
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.{Artifact, Hydrator, Manifest, Shipper}
@@ -47,7 +47,7 @@ defmodule Flezha.State.DurabilityTierTest do
       assert DurabilityTier.children() == []
       refute DurabilityTier.enabled?()
       assert DurabilityTier.ship({:cell, ctx.cell_id}) == :ok
-      assert DurabilityTier.hydrate_operative(ctx.class) == :ok
+      assert DurabilityTier.hydrate_operator(ctx.class) == :ok
       assert Hydrator.hydrate_cspecs() == :ok
       assert DurabilityTier.breaches() == []
       refute DurabilityTier.sync_class?(ctx.class)
@@ -61,7 +61,7 @@ defmodule Flezha.State.DurabilityTierTest do
       warning =
         AuthTestHelper.capture_log_at(:warning, fn -> assert DurabilityTier.children() == [] end)
 
-      # Silence here is the failure this closes: the operator believes a tier
+      # Silence here is the failure this closes: the user believes a tier
       # is running and it is not.
       assert warning =~ "postgress"
       assert warning =~ "none, postgres, s3, local_path"
@@ -89,7 +89,7 @@ defmodule Flezha.State.DurabilityTierTest do
       warning =
         AuthTestHelper.capture_log_at(:warning, fn -> assert DurabilityTier.children() == [] end)
 
-      # The boot continues, so this line is the whole of what the operator
+      # The boot continues, so this line is the whole of what the user
       # gets: it has to name the risk and both valid moves without any other
       # document.
       assert warning =~ "FLEZHA_DURABILITY_BACKEND"
@@ -197,7 +197,7 @@ defmodule Flezha.State.DurabilityTierTest do
       assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
 
       TestHelpers.wipe_cell(ctx.cell_id)
-      assert :ok = DurabilityTier.hydrate_operative(ctx.class)
+      assert :ok = DurabilityTier.hydrate_operator(ctx.class)
 
       assert File.read!(Paths.wal_path(ctx.cell_id)) == before
     end
@@ -227,7 +227,7 @@ defmodule Flezha.State.DurabilityTierTest do
       assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
 
       File.write!(Paths.wal_path(ctx.cell_id), local_only_record())
-      assert :ok = DurabilityTier.hydrate_operative(ctx.class)
+      assert :ok = DurabilityTier.hydrate_operator(ctx.class)
 
       assert File.read!(Paths.wal_path(ctx.cell_id)) == local_only_record()
     end
@@ -244,14 +244,14 @@ defmodule Flezha.State.DurabilityTierTest do
       assert :ok = Shipper.ship_now({:input_log, ctx.class})
 
       File.rm!(log_path)
-      assert :ok = DurabilityTier.hydrate_operative(ctx.class)
+      assert :ok = DurabilityTier.hydrate_operator(ctx.class)
 
       assert File.read!(log_path) == TestHelpers.wal_records(0..2)
       assert File.dir?(Path.dirname(log_path)), "hydration must not replace the class dir"
     end
 
-    test "a workflow's commit ships its input log beside its journal", ctx do
-      # A workflow keys its journal, Cells and input log by its instance id, so
+    test "a bounded operator's commit ships its input log beside its journal", ctx do
+      # A bounded keys its journal, Cells and input log by its instance id, so
       # the commit's refs name all three under the one key.
       instance = ctx.class
       journal = Paths.journal_id(instance)
@@ -259,7 +259,7 @@ defmodule Flezha.State.DurabilityTierTest do
       File.write!(Paths.input_log_path(instance), TestHelpers.wal_records(0..2))
 
       assert {:cell, journal} in DurabilityTier.refs_of_state_key(instance)
-      assert :ok = DurabilityTier.on_workflow_commit(instance)
+      assert :ok = DurabilityTier.on_bounded_commit(instance)
 
       assert NodeTestHelper.wait_until(
                fn ->
@@ -283,7 +283,7 @@ defmodule Flezha.State.DurabilityTierTest do
       {:ok, %{status: :ok}} = Flezha.State.Supervisor.delete_cell(journal)
       assert InputLog.watermark(instance) == nil
 
-      assert :ok = DurabilityTier.hydrate_operative(instance)
+      assert :ok = DurabilityTier.hydrate_operator(instance)
       assert InputLog.watermark(instance) == 2
     end
 
@@ -326,7 +326,7 @@ defmodule Flezha.State.DurabilityTierTest do
       refute Enum.any?(manifest.ranges, &(&1.to <= 3))
 
       TestHelpers.wipe_cell(ctx.cell_id)
-      assert :ok = DurabilityTier.hydrate_operative(ctx.class)
+      assert :ok = DurabilityTier.hydrate_operator(ctx.class)
       assert File.read!(Paths.snapshot_path(ctx.cell_id, 3)) == "snapshot-at-3"
       assert seqs_in_wal(ctx.cell_id) == [4, 5]
     end
@@ -347,7 +347,7 @@ defmodule Flezha.State.DurabilityTierTest do
       assert Enum.all?(manifest.ranges, &(&1.to <= 2))
 
       TestHelpers.wipe_cell(ctx.cell_id)
-      assert :ok = DurabilityTier.hydrate_operative(ctx.class)
+      assert :ok = DurabilityTier.hydrate_operator(ctx.class)
       assert seqs_in_wal(ctx.cell_id) == [0, 1, 2]
     end
   end
@@ -370,7 +370,7 @@ defmodule Flezha.State.DurabilityTierTest do
       assert :ok = Shipper.ship_now(ref)
 
       TestHelpers.wipe_cell(ctx.cell_id)
-      assert :ok = DurabilityTier.hydrate_operative(ctx.class)
+      assert :ok = DurabilityTier.hydrate_operator(ctx.class)
 
       # The epoch's only home on disk is the dedup cache, which is not an
       # artifact. It does not gate the manifest write, but it is still
@@ -384,7 +384,7 @@ defmodule Flezha.State.DurabilityTierTest do
     test "the restored flush cursor lags rather than leads", ctx do
       assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
       TestHelpers.wipe_cell(ctx.cell_id)
-      assert :ok = DurabilityTier.hydrate_operative(ctx.class)
+      assert :ok = DurabilityTier.hydrate_operator(ctx.class)
 
       # A cursor restored ahead of the restored WAL would drop those effect
       # records from the boot re-drive (`seq > cursor`) and never dispatch their
@@ -400,7 +400,7 @@ defmodule Flezha.State.DurabilityTierTest do
 
       assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
       TestHelpers.wipe_cell(ctx.cell_id)
-      assert :ok = DurabilityTier.hydrate_operative(ctx.class)
+      assert :ok = DurabilityTier.hydrate_operator(ctx.class)
 
       assert %{intent: true, done: true} = Paths.compensation_markers(ctx.cell_id)
     end
@@ -410,7 +410,7 @@ defmodule Flezha.State.DurabilityTierTest do
       assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
 
       TestHelpers.wipe_cell(ctx.cell_id)
-      assert :ok = DurabilityTier.hydrate_operative(ctx.class)
+      assert :ok = DurabilityTier.hydrate_operator(ctx.class)
 
       assert %{intent: true, done: false} = Paths.compensation_markers(ctx.cell_id)
     end
@@ -451,7 +451,7 @@ defmodule Flezha.State.DurabilityTierTest do
       # second are present but unreferenced, so a hydration cannot see them.
       assert Stub.stored_manifest({:cell, ctx.cell_id}).ranges == first.ranges
       TestHelpers.wipe_cell(ctx.cell_id)
-      assert :ok = DurabilityTier.hydrate_operative(ctx.class)
+      assert :ok = DurabilityTier.hydrate_operator(ctx.class)
       assert seqs_in_wal(ctx.cell_id) == [0, 1, 2, 3]
     end
 
@@ -658,7 +658,7 @@ defmodule Flezha.State.DurabilityTierTest do
       Map.merge(ctx, %{dlq_dir: dlq_dir, auth_dir: auth.auth_dir, dlq: store})
     end
 
-    test "its operatives, its parked failures and its security state all come back", ctx do
+    test "its operators, its parked failures and its security state all come back", ctx do
       TestHelpers.write_wal(ctx.cell_id, 0..3)
       {:ok, entry_ref} = Dlq.Store.append(ctx.dlq, park(ctx, "poison-bytes"))
       :ok = RoleStore.bind("alice", "_system", :admin)
@@ -666,7 +666,7 @@ defmodule Flezha.State.DurabilityTierTest do
       :ok = AuthState.set_enabled()
 
       # One sweep is the whole cut: the backstop reaches every reference this
-      # node holds, which is what an RPO window buys an operator.
+      # node holds, which is what an RPO window buys a user.
       assert :ok = Shipper.sweep_now()
 
       # The disk dies with the controller. The stores have to be down before it
@@ -684,7 +684,7 @@ defmodule Flezha.State.DurabilityTierTest do
       File.rm_rf!(ctx.auth_dir)
 
       assert :ignore = Hydrator.hydrate_on_boot()
-      assert :ok = DurabilityTier.hydrate_operative(ctx.class)
+      assert :ok = DurabilityTier.hydrate_operator(ctx.class)
 
       assert seqs_in_wal(ctx.cell_id) == [0, 1, 2, 3]
       assert [%{"id" => _}] = Dlq.Store.list(ctx.dlq, ctx.class)
@@ -728,7 +728,7 @@ defmodule Flezha.State.DurabilityTierTest do
       assert :ok = Shipper.sweep_now()
 
       File.rm_rf!(ctx.dlq_dir)
-      assert :ok = DurabilityTier.hydrate_operative(ctx.class)
+      assert :ok = DurabilityTier.hydrate_operator(ctx.class)
 
       assert Dlq.Store.list(ctx.dlq, ctx.class) == [],
              "the artifact is the whole directory, so a drop must reach the backend too"
@@ -750,7 +750,7 @@ defmodule Flezha.State.DurabilityTierTest do
 
   # ---------- id and class are two key spaces ----------
 
-  describe "an operative whose instance id and class differ" do
+  describe "an operator whose instance id and class differ" do
     setup ctx do
       Stub.install()
       start_shipper()
@@ -796,7 +796,7 @@ defmodule Flezha.State.DurabilityTierTest do
 
   defp park(ctx, payload) do
     %{
-      operative_class: ctx.class,
+      operator_class: ctx.class,
       tasklet_id: "task",
       cell_key: "k1",
       channel: "input",

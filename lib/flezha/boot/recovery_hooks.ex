@@ -13,7 +13,7 @@ defmodule Flezha.Boot.RecoveryHooks do
   half-bound.
 
   `reconcile_duplicate` is an **alarm**, not a metric. Every start path
-  resolves through the registry's id claim, so one operative observed on
+  resolves through the registry's id claim, so one operator observed on
   two nodes means either a cross-node partition recovery (inherent, and
   already resolved keep-one/stop-others by the time the hook fires) or a
   start-authority violation. The kept/stopped nodes ride the event so the
@@ -118,28 +118,28 @@ defmodule Flezha.Boot.RecoveryHooks do
   end
 
   @doc """
-  One operative observed running on more than one node, already resolved
+  One operator observed running on more than one node, already resolved
   keep-one/stop-others upstream. Alarm-grade: outside a cross-node
   partition-recovery window it means a start bypassed the id claim.
   """
   @spec reconcile_duplicate(atom(), map()) :: :ok
   def reconcile_duplicate(hub_id, hook_data) do
-    operative_id = Map.get(hook_data, :child_id)
+    operator_id = Map.get(hook_data, :child_id)
     kept = Map.get(hook_data, :kept_node)
     stopped = Map.get(hook_data, :stopped_nodes, [])
 
     Logger.error(
-      "[boot] duplicate operative binding resolved: #{inspect(operative_id)} was running on " <>
+      "[boot] duplicate operator binding resolved: #{inspect(operator_id)} was running on " <>
         "#{Map.get(hook_data, :instance_count, 0)} nodes; kept #{inspect(kept)}, stopped " <>
         "#{inspect(stopped)}. Expected only while recovering from a cross-node partition — " <>
-        "otherwise a start bypassed the operative id claim"
+        "otherwise a start bypassed the operator id claim"
     )
 
     emit(
       :reconcile_duplicate,
       hub_id,
       %{instance_count: Map.get(hook_data, :instance_count, 0)},
-      %{operative_id: operative_id, kept_node: kept, stopped_nodes: stopped}
+      %{operator_id: operator_id, kept_node: kept, stopped_nodes: stopped}
     )
   end
 

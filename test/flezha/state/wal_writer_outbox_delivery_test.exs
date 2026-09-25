@@ -132,7 +132,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     end
 
     # Parking an undeliverable output logs at :error by design — assert that
-    # operator-facing line instead of letting it reach the console unasserted.
+    # user-facing line instead of letting it reach the console unasserted.
     log =
       capture_log(fn ->
         :ok = Outbox.park(md_doomed, "doomed", :broker_gone, 6)

@@ -1,19 +1,19 @@
 # Inside a runner — the shared kernel and the host SDK
 
-The controller's view of a runner is one box: a process that dials in, accepts operatives, and
+The controller's view of a runner is one box: a process that dials in, accepts operators, and
 ships back state changes and outputs. This page opens that box.
 
 A runner is **two layers, not one**. Transport, ordering, durability, retries, timers, credit,
-routing and a workflow's pass live in a single Rust kernel, `flz_core`. The host language SDK
+routing and a bounded operator's pass live in a single Rust kernel, `flz_core`. The host language SDK
 — Rust, Java, and whatever comes next — brings the authoring surface a user writes against and
 the threads that run their code. The seam between them is one poll loop.
 
 Everything on the [kernel](kernel.md), [stream](stream_profile.md) and
-[workflow](workflow_profile.md) pages is the same regardless of which host SDK is running, and
+[bounded operator](bounded_profile.md) pages is the same regardless of which host SDK is running, and
 that is precisely because those mechanisms sit below this seam.
 
 Mechanism-level detail: [`poll_core.md`](../sdk/poll_core.md). The authoring surface
-itself: [`rust_operative_architecture.md`](../sdk/rust_operative_architecture.md).
+itself: [`rust_operator_architecture.md`](../sdk/rust_operator_architecture.md).
 
 ---
 
@@ -34,7 +34,7 @@ flowchart TB
         C2["per-cell ordering + exclusivity · mailboxes"]:::ctrl
         C3["durability: effect records · flusher · restore · compaction"]:::ctrl
         C4["retry→park ladder · deferred wakes · timers · credit"]:::ctrl
-        C5["routing · edge keys · the key-group guard · the workflow pass sheet"]:::ctrl
+        C5["routing · edge keys · the key-group guard · the bounded operator pass sheet"]:::ctrl
     end
 
     CTRL["🧠 Controller"]:::ctrl
@@ -106,7 +106,7 @@ flowchart LR
     end
 
     KR["KeyRequest — batched keying for unkeyed<br/>entry payloads bound for a keyed edge"]:::exec
-    BS["Workflow step — one per cell of the stage<br/>(or CompensateRun for an undo)"]:::exec
+    BS["Bounded step — one per cell of the stage<br/>(or CompensateRun for an undo)"]:::exec
 
     POLL --> WORK
     POLL --> CMD
@@ -129,8 +129,8 @@ The other 14 control commands never surface — a `Ping` generates no activation
 bytes in a result are **opaque to the core**: postcard from a Rust host, Kryo from a Java one.
 That is the same property that lets the controller store them without decoding.
 
-The [key-group guard](stream_profile.md#partitioned-operatives) also lives below the seam:
-`AddOperative` carries a partition member's owned range, and a computed cell key that hashes
+The [key-group guard](stream_profile.md#partitioned-operators) also lives below the seam:
+`AddOperator` carries a partition member's owned range, and a computed cell key that hashes
 outside it takes the park exit on the first frame — so every host gets the mis-route refusal
 without writing a line of it.
 
@@ -190,10 +190,10 @@ core calls no host code, and a host that cannot starve simply never calls it.
 
 **Direct activations are exempt from the cap** — restore folds, snapshot requests and the other
 command crossings answer a caller already blocked on a rendezvous, so holding one behind capped
-cell work would deadlock that caller; a workflow's undo rides the same queue and holds its
+cell work would deadlock that caller; a bounded operator's undo rides the same queue and holds its
 cell's gate until it is answered. They are also what a queued direct activation with no thread
 inside `poll` reports as starvation: a blocked caller must be able to buy a thread. A
-workflow's stage work is not among them: it is ordinary cell work, capped like a stream's.
+bounded operator's stage work is not among them: it is ordinary cell work, capped like an unbounded operator's.
 
 ## Per-cell exclusivity
 
@@ -269,11 +269,11 @@ Promotion needs a thread in `poll`, so a due entry with every worker inside user
 starvation and reads as such: the starvation wait's deadline considers the nearest due entry,
 which is how a host that grows threads gets one there in time to promote the firing.
 
-## A workflow stage
+## A bounded stage
 
-A workflow stage runs the way a stream cell does: its items are routed into its cells'
+A bounded stage runs the way an unbounded cell does: its items are routed into its cells'
 mailboxes and the poll core hands them out as ordinary work, under the cap and the fairness
-rules above. What is the workflow's own is a small pass sheet on the instance, advanced by
+rules above. What is the bounded operator's own is a small pass sheet on the instance, advanced by
 events on the threads that bring them; no core thread belongs to an instance.
 
 ```mermaid
@@ -299,9 +299,9 @@ sequenceDiagram
 A stage therefore costs exactly the SDK threads that run its items, and nothing waits: the
 commit ack, a retry's backoff, `max_duration` and the park are events or entries on the
 deferred-wake list. Barriers, the task journal, loop modes, suspension and rewind are
-described in [`workflow_profile.md`](workflow_profile.md); what an instance costs at population
+described in [`bounded_profile.md`](bounded_profile.md); what an instance costs at population
 is measured in
-[`../resilience/workflow_operative.md`](../resilience/workflow_operative.md#how-many-instances-a-runner-holds).
+[`../resilience/bounded_operator.md`](../resilience/bounded_operator.md#how-many-instances-a-runner-holds).
 
 ## The C ABI
 
@@ -328,7 +328,7 @@ flowchart LR
 Silent runtime skew is impossible by construction. `flz_core_declare_class` takes the
 **complete** host-class declaration — the channel graph, cell modes, clock kinds, the
 effectively-once tier and its ack granularity, the correction window, the record-header
-lang/format bytes, and the workflow lifecycle facts — so a field the core never learned is a
+lang/format bytes, and the bounded lifecycle facts — so a field the core never learned is a
 refusal, not a silent degrade.
 
 Ownership is "whoever allocates frees"; activation buffers the core hands out are freed with
@@ -353,7 +353,7 @@ edge transforms and keying, one Cell per resolved key with its mailbox and
 overflow policy, the retry ladder, and the inter-tasklet hop —
 `route_to_consumers` is a mailbox push, and nothing about it crosses the wire.
 
-**Local mode** is that fact made reachable. It builds the same `OperativeInstance`
+**Local mode** is that fact made reachable. It builds the same `OperatorInstance`
 a deployed runner builds, feeds it through the same dispatch entry a stream
 reader uses, and differs in exactly one thing: the outbound sink. A
 `FlezhaStream::Local` takes what production writes and hands it to a callback in
@@ -368,7 +368,7 @@ query), effectively-once delivery (an output rides its effect record and the
 controller releases it once that record is durable — a declaration that asks for
 the tier is refused at local startup, naming it), plugins, placement, migration
 and rescale, partitioning (a member's key-group range arrives with
-`AddOperative`, so it is not declarable and a local run is unpartitioned by
+`AddOperator`, so it is not declarable and a local run is unpartitioned by
 construction), the dead-letter queue, observability export, authz and
 multi-runner scale.
 
@@ -409,7 +409,7 @@ The rule, normative for every binding:
   seven diffs.
 - **A host that brings its own workers brings their replacement.** Whatever a host's unit of
   work is — a poll thread, a fetcher, a per-Cell process — one that leaves for any reason
-  other than shutdown is replaced without operator action, and its departure never consumes
+  other than shutdown is replaced without user action, and its departure never consumes
   capacity the host budgets for. Every activation a host takes is answered exactly once
   (complete, fail, or abandon) through a guard that runs on an unwind, never a discipline at
   each return site: per-cell exclusivity means an unanswered activation retires its cell
@@ -433,7 +433,7 @@ The rule, normative for every binding:
   `inflight_oldest_ms` in the data heartbeat — because that is the only thing that makes ONE
   wedged Cell visible while the runner keeps completing work; likewise every overflow outcome
   (`blocked_parks`, `drops_newest`, `drops_oldest`, and the deferred-push pair `pending_pushes`
-  / `pending_push_oldest_ms`) rides the same heartbeat, because a drop no operator can count is
+  / `pending_push_oldest_ms`) rides the same heartbeat, because a drop no user can count is
   a silent data loss — and neither is backpressure that withholds work, which holds no handout
   for `inflight` to see. The obligations and the seam
   are in [`../sdk/poll_core.md`](../sdk/poll_core.md); `pool_wedge` is a required conformance
@@ -466,7 +466,7 @@ The rule, normative for every binding:
   the Rust runner is not a number for Java or Elixir until the same bench has run on them.
 - **Every SDK holds one allocated language byte, and a factory is homogeneous in it.** Durable
   `State` and `Change` bodies are per-SDK below the shared 16-byte envelope, and a restore ships
-  those bodies verbatim to whichever runner bound the Cell — so an operative is placed only on
+  those bodies verbatim to whichever runner bound the Cell — so an operator is placed only on
   a runner of its factory's language. The byte is an allocated identifier with one table of
   record in `flz_core/src/header.rs`:
 
@@ -512,7 +512,7 @@ shutdown notification, the identity stamps at its routing seam, the idle reaper 
 and eviction trace, the per-Tasklet schema declaration with its migrations, the
 pending-timer set with its two firing paths and the clock kinds, the effect record with its
 staged interval, its consumed-offset floor and its park — and defers correction windows and
-the workflow kind, each owed to a re-expression in Elixir.
+the bounded kind, each owed to a re-expression in Elixir.
 `state_persistence`, `keyed_channels`, `dynamic_cell`, `schema_evolution`, `cell_timers`
 and `effectively_once` are carried by all seven and sit in the required set: their mechanisms
 live once in the shared core for the six `flz_core` hosts and are re-expressed in the Elixir
@@ -524,7 +524,7 @@ SDK.
 
 - Running a graph with no controller → [`../quickstart.md`](../quickstart.md)
 - The poll boundary in mechanism detail → [`../sdk/poll_core.md`](../sdk/poll_core.md)
-- Authoring an operative → [`../sdk/rust_operative_architecture.md`](../sdk/rust_operative_architecture.md)
+- Authoring an operator → [`../sdk/rust_operator_architecture.md`](../sdk/rust_operator_architecture.md)
 - Proving an SDK still works → [`../sdk/conformance.md`](../sdk/conformance.md)
 - What the runner ships to the controller → [`kernel.md`](kernel.md)
 - The wire protocol → [`protocol_spec.md`](../sdk/protocol_spec.md)

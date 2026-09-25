@@ -203,7 +203,7 @@ impl Controller {
     pub fn try_answer_spawn(
         &self,
         reference_id: &str,
-        request: &pb::SpawnWorkflowRequest,
+        request: &pb::SpawnBoundedRequest,
         refusal: Option<&str>,
     ) -> std::io::Result<String> {
         let (outcome, error, id) = match refusal {
@@ -215,7 +215,7 @@ impl Controller {
         };
         self.try_send(
             reference_id,
-            pb::command_request::Command::SpawnWorkflowResponse(pb::SpawnWorkflowResponse {
+            pb::command_request::Command::SpawnBoundedResponse(pb::SpawnBoundedResponse {
                 outcome: outcome.to_string(),
                 error,
                 instance_id: id.clone(),
@@ -239,18 +239,18 @@ impl Controller {
     }
 }
 
-/// The `RunnerShutdownNotification` for `operative` in a captured frame, as
+/// The `RunnerShutdownNotification` for `operator` in a captured frame, as
 /// its reference id and serialized state. A graceful shutdown ships one per
-/// live operative and blocks on the ack, so both the ABI scenario and the
+/// live operator and blocks on the ack, so both the ABI scenario and the
 /// smoke run read the frame through here rather than each decoding it.
 pub fn shutdown_notification(
     payload_id: &str,
     message: &[u8],
-    operative: &str,
+    operator: &str,
 ) -> Option<(String, Vec<u8>)> {
     match command_in(payload_id, message)? {
         (reference_id, pb::command_request::Command::RunnerShutdownNotification(n))
-            if n.operative_id == operative =>
+            if n.operator_id == operator =>
         {
             Some((reference_id, n.serialized_state))
         }
@@ -258,13 +258,13 @@ pub fn shutdown_notification(
     }
 }
 
-/// The `SpawnWorkflowRequest` in a captured frame, with its reference id.
+/// The `SpawnBoundedRequest` in a captured frame, with its reference id.
 pub fn spawn_request(
     payload_id: &str,
     message: &[u8],
-) -> Option<(String, pb::SpawnWorkflowRequest)> {
+) -> Option<(String, pb::SpawnBoundedRequest)> {
     match command_in(payload_id, message)? {
-        (reference_id, pb::command_request::Command::SpawnWorkflowRequest(request)) => {
+        (reference_id, pb::command_request::Command::SpawnBoundedRequest(request)) => {
             Some((reference_id, request))
         }
         _ => None,
@@ -351,7 +351,7 @@ impl Scenario {
         let secondary = accept_within(secondary, "secondary", self.timeout)?;
         report("data streams accepted");
 
-        self.start_operative(&controller, report)?;
+        self.start_operator(&controller, report)?;
         self.feed(&primary, report)?;
         let seen = self.count_outputs(secondary, report)?;
         report(&format!("{seen} outputs seen"));
@@ -383,22 +383,22 @@ impl Scenario {
         )
     }
 
-    fn start_operative(&self, controller: &Controller, report: Progress<'_>) -> Result<(), String> {
+    fn start_operator(&self, controller: &Controller, report: Progress<'_>) -> Result<(), String> {
         controller.try_command(
-            "AddOperative",
+            "AddOperator",
             "smoke-add",
-            pb::command_request::Command::AddOperative(pb::AddOperative {
-                operative_id: self.operative_id.clone(),
+            pb::command_request::Command::AddOperator(pb::AddOperator {
+                operator_id: self.operator_id.clone(),
                 factory_id: self.factory_id.clone(),
                 ..Default::default()
             }),
         )?;
-        report(&format!("`{}` started", self.operative_id));
+        report(&format!("`{}` started", self.operator_id));
         Ok(())
     }
 
     /// One framed input per payload on the primary stream. The payload id is
-    /// the operative id (what the runner routes by), and the channel rides
+    /// the operator id (what the runner routes by), and the channel rides
     /// the metadata, exactly as the controller's own ingest builds it.
     fn feed(&self, primary: &UnixStream, report: Progress<'_>) -> Result<(), String> {
         let metadata: payloader::PayloadMetadata = self
@@ -407,7 +407,7 @@ impl Scenario {
             .map(|c| ("channel".to_string(), c.clone()))
             .collect();
         for payload in &self.inputs {
-            let frame = payloader::build_from_binary(&self.operative_id, payload, metadata.clone())
+            let frame = payloader::build_from_binary(&self.operator_id, payload, metadata.clone())
                 .map_err(|e| format!("an input frame could not be built: {e}"))?;
             (&*primary)
                 .write_all(&frame)
@@ -418,7 +418,7 @@ impl Scenario {
     }
 
     /// Count output frames on the secondary stream. An output is a frame
-    /// under the operative id; the heartbeat and the record frames beside it
+    /// under the operator id; the heartbeat and the record frames beside it
     /// carry their own payload ids and are drained.
     fn count_outputs(&self, secondary: UnixStream, report: Progress<'_>) -> Result<usize, String> {
         if self.expect_outputs == 0 {
@@ -440,7 +440,7 @@ impl Scenario {
                 ));
             }
             match payloader::extract_payload(&stream) {
-                Ok((payload_id, _, _)) if payload_id == self.operative_id => seen += 1,
+                Ok((payload_id, _, _)) if payload_id == self.operator_id => seen += 1,
                 Ok((payload_id, _, _)) => other.push(payload_id),
                 Err(e) => {
                     return Err(format!(
@@ -474,7 +474,7 @@ impl Scenario {
         Ok(())
     }
 
-    /// A graceful shutdown ships the operative's state and blocks on the ack.
+    /// A graceful shutdown ships the operator's state and blocks on the ack.
     /// Answering it ends the run at the runner's pace instead of at its
     /// timeout; a class with no state to ship sends nothing, and that is not
     /// a failure, so the wait is bounded by the runner's own and its
@@ -486,7 +486,7 @@ impl Scenario {
             |captured| {
                 captured
                     .iter()
-                    .find_map(|(id, m)| shutdown_notification(id, m, &self.operative_id))
+                    .find_map(|(id, m)| shutdown_notification(id, m, &self.operator_id))
             },
         );
         let Ok((reference_id, state)) = found else {
@@ -497,7 +497,7 @@ impl Scenario {
         if let Err(e) = controller.try_send(
             &reference_id,
             pb::command_request::Command::RunnerShutdownAck(pb::RunnerShutdownAck {
-                operative_id: self.operative_id.clone(),
+                operator_id: self.operator_id.clone(),
             }),
         ) {
             report(&format!("the shutdown ack could not be written: {e}"));

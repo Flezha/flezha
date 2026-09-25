@@ -63,7 +63,7 @@ pub fn to_schema(act: &EngineActivation) -> schema::Activation {
 /// A prepare crossing is addressed to the channel's first consumer.
 fn prepare_target(crossing: &PrepareCrossing) -> schema::CellRef {
     schema::CellRef {
-        operative: crossing.instance.instance_id.to_string(),
+        operator: crossing.instance.instance_id.to_string(),
         tasklet: crossing
             .instance
             .topology
@@ -221,9 +221,9 @@ fn settle_items(
     effects: Vec<schema::ItemEffect>,
 ) -> Result<(), Error> {
     let mut queue: std::collections::VecDeque<ItemAttempt> = items.into();
-    let workflow = slot.topology.workflow.is_some();
+    let bounded = slot.topology.bounded.is_some();
     for mut effect in effects {
-        if !workflow {
+        if !bounded {
             refuse_completion(&mut effect);
         }
         let Some(work) = queue.pop_front() else {
@@ -232,10 +232,10 @@ fn settle_items(
                 "completion carries more effects than items".to_string(),
             ));
         };
-        // A workflow's unreadable message rides its ladder before it parks;
-        // a stream's parks at once.
+        // A bounded operator's unreadable message rides its ladder before it parks;
+        // an unbounded operator's parks at once.
         let verdict = match effect.verdict.clone() {
-            schema::Verdict::Unreadable { message } if workflow => {
+            schema::Verdict::Unreadable { message } if bounded => {
                 schema::Verdict::RetryableError { message }
             }
             verdict => verdict,
@@ -273,13 +273,13 @@ fn settle_items(
     Ok(())
 }
 
-/// A stream never completes: an item whose tasklet asked to fails as the
+/// An unbounded operator never completes: an item whose tasklet asked to fails as the
 /// author's own non-retryable error would, carrying nothing it recorded.
 pub(super) fn refuse_completion(effect: &mut schema::ItemEffect) {
     if effect.complete.is_some() && effect.verdict == schema::Verdict::Ok {
         *effect = schema::ItemEffect {
             verdict: schema::Verdict::NonRetryableError {
-                message: crate::workflow::COMPLETE_OUTSIDE_WORKFLOW.to_string(),
+                message: crate::bounded::COMPLETE_OUTSIDE_BOUNDED.to_string(),
             },
             consumed_offset: effect.consumed_offset,
             event_time: effect.event_time,
@@ -368,8 +368,8 @@ pub(super) fn settle_item(
     let Some(stream) = stream_of(&work.item) else {
         return;
     };
-    if slot.topology.workflow.is_some() {
-        return settle_workflow_item(slot, facts, work, &stream, effect, park);
+    if slot.topology.bounded.is_some() {
+        return settle_bounded_item(slot, facts, work, &stream, effect, park);
     }
     let parked = park.is_some();
     let timers = committed_timers(&work.item, effect.timers, parked);
@@ -406,18 +406,18 @@ pub(super) fn settle_item(
     }
 }
 
-/// A host's answer to a workflow undo: its changes and plugin outputs settled
+/// A host's answer to a bounded operator undo: its changes and plugin outputs settled
 /// as an item's are, into the undo's own record; a failed hook reported.
-pub(crate) fn settle_workflow_undo(slot: &Arc<CellSlot>, outcome: schema::ActivationOutcome) {
+pub(crate) fn settle_bounded_undo(slot: &Arc<CellSlot>, outcome: schema::ActivationOutcome) {
     match outcome {
         schema::ActivationOutcome::Work(effects) => {
             let Some(facts) = slot.dispatcher.host_facts() else {
                 return;
             };
-            let stream = crate::workflow::unwired_stream();
+            let stream = crate::bounded::unwired_stream();
             for effect in effects {
                 let (_edge, wire) = split_outputs(effect.outputs);
-                settle_workflow_effects(
+                settle_bounded_effects(
                     slot,
                     facts,
                     effect.changes,
@@ -428,9 +428,9 @@ pub(crate) fn settle_workflow_undo(slot: &Arc<CellSlot>, outcome: schema::Activa
                 );
             }
         }
-        schema::ActivationOutcome::Failed(error) => crate::workflow::note_failure(
+        schema::ActivationOutcome::Failed(error) => crate::bounded::note_failure(
             slot,
-            crate::workflow::WorkflowError::from(error.message),
+            crate::bounded::BoundedError::from(error.message),
             None,
             1,
         ),
@@ -438,11 +438,11 @@ pub(crate) fn settle_workflow_undo(slot: &Arc<CellSlot>, outcome: schema::Activa
     }
 }
 
-/// A workflow Cell's changes, durable timer ops and plugin outputs. A class
+/// A bounded operator Cell's changes, durable timer ops and plugin outputs. A class
 /// that journals writes them as one effect record, sent at once and named on
 /// the pass sheet for the stage's barrier; one that does not sends the outputs
 /// to the wire with their channel, key and metadata.
-fn settle_workflow_effects(
+fn settle_bounded_effects(
     slot: &Arc<CellSlot>,
     facts: &HostTaskletFacts,
     changes: Vec<Vec<u8>>,
@@ -473,15 +473,15 @@ fn settle_workflow_effects(
         return;
     }
     let mut buffer = slot.flush_buffer.lock_recover();
-    crate::workflow::ship_stage_record(slot, &mut **buffer, &facts.header(), channels);
+    crate::bounded::ship_stage_record(slot, &mut **buffer, &facts.header(), channels);
 }
 
-/// A workflow Cell's item: its changes and plugin outputs settled into its
+/// A bounded operator Cell's item: its changes and plugin outputs settled into its
 /// record, its edge outputs held for the stage's commit and its completion
-/// noted; or, where a stream would park it, its stage failed with no dead
+/// noted; or, where an unbounded operator would park it, its stage failed with no dead
 /// letter and only its changes recorded. Either way the stage owes it no
 /// longer.
-fn settle_workflow_item(
+fn settle_bounded_item(
     slot: &Arc<CellSlot>,
     facts: &HostTaskletFacts,
     work: &ItemAttempt,
@@ -500,7 +500,7 @@ fn settle_workflow_item(
         effect.outputs
     };
     let (edge_outputs, wire_outputs) = split_outputs(outputs);
-    settle_workflow_effects(
+    settle_bounded_effects(
         slot,
         facts,
         effect.changes,
@@ -512,9 +512,9 @@ fn settle_workflow_item(
     match park {
         Some((error, attempts)) => {
             let error = if unreadable {
-                crate::workflow::WorkflowError::unreadable(error)
+                crate::bounded::BoundedError::unreadable(error)
             } else {
-                crate::workflow::WorkflowError::non_retryable(error)
+                crate::bounded::BoundedError::non_retryable(error)
             };
             let payload = match &work.item {
                 CellItem::Input(p) => p
@@ -523,16 +523,16 @@ fn settle_workflow_item(
                     .map(|hp| hp.bytes.clone()),
                 CellItem::Timer(_) | CellItem::CloseInterval => None,
             };
-            crate::workflow::note_failure(slot, error, payload, attempts);
+            crate::bounded::note_failure(slot, error, payload, attempts);
         }
-        None => hold_workflow_edges(slot, stream, edge_outputs, effect.complete),
+        None => hold_bounded_edges(slot, stream, edge_outputs, effect.complete),
     }
-    crate::workflow::item_settled(slot);
+    crate::bounded::item_settled(slot);
 }
 
-/// A host workflow stage emits one untransformed output per released value,
+/// A host bounded stage emits one untransformed output per released value,
 /// naming its producing channel; the consumer applies the edge on delivery.
-fn hold_workflow_edges(
+fn hold_bounded_edges(
     slot: &Arc<CellSlot>,
     stream: &Arc<FlezhaStream>,
     edge_outputs: Vec<schema::Output>,
@@ -555,10 +555,10 @@ fn hold_workflow_edges(
             event_time: output.event_time,
             metadata: output.metadata,
         });
-        crate::workflow::hold_emit(&instance, Some(descriptor), &value, stream, slot);
+        crate::bounded::hold_emit(&instance, Some(descriptor), &value, stream, slot);
     }
     if let Some(result) = complete {
-        crate::workflow::complete(slot, result);
+        crate::bounded::complete(slot, result);
     }
 }
 
@@ -744,7 +744,7 @@ fn commit_timers(slot: &Arc<CellSlot>, timers: &[TimerOp], stream: &Arc<FlezhaSt
     crate::timer::apply_ops(slot, timers, stream);
 }
 
-/// Ship the tier-off plugin outputs. The frame's payload id is the OPERATIVE
+/// Ship the tier-off plugin outputs. The frame's payload id is the OPERATOR
 /// ID — what the controller routes `:on_output` by.
 fn ship_plugin_outputs(
     slot: &Arc<CellSlot>,

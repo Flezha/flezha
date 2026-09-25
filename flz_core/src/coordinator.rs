@@ -1,8 +1,8 @@
 //! The coordinator: one thread per runner that owns the control stream and
 //! every control-plane write — command replies, keepalives, heartbeats,
-//! workflow completions and SDK-initiated requests — so those writes never
+//! bounded completions and SDK-initiated requests — so those writes never
 //! interleave. Data-plane traffic bypasses it entirely: stream readers push
-//! straight into the targeted operative's cell mailboxes.
+//! straight into the targeted operator's cell mailboxes.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
@@ -16,11 +16,11 @@ use flz_transport::transport::FlezhaStream;
 use prost::Message;
 use tracing::warn;
 
-use crate::operative::instance::OperativeInstance;
-use crate::operative::registry::{get_class as get_operative_class, OperativeRegistry};
+use crate::operator::instance::OperatorInstance;
+use crate::operator::registry::{get_class as get_operator_class, OperatorRegistry};
 use crate::pb::command_request::Command;
-use crate::pb::{CommandRequest, WorkflowCompleted as PbWorkflowCompleted};
-use crate::routing::OperativeDispatchHandle;
+use crate::pb::{BoundedCompleted as PbBoundedCompleted, CommandRequest};
+use crate::routing::OperatorDispatchHandle;
 use crate::runner::{ClientResponseMessage, RunnerMessage, RunnerStatus};
 use crate::shutdown::ShutdownBridge;
 use crate::util::nonce_suffix;
@@ -29,7 +29,7 @@ use crate::{command, control_unit};
 pub struct RunnerNode {
     runner_id: String,
     _namespace: String,
-    operative_registry: Arc<OperativeRegistry>,
+    operator_registry: Arc<OperatorRegistry>,
     shared_io_streams: Arc<RwLock<HashMap<u32, FlezhaStream>>>,
     quic_client: Option<Arc<QuicClient>>,
     connect_answered: ConnectAnswered,
@@ -38,12 +38,12 @@ pub struct RunnerNode {
 
 /// The newest RunnerNode's registry, for harnesses that drive its instances.
 #[doc(hidden)]
-pub static LIVE_REGISTRY: std::sync::Mutex<Option<Arc<OperativeRegistry>>> =
+pub static LIVE_REGISTRY: std::sync::Mutex<Option<Arc<OperatorRegistry>>> =
     std::sync::Mutex::new(None);
 
 /// A live instance by id on the newest runner, for harnesses.
 #[doc(hidden)]
-pub fn live_instance(instance_id: &str) -> Option<Arc<OperativeInstance>> {
+pub fn live_instance(instance_id: &str) -> Option<Arc<OperatorInstance>> {
     LIVE_REGISTRY
         .lock()
         .unwrap_or_else(|p| p.into_inner())
@@ -53,15 +53,15 @@ pub fn live_instance(instance_id: &str) -> Option<Arc<OperativeInstance>> {
 
 impl RunnerNode {
     pub fn new(namespace: String) -> RunnerNode {
-        let operative_registry = Arc::new(OperativeRegistry::new());
+        let operator_registry = Arc::new(OperatorRegistry::new());
         *LIVE_REGISTRY.lock().unwrap_or_else(|p| p.into_inner()) =
-            Some(Arc::clone(&operative_registry));
+            Some(Arc::clone(&operator_registry));
         let shared_io_streams = Arc::new(RwLock::new(HashMap::new()));
 
         RunnerNode {
             runner_id: "undefined".to_string(),
             _namespace: namespace,
-            operative_registry,
+            operator_registry,
             shared_io_streams,
             quic_client: None,
             connect_answered: ConnectAnswered::default(),
@@ -70,63 +70,63 @@ impl RunnerNode {
     }
 
     /// Spawn an instance of a registered class of either kind; `instance_id`
-    /// is the wire's `operative_id`. Idempotent: a duplicate id answers the
+    /// is the wire's `operator_id`. Idempotent: a duplicate id answers the
     /// existing instance. The instance takes the input tail the bind owes it;
-    /// a workflow also takes the rest of the resume facts and waits for
-    /// [`crate::workflow::open`] before its first pass, so its `init_values`
+    /// a bounded operator also takes the rest of the resume facts and waits for
+    /// [`crate::bounded::open`] before its first pass, so its `init_values`
     /// land first.
-    pub fn start_operative(
+    pub fn start_operator(
         &self,
         factory_id: String,
         instance_id: String,
-        partition: crate::operative::instance::KeyGroupRange,
-        resume: crate::workflow::instance::Resume,
-    ) -> Option<Arc<OperativeInstance>> {
-        if let Some(existing) = self.operative_registry.get(&instance_id) {
+        partition: crate::operator::instance::KeyGroupRange,
+        resume: crate::bounded::instance::Resume,
+    ) -> Option<Arc<OperatorInstance>> {
+        if let Some(existing) = self.operator_registry.get(&instance_id) {
             return Some(existing);
         }
-        let topology = get_operative_class(&factory_id)?;
-        let instance = OperativeInstance::with_options(
+        let topology = get_operator_class(&factory_id)?;
+        let instance = OperatorInstance::with_options(
             topology,
             Arc::from(instance_id.as_str()),
             None,
             partition,
         );
         instance.owe_inbox(resume.owed_inbox);
-        if let Some(run) = &instance.workflow {
+        if let Some(run) = &instance.bounded {
             run.bind(resume);
         }
-        Some(self.operative_registry.register(instance))
+        Some(self.operator_registry.register(instance))
     }
 
     /// Unregister a class with no live instance; `Err(n)` names how many
-    /// exist. MUST run on the coordinator loop, serialized with `AddOperative`.
+    /// exist. MUST run on the coordinator loop, serialized with `AddOperator`.
     pub fn remove_factory(&self, factory_id: &str) -> Result<(), usize> {
-        let live = self.operative_registry.count_by_factory(factory_id);
+        let live = self.operator_registry.count_by_factory(factory_id);
         if live > 0 {
             return Err(live);
         }
-        crate::operative::registry::unregister_class(factory_id);
+        crate::operator::registry::unregister_class(factory_id);
         Ok(())
     }
 
-    pub fn stop_operative(&self, instance_id: &str) -> bool {
-        match self.operative_registry.remove(instance_id) {
+    pub fn stop_operator(&self, instance_id: &str) -> bool {
+        match self.operator_registry.remove(instance_id) {
             Some(instance) => {
                 instance.shutdown_background_threads();
-                crate::workflow::removed(&instance);
+                crate::bounded::removed(&instance);
                 true
             }
             None => false,
         }
     }
 
-    pub fn has_operative(&self, instance_id: &str) -> bool {
-        self.operative_registry.contains(instance_id)
+    pub fn has_operator(&self, instance_id: &str) -> bool {
+        self.operator_registry.contains(instance_id)
     }
 
-    pub fn get_operative(&self, instance_id: &str) -> Option<Arc<OperativeInstance>> {
-        self.operative_registry.get(instance_id)
+    pub fn get_operator(&self, instance_id: &str) -> Option<Arc<OperatorInstance>> {
+        self.operator_registry.get(instance_id)
     }
 
     /// The Cell a wire identity names, with its instance; a keyed one is
@@ -134,18 +134,18 @@ impl RunnerNode {
     pub fn find_cell(
         &self,
         cell_id: &[u8],
-    ) -> Option<(Arc<OperativeInstance>, Arc<crate::cell::CellSlot>)> {
-        self.operative_registry.find_cell(cell_id)
+    ) -> Option<(Arc<OperatorInstance>, Arc<crate::cell::CellSlot>)> {
+        self.operator_registry.find_cell(cell_id)
     }
 
     /// The live instance a wire identity names.
-    pub fn instance_of_cell(&self, cell_id: &[u8]) -> Option<Arc<OperativeInstance>> {
-        self.operative_registry.instance_of_cell(cell_id)
+    pub fn instance_of_cell(&self, cell_id: &[u8]) -> Option<Arc<OperatorInstance>> {
+        self.operator_registry.instance_of_cell(cell_id)
     }
 
-    pub fn operative_dispatch_handle(&self) -> OperativeDispatchHandle {
-        OperativeDispatchHandle {
-            registry: Arc::clone(&self.operative_registry),
+    pub fn operator_dispatch_handle(&self) -> OperatorDispatchHandle {
+        OperatorDispatchHandle {
+            registry: Arc::clone(&self.operator_registry),
         }
     }
 
@@ -153,8 +153,8 @@ impl RunnerNode {
         self._namespace.clone()
     }
 
-    pub fn get_operatives(&self) -> HashMap<String, Arc<OperativeInstance>> {
-        self.operative_registry.snapshot_stream()
+    pub fn get_operators(&self) -> HashMap<String, Arc<OperatorInstance>> {
+        self.operator_registry.snapshot_stream()
     }
 
     pub fn get_io_streams(&self) -> Arc<RwLock<HashMap<u32, FlezhaStream>>> {
@@ -223,7 +223,7 @@ pub fn start(
 
 /// Let the shutdown bridge enumerate live instances without the coordinator
 /// channel; the registry `Arc` is stable across reconnects.
-fn install_snapshot_fn(shutdown_bridge: &ShutdownBridge, registry: Arc<OperativeRegistry>) {
+fn install_snapshot_fn(shutdown_bridge: &ShutdownBridge, registry: Arc<OperatorRegistry>) {
     shutdown_bridge.set_snapshot_fn(Box::new(move || {
         registry
             .snapshot_stream()
@@ -231,7 +231,7 @@ fn install_snapshot_fn(shutdown_bridge: &ShutdownBridge, registry: Arc<Operative
             .map(|(k, instance)| {
                 (
                     k,
-                    crate::command::cell_state::serialize_operative_state(&instance),
+                    crate::command::cell_state::serialize_operator_state(&instance),
                 )
             })
             .collect()
@@ -250,7 +250,7 @@ impl Coordinator {
         shutdown_bridge: Arc<ShutdownBridge>,
     ) -> (Self, [JoinHandle<()>; 2]) {
         let mut runner = RunnerNode::new(namespace.clone());
-        install_snapshot_fn(&shutdown_bridge, Arc::clone(&runner.operative_registry));
+        install_snapshot_fn(&shutdown_bridge, Arc::clone(&runner.operator_registry));
 
         let ctx_arc = Arc::new(Mutex::new(ctx));
         // Expose the coordinator channel process-globally so the
@@ -294,8 +294,8 @@ impl Coordinator {
                     &message,
                 );
             }
-            RunnerMessage::ReturnOperatives => {
-                return_operatives(&self.runner, self.ctx_arc.clone());
+            RunnerMessage::ReturnOperators => {
+                return_operators(&self.runner, self.ctx_arc.clone());
             }
             RunnerMessage::Reconnect(reason) => self.reconnect(reason),
             // A failed keepalive write means the control stream died; the
@@ -306,12 +306,12 @@ impl Coordinator {
             RunnerMessage::SendDataHeartbeat => {
                 heartbeat_tick(&self.runner.shared_io_streams);
             }
-            RunnerMessage::EmitWorkflowCompleted {
-                operative_id,
+            RunnerMessage::EmitBoundedCompleted {
+                operator_id,
                 status,
                 error,
                 result,
-            } => self.write_workflow_completed(operative_id, status, error, result),
+            } => self.write_bounded_completed(operator_id, status, error, result),
             RunnerMessage::EmitControlRequest {
                 reference_id,
                 command,
@@ -346,18 +346,18 @@ impl Coordinator {
             .set_control_stream(Some(Arc::clone(&self.control_stream)));
     }
 
-    /// The terminal `WorkflowCompleted`, carrying the direct-output count.
-    fn write_workflow_completed(
+    /// The terminal `BoundedCompleted`, carrying the direct-output count.
+    fn write_bounded_completed(
         &mut self,
-        operative_id: String,
+        operator_id: String,
         status: String,
         error: String,
         result: Vec<u8>,
     ) {
         let frame = control_command_frame(
-            "workflow-completed",
-            Command::WorkflowCompleted(PbWorkflowCompleted {
-                operative_id: operative_id.clone(),
+            "bounded-completed",
+            Command::BoundedCompleted(PbBoundedCompleted {
+                operator_id: operator_id.clone(),
                 status,
                 error,
                 result,
@@ -366,7 +366,7 @@ impl Coordinator {
         if let Err(e) = self.write_control(frame) {
             warn!(
                 target: "flezha",
-                "[flezha] WorkflowCompleted write failed for {}: {}", operative_id, e
+                "[flezha] BoundedCompleted write failed for {}: {}", operator_id, e
             );
         }
     }
@@ -407,7 +407,7 @@ fn framed_request(reference_id: String, command: Command) -> Vec<u8> {
 }
 
 /// One heartbeat tick; a heartbeat that reached nothing feeds the flood
-/// ladder, the only signal an idle Operative ever gives it.
+/// ladder, the only signal an idle Operator ever gives it.
 fn heartbeat_tick(io_streams: &RwLock<HashMap<u32, FlezhaStream>>) {
     if !send_data_heartbeat(io_streams) {
         crate::state_sink::note_transport_failure();
@@ -468,14 +468,14 @@ fn heartbeat_metadata() -> HashMap<String, String> {
         ("dispatches", crate::cell::dispatches_completed()),
         // Overflow outcomes. `dispatches` frozen with `blocked_parks` climbing
         // is healthy backpressure; frozen with it flat is a wedge. The two drop
-        // counters are the shed an operator would otherwise only find by
+        // counters are the shed a user would otherwise only find by
         // attaching a debugger to the runner.
         ("blocked_parks", crate::cell::pushes_blocked_total()),
         ("drops_newest", crate::cell::drops_newest_total()),
         ("drops_oldest", crate::cell::drops_oldest_total()),
         ("credit_parked", crate::credit::credit_parked()),
         // A discard is correct only where the controller re-forwards from a
-        // durable log, so a climbing value is the operator's one handle on how
+        // durable log, so a climbing value is the user's one handle on how
         // much a rebind threw away.
         (
             "restore_discarded_inputs",
@@ -499,7 +499,7 @@ fn heartbeat_metadata() -> HashMap<String, String> {
         ("pending_push_oldest_ms", core.pending_push_oldest_age_ms()),
         // Wake-list occupancy: a runaway registration shows here long before it
         // is fatal, and a `timers_fired` that stops moving while `timers_armed`
-        // climbs is promotion wedged rather than the Operative idle.
+        // climbs is promotion wedged rather than the Operator idle.
         ("timers_armed", crate::timer::timers_armed() as u64),
         ("timers_fired", crate::timer::timers_fired_total()),
     ]
@@ -508,15 +508,15 @@ fn heartbeat_metadata() -> HashMap<String, String> {
     .collect()
 }
 
-fn return_operatives(runner: &RunnerNode, ctx_arc: Arc<Mutex<Sender<ClientResponseMessage>>>) {
-    let operatives = runner.get_operatives();
+fn return_operators(runner: &RunnerNode, ctx_arc: Arc<Mutex<Sender<ClientResponseMessage>>>) {
+    let operators = runner.get_operators();
     // A closed client channel means the owning handle is gone mid-request;
     // dropping the reply is the only sane outcome — never panic the
     // coordinator.
     let _ = ctx_arc
         .lock()
         .unwrap()
-        .send(ClientResponseMessage::ReturnOperatives(operatives));
+        .send(ClientResponseMessage::ReturnOperators(operators));
 }
 
 /// Re-open the control stream keeping the registry, the data streams and the

@@ -296,7 +296,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
       assert log =~ "keepalive ping interval"
     end
 
-    test "the floor follows the interval an operator actually configured" do
+    test "the floor follows the interval a user actually configured" do
       assert capture_log(fn -> assert window(20_000, ping_interval: 60_000) == 120_000 end) =~
                "keepalive ping interval 60000"
     end

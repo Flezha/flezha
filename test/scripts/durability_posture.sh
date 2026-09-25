@@ -19,7 +19,7 @@
 #
 # Cell WAL recovery is NOT re-proved here; that is
 # `test/system/remote_durability_e2e_test.exs`, which destroys the state
-# directory of a live workflow and a live checkpoint stream against real
+# directory of a live bounded operator and a live checkpoint stream against real
 # runners.
 #
 # Usage:
@@ -246,7 +246,7 @@ disk_death() { # disk_death <backend>
     return
   fi
 
-  # Authz: claim the one-shot bootstrap, then issue a token an operator would
+  # Authz: claim the one-shot bootstrap, then issue a token a user would
   # actually use afterwards.
   local boot_token
   boot_token="$(docker exec "$first" cat /flezha/app_data/auth/bootstrap.token 2>/dev/null)"
@@ -265,11 +265,11 @@ disk_death() { # disk_death <backend>
   fi
 
   # A parked failure, through the store's real durable append.
-  rpc "$first" 'Flezha.Dlq.Store.append(%{operative_class: "durval_class", tasklet_id: "task", cell_key: "k1", channel: "input", origin_offset: nil, error: "poison", attempts: 3, payload: "poison-bytes", park_id: "durval-1"})' \
+  rpc "$first" 'Flezha.Dlq.Store.append(%{operator_class: "durval_class", tasklet_id: "task", cell_key: "k1", channel: "input", origin_offset: nil, error: "poison", attempts: 3, payload: "poison-bytes", park_id: "durval-1"})' \
     >"$LOGDIR/${backend}-park.log" 2>&1
   check "parked a record" "$LOGDIR/${backend}-park.log" "durval_class/task/"
 
-  # A schedule: operator-declared intent, and the thing that creates a registry
+  # A schedule: user-declared intent, and the thing that creates a registry
   # cspec on this node.
   flz "$first" schedule add durval-job --cron "0 3 * * *" --tz UTC --factory durval_factory \
     >"$LOGDIR/${backend}-schedule.log" 2>&1
@@ -296,9 +296,9 @@ disk_death() { # disk_death <backend>
     return
   fi
 
-  # Parked failures hydrate WITH their operative, so the replacement has to bind
-  # it — the same call `Flezha.Operative.Replay` makes on the bind path.
-  rpc "$second" 'Flezha.State.DurabilityTier.hydrate_operative("durval_class")' \
+  # Parked failures hydrate WITH their operator, so the replacement has to bind
+  # it — the same call `Flezha.Operator.Replay` makes on the bind path.
+  rpc "$second" 'Flezha.State.DurabilityTier.hydrate_operator("durval_class")' \
     >"$LOGDIR/${backend}-dlq-hydrate.log" 2>&1
 
   flz "$second" dlq list >"$LOGDIR/${backend}-dlq-after.log" 2>&1

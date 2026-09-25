@@ -29,7 +29,7 @@ class.compact_after_bytes
 class.sync_durability
 class.channels
 class.tasklets
-class.workflow
+class.bounded
 channel.name
 channel.kind
 channel.producer
@@ -50,6 +50,6 @@ tasklet.mailbox_capacity
 tasklet.change_is_nochange
 tasklet.schema_version
 tasklet.min_readable_schema_version
-workflow.loop_mode
-workflow.rollback_mode
-workflow.max_duration_ms
+bounded.loop_mode
+bounded.rollback_mode
+bounded.max_duration_ms

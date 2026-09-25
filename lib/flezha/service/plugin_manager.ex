@@ -1,8 +1,8 @@
 defmodule Flezha.Service.PluginManager do
   @moduledoc """
   Per-node registry of enabled `%Flezha.Plugin{}` entries. Routes
-  `enable_plugin/2` into the owning operative's Overwatch and persists the
-  plugin into that operative's ProcessHub child-spec, so it survives an
+  `enable_plugin/2` into the owning operator's Overwatch and persists the
+  plugin into that operator's ProcessHub child-spec, so it survives an
   Overwatch restart, a controller restart and a cluster cold boot.
 
   Ordering is canonicalise, then durable write, then runtime mutation: an
@@ -14,10 +14,10 @@ defmodule Flezha.Service.PluginManager do
   a failed runtime call rolls both records back, so no surface is left claiming
   a plugin whose enable never succeeded.
 
-  Every call this manager makes into an operative it does not own carries a
+  Every call this manager makes into an operator it does not own carries a
   bound, because the manager is a node-wide singleton whose table starts empty:
   an exit taken from a busy Overwatch would forget every plugin on the node. A
-  disable that could not reach its operative names the plugins it could not drop.
+  disable that could not reach its operator names the plugins it could not drop.
   """
 
   use GenServer
@@ -31,21 +31,21 @@ defmodule Flezha.Service.PluginManager do
   alias Flezha.Config.Durations
   alias Flezha.Config.Backoff
   alias Flezha.Identificator
-  alias Flezha.Operative.Overwatch
-  alias Flezha.Operative.PartitionGroup
+  alias Flezha.Operator.Overwatch
+  alias Flezha.Operator.PartitionGroup
   alias Flezha.Parallel
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Process.Hub
   alias Flezha.SDK.SafeCall
   alias Flezha.Service.CallerContext
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias Flezha.Service.RegistryUpdate
   alias ProcessHub.Service.ProcessRegistry
 
   # This manager is a node-wide singleton and its table does not survive it:
   # `init/1` starts empty, so an exit here forgets every plugin enabled on the
-  # node, not just the one being disabled. The calls it makes into an operative
+  # node, not just the one being disabled. The calls it makes into an operator
   # carry `Overwatch`'s own bound, which is the smaller of the two so the
   # manager answers before the caller waiting on it stops waiting.
 
@@ -54,12 +54,12 @@ defmodule Flezha.Service.PluginManager do
   # Canonicalised here, before anything reads the hooks and before any durable
   # write: the declaration-only half of validation needs no live table, only the
   # host catalog. A refusal therefore costs nothing and leaves nothing, and
-  # `refuse_init_subscription/1` below matches a name the operator typed as
+  # `refuse_init_subscription/1` below matches a name the user typed as
   # text. What is persisted is the canonical struct.
   def enable_plugin(plugin_id, %Plugin{} = plugin) do
     with {:ok, plugin} <- Table.canonicalise(Overwatch.__extensions_catalog__(), plugin),
          :ok <- refuse_init_subscription(plugin) do
-      case PartitionGroup.members(plugin.namespace, plugin.operative_id) do
+      case PartitionGroup.members(plugin.namespace, plugin.operator_id) do
         [] -> do_enable_plugin(plugin_id, plugin)
         members -> enable_across_group(plugin_id, plugin, members)
       end
@@ -71,7 +71,7 @@ defmodule Flezha.Service.PluginManager do
   # plugins overlap and their registry writes share one durable sync. A claim
   # whose enable fails is released, so a failed enable leaves no entry behind.
   defp do_enable_plugin(plugin_id, plugin) do
-    with :ok <- check_operative_target(plugin),
+    with :ok <- check_operator_target(plugin),
          :claimed <- GenServer.call(__MODULE__, {:claim, plugin_id, plugin}) do
       enable_claimed(plugin_id, plugin)
     end
@@ -93,11 +93,11 @@ defmodule Flezha.Service.PluginManager do
   # `flz plugin list` and `disable_plugin/1` read, so the plugin goes invisible
   # while the durable records still carry it, and the next start subscribes it
   # and parks
-  # the operative on `:plugin_prepare_failed` if it still cannot come up. A
+  # the operator on `:plugin_prepare_failed` if it still cannot come up. A
   # controller that DIES here runs no rollback, which is the crash case
   # `auto-restore-on-boot` requires to self-heal on the next start.
   defp subscribe_claimed(plugin_id, %Plugin{} = plugin) do
-    with {:ok, pid} <- resolve_operative(plugin),
+    with {:ok, pid} <- resolve_operator(plugin),
          :ok <- Overwatch.plugin_subscribe(pid, plugin_id, plugin) do
       GenServer.cast(__MODULE__, {:confirm, plugin_id})
       {:ok, "plugin enabled"}
@@ -109,23 +109,23 @@ defmodule Flezha.Service.PluginManager do
   end
 
   # `unregister_plugin/1` alone is not the rollback: it is also the teardown
-  # path (`Flezha.Operative.Plugins.unregister/1`), where removing the durable
+  # path (`Flezha.Operator.Plugins.unregister/1`), where removing the durable
   # entry would make every migration erase the manifest. The durable half
   # belongs here, where only a failed enable reaches it.
-  defp rollback_enable(plugin_id, %Plugin{namespace: ns, operative_id: operative_id}) do
-    case write_disable_to_cspec(ns, operative_id, plugin_id) do
+  defp rollback_enable(plugin_id, %Plugin{namespace: ns, operator_id: operator_id}) do
+    case write_disable_to_cspec(ns, operator_id, plugin_id) do
       :ok ->
         :ok
 
-      # The same unreachable hub or absent operative that failed the enable fails
+      # The same unreachable hub or absent operator that failed the enable fails
       # its removal, and there was nothing to leave behind either way.
       {:error, reason}
-      when reason in [:registry_unavailable, :operative_not_found, :operative_not_declared] ->
+      when reason in [:registry_unavailable, :operator_not_found, :operator_not_declared] ->
         :ok
 
       {:error, reason} ->
         Logger.warning(
-          "[plugin_manager] rollback left #{plugin_id} on #{ns}/#{operative_id}: " <>
+          "[plugin_manager] rollback left #{plugin_id} on #{ns}/#{operator_id}: " <>
             "#{inspect(reason)}; the next restart re-applies it from the declared set"
         )
     end
@@ -133,7 +133,7 @@ defmodule Flezha.Service.PluginManager do
     unregister_plugin(plugin_id)
   end
 
-  # A group id names no operative — it names N of them. Enable runs once per
+  # A group id names no operator — it names N of them. Enable runs once per
   # member with that member's partition opts injected and its `#pK` appended to
   # the plugin id, which is also what keeps this node's plugin ids unique when
   # two members land here. Every member's outcome is reported: a partial enable
@@ -174,8 +174,8 @@ defmodule Flezha.Service.PluginManager do
   end
 
   defp refuse_init_subscription(%Plugin{hooks: subs}) do
-    if Enum.any?(subs, &match?({:on_operative_init, _}, &1)),
-      do: {:error, "init-state plugins must be attached at operative start"},
+    if Enum.any?(subs, &match?({:on_operator_init, _}, &1)),
+      do: {:error, "init-state plugins must be attached at operator start"},
       else: :ok
   end
 
@@ -209,29 +209,29 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
-  def disable_operative_plugins(namespace, operative_id)
-      when is_binary(namespace) and is_binary(operative_id) do
-    call_service({:disable_operative_plugins, namespace, operative_id})
+  def disable_operator_plugins(namespace, operator_id)
+      when is_binary(namespace) and is_binary(operator_id) do
+    call_service({:disable_operator_plugins, namespace, operator_id})
   end
 
   @doc """
-  Disable every plugin of `operative_ids`, in ONE request.
+  Disable every plugin of `operator_ids`, in ONE request.
 
-  A caller that walked the ids itself paid the per-operative `Overwatch`
+  A caller that walked the ids itself paid the per-operator `Overwatch`
   unsubscribe bound M times over: every item funnels into this single
   registered manager, which serves one message at a time, so a caller-side
   fan-out only fills its mailbox and the waits still run end to end. The
   overlap has to be created where the serialisation is — here — so the
-  mailbox is occupied once and M unreachable operatives cost one bound, not M.
+  mailbox is occupied once and M unreachable operators cost one bound, not M.
 
   Answers `:ok`, or `{:error, {:undisabled, plugin_ids}}` naming the ones that
   could not be unsubscribed. Each is named and stepped over, never a reason to
-  abandon the operatives behind it.
+  abandon the operators behind it.
   """
-  @spec disable_operatives(binary(), [binary()]) :: :ok | {:error, {:undisabled, [binary()]}}
-  def disable_operatives(namespace, operative_ids)
-      when is_binary(namespace) and is_list(operative_ids) do
-    call_service({:disable_operatives, namespace, operative_ids})
+  @spec disable_operators(binary(), [binary()]) :: :ok | {:error, {:undisabled, [binary()]}}
+  def disable_operators(namespace, operator_ids)
+      when is_binary(namespace) and is_list(operator_ids) do
+    call_service({:disable_operators, namespace, operator_ids})
   end
 
   def disable_namespace_plugins(namespace) when is_binary(namespace) do
@@ -239,7 +239,7 @@ defmodule Flezha.Service.PluginManager do
   end
 
   # The `:namespace` walk's plugins step: every registration of the namespace
-  # is dropped — the operatives are gone with the hub, and the registry is the
+  # is dropped — the operators are gone with the hub, and the registry is the
   # only thing that survives without explicit cleanup.
   @impl Flezha.Shutdown.Step
   def shutdown_steps do
@@ -280,8 +280,8 @@ defmodule Flezha.Service.PluginManager do
     {:ok, %{}}
   end
 
-  # An entry is `{namespace, operative_id}` once enabled and
-  # `{namespace, operative_id, :pending}` while its enable is in flight.
+  # An entry is `{namespace, operator_id}` once enabled and
+  # `{namespace, operator_id, :pending}` while its enable is in flight.
   @impl true
   def handle_call(:get_plugins, _from, state) do
     {:reply, Map.reject(state, fn {_id, entry} -> pending?(entry) end), state}
@@ -298,15 +298,15 @@ defmodule Flezha.Service.PluginManager do
     case Map.get(state, plugin_id) do
       # Idempotent re-enable: a presence check, not config convergence — the
       # live instance, its workers and its cspec row are all left untouched.
-      {ns, rid} when ns == plugin.namespace and rid == plugin.operative_id ->
+      {ns, rid} when ns == plugin.namespace and rid == plugin.operator_id ->
         {:reply, {:ok, :already_enabled}, state}
 
-      {ns, rid, :pending} when ns == plugin.namespace and rid == plugin.operative_id ->
+      {ns, rid, :pending} when ns == plugin.namespace and rid == plugin.operator_id ->
         {:reply, {:error, "plugin #{plugin_id} is already being enabled"}, state}
 
       nil ->
         {:reply, :claimed,
-         Map.put(state, plugin_id, {plugin.namespace, plugin.operative_id, :pending})}
+         Map.put(state, plugin_id, {plugin.namespace, plugin.operator_id, :pending})}
 
       entry ->
         {ns, rid} = target(entry)
@@ -336,13 +336,13 @@ defmodule Flezha.Service.PluginManager do
       {_ns, _rid, :pending} ->
         {:reply, {:error, "plugin #{plugin_id} is still being enabled"}, state}
 
-      {namespace, operative_id} ->
-        case write_disable_to_cspec(namespace, operative_id, plugin_id) do
+      {namespace, operator_id} ->
+        case write_disable_to_cspec(namespace, operator_id, plugin_id) do
           :ok ->
-            _ = unsubscribe(namespace, operative_id, plugin_id)
+            _ = unsubscribe(namespace, operator_id, plugin_id)
             {:reply, {:ok, "plugin disabled"}, Map.delete(state, plugin_id)}
 
-          {:error, :operative_not_found} ->
+          {:error, :operator_not_found} ->
             {:reply, {:ok, "plugin disabled"}, Map.delete(state, plugin_id)}
 
           {:error, reason} ->
@@ -358,16 +358,16 @@ defmodule Flezha.Service.PluginManager do
     {:reply, :ok, Map.drop(state, ids)}
   end
 
-  def handle_call({:disable_operative_plugins, namespace, operative_id}, _from, state) do
-    disable_matching(state, fn ns, rid -> ns == namespace and rid == operative_id end)
+  def handle_call({:disable_operator_plugins, namespace, operator_id}, _from, state) do
+    disable_matching(state, fn ns, rid -> ns == namespace and rid == operator_id end)
   end
 
-  def handle_call({:disable_operatives, namespace, operative_ids}, _from, state) do
-    ids = MapSet.new(operative_ids)
+  def handle_call({:disable_operators, namespace, operator_ids}, _from, state) do
+    ids = MapSet.new(operator_ids)
     disable_matching(state, fn ns, rid -> ns == namespace and MapSet.member?(ids, rid) end)
   end
 
-  # Every matching registration is disabled concurrently, so the per-operative
+  # Every matching registration is disabled concurrently, so the per-operator
   # `Overwatch` unsubscribe waits overlap inside this one turn. The work is a
   # cspec write and a bounded call and nothing else — it creates no ETS table,
   # unlinks nothing and seeds no route — which is what makes it safe to run off
@@ -424,7 +424,7 @@ defmodule Flezha.Service.PluginManager do
   defp pending?(_entry), do: false
 
   # Every enabled plugin whose target satisfies `match?`, as
-  # `{plugin_id, namespace, operative_id}`. A pending entry is a three-tuple
+  # `{plugin_id, namespace, operator_id}`. A pending entry is a three-tuple
   # and matches nothing here, which is what keeps an enable in flight out of
   # every bulk disable.
   defp targets(state, match?) do
@@ -438,18 +438,18 @@ defmodule Flezha.Service.PluginManager do
   defp fanned_out_from?(id, base),
     do: match?({^base, _index}, Flezha.Partition.split_member_suffix(id))
 
-  defp check_operative_target(%Plugin{namespace: ns, operative_id: rid})
+  defp check_operator_target(%Plugin{namespace: ns, operator_id: rid})
        when is_binary(ns) and is_binary(rid),
        do: :ok
 
-  defp check_operative_target(%Plugin{namespace: ns, operative_id: rid}) do
+  defp check_operator_target(%Plugin{namespace: ns, operator_id: rid}) do
     {:error,
-     "plugin missing namespace or operative_id (got namespace=#{inspect(ns)}, operative_id=#{inspect(rid)})"}
+     "plugin missing namespace or operator_id (got namespace=#{inspect(ns)}, operator_id=#{inspect(rid)})"}
   end
 
-  defp resolve_operative(%Plugin{namespace: ns, operative_id: pid_id})
+  defp resolve_operator(%Plugin{namespace: ns, operator_id: pid_id})
        when is_binary(ns) and is_binary(pid_id) do
-    OperativeManager.get_operative_pid(ns, pid_id)
+    OperatorManager.get_operator_pid(ns, pid_id)
   end
 
   # A bounded call into the manager itself, so a caller tearing a namespace
@@ -462,11 +462,11 @@ defmodule Flezha.Service.PluginManager do
   end
 
   # The runtime half of a disable. The cspec write has already recorded the
-  # intent, so an operative that cannot be reached loses the plugin at
+  # intent, so an operator that cannot be reached loses the plugin at
   # its next `Overwatch.init/1`; what this answers is whether the live process
-  # dropped it now. An operative that is gone has nothing to drop.
-  defp unsubscribe(namespace, operative_id, plugin_id) do
-    case OperativeManager.get_operative_pid(namespace, operative_id) do
+  # dropped it now. An operator that is gone has nothing to drop.
+  defp unsubscribe(namespace, operator_id, plugin_id) do
+    case OperatorManager.get_operator_pid(namespace, operator_id) do
       {:ok, pid} -> Overwatch.plugin_unsubscribe(pid, plugin_id)
       _ -> :ok
     end
@@ -478,54 +478,54 @@ defmodule Flezha.Service.PluginManager do
   registry-write path as enable and disable — there is one place a plugin's
   cspec row is rewritten.
 
-  Called from the host operative, off its own loop: the write is a cluster-wide
+  Called from the host operator, off its own loop: the write is a cluster-wide
   registry round-trip with its own retry ladder, and a provider committing state
-  must never be able to stall the operative it feeds.
+  must never be able to stall the operator it feeds.
   """
   @spec persist_plugin_opt(binary() | atom(), binary(), binary(), atom(), term()) ::
           :ok | {:error, term()}
-  def persist_plugin_opt(namespace, operative_id, plugin_id, key, value) do
+  def persist_plugin_opt(namespace, operator_id, plugin_id, key, value) do
     update_cspec_plugins(
       namespace,
-      operative_id,
+      operator_id,
       RegistryUpdate.put_plugin_opt(plugin_id, key, value)
     )
   end
 
   defp write_enable_to_cspec(
-         %Plugin{namespace: ns, operative_id: operative_id} = plugin,
+         %Plugin{namespace: ns, operator_id: operator_id} = plugin,
          plugin_id
        ) do
     stripped = Plugin.strip_transient(plugin)
 
-    update_cspec_plugins(ns, operative_id, RegistryUpdate.add_plugin(plugin_id, stripped))
+    update_cspec_plugins(ns, operator_id, RegistryUpdate.add_plugin(plugin_id, stripped))
   end
 
-  defp write_disable_to_cspec(namespace, operative_id, plugin_id) do
-    update_cspec_plugins(namespace, operative_id, RegistryUpdate.remove_plugin(plugin_id))
+  defp write_disable_to_cspec(namespace, operator_id, plugin_id) do
+    update_cspec_plugins(namespace, operator_id, RegistryUpdate.remove_plugin(plugin_id))
   end
 
   # Two records, one mutation, and every plugin write goes through here. The row
-  # is what `flz operative info` and the convergence backstop read while the
-  # operative runs. The declared set is what a restart rebuilds it from, and it
+  # is what `flz operator info` and the convergence backstop read while the
+  # operator runs. The declared set is what a restart rebuilds it from, and it
   # is the ONLY one a restart reads: an auto-recovery hub never replays its
   # registry from disk (`ProcessHub.Initializer.setup_storage/3` forces
   # `recovery_replay: false`, so the live registry starts empty), which is why a
   # plugin written only to the row does not survive a controller restart.
   #
   # The row goes first and is the source the declared write copies from: its
-  # transform runs inside the registry, so concurrent writes for one operative
+  # transform runs inside the registry, so concurrent writes for one operator
   # merge there atomically rather than in two callers that cannot see each other.
   #
   # Both or neither. A failure at either half answers, no runtime mutation is
   # issued, and `rollback_enable/2` removes from both.
-  defp update_cspec_plugins(namespace, operative_id, update_fn) do
-    with :ok <- do_update_cspec_plugins(namespace, operative_id, update_fn, 0) do
-      OperativeManager.redeclare_plugins(namespace, operative_id)
+  defp update_cspec_plugins(namespace, operator_id, update_fn) do
+    with :ok <- do_update_cspec_plugins(namespace, operator_id, update_fn, 0) do
+      OperatorManager.redeclare_plugins(namespace, operator_id)
     end
   end
 
-  defp do_update_cspec_plugins(namespace, operative_id, update_fn, attempt) do
+  defp do_update_cspec_plugins(namespace, operator_id, update_fn, attempt) do
     hub_id = Identificator.hub(namespace)
 
     cond do
@@ -536,13 +536,13 @@ defmodule Flezha.Service.PluginManager do
         result =
           try do
             # propagate: true — every node's row must carry the plugin, because
-            # `flz operative info` and the convergence backstop read it from
+            # `flz operator info` and the convergence backstop read it from
             # whichever node answers. It is NOT what survives a restart: this
             # write reaches the registry row only, and no restart reads a row
             # back. The declared set is written separately, by the caller.
             ProcessRegistry.update(
               hub_id,
-              operative_id,
+              operator_id,
               RegistryUpdate.rewrite_cspec_plugins(update_fn),
               propagate: true
             )
@@ -555,16 +555,16 @@ defmodule Flezha.Service.PluginManager do
             :ok
 
           {:error, :no_response} ->
-            retry_or_give_up(namespace, operative_id, update_fn, attempt, result)
+            retry_or_give_up(namespace, operator_id, update_fn, attempt, result)
 
-          # The operative row may live on a peer node whose pubsub-based
+          # The operator row may live on a peer node whose pubsub-based
           # synchronization hasn't fanned out to us yet — retry briefly
           # before surfacing the error.
           {:error, "No child found"} = no_child ->
-            retry_or_give_up(namespace, operative_id, update_fn, attempt, no_child)
+            retry_or_give_up(namespace, operator_id, update_fn, attempt, no_child)
 
           {:error, :not_found} ->
-            {:error, :operative_not_found}
+            {:error, :operator_not_found}
 
           {:error, reason} ->
             {:error, reason}
@@ -577,16 +577,16 @@ defmodule Flezha.Service.PluginManager do
   # node's row has not fanned out yet) are one condition — the hub has not
   # settled — so they walk one ladder; only the answer they give up with
   # differs.
-  defp retry_or_give_up(namespace, operative_id, update_fn, attempt, result) do
+  defp retry_or_give_up(namespace, operator_id, update_fn, attempt, result) do
     if Backoff.give_up?(:no_response, attempt) do
       exhausted(result)
     else
-      Backoff.wait(:no_response, attempt + 1, operative_id)
-      do_update_cspec_plugins(namespace, operative_id, update_fn, attempt + 1)
+      Backoff.wait(:no_response, attempt + 1, operator_id)
+      do_update_cspec_plugins(namespace, operator_id, update_fn, attempt + 1)
     end
   end
 
-  defp exhausted({:error, "No child found"}), do: {:error, :operative_not_found}
+  defp exhausted({:error, "No child found"}), do: {:error, :operator_not_found}
   defp exhausted(error), do: error
 
   # ---------- Published surface ----------
@@ -636,7 +636,7 @@ defmodule Flezha.Service.PluginManager do
   @spec target_namespace(String.t()) :: String.t()
   def target_namespace(plugin_id) when is_binary(plugin_id) do
     case Map.get(get_plugins(), plugin_id) do
-      {namespace, _operative_id} when is_binary(namespace) -> namespace
+      {namespace, _operator_id} when is_binary(namespace) -> namespace
       _other -> Namespace.system_name()
     end
   end

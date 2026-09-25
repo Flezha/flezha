@@ -1,23 +1,23 @@
 defmodule Flezha.Service.Cli.Journal do
   @moduledoc """
-  `flz state journal | inbox` — a workflow instance's task-journal entries, and
+  `flz state journal | inbox` — a bounded instance's task-journal entries, and
   the durable input log of an instance of either kind.
   """
 
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.SDK.Wire
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias Flezha.State.InputLog
   alias Flezha.State.Outbox
   alias Flezha.State.TaskJournal
 
   @doc "The row both reads are judged by: the instance's class namespace."
   def instance_row([instance_id | _]),
-    do: {:ok, %{namespace: OperativeManager.namespace_of_class(instance_id)}}
+    do: {:ok, %{namespace: OperatorManager.namespace_of_class(instance_id)}}
 
   @doc """
-  `flz state journal <operative/instance>` — render a workflow instance's
-  task-journal entries (`workflow-task-journal`) in append order: seq, type,
+  `flz state journal <operator/instance>` — render a bounded instance's
+  task-journal entries (`bounded-task-journal`) in append order: seq, type,
   task index, iteration, the cells that ran with the effect records each wrote
   and the channels they wrote on, and the handoff batch size.
   """
@@ -50,9 +50,9 @@ defmodule Flezha.Service.Cli.Journal do
     end
   end
 
-  # The leaf set is what "done" means for a tree-shaped chain: the operative is
+  # The leaf set is what "done" means for a tree-shaped chain: the operator is
   # complete when the in-flight iteration has committed every leaf. A class that
-  # declared none (a stream, an older SDK) leaves it underivable.
+  # declared none (an unbounded operator, an older SDK) leaves it underivable.
   defp print_journal_completion(nil, _complete),
     do: IO.puts("\n  complete: unknown (class declares no leaf tasklets)")
 
@@ -208,8 +208,8 @@ defmodule Flezha.Service.Cli.Journal do
   end
 
   @doc """
-  `flz state inbox <instance>` — the instance's durable input log, for a stream
-  on the effectively-once tier and a durable workflow alike
+  `flz state inbox <instance>` — the instance's durable input log, for an unbounded operator
+  on the effectively-once tier and a durable bounded operator alike
   (`durable-input-log`): every retained record with its offset, whether it is
   at or below the instance's floor (consumed) or above it (pending), its size
   and channel.

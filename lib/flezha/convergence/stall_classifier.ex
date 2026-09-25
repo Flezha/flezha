@@ -1,7 +1,7 @@
 defmodule Flezha.Convergence.StallClassifier do
   @moduledoc """
   Pure liveness classifiers for the convergence Loop: per-layer localization
-  of a silent data-plane stall (`classify/3`) and per-operative
+  of a silent data-plane stall (`classify/3`) and per-operator
   producing-liveness from durable progress markers (`classify_producing/3`).
   Both are detection-only and share the deepest-verdict-wins convention.
 
@@ -43,7 +43,7 @@ defmodule Flezha.Convergence.StallClassifier do
       only across a heartbeat that landed after a frame was sent, because a
       heartbeat counts only what reached the runner before it
     * `:channel_not_sending`    — channel fed but not calling send_frame
-    * `:operative_not_forwarding`   — operative fed but not forwarding to its channel
+    * `:operator_not_forwarding`   — operator fed but not forwarding to its channel
     * `:cell_dispatch_stalled` — the runner is completing work, but one
       activation it took has been outstanding past the threshold: a handout its
       host lost, which per-cell exclusivity would otherwise retire silently
@@ -55,7 +55,7 @@ defmodule Flezha.Convergence.StallClassifier do
       ends in its own log; the heartbeat carries counters, not identities
 
   Each check has a built-in "is it actually being fed?" precondition (a count
-  that must be *advancing* between ticks), so an idle operative never reads as a
+  that must be *advancing* between ticks), so an idle operator never reads as a
   stall.
 
   **The driver verdicts need a NIF driver.** `:driver_loop_frozen`,
@@ -69,11 +69,11 @@ defmodule Flezha.Convergence.StallClassifier do
   alias Flezha.Convergence.Verdict
   alias Flezha.Transport.LivenessCounters
 
-  @type snapshot :: %{drivers: [map()], channels: [map()], operatives: [map()]}
+  @type snapshot :: %{drivers: [map()], channels: [map()], operators: [map()]}
   @type verdict :: {atom(), map()} | :ok
 
   # `cell_stall_ms` is deliberately far above the longest activation any
-  # bench-fleet fixture produces (a chained workflow turn is milliseconds; the
+  # bench-fleet fixture produces (a chained bounded operator turn is milliseconds; the
   # slowest e2e Tasklet sleeps seconds), because from the runner an activation
   # that is merely slow and one whose handout was lost look identical. Override
   # with `FLEZHA_CONVERGENCE_CELL_STALL_MS` where real Tasklets run longer.
@@ -104,8 +104,8 @@ defmodule Flezha.Convergence.StallClassifier do
     runner_not_consuming: :runner,
     runner_pool_wedged: :runner,
     channel_not_sending: :connection,
-    operative_not_forwarding: :operative,
-    cell_dispatch_stalled: :operative,
+    operator_not_forwarding: :operator,
+    cell_dispatch_stalled: :operator,
     # Declared with no scope on purpose: a producer withheld work is evidence
     # about the consumer, and every scope here resolves to a heal op.
     producer_push_stalled: nil
@@ -132,14 +132,14 @@ defmodule Flezha.Convergence.StallClassifier do
   def runner_of(_ctx), do: nil
 
   @doc """
-  Every operative the probe saw bound to the runner a verdict's context names,
+  Every operator the probe saw bound to the runner a verdict's context names,
   sorted; `[]` when the context names no runner or nothing is bound to it. The
   one reading of "who does this wedge reach": the probe table mints one fact
-  per operative from it, and the Diff plans one heal per operative from the
+  per operator from it, and the Diff plans one heal per operator from the
   same list.
   """
-  @spec operatives_of(map(), map()) :: [term()]
-  def operatives_of(observed, ctx) do
+  @spec operators_of(map(), map()) :: [term()]
+  def operators_of(observed, ctx) do
     case runner_of(ctx) do
       nil -> []
       id -> observed |> Enum.filter(&bound_to?(&1, id)) |> Enum.map(&elem(&1, 0)) |> Enum.sort()
@@ -149,7 +149,7 @@ defmodule Flezha.Convergence.StallClassifier do
   defp bound_to?({_ref, obs}, id), do: is_map(obs) and Map.get(obs, :bound_runner) == id
 
   @doc "Which kind of thing `layer` says is wedged; `nil` for no/unknown layer."
-  @spec layer_scope(atom() | nil) :: :fabric | :runner | :connection | :operative | nil
+  @spec layer_scope(atom() | nil) :: :fabric | :runner | :connection | :operator | nil
   def layer_scope(layer), do: Map.get(@layer_scopes, layer)
 
   @doc """
@@ -180,7 +180,7 @@ defmodule Flezha.Convergence.StallClassifier do
     runner_not_consuming(current, previous, o) ||
       runner_pool_wedged(current, previous) ||
       channel_not_sending(current, previous) ||
-      operative_not_forwarding(current, previous) ||
+      operator_not_forwarding(current, previous) ||
       cell_dispatch_stalled(current, previous, o) ||
       producer_push_stalled(current, previous, o)
   end
@@ -322,7 +322,7 @@ defmodule Flezha.Convergence.StallClassifier do
   # Ranked shallower than every runner-scoped verdict — a wedged runner explains
   # a wedged Cell and not the reverse — and it carries the reported age, so a
   # false positive (a legitimately long Tasklet) is diagnosable from the log
-  # line alone. The verdict names the runner; resolving it to the operatives
+  # line alone. The verdict names the runner; resolving it to the operators
   # that can actually be rebound is the Diff's job.
   defp cell_dispatch_stalled(current, previous, o) do
     find_runner(current, previous, fn runner_id, cur, _prev ->
@@ -381,11 +381,11 @@ defmodule Flezha.Convergence.StallClassifier do
     end)
   end
 
-  defp operative_not_forwarding(current, previous) do
-    prev_index = index_by(previous.operatives, fn r -> r.operative_id end)
+  defp operator_not_forwarding(current, previous) do
+    prev_index = index_by(previous.operators, fn r -> r.operator_id end)
 
-    find_first(current.operatives, fn r ->
-      case Map.get(prev_index, r.operative_id) do
+    find_first(current.operators, fn r ->
+      case Map.get(prev_index, r.operator_id) do
         nil ->
           nil
 
@@ -396,7 +396,7 @@ defmodule Flezha.Convergence.StallClassifier do
           # Fed, not forwarding, and the gap isn't explained by the on_input
           # filter dropping everything.
           if io_delta > 0 and r.forwarded == prev.forwarded and filtered_delta < io_delta do
-            {:operative_not_forwarding, %{operative_id: r.operative_id}}
+            {:operator_not_forwarding, %{operator_id: r.operator_id}}
           end
       end
     end)
@@ -407,11 +407,11 @@ defmodule Flezha.Convergence.StallClassifier do
   @producing_defaults %{grace_ms: 60_000}
 
   @doc """
-  Per-operative producing-liveness from durable progress markers, compared at
+  Per-operator producing-liveness from durable progress markers, compared at
   the convergence tick cadence.
 
   `current` is one map per live Cell (built by the Loop from
-  `Flezha.State.Watchdog.cell_statuses/0`): always `:operative_id`,
+  `Flezha.State.Watchdog.cell_statuses/0`): always `:operator_id`,
   `:cell`, `:last_change_seen_at`, `:last_advance_at` (the WAL
   fed/advance evidence), `:out_pending_seq`, `:outbox_flushed_seq` and
   `:outbox_unconfirmed_ms` (how long the oldest dispatched output has gone
@@ -426,7 +426,7 @@ defmodule Flezha.Convergence.StallClassifier do
   while the progress marker is flat past the grace window is `{:stuck,
   detail, ctx}` (detail ∈ `:wal_frozen | :watermark_frozen | :outbox_flat`,
   ctx naming the lagging Cell); flat markers with no input is `:idle`
-  (producing-healthy). Per operative the single deepest verdict wins.
+  (producing-healthy). Per operator the single deepest verdict wins.
   """
   @spec classify_producing([map()], [map()] | nil, map()) :: %{
           binary() => :advancing | :idle | {:stuck, atom(), map()}
@@ -434,17 +434,17 @@ defmodule Flezha.Convergence.StallClassifier do
   def classify_producing(current, baseline, opts \\ %{}) do
     o = Map.merge(@producing_defaults, opts)
     now = Map.get_lazy(o, :now, fn -> System.monotonic_time(:millisecond) end)
-    base = index_by(baseline || [], fn m -> {m.operative_id, m.cell} end)
+    base = index_by(baseline || [], fn m -> {m.operator_id, m.cell} end)
 
     current
-    |> Enum.group_by(& &1.operative_id)
-    |> Map.new(fn {operative_id, markers} ->
+    |> Enum.group_by(& &1.operator_id)
+    |> Map.new(fn {operator_id, markers} ->
       verdicts =
         Enum.map(markers, fn m ->
-          marker_verdict(m, Map.get(base, {m.operative_id, m.cell}), now, o.grace_ms)
+          marker_verdict(m, Map.get(base, {m.operator_id, m.cell}), now, o.grace_ms)
         end)
 
-      {operative_id, Enum.max_by(verdicts, &Verdict.producing_rank/1)}
+      {operator_id, Enum.max_by(verdicts, &Verdict.producing_rank/1)}
     end)
   end
 
@@ -463,8 +463,8 @@ defmodule Flezha.Convergence.StallClassifier do
 
   # Tier-on: the input-log tail grew over the grace window while THIS Cell's
   # durable consumed offset did not advance. Read per Cell, not as the
-  # operative's min-watermark: the minimum across Cells IS that watermark, so
-  # any frozen Cell still freezes the operative's verdict — and the verdict
+  # operator's min-watermark: the minimum across Cells IS that watermark, so
+  # any frozen Cell still freezes the operator's verdict — and the verdict
   # names the Cell actually responsible, which a class-wide scalar cannot.
   defp watermark_frozen?(m, base) when is_map(base) do
     is_integer(m[:input_log_tail]) and is_integer(base[:input_log_tail]) and

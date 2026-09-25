@@ -12,10 +12,10 @@ defmodule Flezha.SDK.SpawnTest do
   """
   use ExUnit.Case, async: true
 
-  import FlezhaTest.Helper.SdkOperativeHarness
+  import FlezhaTest.Helper.SdkOperatorHarness
 
   alias Flezha.SDK.{Codec, Counters, Ctx, Hold, RunnerServer, Spawn}
-  alias Flezha.SDK.Operative.Inbox
+  alias Flezha.SDK.Operator.Inbox
   alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.SdkSpawnFixtures.{Spawner, SpawnerOp}
 
@@ -42,18 +42,18 @@ defmodule Flezha.SDK.SpawnTest do
 
   # The controller's answer to `reference_id`, as the control stream delivers it.
   defp answered(reference_id, outcome, error, instance_id) do
-    response = %RunnerCommands.SpawnWorkflowResponse{
+    response = %RunnerCommands.SpawnBoundedResponse{
       outcome: outcome,
       error: error,
       instance_id: instance_id
     }
 
-    bin = Codec.encode_request(reference_id, {:spawn_workflow_response, response})
+    bin = Codec.encode_request(reference_id, {:spawn_bounded_response, response})
     {:flz_data, "control", "control_command", bin, %{}}
   end
 
   defp warnings_naming(log, instance_id) do
-    marker = "spawn_workflow(factory `worker`, id `#{instance_id}`) failed"
+    marker = "spawn_bounded(factory `worker`, id `#{instance_id}`) failed"
     length(String.split(log, marker)) - 1
   end
 
@@ -116,10 +116,10 @@ defmodule Flezha.SDK.SpawnTest do
     test "with no runner the request resolves unavailable at once and sends nothing" do
       ctx = Ctx.new(Spawner, nil, 0)
 
-      assert Spawn.try_result(Ctx.spawn_workflow(ctx, "worker", "payload", id: "w1")) ==
+      assert Spawn.try_result(Ctx.spawn_bounded(ctx, "worker", "payload", id: "w1")) ==
                {:error, :unavailable}
 
-      assert Spawn.try_result(Ctx.spawn_workflow(ctx, "worker", "payload")) ==
+      assert Spawn.try_result(Ctx.spawn_bounded(ctx, "worker", "payload")) ==
                {:error, :unavailable}
 
       refute_received {:"$gen_cast", _}
@@ -128,10 +128,10 @@ defmodule Flezha.SDK.SpawnTest do
     test "a replayed invocation issues no request, and answers the given id or none" do
       ctx = Ctx.new(Spawner, nil, 0, runner: self(), replay: true)
 
-      named = Ctx.spawn_workflow(ctx, "worker", "payload", id: "w1")
+      named = Ctx.spawn_bounded(ctx, "worker", "payload", id: "w1")
       assert Spawn.await(named, 1_000) == {:ok, %{id: "w1", outcome: :skipped_on_replay}}
 
-      unnamed = Ctx.spawn_workflow(ctx, "worker", "payload")
+      unnamed = Ctx.spawn_bounded(ctx, "worker", "payload")
       assert Spawn.await(unnamed, 1_000) == {:ok, %{id: "", outcome: :skipped_on_replay}}
 
       refute_received {:"$gen_cast", _}
@@ -141,17 +141,17 @@ defmodule Flezha.SDK.SpawnTest do
       ctx = Ctx.new(Spawner, nil, 0, runner: self())
       caller = self()
 
-      _handle = Ctx.spawn_workflow(ctx, "worker", "payload", id: "w1", if_running: :error)
+      _handle = Ctx.spawn_bounded(ctx, "worker", "payload", id: "w1", if_running: :error)
 
       assert_received {:"$gen_cast",
                        {:spawn, ^caller,
                         %Spawn{
                           instance_id: "w1",
                           factory_id: "worker",
-                          reference_id: "spawn-workflow-w1-" <> _
+                          reference_id: "spawn-bounded-w1-" <> _
                         }, "payload", :error}}
 
-      _handle = Ctx.spawn_workflow(ctx, "worker", "payload", id: "w2")
+      _handle = Ctx.spawn_bounded(ctx, "worker", "payload", id: "w2")
       assert_received {:"$gen_cast", {:spawn, ^caller, %Spawn{instance_id: "w2"}, _, :deliver}}
     end
 
@@ -160,7 +160,7 @@ defmodule Flezha.SDK.SpawnTest do
 
       error =
         assert_raise ArgumentError, fn ->
-          Ctx.spawn_workflow(ctx, "worker", "payload", if_running: :error)
+          Ctx.spawn_bounded(ctx, "worker", "payload", if_running: :error)
         end
 
       assert error.message =~ "`if_running`"
@@ -172,7 +172,7 @@ defmodule Flezha.SDK.SpawnTest do
       ctx = Ctx.new(Spawner, nil, 0, runner: self())
 
       for opts <- [[instance: "w1"], [id: ""], [id: :w1], [id: "w1", if_running: :replace]] do
-        assert_raise ArgumentError, fn -> Ctx.spawn_workflow(ctx, "worker", "payload", opts) end
+        assert_raise ArgumentError, fn -> Ctx.spawn_bounded(ctx, "worker", "payload", opts) end
       end
 
       refute_received {:"$gen_cast", _}
@@ -206,7 +206,7 @@ defmodule Flezha.SDK.SpawnTest do
 
       assert_receive {:flz_data, _stream, "control_command", bin, _meta}
 
-      assert {:ok, %{reference_id: ^id, command: {:spawn_workflow_request, request}}} =
+      assert {:ok, %{reference_id: ^id, command: {:spawn_bounded_request, request}}} =
                Codec.decode_command(bin)
 
       assert %{instance_id: "w1", factory_id: "worker", payload: "payload", if_running: "error"} =
@@ -228,7 +228,7 @@ defmodule Flezha.SDK.SpawnTest do
       assert {:noreply, s} = RunnerServer.handle_cast(cast, connected())
       assert_receive {:flz_data, _stream, "control_command", bin, _meta}
 
-      assert {:ok, %{reference_id: ^id, command: {:spawn_workflow_request, request}}} =
+      assert {:ok, %{reference_id: ^id, command: {:spawn_bounded_request, request}}} =
                Codec.decode_command(bin)
 
       assert %{instance_id: "", factory_id: "worker", if_running: "deliver"} = request
@@ -292,7 +292,7 @@ defmodule Flezha.SDK.SpawnTest do
 
   describe "inside a running tasklet" do
     test "a refused spawn leaves the invocation intact: the emit ships once and the handle resolves the refusal" do
-      %{op: op, counters: counters} = start_operative(SpawnerOp)
+      %{op: op, counters: counters} = start_operator(SpawnerOp)
       Inbox.input(op, "in", "w-refused", %{})
 
       assert_receive {:"$gen_cast", {:spawn, caller, %Spawn{} = spawn, "payload", :deliver}},
@@ -307,7 +307,7 @@ defmodule Flezha.SDK.SpawnTest do
     end
 
     test "a failure nobody reads is logged exactly once by the runner server" do
-      %{op: op} = start_operative(SpawnerOp)
+      %{op: op} = start_operator(SpawnerOp)
       Inbox.input(op, "in", "unread:w-unread", %{})
 
       assert [{"op-1", "sent", _meta}] = frames(1)

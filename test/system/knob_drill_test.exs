@@ -1,6 +1,6 @@
 defmodule FlezhaTest.System.KnobDrillTest do
   @moduledoc """
-  Every knob an operator can OBSERVE, set and then read on the surface its row
+  Every knob a user can OBSERVE, set and then read on the surface its row
   names.
 
   The runtime drill (`test/flezha/config/runtime_drill_test.exs`) proves the
@@ -78,7 +78,7 @@ defmodule FlezhaTest.System.KnobDrillTest do
     )
   end
 
-  # One reading per surface: what an operator looks at, driven for real.
+  # One reading per surface: what a user looks at, driven for real.
   defp readings() do
     %{
       {:status, :state_root} => &status_reports_state_root/1,
@@ -130,7 +130,7 @@ defmodule FlezhaTest.System.KnobDrillTest do
   defp dlq_writes_under(dir) do
     {:ok, entry} =
       Entry.new(%{
-        operative_class: "knob_drill",
+        operator_class: "knob_drill",
         tasklet_id: "task",
         cell_key: "k1",
         channel: "input",
@@ -144,7 +144,7 @@ defmodule FlezhaTest.System.KnobDrillTest do
   end
 
   # The writer creates and holds `<dir>/audit-current.jsonl`, so the directory
-  # an operator points at is where a record lands.
+  # a user points at is where a record lands.
   defp audit_writes_under(dir) do
     {:ok, pid} = AuditWriter.start_link(dir: dir)
     exists? = File.exists?(Path.join(dir, "audit-current.jsonl"))

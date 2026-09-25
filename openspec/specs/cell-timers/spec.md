@@ -104,7 +104,7 @@ event-time timer.
 A processing-time timer SHALL be tracked on the poll core's shared
 deferred-wake list — one list per process, serviced by threads already waiting
 in `poll` — and, on expiry, SHALL be enqueued onto the target Cell's existing
-mailbox. No per-Operative timer thread SHALL exist. In the Elixir SDK, which is not a poll
+mailbox. No per-Operator timer thread SHALL exist. In the Elixir SDK, which is not a poll
 host, the BEAM's own timer service SHALL be that list: the Cell process arms one
 `Process.send_after/3` per pending processing-time timer and, on a due message,
 enqueues every timer due at or below the later of the scheduled and the current
@@ -124,19 +124,19 @@ identity.
 
 #### Scenario: A due timer fires on restore
 
-- **WHEN** an Operative restarts and a Cell's restored pending set contains a processing-time timer whose scheduled time has already passed
+- **WHEN** an Operator restarts and a Cell's restored pending set contains a processing-time timer whose scheduled time has already passed
 - **THEN** it SHALL fire immediately after restore, in ascending scheduled order relative to other due timers
 
-#### Scenario: An Operative that uses timers costs no thread
+#### Scenario: An Operator that uses timers costs no thread
 
-- **WHEN** an Operative registers processing-time timers across many Cells
+- **WHEN** an Operator registers processing-time timers across many Cells
 - **THEN** no thread SHALL be created on its behalf; its due firings SHALL be
   promoted by whichever thread next enters or wakes inside `poll`, and
   `fired_at` SHALL remain the scheduled timestamp regardless of promotion delay
 
 #### Scenario: Instance scoping survives the shared list
 
-- **WHEN** two Operative instances each arm a timer with the same tasklet id,
+- **WHEN** two Operator instances each arm a timer with the same tasklet id,
   cell key, and scheduled time, and one instance cancels its timer
 - **THEN** only that instance's timer SHALL be disarmed and the other SHALL
   fire on schedule
@@ -152,7 +152,7 @@ A timer registration, cancellation, and firing SHALL each be expressed as a
 There SHALL be no timer side-file, no timer journal entry type, no crash marker and
 no completeness oracle. A timer registration made during a replay-driven invocation
 SHALL be registered, not skipped — a timer is internal state, unlike
-`ctx.spawn_workflow`, which is skipped on replay because it is an external effect.
+`ctx.spawn_bounded`, which is skipped on replay because it is an external effect.
 
 #### Scenario: A crash before firing leaves the timer pending
 
@@ -212,40 +212,40 @@ Wheel occupancy and pending-timer counts SHALL be exposed as per-Tasklet counter
 
 #### Scenario: Occupancy is observable
 
-- **WHEN** timers are pending across an Operative's Cells
+- **WHEN** timers are pending across an Operator's Cells
 - **THEN** a per-Tasklet pending-timer count SHALL be reported alongside the existing per-Tasklet counters
 
 ### Requirement: A Cell timer belongs to a tasklet of either kind
 
-Every requirement of this capability SHALL hold for a tasklet of a workflow operative as it holds for a tasklet of a stream operative, in all seven SDKs: `timer_after` / `timerAfter` and, where the tasklet declares an event-time clock, `timer_at_event_time` / `timerAtEventTime` SHALL register a per-Cell timer and answer the absolute timestamp that is its cancel handle; pending timers SHALL be a set per Cell, folded from the Cell's own records, re-stated by compaction above the snapshot seq and re-armed on restore; a firing SHALL run the tasklet's `on_timer` hook on that Cell with `fired_at` equal to `ctx.now()`; processing-time firings SHALL ride the poll core's deferred-wake list (the BEAM's timer service in the Elixir SDK) and event-time firings SHALL be generated ahead of the input that advanced the Cell's high-water. No SDK's context SHALL refuse a timer call because the tasklet runs inside a workflow, and the shared core SHALL commit a workflow cell's timer ops as it commits a stream cell's. The `compensate` hook SHALL keep no timer session in either kind. A `wake_after` / `wakeAfter` class setting SHALL NOT exist in any SDK.
+Every requirement of this capability SHALL hold for a tasklet of a bounded operator as it holds for a tasklet of an unbounded operator, in all seven SDKs: `timer_after` / `timerAfter` and, where the tasklet declares an event-time clock, `timer_at_event_time` / `timerAtEventTime` SHALL register a per-Cell timer and answer the absolute timestamp that is its cancel handle; pending timers SHALL be a set per Cell, folded from the Cell's own records, re-stated by compaction above the snapshot seq and re-armed on restore; a firing SHALL run the tasklet's `on_timer` hook on that Cell with `fired_at` equal to `ctx.now()`; processing-time firings SHALL ride the poll core's deferred-wake list (the BEAM's timer service in the Elixir SDK) and event-time firings SHALL be generated ahead of the input that advanced the Cell's high-water. No SDK's context SHALL refuse a timer call because the tasklet runs inside a bounded operator, and the shared core SHALL commit a bounded cell's timer ops as it commits an unbounded cell's. The `compensate` hook SHALL keep no timer session in either kind. A `wake_after` / `wakeAfter` class setting SHALL NOT exist in any SDK.
 
-#### Scenario: A workflow tasklet arms a processing-time timer and its firing reaches on_timer
+#### Scenario: A bounded tasklet arms a processing-time timer and its firing reaches on_timer
 
-- **WHEN** a tasklet of a `per_input` workflow calls `timer_after(300 ms)` while handling a message, in any of the seven SDKs
+- **WHEN** a tasklet of a `per_input` bounded operator calls `timer_after(300 ms)` while handling a message, in any of the seven SDKs
 - **THEN** the call SHALL answer the absolute timestamp, no further message SHALL be needed, and about 300 ms later `on_timer` SHALL run on that Cell with `fired_at` equal to that timestamp and with the state the message left
 
-#### Scenario: A workflow tasklet with an event-time clock arms an event-time timer
+#### Scenario: A bounded tasklet with an event-time clock arms an event-time timer
 
-- **WHEN** an entry-fed tasklet of a workflow declaring an event-time clock registers `timer_at_event_time(t + 100)` on a message with event time `t`, and a message with event time `t + 150` follows
+- **WHEN** an entry-fed tasklet of a bounded operator declaring an event-time clock registers `timer_at_event_time(t + 100)` on a message with event time `t`, and a message with event time `t + 150` follows
 - **THEN** `on_timer` SHALL run for `t + 100` before the second message is dispatched to that Cell, on every runtime
 
-#### Scenario: A workflow tasklet's timer is folded, compacted and restored like a stream's
+#### Scenario: A bounded tasklet's timer is folded, compacted and restored like an unbounded operator's
 
-- **WHEN** a workflow tasklet registers a processing-time timer, its Cell is compacted, and the runner is killed and restarted before the timer is due
+- **WHEN** a bounded tasklet registers a processing-time timer, its Cell is compacted, and the runner is killed and restarted before the timer is due
 - **THEN** the restored Cell SHALL hold the timer pending, it SHALL be re-armed, and it SHALL fire at its scheduled time
 
 #### Scenario: The compensate hook still has no timers
 
-- **WHEN** a workflow tasklet's `compensate` hook calls `timer_after`
+- **WHEN** a bounded tasklet's `compensate` hook calls `timer_after`
 - **THEN** the call SHALL be refused with the SDK's `TimersUnavailable` form, as before
 
-### Requirement: A firing inside a workflow is a trigger of the run
+### Requirement: A firing inside a bounded operator is a trigger of the run
 
-A timer firing on a Cell of a workflow instance SHALL be handled by the instance's pass bookkeeping before it reaches the Cell, at the point the firing is put in front of the Cell: the promotion of a processing-time deadline and the assembly of an event-time firing chained behind the high-water. When no pass is running and no trigger is queued ahead, the firing SHALL open a pass whose origin is that tasklet and that Cell: the tasklet's chain (every tasklet reachable from it, with in-chain parent counts) SHALL be the pass's chain, the stage SHALL be in flight owing the firing, and the firing's emits SHALL flow down the chain and commit stage by stage as any stage output does. When a pass is running and the firing's own stage is in flight, the firing SHALL join that stage: it SHALL be counted among the stage's owed items, its `on_timer` SHALL run on that Cell inside the stage and its emits SHALL be held with the stage's. Otherwise the firing SHALL wait in the instance's queue, in arrival order with messages, and SHALL be served at the next iteration boundary before the loop mode's own continuation, a `CHAINED` loop's carry included. An event-time firing generated ahead of an input SHALL join the stage that delivered the input. One pass SHALL run at a time. A firing SHALL never be handed to a Cell whose pass has failed or been cancelled.
+A timer firing on a Cell of a bounded instance SHALL be handled by the instance's pass bookkeeping before it reaches the Cell, at the point the firing is put in front of the Cell: the promotion of a processing-time deadline and the assembly of an event-time firing chained behind the high-water. When no pass is running and no trigger is queued ahead, the firing SHALL open a pass whose origin is that tasklet and that Cell: the tasklet's chain (every tasklet reachable from it, with in-chain parent counts) SHALL be the pass's chain, the stage SHALL be in flight owing the firing, and the firing's emits SHALL flow down the chain and commit stage by stage as any stage output does. When a pass is running and the firing's own stage is in flight, the firing SHALL join that stage: it SHALL be counted among the stage's owed items, its `on_timer` SHALL run on that Cell inside the stage and its emits SHALL be held with the stage's. Otherwise the firing SHALL wait in the instance's queue, in arrival order with messages, and SHALL be served at the next iteration boundary before the loop mode's own continuation, a `CHAINED` loop's carry included. An event-time firing generated ahead of an input SHALL join the stage that delivered the input. One pass SHALL run at a time. A firing SHALL never be handed to a Cell whose pass has failed or been cancelled.
 
 #### Scenario: A firing while the instance waits opens a pass at the tasklet that set it
 
-- **WHEN** a `per_input` workflow `in -> tick -> relay -> out` has committed its pass and `tick`'s timer comes due while the instance waits for a message
+- **WHEN** a `per_input` bounded operator `in -> tick -> relay -> out` has committed its pass and `tick`'s timer comes due while the instance waits for a message
 - **THEN** a new pass SHALL open with `tick` as its root, `on_timer` SHALL run on `tick`'s Cell, what it emits SHALL reach `relay` and then `out`, `tick` and `relay` SHALL each commit as a stage, and the iteration SHALL commit
 
 #### Scenario: A firing during a pass waits its turn
@@ -265,7 +265,7 @@ A timer firing on a Cell of a workflow instance SHALL be handled by the instance
 
 ### Requirement: A firing served inside a pass leaves the pending set when its stage commits
 
-For a workflow class that journals, the removal of a fired timer from its Cell's pending set SHALL become durable on the acknowledgement of the stage that served the firing, not on the settle of the attempt that ran `on_timer`: until that acknowledgement the timer SHALL stay in the Cell's live pending set, off the deferred-wake list, so a compaction re-states it and a restore re-arms it, and on the acknowledgement the removal SHALL be applied to the set and written as a Cell timer-ops record. Every other timer op of the invocation SHALL commit at settle as in a stream. For a class that journals nothing the removal SHALL commit at settle. On a crash-resume, a restored timer whose firing's stage the journal records as committed SHALL be dropped before re-arming; a restored timer with no such record SHALL re-arm and fire again, opening the pass afresh. A registration made by a re-run `run` or `on_timer` SHALL be registered, pending timers being a set.
+For a bounded class that journals, the removal of a fired timer from its Cell's pending set SHALL become durable on the acknowledgement of the stage that served the firing, not on the settle of the attempt that ran `on_timer`: until that acknowledgement the timer SHALL stay in the Cell's live pending set, off the deferred-wake list, so a compaction re-states it and a restore re-arms it, and on the acknowledgement the removal SHALL be applied to the set and written as a Cell timer-ops record. Every other timer op of the invocation SHALL commit at settle as in an unbounded operator. For a class that journals nothing the removal SHALL commit at settle. On a crash-resume, a restored timer whose firing's stage the journal records as committed SHALL be dropped before re-arming; a restored timer with no such record SHALL re-arm and fire again, opening the pass afresh. A registration made by a re-run `run` or `on_timer` SHALL be registered, pending timers being a set.
 
 #### Scenario: A crash before the root's commit fires the timer again
 
@@ -279,6 +279,6 @@ For a workflow class that journals, the removal of a fired timer from its Cell's
 
 #### Scenario: An opted-out class commits the removal at settle
 
-- **WHEN** a workflow class with persistence off fires a timer
+- **WHEN** a bounded class with persistence off fires a timer
 - **THEN** the removal SHALL be applied when `on_timer`'s attempt settles, and no stage acknowledgement SHALL be waited for
 

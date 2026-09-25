@@ -23,7 +23,7 @@ No other module other than `RecoveryGate` SHALL compute "is this namespace ready
 
 - **WHEN** `RecoveryGate.ready_namespaces/1` is called and hub `ns1` has recovery state `:recovering`
 - **THEN** the returned `MapSet` does not contain `"ns1"`
-- **AND** no heal ops are issued for operatives in that namespace on the current tick
+- **AND** no heal ops are issued for operators in that namespace on the current tick
 
 #### Scenario: Timed-out hub is included with a warning
 

@@ -2,16 +2,16 @@ defmodule FlezhaTest.Handover do
   alias Flezha.Convergence.Loop
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
   alias Flezha.Identificator
-  alias Flezha.Operative.Replay
+  alias Flezha.Operator.Replay
   alias Flezha.Payloader
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias Flezha.State.TestHelpers
-  alias FlezhaTest.Fixtures.OperativeFixture
+  alias FlezhaTest.Fixtures.OperatorFixture
   alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
-  alias FlezhaTest.Helper.OperativeTestHelper
+  alias FlezhaTest.Helper.OperatorTestHelper
   alias ProcessHub.Constant.Hook
 
   use ExUnit.Case
@@ -27,13 +27,13 @@ defmodule FlezhaTest.Handover do
   end
 
   setup _context do
-    # Restore now rehydrates a operative from its WAL on (re)bind, so leftover
-    # per-Cell state from an earlier test that reused the same operative_id
+    # Restore now rehydrates an operator from its WAL on (re)bind, so leftover
+    # per-Cell state from an earlier test that reused the same operator_id
     # would leak in. Start each test from empty cells.
     TestHelpers.reset_all_cells()
 
     on_exit(fn ->
-      OperativeManager.stop_all_operatives(@default_namespace)
+      OperatorManager.stop_all_operators(@default_namespace)
       FleetManager.stop_namespace(@temp_namespace)
     end)
 
@@ -42,15 +42,15 @@ defmodule FlezhaTest.Handover do
 
   @tag :multi_node
   @tag :drain_migration
-  test "graceful shutdown drains an operative to a peer through live handover" do
+  test "graceful shutdown drains an operator to a peer through live handover" do
     {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:drain_node1)
 
-    operative_id = start_operative_on_peer(peer_node, "drain_mig")
-    OperativeTestHelper.send_sync_io(operative_id, @default_namespace, "before_drain", %{})
+    operator_id = start_operator_on_peer(peer_node, "drain_mig")
+    OperatorTestHelper.send_sync_io(operator_id, @default_namespace, "before_drain", %{})
 
     assert :ok = shutdown_peer(peer_node, 30_000)
 
-    # One :drain_progress per hub — match the namespace the operative is in, or
+    # One :drain_progress per hub — match the namespace the operator is in, or
     # a peer namespace with nothing to move answers for it with migrated: 0.
     assert_receive {[:flezha, :shutdown, :drain_progress], _ref, m,
                     %{namespace: @default_namespace}},
@@ -66,7 +66,7 @@ defmodule FlezhaTest.Handover do
              fn ->
                match?(
                  {:ok, %{arrived_via_hotswap?: true}},
-                 OperativeManager.get_overwatch_state(@default_namespace, operative_id)
+                 OperatorManager.get_overwatch_state(@default_namespace, operator_id)
                )
              end,
              5_000,
@@ -74,7 +74,7 @@ defmodule FlezhaTest.Handover do
            ),
            "expected live HotSwap handover, not a WAL cold restore"
 
-    {:ok, json_state} = OperativeManager.get_cell_state(@default_namespace, operative_id)
+    {:ok, json_state} = OperatorManager.get_cell_state(@default_namespace, operator_id)
     state = Payloader.json_to_map(json_state)
     assert "before_drain" in get_in(state, ["store_input_tasklet", "text_inputs"])
 
@@ -83,11 +83,11 @@ defmodule FlezhaTest.Handover do
 
   @tag :multi_node
   @tag :drain_migration_forced
-  test "a deferring operative is force-migrated at the drain deadline without wedging" do
+  test "a deferring operator is force-migrated at the drain deadline without wedging" do
     {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:drain_node2)
 
-    operative_id = start_operative_on_peer(peer_node, "drain_forced")
-    OperativeTestHelper.send_sync_io(operative_id, @default_namespace, "seed", %{})
+    operator_id = start_operator_on_peer(peer_node, "drain_forced")
+    OperatorTestHelper.send_sync_io(operator_id, @default_namespace, "seed", %{})
 
     # Hold the busy signal: a correction that never leaves its debounce
     # window, so `migration_consent/1` answers :defer for the whole drain.
@@ -96,13 +96,13 @@ defmodule FlezhaTest.Handover do
 
     hub_id = Identificator.hub(@default_namespace)
 
-    {^operative_id, ow_pid} =
+    {^operator_id, ow_pid} =
       :erpc.call(peer_node, ProcessHub, :process_list, [hub_id, :local])
-      |> Enum.find(fn {id, _pid} -> id == operative_id end)
+      |> Enum.find(fn {id, _pid} -> id == operator_id end)
 
     GenServer.cast(
       ow_pid,
-      {:correction_request, {operative_id, "store_input_tasklet", "poke"}, 1}
+      {:correction_request, {operator_id, "store_input_tasklet", "poke"}, 1}
     )
 
     # Sync barrier: the cast is folded into state before the drain begins.
@@ -141,16 +141,16 @@ defmodule FlezhaTest.Handover do
              fn ->
                match?(
                  {:ok, %{arrived_via_hotswap?: true}},
-                 OperativeManager.get_overwatch_state(@default_namespace, operative_id)
+                 OperatorManager.get_overwatch_state(@default_namespace, operator_id)
                )
              end,
              5_000,
              25
            ),
-           "the operative must become addressable at its new home after the forced handover"
+           "the operator must become addressable at its new home after the forced handover"
 
-    OperativeTestHelper.send_sync_io(operative_id, @default_namespace, "after_force", %{})
-    {:ok, json_state} = OperativeManager.get_cell_state(@default_namespace, operative_id)
+    OperatorTestHelper.send_sync_io(operator_id, @default_namespace, "after_force", %{})
+    {:ok, json_state} = OperatorManager.get_cell_state(@default_namespace, operator_id)
     state = Payloader.json_to_map(json_state)
     assert "seed" in get_in(state, ["store_input_tasklet", "text_inputs"])
     assert "after_force" in get_in(state, ["store_input_tasklet", "text_inputs"])
@@ -178,7 +178,7 @@ defmodule FlezhaTest.Handover do
   # The consistent-hash ring decides placement by id, so probe candidate ids
   # until one lands on the peer; the rejects are stopped again. Placement can
   # only reach the peer after it has joined the hub cluster, hence the wait.
-  defp start_operative_on_peer(peer_node, prefix, namespace \\ @default_namespace) do
+  defp start_operator_on_peer(peer_node, prefix, namespace \\ @default_namespace) do
     NodeTestHelper.wait_until(
       fn -> peer_node in HubManager.get_hub_nodes(namespace, false) end,
       10_000
@@ -189,17 +189,17 @@ defmodule FlezhaTest.Handover do
 
       {:ok, %{node: pnode}} =
         id
-        |> OperativeFixture.get(@test_store_input_factory)
-        |> OperativeFixture.start(namespace)
-        |> OperativeFixture.attach_output_msg(namespace)
+        |> OperatorFixture.get(@test_store_input_factory)
+        |> OperatorFixture.start(namespace)
+        |> OperatorFixture.attach_output_msg(namespace)
 
       if pnode == peer_node do
         {:halt, id}
       else
-        OperativeFixture.stop(id, namespace)
+        OperatorFixture.stop(id, namespace)
         {:cont, nil}
       end
-    end) || flunk("no operative landed on #{inspect(peer_node)} in 20 attempts")
+    end) || flunk("no operator landed on #{inspect(peer_node)} in 20 attempts")
   end
 
   @tag :runner_disconnect
@@ -213,10 +213,10 @@ defmodule FlezhaTest.Handover do
   end
 
   @tag :runner_disconnect_migrate_op
-  test "runner disconnect migrate operative" do
+  test "runner disconnect migrate operator" do
     namespace = @temp_namespace
-    operative_id_1 = "operative_1"
-    operative_id_2 = "operative_2"
+    operator_id_1 = "operator_1"
+    operator_id_2 = "operator_2"
 
     # The disconnect is declared and the LOOP rebinds; nothing reroutes inside
     # the session handler any more. Reset the recovery cache before any hub
@@ -229,60 +229,60 @@ defmodule FlezhaTest.Handover do
     runner_id_1 = NodeTestHelper.start_runner(namespace)
     runner_id_2 = NodeTestHelper.start_runner(namespace)
 
-    # Start a few operatives and store some state on them.
-    {:ok, %{pid: _operative_pid_1, runner_id: pipe1_op}} =
-      operative_id_1
-      |> OperativeFixture.get(@test_store_input_factory)
-      |> OperativeFixture.start(namespace)
-      |> OperativeFixture.attach_output_msg(namespace)
+    # Start a few operators and store some state on them.
+    {:ok, %{pid: _operator_pid_1, runner_id: pipe1_op}} =
+      operator_id_1
+      |> OperatorFixture.get(@test_store_input_factory)
+      |> OperatorFixture.start(namespace)
+      |> OperatorFixture.attach_output_msg(namespace)
 
-    {:ok, %{pid: _operative_pid_2, runner_id: _pipe2_op}} =
-      operative_id_2
-      |> OperativeFixture.get(@test_store_input_factory)
-      |> OperativeFixture.start(namespace)
-      |> OperativeFixture.attach_output_msg(namespace)
+    {:ok, %{pid: _operator_pid_2, runner_id: _pipe2_op}} =
+      operator_id_2
+      |> OperatorFixture.get(@test_store_input_factory)
+      |> OperatorFixture.start(namespace)
+      |> OperatorFixture.attach_output_msg(namespace)
 
-    OperativeTestHelper.send_sync_io(operative_id_1, namespace, "state_1", %{})
-    OperativeTestHelper.send_sync_io(operative_id_2, namespace, "state_2", %{})
+    OperatorTestHelper.send_sync_io(operator_id_1, namespace, "state_1", %{})
+    OperatorTestHelper.send_sync_io(operator_id_2, namespace, "state_2", %{})
 
     active_runner =
       if pipe1_op === runner_id_1, do: runner_id_2, else: runner_id_1
 
-    for id <- [operative_id_1, operative_id_2], do: await_durable(node(), id)
+    for id <- [operator_id_1, operator_id_2], do: await_durable(node(), id)
 
     # Trigger the runner disconnect.
     NodeTestHelper.stop_runner(namespace, pipe1_op)
 
-    # Make sure all the operatives are migrated to the other runner. The loop
-    # plans `rebind_operative` from the declared disconnect and commits only on
+    # Make sure all the operators are migrated to the other runner. The loop
+    # plans `rebind_operator` from the declared disconnect and commits only on
     # a confirmed migrate, so the tags land asynchronously.
     assert NodeTestHelper.wait_until(
              fn ->
-               OperativeManager.operative_registry(namespace)
-               |> Enum.all?(fn {_operative_id, {_cspec, _cnodes, metadata}} ->
+               OperatorManager.operator_registry(namespace)
+               |> Enum.all?(fn {_operator_id, {_cspec, _cnodes, metadata}} ->
                  metadata[:tag] === active_runner
                end)
              end,
              10_000
            ),
-           "operatives did not rebind to #{active_runner} within timeout"
+           "operators did not rebind to #{active_runner} within timeout"
 
     # The rebound runner's state arrives with the WAL restore, after the tag flips.
     stored = &{:ok, ~s({"store_input_tasklet":{"binary_inputs":[],"text_inputs":["#{&1}"]}})}
-    states = fn -> Enum.map([operative_id_1, operative_id_2], &cell_state/1) end
+    states = fn -> Enum.map([operator_id_1, operator_id_2], &cell_state/1) end
 
     assert NodeTestHelper.wait_until(
              fn -> states.() == [stored.("state_1"), stored.("state_2")] end,
              15_000
            ),
-           "operative states did not survive the rebind: #{inspect(states.())}"
+           "operator states did not survive the rebind: #{inspect(states.())}"
   end
 
   @tag :runner_disconnect_preserve
   test "runner disconnect preserve" do
     namespace = @temp_namespace
-    num_operatives = 15
-    operative_ids = for i <- 1..num_operatives, do: "operative_#{i}"
+    num_operators = 15
+    operator_ids = for i <- 1..num_operators, do: "operator_#{i}"
 
     # Fresh-process runner takeover (an :inactive peer's bindings
     # are migrated onto the freshly-connected runner) is driven by
@@ -306,22 +306,22 @@ defmodule FlezhaTest.Handover do
     runner_id_1 = NodeTestHelper.start_runner(namespace)
     runner_id_2 = NodeTestHelper.start_runner(namespace)
 
-    # Start operatives and store some state on them.
+    # Start operators and store some state on them.
 
-    operative_infos =
-      for operative_id <- operative_ids do
+    operator_infos =
+      for operator_id <- operator_ids do
         {:ok, info} =
-          operative_id
-          |> OperativeFixture.get(@test_store_input_factory)
-          |> OperativeFixture.start(namespace)
-          |> OperativeFixture.attach_output_msg(namespace)
+          operator_id
+          |> OperatorFixture.get(@test_store_input_factory)
+          |> OperatorFixture.start(namespace)
+          |> OperatorFixture.attach_output_msg(namespace)
 
-        {operative_id, info}
+        {operator_id, info}
       end
 
-    # Send state to all operatives
-    for {operative_id, _info} <- operative_infos do
-      OperativeTestHelper.send_sync_io(operative_id, namespace, "state_#{operative_id}", %{})
+    # Send state to all operators
+    for {operator_id, _info} <- operator_infos do
+      OperatorTestHelper.send_sync_io(operator_id, namespace, "state_#{operator_id}", %{})
     end
 
     # Trigger the runner disconnect.
@@ -331,7 +331,7 @@ defmodule FlezhaTest.Handover do
     # Start a new runner under the same namespace.
     runner_id_3 = NodeTestHelper.start_runner(namespace)
 
-    # The convergence Loop reseats every operative tagged to a dead runner
+    # The convergence Loop reseats every operator tagged to a dead runner
     # onto `runner_id_3`. In production a periodic tick + the
     # `:runner_connected_event` drive this; in-suite, async tick delivery
     # and the global recovery gate are non-deterministic, so drive the real
@@ -341,31 +341,31 @@ defmodule FlezhaTest.Handover do
              fn ->
                Loop.tick_now()
 
-               OperativeManager.operative_registry(namespace)
-               |> Enum.all?(fn {_operative_id, {_cspec, _cnodes, %{tag: tag}}} ->
+               OperatorManager.operator_registry(namespace)
+               |> Enum.all?(fn {_operator_id, {_cspec, _cnodes, %{tag: tag}}} ->
                  tag === runner_id_3
                end)
              end,
              15_000
            ),
-           "operatives did not reseat to runner_id_3 within timeout"
+           "operators did not reseat to runner_id_3 within timeout"
 
     # The rebind tag flips before the WAL restore finishes replaying the
     # change-log onto the reseated runner, so poll the migrated state
     # rather than reading it the instant the tag lands.
-    expected_state = fn operative_id ->
-      "{\"store_input_tasklet\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{operative_id}\"]}}"
+    expected_state = fn operator_id ->
+      "{\"store_input_tasklet\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{operator_id}\"]}}"
     end
 
     # The convergence Loop dispatches the WAL restore once, inside the rebind
-    # heal — but once the tag is `runner_id_3` the operative is not misbound,
+    # heal — but once the tag is `runner_id_3` the operator is not misbound,
     # so a later tick won't re-dispatch. Re-drive the documented,
-    # idempotent restore re-dispatch path per operative each poll so a restore
+    # idempotent restore re-dispatch path per operator each poll so a restore
     # that raced the new runner's readiness retries until state converges.
     assert NodeTestHelper.wait_until(
              fn ->
-               for {operative_id, _info} <- operative_infos do
-                 case HubManager.get_pid(namespace, operative_id) do
+               for {operator_id, _info} <- operator_infos do
+                 case HubManager.get_pid(namespace, operator_id) do
                    {:ok, pid} when is_pid(pid) ->
                      Replay.kick_restore_for_bound_runner(
                        pid,
@@ -377,14 +377,14 @@ defmodule FlezhaTest.Handover do
                  end
                end
 
-               Enum.all?(operative_infos, fn {operative_id, _info} ->
-                 OperativeManager.get_cell_state(namespace, operative_id) ===
-                   {:ok, expected_state.(operative_id)}
+               Enum.all?(operator_infos, fn {operator_id, _info} ->
+                 OperatorManager.get_cell_state(namespace, operator_id) ===
+                   {:ok, expected_state.(operator_id)}
                end)
              end,
              15_000
            ),
-           "operative states did not migrate to runner_id_3 within timeout"
+           "operator states did not migrate to runner_id_3 within timeout"
 
     # Stop the new runner.
     NodeTestHelper.stop_runner(namespace, runner_id_3)
@@ -397,9 +397,9 @@ defmodule FlezhaTest.Handover do
     Application.put_env(:flezha, :runner_keepalive, "30000")
 
     # Cleanup reaps the dead runner ref but must NOT tear the hub down while it
-    # still holds the 15 registered operatives — they stay addressable and
-    # reseat onto the next runner (workflow-operative.md, hub-outlives-runner).
-    assert HubManager.registered_operatives?(namespace)
+    # still holds the 15 registered operators — they stay addressable and
+    # reseat onto the next runner (bounded-operator.md, hub-outlives-runner).
+    assert HubManager.registered_operators?(namespace)
     assert HubManager.hub_alive?(namespace) === true
   end
 
@@ -407,11 +407,11 @@ defmodule FlezhaTest.Handover do
   @tag :runner_disconnect_migrate_hub
   test "runner disconnect migrate hub" do
     namespace = @temp_namespace
-    num_operatives = 15
-    operative_ids = for i <- 1..num_operatives, do: "operative_#{i}"
+    num_operators = 15
+    operator_ids = for i <- 1..num_operators, do: "operator_#{i}"
 
     # Losing its last runner for a factory makes a controller stop serving that
-    # factory's group, and the hub then reassigns every operative of it through
+    # factory's group, and the hub then reassigns every operator of it through
     # the migration-consent gate with handover. No convergence op, no hub drain.
     {peer_pid, peer_node} = start_healing_peer(:anode1)
 
@@ -482,38 +482,38 @@ defmodule FlezhaTest.Handover do
       ]
     )
 
-    # Start operatives and store some state on them.
-    operative_infos =
-      for operative_id <- operative_ids do
+    # Start operators and store some state on them.
+    operator_infos =
+      for operator_id <- operator_ids do
         {:ok, info} =
-          operative_id
-          |> OperativeFixture.get(@test_store_input_factory)
-          |> OperativeFixture.start(namespace)
-          |> OperativeFixture.attach_output_msg(namespace)
+          operator_id
+          |> OperatorFixture.get(@test_store_input_factory)
+          |> OperatorFixture.start(namespace)
+          |> OperatorFixture.attach_output_msg(namespace)
 
-        {operative_id, info}
+        {operator_id, info}
       end
 
-    # The operatives the peer's runners hold; at least one must move.
-    moved = for {id, %{runner_id: rid}} <- operative_infos, rid !== runner_id_1, do: id
+    # The operators the peer's runners hold; at least one must move.
+    moved = for {id, %{runner_id: rid}} <- operator_infos, rid !== runner_id_1, do: id
     assert moved != []
 
-    # Send state to all operatives
-    for {operative_id, _info} <- operative_infos do
-      OperativeTestHelper.send_sync_io(operative_id, namespace, "state_#{operative_id}", %{})
+    # Send state to all operators
+    for {operator_id, _info} <- operator_infos do
+      OperatorTestHelper.send_sync_io(operator_id, namespace, "state_#{operator_id}", %{})
     end
 
     # Check the states before runner migrations.
-    for {operative_id, _info} <- operative_infos do
-      {:ok, json_state} = OperativeManager.get_cell_state(namespace, operative_id)
+    for {operator_id, _info} <- operator_infos do
+      {:ok, json_state} = OperatorManager.get_cell_state(namespace, operator_id)
 
       assert json_state ===
-               "{\"store_input_tasklet\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{operative_id}\"]}}"
+               "{\"store_input_tasklet\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{operator_id}\"]}}"
     end
 
     # No snapshot is taken: the peer's runners hold the only live copy, so the
     # handover is empty and the destination must pull the source's files.
-    for {id, %{node: owner}} <- operative_infos, do: await_durable(owner, id)
+    for {id, %{node: owner}} <- operator_infos, do: await_durable(owner, id)
 
     NodeTestHelper.stop_runner_remote(peer_node, namespace, rem_runner_1)
     NodeTestHelper.stop_runner_remote(peer_node, namespace, rem_runner_2)
@@ -524,7 +524,7 @@ defmodule FlezhaTest.Handover do
     MessageTestHelper.recv_until(
       :hook_insert_recv,
       fn ->
-        OperativeManager.operative_registry(namespace)
+        OperatorManager.operator_registry(namespace)
         |> Enum.all?(fn {_, {_, _, %{tag: tag}}} -> tag === runner_id_1 end)
       end,
       15_000
@@ -538,25 +538,25 @@ defmodule FlezhaTest.Handover do
     # and reading it at the first converged tag races the bind.
     assert NodeTestHelper.wait_until(
              fn ->
-               Enum.all?(operative_infos, fn {operative_id, _info} ->
-                 OperativeManager.get_cell_state(namespace, operative_id) ===
+               Enum.all?(operator_infos, fn {operator_id, _info} ->
+                 OperatorManager.get_cell_state(namespace, operator_id) ===
                    {:ok,
-                    "{\"store_input_tasklet\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{operative_id}\"]}}"}
+                    "{\"store_input_tasklet\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{operator_id}\"]}}"}
                end)
              end,
              15_000
            ),
-           "operative states did not survive the cross-controller migration: " <>
+           "operator states did not survive the cross-controller migration: " <>
              inspect(for id <- moved, do: {id, cell_state(id)})
 
     for id <- moved do
       assert {:ok, %{arrived_via_hotswap?: false}} =
-               OperativeManager.get_overwatch_state(namespace, id)
+               OperatorManager.get_overwatch_state(namespace, id)
     end
 
     # A controller whose fleet does not serve the namespace leaves its
     # cluster on the loop's next tick after the hub has moved its last
-    # operative away, so this is an eventual property like the two above it.
+    # operator away, so this is an eventual property like the two above it.
     assert NodeTestHelper.wait_until(
              fn -> length(HubManager.get_hub_nodes(namespace, true)) === 1 end,
              10_000
@@ -576,13 +576,13 @@ defmodule FlezhaTest.Handover do
     {peer_pid, peer} = start_healing_peer(:stale_snap)
     local_runner = NodeTestHelper.start_runner(@temp_namespace)
     {rem_a, os_pid_a} = start_remote_runner(peer)
-    op = start_operative_on_peer(peer, "stale_snapshot", @temp_namespace)
+    op = start_operator_on_peer(peer, "stale_snapshot", @temp_namespace)
     assert bound_runner(op) == rem_a
 
     # B is up before A leaves, so the peer rebinds rather than re-placing.
     {rem_b, os_pid_b} = start_remote_runner(peer)
 
-    OperativeTestHelper.send_sync_io(op, @temp_namespace, "before_snapshot", %{})
+    OperatorTestHelper.send_sync_io(op, @temp_namespace, "before_snapshot", %{})
     assert NodeTestHelper.wait_until(fn -> state_has?(op, "before_snapshot") end, 10_000)
 
     # The peer's loop waits while A's snapshot is observed, so no rebind can
@@ -599,17 +599,17 @@ defmodule FlezhaTest.Handover do
     :ok = :erpc.call(peer, :sys, :resume, [Loop])
 
     assert NodeTestHelper.wait_until(fn -> bound_runner(op) == rem_b end, 30_000),
-           "the operative never rebound to runner B: #{inspect(bound_runner(op))}"
+           "the operator never rebound to runner B: #{inspect(bound_runner(op))}"
 
     assert NodeTestHelper.wait_until(fn -> state_has?(op, "before_snapshot") end, 15_000),
            "runner B never received the state: #{inspect(cell_state(op))}"
 
     # The rebind dropped A's shutdown snapshot, so a read kept from here would
     # be the only snapshot left to ship.
-    assert {:ok, snapshot} = OperativeManager.create_snapshot(@temp_namespace, op)
+    assert {:ok, snapshot} = OperatorManager.create_snapshot(@temp_namespace, op)
     assert contains?(snapshot, "before_snapshot")
 
-    OperativeTestHelper.send_sync_io(op, @temp_namespace, "after_snapshot", %{})
+    OperatorTestHelper.send_sync_io(op, @temp_namespace, "after_snapshot", %{})
     assert NodeTestHelper.wait_until(fn -> state_has?(op, "after_snapshot") end, 10_000)
 
     await_durable(peer, op)
@@ -619,7 +619,7 @@ defmodule FlezhaTest.Handover do
   end
 
   # Both controllers heal, as in production: only the peer's own loop may
-  # re-place the operatives it hosts.
+  # re-place the operators it hosts.
   defp start_healing_peer(name) do
     {:ok, _} = start_supervised({Loop, tick_ms: 1_000})
 
@@ -630,7 +630,7 @@ defmodule FlezhaTest.Handover do
 
   defp assert_pulled_with(op, local_runner, text) do
     assert NodeTestHelper.wait_until(fn -> bound_runner(op) == local_runner end, 30_000),
-           "the operative never migrated to this controller: #{inspect(bound_runner(op))}"
+           "the operator never migrated to this controller: #{inspect(bound_runner(op))}"
 
     assert NodeTestHelper.wait_until(fn -> state_has?(op, text) end, 15_000),
            "state on the destination lacks #{inspect(text)}: " <>
@@ -647,7 +647,7 @@ defmodule FlezhaTest.Handover do
 
     observe = fn ->
       with {:ok, _json, seq} = read <-
-             OperativeManager.get_cell_state(namespace, op, %{tasklet: elem(cell_id, 1)}),
+             OperatorManager.get_cell_state(namespace, op, %{tasklet: elem(cell_id, 1)}),
            {:ok, writer} <- :erpc.call(node, Flezha.State.WriterRegistry, :lookup, [cell_id]) do
         {read, :erpc.call(node, Flezha.State.WalWriter, :last_persisted_seq, [writer]), seq}
       end
@@ -682,14 +682,14 @@ defmodule FlezhaTest.Handover do
     do: {_, 0} = System.cmd("kill", [signal, Integer.to_string(os_pid)], stderr_to_stdout: true)
 
   defp overwatch(op) do
-    case OperativeManager.get_overwatch_state(@temp_namespace, op) do
+    case OperatorManager.get_overwatch_state(@temp_namespace, op) do
       {:ok, %{} = state} -> state
       _ -> %{runner_id: nil, snapshot: nil, arrived_via_hotswap?: nil}
     end
   end
 
   defp bound_runner(op), do: overwatch(op).runner_id
-  defp cell_state(op), do: OperativeManager.get_cell_state(@temp_namespace, op)
+  defp cell_state(op), do: OperatorManager.get_cell_state(@temp_namespace, op)
   defp contains?(bin, text), do: is_binary(bin) and String.contains?(bin, text)
 
   defp state_has?(op, text) do

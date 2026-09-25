@@ -28,7 +28,7 @@ defmodule Flezha.SDK.RunnerBootTest do
 
   defmodule BootOp do
     @moduledoc false
-    @behaviour Flezha.SDK.StreamOperative
+    @behaviour Flezha.SDK.UnboundedOperator
     def factory_id, do: "boot_probe_op"
 
     def channels(c) do

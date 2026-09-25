@@ -24,10 +24,10 @@ defmodule Flezha.Service.DlqTest do
     original = Application.get_env(:flezha, :dlq, [])
     Application.put_env(:flezha, :dlq, Keyword.merge(original, dir: dir, replay_grace_ms: 200))
 
-    operative_class = "dlqsvc_" <> Integer.to_string(System.unique_integer([:positive]))
+    operator_class = "dlqsvc_" <> Integer.to_string(System.unique_integer([:positive]))
 
     entry = %{
-      operative_class: operative_class,
+      operator_class: operator_class,
       tasklet_id: "task",
       cell_key: "k",
       channel: "input",
@@ -37,7 +37,7 @@ defmodule Flezha.Service.DlqTest do
       payload: "poison-bytes"
     }
 
-    %{operative_class: operative_class, entry: entry}
+    %{operator_class: operator_class, entry: entry}
   end
 
   describe "the hole: the store is not a gate" do
@@ -89,41 +89,41 @@ defmodule Flezha.Service.DlqTest do
   end
 
   describe "the reads answer data" do
-    test "list, get, stats and tasklets", %{entry: entry, operative_class: operative_class} do
+    test "list, get, stats and tasklets", %{entry: entry, operator_class: operator_class} do
       {:ok, ref} = Store.append(entry)
 
-      assert {:ok, [listed]} = DlqSvc.list(operative_class, context())
+      assert {:ok, [listed]} = DlqSvc.list(operator_class, context())
       assert listed["id"]
       assert listed["error"] == "kaboom"
 
       assert {:ok, got, "poison-bytes"} = DlqSvc.get(ref, context())
-      assert got["operative_class"] == operative_class
+      assert got["operator_class"] == operator_class
 
       assert {:ok, stats} = DlqSvc.stats(context())
 
       assert Enum.any?(
                stats,
-               &(&1.operative_class == operative_class and &1.tasklet_id == "task" and
+               &(&1.operator_class == operator_class and &1.tasklet_id == "task" and
                    &1.entries == 1)
              )
 
-      assert {:ok, tasklets} = DlqSvc.tasklets(operative_class, context())
-      assert {operative_class, "task"} in tasklets
+      assert {:ok, tasklets} = DlqSvc.tasklets(operator_class, context())
+      assert {operator_class, "task"} in tasklets
     end
   end
 
   describe "replay/2" do
     setup do
-      Flezha.Operative.ClassRegistry.ensure_table()
+      Flezha.Operator.ClassRegistry.ensure_table()
       :ok
     end
 
     test "re-enters the ordinary input path and reports removal", %{
       entry: entry,
-      operative_class: operative_class
+      operator_class: operator_class
     } do
       {:ok, ref} = Store.append(entry)
-      Flezha.Operative.ClassRegistry.put_overwatch(operative_class, self(), nil)
+      Flezha.Operator.ClassRegistry.put_overwatch(operator_class, self(), nil)
 
       assert {:ok, :removed} = DlqSvc.replay(ref, context())
       assert_received {:"$gen_cast", {:io_in, "poison-bytes", %{"channel" => "input"}}}
@@ -132,11 +132,11 @@ defmodule Flezha.Service.DlqTest do
 
     test "reports the generation when the replay re-parks", %{
       entry: entry,
-      operative_class: operative_class
+      operator_class: operator_class
     } do
       {:ok, ref} = Store.append(entry)
       overwatch = DlqFixtures.spawn_reparking_overwatch(entry, self())
-      Flezha.Operative.ClassRegistry.put_overwatch(operative_class, overwatch, nil)
+      Flezha.Operator.ClassRegistry.put_overwatch(operator_class, overwatch, nil)
 
       assert {:ok, {:re_parked, 2}} = DlqSvc.replay(ref, context())
       assert_received :re_parked

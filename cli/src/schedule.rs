@@ -1,7 +1,7 @@
 use crate::args::{OptSpec, Positional, Reading, INIT_VALUES, NAMESPACE};
 use crate::dispatch::{self, Command, Missing, Verb};
 use crate::help;
-use crate::operative::{first_message_opts, plugins_json_or_refuse, CHANNEL, TEXT};
+use crate::operator::{first_message_opts, plugins_json_or_refuse, CHANNEL, TEXT};
 use crate::rpc::{self, text, Opt};
 
 const CRON: OptSpec = OptSpec::text("--cron", "--cron", "<expr>").required();
@@ -46,7 +46,7 @@ pub(crate) const TABLE: Command = Command {
 };
 
 /// The flags travel as the options list: the three required ones first, then
-/// each optional one the operator wrote, so an absent flag is absent from the
+/// each optional one the caller wrote, so an absent flag is absent from the
 /// request and the controller applies its own default. `--plugins` and
 /// `--text` are carried as the text they were written as, whatever they parse
 /// as: the controller's decoder reads the JSON itself, at every firing, and

@@ -1,4 +1,4 @@
-flz schedule - cron-scheduled workflow operative spawns
+flz schedule - cron-scheduled bounded operator spawns
 
 USAGE:
     flz schedule <SUBCOMMAND>
@@ -7,17 +7,17 @@ SUBCOMMANDS:
     add <name> --cron "<expr>" --tz <iana> --factory <factory_id>
         [--namespace <ns>] [--init-values <json>] [--text <payload>] [--channel <ch>]
         [--plugins <json>]
-                 Add a durable schedule of a workflow factory; a factory a
-                 connected runner announced as a stream is refused.
+                 Add a durable schedule of a bounded factory; a factory a
+                 connected runner announced as unbounded is refused.
                  --init-values is the state every fired instance starts with;
                  --text is the first message it receives, on the entry channel
                  --channel names or the first declared one.
-                 --plugins takes the same array as `operative start --plugins`;
+                 --plugins takes the same array as `operator start --plugins`;
                  each firing prefixes the plugin ids with its instance id.
     list         List schedules with their next fire time
     remove <name>  Remove a schedule
     run <name>     Fire one instance immediately with the stored config;
-                   judged as operative.start in the schedule's namespace
+                   judged as operator.start in the schedule's namespace
     help         Show this help message
 
 EXAMPLES:

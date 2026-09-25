@@ -8,11 +8,11 @@
 # derives is not a golden, it is a second copy of the thing under test. The two
 # sources, read at `c6f5dbfa`:
 #
-#   hybrid_channel      test/apps/rust_runner/src/channel.rs, HybridChannelOperative
-#   commit_block_chain  test/apps/rust_runner/src/workflow.rs, TierCommitBlockWorkflow
+#   hybrid_channel      test/apps/rust_runner/src/channel.rs, HybridChannelOperator
+#   commit_block_chain  test/apps/rust_runner/src/bounded.rs, TierCommitBlockBounded
 #
 # `commit_block_chain` is this file's name for the second shape because no
-# veneer registers a workflow fixture yet; it is `tier_commit_block_workflow`'s
+# veneer registers a bounded fixture yet; it is `tier_commit_block_bounded`'s
 # topology, which declares nothing about its handoffs — no SDK does, because the
 # runtime derives an inter-tasklet channel's journal codec (from the channel
 # kind for a host that ships bytes, `flz_core/src/host/register.rs`).
@@ -36,13 +36,13 @@
 # descriptor name — which the record now carries as a `sink` link, so the core
 # derives it rather than being told a channel name and nothing else.
 
-# hybrid_channel — a stream class. One entry, one producer whose single output
+# hybrid_channel — an unbounded class. One entry, one producer whose single output
 # channel carries a plugin sink AND an inter-tasklet consumer.
 # Tasklets: 0 hybrid_producer_tasklet, 1 hybrid_consumer_tasklet.
 hybrid_channel | 0 | input | entry | - | 0 | -
 hybrid_channel | 1 | hybrid_indicator | inter_task | 0 | 1 | hybrid_indicator
 
-# commit_block_chain — a structured workflow class with the same hybrid shape
+# commit_block_chain — a structured bounded class with the same hybrid shape
 # mid-chain.
 # Tasklets: 0 tier_commit_a, 1 block_b.
 commit_block_chain | 0 | in | entry | - | 0 | -
@@ -81,15 +81,15 @@ commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 #   class.<flag>[(<value>)]    persistent | effectively_once | checkpoint_ack |
 #                              checkpoint_every(n) | outputs_at_checkpoint(ms) |
 #                              correction_window(ms) | sync_durability |
-#                              sleep_when_idle | workflow
+#                              sleep_when_idle | bounded
 #   shorthand(<id>|-, <sink>|-, <input>|-)
-#                              one §5 short form, a stream operative declaration
+#                              one §5 short form, an unbounded operator declaration
 #                              carrying a tasklet body: the factory id, the
 #                              plugin sink and the entry channel name, each `-`
 #                              when the row leaves it unwritten. The step
 #                              declares NO builder topology — it is the whole
-#                              operative. A second step in one row declares a
-#                              workflow short form, so a collision crosses kinds
+#                              operator. A second step in one row declares a
+#                              bounded short form, so a collision crosses kinds
 #   shorthand(...).noout       the same, on a body declaring no output
 #   shorthand(...).topology    the same, on a declaration that also carries a
 #                              topology body
@@ -110,13 +110,13 @@ commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 # counts the skip against the declared surface. The surfaces named here:
 #   merge      a merge terminator
 #   branch     the branch sugar (the Elixir v1 subset has none)
-#   workflow   a workflow class kind
+#   bounded    a bounded class kind
 #   detached   a tasklet no entry can reach — unauthorable in a fluent
 #              builder, where a node exists only once something wires it
 #   raw_flags  the checkpoint-outputs flag set without its delay, which every
 #              SDK's `outputs_at_checkpoint(ms)` makes it impossible to write
 #   sync_durability  the class flag a TYPED stream builder does not carry: Rust
-#              and Java declare it on a workflow class only, so a stream class of
+#              and Java declare it on a bounded class only, so an unbounded class of
 #              theirs cannot spell it at all and the refusal cannot be reached
 #              from one. The row stays for the five builders that can
 #   shorthand  the §5 single-tasklet short form. Every SDK carries it, so no
@@ -160,10 +160,10 @@ CheckpointAckWithoutTier           | ack_no_tier      | class.checkpoint_ack; en
 MergeTooFewSources                 | merge_one_source | entry(in); merge(plain, in)                                                           | merge
 DuplicateMergeSource               | merge_same_twice | entry(in); entry(other); merge(plain, in, in)                                         | merge
 EdgeAlreadyWired                   | edge_rewired     | entry(in); in.map.into(plain); in.into(plain)                                         | -
-EffectivelyOnceOnWorkflow          | eo_workflow      | class.workflow; class.persistent; class.effectively_once; entry(in); in.into(plain)   | workflow
-CorrectionWindowOnWorkflow         | correction_wf    | class.workflow; class.persistent; class.correction_window(60000); entry(in); in.into(plain) | workflow
-CheckpointOnWorkflow               | checkpoint_workflow | class.workflow; class.persistent; class.checkpoint_every(500); entry(in); in.into(plain) | workflow
-SyncDurabilityOnStream             | sync_stream      | class.persistent; class.sync_durability; entry(in); in.into(plain)                    | sync_durability
+EffectivelyOnceOnBounded          | eo_bounded      | class.bounded; class.persistent; class.effectively_once; entry(in); in.into(plain)   | bounded
+CorrectionWindowOnBounded         | correction_bounded    | class.bounded; class.persistent; class.correction_window(60000); entry(in); in.into(plain) | bounded
+CheckpointOnBounded               | checkpoint_bounded | class.bounded; class.persistent; class.checkpoint_every(500); entry(in); in.into(plain) | bounded
+SyncDurabilityOnUnbounded             | sync_unbounded      | class.persistent; class.sync_durability; entry(in); in.into(plain)                    | sync_durability
 SleepWithoutPersistence            | sleep_no_persist | class.sleep_when_idle; entry(in); in.into(plain)                                      | -
 AtCheckpointWithoutMaxDelay        | hold_no_delay    | class.persistent; class.effectively_once; class.outputs_at_checkpoint; entry(in); in.into(plain) | raw_flags
 
@@ -186,7 +186,7 @@ ok                                 | checkpoint_ack   | class.persistent; class.
 ok                                 | checkpoint_every | class.persistent; class.effectively_once; class.checkpoint_every(500); entry(in); in.into(plain) | -
 ok                                 | hold_outputs     | class.persistent; class.effectively_once; class.outputs_at_checkpoint(50); entry(in); in.into(plain) | -
 ok                                 | hybrid_channel   | cited above                                                                           | -
-ok                                 | commit_block_chain | cited above                                                                         | workflow
+ok                                 | commit_block_chain | cited above                                                                         | bounded
 
 # The derived declarations of the `ok` rows above, in the same seven columns as
 # the two twins: topology | index | name | kind | producer | consumers | sink

@@ -2,16 +2,16 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
   @moduledoc """
   The polling half of `Flezha.Plugin.Provider.HttpPoll`: one process per
   enabled plugin owning the interval timer and the injection state, so the host
-  operative's dispatch path is never inside an upstream wait.
+  operator's dispatch path is never inside an upstream wait.
 
   Each request runs in a short-lived monitored child, which keeps this
   worker's mailbox answerable while a hanging endpoint is outstanding — the
   health probe reports on exactly the outage that would otherwise block it.
 
-  Injection is content-gated and the hash advances only once the operative has
+  Injection is content-gated and the hash advances only once the operator has
   TAKEN the payload, so a refused ingest re-offers the same content rather than
   losing a change. A fresh worker holds no hash, so its first success always
-  injects: that seed is what converges a rejoining operative within one
+  injects: that seed is what converges a rejoining operator within one
   interval.
   """
 
@@ -95,7 +95,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
   end
 
   def handle_info({:DOWN, ref, :process, _pid, _reason}, %{host_ref: ref} = state) do
-    # The operative this poller feeds is gone; injecting into a dead mailbox is
+    # The operator this poller feeds is gone; injecting into a dead mailbox is
     # nothing but wasted requests against the upstream.
     {:stop, :normal, state}
   end
@@ -176,7 +176,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
         recovered(%{state | last_hash: :crypto.hash(:sha256, body), etag: etag})
 
       {:error, reason} ->
-        # Neither the hash nor the validator is advanced: the operative did not
+        # Neither the hash nor the validator is advanced: the operator did not
         # take this content, so the next poll must re-offer it rather than read
         # it as already delivered and go quiet forever.
         failed(state, {:ingest, reason}, latency_ms)
@@ -184,10 +184,10 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
   end
 
   # The confirming ingest clause, not the fire-and-forget cast: a parked
-  # operative drops the cast silently, and a dropped config push that has
+  # operator drops the cast silently, and a dropped config push that has
   # already advanced the hash is lost until the endpoint happens to change
   # again. `:absorbed` (duplicate) and `:suspended` (journaled for wake) both
-  # mean the operative owns the payload.
+  # mean the operator owns the payload.
   defp confirm(state, body) do
     Host.inject(
       state.overwatcher_pid,
@@ -222,7 +222,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
     )
 
     # The last delivered hash is retained: being unable to re-read the resource
-    # does not invalidate the content the operative already holds.
+    # does not invalidate the content the operator already holds.
     %{state | consecutive_failures: failures, last_error: reason}
   end
 

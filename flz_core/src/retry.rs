@@ -2,7 +2,7 @@
 //! counted and logged — and the two off-thread ladders the routing seam
 //! climbs: a poison entry parse and an unwinding edge closure, each parked to
 //! the dead-letter queue once exhausted. A third caller, the frame naming a
-//! channel the operative does not declare, walks the same ladder with a
+//! channel the operator does not declare, walks the same ladder with a
 //! budget of one.
 
 use std::any::Any;
@@ -15,7 +15,7 @@ use flz_transport::transport::FlezhaStream;
 use flz_transport::utility::noise::{noise, xorshift64};
 
 use crate::channel::{ChannelDescriptor, RetryPolicy};
-use crate::operative::instance::OperativeInstance;
+use crate::operator::instance::OperatorInstance;
 use crate::park::RETRIES_TOTAL;
 use crate::routing::{deliver_edge, EntryView};
 
@@ -45,7 +45,7 @@ impl<'a> ParkTarget<'a> {
         Self::declared(channel, "_edge")
     }
 
-    /// A name off the wire the operative does not declare: parked at a budget
+    /// A name off the wire the operator does not declare: parked at a budget
     /// of one, because the same declared set answers every re-attempt, and
     /// under this side's own slot, because a frame-controlled name never
     /// becomes a path component.
@@ -104,7 +104,7 @@ fn backoff(base_ms: u64, attempt: u32) -> Duration {
     Duration::from_millis(jittered.min(crate::channel::RETRY_BACKOFF_MAX_MS))
 }
 
-/// Where a re-parsed entry value goes: a stream's consumers, a workflow's
+/// Where a re-parsed entry value goes: an unbounded operator's consumers, a bounded operator's
 /// inbox. The one place the two kinds differ on the entry ladder.
 pub type EntryDeliver = Box<dyn Fn(Arc<dyn Any + Send + Sync>) -> Result<(), String> + Send + Sync>;
 
@@ -180,7 +180,7 @@ pub(crate) fn run_entrance_ladder<V: EntryView>(
 /// Re-attempt one step per the target's budget, then park what still fails;
 /// `attempt_step` re-runs AND delivers, so the ladders differ only in the
 /// step. A [`ParkTarget`] travels rather than a `ChannelDescriptor`, because a
-/// frame naming a channel the operative does not declare has no descriptor to
+/// frame naming a channel the operator does not declare has no descriptor to
 /// park under and must park all the same. `true` when the ladder parked.
 pub(crate) fn run_retry_park_ladder(
     label: &str,
@@ -209,7 +209,7 @@ pub(crate) fn run_retry_park_ladder(
 
 /// Re-attempt one step per `retry`'s budget; `Err` carries the last error
 /// and the attempts spent once the budget is gone, for the caller's own
-/// terminal: a park, or a workflow stage's failure.
+/// terminal: a park, or a bounded stage's failure.
 pub(crate) fn climb_ladder(
     label: &str,
     retry: RetryPolicy,
@@ -232,7 +232,7 @@ pub(crate) fn climb_ladder(
 
 /// Park what a ladder could not deliver after `attempts`, under the
 /// target's identity; the tail every exhausted ladder ends in, whether it
-/// climbed here or at a workflow stage's barrier.
+/// climbed here or at a bounded stage's barrier.
 pub(crate) fn park_exhausted(
     label: &str,
     target: ParkTarget<'_>,
@@ -274,7 +274,7 @@ pub(crate) fn park_exhausted(
 /// parked and observable rather than a dead thread.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_edge_ladder(
-    instance: &Arc<OperativeInstance>,
+    instance: &Arc<OperatorInstance>,
     channel: &crate::channel::ChannelDescriptor,
     edge: &crate::channel::ConsumerEdge,
     value: &Arc<dyn Any + Send + Sync>,
@@ -339,7 +339,7 @@ impl<V: EntryView> Drop for LadderRunning<V> {
 }
 
 struct EdgeLadder {
-    instance: Arc<OperativeInstance>,
+    instance: Arc<OperatorInstance>,
     channel_id: u32,
     edge: crate::channel::ConsumerEdge,
     value: Arc<dyn Any + Send + Sync>,

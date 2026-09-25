@@ -8,15 +8,15 @@ defmodule Flezha.AuthZ.Action do
   """
 
   @actions [
-    # Operative lifecycle and read.
-    :"operative.start",
-    :"operative.stop",
-    :"operative.list",
-    :"operative.scale",
-    :"operative.rewind",
-    :"operative.send",
-    :"operative.replay",
-    :"operative.listen",
+    # Operator lifecycle and read.
+    :"operator.start",
+    :"operator.stop",
+    :"operator.list",
+    :"operator.scale",
+    :"operator.rewind",
+    :"operator.send",
+    :"operator.replay",
+    :"operator.listen",
     # Plugin lifecycle and read.
     :"plugin.install",
     :"plugin.enable",
@@ -60,13 +60,13 @@ defmodule Flezha.AuthZ.Action do
     :"state.delete",
     # Records in flight: an instance's inbox, journal and outbox.
     :"state.records",
-    # Dead-letter-queue operator verbs. The reads are named separately from the
+    # Dead-letter-queue administration verbs. The reads are named separately from the
     # mutations because `dlq.show` is the one that answers payload bytes.
     :"dlq.list",
     :"dlq.show",
     :"dlq.replay",
     :"dlq.drop",
-    # Scheduled operative spawns.
+    # Scheduled operator spawns.
     :"schedule.list",
     :"schedule.add",
     :"schedule.remove",

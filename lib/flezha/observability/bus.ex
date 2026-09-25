@@ -159,7 +159,7 @@ defmodule Flezha.Observability.Bus do
   end
 
   # The foundation's own diagnostics, both dispatched at one depth: suppressed
-  # when an operator disables the source they carry, and never subject to its
+  # when a user disables the source they carry, and never subject to its
   # own kind check, which no `:event` on `@system_source` can fail.
   defp emit_system_event(name, metadata) do
     signal =

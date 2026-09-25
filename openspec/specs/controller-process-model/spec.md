@@ -30,22 +30,22 @@ The telemetry event `[:flezha, :convergence, :safe_call]` is a published surface
 - **WHEN** the innermost target is wedged
 - **THEN** the inner call SHALL refuse first and the outer caller SHALL act on that value rather than time out itself
 
-### Requirement: One resolver SHALL answer which process serves an operative
+### Requirement: One resolver SHALL answer which process serves an operator
 
-The question "which process serves this operative" SHALL be answered by one seam that declares a resolver per key kind, and no consumer SHALL name a registry, an ETS table or a process-hub call to answer it for itself.
+The question "which process serves this operator" SHALL be answered by one seam that declares a resolver per key kind, and no consumer SHALL name a registry, an ETS table or a process-hub call to answer it for itself.
 
 A resolver SHALL answer `{:ok, pid}` or a reason that distinguishes not-found, dead and hub-unavailable, in one vocabulary. A cache in front of a resolver SHALL be invalidated by a monitor rather than by a per-use liveness probe, so the liveness-checked path is never sat behind an unchecked one; a per-frame `Process.alive?/1` is a message the target must answer and measures its mailbox, not its liveness.
 
-The key SHALL have one spelling per kind: a caller that holds an operative's class SHALL NOT reach the same resolver through an argument named for its id.
+The key SHALL have one spelling per kind: a caller that holds an operator's class SHALL NOT reach the same resolver through an argument named for its id.
 
 #### Scenario: A dead target is refused, not returned
 
-- **WHEN** the process a cache holds for an operative has died
+- **WHEN** the process a cache holds for an operator has died
 - **THEN** the next resolution SHALL answer from the registry and SHALL NOT return the dead pid
 
 #### Scenario: A hub that is unavailable is named as such
 
-- **WHEN** an operative's namespace hub is gone, terminating or mid-restart
+- **WHEN** an operator's namespace hub is gone, terminating or mid-restart
 - **THEN** the resolver SHALL answer a hub-unavailable reason distinct from not-found, and SHALL NOT raise into its caller
 
 ### Requirement: A watched process's death SHALL be recorded once by one watch seam

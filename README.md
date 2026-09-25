@@ -1,22 +1,24 @@
 # Flezha
 
-Distributed stateful operatives: a compute graph of tasklets, each with its
+Distributed stateful operators: a compute graph of tasklets, each with its
 own durable per-Cell state, placed and migrated across a cluster by a
-controller, with static and dynamic creation of operatives.
+controller, with static and dynamic creation of operators. A runner hosts
+operators; an operator is the unit you start, and it is either bounded (every
+run ends) or unbounded (it runs until you stop it).
 
 It is built for ETL pipelines: extract from files, HTTP endpoints, sockets or
-another operative, transform with per-key state that survives a crash, and load
+another operator, transform with per-key state that survives a crash, and load
 into Postgres, Kafka or files, as a continuous stream or as a scheduled batch
 job. [ETL pipelines](#etl-pipelines) maps each stage to what carries it.
 
 ## Try it without any of that
 
 You do not need a controller, a container or a socket to see one run. **Local
-mode** takes the operative class you would deploy, runs its declared graph in
+mode** takes the operator class you would deploy, runs its declared graph in
 your own process, and hands you the output:
 
 ```rust
-let run = LocalOperative::start::<WordCount>()?;
+let run = LocalOperator::start::<WordCount>()?;
 run.on_sink("totals", |out| println!("{}", String::from_utf8_lossy(&out.payload)))?;
 run.feed("lines", "the quick brown fox")?;
 run.run_until_idle(Duration::from_secs(5))?;
@@ -39,21 +41,21 @@ minutes.
 
 ## ETL pipelines
 
-Extract, transform, load is the job Flezha is shaped for. An operative declares
+Extract, transform, load is the job Flezha is shaped for. An operator declares
 where records come in, what happens to them and where they go, and plugins attach
 the real endpoints, so the same code can read a file today and an HTTP feed
 tomorrow with no rebuild.
 
 | Stage | What carries it |
 | --- | --- |
-| Extract | A file read line by line, resuming from its last committed offset ([`file.md`](docs/plugins/file.md)); an HTTP resource, injected only when it changes ([`http_poll.md`](docs/plugins/http_poll.md)); a WebSocket feed ([`websocket_subscription.md`](docs/plugins/websocket_subscription.md)); another operative's output ([`operative_forward.md`](docs/plugins/operative_forward.md)); or a plugin of your own ([`installation.md`](docs/plugins/installation.md)) |
+| Extract | A file read line by line, resuming from its last committed offset ([`file.md`](docs/plugins/file.md)); an HTTP resource, injected only when it changes ([`http_poll.md`](docs/plugins/http_poll.md)); a WebSocket feed ([`websocket_subscription.md`](docs/plugins/websocket_subscription.md)); another operator's output ([`operator_forward.md`](docs/plugins/operator_forward.md)); or a plugin of your own ([`installation.md`](docs/plugins/installation.md)) |
 | Transform | `map`, `filter`, `flat_map` and `key_by` declared on the edges ([`stream_transforms.md`](docs/sdk/stream_transforms.md)); tasklets with durable per-key state for aggregation and deduplication; joins and enrichment by merging channels ([`multi_input_tasklets.md`](docs/sdk/multi_input_tasklets.md)); windows and timeouts from per-key timers ([`cell_timers.md`](docs/sdk/cell_timers.md)) |
-| Load | Postgres, each batch writing its rows and its progress watermark in one transaction ([`postgres_sink.md`](docs/plugins/postgres_sink.md)); Kafka, with retries, batching and an idempotent producer ([`kafka_producer.md`](docs/plugins/kafka_producer.md)); a file; or the next operative |
+| Load | Postgres, each batch writing its rows and its progress watermark in one transaction ([`postgres_sink.md`](docs/plugins/postgres_sink.md)); Kafka, with retries, batching and an idempotent producer ([`kafka_producer.md`](docs/plugins/kafka_producer.md)); a file; or the next operator |
 
 What a pipeline usually has to build around itself is already there:
 
 - **A crash resumes instead of starting over.** Per-key state is journaled and
-  snapshotted on the controller, and an operative picks up where it stopped
+  snapshotted on the controller, and an operator picks up where it stopped
   after a runner crash or a controller restart
   ([`auto_restore_on_boot.md`](docs/operations/auto_restore_on_boot.md)).
 - **A bad record neither stops the stream nor vanishes.** It is retried, then
@@ -68,30 +70,30 @@ What a pipeline usually has to build around itself is already there:
   effectively-once, a record that arrives late rewinds its key and replays the
   input in event-time order, and a keyed sink overwrites the stale rows
   ([`data_durability.md`](docs/resilience/data_durability.md#late-input-correction-fix-the-past-and-the-sinks-fix-themselves)).
-- **Batch jobs as well as streams.** A workflow operative is a run with a start
+- **Batch jobs as well as streams.** A bounded operator is a run with a start
   and an end: it commits progress at every step, retries a failing step before
   it aborts, and can undo finished steps with saga compensation
-  ([`workflow_profile.md`](docs/architecture/workflow_profile.md)).
+  ([`bounded_profile.md`](docs/architecture/bounded_profile.md)).
   `flz schedule` starts one on a cron schedule, with no external scheduler.
-- **Scale by key.** `--partitions N` splits one stream operative, or a
-  per-input workflow, into N instances across its key space
-  ([`partitioned_operatives.md`](docs/sdk/partitioned_operatives.md)).
+- **Scale by key.** `--partitions N` splits one unbounded operator, or a
+  per-input bounded operator, into N instances across its key space
+  ([`partitioned_operators.md`](docs/sdk/partitioned_operators.md)).
 
 ## Reading further
 
 [`docs/architecture/`](docs/architecture/README.md) — the durable-compute
-kernel, the two operative profiles, and the diagrams. Vocabulary:
+kernel, the two operator profiles, and the diagrams. Vocabulary:
 [`docs/glossary.md`](docs/glossary.md). Every knob, by layer:
 [`docs/configuration.md`](docs/configuration.md).
 
 ## Features
 - ETL pipelines, run continuously or as scheduled batch jobs ([ETL pipelines](#etl-pipelines))
 - Run a whole graph in process, with no controller ([`docs/quickstart.md`](docs/quickstart.md))
-- Clustered, hot-swap-migratable operatives
+- Clustered, hot-swap-migratable operators
 - SDK runtimes for Rust, Java, and others over a UDS or QUIC transport
 - Per-Cell durable state — WAL + snapshot, crash-resume, point-in-time query ([`docs/internals/state_persistence.md`](docs/internals/state_persistence.md))
 - Opt-in effectively-once delivery — durable input log, atomic effect record, fsync-gated outbox ([`docs/architecture/kernel.md`](docs/architecture/kernel.md))
-- Workflow operatives — a tasklet tree with saga compensation, a durable loop, and suspension ([`docs/architecture/workflow_profile.md`](docs/architecture/workflow_profile.md))
+- Bounded operators — a tasklet tree with saga compensation, a durable loop, and suspension ([`docs/architecture/bounded_profile.md`](docs/architecture/bounded_profile.md))
 - Installable plugin subsystem ([`docs/plugins/installation.md`](docs/plugins/installation.md))
 - First-party Kafka producer with retries, idempotence, batching, and bounded queueing ([`docs/plugins/kafka_producer.md`](docs/plugins/kafka_producer.md))
 - Transactional Postgres sink — upsert + progress watermark in one transaction ([`docs/resilience/data_durability.md`](docs/resilience/data_durability.md))
@@ -196,7 +198,7 @@ telemetry, exit-code semantics and the third-SIGTERM escape hatch:
 `flz reset` clears the Controller's durable on-disk state so the next boot
 starts from a clean slate, and clears nothing while the Controller is up. Which
 directories are in scope (the socket directory is resolved, not fixed), the
-flags, the exit codes and the operator recipes for docker-compose, k8s and CI:
+flags, the exit codes and the user recipes for docker-compose, k8s and CI:
 [`docs/operations/reset.md`](docs/operations/reset.md).
 
 ## Code style
@@ -255,17 +257,17 @@ Stopping the node.
 _build/dev/rel/flezha/bin/flz controller stop
 ```
 
-### Starting an operative.
+### Starting an operator.
 ```bash
-_build/dev/rel/flezha/bin/flz operative start do_nothing --id my_operative
+_build/dev/rel/flezha/bin/flz operator start do_nothing --id my_operator
 ```
 
 `--init-values` seeds Tasklet state at start. Its top level is a map of
-**Tasklet name** to that Tasklet's starting state, so one operative seeds
+**Tasklet name** to that Tasklet's starting state, so one operator seeds
 several Tasklets from one document:
 
 ```bash
-_build/dev/rel/flezha/bin/flz operative start compare_filter --id my_operative --init-values='{
+_build/dev/rel/flezha/bin/flz operator start compare_filter --id my_operator --init-values='{
   "compare_filter_tasklet": {"comparable": "hello world", "inverted": false}
 }'
 ```
@@ -275,13 +277,13 @@ state its class builds. A Tasklet with declared Cell keys takes one state
 per key instead: `{"<tasklet>": {"<cell_key>": <state>}}`. A name the class
 does not carry is ignored with a line on the runner's stderr and the start
 still succeeds, so check the spelling. The full rules, including what a
-workflow operative does with the same flag, are in
-[`docs/sdk/protocol_spec.md`](docs/sdk/protocol_spec.md) "Operative state JSON
+workflow does with the same flag, are in
+[`docs/sdk/protocol_spec.md`](docs/sdk/protocol_spec.md) "Operator state JSON
 shape".
 
-### Stop an operative.
+### Stop an operator.
 ```bash
-_build/dev/rel/flezha/bin/flz operative stop my_operative
+_build/dev/rel/flezha/bin/flz operator stop my_operator
 ```
 
 ### Installable plugins
@@ -297,39 +299,39 @@ See [`docs/plugins/installation.md`](docs/plugins/installation.md) for the
 full authoring guide and [`examples/plugins/hello_world/`](examples/plugins/hello_world/)
 for a minimal copy-paste starting point.
 
-### Enabling websocket plugin for operative.
+### Enabling websocket plugin for operator.
 
 `flz plugin enable <plugin_id> <provider_id> …`. Provider options carry the
 `--X` prefix and reach `init_provider/1`, and a provider with a strict
 allow-list refuses every `--X` key it does not own. The enable itself reads
-three more options: `--namespace` (or `-n`), `--operative_id`, the operative the
+three more options: `--namespace` (or `-n`), `--operator_id`, the operator the
 plugin attaches to, and `--hook`. Any other plain option is refused, naming it.
 
-A hook is a point at which the operative calls the plugin, named by the
+A hook is a point at which the operator calls the plugin, named by the
 provider callback it runs. `--hook=on_output` sends the plugin every payload the
-operative emits, `--hook=on_input` every payload it ingests, and
+operator emits, `--hook=on_input` every payload it ingests, and
 `--hook=on_interval --on_interval.interval_ms=5000` calls it on a timer whose
 interval has no default. `--hook` repeats, and a hook's own options are written
 `--<name>.<key>=<value>`. Naming no hook means no hooks, which is what a plugin
 that only receives wants: the websocket below holds its own socket and injects
-every frame into the operative's input.
+every frame into the operator's input.
 
 ```bash
-_build/dev/rel/flezha/bin/flz plugin enable my_ws operative_websocket \
-  --operative_id=my_operative \
+_build/dev/rel/flezha/bin/flz plugin enable my_ws operator_websocket \
+  --operator_id=my_operator \
   --Xuri="ws://localhost:4500" \
   --Xpost_connect='{"payload":{"type":"text","message":"{\"event_type\":\"subscribe\",\"event_data\":{\"default_message\":\"hello world\",\"interval\":1000}}"}}'
 ```
 
 ```bash
-_build/dev/rel/flezha/bin/flz plugin enable my_stdout operative_stdout \
-  --operative_id=my_operative \
+_build/dev/rel/flezha/bin/flz plugin enable my_stdout operator_stdout \
+  --operator_id=my_operator \
   --hook=on_output
 ```
 
-### Get operative state.
+### Get operator state.
 ```bash
-_build/dev/rel/flezha/bin/flz operative state my_operative
+_build/dev/rel/flezha/bin/flz operator state my_operator
 ```
 
 
@@ -352,7 +354,7 @@ Full reference (flags, shapes, CI gates, floors, triage):
 
 Flezha auto-restores after any restart — single-controller crash, rolling
 deploy, or full cluster cold boot. Two persistence layers back it: the
-ProcessHub durable registry, which holds every operative's child-spec including
+ProcessHub durable registry, which holds every operator's child-spec including
 `opts[:plugins]`, and the per-Cell WAL/snapshot, which holds change-by-change
 progress and is shipped back to the SDK when the Cell's stream reattaches.
 What is written where, the boot reconcile, the `flz boot status` and

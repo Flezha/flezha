@@ -1,24 +1,24 @@
 # Deploy a controller
 
-The controller is the brain of a Flezha deployment. Runners execute operative
+The controller is the brain of a Flezha deployment. Runners execute operator
 code and nothing else; every decision about that code's life, and every record
 of it that has to survive a crash, belongs to the controller. Five things are
 its alone:
 
-- **Placement and distribution.** Which runner each operative binds to, how a
-  partitioned operative's key groups are divided between its instances, and
+- **Placement and distribution.** Which runner each operator binds to, how a
+  partitioned operator's key groups are divided between its instances, and
   where that work goes when a runner disconnects or a node leaves the cluster.
 - **Healing.** A convergence loop compares what should be running against what
-  is, on a tick, and closes the gap: rebinding an operative whose runner went
+  is, on a tick, and closes the gap: rebinding an operator whose runner went
   away, retrying on a backoff ladder, and parking what cannot proceed instead
   of losing it.
 - **Durable state.** The per-Cell write-ahead log, the snapshots and the dead
   letter queue. This is what turns a restart into a resume, and what
   effectively-once delivery is built on.
-- **The registry.** The record of which operatives exist and what they were
+- **The registry.** The record of which operators exist and what they were
   doing, held so that it outlives any single process, and replayed on every
   boot before the controller calls itself ready.
-- **The operator surface.** Namespaces, authorization, tokens and roles,
+- **The operations surface.** Namespaces, authorization, tokens and roles,
   plugins, schedules, the audit log and observability export: everything `flz`
   and any consumer program talk to.
 
@@ -58,7 +58,7 @@ Until then, build a release from a checkout:
 $ make build-release
 ```
 
-That writes `_build/prod/rel/flezha/`, holding `bin/flz` (the operator CLI) and
+That writes `_build/prod/rel/flezha/`, holding `bin/flz` (the user CLI) and
 `bin/flzvm` (the release script the CLI calls). The release carries its own
 Erlang runtime, so the machine it runs on needs no Elixir and no Erlang.
 
@@ -308,7 +308,7 @@ $ curl localhost:9569/healthz
 ```
 
 ```output
-{"status":"healthy","durability":"local_only","tick_age_ms":3460,"bound_operatives":0,"producing_operatives":0,"unknown_operatives":0}
+{"status":"healthy","durability":"local_only","tick_age_ms":3460,"bound_operators":0,"producing_operators":0,"unknown_operators":0}
 ```
 
 `flz` cannot reach this controller. The CLI runs the `flzvm` script beside it,
@@ -323,7 +323,7 @@ passed over some of what the boot told you. Neither matters for a first run,
 and both are picked up later.
 
 **Authorization is off.** Every command above sets `FLEZHA_AUTHZ_ENABLED=false`.
-With it on, operator verbs refuse until you claim an admin, and a runner has to
+With it on, administration verbs refuse until you claim an admin, and a runner has to
 prove the namespace it connects to.
 [`authorization.md`](tradedesk/authorization.md) turns it on.
 

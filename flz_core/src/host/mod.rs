@@ -25,16 +25,16 @@ mod decl_tests;
 
 #[cfg(feature = "bench-internals")]
 pub(crate) use activation::empty_effect;
-pub(crate) use activation::settle_workflow_undo;
+pub(crate) use activation::settle_bounded_undo;
 pub use activation::{abandon_activation, apply_result, to_schema};
 pub use cell::{cell_ref_of, BytesBuffer, HostPayload, HostTaskletFacts};
 pub use commands::{
     apply_state_locked, restore_fold_exclusive, snapshot_frame_crossing, state_json_locked,
 };
 pub use decl::{
-    HostAckGranularity, HostBeyondWindow, HostCellModeDecl, HostChannelDecl, HostChannelKind,
-    HostCheckpointOutputs, HostClassDecl, HostClock, HostLink, HostLoopMode, HostOverflow,
-    HostRollbackMode, HostTaskletDecl, HostWorkflowDecl,
+    HostAckGranularity, HostBeyondWindow, HostBoundedDecl, HostCellModeDecl, HostChannelDecl,
+    HostChannelKind, HostCheckpointOutputs, HostClassDecl, HostClock, HostLink, HostLoopMode,
+    HostOverflow, HostRollbackMode, HostTaskletDecl,
 };
 pub use issue::{render_issues, TopologyIssue};
 pub use prepare::{

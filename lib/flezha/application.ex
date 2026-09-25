@@ -55,7 +55,7 @@ defmodule Flezha.Application do
 
     opts = [strategy: :one_for_one, name: Flezha.Supervisor]
 
-    # A child that refused to start already carries the reason an operator
+    # A child that refused to start already carries the reason a user
     # needs — a claimed socket directory names the peer and the variable. Only
     # a tree that came up is asked whether it reached ready; asking a
     # supervisor that never started replaces that reason with `:noproc`.
@@ -90,7 +90,7 @@ defmodule Flezha.Application do
   defp drain_on_prep_stop() do
     # The Coordinator owns the drain — it dispatches ProcessHub
     # `cluster_leave` (via HubManager.stop_hub_manager/0) inside its
-    # drain phase and waits for peers to claim our Operatives before
+    # drain phase and waits for peers to claim our Operators before
     # finalising. Bounded by `:flezha, :graceful_shutdown_timeout_ms`.
     _ = Coordinator.shutdown(:prep_stop)
   catch
@@ -181,7 +181,7 @@ defmodule Flezha.Application do
       worker_families ++
       [
         Flezha.Service.PortPilot,
-        {Task.Supervisor, name: Flezha.Operative.MessageHandlerTaskSup}
+        {Task.Supervisor, name: Flezha.Operator.MessageHandlerTaskSup}
       ]
   end
 

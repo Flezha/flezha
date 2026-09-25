@@ -78,7 +78,7 @@ impl PollCore {
         if self.wakes.any_due(crate::util::wall_now_ms()) {
             return true;
         }
-        // A direct activation — a host crossing, a workflow undo — is runnable
+        // A direct activation — a host crossing, a bounded operator undo — is runnable
         // whatever the cap says, and something waits on its answer; queued cell
         // work at the cap is not runnable and is owed no thread.
         let runnable = !self.direct.lock_recover().is_empty()

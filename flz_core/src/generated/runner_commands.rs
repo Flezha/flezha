@@ -18,9 +18,9 @@ pub mod command_request {
         #[prost(message, tag = "3")]
         ConnectSocket(super::ConnectSocket),
         #[prost(message, tag = "4")]
-        AddOperative(super::AddOperative),
+        AddOperator(super::AddOperator),
         #[prost(message, tag = "5")]
-        RemOperative(super::RemOperative),
+        RemOperator(super::RemOperator),
         #[prost(message, tag = "6")]
         MigrationSerialization(super::MigrationSerialization),
         #[prost(message, tag = "7")]
@@ -30,7 +30,7 @@ pub mod command_request {
         #[prost(message, tag = "9")]
         RunnerDisconnect(super::RunnerDisconnect),
         #[prost(message, tag = "10")]
-        OperativeMessage(super::OperativeMessage),
+        OperatorMessage(super::OperatorMessage),
         #[prost(message, tag = "11")]
         CellApplyState(super::CellApplyState),
         #[prost(message, tag = "12")]
@@ -54,9 +54,9 @@ pub mod command_request {
         #[prost(message, tag = "21")]
         ReassignRunnerId(super::ReassignRunnerId),
         #[prost(message, tag = "22")]
-        WorkflowCompleted(super::WorkflowCompleted),
+        BoundedCompleted(super::BoundedCompleted),
         #[prost(message, tag = "23")]
-        WorkflowStop(super::WorkflowStop),
+        BoundedStop(super::BoundedStop),
         #[prost(message, tag = "24")]
         CreditWindowInit(super::CreditWindowInit),
         #[prost(message, tag = "25")]
@@ -78,9 +78,9 @@ pub mod command_request {
         #[prost(message, tag = "33")]
         UpdateFactories(super::UpdateFactories),
         #[prost(message, tag = "34")]
-        SpawnWorkflowRequest(super::SpawnWorkflowRequest),
+        SpawnBoundedRequest(super::SpawnBoundedRequest),
         #[prost(message, tag = "35")]
-        SpawnWorkflowResponse(super::SpawnWorkflowResponse),
+        SpawnBoundedResponse(super::SpawnBoundedResponse),
         #[prost(message, tag = "36")]
         AdminRequest(super::AdminRequest),
         #[prost(message, tag = "37")]
@@ -109,41 +109,41 @@ pub struct ConnectSocket {
     pub sockets_count: u32,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct AddOperative {
+pub struct AddOperator {
     #[prost(string, tag = "1")]
-    pub operative_id: ::prost::alloc::string::String,
+    pub operator_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub factory_id: ::prost::alloc::string::String,
     /// Initial state per tasklet name, a JSON object, for both kinds: a
-    /// workflow's tasklets take it as a stream's do, and a workflow's input
+    /// bounded operator's tasklets take it as an unbounded operator's do, and a bounded operator's input
     /// is the messages on its entry channels, never this document.
     #[prost(string, tag = "3")]
     pub init_values: ::prost::alloc::string::String,
-    /// Operative kind for this unit: "stream" or "workflow". Default
-    /// (when populated by the Controller from the operative's :kind) is
-    /// "stream".
+    /// Operator kind for this unit: "unbounded" or "bounded". Default
+    /// (when populated by the Controller from the operator's :kind) is
+    /// "unbounded".
     #[prost(string, tag = "4")]
     pub kind: ::prost::alloc::string::String,
     /// Number of persisted Cells the Controller will ship RestoreInitState
-    /// for on this (re)bind. Non-zero only when re-binding a durable workflow
-    /// operative that has WAL state on disk (crash-resume). A durable workflow
+    /// for on this (re)bind. Non-zero only when re-binding a durable bounded operator
+    /// operator that has WAL state on disk (crash-resume). A durable bounded operator
     /// driver holds its first Tasklet until this many Cell restores have
     /// landed, so a resumed run reads persisted state instead of cold-starting.
-    /// 0 for a fresh spawn, a stream operative, or an opted-out workflow one.
+    /// 0 for a fresh spawn, an unbounded operator, or an opted-out bounded operator one.
     #[prost(uint32, tag = "5")]
     pub resume_cell_count: u32,
-    /// Workflow task-journal crash-resume (workflow-task-journal): the instance's
+    /// Bounded operator task-journal crash-resume (bounded-task-journal): the instance's
     /// committed task indexes + latest journaled handoff. Instance-scoped, so it
     /// rides the bind itself rather than a per-Cell restore — a durable
-    /// workflow class with no per-Cell state ships no RestoreInitState at all,
+    /// bounded class with no per-Cell state ships no RestoreInitState at all,
     /// and would otherwise resume at iteration 0 on every wake.
     /// Absent when the instance has no journal (fresh spawn, opted-out class,
-    /// stream operative) — the driver then keeps the re-run-from-top behaviour.
+    /// unbounded operator) — the driver then keeps the re-run-from-top behaviour.
     #[prost(message, optional, tag = "6")]
     pub task_journal: ::core::option::Option<TaskJournalState>,
-    /// Partitioned operatives: this member's identity within its group. A
+    /// Partitioned operators: this member's identity within its group. A
     /// `partition_count` below 2 means unpartitioned — the whole key space is
-    /// this instance's, which is every operative that predates partitioning.
+    /// this instance's, which is every operator that predates partitioning.
     #[prost(uint32, tag = "7")]
     pub partition_index: u32,
     #[prost(uint32, tag = "8")]
@@ -163,35 +163,33 @@ pub struct AddOperative {
     #[prost(uint32, tag = "11")]
     pub inbox_tail_count: u32,
 }
-/// SDK -> Controller, as the CommandResponse raw_data of AddOperative.
-/// Carries the operative class's SDK-side declarations (operative metadata)
+/// SDK -> Controller, as the CommandResponse raw_data of AddOperator.
+/// Carries the operator class's SDK-side declarations (operator metadata)
 /// so the Controller resolves per-class capabilities without a parallel
 /// config channel. Key "effectively_once" = "true" declares the
 /// effectively-once delivery tier. The SDK returns empty raw_data when no
 /// declaration is present (tier off), keeping the default wire byte-identical;
 /// the Controller resolves absent/undecodable metadata to every default.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct AddOperativeResponse {
+pub struct AddOperatorResponse {
     #[prost(map = "string, string", tag = "1")]
-    pub metadata: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost::alloc::string::String,
-    >,
+    pub metadata:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct RemOperative {
+pub struct RemOperator {
     #[prost(string, tag = "1")]
-    pub operative_id: ::prost::alloc::string::String,
+    pub operator_id: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MigrationSerialization {
     #[prost(string, tag = "1")]
-    pub operative_id: ::prost::alloc::string::String,
+    pub operator_id: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MigrationDeserialization {
     #[prost(string, tag = "1")]
-    pub operative_id: ::prost::alloc::string::String,
+    pub operator_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub factory_id: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "3")]
@@ -199,14 +197,14 @@ pub struct MigrationDeserialization {
 }
 /// Serialize live in-memory Cell state as JSON. Both selector fields are
 /// optional (empty = absent): absent selector covers every Tasklet of the
-/// Operative (the migration/handover shape), `tasklet` narrows to one
+/// Operator (the migration/handover shape), `tasklet` narrows to one
 /// Tasklet's Cells, `tasklet` + `cell_key` to one Cell. An
 /// `cell_key` without a `tasklet` is refused — a Cell key is unique
 /// only within its Tasklet.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CellState {
     #[prost(string, tag = "1")]
-    pub operative_id: ::prost::alloc::string::String,
+    pub operator_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub tasklet: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
@@ -227,21 +225,21 @@ pub struct RunnerDisconnect {
     pub reason: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct OperativeMessage {
+pub struct OperatorMessage {
     #[prost(string, tag = "1")]
-    pub operative_id: ::prost::alloc::string::String,
+    pub operator_id: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "2")]
     pub payload: ::prost::alloc::vec::Vec<u8>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct OperativeMessageResponse {
+pub struct OperatorMessageResponse {
     #[prost(bytes = "vec", tag = "1")]
     pub payload: ::prost::alloc::vec::Vec<u8>,
     #[prost(string, tag = "2")]
     pub error: ::prost::alloc::string::String,
 }
 /// Inverse of CellState. Sent by the Controller to a Runner SDK to
-/// prime a freshly-spawned Operative's GenServer/struct state from a
+/// prime a freshly-spawned Operator's GenServer/struct state from a
 /// previously-captured `state_binary`. Round-trips with the same opaque
 /// SDK-internal serialization used by CellState. SDKs that do not
 /// implement Apply respond with status="error" and error\[\] containing the
@@ -249,7 +247,7 @@ pub struct OperativeMessageResponse {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CellApplyState {
     #[prost(string, tag = "1")]
-    pub operative_id: ::prost::alloc::string::String,
+    pub operator_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub factory_id: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "3")]
@@ -257,9 +255,9 @@ pub struct CellApplyState {
 }
 /// Sent by the SDK to the Controller on graceful shutdown (SIGTERM, Drop of
 /// the SDK handle, explicit disconnect()) for each currently-running
-/// Operative. Carries the Runner's freshest in-memory state binary so the
+/// Operator. Carries the Runner's freshest in-memory state binary so the
 /// Controller can overwrite Overwatch.state.snapshot before the next
-/// AddOperative reissue (see runner-controller-connection-healing
+/// AddOperator reissue (see runner-controller-connection-healing
 /// capability).
 ///
 /// Direction is reversed compared to most CommandRequest variants: SDK -> Controller.
@@ -273,7 +271,7 @@ pub struct CellApplyState {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RunnerShutdownNotification {
     #[prost(string, tag = "1")]
-    pub operative_id: ::prost::alloc::string::String,
+    pub operator_id: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "2")]
     pub serialized_state: ::prost::alloc::vec::Vec<u8>,
 }
@@ -283,12 +281,12 @@ pub struct RunnerShutdownNotification {
 /// is enqueued on the Overwatch GenServer (not after the cast has been applied).
 ///
 /// Controller -> SDK direction at the wire level — same envelope as the
-/// notification. The SDK awaits this with a per-Operative 2 s timeout
-/// (parallelised across Operatives) and exits regardless after the timeout.
+/// notification. The SDK awaits this with a per-Operator 2 s timeout
+/// (parallelised across Operators) and exits regardless after the timeout.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RunnerShutdownAck {
     #[prost(string, tag = "1")]
-    pub operative_id: ::prost::alloc::string::String,
+    pub operator_id: ::prost::alloc::string::String,
 }
 /// One serialized inter-tasklet handoff value: the payload bytes produced
 /// by the channel's byte codec, tagged with the producing channel id so a
@@ -317,7 +315,7 @@ pub struct CommittedCell {
     pub first_seq: ::core::option::Option<u64>,
 }
 /// SDK -> Controller, at each tasklet barrier of a durable structured
-/// workflow operative (workflow-task-journal): tasklet `task_idx` completed
+/// bounded operator (bounded-task-journal): tasklet `task_idx` completed
 /// forward on `cells_ran`, each naming the effect records it wrote in the
 /// stage, and released the serialized `handoff` batch. The Controller waits
 /// until every named record is durable on its Cell's writer, appends ONE
@@ -337,7 +335,7 @@ pub struct CommittedCell {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TaskCommit {
     #[prost(string, tag = "1")]
-    pub operative_id: ::prost::alloc::string::String,
+    pub operator_id: ::prost::alloc::string::String,
     #[prost(uint32, tag = "2")]
     pub task_idx: u32,
     #[prost(uint32, tag = "3")]
@@ -375,14 +373,14 @@ pub struct TimerTrigger {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TaskCommitResponse {
     #[prost(string, tag = "1")]
-    pub operative_id: ::prost::alloc::string::String,
+    pub operator_id: ::prost::alloc::string::String,
     #[prost(uint32, tag = "2")]
     pub task_idx: u32,
     #[prost(string, tag = "3")]
     pub error: ::prost::alloc::string::String,
 }
 /// SDK -> Controller, at each iteration boundary of a looping durable
-/// structured workflow operative (workflow-durable-loop): iteration `iter`
+/// structured bounded operator (bounded-durable-loop): iteration `iter`
 /// finished, having consumed the durable input log up to `consumed_offset` —
 /// the `flz.offset` of the input that seeded it, absent when it consumed none
 /// (0 is the log's first offset) — and released `handoff` as its terminal
@@ -399,7 +397,7 @@ pub struct TaskCommitResponse {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IterCommit {
     #[prost(string, tag = "1")]
-    pub operative_id: ::prost::alloc::string::String,
+    pub operator_id: ::prost::alloc::string::String,
     #[prost(uint32, tag = "2")]
     pub iter: u32,
     #[prost(uint64, optional, tag = "3")]
@@ -421,26 +419,26 @@ pub struct IterCommit {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IterCommitResponse {
     #[prost(string, tag = "1")]
-    pub operative_id: ::prost::alloc::string::String,
+    pub operator_id: ::prost::alloc::string::String,
     #[prost(uint32, tag = "2")]
     pub iter: u32,
     #[prost(string, tag = "3")]
     pub error: ::prost::alloc::string::String,
 }
 /// SDK -> Controller. An instance of either kind whose class sleeps has been idle
-/// past the threshold (a workflow at the committed boundary of iteration `iter`,
-/// a stream at `iter` 0): it asks to sleep WITHOUT a WorkflowCompleted (this is
+/// past the threshold (a bounded operator at the committed boundary of iteration `iter`,
+/// an unbounded operator at `iter` 0): it asks to sleep WITHOUT a BoundedCompleted (this is
 /// not a terminal outcome). The Controller writes the instance's park record and
 /// evicts it from the runner; the registry keeps it `suspended` until a new
 /// input-log append, or the wake deadline, rehydrates it
-/// (workflow-durable-suspension). `wake_deadline_ms` is 0 when the operative
+/// (bounded-durable-suspension). `wake_deadline_ms` is 0 when the operator
 /// declared no durable timer. `consumed_offset` is the highest input-log offset
 /// the run parked to the dead-letter queue unread, absent when none: consumed
 /// without a pass, so the Controller releases it rather than re-delivering it.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IterPark {
     #[prost(string, tag = "1")]
-    pub operative_id: ::prost::alloc::string::String,
+    pub operator_id: ::prost::alloc::string::String,
     #[prost(uint32, tag = "2")]
     pub iter: u32,
     #[prost(uint64, tag = "3")]
@@ -450,7 +448,7 @@ pub struct IterPark {
 }
 /// One journaled forward task commit, shipped back on crash-resume so the driver
 /// can rebuild `plan_compensation`'s per-iteration `committed` input from
-/// durable state (workflow-durable-loop): tasklet `task_idx` of iteration `iter`
+/// durable state (bounded-durable-loop): tasklet `task_idx` of iteration `iter`
 /// completed forward on `cells_ran`.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TaskCommittedTask {
@@ -468,7 +466,7 @@ pub struct TaskCommittedTask {
     pub trigger: ::core::option::Option<TimerTrigger>,
 }
 /// What one committed tasklet of the in-flight iteration released, keyed by
-/// its task_idx (workflow-branching). A tasklet tree re-seeds each uncommitted
+/// its task_idx (bounded-branching). A tasklet tree re-seeds each uncommitted
 /// child branch from its own parent's edge, so the resume state carries every
 /// in-flight commit's handoff — not just the latest one's.
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -479,7 +477,7 @@ pub struct TaskEdgeHandoff {
     pub handoff: ::prost::alloc::vec::Vec<TaskHandoffItem>,
 }
 /// Committed task-journal state shipped back on crash-resume
-/// (workflow-task-journal). `iter` is the iteration to resume at — the one after
+/// (bounded-task-journal). `iter` is the iteration to resume at — the one after
 /// the highest journaled `iter_committed` (0 for a non-looping chain);
 /// `committed_task_idxs` are the tasklets already committed inside that
 /// still-in-flight iteration, which the driver skips, and `task_handoffs` what
@@ -494,7 +492,7 @@ pub struct TaskEdgeHandoff {
 /// input.
 ///
 /// `rewind_undo` carries the tasklets a rewind unwound that have not been
-/// compensated yet (workflow-loop-rewind). The driver runs them through the
+/// compensated yet (bounded-loop-rewind). The driver runs them through the
 /// ordinary compensation planner before resuming forward at `iter`, which the
 /// journal has already folded back to the rewound-to iteration. Each undo
 /// journals a `compensated` entry, so the list shrinks across a crash and
@@ -529,7 +527,7 @@ pub struct TaskJournalState {
 /// before any input is processed. See the per-cell state persistence design.
 ///
 /// `cell_id` is the structured byte identifier
-/// `[operative_class_len: u8][operative_class][tasklet_id_len: u8][tasklet_id]
+/// `[operator_class_len: u8][operator_class][tasklet_id_len: u8][tasklet_id]
 ///   [cell_key_len: u16 BE][cell_key]`. `change_log_bytes` is
 /// the tail of the WAL framed `[seq: u64 BE][len: u32 BE]
 /// [header: 16B][change_bytes][crc32: u32 BE]` records back-to-back.
@@ -541,12 +539,12 @@ pub struct RestoreInitState {
     pub snapshot_bytes: ::prost::alloc::vec::Vec<u8>,
     #[prost(bytes = "vec", tag = "3")]
     pub change_log_bytes: ::prost::alloc::vec::Vec<u8>,
-    /// Saga crash-resume (workflow-operative-saga): the Controller sets these
+    /// Saga crash-resume (bounded-operator-saga): the Controller sets these
     /// from the per-Cell compensation markers it persisted for a durable
-    /// workflow operative. `has_compensation_intent` ⇒ this Cell's tasklet
+    /// bounded operator. `has_compensation_intent` ⇒ this Cell's tasklet
     /// completed forward and may need undo; `has_compensation_done` ⇒ its
     /// compensation already ran (skip it on resume). Both false for a
-    /// stream operative or a workflow one that never compensated.
+    /// unbounded operator or a bounded operator one that never compensated.
     #[prost(bool, tag = "4")]
     pub has_compensation_intent: bool,
     #[prost(bool, tag = "5")]
@@ -610,7 +608,7 @@ pub struct CellMailboxStatus {
     pub status: ::prost::alloc::string::String,
 }
 /// End-to-end control-channel health probe issued by the Controller before
-/// `AddOperative`. The SDK responds immediately with a `CommandResponse{status:
+/// `AddOperator`. The SDK responds immediately with a `CommandResponse{status:
 /// "success", raw_data: PingResponse}`; the round-trip proves the
 /// control channel is bound, the SDK is listening, and the reply path is
 /// intact. SDKs without the handler MUST log and ignore the unknown variant
@@ -628,7 +626,7 @@ pub struct PingResponse {
 /// SDK -> Controller, emitted as the FIRST frame on every newly-established
 /// control stream after `handle_reconnect` runs. Preserves the runner's
 /// identity across the reconnect so the Controller can compute a binding
-/// delta instead of re-issuing every operative. `reason` is one of
+/// delta instead of re-issuing every operator. `reason` is one of
 /// `control_stream_broken | read_error | write_error | keepalive_timeout
 /// | controller_requested`. Old Controllers that do not recognise this
 /// variant silently skip it; new SDKs against an old Controller therefore
@@ -652,21 +650,21 @@ pub struct ReassignRunnerId {
     #[prost(string, tag = "1")]
     pub new_id: ::prost::alloc::string::String,
 }
-/// SDK -> Controller. Emitted by a workflow operative when it reaches an exit
+/// SDK -> Controller. Emitted by a bounded operator when it reaches an exit
 /// trigger (chain complete, ctx.complete, loop terminal, duration, or external
 /// stop). `status` is "ok" on clean completion, "error" on failure (with
 /// `error` describing it), or "cancelled" on a cooperative external stop;
 /// `result` carries the terminal result/error payload. The Controller drives
 /// the same stop/teardown path as an explicit stop (deregister-on-completion)
-/// so a finished workflow operative is removed from the durable registry and
+/// so a finished bounded operator is removed from the durable registry and
 /// never replayed on boot or misjudged by convergence. Direction is reversed
 /// like RunnerShutdownNotification: SDK -> Controller over the
 /// "control_command" payload_id; old Controllers ignore the unknown variant via
 /// Protox unknown-field handling.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct WorkflowCompleted {
+pub struct BoundedCompleted {
     #[prost(string, tag = "1")]
-    pub operative_id: ::prost::alloc::string::String,
+    pub operator_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub status: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
@@ -723,7 +721,7 @@ pub struct ParkPayloadAck {
     #[prost(string, tag = "1")]
     pub park_id: ::prost::alloc::string::String,
 }
-/// One declared operative factory: the controller-facing factory id plus a
+/// One declared operator factory: the controller-facing factory id plus a
 /// human-readable description, mirroring the connect init frame's factory
 /// entries.
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -736,13 +734,13 @@ pub struct FactoryDecl {
     /// SDK declares to the poll core as `class.sdk_lang` and stamps at byte 0
     /// of every durable record it writes (1 Rust, 2 Java, 3 Elixir; the
     /// allocation table of record is `flz_core::header`). The Controller places
-    /// an operative only on a runner advertising its factory's established
+    /// an operator only on a runner advertising its factory's established
     /// language, because the State/Change bodies below the shared envelope are
     /// per-SDK. 0 (absent) is "unspecified" and never places.
     #[prost(uint32, tag = "3")]
     pub sdk_lang: u32,
-    /// The kind of the class registered under this id, "stream" or
-    /// "workflow": the class declares it, so no start names it. The Controller
+    /// The kind of the class registered under this id, "unbounded" or
+    /// "bounded": the class declares it, so no start names it. The Controller
     /// places a start only on a runner advertising the factory's established
     /// kind; empty (absent) never places.
     #[prost(string, tag = "4")]
@@ -753,7 +751,7 @@ pub struct FactoryDecl {
 /// semantics make delivery idempotent; the reconnect init frame remains the
 /// resync of record, so a lost frame self-heals. Fire-and-forget: the
 /// Controller does not ack (it gates no durability barrier — a stale
-/// placement fails at the SDK's AddOperative handler and convergence
+/// placement fails at the SDK's AddOperator handler and convergence
 /// re-places). Direction is reversed like RunnerShutdownNotification:
 /// SDK -> Controller over the "control_command" payload_id; old Controllers
 /// ignore the unknown variant via Protox unknown-field handling.
@@ -762,20 +760,20 @@ pub struct UpdateFactories {
     #[prost(message, repeated, tag = "1")]
     pub factories: ::prost::alloc::vec::Vec<FactoryDecl>,
 }
-/// Controller -> SDK. Cooperative external stop for a workflow operative
-/// (`flz operative stop`), distinct from the hard `RemOperative` teardown: the
+/// Controller -> SDK. Cooperative external stop for a bounded operator
+/// (`flz operator stop`), distinct from the hard `RemOperator` teardown: the
 /// SDK trips its cancellation token, lets in-flight work unwind, runs any saga
-/// compensation, then emits the normal `WorkflowCompleted` (status "cancelled")
+/// compensation, then emits the normal `BoundedCompleted` (status "cancelled")
 /// that drives the single teardown path. Rides the "control_command" payload_id
 /// like other CommandRequest variants; SDKs that do not recognise it skip it via
 /// the protobuf decoder (degrading to no cooperative stop).
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct WorkflowStop {
+pub struct BoundedStop {
     #[prost(string, tag = "1")]
-    pub operative_id: ::prost::alloc::string::String,
+    pub operator_id: ::prost::alloc::string::String,
 }
-/// SDK -> Controller. A tasklet asked for a workflow instance
-/// (`ctx.spawn_workflow`): spawn `factory_id` under `instance_id` if that id is
+/// SDK -> Controller. A tasklet asked for a bounded instance
+/// (`ctx.spawn_bounded`): spawn `factory_id` under `instance_id` if that id is
 /// free, otherwise apply `if_running`. An empty `instance_id` asks the
 /// Controller to generate one and always spawns, so `if_running` is ignored for
 /// it. The namespace is NOT carried — the
@@ -788,7 +786,7 @@ pub struct WorkflowStop {
 /// variants; old Controllers ignore it via Protox unknown-field handling, so
 /// the requester simply times out.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SpawnWorkflowRequest {
+pub struct SpawnBoundedRequest {
     #[prost(string, tag = "1")]
     pub instance_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
@@ -798,16 +796,16 @@ pub struct SpawnWorkflowRequest {
     #[prost(string, tag = "4")]
     pub if_running: ::prost::alloc::string::String,
 }
-/// Controller -> SDK reply to SpawnWorkflowRequest, carrying the originating
+/// Controller -> SDK reply to SpawnBoundedRequest, carrying the originating
 /// request's reference_id so the SDK wakes the requester's result handle.
 /// `outcome` is one of `spawned | delivered | already_running |
-/// factory_unknown | factory_not_workflow | refused`; `error` details a
+/// factory_unknown | factory_not_bounded | refused`; `error` details a
 /// `refused` (quota, shutdown, start failure) and is empty otherwise. `instance_id` is the id the request
 /// resolved to: the requester's own, or the generated one for a request that
 /// carried none (empty when nothing was started). The reply never faults the
 /// requesting tasklet — it only resolves its handle.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SpawnWorkflowResponse {
+pub struct SpawnBoundedResponse {
     #[prost(string, tag = "1")]
     pub outcome: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
@@ -818,7 +816,7 @@ pub struct SpawnWorkflowResponse {
 /// SDK -> Controller. Ordinary application code administering the namespace its
 /// connection proved: one frame for every verb, because the verb is data.
 /// `verb` names a function of the controller's published consumer surface as
-/// "<Module>.<function>" (for example "Operative.start"); `args` is a JSON array
+/// "<Module>.<function>" (for example "Operator.start"); `args` is a JSON array
 /// of that call's remaining arguments.
 ///
 /// There is NO namespace field and NO principal field, and that is the safety

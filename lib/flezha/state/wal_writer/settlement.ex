@@ -1,12 +1,12 @@
 defmodule Flezha.State.WalWriter.Settlement do
   @moduledoc """
-  The writer's outbox, for a stream Cell under the effectively-once tier and a
-  durable workflow Cell alike: which durable entries are owed, which are in
+  The writer's outbox, for an unbounded operator Cell under the effectively-once tier and a
+  durable bounded operator Cell alike: which durable entries are owed, which are in
   flight, and when the cursor may pass one.
 
   An effect record's outputs queue on append and dispatch only once the record
-  is durable and its kind has committed it: a stream's record is its own
-  commit; a workflow Cell's entry is held until the stage marker naming it is
+  is durable and its kind has committed it: an unbounded operator's record is its own
+  commit; a bounded operator Cell's entry is held until the stage marker naming it is
   durable (`commit_records/3`), and one that no marker will ever name (an
   interrupted, failed or unwound attempt's) is dropped without reaching the
   chain. An entry completes when every output has settled and every hold has
@@ -21,7 +21,7 @@ defmodule Flezha.State.WalWriter.Settlement do
   alias Flezha.Dlq.Entry, as: DlqEntry
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Config.Durations
-  alias Flezha.Operative.Lookup
+  alias Flezha.Operator.Lookup
   alias Flezha.SDK.Wire
   alias Flezha.State.{DurabilityTier, InputLog, Outbox, Paths}
   alias Flezha.Process.Timer
@@ -78,7 +78,7 @@ defmodule Flezha.State.WalWriter.Settlement do
     end
   end
 
-  # Dispatch every leading durable entry, in seq order, to the operative's
+  # Dispatch every leading durable entry, in seq order, to the operator's
   # `:on_output` chain with the durable identity `(flz.cell, outbox_seq,
   # epoch)`. Undispatchable (Overwatch not yet bound) → bounded retry timer;
   # the queue is bounded by the credit window like the un-fsynced buffer.
@@ -215,7 +215,7 @@ defmodule Flezha.State.WalWriter.Settlement do
         {:ok, _ref} =
           DlqStore.append(
             DlqEntry.new!(%{
-              operative_class: rc,
+              operator_class: rc,
               tasklet_id: sh,
               cell_key: pk,
               channel: dlq.channel,
@@ -235,7 +235,7 @@ defmodule Flezha.State.WalWriter.Settlement do
   end
 
   @doc """
-  A workflow Cell's records `first..last` are named by a durable stage marker:
+  A bounded operator Cell's records `first..last` are named by a durable stage marker:
   release them. A held entry below `first` belongs to an attempt of an earlier
   stage that never committed (a stage's attempts on one Cell run one after
   another, and each commit names the attempt that succeeded), so it is dropped

@@ -37,7 +37,7 @@ impl Exit {
 /// A verb's failure policy: what it says, and what it exits with. The two
 /// halves are independent across this tree — a verb that panics on a failed
 /// spawn may still be silent on a refusal — so the policy carries both rather
-/// than collapsing them and moving an operator-visible code.
+/// than collapsing them and moving a caller-visible code.
 #[derive(Clone, Copy)]
 pub(crate) struct Failure {
     /// Said on stderr when the child ran and refused. A single `{}` takes the
@@ -94,7 +94,7 @@ pub(crate) const UNKNOWN_STATUS: Failure =
 pub(crate) const QUIET: Failure = Failure::new(Exit::Fixed(1));
 
 /// Said when a verb that named nothing of its own could not start `flzvm`. An
-/// unbuilt release and the wrong working directory are the same operator
+/// unbuilt release and the wrong working directory are the same caller
 /// condition, and only the path says which: `flz` looks for its sibling next
 /// to itself and nowhere else.
 const UNSPAWNABLE: &str = "Error: could not run";

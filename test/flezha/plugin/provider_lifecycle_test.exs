@@ -40,7 +40,7 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
   @provider_dir "lib/flezha/plugin/provider"
   @probe_roots [
     "lib/flezha/plugin",
-    "lib/flezha/operative/plugins.ex",
+    "lib/flezha/operator/plugins.ex",
     "lib/flezha/cli/plugin.ex"
   ]
 
@@ -113,7 +113,7 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
 
         unless Keyword.get(row, :internal, false) do
           assert is_binary(row[:doc]) and row[:doc] != "",
-                 "provider `#{id}` option `#{name}` is operator-facing and undocumented"
+                 "provider `#{id}` option `#{name}` is user-facing and undocumented"
         end
       end
     end
@@ -254,7 +254,7 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
     test "the constructor refuses an entry that could not be listed or attributed" do
       assert {:error, {:dlq_entry_missing, [:cell_key]}} =
                Flezha.Dlq.Entry.new(%{
-                 operative_class: "c",
+                 operator_class: "c",
                  tasklet_id: "p",
                  channel: "ch",
                  error: "boom"
@@ -262,7 +262,7 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
 
       assert {:ok, %Flezha.Dlq.Entry{error: "{:boom, 1}"}} =
                Flezha.Dlq.Entry.new(%{
-                 operative_class: "c",
+                 operator_class: "c",
                  tasklet_id: "p",
                  cell_key: "k",
                  channel: "ch",
@@ -339,7 +339,7 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
       id: row_id,
       provider: wrapper,
       namespace: :default,
-      operative_id: "drill-op",
+      operator_id: "drill-op",
       opts: minimal_opts(provider),
       hooks: [subscription(hd(wrapper.__provider__().extensions))]
     }
@@ -378,11 +378,11 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
   defp sample_by_type(name, _type), do: "drill-#{name}"
 
   # The providers whose `init_provider/1` refuses the minimal map: a forward must
-  # not target its own operative, a poll's request must fit inside its own
+  # not target its own operator, a poll's request must fit inside its own
   # interval, and a poll and a file source must name the entry channel they
   # inject on.
-  defp extra_opts(Flezha.Plugin.Provider.OperativeForward),
-    do: %{target_operative_id: "drill-target"}
+  defp extra_opts(Flezha.Plugin.Provider.OperatorForward),
+    do: %{target_operator_id: "drill-target"}
 
   defp extra_opts(Flezha.Plugin.Provider.HttpPoll),
     do: %{interval_ms: 60_000, timeout_ms: 1_000, channel: "drill-channel"}
@@ -397,7 +397,7 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
       Flezha.Plugin.Provider.Postgres -> "docs/plugins/postgres_sink.md"
       Flezha.Plugin.Provider.HttpPoll -> "docs/plugins/http_poll.md"
       Flezha.Plugin.Provider.Websocket -> "docs/plugins/websocket_subscription.md"
-      Flezha.Plugin.Provider.OperativeForward -> "docs/plugins/operative_forward.md"
+      Flezha.Plugin.Provider.OperatorForward -> "docs/plugins/operator_forward.md"
       Flezha.Plugin.Provider.File.Source -> "docs/plugins/file.md"
       Flezha.Plugin.Provider.File.Sink -> "docs/plugins/file.md"
       _ -> nil

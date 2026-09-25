@@ -9,7 +9,7 @@ The controller SHALL declare one configuration row, `FLEZHA_FILE_PLUGIN_ROOT`, n
 folder, or the one `s3://` bucket prefix, a file plugin may read from or write to. An `s3://`
 root SHALL follow `file-plugin-s3`, and the folder rules of this requirement SHALL NOT apply to
 it. Its default SHALL be the folder `app_data/files`, which the first file plugin enable SHALL
-create when it is missing. A folder the operator sets SHALL NOT be created, and while it is
+create when it is missing. A folder the user sets SHALL NOT be created, and while it is
 missing every file plugin enable SHALL be refused naming it.
 
 Under a folder root, a plugin's `path` SHALL be expanded against the root, so a relative path

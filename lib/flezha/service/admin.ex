@@ -18,7 +18,7 @@ defmodule Flezha.Service.Admin do
   ## The wire form
 
   `verb` is `"<Module>.<function>"` for a `Flezha.Service.*` module that
-  declares verb bindings, for example `"Operative.start"` or
+  declares verb bindings, for example `"Operator.start"` or
   `"PluginManager.enable"`.
 
   `args` is a JSON array of the call's arguments other than the namespace and

@@ -1,5 +1,5 @@
 # Project default Rust toolchain. Stable matches what every existing CI
-# workflow installs via `dtolnay/rust-toolchain@stable`, so adding this
+# bounded operator installs via `dtolnay/rust-toolchain@stable`, so adding this
 # file is a no-op for those jobs.
 #
 # The format-check job in `.github/workflows/format.yml` deliberately

@@ -378,7 +378,7 @@ pub fn arm_interval_deadline(slot: &Arc<CellSlot>) {
     }
 }
 
-/// A workflow firing served inside a pass leaves the pending set durably
+/// A bounded operator firing served inside a pass leaves the pending set durably
 /// when its stage commits, as a message leaves the input log at the commit
 /// that consumed it: its removal is taken out of the ops an attempt makes
 /// durable and held on the pass until the stage's ack. The live set drops it
@@ -397,23 +397,23 @@ pub fn hold_firing_removal(
     else {
         return;
     };
-    if crate::workflow::hold_removal(slot, ops[at]) {
+    if crate::bounded::hold_removal(slot, ops[at]) {
         ops.remove(at);
     }
 }
 
 /// The pending set a compaction re-states: the live one plus every firing
-/// whose removal a workflow stage still holds, which is not durable yet.
+/// whose removal a bounded stage still holds, which is not durable yet.
 pub fn restated(slot: &Arc<CellSlot>, live: &PendingTimers) -> PendingTimers {
     let mut pending = live.clone();
-    for op in crate::workflow::held_removals(slot) {
+    for op in crate::bounded::held_removals(slot) {
         pending.apply(&TimerOp::register(op.kind, op.scheduled_at));
     }
     pending
 }
 
 /// Re-arm a restored Cell's processing-time timers; anything past its
-/// deadline fires on the next promotion, ascending. A workflow Cell first
+/// deadline fires on the next promotion, ascending. A bounded operator Cell first
 /// drops every firing its journal records as committed.
 pub fn rearm_restored(slot: &Arc<CellSlot>) {
     drop_committed_firings(slot);
@@ -441,10 +441,10 @@ pub fn rearm_restored(slot: &Arc<CellSlot>) {
 /// A firing whose stage committed before the crash, while its removal was
 /// still unwritten: it must not fire again.
 fn drop_committed_firings(slot: &Arc<CellSlot>) {
-    if slot.topology.workflow.is_none() {
+    if slot.topology.bounded.is_none() {
         return;
     }
-    let fired = crate::workflow::committed_firings(slot);
+    let fired = crate::bounded::committed_firings(slot);
     if fired.is_empty() {
         return;
     }

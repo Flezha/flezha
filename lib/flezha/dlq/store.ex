@@ -2,7 +2,7 @@ defmodule Flezha.Dlq.Store do
   @moduledoc """
   Durable dead-letter store (`dead-letter-queue`).
 
-  One controller-wide GenServer owning `app_data/dlq/<operative_class>/<tasklet_id>/`:
+  One controller-wide GenServer owning `app_data/dlq/<operator_class>/<tasklet_id>/`:
   a JSONL metadata index (`entries.jsonl`, one record per parked payload)
   with payload bytes in adjacent `<entry_id>.bin` blob files. Appends are
   fsynced before the caller's durable-ack callback fires — the SDK holds
@@ -13,7 +13,7 @@ defmodule Flezha.Dlq.Store do
   `cell_key@origin_offset` when the effectively-once tier provides an
   offset, else `channel:sha256(payload)` — so ack-lost re-sends and
   crash-replay re-parks land on the existing entry instead of duplicating
-  it. A re-park that arrives while the entry is `replaying` (an operator
+  it. A re-park that arrives while the entry is `replaying` (a user
   replay that failed again) increments `generation` instead.
 
   Retention is bounded by age AND total size (more restrictive wins,
@@ -73,12 +73,12 @@ defmodule Flezha.Dlq.Store do
         ) :: :ok
   def park_async(server \\ __MODULE__, cell_id, park, on_durable)
 
-  def park_async(server, {operative_class, tasklet_id, cell_key}, park, on_durable) do
+  def park_async(server, {operator_class, tasklet_id, cell_key}, park, on_durable) do
     entry =
       park
       |> Map.take([:channel, :origin_offset, :error, :attempts, :payload, :park_id])
       |> Map.merge(%{
-        operative_class: operative_class,
+        operator_class: operator_class,
         tasklet_id: tasklet_id,
         cell_key: cell_key
       })
@@ -88,12 +88,12 @@ defmodule Flezha.Dlq.Store do
   end
 
   @doc """
-  List parked entries, nearest-to-expiry (oldest) first. `operative_class`
+  List parked entries, nearest-to-expiry (oldest) first. `operator_class`
   narrows to one class; `nil` lists everything.
   """
   @spec list(pid() | atom(), String.t() | nil) :: [map()]
-  def list(server \\ __MODULE__, operative_class),
-    do: GenServer.call(server, {:list, operative_class}, 30_000)
+  def list(server \\ __MODULE__, operator_class),
+    do: GenServer.call(server, {:list, operator_class}, 30_000)
 
   @doc "Fetch one entry (with payload bytes) by `<class>/<tasklet>/<id>` ref."
   @spec get(pid() | atom(), String.t()) :: {:ok, map(), binary() | nil} | {:error, term()}
@@ -116,7 +116,7 @@ defmodule Flezha.Dlq.Store do
   @spec resolve(pid() | atom(), String.t()) :: :ok | {:error, term()}
   def resolve(server \\ __MODULE__, entry_ref), do: drop(server, entry_ref)
 
-  @doc "Per-tasklet usage: `[%{operative_class, tasklet_id, entries, bytes}]`."
+  @doc "Per-tasklet usage: `[%{operator_class, tasklet_id, entries, bytes}]`."
   @spec stats(pid() | atom()) :: [map()]
   def stats(server \\ __MODULE__), do: GenServer.call(server, :stats, 30_000)
 
@@ -125,16 +125,16 @@ defmodule Flezha.Dlq.Store do
   def sweep(server \\ __MODULE__), do: GenServer.call(server, :sweep, 60_000)
 
   @doc """
-  Every `{operative_class, tasklet_id}` with a parked-failure directory on
+  Every `{operator_class, tasklet_id}` with a parked-failure directory on
   disk, as the directory names — `nil` lists every class.
 
   The names are already path-sanitised, which is what makes them safe to use as
   a durable artifact identity: `task_dir/2` maps one back to the same directory.
   """
   @spec tasklets(String.t() | nil) :: [{String.t(), String.t()}]
-  def tasklets(operative_class \\ nil) do
+  def tasklets(operator_class \\ nil) do
     classes =
-      case operative_class do
+      case operator_class do
         nil -> File.ls(root()) |> ok_or([])
         rc -> [safe(rc)]
       end
@@ -154,7 +154,7 @@ defmodule Flezha.Dlq.Store do
 
   @doc """
   One identity component as it appears on disk. The durable-tier artifact for a
-  parked set is addressed by these, so a caller holding a live operative class
+  parked set is addressed by these, so a caller holding a live operator class
   maps it through here to name the artifact.
   """
   @spec path_component(String.t()) :: String.t()
@@ -174,9 +174,9 @@ defmodule Flezha.Dlq.Store do
     {:reply, do_append(entry), state}
   end
 
-  def handle_call({:list, operative_class}, _from, state) do
+  def handle_call({:list, operator_class}, _from, state) do
     entries =
-      tasklets(operative_class)
+      tasklets(operator_class)
       |> Enum.flat_map(fn {rc, sh} -> load_entries(rc, sh) end)
       |> Enum.sort_by(& &1["ts_ms"])
 
@@ -229,7 +229,7 @@ defmodule Flezha.Dlq.Store do
         entries = load_entries(rc, sh)
 
         %{
-          operative_class: rc,
+          operator_class: rc,
           tasklet_id: sh,
           entries: length(entries),
           bytes: dir_bytes(rc, sh)
@@ -266,7 +266,7 @@ defmodule Flezha.Dlq.Store do
   # ---------- append ----------
 
   defp do_append(entry) do
-    rc = Map.fetch!(entry, :operative_class)
+    rc = Map.fetch!(entry, :operator_class)
     sh = Map.fetch!(entry, :tasklet_id)
     id = entry_id(entry)
     payload = Map.get(entry, :payload)
@@ -298,7 +298,7 @@ defmodule Flezha.Dlq.Store do
     record = %{
       "id" => id,
       "ts_ms" => System.system_time(:millisecond),
-      "operative_class" => rc,
+      "operator_class" => rc,
       "tasklet_id" => sh,
       "cell_key" => Map.get(entry, :cell_key, ""),
       "channel" => Map.get(entry, :channel, ""),
@@ -313,7 +313,7 @@ defmodule Flezha.Dlq.Store do
     append_line(rc, sh, record)
 
     :telemetry.execute([:flezha, :dlq, :parked], %{count: 1}, %{
-      operative_class: rc,
+      operator_class: rc,
       tasklet_id: sh,
       cell_key: record["cell_key"],
       channel: record["channel"],
@@ -344,7 +344,7 @@ defmodule Flezha.Dlq.Store do
       end)
 
     :telemetry.execute([:flezha, :dlq, :parked], %{count: 1}, %{
-      operative_class: rc,
+      operator_class: rc,
       tasklet_id: sh,
       cell_key: existing["cell_key"],
       channel: existing["channel"],
@@ -404,7 +404,7 @@ defmodule Flezha.Dlq.Store do
   defp shrink_to_cap([], _total, _cap), do: :ok
 
   defp retention_drop(entry, reason) do
-    rc = entry["operative_class"]
+    rc = entry["operator_class"]
     sh = entry["tasklet_id"]
     bytes = entry_bytes(entry)
 
@@ -416,7 +416,7 @@ defmodule Flezha.Dlq.Store do
     )
 
     :telemetry.execute([:flezha, :dlq, :retention_dropped], %{count: 1, bytes: bytes}, %{
-      operative_class: rc,
+      operator_class: rc,
       tasklet_id: sh,
       cell_key: entry["cell_key"],
       channel: entry["channel"],
@@ -543,12 +543,12 @@ defmodule Flezha.Dlq.Store do
   # One tasklet's parked set changed: republish the usage gauge, and offer the
   # directory to the durability tier, which ships it whole. A drop has to reach
   # the backend as surely as a park — a stale remote copy would resurrect an
-  # entry the operator already resolved. Inert while no backend is configured.
+  # entry the user already resolved. Inert while no backend is configured.
   defp dir_changed(rc, sh) do
     :telemetry.execute(
       [:flezha, :dlq, :usage],
       %{entries: length(load_entries(rc, sh)), bytes: dir_bytes(rc, sh)},
-      %{operative_class: rc, tasklet_id: sh}
+      %{operator_class: rc, tasklet_id: sh}
     )
 
     DurabilityTier.ship({:dlq, {safe(rc), safe(sh)}})

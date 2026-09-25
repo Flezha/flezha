@@ -487,7 +487,7 @@ pub unsafe extern "C" fn flz_core_abandon(ctx: *mut FlzContext, token: u64) -> i
     }
 }
 
-/// Ship every live operative's state as a `RunnerShutdownNotification`, then
+/// Ship every live operator's state as a `RunnerShutdownNotification`, then
 /// wake every blocked poller with [`FLZ_POLL_SHUTTING_DOWN`] and stop the
 /// runner loop. Unpolled work follows the existing durability rules (it is
 /// journaled controller-side and re-forwarded on the next bind).
@@ -537,7 +537,7 @@ pub extern "C" fn flz_core_watch_stdin_eof(grace_ms: u32) {
     flz_core::shutdown::watch_stdin_eof(grace_ms);
 }
 
-/// Ask for a workflow instance from the live activation `token`: start
+/// Ask for a bounded instance from the live activation `token`: start
 /// `factory_id` under `id`, or under an id the controller generates when `id`
 /// is empty. `if_running` (`"deliver"`, the default when empty, or `"error"`)
 /// applies only to an id that is already running. A nonzero `replay` sends
@@ -599,7 +599,7 @@ pub unsafe extern "C" fn flz_core_spawn_request(
 /// `{"id","outcome"}`, the id the request resolved to and one of `spawned`,
 /// `delivered`, `skipped_on_replay`. [`FLZ_SPAWN_FAILED`]: `out` holds
 /// `{"id","error","message"}`, `error` one of `already_running`,
-/// `factory_unknown`, `factory_not_workflow`, `refused`, `timeout`,
+/// `factory_unknown`, `factory_not_bounded`, `refused`, `timeout`,
 /// `unavailable`. A resolved handle
 /// answers every later read the same. [`FLZ_SPAWN_PENDING`]: no answer yet,
 /// `out` untouched. [`FLZ_ERR`]: the handle was released, because the
@@ -660,7 +660,7 @@ pub unsafe extern "C" fn flz_core_spawn_result(
 
 /// Administer the namespace this runner's connection proved: one entry for the
 /// whole surface, because the verb is data. `verb` names a function of the
-/// controller's published consumer surface (`"Operative.start"`) and `args` is
+/// controller's published consumer surface (`"Operator.start"`) and `args` is
 /// a JSON array of that call's arguments other than the namespace, which the
 /// controller fills from the connection. The published function's own answer
 /// comes back as JSON in `result_out`/`result_len_out` (free with

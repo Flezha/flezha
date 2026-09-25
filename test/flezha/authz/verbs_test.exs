@@ -1,6 +1,6 @@
 defmodule Flezha.AuthZ.VerbsTest do
   @moduledoc """
-  The declaration test. A bypass of the operator-verb seam is impossible
+  The declaration test. A bypass of the caller-verb seam is impossible
   because each clause here fails naming it: a wire name or a published
   function that binds no row, a row naming an action the policy lacks, an
   action no row names, a gated row that serves an unbound caller or reads its

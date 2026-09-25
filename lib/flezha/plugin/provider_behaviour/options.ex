@@ -2,7 +2,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   @moduledoc """
   A provider's option rows, read.
 
-  Everything that happens to a plugin's options between the spec an operator
+  Everything that happens to a plugin's options between the spec a user
   wrote and the callback that reads them: the declared names and defaults, the
   one conversion table, the one refusal grammar, and the two renderings (the
   help screen and the documented table) that are derived from the same rows
@@ -37,8 +37,8 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   `module`'s option names as `{required, all}`, both in declaration order;
   `required` is the rows marked `required: true`.
 
-  The order is the declaration's, because this list is rendered into an
-  operator-facing help screen and into the order `build_struct/3` reports the
+  The order is the declaration's, because this list is rendered into a
+  user-facing help screen and into the order `build_struct/3` reports the
   first unconvertible value in.
   """
   @spec fields(module()) :: {[atom()], [atom()]}
@@ -101,12 +101,12 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   @doc """
   Every declared option present, converted and defaulted, with the required ones
   checked — the ONE thing that happens to a provider's options between the spec
-  an operator wrote and the callback that reads them.
+  a user wrote and the callback that reads them.
 
   `Flezha.Plugin.Extension.Table` calls it before `init_provider/1`, so a
   provider and its worker read declared fields and never re-derive a default of
   their own. An option the declaration does not name is refused here rather than
-  ignored; an option it names and the operator did not write takes its row's
+  ignored; an option it names and the user did not write takes its row's
   default; a value the row's type or bounds refuse answers the sentence the one
   builder renders.
   """
@@ -130,7 +130,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   end
 
   # An option that is absent, or written `nil`, takes its row's default and is
-  # not converted: only a value an operator supplied can be wrong.
+  # not converted: only a value a user supplied can be wrong.
   defp convert_declared_row({field, row}, params, provider, opts) do
     case Map.get(opts, field) do
       nil -> {:cont, Map.put(params, field, row[:default])}
@@ -154,8 +154,8 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   # can name it.
   #
   # `channel` names it in BOTH directions: the entry channel a plugin whose
-  # provider feeds the operative injects on, and the filter over records passing
-  # through the operative a plugin hooked on a chain acts on.
+  # provider feeds the operator injects on, and the filter over records passing
+  # through the operator a plugin hooked on a chain acts on.
   # `channel_in` and `channel_out` name one each, for a plugin whose two names
   # differ. The answer is the two host-side values the readers take —
   # `:entry_channel` for the injection sites, `:filter_channel` for
@@ -164,7 +164,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   #
   # It resolves BEFORE the required check, so a provider that requires an entry
   # channel is satisfied by either spelling, and it reads only the rows an
-  # operator wrote, so re-preparing a plugin resolves the same answer again.
+  # user wrote, so re-preparing a plugin resolves the same answer again.
   defp resolve_channels(%Decl{name: name} = decl, opts, converted) do
     jobs = ProviderBehaviour.channel_jobs(decl, opts)
 
@@ -250,7 +250,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   defp jobs_named(job, jobs), do: if(job in jobs, do: [job], else: [])
 
   defp undone(:in),
-    do: "the provider does not feed the operative, so nothing would ever be injected"
+    do: "the provider does not feed the operator, so nothing would ever be injected"
 
   defp undone(:out),
     do:
@@ -259,7 +259,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
 
   defp undone(:either),
     do:
-      "the plugin neither feeds the operative nor has an on_input or on_output " <>
+      "the plugin neither feeds the operator nor has an on_input or on_output " <>
         "hook, so nothing would read it"
 
   defp put_converted(params, field, {:ok, converted}),
@@ -298,7 +298,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
 
       COMMON OPTIONS:
           --namespace <namespace>    Namespace (default: default)
-          --operative_id <id>        Target operative ID
+          --operator_id <id>        Target operator ID
           --hook=<name>              Call the plugin at this hook; repeatable
           --<name>.<key>=<value>     A sub-option of the hook <name>
 
@@ -392,7 +392,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   shape it does not.
 
   An option with no row — a host-injected key, a value the provider deliberately
-  does not interpret — passes through: only a value an operator supplied for a
+  does not interpret — passes through: only a value a user supplied for a
   declared option can be wrong.
   """
   @spec convert_row(atom(), term(), [{atom(), keyword()}]) :: {:ok, term()} | {:error, binary()}
@@ -419,7 +419,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   defp coerce(:list, _field, value, _row) when is_list(value), do: {:ok, value}
   defp coerce(:list, field, value, _row), do: refuse_value(field, value)
 
-  # A set of names: the comma-separated spelling an operator writes where a flag
+  # A set of names: the comma-separated spelling a user writes where a flag
   # carries only a string, and the already-built list a manifest — or a plugin
   # re-prepared from the options it already holds — carries. `:list` cannot do
   # the first and this cannot replace it: its two rows are fed programmatically
@@ -432,7 +432,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   defp coerce(:map, _field, value, _row) when is_map(value), do: {:ok, value}
   defp coerce(:map, field, value, _row), do: refuse_value(field, value)
 
-  # A JSON option is a map an operator may also write as the string a CLI flag
+  # A JSON option is a map a user may also write as the string a CLI flag
   # delivers. A string that does not decode is refused as a string, never as the
   # decoder's own error struct: the callback promises `String.t()`.
   defp coerce(:json, field, value, row) when is_binary(value) do

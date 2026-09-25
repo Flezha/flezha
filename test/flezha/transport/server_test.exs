@@ -177,7 +177,7 @@ defmodule Flezha.Transport.ServerTest do
       request =
         Codec.encode_request(
           "admin-during-connect",
-          Codec.admin_request_command("Operative.list_operatives", "[]")
+          Codec.admin_request_command("Operator.list_operators", "[]")
         )
 
       :ok = Client.send_frame(runner, "connect_control_channel", connect, %{})

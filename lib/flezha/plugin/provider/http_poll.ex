@@ -7,7 +7,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   ordinary entry frame — but ONLY when the body's SHA-256 differs from the last
   delivered one, so a steady endpoint costs one request per interval and zero
   frames. The first successful poll always injects, which is what converges a
-  just-started or handed-over operative within one interval; consumers must
+  just-started or handed-over operator within one interval; consumers must
   treat that seed idempotently.
 
   `:idle_after_ms` is the age of the last SETTLED poll past which the worker
@@ -31,7 +31,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
     options: [
       url: [type: :string, required: true, doc: "The resource to GET each interval"],
       # One of the two is required and a row can only say so of itself, so each
-      # says it of the pair — this is what both operator surfaces render.
+      # says it of the pair — this is what both user surfaces render.
       channel: [
         type: :names,
         doc:
@@ -83,7 +83,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   @doc """
   Validate and normalise. Deliberately performs no upstream I/O — the first
   poll is the worker's, and the worker is started by the extension table at
-  activation, so a slow or unreachable endpoint cannot stall the operative's
+  activation, so a slow or unreachable endpoint cannot stall the operator's
   plugin preparation.
   """
   @impl true
@@ -207,7 +207,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   defp render_partition_placeholders(url, _opts), do: {:ok, url}
 
   # A sub-second interval is a hammer, not a poll. It is the one bound that is
-  # not a row: its floor is an operator-settable duration, read here rather
+  # not a row: its floor is a user-settable duration, read here rather
   # than frozen into the declaration at compile time.
   defp validate_interval(value) do
     minimum = Durations.get(:http_poll_min_interval_ms)

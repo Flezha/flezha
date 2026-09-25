@@ -3,7 +3,7 @@ defmodule Flezha.Config.Keys do
   Every configuration knob the controller, its SDKs, its crates and its shell
   wrappers read, declared once.
 
-  A row is a name, a type, a default, the application-env key an operator
+  A row is a name, a type, a default, the application-env key a user
   overrides it with, the environment variable `config/runtime.exs` translates
   into that key, a per-`config_env` default, a per-run derivation, a derivation
   over another row, and the runtimes that read the name. Adding a knob is
@@ -97,7 +97,7 @@ defmodule Flezha.Config.Keys do
     {:state_root, :path, "app_data/state",
      key: true, env: "FLEZHA_STATE_DIR", per_run: :state_root, surface: {:status, :state_root}},
     # The UDS socket directory. Unset by default: `Flezha.Socket.Support`
-    # resolves the ladder every SDK shares. A path that is set — an operator's,
+    # resolves the ladder every SDK shares. A path that is set — a user's,
     # a per-run derivation, or a test's — is used as it stands.
     {:socket_files_path, :path, nil,
      key: true,
@@ -177,7 +177,7 @@ defmodule Flezha.Config.Keys do
     # Peer authentication posture: required by default; the explicit wide-open
     # opt-out is warned on every boot while it is set.
     {:transport_auth_required, :bool, true, key: true, env: "FLEZHA_TRANSPORT_AUTH"},
-    # A second trust anchor on purpose: two files an operator may point apart.
+    # A second trust anchor on purpose: two files a user may point apart.
     {:quic_client_ca_path, :path, "app_data/certs/ca.pem",
      key: true, env: "FLEZHA_QUIC_CLIENT_CA"},
     # The addresses a runner dials, read by the NIF's diagnosis rather than the
@@ -205,7 +205,7 @@ defmodule Flezha.Config.Keys do
     {:bind_restore_concurrency, :positive_int, 16, key: true},
     # The fairness cap on runner selection, as a percentage of the fair share of
     # the candidate set. At `100` the cap is exactly the fair share and the
-    # spread is even at every operative count; a value high enough that no
+    # spread is even at every operator count; a value high enough that no
     # candidate ever reaches the cap is plain rendezvous hashing, which is where
     # placement was before the cap existed.
     {:placement_load_cap_percent, :positive_int, 100,
@@ -277,8 +277,8 @@ defmodule Flezha.Config.Keys do
 
     # ---- state: compaction, watermarks, credit ------------------------------
     # A Cell whose un-snapshotted WAL exceeds this is compacted. A class that
-    # declares `compact_after_bytes()` ships it in the `AddOperative` metadata
-    # and that per-class value is resolved ahead of this default; an operator
+    # declares `compact_after_bytes()` ships it in the `AddOperator` metadata
+    # and that per-class value is resolved ahead of this default; a user
     # `%{class => bytes}` override wins over both.
     {:default_compact_after_bytes, :int, 8_388_608, key: true, env: "FLEZHA_COMPACT_AFTER_BYTES"},
     {:compact_after_bytes, :term, %{}, key: true},
@@ -290,23 +290,23 @@ defmodule Flezha.Config.Keys do
     {:wal_pending_msg_cap, :positive_int, 5_000, key: true},
     {:outbox_inflight_max, :positive_int, 1_000, key: true},
     {:record_log_cut_after_bytes, :int, 65_536, key: true},
-    # Per-operative-class operator overrides: a map from class to value, read
+    # Per-operator-class user overrides: a map from class to value, read
     # ahead of the SDK's own declaration and of the global default below it.
-    {:operative_persistence, :term, %{}, key: true},
+    {:operator_persistence, :term, %{}, key: true},
     {:sync_durability, :term, %{}, key: true},
     {:output_stall_timeout_overrides, :term, %{}, key: :output_stall_timeout_ms},
     {:default_time_travel_retention_hours, :int, 6, key: true},
     {:credit_window_bytes, :term, %{}, key: true},
     # Unset means half the per-class credit window, which is not a row: the
-    # window is resolved per operative class, so the site holds the halving.
+    # window is resolved per operator class, so the site holds the halving.
     {:credit_low_watermark_bytes, :int, nil, key: true},
     # Kill switch: `false` skips the CreditWindowInit offer entirely, reverting
     # every session to the legacy CellMailboxStatus and shed path.
     {:credit_flow_control_enabled, :bool, true, key: true, env: "FLEZHA_CREDIT_FLOW_CONTROL"},
     {:time_travel_retention_hours, :term, %{}, key: true},
-    {:default_workflow_completed_retention_hours, :int, 72,
-     key: true, env: "FLEZHA_WORKFLOW_RETENTION_HOURS"},
-    {:workflow_completed_retention_hours, :term, %{}, key: true},
+    {:default_bounded_completed_retention_hours, :int, 72,
+     key: true, env: "FLEZHA_BOUNDED_RETENTION_HOURS"},
+    {:bounded_completed_retention_hours, :term, %{}, key: true},
 
     # ---- remote durability tier ---------------------------------------------
     # `backend: :none` wires nothing into the supervision tree and leaves every
@@ -366,7 +366,7 @@ defmodule Flezha.Config.Keys do
      key: {:durability_tier, :backend_opts, :path}, env: "FLEZHA_DURABILITY_PATH"},
 
     # ---- durable audit log --------------------------------------------------
-    # Operator opt-in: default OFF. When enabled the subsystem writes one JSON
+    # User opt-in: default OFF. When enabled the subsystem writes one JSON
     # Lines record per accepted signal to `<dir>/audit-current.jsonl`.
     {:audit_log_enabled, :bool, false, key: {:audit_log, :enabled}, env: "FLEZHA_AUDIT_ENABLED"},
     {:audit_log_dir, :path, "app_data/audit",
@@ -413,7 +413,7 @@ defmodule Flezha.Config.Keys do
      key: {:authn_authz, :token_ttl_default_seconds}},
     {:authz_namespaces, :term, %{}, key: {:authn_authz, :namespaces}},
 
-    # ---- scheduled workflow spawns ------------------------------------------
+    # ---- scheduled bounded spawns ------------------------------------------
     {:schedule_dir, :path, "app_data/schedules",
      key: {:schedules, :dir}, env: "FLEZHA_SCHEDULE_DIR"},
     # Same posture as authn_authz: no test gets a stray `:flz_schedules` hub it
@@ -458,7 +458,7 @@ defmodule Flezha.Config.Keys do
      key: {:file_plugin_s3, :secret_access_key_env}, env: "FLEZHA_FILE_PLUGIN_S3_SECRET_ENV"},
 
     # ---- boot and recovery --------------------------------------------------
-    # Tests bring up their own runners and operatives, so at-boot replay is off
+    # Tests bring up their own runners and operators, so at-boot replay is off
     # under `:test`; the persistent registry still records mutations.
     {:auto_restore_enabled, :bool, true,
      key: true, env: "FLEZHA_AUTO_RESTORE_ENABLED", env_default: [test: false]},
@@ -579,20 +579,19 @@ defmodule Flezha.Config.Keys do
     {:harness_wait_socket, :string, nil, runtimes: [:harness], env: "FLEZHA_HARNESS_WAIT_SOCKET"},
     {:e2e_runtime, :string, "rust", runtimes: [:harness], env: "FLEZHA_E2E_RUNTIME"},
     {:e2e_snapshot, :string, nil, runtimes: [:harness], env: "FLEZHA_E2E_SNAPSHOT"},
-    {:workflow_e2e_release, :string, nil,
-     runtimes: [:harness], env: "FLEZHA_WORKFLOW_E2E_RELEASE"},
+    {:bounded_e2e_release, :string, nil, runtimes: [:harness], env: "FLEZHA_BOUNDED_E2E_RELEASE"},
     {:conformance_report, :path, nil, runtimes: [:harness], env: "FLEZHA_CONFORMANCE_REPORT"},
     {:refusal_fixture, :string, nil, runtimes: [:harness], env: "FLEZHA_REFUSAL_FIXTURE"},
     {:branch_fail, :string, nil, runtimes: [:harness], env: "FLEZHA_BRANCH_FAIL"},
-    {:workflow_retry_fails, :int, nil, runtimes: [:harness], env: "FLEZHA_WORKFLOW_RETRY_FAILS"},
+    {:bounded_retry_fails, :int, nil, runtimes: [:harness], env: "FLEZHA_BOUNDED_RETRY_FAILS"},
     {:data_stream_loss_drill, :bool, false,
      runtimes: [:harness], env: "FLEZHA_DATA_STREAM_LOSS_DRILL"},
     {:reset_probe_override, :string, nil,
      runtimes: [:harness], env: "FLEZHA_RESET_PROBE_OVERRIDE"},
     {:prefer_explicit_restore, :bool, false,
      runtimes: [:harness], env: "FLEZHA_PREFER_EXPLICIT_RESTORE"},
-    {:persistence_operative, :string, nil,
-     runtimes: [:harness], env: "FLEZHA_PERSISTENCE_OPERATIVE"},
+    {:persistence_operator, :string, nil,
+     runtimes: [:harness], env: "FLEZHA_PERSISTENCE_OPERATOR"},
     {:persistence_processor, :string, nil,
      runtimes: [:harness], env: "FLEZHA_PERSISTENCE_PROCESSOR"},
     {:pre_replay_fleet_wait_ms, :ms, nil,
@@ -629,8 +628,8 @@ defmodule Flezha.Config.Keys do
      runtimes: [:bench], env: "FLEZHA_BENCH_CHECKPOINT_DELAY_MS"},
     {:bench_wake_after_ms, :ms, nil, runtimes: [:bench], env: "FLEZHA_BENCH_WAKE_AFTER_MS"},
     {:bench_dyn_msgs, :int, nil, runtimes: [:bench], env: "FLEZHA_BENCH_DYN_MSGS"},
-    {:bench_msgs_per_operative, :int, nil,
-     runtimes: [:bench], env: "FLEZHA_BENCH_MSGS_PER_OPERATIVE"},
+    {:bench_msgs_per_operator, :int, nil,
+     runtimes: [:bench], env: "FLEZHA_BENCH_MSGS_PER_OPERATOR"},
     {:bench_measurement_secs, :int, 30,
      runtimes: [:bench, :rust], env: "FLEZHA_BENCH_MEASUREMENT_SECS"},
     {:scale_n, :int, nil, runtimes: [:bench], env: "FLEZHA_SCALE_N"},
@@ -731,7 +730,7 @@ defmodule Flezha.Config.Keys do
   def env_name(name), do: fetch!(name).env
 
   @doc """
-  The default as an operator reads it in `docs/configuration.md` — the one
+  The default as a user reads it in `docs/configuration.md` — the one
   rendering, so a document and a row cannot disagree about a value's spelling.
   """
   @spec render_default(name() | row()) :: binary()

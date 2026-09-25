@@ -34,21 +34,21 @@ defmodule Flezha.AuthZ.NamespaceTest do
   describe "build_quotas/1" do
     test "returns defaults when overrides are empty" do
       {:ok, q} = Namespace.build_quotas(%{})
-      assert q.max_operatives == 100
+      assert q.max_operators == 100
       assert q.max_state_bytes == 107_374_182_400
     end
 
     test "applies user overrides over defaults" do
-      {:ok, q} = Namespace.build_quotas(%{max_operatives: 5})
-      assert q.max_operatives == 5
+      {:ok, q} = Namespace.build_quotas(%{max_operators: 5})
+      assert q.max_operators == 5
       assert q.max_state_bytes == 107_374_182_400
     end
 
     test "rejects unknown fields and negative values" do
       assert {:error, {:unknown_quota_field, :nope}} = Namespace.build_quotas(%{nope: 1})
 
-      assert {:error, {:invalid_quota_value, :max_operatives, -1}} =
-               Namespace.build_quotas(%{max_operatives: -1})
+      assert {:error, {:invalid_quota_value, :max_operators, -1}} =
+               Namespace.build_quotas(%{max_operators: -1})
     end
   end
 end

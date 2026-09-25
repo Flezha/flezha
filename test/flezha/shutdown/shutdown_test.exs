@@ -100,9 +100,9 @@ defmodule Flezha.ShutdownTest do
   end
 
   describe "the namespace walk" do
-    test "stops the namespace's operatives, runners, plugin registrations and hub, in that order" do
+    test "stops the namespace's operators, runners, plugin registrations and hub, in that order" do
       test_pid = self()
-      stub(HubManager, :get_all_operatives, fn _ns -> [] end)
+      stub(HubManager, :get_all_operators, fn _ns -> [] end)
 
       stub(PluginManager, :disable_namespace_plugins, fn ns ->
         send(test_pid, {:effect, :plugins, ns})
@@ -114,13 +114,13 @@ defmodule Flezha.ShutdownTest do
         :ok
       end)
 
-      assert [:operatives, :runners, :plugins, :hub] =
+      assert [:operators, :runners, :plugins, :hub] =
                Enum.map(Shutdown.steps(:namespace), & &1.name)
 
       assert {:ok, report} =
                Shutdown.run(:namespace, %{namespace: @namespace, runner_ids: []}, 5_000)
 
-      assert report.ran == [:operatives, :runners, :plugins, :hub]
+      assert report.ran == [:operators, :runners, :plugins, :hub]
     end
   end
 
@@ -136,17 +136,17 @@ defmodule Flezha.ShutdownTest do
   describe "the drain exception" do
     defp placing_delta(facts) do
       intent = %Intent{
-        operatives: [
-          %{namespace: :ns, operative_id: "misbound", factory_id: "f", plugins: []},
-          %{namespace: :ns, operative_id: "unbound", factory_id: "f", plugins: []},
-          %{namespace: :ns, operative_id: "parked", factory_id: "f", plugins: []},
-          %{namespace: :ns, operative_id: "stale", factory_id: "f", plugins: []}
+        operators: [
+          %{namespace: :ns, operator_id: "misbound", factory_id: "f", plugins: []},
+          %{namespace: :ns, operator_id: "unbound", factory_id: "f", plugins: []},
+          %{namespace: :ns, operator_id: "parked", factory_id: "f", plugins: []},
+          %{namespace: :ns, operator_id: "stale", factory_id: "f", plugins: []}
         ]
       }
 
       reality = %{
         active_runners: %{ns: MapSet.new(["e1"])},
-        operatives: %{
+        operators: %{
           {:ns, "misbound"} => %{pid: self(), bound_runner: "e_dead", factory_id: "f"},
           {:ns, "unbound"} => %{pid: self(), bound_runner: nil, factory_id: "f"},
           {:ns, "parked"} => %{
@@ -173,8 +173,8 @@ defmodule Flezha.ShutdownTest do
       delta = placing_delta(draining)
 
       assert delta.draining
-      assert delta.misbound_operatives == [] and delta.unbound_operatives == []
-      assert delta.parked_operatives == [] and delta.stale_tags == []
+      assert delta.misbound_operators == [] and delta.unbound_operators == []
+      assert delta.parked_operators == [] and delta.stale_tags == []
       assert Planner.plan(delta, Backoff.new(:heal)) == []
 
       # The same reality with no drain plans every binding.
@@ -184,7 +184,7 @@ defmodule Flezha.ShutdownTest do
       planned =
         plain |> Planner.plan(Backoff.new(:heal)) |> Enum.map(& &1.primitive) |> Enum.uniq()
 
-      assert :rebind_operative in planned and :publish_binding in planned
+      assert :rebind_operator in planned and :publish_binding in planned
     end
   end
 end

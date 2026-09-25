@@ -77,7 +77,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
 
   def handle_cast({:refuse, reference_id, frame}, state) do
     commit = decode(frame, state)
-    error = {:error, "not the owner of #{commit.operative_id}"}
+    error = {:error, "not the owner of #{commit.operator_id}"}
     {:noreply, ack(state, reference_id, commit, error)}
   end
 
@@ -188,7 +188,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   # oversized payload) is acked with its error at once.
   defp append(state, reference_id, commit) do
     case TaskJournal.append_async(
-           commit.operative_id,
+           commit.operator_id,
            commit.barrier,
            state.reqids,
            {reference_id, commit}
@@ -208,13 +208,13 @@ defmodule Flezha.Runner.ControlChannel.Commits do
     {event, measurements, metadata} = commit.telemetry
     :telemetry.execute(event, measurements, Map.put(metadata, :status, status(result)))
 
-    if result == :ok and DurabilityTier.sync_class?(commit.operative_id) do
+    if result == :ok and DurabilityTier.sync_class?(commit.operator_id) do
       worker = self()
 
       Task.start(fn ->
         send(
           worker,
-          {:commit_shipped, reference_id, commit, DurabilityTier.commit_sync(commit.operative_id)}
+          {:commit_shipped, reference_id, commit, DurabilityTier.commit_sync(commit.operator_id)}
         )
       end)
 
@@ -248,7 +248,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
 
     if error == "" do
       commit.post.()
-      DurabilityTier.on_workflow_commit(commit.operative_id)
+      DurabilityTier.on_bounded_commit(commit.operator_id)
     end
 
     state
@@ -257,7 +257,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   defp status(:ok), do: :ok
   defp status({:error, _}), do: :error
 
-  # Task-boundary commit (workflow-task-journal): ONE `task_committed` entry
+  # Task-boundary commit (bounded-task-journal): ONE `task_committed` entry
   # (the Cells the stage ran, each with the records it wrote, and the handoff),
   # appended once those records are durable and acked once the entry is. The
   # ack IS the durable point the driver gates the next tasklet on, and the
@@ -266,7 +266,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   # records a compensation hook wrote, journaled as a `compensated` entry.
   defp decode(%RunnerCommands.TaskCommit{} = commit, state) do
     %RunnerCommands.TaskCommit{
-      operative_id: operative_id,
+      operator_id: operator_id,
       task_idx: task_idx,
       iter: iter,
       cells_ran: cells_ran,
@@ -288,7 +288,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
            completion(completes, result), trigger(trigger)}
 
     %{
-      operative_id: operative_id,
+      operator_id: operator_id,
       barrier: barrier,
       records: records,
       telemetry:
@@ -296,19 +296,19 @@ defmodule Flezha.Runner.ControlChannel.Commits do
          %{count: 1, handoff_items: length(handoff), cells: length(cells)},
          %{
            namespace: state.namespace,
-           operative_id: operative_id,
+           operator_id: operator_id,
            task_idx: task_idx,
            compensating: compensating
          }},
-      label: "task-journal commit operative=#{inspect(operative_id)} task_idx=#{task_idx}",
+      label: "task-journal commit operator=#{inspect(operator_id)} task_idx=#{task_idx}",
       response:
         {:task_commit_response,
-         %RunnerCommands.TaskCommitResponse{operative_id: operative_id, task_idx: task_idx}},
+         %RunnerCommands.TaskCommitResponse{operator_id: operator_id, task_idx: task_idx}},
       post: fn -> TaskJournal.release_records(records) end
     }
   end
 
-  # Iteration boundary of a durable structured loop (`workflow-durable-loop`):
+  # Iteration boundary of a durable structured loop (`bounded-durable-loop`):
   # ONE `iter_committed(iter, consumed_offset)` record — with the iteration's
   # terminal handoff, so a crash can re-seed the next iteration — then the ack.
   # Everything after the ack is cleanup the commit does not depend on: the
@@ -319,7 +319,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   # writers' to run, so this process never waits on a file rewrite.
   defp decode(%RunnerCommands.IterCommit{} = commit, state) do
     %RunnerCommands.IterCommit{
-      operative_id: operative_id,
+      operator_id: operator_id,
       iter: iter,
       consumed_offset: consumed_offset,
       handoff: handoff,
@@ -329,7 +329,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
     } = commit
 
     %{
-      operative_id: operative_id,
+      operator_id: operator_id,
       barrier:
         {:iter_committed, iter, consumed_offset, entry_channel, handoff_items(handoff),
          completion(completes, result)},
@@ -338,17 +338,17 @@ defmodule Flezha.Runner.ControlChannel.Commits do
         {[:flezha, :state, :iter_commit], %{count: 1},
          %{
            namespace: state.namespace,
-           operative_id: operative_id,
+           operator_id: operator_id,
            iter: iter,
            consumed_offset: consumed_offset
          }},
-      label: "task-journal iteration commit operative=#{inspect(operative_id)} iter=#{iter}",
+      label: "task-journal iteration commit operator=#{inspect(operator_id)} iter=#{iter}",
       response:
         {:iter_commit_response,
-         %RunnerCommands.IterCommitResponse{operative_id: operative_id, iter: iter}},
+         %RunnerCommands.IterCommitResponse{operator_id: operator_id, iter: iter}},
       post: fn ->
-        TaskJournal.release_input(operative_id, consumed_offset)
-        TaskJournal.cut(operative_id)
+        TaskJournal.release_input(operator_id, consumed_offset)
+        TaskJournal.cut(operator_id)
       end
     }
   end

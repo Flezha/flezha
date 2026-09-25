@@ -87,11 +87,11 @@ defmodule Flezha.AuthZ.StoresTest do
 
     test "bindings survive restart" do
       {:ok, pid} = RoleStore.start_link([])
-      :ok = RoleStore.bind("bob", "team-orders", :operator)
+      :ok = RoleStore.bind("bob", "team-orders", :ops)
       :ok = GenServer.stop(pid)
 
       {:ok, _} = RoleStore.start_link([])
-      assert {:ok, %{roles: [:operator]}} = RoleStore.lookup("bob")
+      assert {:ok, %{roles: [:ops]}} = RoleStore.lookup("bob")
     end
 
     test "rejects invalid role" do
@@ -210,24 +210,24 @@ defmodule Flezha.AuthZ.StoresTest do
     test "seeds _system on first open" do
       {:ok, _} = NamespaceStore.start_link([])
 
-      assert {:ok, %{name: "_system", quotas: %{max_operatives: 100}}} =
+      assert {:ok, %{name: "_system", quotas: %{max_operators: 100}}} =
                NamespaceStore.get("_system")
     end
 
     test "create / delete / set_quotas" do
       {:ok, _} = NamespaceStore.start_link([])
 
-      assert {:ok, %{name: "team-orders", quotas: %{max_operatives: 50}}} =
+      assert {:ok, %{name: "team-orders", quotas: %{max_operators: 50}}} =
                NamespaceStore.create("team-orders",
-                 quotas: %{max_operatives: 50},
+                 quotas: %{max_operators: 50},
                  created_by_principal: "alice"
                )
 
       assert {:ok, _} = NamespaceStore.get("team-orders")
       assert {:error, :already_exists} = NamespaceStore.create("team-orders")
 
-      assert {:ok, %{quotas: %{max_operatives: 25}}} =
-               NamespaceStore.set_quotas("team-orders", %{max_operatives: 25})
+      assert {:ok, %{quotas: %{max_operators: 25}}} =
+               NamespaceStore.set_quotas("team-orders", %{max_operators: 25})
 
       assert :ok = NamespaceStore.delete("team-orders")
       assert :error = NamespaceStore.get("team-orders")
@@ -246,20 +246,20 @@ defmodule Flezha.AuthZ.StoresTest do
       {:ok, _} = TokenStore.start_link([])
 
       assert {:ok, raw, entry} =
-               TokenStore.issue("alice", "team-orders", :operator, 3600, label: "dashboards")
+               TokenStore.issue("alice", "team-orders", :ops, 3600, label: "dashboards")
 
       assert String.starts_with?(raw, "flzt_")
       assert entry.principal == "alice"
       assert entry.namespace == "team-orders"
-      assert entry.role == :operator
+      assert entry.role == :ops
 
-      assert {:ok, %{principal: "alice", namespace: "team-orders", role: :operator}} =
+      assert {:ok, %{principal: "alice", namespace: "team-orders", role: :ops}} =
                TokenStore.verify(raw)
     end
 
     test "expired token is rejected" do
       {:ok, _} = TokenStore.start_link([])
-      {:ok, raw, %{expires_at: expires_at}} = TokenStore.issue("alice", "_system", :operator, 1)
+      {:ok, raw, %{expires_at: expires_at}} = TokenStore.issue("alice", "_system", :ops, 1)
       # Expiry is a whole-second wall-clock comparison: wait for that second.
       assert NodeTestHelper.wait_until(
                fn -> System.system_time(:second) >= expires_at end,
@@ -272,7 +272,7 @@ defmodule Flezha.AuthZ.StoresTest do
 
     test "revoked token is rejected" do
       {:ok, _} = TokenStore.start_link([])
-      {:ok, raw, _} = TokenStore.issue("alice", "_system", :operator, 3600)
+      {:ok, raw, _} = TokenStore.issue("alice", "_system", :ops, 3600)
       {:ok, _} = TokenStore.revoke_by_token(raw)
       assert {:error, :token_revoked} = TokenStore.verify(raw)
     end
@@ -289,8 +289,8 @@ defmodule Flezha.AuthZ.StoresTest do
 
     test "list filters by namespace" do
       {:ok, _} = TokenStore.start_link([])
-      {:ok, _, _} = TokenStore.issue("a", "team-orders", :operator, 3600)
-      {:ok, _, _} = TokenStore.issue("b", "team-payments", :operator, 3600)
+      {:ok, _, _} = TokenStore.issue("a", "team-orders", :ops, 3600)
+      {:ok, _, _} = TokenStore.issue("b", "team-payments", :ops, 3600)
       assert length(TokenStore.list("team-orders")) == 1
       assert length(TokenStore.list("team-payments")) == 1
       assert length(TokenStore.list(:all)) == 2
@@ -301,8 +301,8 @@ defmodule Flezha.AuthZ.StoresTest do
 
       # Inside the window (default one day), outside it, and one with no expiry
       # at all: only the first is announced, and only the first time.
-      {:ok, _, inside} = TokenStore.issue("soon", "team-orders", :operator, 3_600)
-      {:ok, _, _far} = TokenStore.issue("later", "team-orders", :operator, 30 * 86_400)
+      {:ok, _, inside} = TokenStore.issue("soon", "team-orders", :ops, 3_600)
+      {:ok, _, _far} = TokenStore.issue("later", "team-orders", :ops, 30 * 86_400)
       {:ok, _, _never} = TokenStore.issue("runner@t", "team-orders", :runner, :never)
 
       assert TokenStore.check_expiring_now() == [inside.token_hash]
@@ -311,7 +311,7 @@ defmodule Flezha.AuthZ.StoresTest do
 
     test "a revoked entry inside the window is not announced" do
       {:ok, _} = TokenStore.start_link([])
-      {:ok, _, entry} = TokenStore.issue("soon", "team-orders", :operator, 3_600)
+      {:ok, _, entry} = TokenStore.issue("soon", "team-orders", :ops, 3_600)
       {:ok, _} = TokenStore.revoke(String.slice(entry.token_hash, 0, 12))
 
       assert TokenStore.check_expiring_now() == []
@@ -350,7 +350,7 @@ defmodule Flezha.AuthZ.StoresTest do
 
       assert length(rotated_files) == 1
       # The fresh file should be a real DETS now; issuing a token should succeed.
-      assert {:ok, _raw, _entry} = TokenStore.issue("alice", "_system", :operator, 3600)
+      assert {:ok, _raw, _entry} = TokenStore.issue("alice", "_system", :ops, 3600)
     end
   end
 end

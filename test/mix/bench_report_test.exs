@@ -11,14 +11,14 @@ defmodule Mix.Tasks.Bench.ReportTest do
   alias Flezha.Service.PortPilot
   alias Mix.Tasks.Bench.Report
   alias Mix.Tasks.Bench.Tally
-  alias Mix.Tasks.Bench.Workflow.Run
+  alias Mix.Tasks.Bench.Bounded.Run
 
   describe "table/3" do
     test "columns align to their widest field and the rule matches" do
       rendered =
         Report.table(
           ["phase", "elapsed"],
-          [["operative creation", "217.1 ms"], ["plugin setup", "42.3 ms"]],
+          [["operator creation", "217.1 ms"], ["plugin setup", "42.3 ms"]],
           [:left, :right]
         )
 
@@ -29,7 +29,7 @@ defmodule Mix.Tasks.Bench.ReportTest do
         assert String.length(line) <= String.length(header) + 8
       end
 
-      assert String.starts_with?(rule, String.duplicate("─", String.length("operative creation")))
+      assert String.starts_with?(rule, String.duplicate("─", String.length("operator creation")))
       assert String.ends_with?(first, "217.1 ms")
       # Right-aligned: the shorter value is padded on the left, so both end
       # at the same column.
@@ -77,7 +77,7 @@ defmodule Mix.Tasks.Bench.ReportTest do
       assert Report.decimal(42, 2) == "42"
     end
 
-    test "the workflow task's own latency line never falls into scientific notation" do
+    test "the bounded task's own latency line never falls into scientific notation" do
       # `max` is the exact observation, not a bucket midpoint, so a round
       # millisecond is reachable — which is the only input that shows this.
       tally = Tally.record({0, 1_000_000_000}, Tally.new(1))
@@ -98,7 +98,7 @@ defmodule Mix.Tasks.Bench.ReportTest do
       assert Report.decimal(rate) == "100000.0"
 
       # The other two members of the family: a per-sleeper size and a
-      # per-workflow count, both of which land on a round thousand.
+      # per-bounded count, both of which land on a round thousand.
       assert Report.decimal(1_024_000 / 1024, 1) == "1000.0"
       assert Report.decimal(2000 / 2, 2) == "1000.00"
 

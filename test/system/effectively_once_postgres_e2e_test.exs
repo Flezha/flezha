@@ -1,7 +1,7 @@
 defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
   @moduledoc """
   Crash-matrix proof for `effectively-once-output-postgres-sink` against a
-  live Rust runner and a real Postgres: a source drives a tier operative
+  live Rust runner and a real Postgres: a source drives a tier operator
   (`tier_store`, declared `effectively_once()`) whose keyed outputs land on
   the transactional Postgres sink. The runner is SIGKILLed mid-stream
   while inputs keep flowing, and the controller's state layer is crashed
@@ -26,10 +26,10 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
   import FlezhaTest.Helper.PostgresSink
   import FlezhaTest.Helper.TierE2EHarness
 
-  alias Flezha.Operative.Builder
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.Builder
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
   alias Flezha.State.Outbox
 
   @moduletag :postgres_integration
@@ -47,19 +47,19 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
   setup do
     db = connect!()
     drop_tables!(db)
-    # Operator-owned schema (the prod default): pre-created, auto_create off.
+    # User-owned schema (the prod default): pre-created, auto_create off.
     create_tables!(db)
     %{db: db}
   end
 
   test "kills at each phase boundary converge the Postgres sink to the no-crash state", %{db: db} do
     namespace = unique("eff_once_pg")
-    operative_id = unique("tier_store")
+    operator_id = unique("tier_store")
     id_path = unique_id_path()
-    cell_id = {operative_id, @tasklet, ""}
-    cell_label = "#{operative_id}/#{@tasklet}/"
+    cell_id = {operator_id, @tasklet, ""}
+    cell_label = "#{operator_id}/#{@tasklet}/"
 
-    on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
+    on_exit(fn -> cleanup(namespace, operator_id, id_path) end)
 
     # --- Phase 0: boot, bind, sink ------------------------------------------
     {port_a, exec_a} = boot_runner(namespace, id_path)
@@ -70,7 +70,7 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
     sink = %Flezha.Plugin{
       id: "tier_pg_sink",
       namespace: namespace,
-      operative_id: operative_id,
+      operator_id: operator_id,
       provider: Flezha.Plugin.Provider.Postgres,
       opts:
         conn_opts()
@@ -78,31 +78,31 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
         |> Map.merge(%{
           auto_create: false,
           linger_ms: 10,
-          plugin_id: "tier_pg_sink_#{operative_id}"
+          plugin_id: "tier_pg_sink_#{operator_id}"
         }),
       hooks: [{:on_output, []}]
     }
 
     builder = %Builder{
-      id: operative_id,
+      id: operator_id,
       factory_id: @factory,
       init_values: %{},
       opts: [plugins: [sink]]
     }
 
-    assert {:ok, info} = OperativeManager.start_operative(namespace, builder)
+    assert {:ok, info} = OperatorManager.start_operator(namespace, builder)
 
     assert info.runner_id == exec_a
 
     # The SDK-declared tier must have been resolved at bind.
     assert wait_until(
-             fn -> ClassRegistry.effectively_once?(operative_id) end,
+             fn -> ClassRegistry.effectively_once?(operator_id) end,
              30_000
            ),
            "the tier declaration never reached the controller"
 
     # --- Phase 1: clean stream ------------------------------------------------
-    send_inputs(operative_id, namespace, ["k1:a", "k2:a", "k1:b"])
+    send_inputs(operator_id, namespace, ["k1:a", "k2:a", "k1:b"])
     assert await_rows(db, %{"k1" => "k1=b", "k2" => "k2=a"}, 30_000)
 
     # --- Phase 2: runner SIGKILL mid-stream ---------------------------------
@@ -110,29 +110,29 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
 
     # Inputs while no runner is alive: journaled, undeliverable — the
     # rebind's journal replay must recover them.
-    send_inputs(operative_id, namespace, ["k2:b", "k3:a"])
+    send_inputs(operator_id, namespace, ["k2:b", "k3:a"])
 
     {_port_b, exec_b} = boot_runner(namespace, id_path)
     assert exec_b != exec_a
 
     assert wait_until(fn -> exec_a not in FleetManager.active_runners(namespace) end, 30_000)
-    force_fresh_rebind(namespace, operative_id)
+    force_fresh_rebind(namespace, operator_id)
 
     assert await_rows(db, %{"k1" => "k1=b", "k2" => "k2=b", "k3" => "k3=a"}, 60_000),
            "journaled inputs were not replayed after the runner kill"
 
     # --- Phase 3: controller state-layer crash with a staled cursor ----------
-    stale_cursor_and_crash_writers(operative_id, cell_id)
-    force_fresh_rebind(namespace, operative_id)
+    stale_cursor_and_crash_writers(operator_id, cell_id)
+    force_fresh_rebind(namespace, operator_id)
 
-    send_inputs(operative_id, namespace, ["k1:c"])
+    send_inputs(operator_id, namespace, ["k1:c"])
 
     expected_final = %{"k1" => "k1=c", "k2" => "k2=b", "k3" => "k3=a"}
     assert await_rows(db, expected_final, 60_000)
 
     # Once the outbox owes nothing the full re-drive has landed; audit the
     # final table state.
-    assert await_outbox_drained(operative_id), "the outbox never drained"
+    assert await_outbox_drained(operator_id), "the outbox never drained"
 
     assert db_changelog(db) == expected_final,
            "the row set diverged from the no-crash final state"

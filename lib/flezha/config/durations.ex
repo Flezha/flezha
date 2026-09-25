@@ -3,7 +3,7 @@ defmodule Flezha.Config.Durations do
   The millisecond reader.
 
   A duration is a row of the one table like any other knob — a name, a default
-  in milliseconds, the application-env key an operator overrides it with, the
+  in milliseconds, the application-env key a user overrides it with, the
   environment variable the boot config translates into that key — plus a
   vocabulary of its own: a derivation for the values that are another row's
   multiple. A silence window that is `k` x its heartbeat, a budget that sits
@@ -51,7 +51,7 @@ defmodule Flezha.Config.Durations do
   defp duration(row), do: Map.take(row, [:default, :key, :env, :derived])
 
   @doc """
-  What a site waits: the operator's override for this row, else the row's
+  What a site waits: the user's override for this row, else the row's
   derivation over its parent, else the declared default.
   """
   @spec get(name()) :: non_neg_integer()

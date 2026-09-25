@@ -3,7 +3,7 @@ defmodule Flezha.Convergence.Probe.Readers do
   The fact readers `Flezha.Convergence.Probe.Table` declares — one function per
   detector entry.
 
-  A reader takes the tick's context (`operatives` from the Intent, the probed
+  A reader takes the tick's context (`operators` from the Intent, the probed
   `reality`, the loop's `signals` and `now`) and returns
   `[%Flezha.Convergence.Probe.Fact{}]`. It reads; it never decides. Every
   verdict word in this file's neighbourhood belongs to the judge, which is why
@@ -18,14 +18,14 @@ defmodule Flezha.Convergence.Probe.Readers do
   alias Flezha.Convergence.StallClassifier
 
   @type context :: %{
-          operatives: [map()],
+          operators: [map()],
           reality: map(),
           signals: map(),
           now: integer()
         }
 
   @doc """
-  Which runner an operative is bound to, whether that runner is live, and
+  Which runner an operator is bound to, whether that runner is live, and
   whether the bounded call into the Overwatch answered at all. `observed?`
   false and `bound_runner: :unknown` are the two ways a `SafeCall` that timed
   out or found no process reaches the judge — the facts that must never be
@@ -33,7 +33,7 @@ defmodule Flezha.Convergence.Probe.Readers do
   """
   @spec binding(context()) :: [Fact.t()]
   def binding(ctx) do
-    per_operative(ctx, fn ref, {ns, _rid}, observed ->
+    per_operator(ctx, fn ref, {ns, _rid}, observed ->
       obs = observed || %{}
 
       %{
@@ -50,32 +50,32 @@ defmodule Flezha.Convergence.Probe.Readers do
   @doc "Whether `Lifecycle.park/2` left a reason on the Overwatch, and which."
   @spec park(context()) :: [Fact.t()]
   def park(ctx) do
-    per_operative(ctx, fn ref, key, observed ->
+    per_operator(ctx, fn ref, key, observed ->
       fact(
         %{
           parked?: Map.get(observed || %{}, :parked?, false),
           park_reason: Map.get(observed || %{}, :park_reason),
-          park_args: Facts.args(ctx.signals[:facts] || %{}, :operative_parked, key)
+          park_args: Facts.args(ctx.signals[:facts] || %{}, :operator_parked, key)
         },
         ref
       )
     end)
   end
 
-  @doc "Whether the operative was evicted at a committed iteration boundary."
+  @doc "Whether the operator was evicted at a committed iteration boundary."
   @spec suspension(context()) :: [Fact.t()]
   def suspension(ctx) do
-    per_operative(ctx, fn ref, _key, observed ->
+    per_operator(ctx, fn ref, _key, observed ->
       fact(%{suspended?: Map.get(observed || %{}, :suspended?, false)}, ref)
     end)
   end
 
-  @doc "Whether a site declared this operative's output stalled."
+  @doc "Whether a site declared this operator's output stalled."
   @spec output_stall(context()) :: [Fact.t()]
   def output_stall(ctx) do
     stalled = MapSet.new(Facts.targets(ctx.signals[:facts] || %{}, :output_stall))
 
-    per_operative(ctx, fn ref, {_ns, rid}, _observed ->
+    per_operator(ctx, fn ref, {_ns, rid}, _observed ->
       fact(%{output_stalled?: MapSet.member?(stalled, rid)}, ref)
     end)
   end
@@ -85,21 +85,21 @@ defmodule Flezha.Convergence.Probe.Readers do
   def progress(ctx) do
     stuck = ctx.signals[:stuck] || %{}
 
-    per_operative(ctx, fn ref, {_ns, rid}, _observed ->
+    per_operator(ctx, fn ref, {_ns, rid}, _observed ->
       fact(%{stuck: Map.get(stuck, rid)}, ref)
     end)
   end
 
   @doc """
-  Per declared plugin: where the operative's extension table actually has it,
+  Per declared plugin: where the operator's extension table actually has it,
   and what its provider said. The provider's answer arrives unjudged — the
   `{:fail_open, reason}` of an uncertain probe reaches the judge as itself.
   """
   @spec plugin_health(context()) :: [Fact.t()]
   def plugin_health(ctx) do
-    observed_map = Map.get(ctx.reality, :operatives, %{})
+    observed_map = Map.get(ctx.reality, :operators, %{})
 
-    Enum.flat_map(ctx.operatives, fn %{namespace: ns, operative_id: rid} = declared ->
+    Enum.flat_map(ctx.operators, fn %{namespace: ns, operator_id: rid} = declared ->
       observed = Map.get(observed_map, {ns, rid})
 
       if plugin_readable?(observed),
@@ -127,7 +127,7 @@ defmodule Flezha.Convergence.Probe.Readers do
     end
   end
 
-  # A plugin set is readable only on an operative the probe actually reached
+  # A plugin set is readable only on an operator the probe actually reached
   # and that is neither suspended nor parked: a suspended instance released its
   # plugins with its runner, and there is nothing there to be unhealthy.
   defp plugin_readable?(nil), do: false
@@ -167,7 +167,7 @@ defmodule Flezha.Convergence.Probe.Readers do
 
   @doc """
   Every driver and channel the tick sampled — the population, so a healthy one
-  is a row an operator can read rather than the absence of one. Read apart from
+  is a row a user can read rather than the absence of one. Read apart from
   the verdict: a classifier that could not answer leaves these standing and
   `unknown`, instead of reporting no data plane at all.
   """
@@ -178,7 +178,7 @@ defmodule Flezha.Convergence.Probe.Readers do
   The data-plane classifier's single deepest verdict, resolved to the subject
   kind its layer names. `:fabric` becomes a `driver` subject — the one kind the
   Diff plans nothing for — and every other scope becomes the runner, channel or
-  operative the heal can reach.
+  operator the heal can reach.
   """
   @spec data_plane(context()) :: [Fact.t()]
   def data_plane(ctx) do
@@ -218,7 +218,7 @@ defmodule Flezha.Convergence.Probe.Readers do
 
   # One verdict, one subject kind — the "exactly one consumer" rule expressed
   # as the subject. `:fabric` is a driver (read by `/healthz` alone), and every
-  # other scope resolves to the runner, channel or operatives a heal can reach.
+  # other scope resolves to the runner, channel or operators a heal can reach.
   defp wedge_facts(ctx, layer, wedge_ctx) do
     observed = %{wedged_layer: layer, wedge_ctx: wedge_ctx}
     scope = StallClassifier.layer_scope(layer)
@@ -242,20 +242,20 @@ defmodule Flezha.Convergence.Probe.Readers do
     end
   end
 
-  # The layer names a bare operative id; the namespace comes from the probed
+  # The layer names a bare operator id; the namespace comes from the probed
   # reality, which is the only place the pair exists.
-  defp wedge_subjects(ctx, :operative, %{operative_id: id}) when is_binary(id) do
-    for {{_ns, rid} = ref, _obs} <- Map.get(ctx.reality, :operatives, %{}),
+  defp wedge_subjects(ctx, :operator, %{operator_id: id}) when is_binary(id) do
+    for {{_ns, rid} = ref, _obs} <- Map.get(ctx.reality, :operators, %{}),
         rid == id,
-        do: {:operative, ref}
+        do: {:operator, ref}
   end
 
-  # The layer names the runner; the operatives it wedged are the ones bound to
+  # The layer names the runner; the operators it wedged are the ones bound to
   # it, resolved against the SAME probed reality the Diff resolves the same
   # verdict against.
-  defp wedge_subjects(ctx, :operative, wedge_ctx) do
-    for ref <- StallClassifier.operatives_of(Map.get(ctx.reality, :operatives, %{}), wedge_ctx),
-        do: {:operative, ref}
+  defp wedge_subjects(ctx, :operator, wedge_ctx) do
+    for ref <- StallClassifier.operators_of(Map.get(ctx.reality, :operators, %{}), wedge_ctx),
+        do: {:operator, ref}
   end
 
   # A layer declared scope-less names nothing to heal: the frame is already
@@ -273,12 +273,12 @@ defmodule Flezha.Convergence.Probe.Readers do
 
   # ---------- helpers ----------
 
-  defp per_operative(ctx, fun) do
-    observed_map = Map.get(ctx.reality, :operatives, %{})
+  defp per_operator(ctx, fun) do
+    observed_map = Map.get(ctx.reality, :operators, %{})
 
-    Enum.map(ctx.operatives, fn %{namespace: ns, operative_id: rid} ->
+    Enum.map(ctx.operators, fn %{namespace: ns, operator_id: rid} ->
       key = {ns, rid}
-      fun.({:operative, key}, key, Map.get(observed_map, key))
+      fun.({:operator, key}, key, Map.get(observed_map, key))
     end)
   end
 
@@ -289,7 +289,7 @@ defmodule Flezha.Convergence.Probe.Readers do
   end
 
   # Every runner the tick knows about: the live roster of each namespace, plus
-  # every runner a declared operative names as its binding, plus every runner
+  # every runner a declared operator names as its binding, plus every runner
   # the liveness sample holds a live channel for. A binding to a runner no
   # roster holds is exactly what the judge has to be able to see, and so is a
   # session the rosters say nothing about at all.
@@ -308,7 +308,7 @@ defmodule Flezha.Convergence.Probe.Readers do
     # failed proves nothing, and evicting on it is what mass-migrates a healthy
     # fleet on a transient race.
     bound =
-      Enum.reduce(Map.get(ctx.reality, :operatives, %{}), active, fn {{ns, _rid}, obs}, acc ->
+      Enum.reduce(Map.get(ctx.reality, :operators, %{}), active, fn {{ns, _rid}, obs}, acc ->
         case Map.get(obs || %{}, :bound_runner) do
           runner_id when is_binary(runner_id) ->
             Map.put_new(acc, runner_id, {ns, off_roster(rosters, ns)})
@@ -319,7 +319,7 @@ defmodule Flezha.Convergence.Probe.Readers do
       end)
 
     # The rosters cover the running namespaces only, so a runner whose namespace
-    # hub is not running is in none of them and no declared operative names it.
+    # hub is not running is in none of them and no declared operator names it.
     # It is `:absent` on the same evidence the binding half has, none, and the
     # judge is what weighs that against the session's own silence.
     Enum.reduce(sample_channels(ctx), bound, &Map.put_new(&2, &1.runner_id, {nil, :absent}))

@@ -10,7 +10,7 @@ defmodule Flezha.AuthZ.RoleStore do
 
   A principal holds a SET of roles in ONE namespace: `bind/4` adds a role and
   refuses a namespace other than the one the principal already holds roles in,
-  `unbind/2` removes one, and `unbind/1` removes the identity. Operators wanting
+  `unbind/2` removes one, and `unbind/1` removes the identity. Callers wanting
   cross-namespace presence must hold multiple principal identities
   (token-per-namespace pattern).
 
@@ -117,8 +117,8 @@ defmodule Flezha.AuthZ.RoleStore do
 
   The roles bound to `principal` in the namespace the connection PROVED that
   grant `runner.connect`, or `[:runner]` when the principal is unbound, bound
-  elsewhere, or holds no such role. A role an operator's credential carries
-  (`viewer`, `operator`, `admin`) is never held by a connection: keeping it
+  elsewhere, or holds no such role. A role a caller's credential carries
+  (`viewer`, `ops`, `admin`) is never held by a connection: keeping it
   would open the administration surface's namespace and quota mutations to
   runner code, which `sdk-admin-api` forbids.
 
@@ -131,7 +131,7 @@ defmodule Flezha.AuthZ.RoleStore do
          [_ | _] = connecting <- Enum.filter(roles, &Policy.runner_principal_role?/1) do
       connecting
     else
-      _unbound_foreign_or_operator_only -> [:runner]
+      _unbound_foreign_or_ops_only -> [:runner]
     end
   end
 

@@ -213,7 +213,7 @@ defmodule Flezha.AuthZ.Verb do
   defp settle({:value, result}), do: result
   defp settle({:caught, kind, reason, stacktrace}), do: :erlang.raise(kind, reason, stacktrace)
 
-  # One record shape for "an operator did X": the action, where it was judged,
+  # One record shape for "a caller did X": the action, where it was judged,
   # who asked and from which surface, plus the row's target fields.
   defp emit(row, source, call, target, extra) do
     metadata =

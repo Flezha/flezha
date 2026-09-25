@@ -1,6 +1,6 @@
 defmodule Flezha.AuthZ.Verbs do
   @moduledoc """
-  The declaration of every operator verb: one row per verb, naming the action
+  The declaration of every administration verb: one row per verb, naming the action
   the policy judges, the rule that resolves the namespace it is judged in, and
   the audit it leaves. `Flezha.AuthZ.Verb.run/5` is the one function that
   applies a row, on every surface.
@@ -118,76 +118,76 @@ defmodule Flezha.AuthZ.Verbs do
     controller_status: [action: :"controller.status", scope: :caller],
     controller_mem_top: [action: :"controller.status", scope: :caller],
     controller_hub_id: [action: :"controller.status", scope: {:argument, 1}],
-    controller_recovery: [action: :"operative.list", scope: {:argument, 1}],
+    controller_recovery: [action: :"operator.list", scope: {:argument, 1}],
     controller_stop: [
       action: :"controller.stop",
       scope: :system,
       audit: {:after, :controller_service}
     ],
-    cluster_status: [action: :"operative.list", scope: {:argument, 1}],
+    cluster_status: [action: :"operator.list", scope: {:argument, 1}],
     # Listings.
-    list_namespaces: [action: :"operative.list", scope: :caller],
-    list_operatives: [action: :"operative.list", scope: {:argument, 1}],
-    list_runners: [action: :"operative.list", scope: {:argument, 1}],
-    operative_info: [action: :"operative.list", scope: {:argument, 1}],
-    operative_classes: [action: :"operative.list", scope: :caller],
-    # Operative lifecycle and live work.
-    operative_start: [
-      action: :"operative.start",
+    list_namespaces: [action: :"operator.list", scope: :caller],
+    list_operators: [action: :"operator.list", scope: {:argument, 1}],
+    list_runners: [action: :"operator.list", scope: {:argument, 1}],
+    operator_info: [action: :"operator.list", scope: {:argument, 1}],
+    operator_classes: [action: :"operator.list", scope: :caller],
+    # Operator lifecycle and live work.
+    operator_start: [
+      action: :"operator.start",
       scope: {:argument, 1},
-      audit: {:after, :operative_service},
-      target: [:_, :operative]
+      audit: {:after, :operator_service},
+      target: [:_, :operator]
     ],
-    operative_stop: [
-      action: :"operative.stop",
+    operator_stop: [
+      action: :"operator.stop",
       scope: {:argument, 1},
-      audit: {:after, :operative_service},
-      target: [:_, :operative]
+      audit: {:after, :operator_service},
+      target: [:_, :operator]
     ],
-    operative_scale: [
-      action: :"operative.scale",
+    operator_scale: [
+      action: :"operator.scale",
       scope: {:argument, 1},
-      audit: {:after, :workflow_service},
+      audit: {:after, :bounded_service},
       target: [:_, :group, :partitions]
     ],
-    operative_rewind: [
-      action: :"operative.rewind",
+    operator_rewind: [
+      action: :"operator.rewind",
       scope: {:argument, 1},
-      audit: {:after, :workflow_service},
-      target: [:_, :operative, :to_iteration]
+      audit: {:after, :bounded_service},
+      target: [:_, :operator, :to_iteration]
     ],
-    operative_send: [
-      action: :"operative.send",
+    operator_send: [
+      action: :"operator.send",
       scope: {:argument, 1},
-      audit: {:after, :operative_service},
-      target: [:_, :operative]
+      audit: {:after, :operator_service},
+      target: [:_, :operator]
     ],
-    # A tasklet's `ctx.spawn_workflow` feeding a running instance: the right
-    # `operative_send` judges, with no record of its own because it runs once per
+    # A tasklet's `ctx.spawn_bounded` feeding a running instance: the right
+    # `operator_send` judges, with no record of its own because it runs once per
     # event. A refusal is still audited, by the policy point.
-    spawn_deliver: [action: :"operative.send", scope: {:argument, 1}],
-    operative_replay: [
-      action: :"operative.replay",
+    spawn_deliver: [action: :"operator.send", scope: {:argument, 1}],
+    operator_replay: [
+      action: :"operator.replay",
       scope: {:row, :namespace},
-      audit: {:after, :operative_service},
+      audit: {:after, :operator_service},
       target: [:_, :cell]
     ],
-    operative_listen: [
-      action: :"operative.listen",
+    operator_listen: [
+      action: :"operator.listen",
       scope: {:argument, 1},
       audit: {:after, :plugin_service},
-      target: [:_, :operative]
+      target: [:_, :operator]
     ],
     cell_state: [action: :"state.get", scope: {:argument, 1}],
     schedule_run: [
-      action: :"operative.start",
+      action: :"operator.start",
       scope: {:row, :namespace},
-      audit: {:after, :operative_service},
+      audit: {:after, :operator_service},
       target: [:schedule]
     ],
     runner_connect: [action: :"runner.connect", scope: {:argument, 1}],
     # Plugins: the installed catalog is controller-wide, an enabled plugin lives
-    # in its operative's namespace.
+    # in its operator's namespace.
     plugin_list: [action: :"plugin.list", scope: :caller],
     list_installed_plugins: [action: :"plugin.list", scope: :caller],
     plugin_info: [action: :"plugin.info", scope: :caller],
@@ -333,7 +333,7 @@ defmodule Flezha.AuthZ.Verbs do
       action: :"state.retention",
       scope: :system,
       audit: {:after, :state_service},
-      target: [:operative_class, :hours]
+      target: [:operator_class, :hours]
     ],
     state_outbox: [action: :"state.records", scope: {:row, :namespace}],
     state_inbox: [action: :"state.records", scope: {:row, :namespace}],
@@ -424,7 +424,7 @@ defmodule Flezha.AuthZ.Verbs do
 
       :error ->
         raise ArgumentError,
-              "no operator verb #{inspect(verb)} is declared in #{inspect(__MODULE__)}"
+              "no administration verb #{inspect(verb)} is declared in #{inspect(__MODULE__)}"
     end
   end
 

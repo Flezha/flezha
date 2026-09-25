@@ -443,11 +443,11 @@ impl Core {
     /// Start the declared class as a local run: no controller, no socket.
     /// The alternative to `start`, never an addition. The host keeps driving
     /// its own poll loop, which is what runs the tasklets.
-    fn local_start(&self, factory_id: &str, operative_id: &str) -> PyResult<()> {
+    fn local_start(&self, factory_id: &str, operator_id: &str) -> PyResult<()> {
         let ctx = self.ptr()?;
         let factory = veneer::c_string("factory id", factory_id)?;
-        let operative = veneer::c_string("operative id", operative_id)?;
-        Ok(veneer::local_start(ctx, &factory, &operative)?)
+        let operator = veneer::c_string("operator id", operator_id)?;
+        Ok(veneer::local_start(ctx, &factory, &operator)?)
     }
 
     /// Queue the declared sink `channel` for `local_next_output`. A channel

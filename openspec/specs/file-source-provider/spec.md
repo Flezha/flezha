@@ -5,18 +5,18 @@ TBD - created by archiving change add-a-file-plugin. Update Purpose after archiv
 ## Requirements
 ### Requirement: A file source SHALL inject one entry frame per line through the confirming ingest
 
-A built-in provider `operative_file_source` SHALL be attachable as a plugin with options
+A built-in provider `operator_file_source` SHALL be attachable as a plugin with options
 `{path, channel | channel_in, start_at? (beginning | end, default beginning), poll_interval_ms?
 (default 1000), max_line_bytes? (default 1 MiB), read_chunk_bytes? (default 64 KiB),
 commit_interval_ms? (default 1000), failure_threshold? (default 3), idle_after_ms? (default 0,
-derived), plugin_id?}`. It SHALL declare that it feeds the operative, so `channel` resolves as
-the entry channel by the rule in `operative-extensions`; `channel_in` SHALL be the explicit
+derived), plugin_id?}`. It SHALL declare that it feeds the operator, so `channel` resolves as
+the entry channel by the rule in `operator-extensions`; `channel_in` SHALL be the explicit
 spelling of the same name, one of the two SHALL be required, and `channel_out` SHALL be refused
 as an option this provider does not offer.
 
 A record SHALL be the bytes of one line up to and excluding its newline. Each record SHALL be
-injected on the entry channel through the operative's confirming ingest, and the reader SHALL
-NOT read past one chunk ahead of the last confirmed line, so a payload the operative did not
+injected on the entry channel through the operator's confirming ingest, and the reader SHALL
+NOT read past one chunk ahead of the last confirmed line, so a payload the operator did not
 take is offered again and the controller's memory is bounded by one chunk and one line. A
 trailing fragment with no newline SHALL NOT be delivered until a newline follows it. An empty
 line SHALL be delivered as an empty string. A line that is not valid UTF-8 SHALL stop the
@@ -39,7 +39,7 @@ reader at that offset.
 
 #### Scenario: A refused ingest is re-offered
 
-- **WHEN** the operative refuses an injected line
+- **WHEN** the operator refuses an injected line
 - **THEN** the reader SHALL offer the same line again on its next attempt and SHALL NOT advance
   past it
 
@@ -86,7 +86,7 @@ keep polling and report unhealthy until it appears.
 #### Scenario: A controller restart resumes after the last committed line
 
 - **GIVEN** a plugin that has confirmed and committed three lines
-- **WHEN** the controller restarts and the operative is rebuilt from its declared manifest
+- **WHEN** the controller restarts and the operator is rebuilt from its declared manifest
 - **THEN** the reader SHALL start at the committed offset and inject nothing until a new line
   is appended
 

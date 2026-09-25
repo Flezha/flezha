@@ -27,7 +27,7 @@ defmodule Flezha.Observability.AuditLog.Retention do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  @doc "Force an immediate sweep — primarily for tests and operator-driven cleanup."
+  @doc "Force an immediate sweep — primarily for tests and user-driven cleanup."
   @spec sweep_now() :: {:ok, map()}
   def sweep_now() do
     GenServer.call(__MODULE__, :sweep_now, 30_000)

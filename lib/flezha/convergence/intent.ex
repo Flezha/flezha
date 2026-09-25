@@ -1,19 +1,19 @@
 defmodule Flezha.Convergence.Intent do
   @moduledoc """
   Pure reader of declared, durable state — "what the system should look
-  like". Derived from the hub's declared set (`HubManager.declared_operatives/1`):
-  every running namespace's declared operatives with the factory their start
+  like". Derived from the hub's declared set (`HubManager.declared_operators/1`):
+  every running namespace's declared operators with the factory their start
   args recorded, plus each one's declared plugins. Intent, not runtime — a
   wiped runtime registry does not empty this list, and a deliberate stop
   removes its entry for good. Read-only; never mutates the declared set.
 
-  Plugins still come from the durable registry cspec (`operative_plugins/2`),
+  Plugins still come from the durable registry cspec (`operator_plugins/2`),
   the record `flz plugin enable/disable` keeps current; the declared entry
   holds the start-time manifest, which only a total registry loss falls back
   to (via the reconcile replaying it).
 
   The Loop diffs this against `Probe.snapshot/0` (reality) each tick. Starting
-  a declared-but-absent operative is NOT this pipeline's job — the hub's own
+  a declared-but-absent operator is NOT this pipeline's job — the hub's own
   reconcile converges running children toward the declared set through the
   idempotent start authority.
   """
@@ -25,34 +25,34 @@ defmodule Flezha.Convergence.Intent do
 
   require Logger
 
-  @type operative :: %{
+  @type operator :: %{
           namespace: atom(),
-          operative_id: binary(),
+          operator_id: binary(),
           factory_id: binary() | nil,
           plugins: [{binary(), Plugin.t()}]
         }
-  @type t :: %__MODULE__{operatives: [operative()]}
+  @type t :: %__MODULE__{operators: [operator()]}
 
-  defstruct operatives: []
+  defstruct operators: []
 
   @spec declared() :: t()
   def declared() do
-    operatives =
+    operators =
       HubManager.get_running_namespaces()
       |> Enum.flat_map(&declared_for_namespace/1)
 
-    %__MODULE__{operatives: operatives}
+    %__MODULE__{operators: operators}
   end
 
   defp declared_for_namespace(namespace) do
     namespace
     |> intent_entries()
-    |> Enum.map(fn %{id: operative_id, factory_id: factory_id} ->
+    |> Enum.map(fn %{id: operator_id, factory_id: factory_id} ->
       %{
         namespace: namespace,
-        operative_id: operative_id,
+        operator_id: operator_id,
         factory_id: factory_id,
-        plugins: declared_plugins(namespace, operative_id)
+        plugins: declared_plugins(namespace, operator_id)
       }
     end)
   catch
@@ -66,11 +66,11 @@ defmodule Flezha.Convergence.Intent do
   # keeps healing what actually runs.
   defp intent_entries(namespace) do
     if HubManager.durable_starts?() do
-      HubManager.declared_operatives(namespace)
+      HubManager.declared_operators(namespace)
     else
       namespace
-      |> HubManager.get_all_operatives()
-      |> Enum.map(fn {operative_id, _pid} -> %{id: operative_id, factory_id: nil} end)
+      |> HubManager.get_all_operators()
+      |> Enum.map(fn {operator_id, _pid} -> %{id: operator_id, factory_id: nil} end)
     end
   end
 
@@ -79,15 +79,15 @@ defmodule Flezha.Convergence.Intent do
   # enable/disable`. Returns `{plugin_id, %Plugin{}}` tuples; empty on any
   # read failure so a transient registry hiccup never spuriously stops a
   # plugin.
-  defp declared_plugins(namespace, operative_id) do
-    case HubManager.operative_plugins(to_string(namespace), operative_id) do
+  defp declared_plugins(namespace, operator_id) do
+    case HubManager.operator_plugins(to_string(namespace), operator_id) do
       {:ok, plugins} when is_list(plugins) -> plugins
       _ -> []
     end
   end
 
   @doc """
-  Operatives with durable state evidence but no live intent, and the refreshed
+  Operators with durable state evidence but no live intent, and the refreshed
   evidence cache. `{prev_mismatch, cache}` in, `{mismatch, cache}` out; the
   caller keeps both. A failure answers with what it was given, so the check can
   never cost the tick its heals or its publish.
@@ -107,12 +107,12 @@ defmodule Flezha.Convergence.Intent do
 
   @doc false
   @spec intent_mismatch(Intent.t(), term()) :: {[binary()], term()}
-  def intent_mismatch(%__MODULE__{operatives: operatives}, cache) do
-    live = MapSet.new(operatives, & &1.operative_id)
+  def intent_mismatch(%__MODULE__{operators: operators}, cache) do
+    live = MapSet.new(operators, & &1.operator_id)
     {dirs, cache} = state_root_dirs(cache)
-    evidence = MapSet.union(MapSet.new(dirs), HubManager.durable_operative_ids())
+    evidence = MapSet.union(MapSet.new(dirs), HubManager.durable_operator_ids())
 
-    # A finished workflow's state is retained for inspection on purpose
+    # A finished bounded operator's state is retained for inspection on purpose
     # (`Flezha.State.Completion`): intent fulfilled, not intent lost.
     mismatch =
       evidence
@@ -138,11 +138,11 @@ defmodule Flezha.Convergence.Intent do
     :telemetry.execute(
       [:flezha, :convergence, :intent_mismatch],
       %{count: length(mismatch)},
-      %{operatives: mismatch}
+      %{operators: mismatch}
     )
   end
 
-  # Operative-class listing under the namespaced `<root>/<ns>/<class>` tree,
+  # Operator-class listing under the namespaced `<root>/<ns>/<class>` tree,
   # re-read only when the newest relevant mtime changes — the root's (a
   # namespace added/removed) or any namespace dir's (a class added/removed);
   # deeper writes touch neither. A cache entry younger than 2 s is never
@@ -161,7 +161,7 @@ defmodule Flezha.Convergence.Intent do
             {dirs, cache}
 
           _ ->
-            dirs = Paths.operative_classes()
+            dirs = Paths.operator_classes()
             {dirs, {mtime, dirs}}
         end
 

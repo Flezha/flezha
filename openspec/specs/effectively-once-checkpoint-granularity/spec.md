@@ -3,16 +3,16 @@
 ## Purpose
 
 The effectively-once tier acknowledges an input by making its state durable —
-one atomic record per invocation. Operatives that fold many inputs into one
+one atomic record per invocation. Operators that fold many inputs into one
 state push (a window that only closes on its boundary) cannot use that
 granularity coherently: the offset would advance with state they never published,
 and a restore would resume past inputs the restored state never saw. This
 capability is the opt-in that moves the acknowledgement to where such an
-operative's state actually becomes kernel-visible — the checkpoint.
+operator's state actually becomes kernel-visible — the checkpoint.
 ## Requirements
-### Requirement: Checkpoint ack-granularity is a per-operative opt-in on the effectively-once tier
+### Requirement: Checkpoint ack-granularity is a per-operator opt-in on the effectively-once tier
 
-An operative with the effectively-once tier enabled SHALL be able to opt into
+An operator with the effectively-once tier enabled SHALL be able to opt into
 `checkpoint` ack-granularity (`ChannelBuilder::checkpoint_ack()`). The default
 SHALL remain per-input granularity, byte-identical to the tier's existing
 behaviour. The declaration SHALL be refused at build time without the tier: off
@@ -22,27 +22,27 @@ log to replay the interval from.
 The mode's other precondition — every plugin-bound channel keyed, so the
 interval's re-emitted outputs are absorbed by sink dedup — needs no new check:
 the tier already refuses an unkeyed plugin-bound channel for every opted-in
-operative.
+operator.
 
 #### Scenario: Default is unchanged
 
-- **WHEN** a tier-enabled operative does not opt into checkpoint granularity
+- **WHEN** a tier-enabled operator does not opt into checkpoint granularity
 - **THEN** its consumed-offset advances per `run` invocation exactly as before
 
 #### Scenario: Opt-in without the tier is refused
 
-- **WHEN** an operative declares `checkpoint_ack()` without `effectively_once()`
-- **THEN** the build fails before the operative starts
+- **WHEN** an operator declares `checkpoint_ack()` without `effectively_once()`
+- **THEN** the build fails before the operator starts
 
 #### Scenario: Opt-in without keyed channels is refused
 
-- **WHEN** a checkpoint-ack operative declares an unkeyed plugin-bound channel
-- **THEN** the build fails before the operative starts
+- **WHEN** a checkpoint-ack operator declares an unkeyed plugin-bound channel
+- **THEN** the build fails before the operator starts
 
 ### Requirement: Consumed-offset advances only at checkpoint boundaries
 
 In checkpoint mode the Cell's durable `consumed_offset` SHALL advance only
-when the operative calls `ctx.checkpoint()`. Changes applied between checkpoints
+when the operator calls `ctx.checkpoint()`. Changes applied between checkpoints
 SHALL be held in the Cell's flush buffer and SHALL NOT be made durable on
 their own. The record written at the checkpoint SHALL carry the interval's
 accumulated changes and the closing input's consumed-offset as one fsynced unit
@@ -59,7 +59,7 @@ record exists to carry the offset.
 
 #### Scenario: Checkpoint closes the interval atomically
 
-- **WHEN** the operative checkpoints after processing offset 4710
+- **WHEN** the operator checkpoints after processing offset 4710
 - **THEN** one record carrying the accumulated changes and consumed-offset 4710
   is fsynced, and only then does the durable offset advance
 
@@ -71,7 +71,7 @@ consumed-offset. Checkpointing moves the acknowledgement, not the output. An
 interval's outputs are therefore emitted again when the interval replays, and
 the keyed-sink dedup the tier already requires SHALL absorb them.
 
-A checkpoint-ack operative MAY declare `outputs: :at_checkpoint` with a
+A checkpoint-ack operator MAY declare `outputs: :at_checkpoint` with a
 `max_delay_ms`: its mid-interval outputs SHALL then ride the interval's
 checkpoint record and be flushed as one batch after that record is fsynced,
 and the interval SHALL close after `every` inputs or `max_delay_ms` since its
@@ -91,7 +91,7 @@ absorbs both.
 
 #### Scenario: Batched outputs flush with the checkpoint record
 
-- **WHEN** an operative declared `outputs: :at_checkpoint` emits 300 outputs
+- **WHEN** an operator declared `outputs: :at_checkpoint` emits 300 outputs
   across an interval of 500 inputs
 - **THEN** no output reaches a plugin before the checkpoint, and after the
   checkpoint record is fsynced all 300 are handed to the chain as one batch
@@ -131,7 +131,7 @@ replay.
 
 On recovery, a checkpoint-mode Cell SHALL be restored from its durable
 records and the controller SHALL re-forward the input log from the restored
-consumed-offset through the operative in order. The replay SHALL keep the
+consumed-offset through the operator in order. The replay SHALL keep the
 current epoch. The Cell SHALL discard any open interval accumulated before
 the restore — the restored state does not contain it, and the re-forwarded
 inputs produce it again.
@@ -154,7 +154,7 @@ inputs produce it again.
 
 The input-log retention floor for a checkpoint-mode Cell SHALL be its last
 checkpointed offset — at least one full checkpoint interval is always retained.
-The operative's min-watermark SHALL advance in steps at checkpoint cadence, and
+The operator's min-watermark SHALL advance in steps at checkpoint cadence, and
 the source-ingestion credit loop SHALL grant accordingly (burst grants at
 watermark steps, park in between when credit is exhausted).
 
@@ -166,13 +166,13 @@ watermark steps, park in between when credit is exhausted).
 
 ### Requirement: A held watermark is not read as a stall
 
-The controller's liveness detectors SHALL NOT report a checkpoint-mode operative
+The controller's liveness detectors SHALL NOT report a checkpoint-mode operator
 as a stalled or dead data-flow merely because it made nothing durable for an
 interval. Silence between checkpoints is the mode's steady state.
 
 #### Scenario: A quiet interval does not trip the input-silence sweep
 
-- **WHEN** a checkpoint-mode operative that has produced output before makes
+- **WHEN** a checkpoint-mode operator that has produced output before makes
   nothing durable for longer than the input-silence timeout
 - **THEN** no `input_silence` is reported for it
 
@@ -180,7 +180,7 @@ interval. Silence between checkpoints is the mode's steady state.
 
 Every SDK that carries the effectively-once tier SHALL expose the bare checkpoint opt-in on its channel builder, spelled in that language's casing (`checkpoint_ack()` / `checkpointAck()`), so a class whose interval is closed only by an explicit `ctx.checkpoint()` is expressible without declaring a cadence it does not want. Each option that presumes the checkpoint interval — the bare opt-in, the declared cadence, and holding outputs until the interval closes — SHALL set the checkpoint granularity itself rather than requiring a second call, and setting it SHALL be idempotent, so the options compose in any order and any combination and each preserves the others' policy. An SDK SHALL NOT be able to produce a declaration that holds outputs at the checkpoint, or closes the interval on a cadence, while acknowledging per input: the core refuses that declaration at registration, and a builder that can express it hands its author a class that cannot start.
 
-An SDK that carries the tier SHALL prove the opt-in through its own authoring surface rather than by writing the declaration by hand, so the refusal a wrong declaration earns is one an author can actually reach. An SDK that cannot yet carry the tier SHALL defer `effectively_once` by name in its own conformance manifest, naming the follow-up that owes it. The Elixir SDK carries it in its own core: `Flezha.SDK.Channels.checkpoint_ack/1`, `checkpoint_every/2` and `outputs_at_checkpoint/2` route through one private policy amendment that sets the granularity, as the reference's do, and `Flezha.SDK.Topology.build/1` refuses `CheckpointAckWithoutTier` before the operative starts.
+An SDK that carries the tier SHALL prove the opt-in through its own authoring surface rather than by writing the declaration by hand, so the refusal a wrong declaration earns is one an author can actually reach. An SDK that cannot yet carry the tier SHALL defer `effectively_once` by name in its own conformance manifest, naming the follow-up that owes it. The Elixir SDK carries it in its own core: `Flezha.SDK.Channels.checkpoint_ack/1`, `checkpoint_every/2` and `outputs_at_checkpoint/2` route through one private policy amendment that sets the granularity, as the reference's do, and `Flezha.SDK.Topology.build/1` refuses `CheckpointAckWithoutTier` before the operator starts.
 
 #### Scenario: Holding outputs at the checkpoint acknowledges at the checkpoint
 
@@ -200,7 +200,7 @@ An SDK that carries the tier SHALL prove the opt-in through its own authoring su
 #### Scenario: The opt-in does not imply the tier
 
 - **WHEN** a class declares any of the three checkpoint options without declaring effectively-once
-- **THEN** the build is refused before the operative starts, naming the missing tier
+- **THEN** the build is refused before the operator starts, naming the missing tier
 
 #### Scenario: An SDK that defers the tier says so in its manifest
 

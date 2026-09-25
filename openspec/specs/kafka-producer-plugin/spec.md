@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The kafka-producer-plugin capability defines the production-grade contract that any Flezha Kafka producer plugin SHALL satisfy when publishing messages from an operative chain to a Kafka cluster. The contract supersedes the prior "thin `KafkaEx.produce` wrapper" behaviour, which surfaced every transient broker condition (`:not_leader_for_partition`, `:no_broker`, `:unknown_topic_or_partition`, `:network_exception`, `:request_timed_out`, `:not_enough_replicas`) directly to the chain, dropped messages on every error, spawned one `KafkaEx.Server` worker per plugin instance, and let upstream mailboxes grow unbounded during outages until the BEAM was OOM-killed. This capability specifies the retry, idempotence, batching, bounded-queue, shared-worker, active metadata refresh, auto-topic-creation, and telemetry semantics a conforming producer SHALL implement, and the configuration surface (`:retries`, `:retry_backoff_ms`, `:retry_max_backoff_ms`, `:delivery_timeout_ms`, `:linger_ms`, `:max_batch_bytes`, `:queue_max`, `:queue_overflow`, `:idempotent`, `:auto_create_topic`, `:auto_create_partitions`, `:auto_create_replication_factor`, `:required_acks`) runners tune to express durability and back-pressure trade-offs. A conforming producer SHALL never surface raw transient broker errors to the chain for messages that ultimately succeed, SHALL bound mailbox and queue growth under sustained outages, and SHALL expose every state transition as a `:telemetry` event so runners can monitor health without parsing log lines.
+The kafka-producer-plugin capability defines the production-grade contract that any Flezha Kafka producer plugin SHALL satisfy when publishing messages from an operator chain to a Kafka cluster. The contract supersedes the prior "thin `KafkaEx.produce` wrapper" behaviour, which surfaced every transient broker condition (`:not_leader_for_partition`, `:no_broker`, `:unknown_topic_or_partition`, `:network_exception`, `:request_timed_out`, `:not_enough_replicas`) directly to the chain, dropped messages on every error, spawned one `KafkaEx.Server` worker per plugin instance, and let upstream mailboxes grow unbounded during outages until the BEAM was OOM-killed. This capability specifies the retry, idempotence, batching, bounded-queue, shared-worker, active metadata refresh, auto-topic-creation, and telemetry semantics a conforming producer SHALL implement, and the configuration surface (`:retries`, `:retry_backoff_ms`, `:retry_max_backoff_ms`, `:delivery_timeout_ms`, `:linger_ms`, `:max_batch_bytes`, `:queue_max`, `:queue_overflow`, `:idempotent`, `:auto_create_topic`, `:auto_create_partitions`, `:auto_create_replication_factor`, `:required_acks`) runners tune to express durability and back-pressure trade-offs. A conforming producer SHALL never surface raw transient broker errors to the chain for messages that ultimately succeed, SHALL bound mailbox and queue growth under sustained outages, and SHALL expose every state transition as a `:telemetry` event so runners can monitor health without parsing log lines.
 ## Requirements
 ### Requirement: Producer retries every transient broker error transparently
 
@@ -253,8 +253,8 @@ The producer-id rotation introduced by step 4 SHALL be bounded by the existing `
 
 #### Scenario: KafkaEx worker crashes mid-batch and queued records continue flowing
 - **GIVEN** a `ProducerWorker` is steadily delivering `btc_demo.ohlc.v1` records at 50 msg/sec and has 200 records in `state.queue`, 50 across the in-flight window, and 0 in `state.blocked`
-- **AND** `$MARKET_COMPOSE` names `docker/dev/docker-compose.yml` in the operator's own checkout of the separate `flezha_market` repository, which owns that stack and which this repository does not carry
-- **AND** the operator runs `docker compose -f "$MARKET_COMPOSE" exec -T flezha-controller /flezha/bin/iex --remsh flezha@... -e ':sys.terminate(pid, :forced)'` against the live KafkaEx worker pid for the operative's canonical identity
+- **AND** `$MARKET_COMPOSE` names `docker/dev/docker-compose.yml` in the user's own checkout of the separate `flezha_market` repository, which owns that stack and which this repository does not carry
+- **AND** the user runs `docker compose -f "$MARKET_COMPOSE" exec -T flezha-controller /flezha/bin/iex --remsh flezha@... -e ':sys.terminate(pid, :forced)'` against the live KafkaEx worker pid for the operator's canonical identity
 - **WHEN** `WorkerRegistry` observes the worker's DOWN
 - **THEN** within 1 second the producer SHALL receive `{:kafka_worker_dead, registry_ref, _reason}`, acquire a new worker via `swap/2`, re-run `InitProducerId`, and resume sending
 - **AND** the topic end-offset of `btc_demo.ohlc.v1` (read via `docker compose ... exec kafka /opt/kafka/bin/kafka-get-offsets.sh --bootstrap-server kafka:9092 --topic btc_demo.ohlc.v1`) SHALL advance by at least 200 records within the next 10 seconds
@@ -406,20 +406,20 @@ The bounded outbound queue SHALL be FIFO regardless of admission primitive. Reco
 
 The Kafka producer plugin SHALL compute its dedup key from the durable outbox
 identity as `<flz.cell>/<outbox_seq>/<epoch>` (where `flz.cell` is
-`operative_class/tasklet_id/cell_key` and `outbox_seq` is
+`operator_class/tasklet_id/cell_key` and `outbox_seq` is
 `<record WAL seq>.<emit ordinal>`). When outbox identity metadata is absent
-(at-least-once operatives), the plugin SHALL fall back to the caller-supplied
+(at-least-once operators), the plugin SHALL fall back to the caller-supplied
 `kafka_msg_key` behaviour unchanged. The plugin SHALL NOT use any value derived
-from the prior `processor_id` term in the dedup key composition; per-Operative
-identity in the dedup key is captured by `<operative_class>` (the Operative's
+from the prior `processor_id` term in the dedup key composition; per-Operator
+identity in the dedup key is captured by `<operator_class>` (the Operator's
 module/class name) within `flz.cell`.
 
 #### Scenario: Dedup key uses outbox identity
 
 - **WHEN** the plugin emits a tier record produced by Cell `k1` of Tasklet
-  `s1` of Operative class `MarketOperative` with outbox seq `42.0` and epoch `1`
+  `s1` of Operator class `MarketOperator` with outbox seq `42.0` and epoch `1`
 - **THEN** the message MUST carry a `flezha.dedup_key` header equal to
-  `MarketOperative/s1/k1/42.0/1`
+  `MarketOperator/s1/k1/42.0/1`
 
 #### Scenario: Backward-compat keys are not produced
 
@@ -450,14 +450,14 @@ dedup on append-only topics.
 ### Requirement: Append-topic exactness contract is documented
 
 Because the Kafka client provides no transactional producer, the plugin SHALL
-document (spec + operator docs) that append-only topics achieve exact-once
+document (spec + user docs) that append-only topics achieve exact-once
 consumption via the identity header (consumer-side dedup), while
 compacted/changelog topics achieve it via message-key upsert with no consumer
 work. The plugin SHALL NOT claim broker-side exactly-once.
 
 #### Scenario: Docs state the boundary
 
-- **WHEN** an operator reads the Kafka sink documentation for the tier
+- **WHEN** a user reads the Kafka sink documentation for the tier
 - **THEN** the changelog-vs-append exactness contract and the consumer-side
   header check are stated explicitly
 
@@ -465,7 +465,7 @@ work. The plugin SHALL NOT claim broker-side exactly-once.
 
 A producer chain serving an effectively-once (delivery-guaranteed) outbox SHALL
 back-pressure the outbox flush — which runs off the ingest hot path — under the
-`:drop_nothing` default rather than evict admitted records. An operator MAY still
+`:drop_nothing` default rather than evict admitted records. A user MAY still
 configure `drop_oldest` or `drop_newest` explicitly on such a chain; each
 resulting drop SHALL emit an alarm-grade event, not only the `dropped_total`
 counter. On permanent failure of a batch carrying guaranteed records, the
@@ -556,14 +556,14 @@ When a batch fails retriably while later batches are outstanding behind it, the 
 
 ### Requirement: `:queue_overflow` names what it discards, and the retired spelling is refused
 
-The `:queue_overflow` option's three values SHALL be `:drop_nothing`, `:drop_oldest` and `:drop_newest`, spelled exactly as the SDK overflow policy spells them, because both surfaces answer one question — what does a full queue discard? — and an operator reading a Flezha pipeline SHALL meet one answer to it.
+The `:queue_overflow` option's three values SHALL be `:drop_nothing`, `:drop_oldest` and `:drop_newest`, spelled exactly as the SDK overflow policy spells them, because both surfaces answer one question — what does a full queue discard? — and a user reading a Flezha pipeline SHALL meet one answer to it.
 
 <!-- overflow-naming-record:begin -->
 The retired spelling `:block` SHALL NOT be accepted on this option, on any path: no alias, no coercion, no deprecation window.
 <!-- overflow-naming-record:end -->
 A configuration carrying it SHALL be refused with a message naming the option and the offered value, never silently mapped onto the default. A CI gate SHALL fail a build that reintroduces the retired spelling on this surface, and that gate SHALL match the option's own name rather than requiring the retired value to appear beside a sibling value.
 
-The option remains operator configuration on a controller-side plugin provider. It is not an authoring surface, carries no SDK spelling and crosses no wire, so no SDK is owed a companion change.
+The option remains configuration on a controller-side plugin provider. It is not an authoring surface, carries no SDK spelling and crosses no wire, so no SDK is owed a companion change.
 
 #### Scenario: A configuration offering the retired spelling is refused
 
@@ -582,7 +582,7 @@ The option remains operator configuration on a controller-side plugin provider. 
 
 An absent option, and an option explicitly set to `nil`, SHALL take the default policy: the option is optional, and only a value that was supplied and is not a policy is an error.
 
-Validation SHALL live on the path an operator's stored configuration travels. A check reachable only from the CLI string-map builder does not satisfy this requirement, because a plugin spec and a stored capability row reach `init_provider/1` without ever constructing the provider struct.
+Validation SHALL live on the path a user's stored configuration travels. A check reachable only from the CLI string-map builder does not satisfy this requirement, because a plugin spec and a stored capability row reach `init_provider/1` without ever constructing the provider struct.
 
 A non-policy value SHALL NOT be coerced, defaulted or carried into the worker. Carrying it there makes an invalid configuration indistinguishable from a valid one until the queue reaches `:queue_max`, at which point the worker exits and the records it held are lost.
 
@@ -619,7 +619,7 @@ A non-policy value SHALL NOT be coerced, defaulted or carried into the worker. C
 
 An unknown key SHALL NOT be silently dropped. The broker client's constructor takes only the four keys it knows, so a misspelled `username` today means *no username* — a configuration that reads as accepted and authenticates as anonymous.
 
-Operator-supplied auth text SHALL NOT be resolved to an atom by name. Resolving it raises for a string that names no existing atom and succeeds for any string that happens to name one, which is the same defect in both directions: a crash for one typo and a silently wrong value for another.
+User-supplied auth text SHALL NOT be resolved to an atom by name. Resolving it raises for a string that names no existing atom and succeeds for any string that happens to name one, which is the same defect in both directions: a crash for one typo and a silently wrong value for another.
 
 Validation SHALL happen once, at preparation, and the resolved configuration SHALL be what the client-restart closure re-reads. The closure is re-invoked on every client restart so a rotated password environment variable takes effect; a validation living inside it would raise inside the shared worker registry rather than at the enable that supplied the bad value.
 

@@ -3,7 +3,7 @@ defmodule Flezha.Runner.ControlUnit do
   The controller's request side of one runner's control channel.
 
   Every controller-initiated command — assign runner id, connect sockets, add
-  or remove an operative, ping, partition, compaction, workflow stop — is built
+  or remove an operator, ping, partition, compaction, bounded stop — is built
   here, handed to `ControlChannel` to write, and its response matched back by
   reference id.
 
@@ -38,7 +38,7 @@ defmodule Flezha.Runner.ControlUnit do
   reply within `timeout_ms` (default 2 s), or `{:error, reason}` for any
   transport or decode failure.
 
-  Used by `Flezha.Operative.Lifecycle.complete_init/4` before `:start_operative` to
+  Used by `Flezha.Operator.Lifecycle.complete_init/4` before `:start_operator` to
   prove the control channel is end-to-end healthy. A timeout here signals a
   stale `stream_ref` that the bound `ControlChannel` cannot detect on its
   own (writes succeed against a closed transport with no failure signal).
@@ -72,26 +72,26 @@ defmodule Flezha.Runner.ControlUnit do
     do: Durations.get(:overwatch_ping_timeout_ms)
 
   @doc """
-  Sends a `OperativeMessage` to the SDK-side operative via the control
-  channel and returns the decoded `OperativeMessageResponse`.
+  Sends a `OperatorMessage` to the SDK-side operator via the control
+  channel and returns the decoded `OperatorMessageResponse`.
 
   Mirrors the `CellState` request/reply pattern: the compute engine's
-  reply (a protobuf-encoded `OperativeMessageResponse`) is delivered by
+  reply (a protobuf-encoded `OperatorMessageResponse`) is delivered by
   `handle_payload/2` as the `raw_data` field of the outer `CommandResponse`.
   An empty `error` string is mapped to `{:ok, payload}`; a non-empty error
   becomes `{:error, error}`. Transport-layer or encoding failures surface as
   `{:error, reason}` unchanged.
   """
-  @spec send_operative_message(binary(), binary(), binary()) ::
+  @spec send_operator_message(binary(), binary(), binary()) ::
           {:ok, binary()} | {:error, term()}
-  def send_operative_message(runner_id, operative_id, payload)
-      when is_binary(runner_id) and is_binary(operative_id) and is_binary(payload) do
-    command = %RunnerCommands.OperativeMessage{
-      operative_id: operative_id,
+  def send_operator_message(runner_id, operator_id, payload)
+      when is_binary(runner_id) and is_binary(operator_id) and is_binary(payload) do
+    command = %RunnerCommands.OperatorMessage{
+      operator_id: operator_id,
       payload: payload
     }
 
-    case send_control_await(runner_id, {:operative_message, command}) do
+    case send_control_await(runner_id, {:operator_message, command}) do
       {:ok, raw_data} -> decode_message_response(raw_data)
       {:error, _} = err -> err
     end
@@ -103,7 +103,7 @@ defmodule Flezha.Runner.ControlUnit do
   seam every control round-trip decodes on top of. Returns `{:ok, raw_data}`
   (the `CommandResponse.raw_data` the caller decodes) or `{:error, reason}` on a
   timeout, transport failure, an unstarted ControlUnit, or a dead one.
-  `send_operative_message/3`, the credit-window handshake, the operative
+  `send_operator_message/3`, the credit-window handshake, the operator
   handover round-trips, and the compaction response inspection all use it.
 
   Options: `:timeout` (default #{Durations.get(:control_unit_reply_timeout_ms)} ms) and
@@ -117,11 +117,11 @@ defmodule Flezha.Runner.ControlUnit do
           {:ok, binary()} | {:ok, binary(), map()} | {:error, term()}
   def send_control_await(runner_id, command, opts \\ [])
 
-  # An operative with nothing bound has no control unit either, which is the
+  # An operator with nothing bound has no control unit either, which is the
   # same answer as one whose unit was never started. Callers reach this on
-  # every path that talks to "the operative's runner" while it has none — a
+  # every path that talks to "the operator's runner" while it has none — a
   # migration arriving or leaving during a group change, a snapshot of an
-  # unbound operative — and none of them may be crashed by it.
+  # unbound operator — and none of them may be crashed by it.
   def send_control_await(runner_id, _command, _opts) when not is_binary(runner_id),
     do: {:error, :no_control_unit}
 
@@ -129,7 +129,7 @@ defmodule Flezha.Runner.ControlUnit do
     # A control unit that was never started is a distinct failure from one that
     # is wedged, and the callers log or park on the difference. A wedged one
     # (waiting on a reply the dead transport will never deliver) is caught below,
-    # so neither shape can crash the operative that asked.
+    # so neither shape can crash the operator that asked.
     case GenServer.whereis(Identificator.control_unit(runner_id)) do
       nil ->
         # An atom, like the ping path's: a caller has to tell "the runner never
@@ -152,7 +152,7 @@ defmodule Flezha.Runner.ControlUnit do
 
   `terminal: true` makes the SDK run its graceful shutdown and then exit
   NON-ZERO, so the orchestrator that owns process lifecycle restarts it — the
-  rung above `evict_runner`, which moves a wedged runner's operatives but
+  rung above `evict_runner`, which moves a wedged runner's operators but
   leaves the process connected and placeable. `reason` rides along for the
   runner's own log and is never interpreted by the SDK.
 
@@ -174,11 +174,11 @@ defmodule Flezha.Runner.ControlUnit do
   end
 
   defp decode_message_response(raw_data) do
-    case RunnerCommands.OperativeMessageResponse.decode(raw_data) do
-      {:ok, %RunnerCommands.OperativeMessageResponse{error: "", payload: payload}} ->
+    case RunnerCommands.OperatorMessageResponse.decode(raw_data) do
+      {:ok, %RunnerCommands.OperatorMessageResponse{error: "", payload: payload}} ->
         {:ok, payload}
 
-      {:ok, %RunnerCommands.OperativeMessageResponse{error: err}} ->
+      {:ok, %RunnerCommands.OperatorMessageResponse{error: err}} ->
         {:error, err}
 
       {:error, reason} ->
@@ -187,33 +187,33 @@ defmodule Flezha.Runner.ControlUnit do
   end
 
   @doc """
-  Cooperative external stop for a workflow operative (`flz operative stop`).
+  Cooperative external stop for a bounded operator (`flz operator stop`).
 
-  Sends a `WorkflowStop` command — distinct from the hard `RemOperative`: the SDK
-  trips the workflow driver's cancellation token, lets in-flight work unwind, runs
-  any saga compensation, then emits `WorkflowCompleted` (status "cancelled") which
-  drives the single teardown via `ControlChannel.handle_workflow_completed/2`.
+  Sends a `BoundedStop` command — distinct from the hard `RemOperator`: the SDK
+  trips the bounded driver's cancellation token, lets in-flight work unwind, runs
+  any saga compensation, then emits `BoundedCompleted` (status "cancelled") which
+  drives the single teardown via `ControlChannel.handle_bounded_completed/2`.
 
-  Fire-and-forget (mirrors `:stop_operative_async`) — the teardown is asynchronous,
+  Fire-and-forget (mirrors `:stop_operator_async`) — the teardown is asynchronous,
   so the caller does not wait on the SDK ack. Returns `{:error, :no_control_unit}`
   when the runner's control unit is gone (caller falls back to a hard stop).
   """
-  @spec workflow_stop(binary(), binary()) :: :ok | {:error, :no_control_unit}
-  def workflow_stop(runner_id, operative_id)
-      when is_binary(runner_id) and is_binary(operative_id) do
-    cast_to_unit(runner_id, {:workflow_stop, operative_id})
+  @spec bounded_stop(binary(), binary()) :: :ok | {:error, :no_control_unit}
+  def bounded_stop(runner_id, operator_id)
+      when is_binary(runner_id) and is_binary(operator_id) do
+    cast_to_unit(runner_id, {:bounded_stop, operator_id})
   end
 
   @doc """
-  Hard, fire-and-forget `RemOperative`: remove the operative from the runner
+  Hard, fire-and-forget `RemOperator`: remove the operator from the runner
   without waiting for the SDK ack. The Overwatch's own teardown uses it, and so
   does the durable-suspension eviction — a suspended instance holds zero runner
   resources while its controller-side registry entry (and Overwatch) stay.
   """
-  @spec stop_operative_async(binary(), binary()) :: :ok | {:error, :no_control_unit}
-  def stop_operative_async(runner_id, operative_id)
-      when is_binary(runner_id) and is_binary(operative_id) do
-    cast_to_unit(runner_id, {:stop_operative_async, operative_id})
+  @spec stop_operator_async(binary(), binary()) :: :ok | {:error, :no_control_unit}
+  def stop_operator_async(runner_id, operator_id)
+      when is_binary(runner_id) and is_binary(operator_id) do
+    cast_to_unit(runner_id, {:stop_operator_async, operator_id})
   end
 
   defp cast_to_unit(runner_id, message) do
@@ -291,38 +291,38 @@ defmodule Flezha.Runner.ControlUnit do
   end
 
   @impl true
-  def handle_call({:start_operative, operative}, from, state) do
+  def handle_call({:start_operator, operator}, from, state) do
     init_values =
-      case operative.init_values !== %{} do
+      case operator.init_values !== %{} do
         true ->
-          {:ok, json_iv} = Jason.encode(operative.init_values)
+          {:ok, json_iv} = Jason.encode(operator.init_values)
           json_iv
 
         false ->
           ""
       end
 
-    # Empty kind ⇒ `:stream` on the SDK side, keeping the wire frame
+    # Empty kind ⇒ `:unbounded` on the SDK side, keeping the wire frame
     # byte-identical to pre-kind builds for the default kind.
-    kind = if operative.kind in [nil, :stream], do: "", else: to_string(operative.kind)
+    kind = if operator.kind in [nil, :unbounded], do: "", else: to_string(operator.kind)
 
-    command = %RunnerCommands.AddOperative{
-      operative_id: operative.id,
-      factory_id: operative.factory_id,
+    command = %RunnerCommands.AddOperator{
+      operator_id: operator.id,
+      factory_id: operator.factory_id,
       init_values: init_values,
       kind: kind,
-      # Both stamped on opts by `Flezha.Operative.Lifecycle`. Non-zero only
-      # for a durable workflow (re)bind: the SDK driver holds its first Tasklet
+      # Both stamped on opts by `Flezha.Operator.Lifecycle`. Non-zero only
+      # for a durable bounded operator (re)bind: the SDK driver holds its first Tasklet
       # until this many Cell restores land (crash-resume). `task_journal` is
       # `nil` unless the instance has a journal to resume from.
-      resume_cell_count: Keyword.get(operative.opts, :resume_cell_count, 0),
-      inbox_tail_count: Keyword.get(operative.opts, :inbox_tail_count, 0),
-      task_journal: Keyword.get(operative.opts, :task_journal)
+      resume_cell_count: Keyword.get(operator.opts, :resume_cell_count, 0),
+      inbox_tail_count: Keyword.get(operator.opts, :inbox_tail_count, 0),
+      task_journal: Keyword.get(operator.opts, :task_journal)
     }
 
-    command = with_partition_identity(command, operative.opts)
+    command = with_partition_identity(command, operator.opts)
 
-    case ControlChannel.send_control(state.runner_id, {:add_operative, command}) do
+    case ControlChannel.send_control(state.runner_id, {:add_operator, command}) do
       {:ok, ref} ->
         {:noreply, store_ref(state, ref, from)}
 
@@ -332,12 +332,12 @@ defmodule Flezha.Runner.ControlUnit do
   end
 
   @impl true
-  def handle_call({:stop_operative, operative_id}, from, state) do
+  def handle_call({:stop_operator, operator_id}, from, state) do
     case ControlChannel.send_control(
            state.runner_id,
            {
-             :rem_operative,
-             %RunnerCommands.RemOperative{operative_id: operative_id}
+             :rem_operator,
+             %RunnerCommands.RemOperator{operator_id: operator_id}
            }
          ) do
       {:ok, ref} ->
@@ -349,12 +349,12 @@ defmodule Flezha.Runner.ControlUnit do
   end
 
   @impl true
-  def handle_cast({:stop_operative_async, operative_id}, state) do
+  def handle_cast({:stop_operator_async, operator_id}, state) do
     ControlChannel.send_control_async(
       state.runner_id,
       {
-        :rem_operative,
-        %RunnerCommands.RemOperative{operative_id: operative_id}
+        :rem_operator,
+        %RunnerCommands.RemOperator{operator_id: operator_id}
       }
     )
 
@@ -362,12 +362,12 @@ defmodule Flezha.Runner.ControlUnit do
   end
 
   @impl true
-  def handle_cast({:workflow_stop, operative_id}, state) do
+  def handle_cast({:bounded_stop, operator_id}, state) do
     ControlChannel.send_control_async(
       state.runner_id,
       {
-        :workflow_stop,
-        %RunnerCommands.WorkflowStop{operative_id: operative_id}
+        :bounded_stop,
+        %RunnerCommands.BoundedStop{operator_id: operator_id}
       }
     )
 
@@ -410,8 +410,8 @@ defmodule Flezha.Runner.ControlUnit do
   # `want_metadata` decides whether the reply also carries the reply frame's
   # metadata map.
   # A partition member's owned key-group range, which arms the SDK's
-  # mis-route guard. Left untouched for an ordinary operative, so its
-  # `AddOperative` stays byte-identical: proto3 omits zero-valued scalars.
+  # mis-route guard. Left untouched for an ordinary operator, so its
+  # `AddOperator` stays byte-identical: proto3 omits zero-valued scalars.
   defp with_partition_identity(command, opts) do
     case Flezha.Partition.identity(opts) do
       %{index: index, count: count, range: {from, to}} when count >= 2 ->

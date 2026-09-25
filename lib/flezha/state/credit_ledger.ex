@@ -7,7 +7,7 @@ defmodule Flezha.State.CreditLedger do
   Accounting only — no processes, no side effects — so one core serves
   every credit loop: the runner→controller state stream
   (`Flezha.Runner.StreamChannel` drives it and performs the sends) and
-  the per-Operative source-ingestion ledger in `Flezha.State.InputLog`.
+  the per-Operator source-ingestion ledger in `Flezha.State.InputLog`.
   """
 
   @enforce_keys [:session, :window, :low]

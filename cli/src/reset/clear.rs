@@ -56,7 +56,7 @@ fn entries_to_clear(root: &Path, source: Source) -> io::Result<Vec<PathBuf>> {
 
 // Recursive count of everything under `entries`. A directory contributes its
 // contents, never itself; everything else counts, socket inodes included — a
-// summary that says "0 files" over two unlinked sockets tells the operator the
+// summary that says "0 files" over two unlinked sockets tells the caller the
 // opposite of what happened. A symlink counts as itself, never as its target.
 fn stats_of(entries: &[PathBuf]) -> io::Result<(u64, u64)> {
     let mut files: u64 = 0;
@@ -193,7 +193,7 @@ mod tests {
         for name in ["runner_control_channel.sock", "primary_stream_r1.sock"] {
             drop(std::os::unix::net::UnixListener::bind(tmp.join(name)).unwrap());
         }
-        std::fs::write(tmp.join("operator-notes.txt"), vec![0u8; 99]).unwrap();
+        std::fs::write(tmp.join("user-notes.txt"), vec![0u8; 99]).unwrap();
 
         let (result, files, _bytes) =
             measure_and_clear(&tmp, Source::SocketLadder, &tmp.join("app_data"), APPLY);
@@ -202,7 +202,7 @@ mod tests {
 
         assert!(!tmp.join("runner_control_channel.sock").exists());
         assert!(!tmp.join("primary_stream_r1.sock").exists());
-        assert!(tmp.join("operator-notes.txt").exists());
+        assert!(tmp.join("user-notes.txt").exists());
         assert!(tmp.is_dir(), "the directory itself is never removed");
 
         let _ = fs::remove_dir_all(&tmp);

@@ -6,7 +6,7 @@ use crate::dispatch::{self, Command, Missing, Verb};
 use crate::{help, rpc};
 
 /// The wait, in seconds. `boot await` is one of the two verbs that refuse a
-/// word they cannot act on: it blocks the operator for as long as this option
+/// word they cannot act on: it blocks the caller for as long as this option
 /// says, so answering a typo with the default wait would be a silence rather
 /// than a wait.
 const TIMEOUT: OptSpec = OptSpec::number("--timeout", "-t", "<seconds>");

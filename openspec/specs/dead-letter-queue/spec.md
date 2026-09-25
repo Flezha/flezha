@@ -2,11 +2,11 @@
 
 ## Purpose
 
-The dead-letter-queue capability guarantees that a permanently-failing (poison) payload in a Stream operative is never silently dropped and never freezes the operative's progress. A failing tasklet invocation — returned error or panic/unhandled exception, one policy in both SDKs — is retried up to a per-channel budget (default 3 total attempts, exponential backoff + jitter; author-classified non-retryable errors park immediately). After exhaustion the payload is durably parked to the controller's DLQ store (`app_data/dlq/<operative_class>/<tasklet_id>/`, JSONL metadata index + per-entry payload blobs) strictly BEFORE the cell advances: tier-off sessions hold the cell until the fsynced append is acknowledged (`park_payload` data-stream frame + `ParkPayloadAck` control command), while effectively-once sessions record the park and the consumed-offset advance in one atomic WAL record so a crash can never advance past a lost park — parking un-freezes the min-watermark, keeping input-log retention and source credit moving. Operators inspect, replay (explicit-only, through the ordinary input path), or drop entries via `flz dlq`; retention is bounded by age and total size with loud telemetry per deletion. Workflow operatives are out of scope — their escape is AbortAll + saga compensation.
+The dead-letter-queue capability guarantees that a permanently-failing (poison) payload in an Unbounded operator is never silently dropped and never freezes the operator's progress. A failing tasklet invocation — returned error or panic/unhandled exception, one policy in both SDKs — is retried up to a per-channel budget (default 3 total attempts, exponential backoff + jitter; author-classified non-retryable errors park immediately). After exhaustion the payload is durably parked to the controller's DLQ store (`app_data/dlq/<operator_class>/<tasklet_id>/`, JSONL metadata index + per-entry payload blobs) strictly BEFORE the cell advances: tier-off sessions hold the cell until the fsynced append is acknowledged (`park_payload` data-stream frame + `ParkPayloadAck` control command), while effectively-once sessions record the park and the consumed-offset advance in one atomic WAL record so a crash can never advance past a lost park — parking un-freezes the min-watermark, keeping input-log retention and source credit moving. Users inspect, replay (explicit-only, through the ordinary input path), or drop entries via `flz dlq`; retention is bounded by age and total size with loud telemetry per deletion. Bounded operators are out of scope — their escape is AbortAll + saga compensation.
 ## Requirements
 ### Requirement: Failing tasklet invocations are retried with backoff before parking
 
-A Stream tasklet invocation that fails — by returned error or by panic/unhandled exception — SHALL be retried up to a per-channel maximum (default 3 attempts) with exponential backoff and jitter. Authors SHALL be able to classify errors as non-retryable, which parks immediately without further attempts. A panic is retryable by default. The Rust and Java SDK dispatchers SHALL implement identical retry semantics, and the current catch-log-continue path SHALL be removed.
+An Unbounded tasklet invocation that fails — by returned error or by panic/unhandled exception — SHALL be retried up to a per-channel maximum (default 3 attempts) with exponential backoff and jitter. Authors SHALL be able to classify errors as non-retryable, which parks immediately without further attempts. A panic is retryable by default. The Rust and Java SDK dispatchers SHALL implement identical retry semantics, and the current catch-log-continue path SHALL be removed.
 
 #### Scenario: Transient failure recovers within the retry budget
 
@@ -25,7 +25,7 @@ A Stream tasklet invocation that fails — by returned error or by panic/unhandl
 
 ### Requirement: A poison payload is durably parked before the cell advances
 
-After the retry budget is exhausted the SDK SHALL ship a park frame (payload bytes, channel, cell key, origin offset where the effectively-once tier provides one, error context, attempt count) on the data stream, and SHALL NOT advance past the payload until the controller acknowledges the park as durable. Tier off: the controller appends the entry to the DLQ store and fsyncs before acking. Tier on: the park entry and the consumed-offset advance SHALL be recorded in one atomic WAL record (no state change, DLQ entry, consumed offset) so a crash can never both advance the offset and lose the parked payload; the cell's consumed offset advances past the poison payload so the operative's min-watermark can move.
+After the retry budget is exhausted the SDK SHALL ship a park frame (payload bytes, channel, cell key, origin offset where the effectively-once tier provides one, error context, attempt count) on the data stream, and SHALL NOT advance past the payload until the controller acknowledges the park as durable. Tier off: the controller appends the entry to the DLQ store and fsyncs before acking. Tier on: the park entry and the consumed-offset advance SHALL be recorded in one atomic WAL record (no state change, DLQ entry, consumed offset) so a crash can never both advance the offset and lose the parked payload; the cell's consumed offset advances past the poison payload so the operator's min-watermark can move.
 
 #### Scenario: Park is durable before advance
 
@@ -39,12 +39,12 @@ After the retry budget is exhausted the SDK SHALL ship a park frame (payload byt
 
 #### Scenario: Parking un-freezes the min-watermark (tier on)
 
-- **WHEN** a tier-on cell's poison payload froze the operative's min-watermark
+- **WHEN** a tier-on cell's poison payload froze the operator's min-watermark
 - **THEN** after the park the cell's consumed offset advances past it, the min-watermark resumes, input-log retention proceeds, and a parked source-credit loop resumes granting
 
-### Requirement: DLQ storage is per-tasklet, durable, and workflow
+### Requirement: DLQ storage is per-tasklet, durable, and bounded operator
 
-The controller SHALL store parked payloads under `app_data/dlq/<operative_class>/<tasklet_id>/` as a JSONL metadata index (entry id, cell key, channel, origin offset, error, attempts, replay generation, timestamp) with payload bytes in adjacent per-entry blob files. Retention SHALL be bounded by age and total size (defaults 30 days / 4 GiB, more restrictive wins); deleting an entry by retention SHALL emit a dedicated loud telemetry event, since it discards already-parked data. Parking and retention SHALL be observable via counters (`dlq_parked_total`, `dlq_dropped_by_retention_total`, per-tasklet entry count and bytes).
+The controller SHALL store parked payloads under `app_data/dlq/<operator_class>/<tasklet_id>/` as a JSONL metadata index (entry id, cell key, channel, origin offset, error, attempts, replay generation, timestamp) with payload bytes in adjacent per-entry blob files. Retention SHALL be bounded by age and total size (defaults 30 days / 4 GiB, more restrictive wins); deleting an entry by retention SHALL emit a dedicated loud telemetry event, since it discards already-parked data. Parking and retention SHALL be observable via counters (`dlq_parked_total`, `dlq_dropped_by_retention_total`, per-tasklet entry count and bytes).
 
 #### Scenario: Parked entry is inspectable after restart
 
@@ -58,11 +58,11 @@ The controller SHALL store parked payloads under `app_data/dlq/<operative_class>
 
 ### Requirement: CLI surface for inspect, replay, and drop
 
-The CLI SHALL provide `flz dlq list <operative>` (entries with cell, channel, error, age — nearest-to-expiry first), `flz dlq show <entry>` (metadata + payload preview), `flz dlq replay <entry>` (re-dispatch through the normal input path; tier on mints fresh output identity by construction — the replay is journaled as a new input, so its effect records carry fresh WAL seqs; a failing replay re-parks with an incremented generation), and `flz dlq drop <entry>` (delete entry + blob, emitting an audit event). Replay SHALL be explicit-only — the system SHALL NOT automatically re-drive parked payloads.
+The CLI SHALL provide `flz dlq list <operator>` (entries with cell, channel, error, age — nearest-to-expiry first), `flz dlq show <entry>` (metadata + payload preview), `flz dlq replay <entry>` (re-dispatch through the normal input path; tier on mints fresh output identity by construction — the replay is journaled as a new input, so its effect records carry fresh WAL seqs; a failing replay re-parks with an incremented generation), and `flz dlq drop <entry>` (delete entry + blob, emitting an audit event). Replay SHALL be explicit-only — the system SHALL NOT automatically re-drive parked payloads.
 
 #### Scenario: Replay re-enters the normal path
 
-- **WHEN** an operator runs `flz dlq replay` on a parked entry after fixing the underlying bug
+- **WHEN** a user runs `flz dlq replay` on a parked entry after fixing the underlying bug
 - **THEN** the payload is dispatched to its cell through the ordinary path, processes successfully, and the DLQ entry is removed
 
 #### Scenario: Failing replay re-parks with generation
@@ -72,23 +72,23 @@ The CLI SHALL provide `flz dlq list <operative>` (entries with cell, channel, er
 
 #### Scenario: Drop is audited
 
-- **WHEN** an operator runs `flz dlq drop`
+- **WHEN** a user runs `flz dlq drop`
 - **THEN** the entry and payload are deleted and an audit event records the drop with the entry's identity
 
-### Requirement: Workflow profile is explicitly out of scope with a documented equivalence
+### Requirement: Bounded profile is explicitly out of scope with a documented equivalence
 
-The dead-letter queue SHALL apply to Stream operatives only. For Workflow operatives a permanently-failing cell SHALL continue to fail its tasklet (AbortAll) and trigger saga compensation — the profile's existing escape. Documentation SHALL state this equivalence and that configurable `on_cell_failure` policies (DeadLetter | MinSuccess) remain deferred.
+The dead-letter queue SHALL apply to Unbounded operators only. For Bounded operators a permanently-failing cell SHALL continue to fail its tasklet (AbortAll) and trigger saga compensation — the profile's existing escape. Documentation SHALL state this equivalence and that configurable `on_cell_failure` policies (DeadLetter | MinSuccess) remain deferred.
 
-#### Scenario: Workflow failure path unchanged
+#### Scenario: Bounded operator failure path unchanged
 
-- **WHEN** a Workflow operative's cell fails permanently
+- **WHEN** a Bounded operator's cell fails permanently
 - **THEN** the tasklet aborts and compensation runs exactly as before this change, and nothing is written to the DLQ store
 
 ### Requirement: A parked entry SHALL be built by one constructor
 
 Every writer that parks a payload SHALL build the entry through one constructor
 in the DLQ directory — the runner-side settlement, the outbox, the records path
-and the operative-forward provider alike — that validates the required fields
+and the operator-forward provider alike — that validates the required fields
 and answers the record the store appends; no writer SHALL hand the store a map it
 built by hand. The entry's on-disk keys and directory layout SHALL be unchanged
 by the constructor, and the runner's wire frame SHALL remain the wire form of
@@ -117,27 +117,27 @@ that entry rather than a further copy.
 
 A parked entry SHALL carry a channel attribution even when no declared channel resolved, and that
 attribution SHALL be the name the frame requested rather than a blank, a placeholder, or the name of
-some channel the operative happens to declare. The name the operator typed is the one fact that
+some channel the operator happens to declare. The name the user typed is the one fact that
 makes the row actionable, so it is the one the row records.
 
-The entry's error SHALL name the declared entry channels of the operative, so the row answers the
-question it raises. An operative declaring none SHALL say so rather than printing an empty set.
+The entry's error SHALL name the declared entry channels of the operator, so the row answers the
+question it raises. An operator declaring none SHALL say so rather than printing an empty set.
 
 #### Scenario: The row names the requested channel
 
-- **GIVEN** an operative declaring one entry channel `prices`
+- **GIVEN** an operator declaring one entry channel `prices`
 - **WHEN** a frame naming `not_prices` is parked
 - **THEN** `flz dlq list` SHALL show the entry with channel `not_prices`
 
 #### Scenario: The error names the declared set
 
-- **GIVEN** an operative declaring entry channels `prices` and `config`
+- **GIVEN** an operator declaring entry channels `prices` and `config`
 - **WHEN** a frame naming `quotes` is parked
 - **THEN** the entry's error SHALL name both `prices` and `config`
 
 #### Scenario: A replayed entry is re-routed by the corrected name
 
 - **GIVEN** a parked entry recorded against the requested channel `not_prices`
-- **WHEN** the operator replays it after the operative is redeclared with a channel of that name
+- **WHEN** the user replays it after the operator is redeclared with a channel of that name
 - **THEN** the payload SHALL reach that channel
 

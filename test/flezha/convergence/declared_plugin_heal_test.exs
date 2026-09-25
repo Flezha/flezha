@@ -27,7 +27,7 @@ end
 
 defmodule FlezhaTest.Convergence.DeclaredPluginHealTest do
   @moduledoc """
-  The convergence loop against a live runner keeps an operative's declared
+  The convergence loop against a live runner keeps an operator's declared
   plugins subscribed: it re-attaches one that went missing and restarts one
   that reports itself unhealthy.
   """
@@ -37,7 +37,7 @@ defmodule FlezhaTest.Convergence.DeclaredPluginHealTest do
   alias Flezha.Service.HubManager
   alias Flezha.Service.PluginManager
   alias Flezha.State.TestHelpers
-  alias FlezhaTest.Fixtures.OperativeFixture
+  alias FlezhaTest.Fixtures.OperatorFixture
   alias FlezhaTest.Helper.NodeTestHelper
 
   use ExUnit.Case
@@ -51,21 +51,21 @@ defmodule FlezhaTest.Convergence.DeclaredPluginHealTest do
     :ok
   end
 
-  test "pluginless running operative re-attaches its declared plugins (2026-06-12 incident shape)" do
+  test "pluginless running operator re-attaches its declared plugins (2026-06-12 incident shape)" do
     namespace = @temp_namespace
     ConvergenceSnapshot.reset_recovery_states()
     {:ok, _} = start_supervised({Loop, tick_ms: 60_000})
 
     runner_id = NodeTestHelper.start_runner(namespace)
 
-    {:ok, %{operative_id: operative_id}} =
-      "self_heal_operative"
-      |> OperativeFixture.get(@test_store_input_factory)
-      |> OperativeFixture.start(namespace)
-      |> OperativeFixture.attach_output_msg(namespace)
+    {:ok, %{operator_id: operator_id}} =
+      "self_heal_operator"
+      |> OperatorFixture.get(@test_store_input_factory)
+      |> OperatorFixture.start(namespace)
+      |> OperatorFixture.attach_output_msg(namespace)
 
-    plugin_id = operative_id <> "_output_msg_handler"
-    {:ok, ow} = HubManager.get_pid(namespace, operative_id)
+    plugin_id = operator_id <> "_output_msg_handler"
+    {:ok, ow} = HubManager.get_pid(namespace, operator_id)
     assert subscribed_plugin?(ow, plugin_id)
 
     # Direct Overwatch unsubscribe bypasses PluginManager, so the declared
@@ -93,25 +93,25 @@ defmodule FlezhaTest.Convergence.DeclaredPluginHealTest do
 
     runner_id = NodeTestHelper.start_runner(namespace)
 
-    {:ok, %{operative_id: operative_id}} =
-      "sick_plugin_operative"
-      |> OperativeFixture.get(@test_store_input_factory)
-      |> OperativeFixture.start(namespace)
+    {:ok, %{operator_id: operator_id}} =
+      "sick_plugin_operator"
+      |> OperatorFixture.get(@test_store_input_factory)
+      |> OperatorFixture.start(namespace)
 
-    plugin_id = operative_id <> "_sick"
+    plugin_id = operator_id <> "_sick"
     FlezhaTest.SickProvider.reset()
 
     {:ok, "plugin enabled"} =
       PluginManager.enable_plugin(plugin_id, %Flezha.Plugin{
         id: plugin_id,
         namespace: namespace,
-        operative_id: operative_id,
+        operator_id: operator_id,
         provider: FlezhaTest.SickProvider,
         opts: %{},
         hooks: [{:on_output, []}]
       })
 
-    {:ok, ow} = HubManager.get_pid(namespace, operative_id)
+    {:ok, ow} = HubManager.get_pid(namespace, operator_id)
     assert subscribed_plugin?(ow, plugin_id)
     activations_before = FlezhaTest.SickProvider.activations()
 

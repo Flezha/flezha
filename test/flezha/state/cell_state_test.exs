@@ -4,7 +4,7 @@ defmodule Flezha.State.RestoreTest do
 
   import ExUnit.CaptureLog
 
-  alias Flezha.Operative.Replay
+  alias Flezha.Operator.Replay
   alias Flezha.SDK.RecordFrame, as: Frame
   alias Flezha.State.{Paths, RecordFrame, Restore, Snapshot, Supervisor, TestHelpers, WalWriter}
 
@@ -61,7 +61,7 @@ defmodule Flezha.State.RestoreTest do
     assert payload.change_log_bytes == expected
   end
 
-  test "a corrupt record below the terminal seq refuses the payload and parks the operative",
+  test "a corrupt record below the terminal seq refuses the payload and parks the operator",
        %{cell_id: pid} do
     header = TestHelpers.stub_header()
     {:ok, srv} = Supervisor.find_or_start(pid)
@@ -85,7 +85,7 @@ defmodule Flezha.State.RestoreTest do
     assert log =~ "durable record refused (crc_mismatch)"
     assert RecordFrame.file_size(path) == size
 
-    # The one place the awaited restore's answer is read parks the operative on
+    # The one place the awaited restore's answer is read parks the operator on
     # a reported refusal — the controller's own reader now produces one.
     handler =
       :telemetry_test.attach_event_handlers(self(), [[:flezha, :state, :restore_refused]])
@@ -100,7 +100,7 @@ defmodule Flezha.State.RestoreTest do
                     %{cell: ^pid, runner: "exec-absent"}}
 
     :telemetry.detach(handler)
-    assert refused_log =~ "leaving the operative unbound"
+    assert refused_log =~ "leaving the operator unbound"
   end
 
   test "a corrupt LAST record is the torn tail the writer repairs, and still ships",
@@ -200,7 +200,7 @@ defmodule Flezha.State.TimeTravelTest do
   use FlezhaTest.StateCase, async: false
 
   alias Flezha.SDK.RecordFrame, as: Frame
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.State.{RecordFrame, Snapshot, Supervisor, TestHelpers, TimeTravel, WalWriter}
 
   setup do
@@ -238,9 +238,9 @@ defmodule Flezha.State.TimeTravelTest do
              TimeTravel.query(pid, {:seq, 50})
   end
 
-  test "a workflow Cell answers a point-in-time query as a stream Cell does" do
-    class = "tt_workflow_" <> uniq()
-    :ok = ClassRegistry.put(class, :workflow)
+  test "a bounded Cell answers a point-in-time query as a stream Cell does" do
+    class = "tt_bounded_" <> uniq()
+    :ok = ClassRegistry.put(class, :bounded)
     on_exit(fn -> ClassRegistry.delete(class) end)
     cell_id = {class, "task", "seg"}
     header = TestHelpers.stub_header()
@@ -309,7 +309,7 @@ end
 
 defmodule Flezha.State.CompletionTest do
   @moduledoc """
-  §5b.3: the per-operative completion record — atomic write, read-back, and its
+  §5b.3: the per-operator completion record — atomic write, read-back, and its
   presence as the retain-vs-delete signal.
   """
   # async: false: writes Application env; a shared on-disk root.
@@ -350,7 +350,7 @@ defmodule Flezha.State.CompletionTest do
     refute Completion.exists?("op2")
   end
 
-  test "path/1 sits at the operative_class level" do
+  test "path/1 sits at the operator_class level" do
     assert Completion.path("op3") =~ "/op3/completion.record"
   end
 end
@@ -359,7 +359,7 @@ defmodule Flezha.State.RetentionTest do
   # async: false: writes Application env; a shared on-disk root; the primary Logger.
   use FlezhaTest.StateCase, async: false
 
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.ClassRegistry
 
   alias Flezha.State.{
     Completion,
@@ -379,7 +379,7 @@ defmodule Flezha.State.RetentionTest do
 
     on_exit(fn ->
       Application.delete_env(:flezha, :time_travel_retention_hours)
-      Application.delete_env(:flezha, :workflow_completed_retention_hours)
+      Application.delete_env(:flezha, :bounded_completed_retention_hours)
       # A writer a test started runs under the application's supervisor and
       # still syncs after the body, so it is stopped before its root goes.
       TestHelpers.reset_all_cells()
@@ -443,7 +443,7 @@ defmodule Flezha.State.RetentionTest do
     end
   end
 
-  describe "finished-job retention (workflow)" do
+  describe "finished-job retention (bounded)" do
     test "retains a completion record within the window, reclaims it after" do
       now = System.system_time(:second)
 
@@ -458,7 +458,7 @@ defmodule Flezha.State.RetentionTest do
         })
 
       # Past the window (0h retention for this class) → reclaimed wholesale.
-      Application.put_env(:flezha, :workflow_completed_retention_hours, %{"bnd_old" => 0})
+      Application.put_env(:flezha, :bounded_completed_retention_hours, %{"bnd_old" => 0})
 
       :ok =
         Completion.write("bnd_old", %{
@@ -478,10 +478,10 @@ defmodule Flezha.State.RetentionTest do
   end
 
   describe "time-travel retention" do
-    test "keeps the older snapshot under the window for a stream and a workflow alike" do
+    test "keeps the older snapshot under the window for a stream and a bounded alike" do
       header = TestHelpers.stub_header()
 
-      for kind <- [:stream, :workflow] do
+      for kind <- [:unbounded, :bounded] do
         class = "ret_#{kind}_" <> uniq()
         pid = {class, "task", "seg"}
         ClassRegistry.put(class, kind)
@@ -552,7 +552,7 @@ defmodule Flezha.State.RetentionTest do
   end
 
   describe "the class registry" do
-    alias Flezha.Operative.ClassRegistry
+    alias Flezha.Operator.ClassRegistry
 
     # The kill below is the point of the test; the supervisor's report of it
     # is not console noise worth keeping.

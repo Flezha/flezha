@@ -2,7 +2,7 @@ defmodule Flezha.AuthZ do
   @moduledoc """
   Single policy point for the Flezha Controller.
 
-  Every operator-action function in `Flezha.Service.*` invokes
+  Every caller-action function in `Flezha.Service.*` invokes
   `Flezha.AuthZ.authorize/3` at the top of its body before any side
   effect. The function returns `:ok` or
   `{:error, {:forbidden, reason}}`.
@@ -31,7 +31,7 @@ defmodule Flezha.AuthZ do
   the same trust boundary as node ownership.
 
   An `:sdk` context's namespace is the one its connection proved and its roles
-  are resolved from `RoleStore` per call, so an operator grants and revokes a
+  are resolved from `RoleStore` per call, so a caller grants and revokes a
   namespace's applications without touching the connection. See
   `Flezha.Runner.FleetManager.Session.runner_caller_context/1`.
 
@@ -114,7 +114,7 @@ defmodule Flezha.AuthZ do
 
   # An un-bootstrapped upgrade must not take down pipelines, but must not be
   # open either: only the controller's own machinery and transport-bound
-  # runner identities pass; every operator verb refuses naming the way in.
+  # runner identities pass; every administration verb refuses naming the way in.
   defp authorize_bootstrap_pending(caller_context, action, scope) do
     case caller_context do
       %{source: :internal} ->
@@ -122,8 +122,8 @@ defmodule Flezha.AuthZ do
 
       # A transport-bound runner identity is judged by the policy, whatever
       # role the store resolved for it: the connect itself only ever needs
-      # `runner.connect`, and a namespace an operator bound before the reset
-      # keeps the authority that operator granted.
+      # `runner.connect`, and a namespace a caller bound before the reset
+      # keeps the authority that caller granted.
       %{source: :sdk} ->
         do_authorize(caller_context, action, scope)
 
@@ -285,7 +285,7 @@ defmodule Flezha.AuthZ do
           :ok
         else
           # If the caller is admin on the target namespace, allow
-          # mutations on its own auth state (e.g. issuing operator
+          # mutations on its own auth state (e.g. issuing caller
           # tokens for the namespace the caller administers).
           if admin? and bound_ns == target_ns do
             :ok
@@ -307,7 +307,7 @@ defmodule Flezha.AuthZ do
 
       Namespace.system?(bound_ns) and admin? ->
         # admin@_system can act on any namespace's non-auth-state
-        # operator actions (e.g. list operatives cross-namespace for the
+        # caller actions (e.g. list operators cross-namespace for the
         # console). Read-only actions are also covered here.
         :ok
 

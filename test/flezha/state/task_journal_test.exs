@@ -1,16 +1,16 @@
 defmodule FlezhaTest.State.TaskJournalTest do
   @moduledoc """
-  `workflow-task-journal` controller store: entry codec round-trip, torn-tail
+  `bounded-task-journal` controller store: entry codec round-trip, torn-tail
   recovery, oversize rejection, reserved-type tolerance, lifecycle (path
   helper, invisibility to the Cell scanners, delete), and the resume state
-  the bind ships back on `AddOperative.task_journal`.
+  the bind ships back on `AddOperator.task_journal`.
   """
   # async: false: writes Application env; a shared on-disk root.
   use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.SDK.Wire
   alias Flezha.Service.Cli.Journal
   alias Flezha.State.{Commands, Outbox, Paths, TaskJournal, TestHelpers, WalWriter}
@@ -72,7 +72,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
 
     # Each committed tasklet's handoff travels under its own task_idx, so a
     # branching tree re-seeds every uncommitted child from ITS parent's edge and
-    # never from a sibling's (`workflow-branching`). The iteration-level handoff
+    # never from a sibling's (`bounded-branching`). The iteration-level handoff
     # is the previous iteration's terminal batch — none here.
     assert %{
              committed_task_idxs: [0, 1],
@@ -454,7 +454,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
   # No Cell WAL is seeded: the journal is instance-scoped and rides the bind,
   # so it must assemble for a class that has no per-Cell state at all — the
   # case that ships no `RestoreInitState` and would otherwise resume at 0.
-  test "the bind ships the journal state on AddOperative" do
+  test "the bind ships the journal state on AddOperator" do
     inst = instance_id()
     seg_id = seg_identity(inst, "TaskA", "s0")
 
@@ -494,7 +494,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
     assert Commands.task_journal_state(instance_id()) == nil
   end
 
-  # ---------- workflow-loop-rewind ----------
+  # ---------- bounded-loop-rewind ----------
 
   # Three committed iterations (0, 1, 2), each one task that ran on `seg` and
   # wrote one record, seq `iter`, with an output on `out`: the shape every
@@ -606,7 +606,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
     assert TaskJournal.current_epoch(inst) == 2
   end
 
-  # ---------- workflow-durable-path-throughput: the cut ----------
+  # ---------- bounded-durable-path-throughput: the cut ----------
 
   defp seqs(inst) do
     {:ok, entries} = TaskJournal.read(inst)

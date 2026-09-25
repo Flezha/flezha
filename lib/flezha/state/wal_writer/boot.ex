@@ -7,12 +7,12 @@ defmodule Flezha.State.WalWriter.Boot do
   I/O, and `open/1` does the mkdir, the open, the torn-tail scan and the
   restart re-drive — every durable effect record above the flush cursor
   re-entering the outbox with identical identity, so a stale cursor widens the
-  re-drive and never skips it. A durable workflow Cell's writer holds each
+  re-drive and never skips it. A durable bounded operator Cell's writer holds each
   re-driven entry until its instance's journal names it, and drops the ones
   the journal says never committed.
   """
 
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.State.{InputLog, Metrics, Outbox, Paths, RecordFrame, SeqIndex, TaskJournal}
   alias Flezha.State.WalWriter.{Admission, Epoch, Settlement, State}
 
@@ -136,11 +136,11 @@ defmodule Flezha.State.WalWriter.Boot do
     end
   end
 
-  # A Cell of a workflow class commits at its stage marker; every other Cell at
+  # A Cell of a bounded class commits at its stage marker; every other Cell at
   # its record. The kind outlives the instance's registration on disk, so a
   # writer that boots before its instance binds still reads it.
-  defp commit_unit({operative_class, _sh, key}) do
-    if key not in Paths.reserved_cell_keys() and ClassRegistry.get(operative_class) == :workflow,
+  defp commit_unit({operator_class, _sh, key}) do
+    if key not in Paths.reserved_cell_keys() and ClassRegistry.get(operator_class) == :bounded,
       do: :stage,
       else: :record
   end

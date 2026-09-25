@@ -16,7 +16,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
 
   @catalog Host.build_catalog(
              [
-               {:on_operative_init, :fold, Ctx.Init},
+               {:on_operator_init, :fold, Ctx.Init},
                {:on_input, :transform, Ctx.IO},
                {:on_snapshot, :fanout, Ctx.Snapshot},
                {:on_message, :request, Ctx.Msg},
@@ -34,7 +34,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
       ]
 
     @impl true
-    def on_operative_init(%Ctx.Init{} = ctx, _opts) do
+    def on_operator_init(%Ctx.Init{} = ctx, _opts) do
       {:ok, %Ctx.Init{ctx | accumulated: Map.put(ctx.accumulated, :a, 1)}}
     end
   end
@@ -48,7 +48,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
       ]
 
     @impl true
-    def on_operative_init(%Ctx.Init{} = ctx, _opts) do
+    def on_operator_init(%Ctx.Init{} = ctx, _opts) do
       {:ok, %Ctx.Init{ctx | accumulated: Map.put(ctx.accumulated, :b, 2)}}
     end
   end
@@ -62,7 +62,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
       ]
 
     @impl true
-    def on_operative_init(_ctx, _opts), do: {:error, :boom}
+    def on_operator_init(_ctx, _opts), do: {:error, :boom}
   end
 
   defmodule TimerPing do
@@ -75,7 +75,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
 
     @impl true
     def on_interval(%Ctx.Tick{} = ctx, opts) do
-      send(Map.fetch!(opts, :pid), {:tick, ctx.operative_id})
+      send(Map.fetch!(opts, :pid), {:tick, ctx.operator_id})
       :ok
     end
   end
@@ -127,7 +127,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
 
     @impl true
     def on_snapshot(%Ctx.Snapshot{} = ctx, opts) do
-      send(Map.fetch!(opts, :pid), {:fanout_called, ctx.operative_id})
+      send(Map.fetch!(opts, :pid), {:fanout_called, ctx.operator_id})
       :ok
     end
   end
@@ -165,14 +165,14 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
     do: Table.bulk_subscribe(table, [{plugin_id, plugin}])
 
   describe "subscription canonicalisation" do
-    test "every sub-option coerces from the text an operator types" do
+    test "every sub-option coerces from the text a user types" do
       assert {:ok, %Plugin{hooks: subs}} =
                Table.canonicalise(@catalog, %Plugin{
                  id: "c",
                  provider: MsgEcho,
                  hooks: [
                    {"on_interval", %{"interval_ms" => "5000"}},
-                   {"on_operative_init",
+                   {"on_operator_init",
                     %{"position" => "1", "timeout_ms" => "1000", "on_error" => "empty"}},
                    {"on_input", %{"position" => "0"}},
                    {"on_message", %{"key" => "orders"}}
@@ -181,7 +181,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
 
       assert subs == [
                {:on_interval, [interval_ms: 5_000]},
-               {:on_operative_init, [position: 1, timeout_ms: 1_000, on_error: "empty"]},
+               {:on_operator_init, [position: 1, timeout_ms: 1_000, on_error: "empty"]},
                {:on_input, [position: 0]},
                {:on_message, [key: "orders"]}
              ]
@@ -190,7 +190,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
     test "canonical input is returned unchanged" do
       canonical = [
         {:on_interval, [interval_ms: 5_000]},
-        {:on_operative_init, [position: 1, timeout_ms: 1_000, on_error: "fail"]},
+        {:on_operator_init, [position: 1, timeout_ms: 1_000, on_error: "fail"]},
         {:on_message, [key: "orders"]},
         {:on_snapshot, []}
       ]
@@ -203,8 +203,8 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
     test "a value that cannot be coerced is refused naming the sub-option" do
       for {name, opts, expected} <- [
             {"on_interval", %{"interval_ms" => "soon"}, {:interval_ms, "soon"}},
-            {"on_operative_init", %{"timeout_ms" => :bad}, {:timeout_ms, :bad}},
-            {"on_operative_init", %{"on_error" => "shrug"}, {:on_error, "shrug"}},
+            {"on_operator_init", %{"timeout_ms" => :bad}, {:timeout_ms, :bad}},
+            {"on_operator_init", %{"on_error" => "shrug"}, {:on_error, "shrug"}},
             {"on_message", %{"key" => 7}, {:key, 7}}
           ] do
         assert {:error, {:invalid_hook_opts, ^expected}} =
@@ -245,7 +245,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
         subscribe(table, "f", %Plugin{
           id: "f",
           provider: FoldA,
-          hooks: [{"on_operative_init", %{"position" => "0"}}]
+          hooks: [{"on_operator_init", %{"position" => "0"}}]
         })
 
       {:ok, table} =
@@ -255,10 +255,10 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
           hooks: [{"on_input", %{"position" => "0"}}]
         })
 
-      assert [%{position: 0}] = Map.fetch!(table.subs, :on_operative_init)
+      assert [%{position: 0}] = Map.fetch!(table.subs, :on_operator_init)
       assert [%{position: 0}] = Map.fetch!(table.subs, :on_input)
 
-      for {provider, name} <- [{FoldA, "on_operative_init"}, {TransformUpcase, "on_input"}] do
+      for {provider, name} <- [{FoldA, "on_operator_init"}, {TransformUpcase, "on_input"}] do
         assert {:error, {_id, {:invalid_hook_opts, {:position, "first"}}}} =
                  subscribe(table, "bad", %Plugin{
                    id: "bad",
@@ -282,12 +282,12 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
         subscribe(table, "e", %Plugin{
           id: "e",
           provider: FoldErr,
-          hooks: [{"on_operative_init", %{"on_error" => "empty"}}]
+          hooks: [{"on_operator_init", %{"on_error" => "empty"}}]
         })
 
-      ctx = %Ctx.Init{operative_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
+      ctx = %Ctx.Init{operator_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
 
-      assert {:ok, %Ctx.Init{}} = Extension.run(table, :on_operative_init, ctx)
+      assert {:ok, %Ctx.Init{}} = Extension.run(table, :on_operator_init, ctx)
     end
   end
 
@@ -357,7 +357,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
                subscribe(table, "x", %Plugin{
                  id: "x",
                  provider: FoldA,
-                 hooks: [{:on_operative_init, [timeout_ms: :bad]}]
+                 hooks: [{:on_operator_init, [timeout_ms: :bad]}]
                })
     end
 
@@ -368,7 +368,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
                subscribe(table, "x", %Plugin{
                  id: "x",
                  provider: FoldA,
-                 hooks: [{:on_operative_init, [on_error: :weird]}]
+                 hooks: [{:on_operator_init, [on_error: :weird]}]
                })
     end
   end
@@ -549,7 +549,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
         subscribe(table, plugin_id, %Plugin{
           id: plugin_id,
           provider: FoldA,
-          hooks: [{:on_operative_init, []}]
+          hooks: [{:on_operator_init, []}]
         })
 
       table
@@ -565,7 +565,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
       ]
 
     @impl true
-    def on_operative_init(%Ctx.Init{} = ctx, _opts), do: {:ok, ctx}
+    def on_operator_init(%Ctx.Init{} = ctx, _opts), do: {:ok, ctx}
     @impl true
     def on_input(%Ctx.IO{} = ctx, _opts), do: {:ok, ctx}
     @impl true
@@ -585,7 +585,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
         subscribe(table, "a", %Plugin{
           id: "a",
           provider: FoldA,
-          hooks: [{:on_operative_init, []}]
+          hooks: [{:on_operator_init, []}]
         })
 
       assert table.active_mask != 0
@@ -598,7 +598,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
     # subscriber lists; `refresh_chain/2` sets the bit. `Extension.run/3`
     # short-circuits on it, so a wrong bit silently skips every subscriber.
     for {name, opts, other_opts} <- [
-          {:on_operative_init, [], []},
+          {:on_operator_init, [], []},
           {:on_input, [position: 0], [position: 0]},
           {:on_snapshot, [], []},
           {:on_message, [key: "k1"], [key: "k2"]},

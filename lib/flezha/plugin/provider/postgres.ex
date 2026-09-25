@@ -5,7 +5,7 @@ defmodule Flezha.Plugin.Provider.Postgres do
   and advances the per-Cell `flezha_sink_progress` watermark row.
 
   That single transaction is the guarantee: effectively-once into the DB for
-  tier operatives, plain inserts for everything else. See
+  tier operators, plain inserts for everything else. See
   `docs/resilience/data_durability.md` "Delivery semantics".
 
   Required opts `:database` and `:username`; the rest, with their defaults, are

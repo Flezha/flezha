@@ -28,7 +28,7 @@ defmodule Flezha.Plugin.Provider.File.Storage do
   """
   @callback prepare_sink(opts :: map()) :: {:ok, map()} | {:error, binary()}
 
-  @doc "`root` as an operator reads it."
+  @doc "`root` as a user reads it."
   @callback shown(root :: binary()) :: binary()
 
   @doc "The type, size and identity of `target`: an inode, or an ETag."

@@ -49,7 +49,7 @@ defmodule Flezha.AuthZ.Bootstrap do
 
   @doc """
   Break-glass recovery (`flz auth rebootstrap`): with the controller
-  STOPPED, an operator with filesystem access to `<auth_dir>` writes the
+  STOPPED, a caller with filesystem access to `<auth_dir>` writes the
   `REBOOTSTRAP` marker; this consumes it on the next boot — every
   `admin@_system` binding is unbound, every `_system` admin token revoked,
   the durable claimed flag reset — so `check_and_write/0` re-enters the

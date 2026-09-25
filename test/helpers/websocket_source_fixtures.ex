@@ -80,7 +80,7 @@ defmodule FlezhaTest.Helper.WebsocketSourceFixtures do
         last_error: nil,
         source_plugin_id: "ws_plugin",
         source_namespace: "default",
-        source_operative_id: "op-1"
+        source_operator_id: "op-1"
       },
       Map.new(overrides)
     )

@@ -1,19 +1,19 @@
 # Namespaces
 
 A namespace is a separate room inside one Flezha controller. Each application
-gets its own room: its runners, its operatives and their saved data live there,
+gets its own room: its runners, its operators and their saved data live there,
 and nothing in one room can see or touch what is in another.
 
-Each room also has its own limits, such as how many operatives it may run, so
+Each room also has its own limits, such as how many operators it may run, so
 one application cannot use up everything, and its own keys, so a runner can only
 enter the room it has a key for. Both the limits and the keys take effect only
 once [authorization](authorization.md) is on, which it is by default, and
 Part 2 keeps it on.
 
 In more technical terms, every runner connects into exactly one namespace and
-serves operatives only there, and an operative's id has to be unique only within
+serves operators only there, and an operator's id has to be unique only within
 its namespace. The controller runs a separate hub for each namespace, the
-process that decides which runner each operative runs on and moves it when that
+process that decides which runner each operator runs on and moves it when that
 runner goes away, and keeps each namespace's saved state in a folder of its own,
 `app_data/state/<namespace>/`. The limits are six quotas stored with the
 namespace, and the keys are the credentials and tokens issued for it.
@@ -23,11 +23,11 @@ flowchart LR
     subgraph C["one Flezha controller"]
         subgraph T["namespace: trading"]
             direction TB
-            T1["runners"] ~~~ T2["operatives"] ~~~ T3[("saved data")]
+            T1["runners"] ~~~ T2["operators"] ~~~ T3[("saved data")]
         end
         subgraph M["namespace: another app"]
             direction TB
-            M1["runners"] ~~~ M2["operatives"] ~~~ M3[("saved data")]
+            M1["runners"] ~~~ M2["operators"] ~~~ M3[("saved data")]
         end
     end
 ```
@@ -72,10 +72,10 @@ $ flz namespace create trading
 namespace trading created
 namespace: trading
 quotas:
-  max_cells_per_operative: 1024
+  max_cells_per_operator: 1024
   max_mailbox_bytes_total: 268435456
   max_message_rate_per_second: 100000
-  max_operatives: 100
+  max_operators: 100
   max_runners: 32
   max_state_bytes: 107374182400
 ```
@@ -112,7 +112,7 @@ runner connects.
 ## Joining it from a runner
 
 Code never creates a namespace. A runner names the one it joins when it is
-created, and it can serve operatives only there.
+created, and it can serve operators only there.
 
 > The next steps need a runner of your own, and this is where you start writing
 > it. Part 1's [The code](../runner_deployment.md#the-code) has the whole
@@ -188,16 +188,16 @@ The six limits, their defaults, and what each one refuses:
 
 | Quota | Default | What it caps |
 |---|---|---|
-| `max_operatives` | 100 | operatives started in the namespace |
-| `max_cells_per_operative` | 1024 | keyed cells one operative may hold, such as symbols in `candles` |
-| `max_mailbox_bytes_total` | 256 MiB | the credit window across the namespace's operative mailboxes |
+| `max_operators` | 100 | operators started in the namespace |
+| `max_cells_per_operator` | 1024 | keyed cells one operator may hold, such as symbols in `candles` |
+| `max_mailbox_bytes_total` | 256 MiB | the credit window across the namespace's operator mailboxes |
 | `max_message_rate_per_second` | 100 000 | stored for now, not yet enforced |
 | `max_state_bytes` | 100 GiB | the namespace's state on disk; a start is refused while over it |
 | `max_runners` | 32 | runners connected to the namespace at once |
 
 A namespace can take limits of its own the moment it is created, with the same
 `--X<field>=<value>` the commands below use: `flz namespace create reporting
---Xmax_operatives=10` sets one and leaves the rest at their defaults.
+--Xmax_operators=10` sets one and leaves the rest at their defaults.
 
 You can read a namespace's limits:
 
@@ -208,10 +208,10 @@ $ flz namespace show trading
 ```output
 namespace: trading
 quotas:
-  max_cells_per_operative: 1024
+  max_cells_per_operator: 1024
   max_mailbox_bytes_total: 268435456
   max_message_rate_per_second: 100000
-  max_operatives: 100
+  max_operators: 100
   max_runners: 32
   max_state_bytes: 107374182400
 ```
@@ -226,10 +226,10 @@ $ flz namespace set-quota trading --Xmax_runners=4
 namespace trading quotas updated
 namespace: trading
 quotas:
-  max_cells_per_operative: 1024
+  max_cells_per_operator: 1024
   max_mailbox_bytes_total: 268435456
   max_message_rate_per_second: 100000
-  max_operatives: 100
+  max_operators: 100
   max_runners: 4
   max_state_bytes: 107374182400
 ```
@@ -275,13 +275,13 @@ error: namespace delete: :not_found
 ```
 
 Delete removes the catalog entry and its quota counters, and only those. A
-namespace with operatives in it must be emptied first, with
-`flz operative stop` on each and its runner stopped, because a running
-operative is not stopped by the entry going away: it carries on, and the
+namespace with operators in it must be emptied first, with
+`flz operator stop` on each and its runner stopped, because a running
+operator is not stopped by the entry going away: it carries on, and the
 namespace it runs in is no longer in the listing. Empty it, then delete it.
 
 ## Next
 
 The desk has its namespace and nothing in it.
-[`workflow_basics.md`](workflow_basics.md) writes `paper_order`, the workflow
+[`bounded_basics.md`](bounded_basics.md) writes `paper_order`, the bounded operator
 that places an order with paper money, and starts one in `trading`.

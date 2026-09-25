@@ -17,6 +17,7 @@ pub mod admission;
 #[cfg(feature = "bench-internals")]
 #[doc(hidden)]
 pub mod bench_support;
+pub mod bounded;
 pub mod cell;
 pub mod channel;
 #[doc(hidden)]
@@ -41,7 +42,7 @@ pub mod host;
 pub mod local;
 #[doc(hidden)]
 pub mod mailbox;
-pub mod operative;
+pub mod operator;
 #[doc(hidden)]
 pub mod park;
 #[doc(hidden)]
@@ -66,7 +67,6 @@ mod test_support;
 pub mod timer;
 #[doc(hidden)]
 pub mod util;
-pub mod workflow;
 
 /// The controller↔runner protobuf command surface (prost-generated).
 pub mod pb {

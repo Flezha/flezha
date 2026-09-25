@@ -118,7 +118,7 @@ defmodule Flezha.Boot.RecoveryHooksTest do
                    500
 
     assert measurements.instance_count == 2
-    assert metadata.operative_id == "btc_kraken"
+    assert metadata.operator_id == "btc_kraken"
     assert metadata.kept_node == :a@host
     assert metadata.stopped_nodes == [:b@host]
   end

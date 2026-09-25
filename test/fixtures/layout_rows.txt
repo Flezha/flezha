@@ -3,10 +3,10 @@
 # `Flezha.Layout.Table` declares the controller's side and
 # `cli/src/reset/plan.rs`'s `ROOTS` the shell's, and a test on each side holds
 # its table equal to this file. Before, the two spelled the list separately and
-# an operator could not tell which one was right.
+# a user could not tell which one was right.
 #
-# `default` is cleared on every reset, `flag` only when the operator asks for
-# it by name, and `never` is not reset's to clear. An operator's tokens, the
+# `default` is cleared on every reset, `flag` only when the user asks for
+# it by name, and `never` is not reset's to clear. A user's tokens, the
 # audit trail and installed plugins are data someone keeps on purpose, so each
 # is a flag of its own rather than part of every reset. The log directory is
 # `never`: it is named relative to wherever the controller runs, and reset

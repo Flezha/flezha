@@ -10,7 +10,7 @@ defmodule Flezha.State.RecoveryTest do
 
   import Flezha.State.TestHelpers, only: [uniq: 0]
 
-  alias Flezha.Operative.Builder
+  alias Flezha.Operator.Builder
   alias Flezha.Service.HubManager
   alias Flezha.State.{Recovery, Restore, Supervisor, TestHelpers, WalWriter}
 
@@ -92,40 +92,40 @@ defmodule Flezha.State.RecoveryTest do
   end
 
   describe "resolve_runner/1" do
-    test "resolves the runner tag for an operative whose :operative_class opt matches" do
-      operative = %Builder{id: "btc_kraken", factory_id: "f", opts: [operative_class: "market"]}
+    test "resolves the runner tag for an operator whose :operator_class opt matches" do
+      operator = %Builder{id: "btc_kraken", factory_id: "f", opts: [operator_class: "market"]}
 
       stub(HubManager, :get_registry, fn "default" ->
-        {:ok, %{"btc_kraken" => entry(operative, "exec_123")}}
+        {:ok, %{"btc_kraken" => entry(operator, "exec_123")}}
       end)
 
       assert Recovery.resolve_runner({"market", "0", "p1"}) == {:ok, "exec_123"}
     end
 
-    test "falls back to the operative id when no :operative_class opt is set" do
-      operative = %Builder{id: "market", factory_id: "f", opts: []}
+    test "falls back to the operator id when no :operator_class opt is set" do
+      operator = %Builder{id: "market", factory_id: "f", opts: []}
 
       stub(HubManager, :get_registry, fn "default" ->
-        {:ok, %{"market" => entry(operative, "exec_9")}}
+        {:ok, %{"market" => entry(operator, "exec_9")}}
       end)
 
       assert Recovery.resolve_runner({"market", "0", "p1"}) == {:ok, "exec_9"}
     end
 
-    test "errors when no registered operative owns the operative_class" do
-      operative = %Builder{id: "eth", factory_id: "f", opts: [operative_class: "other"]}
+    test "errors when no registered operator owns the operator_class" do
+      operator = %Builder{id: "eth", factory_id: "f", opts: [operator_class: "other"]}
 
       stub(HubManager, :get_registry, fn "default" ->
-        {:ok, %{"eth" => entry(operative, "exec_1")}}
+        {:ok, %{"eth" => entry(operator, "exec_1")}}
       end)
 
       assert {:error, msg} = Recovery.resolve_runner({"market", "0", "p1"})
-      assert msg =~ "no active runner owns operative_class=market"
+      assert msg =~ "no active runner owns operator_class=market"
     end
 
     test "tolerates a {cspec, node_pids} 2-tuple row with no metadata (no crash)" do
-      operative = %Builder{id: "market", factory_id: "f", opts: []}
-      spec = cspec(operative)
+      operator = %Builder{id: "market", factory_id: "f", opts: []}
+      spec = cspec(operator)
 
       stub(HubManager, :get_registry, fn "default" ->
         {:ok, %{"market" => {spec, [{node(), self()}]}}}
@@ -143,14 +143,14 @@ defmodule Flezha.State.RecoveryTest do
   end
 
   # The durable-registry entry shape `resolve_runner/1` matches:
-  # `{operative_id, {cspec, node_pids, metadata}}`, runner = `metadata.tag`,
-  # operative_class = the operative's `:operative_class` opt (default: its id),
+  # `{operator_id, {cspec, node_pids, metadata}}`, runner = `metadata.tag`,
+  # operator_class = the operator's `:operator_class` opt (default: its id),
   # carried in the cspec's start args.
-  defp cspec(operative) do
-    %{start: {Flezha.Operative.Overwatch, :start_link, [{"default", operative}]}}
+  defp cspec(operator) do
+    %{start: {Flezha.Operator.Overwatch, :start_link, [{"default", operator}]}}
   end
 
-  defp entry(operative, tag) do
-    {cspec(operative), [{node(), self()}], %{tag: tag, health: :healthy}}
+  defp entry(operator, tag) do
+    {cspec(operator), [{node(), self()}], %{tag: tag, health: :healthy}}
   end
 end

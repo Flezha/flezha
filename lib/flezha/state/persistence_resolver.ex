@@ -1,8 +1,8 @@
 defmodule Flezha.State.PersistenceResolver do
   @moduledoc """
-  Resolves per-Operative persistence configuration from three sources, in order
-  of precedence: the operator's override map for this key (`%{<OperativeClass>
-  => value}`), the per-instance metadata shipped with `AddOperative`, then the
+  Resolves per-Operator persistence configuration from three sources, in order
+  of precedence: the user's override map for this key (`%{<OperatorClass>
+  => value}`), the per-instance metadata shipped with `AddOperator`, then the
   row's own default.
 
   One resolver per key, each named for the key it resolves. The keys and their
@@ -18,59 +18,59 @@ defmodule Flezha.State.PersistenceResolver do
   alias Flezha.AuthZ.NamespaceStore
   alias Flezha.Config
   alias Flezha.Config.Durations
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.State.InputLog
   alias Flezha.State.Paths
 
   require Logger
 
   @doc """
-  Whether `operative_class` keeps durable per-Cell state (WAL, snapshots,
-  bind-time restore, live Cell reads), for either kind: the operator's
-  `:operative_persistence` override, then the class's own switch as the
+  Whether `operator_class` keeps durable per-Cell state (WAL, snapshots,
+  bind-time restore, live Cell reads), for either kind: the user's
+  `:operator_persistence` override, then the class's own switch as the
   runner announced it (`ClassRegistry.persistent?/1`, on unless declared off).
   """
   @spec persistence_enabled?(binary(), map()) :: boolean()
-  def persistence_enabled?(operative_class, metadata \\ %{}) when is_binary(operative_class) do
-    resolve(:operative_persistence, :operative_persistence_enabled, operative_class, metadata,
+  def persistence_enabled?(operator_class, metadata \\ %{}) when is_binary(operator_class) do
+    resolve(:operator_persistence, :operator_persistence_enabled, operator_class, metadata,
       valid: &is_boolean/1,
-      default: fn -> ClassRegistry.persistent?(operative_class) end
+      default: fn -> ClassRegistry.persistent?(operator_class) end
     )
   end
 
   @spec retention_hours(binary(), map()) :: non_neg_integer()
-  def retention_hours(operative_class, metadata \\ %{}) when is_binary(operative_class) do
-    resolve(:time_travel_retention_hours, :time_travel_retention_hours, operative_class, metadata,
+  def retention_hours(operator_class, metadata \\ %{}) when is_binary(operator_class) do
+    resolve(:time_travel_retention_hours, :time_travel_retention_hours, operator_class, metadata,
       valid: &non_neg_int?/1,
       default: fn -> Config.get(:default_time_travel_retention_hours) end
     )
   end
 
   @doc """
-  How many hours a finished workflow operative's data (retained Cell state +
+  How many hours a finished bounded operator's data (retained Cell state +
   completion record) is kept before the retention sweeper reclaims it.
-  Precedence: operator override map `:workflow_completed_retention_hours` →
-  instance metadata → global `:default_workflow_completed_retention_hours`
-  (`72`, env `FLEZHA_WORKFLOW_RETENTION_HOURS`).
+  Precedence: user override map `:bounded_completed_retention_hours` →
+  instance metadata → global `:default_bounded_completed_retention_hours`
+  (`72`, env `FLEZHA_BOUNDED_RETENTION_HOURS`).
   """
   @spec completed_retention_hours(binary(), map()) :: non_neg_integer()
-  def completed_retention_hours(operative_class, metadata \\ %{})
-      when is_binary(operative_class) do
+  def completed_retention_hours(operator_class, metadata \\ %{})
+      when is_binary(operator_class) do
     resolve(
-      :workflow_completed_retention_hours,
-      :workflow_completed_retention_hours,
-      operative_class,
+      :bounded_completed_retention_hours,
+      :bounded_completed_retention_hours,
+      operator_class,
       metadata,
       valid: &non_neg_int?/1,
-      default: fn -> Config.get(:default_workflow_completed_retention_hours) end
+      default: fn -> Config.get(:default_bounded_completed_retention_hours) end
     )
   end
 
   @doc """
   The per-Cell WAL size at which the Watchdog triggers a compaction, per
-  operative class. Precedence (moduledoc): operator override map
+  operator class. Precedence (moduledoc): user override map
   `:compact_after_bytes` → the SDK-declared value the class shipped in its
-  `AddOperative` metadata (persisted in `ClassRegistry`, resolved here the way
+  `AddOperator` metadata (persisted in `ClassRegistry`, resolved here the way
   `compact_after_age_ms/2` resolves a declared correction window) →
   instance-metadata argument → global `:default_compact_after_bytes` (8 MiB).
 
@@ -79,16 +79,16 @@ defmodule Flezha.State.PersistenceResolver do
   with only the class in hand.
   """
   @spec compact_after_bytes(binary(), map()) :: pos_integer()
-  def compact_after_bytes(operative_class, metadata \\ %{}) when is_binary(operative_class) do
-    resolve(:compact_after_bytes, :compact_after_bytes, operative_class, metadata,
+  def compact_after_bytes(operator_class, metadata \\ %{}) when is_binary(operator_class) do
+    resolve(:compact_after_bytes, :compact_after_bytes, operator_class, metadata,
       valid: &(is_integer(&1) and &1 > 0),
-      default: fn -> declared_compact_after_bytes(operative_class) end
+      default: fn -> declared_compact_after_bytes(operator_class) end
     )
   end
 
   # SDK-declared threshold (durable in ClassRegistry) → global default.
-  defp declared_compact_after_bytes(operative_class) do
-    case ClassRegistry.compact_after_bytes(operative_class) do
+  defp declared_compact_after_bytes(operator_class) do
+    case ClassRegistry.compact_after_bytes(operator_class) do
       v when is_integer(v) and v > 0 ->
         v
 
@@ -98,46 +98,46 @@ defmodule Flezha.State.PersistenceResolver do
   end
 
   @doc """
-  Whether `operative_class` requires its commit barriers to reach the remote
+  Whether `operator_class` requires its commit barriers to reach the remote
   durability tier before they are acked (`remote-durability-tier`, RPO 0).
 
   Same three-source cascade as every other per-class knob, with the SDK
-  declaration as the default — so an operator can force a class either way
+  declaration as the default — so a user can force a class either way
   (`:sync_durability => %{class => bool}`) without an SDK change, and a class
   that declares nothing costs nothing.
   """
   @spec sync_durability?(binary(), map()) :: boolean()
-  def sync_durability?(operative_class, metadata \\ %{}) when is_binary(operative_class) do
-    resolve(:sync_durability, :sync_durability, operative_class, metadata,
+  def sync_durability?(operator_class, metadata \\ %{}) when is_binary(operator_class) do
+    resolve(:sync_durability, :sync_durability, operator_class, metadata,
       valid: &is_boolean/1,
-      default: fn -> ClassRegistry.sync_durability?(operative_class) end
+      default: fn -> ClassRegistry.sync_durability?(operator_class) end
     )
   end
 
   @spec output_stall_timeout_ms(binary(), map()) :: non_neg_integer()
-  def output_stall_timeout_ms(operative_class, metadata \\ %{}) when is_binary(operative_class) do
-    resolve(:output_stall_timeout_overrides, :output_stall_timeout_ms, operative_class, metadata,
+  def output_stall_timeout_ms(operator_class, metadata \\ %{}) when is_binary(operator_class) do
+    resolve(:output_stall_timeout_overrides, :output_stall_timeout_ms, operator_class, metadata,
       valid: &non_neg_int?/1,
       default: fn -> Durations.get(:output_stall_timeout_ms) end
     )
   end
 
   @spec credit_window_bytes(binary(), map()) :: pos_integer()
-  def credit_window_bytes(operative_class, metadata \\ %{}) when is_binary(operative_class) do
-    resolve(:credit_window_bytes, :credit_window_bytes, operative_class, metadata,
+  def credit_window_bytes(operator_class, metadata \\ %{}) when is_binary(operator_class) do
+    resolve(:credit_window_bytes, :credit_window_bytes, operator_class, metadata,
       valid: &(is_integer(&1) and &1 > 0),
       default: &wal_high_watermark_bytes/0
     )
-    |> cap_to_namespace_mailbox_quota(operative_class)
+    |> cap_to_namespace_mailbox_quota(operator_class)
   end
 
   # Per-namespace mailbox-byte quota, folded into the same cascade every
   # buffered-byte window resolves through: while authz is enforced, no single
-  # Operative's credit window may exceed its namespace's
+  # Operator's credit window may exceed its namespace's
   # `max_mailbox_bytes_total` (finish-platform-authn-authz §6.3).
-  defp cap_to_namespace_mailbox_quota(window, operative_class) do
+  defp cap_to_namespace_mailbox_quota(window, operator_class) do
     if Flezha.AuthZ.enabled?() do
-      namespace = Paths.namespace_of_class(operative_class)
+      namespace = Paths.namespace_of_class(operator_class)
 
       case NamespaceStore.get(namespace) do
         {:ok, %{quotas: %{max_mailbox_bytes_total: limit}}}
@@ -164,7 +164,7 @@ defmodule Flezha.State.PersistenceResolver do
   The WAL soft watermark (`:wal_high_watermark_bytes`) — the one definition of
   "how many bytes is too many for one Cell-scale payload".
 
-  It bounds the per-Cell WAL, the input log, a workflow journal entry, the
+  It bounds the per-Cell WAL, the input log, a bounded journal entry, the
   default credit window, and a live state read, so it lives here rather than as
   a literal at each of those.
   """
@@ -173,9 +173,9 @@ defmodule Flezha.State.PersistenceResolver do
     do: Config.get(:wal_high_watermark_bytes)
 
   @doc """
-  WAL age at which the Watchdog triggers a compaction, per operative.
+  WAL age at which the Watchdog triggers a compaction, per operator.
 
-  Per-operative rather than global because it stopped being a tuning knob: a
+  Per-operator rather than global because it stopped being a tuning knob: a
   correction rewinds inside its declared window, and compaction truncates the
   WAL below each snapshot — so an age-floor shorter than the correction window
   destroys the very history the rewind needs a baseline inside. A declared
@@ -188,26 +188,26 @@ defmodule Flezha.State.PersistenceResolver do
   *enable* compaction and make retention worse.
   """
   @spec compact_after_age_ms(binary(), map()) :: non_neg_integer()
-  def compact_after_age_ms(operative_class \\ nil, metadata \\ %{})
+  def compact_after_age_ms(operator_class \\ nil, metadata \\ %{})
 
   def compact_after_age_ms(nil, _metadata),
     do: global_non_neg(:compact_after_age_ms)
 
-  def compact_after_age_ms(operative_class, metadata) when is_binary(operative_class) do
-    case configured_compact_after_age_ms(operative_class, metadata) do
+  def compact_after_age_ms(operator_class, metadata) when is_binary(operator_class) do
+    case configured_compact_after_age_ms(operator_class, metadata) do
       0 -> 0
-      n -> max(n, ClassRegistry.correction_window_ms(operative_class) || 0)
+      n -> max(n, ClassRegistry.correction_window_ms(operator_class) || 0)
     end
   end
 
   @doc """
-  The age floor BEFORE a declared correction window raises it — what the operator
+  The age floor BEFORE a declared correction window raises it — what the user
   actually configured. For announcing a derivation, never for compacting against.
   """
   @spec configured_compact_after_age_ms(binary(), map()) :: non_neg_integer()
-  def configured_compact_after_age_ms(operative_class, metadata \\ %{})
-      when is_binary(operative_class) do
-    resolve(:compact_after_age_ms, :compact_after_age_ms, operative_class, metadata,
+  def configured_compact_after_age_ms(operator_class, metadata \\ %{})
+      when is_binary(operator_class) do
+    resolve(:compact_after_age_ms, :compact_after_age_ms, operator_class, metadata,
       valid: &(is_integer(&1) and &1 >= 0),
       default: fn -> global_non_neg(:compact_after_age_ms) end
     )
@@ -224,7 +224,7 @@ defmodule Flezha.State.PersistenceResolver do
   def record_log_cut_after_bytes(),
     do: global_non_neg(:record_log_cut_after_bytes)
 
-  # Global (non-per-Operative) knob: the configured value when it is a valid
+  # Global (non-per-Operator) knob: the configured value when it is a valid
   # non-negative integer, else the row's own.
   defp global_non_neg(name) do
     case Config.get(name) do
@@ -233,14 +233,14 @@ defmodule Flezha.State.PersistenceResolver do
     end
   end
 
-  # Shared three-source cascade (moduledoc precedence): operator override
-  # map -> AddOperative instance metadata (string or atom key) -> default.
+  # Shared three-source cascade (moduledoc precedence): user override
+  # map -> AddOperator instance metadata (string or atom key) -> default.
   # `valid:` gates each source; an invalid value falls through to the next.
-  defp resolve(override_key, meta_key, operative_class, metadata, opts) do
+  defp resolve(override_key, meta_key, operator_class, metadata, opts) do
     valid? = Keyword.fetch!(opts, :valid)
     default = Keyword.fetch!(opts, :default)
 
-    with :error <- validated(operator_override(override_key, operative_class), valid?),
+    with :error <- validated(config_override(override_key, operator_class), valid?),
          :error <- validated(metadata_value(metadata, meta_key), valid?) do
       default.()
     else
@@ -260,10 +260,10 @@ defmodule Flezha.State.PersistenceResolver do
 
   defp non_neg_int?(v), do: is_integer(v) and v >= 0
 
-  defp operator_override(name, operative_class) do
+  defp config_override(name, operator_class) do
     case Config.get(name) do
       %{} = m ->
-        case Map.fetch(m, operative_class) do
+        case Map.fetch(m, operator_class) do
           {:ok, v} -> {:ok, v}
           :error -> :error
         end
@@ -276,7 +276,7 @@ defmodule Flezha.State.PersistenceResolver do
   @doc """
   Announce the retention a declared correction window derived for itself.
 
-  Retention is not a prerequisite an operator negotiates — a correction over a
+  Retention is not a prerequisite a user negotiates — a correction over a
   60 s window MEANS holding 60 s of input log and 60 s of WAL history, so the
   declaration derives both floors (`InputLog.hold_window_ms/1`,
   `PersistenceResolver.compact_after_age_ms/1`). But an SDK author's one line can
@@ -285,12 +285,12 @@ defmodule Flezha.State.PersistenceResolver do
   raised.
   """
   @spec announce_derived_retention(binary(), pos_integer()) :: :ok
-  def announce_derived_retention(operative_class, window_ms) do
+  def announce_derived_retention(operator_class, window_ms) do
     configured_hold = Durations.get(:input_log_hold_window_ms)
-    derived_hold = InputLog.hold_window_ms(operative_class)
+    derived_hold = InputLog.hold_window_ms(operator_class)
 
     if derived_hold > configured_hold do
-      emit_retention_derived(operative_class, :input_log_hold_window_ms, configured_hold,
+      emit_retention_derived(operator_class, :input_log_hold_window_ms, configured_hold,
         derived: derived_hold,
         window_ms: window_ms
       )
@@ -298,11 +298,11 @@ defmodule Flezha.State.PersistenceResolver do
 
     # `0` means "no age-triggered compaction", which already retains everything the
     # window needs — the resolver satisfies it rather than raising it.
-    configured_age = configured_compact_after_age_ms(operative_class)
-    derived_age = compact_after_age_ms(operative_class)
+    configured_age = configured_compact_after_age_ms(operator_class)
+    derived_age = compact_after_age_ms(operator_class)
 
     if derived_age > configured_age do
-      emit_retention_derived(operative_class, :compact_after_age_ms, configured_age,
+      emit_retention_derived(operator_class, :compact_after_age_ms, configured_age,
         derived: derived_age,
         window_ms: window_ms
       )
@@ -311,18 +311,18 @@ defmodule Flezha.State.PersistenceResolver do
     :ok
   end
 
-  defp emit_retention_derived(operative_class, floor, configured, opts) do
+  defp emit_retention_derived(operator_class, floor, configured, opts) do
     derived = Keyword.fetch!(opts, :derived)
 
     Logger.info(
-      "[Overwatch] #{operative_class} declares a #{Keyword.fetch!(opts, :window_ms)}ms " <>
+      "[Overwatch] #{operator_class} declares a #{Keyword.fetch!(opts, :window_ms)}ms " <>
         "correction window: #{floor} raised #{configured} -> #{derived}"
     )
 
     :telemetry.execute(
       [:flezha, :correction, :retention_derived],
       %{count: 1, configured: configured, derived: derived},
-      %{operative: operative_class, floor: floor}
+      %{operator: operator_class, floor: floor}
     )
   end
 end

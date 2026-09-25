@@ -124,7 +124,7 @@ defmodule Flezha.State.DurabilityTier.Backend.Postgres do
   end
 
   @doc """
-  DDL for the artifact table. Public so the integration test and an operator
+  DDL for the artifact table. Public so the integration test and a user
   provisioning the schema by hand share one definition with `auto_create`.
 
   Serialized on an advisory lock: `auto_create` runs per connection, so a pool

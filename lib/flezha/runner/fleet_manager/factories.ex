@@ -11,7 +11,7 @@ defmodule Flezha.Runner.FleetManager.Factories do
   every instance of a factory is of the one kind its class declares.
   """
 
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.Runner.FleetManager.Roster
   alias Flezha.Service.HubManager
 
@@ -32,7 +32,7 @@ defmodule Flezha.Runner.FleetManager.Factories do
         existing = factory_entry(Map.get(acc, factory_id))
         advert = %{sdk_lang: advertised_lang(factory), kind: advertised_kind(factory)}
 
-        # Stored even when it conflicts, so operator tooling can see the
+        # Stored even when it conflicts, so user tooling can see the
         # runner that is advertising the wrong language or kind;
         # `placeable_runners/3` is what refuses it.
         Enum.each(advert, fn {attribute, value} ->
@@ -102,8 +102,8 @@ defmodule Flezha.Runner.FleetManager.Factories do
   # is; only a kind this controller knows becomes an atom.
   defp advertised_kind(factory) do
     case factory["kind"] do
-      "stream" -> :stream
-      "workflow" -> :workflow
+      "unbounded" -> :unbounded
+      "bounded" -> :bounded
       _ -> @unspecified.kind
     end
   end
@@ -113,7 +113,7 @@ defmodule Flezha.Runner.FleetManager.Factories do
   # writing it belongs on this path and never in a query.
   #
   # The durable half of the language's resolution is read at the BIND
-  # (`Flezha.Operative.Lifecycle`): a disk walk here would stall every
+  # (`Flezha.Operator.Lifecycle`): a disk walk here would stall every
   # concurrent placement lookup behind the connect path.
   defp establish(namespace, runner_id, factory_id, attribute, advertised) do
     if advertised == Map.fetch!(@unspecified, attribute),
@@ -186,20 +186,20 @@ defmodule Flezha.Runner.FleetManager.Factories do
   end
 
   # Tripwire for the suspended-instance removal hole: a dropped factory with
-  # controller-known operatives still bound to this runner — or suspended
+  # controller-known operators still bound to this runner — or suspended
   # (runner tag nil) with no other active runner advertising the factory —
   # escaped the SDK-side live-instance check, and its rehydration will fail
   # placement. Warn only; a blocking policy is deferred.
   def warn_dropped_factories(state, namespace, runner_id, dropped) do
     Enum.each(dropped, fn factory_id ->
-      case affected_operatives(state, namespace, runner_id, factory_id) do
+      case affected_operators(state, namespace, runner_id, factory_id) do
         [] ->
           :ok
 
         affected ->
           Logger.warning(
             "[fleet_manager] runner #{runner_id} on #{namespace} dropped factory " <>
-              "#{factory_id} that still has controller-known operatives " <>
+              "#{factory_id} that still has controller-known operators " <>
               "#{inspect(affected)}; their (re)placement will fail until a " <>
               "runner re-defines the factory"
           )
@@ -207,11 +207,11 @@ defmodule Flezha.Runner.FleetManager.Factories do
     end)
   end
 
-  def affected_operatives(state, namespace, runner_id, factory_id) do
+  def affected_operators(state, namespace, runner_id, factory_id) do
     still_placeable = MapSet.size(placeable_runners(state, namespace, factory_id)) > 0
 
     namespace
-    |> HubManager.operative_rows()
+    |> HubManager.operator_rows()
     |> Enum.filter(fn row ->
       row.factory == factory_id and
         (row.runner == runner_id or (is_nil(row.runner) and not still_placeable))
@@ -221,7 +221,7 @@ defmodule Flezha.Runner.FleetManager.Factories do
 
   @doc """
   The factories of `namespace` this node can actually place on, which is what
-  makes its controller an eligible host for their operatives.
+  makes its controller an eligible host for their operators.
 
   `placeable_runners/3` over every factory the namespace holds, so this set
   cannot disagree with the runner choice: a factory advertised here only at a
@@ -278,7 +278,7 @@ defmodule Flezha.Runner.FleetManager.Factories do
   # The factories `runner_id` advertises in `namespace`, at any language or
   # kind. The inverse read of `advertising_runners/3` over the same table: the
   # release path asks what one runner can take, where a placement asks who can
-  # take one operative. Unfiltered on purpose — a mismatched advertisement must
+  # take one operator. Unfiltered on purpose — a mismatched advertisement must
   # not place, but it is not evidence that the runner is irrelevant, and the bind
   # itself is where the language guard belongs.
   def runner_factories(state, namespace, runner_id) do

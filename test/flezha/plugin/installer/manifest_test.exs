@@ -21,7 +21,7 @@ defmodule Flezha.Plugin.Installer.ManifestTest do
           provider: MyOrg.KafkaIngest,
           hooks: [{:on_input, [position: 0]}],
           default_opts: %{},
-          scope: :operative
+          scope: :operator
         }
       ],
       dependencies: []
@@ -104,7 +104,7 @@ defmodule Flezha.Plugin.Installer.ManifestTest do
           provider: Other.NotInList,
           hooks: [{:on_input, []}],
           default_opts: %{},
-          scope: :operative
+          scope: :operator
         }
       ])
 
@@ -168,7 +168,7 @@ defmodule Flezha.Plugin.Installer.ManifestTest do
       provider: mod,
       hooks: [{:on_input, []}],
       default_opts: %{},
-      scope: :operative
+      scope: :operator
     }
   end
 end

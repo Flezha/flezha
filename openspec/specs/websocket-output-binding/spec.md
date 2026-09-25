@@ -3,7 +3,7 @@
 ## Purpose
 TBD - created by archiving change bind-websocket-both-ways. Update Purpose after archive.
 ## Requirements
-### Requirement: A websocket plugin SHALL send operative outputs on the connection it holds
+### Requirement: A websocket plugin SHALL send operator outputs on the connection it holds
 
 `Plugin.Provider.Websocket` SHALL implement `on_input/2` and `on_output/2` and SHALL
 send the dispatched payload upstream as a frame on the socket it already holds, without
@@ -17,8 +17,8 @@ payload and which SHALL be refused at enable time without that placeholder, and 
 same meaning the Kafka producer's own restriction has. With no `sink_template` the payload
 SHALL be sent verbatim as the frame body.
 
-Because the websocket provider also feeds the operative, `channel` on it names both
-directions by the rule in `operative-extensions`: the outputs it sends and the entry channel
+Because the websocket provider also feeds the operator, `channel` on it names both
+directions by the rule in `operator-extensions`: the outputs it sends and the entry channel
 its inbound frames are injected on. A plugin whose two names differ SHALL write `channel_out`
 for the restriction and `channel_in` for the entry channel, and `channel_out` SHALL be
 accepted as the explicit spelling of the restriction in every case.
@@ -28,13 +28,13 @@ provider SHALL NOT use the connection library's public send function, whose disc
 path discards a frame without an error.
 
 #### Scenario: An output is sent on the established socket
-- **WHEN** an operative with a websocket plugin hooked on `on_output` produces an output
+- **WHEN** an operator with a websocket plugin hooked on `on_output` produces an output
 - **THEN** the payload SHALL be sent as one frame of the configured type on the connection the plugin already holds
 - **AND** no second connection SHALL be opened
 
 #### Scenario: Both directions share one connection
 - **WHEN** a plugin has an `on_output` hook and the upstream sends an inbound frame
-- **THEN** the inbound frame SHALL be injected into the operative as it is for a receive-only plugin
+- **THEN** the inbound frame SHALL be injected into the operator as it is for a receive-only plugin
 - **AND** both directions SHALL use the same socket
 
 #### Scenario: A channel-restricted sink ignores other channels
@@ -48,7 +48,7 @@ path discards a frame without an error.
 - **THEN** no frame SHALL be sent, and the output SHALL pass through the chain unchanged
 
 #### Scenario: One `channel` names both directions
-- **GIVEN** a plugin with an `on_output` hook and configured with `channel: "prices"`, on an operative declaring an entry channel `prices`
+- **GIVEN** a plugin with an `on_output` hook and configured with `channel: "prices"`, on an operator declaring an entry channel `prices`
 - **WHEN** an inbound frame arrives and an output naming `alerts` is dispatched
 - **THEN** the frame SHALL be injected on `prices`, and no frame SHALL be sent for the `alerts` output
 
@@ -150,41 +150,41 @@ and no key to overwrite.
 - **THEN** the frame SHALL carry the output's `flz.cell` and `flz.seq` stamps
 - **AND** the published documentation SHALL state that the consumer deduplicates on them
 
-### Requirement: A websocket sink on an effectively-once operative SHALL warn at enable time
+### Requirement: A websocket sink on an effectively-once operator SHALL warn at enable time
 
-A websocket output binding enabled on an effectively-once operative SHALL warn and SHALL
+A websocket output binding enabled on an effectively-once operator SHALL warn and SHALL
 NOT be refused. The warning SHALL name the plugin and the acknowledgement mode, and SHALL
-state that the operative's internal guarantee is unchanged while its websocket output hop
+state that the operator's internal guarantee is unchanged while its websocket output hop
 is not effectively-once.
 
 The provider SHALL read the tier from the host-injected `:effectively_once` opt rather than
 from any state of its own.
 
-#### Scenario: Enabling on a tier operative warns and proceeds
-- **GIVEN** an operative running with effectively-once delivery
+#### Scenario: Enabling on a tier operator warns and proceeds
+- **GIVEN** an operator running with effectively-once delivery
 - **WHEN** a websocket plugin with an `on_output` hook is enabled on it
 - **THEN** a warning naming the plugin and the acknowledgement mode SHALL be emitted
 - **AND** the plugin SHALL be enabled
 
-#### Scenario: Enabling on a plain operative is silent
-- **GIVEN** an operative not running with effectively-once delivery
+#### Scenario: Enabling on a plain operator is silent
+- **GIVEN** an operator not running with effectively-once delivery
 - **WHEN** the same plugin is enabled
 - **THEN** no such warning SHALL be emitted
 
-### Requirement: The outbound handoff SHALL NOT block the socket process on the operative
+### Requirement: The outbound handoff SHALL NOT block the socket process on the operator
 
 The handoff from the output dispatch chain to the socket process SHALL be a correlated
 asynchronous exchange, and SHALL NOT be a synchronous call in either direction while the
-opposite direction can also block. The socket process SHALL NOT wait on the operative's
+opposite direction can also block. The socket process SHALL NOT wait on the operator's
 Overwatch while the Overwatch is waiting on it.
 
 This is a deadlock refusal, not a performance preference: on the effectively-once tier the
 socket process already calls the Overwatch without a deadline to confirm an injected input,
 and the Overwatch is the process that runs the output chain. A synchronous outbound send
-closes that cycle and hangs the operative permanently.
+closes that cycle and hangs the operator permanently.
 
 #### Scenario: Simultaneous ingest and output do not deadlock
-- **GIVEN** an operative running with effectively-once delivery and a websocket plugin bound in both directions
+- **GIVEN** an operator running with effectively-once delivery and a websocket plugin bound in both directions
 - **WHEN** an inbound frame is being confirmed while an output is dispatched to the same plugin
 - **THEN** neither process SHALL block on the other
 - **AND** both the injection and the outbound frame SHALL complete

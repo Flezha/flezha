@@ -23,7 +23,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
   for every lifecycle callback the provider does not write itself.
 
   `feeds: true` declares that the provider's own worker injects payloads into
-  the operative. It defaults to false and only the providers whose worker calls
+  the operator. It defaults to false and only the providers whose worker calls
   `Flezha.Plugin.Host.inject/4` write it.
   """
   defmacro __using__(opts) do

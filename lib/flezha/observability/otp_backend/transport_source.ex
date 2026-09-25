@@ -10,7 +10,7 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
 
   Cardinality is bounded by construction: driver metrics are per
   transport (at most two) and the BEAM aggregates carry no per-cell
-  label, so nothing here grows with runner or operative churn.
+  label, so nothing here grows with runner or operator churn.
 
   Both server drivers produce the self-report, so the same metrics are
   emitted whichever transport carries the traffic; the `:native` in-node
@@ -94,7 +94,7 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
       try do
         LivenessCounters.snapshot_all()
       catch
-        _, _ -> %{channels: [], operatives: []}
+        _, _ -> %{channels: [], operators: []}
       end
 
     scope = %{scope: :data_plane}

@@ -444,7 +444,7 @@ absence, the failure is silent — the subsystem reports itself healthy and neve
 
 - **GIVEN** a change that must rename a module whose name is persisted
 - **WHEN** the change is written
-- **THEN** it SHALL carry the operator tasklet that makes existing durable state
+- **THEN** it SHALL carry the user tasklet that makes existing durable state
   readable again, and SHALL name it in the proposal rather than in a dev note
 
 #### Scenario: A tolerated absence is not a safe absence
@@ -1126,11 +1126,11 @@ alone and fails in the suite cannot be verified by any run of the module.
 
 Such a helper SHALL wait on the exit of what it terminated, never on time.
 
-#### Scenario: An operative stopped by the previous test cannot leak into the next
+#### Scenario: An operator stopped by the previous test cannot leak into the next
 
-- **WHEN** a test stops an operative in its teardown, the next test resets durable
-  state and starts an operative under the same id
-- **THEN** the new operative's Cell SHALL hold no input the previous test sent,
+- **WHEN** a test stops an operator in its teardown, the next test resets durable
+  state and starts an operator under the same id
+- **THEN** the new operator's Cell SHALL hold no input the previous test sent,
   on every run and at every seed
 
 #### Scenario: The full suite is as green as the module
@@ -1308,7 +1308,7 @@ first public release makes irreversible, and each entry SHALL be classified `blo
 
 An entry is **blocking** when settling it differently after the first public release would
 need at least one of: an action outside the project's control, such as a registry
-operator's or another person's consent; an act that cannot be undone, such as recalling a
+user's or another person's consent; an act that cannot be undone, such as recalling a
 clone or un-disclosing a vulnerability; or a compatibility break for someone who already
 depends on the current answer. Every other entry is **owed**: it should be done, and a
 later fix costs no more than an early one. An entry that is merely a good idea is not an

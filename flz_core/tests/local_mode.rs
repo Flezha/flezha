@@ -383,7 +383,7 @@ fn a_channel_the_declaration_does_not_carry_is_refused_by_name() {
     let unknown = run.feed("nope", b"x".to_vec()).expect_err("refused");
     assert!(
         unknown.to_string().contains("nope") && unknown.to_string().contains("refusals-1"),
-        "the refusal names the channel and the operative: {unknown}"
+        "the refusal names the channel and the operator: {unknown}"
     );
 
     let not_entry = run.feed("mid", b"x".to_vec()).expect_err("refused");
@@ -476,8 +476,7 @@ fn the_same_declaration_serves_local_mode_and_class_registration() {
     // No local-mode member exists: the run is started from the factory id the
     // controller registers, and the topology it reads is the registered one.
     let run = LocalRun::start("local_two_step", "shared-decl").expect("the run starts");
-    let registered =
-        flz_core::operative::registry::get_class("local_two_step").expect("registered");
+    let registered = flz_core::operator::registry::get_class("local_two_step").expect("registered");
     assert_eq!(
         run.instance().topology.factory_id,
         registered.factory_id,
@@ -635,8 +634,8 @@ fn echo_keyed(_activation: &Activation, item: &WorkItem) -> ItemEffect {
 }
 
 /// Feed `a:1`, `b:1`, `a:2`, settle, and return what was released, sorted.
-fn keyed_run(factory_id: &str, operative_id: &str) -> Vec<String> {
-    let run = LocalRun::start(factory_id, operative_id).expect("the run starts");
+fn keyed_run(factory_id: &str, operator_id: &str) -> Vec<String> {
+    let run = LocalRun::start(factory_id, operator_id).expect("the run starts");
     let (seen, callback) = recorder();
     run.on_sink("out", callback).expect("`out` is declared");
     for payload in ["a:1", "b:1", "a:2"] {

@@ -300,7 +300,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     :cell_timers,
     :correction_window,
     :keyed_channels,
-    :workflow,
+    :bounded,
     :dynamic_cell,
     :partitioned,
     :schema_evolution,
@@ -333,7 +333,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     :cell_timers,
     :effectively_once,
     :correction_window,
-    :workflow,
+    :bounded,
     :shorthand
   ]
 
@@ -501,7 +501,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
 
   @doc """
   A real, never-bound primary `StreamChannel` under a fresh registered name, and
-  the pid serving it — the state every operative's data stream passes through
+  the pid serving it — the state every operator's data stream passes through
   between the runner's control-channel handshake and the stream the SDK opens
   after it. Stopped on exit.
 

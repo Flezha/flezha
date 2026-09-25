@@ -14,7 +14,7 @@ use flz_transport::utility::socket_dir;
 use super::{CommandAction, Reply};
 use crate::flusher::{SendError, SendFrameFn};
 use crate::pb::ConnectSocket;
-use crate::routing::OperativeDispatchHandle;
+use crate::routing::OperatorDispatchHandle;
 use crate::runner::RunnerNode;
 use crate::state_sink;
 
@@ -185,7 +185,7 @@ fn spawn_listener(
     transport: &'static str,
     pairs: Vec<(FlezhaStream, Arc<FlezhaStream>)>,
 ) {
-    let handle = runner.operative_dispatch_handle();
+    let handle = runner.operator_dispatch_handle();
     let _ = thread::spawn(move || listen_incoming(transport, pairs, handle));
 }
 
@@ -194,7 +194,7 @@ fn run_data_reader(
     key: u32,
     primary: Arc<FlezhaStream>,
     secondary: Arc<FlezhaStream>,
-    handle: OperativeDispatchHandle,
+    handle: OperatorDispatchHandle,
 ) {
     let mut reader = std::io::BufReader::with_capacity(64 * 1024, &*primary);
     let mut frames: u64 = 0;
@@ -223,7 +223,7 @@ fn run_data_reader(
 fn listen_incoming(
     transport: &'static str,
     pairs: Vec<(FlezhaStream, Arc<FlezhaStream>)>,
-    handle: OperativeDispatchHandle,
+    handle: OperatorDispatchHandle,
 ) {
     let mut handles = Vec::new();
     for (key, (primary, secondary)) in pairs.into_iter().enumerate() {

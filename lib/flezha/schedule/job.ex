@@ -9,8 +9,8 @@ defmodule Flezha.Schedule.Job do
   the misfire-grace look-back on start repairs by firing the single most
   recent slot inside the window. Older slots are never back-filled.
 
-  Firing goes through the shared workflow start path
-  (`OperativeManager.start_workflow/5`) with deterministic instance id
+  Firing goes through the shared bounded start path
+  (`OperatorManager.start_bounded/5`) with deterministic instance id
   `<name>@<slot-iso>`; its `:duplicate` answer is the duplicate-fire no-op.
 
   A slot whose spawn fails is retried with exponential backoff under the SAME
@@ -27,10 +27,10 @@ defmodule Flezha.Schedule.Job do
 
   alias Flezha.Config.Durations
   alias Flezha.Config.Backoff
-  alias Flezha.Operative.Builder
+  alias Flezha.Operator.Builder
   alias Flezha.Plugin.SpecDecoder
   alias Flezha.Schedule.{Cron, Store}
-  alias Flezha.Service.OperativeManager
+  alias Flezha.Service.OperatorManager
 
   # Backoff cap equals the finest cron granularity, so a retrying schedule
   # probes at least once per minute.
@@ -51,7 +51,7 @@ defmodule Flezha.Schedule.Job do
 
   @doc """
   Spawn one instance for `entry` with `instance_id` through the standard
-  workflow start path. Also serves `flz schedule run` (manual fire).
+  bounded start path. Also serves `flz schedule run` (manual fire).
 
   The entry's plugin spec is decoded per firing (provider ids resolve against
   the running controller) and attached AT SPAWN: a plugin attached after the
@@ -90,7 +90,7 @@ defmodule Flezha.Schedule.Job do
         {:ok, seed} -> [{:seed_input, seed} | opts]
       end
 
-    case OperativeManager.start_workflow(
+    case OperatorManager.start_bounded(
            entry.namespace,
            instance_id,
            entry.factory_id,

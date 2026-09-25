@@ -25,7 +25,7 @@ flz-fake-controller: drive one runner through a smoke run
                           must read the same directory (FLEZHA_SOCKET_FILES_PATH)
                           [default with a runner command: a directory of its own]
   --factory <id>          the class to start
-  --operative <id>        what to call the started operative [default: the factory id]
+  --operator <id>        what to call the started operator [default: the factory id]
   --transport <uds>       the transport the runner connects over [default: uds]
   --channel <name>        the entry channel inputs are fed to [default: the first declared]
   --inputs <file>         one input payload per line
@@ -161,7 +161,7 @@ struct Invocation {
 fn parse(args: impl Iterator<Item = String>) -> Result<Option<Invocation>, String> {
     let mut socket_dir: Option<PathBuf> = None;
     let mut factory: Option<String> = None;
-    let mut operative: Option<String> = None;
+    let mut operator: Option<String> = None;
     let mut channel: Option<String> = None;
     let mut inputs_file: Option<PathBuf> = None;
     let mut inline_inputs: Vec<Vec<u8>> = Vec::new();
@@ -187,7 +187,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Option<Invocation>, Strin
             }
             "--socket-dir" => socket_dir = Some(PathBuf::from(value()?)),
             "--factory" => factory = Some(value()?),
-            "--operative" => operative = Some(value()?),
+            "--operator" => operator = Some(value()?),
             "--channel" => channel = Some(value()?),
             "--inputs" => inputs_file = Some(PathBuf::from(value()?)),
             "--input" => inline_inputs.push(value()?.into_bytes()),
@@ -237,7 +237,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Option<Invocation>, Strin
 
     Ok(Some(Invocation {
         scenario: Scenario {
-            operative_id: operative.unwrap_or_else(|| factory_id.clone()),
+            operator_id: operator.unwrap_or_else(|| factory_id.clone()),
             expect_outputs: expect_outputs.unwrap_or(inputs.len()),
             socket_dir,
             runner_id,

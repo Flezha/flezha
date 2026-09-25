@@ -39,12 +39,12 @@ defmodule FlezhaTest.System.RemedyDrillTest do
   alias Flezha.Convergence.{Heal, Loop, Planner}
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
   alias Flezha.Identificator
-  alias Flezha.Operative.{Builder, Overwatch}
+  alias Flezha.Operator.{Builder, Overwatch}
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.{Ctx, Table}
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.{HubManager, OperativeManager, PluginManager}
+  alias Flezha.Service.{HubManager, OperatorManager, PluginManager}
   alias Flezha.Shutdown.Coordinator
   alias Flezha.State.{Commands, TestHelpers, WalWriter, Watchdog, WriterRegistry}
   alias Flezha.Transport.LivenessCounters
@@ -106,7 +106,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
   # The rows this tier cannot drive, each with the reason recorded.
   @deferred %{
     reset_control_channel:
-      "needs an operative that is PARKED and still in the hub's declared set: the start " <>
+      "needs an operator that is PARKED and still in the hub's declared set: the start " <>
         "authority stops a child whose start fails, and an Overwatch started outside it is " <>
         "not declared, so the loop never sees it. The park-to-cut path is proved by " <>
         "`Flezha.Convergence.DiffTest` (the Planner cuts a dead transport before the rebind, " <>
@@ -166,19 +166,19 @@ defmodule FlezhaTest.System.RemedyDrillTest do
   # ---------- the rows ----------
 
   # A runner dies with no survivor: the declared disconnect plans the rebind.
-  # With no runner able to serve the operative the rebind is an unmet
+  # With no runner able to serve the operator the rebind is an unmet
   # precondition, so it arms no rung and is planned again on the very next
   # tick; a runner arriving is the repair.
-  defp row(:rebind_operative, namespace) do
+  defp row(:rebind_operator, namespace) do
     {port_a, runner_a} = boot_runner(namespace, unique_id_path("drill"), [])
-    id = start_operative(namespace, "rebound")
+    id = start_operator(namespace, "rebound")
     assert bound_runner(namespace, id) == runner_a
     start_loop()
 
     sigkill(os_pid(port_a))
 
     for _tick <- 1..2 do
-      assert_receive {:heal, %{primitive: :rebind_operative, target: ^id}}, 30_000
+      assert_receive {:heal, %{primitive: :rebind_operator, target: ^id}}, 30_000
     end
 
     assert none_cooling?(namespace, id), "a rebind with nowhere to place armed a rung"
@@ -186,7 +186,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
     {_port_b, runner_b} = boot_runner(namespace, unique_id_path("drill"), [])
 
     assert wait_until(fn -> bound_runner(namespace, id) == runner_b end, 30_000),
-           "the operative never rebound onto the arriving runner"
+           "the operator never rebound onto the arriving runner"
 
     # A rebind that answered `:error` on its way here would have armed a rung
     # that the quiet tick below cannot see.
@@ -197,7 +197,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
   # The dead runner's eviction is the first op of the same plan.
   defp row(:evict_runner, namespace) do
     {port_a, runner_a} = boot_runner(namespace, unique_id_path("drill"), [])
-    id = start_operative(namespace, "evicted")
+    id = start_operator(namespace, "evicted")
     assert bound_runner(namespace, id) == runner_a
     start_loop()
 
@@ -211,10 +211,10 @@ defmodule FlezhaTest.System.RemedyDrillTest do
   # the loop restarts it. The key stays armed until the stable window.
   defp row(:restart_plugin, namespace) do
     {_port, _runner} = boot_runner(namespace, unique_id_path("drill"), [])
-    id = start_operative(namespace, "restarted")
+    id = start_operator(namespace, "restarted")
     plugin_id = id <> "_owned"
     :ok = enable_plugin(namespace, id, plugin_id)
-    {:ok, pid} = OperativeManager.get_operative_pid(namespace, id)
+    {:ok, pid} = OperatorManager.get_operator_pid(namespace, id)
     start_loop()
 
     owned = owned_pid(pid, plugin_id)
@@ -254,7 +254,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
   # re-published. Inline: the key resets on the publish's own `:ok`.
   defp row(:publish_binding, namespace) do
     {_port, runner} = boot_runner(namespace, unique_id_path("drill"), [])
-    id = start_operative(namespace, "republished")
+    id = start_operator(namespace, "republished")
     assert bound_runner(namespace, id) == runner
     start_loop()
 
@@ -272,7 +272,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
   # Watchdog gives up on, and an output stall — each keyed on its own reason.
   defp row(:resync_runner, namespace) do
     {_port, runner} = boot_runner(namespace, unique_id_path("drill"), [])
-    id = start_operative(namespace, "resynced", factory: "store_input")
+    id = start_operator(namespace, "resynced", factory: "store_input")
     cell = {id, "store_input_tasklet", ""}
     feed(namespace, id, 5)
     {:ok, writer} = wait_for_writer(cell)
@@ -328,10 +328,10 @@ defmodule FlezhaTest.System.RemedyDrillTest do
   # A declared plugin unsubscribed is started again.
   defp row(:start_plugin, namespace) do
     {_port, _runner} = boot_runner(namespace, unique_id_path("drill"), [])
-    id = start_operative(namespace, "started")
+    id = start_operator(namespace, "started")
     plugin_id = id <> "_declared"
     :ok = enable_plugin(namespace, id, plugin_id)
-    {:ok, pid} = OperativeManager.get_operative_pid(namespace, id)
+    {:ok, pid} = OperatorManager.get_operator_pid(namespace, id)
     start_loop()
 
     :ok = Overwatch.plugin_unsubscribe(pid, plugin_id)
@@ -347,9 +347,9 @@ defmodule FlezhaTest.System.RemedyDrillTest do
   # An undeclared plugin subscribed is torn down.
   defp row(:stop_plugin, namespace) do
     {_port, _runner} = boot_runner(namespace, unique_id_path("drill"), [])
-    id = start_operative(namespace, "stopped")
+    id = start_operator(namespace, "stopped")
     :ok = enable_plugin(namespace, id, id <> "_declared")
-    {:ok, pid} = OperativeManager.get_operative_pid(namespace, id)
+    {:ok, pid} = OperatorManager.get_operator_pid(namespace, id)
     start_loop()
 
     undeclared = id <> "_undeclared"
@@ -361,7 +361,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
         opts: %{},
         hooks: [{:on_input, [position: 1]}],
         namespace: namespace,
-        operative_id: id
+        operator_id: id
       })
 
     assert wait_until(fn -> Loop.tick_now() == :ok and heal?(:stop_plugin, id) end, 30_000),
@@ -384,10 +384,10 @@ defmodule FlezhaTest.System.RemedyDrillTest do
           port_opts: [:exit_status]
         )
 
-      id = start_operative(namespace, "wedged", factory: "wedge_probe", plugins: [sink(self())])
+      id = start_operator(namespace, "wedged", factory: "wedge_probe", plugins: [sink(self())])
       assert produces?(id, namespace, "one", "ok:one", 60_000)
 
-      OperativeManager.send_io(id, namespace, "wedge", %{"input_type" => "2"})
+      OperatorManager.send_io(id, namespace, "wedge", %{"input_type" => "2"})
       assert wait_until(fn -> inflight?(runner_a) end, 30_000), "the wedge never reached a worker"
       feeder = start_feeder(id, namespace, self())
       {_port_b, runner_b} = boot_runner(namespace, unique_id_path("drill"), env: heartbeat_env())
@@ -411,7 +411,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
   # Planner's suppression against a populated Diff.
   defp row(:drain, namespace) do
     {port_a, runner_a} = boot_runner(namespace, unique_id_path("drill"), [])
-    id = start_operative(namespace, "drained")
+    id = start_operator(namespace, "drained")
     assert bound_runner(namespace, id) == runner_a
     start_loop()
 
@@ -433,7 +433,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
 
     assert :ok = Coordinator.shutdown(:cli, timeout_ms: 15_000)
     assert_receive :ticked_under_the_drain, 30_000
-    refute heal?(:rebind_operative, id)
+    refute heal?(:rebind_operator, id)
 
     # Finalise clears the fact.
     assert wait_until(fn -> not draining?() end, 10_000),
@@ -447,7 +447,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
     assert_receive {:tick, _}, 10_000
   end
 
-  defp start_operative(namespace, label, opts \\ []) do
+  defp start_operator(namespace, label, opts \\ []) do
     id = "#{label}_#{System.unique_integer([:positive])}"
 
     builder = %Builder{
@@ -457,18 +457,18 @@ defmodule FlezhaTest.System.RemedyDrillTest do
       opts: [plugins: Keyword.get(opts, :plugins, [])]
     }
 
-    assert {:ok, _} = OperativeManager.start_operative(namespace, builder)
+    assert {:ok, _} = OperatorManager.start_operator(namespace, builder)
     id
   end
 
   # The loop reads the DECLARED plugin set from the durable cspec, which a
   # start's own `plugins` and `PluginManager.enable_plugin/2` both write.
-  defp enable_plugin(namespace, operative_id, plugin_id) do
+  defp enable_plugin(namespace, operator_id, plugin_id) do
     {:ok, "plugin enabled"} =
       PluginManager.enable_plugin(plugin_id, %Plugin{
         id: plugin_id,
         namespace: namespace,
-        operative_id: operative_id,
+        operator_id: operator_id,
         provider: OwnedPidProvider,
         opts: %{},
         hooks: [{:on_input, [position: 0]}]
@@ -481,7 +481,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
     %Plugin{
       id: "drill_sink",
       namespace: nil,
-      operative_id: nil,
+      operator_id: nil,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: recv_pid, include_metadata: true},
       hooks: [{:on_output, []}]
@@ -539,8 +539,8 @@ defmodule FlezhaTest.System.RemedyDrillTest do
     end
   end
 
-  defp bound_runner(namespace, operative_id) do
-    with {:ok, pid} <- OperativeManager.get_operative_pid(namespace, operative_id),
+  defp bound_runner(namespace, operator_id) do
+    with {:ok, pid} <- OperatorManager.get_operator_pid(namespace, operator_id),
          %{runner_id: runner_id} <- :sys.get_state(pid) do
       runner_id
     else
@@ -548,7 +548,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
     end
   end
 
-  defp registry_tag(namespace, id), do: HubManager.operative_runner_tag(namespace, id)
+  defp registry_tag(namespace, id), do: HubManager.operator_runner_tag(namespace, id)
 
   # Byte-for-byte what a start's late `update_registry` writes when it wins the
   # race: the altered child_data's metadata, carrying the runner alter resolved.
@@ -566,7 +566,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
 
   defp feed(namespace, id, n) do
     for i <- 1..n do
-      OperativeManager.send_io(
+      OperatorManager.send_io(
         id,
         namespace,
         "line-#{i}-#{System.unique_integer([:positive])}",
@@ -601,21 +601,21 @@ defmodule FlezhaTest.System.RemedyDrillTest do
     |> Enum.any?(&(&1.runner_id == runner_id and Map.get(&1, :hb_inflight, 0) >= 1))
   end
 
-  defp start_feeder(operative_id, namespace, owner) do
+  defp start_feeder(operator_id, namespace, owner) do
     spawn(fn ->
       Process.monitor(owner)
-      feed_loop(operative_id, namespace)
+      feed_loop(operator_id, namespace)
     end)
   end
 
-  defp feed_loop(operative_id, namespace) do
+  defp feed_loop(operator_id, namespace) do
     receive do
       :stop -> :ok
       {:DOWN, _ref, :process, _pid, _reason} -> :ok
     after
       100 ->
-        OperativeManager.send_io(operative_id, namespace, "feed", %{"input_type" => "2"})
-        feed_loop(operative_id, namespace)
+        OperatorManager.send_io(operator_id, namespace, "feed", %{"input_type" => "2"})
+        feed_loop(operator_id, namespace)
     end
   end
 

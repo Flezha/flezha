@@ -1,6 +1,6 @@
 # Authentication and authorization
 
-For operators running a Flezha Controller: enforcement posture, distribution
+For callers running a Flezha Controller: enforcement posture, distribution
 cookie and transport certificates, bootstrap admin, tokens, namespaces and
 quotas, role bindings, runtime knobs, on-disk layout, recovery and rollback.
 
@@ -8,24 +8,24 @@ quotas, role bindings, runtime knobs, on-disk layout, recovery and rollback.
 
 `Flezha.AuthZ.enforcement_posture/0` answers one of three states.
 `Flezha.AuthZ.authorize/3` is the single policy point every `Flezha.Service.*`
-operator action calls before any side effect; it returns `:ok` or
+caller action calls before any side effect; it returns `:ok` or
 `{:error, {:forbidden, reason}}` and emits `:authorization_denied` on every
 refusal.
 
 | Posture | When | Effect |
 | --- | --- | --- |
 | `:open` | `FLEZHA_AUTHZ_ENABLED=false`, or the dev/test config opt-out | `authorize/3` returns `:ok` unconditionally; a warning is logged on every boot |
-| `:bootstrap_pending` | enforcement configured on, no `admin@_system` claimed yet | operator verbs refuse naming `flz auth bootstrap`; `:internal` callers pass and `:sdk` contexts are policy-checked as usual, so operatives and runner connections continue |
+| `:bootstrap_pending` | enforcement configured on, no `admin@_system` claimed yet | administration verbs refuse naming `flz auth bootstrap`; `:internal` callers pass and `:sdk` contexts are policy-checked as usual, so operators and runner connections continue |
 | `:enforced` | the bootstrap was claimed (durable flag in `state.dets`) | every call is policy-checked against the role binding |
 
 The prod default is enabled (`config_env() == :prod`); dev and test carry the
-opt-out. An un-bootstrapped upgrade degrades to "operator verbs refused", never
+opt-out. An un-bootstrapped upgrade degrades to "administration verbs refused", never
 to an outage and never to open.
 
 Identity reaches the policy point only from the transport: a verified token
 (`--token` / `FLEZHA_TOKEN`) for CLI callers, the connection's namespace
 handshake for runners (`runner@<namespace>`, whose role the store answers and
-which is `runner` unless an operator bound it); a caller-supplied
+which is `runner` unless a caller bound it); a caller-supplied
 principal is never trusted. The `:internal` source is pre-authorized and only
 constructible inside the Controller's BEAM — reaching it from outside needs
 distribution, which the cookie gates. `FLEZHA_TOKEN` is read by the `flz`
@@ -127,7 +127,7 @@ recovery options (restore `roles.dets`, place a `bootstrap.token`, or set `FLEZH
 
 That log line is written only on the boot that creates the file. A Controller
 booting again with the token still unclaimed writes nothing, so the path is not
-in the log an operator is most likely to read. Any gated verb refused in that
+in the log a caller is most likely to read. Any gated verb refused in that
 state names the path itself:
 
 ```
@@ -163,7 +163,7 @@ is `flzt_<base32>` (256-bit); the store keeps only the SHA-256 hash, so a copied
 characters of that hash.
 
 ```sh
-flz token issue bob team-orders operator --ttl 604800   # --ttl defaults to 86400
+flz token issue bob team-orders ops --ttl 604800         # --ttl defaults to 86400
 # → id:    4f2a9b1c2e7d
 # → token (shown once, store it now): flzt_...
 flz token issue archivist team-orders viewer --ttl never # no expiry
@@ -175,8 +175,8 @@ Every gated verb accepts `--token <t>` or reads `FLEZHA_TOKEN`. Issue and
 revoke emit `:token_issued` / `:token_revoked`. Verification rejects a revoked
 or expired token on the next call — there is no propagation lag.
 
-The credential is read wherever it is written: `flz operative stop --token t
-op1` and `flz operative stop op1 --token t` are the same request. Every `flz`
+The credential is read wherever it is written: `flz operator stop --token t
+op1` and `flz operator stop op1 --token t` are the same request. Every `flz`
 option works that way — a verb's positional arguments are the words that remain
 once its declared options and their values are taken out — so a flag written
 before the subject of the command is a flag, and not the subject.
@@ -190,7 +190,7 @@ on and answers with its defaults.
 
 Nothing stops except the CLI. A runner's namespace is proven by its own
 credential and that credential never expires (see [Runner credentials](#runner-credentials)),
-so operatives and runner connections carry on; an expired operator credential
+so operators and runner connections carry on; an expired caller credential
 means gated verbs refuse, and that is all.
 
 There is no automatic renewal, but a lapse is announced before it happens: an
@@ -258,7 +258,7 @@ credential at all; its expiry is the PKI's to manage.
 
 ## Namespaces and quotas
 
-Namespaces are the tenancy boundary: every Operative, state file, audit record
+Namespaces are the tenancy boundary: every Operator, state file, audit record
 and observability signal carries one. Names match `[a-z][a-z0-9_-]{0,62}`: an
 underscore is allowed after the leading letter, never as the first character.
 `_system` is reserved and exists at boot.
@@ -266,7 +266,7 @@ underscore is allowed after the leading letter, never as the first character.
 ```sh
 flz namespace create team-orders --Xmax_runners=4 --Xmax_state_bytes=1073741824
 flz namespace show team-orders
-flz namespace set-quota team-orders --Xmax_operatives=200
+flz namespace set-quota team-orders --Xmax_operators=200
 flz namespace delete team-orders
 flz namespace list                 # the catalog, with a hub-running column
 ```
@@ -277,13 +277,13 @@ is refused `:not_found`. Both refusals go to standard error and exit 1, so a
 teardown script cannot read a typo as a successful delete.
 
 A namespace listing shows the caller its own namespace and no other, and
-`admin@_system` sees the whole cluster, which is the operator view. The same
-rule narrows the published `Flezha.Service.Operative.list_namespaces/1` a
+`admin@_system` sees the whole cluster, which is the caller view. The same
+rule narrows the published `Flezha.Service.Operator.list_namespaces/1` a
 console reads, so a terminal and a console cannot disagree about which
 namespaces a tenant knows exist.
 
 A context that carries no namespace at all sees them all. That is the ungated
-deployment's operator, and narrowing it to `_system` would hide the namespaces
+deployment's caller, and narrowing it to `_system` would hide the namespaces
 it just created — but it is not only that caller. Under enforcement a principal
 bound in the role store rather than on its context is judged in `_system`, so
 one bound there passes and gets the open answer too; one bound to a tenant is
@@ -296,11 +296,11 @@ or a negative value is refused.
 
 | Quota | Default | Enforced at |
 | --- | --- | --- |
-| `max_operatives` | `100` | `OperativeManager.start_operative/2` |
-| `max_cells_per_operative` | `1_024` | `OperativeManager.start_operative/2` |
-| `max_mailbox_bytes_total` | `268_435_456` (256 MiB) | caps the per-Operative credit window (`PersistenceResolver.credit_window_bytes/2`) |
+| `max_operators` | `100` | `OperatorManager.start_operator/2` |
+| `max_cells_per_operator` | `1_024` | `OperatorManager.start_operator/2` |
+| `max_mailbox_bytes_total` | `268_435_456` (256 MiB) | caps the per-Operator credit window (`PersistenceResolver.credit_window_bytes/2`) |
 | `max_message_rate_per_second` | `100_000` | stored, not enforced |
-| `max_state_bytes` | `107_374_182_400` (100 GiB) | `start_operative` refuses new allocation while over; `State.Watchdog` raises a latched `[:flezha, :state, :disk_quota_breach]` alarm for a running namespace — writes are never interrupted |
+| `max_state_bytes` | `107_374_182_400` (100 GiB) | `start_operator` refuses new allocation while over; `State.Watchdog` raises a latched `[:flezha, :state, :disk_quota_breach]` alarm for a running namespace — writes are never interrupted |
 | `max_runners` | `32` | `FleetManager.connect_handler/4`; a refusal emits `[:flezha, :runner, :quota_refused]` |
 
 A refusal surfaces as `{:error, {:quota_exceeded, kind, %{current, limit}}}`.
@@ -310,17 +310,17 @@ session map. While the posture is not `:enforced`, every quota check passes.
 
 ## Role bindings
 
-Roles are a fixed enumeration: `viewer`, `app`, `operator`, `admin`, `runner`,
+Roles are a fixed enumeration: `viewer`, `app`, `ops`, `admin`, `runner`,
 `spawner`, `stopper`;
 the role→action map lives in `Flezha.AuthZ.Policy`. A principal holds a SET of
 roles in ONE namespace, and an action is allowed when any role in the set grants
 it. Cross-namespace presence still means one principal identity per namespace.
 
 ```sh
-flz role bind alice operator team-orders     # adds a role
+flz role bind alice ops team-orders     # adds a role
 flz role bind runner@team-orders spawner team-orders
 flz role bind runner@team-orders stopper team-orders
-flz role list                                # alice  operator@team-orders
+flz role list                                # alice  ops@team-orders
                                              # runner@team-orders  spawner,stopper@team-orders
 flz role unbind runner@team-orders stopper   # removes one role
 flz role unbind alice                        # removes every role
@@ -334,17 +334,17 @@ a role the principal does not hold changes nothing.
 
 | Role | What it adds |
 | --- | --- |
-| `viewer` | the reads: operatives, plugins, cell state, audit, observability, the schedule registry |
-| `app` | viewer plus the lifecycle an application runs on its own work: start, stop and send to an operative, including the start and the delivery a tasklet's `ctx.spawn_workflow` asks for, listen to what an operative ingests and emits, and enable and disable a plugin. It destroys no record and moves no work it did not create, which is why it is not `operator`: no DLQ drop or replay, no state rotation or deletion, no rewind, no replay and no rescale |
-| `operator` | app plus the rest of the operative and plugin lifecycle, audit rotation, observability mutation, the schedule family, the dead-letter queue and the records in flight |
-| `admin` | operator plus auth state, namespace and quota mutation, plugin install/upgrade/uninstall, controller shutdown and the controller-wide settings. Only `admin@_system` may target another namespace |
-| `runner` | `runner.connect` and nothing else. It is outside the hierarchy: it is what a runner connection resolves to before an operator grants it more |
-| `spawner` | runner plus the two rights a tasklet's `ctx.spawn_workflow` needs in its own namespace, `operative.start` and `operative.send`, and nothing else. Those rights also open `Operative.start` and `Operative.send` on the SDK administration surface; no stop, plugin or schedule verb. It is outside the hierarchy like `runner`, and `app` holds everything it grants |
-| `stopper` | runner plus `operative.stop` on the bound namespace and nothing else, so it combines with `spawner` into an application that starts, sends and stops its own work and still enables no plugin. It is outside the hierarchy like `runner`, and `app` holds everything it grants |
+| `viewer` | the reads: operators, plugins, cell state, audit, observability, the schedule registry |
+| `app` | viewer plus the lifecycle an application runs on its own work: start, stop and send to an operator, including the start and the delivery a tasklet's `ctx.spawn_bounded` asks for, listen to what an operator ingests and emits, and enable and disable a plugin. It destroys no record and moves no work it did not create, which is why it is not `ops`: no DLQ drop or replay, no state rotation or deletion, no rewind, no replay and no rescale |
+| `ops` | app plus the rest of the operator and plugin lifecycle, audit rotation, observability mutation, the schedule family, the dead-letter queue and the records in flight |
+| `admin` | ops plus auth state, namespace and quota mutation, plugin install/upgrade/uninstall, controller shutdown and the controller-wide settings. Only `admin@_system` may target another namespace |
+| `runner` | `runner.connect` and nothing else. It is outside the hierarchy: it is what a runner connection resolves to before a caller grants it more |
+| `spawner` | runner plus the two rights a tasklet's `ctx.spawn_bounded` needs in its own namespace, `operator.start` and `operator.send`, and nothing else. Those rights also open `Operator.start` and `Operator.send` on the SDK administration surface; no stop, plugin or schedule verb. It is outside the hierarchy like `runner`, and `app` holds everything it grants |
+| `stopper` | runner plus `operator.stop` on the bound namespace and nothing else, so it combines with `spawner` into an application that starts, sends and stops its own work and still enables no plugin. It is outside the hierarchy like `runner`, and `app` holds everything it grants |
 
 `app`, `spawner` and `stopper` also carry `runner.connect`, because the only
-principal ever bound to any of them is a runner's; `operator` and `admin` do
-not, because an operator credential is not a runner. For the same reason
+principal ever bound to any of them is a runner's; `ops` and `admin` do
+not, because an `ops` credential is not a runner. For the same reason
 `flz token issue` refuses all three: a runner proves its namespace with a
 `runner` credential, and the refusal is worked out from the connect grant
 rather than from a list of role names, so a role added to the enumeration with
@@ -355,7 +355,7 @@ the connect is refused a credential with nothing edited here.
 A connected runner's roles are read from the role store on every call, keyed on
 the `runner@<namespace>` principal the transport minted. Unbound, they are
 `runner`, which grants the connect and nothing else: an application is refused
-every operator action until somebody says otherwise. Saying otherwise is one
+every administration action until somebody says otherwise. Saying otherwise is one
 command per role:
 
 ```sh
@@ -367,7 +367,7 @@ connection proved, with no credential of its own and nothing that expires. The
 request names no namespace and no principal, so it cannot reach another
 namespace; the controller fills both from the connection. Every act is judged
 at the same policy point, against the same row, and writes the same audit
-record an operator's would, naming `runner@<namespace>` as the principal and
+record a caller's would, naming `runner@<namespace>` as the principal and
 `sdk` as the surface.
 
 A binding made for a different namespace than the one the connection proved
@@ -376,22 +376,22 @@ the next reconnect, because the roles are read per call rather than stamped at
 connect.
 
 A connection holds only those bound roles that grant `runner.connect`. So a
-runner principal bound to an operator's role (`viewer`, `operator`, `admin`)
-connects as `runner` and is refused every operator action, whatever `flz role
+runner principal bound to a caller's role (`viewer`, `ops`, `admin`)
+connects as `runner` and is refused every administration action, whatever `flz role
 list` shows for it. That is what keeps the administration surface's namespace
 and quota mutations out of reach of runner code: an identity holding `spawner`
 and `admin` connects as `spawner` alone.
 
-A namespace whose tasklets spawn workflows, and that needs nothing else from
+A namespace whose tasklets spawn bounded operators, and that needs nothing else from
 this surface, is bound to `spawner` instead. It grants the start and the
-delivery a `ctx.spawn_workflow` asks for, and not the stop or the plugin enable
+delivery a `ctx.spawn_bounded` asks for, and not the stop or the plugin enable
 and disable that `app` adds:
 
 ```sh
 flz role bind runner@team-orders spawner team-orders
 ```
 
-Those two rights are also what `Operative.start` and `Operative.send` on this
+Those two rights are also what `Operator.start` and `Operator.send` on this
 surface are judged against, so a `spawner` namespace's application code can
 call those two as well, and no other verb that changes anything.
 
@@ -411,14 +411,14 @@ removed — revoke the token as well.
 
 ### The declaration: every verb, its action, its grant, where it is judged
 
-Every operator verb is one row of `Flezha.AuthZ.Verbs`, and one function —
+Every administration verb is one row of `Flezha.AuthZ.Verbs`, and one function —
 `Flezha.AuthZ.Verb.run/5` — applies the row on every surface: the `flz` wire,
 the published service API and the runner session. A row names the action the
 policy judges, the rule that resolves the namespace it is judged in, and the
 audit it leaves. The role column is the lowest role the action is granted to;
-`admin` inherits `operator`, which inherits `viewer`; `runner`, `spawner` and
+`admin` inherits `ops`, which inherits `viewer`; `runner`, `spawner` and
 `stopper` sit outside that line, as roles of a runner connection rather than of
-an operator's token. A caller holding several roles is granted the action when
+a caller's token. A caller holding several roles is granted the action when
 any one of them grants it. `public` rows are served to any caller; `none` rows are wire
 names that are not verbs.
 
@@ -442,7 +442,7 @@ told nothing about whether the name exists.
 | `audit_read` | `audit_log_render_read` | `audit.read` | viewer | the caller's own namespace | before on `audit_log` |
 | `audit_tail` | `audit_log_render_tail` | `audit.read` | viewer | the caller's own namespace | before on `audit_log` |
 | `audit_stats` | `audit_log_render_stats` | `audit.read` | viewer | the caller's own namespace | before on `audit_log` |
-| `audit_rotate` | `audit_log_render_rotate` | `audit.rotate` | operator | the caller's own namespace | before on `audit_log` |
+| `audit_rotate` | `audit_log_render_rotate` | `audit.rotate` | ops | the caller's own namespace | before on `audit_log` |
 | `audit_unsubscribe` | published surface only | `audit.read` | viewer | the caller's own namespace | - |
 | `authz_whoami` | `authz_render_whoami`, `authz_whoami` | `authz.whoami` | viewer | the caller's own namespace | - |
 | `token_issue` | `authz_render_token_issue` | `authz.token_issue` | admin | argument 2 (the namespace named) | - |
@@ -460,24 +460,24 @@ told nothing about whether the name exists.
 | `controller_status` | `controller_status` | `controller.status` | viewer | the caller's own namespace | - |
 | `controller_mem_top` | `controller_mem_top` | `controller.status` | viewer | the caller's own namespace | - |
 | `controller_hub_id` | published surface only | `controller.status` | viewer | argument 1 (the namespace named) | - |
-| `controller_recovery` | published surface only | `operative.list` | viewer | argument 1 (the namespace named) | - |
+| `controller_recovery` | published surface only | `operator.list` | viewer | argument 1 (the namespace named) | - |
 | `controller_stop` | `controller_stop` | `controller.stop` | admin | `_system` | after on `controller_service` |
-| `cluster_status` | `cluster_status` | `operative.list` | viewer | argument 1 (the namespace named) | - |
-| `list_namespaces` | `list_namespaces` | `operative.list` | viewer | the caller's own namespace | - |
-| `list_operatives` | `list_operatives` | `operative.list` | viewer | argument 1 (the namespace named) | - |
-| `list_runners` | `list_runners` | `operative.list` | viewer | argument 1 (the namespace named) | - |
-| `operative_info` | `operative_info` | `operative.list` | viewer | argument 1 (the namespace named) | - |
-| `operative_classes` | published surface only | `operative.list` | viewer | the caller's own namespace | - |
-| `operative_start` | `operative_start` | `operative.start` | spawner | argument 1 (the namespace named) | after on `operative_service` |
-| `operative_stop` | `operative_stop` | `operative.stop` | stopper | argument 1 (the namespace named) | after on `operative_service` |
-| `operative_scale` | `operative_scale` | `operative.scale` | operator | argument 1 (the namespace named) | after on `workflow_service` |
-| `operative_rewind` | `operative_rewind` | `operative.rewind` | operator | argument 1 (the namespace named) | after on `workflow_service` |
-| `operative_send` | `operative_send` | `operative.send` | spawner | argument 1 (the namespace named) | after on `operative_service` |
-| `spawn_deliver` | runner session only | `operative.send` | spawner | argument 1 (the namespace named) | - |
-| `operative_replay` | `operative_replay` | `operative.replay` | operator | the stored row's `namespace` | after on `operative_service` |
-| `operative_listen` | `operative_listen` | `operative.listen` | app | argument 1 (the namespace named) | after on `plugin_service` |
+| `cluster_status` | `cluster_status` | `operator.list` | viewer | argument 1 (the namespace named) | - |
+| `list_namespaces` | `list_namespaces` | `operator.list` | viewer | the caller's own namespace | - |
+| `list_operators` | `list_operators` | `operator.list` | viewer | argument 1 (the namespace named) | - |
+| `list_runners` | `list_runners` | `operator.list` | viewer | argument 1 (the namespace named) | - |
+| `operator_info` | `operator_info` | `operator.list` | viewer | argument 1 (the namespace named) | - |
+| `operator_classes` | published surface only | `operator.list` | viewer | the caller's own namespace | - |
+| `operator_start` | `operator_start` | `operator.start` | spawner | argument 1 (the namespace named) | after on `operator_service` |
+| `operator_stop` | `operator_stop` | `operator.stop` | stopper | argument 1 (the namespace named) | after on `operator_service` |
+| `operator_scale` | `operator_scale` | `operator.scale` | ops | argument 1 (the namespace named) | after on `bounded_service` |
+| `operator_rewind` | `operator_rewind` | `operator.rewind` | ops | argument 1 (the namespace named) | after on `bounded_service` |
+| `operator_send` | `operator_send` | `operator.send` | spawner | argument 1 (the namespace named) | after on `operator_service` |
+| `spawn_deliver` | runner session only | `operator.send` | spawner | argument 1 (the namespace named) | - |
+| `operator_replay` | `operator_replay` | `operator.replay` | ops | the stored row's `namespace` | after on `operator_service` |
+| `operator_listen` | `operator_listen` | `operator.listen` | app | argument 1 (the namespace named) | after on `plugin_service` |
 | `cell_state` | `cell_state` | `state.get` | viewer | argument 1 (the namespace named) | - |
-| `schedule_run` | `schedule_run` | `operative.start` | spawner | the stored row's `namespace` | after on `operative_service` |
+| `schedule_run` | `schedule_run` | `operator.start` | spawner | the stored row's `namespace` | after on `operator_service` |
 | `runner_connect` | published surface only | `runner.connect` | runner | argument 1 (the namespace named) | - |
 | `plugin_list` | `list_plugins` | `plugin.list` | viewer | the caller's own namespace | - |
 | `list_installed_plugins` | `list_installed_plugins` | `plugin.list` | viewer | the caller's own namespace | - |
@@ -495,66 +495,66 @@ told nothing about whether the name exists.
 | `observability_subscribe` | published surface only | `observability.subscribe` | viewer | the caller's own namespace | before on `observability_service` |
 | `observability_unsubscribe` | published surface only | `observability.subscribe` | viewer | the caller's own namespace | before on `observability_service` |
 | `observability_tail` | `observability_render_tail` | `observability.subscribe` | viewer | the caller's own namespace | before on `observability_service` |
-| `observability_enable` | `observability_render_enable` | `observability.enable_source` | operator | the caller's own namespace | before on `observability_service` |
-| `observability_disable` | `observability_render_disable` | `observability.disable_source` | operator | the caller's own namespace | before on `observability_service` |
-| `dlq_list` | `dlq_list` | `dlq.list` | operator | the stored row's `namespace` | - |
-| `dlq_stats` | published surface only | `dlq.list` | operator | `_system` | - |
-| `dlq_show` | `dlq_show` | `dlq.show` | operator | the stored row's `namespace` | - |
-| `dlq_drop` | `dlq_drop` | `dlq.drop` | operator | the stored row's `namespace` | after on `dlq_service` |
-| `dlq_replay` | `dlq_replay` | `dlq.replay` | operator | the stored row's `namespace` | after on `dlq_service` |
+| `observability_enable` | `observability_render_enable` | `observability.enable_source` | ops | the caller's own namespace | before on `observability_service` |
+| `observability_disable` | `observability_render_disable` | `observability.disable_source` | ops | the caller's own namespace | before on `observability_service` |
+| `dlq_list` | `dlq_list` | `dlq.list` | ops | the stored row's `namespace` | - |
+| `dlq_stats` | published surface only | `dlq.list` | ops | `_system` | - |
+| `dlq_show` | `dlq_show` | `dlq.show` | ops | the stored row's `namespace` | - |
+| `dlq_drop` | `dlq_drop` | `dlq.drop` | ops | the stored row's `namespace` | after on `dlq_service` |
+| `dlq_replay` | `dlq_replay` | `dlq.replay` | ops | the stored row's `namespace` | after on `dlq_service` |
 | `schedule_list` | `schedule_list` | `schedule.list` | viewer | `_system` | - |
-| `schedule_add` | `schedule_add` | `schedule.add` | operator | `_system` | after on `schedule_service` |
-| `schedule_remove` | `schedule_remove` | `schedule.remove` | operator | `_system` | after on `schedule_service` |
-| `schedule_assert` | published surface only | `schedule.assert` | operator | `_system` | after on `schedule_service` |
-| `schedule_retract` | published surface only | `schedule.retract` | operator | `_system` | after on `schedule_service` |
+| `schedule_add` | `schedule_add` | `schedule.add` | ops | `_system` | after on `schedule_service` |
+| `schedule_remove` | `schedule_remove` | `schedule.remove` | ops | `_system` | after on `schedule_service` |
+| `schedule_assert` | published surface only | `schedule.assert` | ops | `_system` | after on `schedule_service` |
+| `schedule_retract` | published surface only | `schedule.retract` | ops | `_system` | after on `schedule_service` |
 | `state_get` | `state_get` | `state.get` | viewer | the stored row's `namespace` | - |
 | `state_list` | `state_list` | `state.list` | viewer | the stored row's `namespace` | - |
 | `state_at` | `state_at` | `state.at` | viewer | the stored row's `namespace` | - |
-| `state_rotate` | `state_rotate` | `state.rotate` | operator | the stored row's `namespace` | after on `state_service` |
+| `state_rotate` | `state_rotate` | `state.rotate` | ops | the stored row's `namespace` | after on `state_service` |
 | `state_delete` | `state_delete` | `state.delete` | admin | the stored row's `namespace` | after on `state_service` |
 | `state_retention` | `state_retention` | `state.retention` | admin | `_system` | after on `state_service` |
-| `state_outbox` | `state_outbox` | `state.records` | operator | the stored row's `namespace` | - |
-| `state_inbox` | `state_inbox` | `state.records` | operator | the stored row's `namespace` | - |
-| `state_journal` | `state_journal` | `state.records` | operator | the stored row's `namespace` | - |
+| `state_outbox` | `state_outbox` | `state.records` | ops | the stored row's `namespace` | - |
+| `state_inbox` | `state_inbox` | `state.records` | ops | the stored row's `namespace` | - |
+| `state_journal` | `state_journal` | `state.records` | ops | the stored row's `namespace` | - |
 | `state_metrics` | published surface only | `state.list` | viewer | `_system` | - |
 
 Four of those choices are worth stating plainly.
 
-**A parked payload is business data.** `dlq list` and `dlq show` are the
-operator's, not the viewer's, because a DLQ entry holds the record that failed —
+**A parked payload is business data.** `dlq list` and `dlq show` are
+`ops`', not the viewer's, because a DLQ entry holds the record that failed —
 verbatim, with its cell key and its error. Reading one is at least as
 privileged as the drop that destroys it, and no viewer workflow needs it. The
 same rule places `state inbox`, `state journal` and `state outbox`, which read
-records in flight, under `state.records` beside `operative.rewind` and
-`operative.replay`.
+records in flight, under `state.records` beside `operator.rewind` and
+`operator.replay`.
 
 **Schedule management is a `_system` privilege.** The schedule store is one
 durable table for the whole controller and the hub is a cluster-wide singleton;
 a schedule's `--namespace` says where its firings land, it does not partition
 the registry. So a credential for `flz schedule add | list | remove` is one
-bound to `_system` (`flz token issue ci _system operator`), or `admin@_system`.
-A namespace-bound operator cannot manage schedules.
+bound to `_system` (`flz token issue ci _system ops`), or `admin@_system`.
+A namespace-bound caller cannot manage schedules.
 
 **`flz schedule run` is judged where the instance starts.** Firing a schedule by
-hand starts an operative, so it authorizes `operative.start` in the schedule's
-own namespace rather than in `_system`. An `operator@_system` token — the
+hand starts an operator, so it authorizes `operator.start` in the schedule's
+own namespace rather than in `_system`. An `ops@_system` token — the
 credential above for managing schedules — can add, list and remove a schedule
 but cannot run one; a token bound to the schedule's namespace with
-`operative.start` (an `operator` or `admin` there), or `admin@_system`, can.
+`operator.start` (an `ops` or `admin` there), or `admin@_system`, can.
 
-**A spawn's delivery is judged and not recorded.** A tasklet's `ctx.spawn_workflow`
+**A spawn's delivery is judged and not recorded.** A tasklet's `ctx.spawn_bounded`
 that names a running instance feeds it, and that delivery is judged as
-`operative.send` through the `spawn_deliver` row, which writes no record of a
+`operator.send` through the `spawn_deliver` row, which writes no record of a
 permitted delivery because it happens once per event. A refused one is audited as
 `authorization_denied`, like every refusal. The start a spawn makes is
-`operative_start` and is recorded like any other.
+`operator_start` and is recorded like any other.
 
 **`flz auth whoami` is a gated read.** It answers the identity a token
 resolves to, so while authorization is enforced an invocation with no token is
 refused naming the credential rather than printing an unbound identity.
 
 Every grant is reversible in `Flezha.AuthZ.Policy`: move an action between
-`@viewer_actions`, `@operator_extra` and `@admin_extra` and the grant moves
+`@viewer_actions`, `@ops_extra` and `@admin_extra` and the grant moves
 with it, on every surface at once.
 
 ## Audit-log integration
@@ -562,10 +562,10 @@ with it, on every surface at once.
 Two kinds of record reach the audit log. The auth stores' own events land on
 `:platform_authz` with the verified principal in `caller.principal`:
 `:authorization_denied`, `:token_issued`, `:token_revoked`,
-`:bootstrap_completed`, `:rebootstrap_recovery`. An operator verb's act lands on
+`:bootstrap_completed`, `:rebootstrap_recovery`. An administration verb's act lands on
 the source its row declares — `namespace_service` for namespace and role
-mutations, `dlq_service`, `schedule_service`, `operative_service`,
-`plugin_service`, `state_service`, `controller_service`, `workflow_service`,
+mutations, `dlq_service`, `schedule_service`, `operator_service`,
+`plugin_service`, `state_service`, `controller_service`, `bounded_service`,
 `observability_service` and `audit_log` — in one record shape: the record's
 `name` is the verb, `metadata.action` the action it was judged as,
 `metadata.outcome` (`ok` or `error`) for a mutation, `namespace` where it was
@@ -591,7 +591,7 @@ Precedence is env var > `config :flezha, :authn_authz` > default.
 | `:token_ttl_default_seconds` | — | `86_400` | TTL of the bootstrap-minted admin token (`flz token issue` has its own `--ttl`, default 86400, and takes `never`) |
 | `:token_expiry_warning_ms` | `FLEZHA_AUTHZ_TOKEN_EXPIRY_WARNING_MS` | `86_400_000` | how far ahead of its expiry an entry emits `:token_expiring` |
 | `:token_expiry_check_interval_ms` | — | `300_000` | how often the registry looks for one |
-| `:namespaces` | — | `%{}` | per-namespace quota overrides, e.g. `%{"team-orders" => %{max_operatives: 50}}` |
+| `:namespaces` | — | `%{}` | per-namespace quota overrides, e.g. `%{"team-orders" => %{max_operators: 50}}` |
 | `:application_managed` | — | `true` | tests set `false` to run isolated stores |
 
 ## On-disk layout
@@ -651,7 +651,7 @@ flz auth bootstrap <token>
 ```
 
 Either way the claim succeeds exactly once — it unlinks the file — and a claim
-with no file present is refused naming the path it expected. Operatives, runner
+with no file present is refused naming the path it expected. Operators, runner
 connections and their credentials are untouched by a recovery: only
 `admin@_system` and its `_system` admin tokens are invalidated.
 

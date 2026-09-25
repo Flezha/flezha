@@ -5,7 +5,7 @@ TBD - created by archiving change prove-the-namespace-and-recover-a-lost-admin. 
 ## Requirements
 ### Requirement: A runner credential entitles a namespace and never expires
 
-The controller SHALL hold, per namespace, a set of runner credentials, and a runner presenting one SHALL be entitled to that namespace and no other. A runner credential SHALL carry no expiry, and the registry SHALL refuse to issue one with an expiry, because the process holding it is unattended and a credential that lapses fails at a restart rather than at a convenient moment. No runner credential SHALL be issued for the `_system` namespace. The store SHALL keep only a hash of each credential, so that a copied store is not a credential, and the credential SHALL live in the token registry the operator surface already issues, lists and revokes through rather than in a store of its own.
+The controller SHALL hold, per namespace, a set of runner credentials, and a runner presenting one SHALL be entitled to that namespace and no other. A runner credential SHALL carry no expiry, and the registry SHALL refuse to issue one with an expiry, because the process holding it is unattended and a credential that lapses fails at a restart rather than at a convenient moment. No runner credential SHALL be issued for the `_system` namespace. The store SHALL keep only a hash of each credential, so that a copied store is not a credential, and the credential SHALL live in the token registry the operations surface already issues, lists and revokes through rather than in a store of its own.
 
 #### Scenario: A credential entitles exactly its namespace
 
@@ -22,7 +22,7 @@ The controller SHALL hold, per namespace, a set of runner credentials, and a run
 
 #### Scenario: An expiring runner credential cannot be issued
 
-- **WHEN** an operator asks for a runner credential with any expiry
+- **WHEN** a user asks for a runner credential with any expiry
 - **THEN** the request SHALL be refused, so that no deployment can put an
   unattended process behind a credential that lapses
 
@@ -42,7 +42,7 @@ The controller SHALL admit a runner presenting any live credential for its names
 
 #### Scenario: A rolling rotation drops no connection
 
-- **WHEN** an operator issues a second credential, restarts each runner onto it,
+- **WHEN** a user issues a second credential, restarts each runner onto it,
   and retires the first
 - **THEN** no runner SHALL have been refused at any point in the sequence, and
   the retired credential SHALL afterwards be refused
@@ -53,7 +53,7 @@ The controller SHALL close the control channels authenticated with a runner cred
 
 #### Scenario: A live session is closed by revocation
 
-- **WHEN** a runner is connected on a credential and an operator revokes that
+- **WHEN** a runner is connected on a credential and a user revokes that
   credential
 - **THEN** the runner's control channel SHALL be closed without waiting for it to
   reconnect, and the closure SHALL be observable
@@ -63,20 +63,20 @@ The controller SHALL close the control channels authenticated with a runner cred
 - **WHEN** one of a namespace's two live credentials is revoked
 - **THEN** runners authenticated with the other SHALL remain connected
 
-### Requirement: The operator surface issues, lists, rotates and revokes a credential
+### Requirement: The operations surface issues, lists, rotates and revokes a credential
 
-Every verb in a runner credential's lifecycle SHALL bind a row of the operator-verb declaration and be judged by the one seam, like every other operator verb, so that the grant, the scope and the audit of that lifecycle are declared once. Issuance SHALL return the credential exactly once and store only its hash. A rotation SHALL be expressible as an issue followed by a revoke, because a single atomic rotation verb could not leave both credentials live and would therefore disconnect a running fleet.
+Every verb in a runner credential's lifecycle SHALL bind a row of the user-verb declaration and be judged by the one seam, like every other administration verb, so that the grant, the scope and the audit of that lifecycle are declared once. Issuance SHALL return the credential exactly once and store only its hash. A rotation SHALL be expressible as an issue followed by a revoke, because a single atomic rotation verb could not leave both credentials live and would therefore disconnect a running fleet.
 
-#### Scenario: A credential verb is judged like every other operator verb
+#### Scenario: A credential verb is judged like every other administration verb
 
 - **WHEN** a caller without the granting role invokes a verb in the credential's
   lifecycle
 - **THEN** the call SHALL be refused at the same policy point as any other
-  operator verb, and the refusal SHALL be audited
+  administration verb, and the refusal SHALL be audited
 
 #### Scenario: The raw credential is shown once
 
-- **WHEN** an operator issues a runner credential
+- **WHEN** a user issues a runner credential
 - **THEN** the raw value SHALL be returned exactly once and SHALL NOT be
   retrievable afterwards
 

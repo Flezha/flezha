@@ -1,7 +1,7 @@
 # Deploy a runner
 
 A runner is a program of your own that runs your code. It connects to a
-controller, tells it which operatives it can run, and then does the work the
+controller, tells it which operators it can run, and then does the work the
 controller gives it. You write it in any of the seven languages, and you start
 and stop it yourself, like any other service.
 
@@ -161,7 +161,7 @@ TODO.
 all.** The Elixir SDK's in-node mode is a function call:
 
 ```elixir
-children = [{Flezha.SDK, namespace: "default", operatives: [MyOperative], transport: :native}]
+children = [{Flezha.SDK, namespace: "default", operators: [MyOperator], transport: :native}]
 ```
 
 `:native` is the default, and it is deliberately not taken from the environment:
@@ -180,18 +180,18 @@ Every verdict, and the two failures that are not verdicts:
 
 ## The building blocks
 
-The hello world has three pieces: a tasklet, an operative and a runner. They
+The hello world has three pieces: a tasklet, an operator and a runner. They
 mean the same thing in all seven languages, so they are described once here and
 the code follows in [the next section](#the-code).
 
 ### The tasklet
 
 **A processing stage of your own.** Where a step needs more than a one-line
-transform, the operative hands the message to a tasklet: typed input and output
+transform, the operator hands the message to a tasklet: typed input and output
 and, when you need them, per-key state that survives a restart, timers and
 retries.
 
-It emits its result without saying where the result goes. The operative decides
+It emits its result without saying where the result goes. The operator decides
 that, so the same tasklet can be rewired without being touched.
 
 Its name is durable. State is stored under that name, so renaming a tasklet in
@@ -200,9 +200,9 @@ Choose it once.
 
 The echo's tasklet keeps no state and takes no configuration, which is as
 simple as a tasklet gets. State, keys and cells are
-[`stream_basics.md`](tradedesk/stream_basics.md).
+[`unbounded_basics.md`](tradedesk/unbounded_basics.md).
 
-### The operative
+### The operator
 
 **What you write to move data between steps.** It declares the graph: the
 channels data enters on, the steps each message passes through, and the channels
@@ -214,20 +214,20 @@ class of their own ([`stream_transforms.md`](https://github.com/flezha/flezha/bl
 A step that needs your own processing, or state that has to survive, is a
 tasklet the graph routes messages into.
 
-The echo has one tasklet, but an operative can chain as many as it needs, the
-output of one feeding the next, and split or join the path between them. A
-stream does that for as long as it runs, and a workflow runs its tasklets as
+The echo has one tasklet, but an operator can chain as many as it needs, the
+output of one feeding the next, and split or join the path between them. An
+unbounded operator does that for as long as it runs, and a bounded one runs its tasklets as
 the steps of a job that ends.
-[`stream_basics.md`](tradedesk/stream_basics.md#several-tasklets-in-one-operative) and
-[`workflow_basics.md`](tradedesk/workflow_basics.md#several-tasklets-step-by-step) show
+[`unbounded_basics.md`](tradedesk/unbounded_basics.md#several-tasklets-in-one-operator) and
+[`bounded_basics.md`](tradedesk/bounded_basics.md#several-tasklets-step-by-step) show
 both.
 
-The operative is the unit everything else works in: what the controller starts,
+The operator is the unit everything else works in: what the controller starts,
 places on a runner, restarts after a crash, and moves when a runner disappears.
 It has a durable name of its own, and that is the name you type to start one.
 
 **Channel names are addresses, not labels.** `in` is what
-`flz operative send --channel` writes to, and `out` is the name stamped on
+`flz operator send --channel` writes to, and `out` is the name stamped on
 everything that channel delivers. Something outside this file uses both, so
 changing one is a breaking change rather than a rename.
 
@@ -236,13 +236,13 @@ refused there rather than failing halfway through a run.
 
 ### The runner
 
-**A process you run.** It connects to the controller, says which operatives it
+**A process you run.** It connects to the controller, says which operators it
 can serve, and waits.
 
 It decides nothing: it offers capacity and does what the controller asks.
-**Declaring an operative on a runner does not start one.** It says this process
+**Declaring an operator on a runner does not start one.** It says this process
 is able to serve it, and starting one is the next guide. One runner can offer
-many operatives, and many runners can offer the same one, which is how a
+many operators, and many runners can offer the same one, which is how a
 deployment grows.
 
 It takes a namespace, the tenant it belongs to. These guides use `default`
@@ -253,8 +253,8 @@ If the connection drops, the runner reconnects on its own.
 ### How the three meet
 
 None of them names the others. You start a runner, the controller learns the
-operative can be served, you ask for one by name, and the controller binds it to
-a runner that offered it. Messages then arrive on the channel the operative
+operator can be served, you ask for one by name, and the controller binds it to
+a runner that offered it. Messages then arrive on the channel the operator
 declared and travel its graph.
 
 ## The code
@@ -307,14 +307,14 @@ public final class Echo {
 
 **`@Tasklet` is expanded at compile time.** The SDK's annotation processor
 generates `EchoTasklet` from this class, reading the input and output types
-from the `run` signature, and the operative names that generated class. `run`
+from the `run` signature, and the operator names that generated class. `run`
 takes no state parameter, so it keeps nothing between messages and journals
 nothing. A standalone project lists `flezha-sdk-processor` under
 `annotationProcessorPaths`, as the example's `pom.xml` does.
 
 ```java
-// EchoOperative.java: the operative. The graph, and the unit the controller schedules.
-public final class EchoOperative implements StreamOperative {
+// EchoOperator.java: the operator. The graph, and the unit the controller schedules.
+public final class EchoOperator implements UnboundedOperator {
 
     @Override
     public String factoryId() {
@@ -334,10 +334,10 @@ terminated on the plugin layer. `sink(name)` does both jobs, so naming the
 channel again with `named(...)` is refused at registration rather than resolved.
 
 ```java
-// Main.java: the runner. Connects, offers the operative, and serves.
+// Main.java: the runner. Connects, offers the operator, and serves.
 public static void main(String[] args) throws Exception {
     FlezhaRunner runner = Flezha.createRunner(args.length > 0 ? args[0] : "default")
-            .registerFactory(EchoOperative.class)
+            .registerFactory(EchoOperator.class)
             .start();
 
     runner.awaitTermination();
@@ -346,7 +346,7 @@ public static void main(String[] args) throws Exception {
 
 `start()` connects and hands back the runner, and `awaitTermination()` blocks
 until shutdown, which is either a SIGTERM or a `close()` from another thread, `run()` does both in one call. `registerFactory` is the same call
-for the workflow kind.
+for the bounded kind.
 
 > #### Concurrency in Java {: .info}
 >
@@ -379,15 +379,15 @@ pub fn echo(input: String) -> String {
 ```
 
 **`#[tasklet]` turns the function into a tasklet type**, `Echo`, named after
-the function, and that type is what the operative routes into. The input and
+the function, and that type is what the operator routes into. The input and
 output types are read from the signature. There is no `&mut` state parameter, so
 it keeps nothing between messages and journals nothing.
 
 ```rust
-// src/operative.rs: the operative. The graph, and the unit the controller schedules.
-pub struct EchoOperative;
+// src/operator.rs: the operator. The graph, and the unit the controller schedules.
+pub struct EchoOperator;
 
-impl StreamOperative for EchoOperative {
+impl UnboundedOperator for EchoOperator {
     fn factory_id() -> &'static str {
         "echo"
     }
@@ -407,12 +407,12 @@ and `sink()` would leave it the tasklet's name. A graph whose types do not
 line up is refused when the runner declares it.
 
 ```rust
-// src/main.rs: the runner. Connects, offers the operative, and serves.
+// src/main.rs: the runner. Connects, offers the operator, and serves.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let namespace = std::env::args().nth(1).unwrap_or_else(|| "default".to_string());
 
     let runner = Flezha::create_runner(namespace)?;
-    runner.register_factory(EchoOperative)?.start()?;
+    runner.register_factory(EchoOperator)?.start()?;
 
     runner.await_termination()?;
     Ok(())
@@ -423,7 +423,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 until shutdown, a SIGTERM or Ctrl-C; `run()` does both in one call. The runner is
 bound to a name first because a chained temporary would be dropped, and shut
 down, at the end of its statement. Every call answers a `Result`, so a refusal
-leaves `main` through `?`. `register_factory` is the same call for the workflow
+leaves `main` through `?`. `register_factory` is the same call for the bounded operator
 kind.
 
 > #### Concurrency in Rust {: .info}
@@ -457,12 +457,12 @@ With no `initialState` and no `applyChange`, it keeps nothing between messages
 and journals nothing.
 
 ```javascript
-// echo_operative.mjs: the operative. The graph, and the unit the controller schedules.
-import { defineStream } from '@flezha/sdk';
+// echo_operator.mjs: the operator. The graph, and the unit the controller schedules.
+import { defineUnbounded } from '@flezha/sdk';
 
 import { EchoTasklet } from './echo_tasklet.mjs';
 
-export default defineStream({
+export default defineUnbounded({
   factoryId: 'echo',
   channels: (c) => {
     c.input('in', { codec: 'text' })
@@ -472,29 +472,29 @@ export default defineStream({
 });
 ```
 
-`{ codec: 'text' }` hands the tasklet the bytes `flz operative send --text`
+`{ codec: 'text' }` hands the tasklet the bytes `flz operator send --text`
 delivers as a string; an entry that names no codec reads JSON instead. The sink
 names no codec, so the tasklet's string leaves as its UTF-8 bytes, and any
 value other than a string or bytes would leave as JSON. The module exports what
-`defineStream` returned, and that export is what the runner finds.
+`defineUnbounded` returned, and that export is what the runner finds.
 
 ```javascript
-// runner.mjs: the runner. Connects, offers the operative, and serves.
+// runner.mjs: the runner. Connects, offers the operator, and serves.
 import { createRunner } from '@flezha/sdk';
 
 const runner = createRunner(process.argv[2] ?? 'default');
-await runner.registerFactory('./echo_operative.mjs');
+await runner.registerFactory('./echo_operator.mjs');
 
 await runner.run();
 ```
 
-The operative is registered by **module specifier**, a path rather than an
+The operator is registered by **module specifier**, a path rather than an
 imported value, because every dispatch loop imports the module itself. Registering
 therefore imports it, which is why it is awaited. A relative specifier resolves
 against the working directory. `run()` resolves once the
 runner is connected and serving, and the process keeps running until a SIGTERM
 or until its standard input closes. `registerFactory` is the same call for the
-workflow kind.
+bounded kind.
 
 > #### Concurrency in Node {: .info}
 >
@@ -528,29 +528,29 @@ A function becomes a tasklet through the decorator. It declares no state, so it
 keeps nothing between messages, and where its result goes is not its business.
 
 ```python
-# echo_operative.py: the operative. The graph, and the unit the controller schedules.
-@flezha.stream_operative("echo")
-def echo_operative(c: flezha.Channels) -> None:
+# echo_operator.py: the operator. The graph, and the unit the controller schedules.
+@flezha.unbounded_operator("echo")
+def echo_operator(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(echo).sink("out")
 ```
 
-`codec="text"` hands the tasklet the bytes `flz operative send --text` delivers
+`codec="text"` hands the tasklet the bytes `flz operator send --text` delivers
 as a string; an entry that names no codec reads JSON instead. The sink names no
 codec, so the tasklet's string goes back out as its UTF-8 bytes, and any value
 other than a string or bytes would go out as JSON.
 
 ```python
-# runner.py: the runner. Connects, offers the operative, and serves.
+# runner.py: the runner. Connects, offers the operator, and serves.
 def main() -> None:
     runner = flezha.create_runner(sys.argv[1] if len(sys.argv) > 1 else "default")
-    runner.register_factory(echo_operative)
+    runner.register_factory(echo_operator)
 
     runner.start()
     runner.await_termination()
 ```
 
 `start()` connects and starts serving, and `await_termination()` blocks until
-shutdown and then drains; `run()` is the two in one call. Declaring an operative
+shutdown and then drains; `run()` is the two in one call. Declaring an operator
 starts nothing: the controller decides when one runs.
 
 > #### Concurrency in Python {: .info}
@@ -584,8 +584,8 @@ hooks a tasklet has is read from the methods it defines, so with no
 `initial_state` and no `apply_change` it keeps nothing and journals nothing.
 
 ```ruby
-# echo_operative.rb: the operative. The graph, and the unit the controller schedules.
-class EchoOperative < Flezha::StreamOperative
+# echo_operator.rb: the operator. The graph, and the unit the controller schedules.
+class EchoOperator < Flezha::UnboundedOperator
   factory_id "echo"
 
   channels do |c|
@@ -596,14 +596,14 @@ class EchoOperative < Flezha::StreamOperative
 end
 ```
 
-`codec: :text` hands the tasklet the bytes `flz operative send --text` delivers
+`codec: :text` hands the tasklet the bytes `flz operator send --text` delivers
 as a String; an entry that names no codec reads JSON instead. The sink names no
 codec, so the tasklet's String goes back out as its bytes, and any other value
 would go out as JSON.
 
 ```ruby
-# runner.rb: the runner. Connects, offers the operative, and serves.
-runner = Flezha.create_runner(ARGV[0] || "default").register_factory(EchoOperative)
+# runner.rb: the runner. Connects, offers the operator, and serves.
+runner = Flezha.create_runner(ARGV[0] || "default").register_factory(EchoOperator)
 
 runner.boot
 runner.await_termination
@@ -612,7 +612,7 @@ runner.await_termination
 `boot` connects and starts serving, and `await_termination` blocks until
 shutdown and then drains; `run` is the two in one call. Classes are registered
 explicitly: nothing is autoloaded, and what runs is what you named.
-`register_factory` is the same call for the workflow kind.
+`register_factory` is the same call for the bounded kind.
 
 > #### Concurrency in Ruby {: .info}
 >
@@ -624,7 +624,7 @@ explicitly: nothing is autoloaded, and what runs is what you named.
 > with the GVL released. The lock bounds your handler body and nothing else.
 >
 > So the lever for CPU-bound handlers is **process count, not thread count**:
-> run more runner processes, and start the operative with `--partitions N` so
+> run more runner processes, and start the operator with `--partitions N` so
 > its keys spread across them. Handlers that are 90% I/O saturate a core at
 > roughly 2,000 activations per second and the pool grows to cover the wait;
 > handlers that are pure Ruby at 5 ms each serve about 200 per second however
@@ -652,9 +652,9 @@ methods it overrides, so with no `state` and no `applyChange` it keeps nothing a
 journals nothing.
 
 ```php
-// src/EchoOperative.php: the operative. The graph, and the unit the controller schedules.
-#[Operative(factoryId: 'echo')]
-final class EchoOperative extends StreamOperative
+// src/EchoOperator.php: the operator. The graph, and the unit the controller schedules.
+#[Operator(factoryId: 'echo')]
+final class EchoOperator extends UnboundedOperator
 {
     public static function channels(Builder $c): void
     {
@@ -665,18 +665,18 @@ final class EchoOperative extends StreamOperative
 }
 ```
 
-`ChannelCodec::Text` hands the tasklet the text `flz operative send --text`
+`ChannelCodec::Text` hands the tasklet the text `flz operator send --text`
 sends, checked as UTF-8; an entry that names no codec reads JSON instead. The
 sink names no codec, so the tasklet's string goes out as it is, and any other
 value would go out as JSON. The attribute carries the declaration and the method
 carries the graph.
 
 ```php
-// runner.php: the runner. Connects, offers the operative, and serves.
+// runner.php: the runner. Connects, offers the operator, and serves.
 require __DIR__ . '/vendor/autoload.php';
 
 $runner = Flezha::createRunner($argv[1] ?? 'default')
-    ->registerFactory(EchoOperative::class)
+    ->registerFactory(EchoOperator::class)
     ->start();
 
 $runner->awaitTermination();
@@ -685,7 +685,7 @@ $runner->awaitTermination();
 `start()` connects, and `awaitTermination()` is where this process serves: PHP has
 no threads, so under the default executor nothing is processed until the wait
 begins. `run()` does both in one call, and `registerFactory` is the same call for
-the workflow kind.
+the bounded kind.
 
 > #### Concurrency in PHP {: .info}
 >
@@ -717,7 +717,7 @@ defmodule Echo.Tasklet do
 
   @impl true
   def run(input, state, ctx) do
-    emit(ctx, "echo: " <> input)           # send the result out; the operative picks the channel
+    emit(ctx, "echo: " <> input)           # send the result out; the operator picks the channel
     {:ok, state}
   end
 end
@@ -729,9 +729,9 @@ emitted is released only then. With no `state` block it keeps nothing between
 messages and journals nothing.
 
 ```elixir
-# lib/echo/operative.ex: the operative. The graph, and the unit the controller schedules.
-defmodule Echo.Operative do
-  use Flezha.SDK.StreamOperative, factory_id: "echo"
+# lib/echo/operator.ex: the operator. The graph, and the unit the controller schedules.
+defmodule Echo.Operator do
+  use Flezha.SDK.UnboundedOperator, factory_id: "echo"
 
   @impl true
   def channels(c) do
@@ -744,7 +744,7 @@ The graph is a pipe, and `use` imports the builder it is written with. A binary 
 decoder or encoder here.
 
 ```elixir
-# lib/echo/application.ex: the runner. Connects, offers the operative, and serves.
+# lib/echo/application.ex: the runner. Connects, offers the operator, and serves.
 defmodule Echo.Application do
   use Application
 
@@ -753,7 +753,7 @@ defmodule Echo.Application do
     namespace = List.first(System.argv(), "default")
 
     children = [
-      {Flezha.SDK, namespace: namespace, operatives: [Echo.Operative], transport: :uds}
+      {Flezha.SDK, namespace: namespace, operators: [Echo.Operator], transport: :uds}
     ]
 
     Supervisor.start_link(children, strategy: :one_for_one)
@@ -765,7 +765,7 @@ The runner is a child of your own supervision tree, so a crash restarts it and i
 reconnects under the same identity. `transport: :uds` because this node is not the
 controller's: the default, `:native`, is for code inside the controller's own node,
 and it is not taken from the environment. The example depends on the `flezha_sdk`
-package alone, which starts no controller. `operatives:` takes either kind: the
+package alone, which starts no controller. `operators:` takes either kind: the
 kind is read from the module, never named by the list.
 
 > #### Concurrency in Elixir {: .info}
@@ -795,7 +795,7 @@ you run your other services: from a terminal, under systemd, in Docker or
 Kubernetes, or under any supervisor you already use.
 
 Once it is running, the runner connects to the controller and offers it the
-operatives it declares. From then on the controller decides what runs on it.
+operators it declares. From then on the controller decides what runs on it.
 
 Three things matter when a supervisor runs it:
 
@@ -849,7 +849,7 @@ From the echo example's folder:
 $ npm install && node runner.mjs
 ```
 
-Start it from that folder, because the operative's module specifier resolves
+Start it from that folder, because the operator's module specifier resolves
 against the working directory. The first argument is the namespace, `default`
 when omitted.
 
@@ -929,11 +929,11 @@ names every reason with its fix.
 >
 > Two runner processes in the same namespace, on one machine, are an ordinary
 > way to spread the work, but each needs an identity file of its own. The
-> controller binds operatives to a runner's durable identity, which the runner
+> controller binds operators to a runner's durable identity, which the runner
 > reads from `FLEZHA_RUNNER_ID_PATH`, `/var/lib/flezha-runner/id` by default. Two
 > processes reading one file present one identity, and the newer one takes the
 > older one's work. Give each process its own path, or run them in containers,
 > where the default path is separate already.
 
-Nothing runs on it yet. [`running_operatives.md`](running_operatives.md) starts
-the first operative.
+Nothing runs on it yet. [`running_operators.md`](running_operators.md) starts
+the first operator.

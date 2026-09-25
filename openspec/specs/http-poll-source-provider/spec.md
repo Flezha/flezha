@@ -1,11 +1,11 @@
 # http-poll-source-provider Specification
 
 ## Purpose
-Feed an Operative's entry channel from a slowly-changing HTTP resource — runtime
-configuration, reference data, external state — without restarting the Operative
-with new `init_values` and without an operator hand-pushing frames. Injection is
+Feed an Operator's entry channel from a slowly-changing HTTP resource — runtime
+configuration, reference data, external state — without restarting the Operator
+with new `init_values` and without a user hand-pushing frames. Injection is
 gated on content change, plus one unconditional seed per provider (re)start so a
-restarted or handed-over Operative converges on current content within one
+restarted or handed-over Operator converges on current content within one
 interval. All input stays on the journaled entry path, so replay determinism and
 the durability tiers are unaffected.
 ## Requirements
@@ -13,9 +13,9 @@ the durability tiers are unaffected.
 
 A built-in provider `http_poll` SHALL be attachable as a plugin with config `{url, interval_ms ≥ 1000 (default 60000), channel | channel_in, headers?, timeout_ms?, max_body_bytes? (default 1 MiB)}`. It SHALL poll `url` each interval and inject the response body as an entry frame on the channel named by either spelling, only when the body's SHA-256 differs from the last-injected hash. On provider start and on handover/recovery re-application, the first successful poll SHALL inject unconditionally (seed frame). Attach-time validation SHALL reject a scheme other than http/https, a URL with no host, an interval below the minimum, a non-positive tunable, a body cap above the ceiling, an empty or entirely missing entry channel, malformed headers, and any unrecognised option.
 
-The provider SHALL declare that it feeds the operative, so its `channel` resolves as the entry channel by the rule in `operative-extensions`. `channel_in` SHALL be accepted as the explicit spelling of the same name, one of the two SHALL be required, and supplying both SHALL be refused. `channel_out` SHALL NOT be a declared option of this provider: it never acts on records passing through the operative, so the option could not take effect, and it is refused as an option the provider does not offer.
+The provider SHALL declare that it feeds the operator, so its `channel` resolves as the entry channel by the rule in `operator-extensions`. `channel_in` SHALL be accepted as the explicit spelling of the same name, one of the two SHALL be required, and supplying both SHALL be refused. `channel_out` SHALL NOT be a declared option of this provider: it never acts on records passing through the operator, so the option could not take effect, and it is refused as an option the provider does not offer.
 
-The `channel` name SHALL NOT be checked against the operative's declared entry channels: channel names are an SDK-side topology fact that never reaches the controller (`AddOperativeResponse.metadata` carries capability declarations only), and attach runs before the operative binds to a runner. A name that is not one of the operative's entry channels SHALL surface on the runner as a dead-letter park under that name, as a mistyped `flz operative send --channel` does, rather than as a dropped frame.
+The `channel` name SHALL NOT be checked against the operator's declared entry channels: channel names are an SDK-side topology fact that never reaches the controller (`AddOperatorResponse.metadata` carries capability declarations only), and attach runs before the operator binds to a runner. A name that is not one of the operator's entry channels SHALL surface on the runner as a dead-letter park under that name, as a mistyped `flz operator send --channel` does, rather than as a dropped frame.
 
 #### Scenario: Unchanged content injects nothing
 
@@ -27,9 +27,9 @@ The `channel` name SHALL NOT be checked against the operative's declared entry c
 - **WHEN** the polled body changes between two polls
 - **THEN** exactly one new frame with the new body SHALL be injected on `channel`
 
-#### Scenario: Rejoining operative is seeded
+#### Scenario: Rejoining operator is seeded
 
-- **WHEN** an operative recovers/hands over and the plugin is re-applied
+- **WHEN** an operator recovers/hands over and the plugin is re-applied
 - **THEN** the first successful poll SHALL inject the current body even if its hash matches the pre-handover value
 
 #### Scenario: Invalid attach is rejected
@@ -39,9 +39,9 @@ The `channel` name SHALL NOT be checked against the operative's declared entry c
 
 #### Scenario: A channel no entry channel matches parks rather than vanishing
 
-- **GIVEN** an attached `http_poll` plugin whose `channel` names no entry channel of the operative it feeds
+- **GIVEN** an attached `http_poll` plugin whose `channel` names no entry channel of the operator it feeds
 - **WHEN** the first poll injects a body
-- **THEN** the frame SHALL be parked in the dead-letter store under that channel name, and SHALL be replayable onto the channel once the operative declares one of that name
+- **THEN** the frame SHALL be parked in the dead-letter store under that channel name, and SHALL be replayable onto the channel once the operator declares one of that name
 
 #### Scenario: The explicit spelling names the same channel
 
@@ -63,11 +63,11 @@ threshold catches a poller that keeps trying and keeps failing, the idle window
 catches one that has stopped trying at all. Both verdicts are unhealthy; the
 failure run takes precedence when both apply, because it names the actual error.
 
-Injection SHALL use the operative's confirming ingest, and the recorded hash SHALL advance only on a delivered verdict, so a frame the operative did not take is re-offered on the next poll rather than treated as delivered. Redirects SHALL NOT be followed, and the response-size cap SHALL be enforced as the body arrives so it bounds controller memory.
+Injection SHALL use the operator's confirming ingest, and the recorded hash SHALL advance only on a delivered verdict, so a frame the operator did not take is re-offered on the next poll rather than treated as delivered. Redirects SHALL NOT be followed, and the response-size cap SHALL be enforced as the body arrives so it bounds controller memory.
 
 #### Scenario: A refused ingest is re-offered
 
-- **WHEN** the operative refuses an injected frame and the endpoint content does not change
+- **WHEN** the operator refuses an injected frame and the endpoint content does not change
 - **THEN** the poll SHALL count as a failure and the next poll SHALL offer the same content again
 
 #### Scenario: A rejected body does not commit its validator

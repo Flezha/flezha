@@ -147,7 +147,7 @@ pub fn c_string(what: &str, value: &str) -> Result<CString, Refusal> {
 /// Run one entry point that hands out a buffer, and read what it handed out.
 ///
 /// `hands_out` is every status that means a buffer was produced —
-/// [`FLZ_POLL_ACTIVATION`] for poll and the workflow receive, [`FLZ_OK`] and
+/// [`FLZ_POLL_ACTIVATION`] for poll and the bounded operator receive, [`FLZ_OK`] and
 /// [`FLZ_SPAWN_FAILED`] for the spawn result, both of [`FLZ_OK`] and
 /// [`FLZ_ERR`] for the topology check, whose answer is a verdict either way;
 /// every other status leaves the out pointers untouched. `read` runs over the
@@ -266,9 +266,9 @@ pub fn start(ctx: CtxPtr, namespace: &CStr) -> Result<(), Refusal> {
 
 /// Start the declared class as a local run: no controller, no socket. The
 /// host keeps its own poll loop, which is what runs the tasklets.
-pub fn local_start(ctx: CtxPtr, factory_id: &CStr, operative_id: &CStr) -> Result<(), Refusal> {
+pub fn local_start(ctx: CtxPtr, factory_id: &CStr, operator_id: &CStr) -> Result<(), Refusal> {
     verdict(ctx, unsafe {
-        crate::flz_core_local_start(ctx.get(), factory_id.as_ptr(), operative_id.as_ptr())
+        crate::flz_core_local_start(ctx.get(), factory_id.as_ptr(), operator_id.as_ptr())
     })
 }
 

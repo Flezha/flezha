@@ -9,10 +9,10 @@ defmodule Flezha.Runner.FleetManager do
   `Factories` (the factory table and each factory's SDK language) and
   `Session` (the handshake, connect, disconnect, evict, reroute) — while the
   public API stays here. `Marks` also holds each live session's stable
-  identity, which an operative's ownership record names.
+  identity, which an operator's ownership record names.
 
   Invariant: a disconnect drops the runner from the active set
-  unconditionally; what varies is only what becomes of its operatives.
+  unconditionally; what varies is only what becomes of its operators.
   """
 
   alias Flezha.AuthZ.RunnerProof
@@ -129,7 +129,7 @@ defmodule Flezha.Runner.FleetManager do
   @doc """
   Atomically evict a dead/orphaned runner binding: stop its runner supervisor
   (its stream channels, and every route they held, go with it), drop its
-  factory refs, and remove it from `runner_namespaces`. Its operatives become
+  factory refs, and remove it from `runner_namespaces`. Its operators become
   misbound and rebind onto
   a live runner on the next convergence tick. Idempotent — an unknown
   id returns `:ok`. Driven by `Flezha.Convergence.Heal.execute/1` and by the
@@ -154,7 +154,7 @@ defmodule Flezha.Runner.FleetManager do
 
   The inverse of `runners_for_factory/3`, for the caller that holds a runner
   and asks what it can take: the convergence loop's release path, deciding
-  which waiting operatives a runner arriving in the namespace is news for. An
+  which waiting operators a runner arriving in the namespace is news for. An
   empty set is a runner that has advertised nothing yet, which the caller must
   not read as "serves nothing"; a fleet that could not be read at all answers
   `:unknown`, because a refused read is evidence of nothing.
@@ -170,10 +170,10 @@ defmodule Flezha.Runner.FleetManager do
   @doc """
   Returns active compute engines in `namespace` that advertise `factory_id`.
 
-  Used by `OperativeManager.assign_runner/3` so we never route a
-  operative to a node that doesn't own its factory — without this filter
-  every input frame for a misrouted operative hits a dead registry entry
-  on the foreign node and generates a `enqueue: operative X not found`
+  Used by `OperatorManager.assign_runner/3` so we never route a
+  operator to a node that doesn't own its factory — without this filter
+  every input frame for a misrouted operator hits a dead registry entry
+  on the foreign node and generates a `enqueue: operator X not found`
   warning on every input.
   """
   def runners_for_factory(namespace, factory_id, timeout \\ Durations.get(:runner_lookup_ms)) do
@@ -181,7 +181,7 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   @doc """
-  The runner `operative_id` is placed on in `namespace`, or `nil` when the
+  The runner `operator_id` is placed on in `namespace`, or `nil` when the
   candidate set is empty.
 
   Candidates come from the same filter `runners_for_factory/3` answers with — a
@@ -197,12 +197,12 @@ defmodule Flezha.Runner.FleetManager do
   def resolve_runner(
         namespace,
         factory_id,
-        operative_id,
+        operator_id,
         timeout \\ Durations.get(:runner_lookup_ms)
       ) do
     GenServer.call(
       __MODULE__,
-      {:resolve_runner, namespace, factory_id, operative_id},
+      {:resolve_runner, namespace, factory_id, operator_id},
       timeout
     )
   end
@@ -224,18 +224,18 @@ defmodule Flezha.Runner.FleetManager do
           | {:language, byte()}
           | :ambiguous_kind
           | :no_kind_declared
-          | {:kind, :stream | :workflow}
+          | {:kind, :unbounded | :bounded}
   def placement_refusal(namespace, factory_id, timeout \\ Durations.get(:runner_lookup_ms)) do
     GenServer.call(__MODULE__, {:placement_refusal, namespace, factory_id}, timeout)
   end
 
   @doc """
   The kind `factory_id` is established at in `namespace`, which a start takes
-  rather than names: `{:ok, :stream | :workflow}` when a runner here can place
+  rather than names: `{:ok, :unbounded | :bounded}` when a runner here can place
   it, else `{:error, refusal}` in `placement_refusal/3`'s vocabulary.
   """
   @spec factory_kind(String.t(), String.t(), timeout()) ::
-          {:ok, :stream | :workflow} | {:error, term()}
+          {:ok, :unbounded | :bounded} | {:error, term()}
   def factory_kind(namespace, factory_id, timeout \\ Durations.get(:runner_lookup_ms)) do
     GenServer.call(__MODULE__, {:factory_kind, namespace, factory_id}, timeout)
   end
@@ -269,7 +269,7 @@ defmodule Flezha.Runner.FleetManager do
   Clear the `stream_ref` on this runner's `ControlChannel` so the existing
   rebind machinery (see `runner-controller-connection-healing`) picks up
   the next data stream the SDK opens. Called by
-  `Flezha.Operative.Overwatch` after an end-to-end ping fails, indicating the
+  `Flezha.Operator.Overwatch` after an end-to-end ping fails, indicating the
   controller-side `ControlChannel` is alive but its underlying transport
   handle is stale.
 
@@ -409,7 +409,7 @@ defmodule Flezha.Runner.FleetManager do
   # to count — lets another batch member's read overtake the count, and the
   # batch is exactly where the spread matters.
   @impl true
-  def handle_call({:resolve_runner, namespace, factory_id, operative_id}, _from, state) do
+  def handle_call({:resolve_runner, namespace, factory_id, operator_id}, _from, state) do
     case candidates(state, namespace, factory_id) do
       [] ->
         {:reply, nil, state}
@@ -418,7 +418,7 @@ defmodule Flezha.Runner.FleetManager do
         {cache, entry} =
           Load.refreshed(state.runner_loads, namespace, fn -> rebuild_loads(state, namespace) end)
 
-        {entry, runner_id} = Load.place(entry, candidates, operative_id)
+        {entry, runner_id} = Load.place(entry, candidates, operator_id)
 
         {:reply, runner_id, %{state | runner_loads: Map.put(cache, namespace, entry)}}
     end
@@ -452,7 +452,7 @@ defmodule Flezha.Runner.FleetManager do
           {:namespace_not_found, state.runner_namespaces}
 
         _ ->
-          # The `:namespace` walk: the operatives, the runners, the plugin
+          # The `:namespace` walk: the operators, the runners, the plugin
           # registrations and the hub, in that order, with the namespace read
           # as quiesced for its duration.
           target = %{
@@ -578,7 +578,7 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   # The grace elapsed with no runner for the factory back. Withdrawing it is
-  # what hands its operatives to a controller that can still run them.
+  # what hands its operators to a controller that can still run them.
   @impl true
   def handle_info({:withdraw_group, namespace, factory_id}, state) do
     {:noreply, Announce.withdraw(state, namespace, [factory_id])}
@@ -604,7 +604,7 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   # The message must read the same derivation as the decision, or the two
-  # drift exactly where the record is missing and the operator is told a
+  # drift exactly where the record is missing and the user is told a
   # factory is established at a value nobody ever established.
   defp placement_refusal_of(state, namespace, factory_id) do
     case Factories.placement(state, namespace, factory_id) do
@@ -641,7 +641,7 @@ defmodule Flezha.Runner.FleetManager do
   defp candidates(state, namespace, factory_id) when is_binary(factory_id),
     do: MapSet.to_list(Factories.placeable_runners(state, namespace, factory_id))
 
-  # Counted from the hub registry's own record of who owns each operative, over
+  # Counted from the hub registry's own record of who owns each operator, over
   # the same universe a placement chooses from. A namespace whose hub is not up
   # holds no recorded binding, so every active runner counts zero and the
   # handouts alone spread the work.
@@ -676,7 +676,7 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   # Which of `namespace`'s inactive runners have outlived the keepalive. The hub
-  # is reclaimed on the way past only when it holds no (suspended) operatives.
+  # is reclaimed on the way past only when it holds no (suspended) operators.
   defp expired_runners(state, namespace, now, keep_alive) do
     state
     |> Roster.get_runner_ids(namespace, :inactive)

@@ -149,7 +149,7 @@ defmodule Flezha.Plugin.Provider.HttpPollAttachTest do
       assert opts.headers == %{"authorization" => "Bearer t"}
     end
 
-    test "refuses an unknown option on the path an operator actually uses" do
+    test "refuses an unknown option on the path a user actually uses" do
       # `SpecDecoder` hands a `--plugins` spec straight to `init_provider/1`
       # without ever building the provider struct, so a check that lived only
       # in `build/1` would never run in production.
@@ -170,7 +170,7 @@ defmodule Flezha.Plugin.Provider.HttpPollAttachTest do
                  url: "http://x/y",
                  channel: @channel,
                  source_namespace: "default",
-                 source_operative_id: "detector"
+                 source_operator_id: "detector"
                })
     end
 

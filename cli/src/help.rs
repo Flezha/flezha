@@ -92,7 +92,7 @@ USAGE:
     flz cluster <SUBCOMMAND>
 
 SUBCOMMANDS:
-    status              Show nodes, leader, per-node operative counts, operative health, recovery state
+    status              Show nodes, leader, per-node operator counts, operator health, recovery state
     help                Show this help message
 
 OPTIONS:
@@ -177,7 +177,7 @@ OPTIONS:
 
 EXIT CODES:
     0   Clean shutdown (or `--force` finalised cleanly)
-    1   Partial drain (timeout elapsed; some Operatives still local)
+    1   Partial drain (timeout elapsed; some Operators still local)
     2   Already shutting down (the in-flight outcome is reported)
     3   Controller not reachable on the CLI socket"#;
 
@@ -198,10 +198,10 @@ Use 'flz controller <COMMAND> --help' for more information on a specific command
 pub(crate) const DLQ: Help = r#"Dead-letter queue: parked poison payloads (retry budget exhausted).
 
 Usage:
-  flz dlq list [operative]                       Parked entries, nearest-to-expiry first
-  flz dlq show <operative/tasklet/entry-id>      Entry metadata + payload preview
-  flz dlq replay <operative/tasklet/entry-id>    Re-dispatch through the normal input path
-  flz dlq drop <operative/tasklet/entry-id>      Discard the entry (audited)
+  flz dlq list [operator]                        Parked entries, nearest-to-expiry first
+  flz dlq show <operator/tasklet/entry-id>       Entry metadata + payload preview
+  flz dlq replay <operator/tasklet/entry-id>     Re-dispatch through the normal input path
+  flz dlq drop <operator/tasklet/entry-id>       Discard the entry (audited)
 
 Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var."#;
 
@@ -212,8 +212,8 @@ USAGE:
 
 COMMANDS:
     controller     Controller management commands
-    cluster        Controller cluster status (nodes, leader, operative health)
-    operative      Operative management commands
+    cluster        Controller cluster status (nodes, leader, operator health)
+    operator       Operator management commands
     namespace      Namespace management commands
     runner         Runner management commands
     plugin         Plugin management commands
@@ -223,7 +223,7 @@ COMMANDS:
     observe        Observability foundation inspection (sources, sinks, tail)
     audit          Durable audit log inspection (list, read, tail, stats, rotate)
     dlq            Dead-letter queue: inspect, replay, or drop parked payloads
-    schedule       Cron-scheduled workflow operative spawns (add, list, remove, run)
+    schedule       Cron-scheduled bounded operator spawns (add, list, remove, run)
     auth           Bootstrap claim, identity (whoami), offline break-glass recovery
     token          Scoped-token management (issue, revoke, list)
     role           Principal → role bindings (bind, unbind, list)
@@ -237,7 +237,7 @@ Use 'flz <COMMAND> help' for more information on a specific command.
 
 EXAMPLES:
     flz controller start
-    flz operative start my_factory --id my_operative --namespace prod
+    flz operator start my_factory --id my_operator --namespace prod
     flz plugin install /path/to/my_plugin-1.0.0.fpz
     flz plugin list --installed
     flz plugin enable kafka_producer provider1 Xhosts=localhost:9092
@@ -258,7 +258,7 @@ COMMANDS:
     set-quota <name> --X<quota>=<value>  Update quota overrides
     help                                 Show this help message
 
-Quota fields: max_operatives, max_cells_per_operative, max_mailbox_bytes_total,
+Quota fields: max_operators, max_cells_per_operator, max_mailbox_bytes_total,
               max_message_rate_per_second, max_state_bytes, max_runners
 
 Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var."#;
@@ -298,10 +298,10 @@ COMMANDS:
     disable    Disable a source (transitions to :disabled — Bus drops emits)
     help       Show this help message"#;
 
-pub(crate) const OPERATIVE_START: Help = r#"flz operative start - Start an operative
+pub(crate) const OPERATOR_START: Help = r#"flz operator start - Start an operator
 
 USAGE:
-    flz operative start <factory_id> [OPTIONS]
+    flz operator start <factory_id> [OPTIONS]
 
 OPTIONS:
     --id <id>, -i <id>          Id to start under (default: generated)
@@ -316,7 +316,7 @@ OPTIONS:
     --json                      The same as --output json
 
 KIND:
-    The factory's own: its class declares stream or workflow and its runner
+    The factory's own: its class declares unbounded or bounded and its runner
     announces it, so a start names only the factory.
 
 ID:
@@ -325,12 +325,12 @@ ID:
     {"id": ..., "outcome": "started" | "already_running"}.
 
     A start without --id that is run again after its answer was lost starts a
-    second operative, and a second stream runs until it is stopped. Pass --id
+    second operator, and an unbounded one runs until it is stopped. Pass --id
     when the start may be retried: a start of an id that is already running
     prints "<id> is already running, left untouched" and starts nothing.
 
 INIT VALUES:
-    A stream operative's document is keyed by Tasklet name, one entry per
+    An unbounded operator's document is keyed by Tasklet name, one entry per
     Tasklet to seed. Name only what you want seeded; a Tasklet you leave
     out keeps the state its class builds.
 
@@ -338,32 +338,32 @@ INIT VALUES:
         --init-values '{"ohlc": {"1m": {"high": 0}}}'   one state per declared key
 
     A name the class does not carry is ignored, not refused: the runner logs
-    it and the start still succeeds, so check the spelling. A workflow
-    operative's tasklets take the document as state the same way.
+    it and the start still succeeds, so check the spelling. A bounded
+    operator's tasklets take the document as state the same way.
 
 FIRST MESSAGE:
     --text is the instance's first input, on the entry channel --channel
-    names or the first declared one, for both kinds; a workflow started
-    without it waits for `flz operative send`. --channel needs --text.
+    names or the first declared one, for both kinds; a bounded one started
+    without it waits for `flz operator send`. --channel needs --text.
 
 EXAMPLES:
-    flz operative start do_nothing
-    flz operative start do_nothing --id my_operative
-    flz operative start candles --id ohlc --partitions 3
-    flz operative start order_aggregator -i orders --namespace prod -o json
-    flz operative start paper_order --text '{"symbol":"AAPL"}' --channel order"#;
+    flz operator start do_nothing
+    flz operator start do_nothing --id my_operator
+    flz operator start candles --id ohlc --partitions 3
+    flz operator start order_aggregator -i orders --namespace prod -o json
+    flz operator start paper_order --text '{"symbol":"AAPL"}' --channel order"#;
 
-pub(crate) const OPERATIVE_LISTEN: Help = r#"flz operative listen - Print the frames an operative emits or ingests
+pub(crate) const OPERATOR_LISTEN: Help = r#"flz operator listen - Print the frames an operator emits or ingests
 
 USAGE:
-    flz operative listen <operative_id> [OPTIONS]
+    flz operator listen <operator_id> [OPTIONS]
 
 OPTIONS:
-    --input                   Listen to what the operative ingests, not what it emits
+    --input                   Listen to what the operator ingests, not what it emits
     --duration-ms <N>         Stop after N milliseconds (default 30000)
     --output <text|json>      Output format (default: text)
     --json                    The same as --output json
-    --namespace <ns>          Namespace the operative runs in (default: default)
+    --namespace <ns>          Namespace the operator runs in (default: default)
 
 OUTPUT:
     One line per frame: the channel, a tab and the payload. A frame from a
@@ -376,38 +376,38 @@ OUTPUT:
     caller goes away. A partition group is listened to by its group id.
 
 EXAMPLES:
-    flz operative listen my_echo --duration-ms 10000
-    flz operative listen my_echo --input
-    flz operative listen ohlc --json"#;
+    flz operator listen my_echo --duration-ms 10000
+    flz operator listen my_echo --input
+    flz operator listen ohlc --json"#;
 
-pub(crate) const OPERATIVE: Help = r#"flz operative - Operative management commands
+pub(crate) const OPERATOR: Help = r#"flz operator - Operator management commands
 
 USAGE:
-    flz operative <COMMAND>
+    flz operator <COMMAND>
 
 COMMANDS:
-    start       Start an operative
+    start       Start an operator
     scale       Rescale a partition group to N partitions
-    stop        Stop an operative
-    state       Get operative state
-    list        List operatives
-    info        Get operative info
-    listen      Print the frames an operative emits or ingests
-    send        Send a payload to an operative's input stream
-    rewind      Rewind a workflow loop to a committed iteration
+    stop        Stop an operator
+    state       Get operator state
+    list        List operators
+    info        Get operator info
+    listen      Print the frames an operator emits or ingests
+    send        Send a payload to an operator's input stream
+    rewind      Rewind a bounded loop to a committed iteration
     replay      Re-run a Cell's retained inputs from a point in the past
     help        Show this help message
 
 EXAMPLES:
-    flz operative start candles --id ohlc --partitions 3
-    flz operative scale ohlc 5
-    flz operative send orchestrator --text '{"task":"refactor"}'
-    flz operative send my_echo --text 'hello world' --await 2000
-    flz operative listen my_echo --duration-ms 10000
-    flz operative rewind chat-1 --to-iteration 3
-    flz operative replay candles/aggregate/BTC --from 1720000000000
+    flz operator start candles --id ohlc --partitions 3
+    flz operator scale ohlc 5
+    flz operator send orchestrator --text '{"task":"refactor"}'
+    flz operator send my_echo --text 'hello world' --await 2000
+    flz operator listen my_echo --duration-ms 10000
+    flz operator rewind chat-1 --to-iteration 3
+    flz operator replay candles/aggregate/BTC --from 1720000000000
 
-Use 'flz operative <COMMAND> --help' for more information on a specific command.
+Use 'flz operator <COMMAND> --help' for more information on a specific command.
 
 Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var."#;
 
@@ -429,8 +429,8 @@ COMMANDS:
     help       Show help for a specific plugin provider
 
 HOOKS:
-    A hook is a point at which the operative calls its plugin, named by the
-    callback the provider defines: on_input sends every payload the operative
+    A hook is a point at which the operator calls its plugin, named by the
+    callback the provider defines: on_input sends every payload the operator
     ingests, on_output every payload it emits, on_interval runs on a timer.
     `flz plugin help <provider_id>` lists the hooks a provider has.
 
@@ -439,10 +439,10 @@ HOOKS:
     it needs `--on_interval.interval_ms=<ms>`.
 
     An enable naming no hook has no hooks. A plugin that only receives still
-    feeds its operative: its connection is held by the provider's own worker,
+    feeds its operator: its connection is held by the provider's own worker,
     which no hook governs.
 
-    The enable reads --namespace, --operative_id, --hook and the X-prefixed
+    The enable reads --namespace, --operator_id, --hook and the X-prefixed
     provider settings, and refuses any other option.
 
 EXAMPLES:
@@ -454,10 +454,10 @@ EXAMPLES:
     flz plugin upgrade kafka_ingest /path/to/kafka_ingest-1.1.0.fpz
     flz plugin uninstall kafka_ingest
     # Legacy provider enable (compile-time providers):
-    flz plugin enable ws_out operative_websocket --operative_id my_op \
+    flz plugin enable ws_out operator_websocket --operator_id my_op \
         --Xuri=ws://localhost:4500 --hook=on_output --on_output.position=0
     # Source only: it injects what arrives and sends nothing back.
-    flz plugin enable ws_in operative_websocket --operative_id my_op \
+    flz plugin enable ws_in operator_websocket --operator_id my_op \
         --Xuri=ws://localhost:4500
     flz plugin disable ws_out"#;
 
@@ -487,7 +487,7 @@ DESCRIPTION:
     Clearing app_data/auth/ removes every token (runner credentials
     included), every role binding and every namespace but _system. With
     authorization on and no remote durability backend, the next start
-    writes a fresh bootstrap token. Until it is claimed, operator verbs
+    writes a fresh bootstrap token. Until it is claimed, administration verbs
     are refused and every runner is admitted with no credential, into
     any namespace but _system it names: claim it at once.
 
@@ -565,7 +565,7 @@ COMMANDS:
 
 Use 'flz runner <COMMAND> --help' for more information on a specific command."#;
 
-pub(crate) const SCHEDULE: Help = r#"flz schedule - cron-scheduled workflow operative spawns
+pub(crate) const SCHEDULE: Help = r#"flz schedule - cron-scheduled bounded operator spawns
 
 USAGE:
     flz schedule <SUBCOMMAND>
@@ -574,17 +574,17 @@ SUBCOMMANDS:
     add <name> --cron "<expr>" --tz <iana> --factory <factory_id>
         [--namespace <ns>] [--init-values <json>] [--text <payload>] [--channel <ch>]
         [--plugins <json>]
-                 Add a durable schedule of a workflow factory; a factory a
-                 connected runner announced as a stream is refused.
+                 Add a durable schedule of a bounded factory; a factory a
+                 connected runner announced as unbounded is refused.
                  --init-values is the state every fired instance starts with;
                  --text is the first message it receives, on the entry channel
                  --channel names or the first declared one.
-                 --plugins takes the same array as `operative start --plugins`;
+                 --plugins takes the same array as `operator start --plugins`;
                  each firing prefixes the plugin ids with its instance id.
     list         List schedules with their next fire time
     remove <name>  Remove a schedule
     run <name>     Fire one instance immediately with the stored config;
-                   judged as operative.start in the schedule's namespace
+                   judged as operator.start in the schedule's namespace
     help         Show this help message
 
 EXAMPLES:
@@ -601,27 +601,27 @@ USAGE:
     flz state <SUBCOMMAND>
 
 SUBCOMMANDS:
-    get <operative/tasklet[/key]>            Current in-memory state of a live Cell, with its change_seq
-    list <operative>                         List Cells under an Operative class
-    at <operative/tasklet/key> <seq|ts>      Query state at a point in time
-    rotate <operative/tasklet/key>           Force a compaction snapshot
-    retention <operative> <hours>            Set time-travel retention
-    delete <operative/tasklet/key>           Hard-delete a Cell's persisted state
-    outbox <operative/tasklet/key>           Effectively-once outbox status (lag, cursor, watermark)
-    journal <operative/instance>             Workflow instance task-journal (committed tasks, iterations, park)
-    inbox <operative/instance>               Workflow instance durable inbox (offsets, undelivered tail)
+    get <operator/tasklet[/key]>             Current in-memory state of a live Cell, with its change_seq
+    list <operator>                          List Cells under an Operator class
+    at <operator/tasklet/key> <seq|ts>       Query state at a point in time
+    rotate <operator/tasklet/key>            Force a compaction snapshot
+    retention <operator> <hours>             Set time-travel retention
+    delete <operator/tasklet/key>            Hard-delete a Cell's persisted state
+    outbox <operator/tasklet/key>            Effectively-once outbox status (lag, cursor, watermark)
+    journal <operator/instance>              Bounded instance task-journal (committed tasks, iterations, park)
+    inbox <operator/instance>                Bounded instance durable inbox (offsets, undelivered tail)
     help                                     Show this help message
 
 EXAMPLES:
-    flz state get MarketOperative/OhlcTasklet/M1
-    flz state get MarketOperative/OhlcTasklet --output json
-    flz state list MarketOperative
-    flz state at MarketOperative/OhlcTasklet/M1 12345
-    flz state at MarketOperative/OhlcTasklet/M1 2026-05-01T12:00:00Z
-    flz state rotate MarketOperative/OhlcTasklet/M1
-    flz state retention MarketOperative 6
-    flz state delete MarketOperative/OhlcTasklet/M1
-    flz state outbox MarketOperative/OhlcTasklet/M1
+    flz state get MarketOperator/OhlcTasklet/M1
+    flz state get MarketOperator/OhlcTasklet --output json
+    flz state list MarketOperator
+    flz state at MarketOperator/OhlcTasklet/M1 12345
+    flz state at MarketOperator/OhlcTasklet/M1 2026-05-01T12:00:00Z
+    flz state rotate MarketOperator/OhlcTasklet/M1
+    flz state retention MarketOperator 6
+    flz state delete MarketOperator/OhlcTasklet/M1
+    flz state outbox MarketOperator/OhlcTasklet/M1
     flz state journal etl-job-42
     flz state inbox chat-session-7"#;
 

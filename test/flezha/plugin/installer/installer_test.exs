@@ -235,7 +235,7 @@ defmodule Flezha.Plugin.Installer.PublicServiceAPITest do
     :ok = Store.put(id, %{row | provides: earlier})
 
     assert {:error, {:invalid_hook, :not_a_list}} =
-             Installer.enable(id, namespace: "default", operative_id: "op")
+             Installer.enable(id, namespace: "default", operator_id: "op")
   end
 
   defp build_fpz!(tmp, id, mod) do
@@ -255,7 +255,7 @@ defmodule Flezha.Plugin.Installer.PublicServiceAPITest do
           provider: #{mod},
           hooks: [{:on_input, []}],
           default_opts: %{},
-          scope: :operative
+          scope: :operator
         }
       ],
       dependencies: []

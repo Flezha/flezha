@@ -17,7 +17,7 @@ defmodule Flezha.State.WatchdogTest do
   import FlezhaTest.Helper.NodeTestHelper, only: [override_log_level: 1, wait_until: 3]
 
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.Shipper
   alias Flezha.State.Paths
@@ -125,10 +125,10 @@ defmodule Flezha.State.WatchdogTest do
 
     assert_receive {:output_stall, %{stalled_ms: ms, last_seq: 2}, meta}, 1_000
     assert ms >= @stall_ms
-    # `operative_instance` is the rebind target the convergence Loop consumes;
-    # by the flezha convention it equals the on-disk `operative_class`.
-    assert meta.operative_instance == "TestOperative"
-    assert meta.operative_class == "TestOperative"
+    # `operator_instance` is the rebind target the convergence Loop consumes;
+    # by the flezha convention it equals the on-disk `operator_class`.
+    assert meta.operator_instance == "TestOperator"
+    assert meta.operator_class == "TestOperator"
 
     # The Watchdog emits and stops there. Its former direct resync is the
     # second actor the convergence pipeline replaced with the output-stall
@@ -156,8 +156,8 @@ defmodule Flezha.State.WatchdogTest do
     :ok = Watchdog.sweep_now()
 
     # Scoped to THIS test's cell key. The Watchdog is a singleton and every
-    # test in this file uses the operative class "TestOperative", so an unscoped
-    # refute — or one scoped only to the operative — matches a sibling test's
+    # test in this file uses the operator class "TestOperator", so an unscoped
+    # refute — or one scoped only to the operator — matches a sibling test's
     # message and fails whenever the suite interleaves.
     refute_received {:output_stall, _, %{key: ^key}}
     refute_received {:resync_called, ^cell_id, _}
@@ -171,8 +171,8 @@ defmodule Flezha.State.WatchdogTest do
 
     :ok = Watchdog.sweep_now()
 
-    # Scoped to this test's cell KEY, not its operative: the Watchdog is a
-    # singleton and every test here shares the class "TestOperative", so a sweep
+    # Scoped to this test's cell KEY, not its operator: the Watchdog is a
+    # singleton and every test here shares the class "TestOperator", so a sweep
     # also sees compactions a sibling test left pending.
     assert_receive {:compaction_timeout, %{waited_ms: ms}, %{key: ^key, attempt: 1}}, 1_000
     assert ms >= @compaction_ms
@@ -202,7 +202,7 @@ defmodule Flezha.State.WatchdogTest do
         assert_receive {:compaction_gave_up, %{attempts: 4}, %{key: ^key}}, 1_000
       end)
 
-    # "Loudly" is half the contract: the operator gets a named alarm.
+    # "Loudly" is half the contract: the user gets a named alarm.
     assert log =~ "compaction GAVE UP after 4 failed attempts"
     assert log =~ "key=#{key}"
 
@@ -305,27 +305,27 @@ defmodule Flezha.State.WatchdogTest do
     refute_received {:compaction_trigger, _, %{key: ^key}}
   end
 
-  test "an awake silent workflow is flagged like a stream; a sleeping instance is not", %{
+  test "an awake silent bounded is flagged like a stream; a sleeping instance is not", %{
     header: header
   } do
     # The sweep is off at its default, so the rule is only observable with the
     # window armed.
     on_exit(TestHelpers.override_env(:input_silence_timeout_ms, @stall_ms))
 
-    workflow = "WorkflowWatch" <> uniq()
+    bounded = "BoundedWatch" <> uniq()
     asleep = "SleepingWatch" <> uniq()
-    ClassRegistry.put(workflow, :workflow)
+    ClassRegistry.put(bounded, :bounded)
     :ok = ClassRegistry.put_parked(asleep, %{wake_deadline_ms: nil, consumed_offset: nil})
 
     on_exit(fn ->
       ClassRegistry.put_parked(asleep, nil)
-      ClassRegistry.delete(workflow)
+      ClassRegistry.delete(bounded)
       ClassRegistry.delete(asleep)
     end)
 
     forward_state_event(:input_silence)
 
-    for class <- [workflow, asleep] do
+    for class <- [bounded, asleep] do
       pid = {class, "task", "seg" <> uniq()}
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, w} = Supervisor.lookup(pid)
@@ -340,8 +340,8 @@ defmodule Flezha.State.WatchdogTest do
     ExUnit.CaptureLog.capture_log(fn ->
       :ok = Watchdog.sweep_now()
 
-      assert_receive {:input_silence, _, %{operative_class: ^workflow}}, 1_000
-      refute_received {:input_silence, _, %{operative_class: ^asleep}}
+      assert_receive {:input_silence, _, %{operator_class: ^bounded}}, 1_000
+      refute_received {:input_silence, _, %{operator_class: ^asleep}}
     end)
   end
 
@@ -383,13 +383,13 @@ defmodule Flezha.State.WatchdogTest do
         :ok = Watchdog.sweep_now()
 
         # The control proves the detector is armed and this signature trips it...
-        assert_receive {:input_silence, _, %{operative_class: ^per_input}}, 1_000
+        assert_receive {:input_silence, _, %{operator_class: ^per_input}}, 1_000
         # ...and that the checkpoint-ack class is exempt, not merely unobserved.
-        refute_received {:input_silence, _, %{operative_class: ^checkpoint}}
+        refute_received {:input_silence, _, %{operator_class: ^checkpoint}}
       end)
 
     # The positive control alarms by name; the exempt class never appears.
-    assert log =~ ~s(input silent for operative="#{per_input}")
+    assert log =~ ~s(input silent for operator="#{per_input}")
     # The line states what was seen, and claims nothing about a dead feed.
     assert log =~ "having produced output earlier"
     refute log =~ "data-flow stop"
@@ -417,7 +417,7 @@ defmodule Flezha.State.WatchdogTest do
 
     log = ExUnit.CaptureLog.capture_log(fn -> :ok = Watchdog.sweep_now() end)
 
-    refute_received {:input_silence, _, %{operative_class: ^class}}
+    refute_received {:input_silence, _, %{operator_class: ^class}}
     refute log =~ "input silent"
   end
 
@@ -437,11 +437,11 @@ defmodule Flezha.State.WatchdogTest do
     TestHelpers.age_writer(w, @stall_ms * 2)
 
     :ok = Watchdog.sweep_now()
-    assert_receive {:input_silence, _, %{operative_class: ^class}}, 1_000
+    assert_receive {:input_silence, _, %{operator_class: ^class}}, 1_000
 
     # Still silent: the latch holds, so the episode reports once.
     :ok = Watchdog.sweep_now()
-    refute_received {:input_silence, _, %{operative_class: ^class}}
+    refute_received {:input_silence, _, %{operator_class: ^class}}
 
     # Input resumes, and a later silence is reported afresh.
     :ok = WalWriter.append(w, 2, header, "b")
@@ -449,7 +449,7 @@ defmodule Flezha.State.WatchdogTest do
 
     TestHelpers.age_writer(w, @stall_ms * 2)
     :ok = Watchdog.sweep_now()
-    assert_receive {:input_silence, _, %{operative_class: ^class}}, 1_000
+    assert_receive {:input_silence, _, %{operator_class: ^class}}, 1_000
   end
 
   test "a remote-durability RPO breach alarms once and clears when it catches up" do

@@ -15,7 +15,7 @@ defmodule Flezha.Service.HubManager.Rows do
 
   alias Flezha.Convergence.Snapshot
   alias Flezha.Identificator
-  alias Flezha.Operative.Lookup
+  alias Flezha.Operator.Lookup
   alias Flezha.Plugin
   alias Flezha.Process.Cspec
   alias Flezha.Process.Hub
@@ -58,14 +58,14 @@ defmodule Flezha.Service.HubManager.Rows do
 
   @doc """
   The same dump, for a caller that only folds it: a hub that is not up holds no
-  running operative, and that is an empty dump rather than an error to unwrap.
+  running operator, and that is an empty dump rather than an error to unwrap.
   """
   @spec registry_dump(String.t()) :: map()
   def registry_dump(namespace), do: with_live_hub(namespace, %{}, &live_registry_dump/1)
 
   # Every caller here means "what is currently running with a live binding":
   # unbound rows are replay residue, not runtime. Declared intent is a
-  # different question — `declared_operatives/1` answers that from the hub's
+  # different question — `declared_operators/1` answers that from the hub's
   # declared set.
   defp live_registry_dump(hub_id) do
     ProcessRegistry.dump_all(hub_id, include_unbound: false, include_stopped: false)
@@ -78,17 +78,17 @@ defmodule Flezha.Service.HubManager.Rows do
 
   # The one place either published string is written. `Lookup` answers in the
   # three atoms every resolver shares; this is the boundary where a hub read
-  # becomes the operator-facing wording, and there is no second remap behind it.
-  def get_pid(namespace, operative_id) do
-    case Lookup.operative(namespace, operative_id) do
+  # becomes the user-facing wording, and there is no second remap behind it.
+  def get_pid(namespace, operator_id) do
+    case Lookup.operator(namespace, operator_id) do
       {:ok, pid} -> {:ok, pid}
       {:error, :hub_down} -> {:error, "hub not alive"}
-      {:error, _reason} -> {:error, "operative not found"}
+      {:error, _reason} -> {:error, "operator not found"}
     end
   end
 
   @doc """
-  Resolve a operative's runnable pid from a ProcessHub `node_pids` list
+  Resolve an operator's runnable pid from a ProcessHub `node_pids` list
   (`[{node, pid}]`, with 0, 1, or many entries).
 
   Drops entries on nodes absent from the live cluster, prefers the local node's
@@ -97,7 +97,7 @@ defmodule Flezha.Service.HubManager.Rows do
 
   This centralises the multi-node-safe access that replaced the former
   single-element `[{_node, pid}]` matches, which raised `FunctionClauseError`
-  the moment a operative was registered on more than one node.
+  the moment an operator was registered on more than one node.
   """
   @spec live_pid([{node(), pid()}]) :: pid() | nil
   def live_pid(node_pids) when is_list(node_pids) do
@@ -125,20 +125,20 @@ defmodule Flezha.Service.HubManager.Rows do
 
   def live_pid(_), do: nil
 
-  def get_all_operatives(namespace) do
+  def get_all_operators(namespace) do
     with_live_hub(namespace, [], fn hub_id ->
       ProcessHub.process_list(hub_id, :global)
-      |> Enum.flat_map(fn {operative_id, node_pids} ->
+      |> Enum.flat_map(fn {operator_id, node_pids} ->
         case live_pid(node_pids) do
           nil -> []
-          operative_pid -> [{operative_id, operative_pid}]
+          operator_pid -> [{operator_id, operator_pid}]
         end
       end)
     end)
   end
 
   @doc """
-  The live node hosting a operative from its `node_pids` (`[{node, pid}]`): the
+  The live node hosting an operator from its `node_pids` (`[{node, pid}]`): the
   local node when it holds the runnable pid, else another live cluster node,
   else `nil` (every entry is on a dead node — a FAILED placement). Sibling of
   `live_pid/1` for surfacing per-node placement in the CLI.
@@ -164,30 +164,30 @@ defmodule Flezha.Service.HubManager.Rows do
   def live_node(_), do: nil
 
   @doc """
-  Per-operative view of a namespace's durable registry for operator surfaces:
-  one row per registered operative (including FAILED ones whose only placement is
-  a dead node, which `get_all_operatives/1` filters out), carrying the assigned
+  Per-operator view of a namespace's durable registry for user surfaces:
+  one row per registered operator (including FAILED ones whose only placement is
+  a dead node, which `get_all_operators/1` filters out), carrying the assigned
   runner, the declared factory (from the durable cspec start-args) and live node
   from the registry dump and the live health classified
-  by the Convergence Loop (`Snapshot.operative_health/2`), so the CLI sees exactly
+  by the Convergence Loop (`Snapshot.operator_health/2`), so the CLI sees exactly
   what the loop sees. A registry row the loop has not yet observed reports
   `:unknown` until the next tick covers it.
   """
-  @spec operative_rows(String.t()) :: [
+  @spec operator_rows(String.t()) :: [
           %{id: term(), health: atom(), runner: term(), factory: term(), node: term()}
         ]
-  def operative_rows(namespace) do
+  def operator_rows(namespace) do
     with_live_hub(namespace, [], fn hub_id ->
       hub_id
       |> live_registry_dump()
-      |> Enum.map(fn {operative_id, entry} ->
+      |> Enum.map(fn {operator_id, entry} ->
         {cspec, node_pids, metadata} = normalize_registry_entry(entry)
 
-        builder = cspec_operative(cspec)
+        builder = cspec_operator(cspec)
 
         %{
-          id: operative_id,
-          health: Snapshot.operative_health(namespace, operative_id),
+          id: operator_id,
+          health: Snapshot.operator_health(namespace, operator_id),
           runner: Map.get(metadata, :tag),
           factory: builder && Map.get(builder, :factory_id),
           partition: cspec_partition(cspec),
@@ -199,57 +199,57 @@ defmodule Flezha.Service.HubManager.Rows do
   end
 
   @doc """
-  Every operative's declared plugins, as `{operative_id, [%Flezha.Plugin{}]}`.
+  Every operator's declared plugins, as `{operator_id, [%Flezha.Plugin{}]}`.
 
-  Read from the same durable registry dump `operative_rows/1` walks, so asking
+  Read from the same durable registry dump `operator_rows/1` walks, so asking
   "who depends on X" costs one registry read rather than an Overwatch
-  round-trip per operative. Declared, not live: a plugin the cspec records but
+  round-trip per operator. Declared, not live: a plugin the cspec records but
   whose host has not re-subscribed it yet still appears, which is what a caller
   looking for dependents wants.
   """
-  @spec operative_plugins(binary() | atom()) :: [{binary(), [Flezha.Plugin.t()]}]
-  def operative_plugins(namespace) do
+  @spec operator_plugins(binary() | atom()) :: [{binary(), [Flezha.Plugin.t()]}]
+  def operator_plugins(namespace) do
     with_live_hub(namespace, [], fn hub_id ->
       hub_id
       |> live_registry_dump()
-      |> Enum.map(fn {operative_id, entry} ->
+      |> Enum.map(fn {operator_id, entry} ->
         {cspec, _node_pids, _metadata} = normalize_registry_entry(entry)
-        {operative_id, Keyword.get(cspec_opts(cspec), :plugins, [])}
+        {operator_id, Keyword.get(cspec_opts(cspec), :plugins, [])}
       end)
       |> Enum.reject(fn {_id, plugins} -> plugins == [] end)
     end)
   end
 
   @doc """
-  Read the current plugin list embedded in a operative's child-spec
+  Read the current plugin list embedded in an operator's child-spec
   start args. Returns `{:ok, [{plugin_id, %Flezha.Plugin{}}]}` (entries
   are normalised to tuple form regardless of how they are stored).
   """
-  @spec operative_plugins(String.t(), String.t()) ::
+  @spec operator_plugins(String.t(), String.t()) ::
           {:ok, [{binary(), Plugin.t()}]} | {:error, term()}
-  def operative_plugins(namespace, operative_id) do
+  def operator_plugins(namespace, operator_id) do
     with_live_hub(namespace, {:error, "hub not alive"}, fn hub_id ->
-      case ProcessRegistry.lookup(hub_id, operative_id) do
+      case ProcessRegistry.lookup(hub_id, operator_id) do
         nil ->
-          {:error, "operative not found"}
+          {:error, "operator not found"}
 
         entry ->
           case Cspec.start_arg(elem(entry, 0)) do
             {:ok, arg} -> {:ok, normalize_plugins(extract_plugins(arg))}
-            :error -> {:error, "operative not found"}
+            :error -> {:error, "operator not found"}
           end
       end
     end)
   end
 
-  # The declared operative from a registry entry's cspec start-args — the same
-  # `{namespace, operative}` / `{namespace, runner, operative}` arg shapes
+  # The declared operator from a registry entry's cspec start-args — the same
+  # `{namespace, operator}` / `{namespace, runner, operator}` arg shapes
   # `alter_child_data/2` rewrites. The durable record of everything a start
   # declared, which is why partition identity lives there.
-  defp cspec_operative(cspec) do
+  defp cspec_operator(cspec) do
     case Cspec.start_arg(cspec) do
-      {:ok, {_namespace, %{} = operative}} -> operative
-      {:ok, {_namespace, _runner, %{} = operative}} -> operative
+      {:ok, {_namespace, %{} = operator}} -> operator
+      {:ok, {_namespace, _runner, %{} = operator}} -> operator
       _ -> nil
     end
   end
@@ -261,9 +261,9 @@ defmodule Flezha.Service.HubManager.Rows do
   # The builder opts a registry entry's cspec start-args carry, or `[]` — where
   # a partition member's identity is durable.
   defp cspec_opts(cspec) do
-    case cspec_operative(cspec) do
+    case cspec_operator(cspec) do
       nil -> []
-      operative -> Map.get(operative, :opts, [])
+      operator -> Map.get(operator, :opts, [])
     end
   end
 
@@ -281,28 +281,28 @@ defmodule Flezha.Service.HubManager.Rows do
   def rewrite_cspec_plugins(%{start: {m, f, [arg]}} = cspec, update_fn) do
     new_arg =
       case arg do
-        {namespace, operative} ->
-          {namespace, rewrite_operative_plugins(operative, update_fn)}
+        {namespace, operator} ->
+          {namespace, rewrite_operator_plugins(operator, update_fn)}
 
-        {namespace, runner_id, operative} ->
-          {namespace, runner_id, rewrite_operative_plugins(operative, update_fn)}
+        {namespace, runner_id, operator} ->
+          {namespace, runner_id, rewrite_operator_plugins(operator, update_fn)}
       end
 
     Map.put(cspec, :start, {m, f, [new_arg]})
   end
 
-  defp rewrite_operative_plugins(operative, update_fn) do
-    current = normalize_plugins(extract_plugins({nil, operative}))
+  defp rewrite_operator_plugins(operator, update_fn) do
+    current = normalize_plugins(extract_plugins({nil, operator}))
     new_plugins = update_fn.(current)
-    new_opts = Keyword.put(operative.opts, :plugins, new_plugins)
-    %{operative | opts: new_opts}
+    new_opts = Keyword.put(operator.opts, :plugins, new_plugins)
+    %{operator | opts: new_opts}
   end
 
-  defp extract_plugins({_namespace, operative}),
-    do: Keyword.get(operative.opts, :plugins, [])
+  defp extract_plugins({_namespace, operator}),
+    do: Keyword.get(operator.opts, :plugins, [])
 
-  defp extract_plugins({_namespace, _runner_id, operative}),
-    do: Keyword.get(operative.opts, :plugins, [])
+  defp extract_plugins({_namespace, _runner_id, operator}),
+    do: Keyword.get(operator.opts, :plugins, [])
 
   defp normalize_plugins(plugins) when is_list(plugins) do
     Enum.map(plugins, fn
@@ -311,12 +311,12 @@ defmodule Flezha.Service.HubManager.Rows do
     end)
   end
 
-  def durable_operative_count(hub_id) do
+  def durable_operator_count(hub_id) do
     with_live_hub_id(hub_id, 0, fn id -> map_size(live_registry_dump(id)) end)
   end
 
   @doc """
-  Whether operative starts declare durable intent — `durable: true` through
+  Whether operator starts declare durable intent — `durable: true` through
   the hub's declared set. THE auto-restore kill-switch predicate: the start
   authority, the hub's `auto_recovery` config, the registry backend, and the
   pending-restore health read all flip on it together — a hub without
@@ -332,50 +332,50 @@ defmodule Flezha.Service.HubManager.Rows do
   end
 
   @doc """
-  The namespace's declared operatives, read from the hub's declared set:
+  The namespace's declared operators, read from the hub's declared set:
   intent, not runtime. An entry exists here for exactly as long as the
-  operative should exist, whether or not anything currently runs it — a wiped
+  operator should exist, whether or not anything currently runs it — a wiped
   runtime registry does not empty this list, and a deliberate stop removes its
   entry for good. Parsed through the same cspec start-args shapes the registry
   readers use; an entry whose args no current clause understands still counts
   as declared, with an unknown factory.
   """
-  @spec declared_operatives(binary() | atom()) ::
+  @spec declared_operators(binary() | atom()) ::
           [%{id: binary(), factory_id: binary() | nil}]
-  def declared_operatives(namespace) do
+  def declared_operators(namespace) do
     with_live_hub(namespace, [], fn hub_id ->
       %{children: children} = DeclaredChildren.declared_children(hub_id)
 
       Enum.map(children, fn child_spec ->
-        operative = cspec_operative(child_spec)
-        %{id: child_spec.id, factory_id: operative && Map.get(operative, :factory_id)}
+        operator = cspec_operator(child_spec)
+        %{id: child_spec.id, factory_id: operator && Map.get(operator, :factory_id)}
       end)
     end)
   end
 
-  def durable_operative_keys(hub_id) do
+  def durable_operator_keys(hub_id) do
     with_live_hub_id(hub_id, [], fn id ->
       live_registry_dump(id) |> Map.keys() |> Enum.filter(&is_binary/1)
     end)
   end
 
   @doc """
-  True when the namespace's hub still holds registered operatives (running or
+  True when the namespace's hub still holds registered operators (running or
   durably suspended). Runner cleanup / migration consult this so a hub is never
-  torn down while it holds parked operatives that must stay addressable.
+  torn down while it holds parked operators that must stay addressable.
   """
-  def registered_operatives?(namespace) do
-    Identificator.hub(namespace) |> durable_operative_keys() != []
+  def registered_operators?(namespace) do
+    Identificator.hub(namespace) |> durable_operator_keys() != []
   end
 
   @doc """
-  True when THIS node still hosts operatives of `namespace`'s hub — the
+  True when THIS node still hosts operators of `namespace`'s hub — the
   question a node-local reclaim asks, as opposed to the cluster-wide
-  `registered_operatives?/1`. A hub that cannot be read answers `true`: a
+  `registered_operators?/1`. A hub that cannot be read answers `true`: a
   read that failed proves nothing, and nothing is torn down on it.
   """
-  @spec local_operatives?(binary()) :: boolean()
-  def local_operatives?(namespace) do
+  @spec local_operators?(binary()) :: boolean()
+  def local_operators?(namespace) do
     with_live_hub(namespace, true, fn hub_id ->
       ProcessHub.process_list(hub_id, :local) != []
     end)

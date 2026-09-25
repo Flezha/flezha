@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use crossbeam::channel::Sender;
 
-use crate::operative::instance::OperativeInstance;
+use crate::operator::instance::OperatorInstance;
 
 /// The coordinator's message channel, installed once by `coordinator::start`.
 static RECONNECT_TRIGGER: OnceLock<Mutex<Sender<RunnerMessage>>> = OnceLock::new();
@@ -54,15 +54,10 @@ pub fn emit_control_request(reference_id: String, command: crate::pb::command_re
     coordinator_send(RunnerMessage::control_request(reference_id, command));
 }
 
-/// A workflow's `WorkflowCompleted`, so the controller deregisters it.
-pub fn emit_workflow_completed(
-    operative_id: String,
-    status: String,
-    error: String,
-    result: Vec<u8>,
-) {
-    coordinator_send(RunnerMessage::EmitWorkflowCompleted {
-        operative_id,
+/// A bounded operator's `BoundedCompleted`, so the controller deregisters it.
+pub fn emit_bounded_completed(operator_id: String, status: String, error: String, result: Vec<u8>) {
+    coordinator_send(RunnerMessage::EmitBoundedCompleted {
+        operator_id,
         status,
         error,
         result,
@@ -85,7 +80,7 @@ pub fn env_test_guard() -> std::sync::MutexGuard<'static, ()> {
 /// traffic never comes here.
 pub enum RunnerMessage {
     HandleCommandAction(String, Vec<u8>, HashMap<String, String>),
-    ReturnOperatives,
+    ReturnOperators,
     /// Drive a reconnect; the reason is one of `control_stream_broken |
     /// read_error | write_error | keepalive_timeout | controller_requested |
     /// broken_pipe_flood`.
@@ -94,9 +89,9 @@ pub enum RunnerMessage {
     SendControlKeepalive,
     /// The heartbeat timer's tick: a heartbeat on every secondary stream.
     SendDataHeartbeat,
-    /// A workflow reached an exit trigger.
-    EmitWorkflowCompleted {
-        operative_id: String,
+    /// A bounded operator reached an exit trigger.
+    EmitBoundedCompleted {
+        operator_id: String,
         status: String,
         error: String,
         result: Vec<u8>,
@@ -108,7 +103,7 @@ pub enum RunnerMessage {
         command: Box<crate::pb::command_request::Command>,
     },
     /// A post-start remove, on the loop so the live-instance check is
-    /// serialized with `AddOperative`; answered by
+    /// serialized with `AddOperator`; answered by
     /// [`ClientResponseMessage::RemoveFactoryResult`].
     RemoveFactory {
         factory_id: String,
@@ -137,10 +132,10 @@ pub enum RunnerStatus {
 
 pub enum ClientResponseMessage {
     RunnerIdConfirmation,
-    ReturnOperatives(HashMap<String, Arc<OperativeInstance>>),
+    ReturnOperators(HashMap<String, Arc<OperatorInstance>>),
     /// `Err(n)`: `n` live instances exist and the class stays defined.
     RemoveFactoryResult(Result<(), usize>),
 }
 
 pub use crate::coordinator::{live_instance, start, RunnerNode};
-pub use crate::routing::OperativeDispatchHandle;
+pub use crate::routing::OperatorDispatchHandle;

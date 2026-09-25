@@ -15,7 +15,7 @@ defmodule Flezha.State.DurabilityTier do
   Every trigger, recovery and status function is a no-op while `backend: :none`,
   under which `children/0` starts nothing. An unset or unrecognised
   `FLEZHA_DURABILITY_BACKEND` takes that default and `children/0` says so;
-  a backend the operator did select and that lacks an option it cannot work
+  a backend the user did select and that lacks an option it cannot work
   without refuses the boot instead.
   """
 
@@ -23,7 +23,7 @@ defmodule Flezha.State.DurabilityTier do
 
   alias Flezha.Config
   alias Flezha.Config.Durations
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.Process.Cspec
   alias Flezha.State.DurabilityTier.{Artifact, Hydrator, Shipper}
   alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig
@@ -42,7 +42,7 @@ defmodule Flezha.State.DurabilityTier do
   def enabled?(), do: BackendConfig.resolve() != :none
 
   @doc """
-  How this controller's durable state is protected, as an operator reads it.
+  How this controller's durable state is protected, as a user reads it.
 
   `:local_only` means the disk under this node is the only copy — a deliberate,
   supported posture, and one a fleet audit must be able to find, so it is
@@ -65,7 +65,7 @@ defmodule Flezha.State.DurabilityTier do
   def unconfigured?(), do: configured_backend() == :unset
 
   @doc """
-  The backend as an operator named it, rather than as `Backend.resolve/0`
+  The backend as a user named it, rather than as `Backend.resolve/0`
   resolves it — what `flz controller status` reports.
   """
   @spec configured_backend() :: atom() | binary() | {module(), keyword()}
@@ -95,17 +95,17 @@ defmodule Flezha.State.DurabilityTier do
   end
 
   @doc """
-  This node now runs `state_key`'s operative, so it may take over that
+  This node now runs `state_key`'s operator, so it may take over that
   reference's remote lineage.
 
   Shipping alone must never be enough to claim one: a migration leaves the
-  source node holding a full copy of the state (`WalTransfer.pull_operative/3`
+  source node holding a full copy of the state (`WalTransfer.pull_operator/3`
   copies, and nothing deletes the source), so its backstop sweep would
   otherwise bid the lineage back and fence the node that actually runs the
-  operative now.
+  operator now.
   """
-  @spec adopt_operative(binary()) :: :ok
-  def adopt_operative(state_key) when is_binary(state_key) do
+  @spec adopt_operator(binary()) :: :ok
+  def adopt_operator(state_key) when is_binary(state_key) do
     if enabled?() do
       case GenServer.whereis(Shipper) do
         nil -> :ok
@@ -141,7 +141,7 @@ defmodule Flezha.State.DurabilityTier do
 
   @doc """
   Age at which an unreferenced artifact is collected even though no node holds
-  local state for its reference — a stopped operative, or one whose state moved.
+  local state for its reference — a stopped operator, or one whose state moved.
 
   Without it, scoping collection to what a node owns would leak those forever.
   Far longer than `gc_grace_ms/0` on purpose: it is the threshold past which no
@@ -152,7 +152,7 @@ defmodule Flezha.State.DurabilityTier do
   def gc_abandoned_after_ms(),
     do: positive(:durability_gc_abandoned_after_ms)
 
-  # An operator who sets one of these to zero or to something that is not a
+  # A user who sets one of these to zero or to something that is not a
   # count is asking for no sweep at all, which the tier has no meaning for; the
   # row's own value is what it falls back to.
   defp positive(name) do
@@ -203,7 +203,7 @@ defmodule Flezha.State.DurabilityTier do
 
   # What the boot chose, said out loud, on every boot rather than only the one
   # that establishes it: the population these lines are for is whoever inherits
-  # the node, not the operator who ran the first boot.
+  # the node, not the user who ran the first boot.
   #
   # A warning and not a refusal. The refusal this replaces was written when the
   # boot was the only place the posture could be noticed; `/healthz` and
@@ -226,7 +226,7 @@ defmodule Flezha.State.DurabilityTier do
 
     Without a remote durability tier this controller is both the coordination \
     brain and the durable store on one local disk: if it dies WITH that disk, \
-    every operative's state goes with it.
+    every operator's state goes with it.
 
     Two valid moves:
 
@@ -242,7 +242,7 @@ defmodule Flezha.State.DurabilityTier do
 
   # A typo must not crash-loop the controller, so the name resolves to `none`
   # like an unset variable does. Saying which name was not understood is what
-  # stops the operator believing a tier is running.
+  # stops the user believing a tier is running.
   defp unrecognised_message(name) do
     "FLEZHA_DURABILITY_BACKEND=#{inspect(name)} is not a backend this release " <>
       "knows. Valid values: none, postgres, s3, local_path. Defaulting to none: " <>
@@ -270,7 +270,7 @@ defmodule Flezha.State.DurabilityTier do
       else: []
   end
 
-  # The variable an operator sets the option with, asked of the knob reader
+  # The variable a user sets the option with, asked of the knob reader
   # rather than restated here: a backend option is a row like any other, and
   # the key it fills is the only name this module holds for it.
   defp naming(key) do
@@ -290,22 +290,22 @@ defmodule Flezha.State.DurabilityTier do
   # ---------- per-class sync mode ----------
 
   @doc """
-  Whether `operative_class` requires the remote ship to complete before its
+  Whether `operator_class` requires the remote ship to complete before its
   commit barrier is acked (RPO 0).
 
-  Resolved through the ordinary per-class cascade — operator override, instance
-  metadata, then the SDK declaration — so an operator can force a class either
+  Resolved through the ordinary per-class cascade — user override, instance
+  metadata, then the SDK declaration — so a user can force a class either
   way without an SDK change. Always `false` while the tier is off: a class
   cannot be made to wait on a backend that does not exist.
   """
   @spec sync_class?(binary()) :: boolean()
-  def sync_class?(operative_id) when is_binary(operative_id) do
-    # Callers on the commit path hold an operative ID, while the declaration is
-    # recorded against the resolved CLASS. Where an `:operative_class` override
+  def sync_class?(operator_id) when is_binary(operator_id) do
+    # Callers on the commit path hold an operator ID, while the declaration is
+    # recorded against the resolved CLASS. Where an `:operator_class` override
     # makes those differ, looking up the id finds nothing and the gate silently
     # never arms — the class asked for RPO 0 and gets ordinary async shipping.
     enabled?() and
-      Enum.any?(ClassRegistry.state_keys(operative_id), &PersistenceResolver.sync_durability?/1)
+      Enum.any?(ClassRegistry.state_keys(operator_id), &PersistenceResolver.sync_durability?/1)
   end
 
   # ---------- triggers ----------
@@ -320,11 +320,11 @@ defmodule Flezha.State.DurabilityTier do
 
   @doc """
   Every shippable reference stored under one on-disk STATE KEY: the durable
-  references `Paths.durable_refs/1` names (its Cells, a workflow's journal,
+  references `Paths.durable_refs/1` names (its Cells, a bounded operator's journal,
   its input log) that hold local state, and its dead-letter trees.
 
-  An operative can occupy two state keys — see `refs_of_operative/1`, which is
-  what anything holding an operative id should call.
+  An operator can occupy two state keys — see `refs_of_operator/1`, which is
+  what anything holding an operator id should call.
   """
   @spec refs_of_state_key(binary()) :: [Artifact.ref()]
   def refs_of_state_key(state_key) when is_binary(state_key) do
@@ -344,9 +344,9 @@ defmodule Flezha.State.DurabilityTier do
   @spec all_refs(binary()) :: [Artifact.ref()]
   def all_refs(writer) when is_binary(writer) do
     # Classes with Cell state UNION classes with parked failures: a stopped
-    # operative keeps its parks without holding state, and its parks are still
+    # operator keeps its parks without holding state, and its parks are still
     # this node's to ship.
-    (Paths.operative_classes() ++ Artifact.dlq_classes())
+    (Paths.operator_classes() ++ Artifact.dlq_classes())
     |> Enum.uniq()
     |> Enum.flat_map(&refs_of_state_key/1)
     |> Enum.concat(Artifact.cspec_refs(writer))
@@ -354,17 +354,17 @@ defmodule Flezha.State.DurabilityTier do
   end
 
   @doc """
-  Every shippable reference of one operative, across BOTH identities it is
+  Every shippable reference of one operator, across BOTH identities it is
   stored under — its instance id, which keys the task-journal, and its
-  resolved class, which keys the Cells and input log (for a workflow the two
+  resolved class, which keys the Cells and input log (for a bounded operator the two
   are one key).
 
-  Anything holding an operative id and wanting its whole durable identity goes
+  Anything holding an operator id and wanting its whole durable identity goes
   through here; `refs_of/1` answers the narrower question about one state key.
   """
-  @spec refs_of_operative(binary()) :: [Artifact.ref()]
-  def refs_of_operative(operative_id) when is_binary(operative_id) do
-    operative_id
+  @spec refs_of_operator(binary()) :: [Artifact.ref()]
+  def refs_of_operator(operator_id) when is_binary(operator_id) do
+    operator_id
     |> ClassRegistry.state_keys()
     |> Enum.flat_map(&refs_of_state_key/1)
     |> Enum.uniq()
@@ -385,16 +385,16 @@ defmodule Flezha.State.DurabilityTier do
   backstop sweep.
   """
   @spec on_effect_flushed(tuple(), integer() | nil) :: :ok
-  def on_effect_flushed({operative_class, _, _} = cell_id, consumed_offset)
+  def on_effect_flushed({operator_class, _, _} = cell_id, consumed_offset)
       when is_integer(consumed_offset) do
-    if enabled?() and ClassRegistry.checkpoint_ack?(operative_class) do
+    if enabled?() and ClassRegistry.checkpoint_ack?(operator_class) do
       ship({:cell, cell_id})
 
       # The input log rides the same cut. Shipping the state without it would
       # leave a hydrated Cell holding a consumed floor and nothing to replay
       # from — the inputs after the cut would be gone, and the next one would
       # land below the floor and be skipped as already consumed.
-      ship({:input_log, operative_class})
+      ship({:input_log, operator_class})
     end
 
     :ok
@@ -403,31 +403,31 @@ defmodule Flezha.State.DurabilityTier do
   def on_effect_flushed(_cell_id, _consumed_offset), do: :ok
 
   @doc """
-  A workflow instance committed a task or an iteration: its journal suffix, and
+  A bounded instance committed a task or an iteration: its journal suffix, and
   the input log holding what it has not consumed, are the artifacts that must
   reach the remote store for the instance to resume elsewhere.
   """
-  @spec on_workflow_commit(binary()) :: :ok
-  def on_workflow_commit(operative_id) when is_binary(operative_id) do
-    if enabled?(), do: Enum.each(refs_of_operative(operative_id), &Shipper.enqueue/1)
+  @spec on_bounded_commit(binary()) :: :ok
+  def on_bounded_commit(operator_id) when is_binary(operator_id) do
+    if enabled?(), do: Enum.each(refs_of_operator(operator_id), &Shipper.enqueue/1)
     :ok
   end
 
-  @doc "The registry cspec changed — what operatives exist, and how they are configured."
+  @doc "The registry cspec changed — what operators exist, and how they are configured."
   @spec ship_cspec(atom() | binary()) :: :ok
   def ship_cspec(hub_id), do: ship({:cspec, {to_string(hub_id), writer_id()}})
 
   @doc """
-  Ship `operative_id`'s artifacts and wait for the manifest write, for a class
+  Ship `operator_id`'s artifacts and wait for the manifest write, for a class
   that declared synchronous durability. Returns the backend's verdict so the
-  caller can withhold the commit ack: a failure stalls the workflow at its
+  caller can withhold the commit ack: a failure stalls the bounded operator at its
   barrier, loudly, which is what RPO 0 means.
   """
   @spec commit_sync(binary()) :: :ok | {:error, term()}
-  def commit_sync(operative_id) when is_binary(operative_id) do
+  def commit_sync(operator_id) when is_binary(operator_id) do
     # Both key spaces: shipping only one of them would let this barrier answer
     # `:ok` having never sent the Cell state the guarantee is about.
-    Enum.reduce_while(refs_of_operative(operative_id), :ok, fn ref, :ok ->
+    Enum.reduce_while(refs_of_operator(operator_id), :ok, fn ref, :ok ->
       case Shipper.ship_now(ref) do
         :ok -> {:cont, :ok}
         {:error, _} = err -> {:halt, err}
@@ -438,14 +438,14 @@ defmodule Flezha.State.DurabilityTier do
   # ---------- recovery ----------
 
   @doc """
-  Hydrate `operative_class`'s artifacts from the remote manifest when its local
+  Hydrate `operator_class`'s artifacts from the remote manifest when its local
   state is absent. A no-op when the tier is off, when nothing is shipped, or
   when local state already exists — local is always authoritative.
   """
-  @spec hydrate_operative(binary()) :: :ok
-  def hydrate_operative(operative_class) when is_binary(operative_class) do
+  @spec hydrate_operator(binary()) :: :ok
+  def hydrate_operator(operator_class) when is_binary(operator_class) do
     with {module, opts} <- BackendConfig.resolve(),
-         do: Hydrator.hydrate_operative(module, opts, operative_class)
+         do: Hydrator.hydrate_operator(module, opts, operator_class)
 
     :ok
   end
@@ -458,9 +458,9 @@ defmodule Flezha.State.DurabilityTier do
   Tasklet.
   """
   @spec hydrate_cells(binary(), binary(), [binary()]) :: :ok
-  def hydrate_cells(operative_class, tasklet_id, cell_keys) do
+  def hydrate_cells(operator_class, tasklet_id, cell_keys) do
     with {module, opts} <- BackendConfig.resolve() do
-      Hydrator.hydrate_cells(module, opts, operative_class, tasklet_id, cell_keys)
+      Hydrator.hydrate_cells(module, opts, operator_class, tasklet_id, cell_keys)
     end
 
     :ok
