@@ -52,8 +52,8 @@ last one stops everything.
 
 ## Part 2: Going further
 
-Authorization, namespaces, an ETL stream and a workflow, durability, plugins and
-partitioning. The example is `tradedesk`, a toy trader: an ETL stream, built as an
+Authorization, namespaces, an ETL stream and a workflow, partitioning, plugins and
+durability. The example is `tradedesk`, a toy trader: an ETL stream, built as an
 unbounded operator, compares each trade's price with its symbol's recent average, and
 when a price is far enough above it, a workflow, built as a bounded operator, places an
 order with paper money, so nothing reaches a real exchange.
@@ -64,9 +64,9 @@ order with paper money, so nothing reaches a real exchange.
 | [`namespaces.md`](tradedesk/namespaces.md) | Give tradedesk a namespace of its own |
 | [`building_an_etl_stream.md`](tradedesk/building_an_etl_stream.md) | Build the desk's ETL stream as an unbounded operator: chained tasklets, `flat_map`, `filter`, `key_by`, and state per symbol |
 | [`building_a_workflow.md`](tradedesk/building_a_workflow.md) | Build the paper-order workflow as a bounded operator: steps, retries and compensation, started by hand |
-| [`durability.md`](tradedesk/durability.md) | Kill the runner mid-order: the order continues from its step, is never placed twice, and candles keep coming |
+| [`partitioning.md`](tradedesk/partitioning.md) | Start the desk: `--partitions`, `key_by`, how trades are routed, and `flz operator scale` |
 | [`plugins.md`](tradedesk/plugins.md) | Read the testnet's trades with the WebSocket plugin, and record filled orders with a file sink |
-| [`partitioning.md`](tradedesk/partitioning.md) | `--partitions`, `key_by`, how trades are routed, and `flz operator scale` |
+| [`durability.md`](tradedesk/durability.md) | Stop and crash the runner and the controller, and read the desk's state back: each symbol's prices, each order's finished steps |
 
 ## Part 3: Advanced topics
 

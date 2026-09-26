@@ -42,9 +42,9 @@ answer "what are the options"; a guide answers "what do I type".
 | [`namespaces.md`](guides/tradedesk/namespaces.md) | Part 2. A namespace of your own, joining it from a runner, and quotas |
 | [`building_an_etl_stream.md`](guides/tradedesk/building_an_etl_stream.md) | Part 2. An ETL stream, built as an unbounded operator: chained tasklets, transforms and state |
 | [`building_a_workflow.md`](guides/tradedesk/building_a_workflow.md) | Part 2. A workflow, built as a bounded operator: steps, retries and compensation |
-| [`durability.md`](guides/tradedesk/durability.md) | Part 2. What survives a crash |
-| [`plugins.md`](guides/tradedesk/plugins.md) | Part 2. The plugin system and the plugins that ship |
 | [`partitioning.md`](guides/tradedesk/partitioning.md) | Part 2. Partitions, keys and scaling |
+| [`plugins.md`](guides/tradedesk/plugins.md) | Part 2. The plugin system and the plugins that ship |
+| [`durability.md`](guides/tradedesk/durability.md) | Part 2. What survives a crash |
 | [`clustering.md`](guides/advanced/clustering.md) | Part 3. Setting up the example in Docker, and more than one machine |
 | [`custom_plugins.md`](guides/advanced/custom_plugins.md) | Part 3. Writing and installing your own plugin |
 | [`full_form_tasklets.md`](guides/advanced/full_form_tasklets.md) | Part 3. A tasklet without the annotations |

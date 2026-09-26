@@ -28,20 +28,18 @@ You write it in six pieces, one section each: the two steps that can be undone,
 which reserve the money and place the order; the step that confirms the fill,
 which is where an order can fail; the step that books the order; the operator,
 which connects the four into the path every order takes; and the runner, which
-now registers both factories. Running it comes later, in [`durability.md`](durability.md).
+now registers both factories. Running it comes later, in [`partitioning.md`](partitioning.md).
 
 ## A step that can be undone
 
-`reserve_funds` takes the order, an `OrderTicket`: the symbol, and how many to
-buy. It puts the money for the order aside, under a reservation id, and hands
-the order on with that id. If the order fails further on, the money
-has to be released again, and that is its undo: a method of its own,
-`compensate`, which Flezha calls when the order ends in failure.
+`reserve_funds` is the first step. It puts the money for the order aside and
+gives that reservation an id. Then it hands the order on to the next step,
+together with the id.
 
-The undo needs the reservation's id, so the step keeps it in its state.
-`compensate` is also handed what the step emitted, but that is not enough:
-after a crash, a step gets its state back and not what it emitted, so the list
-can be empty. The state always comes back.
+If the order fails later, the money has to be released again. That is the
+step's undo. To release the money, the undo has to know which reservation to
+release, so the step writes the id down in its state, its memory, where the
+undo can find it.
 
 > Write the step that reserves the money, and releases it on an undo. It goes
 > into the same runner project as the ETL stream; the finished project is
@@ -81,24 +79,42 @@ public final class ReserveFunds {
 }
 ```
 
-**`compensate` sits beside `run`, and writing it is what gives the step an
-undo.** It takes the list of what the step emitted, then the same state
-parameter `run` takes. A step without one is skipped when an order is undone.
-`@State` and `@Tasklet` generate the rest, as in the ETL stream:
-`ReservationHandle`, whose `setId` records the id and `get()` reads it back, and
-`ReserveFundsTasklet`, the class the operator names.
+**Flezha calls `run` with the order**, and passes it three things: the input,
+the state and the context, in the order the ETL stream's `track_prices`
+introduced. `track_prices` took the first two and `buy_above_average` the first
+and the last; this step needs all three:
+
+- `order` is the input, what arrives on the step's channel. For the first step,
+  that is the order the instance was started with, an `OrderTicket`.
+- `reservation` is the step's state. It holds the `Reservation` class above,
+  and `@State` generates `ReservationHandle` around it: `setId(id)` writes the
+  id down, and `get()` reads it back.
+- `ctx` is the context, the step's way of talking to Flezha. `ctx.emit(...)`
+  hands a value to the next step, and `ctx.stableId()` gives an id that stays
+  the same when the step runs again, so a retry does not put the money aside
+  twice.
+
+What `run` hands on is a `Reserved`: the order and the id. `run` emits through
+`ctx` instead of returning a value, so `emits` in `@Tasklet` names the type.
+
+**Flezha calls `compensate` only when the order fails**, and passes it two
+things:
+
+- `completedOutput` is what `run` handed on, a list of `Reserved`.
+- `reservation` is the same state `run` wrote the id into.
+
+The id is read from the state, not from `completedOutput`, because after a
+crash Flezha brings back the step's state but not what it handed on, so the
+list can be empty. Writing a `compensate` is what gives a step an undo, and a
+step without one is skipped. It can run twice, when a crash comes in the middle
+of an undo, so it has to be safe to repeat.
+
+`@Tasklet` generates `ReserveFundsTasklet` from the class, the name the
+operator uses.
 [What the Java annotations generate](building_an_etl_stream.md#keep-each-symbol-s-prices)
-lists it all.
-
-`run` takes the context, because `ctx.stableId()` gives the same id when the
-step runs again, so a retry does not put a second sum aside. A `run` that takes
-the context emits through it and returns nothing, so `emits` names what it
-hands on.
-
-`OrderTicket` is declared with the operator, in
+lists it all. `OrderTicket` is declared with the operator, in
 [Several tasklets, step by step](#several-tasklets-step-by-step), because it is
-what the whole operator takes. `compensate` may itself be called twice, when a
-crash comes in the middle of an undo, so it has to be safe to repeat.
+what the whole operator takes.
 
 ### Rust
 
@@ -128,8 +144,10 @@ TODO: not written yet.
 
 ## Place the order
 
-`place_order` has the same shape. It places the order with the paper exchange,
-keeps the order's id in its state, and its undo cancels the order by that id.
+`place_order` has the same shape. Its `run` gets what `reserve_funds` handed on,
+a `Reserved`, places the order with the paper exchange under an id, writes the
+id into its state, and hands the order on. Its `compensate` cancels the order
+by that id.
 
 > Write the step that places the order, and cancels it on an undo.
 > {: .step}
@@ -469,5 +487,5 @@ TODO: not written yet.
 ## Next
 
 The desk has both of its operators, and neither has run yet.
-[`durability.md`](durability.md) runs them, crashes the runner in the middle
-of an order, and watches the order carry on from its step.
+[`partitioning.md`](partitioning.md) starts them, and spreads the desk's
+symbols over partitions.

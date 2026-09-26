@@ -87,17 +87,26 @@ public final class TrackPrices {
 }
 ```
 
-`Trade` is what the tasklet takes and `Move` is what it emits. Both sit inside
-the tasklet, like its state. The annotation on `Trade` is explained with the
-operator below.
+**Flezha calls `run` once for every trade**, and passes it two things:
 
-**`@State` marks what a cell remembers.** The class sits inside the tasklet
-that uses it. `window.get()` reads the window, and `pushBackPrices` and
-`popFrontPrices` add a price at the end and drop one from the front. The box
-below lists what the annotations generate.
+- `trade` is the input: one trade, as it arrives on the tasklet's channel.
+- `window` is the state of this symbol's cell, what it remembers. It holds the
+  `PriceWindow` class above, and `@State` generates `PriceWindowHandle` around
+  it: `window.get()` reads the window, and `pushBackPrices` and
+  `popFrontPrices` add a price at the end and drop one from the front.
 
-An `Optional` return emits only when a value is present, which is how the first
-trade emits nothing.
+What `run` returns is what the tasklet emits, here a `Move`. An `Optional`
+emits only when a value is present, which is how the first trade emits
+nothing.
+
+A `run` always takes its input first, then its state when the tasklet remembers
+something. A tasklet that remembers nothing takes only the input, and one that
+needs Flezha for more than returning a value takes a context last, as
+`buy_above_average` below does.
+
+`Trade`, `Move` and `PriceWindow` sit inside the tasklet, because nothing else
+uses them. The annotation on `Trade` is explained with the operator below, and
+the box below lists what the annotations generate.
 
 > #### What the Java annotations generate {: .info}
 >
@@ -219,7 +228,8 @@ public final class BuyAboveAverage {
 }
 ```
 
-`run` takes the context because it does two things per input: it starts a
+`run` takes the move, its input, and no state, because it remembers nothing.
+It also takes the context, because it does two things per input: it starts a
 bounded operator and it emits. A `void` method declares no output, so `emits`
 names the type it emits. `spawnBounded` sends the order as JSON, and
 `paper_order` decodes it back into an `OrderTicket`, the order it takes,

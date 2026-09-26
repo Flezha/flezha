@@ -147,9 +147,9 @@ defmodule Flezha.MixProject do
         "docs/guides/tradedesk/namespaces.md",
         "docs/guides/tradedesk/building_an_etl_stream.md",
         "docs/guides/tradedesk/building_a_workflow.md",
-        "docs/guides/tradedesk/durability.md",
-        "docs/guides/tradedesk/plugins.md",
         "docs/guides/tradedesk/partitioning.md",
+        "docs/guides/tradedesk/plugins.md",
+        "docs/guides/tradedesk/durability.md",
         "docs/guides/advanced/clustering.md",
         "docs/guides/advanced/custom_plugins.md",
         "docs/guides/advanced/full_form_tasklets.md",
@@ -190,9 +190,9 @@ defmodule Flezha.MixProject do
           "docs/guides/tradedesk/namespaces.md",
           "docs/guides/tradedesk/building_an_etl_stream.md",
           "docs/guides/tradedesk/building_a_workflow.md",
-          "docs/guides/tradedesk/durability.md",
+          "docs/guides/tradedesk/partitioning.md",
           "docs/guides/tradedesk/plugins.md",
-          "docs/guides/tradedesk/partitioning.md"
+          "docs/guides/tradedesk/durability.md"
         ],
         "Guide Part 3: Advanced topics": [
           "docs/guides/advanced/clustering.md",

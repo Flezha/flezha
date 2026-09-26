@@ -173,15 +173,15 @@ $ flz operator start prices --id prices --namespace trading
 
 ## Watch it remember
 
-> Send AAPL four trades by hand. The first three are worth about 1 000 each,
+> Send EUR/USD four trades by hand. The first three are worth about 1 000 each,
 > and the fourth, at 3 090, is more than twice their average.
 > {: .step}
 
 ```sh
-$ flz operator send prices --namespace trading --channel manual --text 'AAPL 100 10'
-$ flz operator send prices --namespace trading --channel manual --text 'AAPL 101 12'
-$ flz operator send prices --namespace trading --channel manual --text 'AAPL 102 11'
-$ flz operator send prices --namespace trading --channel manual --text 'AAPL 103 30'
+$ flz operator send prices --namespace trading --channel manual --text 'EUR/USD 100 10'
+$ flz operator send prices --namespace trading --channel manual --text 'EUR/USD 101 12'
+$ flz operator send prices --namespace trading --channel manual --text 'EUR/USD 102 11'
+$ flz operator send prices --namespace trading --channel manual --text 'EUR/USD 103 30'
 ```
 
 A listener, as in Part 1's
@@ -193,10 +193,10 @@ TODO: output from an end-to-end run.
 ```
 
 `flz state get` reads a live cell's state, by
-`<operator>/<tasklet>/<key>`. AAPL's cell holds the four values it has seen:
+`<operator>/<tasklet>/<key>`. EUR/USD's cell holds the four values it has seen:
 
 ```sh
-$ flz state get prices/spot_big_trade/AAPL
+$ flz state get prices/spot_big_trade/EUR/USD
 ```
 
 ```output
@@ -221,12 +221,12 @@ A runner can stop in two ways, and they differ in what reaches the controller.
 $ pkill -9 -f tradedesk.jar
 ```
 
-> Start the runner again, with the same command as before, and read AAPL's
+> Start the runner again, with the same command as before, and read EUR/USD's
 > cell once more: its last values are back.
 > {: .step}
 
 ```sh
-$ flz state get prices/spot_big_trade/AAPL
+$ flz state get prices/spot_big_trade/EUR/USD
 ```
 
 ```output
@@ -237,7 +237,7 @@ The next trade is compared with what the cell remembers, not with an empty
 list:
 
 ```sh
-$ flz operator send prices --namespace trading --channel manual --text 'AAPL 104 40'
+$ flz operator send prices --namespace trading --channel manual --text 'EUR/USD 104 40'
 ```
 
 ```output
@@ -428,6 +428,15 @@ run out the runner's terminal shows the undo, in reverse:
 TODO: output from an end-to-end run.
 ```
 
+## The dead-letter queue
+
+TODO: not written yet. A message the desk keeps failing on is tried again, then
+set aside in the dead-letter queue instead of blocking the ones behind it. This
+section shows one being parked, for example a GBP/USD trade sent to a partition
+that does not own it, then finds it with `flz dlq list <partition>`, reads it
+with `flz dlq show`, and replays or drops it with `flz dlq replay` and
+`flz dlq drop`.
+
 ## What the controller keeps
 
 The runner is not the only thing that can stop. The controller reads back
@@ -441,6 +450,6 @@ sink twice. Making every result arrive exactly once is Part 3's
 
 ## Next
 
-The desk remembers, survives a crash and undoes a failed order.
-[`plugins.md`](plugins.md) connects it to the exchange, so the trades arrive on
-their own.
+That is the end of Part 2: the desk remembers what it needs, and survives a
+crash of its runner or its controller. [Part 3](../guides.md#part-3-advanced-topics)
+goes deeper.
