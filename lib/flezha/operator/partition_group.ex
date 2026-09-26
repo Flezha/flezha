@@ -25,7 +25,6 @@ defmodule Flezha.Operator.PartitionGroup do
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.SpecDecoder
-  alias Flezha.Runner.FleetManager
   alias Flezha.SDK.KeyGroup
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperatorManager
@@ -63,9 +62,8 @@ defmodule Flezha.Operator.PartitionGroup do
   member id fits, and always starts a fresh group: a base that names a live
   group or singleton is drawn again rather than converged or refused.
 
-  Returns `{:ok, %{group:, members:, warnings:}}`; `warnings` carries advice
-  the start proceeded despite (fewer runners than partitions). A converge
-  additionally carries `already_running:` — the member ids it left untouched.
+  Returns `{:ok, %{group:, members:}}`. A converge additionally carries
+  `already_running:` — the member ids it left untouched.
   """
   @spec start(String.t(), Flezha.Operator.Builder.t(), pos_integer(), binary()) ::
           {:ok, map()} | {:error, term()}
@@ -191,8 +189,7 @@ defmodule Flezha.Operator.PartitionGroup do
        %{
          group: operator.id,
          members: started,
-         already_running: in_partition_order(skipped ++ Enum.map(members, & &1.id)),
-         warnings: runner_count_warnings(namespace, partitions)
+         already_running: in_partition_order(skipped ++ Enum.map(members, & &1.id))
        }}
     end
   end
@@ -229,12 +226,7 @@ defmodule Flezha.Operator.PartitionGroup do
              plugins_fun,
              :refuse
            ) do
-      {:ok,
-       %{
-         group: operator.id,
-         members: started,
-         warnings: runner_count_warnings(namespace, length(ranges))
-       }}
+      {:ok, %{group: operator.id, members: started}}
     end
   end
 
@@ -312,21 +304,6 @@ defmodule Flezha.Operator.PartitionGroup do
     {:error,
      "partition #{index} of group #{group_id} failed to start (#{reason}); " <>
        "#{length(started)} already-started member(s) were stopped"}
-  end
-
-  defp runner_count_warnings(namespace, partitions) do
-    case length(FleetManager.active_runners(namespace)) do
-      runners when runners > 0 and runners < partitions ->
-        [
-          "#{partitions} partitions but only #{runners} active runner(s) in namespace " <>
-            "#{namespace}: members will share machines (about " <>
-            "#{Float.round(partitions / runners, 1)} per runner). More partitions than " <>
-            "runners buys no parallelism — start the fleet first, or use fewer partitions."
-        ]
-
-      _ ->
-        []
-    end
   end
 
   @doc """

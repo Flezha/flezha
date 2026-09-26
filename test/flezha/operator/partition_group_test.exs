@@ -70,20 +70,6 @@ defmodule FlezhaTest.Operator.PartitionGroupTest do
 
       assert :ok == Partition.coverage(ranges)
     end
-
-    test "warns loudly when there are fewer runners than partitions" do
-      stub(FleetManager, :active_runners, fn _ns -> ["runner-1"] end)
-
-      assert {:ok, %{warnings: [warning]}} =
-               PartitionGroup.start(@namespace, builder(), 3)
-
-      assert warning =~ "3 partitions but only 1 active runner"
-      assert length(started_members()) == 3
-    end
-
-    test "says nothing when the fleet is big enough" do
-      assert {:ok, %{warnings: []}} = PartitionGroup.start(@namespace, builder(), 3)
-    end
   end
 
   describe "refusals, all of which run before the first member starts" do

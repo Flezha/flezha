@@ -221,8 +221,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
          %{
            group: "ohlc",
            members: ["ohlc#p2"],
-           already_running: ["ohlc#p0", "ohlc#p1"],
-           warnings: []
+           already_running: ["ohlc#p0", "ohlc#p1"]
          }}
       end)
 
@@ -239,8 +238,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
          %{
            group: "ohlc",
            members: [],
-           already_running: ["ohlc#p0", "ohlc#p1", "ohlc#p2"],
-           warnings: []
+           already_running: ["ohlc#p0", "ohlc#p1", "ohlc#p2"]
          }}
       end)
 
@@ -252,7 +250,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
 
     test "a fresh group start keeps its message" do
       stub(PartitionGroup, :start, fn _ns, _op, 3, _json ->
-        {:ok, %{group: "ohlc", members: ["ohlc#p0", "ohlc#p1", "ohlc#p2"], warnings: []}}
+        {:ok, %{group: "ohlc", members: ["ohlc#p0", "ohlc#p1", "ohlc#p2"]}}
       end)
 
       out = capture_io(fn -> start("text", ~s({"partitions": 3}), id: "ohlc") end)
@@ -266,19 +264,15 @@ defmodule Flezha.Service.CliManagerPartitionTest do
         {:ok,
          %{
            group: "candles-k7m2qzxw4pd3fn2a",
-           members: Enum.map(0..2, &Partition.member_id("candles-k7m2qzxw4pd3fn2a", &1)),
-           warnings: ["w"]
+           members: Enum.map(0..2, &Partition.member_id("candles-k7m2qzxw4pd3fn2a", &1))
          }}
       end)
 
       out = capture_io(fn -> start("text", ~s({"partitions": 3}), []) end)
       assert out =~ "Operator candles-k7m2qzxw4pd3fn2a started with 3 partitions:"
 
-      {json, warnings} =
-        with_io(:stderr, fn -> capture_io(fn -> start("json", ~s({"partitions": 3}), []) end) end)
-
+      json = capture_io(fn -> start("json", ~s({"partitions": 3}), []) end)
       assert json == ~s({"id":"candles-k7m2qzxw4pd3fn2a","outcome":"started"}\n)
-      assert warnings == "WARNING: w\n"
     end
   end
 
@@ -296,14 +290,12 @@ defmodule Flezha.Service.CliManagerPartitionTest do
            cells_moved: 1,
            vacated: ["ohlc#p2"],
            sealed: [],
-           members: ["ohlc#p0", "ohlc#p1", "ohlc#p2"],
-           warnings: ["more partitions than runners"]
+           members: ["ohlc#p0", "ohlc#p1", "ohlc#p2"]
          }}
       end)
 
       out = capture_io(fn -> CliManager.operator_scale("default", "ohlc", "3", "{}") end)
 
-      assert out =~ "WARNING: more partitions than runners"
       assert out =~ "Operator ohlc rescaled 2 -> 3"
       assert out =~ "1 cells moved, 1 trees removed"
       assert out =~ "  ohlc#p0"
@@ -320,8 +312,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
            cells_moved: 2,
            vacated: [],
            sealed: ["orders#p0", "orders#p1"],
-           members: ["orders#p0", "orders#p1", "orders#p2"],
-           warnings: []
+           members: ["orders#p0", "orders#p1", "orders#p2"]
          }}
       end)
 

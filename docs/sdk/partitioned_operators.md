@@ -239,8 +239,8 @@ symbol — that stage 1's `key_by` must return, or the guard says so on the firs
 
 ## Sizing and limits
 
-- **More partitions than runners buys nothing.** The start proceeds but warns, naming both
-  counts and how many members will share machines.
+- **More partitions than runners buys nothing.** The extra members share machines with the
+  others and add no parallelism, so start the runners before the group.
 - **Placement spreads by count, not by anti-affinity.** Candidates are ranked by the ordinary HRW
   hash and narrowed by a fairness cap on operators already bound, so a group of N members across
   N runners normally lands one per runner; nothing pins a *particular* member to a *particular*

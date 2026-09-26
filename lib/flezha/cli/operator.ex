@@ -80,20 +80,15 @@ defmodule Flezha.Service.Cli.Operator do
     end
   end
 
-  # JSON output is the one object `start` answers, so a warning goes to the
-  # caller's stderr rather than ahead of it.
   defp start_partitioned(namespace, operator, partitions, plugins_json, format) do
     case PartitionGroup.start(namespace, operator, partitions, plugins_json) do
-      {:ok, %{group: group, members: members, warnings: warnings} = result} ->
+      {:ok, %{group: group, members: members} = result} ->
         outcome = if members == [], do: :already_running, else: :started
         answer = {:ok, %{id: group, outcome: outcome}}
 
         if format == :json do
-          notify = Context.notifier()
-          Enum.each(warnings, &notify.("WARNING: #{&1}"))
           render_start(answer, :json)
         else
-          Enum.each(warnings, &IO.puts("WARNING: #{&1}"))
           report_group_start(group, members, Map.get(result, :already_running, []))
           answer
         end
@@ -239,8 +234,6 @@ defmodule Flezha.Service.Cli.Operator do
 
     case PartitionGroup.rescale(Namespace.or_default(namespace), group_id, target, opts) do
       {:ok, result} ->
-        Enum.each(result.warnings, &IO.puts("WARNING: #{&1}"))
-
         IO.puts(
           "Operator #{group_id} rescaled #{result.from} -> #{result.to} " <>
             "(#{result.cells_moved} cells moved, #{length(result.vacated)} trees removed):"
