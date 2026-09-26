@@ -92,10 +92,9 @@ the tasklet, like its state. The annotation on `Trade` is explained with the
 operator below.
 
 **`@State` marks what a cell remembers.** The class sits inside the tasklet
-that uses it. From it the annotation processor generates `PriceWindowHandle`,
-the parameter `run` takes: `window.get()` reads the window, and
-`pushBackPrices` and `popFrontPrices` add a price at the end and drop one from
-the front.
+that uses it. `window.get()` reads the window, and `pushBackPrices` and
+`popFrontPrices` add a price at the end and drop one from the front. The box
+below lists what the annotations generate.
 
 An `Optional` return emits only when a value is present, which is how the first
 trade emits nothing.
@@ -202,8 +201,6 @@ first input: the symbol, and how many to buy.
 @Tasklet(id = "buy_above_average", emits = String.class)
 public final class BuyAboveAverage {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
-
     private static final double BUY_ABOVE_PCT = 2.0;
     private static final int LOT = 10;
 
@@ -213,14 +210,7 @@ public final class BuyAboveAverage {
             return;
         }
 
-        byte[] ticket;
-        try {
-            ticket = JSON.writeValueAsBytes(new OrderTicket(move.symbol(), LOT));
-        } catch (Exception unserializable) {
-            throw new TaskletException("could not encode the order: " + unserializable.getMessage());
-        }
-
-        ctx.spawnBounded("paper_order", ticket);            // one bounded operator per order
+        ctx.spawnBounded("paper_order", new OrderTicket(move.symbol(), LOT));   // one bounded operator per order
 
         ctx.emit(String.format(
                 "%s %.2f is %.2f%% above its average of %.2f, buying %d",
@@ -230,10 +220,10 @@ public final class BuyAboveAverage {
 ```
 
 `run` takes the context because it does two things per input: it starts a
-bounded operator and it emits. A `void` method declares no output, so `emits` names the
-type it emits. `spawnBounded` takes the order as JSON; `OrderTicket` is the
-order `paper_order` takes, declared with the bounded operator in
-[`building_a_workflow.md`](building_a_workflow.md).
+bounded operator and it emits. A `void` method declares no output, so `emits`
+names the type it emits. `spawnBounded` sends the order as JSON, and
+`paper_order` decodes it back into an `OrderTicket`, the order it takes,
+declared in [`building_a_workflow.md`](building_a_workflow.md).
 
 ### Rust
 

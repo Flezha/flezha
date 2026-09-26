@@ -30,8 +30,8 @@ let one = ctx.spawn_bounded_with(
 ```
 
 ```java
-SpawnHandle job = ctx.spawnBounded("triage", input.getBytes(UTF_8));
-SpawnHandle one = ctx.spawnBounded("triage", input.getBytes(UTF_8),
+SpawnHandle job = ctx.spawnBounded("triage", input);
+SpawnHandle one = ctx.spawnBounded("triage", input,
         SpawnOptions.id("triage@" + subject).ifRunning(IfRunning.DELIVER));
 ```
 
