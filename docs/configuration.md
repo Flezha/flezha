@@ -636,7 +636,7 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:convergence_health_enabled` | `true` | `lib/flezha/application.ex` |
 | `:convergence_tick_ms` | `5_000` | `lib/flezha/convergence/loop.ex`, `lib/flezha/healthz/server.ex` |
 | `:convergence_output_stall_grace_ms` | `60_000` | `lib/flezha/convergence/loop.ex` |
-| `:convergence_unmet_intent_grace_ms` | `120_000` | `lib/flezha/convergence/snapshot.ex`: how long a `failed` or `unbound` operator reads `recovering` on `/healthz` and in `flz operator list` before either shows its own word |
+| `:convergence_unmet_intent_grace_ms` | `120_000` | `lib/flezha/convergence/snapshot.ex`: how long a `failed` or `unbound` operator reads `recovering` on `/healthz`, in `flz operator list` and `info`, in `flz cluster status` and in the admin `operator_rows` verb before any of them shows its own word |
 | `:convergence_fabric_503_polls` | `3` | `lib/flezha/healthz/server.ex` |
 | `:convergence_cell_stall_ms` | `300_000` (the classifier's own default, `lib/flezha/convergence/stall_classifier.ex`) | `lib/flezha/convergence/loop/liveness.ex` — how long a handout may be out before the per-operator classifier calls that Cell stalled; a non-positive value leaves the default in place |
 | `:healthz_enabled` | `false` | `lib/flezha/application.ex` |

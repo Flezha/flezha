@@ -96,15 +96,16 @@ defmodule Flezha.Convergence.Snapshot do
   end
 
   @doc """
-  Per-operator health for `{namespace, operator_id}`: the state of the one
-  verdict record the Loop published for it. `:unknown` for an operator it has
-  not judged. One of `:healthy | :degraded | :failed | :unbound | :parked |
-  :suspended | :unknown`.
+  Per-operator health for `{namespace, operator_id}` as every user surface
+  shows it: the state of the one verdict record the Loop published for it,
+  worded by `Verdict.listed_state/2`, so a `:failed` or `:unbound` operator
+  reads `:recovering` inside the unmet-intent grace. `:unknown` for an operator
+  it has not judged. A caller that decides from the state reads `verdict/2`.
   """
-  @spec operator_health(String.t(), term()) :: Verdict.state()
+  @spec operator_health(String.t(), term()) :: Verdict.state() | :recovering
   def operator_health(namespace, operator_id) do
     case verdict(namespace, operator_id) do
-      %Verdict{state: state} -> state
+      %Verdict{state: state} -> Verdict.listed_state(state, unmet_intent())
       _ -> :unknown
     end
   end

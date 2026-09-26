@@ -9,7 +9,9 @@ read `failed` in `flz operator list` for a few seconds, though the takeover succ
 `failed` or `unbound` operator now reads `recovering` there, in the table and in the JSON,
 for as long as `/healthz` calls the same moment `recovering`
 (`FLEZHA_CONVERGENCE_UNMET_INTENT_GRACE_MS`), and its own word after that. The HEALTH column
-is two characters wider to fit it.
+is two characters wider to fit it. `flz operator info` (each operator and each partition
+member), the health counts of `flz cluster status` and the admin `operator_rows` verb follow
+the same rule, so an application reading operator health can now see `recovering`.
 
 ### Changed (BREAKING): Operative is Operator; the kinds are unbounded and bounded
 

@@ -20,7 +20,9 @@ defmodule Flezha.Convergence.Verdict do
     * `:unknown` — the next tick; an uncertain probe escalates nothing
 
   `rank/1` is the one order every listing sorts by (`healthy < unknown <
-  suspended < degraded < unbound < failed < parked`), and `fold/2` is the one
+  suspended < degraded < recovering < unbound < failed < parked`, where
+  `recovering` is the word `listed_state/2` shows for an `:unbound` or
+  `:failed` record inside its grace), and `fold/2` is the one
   table `/healthz` folds records into an endpoint word — so no surface keeps a
   second vocabulary or a second rank.
   """
@@ -31,7 +33,18 @@ defmodule Flezha.Convergence.Verdict do
   # The one order. `:parked` is worst because it is the only state whose remedy
   # nobody in the system owns, and `:unknown` sits just above `:healthy`
   # because an uncertain probe must never outrank a fault somebody read.
-  @rank %{healthy: 0, unknown: 1, suspended: 2, degraded: 3, unbound: 4, failed: 5, parked: 6}
+  # `:recovering` ranks where the states it stands for do, below a record
+  # already past its grace.
+  @rank %{
+    healthy: 0,
+    unknown: 1,
+    suspended: 2,
+    degraded: 3,
+    recovering: 4,
+    unbound: 5,
+    failed: 6,
+    parked: 7
+  }
 
   # The operator states the loop is (re)binding: `recovering` inside the
   # unmet-intent grace on every surface, their own word past it.
@@ -99,7 +112,7 @@ defmodule Flezha.Convergence.Verdict do
   def reachable(kind), do: Map.fetch!(@reachable, kind)
 
   @doc "The one order: worse states rank higher."
-  @spec rank(state()) :: non_neg_integer()
+  @spec rank(state() | :recovering) :: non_neg_integer()
   def rank(state), do: Map.fetch!(@rank, state)
 
   @doc "The transition event every state change executes."
@@ -236,7 +249,8 @@ defmodule Flezha.Convergence.Verdict do
   def http_status(_status), do: 200
 
   @doc """
-  The word a listing shows for an operator in `state`: `:recovering` while an
+  The word every user surface shows for an operator in `state` (through
+  `Snapshot.operator_health/2`): `:recovering` while an
   `:unbound` or `:failed` operator is inside the unmet-intent grace, the window
   `fold/2` also reports as `recovering`, and the state itself otherwise. The
   record keeps its state; only the rendered word changes.

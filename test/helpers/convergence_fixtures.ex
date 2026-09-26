@@ -9,7 +9,8 @@ defmodule FlezhaTest.Helper.ConvergenceFixtures do
   the judge would never mint.
   """
 
-  alias Flezha.Convergence.{Diff, Intent, Probe, Verdict}
+  alias Flezha.Convergence.{Diff, Intent, Probe, Snapshot, Verdict}
+  alias Flezha.Service.HubManager
 
   @doc """
   A verdict-record map from `{subject, state}` or `{subject, state, opts}`
@@ -28,6 +29,26 @@ defmodule FlezhaTest.Helper.ConvergenceFixtures do
 
       {subject, Verdict.new(subject, state, Keyword.put_new(opts, :now, 0))}
     end)
+  end
+
+  @doc """
+  Publish the Loop's verdict for each of `rows` (their `health` is the record
+  state) beside its unmet-intent clock, and stub `HubManager.operator_rows/1` to
+  answer `rows` with each health read back through `Snapshot.operator_health/2`,
+  as the registry rows read it. The calling test must `use Mimic`.
+  """
+  @spec stub_registry_rows(String.t(), [map()], non_neg_integer() | nil) :: :ok
+  def stub_registry_rows(namespace, rows, unmet_intent_ms) do
+    Snapshot.publish(%{
+      operator_health: verdicts(for r <- rows, do: {{:operator, {namespace, r.id}}, r.health}),
+      unmet_intent_ms: unmet_intent_ms
+    })
+
+    Mimic.stub(HubManager, :operator_rows, fn ns ->
+      Enum.map(rows, &%{&1 | health: Snapshot.operator_health(ns, &1.id)})
+    end)
+
+    :ok
   end
 
   @doc """

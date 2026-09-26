@@ -114,10 +114,10 @@ Partition group: ohlc (3/3)
   coverage: all 256 key groups owned exactly once
 ```
 
-One `list` row per group, showing the **worst** member's health. A `failed` or `unbound` row,
-a group whose members are moving off a dead runner among them, reads `recovering` until the
-unmet-intent grace `/healthz` uses runs out (`FLEZHA_CONVERGENCE_UNMET_INTENT_GRACE_MS`), and
-its own word after that. Coverage is recomputed from
+One `list` row per group, showing the **worst** member's health. A `failed` or `unbound` `list`
+row or `info` member line reads `recovering` until the unmet-intent grace `/healthz` uses runs
+out (`FLEZHA_CONVERGENCE_UNMET_INTENT_GRACE_MS`), and its own word after that. A group moving
+off a dead runner is the usual case. Coverage is recomputed from
 the member rows on every read; a missing member or an overlapping range is rendered as a
 warning naming the exact gap or the contested key group. Membership is a metadata match over
 the registry rows (`ProcessHub.metadata_query/2` on `:partition`), never a registry decode.

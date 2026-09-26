@@ -170,8 +170,9 @@ defmodule Flezha.Service.HubManager.Rows do
   runner, the declared factory (from the durable cspec start-args) and live node
   from the registry dump and the live health classified
   by the Convergence Loop (`Snapshot.operator_health/2`), so the CLI sees exactly
-  what the loop sees. A registry row the loop has not yet observed reports
-  `:unknown` until the next tick covers it.
+  what the loop sees, worded as every surface shows it: `:recovering` for a
+  rebinding operator inside the unmet-intent grace. A registry row the loop has
+  not yet observed reports `:unknown` until the next tick covers it.
   """
   @spec operator_rows(String.t()) :: [
           %{id: term(), health: atom(), runner: term(), factory: term(), node: term()}

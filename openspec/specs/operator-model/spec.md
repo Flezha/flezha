@@ -128,7 +128,7 @@ Each controller node SHALL advertise into a cluster-replicated directory which n
 
 ### Requirement: `flz operator info` SHALL report the operator's phase and the loop's health verdict
 
-`flz operator info` SHALL report each live operator's lifecycle phase as one of `running`, `suspended`, `unbound` or `parked`, and its health as the state of the one verdict record the convergence loop publishes for it, both read from that record — the phase is the record's own fact, read from the operator's state, and the health is the record's state, one of `healthy`, `degraded`, `failed`, `unbound`, `parked`, `suspended` or `unknown`. It SHALL report `parked` — never `running` — for an operator the Controller has parked, whatever the park reason, and `unbound` — never `running` and never `parked` — for an operator that holds no runner binding at all. Phase SHALL be derived in the same order as health: suspended first, then unbound, then parked, so the two words cannot describe one operator differently. `flz operator list`, `flz cluster status`, the published `Flezha.Service.Operator.operator_rows/2` and `/healthz` SHALL read the same record, so no two user surfaces describe one operator in contradictory words. `info` SHALL NOT derive a phase or a health verdict of its own, and no surface SHALL keep a second vocabulary or a second rank order: the worst row of a listing is chosen by the record module's one rank. Both the text and the JSON rendering SHALL carry both fields. A finished bounded operator, surfaced from its retained completion record rather than from a live Overwatch, SHALL keep reporting phase `finished`.
+`flz operator info` SHALL report each live operator's lifecycle phase as one of `running`, `suspended`, `unbound` or `parked`, and its health as the state of the one verdict record the convergence loop publishes for it, both read from that record — the phase is the record's own fact, read from the operator's state, and the health is the record's state, one of `healthy`, `degraded`, `failed`, `unbound`, `parked`, `suspended` or `unknown`, except that a `failed` or `unbound` record SHALL read `recovering` while the convergence loop is inside the unmet-intent grace `/healthz` weighs it against, and its own word past it. It SHALL report `parked` — never `running` — for an operator the Controller has parked, whatever the park reason, and `unbound` — never `running` and never `parked` — for an operator that holds no runner binding at all. Phase SHALL be derived in the same order as health: suspended first, then unbound, then parked, so the two words cannot describe one operator differently. `flz operator list`, `flz cluster status`, the published `Flezha.Service.Operator.operator_rows/2` and `/healthz` SHALL read the same record, and every one of them except `/healthz`, which folds the records, SHALL show it through the same `recovering` rule, so no two user surfaces describe one operator in contradictory words. `info` SHALL NOT derive a phase or a health verdict of its own, and no surface SHALL keep a second vocabulary or a second rank order: the worst row of a listing is chosen by the record module's one rank. Both the text and the JSON rendering SHALL carry both fields. A finished bounded operator, surfaced from its retained completion record rather than from a live Overwatch, SHALL keep reporting phase `finished`.
 
 #### Scenario: A parked operator is not reported as running
 
@@ -137,7 +137,7 @@ Each controller node SHALL advertise into a cluster-replicated directory which n
 
 #### Scenario: An operator holding no binding is reported unbound, not parked
 
-- **WHEN** the user runs `flz operator info` for a declared operator whose bind found no runner, so it is held alive with no binding
+- **WHEN** the user runs `flz operator info` for a declared operator whose bind found no runner, so it is held alive with no binding, past the unmet-intent grace
 - **THEN** the text and the JSON rendering SHALL both report its phase as `unbound` and its health as `unbound`, and neither SHALL report `running` or `parked`
 
 #### Scenario: A park that named a runner is still parked
@@ -162,8 +162,13 @@ Each controller node SHALL advertise into a cluster-replicated directory which n
 
 #### Scenario: Every surface reports one word for one operator
 
-- **WHEN** an operator is parked, or its runner is dead, or it is declared and unbound
-- **THEN** `flz operator info`, `flz operator list`, `operator_rows/2` and the health verdict event on the observability bus SHALL all report the same state — `parked`, `failed` or `unbound` — and `/healthz` SHALL fold that state to `degraded` or `recovering` and never to `healthy`
+- **WHEN** an operator is parked, or its runner is dead, or it is declared and unbound, and the unmet-intent grace has run out
+- **THEN** `flz operator info`, `flz operator list`, `flz cluster status`, `operator_rows/2` and the health verdict event on the observability bus SHALL all report the same state — `parked`, `failed` or `unbound` — and `/healthz` SHALL fold that state to `degraded` or `recovering` and never to `healthy`
+
+#### Scenario: An operator moving off a dead runner reads recovering everywhere inside the grace
+
+- **WHEN** a runner dies and the convergence loop is rebinding its operators, a partition group's members among them, inside the unmet-intent grace
+- **THEN** `flz operator info` (each operator and each group member line), `flz operator list`, the health counts of `flz cluster status` and `operator_rows/2` SHALL all report `recovering`, in text and in JSON, while the verdict record and its event keep the state `failed` or `unbound` and `/healthz` reports `200 recovering`
 
 ### Requirement: A park is reported, not only logged
 

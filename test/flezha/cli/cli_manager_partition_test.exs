@@ -15,6 +15,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
   import Mimic
   import FlezhaTest.Helper.MimicGlobal
 
+  alias Flezha.Convergence.Snapshot
   alias Flezha.Observability.RingBufferSink
   alias Flezha.Observability.TestSinks
   alias Flezha.Operator.PartitionGroup
@@ -22,6 +23,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
   alias Flezha.Service.CliManager
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperatorManager
+  alias FlezhaTest.Helper.ConvergenceFixtures
 
   setup :set_mimic_global_until_exit
 
@@ -73,6 +75,21 @@ defmodule Flezha.Service.CliManagerPartitionTest do
       assert [%{health: :failed}] = CliManager.group_partition_rows(rows)
     end
 
+    test "ranks a recovering member between degraded and parked" do
+      group = fn healths ->
+        [%{health: health}] =
+          healths
+          |> Enum.with_index(fn h, i -> member_row("ohlc", i, length(healths), health: h) end)
+          |> CliManager.group_partition_rows()
+
+        health
+      end
+
+      assert group.([:healthy, :recovering]) == :recovering
+      assert group.([:degraded, :recovering]) == :recovering
+      assert group.([:recovering, :parked]) == :parked
+    end
+
     test "leaves ungrouped operators untouched" do
       rows = [plain_row("plain"), member_row("ohlc", 0, 2), member_row("ohlc", 1, 2)]
 
@@ -122,6 +139,71 @@ defmodule Flezha.Service.CliManagerPartitionTest do
 
       assert out =~ "WARNING: key-group coverage is broken"
       assert out =~ "overlap: key group 128 is claimed by ohlc#p0, ohlc#p1"
+    end
+  end
+
+  describe "health while a group moves off a dead runner" do
+    setup do
+      prev = Snapshot.current()
+      on_exit(fn -> Snapshot.publish(prev) end)
+
+      rows =
+        for(index <- 0..2, do: member_row("prices", index, 3, health: :failed)) ++
+          [plain_row("quotes")]
+
+      stub(OperatorManager, :get_operator_ids, fn _ns -> {:ok, Enum.map(rows, & &1.id)} end)
+
+      stub(OperatorManager, :get_overwatch_state, fn ns, _id ->
+        {:ok, %{runner_id: "r2", namespace: ns, extensions: %{}, default_input_type: "bytes"}}
+      end)
+
+      stub(HubManager, :get_hub_nodes, fn _ns, true -> [node()] end)
+      stub(HubManager, :recovery_state, fn _hub_id -> {:ok, :normal} end)
+      %{rows: rows}
+    end
+
+    test "info reads recovering for the group's members and each operator", %{rows: rows} do
+      ConvergenceFixtures.stub_registry_rows("trading", rows, 2_000)
+
+      text = capture_io(fn -> CliManager.operator_info("trading", "text") end)
+      assert text =~ ~r/p0  prices#p0 .*runner-0  recovering\n/
+      assert length(Regex.scan(~r/Health: recovering\n/, text)) == 3
+      assert text =~ "Health: healthy"
+      refute text =~ "failed"
+
+      json = Jason.decode!(capture_io(fn -> CliManager.operator_info("trading", "json") end))
+      [%{"members" => members}] = json["groups"]
+      assert Enum.map(members, & &1["health"]) == List.duplicate("recovering", 3)
+
+      assert Map.new(json["operators"], &{&1["id"], &1["health"]}) ==
+               %{
+                 "prices#p0" => "recovering",
+                 "prices#p1" => "recovering",
+                 "prices#p2" => "recovering",
+                 "quotes" => "healthy"
+               }
+    end
+
+    test "cluster status counts recovering inside the grace", %{rows: rows} do
+      ConvergenceFixtures.stub_registry_rows("trading", rows, 2_000)
+
+      json = Jason.decode!(capture_io(fn -> CliManager.cluster_status("trading", "json") end))
+      assert json["operator_health"] == %{"recovering" => 3, "healthy" => 1}
+
+      text = capture_io(fn -> CliManager.cluster_status("trading", "text") end)
+      assert text =~ "recovering=3"
+      refute text =~ "failed"
+    end
+
+    test "cluster status and info read failed past the grace", %{rows: rows} do
+      ConvergenceFixtures.stub_registry_rows("trading", rows, 500_000)
+
+      json = Jason.decode!(capture_io(fn -> CliManager.cluster_status("trading", "json") end))
+      assert json["operator_health"] == %{"failed" => 3, "healthy" => 1}
+
+      text = capture_io(fn -> CliManager.operator_info("trading", "text") end)
+      assert length(Regex.scan(~r/Health: failed\n/, text)) == 3
+      refute text =~ "recovering"
     end
   end
 

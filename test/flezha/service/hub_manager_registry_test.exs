@@ -132,6 +132,25 @@ defmodule Flezha.Service.HubManagerRegistryTest do
       assert row.health == :healthy
     end
 
+    test "a failed operator reads recovering inside the unmet-intent grace, failed past it" do
+      inject_operator(@health_ns, "operator_moving", [{node(), self()}])
+
+      health_after = fn unmet_intent_ms ->
+        Snapshot.publish(%{
+          operator_health:
+            FlezhaTest.Helper.ConvergenceFixtures.verdicts([
+              {{:operator, {@health_ns, "operator_moving"}}, :failed}
+            ]),
+          unmet_intent_ms: unmet_intent_ms
+        })
+
+        Enum.find(HubManager.operator_rows(@health_ns), &(&1.id == "operator_moving")).health
+      end
+
+      assert health_after.(2_000) == :recovering
+      assert health_after.(500_000) == :failed
+    end
+
     test "an operator the loop has not yet observed reports :unknown, not a crash" do
       inject_operator(@health_ns, "operator_unseen", [{node(), self()}])
       Snapshot.publish(%{operator_health: %{}})
