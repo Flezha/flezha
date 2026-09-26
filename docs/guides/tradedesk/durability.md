@@ -25,7 +25,7 @@ needs a memory of its own.
 What a tasklet remembers is its state, and state belongs to a cell.
 [`building_an_etl_stream.md`](building_an_etl_stream.md#several-tasklets-in-one-operator) gave
 every symbol a cell of its own with `keyBy`, so every symbol now keeps its own
-last ten values: AAPL's never mix with MSFT's.
+last ten values: EUR/USD's never mix with USD/JPY's.
 
 Every change to that state is recorded the moment it is made, and the
 controller keeps the record, in the namespace's own folder under
@@ -262,7 +262,7 @@ TODO: not written yet.
 > {: .step}
 
 ```sh
-$ flz operator start paper_order --id order_1 --namespace trading --text '{"symbol": "AAPL", "quantity": 10}' --channel order
+$ flz operator start paper_order --id order_1 --namespace trading --text '{"symbol": "EUR/USD", "quantity": 10}' --channel order
 ```
 
 ```sh
@@ -304,49 +304,24 @@ not what it emitted. So a step that can be undone keeps its id in its state.
 
 ```java
 // ReserveFunds.java: step one. Puts the money aside, and releases it on an undo.
-public final class ReserveFunds
-        implements Tasklet<OrderTicket, ReserveFunds.Reservation, ReserveFunds.Reserved, ReserveFunds.Taken, WallClock, Void> {
-
-    public static final class Reservation {                  // what this step remembers
-        public String id = "";
-    }
-
-    public record Taken(String id) implements Change {}      // the one change it records
+@Tasklet(id = "reserve_funds", emits = ReserveFunds.Reserved.class)
+public final class ReserveFunds {
 
     public record Reserved(OrderTicket order, String reservationId) {}
 
-    @Override
-    public String name() {
-        return "reserve_funds";
+    @State
+    public static class Reservation {                        // what this step remembers
+        public String id = "";
     }
 
-    @Override
-    public List<Class<?>> kryoTypes() {
-        return List.of(Reservation.class, Taken.class);
+    public void run(OrderTicket order, ReservationHandle reservation, TaskletCtx ctx) throws TaskletException {
+        String id = "res-" + ctx.stableId();
+        reservation.setId(id);
+        ctx.emit(new Reserved(order, id));
     }
 
-    @Override
-    public Reservation initState(Optional<String> cellKey, Optional<RestoreInitPayload> initPayload) {
-        return new Reservation();
-    }
-
-    @Override
-    public void applyChange(Reservation state, Taken change) {
-        state.id = change.id();
-    }
-
-    @Override
-    public void run(OrderTicket order, StateHandle<Reservation, Taken> state, TaskletCtx ctx)
-            throws TaskletException {
-        String reservationId = "res-" + ctx.stableId();
-        state.apply(new Taken(reservationId));
-        ctx.emit(new Reserved(order, reservationId));
-    }
-
-    @Override
-    public void compensate(List<Reserved> completedOutput, StateHandle<Reservation, Taken> state, TaskletCtx ctx)
-            throws TaskletException {
-        System.out.println("[undo] released " + state.get().id);
+    public void compensate(List<Reserved> completedOutput, ReservationHandle reservation) {
+        System.out.println("[undo] released " + reservation.get().id);
     }
 }
 ```
@@ -354,11 +329,9 @@ public final class ReserveFunds
 `PlaceOrder` has the same shape, keeping the order's id and cancelling it in
 its `compensate`.
 
-**A step with an undo implements `Tasklet` itself.** `@Tasklet` cannot declare
-`compensate`, so this class writes out what `@Tasklet` generates for the other
-steps. The six type arguments are the input, the state, the output, the change
-it records, the clock and the configuration. `ctx.stableId()` gives the same id
-when a step runs again, so a retry does not put a second sum aside.
+**`compensate` sits beside `run`,** and takes what the step emitted and the
+same state parameter `run` takes. `ctx.stableId()` gives the same id when a
+step runs again, so a retry does not put a second sum aside.
 
 ### Rust
 
@@ -391,7 +364,7 @@ TODO: not written yet.
 > {: .step}
 
 ```sh
-$ flz operator start paper_order --id order_2 --namespace trading --text '{"symbol": "AAPL", "quantity": 500}' --channel order
+$ flz operator start paper_order --id order_2 --namespace trading --text '{"symbol": "EUR/USD", "quantity": 500}' --channel order
 ```
 
 After ten seconds `confirm_fill` refuses it, is tried again, and once its tries

@@ -126,6 +126,7 @@ mutable-state parameter: `&mut S` in Rust; in Java either the `@State`-generated
 | unspecified                                         | `type Config = ()` / `Void`                         |
 | `id = "…"` else the declaration name                | `name()` — Rust and Python: the function name; Java, Ruby and PHP: the class name in snake_case |
 | `capacity = N` / `capacity = N`                     | `mailbox_capacity()` / `mailboxCapacity()` override |
+| Java: a public `void compensate(List<O>, …)` beside `run` | `compensate()` override: the undo, handed the outputs, the state parameter `run` takes, and a trailing `TaskletCtx` when written |
 | `on_full = …` / `onFull = "…"` (short form only)    | overflow policy of the generated entry channel (§5): `drop_nothing`, `drop_newest`, `drop_oldest` |
 | `input = "…"` (short form only)                     | name of the generated entry channel (§5); absent, that channel is named `input` |
 

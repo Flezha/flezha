@@ -74,19 +74,9 @@ made from it.
 Starting it is a separate step, and it is the one that creates a running
 instance.
 
-> From a third terminal, check that the controller and your runner from
-> [`runner_deployment.md`](runner_deployment.md) are both still running: one
-> answers `boot await: ready`, the other lists your runner. If either is
-> missing, start it again the way its guide showed.
-> {: .step}
-
-```sh
-$ flz boot await
-$ flz runner list
-```
-
-> Start an operator from the `echo` factory your runner registered, and name it
-> `my_echo`. Your runner has to be connected.
+> From a third terminal, start an operator from the `echo` factory your runner
+> registered, and name it `my_echo`. The controller and your runner from
+> [`runner_deployment.md`](runner_deployment.md) have to be running.
 > {: .step}
 
 ```sh

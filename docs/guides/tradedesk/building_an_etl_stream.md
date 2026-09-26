@@ -122,9 +122,9 @@ trade emits nothing.
 > The annotations are a short form, and you do not have to use them. A class can
 > implement `Tasklet` itself and write out what they generate: its six type
 > arguments, its state, the changes it records and how each one applies. That
-> long form is also how a tasklet declares what the short form cannot, such as a
-> `compensate` that undoes a workflow step, which
-> [`building_a_workflow.md`](building_a_workflow.md) uses, or an `onTimer`.
+> full form is also how a tasklet declares what the short form cannot, such as
+> an `onTimer`. [`full_form_tasklets.md`](../advanced/full_form_tasklets.md) in
+> Part 3 covers it.
 
 ### Rust
 

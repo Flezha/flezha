@@ -152,6 +152,7 @@ defmodule Flezha.MixProject do
         "docs/guides/tradedesk/partitioning.md",
         "docs/guides/advanced/clustering.md",
         "docs/guides/advanced/custom_plugins.md",
+        "docs/guides/advanced/full_form_tasklets.md",
         "docs/guides/advanced/effectively_once.md",
         "docs/guides/advanced/erlang_vm_tuning.md",
         "docs/guides/advanced/elixir_applications.md",
@@ -196,6 +197,7 @@ defmodule Flezha.MixProject do
         "Guide Part 3: Advanced topics": [
           "docs/guides/advanced/clustering.md",
           "docs/guides/advanced/custom_plugins.md",
+          "docs/guides/advanced/full_form_tasklets.md",
           "docs/guides/advanced/effectively_once.md",
           "docs/guides/advanced/erlang_vm_tuning.md",
           "docs/guides/advanced/elixir_applications.md",

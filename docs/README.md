@@ -47,6 +47,7 @@ answer "what are the options"; a guide answers "what do I type".
 | [`partitioning.md`](guides/tradedesk/partitioning.md) | Part 2. Partitions, keys and scaling |
 | [`clustering.md`](guides/advanced/clustering.md) | Part 3. Setting up the example in Docker, and more than one machine |
 | [`custom_plugins.md`](guides/advanced/custom_plugins.md) | Part 3. Writing and installing your own plugin |
+| [`full_form_tasklets.md`](guides/advanced/full_form_tasklets.md) | Part 3. A tasklet without the annotations |
 | [`effectively_once.md`](guides/advanced/effectively_once.md) | Part 3. The delivery guarantee and its cost |
 | [`erlang_vm_tuning.md`](guides/advanced/erlang_vm_tuning.md) | Part 3. Settings for a controller under load |
 | [`elixir_applications.md`](guides/advanced/elixir_applications.md) | Part 3. Flezha inside an Elixir application of your own |
