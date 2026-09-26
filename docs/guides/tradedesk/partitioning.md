@@ -215,7 +215,7 @@ $ flz operator send 'prices#p0' --namespace trading --channel trades --text '{"d
 Delivered to 'prices#p0'.
 Delivered to 'prices#p0'.
 Delivered to 'prices#p0'.
-signals	EUR/USD 1.11 is 2.29% above its average of 1.09, buying 10
+signals	EUR/USD 1.1100 is 2.29% above its average of 1.0852, buying 10
 ```
 
 A message carries only the fields the desk reads; the exchange's other fields

@@ -222,7 +222,7 @@ public final class BuyAboveAverage {
         ctx.spawnBounded("paper_order", new OrderTicket(move.symbol(), LOT));   // one bounded operator per order
 
         ctx.emit(String.format(
-                "%s %.2f is %.2f%% above its average of %.2f, buying %d",
+                "%s %.4f is %.2f%% above its average of %.4f, buying %d",
                 move.symbol(), move.price(), percent, move.average(), LOT));
     }
 }
