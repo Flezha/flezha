@@ -40,7 +40,8 @@ Two kinds of process make that work:
 
 ## Watch one run
 
-Bring up a controller and a runner that is already offering an operator, and
+Bring up a controller and a runner that has already registered the `echo`
+factory, and
 send a message through it:
 
 ```sh

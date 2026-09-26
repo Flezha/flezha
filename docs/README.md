@@ -34,14 +34,14 @@ answer "what are the options"; a guide answers "what do I type".
 | [`what_is_flezha.md`](guides/what_is_flezha.md) | **Start here.** What Flezha is, and one echo running in Docker |
 | [`guides.md`](guides/guides.md) | The three guides, the topics each one covers, and the order to read them in |
 | [`controller_deployment.md`](guides/controller_deployment.md) | Part 1. Running one controller: the Docker image, the release binaries, or your own Elixir application |
-| [`runner_deployment.md`](guides/runner_deployment.md) | Part 1. Reaching the controller, and your own runner offering an operator class |
+| [`runner_deployment.md`](guides/runner_deployment.md) | Part 1. Reaching the controller, and your own runner registering an operator factory |
 | [`running_operators.md`](guides/running_operators.md) | Part 1. Starting an operator, watching it, stopping it, and what survives a restart |
 | [`sources_and_sinks.md`](guides/sources_and_sinks.md) | Part 1. Attaching a real input and a real output with the file plugin, and how a plugin is enabled and disabled |
 | [`cli.md`](guides/cli.md) | Reference. `flz` itself: reaching a controller, output formats, identity for a gated verb |
 | [`authorization.md`](guides/tradedesk/authorization.md) | Part 2. Claiming the admin, tokens, the runner's key and roles |
 | [`namespaces.md`](guides/tradedesk/namespaces.md) | Part 2. A namespace of your own, joining it from a runner, and quotas |
-| [`bounded_basics.md`](guides/tradedesk/bounded_basics.md) | Part 2. Writing the bounded operator: steps, retries and compensation |
-| [`unbounded_basics.md`](guides/tradedesk/unbounded_basics.md) | Part 2. Writing the unbounded operator: chained tasklets, transforms, a merge and state |
+| [`building_an_etl_stream.md`](guides/tradedesk/building_an_etl_stream.md) | Part 2. An ETL stream, built as an unbounded operator: chained tasklets, transforms and state |
+| [`building_a_workflow.md`](guides/tradedesk/building_a_workflow.md) | Part 2. A workflow, built as a bounded operator: steps, retries and compensation |
 | [`durability.md`](guides/tradedesk/durability.md) | Part 2. What survives a crash |
 | [`plugins.md`](guides/tradedesk/plugins.md) | Part 2. The plugin system and the plugins that ship |
 | [`partitioning.md`](guides/tradedesk/partitioning.md) | Part 2. Partitions, keys and scaling |

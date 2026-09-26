@@ -200,7 +200,7 @@ Choose it once.
 
 The echo's tasklet keeps no state and takes no configuration, which is as
 simple as a tasklet gets. State, keys and cells are
-[`unbounded_basics.md`](tradedesk/unbounded_basics.md).
+[`building_an_etl_stream.md`](tradedesk/building_an_etl_stream.md).
 
 ### The operator
 
@@ -218,8 +218,8 @@ The echo has one tasklet, but an operator can chain as many as it needs, the
 output of one feeding the next, and split or join the path between them. An
 unbounded operator does that for as long as it runs, and a bounded one runs its tasklets as
 the steps of a job that ends.
-[`unbounded_basics.md`](tradedesk/unbounded_basics.md#several-tasklets-in-one-operator) and
-[`bounded_basics.md`](tradedesk/bounded_basics.md#several-tasklets-step-by-step) show
+[`building_an_etl_stream.md`](tradedesk/building_an_etl_stream.md#several-tasklets-in-one-operator) and
+[`building_a_workflow.md`](tradedesk/building_a_workflow.md#several-tasklets-step-by-step) show
 both.
 
 The operator is the unit everything else works in: what the controller starts,
@@ -236,14 +236,14 @@ refused there rather than failing halfway through a run.
 
 ### The runner
 
-**A process you run.** It connects to the controller, says which operators it
-can serve, and waits.
+**A process you run.** It connects to the controller, says which operator factories
+it can serve, and waits.
 
 It decides nothing: it offers capacity and does what the controller asks.
-**Declaring an operator on a runner does not start one.** It says this process
-is able to serve it, and starting one is the next guide. One runner can offer
-many operators, and many runners can offer the same one, which is how a
-deployment grows.
+**Registering an operator factory on a runner does not start an operator.** It
+says this process can run operators made from that factory, and starting one is
+the next guide. One runner can register many factories, and many runners can
+register the same one, which is how a deployment grows.
 
 It takes a namespace, the tenant it belongs to. These guides use `default`
 throughout; [`namespaces.md`](tradedesk/namespaces.md) is where it becomes a decision.
@@ -252,9 +252,9 @@ If the connection drops, the runner reconnects on its own.
 
 ### How the three meet
 
-None of them names the others. You start a runner, the controller learns the
-operator can be served, you ask for one by name, and the controller binds it to
-a runner that offered it. Messages then arrive on the channel the operator
+None of them names the others. You start a runner, the controller learns which
+factories it registered, you ask for an operator by its factory id, and the
+controller binds it to a runner that registered that factory. Messages then arrive on the channel the operator
 declared and travel its graph.
 
 ## The code
@@ -334,7 +334,7 @@ terminated on the plugin layer. `sink(name)` does both jobs, so naming the
 channel again with `named(...)` is refused at registration rather than resolved.
 
 ```java
-// Main.java: the runner. Connects, offers the operator, and serves.
+// Main.java: the runner. Connects, registers the echo factory, and serves.
 public static void main(String[] args) throws Exception {
     FlezhaRunner runner = Flezha.createRunner(args.length > 0 ? args[0] : "default")
             .registerFactory(EchoOperator.class)
@@ -407,7 +407,7 @@ and `sink()` would leave it the tasklet's name. A graph whose types do not
 line up is refused when the runner declares it.
 
 ```rust
-// src/main.rs: the runner. Connects, offers the operator, and serves.
+// src/main.rs: the runner. Connects, registers the echo factory, and serves.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let namespace = std::env::args().nth(1).unwrap_or_else(|| "default".to_string());
 
@@ -479,7 +479,7 @@ value other than a string or bytes would leave as JSON. The module exports what
 `defineUnbounded` returned, and that export is what the runner finds.
 
 ```javascript
-// runner.mjs: the runner. Connects, offers the operator, and serves.
+// runner.mjs: the runner. Connects, registers the echo factory, and serves.
 import { createRunner } from '@flezha/sdk';
 
 const runner = createRunner(process.argv[2] ?? 'default');
@@ -540,7 +540,7 @@ codec, so the tasklet's string goes back out as its UTF-8 bytes, and any value
 other than a string or bytes would go out as JSON.
 
 ```python
-# runner.py: the runner. Connects, offers the operator, and serves.
+# runner.py: the runner. Connects, registers the echo factory, and serves.
 def main() -> None:
     runner = flezha.create_runner(sys.argv[1] if len(sys.argv) > 1 else "default")
     runner.register_factory(echo_operator)
@@ -602,7 +602,7 @@ codec, so the tasklet's String goes back out as its bytes, and any other value
 would go out as JSON.
 
 ```ruby
-# runner.rb: the runner. Connects, offers the operator, and serves.
+# runner.rb: the runner. Connects, registers the echo factory, and serves.
 runner = Flezha.create_runner(ARGV[0] || "default").register_factory(EchoOperator)
 
 runner.boot
@@ -672,7 +672,7 @@ value would go out as JSON. The attribute carries the declaration and the method
 carries the graph.
 
 ```php
-// runner.php: the runner. Connects, offers the operator, and serves.
+// runner.php: the runner. Connects, registers the echo factory, and serves.
 require __DIR__ . '/vendor/autoload.php';
 
 $runner = Flezha::createRunner($argv[1] ?? 'default')
@@ -744,7 +744,7 @@ The graph is a pipe, and `use` imports the builder it is written with. A binary 
 decoder or encoder here.
 
 ```elixir
-# lib/echo/application.ex: the runner. Connects, offers the operator, and serves.
+# lib/echo/application.ex: the runner. Connects, registers the echo factory, and serves.
 defmodule Echo.Application do
   use Application
 
@@ -795,7 +795,7 @@ you run your other services: from a terminal, under systemd, in Docker or
 Kubernetes, or under any supervisor you already use.
 
 Once it is running, the runner connects to the controller and offers it the
-operators it declares. From then on the controller decides what runs on it.
+factories it registered. From then on the controller decides what runs on it.
 
 Three things matter when a supervisor runs it:
 

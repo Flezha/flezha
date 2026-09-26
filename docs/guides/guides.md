@@ -45,24 +45,25 @@ last one stops everything.
 | Guide | What you end up with |
 |---|---|
 | [`controller_deployment.md`](controller_deployment.md) | A controller running, four ways to choose from, and a check that it is up |
-| [`runner_deployment.md`](runner_deployment.md) | Your own runner connected to it, offering an operator class |
+| [`runner_deployment.md`](runner_deployment.md) | Your own runner connected to it, registering an operator factory |
 | [`running_operators.md`](running_operators.md) | An operator started on that runner, taking messages and answering them |
 | [`sources_and_sinks.md`](sources_and_sinks.md) | Data arriving from somewhere real, and results going somewhere real |
 | [`stop_everything.md`](stop_everything.md) | Everything above stopped, and what comes back when you start again |
 
 ## Part 2: Going further
 
-Authorization, namespaces, bounded and unbounded operators, durability, plugins and
-partitioning. The example is `tradedesk`, a toy trader: an unbounded operator turns trades
-into candles, and when a candle gives a signal a bounded operator places an order with
-paper money, so nothing reaches a real exchange.
+Authorization, namespaces, an ETL stream and a workflow, durability, plugins and
+partitioning. The example is `tradedesk`, a toy trader: an ETL stream, built as an
+unbounded operator, compares each trade's price with its symbol's recent average, and
+when a price is far enough above it, a workflow, built as a bounded operator, places an
+order with paper money, so nothing reaches a real exchange.
 
 | Guide | What you do |
 |---|---|
 | [`authorization.md`](tradedesk/authorization.md) | Keep authorization on, claim the admin, and issue the key tradedesk's runner connects with |
 | [`namespaces.md`](tradedesk/namespaces.md) | Give tradedesk a namespace of its own |
-| [`bounded_basics.md`](tradedesk/bounded_basics.md) | Write the paper-order bounded operator by hand: steps, retries and compensation, started by hand |
-| [`unbounded_basics.md`](tradedesk/unbounded_basics.md) | Write the unbounded operator by hand: chained tasklets, `map`, `filter`, `key_by`, a merge, and state per symbol |
+| [`building_an_etl_stream.md`](tradedesk/building_an_etl_stream.md) | Build the desk's ETL stream as an unbounded operator: chained tasklets, `flat_map`, `filter`, `key_by`, and state per symbol |
+| [`building_a_workflow.md`](tradedesk/building_a_workflow.md) | Build the paper-order workflow as a bounded operator: steps, retries and compensation, started by hand |
 | [`durability.md`](tradedesk/durability.md) | Kill the runner mid-order: the order continues from its step, is never placed twice, and candles keep coming |
 | [`plugins.md`](tradedesk/plugins.md) | Read the testnet's trades with the WebSocket plugin, and record filled orders with a file sink |
 | [`partitioning.md`](tradedesk/partitioning.md) | `--partitions`, `key_by`, how trades are routed, and `flz operator scale` |

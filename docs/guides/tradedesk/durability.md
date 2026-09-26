@@ -23,7 +23,7 @@ needs a memory of its own.
 ## State: what a cell remembers
 
 What a tasklet remembers is its state, and state belongs to a cell.
-[`unbounded_basics.md`](unbounded_basics.md#several-tasklets-in-one-operator) gave
+[`building_an_etl_stream.md`](building_an_etl_stream.md#several-tasklets-in-one-operator) gave
 every symbol a cell of its own with `keyBy`, so every symbol now keeps its own
 last ten values: AAPL's never mix with MSFT's.
 
@@ -105,7 +105,7 @@ TODO: not written yet.
 
 > Run the new version: stop the operator, stop the runner with Ctrl-C, start the
 > runner again as in
-> [`unbounded_basics.md`](unbounded_basics.md#the-runner), and start the operator
+> [`building_an_etl_stream.md`](building_an_etl_stream.md#the-runner), and start the operator
 > again.
 > {: .step}
 
@@ -130,7 +130,8 @@ $ flz operator send prices --namespace trading --channel manual --text 'AAPL 102
 $ flz operator send prices --namespace trading --channel manual --text 'AAPL 103 30'
 ```
 
-The listener from [`unbounded_basics.md`](unbounded_basics.md#send-it-trades) shows
+A listener, as in Part 1's
+[Or watch it from another terminal](../running_operators.md#or-watch-it-from-another-terminal), shows
 one big trade, the fourth, and its decision to buy:
 
 ```output

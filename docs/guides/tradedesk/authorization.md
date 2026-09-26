@@ -84,7 +84,7 @@ runs unattended, and a key that lapsed would stop it at its next restart.
 > [`namespaces.md`](namespaces.md) creates next; a key can be issued before its
 > namespace exists. `--ttl never` is required, since without it the token gets
 > the default lifetime of one day and is refused. Keep the token: the runner in
-> [`unbounded_basics.md`](unbounded_basics.md) reads it from
+> [`building_an_etl_stream.md`](building_an_etl_stream.md) reads it from
 > `FLEZHA_NAMESPACE_SECRET`.
 > {: .step}
 
@@ -118,7 +118,7 @@ namespace. Only `admin@_system` reaches across namespaces.
 | `stopper` | what a runner needs to stop its own operators |
 
 The key makes the runner `runner@trading`, which holds only `runner`.
-[`bounded_basics.md`](bounded_basics.md) binds `spawner` to it as well, when
+[`building_a_workflow.md`](building_a_workflow.md) binds `spawner` to it as well, when
 the unbounded operator starts its first bounded operator.
 [`../../operations/authn_authz.md`](../../operations/authn_authz.md) has every
 verb and the role that grants it.

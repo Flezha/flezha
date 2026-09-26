@@ -1,21 +1,10 @@
 # Running operators
 
-> From a third terminal, check that the controller and your runner from
-> [`runner_deployment.md`](runner_deployment.md) are both still running: one
-> answers `boot await: ready`, the other lists your runner. If either is
-> missing, start it again the way its guide showed.
-> {: .step}
-
-```sh
-$ flz boot await
-$ flz runner list
-```
-
 ## What an operator is
 
 What you wrote is a **declaration**: a graph from an input to an output, with the
 steps in between. It runs nothing by itself. Your runner registers it
-under a **factory id**, and an operator is one running instance created from
+as a **factory**, under a **factory id**, and an operator is one running instance created from
 that declaration when you ask the controller for one. If the analogy helps, the
 declaration is the definition and an operator is a thing made from it.
 
@@ -24,6 +13,42 @@ choose and each independent of the rest: its own cells, its own state, its
 own placement in the cluster. Ten exchanges to watch is one declaration started
 ten times. What the declaration itself is, and why it is the unit the controller
 schedules, is in [the runner guide](runner_deployment.md#the-operator).
+
+A runner runs every operator the controller places on it. An operator runs its
+tasklets, and each tasklet runs in one or more **cells**: one cell by default,
+or one per key when its input is keyed, each with state of its own. `echo` is
+the smallest there is, one tasklet in one cell. A bigger runner looks like this:
+
+```mermaid
+flowchart TB
+    subgraph R["runner"]
+        direction LR
+        subgraph O1["operator A"]
+            direction LR
+            subgraph T1["tasklet 1: keyed"]
+                direction TB
+                C1["cell k1"] ~~~ C2["cell k2"] ~~~ C3["cell k3"]
+            end
+            subgraph T2["tasklet 2"]
+                direction TB
+                C4["cell"]
+            end
+            subgraph T3["tasklet 3: keyed"]
+                direction TB
+                C5["cell k1"] ~~~ C6["cell k2"]
+            end
+            T1 ~~~ T2 ~~~ T3
+        end
+        subgraph O2["operator B"]
+            direction TB
+            subgraph T4["tasklet 1: keyed"]
+                direction TB
+                C7["cell k1"] ~~~ C8["cell k2"]
+            end
+        end
+        O1 ~~~ O2
+    end
+```
 
 ## The two kinds
 
@@ -39,16 +64,28 @@ behind its own barrier before the tasklets it feeds run, ending by itself on
 chain completion, when a
 tasklet calls `ctx.complete`, or at `max_duration`.
 Stopping one by hand ends it early; it is not how one is meant to finish.
-[`bounded_basics.md`](tradedesk/bounded_basics.md) is the kind's own guide.
+[`building_a_workflow.md`](tradedesk/building_a_workflow.md) is the kind's own guide.
 
 ## Start one
 
-The runner is connected and offering `echo`, and nothing is running yet.
-Declaring an operator on a runner says that process is *able* to serve one.
+The runner is connected and has registered the `echo` factory, and nothing is
+running yet. Registering a factory says that process is *able* to run operators
+made from it.
 Starting it is a separate step, and it is the one that creates a running
 instance.
 
-> Start an operator from the `echo` class your runner offers, and name it
+> From a third terminal, check that the controller and your runner from
+> [`runner_deployment.md`](runner_deployment.md) are both still running: one
+> answers `boot await: ready`, the other lists your runner. If either is
+> missing, start it again the way its guide showed.
+> {: .step}
+
+```sh
+$ flz boot await
+$ flz runner list
+```
+
+> Start an operator from the `echo` factory your runner registered, and name it
 > `my_echo`. Your runner has to be connected.
 > {: .step}
 
@@ -75,7 +112,7 @@ a start may be retried: a start of an id that is already running changes nothing
 and prints `my_echo is already running, left untouched`.
 
 **`echo` is the factory id.** Every operator class declares exactly one, and
-`factoryId()` returns it in your code. A runner offers its classes to the
+`factoryId()` returns it in your code. A runner registers its classes with the
 controller by their factory ids, and `flz operator start` uses the one you give
 it to find a runner that can run the class. It is recorded in the controller's
 registry and in durable state, so changing it later declares a new class rather
@@ -104,7 +141,7 @@ Operators in namespace 'default':
 ```
 
 `RUNNER` is the column that matters. A name there means the controller found a
-runner offering `echo` and bound the instance to it. `(none)`, with
+runner that registered `echo` and bound the instance to it. `(none)`, with
 `(unplaced)` under `NODE`, means the instance exists but no runner has been
 found to serve it. That almost always means the factory id is spelled one way
 in your code and another way on the command line.

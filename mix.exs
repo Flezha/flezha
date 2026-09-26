@@ -145,8 +145,8 @@ defmodule Flezha.MixProject do
         "docs/guides/cli.md",
         "docs/guides/tradedesk/authorization.md",
         "docs/guides/tradedesk/namespaces.md",
-        "docs/guides/tradedesk/bounded_basics.md",
-        "docs/guides/tradedesk/unbounded_basics.md",
+        "docs/guides/tradedesk/building_an_etl_stream.md",
+        "docs/guides/tradedesk/building_a_workflow.md",
         "docs/guides/tradedesk/durability.md",
         "docs/guides/tradedesk/plugins.md",
         "docs/guides/tradedesk/partitioning.md",
@@ -187,8 +187,8 @@ defmodule Flezha.MixProject do
         "Guide Part 2: Going further": [
           "docs/guides/tradedesk/authorization.md",
           "docs/guides/tradedesk/namespaces.md",
-          "docs/guides/tradedesk/bounded_basics.md",
-          "docs/guides/tradedesk/unbounded_basics.md",
+          "docs/guides/tradedesk/building_an_etl_stream.md",
+          "docs/guides/tradedesk/building_a_workflow.md",
           "docs/guides/tradedesk/durability.md",
           "docs/guides/tradedesk/plugins.md",
           "docs/guides/tradedesk/partitioning.md"
