@@ -8,6 +8,60 @@ back, or another one takes over, the work carries on from where it was instead
 of starting again. Nothing in your code saves or loads anything: you say what a
 tasklet remembers, and Flezha keeps it.
 
+## Where it is kept
+
+The controller keeps everything it saves on its own disk, in the folder it was
+started in: each namespace's state under `app_data/state/<namespace>/`, apart
+from every other's, and the namespaces, tokens and keys under `app_data/auth/`.
+That includes the write-ahead log, the running record of every change, which is
+always on the local disk, whatever else is configured.
+
+The local disk is enough as long as it survives: a crashed runner or a restarted
+controller gets everything back from it. A controller that loses its disk loses
+what was on it. For that case the controller can also send a copy of everything
+it saves to storage that lives somewhere else, chosen with
+`FLEZHA_DURABILITY_BACKEND`:
+
+| Backend | Where the copy goes |
+|---|---|
+| `none` | nowhere: the local disk is the only copy. This is the default |
+| `postgres` | a table in a PostgreSQL database |
+| `s3` | a bucket on Amazon S3 or any S3-compatible store |
+| `local_path` | a folder that outlives the controller's own disk, such as a network mount |
+
+The two copies are kept on different schedules:
+
+- **The controller's disk** gets every change within a few milliseconds, always,
+  whichever backend is set.
+- **The extra copy** follows in the background: a workflow's after every
+  finished step, a stream's at least every 30 seconds
+  (`FLEZHA_DURABILITY_SHIP_INTERVAL_MS`). The 30 seconds applies to this copy
+  only, and only matters if the controller loses its disk.
+
+A controller that starts on an empty disk fetches the copy and carries on from
+it. Part 2 keeps the default, the local disk, and
+[`configuration.md`](../../configuration.md#state-wal-and-durability) lists the
+settings for each backend.
+
+> #### Fast in memory, saved in the background {: .info}
+>
+> A cell's state lives in the memory of the runner that runs it, so a tasklet
+> reads and changes it at memory speed, with no disk in the way. Every change is
+> also sent to the controller, which adds it to the write-ahead log, and neither
+> step holds the tasklet up: the runner sends its changes in small batches about
+> every 5 milliseconds, and the controller writes its log to disk (an `fsync`)
+> in batches, also about every 5 milliseconds, rather than once per change. The
+> copy to Postgres or S3, when one is set, is sent in the background as well.
+>
+> The cost is a small window. A runner that crashes, rather than stopping
+> cleanly, can lose its last few milliseconds of changes. A clean stop, with
+> Ctrl-C or a SIGTERM, hands everything to the controller first and loses
+> nothing.
+>
+> A workflow is the exception, on purpose: a bounded operator waits until each
+> finished step is on the controller's disk before the next step starts, so a
+> finished step is kept even when the runner crashes.
+
 ## What the desk will remember
 
 A trade worth 10 000 is big for one symbol and small for another, so one number
@@ -376,11 +430,9 @@ TODO: output from an end-to-end run.
 
 ## What the controller keeps
 
-The runner is not the only thing that can stop. The controller keeps its own
-records on disk: the namespaces, the tokens and the keys under
-`app_data/auth/`, and each namespace's state under `app_data/state/<namespace>/`,
-apart from every other's. A controller restart brings back `trading` and its
-limits before any runner reconnects, then its operators, which wait for a
+The runner is not the only thing that can stop. The controller reads back
+everything it keeps, as [Where it is kept](#where-it-is-kept) describes, when it
+restarts: it brings back `trading` and its limits before any runner reconnects, then its operators, which wait for a
 runner to take them. The runner's key still works.
 
 What this page does not cover is delivery. After a crash, a result can reach a
