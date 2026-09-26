@@ -442,6 +442,7 @@ One frame, payload id `connect_control_channel`, empty metadata, JSON message:
   "factory_ids": ["<factory_id>", ...],
   "factories": [{"id": "<factory_id>", "description": null, "sdk_lang": 1, "kind": "bounded"}, ...],
   "stable_id": "<namespace>-<profile_hash8>-<rand6>",
+  "incarnation": "<opaque, minted once per process>",
   "namespace_secret": "flzt_<base32>"
 }
 ```
@@ -464,6 +465,12 @@ One frame, payload id `connect_control_channel`, empty metadata, JSON message:
   `rand6` is a per-process random suffix). The controller binds operators to
   it and on a reconnect swaps the prior session's bindings onto the new token.
   See [`../internals/runner_identity.md`](../internals/runner_identity.md).
+- `incarnation` — an opaque value the runner process mints once and presents
+  on every connect it makes. Under a `stable_id` the controller already holds,
+  the same incarnation is a reconnect of the process that still runs the
+  operators, so only the bindings move; a new one is a restarted process that
+  runs none of them, so each operator is bound onto it afresh and resumes from
+  its durable state.
 - `namespace_secret` — the credential the claimed namespace is checked against,
   from `FLEZHA_NAMESPACE_SECRET`. **Omitted entirely** when the runner holds
   none, which is what a deployment authenticating with an `/ns/`-bearing

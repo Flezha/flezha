@@ -11,7 +11,7 @@ defmodule Flezha.Operator.Replay do
   Everything here runs in the `Overwatch` process and reads its state without
   changing it. Invariant: the exceptions are `arm_bind_reforward/1` and
   `dispatch_restore/3`, because the un-park path drives
-  `Lifecycle.complete_init/4` inside a task where `self()` is not the Overwatch.
+  `Lifecycle.complete_init/5` inside a task where `self()` is not the Overwatch.
   """
 
   alias Flezha.Config

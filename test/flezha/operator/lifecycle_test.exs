@@ -93,7 +93,7 @@ defmodule FlezhaTest.Operator.OverwatchRetryTest do
 
     # The start's ping is issued after the bind and right before the start, so
     # the ownership record already names the runner the operator starts on.
-    assert_receive {:ping_called, runner_id, {:ok, _overwatch, owner, nil}}, 2_000
+    assert_receive {:ping_called, runner_id, {:ok, _overwatch, owner}}, 2_000
     assert owner == Marks.identity_of(runner_id)
     assert_receive :activated, 2_000
   end
@@ -356,10 +356,8 @@ defmodule FlezhaTest.Operator.OverwatchRetryTest do
              )
     end
 
-    # fails when: a never-bound operator takes the HotSwap migrate path, which
-    # assumes a previous runner is alive to serialise its state. `init_error`
-    # is what selects the un-park task, and the hold sets it.
-    test "a rebind of a held operator runs the full init, not the HotSwap migrate" do
+    # fails when: a rebind of a never-bound operator skips the full init.
+    test "a rebind of a held operator runs the full init" do
       id = "held-migrate-#{System.unique_integer([:positive])}"
       Application.put_env(:flezha, :overwatch_ping_fn, fn _ -> {:error, :no_runner} end)
 
@@ -373,11 +371,11 @@ defmodule FlezhaTest.Operator.OverwatchRetryTest do
         init_error: {:runner_not_ready, :timeout}
       }
 
-      assert {:reply, :ok, %Overwatch{migrate_task: %{mode: :unpark, pid: task}}} =
+      assert {:reply, :ok, %Overwatch{migrate_task: %{pid: task}}} =
                Overwatch.handle_call({:runner_migrate, "late_runner"}, {self(), make_ref()}, held)
 
-      # The un-park task runs `complete_init` — the full init, which pings the
-      # runner. The HotSwap clause spawns nothing and pings from the caller.
+      # The migrate task runs `complete_init`, the full init, which pings the
+      # runner.
       assert_receive {:migrate_task_result, ^task, {:park, _, {:ping_failed, :no_runner}}}, 2_000
     end
 

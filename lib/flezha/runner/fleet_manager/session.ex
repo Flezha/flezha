@@ -5,6 +5,8 @@ defmodule Flezha.Runner.FleetManager.Session do
   A session token is minted per connection; a `stable_id` that already has a
   live session is resolved newest-wins — the old token is fenced, each of its
   operators' Overwatches is told the new one, and the old session is evicted.
+  The connect's `incarnation` tells the two kinds of return apart: the same
+  process reconnecting still runs its operators, a restarted one runs none.
   A `stable_id` held by a session admitted under another credential is refused
   instead (`check_identity_pin/2`).
 
@@ -141,10 +143,11 @@ defmodule Flezha.Runner.FleetManager.Session do
   # Reconnect/takeover binding swap. The SDK presents the same persisted stable
   # id on every connect, and an operator is owned by that identity while its
   # routing keys on the per-connection session token, so a reconnect tells each
-  # of the prior session's operators its new token and then closes the old
-  # session (newest-wins). A first connect just records the mapping, with the
-  # credential that admitted it; a degraded runner with no stable id connects
-  # fresh.
+  # of the prior session's operators its new token, and whether the process
+  # behind it is the one that ran them, and then closes the old session
+  # (newest-wins). A first connect just records the mapping, with the
+  # credential and incarnation that came with it; a degraded runner with no
+  # stable id connects fresh.
   defp resolve_stable_identity(state, _session_token, %{stable_id: nil}), do: state
 
   defp resolve_stable_identity(state, session_token, connect) do
@@ -152,19 +155,23 @@ defmodule Flezha.Runner.FleetManager.Session do
 
     state =
       case Map.get(state.stable_sessions, stable_id) do
-        {old_session, _credential} when old_session != session_token ->
+        {old_session, _credential, incarnation} when old_session != session_token ->
           # Unbind-old BEFORE bind-new: once the fence returns, nothing the
           # superseded session forwards can land in any Cell WAL, so no
           # window exists in which both sessions hold a writable binding.
           fence_superseded_session(old_session)
-          swap_bindings(namespace, old_session, session_token)
+          swap_bindings(namespace, old_session, session_token, continuity(incarnation, connect))
           do_evict_runner(state, old_session)
 
         _ ->
           state
       end
 
-    put_in(state, [:stable_sessions, stable_id], {session_token, credential})
+    put_in(
+      state,
+      [:stable_sessions, stable_id],
+      {session_token, credential, connect.incarnation}
+    )
   end
 
   @doc """
@@ -199,7 +206,7 @@ defmodule Flezha.Runner.FleetManager.Session do
   defp held_elsewhere?(state, stable_id, credential) do
     pinned_live? =
       case Map.get(state.stable_sessions, stable_id) do
-        {session, held} when is_binary(held) and held != credential ->
+        {session, held, _incarnation} when is_binary(held) and held != credential ->
           Roster.find_runner_namespace(state, session) != nil
 
         _unpinned_or_same ->
@@ -221,18 +228,24 @@ defmodule Flezha.Runner.FleetManager.Session do
     StreamPool.call_channels(old_session, :fence_write_path)
   end
 
+  # The same process reconnecting presents the incarnation it connected with
+  # before; a restarted one presents a new one.
+  defp continuity(incarnation, %{incarnation: incarnation}), do: :reconnected
+  defp continuity(_incarnation, _connect), do: :restarted
+
   # Tell every operator the registry tags with `old_session` that its runner is
-  # `new_session` now. Each Overwatch re-binds and publishes its own tag and
-  # route, so the Overwatch, the tag and the route have one writer; the
-  # convergence loop's stale-tag and misbound heals cover an operator with no
-  # live Overwatch to tell. `do_evict_runner/2` then tears down the old session.
-  def swap_bindings(namespace, old_session, new_session) do
+  # `new_session` now, and whether that is the process that ran it
+  # (`continuity`). Each Overwatch re-binds and publishes its own tag and route,
+  # so the Overwatch, the tag and the route have one writer; the convergence
+  # loop's stale-tag and misbound heals cover an operator with no live
+  # Overwatch to tell. `do_evict_runner/2` then tears down the old session.
+  def swap_bindings(namespace, old_session, new_session, continuity) do
     namespace
     |> HubManager.runner_operators(old_session)
     |> Enum.each(fn {_operator_id, node_pids} ->
       case HubManager.live_pid(node_pids) do
         nil -> :ok
-        pid -> GenServer.cast(pid, {:session_replaced, old_session, new_session})
+        pid -> GenServer.cast(pid, {:session_replaced, old_session, new_session, continuity})
       end
     end)
   end
@@ -577,17 +590,19 @@ defmodule Flezha.Runner.FleetManager.Session do
       transport: transport,
       credential: credential,
       factories: parse_factories(init_payload),
-      stable_id: parse_stable_id(init_payload)
+      stable_id: non_empty(init_payload, "stable_id"),
+      incarnation: non_empty(init_payload, "incarnation")
     }
   end
 
-  # The SDK's self-owned, durable stable identity, presented on every connect.
-  # `nil` only when absent/empty (a degraded runner with no writable
-  # persistence path) — such a runner connects fresh with no binding
-  # continuity, per the identity-degradation contract.
-  defp parse_stable_id(init_payload) do
-    case Map.get(init_payload, "stable_id") do
-      id when is_binary(id) and id != "" -> id
+  # `stable_id` is the SDK's self-owned, durable identity, `nil` only for a
+  # degraded runner with no writable persistence path, which connects fresh
+  # with no binding continuity. `incarnation` is minted once per SDK process,
+  # so it tells a reconnect of the process that ran a session's operators from
+  # a restart that runs none of them.
+  defp non_empty(init_payload, key) do
+    case Map.get(init_payload, key) do
+      value when is_binary(value) and value != "" -> value
       _ -> nil
     end
   end
@@ -619,7 +634,8 @@ defmodule Flezha.Runner.FleetManager.Session do
 
     # Resolve the runner's durable STABLE IDENTITY: on a reconnect (or a
     # newest-wins takeover) re-point the prior session's operator bindings onto
-    # this fresh session token and close the old session. A first connect just
+    # this fresh session token, or bind them afresh when the process
+    # restarted, and close the old session. A first connect just
     # records the mapping; a degraded runner (no stable id) connects fresh.
     state = resolve_stable_identity(state, session_token, connect)
 

@@ -66,6 +66,10 @@ struct ControlInitMessage {
     /// The runner's stable identity, on every connect; the controller's
     /// binding key.
     stable_id: String,
+    /// This process's incarnation, the same on every connect it makes: a new
+    /// one under a known `stable_id` tells the controller the runner restarted
+    /// and runs none of the operators it was bound to.
+    incarnation: String,
     /// The credential the controller checks the claimed namespace against.
     /// Absent when this runner holds none, so a deployment authenticating with a
     /// SPIFFE certificate — or one with enforcement off — sends what it always
@@ -514,6 +518,7 @@ fn send_init_msg(
         factory_ids,
         factories,
         stable_id,
+        incarnation: crate::persistent_id::incarnation(),
         namespace_secret: flz_transport::env::env_raw("FLEZHA_NAMESPACE_SECRET"),
     };
 

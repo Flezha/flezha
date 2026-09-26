@@ -27,7 +27,14 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
   import FlezhaTest.Helper.TierE2EHarness,
-    only: [boot_runner: 3, os_pid: 1, stop_namespace: 1, unique_id_path: 1]
+    only: [
+      boot_runner: 3,
+      os_pid: 1,
+      produces?: 5,
+      sigkill: 1,
+      stop_namespace: 1,
+      unique_id_path: 1
+    ]
 
   alias Flezha.Convergence.Loop
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
@@ -154,6 +161,24 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
 
     assert wait_until(fn -> bound_runner(namespace, id) == runner_a2 end, 1_000),
            "the tag names #{runner_a2} but the Overwatch still names #{bound_runner(namespace, id)}"
+  end
+
+  # A runner restarted on its identity runs none of the operators it held, so
+  # its connect must bind them onto it afresh rather than only re-point them.
+  @tag capability: :liveness, skip: FlezhaTest.SystemCase.deferral(:liveness)
+  test "a stream on a runner restarted on its identity answers input again",
+       %{namespace: namespace} do
+    id_path = unique_id_path("own_restart_stream")
+    {port_a, runner_a} = boot_runner(namespace, id_path, [])
+    id = start_operator(namespace, "wedge_probe")
+    assert produces?(id, namespace, "one", "ok:one", 30_000)
+
+    sigkill(os_pid(port_a))
+    {_port_a2, runner_a2} = boot_runner(namespace, id_path, [])
+    assert runner_a2 != runner_a
+
+    assert produces?(id, namespace, "two", "ok:two", 60_000),
+           "the stream answered no input on the restarted runner"
   end
 
   # ---------- helpers ----------

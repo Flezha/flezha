@@ -72,11 +72,11 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
       :ok
     end)
 
-    parked = state(inst, migrate_task: %{ref: make_ref(), pid: self(), mode: :unpark})
+    parked = state(inst, migrate_task: %{ref: make_ref(), pid: self()})
     recovered = %{parked | runner_id: "ex_woken", suspended: false}
 
     {:noreply, unparked} =
-      Overwatch.handle_info({:migrate_task_result, self(), {:unparked, recovered}}, parked)
+      Overwatch.handle_info({:migrate_task_result, self(), {:bound, recovered}}, parked)
 
     assert unparked.migrate_task == nil
     assert_receive {:tag_published, "default", "ex_woken"}
@@ -94,13 +94,13 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
     parked =
       state(inst,
         snapshot: "stored_before_the_park",
-        migrate_task: %{ref: make_ref(), pid: self(), mode: :unpark}
+        migrate_task: %{ref: make_ref(), pid: self()}
       )
 
     recovered = %{parked | runner_id: "ex_woken", suspended: false}
 
     {:noreply, unparked} =
-      Overwatch.handle_info({:migrate_task_result, self(), {:unparked, recovered}}, parked)
+      Overwatch.handle_info({:migrate_task_result, self(), {:bound, recovered}}, parked)
 
     assert unparked.runner_id == "ex_woken"
     assert unparked.snapshot == nil
@@ -145,7 +145,7 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
     {:noreply, suspended, :hibernate} = Overwatch.handle_cast({:suspend, 2, park()}, state(inst))
 
     assert suspended.runner_id == nil
-    assert ClassRegistry.owner(inst) == {:ok, self(), "ex_1", nil}
+    assert ClassRegistry.owner(inst) == {:ok, self(), "ex_1"}
   end
 
   test "a turn that landed while the loop was parking is never stranded" do
@@ -315,7 +315,7 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
     inst = instance_id()
     stub(Flezha.Runner.ControlUnit, :stop_operator_async, fn _, _ -> :ok end)
     stub(Flezha.Service.HubManager, :operator_set_runner, fn _, _, _ -> :ok end)
-    binding = state(inst, migrate_task: %{ref: make_ref(), pid: self(), mode: :unpark})
+    binding = state(inst, migrate_task: %{ref: make_ref(), pid: self()})
 
     {:noreply, parked, :hibernate} = Overwatch.handle_cast({:suspend, 4, park()}, binding)
     assert parked.parked_in_flight
@@ -323,7 +323,7 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
     recovered = %{parked | runner_id: "ex_stale", suspended: false}
 
     {:noreply, after_bind} =
-      Overwatch.handle_info({:migrate_task_result, self(), {:unparked, recovered}}, parked)
+      Overwatch.handle_info({:migrate_task_result, self(), {:bound, recovered}}, parked)
 
     assert after_bind.suspended, "the stale bound state is not adopted"
     assert ClassRegistry.parked(inst) == park()
@@ -395,13 +395,13 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
 
     carrying = %{
       asleep
-      | migrate_task: %{ref: make_ref(), pid: self(), mode: :unpark, then: :stop}
+      | migrate_task: %{ref: make_ref(), pid: self(), then: :stop}
     }
 
     recovered = %{carrying | runner_id: "ex_2", suspended: false}
 
     {:noreply, _awake} =
-      Overwatch.handle_info({:migrate_task_result, self(), {:unparked, recovered}}, carrying)
+      Overwatch.handle_info({:migrate_task_result, self(), {:bound, recovered}}, carrying)
 
     assert_received {:bounded_stop, "ex_2", ^inst}
   end
@@ -730,6 +730,7 @@ defmodule FlezhaTest.Operator.OverwatchAsyncMigrateTest do
 
   alias Flezha.Operator.Builder
   alias Flezha.Operator.ClassRegistry
+  alias Flezha.Operator.Migration
   alias Flezha.Operator.Overwatch
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Service.OperatorManager
@@ -856,59 +857,86 @@ defmodule FlezhaTest.Operator.OverwatchAsyncMigrateTest do
     send(pinger, :unpark)
   end
 
-  # fails when: the running-migrate branch commits the binding before the runner
-  # answers. A cross-node heal target is unreachable by construction (the runner
-  # registry is node-local), so the failed attempt would leave the operator
-  # naming a LIVE runner it cannot reach — `Convergence.Diff` then reads it as
-  # bound-and-healthy, drops it from `misbound_operators`, and the wedge becomes
-  # permanently invisible.
-  test "a failed running-migrate leaves the binding untouched" do
+  # fails when: a running migrate starts the operator with only its init
+  # values, so a durable instance whose runner died starts again from nothing
+  # (no journal, no restore gate, no input tail) instead of resuming; or the
+  # bind places it on a runner other than the one the move chose.
+  test "a running migrate is the full bind on its target, run in the migrate task" do
+    test_pid = self()
+
+    Application.put_env(:flezha, :overwatch_ping_fn, fn runner_id ->
+      send(test_pid, {:pinged, runner_id})
+      {:error, :no_control_unit}
+    end)
+
+    state = running_state()
+    :ok = ClassRegistry.put_overwatch(state.id, self(), "runner_a")
+    on_exit(fn -> ClassRegistry.delete(state.id) end)
+
+    assert {:reply, :ok, %Overwatch{migrate_task: %{pid: task}} = moving} =
+             Overwatch.handle_call({:runner_migrate, "runner_b"}, {self(), make_ref()}, state)
+
+    assert moving.runner_id == "runner_a", "the binding moves only once the bind lands"
+
+    assert_receive {:migrate_task_result, ^task,
+                    {:park, _parked, {:ping_failed, :no_control_unit}}},
+                   2_000
+
+    assert_received {:pinged, "runner_b"}
+  end
+
+  # fails when: an instance moved while running holds its output until the
+  # bind reports, so a run that completes first is torn down holding it.
+  test "only a woken or un-parked bind holds the instance's output" do
+    frame = {:io_out, "out", %{}}
+    binding = %{running_state() | migrate_task: %{ref: make_ref(), pid: self()}}
+
+    assert {:noreply, %{held_outputs: [^frame]}} =
+             Overwatch.handle_cast(frame, %{binding | suspended: true})
+
+    assert {:noreply, %{held_outputs: [^frame]}} =
+             Overwatch.handle_cast(frame, %{binding | init_error: :timeout})
+
+    assert {:noreply, %{held_outputs: []}} = Overwatch.handle_cast(frame, binding)
+  end
+
+  # fails when: a move stops seeding the runner from the final state a
+  # graceful stop shipped, or drops the partition identity and kind the
+  # builder carries.
+  test "a move seeds the bind from a stored snapshot, else from the builder" do
+    state = running_state()
+    assert Migration.bind_operator(state) == state.builder
+
+    seeded = %{state | snapshot: ~s({"store_input_tasklet":{"text_inputs":["s"]}})}
+
+    assert Migration.bind_operator(seeded) == %Builder{
+             state.builder
+             | init_values: %{"store_input_tasklet" => %{"text_inputs" => ["s"]}}
+           }
+  end
+
+  # fails when: a runner process that restarted with its stable identity only
+  # has the binding re-pointed at it, so it never runs the operator again; or a
+  # reconnect of the process that still runs it is bound afresh.
+  test "a restarted runner is bound afresh, a reconnected one only re-pointed" do
     Application.put_env(:flezha, :overwatch_ping_fn, fn _ -> {:error, :no_control_unit} end)
 
     state = running_state()
     :ok = ClassRegistry.put_overwatch(state.id, self(), "runner_a")
     on_exit(fn -> ClassRegistry.delete(state.id) end)
 
-    assert {:reply, {:error, {:ping_failed, :no_control_unit}}, unchanged} =
-             Overwatch.handle_call({:runner_migrate, "runner_b"}, {self(), make_ref()}, state)
-
-    assert unchanged.runner_id == "runner_a"
-    assert unchanged.channel == :chan_a
-
-    assert ClassRegistry.owner(state.id) == {:ok, self(), "runner_a", nil},
-           "a failed migrate must keep the owner and forget the identity it tried"
-  end
-
-  # fails when: a committed running-migrate keeps the snapshot it seeded the new
-  # runner from, so a handover after that runner dies hard ships the older state
-  # and skips the pull of every change the runner made.
-  test "a committed running-migrate seeds the runner from the stored snapshot and drops it" do
-    Application.put_env(:flezha, :overwatch_ping_fn, fn _ -> {:ok, :pong} end)
-    runner_id = "runner_b_#{System.unique_integer([:positive])}"
-    test_pid = self()
-
-    answer_control_unit_once(runner_id, fn {:start_operator, operator} ->
-      send(test_pid, {:started_with, operator.init_values, ClassRegistry.owner(operator.id)})
-      {:ok, %{}}
+    ExUnit.CaptureLog.capture_log(fn ->
+      reconnected = Migration.session_replaced(state, "runner_a", "runner_b", :reconnected)
+      assert reconnected.runner_id == "runner_b"
+      assert reconnected.migrate_task == nil
     end)
 
-    state = %{running_state() | snapshot: ~s({"store_input_tasklet":{"text_inputs":["s"]}})}
-    :ok = ClassRegistry.put_overwatch(state.id, self(), "runner_a")
-    on_exit(fn -> ClassRegistry.delete(state.id) end)
+    restarted = Migration.session_replaced(state, "runner_a", "runner_b", :restarted)
+    assert %{pid: task} = restarted.migrate_task
+    assert_receive {:migrate_task_result, ^task, {:park, _, {:ping_failed, _}}}, 2_000
 
-    assert {:reply, :ok, bound} =
-             Overwatch.handle_call({:runner_migrate, runner_id}, {self(), make_ref()}, state)
-
-    assert_received {:started_with, %{"store_input_tasklet" => %{"text_inputs" => ["s"]}},
-                     owner_at_start}
-
-    assert bound.runner_id == runner_id
-    assert bound.snapshot == nil
-
-    # Both runners are accepted while the start is in flight, and only the one
-    # it ended on afterwards.
-    assert owner_at_start == {:ok, self(), "runner_a", runner_id}
-    assert ClassRegistry.owner(state.id) == {:ok, self(), runner_id, nil}
+    assert Migration.session_replaced(state, "runner_x", "runner_b", :restarted) == state
+    assert Migration.session_replaced(restarted, "runner_a", "runner_c", :restarted) == restarted
   end
 
   # fails when: a handover away from a runner that is gone stops shipping the

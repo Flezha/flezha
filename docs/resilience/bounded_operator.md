@@ -129,7 +129,7 @@ An unbounded operator that sleeps takes the same path at iteration `0`
 | removing its factory from the runner | the SDK's live-instance check cannot see a suspended instance, so the removal succeeds and the later rehydrate fails placement until a runner re-defines the factory; `FleetManager` warns `dropped factory ... that still has controller-known operators` on the `UpdateFactories` frame. A blocking policy is deferred |
 
 **Rehydrate = bind.** A new input-log append, the wake deadline, a crash and a migration all go
-through `Lifecycle.complete_init/4`: respawn on any live runner, `AddOperator.task_journal`
+through `Lifecycle.complete_init/5`: respawn on any live runner, `AddOperator.task_journal`
 with the folded journal, `resume_cell_count` Cell restores, and the one re-forward every bind
 of either kind runs (`Replay.reforward_undelivered_tail/1`): the log's records above the floor,
 each with its original `flz.offset`, before the plugins come up.
@@ -333,12 +333,15 @@ and a 30 s deadline on the deferred-wake list degrades a restore that never land
 best-effort re-run. A restored Cell re-arms its change seq from `RestoreInitState.terminal_seq`, so
 post-resume appends are contiguous and the unbounded-only seq-gap resync never applies. Execution
 is at-least-once: steps and hooks are idempotent by author contract. A crashed instance reaches
-a new runner when a replacement presenting the same stable identity (`FLEZHA_RUNNER_ID_PATH`)
-has the dead session's bindings swapped onto it — promptly on UDS (socket EOF), after the 45 s
-control idle timeout on QUIC; the Overwatch re-binds with `Lifecycle.complete_init/4`, which
-stamps `resume_cell_count` from the on-disk WAL and ships the persisted Cells with their
-compensation markers (in production the convergence loop drives this), and the instance resumes
+a new runner in one of two ways: a restarted runner presents the same stable identity
+(`FLEZHA_RUNNER_ID_PATH`) with a new `incarnation`, and the Overwatch binds onto it at the
+connect; or the convergence loop's `rebind_operator` moves it onto another runner once the dead
+session is gone. Both are the full bind, `Lifecycle.complete_init/5`, which stamps
+`resume_cell_count` and the journal from durable state, ships the persisted Cells with their
+compensation markers and re-forwards the input log's undelivered tail, and the instance resumes
 past the journaled tasklets — or resumes the compensation — to a terminal `BoundedCompleted`.
+A reconnect of the same process (the same `incarnation`) only moves the binding, because that
+process still runs the instance.
 A live instance and a resumed one are the same data: the pass the journal describes is the
 pass the instance runs.
 

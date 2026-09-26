@@ -6,8 +6,8 @@ defmodule Flezha.Operator.Lifecycle do
   reason, and the park is declared to the convergence loop, which drives the
   un-park on its own table. Bind and the SDK start are one module because they
   are one cycle: a bind cancels the wake timer a suspension left behind and
-  re-forwards its input log's tail, and the un-park task re-enters
-  `complete_init/4`.
+  re-forwards its input log's tail, and the bind task every move runs re-enters
+  `complete_init/5`.
 
   Everything that takes an operator OFF its runner — suspend, rehydrate,
   rewind, terminate, migrate — is `Flezha.Operator.Migration`, a sibling above
@@ -149,9 +149,19 @@ defmodule Flezha.Operator.Lifecycle do
   # Overwatch), and `self()` there is the TASK — registering it as the
   # operator's Overwatch would point the journal's outbox flush at a process that
   # exits moments later, silently dropping the output.
-  @spec complete_init(Overwatch.t(), binary(), map(), pid()) ::
+  #
+  # `placement` is `:resolve` for a bind that awaited any runner, which asks
+  # again just before the start, and `:pinned` for a move whose caller chose
+  # `runner_id`.
+  @spec complete_init(Overwatch.t(), binary(), map(), pid(), :resolve | :pinned) ::
           {:ok, Overwatch.t()} | {:error, term(), Overwatch.t()}
-  def complete_init(%Overwatch{} = state, runner_id, operator, owner \\ self()) do
+  def complete_init(
+        %Overwatch{} = state,
+        runner_id,
+        operator,
+        owner \\ self(),
+        placement \\ :resolve
+      ) do
     state = bind_to_runner(state, operator.id, runner_id, owner)
     plugins = Keyword.get(operator.opts, :plugins, [])
 
@@ -169,7 +179,7 @@ defmodule Flezha.Operator.Lifecycle do
          # A park landing after the runner starts the instance writes a record
          # that stays; a failed start leaves none for a boot to take for a sleep.
          :ok <- ClassRegistry.put_parked(Overwatch.operator_class(state), nil),
-         {:ok, add_operator_raw, state} <- start_once(state, operator, owner),
+         {:ok, add_operator_raw, state} <- start_once(state, operator, owner, placement),
          # The class's SDK-side declarations ride the AddOperator response;
          # resolve them BEFORE plugin activation so source adapters pick the
          # tier ingest mode (blocking call) from the env.
@@ -327,13 +337,19 @@ defmodule Flezha.Operator.Lifecycle do
     %{operator | opts: opts}
   end
 
-  # The one attempt. The runner is re-resolved first so a runner that came
-  # online since the bind was awaited is the one used, and bound before the
+  # The one attempt. An awaited runner is re-resolved first so a runner that
+  # came online since the bind was awaited is the one used, and bound before the
   # attempt so the ownership record names the runner told to start; the state
   # carries the runner the attempt was made on either way, so a park names it.
-  defp start_once(%Overwatch{} = state, operator, owner) do
+  defp start_once(%Overwatch{} = state, operator, owner, placement) do
     runner_id =
-      resolve_runner(state.namespace, operator.factory_id, operator.id, state.runner_id)
+      case placement do
+        :resolve ->
+          resolve_runner(state.namespace, operator.factory_id, operator.id, state.runner_id)
+
+        :pinned ->
+          state.runner_id
+      end
 
     state = bind_to_runner(state, operator.id, runner_id, owner)
 

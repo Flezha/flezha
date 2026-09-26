@@ -21,7 +21,7 @@ defmodule FlezhaTest.System.BoundedTimersE2ETest do
   use FlezhaTest.SystemCase, capability: :bounded
 
   import FlezhaTest.Helper.TierE2EHarness,
-    only: [cleanup: 3, kill_overwatch: 2, os_pid: 1, sigkill: 1, unique: 1, unique_id_path: 0]
+    only: [cleanup: 3, os_pid: 1, sigkill: 1, unique: 1, unique_id_path: 0]
 
   import FlezhaTest.Helper.BoundedResumeHarness
 
@@ -100,8 +100,6 @@ defmodule FlezhaTest.System.BoundedTimersE2ETest do
                fn -> runner_a not in FleetManager.active_runners(namespace) end,
                15_000
              )
-
-      kill_overwatch(namespace, id)
 
       assert await_sink(collector, ["relay:armed:#{at}", "relay:fired:#{at}"], 60_000),
              "the restored timer never fired: #{inspect(collected(collector))}"

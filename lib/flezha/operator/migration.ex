@@ -1,8 +1,9 @@
 defmodule Flezha.Operator.Migration do
   @moduledoc """
   Everything that moves an operator off the runner it is on: suspension, the
-  un-park task, a running migrate, a reconnect's session swap, a loop rewind,
-  and the terminal teardown.
+  bind task every move runs (an un-park, a wake, a `runner_migrate`, a
+  restarted runner), a reconnect's session swap, a loop rewind, and the
+  terminal teardown.
 
   It sits above `Flezha.Operator.Lifecycle` in the call graph — it binds,
   completes an init and parks through that module and is never called back by
@@ -23,8 +24,6 @@ defmodule Flezha.Operator.Migration do
   alias Flezha.Payloader
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.ControlUnit
-  alias Flezha.Runner.FleetManager.Marks
-  alias Flezha.Runner.StreamPool
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperatorManager
   alias Flezha.Shutdown
@@ -85,89 +84,54 @@ defmodule Flezha.Operator.Migration do
   # ---------------------------------------------------------------
 
   @doc """
-  The minimal SDK operator for a running-operator migrate: the factory + the
-  current (snapshot-derived) init_values, no plugins (the controller-side
-  plugin table is untouched on a running migrate).
-
-  Partition identity is the one thing that must survive: it arms the SDK's
-  mis-route guard, and a member that migrates without it starts accepting keys
-  it does not own.
+  The operator a bind onto another runner starts: the builder, seeded from
+  the final state a graceful stop shipped when one is stored. The kind and
+  the partition identity ride the builder, so a moved member keeps its
+  mis-route guard.
   """
-  @spec migrate_operator(Overwatch.t()) :: Flezha.Operator.Builder.t()
-  def migrate_operator(%Overwatch{} = state) do
-    init_values =
-      if state.snapshot != nil,
-        do: Payloader.json_to_map(state.snapshot),
-        else: state.init_values
+  @spec bind_operator(Overwatch.t()) :: Flezha.Operator.Builder.t()
+  def bind_operator(%Overwatch{snapshot: nil, builder: builder}), do: builder
 
-    %Flezha.Operator.Builder{
-      id: state.id,
-      factory_id: state.factory_id,
-      kind: state.builder.kind,
-      init_values: init_values,
-      opts: Keyword.take(state.builder.opts, Flezha.Partition.opt_keys())
-    }
-  end
+  def bind_operator(%Overwatch{builder: %Flezha.Operator.Builder{} = builder} = state),
+    do: %Flezha.Operator.Builder{builder | init_values: Payloader.json_to_map(state.snapshot)}
 
   @doc """
   The convergence loop's `{:runner_migrate, target}`, answered as the reply
   tuple the Overwatch's call returns.
 
-  Parked (a failed init) and suspended (a durable loop park) both come back
-  through the un-park task: it re-binds, restores journal and cells, and
-  re-forwards the input log's undelivered tail, off the Overwatch so a slow
-  bind never blocks it. A running operator migrates in place: one ping and start
-  round-trip, kept synchronous for the HotSwap handover invariants that depend
-  on the state being applied before the call returns.
+  Every move is the full bind an un-park runs, off the Overwatch so a slow
+  bind never blocks it: the resume state rides `AddOperator`, the durable
+  Cells are restored and the input log's undelivered tail is re-forwarded,
+  whether the operator was parked, suspended or running on a runner that
+  died. A failed bind parks the operator on the target.
   """
   @spec runner_migrate(Overwatch.t(), binary()) ::
           {:reply, :ok | {:error, term()}, Overwatch.t()}
   def runner_migrate(%Overwatch{migrate_task: task} = state, _new_runner_id) when task != nil,
     do: {:reply, {:error, :busy}, state}
 
-  def runner_migrate(%Overwatch{init_error: reason, suspended: suspended} = state, new_runner_id)
-      when reason != nil or suspended do
-    {ref, pid} = spawn_migrate_task({:unpark, state, new_runner_id})
-    {:reply, :ok, %{state | migrate_task: %{ref: ref, pid: pid, mode: :unpark}}}
-  end
+  def runner_migrate(%Overwatch{} = state, new_runner_id),
+    do: {:reply, :ok, start_bind(state, new_runner_id, nil)}
 
-  # The binding is committed only once the runner has answered. Committing it
-  # first leaves a failed migrate naming a runner this process cannot reach —
-  # the operator then reads as bound to a LIVE runner, so `Convergence.Diff`
-  # stops classifying it misbound and the divergence hides itself permanently.
-  # The runner now holds the stored snapshot it was seeded from, so it is not kept.
-  #
-  # While the attempt runs the target's identity is pending on the ownership
-  # record, so the target's first output and the current runner's frames are
-  # both accepted. A failed attempt clears it and drops any route the target's
-  # channels warmed meanwhile.
-  def runner_migrate(%Overwatch{} = state, new_runner_id) do
-    class = Overwatch.operator_class(state)
-    _ = ClassRegistry.set_pending(class, Marks.identity_of(new_runner_id))
-
-    case Lifecycle.attempt_ping_and_start(migrate_operator(state), new_runner_id) do
-      {:ok, _} ->
-        {:reply, :ok, Lifecycle.commit_binding(%{state | snapshot: nil}, new_runner_id)}
-
-      {:error, reason} ->
-        _ = ClassRegistry.set_pending(class, nil)
-        _ = StreamPool.drop_route(new_runner_id, state.id)
-        {:reply, {:error, reason}, state}
+  @doc """
+  The runner this operator is bound to connected again as `new_session` with
+  the same stable identity. A reconnect of the same process still runs the
+  operator, so the binding is only re-pointed: the Overwatch, the registry
+  tag and the route move together. A restarted process runs nothing, so the
+  operator is bound onto it afresh. A binding that has already moved away
+  from `old_session` is left alone.
+  """
+  @spec session_replaced(Overwatch.t(), binary(), binary(), :reconnected | :restarted) ::
+          Overwatch.t()
+  def session_replaced(%Overwatch{runner_id: old} = state, old, new_session, continuity) do
+    case continuity do
+      :reconnected -> Lifecycle.commit_binding(state, new_session)
+      :restarted when state.migrate_task == nil -> start_bind(state, new_session, nil)
+      :restarted -> state
     end
   end
 
-  @doc """
-  The runner this operator is bound to reconnected as `new_session` with the
-  same stable identity: re-point the binding and publish it, so the Overwatch,
-  the registry tag and the route move together while the ownership record
-  keeps naming the same identity. A binding that has already moved away from
-  `old_session` is left alone.
-  """
-  @spec session_replaced(Overwatch.t(), binary(), binary()) :: Overwatch.t()
-  def session_replaced(%Overwatch{runner_id: old_session} = state, old_session, new_session),
-    do: Lifecycle.commit_binding(state, new_session)
-
-  def session_replaced(%Overwatch{} = state, _old_session, _new_session), do: state
+  def session_replaced(%Overwatch{} = state, _old_session, _new_session, _continuity), do: state
 
   # Refuse a rewind before it changes anything: an uncommitted target, or an
   # unwound tasklet whose plugin output cannot be undone.
@@ -279,7 +243,7 @@ defmodule Flezha.Operator.Migration do
 
   @doc """
   Rehydrate a suspended instance through the normal bind path (the same
-  `complete_init/4` an un-park drives), which restores journal + snapshots and
+  `complete_init/5` an un-park drives), which restores journal + snapshots and
   re-forwards the input log's undelivered tail.
 
   Idempotent: an instance already running, or with a rehydrate already in
@@ -318,8 +282,7 @@ defmodule Flezha.Operator.Migration do
           %{namespace: state.namespace, operator_id: state.id, runner_id: runner_id}
         )
 
-        {ref, pid} = spawn_migrate_task({:unpark, state, runner_id})
-        {:ok, %Overwatch{state | migrate_task: %{ref: ref, pid: pid, mode: :unpark, then: then}}}
+        {:ok, start_bind(state, runner_id, then)}
     end
   end
 
@@ -385,7 +348,7 @@ defmodule Flezha.Operator.Migration do
     :ok
   end
 
-  # The `:process` steps, in order: the in-flight un-park task FIRST (left
+  # The `:process` steps, in order: the in-flight bind task FIRST (left
   # running, it would bind a runner for an operator that is being torn down),
   # the class entry, the runner's copy of the operator, and the plugin table
   # ONCE — the on-terminate hooks of a bound operator, then every subscriber
@@ -514,7 +477,7 @@ defmodule Flezha.Operator.Migration do
   # terminate / result-application surface is reviewable as a single unit.
   # ---------------------------------------------------------------
 
-  # Terminate any in-flight un-park task so teardown is never blocked by the
+  # Terminate any in-flight bind task so teardown is never blocked by the
   # bind running inside it.
   @spec terminate_migrate_task(Overwatch.t()) :: Overwatch.t()
   def terminate_migrate_task(%Overwatch{migrate_task: nil} = state), do: state
@@ -525,21 +488,19 @@ defmodule Flezha.Operator.Migration do
     %{state | migrate_task: nil}
   end
 
-  @doc """
-  Run `complete_init/4` in a task so a slow bind never blocks the Overwatch.
-  The task reports its outcome and decides nothing: a failure is a park the
-  Overwatch declares. Returns the task's `{ref, pid}`.
-  """
-  @spec spawn_migrate_task({:unpark, Overwatch.t(), binary()}) :: {reference(), pid()}
-  def spawn_migrate_task({:unpark, state, new_runner_id}) do
-    operator = state.builder
+  # Run `complete_init/5` on `runner_id` in a task so a slow bind never blocks
+  # the Overwatch. The task reports its outcome and decides nothing: a failure
+  # is a park the Overwatch declares. `then` is what a wake carries
+  # (`apply_migrate_result/2`).
+  defp start_bind(%Overwatch{} = state, runner_id, then) do
+    operator = bind_operator(state)
     parent = self()
 
     task =
       Task.Supervisor.async_nolink(Flezha.Operator.MessageHandlerTaskSup, fn ->
-        case Lifecycle.complete_init(state, new_runner_id, operator, parent) do
+        case Lifecycle.complete_init(state, runner_id, operator, parent, :pinned) do
           {:ok, recovered} ->
-            send(parent, {:migrate_task_result, self(), {:unparked, recovered}})
+            send(parent, {:migrate_task_result, self(), {:bound, recovered}})
             :ok
 
           {:error, err, parked} ->
@@ -548,18 +509,19 @@ defmodule Flezha.Operator.Migration do
         end
       end)
 
-    {task.ref, task.pid}
+    %Overwatch{state | migrate_task: %{ref: task.ref, pid: task.pid, then: then}}
   end
 
   @doc """
-  Fold an un-park task's result back into the state.
+  Fold a bind task's result back into the state.
 
-  `complete_init/4` ran inside the task, whose `self()` is not the Overwatch
-  process, so the binding is published here — the one point every un-park caller
-  funnels through, `rehydrate/1` included.
+  `complete_init/5` ran inside the task, whose `self()` is not the Overwatch
+  process, so the binding is published here — the one point every move
+  funnels through: an un-park, a wake, a `runner_migrate` and a restarted
+  runner.
   """
   @spec apply_migrate_result(Overwatch.t(), tuple()) :: Overwatch.t()
-  def apply_migrate_result(%Overwatch{parked_in_flight: true} = state, {:unparked, _recovered}) do
+  def apply_migrate_result(%Overwatch{parked_in_flight: true} = state, {:bound, _recovered}) do
     # The instance parked before this bind reported, so the bound state is
     # stale; the suspension stands, and the tail that was journaled meanwhile
     # (or a stop the wake carried) wakes it again.
@@ -572,7 +534,7 @@ defmodule Flezha.Operator.Migration do
     end
   end
 
-  def apply_migrate_result(state, {:unparked, recovered}) do
+  def apply_migrate_result(state, {:bound, recovered}) do
     Logger.info("[Overwatch] operator #{state.id} un-parked onto runner #{recovered.runner_id}")
 
     Lifecycle.publish_binding(recovered, state.runner_id)

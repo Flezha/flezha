@@ -38,7 +38,7 @@ defmodule Flezha.Runner.ControlUnit do
   reply within `timeout_ms` (default 2 s), or `{:error, reason}` for any
   transport or decode failure.
 
-  Used by `Flezha.Operator.Lifecycle.complete_init/4` before `:start_operator` to
+  Used by `Flezha.Operator.Lifecycle.complete_init/5` before `:start_operator` to
   prove the control channel is end-to-end healthy. A timeout here signals a
   stale `stream_ref` that the bound `ControlChannel` cannot detect on its
   own (writes succeed against a closed transport with no failure signal).

@@ -316,17 +316,14 @@ defmodule FlezhaTest.Operator.ClassRegistryTest do
   end
 
   describe "the ownership record" do
-    test "round-trips the Overwatch, its owner and a pending identity", %{class: class} do
+    test "round-trips the Overwatch and its owner", %{class: class} do
       :ok = ClassRegistry.put_overwatch(class, self(), "identity-a")
-      assert ClassRegistry.owner(class) == {:ok, self(), "identity-a", nil}
+      assert ClassRegistry.owner(class) == {:ok, self(), "identity-a"}
       assert ClassRegistry.overwatch_pid(class) == {:ok, self()}
 
-      :ok = ClassRegistry.set_pending(class, "identity-b")
-      assert ClassRegistry.owner(class) == {:ok, self(), "identity-a", "identity-b"}
-
-      # A bind names its runner and settles the migrate.
+      # A bind names its runner.
       :ok = ClassRegistry.put_overwatch(class, self(), "identity-b")
-      assert ClassRegistry.owner(class) == {:ok, self(), "identity-b", nil}
+      assert ClassRegistry.owner(class) == {:ok, self(), "identity-b"}
     end
 
     test "is removed with the class", %{class: class} do
@@ -336,10 +333,7 @@ defmodule FlezhaTest.Operator.ClassRegistryTest do
       assert ClassRegistry.owner(class) == :error
     end
 
-    test "answers :error for a class never bound here, and a pending write creates no row",
-         %{class: class} do
-      :ok = ClassRegistry.set_pending(class, "identity-b")
-
+    test "answers :error for a class never bound here", %{class: class} do
       assert ClassRegistry.owner(class) == :error
     end
   end

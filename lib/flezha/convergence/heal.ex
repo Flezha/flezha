@@ -18,8 +18,9 @@ defmodule Flezha.Convergence.Heal do
   `:ok | :error` so the Loop can drive `Backoff`.
 
     * `rebind_operator` — migrate an operator tagged to a dead/wrong runner (or
-      not yet bound, or parked) onto an available one: flip the registry tag,
-      fan its pid into the new runner's stream channels, replay the WAL.
+      not yet bound, or parked) onto an available one through the full bind:
+      resume state, the durable Cells restored, the input log's tail
+      re-forwarded, then the registry tag and the route published.
     * `resync_runner` — re-run the `RestoreInitState` handshake for a
       operator against the runner it is already bound to, or for ONE Cell
       against the runner a declared gap named. The rung below
@@ -235,9 +236,9 @@ defmodule Flezha.Convergence.Heal do
   defp apply_primitive(prim, _op) when prim in @primitives, do: :error
 
   # Migrate an operator bound to a dead/wrong runner onto an available one.
-  # On success the Overwatch has published its own binding, the registry tag
-  # and the target runner's route. Any failed step leaves the registry
-  # untouched and the operator degraded for the next tick under Backoff.
+  # The Overwatch runs the bind in its own task and publishes the binding, the
+  # registry tag and the target runner's route once it lands; a bind that
+  # fails parks the operator for the next tick under Backoff.
   defp rebind_operator(%{namespace: namespace, target: operator_id} = op, pid) do
     with %{factory_id: factory, runner_id: prev} <- overwatch_snapshot(pid),
          true <- factory != nil,
@@ -245,15 +246,6 @@ defmodule Flezha.Convergence.Heal do
          {:ok, target} <- placed(OperatorManager.assign_runner(namespace, factory, operator_id)),
          {:ok, :ok} <-
            SafeCall.bounded(pid, {:runner_migrate, target}, Durations.get(:migrate_timeout_ms)) do
-      # Replay the per-Cell WAL into the new binding. The `runner_migrate`
-      # above is a HotSwap handover, which only carries state when the previous
-      # runner is alive to serialise it; when the previous runner died (the
-      # common rebind trigger) the new runner's tasklet would otherwise init
-      # empty and the operator's persisted state is lost (state resets to 0).
-      # resync routes a `RestoreInitState` handshake for each persisted
-      # cell to `target`, rebuilding state from the durable WAL.
-      _ = Recovery.resync_for_overwatch(pid, target)
-
       emit_reconnected(namespace, operator_id, prev, target)
       :ok
     else

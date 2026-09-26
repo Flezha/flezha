@@ -474,15 +474,6 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       assert :sys.get_state(pid).operator_mapping[class] == [self()]
     end
 
-    test "a running migrate's target is routed while it is pending", %{pid: pid, class: class} do
-      :ok = ClassRegistry.put_overwatch(class, self(), "runner_a")
-      :ok = ClassRegistry.set_pending(class, "ce_test")
-
-      send(pid, {:flz_data, :ref, class, "from-the-target", %{}})
-
-      assert_receive {:"$gen_cast", {:io_out, "from-the-target", _}}, 1_000
-    end
-
     test "another runner's output is refused, counted every time and reported once",
          %{pid: pid, class: class} do
       :ok = ClassRegistry.put_overwatch(class, self(), "runner_a")

@@ -207,13 +207,20 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
 
         target = Enum.find([first, second], &(&1 != info.runner_id))
 
-        # The migrate the loop's `rebind_operator` drives: a HotSwap handover
-        # the operator confirms before its binding flips.
+        # The migrate the loop's `rebind_operator` drives: the full bind, run
+        # off the Overwatch, whose binding flips once the target has started it.
         {:ok, pid} = OperatorManager.get_operator_pid(ctx.namespace, operator_id)
         assert :ok = GenServer.call(pid, {:runner_migrate, target}, 60_000)
 
-        assert {:ok, %{runner_id: ^target}} =
-                 OperatorManager.get_overwatch_state(ctx.namespace, operator_id)
+        assert NodeTestHelper.wait_until(
+                 fn ->
+                   match?(
+                     {:ok, %{runner_id: ^target, migrate_task: nil}},
+                     OperatorManager.get_overwatch_state(ctx.namespace, operator_id)
+                   )
+                 end,
+                 30_000
+               )
       end
 
       # QUIC's controller-side session teardown does not fire

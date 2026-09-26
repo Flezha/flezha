@@ -156,8 +156,8 @@ defmodule Flezha.Runner.StreamChannel.Records do
   @doc """
   Whether the session behind `state` may act on the operator whose class is
   `operator_class` (its id, unless it declared a class): the session's stable
-  identity is the owner or the pending identity the ownership record names, or
-  no record exists on this node. `kind` names the frame in the report.
+  identity is the owner the ownership record names, or no record exists on
+  this node. `kind` names the frame in the report.
 
   A refusal is counted on the channel every time. The event, the warning and
   the `RemOperator` that stops the sender's copy go out once per session and
@@ -167,13 +167,13 @@ defmodule Flezha.Runner.StreamChannel.Records do
   def admit(state, operator_class, kind),
     do: ownership(state, operator_class, kind) != :refused
 
-  # The one read of the ownership record: the session owns the operator (as
-  # owner or pending) and the record names its Overwatch, no record exists on
-  # this node, or the frame is refused.
+  # The one read of the ownership record: the session owns the operator and
+  # the record names its Overwatch, no record exists on this node, or the
+  # frame is refused.
   defp ownership(state, operator_class, kind) do
     case ClassRegistry.owner(operator_class) do
-      {:ok, pid, owner, pending} ->
-        if state.identity in [owner, pending],
+      {:ok, pid, owner} ->
+        if state.identity == owner,
           do: {:owner, pid},
           else: refuse(state, operator_class, owner, kind)
 

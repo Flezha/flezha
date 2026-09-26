@@ -13,7 +13,7 @@ defmodule FlezhaTest.Helper.BoundedResumeHarness do
   import ExUnit.Callbacks, only: [on_exit: 1]
 
   import FlezhaTest.Helper.TierE2EHarness,
-    only: [cleanup: 3, kill_overwatch: 2, os_pid: 1, sigkill: 1, unique: 1, unique_id_path: 0]
+    only: [cleanup: 3, os_pid: 1, sigkill: 1, unique: 1, unique_id_path: 0]
 
   alias Flezha.Operator.Builder
   alias Flezha.Runner.FleetManager
@@ -176,9 +176,13 @@ defmodule FlezhaTest.Helper.BoundedResumeHarness do
   # and assert the terminal outcome. `mid_run?` is a predicate on the operator
   # id that becomes true once the durable mid-run point is reached on the first
   # runner (which never completes it — the release env is unset there).
+  # `rebind:` is how the instance reaches the replacement: `:restart` (its
+  # connect on the same identity binds it) or `:heal` (a replacement on a new
+  # identity, which the running convergence loop moves it onto).
   # Returns the operator id for scenario-specific assertions.
   def drive_crash_resume(ctx, factory_id, terminal_status, mid_run?, opts \\ []) do
-    {before_rebind, builder_opts} = Keyword.pop(opts, :before_rebind)
+    {before_rebind, opts} = Keyword.pop(opts, :before_rebind)
+    {rebind, builder_opts} = Keyword.pop(opts, :rebind, :restart)
     namespace = unique("bounded_crash")
     operator_id = unique(factory_id)
     id_path = unique_id_path()
@@ -199,10 +203,18 @@ defmodule FlezhaTest.Helper.BoundedResumeHarness do
 
     assert registered?(namespace, operator_id)
 
-    # SIGKILL A; the replacement (release env set) re-presents A's stable id, so
-    # its connect swaps the bindings + evicts the dead session on both transports.
+    # SIGKILL A; the replacement (release env set) re-presents A's stable id
+    # with a new incarnation, so its connect evicts the dead session and binds
+    # the instance onto it on both transports, unless the scenario gives it an
+    # identity of its own.
     sigkill(os_pid(port_a))
-    {_port_b, exec_b} = boot_runner(namespace, ctx, id_path, release?: true)
+
+    # Scenario hook on the durable state the crash left, before the rebind
+    # (which is what triggers the restore).
+    if before_rebind, do: before_rebind.(operator_id)
+
+    id_path_b = if rebind == :heal, do: unique_id_path(), else: id_path
+    {_port_b, exec_b} = boot_runner(namespace, ctx, id_path_b, release?: true)
     assert exec_b != exec_a, "replacement must mint a fresh session token"
 
     assert NodeTestHelper.wait_until(
@@ -210,12 +222,6 @@ defmodule FlezhaTest.Helper.BoundedResumeHarness do
              15_000
            ),
            "dead runner was never evicted after the replacement connected"
-
-    # Scenario hook on the durable state the crash left, before the rebind
-    # (which is what triggers the restore).
-    if before_rebind, do: before_rebind.(operator_id)
-
-    kill_overwatch(namespace, operator_id)
 
     # The resumed operator completes with the expected terminal status.
     await_status(operator_id, terminal_status, 60_000)

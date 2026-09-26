@@ -249,7 +249,7 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
       }
     }
 
-    migrated = Migration.migrate_operator(state)
+    migrated = Migration.bind_operator(state)
 
     # The kind travels with the migrate: a bounded instance re-added as a
     # unbounded class is refused by the runner and never heals.
@@ -261,9 +261,6 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
              count: 3,
              range: range
            }
-
-    # Only the partition keys survive — a migrate still ships no plugins.
-    assert Keyword.get(migrated.opts, :plugins) == nil
   end
 end
 

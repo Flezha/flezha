@@ -101,7 +101,6 @@ defmodule FlezhaTest.System.EffectivelyOnceCheckpointE2ETest do
     {_port_b, exec_b} = boot_runner(namespace, id_path)
     assert exec_b != exec_a
     assert wait_until(fn -> exec_a not in FleetManager.active_runners(namespace) end, 30_000)
-    force_fresh_rebind(namespace, operator_id)
 
     # Recovery restored the 2-checkpoint and re-forwarded 3..5. The re-run
     # re-emits the interval's outputs; upsert by key absorbs them.

@@ -531,7 +531,7 @@ defmodule Flezha.Operator.ClassRegistry do
 
   @doc """
   Record the live Overwatch pid for `operator_class` and the stable identity
-  of the runner it is bound to, clearing any pending identity. Written at bind,
+  of the runner it is bound to. Written at bind,
   before the runner is told to start the operator.
 
   The State subsystem's fsync-gated outbox flush resolves the `:on_output`
@@ -542,34 +542,20 @@ defmodule Flezha.Operator.ClassRegistry do
   def put_overwatch(operator_class, pid, owner)
       when is_binary(operator_class) and is_pid(pid) do
     ensure_table()
-    :ets.insert(@table, {{operator_class, :overwatch}, pid, owner, nil})
+    :ets.insert(@table, {{operator_class, :overwatch}, pid, owner})
     :ok
   end
 
   @doc """
-  Record on `operator_class`'s row the identity a running migrate is trying,
-  or clear it with `nil`. Frames from the owner and from the pending identity
-  are both accepted until the migrate is decided. A class with no row is left
-  without one.
+  The Overwatch pid and the owning identity recorded for `operator_class`,
+  or `:error` when nothing is recorded on this node. The pid is answered
+  whether or not it is still alive.
   """
-  @spec set_pending(binary(), binary() | nil) :: :ok
-  def set_pending(operator_class, identity) when is_binary(operator_class) do
-    if :ets.whereis(@table) != :undefined,
-      do: :ets.update_element(@table, {operator_class, :overwatch}, {4, identity})
-
-    :ok
-  end
-
-  @doc """
-  The Overwatch pid, the owning identity and the pending identity recorded for
-  `operator_class`, or `:error` when nothing is recorded on this node. The pid
-  is answered whether or not it is still alive.
-  """
-  @spec owner(binary()) :: {:ok, pid(), binary() | nil, binary() | nil} | :error
+  @spec owner(binary()) :: {:ok, pid(), binary() | nil} | :error
   def owner(operator_class) when is_binary(operator_class) do
     with true <- :ets.whereis(@table) != :undefined,
-         [{_key, pid, owner, pending}] <- :ets.lookup(@table, {operator_class, :overwatch}) do
-      {:ok, pid, owner, pending}
+         [{_key, pid, owner}] <- :ets.lookup(@table, {operator_class, :overwatch}) do
+      {:ok, pid, owner}
     else
       _ -> :error
     end
@@ -579,7 +565,7 @@ defmodule Flezha.Operator.ClassRegistry do
   @spec overwatch_pid(binary()) :: {:ok, pid()} | :error
   def overwatch_pid(operator_class) when is_binary(operator_class) do
     case owner(operator_class) do
-      {:ok, pid, _owner, _pending} -> if Process.alive?(pid), do: {:ok, pid}, else: :error
+      {:ok, pid, _owner} -> if Process.alive?(pid), do: {:ok, pid}, else: :error
       :error -> :error
     end
   end

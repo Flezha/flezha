@@ -162,8 +162,6 @@ defmodule FlezhaTest.System.BoundedControlFlowE2ETest do
              ),
              "dead runner was never evicted after the replacement connected"
 
-      kill_overwatch(namespace, operator_id)
-
       assert NodeTestHelper.wait_until(
                fn -> committed_iters(operator_id) == [0, 1, 2, 3] end,
                90_000

@@ -385,7 +385,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
       second = active_stand_in(ns, %{"stable_id" => id, "credential" => "c2"})
 
       assert FleetManager.active_runners(ns) == [second]
-      assert :sys.get_state(FleetManager).stable_sessions[id] == {second, "c2"}
+      assert :sys.get_state(FleetManager).stable_sessions[id] == {second, "c2", nil}
     end
 
     test "is neither pinned nor refused when the connect carries no credential",
@@ -399,7 +399,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
              )
 
       assert second in FleetManager.active_runners(ns)
-      assert :sys.get_state(FleetManager).stable_sessions[id] == {second, nil}
+      assert :sys.get_state(FleetManager).stable_sessions[id] == {second, nil, nil}
     end
   end
 

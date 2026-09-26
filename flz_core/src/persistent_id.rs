@@ -18,6 +18,11 @@ const DEFAULT_ID_PATH: &str = "/var/lib/flezha-runner/id";
 // where nothing is written to disk to re-load.
 static STABLE_ID: OnceLock<String> = OnceLock::new();
 
+// One incarnation per process: a reconnect presents the one it connected with
+// before, a restart a new one, which is how the controller tells a process that
+// still runs its operators from one that runs none.
+static INCARNATION: OnceLock<String> = OnceLock::new();
+
 pub fn id_path() -> PathBuf {
     PathBuf::from(crate::util::env_string(ENV_ID_PATH, DEFAULT_ID_PATH))
 }
@@ -27,6 +32,19 @@ pub fn id_path() -> PathBuf {
 pub fn stable_id(namespace: &str, factory_ids: &[String]) -> String {
     STABLE_ID
         .get_or_init(|| load_or_derive(&id_path(), namespace, factory_ids))
+        .clone()
+}
+
+/// This process's incarnation: when it first connected, and a random suffix.
+pub fn incarnation() -> String {
+    INCARNATION
+        .get_or_init(|| {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            format!("{now:x}-{}", rand6())
+        })
         .clone()
 }
 
@@ -117,6 +135,13 @@ mod tests {
         p.push(format!("flezha-pid-test-{}-{}", std::process::id(), name));
         p.push("id");
         p
+    }
+
+    #[test]
+    fn incarnation_is_minted_once_per_process() {
+        let first = incarnation();
+        assert!(!first.is_empty());
+        assert_eq!(incarnation(), first);
     }
 
     #[test]

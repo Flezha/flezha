@@ -9,9 +9,8 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
     * **resume** — a durable structured bounded operator (`commit_block_bounded`)
       commits Cell state in tasklet A, then blocks in tasklet B. The
       runner is SIGKILLed mid-run (task A durable, task B never finished), a
-      replacement runner is started on the same stable identity, and the
-      operator's controller-side supervisor is forced to re-bind onto it. The
-      replacement restores the committed state and runs to completion — proving
+      replacement runner is started on the same stable identity, and its
+      connect binds the operator onto it. The replacement restores the committed state and runs to completion — proving
       resume-not-restart with a terminal outcome matching a clean run.
 
     * **compensation** — a durable saga bounded operator (`saga_block_bounded`)
@@ -27,14 +26,13 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
   auto-rebinds a crashed operator — the test drives it:
 
     * A shared `FLEZHA_RUNNER_ID_PATH` makes the replacement re-present the
-      dead runner's durable stable identity, so its connect swaps the bindings
-      and evicts the dead session on both transports (no reliance on detecting
-      the SIGKILL, which QUIC surfaces only after its ~45 s idle timeout).
-    * `Process.exit(overwatch_pid, :kill)` forces a fresh controller-side bind:
-      ProcessHub transient-restarts the supervisor, which re-resolves onto the
-      live replacement and re-issues `AddOperator` with `resume_cell_count > 0`
-      — the only path that arms the SDK's restore-before-run gate. The hard kill
-      bypasses `terminate/2`, so the WAL survives (a graceful stop would delete it).
+      dead runner's durable stable identity with a new incarnation, so its
+      connect evicts the dead session and binds the operator onto it with
+      `resume_cell_count > 0`, the journal and the input tail, on both
+      transports (no reliance on detecting the SIGKILL, which QUIC surfaces
+      only after its ~45 s idle timeout).
+    * One scenario gives the replacement a new identity instead: the
+      convergence loop it starts is then what moves the operator.
     * The replacement is launched WITH `FLEZHA_BOUNDED_E2E_RELEASE`, so the
       blocking tasklet/compensation that parked on the first runner completes
       on the resume, making the crash window deterministic (no wall-clock races).
@@ -50,10 +48,17 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
 
   # The shared tier-e2e mechanics.
   import FlezhaTest.Helper.TierE2EHarness,
-    only: [cleanup: 3, kill_overwatch: 2, os_pid: 1, sigkill: 1, unique: 1, unique_id_path: 0]
+    only: [
+      cleanup: 3,
+      os_pid: 1,
+      sigkill: 1,
+      unique: 1,
+      unique_id_path: 0
+    ]
 
   import FlezhaTest.Helper.BoundedResumeHarness
 
+  alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
   alias Flezha.Operator.ClassRegistry
   alias Flezha.Operator.Replay
   alias Flezha.Runner.FleetManager
@@ -168,32 +173,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
             plugins: [forward_sink("diamond_sink", collector)]
           )
 
-        seed = ~s({"seed":"go"})
-        delivered = collector |> await_outputs(5, operator_id) |> Enum.map(&elem(&1, 0))
-
-        assert Enum.sort(delivered) ==
-                 Enum.sort([
-                   "a:#{seed}",
-                   "b:#{seed}",
-                   "c:#{seed}",
-                   "j:b:#{seed}",
-                   "j:c:#{seed}"
-                 ]),
-               "the join accumulates BOTH producers' contributions: #{inspect(delivered)}"
-
-        assert Enum.count(delivered, &(&1 == "c:#{seed}")) == 1,
-               "the committed producer must not re-run"
-
-        committed = committed_tasks(operator_id)
-
-        assert Enum.sort(committed) == [0, 1, 2, 3, 4],
-               "each node commits exactly once across the crash — the join never twice: " <>
-                 inspect(committed)
-
-        assert ClassRegistry.leaf_tasks(operator_id) == [4],
-               "the join is the diamond's single leaf"
-
-        assert TaskJournal.complete?(operator_id, [4])
+        assert_diamond_resumed(collector, operator_id)
       end
 
       # The same diamond with NO crash: one runner, the release env set, so
@@ -320,6 +300,58 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
     end
   end
 
+  describe "a crashed runner's instance reaches its replacement (uds)" do
+    @describetag transport: :uds, scenario: :uds_rebind
+
+    # The replacement has an identity of its own, so the convergence loop's
+    # rebind is what moves the instance: it must resume, not start again.
+    test "a convergence rebind onto another runner resumes, not restarts", ctx do
+      ConvergenceSnapshot.reset_recovery_states()
+      start_supervised!({Flezha.Convergence.Loop, tick_ms: 1_000})
+      collector = spawn_link(fn -> collect_loop([]) end)
+
+      operator_id =
+        drive_crash_resume(ctx, "diamond_bounded", "ok", &diamond_half_committed?/1,
+          plugins: [forward_sink("diamond_sink", collector)],
+          rebind: :heal
+        )
+
+      assert_diamond_resumed(collector, operator_id)
+    end
+  end
+
+  # The diamond after a resume: the join accumulates both producers, the
+  # producer committed before the crash never ran again, and each node
+  # committed once.
+  defp assert_diamond_resumed(collector, operator_id) do
+    seed = ~s({"seed":"go"})
+    delivered = collector |> await_outputs(5, operator_id) |> Enum.map(&elem(&1, 0))
+
+    assert Enum.sort(delivered) ==
+             Enum.sort([
+               "a:#{seed}",
+               "b:#{seed}",
+               "c:#{seed}",
+               "j:b:#{seed}",
+               "j:c:#{seed}"
+             ]),
+           "the join accumulates BOTH producers' contributions: #{inspect(delivered)}"
+
+    assert Enum.count(delivered, &(&1 == "c:#{seed}")) == 1,
+           "the committed producer must not re-run"
+
+    committed = committed_tasks(operator_id)
+
+    assert Enum.sort(committed) == [0, 1, 2, 3, 4],
+           "each node commits exactly once across the crash — the join never twice: " <>
+             inspect(committed)
+
+    assert ClassRegistry.leaf_tasks(operator_id) == [4],
+           "the join is the diamond's single leaf"
+
+    assert TaskJournal.complete?(operator_id, [4])
+  end
+
   # Arm a timer on a runner that parks its firing at `hold`, SIGKILL it once
   # `ready?` holds on the journal, and rebind onto a released replacement.
   defp crash_timer_pass(ctx, hold, ready?) do
@@ -360,7 +392,6 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
              15_000
            )
 
-    kill_overwatch(namespace, id)
     {collector, id, at}
   end
 
@@ -418,8 +449,6 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
                15_000
              ),
              "dead runner was never evicted after the replacement connected"
-
-      kill_overwatch(namespace, operator_id)
 
       assert NodeTestHelper.wait_until(fn -> committed_iters(operator_id) == [0] end, 60_000),
              "the resumed pass did not commit iteration 0: " <>

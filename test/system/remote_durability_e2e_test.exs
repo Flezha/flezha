@@ -116,7 +116,6 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
       boot_runner(namespace, id_path, env: [{"FLEZHA_BOUNDED_E2E_RELEASE", "1"}])
 
     assert exec_b != exec_a
-    kill_overwatch(namespace, operator_id)
 
     # Zero loss: the bind hydrated the journal out of the manifest, so the
     # resumed run SKIPS task A and completes.
@@ -208,8 +207,6 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
     {port_b, exec_b} = boot_runner(namespace, id_path)
     assert exec_b != exec_a
 
-    force_fresh_rebind(namespace, operator_id)
-
     # The checkpointed state is back: the live Cell holds both keys folded
     # before the disk was destroyed. Loss is bounded to what was never
     # checkpointed, which is the mode's documented contract.
@@ -253,7 +250,6 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
     destroy_local_state(operator_id)
     {_port_c, exec_c} = boot_runner(namespace, id_path)
     assert exec_c != exec_b
-    force_fresh_rebind(namespace, operator_id)
 
     assert wait_until(
              fn ->
@@ -327,7 +323,6 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
     destroy_local_state(operator_id)
     {_port_b, exec_b} = boot_runner(namespace, id_path)
     assert exec_b != exec_a
-    force_fresh_rebind(namespace, operator_id)
 
     assert wait_until(
              fn ->

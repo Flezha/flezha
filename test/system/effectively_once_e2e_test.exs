@@ -86,7 +86,6 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
     assert exec_b != exec_a
 
     assert wait_until(fn -> exec_a not in FleetManager.active_runners(namespace) end, 30_000)
-    force_fresh_rebind(namespace, operator_id)
 
     assert await_changelog(
              %{"k1" => "k1=b", "k2" => "k2=b", "k3" => "k3=a"},

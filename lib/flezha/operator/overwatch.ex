@@ -81,8 +81,9 @@ defmodule Flezha.Operator.Overwatch do
     # stall can be localised to "WS plugin stopped feeding" vs "operator stopped
     # forwarding to the channel".
     liveness_ref: nil,
-    # The un-park `:runner_migrate` runs in a `Task.Supervisor.async_nolink/3`
-    # task so it never blocks the Overwatch; this field carries the in-flight
+    # A bind onto another runner (an un-park, a wake, a `:runner_migrate`, a
+    # restarted runner) runs in a `Task.Supervisor.async_nolink/3` task so it
+    # never blocks the Overwatch; this field carries the in-flight
     # task's reference + pid so `terminate/2` can kill it cleanly. `nil`
     # when no migrate is in flight.
     migrate_task: nil,
@@ -108,7 +109,7 @@ defmodule Flezha.Operator.Overwatch do
     suspended: false,
     # Timer ref for the recorded wake deadline while suspended.
     timers: %{},
-    # A park that landed while an un-park task was binding: the task's bound
+    # A park that landed while a bind task was binding: the task's bound
     # state is stale by the time it reports, and the journaled tail still
     # owes a wake.
     parked_in_flight: false,
@@ -528,12 +529,15 @@ defmodule Flezha.Operator.Overwatch do
   # took — so an output no delivery-guaranteed sink took is complete the moment
   # the chain has had it, filtered included.
   # A migrate task binds the plugins on its own copy of this state, so an
-  # output of the instance it woke waits for that binding to be adopted rather
-  # than meet a plugin table the wake has not brought up (a sleeper
-  # rediscovered at boot has none running).
+  # output of the instance it woke or un-parked waits for that binding to be
+  # adopted rather than meet a plugin table the bind has not brought up (a
+  # sleeper rediscovered at boot has none running). An instance moved while it
+  # was running still has its table up, and its output is not held: a run that
+  # completes before the bind reports would be torn down holding it.
   @impl true
   def handle_cast(frame, %__MODULE__{migrate_task: %{}} = state)
-      when is_tuple(frame) and elem(frame, 0) in [:io_out, :io_out_batch] do
+      when is_tuple(frame) and elem(frame, 0) in [:io_out, :io_out_batch] and
+             (state.suspended or state.init_error != nil) do
     {:noreply, %__MODULE__{state | held_outputs: [frame | state.held_outputs]}}
   end
 
@@ -595,10 +599,13 @@ defmodule Flezha.Operator.Overwatch do
     {:noreply, state}
   end
 
-  # The bound runner reconnected under a new session with the same stable
-  # identity (`Flezha.Runner.FleetManager.Session.swap_bindings/3`).
-  def handle_cast({:session_replaced, old_session, new_session}, %__MODULE__{} = state),
-    do: {:noreply, Migration.session_replaced(state, old_session, new_session)}
+  # The bound runner connected again under a new session with the same stable
+  # identity (`Flezha.Runner.FleetManager.Session.swap_bindings/4`).
+  def handle_cast(
+        {:session_replaced, old_session, new_session, continuity},
+        %__MODULE__{} = state
+      ),
+      do: {:noreply, Migration.session_replaced(state, old_session, new_session, continuity)}
 
   # ---------------------------------------------------------------
   # handle_info
