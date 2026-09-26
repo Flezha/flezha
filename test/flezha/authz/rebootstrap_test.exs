@@ -158,21 +158,13 @@ defmodule Flezha.AuthZ.RebootstrapTest do
       assert AuthState.enabled?()
 
       # Once: the file is unlinked, so a second claim of the same value is
-      # refused naming the file it expected.
+      # refused as already claimed.
       path = Config.bootstrap_token_path()
       refute File.exists?(path)
-      assert {:error, {:bootstrap_token_missing, ^path}} = Bootstrap.claim(written, [])
+      assert {:error, :bootstrap_already_completed} = Bootstrap.claim(written, [])
 
       assert [%{metadata: %{mode: :online}} | _] =
                AuthTestHelper.await_platform_authz_events(:rebootstrap_recovery, since)
-    end
-
-    test "a claim without the file is refused naming the file it expected" do
-      {_principal, _} = claim_bootstrap!()
-      path = Config.bootstrap_token_path()
-      refute File.exists?(path)
-
-      assert {:error, {:bootstrap_token_missing, ^path}} = Bootstrap.claim("anything", [])
     end
 
     test "a wrong value does not consume the file the caller wrote" do

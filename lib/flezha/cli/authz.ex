@@ -42,9 +42,24 @@ defmodule Flezha.Service.Cli.Authz do
         IO.puts("admin token (shown once, store it now): #{minted}")
 
       {:error, reason} ->
-        Context.fail!("auth bootstrap: #{Context.format_reason(reason)}")
+        Context.fail!("auth bootstrap: " <> bootstrap_message(reason))
     end
   end
+
+  defp bootstrap_message(:bootstrap_already_completed),
+    do:
+      "this controller's admin is already claimed, so there is no bootstrap token to claim; " <>
+        "if its admin token is lost, run `flz auth rebootstrap` and claim the token it writes"
+
+  defp bootstrap_message({:bootstrap_token_missing, path}),
+    do:
+      "no bootstrap token at #{path}; a controller writes one at boot while no admin is claimed, " <>
+        "relative to the directory it was started from"
+
+  defp bootstrap_message(:bootstrap_token_mismatch),
+    do: "the token does not match the one in the bootstrap token file"
+
+  defp bootstrap_message(reason), do: Context.format_reason(reason)
 
   @doc "The identity a verified token resolves to."
   def authz_whoami(%{context: context}) do

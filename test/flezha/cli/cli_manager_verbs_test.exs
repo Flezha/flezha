@@ -466,6 +466,17 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
     assert bootstrap_out =~ "shown once"
     [admin_token] = Regex.run(~r/flzt_[a-z0-9]+/, bootstrap_out)
 
+    # A second claim says the admin is claimed and names the recovery verb,
+    # never an Elixir term or the file a claimed controller does not write.
+    reclaim_err =
+      capture_io(:stderr, fn ->
+        assert catch_exit(CliManager.authz_render_bootstrap(raw_bootstrap)) == {:shutdown, 1}
+      end)
+
+    assert reclaim_err =~ "already claimed"
+    assert reclaim_err =~ "flz auth rebootstrap"
+    refute reclaim_err =~ ":bootstrap_already_completed"
+
     # `flz namespace create` with quota overrides (the CLI's `--X` JSON).
     create_out =
       capture_io(fn ->

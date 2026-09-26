@@ -19,8 +19,9 @@ defmodule Flezha.AuthZ.Bootstrap do
        `bootstrap.token`, and emits a `:bootstrap_completed` event
        on `:platform_authz`.
 
-  Re-claim after a successful `claim/2` is refused naming the file it expected,
-  because the token file is unlinked.
+  Re-claim after a successful `claim/2` is refused as `:bootstrap_already_completed`: the
+  token file is unlinked by the claim and never written again while an admin
+  exists, so the refusal names the state rather than the missing file.
 
   ## Break-glass recovery, with or without a stop
 
@@ -130,13 +131,18 @@ defmodule Flezha.AuthZ.Bootstrap do
   def claim(presented_token, opts \\ []) when is_binary(presented_token) do
     path = Config.bootstrap_token_path()
 
-    if File.exists?(path) do
-      with {:ok, stored} <- read_token_file(path),
-           :ok <- compare_constant_time(stored, presented_token) do
-        recover_or_bind(path, opts)
-      end
-    else
-      {:error, {:bootstrap_token_missing, path}}
+    cond do
+      File.exists?(path) ->
+        with {:ok, stored} <- read_token_file(path),
+             :ok <- compare_constant_time(stored, presented_token) do
+          recover_or_bind(path, opts)
+        end
+
+      RoleStore.admin_system_exists?() ->
+        {:error, :bootstrap_already_completed}
+
+      true ->
+        {:error, {:bootstrap_token_missing, path}}
     end
   end
 
