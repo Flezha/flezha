@@ -126,8 +126,8 @@ $ flz operator list
 Fetching operators for namespace 'default'...
 Operators in namespace 'default':
 
-  OPERATOR                         HEALTH    PARTS   NODE                  RUNNER
-  my_echo                           healthy   -       flezha@127.0.0.1      default_23fc85126379
+  OPERATOR                          HEALTH      PARTS   NODE                  RUNNER
+  my_echo                           healthy     -       flezha@127.0.0.1      default_23fc85126379
 ```
 
 `RUNNER` is the column that matters. A name there means the controller found a

@@ -6,6 +6,7 @@ defmodule Flezha.Service.Cli.Listing do
 
   alias Flezha.AuthZ.Namespace
   alias Flezha.AuthZ.NamespaceStore
+  alias Flezha.Convergence.Snapshot
   alias Flezha.Convergence.Verdict
   alias Flezha.Partition
   alias Flezha.Service.Cli.Context
@@ -97,13 +98,19 @@ defmodule Flezha.Service.Cli.Listing do
   runner, and live node. Reads the durable registry, so it surfaces FAILED
   operators (whose only placement is a dead node) and is multi-node-safe — it no
   longer crashes on an operator registered across nodes.
+
+  A `failed` or `unbound` row reads `recovering` while the loop is still inside
+  the unmet-intent grace `/healthz` uses, so a takeover in progress is not
+  shown as a fault; the table and the JSON render the same word.
   """
   def list_operators(namespace, output_format, _call) do
     namespace_display = Namespace.or_default(namespace)
+    facts = Snapshot.unmet_intent()
 
     namespace_display
     |> HubManager.operator_rows()
     |> group_partition_rows()
+    |> Enum.map(&%{&1 | health: Verdict.listed_state(&1.health, facts)})
     |> render_list(output_format, %{
       json: fn rows ->
         %{namespace: namespace_display, operators: Enum.map(rows, &operator_json/1)}
@@ -112,7 +119,7 @@ defmodule Flezha.Service.Cli.Listing do
       header: "Operators in namespace '#{namespace_display}':",
       columns: [
         {"OPERATOR", 34, &to_string(&1.id)},
-        {"HEALTH", 10, &to_string(&1.health)},
+        {"HEALTH", 12, &to_string(&1.health)},
         {"PARTS", 8, &Context.label_or(&1[:partitions], "-")},
         {"NODE", 22, &Context.label_or(&1.node, "(unplaced)")},
         {"RUNNER", 0, &Context.label_or(&1.runner, "(none)")}

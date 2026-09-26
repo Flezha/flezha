@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Fixed: `flz operator list` reads `recovering` while operators move off a dead runner
+
+After a runner died, a partitioned operator whose members were being moved to another runner
+read `failed` in `flz operator list` for a few seconds, though the takeover succeeded. A
+`failed` or `unbound` operator now reads `recovering` there, in the table and in the JSON,
+for as long as `/healthz` calls the same moment `recovering`
+(`FLEZHA_CONVERGENCE_UNMET_INTENT_GRACE_MS`), and its own word after that. The HEALTH column
+is two characters wider to fit it.
+
 ### Changed (BREAKING): Operative is Operator; the kinds are unbounded and bounded
 
 The unit a runner hosts is an **Operator**, and its two kinds are **unbounded** (no run reaches

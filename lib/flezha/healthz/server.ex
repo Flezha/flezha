@@ -212,12 +212,11 @@ defmodule Flezha.Healthz.Server do
       stuck: Map.get(current, :stuck_operators, %{}),
       intent_mismatch: Map.get(current, :intent_mismatch, []),
       pending_restore: Map.get(current, :pending_restore, false),
-      unmet_intent_ms: Map.get(current, :unmet_intent_ms),
-      unmet_intent_grace_ms: unmet_intent_grace_ms(),
       rpo_breaches: DurabilityTier.breaches(),
       stale_sensors: stale_sensors(),
       data_plane: data_plane_verdict(current)
     }
+    |> Map.merge(Snapshot.unmet_intent(current))
   end
 
   # A sensor is stale once its last completed pass is older than 3× its own
@@ -270,9 +269,6 @@ defmodule Flezha.Healthz.Server do
     do: Config.get(:convergence_fabric_503_polls)
 
   defp tick_ms(), do: Durations.get(:convergence_tick_ms)
-
-  defp unmet_intent_grace_ms(),
-    do: Durations.get(:convergence_unmet_intent_grace_ms)
 
   defp tick_age(nil), do: nil
   defp tick_age(last_tick_at), do: now_ms() - last_tick_at

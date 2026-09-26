@@ -33,6 +33,10 @@ defmodule Flezha.Convergence.Verdict do
   # because an uncertain probe must never outrank a fault somebody read.
   @rank %{healthy: 0, unknown: 1, suspended: 2, degraded: 3, unbound: 4, failed: 5, parked: 6}
 
+  # The operator states the loop is (re)binding: `recovering` inside the
+  # unmet-intent grace on every surface, their own word past it.
+  @rebinding [:unbound, :failed]
+
   # Which states a kind can reach. Declared here and conformance-tested, so a
   # surface never has to guard against a word its subject cannot produce.
   @reachable %{
@@ -231,6 +235,18 @@ defmodule Flezha.Convergence.Verdict do
   def http_status(:unhealthy), do: 503
   def http_status(_status), do: 200
 
+  @doc """
+  The word a listing shows for an operator in `state`: `:recovering` while an
+  `:unbound` or `:failed` operator is inside the unmet-intent grace, the window
+  `fold/2` also reports as `recovering`, and the state itself otherwise. The
+  record keeps its state; only the rendered word changes.
+  """
+  @spec listed_state(state(), map()) :: state() | :recovering
+  def listed_state(state, facts) when state in @rebinding,
+    do: if(past_grace?(facts), do: state, else: :recovering)
+
+  def listed_state(state, _facts), do: state
+
   # ---------- the /healthz fold ----------
 
   @doc """
@@ -319,7 +335,7 @@ defmodule Flezha.Convergence.Verdict do
   # would hold the endpoint at `recovering` with no way out of it.
   defp rebinding?(records, facts) do
     Enum.any?(records, fn
-      {{:operator, _}, %__MODULE__{state: state}} -> state in [:unbound, :failed]
+      {{:operator, _}, %__MODULE__{state: state}} -> state in @rebinding
       _ -> false
     end) and not past_grace?(facts)
   end

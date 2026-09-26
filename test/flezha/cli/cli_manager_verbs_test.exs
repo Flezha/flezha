@@ -353,11 +353,63 @@ defmodule Flezha.Service.CliManager.ClusterTest do
 
   import ExUnit.CaptureIO
 
+  alias Flezha.Convergence.Snapshot
   alias Flezha.Service.CliManager
   alias Flezha.Service.HubManager
 
   describe "list_operators/2 (health column)" do
+    setup do
+      prev = Snapshot.current()
+      on_exit(fn -> Snapshot.publish(prev) end)
+    end
+
+    # The Loop's unmet-intent clock; the grace it is weighed against is the
+    # configured default of 120 s.
+    defp unmet_intent_for(ms), do: Snapshot.publish(%{operator_health: %{}, unmet_intent_ms: ms})
+
+    defp partition_group(health) do
+      for index <- 0..2 do
+        %{
+          id: "prices#p#{index}",
+          health: health,
+          runner: "r2",
+          factory: "prices",
+          partition: %{group: "prices", index: index, count: 3, range: {index, index}},
+          node: node()
+        }
+      end
+    end
+
+    test "a group rebinding off a dead runner reads recovering inside the grace" do
+      stub(HubManager, :operator_rows, fn _ns ->
+        partition_group(:failed) ++ [%{id: "quotes", health: :unbound, runner: nil, node: nil}]
+      end)
+
+      unmet_intent_for(2_000)
+
+      text = capture_io(fn -> CliManager.list_operators("trading", "text") end)
+      assert text =~ ~r/prices\s+recovering\s+3\/3/
+      assert text =~ ~r/quotes\s+recovering\s/
+      refute text =~ "failed"
+
+      %{"operators" => rows} =
+        Jason.decode!(capture_io(fn -> CliManager.list_operators("trading", "json") end))
+
+      assert Enum.map(rows, &{&1["id"], &1["health"]}) ==
+               [{"prices", "recovering"}, {"quotes", "recovering"}]
+    end
+
+    test "a group still failed past the grace reads failed" do
+      stub(HubManager, :operator_rows, fn _ns -> partition_group(:failed) end)
+      unmet_intent_for(500_000)
+
+      assert capture_io(fn -> CliManager.list_operators("trading", "text") end) =~
+               ~r/prices\s+failed\s+3\/3/
+    end
+
     test "json output carries per-operator health, runner, and node" do
+      unmet_intent_for(500_000)
+
       stub(HubManager, :operator_rows, fn _ns ->
         [
           %{id: "r1", health: :healthy, runner: "e1", node: :a@h},
@@ -377,6 +429,8 @@ defmodule Flezha.Service.CliManager.ClusterTest do
     end
 
     test "text output shows a HEALTH column and surfaces a FAILED, unplaced operator" do
+      unmet_intent_for(500_000)
+
       stub(HubManager, :operator_rows, fn _ns ->
         [%{id: "r2", health: :failed, runner: nil, node: nil}]
       end)

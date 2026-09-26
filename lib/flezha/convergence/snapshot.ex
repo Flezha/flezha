@@ -26,6 +26,7 @@ defmodule Flezha.Convergence.Snapshot do
 
   use GenServer
 
+  alias Flezha.Config.Durations
   alias Flezha.Convergence.Verdict
   alias ProcessHub.Constant.Hook
 
@@ -57,6 +58,22 @@ defmodule Flezha.Convergence.Snapshot do
   @spec publish(map()) :: :ok
   def publish(map) when is_map(map) do
     insert(:current, map)
+  end
+
+  @doc """
+  The unmet-intent clock the Loop published in `current` beside the configured
+  grace: the two facts `Verdict` weighs to tell a rebind still inside its
+  window from one past it.
+  """
+  @spec unmet_intent(map()) :: %{
+          unmet_intent_ms: non_neg_integer() | nil,
+          unmet_intent_grace_ms: non_neg_integer()
+        }
+  def unmet_intent(current \\ current()) do
+    %{
+      unmet_intent_ms: Map.get(current, :unmet_intent_ms),
+      unmet_intent_grace_ms: Durations.get(:convergence_unmet_intent_grace_ms)
+    }
   end
 
   @doc """
