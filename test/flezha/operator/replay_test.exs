@@ -608,11 +608,11 @@ defmodule FlezhaTest.Operator.OverwatchRestoreAsyncTest do
     end)
 
     state = %Overwatch{
-      id: "btc_kraken",
+      id: "btc_feed",
       namespace: "default",
       runner_id: "ex_1",
       factory_id: "market",
-      builder: %Builder{id: "btc_kraken", factory_id: "market", opts: []},
+      builder: %Builder{id: "btc_feed", factory_id: "market", opts: []},
       arrived_via_hotswap?: false
     }
 

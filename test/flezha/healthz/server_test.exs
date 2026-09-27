@@ -143,7 +143,7 @@ defmodule Flezha.Healthz.ServerTest do
 
   test "output stalled → 200 degraded (not a restart signal)", %{port: port} do
     # One of two bound operators stalled: producing(1) < bound(2).
-    publish_tick(["btc_kraken"], 2)
+    publish_tick(["btc_feed"], 2)
 
     {status, _headers, body} = get(port, "/healthz")
     decoded = Jason.decode!(body)
@@ -157,7 +157,7 @@ defmodule Flezha.Healthz.ServerTest do
       assert decoded["status"] == "degraded"
       assert decoded["bound_operators"] == 2
       assert decoded["producing_operators"] == 1
-      assert decoded["stalled_operators"] == ["btc_kraken"]
+      assert decoded["stalled_operators"] == ["btc_feed"]
     end
   end
 
@@ -167,7 +167,7 @@ defmodule Flezha.Healthz.ServerTest do
       last_tick_at: System.monotonic_time(:millisecond),
       operator_health:
         verdicts([
-          {op("btc_kraken"), :degraded,
+          {op("btc_feed"), :degraded,
            reason: {:plugin_unhealthy, "src", :not_running}, phase: :running},
           {op("healthy_1"), :healthy, reason: :producing, phase: :running}
         ])
@@ -183,7 +183,7 @@ defmodule Flezha.Healthz.ServerTest do
       assert status == 200
       assert decoded["status"] == "degraded"
       assert decoded["reason"] == "plugin_unhealthy"
-      assert decoded["plugin_degraded_operators"] == ["btc_kraken"]
+      assert decoded["plugin_degraded_operators"] == ["btc_feed"]
     end
   end
 
@@ -360,11 +360,11 @@ defmodule Flezha.Healthz.ServerTest do
   test "STUCK operator (fed but frozen) → 200 degraded with per-reason detail", %{port: port} do
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      stuck_operators: %{"btc_kraken" => %{detail: :wal_frozen, cell: "task/k1"}},
+      stuck_operators: %{"btc_feed" => %{detail: :wal_frozen, cell: "task/k1"}},
       intent_mismatch: [],
       operator_health:
         verdicts([
-          {op("btc_kraken"), :degraded, reason: {:stuck, :wal_frozen}, phase: :running},
+          {op("btc_feed"), :degraded, reason: {:stuck, :wal_frozen}, phase: :running},
           {op("healthy_1"), :healthy, reason: :producing, phase: :running}
         ]),
       pending_restore: false
@@ -380,8 +380,8 @@ defmodule Flezha.Healthz.ServerTest do
       assert decoded["status"] == "degraded"
       assert decoded["reason"] == "output_stalled"
       assert decoded["producing_operators"] == 1
-      assert decoded["stuck_operators"]["btc_kraken"]["detail"] == "wal_frozen"
-      assert decoded["stuck_operators"]["btc_kraken"]["cell"] == "task/k1"
+      assert decoded["stuck_operators"]["btc_feed"]["detail"] == "wal_frozen"
+      assert decoded["stuck_operators"]["btc_feed"]["cell"] == "task/k1"
     end
   end
 
@@ -393,7 +393,7 @@ defmodule Flezha.Healthz.ServerTest do
       last_tick_at: System.monotonic_time(:millisecond),
       stalled_operators: [],
       stuck_operators: %{},
-      intent_mismatch: ["btc_kraken", "eth_kraken"],
+      intent_mismatch: ["btc_feed", "eth_feed"],
       intended_operators: 0,
       bound_operators: 0,
       producing_operators: 0,
@@ -410,7 +410,7 @@ defmodule Flezha.Healthz.ServerTest do
       assert status == 200
       assert decoded["status"] == "degraded"
       assert decoded["reason"] == "intent_mismatch"
-      assert decoded["intent_mismatch"] == ["btc_kraken", "eth_kraken"]
+      assert decoded["intent_mismatch"] == ["btc_feed", "eth_feed"]
     end
   end
 
@@ -422,7 +422,7 @@ defmodule Flezha.Healthz.ServerTest do
       last_tick_at: System.monotonic_time(:millisecond),
       stalled_operators: [],
       stuck_operators: %{},
-      intent_mismatch: ["btc_kraken"],
+      intent_mismatch: ["btc_feed"],
       intended_operators: 0,
       bound_operators: 0,
       producing_operators: 0,

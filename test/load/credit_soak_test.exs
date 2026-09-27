@@ -1,8 +1,8 @@
 defmodule Flezha.Load.CreditSoakTest do
   @moduledoc """
-  Credit-grant flow-control soak against the 06-21 mock-Kraken load.
+  Credit-grant flow-control soak against the 06-21 mock exchange load.
 
-  Recreates the incident shape: the `flezha_kraken_mock` WS feed drives a
+  Recreates the incident shape: the mock exchange WS feed drives a
   state-persisting operator at ≥1100 msg/s sustained, against a
   deliberately slowed fsync path (long batcher tick + periodic injected
   fsync stalls). Acceptance:
@@ -30,8 +30,8 @@ defmodule Flezha.Load.CreditSoakTest do
   Environment variables:
 
     * `CREDIT_SOAK_DURATION_MIN` — measurement window (default 10).
-    * `CREDIT_SOAK_KRAKEN_DIR` — checkout of `flezha_kraken_mock`
-      (default `../flezha_market/flezha_kraken_mock` next to this repo).
+    * `CREDIT_SOAK_MOCK_DIR` — checkout of the mock exchange feed from the
+      `flezha_market` repository, with `npm install` run. Required.
     * `CREDIT_SOAK_BOOK_RATE` — book updates/s per pair (default 600;
       two pairs + trades ≈ 1220 msg/s offered).
   """
@@ -64,7 +64,7 @@ defmodule Flezha.Load.CreditSoakTest do
   @tasklet "store_input_tasklet"
   @ws_plugin_id "credit_soak_ws"
 
-  @kraken_port 8097
+  @mock_port 8097
   @pairs "XBT/USD,XBT/EUR"
   @subscribe ~s({"event":"subscribe","subscription":{"name":"book","depth":1000},"pair":["XBT/USD","XBT/EUR"]})
 
@@ -77,12 +77,12 @@ defmodule Flezha.Load.CreditSoakTest do
   @stall_ms 1_500
   @sample_ms 10_000
 
-  test "mock-Kraken load: flat memory, zero sheds, zero loss, park/resume cycling" do
+  test "mock exchange load: flat memory, zero sheds, zero loss, park/resume cycling" do
     duration_min = int_env("CREDIT_SOAK_DURATION_MIN", 10)
     book_rate = int_env("CREDIT_SOAK_BOOK_RATE", 600)
 
-    kraken_port = start_mock_kraken!(book_rate)
-    on_exit(fn -> ensure_port_dead(kraken_port) end)
+    mock_port = start_mock_exchange!(book_rate)
+    on_exit(fn -> ensure_port_dead(mock_port) end)
 
     prev_fsync = Application.get_env(:flezha, :agent_fsync_interval_ms)
     Application.put_env(:flezha, :agent_fsync_interval_ms, @fsync_tick_ms)
@@ -139,7 +139,7 @@ defmodule Flezha.Load.CreditSoakTest do
         operator_id: operator_id,
         provider: Flezha.Plugin.Provider.Websocket,
         opts: %{
-          uri: "ws://localhost:#{@kraken_port}",
+          uri: "ws://localhost:#{@mock_port}",
           # String keys throughout: `subscribe_frame/1` indexes
           # `post_connect["payload"]["type"|"message"]`.
           post_connect: %{"payload" => %{"type" => "text", "message" => @subscribe}}
@@ -298,19 +298,15 @@ defmodule Flezha.Load.CreditSoakTest do
     }
   end
 
-  ## ----- mock kraken -------------------------------------------------------------
+  ## ----- mock exchange -----------------------------------------------------------
 
-  defp start_mock_kraken!(book_rate) do
-    dir =
-      System.get_env(
-        "CREDIT_SOAK_KRAKEN_DIR",
-        Path.expand("../../../flezha_market/flezha_kraken_mock", __DIR__)
-      )
+  defp start_mock_exchange!(book_rate) do
+    dir = System.get_env("CREDIT_SOAK_MOCK_DIR", "")
 
     unless File.exists?(Path.join(dir, "server.js")) do
       flunk(
-        "flezha_kraken_mock not found at #{dir} — set CREDIT_SOAK_KRAKEN_DIR " <>
-          "to a checkout of flezha_market/flezha_kraken_mock (npm install run)."
+        "no mock exchange feed at #{inspect(dir)}: set CREDIT_SOAK_MOCK_DIR to a checkout " <>
+          "of the mock exchange feed from the flezha_market repository (npm install run)."
       )
     end
 
@@ -321,15 +317,15 @@ defmodule Flezha.Load.CreditSoakTest do
         args: ["server.js"],
         cd: dir,
         env: [
-          {~c"PORT", ~c"#{@kraken_port}"},
+          {~c"PORT", ~c"#{@mock_port}"},
           {~c"PAIRS", String.to_charlist(@pairs)},
           {~c"BOOK_UPDATES_PER_SEC", ~c"#{book_rate}"},
           {~c"TRADES_PER_SEC", ~c"10"}
         ]
       ])
 
-    assert wait_until(fn -> tcp_up?(@kraken_port) end, 20_000),
-           "mock kraken never came up on :#{@kraken_port}"
+    assert wait_until(fn -> tcp_up?(@mock_port) end, 20_000),
+           "mock exchange never came up on :#{@mock_port}"
 
     port
   end

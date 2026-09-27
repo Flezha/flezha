@@ -93,10 +93,10 @@ defmodule Flezha.State.RecoveryTest do
 
   describe "resolve_runner/1" do
     test "resolves the runner tag for an operator whose :operator_class opt matches" do
-      operator = %Builder{id: "btc_kraken", factory_id: "f", opts: [operator_class: "market"]}
+      operator = %Builder{id: "btc_feed", factory_id: "f", opts: [operator_class: "market"]}
 
       stub(HubManager, :get_registry, fn "default" ->
-        {:ok, %{"btc_kraken" => entry(operator, "exec_123")}}
+        {:ok, %{"btc_feed" => entry(operator, "exec_123")}}
       end)
 
       assert Recovery.resolve_runner({"market", "0", "p1"}) == {:ok, "exec_123"}

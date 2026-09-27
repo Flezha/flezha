@@ -3,7 +3,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIgnorePatternTest do
   Watchdog contract tests for the WebSocket plugin's per-plugin
   `ignore_pattern` substring filter on `last_data_frame_at` updates.
 
-  Failure mode this protects against: Kraken (or any) WS keeps emitting
+  Failure mode this protects against: an upstream WS keeps emitting
   per-second `{"event":"heartbeat"}` JSON frames after the actual market
   feed dies. Without an `ignore_pattern`, those heartbeats refresh the
   watchdog timer indefinitely and the plugin manager never restarts the

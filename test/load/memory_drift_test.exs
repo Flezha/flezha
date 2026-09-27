@@ -2,7 +2,7 @@ defmodule Flezha.Load.MemoryDriftTest do
   @moduledoc """
   Long-running load harness that measures Controller BEAM memory
   growth under realistic WebSocket + Kafka traffic. Drives an operator
-  with a configurable WS source (synthetic testnet or live Kraken WS)
+  with a configurable WS source (synthetic testnet or a live exchange feed)
   and, optionally, a Kafka producer plugin on `:on_input` so each
   inbound frame is also published.
 
@@ -37,12 +37,12 @@ defmodule Flezha.Load.MemoryDriftTest do
       (default 10_000).
     * `MEMORY_DRIFT_WORKLOAD` — `ws` | `kafka` | `combined`
       (default `combined`).
-    * `MEMORY_DRIFT_WS_SOURCE` — `testnet` | `kraken`
+    * `MEMORY_DRIFT_WS_SOURCE` — `testnet` | `live`
       (default `testnet`).
     * `MEMORY_DRIFT_WS_INTERVAL_MS` — testnet echo interval in ms
       (default 3, i.e. ~333 msg/sec).
-    * `MEMORY_DRIFT_WS_URI` / `MEMORY_DRIFT_WS_SUBSCRIBE` — override
-      the Kraken endpoint and subscribe message.
+    * `MEMORY_DRIFT_WS_URI` / `MEMORY_DRIFT_WS_SUBSCRIBE` — the live
+      feed's endpoint and subscribe message; both required with `live`.
     * `MEMORY_DRIFT_PAYLOAD` — override the testnet echo body (must
       be ≥ 64 B to exercise the refc-binary path).
     * `MEMORY_DRIFT_KAFKA_HOST` / `MEMORY_DRIFT_KAFKA_PORT` — broker
@@ -82,15 +82,6 @@ defmodule Flezha.Load.MemoryDriftTest do
   @ws_plugin_id "memory_drift_ws"
   @kafka_plugin_id "memory_drift_kafka"
   @operator_factory "do_nothing"
-
-  # Kraken public WS v1 book (depth) subscription on a fan-out of major
-  # pairs. The `book` channel — not `trade` — is what produces sustained
-  # throughput on the order of 100-300 msg/sec; one update per order-book
-  # mutation per pair.
-  @kraken_ws_uri "wss://ws.kraken.com"
-  @kraken_pairs ~s(["BTC/USD","ETH/USD","BTC/EUR","ETH/EUR","XRP/USD","SOL/USD","ADA/USD","DOT/USD"])
-  @kraken_subscribe_message ~s({"event":"subscribe","subscription":{"name":"book","depth":1000},"pair":) <>
-                              @kraken_pairs <> "}"
 
   @kafka_host System.get_env("MEMORY_DRIFT_KAFKA_HOST", "localhost")
   @kafka_port String.to_integer(System.get_env("MEMORY_DRIFT_KAFKA_PORT", "9092"))
@@ -280,10 +271,8 @@ defmodule Flezha.Load.MemoryDriftTest do
     IO.puts("[memory_drift] Kafka producer plugin '#{@kafka_plugin_id}' → topic=#{topic}")
   end
 
-  defp ws_endpoint("kraken") do
-    uri = System.get_env("MEMORY_DRIFT_WS_URI", @kraken_ws_uri)
-    msg = System.get_env("MEMORY_DRIFT_WS_SUBSCRIBE", @kraken_subscribe_message)
-    {uri, msg}
+  defp ws_endpoint("live") do
+    {System.fetch_env!("MEMORY_DRIFT_WS_URI"), System.fetch_env!("MEMORY_DRIFT_WS_SUBSCRIBE")}
   end
 
   defp ws_endpoint(_) do

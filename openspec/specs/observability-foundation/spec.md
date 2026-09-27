@@ -177,11 +177,11 @@ The mapping SHALL also name, in the other direction, every mapped event nothing 
 - **THEN** a signal with `kind: :event`, `source: :flezha_state`, `name: :wal_backpressure`, `measurements.bytes: 1024`, `metadata.operator: "r1"` SHALL appear on the bus
 
 #### Scenario: Websocket re-subscribe event is bridged
-- **WHEN** code calls `:telemetry.execute([:flezha, :plugin, :websocket, :resubscribe], %{data_silence_ms: 120_000}, %{plugin_id: "wss://ws.kraken.com"})`
-- **THEN** a signal sourced from the websocket provider carrying `measurements.data_silence_ms: 120_000` and `metadata.plugin_id: "wss://ws.kraken.com"` SHALL appear on the bus
+- **WHEN** code calls `:telemetry.execute([:flezha, :plugin, :websocket, :resubscribe], %{data_silence_ms: 120_000}, %{plugin_id: "wss://feed.example.com"})`
+- **THEN** a signal sourced from the websocket provider carrying `measurements.data_silence_ms: 120_000` and `metadata.plugin_id: "wss://feed.example.com"` SHALL appear on the bus
 
 #### Scenario: Persistence stall/gap events are bridged
-- **WHEN** code calls `:telemetry.execute([:flezha, :state, :output_stall], %{stalled_ms: 60_000, last_seq: 100}, %{operator: "btc_kraken", tasklet: "ohlc", key: "1m"})`
+- **WHEN** code calls `:telemetry.execute([:flezha, :state, :output_stall], %{stalled_ms: 60_000, last_seq: 100}, %{operator: "btc_feed", tasklet: "ohlc", key: "1m"})`
 - **THEN** a signal sourced from the state subsystem carrying the stalled duration, last seq, and Cell metadata SHALL appear on the bus
 - **AND** the same bridging SHALL hold for `[:flezha, :state, :seq_gap]` and `[:flezha, :state, :compaction_timeout]`
 

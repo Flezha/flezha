@@ -293,17 +293,17 @@ defmodule Flezha.Convergence.LoopTest do
     end
 
     test "wiped registry with on-disk evidence → mismatch names the operators", %{root: root} do
-      seed_cell(root, "btc_kraken", "op", "k1")
-      seed_cell(root, "eth_kraken", "op", "k1")
+      seed_cell(root, "btc_feed", "op", "k1")
+      seed_cell(root, "eth_feed", "op", "k1")
 
-      assert {["btc_kraken", "eth_kraken"], cache} = Intent.intent_mismatch(intent_for([]), nil)
+      assert {["btc_feed", "eth_feed"], cache} = Intent.intent_mismatch(intent_for([]), nil)
 
       # Live intent covering one operator clears exactly that entry.
-      assert {["eth_kraken"], _} = Intent.intent_mismatch(intent_for(["btc_kraken"]), cache)
+      assert {["eth_feed"], _} = Intent.intent_mismatch(intent_for(["btc_feed"]), cache)
     end
 
     test "a finished bounded retained for inspection is not evidence", %{root: root} do
-      seed_cell(root, "btc_kraken", "op", "k1")
+      seed_cell(root, "btc_feed", "op", "k1")
       seed_cell(root, "done_bounded", "op", "k1")
 
       :ok =
@@ -315,7 +315,7 @@ defmodule Flezha.Convergence.LoopTest do
           finished_at: 0
         })
 
-      assert {["btc_kraken"], _} = Intent.intent_mismatch(intent_for([]), nil)
+      assert {["btc_feed"], _} = Intent.intent_mismatch(intent_for([]), nil)
     end
 
     test "durable-registry rows without live intent also count as evidence" do
@@ -325,11 +325,11 @@ defmodule Flezha.Convergence.LoopTest do
     end
 
     test "flz state delete clears the entry", %{root: root} do
-      seed_cell(root, "btc_kraken", "op", "k1")
-      assert {["btc_kraken"], cache} = Intent.intent_mismatch(intent_for([]), nil)
+      seed_cell(root, "btc_feed", "op", "k1")
+      assert {["btc_feed"], cache} = Intent.intent_mismatch(intent_for([]), nil)
 
-      # The CLI `flz state delete btc_kraken/op/k1` path.
-      {:ok, _} = Flezha.State.Supervisor.delete_cell({"btc_kraken", "op", "k1"})
+      # The CLI `flz state delete btc_feed/op/k1` path.
+      {:ok, _} = Flezha.State.Supervisor.delete_cell({"btc_feed", "op", "k1"})
 
       assert {[], _} = Intent.intent_mismatch(intent_for([]), cache)
     end

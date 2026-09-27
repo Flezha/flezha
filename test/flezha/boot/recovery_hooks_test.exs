@@ -102,7 +102,7 @@ defmodule Flezha.Boot.RecoveryHooksTest do
       ExUnit.CaptureLog.capture_log(fn ->
         assert :ok =
                  RecoveryHooks.reconcile_duplicate(:market_hub, %{
-                   child_id: "btc_kraken",
+                   child_id: "btc_feed",
                    instance_count: 2,
                    kept_node: :a@host,
                    stopped_nodes: [:b@host]
@@ -112,13 +112,13 @@ defmodule Flezha.Boot.RecoveryHooksTest do
     # Alarm-grade: a start-authority violation must be greppable at error level,
     # not buried in a metric only a dashboard reads.
     assert log =~ "[error]"
-    assert log =~ "btc_kraken"
+    assert log =~ "btc_feed"
 
     assert_receive {:telemetry, [:flezha, :boot, :reconcile_duplicate], measurements, metadata},
                    500
 
     assert measurements.instance_count == 2
-    assert metadata.operator_id == "btc_kraken"
+    assert metadata.operator_id == "btc_feed"
     assert metadata.kept_node == :a@host
     assert metadata.stopped_nodes == [:b@host]
   end

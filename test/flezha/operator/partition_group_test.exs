@@ -578,7 +578,7 @@ defmodule FlezhaTest.Operator.PartitionGroupRescaleTest do
       # builder.opts, so reading only there rescales into members with no plugins
       # at all — healthy, fully covering the key space, producing nothing.
       plugin = %Plugin{
-        id: "ohlc_kraken_ws#p0",
+        id: "ohlc_exchange_ws#p0",
         provider: :operator_websocket,
         operator_id: "ohlc#p0",
         opts: %{uri: "wss://example/v2"}
@@ -593,7 +593,7 @@ defmodule FlezhaTest.Operator.PartitionGroupRescaleTest do
 
       assert Enum.map(started, fn m ->
                m.opts |> Keyword.fetch!(:plugins) |> Enum.map(& &1.id)
-             end) == [["ohlc_kraken_ws#p0"], ["ohlc_kraken_ws#p1"]]
+             end) == [["ohlc_exchange_ws#p0"], ["ohlc_exchange_ws#p1"]]
 
       # The member's own partition identity rides along in each plugin's opts.
       assert Enum.all?(started, fn m ->

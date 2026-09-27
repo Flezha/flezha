@@ -114,7 +114,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
             base_state(
               idle_timeout_ms: 100,
               last_frame_at: System.monotonic_time(:millisecond) - 350,
-              plugin_id: "kraken_trade_ws",
+              plugin_id: "exchange_trade_ws",
               overwatcher_pid: parent
             )
 
@@ -122,7 +122,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
         end)
 
       assert_receive {:telemetry, @telemetry_event, %{silence_ms: silence_ms},
-                      %{plugin_id: "kraken_trade_ws"}},
+                      %{plugin_id: "exchange_trade_ws"}},
                      1_000
 
       assert silence_ms >= 100

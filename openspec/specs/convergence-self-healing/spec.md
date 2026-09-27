@@ -8,7 +8,7 @@ TBD - created by archiving change unified-convergence-loop. Update Purpose after
 The system MUST run exactly one self-healing decision loop (`Flezha.Convergence.Loop`), and every remedy MUST be one of its declared primitives — `rebind_operator`, `resync_runner`, `start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner`, `restart_runner`, `reset_control_channel`, `publish_binding` — planned by the Planner and executed by `Heal.execute/1`. No module other than the Loop emits heal actions. Watchdog, FleetManager, HubManager, Healthz, StreamChannel, the Overwatch's bind, the WAL admission, the extension table and the registry hooks each record a fact and declare it through `Loop.declare/1`; none of them decide what to fix, none carry a retry ladder, counter or clock of its own, and none invoke a remedy entry point directly. In particular the Watchdog SHALL NOT call `Recovery.resync` (or any other remedy) itself — neither for an output stall nor for a compaction give-up — and the WAL admission SHALL NOT resync a seq gap itself. The one remedy-shaped action outside the primitives is the node drain of a graceful shutdown: an administration verb the loop is told about (`{:node_draining, deadline}`) and never chooses, reached through `HubManager.drain_hub/2` from `lib/flezha/shutdown/` only.
 
 #### Scenario: stall is observed in one place, decision happens in another
-- **GIVEN** the State Watchdog detects output stall for operator `btc_kraken` tasklet 0
+- **GIVEN** the State Watchdog detects output stall for operator `btc_feed` tasklet 0
 - **WHEN** the Watchdog flags the stall
 - **THEN** the Watchdog emits a `[:flezha, :state, :output_stall]` event with `%{operator_class, operator_instance, tasklet, key}`
 - **AND** the Watchdog performs no heal action of its own — no direct `Recovery.resync`, no dedup bookkeeping
@@ -90,7 +90,7 @@ The guard protects a target that is merely *observed* healthy. It SHALL NOT prot
 - **THEN** FleetManager evicts it despite the open connection, and its operators rebind onto a live runner
 
 #### Scenario: an output-stalled operator is always re-wired
-- **GIVEN** operator `btc_kraken` is bound to an active runner but has not produced output past the stall grace
+- **GIVEN** operator `btc_feed` is bound to an active runner but has not produced output past the stall grace
 - **WHEN** the Planner emits the output-stall ladder op (`resync_runner`, then `rebind_operator` on persistence) with `reason: :output_stall`
 - **THEN** the Heal applies it even though its bound runner is active (the silent-freeze self-heal MUST NOT be skipped by the healthy-target guard).
 
@@ -101,7 +101,7 @@ The guard protects a target that is merely *observed* healthy. It SHALL NOT prot
 Committing the binding first records `bound_runner ∈ active_runners` for a runner the operator cannot reach: `Convergence.Probe` reads it as placed, `Convergence.Diff` stops classifying it misbound, and the delta goes permanently empty. The operator then reports healthy while every frame drops.
 
 #### Scenario: a failed cross-node migrate stays visible to the next tick
-- **GIVEN** operator `btc_kraken` is misbound and the Heal targets a runner on another controller's node
+- **GIVEN** operator `btc_feed` is misbound and the Heal targets a runner on another controller's node
 - **WHEN** `runner_migrate` cannot reach that runner (`{:ping_failed, :no_control_unit}`)
 - **THEN** the operator's `runner_id` and `channel` SHALL be unchanged
 - **AND** the next Diff SHALL still classify it misbound and re-plan the heal under backoff.
@@ -278,7 +278,7 @@ An output stall SHALL reach the loop as a declared fact: the Watchdog telemetry 
 
 #### Scenario: output-stalled operator walks the resync-then-rebind ladder
 
-- **GIVEN** operator `btc_kraken` is bound to active runner `ex1` and has not produced output past the output-stall grace period
+- **GIVEN** operator `btc_feed` is bound to active runner `ex1` and has not produced output past the output-stall grace period
 - **WHEN** the Watchdog flags it and the convergence Loop receives the stall event
 - **THEN** the Loop triggers an immediate tick
 - **AND** the first eligible attempt issues a `resync_runner` op with `args: %{reason: :output_stall}`
@@ -286,8 +286,8 @@ An output stall SHALL reach the loop as a declared fact: the Watchdog telemetry 
 
 #### Scenario: repeated stalls are backoff-throttled
 
-- **GIVEN** operator `btc_kraken` was just resynced due to an output stall 1 second ago
-- **WHEN** the Watchdog flags another output stall for `btc_kraken`
+- **GIVEN** operator `btc_feed` was just resynced due to an output stall 1 second ago
+- **WHEN** the Watchdog flags another output stall for `btc_feed`
 - **THEN** the planned op is filtered out by Backoff (the first rung's cooldown has not yet elapsed)
 - **AND** no op is issued on this tick
 
@@ -314,9 +314,9 @@ The system MUST detect a wall-clock vs monotonic-clock divergence indicating sle
 When `flz plugin enable <operator> <plugin>` succeeds, the plugin MUST be persisted into the hub's **declared-children set**, on every node of the hub cluster, regardless of which node served the CLI call. The declared set is named deliberately: the hub keeps two records of the same child, and an auto-recovery hub never replays its process registry from disk, so a plugin held only in the registry row is not read back by the restart it was written to survive. The registry row MUST continue to carry the plugin as the live view, written from the declared spec by every start, so the two records cannot disagree about a running operator. On restart (recovery mode, plain restart, or node-death redistribution from any node), every restored operator MUST re-instantiate its declared plugins idempotently, and the convergence I2 backstop MUST re-add a declared-but-missing plugin to a running operator. The same cluster-wide propagation MUST apply to plugin disable, to provider state persisted against a plugin, and to the registry runner-tag write issued by Heal rebinds. A peer node that is unreachable at write time MUST converge on rejoin via the peer-sync recovery path; propagation failures MUST be logged, never silently dropped.
 
 #### Scenario: plugin survives recovery-mode restart
-- **GIVEN** `flz plugin enable btc_kraken kafka-producer` was executed
+- **GIVEN** `flz plugin enable btc_feed kafka-producer` was executed
 - **WHEN** the controller is restarted in recovery mode
-- **THEN** `btc_kraken` shows kafka-producer and the producer functions within a few ticks of boot.
+- **THEN** `btc_feed` shows kafka-producer and the producer functions within a few ticks of boot.
 
 #### Scenario: a restart-driven start SHALL NOT erase an enabled plugin
 - **GIVEN** an operator declared by `flz operator start` with no plugins, and a plugin enabled on it afterwards
@@ -413,7 +413,7 @@ A declared plugin SHALL carry its own verdict record: `degraded` when it is not 
 When an SDK runner process restarts and presents `previous_runner_id`, the controller MUST evict the previous binding and bind the new id atomically, with no window where an operator is bound to both ids or to a corpse.
 
 #### Scenario: SDK process restart preserves operator binding
-- **GIVEN** operator `btc_kraken` is bound to runner `default_X` and producing
+- **GIVEN** operator `btc_feed` is bound to runner `default_X` and producing
 - **WHEN** the SDK process is killed and restarts, reading its persisted `runner_id = default_X` and announcing it as `previous_runner_id`
 - **THEN** the controller evicts the stale `default_X` binding inside the connect handler before the new bind, re-attaches the operator, and kafka offsets resume within a couple of ticks
 - **AND** no entry in the active runner set references a dead `default_X`.

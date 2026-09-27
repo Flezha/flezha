@@ -388,7 +388,7 @@ The fake exchange at `test/apps/testnet` is now the git submodule
 [`flezha/flezha_testnet`](https://github.com/flezha/flezha_testnet). Clone with
 `--recurse-submodules`, or run `git submodule update --init test/apps/testnet` in an
 existing checkout; `mix test.setup` says so when it is missing. The testnet now ships
-the trade and order book generators its Kraken channels use, so a subscription streams
+the trade and order book generators its subscription channels use, so a subscription streams
 data instead of only being acknowledged, including in the `:latest-dev` image.
 
 ### Added: a channel names its payload format in the Ruby, Python, Node and PHP SDKs
@@ -2950,7 +2950,7 @@ as before.
   annotation-processing error. Nothing changes for a tasklet that does not
   declare it.
 
-- **The testnet WS server speaks Kraken-v2 subscriptions.** It understood only
+- **The testnet WS server speaks v2 subscriptions.** It understood only
   its own `{"event_type":"subscribe",…}` payload, whose generators were global
   to the server — so a partitioned operative could not be exercised against it:
   every member would have received every symbol and parked the out-of-range

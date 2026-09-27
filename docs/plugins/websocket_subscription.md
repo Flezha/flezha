@@ -346,7 +346,7 @@ reconcile outcome and the last error.
 
 ```text
   Plugins:
-    - kraken_ws: Flezha.Plugin.Provider.Websocket
+    - exchange_ws: Flezha.Plugin.Provider.Websocket
         applied: BTC/USD, ETH/USD
         desired: BTC/USD, ETH/USD
         inflight: 0

@@ -65,7 +65,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     :telemetry.execute(
       [:flezha, :plugin, :websocket, :resubscribe],
       %{data_silence_ms: 120_000},
-      %{plugin_id: "wss://ws.kraken.com"}
+      %{plugin_id: "wss://feed.example.com"}
     )
 
     signal =
@@ -73,7 +73,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
 
     assert signal
     assert signal.measurements[:data_silence_ms] == 120_000
-    assert signal.metadata[:plugin_id] == "wss://ws.kraken.com"
+    assert signal.metadata[:plugin_id] == "wss://feed.example.com"
   end
 
   test "persistence stall/gap/compaction events are bridged" do
@@ -82,7 +82,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     :telemetry.execute(
       [:flezha, :state, :output_stall],
       %{stalled_ms: 60_000, last_seq: 100},
-      %{operator: "btc_kraken", tasklet: "ohlc", key: "1m"}
+      %{operator: "btc_feed", tasklet: "ohlc", key: "1m"}
     )
 
     stall =
@@ -91,7 +91,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     assert stall
     assert stall.measurements[:stalled_ms] == 60_000
     assert stall.measurements[:last_seq] == 100
-    assert stall.metadata[:operator] == "btc_kraken"
+    assert stall.metadata[:operator] == "btc_feed"
 
     :telemetry.execute([:flezha, :state, :seq_gap], %{expected: 101, got: 137}, %{operator: "r"})
     gap = receive_until(fn s -> s.source == :flezha_state and s.name == :seq_gap end, 500)
@@ -143,7 +143,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     :telemetry.execute(
       [:flezha, :state, :input_log_syncer_died],
       %{count: 1},
-      %{operator: "btc_kraken", reason: :killed}
+      %{operator: "btc_feed", reason: :killed}
     )
 
     died =
@@ -157,7 +157,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     assert died.metadata[:reason] == :killed
 
     :telemetry.execute([:flezha, :plugin, :websocket, :shipped], %{count: 3}, %{
-      plugin_id: "wss://ws.kraken.com"
+      plugin_id: "wss://feed.example.com"
     })
 
     shipped = receive_until(fn s -> s.source == :flezha_ws and s.name == :shipped end, 500)
@@ -198,7 +198,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     :telemetry.execute(
       [:flezha, :convergence, :operator_stuck],
       %{count: 1},
-      %{operator_id: "btc_kraken", detail: :wal_frozen, cell: "ohlc/1m"}
+      %{operator_id: "btc_feed", detail: :wal_frozen, cell: "ohlc/1m"}
     )
 
     stuck =
@@ -210,12 +210,12 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     assert stuck
     assert stuck.kind == :event
     assert stuck.metadata[:detail] == :wal_frozen
-    assert stuck.metadata[:operator_id] == "btc_kraken"
+    assert stuck.metadata[:operator_id] == "btc_feed"
 
     :telemetry.execute(
       [:flezha, :convergence, :intent_mismatch],
       %{count: 2},
-      %{operators: ["btc_kraken", "eth_kraken"]}
+      %{operators: ["btc_feed", "eth_feed"]}
     )
 
     mismatch =
@@ -226,7 +226,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
 
     assert mismatch
     assert mismatch.measurements[:count] == 2
-    assert mismatch.metadata[:operators] == ["btc_kraken", "eth_kraken"]
+    assert mismatch.metadata[:operators] == ["btc_feed", "eth_feed"]
   end
 
   test "an operator park reaches the bus from the real lifecycle call site" do
@@ -243,7 +243,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     on_exit(fn -> Registry.unregister_sink(park_sink) end)
     drain_mailbox()
 
-    reason = {:plugin_prepare_failed, "kraken_sink", {:module_not_loaded, MyOrg.Uninstalled}}
+    reason = {:plugin_prepare_failed, "exchange_sink", {:module_not_loaded, MyOrg.Uninstalled}}
 
     Lifecycle.park(
       %Overwatch{id: "obs_park_operator", namespace: "default"},
@@ -260,7 +260,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     assert parked.kind == :metric
     assert parked.measurements[:count] == 1
     assert parked.metadata[:operator_id] == "obs_park_operator"
-    assert parked.metadata[:plugin_id] == "kraken_sink"
+    assert parked.metadata[:plugin_id] == "exchange_sink"
     assert parked.metadata[:reason] == reason
   end
 
