@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Fixed: a sinkless short form that returns a value no longer parks its input
+
+In the Node, Python, Ruby and PHP SDKs, a tasklet with no outgoing channel whose `run` returned a
+value tried to emit it, failed, retried and parked the input in the dead-letter queue. The value
+is now left alone, as the Rust SDK always did; an explicit `emit` with nowhere to go is still
+refused. The Python and Ruby test harnesses no longer emit what a `compensate` hook returns,
+which the runner never did, and a Python `runner.admin()` taken before `start` is refused by name
+instead of raising `AttributeError` on every call.
+
 ### Fixed: the local-only durability warning points at a page that exists
 
 A production controller started with `FLEZHA_DURABILITY_BACKEND` unset warns that its disk holds
