@@ -591,7 +591,7 @@ defmodule Flezha.Operator.Overwatch do
     {:noreply, state}
   end
 
-  # External callers (the convergence Loop's rebind heal) trigger a fresh
+  # External callers (the convergence loop's `resync_runner` heal) trigger a fresh
   # per-Cell replay against the bound runner without knowing this process's
   # internals. Used by `Flezha.State.Recovery.resync_for_overwatch/2`.
   def handle_cast({:kick_restore, runner_id}, %__MODULE__{} = state) do

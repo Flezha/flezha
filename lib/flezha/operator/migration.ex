@@ -85,12 +85,22 @@ defmodule Flezha.Operator.Migration do
 
   @doc """
   The operator a bind onto another runner starts: the builder, seeded from
-  the final state a graceful stop shipped when one is stored. The kind and
-  the partition identity ride the builder, so a moved member keeps its
-  mis-route guard.
+  the final state a graceful stop shipped when one is stored, else from the
+  init state this Overwatch already resolved, so a move never runs the
+  `:on_operator_init` chain again. The kind and the partition identity ride
+  the builder, so a moved member keeps its mis-route guard.
   """
   @spec bind_operator(Overwatch.t()) :: Flezha.Operator.Builder.t()
-  def bind_operator(%Overwatch{snapshot: nil, builder: builder}), do: builder
+  def bind_operator(%Overwatch{snapshot: nil, init_values: resolved, builder: builder})
+      when resolved == %{},
+      do: builder
+
+  def bind_operator(%Overwatch{
+        snapshot: nil,
+        init_values: resolved,
+        builder: %Flezha.Operator.Builder{} = builder
+      }),
+      do: %Flezha.Operator.Builder{builder | init_values: resolved}
 
   def bind_operator(%Overwatch{builder: %Flezha.Operator.Builder{} = builder} = state),
     do: %Flezha.Operator.Builder{builder | init_values: Payloader.json_to_map(state.snapshot)}

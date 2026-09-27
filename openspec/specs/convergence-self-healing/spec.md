@@ -410,12 +410,12 @@ A declared plugin SHALL carry its own verdict record: `degraded` when it is not 
 
 ### Requirement: Fresh-process runner takeover is atomic
 
-When an SDK runner process restarts and presents `previous_runner_id`, the controller MUST evict the previous binding and bind the new id atomically, with no window where an operator is bound to both ids or to a corpse.
+When an SDK runner process restarts and presents its stable identity with a new incarnation while the identity's previous session is still held, the controller MUST fence and evict the previous session and bind each of the identity's operators onto the new session through the one bind path, ordered unbind-old before bind-new, with no window where an operator is bound to both sessions or to a corpse, and with no `AddOperator` sent to a process for an operator it still runs.
 
 #### Scenario: SDK process restart preserves operator binding
-- **GIVEN** operator `btc_feed` is bound to runner `default_X` and producing
-- **WHEN** the SDK process is killed and restarts, reading its persisted `runner_id = default_X` and announcing it as `previous_runner_id`
-- **THEN** the controller evicts the stale `default_X` binding inside the connect handler before the new bind, re-attaches the operator, and kafka offsets resume within a couple of ticks
+- **GIVEN** operator `btc_feed` is bound to session `default_X` of stable identity `S` and producing
+- **WHEN** the SDK process is killed and restarts, presenting `S` with a new incarnation
+- **THEN** the controller fences and evicts `default_X` inside the connect handler, each affected Overwatch binds its operator onto the new session through `Lifecycle.complete_init/4`, `btc_feed` is re-attached with its persisted state, and kafka offsets resume within a couple of ticks
 - **AND** no entry in the active runner set references a dead `default_X`.
 
 ### Requirement: Data-plane stall verdicts feed the convergence pipeline
@@ -550,23 +550,34 @@ against it and no backoff key advances.
 ### Requirement: Registry rebinds commit only on a confirmed migrate
 
 Every rebind path SHALL commit the registry binding only after the operator
-confirms the migrate — the heal rebind and the runner-disconnect reroute
-alike. A failed, timed-out, or
-unconfirmable migrate SHALL leave the binding unchanged so frames continue to
-route to the operator's current runner, and the operator SHALL remain
-eligible for the next convergence tick.
+confirms the bind — the heal rebind and the runner-disconnect reroute
+alike. The Overwatch's `runner_migrate` SHALL take the one bind path for every
+state it is in: it spawns the supervised bind task an un-park spawns, which runs
+`Lifecycle.complete_init/4` against the target and reports its outcome; the
+Overwatch publishes the registry tag and the route when the task reports a bound
+state, and parks the operator with the attempt's reason when it reports a
+failure, so the failure is declared to the loop and rebound on the `{:parked, id}`
+ladder. There SHALL be no synchronous running-migrate path beside the task, no
+snapshot-seeded `AddOperator`, and no restore dispatched by the heal after the
+bind: the bind restores the persisted Cells and delivers the inbox tail itself.
+A failed, timed-out, or unconfirmable bind SHALL leave the durable registry
+binding unchanged, and the operator SHALL remain eligible for the next
+convergence tick.
 
 #### Scenario: Timed-out migrate does not switch the registry
 
-- **WHEN** a `runner_migrate` call times out or returns an error
-- **THEN** the durable registry binding is not switched to the new runner, and
-  the operator remains routable on its current runner until a migrate
-  succeeds
+- **WHEN** a `runner_migrate` call times out, or the bind task it spawned reports a failure
+- **THEN** the durable registry binding is not switched to the new runner, the operator is parked with the reason and declared to the loop, and the parked ladder rebinds it
 
 #### Scenario: A bounded instance migrates as a bounded operator
 
-- **WHEN** a `runner_migrate` re-adds a bounded operator on its new runner
-- **THEN** the `AddOperator` SHALL carry the operator's kind (and its resume state), so the runner starts it as a bounded operator instead of refusing it as an unregistered unbounded class
+- **WHEN** a `runner_migrate` re-adds a durable bounded operator on its new runner
+- **THEN** the `AddOperator` SHALL carry the operator's kind, its folded `task_journal`, a `resume_cell_count` equal to its persisted Cells and its undelivered `inbox_tail_count`, so the runner starts it as a bounded operator, holds its driver until those Cells are restored, skips every committed tasklet and receives the tail it is owed
+
+#### Scenario: A rebind performs one restore
+
+- **WHEN** the heal's `rebind_operator` succeeds for an operator with persisted Cells
+- **THEN** each Cell SHALL receive exactly one `RestoreInitState` for that rebind, sent by the bind, and the heal SHALL send none of its own
 
 #### Scenario: Reroute picks by placement, not at random
 

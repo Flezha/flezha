@@ -5,6 +5,7 @@ defmodule FlezhaTest.Operator.OverwatchInitStateTest do
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Service.OperatorManager
   alias Flezha.State.TestHelpers
+  alias FlezhaTest.Helper.NodeTestHelper
 
   use ExUnit.Case
 
@@ -194,6 +195,8 @@ defmodule FlezhaTest.Operator.OverwatchInitStateTest do
       :exit, _ -> :ok
     end
 
+    # The move binds in a task; the resolver would run inside it.
+    assert NodeTestHelper.wait_until(fn -> :sys.get_state(pid).migrate_task == nil end, 10_000)
     refute_received {:probe, :called}
   end
 

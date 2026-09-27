@@ -701,8 +701,8 @@ sequenceDiagram
 
 Above the fences sits the **identity check**. `StreamChannel.Records.admit/3` refuses an output,
 a cell write, a `correction_request` or a control frame (`BoundedCompleted`, `IterPark`,
-`RunnerShutdownNotification`, `TaskCommit`, `IterCommit`) when the operator's row names the
-sending session's identity neither as owner nor as the pending target of a running migrate. A
+`RunnerShutdownNotification`, `TaskCommit`, `IterCommit`) when the operator's row does not
+name the sending session's identity as its owner. A
 refusal acts on nothing: it is counted on the channel's `foreign_frame_refused` liveness slot,
 reported once per session and operator on `[:flezha, :runner, :foreign_frame_refused]`, and
 answered with `RemOperator`, so a copy kept by a runner that was evicted while still alive is told

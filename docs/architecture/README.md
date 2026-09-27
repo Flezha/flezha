@@ -391,10 +391,12 @@ operator id picks which **runner** it binds to.
 
 A runner dials in, presents a **stable identity** that survives its own restarts, and the
 controller mints a per-connection **session token**. Stream routing and registry names key on the
-session token; which runner owns an operator keys on the stable identity. A reconnect under the
-same identity therefore moves no ownership, only the session each operator's Overwatch publishes
-its route on, and a runner's frame about an operator it does not own is refused and the runner
-told to remove its copy ([`runner_identity.md`](../internals/runner_identity.md)).
+session token; which runner owns an operator keys on the stable identity. The connect also
+carries an **incarnation**, minted once per runner process start. A reconnect under the same
+identity and incarnation is the same process, so it moves no ownership, only the session each
+operator's Overwatch publishes its route on; a new incarnation is a restarted process that runs
+nothing, so each of its operators is bound onto it afresh, with its state restored. A runner's
+frame about an operator it does not own is refused and the runner told to remove its copy ([`runner_identity.md`](../internals/runner_identity.md)).
 
 ```mermaid
 sequenceDiagram
@@ -402,8 +404,8 @@ sequenceDiagram
     participant CTRL as 🧠 Controller
     participant OW as 🧠 Overwatch (per operator)
 
-    EX->>CTRL: dial + connect_control_channel<br/>{namespace, stable_id, factories}
-    Note over CTRL: mint a session token for this connection<br/>if a prior session held this stable_id, fence it FIRST, then tell each of its operators the new one
+    EX->>CTRL: dial + connect_control_channel<br/>{namespace, stable_id, incarnation, factories}
+    Note over CTRL: mint a session token for this connection<br/>if a prior session held this stable_id, fence it FIRST, then tell each of its operators the new one:<br/>same incarnation re-points the binding, a new one binds afresh
     CTRL->>EX: AssignRunnerId
     CTRL->>EX: ConnectSocket {sockets_count}
     EX->>CTRL: open data streams — primary 0x01 in, secondary 0x02 out

@@ -161,6 +161,10 @@ the journal state (the resume iteration, the entry channel of the last committed
 iteration, committed task indexes, and the latest journaled handoff) to the SDK
 **on the bind** (`AddOperator.task_journal`), which is instance-scoped and therefore
 reaches a class that has no per-Cell state and so receives no `RestoreInitState`.
+Every way the instance comes back onto a runner SHALL be that bind: a fresh bind after a
+controller restart, an un-park, a rehydrate, a rewind, the convergence loop's rebind after
+its runner died, and the takeover by a restarted runner presenting the same stable
+identity; none of them SHALL send an `AddOperator` without the journal.
 When no compensation is in flight, the driver SHALL skip every tasklet recorded
 `task_committed` and SHALL seed each uncommitted tasklet that has a committed producer
 from that producer's journaled handoff instead of the entry channel; an uncommitted root
@@ -193,6 +197,12 @@ unchanged. An instance with no journal (opted-out) SHALL keep the re-run-from-to
 
 - **WHEN** a respawned instance has outstanding compensation-intent markers
 - **THEN** the driver SHALL run the remaining compensation (existing behavior) and SHALL NOT resume forward execution from the journal
+
+#### Scenario: A rebind onto another runner carries the journal
+
+- **GIVEN** a chain A→B whose runner is killed after `task_committed(A)` was journaled
+- **WHEN** the instance is bound onto a replacement runner, by the convergence loop or by the takeover of a restarted runner presenting the same stable identity
+- **THEN** the `AddOperator` SHALL carry the folded journal, the replacement's driver SHALL NOT run A, and the run of A observable on the replacement SHALL be absent, not merely deduplicated in the journal and the WAL
 
 ### Requirement: The task-journal shares the instance lifecycle and is inspectable
 

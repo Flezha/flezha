@@ -59,7 +59,7 @@ defmodule Flezha.Operator.Replay do
   @doc """
   External trigger for the bind-driven per-Cell replay. Called from
   `Flezha.State.Recovery.resync_for_overwatch/2` when a non-bind caller
-  (the convergence Loop's rebind heal) needs to re-issue the
+  (the convergence loop's `resync_runner` heal) needs to re-issue the
   `RestoreInitState` handshake for an already-bound Overwatch.
 
   Routes the work back to the Overwatch process via a cast so the caller never

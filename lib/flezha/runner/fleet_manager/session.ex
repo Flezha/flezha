@@ -229,8 +229,11 @@ defmodule Flezha.Runner.FleetManager.Session do
   end
 
   # The same process reconnecting presents the incarnation it connected with
-  # before; a restarted one presents a new one.
-  defp continuity(incarnation, %{incarnation: incarnation}), do: :reconnected
+  # before; a restarted one presents a new one. A connect with no incarnation
+  # cannot prove it is the same process, so it is bound afresh.
+  defp continuity(incarnation, %{incarnation: incarnation}) when is_binary(incarnation),
+    do: :reconnected
+
   defp continuity(_incarnation, _connect), do: :restarted
 
   # Tell every operator the registry tags with `old_session` that its runner is

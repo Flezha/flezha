@@ -403,6 +403,47 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
     end
   end
 
+  describe "a stable identity presented again" do
+    setup do
+      namespace = "incarnation-#{System.unique_integer([:positive])}"
+      on_exit(fn -> FleetManager.stop_namespace(namespace) end)
+
+      # This test process stands in for the one Overwatch the old session runs.
+      test_pid = self()
+      stub(HubManager, :runner_operators, fn _ns, _session -> [{"op", [test_pid]}] end)
+      stub(HubManager, :live_pid, fn _node_pids -> test_pid end)
+
+      %{ns: namespace, identity: "incarnated-#{System.unique_integer([:positive])}"}
+    end
+
+    # fails when: the same process reconnecting is bound afresh, re-running
+    # what its runner still holds.
+    test "with the same incarnation re-points the binding", %{ns: ns, identity: id} do
+      first = active_stand_in(ns, %{"stable_id" => id, "incarnation" => "i1"})
+      second = active_stand_in(ns, %{"stable_id" => id, "incarnation" => "i1"})
+
+      assert_receive {:"$gen_cast", {:session_replaced, ^first, ^second, :reconnected}}, 5_000
+    end
+
+    # fails when: a restarted process only has the binding re-pointed at it,
+    # so it never runs its operators again.
+    test "with a new incarnation binds afresh", %{ns: ns, identity: id} do
+      first = active_stand_in(ns, %{"stable_id" => id, "incarnation" => "i1"})
+      second = active_stand_in(ns, %{"stable_id" => id, "incarnation" => "i2"})
+
+      assert_receive {:"$gen_cast", {:session_replaced, ^first, ^second, :restarted}}, 5_000
+    end
+
+    # fails when: two connects that carry no incarnation read as the same
+    # process, so a restarted runner that cannot prove otherwise is never bound.
+    test "with no incarnation binds afresh", %{ns: ns, identity: id} do
+      first = active_stand_in(ns, %{"stable_id" => id})
+      second = active_stand_in(ns, %{"stable_id" => id})
+
+      assert_receive {:"$gen_cast", {:session_replaced, ^first, ^second, :restarted}}, 5_000
+    end
+  end
+
   # A stand-in that answers its handshake, once the fleet lists it.
   defp active_stand_in(namespace, extra) do
     {_sdk, session} = stand_in_runner(namespace, &accept/1, extra)

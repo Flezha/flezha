@@ -90,8 +90,8 @@ defmodule Flezha.Runner.StreamChannel.Records do
 
   A route exists only in the owner session's channels, so a hit in the stream's
   mapping is the ownership check and costs nothing more. A miss is judged by
-  the operator's ownership record: the owner's or the pending runner's first
-  output, which can beat the publish that seeds the route, is routed through
+  the operator's ownership record: the owner's first output, which can beat
+  the publish that seeds the route, is routed through
   the record's Overwatch and the route cached; a frame from any other runner
   is refused (`admit/3`). A frame for an operator nobody records, or whose
   recorded Overwatch is gone, is the only true drop, and it is counted.

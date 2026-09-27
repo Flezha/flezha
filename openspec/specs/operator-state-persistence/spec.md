@@ -152,7 +152,7 @@ The restore/resync dispatch path SHALL NOT ship a `RestoreInitState` whose assem
 
 Restore SHALL be:
 
-1. **Unconditional on every Overwatch bind** — driven by `Flezha.State.Recovery.resync_for_overwatch/2` (not a class→runner lookup that fails on cold boot). When the operator arrived via HotSwap handover, the in-band state is authoritative and the `{:kick_restore}` path SHALL skip to avoid double-applying.
+1. **Unconditional on every Overwatch bind, and performed by the bind** — `Lifecycle.complete_init/4` restores the persisted Cells of the operator it binds, awaited for the effectively-once tier and dispatched from the bind for every other class, and stamps `AddOperator.resume_cell_count` from the same enumeration so a durable bounded driver is held until they land. Every way an operator comes onto a runner is that bind: a fresh bind, an un-park, a rehydrate, a rewind, the convergence loop's rebind after its runner died, and the takeover by a restarted runner presenting the same stable identity. The heal's `rebind_operator` SHALL dispatch no restore of its own after the bind; `Flezha.State.Recovery.resync_for_overwatch/2` serves the `resync_runner` primitive alone, the remedy for a binding that is intact but stopped agreeing. When the operator arrived via HotSwap handover, the in-band state is authoritative and the `{:kick_restore}` path SHALL skip to avoid double-applying.
 2. **Keyed by operator instance id, not factory id** — the Cell wire identity is `[rc_len:u8][rc][sh_len:u8][sh][pk_len:u16 BE][pk]` keyed by the operator *instance*, so two operators of the same factory class never collide on one WAL.
 3. **Inclusive of seq 0** — an empty WAL initialises `last_persisted_seq = -1` (not `0`) and the "no snapshot" restore sentinel is `-1`, so the 0-based first change is never dedup-dropped. After fold, the SDK re-arms `change_seq = terminal_seq + 1` so the next produced frame is contiguous.
 4. **Re-armed from the controller's terminal** — `RestoreInitState.terminal_seq` SHALL carry the controller's `max(snapshot seq, last WAL seq shipped)`, and the SDK SHALL re-arm `change_seq = max(change-log terminal, terminal_seq) + 1`. A snapshot-only restore — the WAL tail is empty after a compaction — carries no change-log record to derive the seq from; re-armed below the snapshot's seq, its next Changes would be dropped by the writer as duplicates.
@@ -166,6 +166,11 @@ Restore SHALL be:
 - **GIVEN** a `resume_probe` operator has accumulated a running total of 100 in persisted state
 - **WHEN** both runners are gracefully stopped and restarted under load and the operator rebinds
 - **THEN** the operator's restored state is 100 (the WAL snapshot + change-log), driving one more `+7` input emits 107, and no state is lost.
+
+#### Scenario: a durable bounded operator's driver is held until the loop's rebind has restored its Cells
+- **GIVEN** a durable bounded instance with one persisted Cell whose runner is killed
+- **WHEN** the convergence loop rebinds it onto a live runner
+- **THEN** the `AddOperator` SHALL carry `resume_cell_count = 1`, the bind SHALL ship that Cell's `RestoreInitState`, the driver SHALL run its first uncommitted tasklet only after the restore landed, and no second `RestoreInitState` for the Cell SHALL follow from the heal
 
 #### Scenario: the first change of a fresh operator survives restart
 - **GIVEN** an operator produced exactly one state change (seq 0) and no snapshot exists

@@ -224,14 +224,24 @@ its heap (the restore frames and plugin setup are garbage once it parks).
 
 The controller SHALL tell a rehydrating bind of either kind how many journaled, undelivered
 input records it will forward after the bind (`AddOperator.inbox_tail_count`, the log's tail
-above the instance's floor), and the SDK SHALL NOT start the instance's idle clock until that
-many records have arrived (bounded by an owed-tail wait of 60 s, after which it sleeps and the
-controller's rehydrate-if-pending forwards the tail again). A tail forwarded after the bind
-under load would otherwise reach an instance that has already slept and be dropped at the socket.
+above the instance's floor), and SHALL forward them after that bind, on every bind the
+instance takes: a rehydrate from suspension, a rewind, the convergence loop's rebind after its
+runner died, and the takeover by a restarted runner presenting the same stable identity. The
+SDK SHALL NOT start the instance's idle clock until that many records have arrived (bounded by
+an owed-tail wait of 60 s, after which it sleeps and the controller's rehydrate-if-pending
+forwards the tail again). A tail forwarded after the bind under load would otherwise reach an
+instance that has already slept and be dropped at the socket. The controller SHALL NOT forward
+the tail to a process that still runs the instance: a reconnect of the same process moves its
+session and forwards nothing.
 
 #### Scenario: The tail arrives after the park idle would have expired
 - **WHEN** a suspended instance with one undelivered record is rehydrated and the controller's forward of that record reaches the runner later than the idle window after the bind
 - **THEN** the instance SHALL still be awake, consume the record, and SHALL NOT have slept in between
+
+#### Scenario: A crashed instance rebound elsewhere is told and sent its tail
+- **GIVEN** a durable per-input bounded operator whose runner is killed with two journaled input records not yet consumed
+- **WHEN** the instance is bound onto a replacement runner by the convergence loop or by a same-identity takeover
+- **THEN** the `AddOperator` SHALL carry `inbox_tail_count = 2`, both records SHALL be forwarded after the bind with their original offsets, and the instance SHALL run them as its next iterations without sleeping first
 
 #### Scenario: Nothing owed
 - **WHEN** an instance binds with `inbox_tail_count = 0`

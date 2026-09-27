@@ -57,11 +57,15 @@ The flezha application SHALL support a runner-only boot: with `:controller_enabl
 - **THEN** the controller tree starts exactly as before this change
 
 ### Requirement: The SDK presents a durable stable identity on every connect
-The SDK SHALL derive and persist a stable identity per the cross-SDK contract: format `"<namespace>-<profile_hash8>-<rand6>"` where the profile hash is order-independent over the sorted declared factory ids; persisted via atomic write at `FLEZHA_RUNNER_ID_PATH` (default `/var/lib/flezha-runner/id`); memoized per boot; presented as `stable_id` on **every** connect, initial and reconnect alike, in both deployment modes. When the persistence path is unavailable the SDK SHALL generate a fresh per-boot identity, log a single `warn`, and run normally — it SHALL NOT refuse to start or crash. The retired `previous_runner_id` field SHALL NOT be sent, and the dead protocol tags 20/21 SHALL NOT be implemented.
+The SDK SHALL derive and persist a stable identity per the cross-SDK contract: format `"<namespace>-<profile_hash8>-<rand6>"` where the profile hash is order-independent over the sorted declared factory ids; persisted via atomic write at `FLEZHA_RUNNER_ID_PATH` (default `/var/lib/flezha-runner/id`); memoized per boot; presented as `stable_id` on **every** connect, initial and reconnect alike, in both deployment modes. Beside it the SDK SHALL present an `incarnation`: a random 128-bit value as lowercase hex, minted when the runner server starts and held in its state, never persisted, so a reconnect from the same server presents the same one and a server the supervisor restarted, whose operators were linked to it and died with it, presents a new one. When the persistence path is unavailable the SDK SHALL generate a fresh per-boot identity, log a single `warn`, and run normally — it SHALL NOT refuse to start or crash. The retired `previous_runner_id` field SHALL NOT be sent, and the dead protocol tags 20/21 SHALL NOT be implemented.
 
 #### Scenario: Restart re-presents the same identity and takeover applies
 - **WHEN** the SDK supervisor restarts after a crash and reconnects with the persistence path intact
-- **THEN** the handshake carries the same `stable_id`, and the controller fences the superseded session, swaps its operator bindings to the new session token, and evicts the old session (newest-wins)
+- **THEN** the handshake carries the same `stable_id` and a new `incarnation`, and the controller fences the superseded session, evicts it, and binds each of its operators onto the new session through the one bind path, so the restarted server is told `AddOperator` for each with its resume state (newest-wins)
+
+#### Scenario: A reconnect from the same server presents the same incarnation
+- **WHEN** the control connection drops and the same runner server reconnects
+- **THEN** the handshake carries the same `stable_id` and the same `incarnation`, and the controller re-points the existing bindings onto the new session token without sending `AddOperator` for an operator the server still runs
 
 #### Scenario: Missing persistence degrades, never fails
 - **WHEN** the SDK boots with no writable `FLEZHA_RUNNER_ID_PATH`

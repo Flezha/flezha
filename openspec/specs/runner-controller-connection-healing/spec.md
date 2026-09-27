@@ -118,12 +118,17 @@ The existing `Command::RunnerShutdownNotification`, `Command::RestoreInitStateRe
 
 ### Requirement: Runner restart while the Controller is alive SHALL heal stream binding cleanly
 
-When a Runner (Rust/Java SDK) process restarts and its reconnect loop succeeds against the still-alive Controller, the fleet manager SHALL declare the disconnect (`{:runner_disconnected, ns, runner_id}`) and, under `FLEZHA_RUNNER_KEEPALIVE`, preserve the runner as `:inactive` — a keepalive fact, not a remedy; the convergence loop SHALL plan `rebind_operator` per affected operator from the declared fact, choosing the returned or a surviving runner through the placement function, and the new data streams the Runner opens SHALL bind cleanly to nil-ref `StreamChannel`s without silent traffic drops. No reroute SHALL run inside the session handler.
+When a Runner process restarts and its reconnect loop succeeds against the still-alive Controller, the fleet manager SHALL declare the disconnect (`{:runner_disconnected, ns, runner_id}`) and, under `FLEZHA_RUNNER_KEEPALIVE`, preserve the runner as `:inactive` — a keepalive fact, not a remedy; the convergence loop SHALL plan `rebind_operator` per affected operator from the declared fact, choosing the returned or a surviving runner through the placement function, and the new data streams the Runner opens SHALL bind cleanly to nil-ref `StreamChannel`s without silent traffic drops. No reroute SHALL run inside the session handler. The rebind the loop drives SHALL be the one bind path: the Overwatch's `runner_migrate` runs `Lifecycle.complete_init/4` in its supervised bind task for every state, so the `AddOperator` it sends carries the operator's kind and, for a durable bounded instance, its `task_journal`, `resume_cell_count` and `inbox_tail_count`, the persisted Cells are restored by that bind, and the undelivered inbox tail is delivered by it; the heal SHALL dispatch no second restore after the bind. When the replacement presents the dead session's stable identity before the loop has placed the operators, the takeover binds them through the same path instead, and the loop finds nothing left to plan.
 
 #### Scenario: Runner restart with single-replica-in-namespace
 - **GIVEN** Runner A is the only Runner in namespace `ns1` on this Controller, running Operators `r1` and `r2`
 - **WHEN** Runner A's container restarts and reconnects
-- **THEN** the disconnect SHALL have been declared, the loop SHALL re-issue `AddOperator` for `r1` and `r2` against A through `rebind_operator`, and the data streams MUST rebind to the existing `StreamChannel`s without traffic loss
+- **THEN** the disconnect SHALL have been declared, `r1` and `r2` SHALL each be bound onto the returned runner by exactly one `AddOperator` carrying their resume state, through `rebind_operator` or the takeover, whichever runs first, and the data streams MUST rebind to the existing `StreamChannel`s without traffic loss
+
+#### Scenario: A durable bounded operator rebound by the loop resumes at its stage
+- **GIVEN** a durable bounded instance on runner A with tasklet A committed and tasklet B in flight, and a runner B advertising the factory under a different stable identity
+- **WHEN** runner A is killed, its disconnect is declared, and the loop plans `rebind_operator` onto runner B
+- **THEN** the `AddOperator` runner B receives SHALL carry the folded `task_journal`, a `resume_cell_count` equal to the instance's persisted Cells and the undelivered `inbox_tail_count`, runner B's driver SHALL be held until those Cells are restored, tasklet A SHALL NOT run on runner B, and the instance SHALL reach its terminal completion
 
 ### Requirement: `FLEZHA_RUNNER_KEEPALIVE` controls inactive-Runner retention
 
@@ -506,20 +511,26 @@ QUIC SHALL enforce the same window via an explicit `max_idle_timeout` (no longer
 
 ### Requirement: Controller resolves a reconnect by swapping the binding, not minting-and-evicting
 
-On any runner reconnect the controller SHALL resolve identity by the runner's presented **stable identity** (see capability `runner-identity-and-session`) and SHALL re-point that stable identity's existing operator bindings at the new session, rather than minting a fresh durable id and evicting the previous one. The controller SHALL NOT perform an unconditional `previous_runner_id` pre-eviction, and the in-process-reconnect operator reissue SHALL actually re-bind operators (it SHALL NOT be a no-op stub). On disconnect, each operator's stale stream mapping SHALL be cleared (`HubManager.hook_remove_pid/2`) so the reconnecting session's fresh streams bind cleanly to nil-ref `StreamChannel`s.
+On any runner reconnect the controller SHALL resolve identity by the runner's presented **stable identity** (see capability `runner-identity-and-session`) and SHALL NOT mint a fresh durable id nor perform an unconditional `previous_runner_id` pre-eviction. What it does with the identity's existing operator bindings SHALL follow the incarnation the connect presents. The held incarnation is the same process: the controller SHALL re-point the bindings at the new session, each Overwatch publishing its own tag and route, and SHALL send the process nothing for an operator it still runs. A different incarnation, or none, is a new process: the controller SHALL bind each operator onto the new session through the one bind path, `Lifecycle.complete_init/4` in the Overwatch's supervised bind task, which sends `AddOperator` with the operator's resume state, restores its persisted Cells and delivers its undelivered inbox tail; an Overwatch with a bind task already in flight SHALL leave it to finish or park. On disconnect, each operator's stale stream mapping SHALL be cleared (`HubManager.hook_remove_pid/2`) so the reconnecting session's fresh streams bind cleanly to nil-ref `StreamChannel`s.
 
 #### Scenario: fresh-process restart preserves bindings without a pre-evict
 
-- **GIVEN** a runner with operators `[r1, r2]` whose process restarts and reconnects within the keepalive window, presenting the same persisted stable identity
+- **GIVEN** a runner with operators `[r1, r2]` whose process restarts and reconnects within the keepalive window, presenting the same persisted stable identity and a new incarnation
 - **WHEN** the controller handles the connect
-- **THEN** it SHALL swap `r1` and `r2`'s bindings onto the new session token
+- **THEN** it SHALL bind `r1` and `r2` onto the new session token through the one bind path, each with one `AddOperator` carrying its resume state
 - **AND** it SHALL NOT mint a new durable identity nor issue an unconditional eviction of a "previous" id
 
 #### Scenario: in-process reconnect actually re-binds operators
 
 - **GIVEN** a runner whose control stream dropped but whose process survived, holding operators `[r1]`
-- **WHEN** it reconnects and the controller's view and the runner's view of bindings diverge
-- **THEN** the controller SHALL re-bind `r1` onto the new session (not rely on a no-op reissue plus a later convergence tick)
+- **WHEN** it reconnects presenting the same stable identity and the same incarnation
+- **THEN** the controller SHALL re-point `r1` onto the new session, `r1`'s Overwatch SHALL publish its tag and route on it, and the process SHALL receive no `AddOperator`, `RestoreInitState` or inbox tail for `r1`
+
+#### Scenario: a connect with a stable identity and no incarnation is a new process
+
+- **GIVEN** stable identity `S` held by a live session
+- **WHEN** a connect presents `S` and no incarnation
+- **THEN** the controller SHALL handle it as a restarted process and bind `S`'s operators onto the new session through the one bind path
 
 ### Requirement: A runner resolves its UDS socket directory from an ordered ladder
 

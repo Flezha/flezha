@@ -35,15 +35,11 @@ defmodule Flezha.State.Recovery do
   end
 
   @doc """
-  Bind-driven WAL replay trigger. Called by `Flezha.Operator.Overwatch`
-  from `handle_continue(:after_bind, _)` with the Overwatch's own
-  `runner_id` so the replay never depends on a class→runner lookup
-  in the durable registry (the lookup that failed on cold boot and
-  produced the silent "resync skipped reason=:output_stall" no-op).
-
-  This is the single state-restoration trigger for non-HotSwap operators;
-  every Overwatch bind unconditionally invokes it. The implementation
-  is intentionally trivial — the heavy lifting lives in
+  Re-issue the per-Cell WAL replay for an operator that is already bound,
+  against `runner_id`, the runner its Overwatch is bound to, so the replay
+  never depends on a class→runner lookup in the durable registry. The
+  convergence loop's `resync_runner` heal is the caller; a bind restores its
+  Cells on its own. The heavy lifting lives in
   `Flezha.State.Commands.dispatch_restore_init_state/2`.
   """
   @spec resync_for_overwatch(pid(), binary()) :: :ok
