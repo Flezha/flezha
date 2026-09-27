@@ -44,11 +44,11 @@ The plugin stays connected; the exchange just has nothing to send.
 > {: .step}
 
 ```sh
-$ flz state get prices/track_prices --namespace trading
+$ flz state get trade_watcher/track_prices --namespace trading
 ```
 
 ```output
-state get prices/track_prices:
+state get trade_watcher/track_prices:
   change_seq: -
   state:      {"track_prices":{"EUR/USD":{"prices":[1.13378,1.14873,1.1487,1.13987,1.13993,1.14014,1.14012,1.14368,1.1327,1.13267]},"GBP/USD":{"prices":[1.37453,1.37442,1.37448,1.3887,1.38872,1.40792,1.40786,1.40481,1.40493,1.40494]},"USD/JPY":{"prices":[161.741,161.744,160.871,159.473,159.473,161.233,162.522,162.519,162.525,162.162]}}}
 ```
@@ -69,17 +69,17 @@ With no runner, the partitions have nowhere to run. The controller marks them
 `failed`, and they wait:
 
 ```sh
-$ flz operator info prices --namespace trading
+$ flz operator info trade_watcher --namespace trading
 ```
 
 ```output
 Fetching operator information for namespace 'trading'...
 Operator information for namespace 'trading':
 
-Partition group: prices (3/3)
-  p0  prices#p0                      key groups 0-84  trading_90cb7c5b6846  failed
-  p1  prices#p1                      key groups 85-169  trading_90cb7c5b6846  failed
-  p2  prices#p2                      key groups 170-255  trading_90cb7c5b6846  failed
+Partition group: trade_watcher (3/3)
+  p0  trade_watcher#p0               key groups 0-84  trading_90cb7c5b6846  failed
+  p1  trade_watcher#p1               key groups 85-169  trading_90cb7c5b6846  failed
+  p2  trade_watcher#p2               key groups 170-255  trading_90cb7c5b6846  failed
   coverage: all 256 key groups owned exactly once
 ...
 ```
@@ -88,11 +88,11 @@ A window cannot be read now either, because `flz state get` asks the runner
 that holds it, and there is none:
 
 ```sh
-$ flz state get prices/track_prices --namespace trading
+$ flz state get trade_watcher/track_prices --namespace trading
 ```
 
 ```output
-error: state get: no running operator `prices#p0` in any namespace
+error: state get: no running operator `trade_watcher#p0` in any namespace
 ```
 
 > Start the runner again, with the same command as in
@@ -101,15 +101,15 @@ error: state get: no running operator `prices#p0` in any namespace
 > {: .step}
 
 ```sh
-$ flz operator info prices --namespace trading
+$ flz operator info trade_watcher --namespace trading
 ```
 
 ```output
 ...
-Partition group: prices (3/3)
-  p0  prices#p0                      key groups 0-84  trading_884227a6e4a6  healthy
-  p1  prices#p1                      key groups 85-169  trading_884227a6e4a6  healthy
-  p2  prices#p2                      key groups 170-255  trading_884227a6e4a6  healthy
+Partition group: trade_watcher (3/3)
+  p0  trade_watcher#p0               key groups 0-84  trading_884227a6e4a6  healthy
+  p1  trade_watcher#p1               key groups 85-169  trading_884227a6e4a6  healthy
+  p2  trade_watcher#p2               key groups 170-255  trading_884227a6e4a6  healthy
 ...
 ```
 
@@ -117,11 +117,11 @@ The runner has a new id, because every run of it is a new session, and the
 partitions moved to it. Their windows came with them:
 
 ```sh
-$ flz state get prices/track_prices --namespace trading
+$ flz state get trade_watcher/track_prices --namespace trading
 ```
 
 ```output
-state get prices/track_prices:
+state get trade_watcher/track_prices:
   change_seq: -
   state:      {"track_prices":{"EUR/USD":{"prices":[1.13378,1.14873,1.1487,1.13987,1.13993,1.14014,1.14012,1.14368,1.1327,1.13267]},"GBP/USD":{"prices":[1.37453,1.37442,1.37448,1.3887,1.38872,1.40792,1.40786,1.40481,1.40493,1.40494]},"USD/JPY":{"prices":[161.741,161.744,160.871,159.473,159.473,161.233,162.522,162.519,162.525,162.162]}}}
 ```
@@ -142,11 +142,11 @@ $ pkill -9 -f tradedesk.jar
 > {: .step}
 
 ```sh
-$ flz state get prices/track_prices --namespace trading
+$ flz state get trade_watcher/track_prices --namespace trading
 ```
 
 ```output
-state get prices/track_prices:
+state get trade_watcher/track_prices:
   change_seq: -
   state:      {"track_prices":{"EUR/USD":{"prices":[1.13378,1.14873,1.1487,1.13987,1.13993,1.14014,1.14012,1.14368,1.1327,1.13267]},"GBP/USD":{"prices":[1.37453,1.37442,1.37448,1.3887,1.38872,1.40792,1.40786,1.40481,1.40493,1.40494]},"USD/JPY":{"prices":[161.741,161.744,160.871,159.473,159.473,161.233,162.522,162.519,162.525,162.162]}}}
 ```
@@ -169,7 +169,7 @@ the time you have to crash the runner in the middle of an order.
 > {: .step}
 
 ```sh
-$ flz operator start paper_order --id order_1 --namespace trading --text '{"symbol": "EUR/USD", "quantity": 10}' --channel order
+$ flz operator start order_executor --id order_1 --namespace trading --text '{"symbol": "EUR/USD", "quantity": 10}' --channel order
 ```
 
 ```output
@@ -310,11 +310,11 @@ The partitions take up to a minute to be placed on the runner again. Then they
 are `healthy`, and every window is where it was:
 
 ```sh
-$ flz state get prices/track_prices --namespace trading
+$ flz state get trade_watcher/track_prices --namespace trading
 ```
 
 ```output
-state get prices/track_prices:
+state get trade_watcher/track_prices:
   change_seq: -
   state:      {"track_prices":{"EUR/USD":{"prices":[1.13378,1.14873,1.1487,1.13987,1.13993,1.14014,1.14012,1.14368,1.1327,1.13267]},"GBP/USD":{"prices":[1.37453,1.37442,1.37448,1.3887,1.38872,1.40792,1.40786,1.40481,1.40493,1.40494]},"USD/JPY":{"prices":[161.741,161.744,160.871,159.473,159.473,161.233,162.522,162.519,162.525,162.162]}}}
 ```
@@ -326,15 +326,15 @@ message is tried three times, then set aside in the **dead-letter queue**, so
 the messages behind it are not held up. It is kept there, on the controller's
 disk, until you decide what to do with it.
 
-> Send `prices#p1` a trade whose price is not a number.
+> Send `trade_watcher#p1` a trade whose price is not a number.
 > {: .step}
 
 ```sh
-$ flz operator send 'prices#p1' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "EUR/USD", "price": "one euro", "ord_type": "market"}]}'
+$ flz operator send 'trade_watcher#p1' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "EUR/USD", "price": "one euro", "ord_type": "market"}]}'
 ```
 
 ```output
-Delivered to 'prices#p1'.
+Delivered to 'trade_watcher#p1'.
 ```
 
 The runner's terminal shows the three tries, the last one ending:
@@ -346,23 +346,23 @@ The runner's terminal shows the three tries, the last one ending:
 `flz dlq list` shows what a partition has set aside:
 
 ```sh
-$ flz dlq list 'prices#p1' --namespace trading
+$ flz dlq list 'trade_watcher#p1' --namespace trading
 ```
 
 ```output
 ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
-prices#p1/trades/307bcbd6439a080f                           _entry          trades      1    3s        java.lang.IllegalArgumentException: entry channel: JSON dese
+trade_watcher#p1/trades/307bcbd6439a080f                           _entry          trades      1    3s        java.lang.IllegalArgumentException: entry channel: JSON dese
 ```
 
 `flz dlq show` reads one entry, with the message itself:
 
 ```sh
-$ flz dlq show 'prices#p1/trades/307bcbd6439a080f' --namespace trading
+$ flz dlq show 'trade_watcher#p1/trades/307bcbd6439a080f' --namespace trading
 ```
 
 ```output
 id                "307bcbd6439a080f"
-operator_class    "prices#p1"
+operator_class    "trade_watcher#p1"
 tasklet_id        "trades"
 cell_key          "_entry"
 channel           "trades"
@@ -385,15 +385,15 @@ it:
 > {: .step}
 
 ```sh
-$ flz dlq drop 'prices#p1/trades/307bcbd6439a080f' --namespace trading
+$ flz dlq drop 'trade_watcher#p1/trades/307bcbd6439a080f' --namespace trading
 ```
 
 ```output
-dropped prices#p1/trades/307bcbd6439a080f
+dropped trade_watcher#p1/trades/307bcbd6439a080f
 ```
 
 ```sh
-$ flz dlq list 'prices#p1' --namespace trading
+$ flz dlq list 'trade_watcher#p1' --namespace trading
 ```
 
 ```output

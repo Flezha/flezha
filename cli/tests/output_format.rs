@@ -559,8 +559,8 @@ const CASES: &[(&[&str], Want)] = &[
     // A first message rides the options list as text, with the entry channel
     // it names; a channel with no message names nothing.
     (
-        &["operator", "start", "paper_order", "--text", r#"{"symbol":"AAPL"}"#, "--channel", "order"],
-        Rpc(r#"Flezha.Service.CliManager.operator_start("", "paper_order", "{}", "text", "{}", [text: "{\"symbol\":\"AAPL\"}", channel: "order"])"#),
+        &["operator", "start", "order_executor", "--text", r#"{"symbol":"EUR/USD","quantity":10}"#, "--channel", "order"],
+        Rpc(r#"Flezha.Service.CliManager.operator_start("", "order_executor", "{}", "text", "{}", [text: "{\"symbol\":\"EUR/USD\",\"quantity\":10}", channel: "order"])"#),
     ),
     (
         &["operator", "start", "echo", "-t", "hello"],

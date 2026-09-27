@@ -20,7 +20,7 @@ none, and a bounded operator makes sure the desk never keeps one.
 
 ## The desk's bounded operator
 
-The desk's bounded operator is called `paper_order`, and one instance of it is
+The desk's bounded operator is called `order_executor`, and one instance of it is
 one order. [`building_an_etl_stream.md`](building_an_etl_stream.md) starts one
 for every buy, and you can start one by hand.
 
@@ -386,14 +386,14 @@ order needs.
 ### Java
 
 ```java
-// PaperOrderOperator.java: the bounded operator. One instance is one order.
-public final class PaperOrderOperator implements BoundedOperator {
+// OrderExecutorOperator.java: the bounded operator. One instance is one order.
+public final class OrderExecutorOperator implements BoundedOperator {
 
     public record OrderTicket(String symbol, int quantity) {} // the order an instance is started with
 
     @Override
     public String factoryId() {
-        return "paper_order";
+        return "order_executor";
     }
 
     @Override
@@ -442,12 +442,12 @@ TODO: not written yet.
 
 ## The runner
 
-One runner registers both of the desk's factories. Registering `paper_order`
+One runner registers both of the desk's factories. Registering `order_executor`
 starts no order: it tells the controller this runner can run orders, and each
 one is started from the factory later, one per buy. A bounded operator's factory
 is registered the same way as an unbounded one's.
 
-> Register the `paper_order` factory on the runner too, before `start()`.
+> Register the `order_executor` factory on the runner too, before `start()`.
 > {: .step}
 
 <!-- tabs-open -->
@@ -458,8 +458,8 @@ is registered the same way as an unbounded one's.
 // Main.java: the runner. Joins trading and registers both factories.
 public static void main(String[] args) throws Exception {
     FlezhaRunner runner = Flezha.createRunner(args.length > 0 ? args[0] : "trading")
-            .registerFactory(PricesOperator.class)
-            .registerFactory(PaperOrderOperator.class)
+            .registerFactory(TradeWatcherOperator.class)
+            .registerFactory(OrderExecutorOperator.class)
             .start();
 
     runner.awaitTermination();

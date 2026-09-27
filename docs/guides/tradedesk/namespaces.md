@@ -283,5 +283,5 @@ namespace it runs in is no longer in the listing. Empty it, then delete it.
 ## Next
 
 The desk has its namespace and nothing in it.
-[`building_an_etl_stream.md`](building_an_etl_stream.md) builds `prices`, the
-desk's ETL stream, as an unbounded operator in `trading`.
+[`building_an_etl_stream.md`](building_an_etl_stream.md) builds `trade_watcher`,
+the desk's ETL stream, as an unbounded operator in `trading`.

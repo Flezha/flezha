@@ -18,7 +18,7 @@ up, when it is called, and how one fits a real, live feed.
 ```mermaid
 flowchart LR
     X(["exchange"]) --> W["WebSocket plugin<br/>source"] --> T(["trades"])
-    T --> P["prices<br/>3 partitions"] --> S(["signals"])
+    T --> P["trade_watcher<br/>3 partitions"] --> S(["signals"])
     S --> F["file plugin<br/>sink"] --> O(["signals.txt"])
 ```
 
@@ -51,7 +51,7 @@ flags, and it helps to tell them apart before the long command below:
 
 | Flag | Belongs to | For example |
 |---|---|---|
-| `--operator_id`, `--namespace` | the command: which operator the plugin is attached to | `--operator_id=prices` |
+| `--operator_id`, `--namespace` | the command: which operator the plugin is attached to | `--operator_id=trade_watcher` |
 | `--hook` | the command: when the controller calls the plugin | `--hook=on_output` |
 | `--X<option>` | the plugin: its own settings, one flag each | `--Xuri=ws://localhost:4500/` |
 
@@ -89,14 +89,14 @@ symbols it is given, and hands every message it receives to the operator. Every
 exchange has its own message for subscribing, so the plugin is given the demo
 exchange's as a template, and fills in the symbols itself.
 
-> Attach the WebSocket plugin to `prices`, reading the three currency pairs
+> Attach the WebSocket plugin to `trade_watcher`, reading the three currency pairs
 > onto the `trades` channel. It needs the admin token in `FLEZHA_TOKEN` and the
 > desk running, as [`partitioning.md`](partitioning.md) left it.
 > {: .step}
 
 ```sh
 $ flz plugin enable exchange operator_websocket \
-  --operator_id=prices --namespace trading \
+  --operator_id=trade_watcher --namespace trading \
   --Xuri=ws://localhost:4500/ \
   --Xchannel=trades \
   --Xsubscription_items='["EUR/USD", "GBP/USD", "USD/JPY"]' \
@@ -114,7 +114,7 @@ What each setting does:
 | Setting | What it does |
 |---|---|
 | `uri` | where the exchange is |
-| `channel` | the entry channel every message is handed to: `trades`, the one `PricesOperator` declares |
+| `channel` | the entry channel every message is handed to: `trades`, the one `TradeWatcherOperator` declares |
 | `subscription_items` | the symbols to subscribe to, a JSON list |
 | `subscribe_template` | the message that subscribes. `{{items}}` becomes a list of symbols, and `{{req_id}}` a number the exchange echoes back to confirm it |
 | `unsubscribe_template` | the message that drops symbols, so a list that changes later is followed without reconnecting |
@@ -124,9 +124,9 @@ connection open and pushes each message in as it arrives.
 
 ## Each partition asks for its own symbols
 
-`prices` is a group of three partitions, and a plugin enabled on the group is
-enabled once on every partition, each copy named after its partition. The
-testnet's terminal shows three connections, one per partition, and each
+`trade_watcher` is a group of three partitions, and a plugin enabled on the
+group is enabled once on every partition, each copy named after its partition.
+The testnet's terminal shows three connections, one per partition, and each
 subscribing only what its partition owns:
 
 ```output
@@ -145,12 +145,12 @@ symbol's window, and no message is received only to be thrown away.
 `flz operator info` shows each copy's subscriptions:
 
 ```sh
-$ flz operator info prices --namespace trading
+$ flz operator info trade_watcher --namespace trading
 ```
 
 ```output
 ...
-Operator: prices#p1
+Operator: trade_watcher#p1
   Kind: unbounded
   Phase: running
   Health: healthy
@@ -169,8 +169,8 @@ Operator: prices#p1
 ```
 
 `desired` is what the plugin was asked for, and `applied` what the exchange has
-confirmed. `exchange#p2` shows GBP/USD, and `exchange#p0` nothing: `prices#p0`
-owns none of the three pairs.
+confirmed. `exchange#p2` shows GBP/USD, and `exchange#p0` nothing:
+`trade_watcher#p0` owns none of the three pairs.
 
 ## Trades arrive on their own
 
@@ -188,11 +188,11 @@ books it:
 The windows fill up with the exchange's prices:
 
 ```sh
-$ flz state get prices/track_prices --namespace trading
+$ flz state get trade_watcher/track_prices --namespace trading
 ```
 
 ```output
-state get prices/track_prices:
+state get trade_watcher/track_prices:
   change_seq: -
   state:      {"track_prices":{"EUR/USD":{"prices":[1.08753,1.07444,1.06346,1.06353,1.05102,1.04646,1.04639,1.05715,1.05565,1.04751]},"GBP/USD":{"prices":[1.3921,1.40845,1.40833,1.39296,1.37753,1.34887,1.34884,1.33784,1.33782,1.34824]},"USD/JPY":{"prices":[147.097,147.375,147.371,147.052,147.54,147.537,146.216,146.206,146.212,145.232]}}}
 ```
@@ -216,7 +216,7 @@ dead-letter queue, which [`durability.md`](durability.md#the-dead-letter-queue)
 shows. With it, nothing is set aside:
 
 ```sh
-$ flz dlq list 'prices#p1' --namespace trading
+$ flz dlq list 'trade_watcher#p1' --namespace trading
 ```
 
 ```output
@@ -225,16 +225,16 @@ dead-letter queue is empty
 
 ## Write the signals to a file
 
-Everything `buy_above_average` emits leaves `prices` on its `signals` sink. A
-sink plugin attached to it writes those lines somewhere.
+Everything `buy_above_average` emits leaves `trade_watcher` on its `signals`
+sink. A sink plugin attached to it writes those lines somewhere.
 
-> Attach a file sink to `prices` that writes every signal to `signals.txt` in
-> the plugin folder.
+> Attach a file sink to `trade_watcher` that writes every signal to
+> `signals.txt` in the plugin folder.
 > {: .step}
 
 ```sh
 $ flz plugin enable signals operator_file_sink \
-  --operator_id=prices --namespace trading \
+  --operator_id=trade_watcher --namespace trading \
   --hook=on_output \
   --Xpath=signals.txt \
   --Xchannel_out=signals
@@ -287,7 +287,7 @@ the same settings written as JSON. Try it on an order, with a file sink that
 should record its steps:
 
 ```sh
-$ flz operator start paper_order --id order_1 --namespace trading \
+$ flz operator start order_executor --id order_1 --namespace trading \
   --text '{"symbol": "EUR/USD", "quantity": 10}' --channel order \
   --plugins '[{"id": "order_1_file", "provider": "operator_file_sink", "opts": {"path": "order_1.txt"}, "hooks": [["on_output", {}]]}]'
 ```
@@ -306,7 +306,7 @@ $ wc -c app_data/files/order_1.txt
 0 app_data/files/order_1.txt
 ```
 
-`paper_order` declares no sink. Its steps hand their values to each other, and
+`order_executor` declares no sink. Its steps hand their values to each other, and
 `confirm_fill` ends the order with a result, but nothing leaves it on a sink, so
 there is nothing for `on_output` to hand the plugin. An operator decides in its
 code what leaves it, with `sink(...)`, and a plugin can only take what does.

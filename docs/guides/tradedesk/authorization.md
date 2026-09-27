@@ -148,8 +148,8 @@ has no token:
 authz.whoami: refused: no verifiable identity — supply `--token <token>` or set FLEZHA_TOKEN
 ```
 
-**If you lose the admin token,** mint a new one-time token without stopping the
-controller, then claim it as before:
+**If you lose the admin token,** get a new one in two steps, without stopping
+the controller. First make a new one-time token:
 
 ```sh
 $ flz auth rebootstrap
@@ -160,6 +160,21 @@ Bootstrap token written to ./app_data/auth/bootstrap.token.
 Claim it against the RUNNING controller:
     flz auth bootstrap 260cd28f8acf6b95e5ac9bec6e7ed73b69665780724253baafcd2ccc14422f11
 The claim unbinds every admin@_system and revokes its _system admin tokens before binding the new admin, and it is audited as a recovery.
+```
+
+That one-time token is not an admin token, and no other command accepts it.
+Claim it, and the answer is your new admin token, the one that starts with
+`flzt_`, to put in `FLEZHA_TOKEN`:
+
+```sh
+$ flz auth bootstrap 260cd28f8acf6b95e5ac9bec6e7ed73b69665780724253baafcd2ccc14422f11
+```
+
+```output
+bootstrap claimed; admin@_system bound to admin-4e858b9851ea3e58
+admin token (shown once, store it now): flzt_qd4ralq5vlwyvkd2tibw4545jtwc5bu3zr636zkurntnsug5indq
+
+18:11:37.396 [warning] [authz.bootstrap] recovery claim accepted against a RUNNING controller: unbound 1 admin@_system binding(s), revoked 1 _system admin token(s); admin@_system is now admin-4e858b9851ea3e58
 ```
 
 Every old admin token stops working. Runner keys are untouched.

@@ -88,7 +88,7 @@ order with paper money on a demo exchange.
 | [`authorization.md`](tradedesk/authorization.md) | Keep authorization on, claim the admin, and issue the key tradedesk's runner connects with |
 | [`namespaces.md`](tradedesk/namespaces.md) | Give tradedesk a namespace of its own |
 | [`building_an_etl_stream.md`](tradedesk/building_an_etl_stream.md) | Build the desk's ETL stream as an unbounded operator: chained tasklets, `flat_map`, `filter`, `key_by`, and state per symbol |
-| [`building_a_workflow.md`](tradedesk/building_a_workflow.md) | Build the paper-order workflow as a bounded operator: steps, retries and compensation, started by hand |
+| [`building_a_workflow.md`](tradedesk/building_a_workflow.md) | Build the `order_executor` workflow as a bounded operator: steps, retries and compensation, started by hand |
 | [`partitioning.md`](tradedesk/partitioning.md) | Start the desk: `--partitions`, `key_by`, how trades are routed, and `flz operator scale` |
 | [`plugins.md`](tradedesk/plugins.md) | Read the demo exchange's trades with the WebSocket plugin, and write the buy signals to a file |
 | [`durability.md`](tradedesk/durability.md) | Stop and crash the runner and the controller, read the desk's state back, finish an order a crash interrupted, and handle a message that cannot be read |

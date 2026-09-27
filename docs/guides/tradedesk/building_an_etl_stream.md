@@ -16,9 +16,9 @@ symbol's recent prices.
 
 ## The desk's ETL pipeline stream operator
 
-The desk's ETL pipeline stream operator is called `prices`. Trades come in from
-the exchange, and for each symbol it keeps the last ten prices. When a new price
-is 2 % or more above their average, the desk buys: it starts an order.
+The desk's ETL pipeline stream operator is called `trade_watcher`. Trades come
+in from the exchange, and for each symbol it keeps the last ten prices. When a
+new price is 2 % or more above their average, the desk buys: it starts an order.
 
 You write it in four pieces, one section each: the tasklet that keeps each
 symbol's prices; the tasklet that decides when to buy; the operator, which
@@ -194,9 +194,9 @@ order, and it emits a line saying so. For the other prices it does nothing. The
 further a price is above its average, the more it buys: 10 for each percent, so
 a price 2.3 % above buys 23, and one 12 % above buys 120.
 
-The order is a workflow, `paper_order`, built as a bounded operator: the kind
+The order is a workflow, `order_executor`, built as a bounded operator: the kind
 for work that runs a set of steps and then ends, such as placing one order. The
-tasklet starts one `paper_order` for every buy, and hands it the order as its
+tasklet starts one `order_executor` for every buy, and hands it the order as its
 first input: the symbol, and how many to buy.
 [`building_a_workflow.md`](building_a_workflow.md) builds that workflow.
 
@@ -222,7 +222,7 @@ public final class BuyAboveAverage {
         }
         int quantity = (int) Math.round(percent * UNITS_PER_PERCENT);   // a stronger move buys more
 
-        ctx.spawnBounded("paper_order", new OrderTicket(move.symbol(), quantity));   // one bounded operator per order
+        ctx.spawnBounded("order_executor", new OrderTicket(move.symbol(), quantity));   // one bounded operator per order
 
         ctx.emit(String.format(
                 "%s %.4f is %.2f%% above its average of %.4f, buying %d",
@@ -235,7 +235,7 @@ public final class BuyAboveAverage {
 It also takes the context, because it does two things per input: it starts a
 bounded operator and it emits. A `void` method declares no output, so `emits`
 names the type it emits. `spawnBounded` sends the order as JSON, and
-`paper_order` decodes it back into an `OrderTicket`, the order it takes,
+`order_executor` decodes it back into an `OrderTicket`, the order it takes,
 declared in [`building_a_workflow.md`](building_a_workflow.md).
 
 ### Rust
@@ -353,15 +353,15 @@ have several. The desk needs only one.
 ### Java
 
 ```java
-// PricesOperator.java: the unbounded operator. Trades in, signals out.
-public final class PricesOperator implements UnboundedOperator {
+// TradeWatcherOperator.java: the unbounded operator. Trades in, signals out.
+public final class TradeWatcherOperator implements UnboundedOperator {
 
     @JsonIgnoreProperties(ignoreUnknown = true)              // the exchange sends more than the desk reads
     public record TradeMessage(String channel, List<Trade> data) {}
 
     @Override
     public String factoryId() {
-        return "prices";
+        return "trade_watcher";
     }
 
     @Override
@@ -417,11 +417,11 @@ TODO: not written yet.
 ## The runner
 
 Registering the operator on the runner starts nothing. It tells the controller
-that this runner can run operators of the `prices` type, its factory. Operators
-are started from that factory later, with `flz operator start prices`, and each
-one runs on a runner that registered it.
+that this runner can run operators of the `trade_watcher` type, its factory.
+Operators are started from that factory later, with `flz operator start
+trade_watcher`, and each one runs on a runner that registered it.
 
-> Register the `prices` factory on the runner, before `start()`.
+> Register the `trade_watcher` factory on the runner, before `start()`.
 > {: .step}
 
 <!-- tabs-open -->
@@ -432,7 +432,7 @@ one runs on a runner that registered it.
 // Main.java: the runner. Joins trading and offers the prices factory.
 public static void main(String[] args) throws Exception {
     FlezhaRunner runner = Flezha.createRunner(args.length > 0 ? args[0] : "trading")
-            .registerFactory(PricesOperator.class)
+            .registerFactory(TradeWatcherOperator.class)
             .start();
 
     runner.awaitTermination();
@@ -468,5 +468,5 @@ TODO: not written yet.
 ## Next
 
 The desk starts an order for every buy, and the order has nothing to run yet.
-[`building_a_workflow.md`](building_a_workflow.md) writes `paper_order`, the bounded operator
-that places it.
+[`building_a_workflow.md`](building_a_workflow.md) writes `order_executor`, the
+bounded operator that places it.

@@ -351,7 +351,7 @@ EXAMPLES:
     flz operator start do_nothing --id my_operator
     flz operator start candles --id ohlc --partitions 3
     flz operator start order_aggregator -i orders --namespace prod -o json
-    flz operator start paper_order --text '{"symbol":"AAPL"}' --channel order"#;
+    flz operator start order_executor --text '{"symbol":"EUR/USD","quantity":10}' --channel order"#;
 
 pub(crate) const OPERATOR_LISTEN: Help = r#"flz operator listen - Print the frames an operator emits or ingests
 
