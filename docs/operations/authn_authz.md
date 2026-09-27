@@ -235,7 +235,8 @@ flz token issue runner@team-orders team-orders runner --ttl never
 Hand it to the runner as `FLEZHA_NAMESPACE_SECRET`. Three rules the registry
 enforces on it:
 
-- **It cannot expire.** `--ttl` is refused for a `runner` entry. The holder is an
+- **It cannot expire.** A `runner` entry is issued with `--ttl never`; any other TTL, the
+  default included, is refused `:runner_token_cannot_expire`. The holder is an
   unattended process, and a credential that lapses fails it at a restart — a
   deploy or a recovery, which is exactly when nobody wants a new failure.
 - **It cannot be `_system`.** Refused at issue as well as at connect.

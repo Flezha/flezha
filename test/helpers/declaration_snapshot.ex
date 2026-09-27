@@ -2,11 +2,10 @@ defmodule FlezhaTest.Helper.DeclarationSnapshot do
   @moduledoc """
   The declaration a runtime sends, compared to its committed golden.
 
-  Two callers read this: the smoke tier, which pins the declaration of the one
-  runtime `FLEZHA_E2E_RUNTIME` selected, and `test/system/topology_refusal_e2e_test.exs`,
-  which pins every golden against every runtime with a manifest. They were two
-  copies of one comparison until the topology check made "every runtime, same
-  bytes" a clause of its own.
+  Two callers read this: `test/system/topology_refusal_e2e_test.exs`, which pins
+  every declaration golden against every runtime with a manifest, and the smoke
+  tier, which pins only the identity stamps a keyed sink's output carries
+  (`keyed_output_stamps`).
 
   The mechanism: bind the factory with `ClassRegistry.decode_declarations/1`
   intercepted and compare the raw metadata map the controller decoded. The stub
