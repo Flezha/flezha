@@ -653,6 +653,19 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
       # would pass every assertion above.
       assert "operator_websocket" in checked
     end
+
+    test "every provider's info lists its public options only" do
+      for {id, module} <- Flezha.Plugin.Providers.all(), Code.ensure_loaded?(module) do
+        info = module.provider_info()
+        decl = module.__provider__()
+
+        public =
+          for {name, _row} <- ProviderBehaviour.Decl.public_options(decl),
+              do: Atom.to_string(name)
+
+        assert Enum.sort(info.required_fields ++ info.optional_fields) == Enum.sort(public), id
+      end
+    end
   end
 
   # One vocabulary, one root. A provider that invents a second spelling for a

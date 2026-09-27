@@ -375,13 +375,14 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   @doc "`module`'s shape, as `flz plugin list` reports it."
   @spec describe(module()) :: map()
   def describe(module) do
-    {required, all} = fields(module)
+    {required, _all} = fields(module)
+    public = for {name, _row} <- Decl.public_options(module.__provider__()), do: name
 
     %{
       module: inspect(module),
       type: module.plugin_type(),
       required_fields: Enum.map(required, &Atom.to_string/1),
-      optional_fields: Enum.map(all -- required, &Atom.to_string/1)
+      optional_fields: Enum.map(public -- required, &Atom.to_string/1)
     }
   end
 
