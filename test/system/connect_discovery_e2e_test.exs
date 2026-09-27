@@ -70,7 +70,7 @@ defmodule FlezhaTest.System.ConnectDiscoveryE2ETest do
       assert output =~ Path.expand(Support.socket_dir()),
              "the refusal names the first candidate, but said: #{output}"
 
-      assert Enum.any?(repository_rungs(), &(output =~ &1)),
+      assert Enum.any?(named_rungs(), &(output =~ &1)),
              "the refusal names the second candidate, but said: #{output}"
 
       assert output =~ "FLEZHA_SOCKET_FILES_PATH",
@@ -111,6 +111,21 @@ defmodule FlezhaTest.System.ConnectDiscoveryE2ETest do
     unless File.dir?(app_rung), do: on_exit(fn -> File.rm_rf(Path.join(app_dir, "app_data")) end)
 
     [Path.expand("app_data/sockets"), app_rung]
+  end
+
+  # The rungs as a runner may name them: a test app under `test/apps` is a
+  # symlink, and a runner that reports its working directory resolved names
+  # the rung under the directory the link points at.
+  defp named_rungs do
+    link = Path.expand("test/apps/#{NodeTestHelper.spawn_runtime()}_runner")
+
+    resolved =
+      case File.read_link(link) do
+        {:ok, target} -> [Path.join(Path.expand(target, Path.dirname(link)), "app_data/sockets")]
+        {:error, _} -> []
+      end
+
+    repository_rungs() ++ resolved
   end
 
   # A live control socket in `dir`. Only the socket file is removed afterwards;
