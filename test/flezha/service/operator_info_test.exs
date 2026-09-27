@@ -17,6 +17,7 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
 
   import ExUnit.CaptureIO
 
+  alias Flezha.Config.Durations
   alias Flezha.Convergence.Intent
   alias Flezha.Convergence.Snapshot
   alias Flezha.Service.CliManager
@@ -169,16 +170,26 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
       %{bounded_state(0) | runner_id: nil}
       |> Map.put(:init_error, {:runner_not_ready, :timeout})
 
-  # fails when: the phase derivation tests `init_error` before the binding, so a
-  # held operator reads `parked` on the surface the loop calls `unbound`.
-  test "info and the loop's verdict record agree that a held operator is unbound" do
+  # A held operator's health as the loop publishes it, the intent unmet for
+  # `unmet_ms`.
+  defp publish_held(unmet_ms) do
     state = held_state()
     stub_one(state)
 
     health = judged(state)
     assert health[{:operator, {@namespace, "op-1"}}].state == :unbound
 
-    Snapshot.publish(Map.put(Snapshot.current(), :operator_health, health))
+    Snapshot.current()
+    |> Map.put(:operator_health, health)
+    |> Map.put(:unmet_intent_ms, unmet_ms)
+    |> Snapshot.publish()
+  end
+
+  # fails when: the phase derivation tests `init_error` before the binding, so a
+  # held operator reads `parked` on the surface the loop calls `unbound`; or the
+  # grace outlives its window and hides the verdict.
+  test "info and the loop's verdict record agree that a held operator is unbound" do
+    publish_held(Durations.get(:convergence_unmet_intent_grace_ms) + 1)
 
     out = capture_io(fn -> CliManager.operator_info(@namespace, "json") end)
     %{"operators" => [proc]} = Jason.decode!(out)
@@ -190,6 +201,17 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
     assert text =~ "Health: unbound"
     assert text =~ "Phase: unbound"
     refute text =~ "parked"
+  end
+
+  # fails when: `info` shows the raw verdict while the loop is still inside its
+  # grace, so it disagrees with `flz operator list` at the same moment.
+  test "a held operator reads recovering while the loop's grace runs" do
+    publish_held(0)
+
+    out = capture_io(fn -> CliManager.operator_info(@namespace, "json") end)
+    %{"operators" => [proc]} = Jason.decode!(out)
+
+    assert proc["health"] == "recovering"
   end
 
   test "a held operator reports unbound before the loop has judged it too" do
