@@ -22,6 +22,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
 
   alias Flezha.Service.PortPilot
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.ReferenceTopologies
   alias FlezhaTest.Helper.SourceWalk
 
   @apps_root "test/apps"
@@ -228,6 +229,19 @@ defmodule FlezhaTest.SdkConformance.GateTest do
         unless manifest["artifacts"]["test"] != [] and manifest["artifacts"]["bench"] != [] do
           fail("#{path}: an artifacts profile is empty")
         end
+      end
+    end
+
+    test "each names only topology surfaces the reference table declares" do
+      known = ReferenceTopologies.known_surfaces()
+
+      for runtime <- runtimes(),
+          surface <- PortPilot.manifest(runtime)["topology_surfaces"] || [],
+          surface not in known do
+        fail(
+          "#{PortPilot.manifest_path(runtime)} declares topology surface #{inspect(surface)}, " <>
+            "which test/fixtures/reference_topologies.txt does not name"
+        )
       end
     end
 
