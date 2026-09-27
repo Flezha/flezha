@@ -16,6 +16,7 @@ defmodule FlezhaTest.State.WalTransferTest do
   defp seed_cell(suffix) do
     cell_id = TestHelpers.sample_cell_id(suffix)
     {:ok, srv} = Supervisor.find_or_start(cell_id)
+    on_exit(fn -> Supervisor.delete_cell(cell_id) end)
     # An empty WAL sheds any frame before seq 0 and pulls a baseline instead.
     :ok = WalWriter.append(srv, 0, TestHelpers.stub_header(), "alpha")
     :ok = WalWriter.append(srv, 1, TestHelpers.stub_header(), "beta")
