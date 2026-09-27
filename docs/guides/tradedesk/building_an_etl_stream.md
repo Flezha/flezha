@@ -268,18 +268,20 @@ every trade takes, in one expression that reads in the order the data flows:
 
 ```mermaid
 flowchart LR
-    I(["trades"]) --> F["flatMap"] --> Q["filter"] --> K["keyBy symbol"]
+    I(["trades"]) --> M["filter<br/>trade messages"] --> F["flatMap"] --> Q["filter<br/>market orders"] --> K["keyBy symbol"]
     K --> T["track_prices<br/>one cell per symbol"]
     T --> B["buy_above_average"]
     B --> S(["signals"])
 ```
 
 Messages enter on the channel `trades`, in the format a typical exchange's
-WebSocket API sends: each message carries one or more trades in its `data`
-list. Three transforms come next: small steps written right into the path,
-with no class of their own. Here are two messages on their way through them:
+WebSocket API sends: a trade message says `"channel": "trade"` and carries one
+or more trades in its `data` list. Four transforms come next: small steps
+written right into the path, with no class of their own. Here are three
+messages on their way through them:
 
 ```json
+{"method": "subscribe", "req_id": 1, "result": {"channel": "trade", "symbol": "EUR/USD"}, "success": true}
 {"channel": "trade", "type": "update", "data": [
   {"symbol": "EUR/USD", "side": "buy", "price": 1.0850, "qty": 1000, "ord_type": "market", "trade_id": 1, "timestamp": "2026-09-22T10:00:00.000000Z"},
   {"symbol": "EUR/USD", "side": "sell", "price": 1.0851, "qty": 500, "ord_type": "limit", "trade_id": 2, "timestamp": "2026-09-22T10:00:00.000000Z"},
@@ -289,6 +291,11 @@ with no class of their own. Here are two messages on their way through them:
   {"symbol": "USD/JPY", "side": "buy", "price": 149.50, "qty": 1000, "ord_type": "market", "trade_id": 4, "timestamp": "2026-09-22T10:00:01.000000Z"}
 ]}
 ```
+
+The first `filter` keeps the trade messages. The exchange sends other messages
+on the same connection too, such as the first one here, which confirms a
+subscription and has no trades in it. It goes no further, and the two trade
+messages carry on.
 
 `flatMap` splits each message into its trades. Two messages become four
 trades, all on one level, and each goes on alone. A trade keeps only the three
@@ -301,8 +308,8 @@ fields the desk reads, and the rest of what the exchange sends is dropped:
 {"symbol": "USD/JPY", "price": 149.50, "ord_type": "market"}
 ```
 
-`filter` keeps the market orders, the trades that went through at whatever the
-price was. The limit order is gone:
+The second `filter` keeps the market orders, the trades that went through at
+whatever the price was. The limit order is gone:
 
 ```json
 {"symbol": "EUR/USD", "price": 1.0850, "ord_type": "market"}
@@ -347,7 +354,7 @@ have several. The desk needs only one.
 public final class PricesOperator implements UnboundedOperator {
 
     @JsonIgnoreProperties(ignoreUnknown = true)              // the exchange sends more than the desk reads
-    public record TradeMessage(List<Trade> data) {}
+    public record TradeMessage(String channel, List<Trade> data) {}
 
     @Override
     public String factoryId() {
@@ -357,6 +364,7 @@ public final class PricesOperator implements UnboundedOperator {
     @Override
     public void channels(ChannelBuilder c) {
         c.input(TradeMessage.class, "trades")
+                .filter(message -> "trade".equals(message.channel())) // trade messages only
                 .flatMap(Trade.class, TradeMessage::data)            // a message into its trades
                 .filter(trade -> "market".equals(trade.ord_type()))  // market orders only
                 .keyBy(Trade::symbol)                                // one cell per symbol
@@ -368,8 +376,9 @@ public final class PricesOperator implements UnboundedOperator {
 }
 ```
 
-`TradeMessage` is the exchange's message, and it lives inside the operator,
-the only place that reads it. The default JSON decoding refuses a field the
+`TradeMessage` is the exchange's message: `channel` says what kind of message
+it is, and `data` holds its trades. It lives inside the operator, the only
+place that reads it. The default JSON decoding refuses a field the
 record does not name, so `@JsonIgnoreProperties`, here and on `Trade`, tells it
 to drop the exchange's other fields. `TrackPricesTasklet` and
 `BuyAboveAverageTasklet` are the classes `@Tasklet` generates from the two

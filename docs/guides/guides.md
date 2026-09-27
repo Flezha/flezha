@@ -56,7 +56,7 @@ Authorization, namespaces, an ETL stream and a workflow, partitioning, plugins a
 durability. The example is `tradedesk`, a toy trader: an ETL stream, built as an
 unbounded operator, compares each trade's price with its symbol's recent average, and
 when a price is far enough above it, a workflow, built as a bounded operator, places an
-order with paper money, so nothing reaches a real exchange.
+order with paper money on a demo exchange.
 
 | Guide | What you do |
 |---|---|
@@ -66,7 +66,7 @@ order with paper money, so nothing reaches a real exchange.
 | [`building_a_workflow.md`](tradedesk/building_a_workflow.md) | Build the paper-order workflow as a bounded operator: steps, retries and compensation, started by hand |
 | [`partitioning.md`](tradedesk/partitioning.md) | Start the desk: `--partitions`, `key_by`, how trades are routed, and `flz operator scale` |
 | [`plugins.md`](tradedesk/plugins.md) | Read the testnet's trades with the WebSocket plugin, and record filled orders with a file sink |
-| [`durability.md`](tradedesk/durability.md) | Stop and crash the runner and the controller, and read the desk's state back: each symbol's prices, each order's finished steps |
+| [`durability.md`](tradedesk/durability.md) | Stop and crash the runner and the controller, read the desk's state back, finish an order a crash interrupted, and handle a message that cannot be read |
 
 ## Part 3: Advanced topics
 

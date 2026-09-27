@@ -211,8 +211,10 @@ TODO: not written yet.
 ## A step that can fail
 
 `confirm_fill` asks the paper exchange whether the order filled. The exchange
-fills at most 100 at a time, so a bigger order is refused, and this is the step
-where an order can fail.
+takes ten seconds to answer, and it fills at most 100 at a time, so a bigger
+order is refused: this is the step where an order can fail. The ten seconds are what let
+[`durability.md`](durability.md#an-order-in-the-middle-of-a-crash) crash the
+runner in the middle of an order.
 
 A step that fails is tried again, three times in all by default, with a short
 wait between tries that grows each time. When the tries run out, the order ends
@@ -238,6 +240,12 @@ public final class ConfirmFill {
     private static final int EXCHANGE_MAX = 100;
 
     public void run(PlacedOrder placed, TaskletCtx ctx) throws TaskletException {
+        try {
+            Thread.sleep(10_000);                            // the paper exchange takes ten seconds to answer
+        } catch (InterruptedException stopped) {
+            Thread.currentThread().interrupt();
+            throw new TaskletException("stopped while waiting for the exchange");
+        }
         int quantity = placed.order().quantity();
         if (quantity > EXCHANGE_MAX) {
             throw new TaskletException(                      // tried again, then the order is undone

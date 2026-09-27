@@ -206,9 +206,9 @@ without being named.
 > {: .step}
 
 ```sh
-$ flz operator send 'prices#p0' --namespace trading --channel trades --text '{"data": [{"symbol": "EUR/USD", "price": 1.0850, "ord_type": "market"}]}'
-$ flz operator send 'prices#p0' --namespace trading --channel trades --text '{"data": [{"symbol": "EUR/USD", "price": 1.0853, "ord_type": "market"}]}'
-$ flz operator send 'prices#p0' --namespace trading --channel trades --text '{"data": [{"symbol": "EUR/USD", "price": 1.1100, "ord_type": "market"}]}' --await 3000
+$ flz operator send 'prices#p0' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "EUR/USD", "price": 1.0850, "ord_type": "market"}]}'
+$ flz operator send 'prices#p0' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "EUR/USD", "price": 1.0853, "ord_type": "market"}]}'
+$ flz operator send 'prices#p0' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "EUR/USD", "price": 1.1100, "ord_type": "market"}]}' --await 3000
 ```
 
 ```output
@@ -218,8 +218,9 @@ Delivered to 'prices#p0'.
 signals	EUR/USD 1.1100 is 2.29% above its average of 1.0852, buying 10
 ```
 
-A message carries only the fields the desk reads; the exchange's other fields
-would be ignored anyway. The quotes around `prices#p0` keep some shells from
+A message carries `"channel": "trade"`, which is how the desk tells a trade
+message from the exchange's other messages, and only the fields the desk reads;
+the exchange's other fields would be ignored anyway. The quotes around `prices#p0` keep some shells from
 reading the `#` as something else.
 
 The buy started an order, which ran its steps and ended. The runner's terminal
@@ -233,7 +234,7 @@ shows the line `record_order` prints:
 > {: .step}
 
 ```sh
-$ flz operator send 'prices#p1' --namespace trading --channel trades --text '{"data": [{"symbol": "GBP/USD", "price": 1.3400, "ord_type": "market"}]}'
+$ flz operator send 'prices#p1' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "GBP/USD", "price": 1.3400, "ord_type": "market"}]}'
 ```
 
 ```output

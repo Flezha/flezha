@@ -1,12 +1,461 @@
 # Durability
 
-Durability is what keeps the desk's work when something stops: a runner
-crashes, a machine is switched off, the controller is restarted. Flezha writes
-down every change a tasklet makes to what it remembers, and every step a
-bounded operator finishes, on the controller's disk, as it happens. When a runner comes
-back, or another one takes over, the work carries on from where it was instead
-of starting again. Nothing in your code saves or loads anything: you say what a
-tasklet remembers, and Flezha keeps it.
+Durability is what keeps the desk's work when something stops: the runner is
+stopped or crashes, or the controller is restarted. Flezha writes down every
+change a tasklet makes to what it remembers, and every step an order finishes,
+on the controller's disk, as it happens. When the runner comes back, the work
+carries on from where it was instead of starting again. Nothing in the desk's
+code saves or loads anything.
+
+On this page you stop and crash the desk on purpose, and check each time that
+nothing was lost.
+
+## What the desk remembers
+
+The desk remembers three things, and each one comes back after a stop:
+
+| What | Where it lives | Written in |
+|---|---|---|
+| each symbol's last ten prices | the cell of `track_prices` for that symbol | [`building_an_etl_stream.md`](building_an_etl_stream.md#keep-each-symbol-s-prices) |
+| which steps of an order have finished | the order's journal, one per order | [`building_a_workflow.md`](building_a_workflow.md#several-tasklets-step-by-step) |
+| the reservation and order ids an undo needs | the state of `reserve_funds` and `place_order` | [`building_a_workflow.md`](building_a_workflow.md#a-step-that-can-be-undone) |
+
+## Pause the exchange
+
+While the exchange is connected, new prices keep changing the windows, so a
+window read before a stop and one read after it would differ anyway. Pause the
+feed first, and every window stays exactly as it is.
+
+> Disable the exchange plugin from [`plugins.md`](plugins.md). The windows keep
+> what they have, and no new orders start.
+> {: .step}
+
+```sh
+$ flz plugin disable exchange --namespace trading
+```
+
+```output
+Disabling plugin...
+Plugin exchange disabled successfully (plugin disabled on 3 partitions).
+```
+
+> Read every symbol's window, and keep the output to compare with later.
+> {: .step}
+
+```sh
+$ flz state get prices/track_prices --namespace trading
+```
+
+```output
+state get prices/track_prices:
+  change_seq: -
+  state:      {"track_prices":{"EUR/USD":{"prices":[1.13378,1.14873,1.1487,1.13987,1.13993,1.14014,1.14012,1.14368,1.1327,1.13267]},"GBP/USD":{"prices":[1.37453,1.37442,1.37448,1.3887,1.38872,1.40792,1.40786,1.40481,1.40493,1.40494]},"USD/JPY":{"prices":[161.741,161.744,160.871,159.473,159.473,161.233,162.522,162.519,162.525,162.162]}}}
+```
+
+## Stop the runner
+
+A runner can stop in two ways, and they differ in what reaches the controller:
+
+- **A clean stop**, with Ctrl-C or a SIGTERM from whatever runs it. The runner
+  hands its last changes to the controller before it exits, so nothing is lost.
+- **A crash**, such as `kill -9`, a power cut or the machine dying. There is no
+  goodbye, and the controller keeps every change the runner had already sent.
+
+> Stop the runner with Ctrl-C in its terminal.
+> {: .step}
+
+With no runner, the partitions have nowhere to run. The controller marks them
+`failed`, and they wait:
+
+```sh
+$ flz operator info prices --namespace trading
+```
+
+```output
+Fetching operator information for namespace 'trading'...
+Operator information for namespace 'trading':
+
+Partition group: prices (3/3)
+  p0  prices#p0                      key groups 0-84  trading_90cb7c5b6846  failed
+  p1  prices#p1                      key groups 85-169  trading_90cb7c5b6846  failed
+  p2  prices#p2                      key groups 170-255  trading_90cb7c5b6846  failed
+  coverage: all 256 key groups owned exactly once
+...
+```
+
+A window cannot be read now either, because `flz state get` asks the runner
+that holds it, and there is none:
+
+```sh
+$ flz state get prices/track_prices --namespace trading
+```
+
+```output
+error: state get: no running operator `prices#p0` in any namespace
+```
+
+> Start the runner again, with the same command as in
+> [`partitioning.md`](partitioning.md#start-the-desk). Within a few seconds the
+> partitions are back on it, `healthy`.
+> {: .step}
+
+```sh
+$ flz operator info prices --namespace trading
+```
+
+```output
+...
+Partition group: prices (3/3)
+  p0  prices#p0                      key groups 0-84  trading_884227a6e4a6  healthy
+  p1  prices#p1                      key groups 85-169  trading_884227a6e4a6  healthy
+  p2  prices#p2                      key groups 170-255  trading_884227a6e4a6  healthy
+...
+```
+
+The runner has a new id, because every run of it is a new session, and the
+partitions moved to it. Their windows came with them:
+
+```sh
+$ flz state get prices/track_prices --namespace trading
+```
+
+```output
+state get prices/track_prices:
+  change_seq: -
+  state:      {"track_prices":{"EUR/USD":{"prices":[1.13378,1.14873,1.1487,1.13987,1.13993,1.14014,1.14012,1.14368,1.1327,1.13267]},"GBP/USD":{"prices":[1.37453,1.37442,1.37448,1.3887,1.38872,1.40792,1.40786,1.40481,1.40493,1.40494]},"USD/JPY":{"prices":[161.741,161.744,160.871,159.473,159.473,161.233,162.522,162.519,162.525,162.162]}}}
+```
+
+Every price is where it was.
+
+## Crash the runner
+
+> Crash the runner with `kill -9`, from another terminal. The controller sees
+> it gone at once and marks the partitions `failed`, as before.
+> {: .step}
+
+```sh
+$ pkill -9 -f tradedesk.jar
+```
+
+> Start the runner again, and read the windows once more.
+> {: .step}
+
+```sh
+$ flz state get prices/track_prices --namespace trading
+```
+
+```output
+state get prices/track_prices:
+  change_seq: -
+  state:      {"track_prices":{"EUR/USD":{"prices":[1.13378,1.14873,1.1487,1.13987,1.13993,1.14014,1.14012,1.14368,1.1327,1.13267]},"GBP/USD":{"prices":[1.37453,1.37442,1.37448,1.3887,1.38872,1.40792,1.40786,1.40481,1.40493,1.40494]},"USD/JPY":{"prices":[161.741,161.744,160.871,159.473,159.473,161.233,162.522,162.519,162.525,162.162]}}}
+```
+
+The same windows again. A crash had no chance to hand anything over, and it
+did not need to: every change had reached the controller as it was made.
+
+## An order in the middle of a crash
+
+An order writes down each step the moment it finishes, in its journal. When the
+runner crashes in the middle of an order, the order continues at the first step
+that had not finished. The steps before it do not run again, so the money is
+not put aside twice and the order is not placed twice.
+
+`confirm_fill` waits ten seconds for the paper exchange to answer, which is
+the time you have to crash the runner in the middle of an order.
+
+> Start an order by hand, and read its journal right away, within the ten
+> seconds.
+> {: .step}
+
+```sh
+$ flz operator start paper_order --id order_1 --namespace trading --text '{"symbol": "EUR/USD", "quantity": 10}' --channel order
+```
+
+```output
+Started order_1
+```
+
+```sh
+$ flz state journal order_1 --namespace trading
+```
+
+```output
+task-journal for instance order_1:
+
+  seq=0 task_committed task_idx=0 iter=0 epoch=0
+    ran: order_1/reserve_funds/ record=0
+    handoff: 1 item(s), 102 byte(s)
+      edge: channel_id=1 1 item(s), 102 byte(s)
+
+  seq=1 task_committed task_idx=1 iter=0 epoch=0
+    ran: order_1/place_order/ record=0
+    handoff: 1 item(s), 103 byte(s)
+      edge: channel_id=2 1 item(s), 103 byte(s)
+
+  seq=2 task_committed task_idx=3 iter=0 epoch=0
+    ran: order_1/record_order/
+    handoff: 0 item(s), 0 byte(s)
+
+
+  leaves: 2,3  complete: false
+```
+
+Each `task_committed` is a step that finished: the money is reserved, the order
+is placed and booked. `confirm_fill` is still waiting for the exchange, so the
+order is not `complete`. The runner's terminal shows the booking:
+
+```output
+[book] EUR/USD 10 as ord-6b2e13f521b6781afd9f710152cd2f25
+```
+
+> Crash the runner while `confirm_fill` waits, then start it again.
+> {: .step}
+
+```sh
+$ pkill -9 -f tradedesk.jar
+```
+
+About ten seconds after the runner is back, the order is done:
+
+```sh
+$ flz state journal order_1 --namespace trading
+```
+
+```output
+task-journal for instance order_1:
+...
+  seq=2 task_committed task_idx=3 iter=0 epoch=0
+    ran: order_1/record_order/
+    handoff: 0 item(s), 0 byte(s)
+
+  seq=3 task_committed task_idx=2 iter=0 epoch=0
+    ran: order_1/confirm_fill/
+    handoff: 0 item(s), 0 byte(s)
+    completes the instance: result 57 byte(s)
+
+
+  leaves: 2,3  complete: true
+```
+
+Only `confirm_fill` ran after the crash. The runner's terminal still shows the
+one booking from before it, and no second one, because `record_order` had
+finished and was not run again.
+
+```sh
+$ flz operator info order_1 --namespace trading
+```
+
+```output
+...
+Operator: order_1
+  Kind: bounded
+  Phase: finished
+  Status: ok
+  Finished At (unix s): 1790449731
+```
+
+## Undo an order
+
+The paper exchange fills at most 100 at a time, so a bigger order fails at
+`confirm_fill`. It is tried three times, and then everything that finished is
+undone, last step first.
+
+> Start an order for 500, and watch the runner's terminal. With ten seconds per
+> try, it takes about half a minute.
+> {: .step}
+
+```sh
+$ flz operator start paper_order --id order_2 --namespace trading --text '{"symbol": "EUR/USD", "quantity": 500}' --channel order
+```
+
+```output
+Started order_2
+```
+
+The runner's terminal:
+
+```output
+[book] EUR/USD 500 as ord-0e7ee9553cfe5eac606fd232fd7ab33c
+[flezha] tasklet confirm_fill attempt 1/3 failed (retrying in 66 ms): the exchange fills at most 100 a time, and this is 500
+[flezha] tasklet confirm_fill attempt 2/3 failed (retrying in 120 ms): the exchange fills at most 100 a time, and this is 500
+[undo] cancelled ord-0e7ee9553cfe5eac606fd232fd7ab33c
+[undo] released res-54e4641a002cc27f8d030507d8d5aea5
+```
+
+The order was cancelled, then the money released. Both undos read their id from
+the step's state, which is what makes them work after a crash too: the state
+comes back, while what a step handed on does not. The booking is not undone,
+because `record_order` has no `compensate`.
+
+```sh
+$ flz operator info order_2 --namespace trading
+```
+
+```output
+...
+Operator: order_2
+  Kind: bounded
+  Phase: finished
+  Status: error
+  Error: the exchange fills at most 100 a time, and this is 500
+  Finished At (unix s): 1790449785
+```
+
+## Restart the controller
+
+The runner is not the only thing that can stop. The controller keeps its own
+records on disk, and reads them back when it starts.
+
+> Stop the controller, then start it again the way
+> [`authorization.md`](authorization.md#claim-the-admin) did. Leave the runner
+> running.
+> {: .step}
+
+```sh
+$ flz controller stop
+```
+
+```output
+...
+[shutdown] complete duration_ms=9 outcome=clean
+```
+
+While the controller is gone, the runner keeps trying to reach it, and connects
+by itself once it is back:
+
+```output
+...
+[flezha] Control channel attempt 7 in 3.265s...
+[flezha] Connected after 6 attempts
+```
+
+Your admin token still works, and `trading` is still there:
+
+```sh
+$ flz auth whoami
+```
+
+```output
+principal: admin-c5257dbf521257b2
+namespace: _system
+role:      admin
+```
+
+```sh
+$ flz namespace list
+```
+
+```output
+...
+  NAMESPACE                          RUNNING
+  _system                            yes
+  trading                            yes
+```
+
+The partitions take up to a minute to be placed on the runner again. Then they
+are `healthy`, and every window is where it was:
+
+```sh
+$ flz state get prices/track_prices --namespace trading
+```
+
+```output
+state get prices/track_prices:
+  change_seq: -
+  state:      {"track_prices":{"EUR/USD":{"prices":[1.13378,1.14873,1.1487,1.13987,1.13993,1.14014,1.14012,1.14368,1.1327,1.13267]},"GBP/USD":{"prices":[1.37453,1.37442,1.37448,1.3887,1.38872,1.40792,1.40786,1.40481,1.40493,1.40494]},"USD/JPY":{"prices":[161.741,161.744,160.871,159.473,159.473,161.233,162.522,162.519,162.525,162.162]}}}
+```
+
+## The dead-letter queue
+
+Some messages cannot be handled at all, however often they are tried. Such a
+message is tried three times, then set aside in the **dead-letter queue**, so
+the messages behind it are not held up. It is kept there, on the controller's
+disk, until you decide what to do with it.
+
+> Send `prices#p1` a trade whose price is not a number.
+> {: .step}
+
+```sh
+$ flz operator send 'prices#p1' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "EUR/USD", "price": "one euro", "ord_type": "market"}]}'
+```
+
+```output
+Delivered to 'prices#p1'.
+```
+
+The runner's terminal shows the three tries, the last one ending:
+
+```output
+[flezha] prepare for channel `trades` parking payload to DLQ after 3 attempt(s): java.lang.IllegalArgumentException: entry channel: JSON deserialization failed: Cannot deserialize value of type `double` from String "one euro": not a valid `double` value (as String to convert)
+```
+
+`flz dlq list` shows what a partition has set aside:
+
+```sh
+$ flz dlq list 'prices#p1' --namespace trading
+```
+
+```output
+ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
+prices#p1/trades/307bcbd6439a080f                           _entry          trades      1    3s        java.lang.IllegalArgumentException: entry channel: JSON dese
+```
+
+`flz dlq show` reads one entry, with the message itself:
+
+```sh
+$ flz dlq show 'prices#p1/trades/307bcbd6439a080f' --namespace trading
+```
+
+```output
+id                "307bcbd6439a080f"
+operator_class    "prices#p1"
+tasklet_id        "trades"
+cell_key          "_entry"
+channel           "trades"
+origin_offset     nil
+error             "java.lang.IllegalArgumentException: entry channel: JSON deserialization failed: ..."
+attempts          3
+generation        1
+status            "parked"
+ts_ms             1790449871673
+payload_bytes     96
+payload            {"channel": "trade", "data": [{"symbol": "EUR/USD", "price": "one euro", "ord_type": "market"}]}
+```
+
+An entry is either sent through again or thrown away. `flz dlq replay` sends it
+through again, which is for a message that failed because of something since
+fixed, such as a bug in the operator. This one will never be readable, so drop
+it:
+
+> Drop the entry.
+> {: .step}
+
+```sh
+$ flz dlq drop 'prices#p1/trades/307bcbd6439a080f' --namespace trading
+```
+
+```output
+dropped prices#p1/trades/307bcbd6439a080f
+```
+
+```sh
+$ flz dlq list 'prices#p1' --namespace trading
+```
+
+```output
+dead-letter queue is empty
+```
+
+A partition group with entries in its dead-letter queue cannot be rescaled, as
+[`partitioning.md`](partitioning.md#change-the-number-of-partitions) says, so
+empty it before `flz operator scale`.
+
+## Resume the exchange
+
+> Enable the exchange plugin again, with the same command as in
+> [`plugins.md`](plugins.md#connect-the-exchange). The desk picks up the prices
+> from where the windows stopped.
+> {: .step}
 
 ## Where it is kept
 
@@ -62,394 +511,15 @@ settings for each backend.
 > finished step is on the controller's disk before the next step starts, so a
 > finished step is kept even when the runner crashes.
 
-## What the desk will remember
-
-A trade worth 10 000 is big for one symbol and small for another, so one number
-for every symbol is a poor rule. On this page `spot_big_trade` compares each
-trade with the same symbol's last ten trades instead: a trade is big when it is
-worth at least twice their average. That needs a memory, one per symbol.
-
-Then the page crashes the runner, twice: once to see the operator's memory come
-back, and once in the middle of an order, to see the bounded operator continue from
-its step. Last, an order that fails is undone, which is where a bounded operator step
-needs a memory of its own.
-
-## State: what a cell remembers
-
-What a tasklet remembers is its state, and state belongs to a cell.
-[`building_an_etl_stream.md`](building_an_etl_stream.md#several-tasklets-in-one-operator) gave
-every symbol a cell of its own with `keyBy`, so every symbol now keeps its own
-last ten values: EUR/USD's never mix with USD/JPY's.
-
-Every change to that state is recorded the moment it is made, and the
-controller keeps the record, in the namespace's own folder under
-`app_data/state/trading/`. That record is what brings the state back after a
-crash.
-
-> Give `spot_big_trade` a memory: each symbol's last ten trade values, and the
-> new rule that compares a trade with their average. A symbol's first trade has
-> nothing to be compared with, so it is never big.
-> {: .step}
-
-<!-- tabs-open -->
-
-### Java
-
-```java
-// SpotBigTrade.java: passes on a trade worth at least twice its symbol's recent average.
-@Tasklet(id = "spot_big_trade")
-public final class SpotBigTrade {
-
-    private static final int WINDOW = 10;
-
-    @State
-    public static class Recent {                             // what each symbol's cell remembers
-        public Deque<Double> values = new ArrayDeque<>();
-    }
-
-    public Optional<BigTrade> run(Trade trade, RecentHandle recent) {
-        Deque<Double> values = recent.get().values;
-        double value = trade.price() * trade.quantity();
-        boolean big = !values.isEmpty() && value >= 2 * average(values);
-
-        recent.pushBackValues(value);
-        if (values.size() > WINDOW) {
-            recent.popFrontValues(1);
-        }
-        return big ? Optional.of(new BigTrade(trade.symbol(), trade.price(), value)) : Optional.empty();
-    }
-
-    private static double average(Deque<Double> values) {
-        return values.stream().mapToDouble(Double::doubleValue).average().orElseThrow();
-    }
-}
-```
-
-**`@State` turns a class into the cell's state.** It sits inside the tasklet
-that uses it. From it the annotation processor generates `RecentHandle`, the
-parameter `run` takes, with one method per way a field can change:
-`pushBackValues` and `popFrontValues` each change the list and record just the
-value they add or drop, not the whole list. `recent.get()` reads it.
-
-### Rust
-
-TODO: not written yet.
-
-### Node
-
-TODO: not written yet.
-
-### Python
-
-TODO: not written yet.
-
-### Ruby
-
-TODO: not written yet.
-
-### PHP
-
-TODO: not written yet.
-
-### Elixir
-
-TODO: not written yet.
-
-<!-- tabs-close -->
-
-> Run the new version: stop the operator, stop the runner with Ctrl-C, start the
-> runner again as in
-> [`building_an_etl_stream.md`](building_an_etl_stream.md#the-runner), and start the operator
-> again.
-> {: .step}
-
-```sh
-$ flz operator stop prices --namespace trading
-```
-
-```sh
-$ flz operator start prices --id prices --namespace trading
-```
-
-## Watch it remember
-
-> Send EUR/USD four trades by hand. The first three are worth about 1 000 each,
-> and the fourth, at 3 090, is more than twice their average.
-> {: .step}
-
-```sh
-$ flz operator send prices --namespace trading --channel manual --text 'EUR/USD 100 10'
-$ flz operator send prices --namespace trading --channel manual --text 'EUR/USD 101 12'
-$ flz operator send prices --namespace trading --channel manual --text 'EUR/USD 102 11'
-$ flz operator send prices --namespace trading --channel manual --text 'EUR/USD 103 30'
-```
-
-A listener, as in Part 1's
-[Or watch it from another terminal](../running_operators.md#or-watch-it-from-another-terminal), shows
-one big trade, the fourth, and its decision to buy:
-
-```output
-TODO: output from an end-to-end run.
-```
-
-`flz state get` reads a live cell's state, by
-`<operator>/<tasklet>/<key>`. EUR/USD's cell holds the four values it has seen:
-
-```sh
-$ flz state get prices/spot_big_trade/EUR/USD
-```
-
-```output
-TODO: output from an end-to-end run.
-```
-
-## Crash the runner
-
-A runner can stop in two ways, and they differ in what reaches the controller.
-
-- **Ctrl-C, or a SIGTERM from whatever runs it.** The runner hands its last
-  state to the controller before it exits, so nothing is lost.
-- **A crash**, such as `kill -9`, a power cut or the machine dying. There is no
-  goodbye. The controller has every change the runner had already sent it,
-  which can miss the last few.
-
-> Crash the runner with `kill -9`. The controller sees it gone within a few
-> seconds, and `prices` waits for a runner.
-> {: .step}
-
-```sh
-$ pkill -9 -f tradedesk.jar
-```
-
-> Start the runner again, with the same command as before, and read EUR/USD's
-> cell once more: its last values are back.
-> {: .step}
-
-```sh
-$ flz state get prices/spot_big_trade/EUR/USD
-```
-
-```output
-TODO: output from an end-to-end run.
-```
-
-The next trade is compared with what the cell remembers, not with an empty
-list:
-
-```sh
-$ flz operator send prices --namespace trading --channel manual --text 'EUR/USD 104 40'
-```
-
-```output
-TODO: output from an end-to-end run.
-```
-
-## An order in the middle of a crash
-
-A bounded operator keeps a journal: every step that finishes is written down, with what
-it handed to the next step. When the runner crashes in the middle of an order,
-the order continues at the first step that had not finished. The steps before
-it do not run again, so the money is not reserved twice and the order is not
-placed twice. That needs nothing in your code.
-
-To crash the runner in the middle of an order, the order has to take a while.
-The paper exchange now takes ten seconds to confirm a fill.
-
-> Make `confirm_fill` wait ten seconds for the exchange before it answers.
-> {: .step}
-
-<!-- tabs-open -->
-
-### Java
-
-```java
-// ConfirmFill.java: asks the exchange whether the order filled.
-@Tasklet(id = "confirm_fill")
-public final class ConfirmFill {
-
-    private static final int EXCHANGE_MAX = 100;
-
-    public void run(PlacedOrder placed, TaskletCtx ctx) throws TaskletException {
-        try {
-            Thread.sleep(10_000);                            // the paper exchange takes its time
-        } catch (InterruptedException stopped) {
-            throw new TaskletException("stopped while waiting for the exchange");
-        }
-        int quantity = placed.order().quantity();
-        if (quantity > EXCHANGE_MAX) {
-            throw new TaskletException(
-                    "the exchange fills at most " + EXCHANGE_MAX + " a time, and this is " + quantity);
-        }
-        ctx.complete("filled " + placed.order().symbol() + " " + quantity + " as " + placed.orderId());
-    }
-}
-```
-
-### Rust
-
-TODO: not written yet.
-
-### Node
-
-TODO: not written yet.
-
-### Python
-
-TODO: not written yet.
-
-### Ruby
-
-TODO: not written yet.
-
-### PHP
-
-TODO: not written yet.
-
-### Elixir
-
-TODO: not written yet.
-
-<!-- tabs-close -->
-
-> Restart the runner with the new version, start an order by hand, and crash
-> the runner within ten seconds. Then start the runner again.
-> {: .step}
-
-```sh
-$ flz operator start paper_order --id order_1 --namespace trading --text '{"symbol": "EUR/USD", "quantity": 10}' --channel order
-```
-
-```sh
-$ pkill -9 -f tradedesk.jar
-```
-
-Once the runner is back, the order finishes. `flz state journal` shows what the
-journal holds for it: the two steps that had finished before the crash, and the
-one that ran after it.
-
-```sh
-$ flz state journal order_1
-```
-
-```output
-TODO: output from an end-to-end run.
-```
-
-## Undo an order
-
-When a step fails, it is tried again, and when its tries run out, the order
-ends in failure. Flezha then undoes the steps that had finished, in reverse:
-the order is cancelled, then the money is released. Each step says how it is
-undone in a method of its own, `compensate`. A step with nothing to undo has
-none and is skipped.
-
-The undo needs to know what to undo: the reservation's id, the order's id. In
-an ordinary failure, `compensate` is handed what the step emitted, and the id
-is in there. After a crash that list is empty: the step gets its state back,
-not what it emitted. So a step that can be undone keeps its id in its state.
-
-> Give `reserve_funds` and `place_order` an undo: each keeps the id it created
-> in its state, and `compensate` reads it from there.
-> {: .step}
-
-<!-- tabs-open -->
-
-### Java
-
-```java
-// ReserveFunds.java: step one. Puts the money aside, and releases it on an undo.
-@Tasklet(id = "reserve_funds", emits = ReserveFunds.Reserved.class)
-public final class ReserveFunds {
-
-    public record Reserved(OrderTicket order, String reservationId) {}
-
-    @State
-    public static class Reservation {                        // what this step remembers
-        public String id = "";
-    }
-
-    public void run(OrderTicket order, ReservationHandle reservation, TaskletCtx ctx) throws TaskletException {
-        String id = "res-" + ctx.stableId();
-        reservation.setId(id);
-        ctx.emit(new Reserved(order, id));
-    }
-
-    public void compensate(List<Reserved> completedOutput, ReservationHandle reservation) {
-        System.out.println("[undo] released " + reservation.get().id);
-    }
-}
-```
-
-`PlaceOrder` has the same shape, keeping the order's id and cancelling it in
-its `compensate`.
-
-**`compensate` sits beside `run`,** and takes what the step emitted and the
-same state parameter `run` takes. `ctx.stableId()` gives the same id when a
-step runs again, so a retry does not put a second sum aside.
-
-### Rust
-
-TODO: not written yet.
-
-### Node
-
-TODO: not written yet.
-
-### Python
-
-TODO: not written yet.
-
-### Ruby
-
-TODO: not written yet.
-
-### PHP
-
-TODO: not written yet.
-
-### Elixir
-
-TODO: not written yet.
-
-<!-- tabs-close -->
-
-> Restart the runner with the new version, and start an order the exchange
-> refuses: it fills at most 100.
-> {: .step}
-
-```sh
-$ flz operator start paper_order --id order_2 --namespace trading --text '{"symbol": "EUR/USD", "quantity": 500}' --channel order
-```
-
-After ten seconds `confirm_fill` refuses it, is tried again, and once its tries
-run out the runner's terminal shows the undo, in reverse:
-
-```output
-TODO: output from an end-to-end run.
-```
-
-## The dead-letter queue
-
-TODO: not written yet. A message the desk keeps failing on is tried again, then
-set aside in the dead-letter queue instead of blocking the ones behind it. This
-section shows one being parked, for example a GBP/USD trade sent to a partition
-that does not own it, then finds it with `flz dlq list <partition>`, reads it
-with `flz dlq show`, and replays or drops it with `flz dlq replay` and
-`flz dlq drop`.
-
-## What the controller keeps
-
-The runner is not the only thing that can stop. The controller reads back
-everything it keeps, as [Where it is kept](#where-it-is-kept) describes, when it
-restarts: it brings back `trading` and its limits before any runner reconnects, then its operators, which wait for a
-runner to take them. The runner's key still works.
-
-What this page does not cover is delivery. After a crash, a result can reach a
-sink twice. Making every result arrive exactly once is Part 3's
+## What this page does not cover
+
+Delivery. After a crash, a value the desk sent out just before it can reach a
+sink a second time, so `signals.txt` can hold a line twice. Making every value
+arrive exactly once is Part 3's
 [`effectively_once.md`](../advanced/effectively_once.md).
 
 ## Next
 
-That is the end of Part 2: the desk remembers what it needs, and survives a
-crash of its runner or its controller. [Part 3](../guides.md#part-3-advanced-topics)
-goes deeper.
+That is the end of Part 2: the desk trades on its own, remembers what it needs,
+and survives a stop or a crash of its runner or its controller.
+[Part 3](../guides.md#part-3-advanced-topics) goes deeper.
