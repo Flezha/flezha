@@ -109,7 +109,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   @authoring_roots ~w(
     flz_core/src flz_core_ffi/src sdk/rust/src sdk/rust/macros/src sdk/rust/examples
     sdk/rust/test_app sdk/java/flezha-sdk-api/src/main sdk/java/flezha-sdk-runtime/src/main
-    sdk/java/flezha-sdk-processor/src/main sdk/java/flezha-sdk-examples sdk/java/examples
+    sdk/java/flezha-sdk-examples sdk/java/examples
     sdk/java/test_app/src sdk/node/src sdk/node/examples sdk/node/test_app sdk/python/src
     sdk/python/test_app sdk/ruby/lib sdk/ruby/test_app sdk/php/src sdk/php/examples
     sdk/php/test_app sdk/elixir/lib sdk/elixir/test_app/lib examples

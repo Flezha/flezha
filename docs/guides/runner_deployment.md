@@ -296,34 +296,35 @@ The whole example:
 
 ```java
 // Echo.java: the tasklet. The processing stage the graph routes each message into.
-@Tasklet(id = "echo")                        // state is saved under this name, so choose it once
-public final class Echo {
+@Tasklet.Spec(name = "echo")                 // state is saved under this name, so choose it once
+public final class Echo implements Tasklet<String, Void, String> {
 
-    public String run(String input) {
-        return "echo: " + input;             // what it returns is emitted
+    @Override
+    public void run(String input, Ctx<Void, String> ctx) throws TaskletException {
+        ctx.emit("echo: " + input);          // where it goes is the operator's business
     }
 }
 ```
 
-**`@Tasklet` is expanded at compile time.** The SDK's annotation processor
-generates `EchoTasklet` from this class, reading the input and output types
-from the `run` signature, and the operator names that generated class. `run`
-takes no state parameter, so it keeps nothing between messages and journals
-nothing. A standalone project lists `flezha-sdk-processor` under
-`annotationProcessorPaths`, as the example's `pom.xml` does.
+**The class is the tasklet.** It implements `Tasklet<String, Void, String>`:
+a string in, no state, a string out. `run` emits through `ctx`, and with `Void`
+state it keeps nothing between messages and journals nothing.
+`@Tasklet.Spec` gives the tasklet its name, and the operator names the class
+itself: nothing is generated.
 
 ```java
 // EchoOperator.java: the operator. The graph, and the unit the controller schedules.
 public final class EchoOperator implements UnboundedOperator {
 
     @Override
+    @Nonnull
     public String factoryId() {
         return "echo";
     }
 
     @Override
-    public void channels(ChannelBuilder c) {
-        c.input(String.class, "in").into(EchoTasklet.class).sink("out");
+    public void channels(@Nonnull ChannelBuilder c) {
+        c.input(String.class, "in").into(Echo.class).sink("out");
     }
 }
 ```

@@ -3,14 +3,16 @@
 For operator authors who use the attribute/annotation sugar and for SDK
 implementers who must keep it identical across bindings. It specifies how a
 sugared declaration — `#[flezha::tasklet]` / `#[derive(flezha::State)]` /
-`flezha::operator!` in Rust, `@Tasklet` / `@State` in Java — maps onto the `UnboundedOperator` / `Tasklet` / `Change` / `Channel`
-trait (interface) surface. The sugar is **pure expansion**: a macro (Rust,
-`sdk/rust/macros/`) or an annotation processor (Java, `sdk/java/flezha-sdk-processor/`)
-generates exactly the impls a user would write by hand, against the unchanged
+`flezha::operator!` in Rust — maps onto the `UnboundedOperator` / `Tasklet` / `Change` / `Channel`
+trait (interface) surface. The sugar is **pure expansion**: a macro
+(`sdk/rust/macros/`) generates exactly the impls a user would write by hand, against the unchanged
 runtime. There is no parallel runtime path, no new protobuf message and no
 WAL-format change.
 
-The sugar exists in the Rust and Java SDKs. The Elixir SDK expands the same
+The sugar exists in the Rust SDK. The Java SDK has one form and no sugar: the
+author's class implements `Tasklet<Input, State, Output>` and carries
+`@Tasklet.Spec`, its changes are records applied through `ctx.change(...)`, and
+nothing is generated ([`java_sdk.md`](java_sdk.md#tasklets)). The Elixir SDK expands the same
 declarations through `use` macros — `use Flezha.SDK.Tasklet`,
 `use Flezha.SDK.UnboundedOperator` and `use Flezha.SDK.BoundedOperator` take
 the scalar settings as options named after the behaviour's own callbacks and
@@ -57,7 +59,7 @@ after a restart, and nothing reports the difference until the restart.
 | SDK | Mechanism it ships |
 | --- | --- |
 | Rust | The borrow checker. `StateHandle` hands out the generated mutators and `apply`; there is no `&mut S` to assign through, so an unrecorded mutation does not compile. |
-| Java | The generated `<State>Handle`. The state object is reachable, so an unrecorded mutation is possible in principle and prevented by the generated surface being the only one an author is given. |
+| Java | One recorded path. `ctx.change(...)` applies a change through its `applyTo` and records it; `ctx.state()` hands out the live object, so an unrecorded mutation compiles and runs, and `TaskletTestHarness.replayEquals()` is what catches it. |
 | Elixir | Immutability plus one recorded path. `Flezha.SDK.Ctx.apply/3` folds a change through `apply_change/2` and records it; `run/3` returns the state it produced, and the contract is that the two agree — the recorded changes are what a restore folds. A `state do field … end` block generates that path: `set_<field>` / `push_<field>` and `defchange`'s named recorder each journal exactly one change through `Ctx.apply/3`, so the hand-written fold is only for what the block does not cover. Deterministic effects come from the same ctx: `Ctx.stable_id/1` answers the frozen FNV-1a-128 over the Cell's identity, the invocation's starting seq and a per-invocation ordinal, and `Ctx.checkpoint/1` closes an effectively-once interval. There is no replay harness yet, so the contract is stated rather than checked. |
 | Node | Runtime rejection. `ctx.state` is a deep read-only view; an assignment throws naming the field and pointing at `ctx.change`. `applyChange` and the restore fold hold the value itself. |
 | Ruby | Documented rule, no runtime check. Node's guard is a `Proxy`; Ruby has no counterpart that does not cost an allocation per field read, so `ctx.change` is the path and the rule is stated rather than paid for on every access. |
@@ -106,27 +108,25 @@ The replay-determinism harness (`TaskletTestHarness::replay_equals` in Rust,
 
 ## 2. Signature → associated types (the inference table)
 
-Inference is driven by the `run` declaration. In Rust the declaration is a free
-function carrying `#[flezha::tasklet(...)]`; in Java `@Tasklet` sits on a
-class that has exactly one public method named `run`. `S` below is the optional
-mutable-state parameter: `&mut S` in Rust; in Java either the `@State`-generated
-`<S>Handle` or a raw `StateHandle<S, Change>`.
+Inference is driven by the `run` declaration, a free function carrying
+`#[flezha::tasklet(...)]`. `S` below is the optional mutable-state parameter,
+`&mut S`. Java infers nothing: its `Tasklet<Input, State, Output>` names the
+three types, and §2.2 says where the rest comes from.
 
 | Source in the `run` declaration                     | Associated type / item                              |
 | --------------------------------------------------- | --------------------------------------------------- |
 | first by-value param of type `I`                    | `type Input = I`                                    |
 | return type `O` (or `Result<O, _>`)                 | `type Output = O` (always emit)                     |
-| return type `Option<O>` / `Optional<O>`             | `type Output = O`, emit on present                  |
-| return type unit (`()` / `void`)                    | no output channel                                   |
+| return type `Option<O>`                             | `type Output = O`, emit on present                  |
+| return type unit (`()`)                             | no output channel                                   |
 | a trailing tasklet-context param + unit return    | the body emits; `emits = T` sets `type Output = T`  |
 | a mutable-state param of type `S`                   | `type State = S` (stateful)                         |
-| no mutable-state param                              | `type State = ()` / `Stateless`, `Change = NoChange` |
+| no mutable-state param                              | `type State = ()`, `Change = NoChange`              |
 | `State` opts into change derivation                 | `type Change = <S>Change` (derived)                 |
 | `clock = T` (Rust) else unspecified                 | `type Clock = T`, default `WallClock`               |
-| unspecified                                         | `type Config = ()` / `Void`                         |
-| `id = "…"` else the declaration name                | `name()` — Rust and Python: the function name; Java, Ruby and PHP: the class name in snake_case |
-| `capacity = N` / `capacity = N`                     | `mailbox_capacity()` / `mailboxCapacity()` override |
-| Java: a public `void compensate(List<O>, …)` beside `run` | `compensate()` override: the undo, handed the outputs, the state parameter `run` takes, and a trailing `TaskletCtx` when written |
+| unspecified                                         | `type Config = ()`                                  |
+| `id = "…"` else the declaration name                | `name()` — Rust and Python: the function name; Ruby and PHP: the class name in snake_case; Java names every tasklet in `@Tasklet.Spec(name = …)` |
+| `capacity = N`                                      | `mailbox_capacity()` override                       |
 | `on_full = …` / `onFull = "…"` (short form only)    | overflow policy of the generated entry channel (§5): `drop_nothing`, `drop_newest`, `drop_oldest` |
 | `input = "…"` (short form only)                     | name of the generated entry channel (§5); absent, that channel is named `input` |
 
@@ -148,16 +148,6 @@ fn ohlc(trade: Trade, s: &mut Candles, ctx: &mut TaskletCtx) -> Result<(), Taskl
 }
 ```
 
-```java
-@Tasklet(id = "ohlc", emits = Candle.class)
-public class Ohlc {
-    public void run(Trade trade, CandlesHandle s, TaskletCtx ctx) {
-        ctx.emitKeyed(closed.symbol(), closed);
-        ctx.emitKeyed(opened.symbol(), opened);
-    }
-}
-```
-
 The generated implementation passes the invocation's context straight through,
 so the expansion is the code a hand-written implementation would contain (§1).
 Because the body owns every emit, the return type has no output left to declare
@@ -173,28 +163,31 @@ following is refused with a named error, never silently:
 Sugar is the top tier. Below it, a hand-written implementation is charged only
 for what its declaration does not already state:
 
-- **Java** — `inputType()`, `outputType()`, `changeType()`, `clockType()` and
-  `configType()` default to the type arguments read off the implementing
-  class's generic supertype chain: a direct `implements Tasklet<…>` with
-  concrete arguments, or a concrete subclass of a generic intermediate class
-  (type variables are substituted at every hop). `kryoTypes()` defaults to the
-  resolved Change and State classes, and to the empty list for a `NoChange`
-  tasklet, which persists nothing. An argument still generic at the concrete
-  class is **never guessed**: `registerFactory` fails naming the
-  class and the parameter, and nothing is registered — a startup error, not a
-  dispatch error. The optional hooks `compensate`, `cellsFor`, `eventTime`,
-  `mailboxCapacity` and `maxCells` are declared by writing them: registration
+- **Java** — one tier, the author's own class. `Input`, `State` and `Output` are
+  read off the implementing class's generic supertype chain: a direct
+  `implements Tasklet<…>` with concrete arguments, or a concrete subclass of a
+  generic intermediate class (type variables are substituted at every hop). An
+  argument still generic at the concrete class is **never guessed**:
+  `registerFactory` fails naming the class and the parameter, and nothing is
+  registered — a startup error, not a dispatch error. The name and scalar
+  settings come from `@Tasklet.Spec`, the initial state from the state class's
+  no-arg constructor, and the encoded types from discovery (the state class and
+  the change records nested in the tasklet or its state), each unless the class
+  writes the matching hook (`initState`, `kryoTypes`). The optional hooks
+  `onTimer`, `eventTime`, `compensate`, `cellsFor`, `initState`, `migrateState`,
+  `migrateChange` and `kryoTypes` are declared by writing them: registration
   reads which ones the class overrides, itself or through a class above it, as
   Ruby reads the methods a tasklet defines and PHP the methods it overrides, so
-  a hook cannot be written and left inactive.
+  a hook cannot be written and left inactive. Writing `eventTime` is what makes
+  the clock event time, and `@Tasklet.Spec(logicalClock = true)` the logical one.
 - **Rust** — `SimpleTasklet` declares `Input`, `Output`, `State`, `name`,
   `init_state` and `run`; a blanket impl lifts it to `Tasklet` with
   `Clock = WallClock`, `Config = ()` and the `State` type's derived change type.
   `type State = ()` is the stateless spelling. Stable Rust has no
   associated-type defaults, hence a tier rather than defaults on the trait.
 
-**Explicit always wins.** A Java override is authoritative over the default it
-replaces; a Rust type implements `Tasklet` directly to declare a non-default
+**Explicit always wins.** A written Java hook (`initState`, `kryoTypes`) is
+authoritative over the default it replaces; a Rust type implements `Tasklet` directly to declare a non-default
 clock, a typed config or a hand-written change — and a type cannot sit in both
 Rust tiers at once, because the blanket impl and a direct impl overlap and the
 compiler refuses it.
@@ -202,15 +195,15 @@ compiler refuses it.
 ## 3. State → Change derivation, and the manual boundary
 
 Opting a state type into change derivation (`#[derive(flezha::State)]` in
-Rust, `@State` in Java) generates:
+Rust) generates:
 
-- a `<State>Change` enum (Rust) / sealed interface of records (Java) with **one variant per
+- a `<State>Change` enum with **one variant per
   field**: `Set<Field>(T)` for every field, plus collection deltas for
   `Vec`/`List` and `VecDeque`/`Deque` fields (table below);
 - `apply_change` folding each variant into the state;
 - field-granular mutators on the state handle (`state.set_field(v)`,
-  `state.push_field(v)`; Rust exposes them through a generated `<State>Mut`
-  trait, Java through a generated `<State>Handle` class) plus the explicit
+  `state.push_field(v)`, exposed through a generated `<State>Mut` trait) plus
+  the explicit
   `state.apply(change)` path. Both journal the change to the WAL.
 
 **Elixir spells the same derivation as a block.** `use Flezha.SDK.Tasklet`
@@ -226,7 +219,9 @@ also writes `apply_change/2` or `state_from_json/1` by hand fails to compile,
 naming both: the block owns them. §3.1's keyed-map and deque modes are
 **deferred for Elixir** — its block carries the field and `:list` modes only.
 A field-granular derivation is likewise **deferred for Python, Node, Ruby and
-PHP**, which declare their change types by hand.
+PHP**, which declare their change types by hand. Java declares its change types
+by hand too, as its one form: a record implementing `Change<State>` whose
+`applyTo` performs the mutation.
 
 **The manual boundary.** Only field-granular mutations are derivable. A
 mutation that is conditional, spans multiple fields atomically, or is a
@@ -265,18 +260,19 @@ by name. To *read* them, declare how far back you read and how:
 
 | | Rust | Java | Elixir |
 |---|---|---|---|
-| version | `const SCHEMA_VERSION: u32` | `int schemaVersion()` | `schema_version/0` |
-| readable floor | `const MIN_READABLE_SCHEMA_VERSION: u32` | `int minReadableSchemaVersion()` | `min_readable_schema_version/0` |
+| version | `const SCHEMA_VERSION: u32` | `@Tasklet.Spec(schemaVersion = n)` | `schema_version/0` |
+| readable floor | `const MIN_READABLE_SCHEMA_VERSION: u32` | `@Tasklet.Spec(minReadableSchemaVersion = n)` | `min_readable_schema_version/0` |
 | state migration | `fn migrate_state(from_version, bytes)` | `State migrateState(int, byte[])` | `migrate_state(from_version, old_term) :: {:ok, state} \| {:error, reason}` |
-| change migration | `fn migrate_change(from_version, bytes)` | `ChangeT migrateChange(int, byte[])` | `migrate_change(from_version, old_term)` |
+| change migration | `fn migrate_change(from_version, bytes)` | `Change<State> migrateChange(int, byte[])` | `migrate_change(from_version, old_term)` |
 
 Both migrations default to refusing, so declaring a floor without implementing
 them fails at the first affected record rather than guessing. Keep the old type
 in your own source and decode it inside the migration — the runtime cannot know
 a type that no longer exists in this build. Rust re-exports the codec it wrote
-the bytes with as `flezha_runner::state::postcard`; Java constructs a
-`KryoCodec` over **the old version's type list, in the old order** (Kryo ids are
-positional); Elixir hands the migration the decoded term, its body codec being
+the bytes with as `flezha_runner::state::postcard`; Java decodes with a
+`KryoCodec` that registers the old types under the ids the old version gave
+them (a listed `kryoTypes()` in its old order, or the ids derived from the old
+class names); Elixir hands the migration the decoded term, its body codec being
 `:erlang.term_to_binary/2` with no second codec to choose.
 
 ```rust
@@ -312,23 +308,19 @@ Rust and Java test apps, driven by `test/system/schema_evolution_e2e_test.exs`.
 
 ### 3.1 Keyed and collection state journaling
 
-A map field annotated `#[journal(...)]` (Rust) / `@Journal(...)` (Java) opts
+A map field annotated `#[journal(...)]` (Rust) opts
 that field into per-key journaling: the SDK generates named per-key mutators,
 the matching `Change` variants and the `apply_change` arms that replay them.
 The annotation is **required** on a map field — an unannotated map field is a
 compile error (there is no single per-key op to record). The field type must
 match the declared mode, or the SDK reports an error.
 
-| Mode (Rust / Java)             | Field type                 | Generated mutators (Rust)                                                              | Change variants                                                                   | `apply_change`                                  |
+| Mode (Rust)                    | Field type                 | Generated mutators (Rust)                                                              | Change variants                                                                   | `apply_change`                                  |
 | ------------------------------ | -------------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------- |
-| `map_set` / `MAP_SET`          | `HashMap<K, V>`            | `set_<field>(key, V)`                                                                  | `Set<Field>(K, V)`                                                                | `map.insert(key, value)`                        |
-| `map_vec` / `MAP_VEC`          | `HashMap<K, Vec<U>>`       | `push_<field>(key, U)`, `drain_<field>_front(key, n)`, `replace_last_<field>(key, U)` | `Push<Field>(K, U)`, `Drain<Field>Front(K, usize)`, `ReplaceLast<Field>(K, U)`   | insert-default-then-op on the keyed vector      |
-| `map_deque` / `MAP_DEQUE`      | `HashMap<K, VecDeque<U>>`  | `push_back_<field>(key, U)`, `pop_front_<field>(key, n)`                              | `PushBack<Field>(K, U)`, `PopFront<Field>(K, usize)`                              | insert-default-then-op on the keyed deque       |
+| `map_set`                      | `HashMap<K, V>`            | `set_<field>(key, V)`                                                                  | `Set<Field>(K, V)`                                                                | `map.insert(key, value)`                        |
+| `map_vec`                      | `HashMap<K, Vec<U>>`       | `push_<field>(key, U)`, `drain_<field>_front(key, n)`, `replace_last_<field>(key, U)` | `Push<Field>(K, U)`, `Drain<Field>Front(K, usize)`, `ReplaceLast<Field>(K, U)`   | insert-default-then-op on the keyed vector      |
+| `map_deque`                    | `HashMap<K, VecDeque<U>>`  | `push_back_<field>(key, U)`, `pop_front_<field>(key, n)`                              | `PushBack<Field>(K, U)`, `PopFront<Field>(K, usize)`                              | insert-default-then-op on the keyed deque       |
 
-Java spells the mode as `@Journal(Journal.Mode.MAP_DEQUE)` (or `MAP_SET` /
-`MAP_VEC`), the mutators in camelCase (`setByProduct`, `pushCloses`,
-`drainClosesFront`, `replaceLastCloses`, `pushBackWindow`, `popFrontWindow`)
-and the field types as `Map<K, V>` / `Map<K, List<U>>` / `Map<K, Deque<U>>`.
 The collection modes use **insert-default-then-op** semantics: the keyed
 collection is created on first touch, so `push`/`drain`/`pop` never need a
 guard for an absent key.
@@ -350,11 +342,11 @@ one generated `Change` and one `apply_change`.
 have keyed by, the Cell *is* the key and its collections stop being maps. A
 flat field therefore gets delta mutators too, with no annotation:
 
-| Field type                 | Generated mutators (Rust / Java)                                                                              | Change variants                                |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| any `T`                    | `set_<field>(T)` / `set<Field>(T)`                                                                            | `Set<Field>(T)`                                |
-| `Vec<U>` / `List<U>`       | additionally `push_<field>(U)` / `push<Field>(U)`                                                             | `Push<Field>(U)`                               |
-| `VecDeque<U>` / `Deque<U>` | additionally `push_back_<field>(U)`, `pop_front_<field>(n)` / `pushBack<Field>(U)`, `popFront<Field>(int n)` | `PushBack<Field>(U)`, `PopFront<Field>(usize)` |
+| Field type    | Generated mutators (Rust)                                | Change variants                                |
+| ------------- | -------------------------------------------------------- | ---------------------------------------------- |
+| any `T`       | `set_<field>(T)`                                         | `Set<Field>(T)`                                |
+| `Vec<U>`      | additionally `push_<field>(U)`                           | `Push<Field>(U)`                               |
+| `VecDeque<U>` | additionally `push_back_<field>(U)`, `pop_front_<field>(n)` | `PushBack<Field>(U)`, `PopFront<Field>(usize)` |
 
 `pop_front` / `drain_front` are saturating: popping more than the collection
 holds empties it rather than failing, so a delta recorded against a longer
@@ -362,19 +354,21 @@ window replays safely.
 
 ### 3.2 Emit-or-skip output return
 
-A logic function returning `Option<O>` (Rust) / `Optional<O>` (Java) emits
+A logic function returning `Option<O>` (Rust) emits
 when present and emits nothing when absent — the warmup gate without touching
 the tasklet context. The unit return (no output channel) and the
-unconditional `O` return (always emit) are the other two shapes.
+unconditional `O` return (always emit) are the other two shapes. A Java `run`
+returns nothing and emits through `ctx.emit`, so emitting nothing is not
+calling it.
 
 **Keyed output (`key`).** On a `.keyed()` output channel the plain emit carries
 the emitting Cell's **own key** — the key its input routed by — so a keyed
 tasklet never re-supplies what the runtime already knows. A sugared tasklet
 needs `key` only where its output's natural key *differs* from its Cell's, or
 where the tasklet is single-cell and so has no key at all (there, the plain
-emit is refused). `key` names a function from the output to that key (Rust:
-`#[flezha::tasklet(key = f)]` with `f(&Output) -> String`; Java:
-`key = "methodName"` naming a static method on the authoring class). `key` on a
+emit is refused). `key` names a function from the output to that key
+(`#[flezha::tasklet(key = f)]` with `f(&Output) -> String`); a Java body passes
+the key itself, `ctx.emitKeyed(key, value)`. `key` on a
 tasklet with a unit return is an error.
 
 ### 3.3 Single hand-written path determinism
@@ -395,8 +389,8 @@ A Tasklet can act because time passed, not only because an input arrived:
 `ctx.timerAtEventTime(ts)` / `ctx.timerAfter(d)` (Java) —
 `timer_at_event_time(ctx, ts)` / `timer_after(ctx, ms)` (Elixir, imported by `use`) —
 register a per-Cell deadline, and `Tasklet::on_timer` /
-`Tasklet.onTimer` / `on_timer/4` handles the firing with the same
-`StateHandle` and `TaskletCtx` `run` gets.
+`Tasklet.onTimer` / `on_timer/4` handles the firing with the same state and
+context `run` gets.
 Registration returns the absolute timestamp it is scheduled at; that value is
 the handle a cancellation takes.
 
@@ -436,24 +430,23 @@ explicit author choice — never inferred from the `run` body. Each opt-in maps
 | Opt-in (Rust / Java)                                                         | Generated trait surface                                                               |
 | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | none                                                                         | single-cell (empty `cell_keys()`)                                                 |
-| `keys = [..]` + `cells_for = f` / `keys = {..}` + an `@CellsFor` method | `cell_keys()` = keys, `CELLS_FOR_OVERRIDDEN = true` (Rust), `cells_for` delegates |
-| `idle_ttl = ms` / `max_cells = n` (Rust; dynamic knobs)                   | `cell_idle_ttl()` / `max_cells()` overrides — the KEY is not here. Java overrides `cellIdleTtl()` on a hand-written Tasklet; Elixir declares `cell_idle_ttl_ms/0` / `max_cells/0` |
+| `keys = [..]` + `cells_for = f` / `@Tasklet.Spec(keys = {..})` + a written `cellsFor` | `cell_keys()` = keys, `CELLS_FOR_OVERRIDDEN = true` (Rust), `cells_for` delegates |
+| `idle_ttl = ms` / `max_cells = n` (Rust; dynamic knobs)                   | `cell_idle_ttl()` / `max_cells()` overrides — the KEY is not here. Java writes `@Tasklet.Spec(idleTtlSeconds = s, maxCells = n)`; Elixir declares `cell_idle_ttl_ms/0` / `max_cells/0` |
 
 Declaring only one of `keys` / `cells_for` is refused. Static keying is
 declared **on the tasklet**; dynamic keying is declared **on the wiring** —
 `.key_by(f)` / `.keyBy(f)` on the stream that feeds it
 ([`stream_transforms.md`](stream_transforms.md)). The sugar therefore offers no
-`cell_key` hook: `cell_key = …` (Rust) / `@CellKey` (Java) is a
-compile / annotation-processing error naming `key_by` as its replacement. The
+`cell_key` hook: `cell_key = …` (Rust) is a compile error naming `key_by` as
+its replacement, and a Java tasklet has no member that could spell one. The
 two modes stay mutually exclusive — a keyed edge into a tasklet declaring
 `cell_keys()` fails the build with `KeyByOnUnkeyableTarget`.
 
 **Per-cell state init (`init`).** By default a stateful tasklet's
 `init_state` returns `State::default()` / `new State()`. When a cell's
 starting state is a function of its key, declare `init` naming a function
-`fn(Option<&str>) -> State` (Rust: `#[flezha::tasklet(init = f)]`; Java: an
-`@InitState State initState(Optional<String> cellKey)` method on the
-authoring class). The generated `init_state` delegates to it, passing the
+`fn(Option<&str>) -> State` (Rust: `#[flezha::tasklet(init = f)]`; Java: a
+written `State initState(Optional<String> cellKey)` override). The generated `init_state` delegates to it, passing the
 cell key (absent in single-cell mode and the test-harness default).
 `init` on a stateless tasklet is a compile-time error. The restore payload
 stays runtime-applied after `init_state` returns, so the `init` function never
@@ -532,7 +525,7 @@ is an address a user types and a rename must not move it.
 | SDK | Unbounded short form | Bounded short form |
 | --- | --- | --- |
 | Rust | `#[flezha::unbounded_operator(id = "echo", sink = "out", input = "in")] fn echo(s: String) -> String` | `#[flezha::bounded_operator(...)]` |
-| Java | `@UnboundedOperator(id = "echo", sink = "out", input = "in") class Echo { String run(String s) }` | `@BoundedOperator(...)` |
+| Java | `@UnboundedOperator(id = "echo", sink = "out", input = "in") class Echo implements Tasklet<String, Void, String> { void run(String s, Ctx<Void, String> ctx) }` | `@BoundedOperator(...)` |
 | Python | `@flezha.unbounded_operator(id="echo", sink="out", input="in", codec="text") def echo(s: str) -> str` | `@flezha.bounded_operator(...)` |
 | Node | `defineUnbounded({ factoryId: 'echo', sink: 'out', input: 'in', codec: 'text', run })` | `defineBounded({ ... })` |
 | Ruby | `class Echo < Flezha::UnboundedOperator; factory_id "echo"; sink "out"; input "in"; codec :text; def run(s, ctx) = s; end` | `< Flezha::BoundedOperator` |
@@ -575,8 +568,9 @@ tasklet's name is a durable address; pinning it to the factory id is what
 makes growing out of the short form keep its state. Where an SDK generates
 code, the two are separate types and the author-facing name is the
 operator's: Rust emits the operator `Echo` and the tasklet `EchoTasklet`;
-Java emits `EchoTasklet` and `EchoUnboundedOperator` and registers from the
-class the author wrote; Elixir generates the nested module `Echo.Tasklet`.
+Elixir generates the nested module `Echo.Tasklet`. Java generates nothing: the
+class the author wrote is the tasklet, and registering it builds the operator
+at registration.
 The generated tasklet composes in another operator's topology body like any
 tasklet.
 
@@ -806,7 +800,7 @@ Where the fixtures live: the hand-written `StaticCellOperator`
 (`factory_id` `static_cell`) is in `test/apps/rust_runner/src/cell.rs` and
 its `operator!` twin `sugar_static_cell` in `test/apps/rust_runner/src/sugar.rs`; the Java twin is
 `test/apps/java_runner/src/main/java/com/flezha/test/SugarStaticCellUnboundedOperator.java`
-(`sugar_static_cell`, `SugarEntry` with `@CellsFor`), asserted by
+(`sugar_static_cell`, `SugarEntry` writing `cellsFor`), asserted by
 `SugarTwinTest.referenceOperatorMatchesContract`. Java has no pipeline macro,
 so its two-tasklet twin is an explicit `UnboundedOperator` class with a
 `channels()` body.
@@ -846,10 +840,9 @@ fn rolling_window(input: (String, f64), state: &mut RollingWindowState) -> Optio
 }
 ```
 
-**Java sugar** is the same shape: `@Journal(Journal.Mode.MAP_DEQUE)
-Map<String, Deque<Double>> window` on a `@State` class, `pushBackWindow` /
-`popFrontWindow` on the generated `RollingWindowStateHandle`, and a `run`
-returning `Optional<Double>`.
+**Java** writes the two changes by hand, as its one form: records `Pushed` and
+`Popped` implementing `Change<RollingWindowState>`, applied with `ctx.change`,
+and a `run` that emits the average only once a key's window is full.
 
 **Expected expanded `Change` + `apply_change`** (identical across SDKs, up to
 variant naming):
@@ -875,8 +868,8 @@ The sugared and hand-written forms produce byte-identical emits and
 logically-equal state, and the sugared form passes `replay_equals` /
 `replayEquals()`. Fixtures (`N = 3`): Rust `rolling_window` +
 `RollingWindowTwin` in `test/apps/rust_runner/src/sugar.rs`; Java
-`RollingWindow` (`java_rolling_window`) + `RollingWindowTwin`, asserted by
-`SugarTwinTest.rollingWindowMatchesHandWrittenTwin`.
+`RollingWindow` (`java_rolling_window`), asserted by
+`SugarTwinTest.rollingWindowGatesWarmupAndReplays`.
 
 ## See also
 

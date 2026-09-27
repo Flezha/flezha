@@ -55,53 +55,59 @@ The whole example:
 
 ```java
 // ReserveFunds.java: step one. Puts the money aside, and releases it on an undo.
-@Tasklet(id = "reserve_funds", emits = ReserveFunds.Reserved.class)
-public final class ReserveFunds {
+@Tasklet.Spec(name = "reserve_funds")
+public final class ReserveFunds implements Tasklet<OrderTicket, ReserveFunds.Reservation, ReserveFunds.Reserved> {
 
     public record Reserved(OrderTicket order, String reservationId) {}  // what it hands on
 
-    @State
     public static class Reservation {                        // what this step remembers
         public String id = "";
     }
 
+    public record Reserving(String id) implements Change<Reservation> {  // how the id is written down
+        @Override
+        public void applyTo(Reservation reservation) {
+            reservation.id = id;
+        }
+    }
+
     // The step: reserve the money under an id, remember the id, and hand the order on.
-    public void run(OrderTicket order, ReservationHandle reservation, TaskletCtx ctx) throws TaskletException {
+    @Override
+    public void run(OrderTicket order, Ctx<Reservation, Reserved> ctx) throws TaskletException {
         String id = "res-" + ctx.stableId();                 // the same id when the step runs again
-        reservation.setId(id);
+        ctx.change(new Reserving(id));
         ctx.emit(new Reserved(order, id));
     }
 
     // The undo: release the money, by the id the state kept.
-    public void compensate(List<Reserved> completedOutput, ReservationHandle reservation) {
-        System.out.println("[undo] released " + reservation.get().id);
+    @Override
+    public void compensate(List<Reserved> completedOutput, Ctx<Reservation, Reserved> ctx) {
+        System.out.println("[undo] released " + ctx.state().id);
     }
 }
 ```
 
-**Flezha calls `run` with the order**, and passes it three things: the input,
-the state and the context, in the order the ETL stream's `track_prices`
-introduced. `track_prices` took the first two and `buy_above_average` the first
-and the last; this step needs all three:
+**Flezha calls `run` with the order**, and passes it two things: the input and
+the context, as it did for the ETL stream's tasklets.
 
 - `order` is the input, what arrives on the step's channel. For the first step,
   that is the order the instance was started with, an `OrderTicket`.
-- `reservation` is the step's state. It holds the `Reservation` class above,
-  and `@State` generates `ReservationHandle` around it: `setId(id)` writes the
-  id down, and `get()` reads it back.
-- `ctx` is the context, the step's way of talking to Flezha. `ctx.emit(...)`
-  hands a value to the next step, and `ctx.stableId()` gives an id that stays
-  the same when the step runs again, so a retry does not put the money aside
-  twice.
+- `ctx` is the context, the step's way of talking to Flezha. `ctx.change(...)`
+  writes the id down in the step's state, the `Reservation` class above, and
+  `ctx.state()` reads it back. `ctx.emit(...)` hands a value to the next step,
+  and `ctx.stableId()` gives an id that stays the same when the step runs
+  again, so a retry does not put the money aside twice.
 
-What `run` hands on is a `Reserved`: the order and the id. `run` emits through
-`ctx` instead of returning a value, so `emits` in `@Tasklet` names the type.
+`Tasklet<OrderTicket, Reservation, Reserved>` names what comes in, what the step
+remembers, and what it hands on: a `Reserved`, the order and the id.
+`Reserving` is the change that writes the id down, applied by its `applyTo`.
 
 **Flezha calls `compensate` only when the order fails**, and passes it two
 things:
 
 - `completedOutput` is what `run` handed on, a list of `Reserved`.
-- `reservation` is the same state `run` wrote the id into.
+- `ctx` is the context again, and `ctx.state()` is the same state `run` wrote
+  the id into.
 
 The id is read from the state, not from `completedOutput`, because after a
 crash Flezha brings back the step's state but not what it handed on, so the
@@ -109,10 +115,9 @@ list can be empty. Writing a `compensate` is what gives a step an undo, and a
 step without one is skipped. It can run twice, when a crash comes in the middle
 of an undo, so it has to be safe to repeat.
 
-`@Tasklet` generates `ReserveFundsTasklet` from the class, the name the
-operator uses.
-[What the Java annotations generate](building_an_etl_stream.md#keep-each-symbol-s-prices)
-lists it all. `OrderTicket` is declared with the operator, in
+The operator names the class itself, `ReserveFunds`.
+[What `@Tasklet.Spec` declares](building_an_etl_stream.md#keep-each-symbol-s-prices)
+lists what the annotation carries. `OrderTicket` is declared with the operator, in
 [Several tasklets, step by step](#several-tasklets-step-by-step), because it is
 what the whole operator takes.
 
@@ -158,26 +163,34 @@ by that id.
 
 ```java
 // PlaceOrder.java: step two. Places the order, and cancels it on an undo.
-@Tasklet(id = "place_order", emits = PlaceOrder.PlacedOrder.class)
-public final class PlaceOrder {
+@Tasklet.Spec(name = "place_order")
+public final class PlaceOrder implements Tasklet<Reserved, PlaceOrder.Placement, PlaceOrder.PlacedOrder> {
 
     public record PlacedOrder(OrderTicket order, String orderId) {}  // what it hands on
 
-    @State
     public static class Placement {                          // what this step remembers
         public String orderId = "";
     }
 
+    public record Placing(String orderId) implements Change<Placement> {  // how the id is written down
+        @Override
+        public void applyTo(Placement placement) {
+            placement.orderId = orderId;
+        }
+    }
+
     // The step: place the order under an id, remember the id, and hand the order on.
-    public void run(Reserved reserved, PlacementHandle placement, TaskletCtx ctx) throws TaskletException {
+    @Override
+    public void run(Reserved reserved, Ctx<Placement, PlacedOrder> ctx) throws TaskletException {
         String orderId = "ord-" + ctx.stableId();
-        placement.setOrderId(orderId);
+        ctx.change(new Placing(orderId));
         ctx.emit(new PlacedOrder(reserved.order(), orderId));
     }
 
     // The undo: cancel the order, by the id the state kept.
-    public void compensate(List<PlacedOrder> completedOutput, PlacementHandle placement) {
-        System.out.println("[undo] cancelled " + placement.get().orderId);
+    @Override
+    public void compensate(List<PlacedOrder> completedOutput, Ctx<Placement, PlacedOrder> ctx) {
+        System.out.println("[undo] cancelled " + ctx.state().orderId);
     }
 }
 ```
@@ -234,12 +247,13 @@ quantity and the exchange's id for the order.
 
 ```java
 // ConfirmFill.java: asks the exchange whether the order filled, and ends the order with the answer.
-@Tasklet(id = "confirm_fill")
-public final class ConfirmFill {
+@Tasklet.Spec(name = "confirm_fill")
+public final class ConfirmFill implements Tasklet<PlacedOrder, Void, Void> {
 
     private static final int EXCHANGE_MAX = 100;
 
-    public void run(PlacedOrder placed, TaskletCtx ctx) throws TaskletException {
+    @Override
+    public void run(PlacedOrder placed, Ctx<Void, Void> ctx) throws TaskletException {
         try {
             Thread.sleep(10_000);                            // the paper exchange takes ten seconds to answer
         } catch (InterruptedException stopped) {
@@ -302,18 +316,19 @@ order is undone, a step with no `compensate` is skipped.
 
 ```java
 // RecordOrder.java: writes the placed order into the desk's book.
-@Tasklet(id = "record_order")
-public final class RecordOrder {
+@Tasklet.Spec(name = "record_order")
+public final class RecordOrder implements Tasklet<PlacedOrder, Void, Void> {
 
-    public void run(PlacedOrder placed) {
+    @Override
+    public void run(PlacedOrder placed, Ctx<Void, Void> ctx) {
         System.out.println(
                 "[book] " + placed.order().symbol() + " " + placed.order().quantity() + " as " + placed.orderId());
     }
 }
 ```
 
-A `void` method with no context declares no output, which is the plainest
-shape a tasklet has.
+A `Void` state and a `Void` output keep nothing and hand nothing on, which is
+the plainest shape a tasklet has.
 
 ### Rust
 
@@ -389,30 +404,30 @@ order needs.
 // OrderExecutorOperator.java: the bounded operator. One instance is one order.
 public final class OrderExecutorOperator implements BoundedOperator {
 
-    public record OrderTicket(String symbol, int quantity) {} // the order an instance is started with
+    public record OrderTicket(String symbol, int quantity) {}
 
     @Override
+    @Nonnull
     public String factoryId() {
         return "order_executor";
     }
 
     @Override
-    public void channels(ChannelBuilder c) {
+    public void channels(@Nonnull ChannelBuilder c) {
         c.input(OrderTicket.class, "order")
-                .into(ReserveFundsTasklet.class)                            // step one
-                .into(PlaceOrderTasklet.class)                              // step two, once step one is done
+                .into(ReserveFunds.class)                                  // step one
+                .into(PlaceOrder.class)                                    // step two, once step one is done
                 .branch(
-                        fill -> fill.into(ConfirmFillTasklet.class),        // two arms, side by side
-                        book -> book.into(RecordOrderTasklet.class));
+                        fill -> fill.into(ConfirmFill.class),              // two arms, side by side
+                        book -> book.into(RecordOrder.class));
     }
 }
 ```
 
 `OrderTicket` is the order an instance is started with: `reserve_funds` takes
 it, and `BuyAboveAverage` in the ETL stream sends it when it starts an order.
-The four classes it names in `into` are the ones `@Tasklet` generated from
-the four steps: `ReserveFundsTasklet`, `PlaceOrderTasklet`,
-`ConfirmFillTasklet` and `RecordOrderTasklet`.
+The four classes it names in `into` are the four steps themselves:
+`ReserveFunds`, `PlaceOrder`, `ConfirmFill` and `RecordOrder`.
 
 ### Rust
 

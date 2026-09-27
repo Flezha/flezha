@@ -72,8 +72,7 @@ The key closure sees the **post-transform** value (hence `TransformAfterKeyBy`)
 and is total: it names a Cell and never declines — drop inputs with a
 `filter` declared before the key. A keyed edge makes its consumer dynamic;
 `cell_keys` / `cells_for`, `cell_idle_ttl` and `max_cells` stay on
-the Tasklet. `Tasklet` has no key hook of its own, and a Java
-`@CellKey` annotation is a processor error naming `.keyBy(f)`.
+the Tasklet. `Tasklet` has no key hook of its own, in Java as in Rust.
 
 ## Containment
 

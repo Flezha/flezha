@@ -81,7 +81,7 @@ The Maven parent at `sdk/java/pom.xml` SHALL configure `spotless-maven-plugin` w
 
 #### Scenario: Generated Java is excluded
 
-- **WHEN** the Spotless plugin runs against a module whose build writes generated Java, such as a module consuming the `flezha-sdk-processor` annotation processor
+- **WHEN** the Spotless plugin runs against a module whose build writes generated Java under `target/generated-sources/`
 - **THEN** files under `target/generated-sources/` are NOT inspected, because the plugin's Java source set is `src/main/java` and `src/test/java` only
 - **AND** the code-generation step continues to emit code in its own style without conflict
 

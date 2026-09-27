@@ -282,12 +282,17 @@ The defined modes are:
 - **THEN** the SDK reports a clear authoring error directing the author to a hand-written `Change`, and SHALL NOT generate silent or incorrect journaling
 
 ### Requirement: Emit-or-skip output return
-The authoring contract SHALL define an optional-output return shape for the logic function: a `run` returning an optional `Output` emits when present and emits nothing when absent. The unit return (no output channel) and the unconditional `Output` return (always emit) are unchanged.
+The authoring contract SHALL define an optional-output return shape for an SDK whose logic function returns its output (Rust `#[flezha::tasklet]`): a `run` returning an optional `Output` emits when present and emits nothing when absent. The unit return (no output channel) and the unconditional `Output` return (always emit) are unchanged. The Java SDK's `run` returns `void` and emits through its typed `ctx.emit(Output)`, so the shape does not apply there: emitting nothing is not calling `emit`.
 
 #### Scenario: Optional output emits on present, skips on absent
 
-- **WHEN** a `@Tasklet`/`#[flezha::tasklet]` `run` returns an optional `Output`
+- **WHEN** a `#[flezha::tasklet]` `run` returns an optional `Output`
 - **THEN** the generated tasklet emits the value when present and emits nothing when absent, without the author touching the tasklet context
+
+#### Scenario: A Java tasklet that emits nothing
+
+- **WHEN** a Java tasklet's `run` returns without calling `ctx.emit` for an input
+- **THEN** nothing SHALL be emitted for that input
 
 ### Requirement: Single hand-written path determinism
 The authoring contract SHALL state that a tasklet mutating state only through generated journaling mutators has exactly one hand-written path (`run`) and one generated replay path (the generated change-application); the two cannot diverge because the replay path is generated from the same mutator definitions. The replay-determinism conformance test remains the gate for all tasklets (sugared and hand-written).
@@ -354,9 +359,9 @@ The contract is written once and implemented per language, but the languages do 
 
 ### Requirement: Sugared run may declare a context parameter for multi-emit
 
-The authoring sugar (`#[tasklet]` in Rust, `@Tasklet` in Java) SHALL accept a `run` signature with a trailing tasklet-context parameter and a unit/void return: `fn run(input: I, state: …, ctx: &mut TaskletCtx)` / `void run(I input, StateHandle<S, C> state, TaskletCtx ctx)` (the state parameter remains optional, driving stateful inference exactly as today; a `Result<(), _>` return is a unit return for this purpose). The generated implementation SHALL pass the invocation's context through, so the body performs any number of `emit` / `emit_keyed` calls itself. Inference of Input, State, and Change from the remaining signature SHALL be unchanged, and the expansion SHALL remain the same code a hand-written implementation would contain.
+The Rust authoring sugar (`#[tasklet]`) SHALL accept a `run` signature with a trailing tasklet-context parameter and a unit return: `fn run(input: I, state: …, ctx: &mut TaskletCtx)` (the state parameter remains optional, driving stateful inference exactly as today; a `Result<(), _>` return is a unit return for this purpose). The generated implementation SHALL pass the invocation's context through, so the body performs any number of `emit` / `emit_keyed` calls itself. Inference of Input, State, and Change from the remaining signature SHALL be unchanged, and the expansion SHALL remain the same code a hand-written implementation would contain. The Java SDK has no sugar: every Java `run` takes the context and emits through it.
 
-Because the body owns every emit, the return type no longer declares the output type, and an `emits = Type` (Rust) / `emits = Type.class` (Java) attribute SHALL declare it instead; absent, the tasklet declares no output channel. Three conflicts SHALL each be rejected with an error naming them: `key = …` together with a context parameter (the body keys its own emits), a non-unit return together with a context parameter (one tasklet, one emit path), and `emits` without a context parameter (there the return type already answers).
+Because the body owns every emit, the return type no longer declares the output type, and an `emits = Type` attribute SHALL declare it instead; absent, the tasklet declares no output channel. Three conflicts SHALL each be rejected with an error naming them: `key = …` together with a context parameter (the body keys its own emits), a non-unit return together with a context parameter (one tasklet, one emit path), and `emits` without a context parameter (there the return type already answers).
 
 #### Scenario: Multi-emit under sugar
 
@@ -366,7 +371,7 @@ Because the body owns every emit, the return type no longer declares the output 
 #### Scenario: key attribute is rejected on the context shape
 
 - **WHEN** a sugared tasklet declares both a context parameter and a `key = …` attribute
-- **THEN** macro expansion / annotation processing SHALL fail with an error naming the conflict
+- **THEN** macro expansion SHALL fail with an error naming the conflict
 
 #### Scenario: the output type of a context-parameter run
 
@@ -376,25 +381,25 @@ Because the body owns every emit, the return type no longer declares the output 
 #### Scenario: emits without a context parameter is rejected
 
 - **WHEN** a sugared tasklet declares `emits` but no context parameter
-- **THEN** macro expansion / annotation processing SHALL fail with an error naming the conflict, since the return type already declares the output type
+- **THEN** macro expansion SHALL fail with an error naming the conflict, since the return type already declares the output type
 
 ### Requirement: Hand-written implementations receive inferable defaults
 
 Hand-written tasklet implementations SHALL NOT be charged ceremony for information the declaration already states, in each SDK's idiom:
 
-- **Java**: the five type-token methods (`inputType`, `outputType`, `changeType`, `clockType`, `configType`) SHALL have default implementations resolving the type arguments from the implementing class's generic supertype chain (direct `implements Tasklet<…>` with concrete arguments, or a concrete subclass of a generic intermediate class). When a token cannot be resolved, registration SHALL fail with an error naming the class and the unresolved type parameter — never guess. `kryoTypes()` SHALL default to the resolved change and state classes when both are resolvable and the change type is not `NoChange` — a `NoChange` tasklet persists nothing, so it keeps the empty-list default, which is also what keeps every existing declaration's meaning unchanged. An explicit override SHALL always win. Whether an **optional hook** is declared SHALL be derived the same way, from the implementing class rather than from a companion boolean: the interface SHALL carry no `*Overridden()` method, and registration SHALL read `compensate`, `cellsFor`, `eventTime`, `mailboxCapacity` and `maxCells` by comparing each hook's declaring class against the interface's own. This brings Java level with the Ruby and PHP bindings, where a declaration and its implementation cannot disagree.
+- **Java**: the author's class is the one tasklet form. Its `Input`, `State` and `Output` SHALL be read from the implementing class's generic supertype chain (direct `implements Tasklet<…>` with concrete arguments, or a concrete subclass of a generic intermediate class). When one cannot be resolved, registration SHALL fail with an error naming the class and the unresolved type parameter, never guessing. The name and scalar settings SHALL be read from `@Tasklet.Spec`, the initial state from the state class's no-arg constructor, and the Kryo user types from discovery, each unless the class overrides the matching hook (`initState`, `kryoTypes`), and an override SHALL always win. Whether an **optional hook** is declared SHALL be derived from the implementing class rather than from a companion boolean: the interface SHALL carry no `*Overridden()` method, and registration SHALL read `eventTime`, `compensate`, `cellsFor`, `initState` and `kryoTypes` by comparing each hook's declaring class against the interface's own; `onTimer`, `migrateState` and `migrateChange` need no reading, because the runtime calls them only when a timer fires or an older record is restored. This keeps Java level with the Ruby and PHP bindings, where a declaration and its implementation cannot disagree.
 - **Rust**: a `SimpleTasklet` trait SHALL declare only `Input`, `Output`, `State` plus `name`, `init_state`, and `run`; a blanket implementation SHALL lift every `SimpleTasklet` to `Tasklet` with `Clock = WallClock`, `Config = ()`, and the `State` type's derived change type. Implementing `Tasklet` directly SHALL remain fully supported, and a type SHALL NOT implement both.
 
-The mandatory authoring surface for the common hand-written case therefore reduces to name, state initialization, and `run` in both SDKs.
+The mandatory authoring surface for the common case therefore reduces to a name and `run` in Java, and to name, state initialization, and `run` in Rust.
 
-#### Scenario: Java tokens resolved from the implements clause
+#### Scenario: Java types resolved from the implements clause
 
-- **WHEN** a class declares `implements Tasklet<Trade, CellState, Candle, CellStateChange, WallClock, Void>` and overrides none of the token methods
-- **THEN** registration SHALL succeed with the six types resolved exactly as written in the clause
+- **WHEN** a class declares `implements Tasklet<Trade, PriceWindow, Move>` and carries `@Tasklet.Spec(name = "track_prices")`
+- **THEN** registration SHALL succeed with the three types resolved exactly as written in the clause
 
-#### Scenario: Unresolvable token fails registration by name
+#### Scenario: Unresolvable type fails registration by name
 
-- **WHEN** a class implements `Tasklet` with a type argument still generic at the concrete class and does not override the corresponding token method
+- **WHEN** a class implements `Tasklet` with a type argument still generic at the concrete class
 - **THEN** registration SHALL fail with an error naming the class and the unresolved type parameter, and nothing SHALL be registered
 
 #### Scenario: Rust simplified tier defaults the tail types
@@ -404,7 +409,7 @@ The mandatory authoring surface for the common hand-written case therefore reduc
 
 #### Scenario: Explicit override wins
 
-- **WHEN** a Java implementation overrides `clockType()` (or a Rust implementation implements `Tasklet` directly with a non-default `Clock`)
+- **WHEN** a Java class overrides `kryoTypes()` (or a Rust implementation implements `Tasklet` directly with a non-default `Clock`)
 - **THEN** the explicit declaration SHALL be used, defaults notwithstanding
 
 #### Scenario: A Java hook cannot be written and left unclaimed

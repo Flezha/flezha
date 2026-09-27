@@ -484,7 +484,7 @@ end
 
 `use Flezha.SDK.Tasklet` makes a `state` block available, which writes that
 whole path for the field-granular half — §3's derivation, as Rust's
-`#[derive(State)]` and Java's `@State` write it:
+`#[derive(State)]` writes it:
 
 ```elixir
 defmodule Position do

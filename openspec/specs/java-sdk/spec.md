@@ -26,30 +26,45 @@ The Java SDK SHALL provide `com.flezha.sdk.Flezha.createRunner(String namespace)
 
 ### Requirement: Tasklet Interface and Per-Cell Dispatch
 
-The Java SDK SHALL expose a generic `Tasklet<Input, State, Output, Change, Clock, Config>` interface in `com.flezha.sdk.tasklet`. Implementers SHALL provide `name()`, `inputType() → Class<Input>`, `outputType() → Class<Output>`, `initState(Optional<String> cellKey, Optional<RestoreInitPayload> initPayload) → State`, and `run(Input, StateHandle<State, Change>, TaskletCtx) throws TaskletException`. The default-method overrides `cellKeys()` and `cellsFor(Input)` declare static keying; dynamic keying is declared on the WIRING (`keyBy` on the consumer edge), not on the Tasklet. The cell mode is therefore single by default, static when `cellKeys()` is non-empty and the implementing class declares `cellsFor`, and dynamic when a consumer edge into the Tasklet carries a key function. The interface SHALL carry no `*Overridden()` companion for any optional hook: whether a hook is declared SHALL be read at registration from the implementing class, by comparing the declaring class of the hook's erased method against `Tasklet` itself, and a hook declared on an intermediate class in the hierarchy SHALL count as declared. This covers `compensate`, `cellsFor`, `eventTime`, `mailboxCapacity` and `maxCells`, and it is the same derivation the authoring contract already applies to the type tokens and `kryoTypes()`. The runtime SHALL invoke `run` on a per-cell basis with sticky ordering (see the Sticky Per-Cell Ordering requirement) and SHALL pass each input to all cells returned by `cellsFor(input)` for static-mode tasklets (single-mode tasklets skip the call and route to cell index 0).
+The Java SDK SHALL expose a generic `Tasklet<Input, State, Output>` interface in `com.flezha.sdk.tasklet`, implemented directly by the author's own class, which SHALL also carry the `@Tasklet.Spec` annotation declaring its name and settings. Implementers SHALL provide `void run(Input input, Ctx<State, Output> ctx) throws TaskletException`. `run`, `onTimer` and `compensate` SHALL return `void`, and the context SHALL be the only path by which a tasklet emits. `Void` as `State` SHALL mean the tasklet keeps no state and journals nothing; `Void` as `Output` SHALL mean it declares no output channel. The three type arguments SHALL be read at registration from the implementing class's generic supertype chain, and an argument still generic at the concrete class SHALL fail registration naming the class and the parameter. The SDK SHALL generate no class for a tasklet: the class the author wrote is the class the wiring, the runner and the test harness name.
 
-The `TaskletCtx` parameter SHALL provide:
+Static keying is declared by `@Tasklet.Spec(keys = ...)` together with a written `cellsFor(Input)`; dynamic keying is declared on the WIRING (`keyBy` on the consumer edge), not on the Tasklet. The cell mode is therefore single by default, static when `keys` is non-empty and the class writes `cellsFor`, and dynamic when a consumer edge into the Tasklet carries a key function. The interface SHALL carry no `*Overridden()` companion for any optional hook: whether a hook is declared SHALL be read at registration from the implementing class, by comparing the declaring class of the hook's erased method against `Tasklet` itself, and a hook declared on an intermediate class in the hierarchy SHALL count as declared. This covers `onTimer`, `eventTime`, `compensate`, `cellsFor`, `initState`, `migrateState` and `migrateChange`. The runtime SHALL invoke `run` on a per-cell basis with sticky ordering (see the Sticky Per-Cell Ordering requirement) and SHALL pass each input to all cells returned by `cellsFor(input)` for static-mode tasklets (single-mode tasklets skip the call and route to cell index 0).
 
-- `emit(value)` for inter-tasklet or plugin-bound outputs, `emit(channel, value)` for explicit channel selection, and `emitWithMeta(value, meta)` / `emitWithMeta(channel, value, meta)` for plugin-bound outputs with user-attached metadata. `emitWithMeta` on inter-tasklet channels SHALL throw `TaskletException.MetadataNotAllowedOnInterTaskletChannel` naming the channel.
+The `Ctx<State, Output>` parameter SHALL provide:
+
+- `State state()`, which reads the cell's state, and `void change(Change<State> change)`, which applies the change to the state through its `applyTo` and appends it to the cell's flush buffer. There SHALL be no other public path that records a change.
+- `emit(Output value)` for inter-tasklet or plugin-bound outputs, typed by the tasklet's `Output`; `emit(channel, value)` for explicit channel selection; and `emitWithMeta(value, meta)` / `emitWithMeta(channel, value, meta)` for plugin-bound outputs with user-attached metadata. `emitWithMeta` on inter-tasklet channels SHALL throw `TaskletException.MetadataNotAllowedOnInterTaskletChannel` naming the channel.
 - `emitKeyed(key, value)` and `emitKeyedWithMeta(key, value, meta)` for channels declared `.keyed()`, supplying an output key that differs from the Cell's own. Emitting **without** a key on a `.keyed()` channel SHALL carry the invoking Cell's key when it has one, and SHALL throw `TaskletException.KeyRequiredOnKeyedChannel` when it does not (a single-cell Tasklet); emitting **with** a key on a channel not declared `.keyed()` SHALL throw `TaskletException.KeyNotAllowedOnNonKeyedChannel`. Both name the channel.
-- `Optional<String> cellKey()` — the key this Cell was routed by, empty for a single-cell Tasklet. It is part of the invocation's identity, so it is replay-stable.
-- `long now()` — the invocation's time value, computed **once** by the runtime from the Tasklet's declared `Clock` before `run` executes, and returning that same value for every call within the invocation. This is the determinism-contract replacement for `System.currentTimeMillis()`.
-- `StableId stableId()` — a deterministic, replay-stable 128-bit identifier derived from the Cell identity, the invocation's durable change seq, and a per-invocation call ordinal. Repeated calls within one invocation differ; the n-th call of a replayed invocation SHALL equal the n-th call of the original. This is the determinism-contract replacement for `UUID.randomUUID()`.
-- `void checkpoint()` — see the checkpoint ack-granularity requirement.
+- `Optional<String> cellKey()`, the key this Cell was routed by, empty for a single-cell Tasklet. It is part of the invocation's identity, so it is replay-stable.
+- `long now()`, the invocation's time value, computed **once** by the runtime from the Tasklet's clock before `run` executes, and returning that same value for every call within the invocation. This is the determinism-contract replacement for `System.currentTimeMillis()`.
+- `StableId stableId()`, a deterministic, replay-stable 128-bit identifier derived from the Cell identity, the invocation's durable change seq, and a per-invocation call ordinal. Repeated calls within one invocation differ; the n-th call of a replayed invocation SHALL equal the n-th call of the original. This is the determinism-contract replacement for `UUID.randomUUID()`.
+- `void checkpoint()`, the timer calls, `spawnBounded` and `complete`, with the meaning they have on the tasklet context today.
 
 The runtime SHALL stamp `flz.cell`, `flz.seq`, and (on keyed emits) `flz.key` onto plugin-bound frames. User-supplied metadata keys in the reserved `flz.` namespace SHALL be **rejected** with `TaskletException.ReservedMetadataKey` naming the key, so that identity stamps can neither be spoofed nor clobbered.
 
 #### Scenario: Single-mode Tasklet runs on a single cell
-- **WHEN** a Tasklet whose `cellKeys()` returns an empty list is registered as the consumer of an entry channel, and one input arrives on that channel
-- **THEN** the SDK SHALL invoke the Tasklet's `run` once on the single allocated cell (cell index 0), with `state` argument equal to the value `initState(Optional.empty(), Optional.empty())` returned at operator startup
+- **WHEN** a Tasklet whose `@Tasklet.Spec` declares no `keys` is registered as the consumer of an entry channel, and one input arrives on that channel
+- **THEN** the SDK SHALL invoke the Tasklet's `run` once on the single allocated cell (cell index 0), whose `ctx.state()` is the state the Tasklet's initial-state rule produced at operator startup
 
-#### Scenario: Static-mode Tasklet creates one cell per cellKey
-- **WHEN** a Tasklet's `cellKeys()` returns `["1m", "1h", "1d", "1w"]` and its class declares `cellsFor`
-- **THEN** at operator startup the SDK SHALL allocate exactly four `CellSlot` instances for that Tasklet, each constructed with `initState(Optional.of(key), Optional.empty())` for its corresponding key
+#### Scenario: Static-mode Tasklet creates one cell per key
+- **WHEN** a Tasklet's `@Tasklet.Spec` declares `keys = {"1m", "1h", "1d", "1w"}` and its class writes `cellsFor`
+- **THEN** at operator startup the SDK SHALL allocate exactly four `CellSlot` instances for that Tasklet, each constructed from the initial-state rule for its corresponding key
 
 #### Scenario: Static-mode cellsFor fan-out enqueues input on each named cell
 - **WHEN** a Tasklet's `cellsFor(input)` returns `["1m", "1h"]` for a given input
 - **THEN** the SDK SHALL enqueue that input on the cells identified by `"1m"` and `"1h"` (each receives its own `run` invocation), and SHALL NOT enqueue it on `"1d"` or `"1w"`
+
+#### Scenario: The author's class is the class the wiring names
+- **WHEN** a class `TrackPrices implements Tasklet<Trade, PriceWindow, Move>` carries `@Tasklet.Spec(name = "track_prices")` and an operator declares `.into(TrackPrices.class)`
+- **THEN** registration SHALL succeed, the tasklet SHALL be named `track_prices`, and no class other than those the author wrote SHALL exist for it
+
+#### Scenario: One run emits any number of values through the context
+- **WHEN** a tasklet's `run` calls `ctx.emit` twice for one input, and not at all for the next input
+- **THEN** two values SHALL be emitted for the first input and none for the second, in call order
+
+#### Scenario: A Void state keeps nothing
+- **WHEN** a Tasklet declares `Tasklet<PlacedOrder, Void, Void>` and processes an input
+- **THEN** its completion SHALL carry no change bytes, and it SHALL declare no output channel
 
 #### Scenario: Run throwing TaskletException logs and continues
 - **WHEN** `Tasklet.run(...)` throws `TaskletException` on a given input and the input channel's retry budget is exhausted
@@ -61,7 +76,7 @@ The runtime SHALL stamp `flz.cell`, `flz.seq`, and (on keyed emits) `flz.key` on
 
 #### Scenario: Inter-tasklet zero-copy preserves value identity
 - **WHEN** Tasklet A emits a non-null value `v` on an inter-tasklet channel that Tasklet B consumes (single-cell fan-out, single JVM)
-- **THEN** the value passed to Tasklet B's `run` SHALL be `==`-equal (reference-equal) to `v` — the runtime SHALL NOT copy or serialize the value between Tasklets in the same JVM
+- **THEN** the value passed to Tasklet B's `run` SHALL be `==`-equal (reference-equal) to `v`, because the runtime SHALL NOT copy or serialize the value between Tasklets in the same JVM
 
 #### Scenario: emitWithMeta on an inter-tasklet channel returns error
 - **WHEN** a Tasklet whose declared output is an inter-tasklet channel calls `ctx.emitWithMeta(value, Map.of("k", "v"))`
@@ -81,7 +96,7 @@ The runtime SHALL stamp `flz.cell`, `flz.seq`, and (on keyed emits) `flz.key` on
 
 #### Scenario: now() is constant within one invocation
 - **WHEN** a Tasklet's `run` calls `ctx.now()` three times
-- **THEN** all three calls SHALL return the identical value — the one the runtime computed from the declared `Clock` before entering `run`
+- **THEN** all three calls SHALL return the identical value, the one the runtime computed from the Tasklet's clock before entering `run`
 
 #### Scenario: stableId() is replay-stable and ordinal-distinct
 - **WHEN** a Tasklet's `run` calls `ctx.stableId()` twice for a given input, and the same input is later replayed at the same durable change seq
@@ -239,104 +254,9 @@ Java `byte[]` before being freed through the core-provided free function.
 - **WHEN** poller threads are blocked in the native `poll` call and the runner shuts down
 - **THEN** every blocked call SHALL return promptly with the distinguishable shutting-down status and the poller threads SHALL exit their loops
 
-### Requirement: Tasklet interface declares Change, Clock, Config generic parameters
-
-The Java SDK's `Tasklet` interface SHALL be parameterized as `Tasklet<Input, State, Output, Change extends com.flezha.sdk.state.Change, Clock extends com.flezha.sdk.state.Clock, Config>`. The interface SHALL declare reflection methods `Class<Change> changeType()`, `Class<Clock> clockType()`, `Class<Config> configType()` returning the runtime `Class` for each generic parameter (Java type erasure precludes recovering them otherwise).
-
-The interface SHALL declare lifecycle methods:
-- `default void applyChange(State state, Change change)` whose default impl is a no-op for `NoChange` and throws `UnsupportedOperationException` for any other Change type (forcing user override).
-- `default Optional<CoalesceKey> coalesceKey(Change change)` whose default impl delegates to `change.coalesceKey()`.
-- `default long compactAfterBytes()` returning `64L * 1024 * 1024`.
-- `default int schemaVersion()` returning `1`.
-- `default List<Class<?>> kryoTypes()` returning `List.of()` — the user-declared list of types to register with Kryo for serialization, in stable-ID order.
-- `default Tasklet<...> fromConfig(Config cfg)` whose default invokes the no-arg constructor when `Config = Void`, and throws `UnsupportedOperationException` for non-Void Config types (forcing user override).
-
-#### Scenario: Default Change is NoChange skips persistence machinery
-
-- **WHEN** a Java Tasklet does not declare its `Change` parameter (defaults to `NoChange`)
-- **THEN** the runtime SHALL detect via `changeType() == NoChange.class` (reference equality) and its completions SHALL carry no change bytes, so the core registers no flusher work for this Cell
-
-#### Scenario: User-defined Change opts the Tasklet into persistence
-
-- **WHEN** a Java Tasklet declares `Change = MyChange` (any non-`NoChange` user type implementing `com.flezha.sdk.state.Change`)
-- **THEN** the runtime SHALL register a typed flush buffer (`List<MyChange>`) on each Cell of that Tasklet and SHALL include those Cells in the per-JVM flusher's drain rotation
-
-#### Scenario: Default applyChange throws on non-NoChange Change without override
-
-- **WHEN** a Java Tasklet declares `Change = MyChange` but does NOT override `applyChange`
-- **THEN** the operator registration step SHALL succeed (the default impl exists) but the first `state.apply(MyChange.foo())` call SHALL throw `UnsupportedOperationException` whose message names the missing override
-
-#### Scenario: Default fromConfig invokes no-arg constructor for Void Config
-
-- **WHEN** a Java Tasklet declares `Config = Void` and does NOT override `fromConfig`
-- **THEN** the runtime's `fromConfig(null)` invocation SHALL call the Tasklet's public no-arg constructor via reflection; absence of a no-arg constructor SHALL throw `IllegalStateException` whose message names the Tasklet
-
-#### Scenario: User-defined Config ships through Jackson deserialization
-
-- **WHEN** a Java Tasklet declares `Config = MyConfig` (a Jackson-deserializable POJO/record) and overrides `fromConfig(MyConfig cfg)`
-- **THEN** the runtime SHALL deserialize the agent-shipped JSON config bytes via Jackson into `MyConfig` and SHALL invoke `tasklet.fromConfig(cfg)` to construct the Tasklet at Cell init; deserialization failure SHALL throw `UnboundedOperatorConfigurationException("Config deserialize failed: " + taskletName)`
-
-### Requirement: Tasklet.run receives StateHandle, not direct State reference
-
-The Java SDK's `Tasklet.run` signature SHALL be `void run(Input input, StateHandle<State, Change> state, TaskletCtx ctx) throws TaskletException` (was `void run(Input input, State state, TaskletCtx ctx)`). `StateHandle<State, Change>` SHALL provide:
-
-- `State get()` — read access to the underlying state.
-- `void apply(Change change)` — runs `Tasklet::applyChange(state, change)` and pushes the Change onto the per-Cell flush buffer.
-- NO setter, no direct-mutation method. Direct `state.field = value` is impossible without going through `apply`.
-
-#### Scenario: Direct field mutation requires apply
-
-- **WHEN** a Java Tasklet's `run` body wants to mutate `state.someField` from a value `v1` to `v2`
-- **THEN** the user MUST declare a Change (e.g. `record SetSomeField(Object newValue) implements Change {}`), implement `applyChange` to write the field, and call `state.apply(new SetSomeField(v2))`; direct `state.get().someField = v2` is technically possible (mutable field on the underlying State) but bypasses persistence and breaks `replayEquals` — flagged as user error in documentation but not structurally prevented in Java (unlike Rust's `Deref` chokepoint)
-
-#### Scenario: Read access via get() is allocation-free
-
-- **WHEN** a Java Tasklet's `run` body reads `state.get().someField`
-- **THEN** the read SHALL succeed via the handle's `get()` method (one method invocation, JIT-inlinable), no Change recording, no buffer mutation
-
-#### Scenario: Mutation via apply runs applyChange and records
-
-- **WHEN** a Java Tasklet's `run` body calls `state.apply(MyChange.foo())`
-- **THEN** `Tasklet.applyChange(state, &MyChange.foo())` SHALL run on the underlying state AND `MyChange.foo()` SHALL be appended to the per-Cell flush buffer (observable via `TaskletTestHarness.recordedChanges()` and via the per-JVM flusher's next tick)
-
-### Requirement: Tasklet declares Clock generic parameter with default WallClock
-
-The Java SDK's `Tasklet` interface SHALL declare `Clock extends com.flezha.sdk.state.Clock` as a generic parameter, defaulting to `com.flezha.sdk.state.WallClock`. `Clock` SHALL be a sealed Java interface with `permits WallClock, LogicalClock, EventTimeFrom`. The runtime SHALL evaluate the declared clock **once per invocation**, before entering `run`, and serve that single value from `ctx.now()`:
-
-- `WallClock` — epoch milliseconds at dispatch entry.
-- `EventTimeFrom` — the event time extracted from the current input. Because Java's erasure precludes Rust's compile-enforced `TimeExtractor<Input>` bound, a Tasklet declaring `EventTimeFrom` SHALL override `default OptionalLong eventTime(Input input)`; failing to do so SHALL fail Operator registration with `UnboundedOperatorConfigurationException` naming the Tasklet and the missing override.
-- `LogicalClock` — the raw durable `change_seq`, re-armed to `terminal + 1` on restore. A Tasklet declaring `LogicalClock` with `Change = NoChange` SHALL fail registration with `UnboundedOperatorConfigurationException` carrying the Rust error name `UnservableClock`, since there is no durable seq to serve.
-
-`UnboundedOperatorConfigurationException::ClockNotImplementedYet` SHALL NOT be thrown for any member of the sealed hierarchy.
-
-#### Scenario: Default Clock is WallClock
-
-- **WHEN** a Java Tasklet does not declare its `Clock` parameter
-- **THEN** `Tasklet.clockType() == WallClock.class` AND Operator registration SHALL succeed AND `ctx.now()` SHALL return epoch milliseconds sampled once at dispatch entry
-
-#### Scenario: EventTimeFrom serves the extracted input time
-
-- **WHEN** a Java Tasklet declares `Clock = EventTimeFrom` and overrides `eventTime(input)` to return the input's timestamp field
-- **THEN** registration SHALL succeed AND `ctx.now()` SHALL return that extracted timestamp for the invocation
-
-#### Scenario: EventTimeFrom without an eventTime override fails registration
-
-- **WHEN** a Java Tasklet declares `Clock = EventTimeFrom` but does not override `eventTime(Input)`
-- **THEN** `.registerFactory(...)` SHALL throw `UnboundedOperatorConfigurationException` naming the Tasklet and the missing `eventTime` override
-
-#### Scenario: LogicalClock serves the durable change seq and re-arms on restore
-
-- **WHEN** a Java Tasklet declares `Clock = LogicalClock` and a non-`NoChange` Change, and the Cell is restored from a change log whose terminal seq is 41
-- **THEN** registration SHALL succeed AND the first post-restore invocation's `ctx.now()` SHALL return `42`
-
-#### Scenario: LogicalClock with NoChange fails registration
-
-- **WHEN** a Java Tasklet declares `Clock = LogicalClock` and `Change = NoChange`
-- **THEN** `.registerFactory(...)` SHALL throw `UnboundedOperatorConfigurationException` whose message carries the error name `UnservableClock`
-
 ### Requirement: Operator declares persistenceEnabled default-method, frozen at instance start
 
-The Java SDK's `UnboundedOperator` and `BoundedOperator` interfaces SHALL each declare `default boolean persistenceEnabled() { return true; }` and `default boolean sleepWhenIdle()` (`false` on `UnboundedOperator`, `persistenceEnabled()` on `BoundedOperator`). The runtime SHALL read `persistenceEnabled()` from the class for either kind when it builds the class declaration, SHALL write it as the declaration's `persistent` and SHALL NOT derive `persistent` from whether any Tasklet declares a Change other than `NoChange`; it SHALL write `sleepWhenIdle()` as `sleep_when_idle`. The core resolves the per-instance value from the declaration when `AddOperator` is processed and announces both to the controller.
+The Java SDK's `UnboundedOperator` and `BoundedOperator` interfaces SHALL each declare `default boolean persistenceEnabled() { return true; }` and `default boolean sleepWhenIdle()` (`false` on `UnboundedOperator`, `persistenceEnabled()` on `BoundedOperator`). The runtime SHALL read `persistenceEnabled()` from the class for either kind when it builds the class declaration, SHALL write it as the declaration's `persistent` and SHALL NOT derive `persistent` from whether any Tasklet keeps state; it SHALL write `sleepWhenIdle()` as `sleep_when_idle`. The core resolves the per-instance value from the declaration when `AddOperator` is processed and announces both to the controller.
 
 The resolved value SHALL be bound to the instance and SHALL be propagated to every `CellSlot` constructed for that instance. A change to the class's method (via SDK redeploy) SHALL NOT affect already-running instances.
 
@@ -352,7 +272,7 @@ The resolved value SHALL be bound to the instance and SHALL be propagated to eve
 
 #### Scenario: An unbounded operator's opt-out is read from the class, not its Tasklets
 
-- **WHEN** an `UnboundedOperator` whose Tasklets declare Changes other than `NoChange` returns `false` from `persistenceEnabled()`
+- **WHEN** an `UnboundedOperator` whose Tasklets keep state (a non-`Void` State) returns `false` from `persistenceEnabled()`
 - **THEN** the class declaration SHALL announce `persistent: false`, no `cell_state_change` frame SHALL reach the wire, and a rebind after the runner dies SHALL restore nothing
 
 #### Scenario: Sleeping without persistence is refused
@@ -364,23 +284,6 @@ The resolved value SHALL be bound to the instance and SHALL be propagated to eve
 
 - **WHEN** an instance is constructed with resolved `persistenceEnabled = true`, AND the class is redeployed returning `false` while the instance runs
 - **THEN** the running instance SHALL continue with `persistenceEnabled = true`; the new value SHALL take effect only on the next `stop_operator` + `start_operator` cycle for that instance
-
-### Requirement: initState accepts optional restoration payload
-
-The Java SDK's `Tasklet.initState` signature SHALL be `State initState(Optional<String> cellKey, Optional<RestoreInitPayload> initPayload)`. When `initPayload.isEmpty()`, `initState` SHALL behave as a fresh-start constructor. When `initPayload.isPresent()`, the user MAY inspect or ignore the payload bytes; the runtime SHALL automatically apply the payload AFTER `initState` returns:
-
-1. If `payload.snapshotBytes().length > 0`, deserialize via `KryoCodec` (after header validation) and replace the user-constructed state.
-2. If `payload.changeLogBytes().length > 0`, decode each WAL record (frame format from `operator-state-persistence`), validate header, deserialize Change via `KryoCodec`, and invoke `Tasklet.applyChange(state, change)` in seq order.
-
-#### Scenario: Cold start passes Optional.empty()
-
-- **WHEN** a Java Cell is constructed for the first time with no prior persisted state on the agent
-- **THEN** the runtime SHALL invoke `initState(cellKey, Optional.empty())`
-
-#### Scenario: Restart passes Optional.of(payload)
-
-- **WHEN** a Java Cell is reconnected and the agent has snapshot or WAL bytes for it
-- **THEN** the runtime SHALL invoke `initState(cellKey, Optional.of(payload))` AND, after `initState` returns, the runtime SHALL deserialize the snapshot (if any) and fold the change log via `applyChange` in seq order
 
 ### Requirement: Per-Cell flusher with toggle-aware drain
 
@@ -402,40 +305,57 @@ change bytes (and timer ops, offsets, outputs) back in the
 
 ### Requirement: Hot-path cost is bounded
 
-The Java SDK's `state.apply(change)` SHALL pay exactly: one `Tasklet.applyChange(state, change)` invocation (user-supplied; cost varies) plus one `ArrayList.add(change)` tasklet (amortized O(1)). The hot path SHALL NOT serialize, fsync, network-send, or acquire any lock beyond the existing per-Cell sticky CAS and the runner thread's exclusive ownership of the buffer for the duration of `Tasklet.run`.
+The Java SDK's `ctx.change(change)` SHALL pay exactly: one `change.applyTo(state)` invocation (user-supplied; cost varies) plus one `ArrayList.add(change)` tasklet (amortized O(1)). The hot path SHALL NOT serialize, fsync, network-send, or acquire any lock beyond the existing per-Cell sticky CAS and the runner thread's exclusive ownership of the buffer for the duration of `Tasklet.run`.
 
-#### Scenario: No serialization on state.apply
+#### Scenario: No serialization on ctx.change
 
-- **WHEN** a Tasklet's `run` calls `state.apply(MyChange.foo())` 100 times in a tight loop
+- **WHEN** a Tasklet's `run` calls `ctx.change(new MyChange())` 100 times in a tight loop
 - **THEN** zero `KryoCodec.serialize`, `Kryo.writeClassAndObject`, or any serialization-equivalent call SHALL be issued from the runner thread during these 100 calls (verifiable via JFR profiling or by mocking `KryoCodec` and asserting zero invocations)
 
-#### Scenario: No JNI calls on state.apply
+#### Scenario: No JNI calls on ctx.change
 
-- **WHEN** a Tasklet's `run` calls `state.apply(MyChange.foo())` 100 times
+- **WHEN** a Tasklet's `run` calls `ctx.change(new MyChange())` 100 times
 - **THEN** zero `NativeTransport.*` JNI calls SHALL be issued from the runner thread during these 100 calls
 
 ### Requirement: Kryo serialization with stable registered type IDs
 
-The Java SDK SHALL use Kryo for `format_id = 4` serialization with `setRegistrationRequired(true)`. The runtime SHALL register built-in flezha types (NoChange, RestoreInitPayload, CoalesceKey, primitives, common collections) at SDK init in a fixed order (stable IDs 1-N). User types from `Tasklet.kryoTypes()` SHALL be registered after built-ins in declaration order (stable IDs N+1, N+2, ...).
+The Java SDK SHALL use Kryo for `format_id = 4` serialization with `setRegistrationRequired(true)`. The runtime SHALL register built-in flezha types (primitives, common collections and the runtime's own payload types) at SDK init in a fixed order (stable IDs 1-N).
 
-The Java SDK SHALL refuse to serialize any user-supplied object whose runtime class is not in the registered set — Kryo throws `IllegalArgumentException` per its `registrationRequired = true` semantics; the SDK wraps this as `StateSerializeException::UnregisteredClass(className)` and rethrows.
+A tasklet's user types SHALL by default be discovered at registration: its state class, every member class (declared in a class body, at any depth) of the tasklet class, a class above it, or the state class that implements `Change`, and every non-JDK class reachable from the fields and record components of those classes. Each discovered type SHALL be registered under an id derived from its name and placed in a band above the built-in ids, so that adding a type never changes the id of another. A type nested at any depth in the tasklet class SHALL be named by the tasklet's durable name (its `@Tasklet.Spec` name, or a short form's operator id) followed by its binary name relative to the tasklet class, so renaming or moving the tasklet class changes no id; any other type SHALL be named by its binary class name. Two discovered types deriving the same id SHALL fail registration naming both classes.
 
-Reordering of `Tasklet.kryoTypes()` between SDK versions SHALL be an unsupported breaking change (changes the assigned IDs); appending new types to the end SHALL be safe (preserves prior IDs).
+A tasklet that overrides `kryoTypes()` SHALL own its ids from its first save: the returned list SHALL replace discovery, and its types SHALL be registered after the built-ins in list order (stable IDs N+1, N+2, ...); a listed class Kryo already registers SHALL keep its id and take no slot. Reordering that list between versions SHALL be an unsupported breaking change; appending to its end SHALL be safe. Switching an existing tasklet between discovery and a list moves every id, and SHALL be treated as a schema change: a `schemaVersion` bump with `migrateState` / `migrateChange`.
+
+The Java SDK SHALL refuse to serialize any user-supplied object whose runtime class is not in the registered set: Kryo throws `IllegalArgumentException` per its `registrationRequired = true` semantics, and the SDK wraps this as `StateSerializeException::UnregisteredClass(className)`, whose message SHALL name both fixes, nesting the class in the tasklet or its state, or listing it in `kryoTypes()`.
 
 #### Scenario: Built-in types registered with stable IDs
 
 - **WHEN** a JVM starts with the Java SDK loaded
-- **THEN** the registered Kryo types SHALL include `NoChange`, `RestoreInitPayload`, `CoalesceKey`, `String`, `Long`, `Integer`, `Double`, `Boolean`, `byte[]`, `List`, `Map`, `Optional` at fixed stable IDs (the exact values are recorded in `KryoCodec` source as a documented constant)
+- **THEN** the registered Kryo types SHALL include `String`, `Long`, `Integer`, `Double`, `Boolean`, `byte[]`, `List`, `Map`, `Optional` and `ArrayDeque` at fixed stable IDs (the exact values are recorded in `KryoCodec` source as a documented constant)
 
-#### Scenario: User types registered after built-ins
+#### Scenario: Nested change records are discovered
 
-- **WHEN** `Tasklet.kryoTypes()` returns `[OhlcChange.class, OhlcState.class]` and built-ins occupy IDs 1-12
-- **THEN** `OhlcChange.class` SHALL register with ID 13 AND `OhlcState.class` SHALL register with ID 14
+- **WHEN** a tasklet with state class `PriceWindow` nests the record `PriceSeen implements Change<PriceWindow>` and does not override `kryoTypes()`
+- **THEN** registration SHALL register `PriceWindow` and `PriceSeen`, and a restart SHALL decode the saved `PriceSeen` records
+
+#### Scenario: Adding a change record moves no other id
+
+- **WHEN** a tasklet that already has saved `PriceSeen` records gains a second nested change record whose name sorts before `PriceSeen`
+- **THEN** `PriceSeen` SHALL keep its id, and the saved records SHALL still decode as `PriceSeen`
+
+#### Scenario: Colliding derived ids fail registration
+
+- **WHEN** two discovered types of one tasklet derive the same id
+- **THEN** registration SHALL fail with an error naming both classes, and nothing SHALL be registered
+
+#### Scenario: An explicit list owns the ids
+
+- **WHEN** a tasklet overrides `kryoTypes()` to return `[OhlcState.class, OhlcChange.class]` and built-ins occupy IDs 1-N
+- **THEN** `OhlcState.class` SHALL register with ID N+1 AND `OhlcChange.class` with ID N+2, and no type SHALL be discovered for that tasklet
 
 #### Scenario: Unregistered class fails loud
 
-- **WHEN** a Tasklet's `Change` references a nested class not in `kryoTypes()` (e.g. a nested `record OhlcChange.BarTick(Interval interval, ...)` where `Interval` is a record not registered)
-- **THEN** the first `state.apply(...)` triggering serialization SHALL throw `StateSerializeException::UnregisteredClass("Interval")` and the JVM SHALL NOT silently succeed with auto-IDs
+- **WHEN** a tasklet records a change whose class is declared outside the tasklet and its state and is not in an overriding `kryoTypes()`
+- **THEN** the first flush SHALL throw `StateSerializeException::UnregisteredClass` naming the class and both fixes, and the JVM SHALL NOT silently succeed with auto-IDs
 
 ### Requirement: Public Java SDK handler classes use canonical Operator vocabulary
 
@@ -494,7 +414,7 @@ Declaring `.keyed()` SHALL be required on every plugin-bound channel of a tier-e
 
 ### Requirement: Java SDK implements checkpoint ack granularity
 
-The Java SDK SHALL implement the `effectively-once-checkpoint-granularity` capability. A channel declaration SHALL support `c.checkpointAck()`, valid only together with `c.effectivelyOnce()` — declaring it alone SHALL fail registration with `CheckpointAckWithoutTier`. `TaskletCtx.checkpoint()` SHALL mark the invocation as closing the current interval.
+The Java SDK SHALL implement the `effectively-once-checkpoint-granularity` capability. A channel declaration SHALL support `c.checkpointAck()`, valid only together with `c.effectivelyOnce()` — declaring it alone SHALL fail registration with `CheckpointAckWithoutTier`. `Ctx.checkpoint()` SHALL mark the invocation as closing the current interval.
 
 The per-Cell flush buffer SHALL carry a third `staged` list holding the open interval's changes. `drainToFrames` and `isEmpty` SHALL deliberately **ignore** `staged` — an open interval is not flushable, and draining it alone would put state ahead of its offset. An invocation SHALL emit an effect record carrying `{staged, consumedOffset}` when it checkpointed or parked to the DLQ; otherwise it SHALL emit `{[], outputs, null}` only if it produced outputs. A dead-letter park SHALL close the interval. A restore SHALL discard the open interval.
 
@@ -705,7 +625,7 @@ The Java SDK's `data_heartbeat` frame SHALL carry the same metrics the Rust SDK 
 
 The Java SDK SHALL provide `FlezhaRunner.registerFactory(Class<? extends Operator>)` and its inverse `FlezhaRunner.unregisterFactory(Class<? extends Operator>)` as chainable builder methods, `registerFactory` reading the kind from the kind interface the class implements and refusing a class that implements both `UnboundedOperator` and `BoundedOperator` with an `IllegalArgumentException` whose message begins `AmbiguousOperatorKind`, or neither with one beginning `UnknownOperatorKind`, callable **before and after** `.start()`/`.run()`. For each declared UnboundedOperator class the SDK SHALL: (a) instantiate the class via its public no-arg constructor; (b) call its `factoryId()` method to obtain the controller-facing factory id; (c) call its `channels(ChannelBuilder)` method exactly once — the builder being the producer-first graph builder of `sdk-graph-authoring` — and freeze the resulting `OperatorTopology`; (d) verify wiring constraints (entry-channel deserializability, type-equality between an unbounded operator's payload type and its consumer Tasklets' input types, node reachability from the entry, at most one output channel per node, acyclicity, node-identity and channel-name uniqueness, static-mode and dynamic-mode default-impl detection); (e) record `(factoryId → topology)` in the class registry. The registry SHALL stay mutable after `.start()` for as long as the runner is open: `registerFactory` and its `unregisterFactory` inverse are legal on a started runner, and every post-start change SHALL re-sync the runner's full current factory set rather than a delta — the set the next connect/reconnect init frame carries to the controller. A started runner that has been closed SHALL refuse every `registerFactory`/`unregisterFactory` call with an `IllegalStateException` naming the closed runner, and the refused call SHALL NOT reach the class registries or the core — `.close()` destroys the core context, so a declaration made afterwards would otherwise carry a freed handle back across the JNI boundary. A never-started runner has no context to free, so `.close()` on one leaves it mutable, as the runner-lifecycle requirement already states. `unregisterFactory` SHALL throw `IllegalArgumentException` naming the factory id when that id is not defined on this runner, and `OperatorTypeInUseException` — an `IllegalStateException` subclass — naming the factory id when the runner is started and live operator instances of it exist, leaving the type defined. There SHALL be no `OperatorHandler`-style factory registration in the public surface.
 
-Dynamic cell mode SHALL be supported: a Tasklet reached by a consumer edge declaring `keyBy`, returning an empty list from `cellKeys()`, SHALL be declared successfully and create Cells lazily per key at dispatch time, per the `operator-state-persistence` dynamic-cell behaviour. Eviction SHALL be off by default (`cellIdleTtl()` returns `Optional.empty()`); when a TTL is declared, the per-Tasklet reaper SHALL evict idle Cells destructively by shipping `delete_cell_state`, and a recreated Cell SHALL cold-start fresh rather than restore from disk.
+Dynamic cell mode SHALL be supported: a Tasklet reached by a consumer edge declaring `keyBy`, declaring no `@Tasklet.Spec` `keys`, SHALL be declared successfully and create Cells lazily per key at dispatch time, per the `operator-state-persistence` dynamic-cell behaviour. Eviction SHALL be off by default (`@Tasklet.Spec` `idleTtlSeconds` is 0); when a TTL is declared, the per-Tasklet reaper SHALL evict idle Cells destructively by shipping `delete_cell_state`, and a recreated Cell SHALL cold-start fresh rather than restore from disk.
 
 Because Java's type erasure precludes Rust's compile-time topology refusals, every constraint Rust enforces at compile time SHALL be enforced at declaration time, throwing `UnboundedOperatorConfigurationException` whose message carries the same diagnostic content and the same error name as the corresponding Rust `TopologyIssue` variant.
 
@@ -858,11 +778,11 @@ Today `UnboundedOperatorInstance` builds one Tasklet per `TaskletDispatcher` and
 
 The Java SDK SHALL describe the state-mutation enforcement it actually provides, and SHALL document its asymmetry with Rust the way it already documents its other Rust asymmetries.
 
-`StateHandle.get()` returns the live State object, so `state.get().field = x` compiles, runs, and is never journaled as a Change. The Rust SDK forecloses this structurally by implementing `Deref` and deliberately not `DerefMut`. The Java class javadoc and `docs/sdk/state_persistence.md` both assert that Java's lack of a setter is "the structural enforcement" — which it is not, because `get()` hands back the object.
+`ctx.state()` returns the live State object, so `ctx.state().field = x` compiles, runs, and is never journaled as a Change. The Rust SDK forecloses this structurally by implementing `Deref` and deliberately not `DerefMut`. Java's documentation SHALL NOT call its one recorded path, `ctx.change(...)`, a structural enforcement, because `state()` hands back the object.
 
 #### Scenario: Documentation does not claim enforcement that does not exist
 
-- **WHEN** Java SDK documentation describes how state mutation outside `apply` is prevented
+- **WHEN** Java SDK documentation describes how state mutation outside `ctx.change` is prevented
 - **THEN** it SHALL NOT assert structural enforcement unless a direct field mutation is actually prevented
 
 #### Scenario: The asymmetry with Rust is stated
@@ -872,12 +792,12 @@ The Java SDK SHALL describe the state-mutation enforcement it actually provides,
 
 #### Scenario: A bypassed mutation's actual fate is described
 
-- **WHEN** the documentation describes the consequence of mutating state outside `apply`
+- **WHEN** the documentation describes the consequence of mutating state outside `ctx.change`
 - **THEN** it SHALL state that the mutation is captured by graceful shutdown and live migration but lost by any restore, which rebuilds from snapshot plus change log
 
 ### Requirement: Factory visibility SHALL match its documentation
 
-A factory or constructor's declared visibility SHALL match the visibility its documentation claims. `StateHandle.create(...)` is declared `public static` while its own javadoc calls it a "package-private factory" and the class javadoc claims a package-private constructor "forecloses user instantiation". No such enforcement exists.
+A factory or constructor's declared visibility SHALL match the visibility its documentation claims: a factory documented as package-private is declared package-private, and one the runtime must reach from another package is documented as public.
 
 #### Scenario: Declared visibility matches documented visibility
 
@@ -1162,4 +1082,72 @@ absent from.
 
 - **WHEN** a class implementing `BoundedOperator` writes `@Override public Optional<Duration> wakeAfter()`
 - **THEN** compilation fails, the interface declaring no such method
+
+### Requirement: A change applies itself through the context
+
+`com.flezha.sdk.state.Change<S>` SHALL declare `void applyTo(S state)` and keep `default Optional<CoalesceKey> coalesceKey()`. `ctx.change(change)` SHALL call `change.applyTo(state)` on the live state and append the change to the cell's flush buffer. The restore fold SHALL call `applyTo` on each decoded change in seq order. The `Tasklet` interface SHALL declare neither `applyChange` nor `coalesceKey(change)`.
+
+#### Scenario: A change is applied and recorded
+
+- **WHEN** a tasklet's `run` calls `ctx.change(new PriceSeen(1.0853))`
+- **THEN** `PriceSeen.applyTo` SHALL run on the cell's state, and the change SHALL be in the cell's flush buffer
+
+#### Scenario: A restart folds the log through applyTo
+
+- **WHEN** a cell whose log holds three `PriceSeen` changes is restored
+- **THEN** each change's `applyTo` SHALL run in seq order on the initial state, and the result SHALL equal the state before the restart
+
+### Requirement: A tasklet's state starts from its state class
+
+A new cell's state SHALL be built from the state class's no-arg constructor, resolved once at registration. A state class with no accessible no-arg constructor SHALL fail registration naming the class, unless the tasklet overrides `State initState(Optional<String> cellKey)`, which SHALL then build every new cell's state and receive the cell's key. The runtime SHALL apply any restore payload after the initial state is built.
+
+#### Scenario: The constructor builds a new cell's state
+
+- **WHEN** a tasklet whose state class `PriceWindow` has a no-arg constructor gets a new cell
+- **THEN** that cell's `ctx.state()` SHALL be a new `PriceWindow`
+
+#### Scenario: initState receives the cell key
+
+- **WHEN** a tasklet overrides `initState(Optional<String> cellKey)` and a cell keyed `"1h"` is created
+- **THEN** `initState` SHALL be called with `Optional.of("1h")`, and its result SHALL be the cell's state
+
+#### Scenario: A state class without a constructor is refused
+
+- **WHEN** a tasklet's state class has no no-arg constructor and the tasklet does not override `initState`
+- **THEN** registration SHALL fail naming the state class
+
+### Requirement: A tasklet's clock follows from what it declares
+
+`Clock` SHALL be internal to the runtime, with three members served once per invocation from `ctx.now()`:
+
+- **Wall clock**, the default: epoch milliseconds at dispatch entry.
+- **Event time**, when the tasklet writes `long eventTime(Input input)`: the value it returns for the current input.
+- **Logical**, when `@Tasklet.Spec(logicalClock = true)`: the raw durable change seq, re-armed to `terminal + 1` on restore.
+
+A tasklet that writes `eventTime` and declares `logicalClock = true` SHALL fail registration naming both. A logical clock on a `Void` state SHALL fail registration with `UnservableClock`, since there is no durable seq to serve.
+
+#### Scenario: The default clock is the wall clock
+
+- **WHEN** a tasklet writes no `eventTime` and does not declare `logicalClock`
+- **THEN** `ctx.now()` SHALL return epoch milliseconds sampled once at dispatch entry
+
+#### Scenario: Writing eventTime makes the clock event time
+
+- **WHEN** a tasklet writes `eventTime(trade)` returning `trade.at()`
+- **THEN** `ctx.now()` SHALL return that value for the invocation, and event-time timers SHALL fire against it
+
+#### Scenario: Logical clock re-arms on restore
+
+- **WHEN** a tasklet declares `logicalClock = true` with a non-`Void` state, and a cell is restored from a log whose terminal seq is 41
+- **THEN** the first post-restore invocation's `ctx.now()` SHALL return `42`
+
+#### Scenario: Two clocks are refused
+
+- **WHEN** a tasklet writes `eventTime` and declares `logicalClock = true`
+- **THEN** registration SHALL fail naming both declarations
+
+#### Scenario: A logical clock without state is refused
+
+- **WHEN** a tasklet declares `logicalClock = true` and `Void` state
+- **THEN** registration SHALL fail with an error carrying `UnservableClock`
 

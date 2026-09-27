@@ -327,19 +327,19 @@ and the full trait. Other hooks: `from_config`, `on_timer`,
 
 ### Java SDK parity
 
-The Java SDK is the same model: `Tasklet<Input, State, Output, ChangeT,
-ClockT, ConfigT>` is a parameterized interface with `inputType()` /
-`outputType()` accessors, so bounds Rust checks at compile time become
+The Java SDK is the same model with one authoring form: the author's class
+implements `Tasklet<Input, State, Output>` and carries `@Tasklet.Spec` for its
+name and settings, and the three types are read off its `implements` clause,
+so bounds Rust checks at compile time become
 `UnboundedOperatorConfigurationException`s from `registerFactory(...)`;
 a written `cellsFor`, read off the class at registration, replaces the
 `CELLS_FOR_OVERRIDDEN` const;
-dynamic mode is read off the wiring on both sides (the annotation processor
-refuses `@CellKey`) with `cellIdleTtl()` as the only knob; zero-copy
+dynamic mode is read off the wiring on both sides, with
+`@Tasklet.Spec(idleTtlSeconds, maxCells)` as its knobs; zero-copy
 passes the value by reference, so the producer must treat an emitted value as
-immutable. `@Tasklet` / `@State` / `@CellsFor` (`flezha-sdk-processor`)
-generate the impls, and a `@UnboundedOperator` or `@BoundedOperator` class
-generates the short form's `<Class>UnboundedOperator` or
-`<Class>BoundedOperator`, which the application registers with
+immutable. Nothing is generated: a change is a record the author writes, and a
+`@UnboundedOperator` or `@BoundedOperator` tasklet class is a whole short-form
+operator, built when the application registers it with
 `registerFactory`. Persisted
 Changes declare `sdk_lang = 2`, `change_format_id = 4` (Kryo). A Java
 `BoundedOperator` emits `BoundedCompleted` byte-identically to Rust.

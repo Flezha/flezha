@@ -114,7 +114,7 @@ read in any order.
 |---|---|
 | [`clustering.md`](advanced/clustering.md) | Set up the example in Docker, run several controllers, then stop one |
 | [`custom_plugins.md`](advanced/custom_plugins.md) | Writing and installing a plugin of your own |
-| [`full_form_tasklets.md`](advanced/full_form_tasklets.md) | Writing a tasklet without the annotations, and what only that form declares |
+| [`full_form_tasklets.md`](advanced/full_form_tasklets.md) | Writing a tasklet without the sugar, and what only that form declares |
 | [`effectively_once.md`](advanced/effectively_once.md) | The delivery guarantee, what it requires, and what it costs |
 | [`erlang_vm_tuning.md`](advanced/erlang_vm_tuning.md) | Scheduler, memory and IO settings for a controller under load |
 | [`elixir_applications.md`](advanced/elixir_applications.md) | Flezha inside an Elixir application of your own |

@@ -42,7 +42,7 @@ the C ABI and where the code lives; the system-level picture is
 | `flz_core_ffi/tests/abi_scenario.rs`   | The CI scenario that drives the whole runtime through the C ABI |
 | `flz_transport/`                       | The transport tier both the kernel and the controller NIF share: `transport/` (QUIC, TLS, config, liveness, `protocol.rs` stream constants `STREAM_TYPE_PRIMARY 0x01` / `STREAM_TYPE_SECONDARY 0x02`), `service/payloader.rs` (binary framing), `utility/socket_dir.rs` (socket paths), `utility/socket_probe.rs` (reachability) |
 | `sdk/rust/src/`                        | The Rust SDK — the typed layer over `flz_core`: `lib.rs` (runner handle), `tasklet/`, `channel/` (builder DSL), `operator/` (typed dispatcher, poll pool), `cell/`, `bounded/`, `runner/`, `testing/` (harness), `diag.rs` |
-| `sdk/java/`                            | The Java SDK (Maven): `flezha-sdk-api` (authoring surface), `flezha-sdk-processor` (annotation processor), `flezha-sdk-runtime` (`PollHost`, `ActivationDispatcher`, codec), `flezha-sdk-native` (`FlzCore`, `NativeLibraryLoader`, bundled binaries), `flezha-sdk-testing` (`TaskletTestHarness`), `flezha-sdk-examples` (the `E01`–`E12` authoring samples), `flezha-sdk` (fat-jar aggregator) |
+| `sdk/java/`                            | The Java SDK (Maven): `flezha-sdk-api` (authoring surface), `flezha-sdk-runtime` (`PollHost`, `ActivationDispatcher`, codec), `flezha-sdk-native` (`FlzCore`, `NativeLibraryLoader`, bundled binaries), `flezha-sdk-testing` (`TaskletTestHarness`), `flezha-sdk-examples` (the `E01`–`E12` authoring samples), `flezha-sdk` (fat-jar aggregator) |
 
 ## The core decides, the SDK brings the threads
 

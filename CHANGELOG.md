@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Changed (BREAKING): a Java tasklet is one class, and nothing is generated
+
+The Java SDK has one way to write a tasklet: your own class implements
+`Tasklet<Input, State, Output>`, carries `@Tasklet.Spec` with its name and settings, and writes
+`run(input, ctx)`. `ctx.state()` reads the cell's state, `ctx.change(...)` records a change, and
+a change is a record implementing `Change<State>` whose `applyTo` writes the state. A new cell's
+state comes from the state class's no-arg constructor, or from a written `initState(cellKey)`;
+hooks such as `onTimer`, `eventTime` and `compensate` are declared by writing them, and writing
+`eventTime` makes the clock event time. The operator names the class itself, `.into(TrackPrices.class)`,
+and a short-form class annotated `@UnboundedOperator` or `@BoundedOperator` is read when it is
+registered. The `flezha-sdk-processor` module is gone, with `@Tasklet`, `@State`, `@Journal`,
+`@InitState`, `@CellsFor`, `@CellKey`, `StateHandle`, `TaskletCtx`, `Stateless` and the clock and
+config type parameters. The types a tasklet saves are found by the SDK and take ids derived from
+their names, so adding a change record moves no other id, and a type nested in the tasklet is named
+through the tasklet's `@Tasklet.Spec` name, so renaming or moving the tasklet class keeps its
+state; a written `kryoTypes()` owns ids by list order from the first save. State saved by an earlier Java SDK is not readable: clear it once when upgrading.
+
 ### Fixed: an instance's input floor is what it durably processed
 
 A plain sleeping stream folded inputs twice after a controller restart while it was awake, a

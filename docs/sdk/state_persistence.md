@@ -21,18 +21,18 @@ SDKs: `apply_change` MUST be a pure, deterministic fold — replay is the recove
 (crash-resume, retry, rewind, effectively-once), so ambient time, randomness and external
 reads inside `run` / `apply_change` violate the contract; time comes from `ctx.now()` (the
 declared `Clock`), identifiers from `ctx.stable_id()`, and the harness gate `replay_equals`
-/ `replayEquals()` catches a divergence. And `state.apply(change)` is the only recorded
-mutation path: one fold, one push.
+/ `replayEquals()` catches a divergence. And `state.apply(change)` (Java: `ctx.change(change)`)
+is the only recorded mutation path: one fold, one push.
 
-`NoChange` (uninhabited in both SDKs) opts a Tasklet out: the runtime detects it (`TypeId`
-in Rust, `changeType() == NoChange.class` in Java) and registers nothing with the flusher.
-`Clock` is sealed in both SDKs: `WallClock` (epoch ms, read once per invocation),
-`EventTimeFrom` (extracted from the input), `LogicalClock` (the durable change seq — needs a
-real Change type). `coalesce_key()` (default none) is opt-in batching: Changes sharing a key
+`NoChange` (Rust, uninhabited) and a `Void` state (Java) opt a Tasklet out: the runtime
+detects it and registers nothing with the flusher. Three clocks serve `ctx.now()`: the wall
+clock (epoch ms, read once per invocation), event time (extracted from the input) and the
+logical clock (the durable change seq — needs a real Change type). Rust declares them as the
+sealed `Clock` type `WallClock` / `EventTimeFrom` / `LogicalClock`; Java reads them off the
+class: a written `eventTime(input)`, or `@Tasklet.Spec(logicalClock = true)`. `coalesce_key()` (default none) is opt-in batching: Changes sharing a key
 within one linger window collapse to the most recent record at drain time; keyless Changes
 are kept verbatim — right for "current value of X", wrong for "+1" deltas. The sugared tier
-(`#[derive(flezha::State)]`, Java `@State`) generates the field-granular Change type, its
-fold and (Java) the Kryo type list; see
+(`#[derive(flezha::State)]`, Rust) generates the field-granular Change type and its fold; see
 [`authoring_contract.md`](authoring_contract.md#3-state--change-derivation-and-the-manual-boundary).
 
 Timers are folded state: registrations, cancellations and firings are records in the
@@ -44,7 +44,7 @@ a compaction re-states the full set after the snapshot seq so truncation cannot 
 ### The flusher lives in the core
 
 `flz_core` owns one flush thread per process, started lazily on the first registration of a
-non-`NoChange` Tasklet. Every linger tick (`FLEZHA_FLUSH_LINGER_MS`, default 5) it drains
+Tasklet that keeps state. Every linger tick (`FLEZHA_FLUSH_LINGER_MS`, default 5) it drains
 each registered Cell's buffer, coalesces, stamps the 16-byte header and ships the frames.
 Rust pushes typed Changes into the buffer directly; Java has no flusher of its own — its
 Kryo-encoded change bytes ride the activation result into the core, so a long invocation (a
@@ -65,7 +65,7 @@ kind keeps no WAL or snapshot, is given no restore on a rebind, and answers a li
 
 | Surface | Rust | Java | Elixir |
 |---|---|---|---|
-| Persistence switch, both kinds | `PERSISTENCE_ENABLED` const on both traits, default `true` | `persistenceEnabled()` on both kind interfaces, default `true`, read from the class whatever its Tasklets' Change types | `persistence_enabled/0` on both behaviours (a `use` option), default `true` |
+| Persistence switch, both kinds | `PERSISTENCE_ENABLED` const on both traits, default `true` | `persistenceEnabled()` on both kind interfaces, default `true`, read from the class whatever its Tasklets' states | `persistence_enabled/0` on both behaviours (a `use` option), default `true` |
 | Sleep setting | `SLEEP_WHEN_IDLE`: `false` on `UnboundedOperator`, `PERSISTENCE_ENABLED` on `BoundedOperator` | `sleepWhenIdle()`: `false` on `UnboundedOperator`, `persistenceEnabled()` on `BoundedOperator` | `sleep_when_idle` (a `use` option or callback): `false` for an unbounded operator, `persistence_enabled/0` for a bounded operator |
 | Sleeping with persistence off | refused as `SleepWithoutPersistence` | same | same |
 | Controller side | `:operator_persistence` (`%{class => bool}`) overrides the announced switch per class | same | same |
@@ -82,8 +82,9 @@ change_log_bytes, terminal_seq, has_compensation_intent, has_compensation_done }
 `snapshot_bytes` is the raw encoded `State` (the controller strips the snapshot file's
 header before shipping), `change_log_bytes` the WAL tail in the controller's on-disk record
 framing. Under the Cell's exclusivity gate the runtime calls the author's
-`init_state(cell_key, Some(payload))` / `initState(cellKey, Optional.of(payload))` (the
-author may inspect byte sizes but never decodes them), replaces the state with the decoded
+`init_state(cell_key, Some(payload))` (the author may inspect byte sizes but never decodes
+them; a Java cell's state comes from its state class or its written `initState(cellKey)`),
+replaces the state with the decoded
 snapshot when present, folds every record in seq order (plain Changes, the Changes enclosed
 in effect records, timer ops into the pending-timer set), re-arms the change seq to
 `terminal_seq + 1` (terminal = highest folded seq, never below the command's
@@ -105,7 +106,8 @@ Rust folds in-process with postcard and verifies each record's header (`sdk_lang
 `RestoreError::{LangMismatch, SchemaTooOld, SchemaFromTheFuture, HeaderInvalid,
 CrcMismatch, SnapshotDecode, ChangeDecode}`. Java folds through a `RestoreFold`
 activation: the core splits the log on `format_id`, folds timer ops and cursors itself and
-hands the host only the snapshot and change bodies to Kryo-decode and `applyChange`; the
+hands the host only the snapshot and change bodies to Kryo-decode and fold through each
+change's `applyTo`; the
 host fold performs no header or CRC check. A restore naming a Cell with no live slot
 validates the log and acks the terminal seq; a dynamic Cell the controller has state for
 is materialised so it survives a rebind; an evicted Cell is never restored — eviction
@@ -153,7 +155,7 @@ restore rejects any `sdk_lang` but its own before it reads the format byte:
 |---|---|---|---|---|
 | 0 | `sdk_lang` | 1 | 2 | 3 |
 | 1..5 | `sdk_version` | `(major << 16) \| (minor << 8) \| patch` of the writing SDK's own released version | the same packing of the writing SDK's own released version | the same packing of the writing SDK's own released version |
-| 5..9 | `schema_version` | the Tasklet's `SCHEMA_VERSION` | the class-wide maximum of its Tasklets' `schemaVersion()` | the Tasklet's `schema_version/0` |
+| 5..9 | `schema_version` | the Tasklet's `SCHEMA_VERSION` | the class-wide maximum of its Tasklets' `schemaVersion` | the Tasklet's `schema_version/0` |
 | 9 | `format_id` | 1 postcard | 4 Kryo | 7 External Term Format |
 | 10..12 | reserved | 0 | 0 | 0 |
 | 12..16 | `crc32` | over the body | over the body | over the body |
@@ -162,9 +164,9 @@ restore rejects any `sdk_lang` but its own before it reads the format byte:
 
 | Knob | Rust | Java | Elixir | Default |
 |---|---|---|---|---|
-| Schema version — bump on a non-additive Change-schema edit; a restore refuses a version above the running one or below the readable floor by name | `Tasklet::SCHEMA_VERSION` | `Tasklet.schemaVersion()` | `schema_version/0`, with `min_readable_schema_version/0` the floor | 1 |
-| Per-Cell WAL size at which the controller solicits a snapshot; `flz_core::persistence::DEFAULT_COMPACT_AFTER_BYTES`, in lockstep with the controller's `:default_compact_after_bytes`; every SDK ships the smallest value across the class's Tasklets in `AddOperator` metadata (`compact_after_bytes`) only when it differs from the default | `Tasklet::compact_after_bytes()` | `Tasklet.compactAfterBytes()` | `compact_after_bytes/0` | 8 MiB |
-| Pending-timer cap; past it registration returns / throws `TimerCapExceeded` | `Tasklet::max_timers_per_cell()` | `Tasklet.maxTimersPerCell()` | `max_timers_per_cell/0` | 10 000 |
+| Schema version — bump on a non-additive Change-schema edit; a restore refuses a version above the running one or below the readable floor by name | `Tasklet::SCHEMA_VERSION` | `@Tasklet.Spec(schemaVersion = n)` | `schema_version/0`, with `min_readable_schema_version/0` the floor | 1 |
+| Per-Cell WAL size at which the controller solicits a snapshot; `flz_core::persistence::DEFAULT_COMPACT_AFTER_BYTES`, in lockstep with the controller's `:default_compact_after_bytes`; every SDK ships the smallest value across the class's Tasklets in `AddOperator` metadata (`compact_after_bytes`) only when it differs from the default | `Tasklet::compact_after_bytes()` | `@Tasklet.Spec(compactAfterBytes = n)` | `compact_after_bytes/0` | 8 MiB |
+| Pending-timer cap; past it registration returns / throws `TimerCapExceeded` | `Tasklet::max_timers_per_cell()` | `@Tasklet.Spec(maxTimersPerCell = n)` | `max_timers_per_cell/0` | 10 000 |
 | Flusher linger between drains | `FLEZHA_FLUSH_LINGER_MS` env (read once by the core) | same | none — records ship at dispatch end | 5 ms |
 
 ## Rust SDK
@@ -241,71 +243,77 @@ harness.replay_emits_equal(&[1, 2, 3, 4]).expect("deterministic emits");
 ### Tasklet shape
 
 ```java
-public static final class Counter { public long count; }
-public record Increment(long atMs) implements Change {}
+@Tasklet.Spec(name = "count")
+public static final class CountTasklet implements Tasklet<String, CountTasklet.Counter, String> {
 
-public static final class CountTasklet
-        implements Tasklet<String, Counter, String, Increment, WallClock, Void> {
-    @Override public String name() { return "count"; }
-    /** Stable Kryo ids, positional. Append only. */
-    @Override public List<Class<?>> kryoTypes() { return List.of(Increment.class, Counter.class); }
-    @Override public void applyChange(Counter state, Increment change) { state.count++; }
-    @Override public Counter initState(Optional<String> key, Optional<RestoreInitPayload> payload) { return new Counter(); }
-    @Override public void run(String input, StateHandle<Counter, Increment> state, TaskletCtx ctx)
-            throws TaskletException {
-        state.apply(new Increment(ctx.now()));
-        ctx.emit("count=" + state.get().count);
+    public static final class Counter { public long count; }
+
+    public record Increment(long atMs) implements Change<Counter> {
+        @Override public void applyTo(Counter state) { state.count++; }
+    }
+
+    @Override
+    public void run(String input, Ctx<Counter, String> ctx) throws TaskletException {
+        ctx.change(new Increment(ctx.now()));
+        ctx.emit("count=" + ctx.state().count);
     }
 }
 ```
 
-`Tasklet<Input, State, Output, ChangeT, ClockT, ConfigT>` carries six type parameters
-because erasure leaves no associated types to infer. `inputType()`, `outputType()`,
-`changeType()`, `clockType()` and `configType()` default to reading the `implements` clause
-(or a concrete subclass of a generic intermediate); an argument still generic at the
-concrete class must be overridden or registration fails naming the class and parameter. A
-Tasklet needs a public no-arg constructor. A non-`NoChange` Change without an
-`applyChange` override throws `UnsupportedOperationException` at the first fold.
-`Optional<RestoreInitPayload>` allocates once per Cell restart where Rust borrows;
-negligible.
+`Tasklet<Input, State, Output>` is the one form. The three types are read off the
+`implements` clause (or a concrete subclass of a generic intermediate); an argument still
+generic at the concrete class fails registration naming the class and parameter. The name
+and settings come from `@Tasklet.Spec`, which every tasklet class carries. A new cell's
+state is the state class's no-arg constructor unless the class writes
+`initState(Optional<String> cellKey)`; a state class with neither fails registration. A
+change is a record implementing `Change<State>`, and its `applyTo` is the only method that
+writes a state field. `Void` as the state keeps nothing. A Tasklet needs a public no-arg
+constructor. [`java_sdk.md`](java_sdk.md#tasklets) lists the `@Tasklet.Spec` members.
 
 ### Kryo registration
 
-Each Tasklet gets its own `KryoCodec` built from its descriptor's `kryoTypes()`;
-`kryo.setRegistrationRequired(true)` makes an unregistered type fail loud at first
-serialisation. Built-in registrations (`NoChange`, `RestoreInitPayload`, `CoalesceKey`,
-primitive arrays, boxed numbers, `String`, `Optional`, the common `java.util` collections,
-`Instant`, `ArrayDeque`) take the low ids; user types follow in `kryoTypes()` order, which
-defaults to `[changeType, State]` (empty for a `NoChange` Tasklet). The list is
-append-only: a new Change variant goes at the end so earlier ids survive across versions;
-reordering breaks every persisted record. Wiring may add a type only it knows (a
-`routeLatest` document class) to the descriptor's copy of the list.
+Each Tasklet gets its own `KryoCodec`; `kryo.setRegistrationRequired(true)` makes an
+unregistered type fail loud at the first flush, as `StateSerializeException.UnregisteredClass`
+naming the class and both fixes. Built-in registrations (`RestoreInitPayload`,
+`CoalesceKey`, primitive arrays, boxed numbers, `String`, `Optional`, the common
+`java.util` collections, `Instant`, `ArrayDeque`) take fixed low ids. By default the user
+types are discovered: the state class, every member class (declared in a class body, at any
+depth) of the tasklet class, a class above it, or the state class that implements `Change`,
+and every non-JDK class their fields reach; a local or anonymous class is not found. Each takes an id
+derived from its name, in a band above the built-ins, so adding a change record moves no
+other id; two classes deriving one id fail registration naming both. A type nested in the
+tasklet class is named by the tasklet's `@Tasklet.Spec` name and its path inside the class,
+so renaming or moving the tasklet class keeps every id; any other type is named by its
+binary class name. A tasklet that writes `kryoTypes()` owns its ids from the first save:
+the list replaces discovery, ids follow list order after the built-ins, and only appending
+is safe. Switching an existing tasklet between discovery and a list moves every id, so it
+needs a `schemaVersion` bump and `migrateState` / `migrateChange`. Wiring may add a type only it
+knows (a `routeLatest` document class) to a node's list.
 
-### StateHandle
+### State and changes
 
-`StateHandle<State, ChangeT>` replaces the raw state parameter on `run`: reads go through
-`get()`, the journaled mutation path is `apply(change)`. Enforcement is by convention, not
-structure: `get()` returns the live object, so `state.get().field = x` compiles and runs but
-is never journaled. Such a write survives graceful shutdown and live migration (both ship
-the live object) and is lost by every restore, which rebuilds from snapshot + change log —
-it disappears exactly under an unplanned crash. Java adds no runtime guard (a defensive
-copy or proxy on every `get()` would tax every read); the detection offered instead is the
-opt-in `TaskletTestHarness.replayEquals()`, run in CI (`HarnessBehaviourTest` is the
+`ctx.state()` reads the cell's state, and `ctx.change(change)` is the journaled mutation
+path: it calls the change's `applyTo` and records it. Enforcement is by convention, not
+structure: `ctx.state()` returns the live object, so `ctx.state().field = x` compiles and
+runs but is never journaled. Such a write survives graceful shutdown and live migration
+(both ship the live object) and is lost by every restore, which rebuilds from snapshot +
+change log — it disappears exactly under an unplanned crash. Java adds no runtime guard (a
+defensive copy or proxy on every read would tax every read); the detection offered instead
+is the opt-in `TaskletTestHarness.replayEquals()`, run in CI (`HarnessBehaviourTest` is the
 reference case).
 
-### Change, Clock and registration refusals
+### Change, clock and registration refusals
 
-`Change` is a marker interface with `Optional<CoalesceKey> coalesceKey()` (default empty);
-`CoalesceKey.fromHash(Object...)` hashes arbitrary values. `NoChange` cannot be
-instantiated. `Clock` permits `WallClock`, `LogicalClock` and `EventTimeFrom`; all three
-are wired. What Rust rejects at compile time is rejected at registration here
-(`UnboundedOperatorConfigurationException`): an `EventTimeFrom` Tasklet that does not
-override `eventTime(Input)` (`eventTimeExtractorMissing`), and a `LogicalClock` Tasklet
-with `Change = NoChange` (`unservableClock`).
+`Change<S>` declares `applyTo(S)` and `Optional<CoalesceKey> coalesceKey()` (default
+empty); `CoalesceKey.fromHash(Object...)` hashes arbitrary values. What Rust rejects at
+compile time is rejected at registration here (`UnboundedOperatorConfigurationException`):
+a tasklet that writes `eventTime` and declares `logicalClock = true`, and a logical clock
+over a `Void` state (`UnservableClock`).
 
 ### Test harness
 
-`flezha-sdk-testing` ships `TaskletTestHarness<Input, State, Output, ChangeT>`:
+`flezha-sdk-testing` ships `TaskletTestHarness<Input, State, Output>`, which reads the class
+exactly as registration does:
 
 ```java
 assertThat(TaskletTestHarness.of(new CountTasklet()).withWallClock(t0)
@@ -316,10 +324,10 @@ assertThat(TaskletTestHarness.of(new CountTasklet()).withWallClock(t0)
 
 | Group | API |
 |---|---|
-| Construct | `of(tasklet)` (`initState(empty, empty)`); `withInitialState(state)`; `withPayload(cellKey, payload)` — only hands the payload to `initState`; unlike Rust's `with_payload` it does not run the runtime's snapshot + change-log fold |
-| Configure | `withKeyedChannel()`, `withCellKey(key)`, `withWallClock(ms)`, `withWallClockScript(ms...)` |
-| Drive / assert | `applyInputs(iterable)`; `expectChanges`, `expectEmits`, `expectState`, `recordedChanges()`, `recordedEmits()`, `emitRecords()`, `state()`, `replay(initial, log)`. No timer methods — Java timer coverage lives in `ActivationDispatcherTest` |
-| Gates | `replayEquals()` returns `Optional.empty()` when the Kryo bytes of the live state equal those of the replayed state (vacuously for a `NoChange` Tasklet), else `ReplayMismatch(expectedBytes, actualBytes)` whose `toString()` is a hex dump; it compares state only. `replayEmitsEqual(inputs)` returns an empty `Optional` when a replay produces the same emit sequence, else a diagnostic string |
+| Construct | `of(tasklet)` (the initial-state rule for no cell key); `withInitialState(state)`; `withPayload(cellKey, payload)` — the initial state, then the payload's snapshot, then its change log folded through `applyTo` |
+| Configure | `withKeyedChannel()`, `withCellKey(key)`, `withWallClock(ms)`, `withWallClockScript(ms...)`; a tasklet writing `eventTime` reads its time from each input, and a logical-clock one the invocation's change seq |
+| Drive / assert | `applyInputs(iterable)`; `expectChanges`, `expectEmits`, `expectState` (Kryo bytes), `recordedChanges()`, `recordedEmits()`, `emitRecords()`, `state()`, `replay(initial, log)`. No timer methods — Java timer coverage lives in `ActivationDispatcherTest` |
+| Gates | `replayEquals()` returns `Optional.empty()` when the Kryo bytes of the live state equal those of the replayed state (vacuously for a `Void` state), else `ReplayMismatch(expectedBytes, actualBytes)` whose `toString()` is a hex dump; it compares state only. `replayEmitsEqual(inputs)` returns an empty `Optional` when a replay produces the same emit sequence, else a diagnostic string |
 
 ## Elixir SDK
 

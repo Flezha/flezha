@@ -34,18 +34,16 @@ impl Tasklet for Session {
 
 ```java
 @Override
-public void run(Click input, StateHandle<SessionState, SessionChange> state, TaskletCtx ctx)
-        throws TaskletException {
-    state.apply(SessionChange.touched(input.at()));
+public void run(Click input, Ctx<SessionState, Summary> ctx) throws TaskletException {
+    ctx.change(new Touched(input.at()));
     ctx.timerAfter(Duration.ofSeconds(30));
 }
 
 @Override
-public void onTimer(long firedAt, TimerKind kind,
-        StateHandle<SessionState, SessionChange> state, TaskletCtx ctx)
+public void onTimer(long firedAt, TimerKind kind, Ctx<SessionState, Summary> ctx)
         throws TaskletException {
-    state.apply(SessionChange.closed(firedAt));
-    ctx.emit(state.summary());
+    ctx.change(new Closed(firedAt));
+    ctx.emit(ctx.state().summary());
 }
 ```
 
@@ -62,8 +60,8 @@ The Elixir functions are `Flezha.SDK.Ctx`'s, imported by
 `use Flezha.SDK.Tasklet`. Registration returns the **absolute** scheduled
 timestamp, which is the handle a cancellation takes. Pending timers are a **set**: a duplicate registration
 is idempotent, and cancelling an unregistered timer changes nothing.
-`on_timer` / `onTimer` receives the same `StateHandle` and `TaskletCtx` as
-`run`, so a firing may apply Changes, emit and register further timers. Its
+`on_timer` / `onTimer` receives the same state and context as `run` (in Java
+the one `Ctx`), so a firing may apply Changes, emit and register further timers. Its
 default panics (Rust) / throws (Java) naming the Tasklet — registration is
 a runtime call, so an unhandled timer cannot be caught at build time; in
 Elixir, where `on_timer/4` is an optional behaviour callback, a firing on a
@@ -82,7 +80,7 @@ arrived" — a session timeout, an idle flush, a join expiry — and the
 event-time timer is for a deadline the data itself reaches, such as a window
 boundary. `timer_at_event_time` is refused
 (`EventTimeTimerWithoutEventTimeClock`) unless the Tasklet declares
-`type Clock = EventTimeFrom<_>` / `clockType() == EventTimeFrom.class`.
+`type Clock = EventTimeFrom<_>` (Rust) or writes `eventTime(input)` (Java).
 
 **`timer_after(d)` anchors on `ctx.now()`**, not an ambient read, so a
 replayed invocation registers the same absolute timestamp the live one did.
@@ -217,7 +215,7 @@ wedged, not an idle Operator.
 | --- | --- | --- | --- |
 | Pending set, `TimerOp`, `TimerPolicy`, `TimerSession`, `TimerCounters`, arming (`apply_ops` / `rearm_restored`) | `flz_core/src/timer.rs` (re-exported by `sdk/rust/src/cell/timer.rs`, which adds `timer_policy_for::<S>()`) | `flezha-sdk-runtime/.../state/{TimerOp,PendingTimers,TimerPolicy,TimerSession}.java`, `.../cell/TimerCounters.java` | `lib/flezha/sdk/timers.ex` (the set and the session); arming in `lib/flezha/sdk/cell.ex` (`arm`, `disarm`, `rearm`) |
 | Both triggers: event-time due generation at batch assembly, processing-time on the deferred-wake list | `flz_core/src/poll_core/` | shared core | `cell.ex` — `admit/2` at admission, `handle_info({:timer_due, _})` off the BEAM's timer service |
-| The surface and the hook | `sdk/rust/src/tasklet/{ctx,mod}.rs` | `flezha-sdk-api/.../tasklet/{TaskletCtx,Tasklet}.java`, `.../state/TimerKind.java` | `lib/flezha/sdk/{ctx,tasklet}.ex` |
+| The surface and the hook | `sdk/rust/src/tasklet/{ctx,mod}.rs` | `flezha-sdk-api/.../tasklet/{Ctx,Tasklet}.java`, `.../state/TimerKind.java` | `lib/flezha/sdk/{ctx,tasklet}.ex` |
 | The invocation (`invoke_once`) and the restore fold | `sdk/rust/src/operator/dispatcher.rs`, `sdk/rust/src/cell/restore.rs` | `flezha-sdk-runtime/.../core/ActivationDispatcher.java` (`RestoreFold`) | `cell.ex` (`dispatch/2`, `call/3`), `lib/flezha/sdk/record.ex` (the fold), `lib/flezha/sdk/cell/records.ex` (the record, the restatement, the slot) |
 | Record formats (`FORMAT_ID_TIMER_OPS`, `EffectRecordBody.timers`) | `flz_core/src/{header,schema}.rs` | shared core | `Flezha.SDK.Wire.encode_timer_ops/1` — the same bytes |
 | Controller: `Flezha.SDK.Wire` decodes the effect record's `timers` field; nothing else changes | `sdk/elixir/lib/flezha/sdk/wire.ex` | — | — |

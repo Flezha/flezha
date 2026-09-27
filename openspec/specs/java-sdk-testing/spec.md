@@ -56,9 +56,9 @@ The Java reference test app at `test/apps/java_runner/` SHALL implement its fixt
 - **WHEN** the factory ids the controller lists for a connected Java runner are compared to the union of the Java manifest's `fixtures`
 - **THEN** the two SHALL be equal sets, and for every non-deferred capability the Java manifest's ids SHALL equal the Rust manifest's
 
-#### Scenario: Java test app uses the new Tasklet / TaskletCtx API exclusively
+#### Scenario: Java test app uses the new Tasklet / Ctx API exclusively
 - **WHEN** the Java test app's source files are scanned for `import com.flezha.sdk.OperatorHandler`, `com.flezha.sdk.FactoryRegistry`, `com.flezha.sdk.OperatorSettings`, `com.flezha.sdk.OperatorResult`, `com.flezha.sdk.OperatorRunner`, `com.flezha.sdk.InputTransformer`, or `com.flezha.sdk.OutputTransformer`
-- **THEN** zero matches SHALL be found — the test app's classes use only `UnboundedOperator`, `Tasklet`, `TaskletCtx`, `ChannelBuilder`, and `FlezhaRunner.registerFactory`
+- **THEN** zero matches SHALL be found — the test app's classes use only `UnboundedOperator`, `Tasklet`, `Ctx`, `ChannelBuilder`, and `FlezhaRunner.registerFactory`
 
 ### Requirement: Elixir Integration Harness Supports Java Runtime
 
@@ -114,37 +114,42 @@ The project CI workflow SHALL run the Java SDK unit tests, the JNI bridge tests,
 
 ### Requirement: TaskletTestHarness in flezha-sdk-testing artifact
 
-The `flezha-sdk-testing` Maven artifact SHALL export `com.flezha.sdk.testing.TaskletTestHarness<Input, State, Output, Change extends com.flezha.sdk.state.Change>` as a public type. The harness SHALL support:
+The `flezha-sdk-testing` Maven artifact SHALL export `com.flezha.sdk.testing.TaskletTestHarness<Input, State, Output>` as a public type. The harness SHALL support:
 
-- `static <I, S, O, C extends Change> TaskletTestHarness<I, S, O, C> of(Tasklet<I, S, O, C, ?, ?> tasklet)` — constructs a harness with state from `tasklet.initState(Optional.empty(), Optional.empty())`.
-- `withInitialState(State state)` — explicit initial state.
-- `withPayload(Optional<String> cellKey, RestoreInitPayload payload)` — replicates the runtime's snapshot+changelog restoration flow.
-- `applyInputs(Iterable<Input> inputs)` — invokes `Tasklet.run` for each input on the harness's owned state, recording emits and Changes; returns `this` for chaining.
-- `expectChanges(List<Change> expected)` — asserts equality, throws `AssertionError` with diagnostic on mismatch, returns `this`.
-- `expectEmits(Class<C> type, List<C> expected)` — asserts emits of type `C` equal expected, returns `this`.
-- `expectState(State expected)` — asserts state equality (via Kryo bytes), returns `this`.
-- `replay(State initial, List<Change> log) -> State` — folds the log via `Tasklet.applyChange`, returns terminal state.
-- `replayEquals() -> Optional<ReplayMismatch>` — replays self.recordedChanges against a re-constructed initial state and asserts byte-equality (via Kryo round-trip) with self.state. Empty optional = pass; non-empty carries `expectedBytes` and `actualBytes` for the test failure message.
+- `static <I, S, O> TaskletTestHarness<I, S, O> of(Tasklet<I, S, O> tasklet)`, which constructs a harness whose state comes from the tasklet's initial-state rule for no cell key.
+- `withInitialState(State state)`, an explicit initial state.
+- `withPayload(Optional<String> cellKey, RestoreInitPayload payload)`, which replicates the runtime's snapshot and change-log restoration flow.
+- `applyInputs(Iterable<Input> inputs)`, which invokes `Tasklet.run` for each input on the harness's owned state, recording emits and every `ctx.change` call, and returns `this` for chaining.
+- `expectChanges(List<Change<State>> expected)`, which asserts equality, throws `AssertionError` with a diagnostic on mismatch, and returns `this`.
+- `expectEmits(Class<C> type, List<C> expected)`, which asserts emits of type `C` equal expected, and returns `this`.
+- `expectState(State expected)`, which asserts state equality (via Kryo bytes) and returns `this`.
+- `replay(State initial, List<Change<State>> log) -> State`, which folds the log through each change's `applyTo` and returns the terminal state.
+- `replayEquals() -> Optional<ReplayMismatch>`, which replays the recorded changes against the captured initial state and asserts byte-equality (via Kryo round-trip) with the harness's state. An empty optional is a pass; a non-empty one carries `expectedBytes` and `actualBytes` for the test failure message.
 
 #### Scenario: Harness asserts on recorded Changes
 
-- **WHEN** a JUnit test runs `TaskletTestHarness.of(new CounterTasklet()).applyInputs(List.of(new Input.Add(5), new Input.Add(3))).expectChanges(List.of(new CounterChange(5), new CounterChange(3)))`
-- **THEN** the chain SHALL succeed with no `AssertionError` thrown; the harness's `recordedChanges` SHALL equal the expected list
+- **WHEN** a JUnit test runs `TaskletTestHarness.of(new Counter()).applyInputs(List.of(new Input.Add(5), new Input.Add(3))).expectChanges(List.of(new Added(5), new Added(3)))`
+- **THEN** the chain SHALL succeed with no `AssertionError` thrown, and the harness's recorded changes SHALL equal the expected list
 
 #### Scenario: Harness replays for determinism check
 
-- **WHEN** a JUnit test runs `TaskletTestHarness.of(new CounterTasklet()).applyInputs(inputs).replayEquals()` against a deterministic `applyChange`
+- **WHEN** a JUnit test runs `TaskletTestHarness.of(new Counter()).applyInputs(inputs).replayEquals()` against deterministic `applyTo` methods
 - **THEN** the result SHALL be `Optional.empty()` and the test SHALL pass
 
-#### Scenario: Harness detects non-deterministic applyChange
+#### Scenario: Harness detects non-deterministic applyTo
 
-- **WHEN** a Tasklet's `applyChange` reads `System.currentTimeMillis()` and uses it to seed a state field, AND the harness runs `replayEquals()`
+- **WHEN** a change's `applyTo` reads `System.currentTimeMillis()` and uses it to seed a state field, AND the harness runs `replayEquals()`
 - **THEN** the result SHALL be `Optional.of(new ReplayMismatch(expectedBytes, actualBytes))` whose `toString()` renders a hex-diff identifying the divergent bytes
+
+#### Scenario: Harness takes the author's class
+
+- **WHEN** a test builds `TaskletTestHarness.of(new TrackPrices())` for a class annotated `@Tasklet.Spec(name = "track_prices")`
+- **THEN** the harness SHALL run that class directly, with no generated class involved
 
 #### Scenario: Harness compiles only for testing-scope dependencies
 
 - **WHEN** a downstream Java module depends on `flezha-sdk-testing` with `<scope>test</scope>` AND attempts to use `TaskletTestHarness` from `src/main/java/`
-- **THEN** Maven SHALL fail the compile with a "package not visible at compile scope" error; the harness SHALL be visible only from `src/test/java/`
+- **THEN** Maven SHALL fail the compile with a "package not visible at compile scope" error, and the harness SHALL be visible only from `src/test/java/`
 
 ### Requirement: TaskletTestHarness JUnit assertions are AssertJ-style chainable
 
@@ -162,23 +167,23 @@ The `TaskletTestHarness` API SHALL be method-chainable (each `expect*` method re
 
 ### Requirement: TaskletTestHarness uses KryoCodec for byte-equality state comparison
 
-`TaskletTestHarness.replayEquals()` and `TaskletTestHarness.expectState()` SHALL serialize both the actual and expected `State` values via `KryoCodec` (constructed from the Tasklet's `kryoTypes()`) and compare the resulting `byte[]` arrays via `Arrays.equals`. This avoids requiring `State` to override `equals` correctly (Java's default `equals` is reference equality; record `equals` works but user POJO `equals` is often broken).
+`TaskletTestHarness.replayEquals()` and `TaskletTestHarness.expectState()` SHALL serialize both the actual and expected `State` values via `KryoCodec`, constructed from the same user types registration would register for the tasklet, and compare the resulting `byte[]` arrays via `Arrays.equals`. This avoids requiring `State` to override `equals` correctly (Java's default `equals` is reference equality; record `equals` works but user POJO `equals` is often broken).
 
-The Tasklet's `kryoTypes()` SHALL include all classes reachable from `State` for `replayEquals` and `expectState` to work; missing types SHALL throw `StateSerializeException::UnregisteredClass(className)` from the Kryo round-trip, with a diagnostic message naming the missing class.
+A class reachable from `State` that is neither discovered nor listed in an overriding `kryoTypes()` SHALL throw `StateSerializeException::UnregisteredClass(className)` from the Kryo round-trip, with a diagnostic message naming the missing class. `applyInputs` SHALL encode every change an invocation records with that same codec, as the runtime's flush does, so a change class the codec does not register (one declared outside the tasklet and its state, or a lambda) SHALL throw `UnregisteredClass` from `applyInputs`.
 
-#### Scenario: Record State works without registration of inner types
+#### Scenario: Record State works with discovered types
 
-- **WHEN** a Tasklet declares `State = OhlcState` (a record carrying primitives only) AND `kryoTypes() = List.of(OhlcState.class)`
+- **WHEN** a tasklet's state is `OhlcState` (a record carrying primitives only) and the tasklet does not override `kryoTypes()`
 - **THEN** `replayEquals()` SHALL succeed via Kryo bytes equality
 
-#### Scenario: State referencing un-registered class throws diagnostic
+#### Scenario: State referencing an unregistered class throws a diagnostic
 
-- **WHEN** a Tasklet declares `State = OrderBookState` containing a `Map<Long, Level>` where `Level` is not in `kryoTypes()`
+- **WHEN** a tasklet overrides `kryoTypes()` to return `[OrderBookState.class]`, and `OrderBookState` holds a `Map<Long, Level>` where `Level` is not in that list
 - **THEN** `replayEquals()` SHALL throw `StateSerializeException::UnregisteredClass("Level")` with a clear pointer to the missing registration
 
 ### Requirement: TaskletTestHarness records emits without invoking the wire path
 
-The harness SHALL provide a `TestTaskletCtx` implementation of `TaskletCtx` that records `emit` and `emitWithMeta` calls into a `List<EmitRecord>` accessible via `harness.recordedEmits()`. The test ctx SHALL NOT invoke `NativeTransport.*` or any JNI bridge; the emits exist only in-memory.
+The harness SHALL provide an implementation of `Ctx` that records `emit` and `emitWithMeta` calls into a `List<EmitRecord>` accessible via `harness.recordedEmits()`. The test ctx SHALL NOT invoke `NativeTransport.*` or any JNI bridge; the emits exist only in-memory.
 
 #### Scenario: emit calls recorded but not shipped
 
@@ -276,19 +281,19 @@ The Elixir↔Java integration suite SHALL exercise a run-once Java bounded opera
 
 ### Requirement: TaskletTestHarness replayEquals replays against the captured initial snapshot
 
-`TaskletTestHarness.replayEquals()` SHALL reconstruct its replay baseline from the initial `State` captured (Kryo-serialized) at construction — whether the harness was built by `of(...)`, `withInitialState(...)`, or `withPayload(...)` — and fold the recorded Changes onto a fresh deserialization of that snapshot, matching the Rust `TaskletTestHarness`. It SHALL NOT rebuild the baseline by calling `initState(Optional.empty(), Optional.empty())` afresh at replay time. This makes the harness honor a `withInitialState`/`withPayload` baseline whose `State` carries init-derived, non-journaled fields (e.g. a per-cell window length supplied via the `@InitState` hook), which the prior `initState(empty)` reconstruction would report as a false replay divergence.
+`TaskletTestHarness.replayEquals()` SHALL reconstruct its replay baseline from the initial `State` captured (Kryo-serialized) at construction, whether the harness was built by `of(...)`, `withInitialState(...)`, or `withPayload(...)`, and fold the recorded changes onto a fresh deserialization of that snapshot, matching the Rust `TaskletTestHarness`. It SHALL NOT rebuild the baseline by applying the initial-state rule afresh at replay time. This makes the harness honor a `withInitialState` or `withPayload` baseline whose `State` carries init-derived, non-journaled fields (e.g. a per-cell window length supplied by an `initState(cellKey)` override), which rebuilding from the initial-state rule would report as a false replay divergence.
 
-A stateless Tasklet (`Change = NoChange`) SHALL keep no replay baseline: `replayEquals()` SHALL return `Optional.empty()` without serializing the state, since nothing is journaled and the `Stateless` state is not Kryo-registered.
+A tasklet with `Void` state SHALL keep no replay baseline: `replayEquals()` SHALL return `Optional.empty()` without serializing any state, since nothing is journaled.
 
 #### Scenario: withInitialState baseline is honored
 
-- **WHEN** a harness is built via `withInitialState(state)` for a Tasklet whose `State` has a key-derived field set outside the journaled Change log, inputs are applied, and `replayEquals()` runs
-- **THEN** the recorded Changes are folded onto the captured `state` snapshot rather than a fresh `initState(Optional.empty(), Optional.empty())`, so the key-derived field matches and the result is `Optional.empty()`
+- **WHEN** a harness is built via `withInitialState(state)` for a tasklet whose `State` has a key-derived field set outside the journaled change log, inputs are applied, and `replayEquals()` runs
+- **THEN** the recorded changes are folded onto the captured `state` snapshot rather than onto a freshly built initial state, so the key-derived field matches and the result is `Optional.empty()`
 
-#### Scenario: Stateless Tasklet keeps no replay baseline
+#### Scenario: A Void-state tasklet keeps no replay baseline
 
-- **WHEN** `replayEquals()` runs on a harness for a `NoChange` Tasklet
-- **THEN** it returns `Optional.empty()` without serializing the stateless state, since no Changes are journaled
+- **WHEN** `replayEquals()` runs on a harness for a tasklet with `Void` state
+- **THEN** it returns `Optional.empty()` without serializing any state, since no changes are journaled
 
 ### Requirement: TaskletTestHarness verifies the determinism contract on the output side
 
@@ -308,7 +313,7 @@ This is what lets a Java author verify the determinism contract (`ctx.now()` / `
 
 ### Requirement: TaskletTestHarness supports injectable clocks
 
-The `TaskletTestHarness` SHALL support driving the Tasklet's declared `Clock` from the test rather than from the ambient system clock: `withWallClock(long fixedMillis)` SHALL pin `ctx.now()` to a constant, and `withWallClockScript(long... millis)` SHALL serve one value per successive invocation. For an `EventTimeFrom` Tasklet the harness SHALL serve the value the Tasklet's `eventTime(input)` extractor returns; for a `LogicalClock` Tasklet it SHALL serve the harness's durable change seq.
+The `TaskletTestHarness` SHALL support driving the tasklet's clock from the test rather than from the ambient system clock: `withWallClock(long fixedMillis)` SHALL pin `ctx.now()` to a constant, and `withWallClockScript(long... millis)` SHALL serve one value per successive invocation. For a tasklet that writes `eventTime` the harness SHALL serve the value `eventTime(input)` returns; for a tasklet declaring `logicalClock = true` it SHALL serve the harness's durable change seq.
 
 #### Scenario: A fixed wall clock makes now() constant across invocations
 
@@ -319,6 +324,11 @@ The `TaskletTestHarness` SHALL support driving the Tasklet's declared `Clock` fr
 
 - **WHEN** a harness built with `withWallClockScript(1000L, 2000L, 3000L)` applies three inputs
 - **THEN** the invocations' `ctx.now()` SHALL return `1000`, `2000`, and `3000` respectively
+
+#### Scenario: An event-time tasklet reads its time from the input
+
+- **WHEN** a harness runs a tasklet whose `eventTime(trade)` returns `trade.at()`, on a trade with `at = 5000`
+- **THEN** that invocation's `ctx.now()` SHALL return `5000`
 
 ### Requirement: TaskletTestHarness asserts keyed emits and identity stamps
 

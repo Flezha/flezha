@@ -52,8 +52,8 @@ The whole example:
 
 ```java
 // TrackPrices.java: keeps a symbol's last ten prices, and compares each new one with their average.
-@Tasklet(id = "track_prices")
-public final class TrackPrices {
+@Tasklet.Spec(name = "track_prices")
+public final class TrackPrices implements Tasklet<TrackPrices.Trade, TrackPrices.PriceWindow, TrackPrices.Move> {
 
     @JsonIgnoreProperties(ignoreUnknown = true)              // the exchange sends more than the desk reads
     public record Trade(String symbol, double price, String ord_type) {}
@@ -61,24 +61,27 @@ public final class TrackPrices {
 
     private static final int WINDOW = 10;
 
-    @State
     public static class PriceWindow {                        // what each symbol's cell remembers
         public Deque<Double> prices = new ArrayDeque<>();
     }
 
-    public Optional<Move> run(Trade trade, PriceWindowHandle window) {
-        Deque<Double> prices = window.get().prices;
-
-        // A symbol's first trade has nothing to be compared with.
-        Optional<Move> move = prices.isEmpty()
-                ? Optional.empty()
-                : Optional.of(new Move(trade.symbol(), trade.price(), average(prices)));
-
-        window.pushBackPrices(trade.price());
-        if (prices.size() > WINDOW) {
-            window.popFrontPrices(1);
+    public record PriceSeen(double price) implements Change<PriceWindow> {  // how a price joins the window
+        @Override
+        public void applyTo(PriceWindow window) {
+            window.prices.addLast(price);
+            if (window.prices.size() > WINDOW) {
+                window.prices.removeFirst();
+            }
         }
-        return move;
+    }
+
+    @Override
+    public void run(Trade trade, Ctx<PriceWindow, Move> ctx) throws TaskletException {
+        Deque<Double> prices = ctx.state().prices;
+        if (!prices.isEmpty()) {                             // a symbol's first trade has nothing to compare with
+            ctx.emit(new Move(trade.symbol(), trade.price(), average(prices)));
+        }
+        ctx.change(new PriceSeen(trade.price()));
     }
 
     private static double average(Deque<Double> prices) {
@@ -90,50 +93,43 @@ public final class TrackPrices {
 **Flezha calls `run` once for every trade**, and passes it two things:
 
 - `trade` is the input: one trade, as it arrives on the tasklet's channel.
-- `window` is the state of this symbol's cell, what it remembers. It holds the
-  `PriceWindow` class above, and `@State` generates `PriceWindowHandle` around
-  it: `window.get()` reads the window, and `pushBackPrices` and
-  `popFrontPrices` add a price at the end and drop one from the front.
+- `ctx` is the context, the tasklet's way of talking to Flezha. `ctx.state()`
+  is this symbol's cell state, what it remembers: the `PriceWindow` above.
+  `ctx.emit(...)` hands a `Move` on, and `ctx.change(...)` records a change to
+  the state.
 
-What `run` returns is what the tasklet emits, here a `Move`. An `Optional`
-emits only when a value is present, which is how the first trade emits
-nothing.
+`Tasklet<Trade, PriceWindow, Move>` names the three types in that order: what
+comes in, what the cell remembers, and what goes out. The first trade of a
+symbol emits nothing, because `run` only calls `ctx.emit` when there is an
+average to compare with.
 
-A `run` always takes its input first, then its state when the tasklet remembers
-something. A tasklet that remembers nothing takes only the input, and one that
-needs Flezha for more than returning a value takes a context last, as
-`buy_above_average` below does.
+**The state changes only through a change.** `PriceSeen` is the one change the
+window records: a record that carries the price, with an `applyTo` that adds it
+and drops the oldest once there are more than ten. `ctx.change` runs `applyTo`
+and writes the change down, and after a crash Flezha runs `applyTo` again for
+every change it wrote, which is how the window comes back. Assigning a field of
+`ctx.state()` directly would work until the first crash and then be gone.
 
-`Trade`, `Move` and `PriceWindow` sit inside the tasklet, because nothing else
-uses them. The annotation on `Trade` is explained with the operator below, and
-the box below lists what the annotations generate.
+`Trade`, `Move`, `PriceWindow` and `PriceSeen` sit inside the tasklet, because
+nothing else uses them. The annotation on `Trade` is explained with the
+operator below, and the box below lists what `@Tasklet.Spec` declares.
 
-> #### What the Java annotations generate {: .info}
+> #### What `@Tasklet.Spec` declares {: .info}
 >
-> The SDK's annotation processor writes some classes for you when the project
-> compiles, named after the classes you annotate:
+> Nothing is generated: the class you write is the class the operator names in
+> `into(...)`. `@Tasklet.Spec` is read when the runner registers the operator,
+> and carries the tasklet's name and settings:
 >
-> | You write | It generates | What it is |
-> |---|---|---|
-> | `@Tasklet` on `TrackPrices` | `TrackPricesTasklet` | the full tasklet, the class the operator names in `into(...)` |
-> | `@State` on `PriceWindow` | `PriceWindowHandle` | the parameter `run` takes: `get()` reads the state, and one method per way a field can change |
-> | | `PriceWindowChange` | the changes those methods record, which bring the state back after a crash |
->
-> The handle's methods depend on each field's type, and carry the field's name:
->
-> | A field `prices` that is | Gives the handle |
+> | Member | What it is |
 > |---|---|
-> | any type | `setPrices(value)` |
-> | a `List` | `setPrices`, and `pushPrices(element)` |
-> | a `Deque` | `setPrices`, `pushBackPrices(element)` and `popFrontPrices(n)` |
-> | a `Map` | nothing until the field says how its entries change, with `@Journal` |
+> | `name` | required: the name the tasklet's state is saved under, so choose it once |
+> | `keys` | fixed cell keys, with a `cellsFor` method that routes each input |
+> | `capacity`, `maxCells`, `idleTtlSeconds` | the cell's mailbox, the cap on cells, and how long an idle cell lives |
+> | `schemaVersion`, `logicalClock` | the version of the saved state, and a clock that counts changes |
 >
-> The annotations are a short form, and you do not have to use them. A class can
-> implement `Tasklet` itself and write out what they generate: its six type
-> arguments, its state, the changes it records and how each one applies. That
-> full form is also how a tasklet declares what the short form cannot, such as
-> an `onTimer`. [`full_form_tasklets.md`](../advanced/full_form_tasklets.md) in
-> Part 3 covers it.
+> A change nested in the tasklet or its state, like `PriceSeen`, is registered
+> for saving on its own. Optional hooks, such as a timer's `onTimer` or an
+> undo's `compensate`, are declared by writing the method.
 
 ### Rust
 
@@ -209,13 +205,14 @@ first input: the symbol, and how many to buy.
 
 ```java
 // BuyAboveAverage.java: buys when a price is far enough above its average.
-@Tasklet(id = "buy_above_average", emits = String.class)
-public final class BuyAboveAverage {
+@Tasklet.Spec(name = "buy_above_average")
+public final class BuyAboveAverage implements Tasklet<Move, Void, String> {
 
     private static final double BUY_ABOVE_PCT = 2.0;
     private static final int UNITS_PER_PERCENT = 10;
 
-    public void run(Move move, TaskletCtx ctx) throws TaskletException {
+    @Override
+    public void run(Move move, Ctx<Void, String> ctx) throws TaskletException {
         double percent = (move.price() - move.average()) / move.average() * 100.0;
         if (percent < BUY_ABOVE_PCT) {
             return;
@@ -231,12 +228,11 @@ public final class BuyAboveAverage {
 }
 ```
 
-`run` takes the move, its input, and no state, because it remembers nothing.
-It also takes the context, because it does two things per input: it starts a
-bounded operator and it emits. A `void` method declares no output, so `emits`
-names the type it emits. `spawnBounded` sends the order as JSON, and
-`order_executor` decodes it back into an `OrderTicket`, the order it takes,
-declared in [`building_a_workflow.md`](building_a_workflow.md).
+`Tasklet<Move, Void, String>`: it takes the move, keeps no state, because it
+remembers nothing, and emits a line. It does two things per input through the
+context: it starts a bounded operator and it emits. `spawnBounded` sends the
+order as JSON, and `order_executor` decodes it back into an `OrderTicket`, the
+order it takes, declared in [`building_a_workflow.md`](building_a_workflow.md).
 
 ### Rust
 
@@ -356,23 +352,24 @@ have several. The desk needs only one.
 // TradeWatcherOperator.java: the unbounded operator. Trades in, signals out.
 public final class TradeWatcherOperator implements UnboundedOperator {
 
-    @JsonIgnoreProperties(ignoreUnknown = true)              // the exchange sends more than the desk reads
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public record TradeMessage(String channel, List<Trade> data) {}
 
     @Override
+    @Nonnull
     public String factoryId() {
         return "trade_watcher";
     }
 
     @Override
-    public void channels(ChannelBuilder c) {
+    public void channels(@Nonnull ChannelBuilder c) {
         c.input(TradeMessage.class, "trades")
                 .filter(message -> "trade".equals(message.channel())) // trade messages only
                 .flatMap(Trade.class, TradeMessage::data)            // a message into its trades
                 .filter(trade -> "market".equals(trade.ord_type()))  // market orders only
                 .keyBy(Trade::symbol)                                // one cell per symbol
-                .into(TrackPricesTasklet.class)
-                .into(BuyAboveAverageTasklet.class)
+                .into(TrackPrices.class)
+                .into(BuyAboveAverage.class)
                 .sink("signals")
                 .sealed();
     }
@@ -383,10 +380,9 @@ public final class TradeWatcherOperator implements UnboundedOperator {
 it is, and `data` holds its trades. It lives inside the operator, the only
 place that reads it. The default JSON decoding refuses a field the
 record does not name, so `@JsonIgnoreProperties`, here and on `Trade`, tells it
-to drop the exchange's other fields. `TrackPricesTasklet` and
-`BuyAboveAverageTasklet` are the classes `@Tasklet` generates from the two
-tasklets above. `sealed()` says the path ends at `signals`: a later `into` on
-it no longer compiles.
+to drop the exchange's other fields. `into` names the two tasklet classes
+above, `TrackPrices` and `BuyAboveAverage`. `sealed()` says the path ends at
+`signals`: a later `into` on it no longer compiles.
 
 ### Rust
 

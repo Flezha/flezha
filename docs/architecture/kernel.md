@@ -452,7 +452,7 @@ identity, and user code reads them from the context.
 flowchart TB
     subgraph GOOD["ctx mediates — replay-stable"]
         DISP["⚙️ Dispatcher<br/>once per invocation: evaluate the declared Clock,<br/>snapshot change_seq, reset the ordinal counter"]:::exec
-        CTX["TaskletCtx"]:::exec
+        CTX["ctx, the tasklet context"]:::exec
         DISP --> CTX
         CTX -->|"ctx.now()"| T["time · WallClock | EventTimeFrom&lt;F&gt; | LogicalClock"]:::store
         CTX -->|"ctx.stable_id()"| ID["FNV-1a-128 over<br/>cell identity ‖ change_seq ‖ ordinal"]:::store
