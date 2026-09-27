@@ -165,6 +165,7 @@ the logical id.
 | `delete_cell_state` | runner → controller | Dynamic-Cell hard delete (§11) |
 | `park_payload` | runner → controller | Dead-letter park (§11) |
 | `correction_request` | runner → controller | Late-input correction (§11) |
+| `processed_prefix` | runner → controller | An instance's processed input prefix (§11) |
 
 ### Frame limits
 
@@ -825,7 +826,7 @@ naming namespace, runner, factory id and affected operators.
 ### SpawnBoundedRequest
 
 `SpawnBoundedRequest { instance_id, factory_id, payload: bytes, if_running:
-string }` travels runner → controller (tag 34) when a tasklet asks for a
+string, identity: string }` travels runner → controller (tag 34) when a tasklet asks for a
 bounded instance (`ctx.spawn_bounded` / `ctx.spawnBounded`). The controller
 spawns `factory_id` under `instance_id` when free, with `payload` as its first
 message (empty = spawn only): an ordinary entry message naming no channel, so
@@ -834,8 +835,18 @@ rule (bytes as they are, a string as UTF-8, anything else as JSON); otherwise
 `if_running` applies: `"deliver"` (default; any unrecognised value reads as
 deliver) sends `payload` to the running instance as one more message,
 `"error"` refuses. An empty `instance_id` asks the
-controller to generate one; such a request always spawns and `if_running` is
+controller to generate one; such a request spawns and `if_running` is
 ignored.
+
+`identity` names a tasklet's request across a re-run of its input: FNV-1a-128,
+rendered as 32 lowercase hex digits, over the requesting Cell's identity, the
+input-log offset its invocation took (8 bytes big-endian), the call's position
+in the invocation (4 bytes), the factory id and the payload, each part
+preceded by its length as 8 bytes big-endian. It is empty for an invocation
+that took no offset and for a spawn from outside a tasklet. A generated id is
+derived from it, and a delivered payload carries it as its `flz.msg_id`, so a
+request whose identity was already resolved answers the operator the first one
+started, running or completed, and delivers nothing twice.
 
 **The namespace is not carried**: the controller takes it from the control
 channel the request arrived on, which makes cross-namespace spawning impossible
@@ -1109,7 +1120,10 @@ header for every host it serves — and the Elixir SDK's own fold does the same
 
 Runner → controller, from a Cell that records effects: an unbounded Cell on the
 effectively-once tier, and every Cell of a durable bounded class (which does
-not declare the tier; the record is its durability). Same frame as
+not declare the tier; the record is its durability). A persistent Cell off the
+tier writes one too for the inputs it took with a `flz.offset`: the changes of
+a drain fold into one record carrying the highest offset folded, so the offset
+rides the record of the state it produced. Same frame as
 `cell_state_change` with `format_id = 2`; `body` is the postcard
 `EffectRecordBody`: one invocation's state change(s), plugin outputs and
 consumed input-log offset, persisted by the controller as ONE WAL record under
@@ -1128,7 +1142,9 @@ EffectRecordBody {
     dlq:             Option<DlqEntryBody>,
     event_time:      u64,               -- the invocation's declared clock value
     timers:          Vec<TimerOp>,      -- this invocation's pending-timer mutations
+    edges:           Vec<EdgeRecord>,   -- inter-tasklet values, where the record carries the offset
 }
+EdgeRecord   { channel: u32, consumer: u32, origin: Option<u64>, payload: Vec<u8> }
 TimerOp      { kind: u32 (0 event time, 1 processing time), scheduled_at: u64 ms, register: bool }
 OutputRecord { channel: String, key: String, metadata: Vec<(String, String)> key-sorted, payload: Vec<u8> }
 DlqEntryBody { channel: String, error: String, attempts: u32, payload: Option<Vec<u8>> }
@@ -1137,6 +1153,12 @@ DlqEntryBody { channel: String, error: String, attempts: u32, payload: Option<Ve
 Postcard encodes `Vec`/`String` as a LEB128 varint length + contents, structs
 as concatenated fields and `Option` as `0x00 | 0x01 ++ T`.
 
+- `edges` keeps each inter-tasklet value the input produced: the channel and
+  consuming tasklet as the writing SDK numbers them, the input-log offset it
+  derives from, and the value through the channel's codec. A bind delivers
+  every kept value whose origin is above the instance's floor again, ahead of
+  the re-forwarded tail (`flz.edge`, below); a consumer whose own records took
+  that offset drops it.
 - `event_time` is what the Tasklet's declared clock evaluated to (extracted
   event time under `EventTimeFrom`, wall-clock ms under `WallClock`, the change
   seq under `LogicalClock`); late-input correction and `{:timestamp, ts}`
@@ -1427,6 +1449,7 @@ message TaskJournalState {
     bool   completed = 10;                         // the last committed iteration ended the instance
     bytes  result = 11;                            // and ended it with this
     string entry_channel = 12;                     // the chain the last committed iteration ran
+    optional uint64 released_offset = 13;          // highest offset released by a commit or an unread dead letter
 }
 ```
 
@@ -1623,12 +1646,14 @@ controller owes it (`AddOperator.inbox_tail_count`) before it may sleep again.
 A message the run parked to the dead-letter queue unread (an undeclared
 channel, a parse the entry's ladder never got past, a host decoder's unreadable
 verdict) is consumed without a pass; `consumed_offset` names the highest such
-input-log offset, so the park releases it as an `IterCommit` releases its input
-and a suspended instance is not rehydrated to receive it again.
+input-log offset. The controller journals it as released (an `input_released`
+task-journal entry) before it records the park, as an `IterCommit` releases its
+input, so a suspended instance is not rehydrated to receive it again, across a
+restart too; the driver drops a re-forwarded message at or below the journal's
+`released_offset`.
 
-The controller writes the instance's park record (its wake deadline and
-`consumed_offset`) beside the class's declarations, durable BEFORE the
-eviction, then evicts the instance from its runner (`RemOperator`); the
+The controller writes the instance's park record (its wake deadline) beside
+the class's declarations, durable BEFORE the eviction, then evicts the instance from its runner (`RemOperator`); the
 bind that wakes it clears the record. The
 registry entry and the controller-side Overwatch stay: it is the **runner**
 that holds zero resources, and `flz operator info` reports the instance
@@ -1651,13 +1676,37 @@ a durable bounded operator, or an instance of a class that sleeps. Its input is 
 record is synced, and the forwarded frame carries the assigned offset as
 `flz.offset`. Offsets are 0-based; absent means the input was not journaled (an
 instance without durable input), never offset `0`. An unbounded operator threads it into
-its effect record's `consumed_offset`; a bounded operator into
+its Cells' effect records' `consumed_offset`; a bounded operator into
 `IterCommit.consumed_offset`, or `IterPark.consumed_offset` for a message it
 parked unread, and an iteration that consumed no journaled input (a carry-fed
-pass) carries none. An unbounded operator that sleeps reports none: the controller reports each offset it
-forwarded to a bound runner instead. The controller reports each into the
-log's watermark, retention reclaims below it, and every bind re-forwards
-exactly the retained records above it, each with its original `flz.offset`.
+pass) carries none. A Cell drops an input stamped at or below the highest
+offset it took, restored from its records and raised as it takes each forwarded
+input, so a tail forwarded twice is taken once. The controller reports each
+offset into the log's watermark, retention reclaims below the instance's floor,
+and every bind re-forwards exactly the retained records above it, each with its
+original `flz.offset`. A bind first re-delivers the inter-tasklet values the
+Cells' records kept for inputs above the floor, each stamped `flz.edge`
+(`"<channel>:<consumer>"`, the record's numbers) and `flz.offset` (its origin);
+the runner hands such a frame to that one consumer, never to an entry channel.
+
+### Data-stream payload-id `processed_prefix`
+
+Runner → controller, on the data stream of an unbounded instance whose input
+is journaled: a Cell frame whose identity names the instance (empty tasklet and
+key), whose seq is the offset `P` and whose 16 header bytes are zero. It says
+every input at or below `P` has been processed by every Cell it reached and
+every record it produced is on this stream ahead of the marker. The body is
+empty, or two bytes big-endian naming how many streams the runner sent the
+same marker on when it spreads the instance's records over several; the
+controller then counts `P` once each of them has. The runner never holds a
+marker for a reconnect, and sends none covering a record it lost.
+
+The controller confirms `P` once every Cell writer of the instance has fsynced
+past the bytes this stream had handed it when the marker arrived; records an
+earlier stream handed over are made durable by one flush the stream's first
+marker asks for, before any of its markers counts. A confirmed `P` is the instance's floor.
+Before one is confirmed, and after a controller restart, the floor is the
+minimum durable consumed offset over the instance's reporters.
 
 Dedup at append is keyed on the sender's `flz.msg_id` metadata only: an append
 whose id the log still retains is absorbed and nothing is forwarded, so an

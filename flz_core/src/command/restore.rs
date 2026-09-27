@@ -145,12 +145,12 @@ fn reseat_restored(slot: &Arc<CellSlot>, terminal: u64, change_log_bytes: &[u8])
     slot.change_seq.store(terminal + 1, Ordering::Release);
 
     // A restore re-seats the Cell on a different past — the crash's,
-    // or (for a correction) a deliberately rewound one. An open
-    // checkpoint interval's changes were never acknowledged, so the
-    // restored state does not contain them and the re-forwarded inputs
-    // produce them again; a half-filled replay buffer belongs to a
-    // slice that was abandoned. Both go, on every class.
-    slot.discard_staged_interval();
+    // or (for a correction) a deliberately rewound one. What the buffer has
+    // not shipped (an open checkpoint interval included) is not in the
+    // restored state and the re-forwarded inputs produce it again; a
+    // half-filled replay buffer belongs to a slice that was abandoned. Both
+    // go, on every class.
+    slot.discard_unshipped();
     slot.discard_replay_slice();
     // The mailbox goes only where the controller re-forwards it; the
     // slot owns that rule.
@@ -164,11 +164,14 @@ fn reseat_restored(slot: &Arc<CellSlot>, terminal: u64, change_log_bytes: &[u8])
     }
 
     let cursors = restore_cursors(change_log_bytes);
-    // Effectively-once: remember the highest input-log offset the
-    // restored effect records durably consumed, so the crash-replay
-    // re-forward skips already-applied inputs (`drain_cell`).
-    if let Some(floor) = cursors.consumed_offset {
-        slot.consumed_floor.store(floor as i64, Ordering::Release);
+    // The floor goes back to the offset the restored records carry, so the
+    // re-forward runs exactly what the restored state has not seen.
+    slot.consumed_floor.store(
+        cursors.consumed_offset.map_or(-1, |floor| floor as i64),
+        Ordering::Release,
+    );
+    if let Some(prefix) = slot.instance.upgrade().and_then(|i| i.prefix.clone()) {
+        prefix.restored();
     }
     // Correction: rebuild the event-time high-water, so a resumed
     // Cell neither mistakes its own history for a flood of late

@@ -125,6 +125,14 @@ defmodule FlezhaTest.Process.IdentificatorTest do
       assert id =~ ~r/\Aabcdefghijklmn-[a-z2-7]{16}\z/
     end
 
+    test "a seed mints one id in the drawn id's shape, and another seed another" do
+      id = Identificator.mint(:operator, "worker", seed: "origin-7")
+      assert id == Identificator.mint(:operator, "worker", seed: "origin-7")
+      assert id =~ ~r/\Aworker-[a-z2-7]{16}\z/
+      assert Identificator.validate(:operator, id) == :ok
+      refute id == Identificator.mint(:operator, "worker", seed: "origin-8")
+    end
+
     test "ids minted in a tight loop never repeat" do
       ids = for _ <- 1..20_000, do: Identificator.mint(:operator, "echo")
       assert length(Enum.uniq(ids)) == length(ids)

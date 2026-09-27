@@ -57,14 +57,14 @@ defmodule FlezhaTest.Operator.ClassRegistryTest do
   test "a park record survives a table wipe and is gone once cleared", %{class: class} do
     assert ClassRegistry.parked(class) == nil
 
-    :ok = ClassRegistry.put_parked(class, %{wake_deadline_ms: 1_700_000, consumed_offset: nil})
+    :ok = ClassRegistry.put_parked(class, %{wake_deadline_ms: 1_700_000})
     :ets.delete_all_objects(:flezha_operator_class_registry)
 
-    assert ClassRegistry.parked(class) == %{wake_deadline_ms: 1_700_000, consumed_offset: nil}
+    assert ClassRegistry.parked(class) == %{wake_deadline_ms: 1_700_000}
 
-    :ok = ClassRegistry.put_parked(class, %{wake_deadline_ms: nil, consumed_offset: 7})
+    :ok = ClassRegistry.put_parked(class, %{wake_deadline_ms: nil})
     :ok = ClassRegistry.delete(class)
-    assert ClassRegistry.parked(class) == %{wake_deadline_ms: nil, consumed_offset: 7}
+    assert ClassRegistry.parked(class) == %{wake_deadline_ms: nil}
 
     :ok = ClassRegistry.put_parked(class, nil)
     :ets.delete_all_objects(:flezha_operator_class_registry)

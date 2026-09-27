@@ -114,6 +114,9 @@ pub struct OperatorInstance {
     pub(crate) idle: crate::operator::sleep::IdleWatch,
     /// `Some` for a bounded class: the pass sheet its events advance.
     pub bounded: Option<crate::bounded::BoundedRun>,
+    /// An unbounded operator's processed prefix; a bounded operator's floor is
+    /// its journal.
+    pub prefix: Option<Arc<crate::prefix::PrefixLedger>>,
 }
 
 impl OperatorInstance {
@@ -137,6 +140,8 @@ impl OperatorInstance {
     ) -> Arc<Self> {
         // The runner override wins over the class const when present.
         let persistence_enabled = config_override.unwrap_or(topology.persistence_enabled_const);
+        let prefix = (topology.bounded.is_none() && persistence_enabled)
+            .then(|| crate::prefix::PrefixLedger::new(Arc::clone(&instance_id)));
         Arc::new_cyclic(|weak: &Weak<OperatorInstance>| {
             let topology_is_bounded = topology.bounded.is_some();
             let tasklet_count = topology.tasklets.len();
@@ -154,6 +159,7 @@ impl OperatorInstance {
                     tasklet_id as u32,
                     tasklet_desc,
                     persistence_enabled,
+                    &prefix,
                 );
                 cells.push(slots);
                 cell_key_to_idx.push(key_map);
@@ -180,6 +186,7 @@ impl OperatorInstance {
                 idle: Default::default(),
                 bounded: topology_is_bounded
                     .then(|| crate::bounded::BoundedRun::new(Weak::clone(weak))),
+                prefix,
             }
         })
     }
@@ -305,6 +312,7 @@ fn build_tasklet_cells(
     tasklet_id: u32,
     tasklet_desc: &crate::operator::topology::TaskletDescriptor,
     persistence_enabled: bool,
+    prefix: &Option<Arc<crate::prefix::PrefixLedger>>,
 ) -> TaskletCells {
     let build = |cell_key: Option<&str>, cell_index: usize| {
         (tasklet_desc.build_cell)(BuildCellArgs {
@@ -315,6 +323,7 @@ fn build_tasklet_cells(
             cell_key,
             cell_index,
             persistence_enabled,
+            prefix: prefix.clone(),
         })
     };
     if tasklet_desc.mode == CellMode::Dynamic {
@@ -325,6 +334,7 @@ fn build_tasklet_cells(
             Weak::clone(weak),
             Arc::clone(instance_id),
             persistence_enabled,
+            prefix.clone(),
         );
         return (Vec::new(), HashMap::new(), Some(Arc::new(registry)));
     }

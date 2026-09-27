@@ -114,6 +114,9 @@ pub fn route_to_consumers(
 pub(crate) enum Destination<'a> {
     Mailbox(Option<&'a Arc<CellSlot>>),
     Held(&'a mut Vec<(Arc<CellSlot>, CellItem)>),
+    /// An edge value a restore delivers again from its producer's record:
+    /// admitted as the entry path admits, but not forwarded input.
+    Redelivered,
 }
 
 /// One value through one edge's transform and into the mailbox — the ONE
@@ -213,17 +216,25 @@ fn deliver_to_consumer(
 ) -> Result<bool, Error> {
     let policy = channel.overflow_policy;
     let mut deferred = false;
+    let forwarded = matches!(to, Destination::Mailbox(None));
     // The one place the two admission forms are chosen between: a value with a
     // producing Cell withholds work from it, a value from the entry path (or
     // a replay member, which only the entry path produces) parks the reader.
     let mut admit = |consumer: &Arc<CellSlot>| {
-        let item = CellItem::Input(make_cell_payload(value, stream, consumed_offset, replay));
+        let mut payload = make_cell_payload(value, stream, consumed_offset, replay);
+        payload.forwarded = forwarded;
+        payload.hold = consumed_offset
+            .zip(instance.prefix.as_ref())
+            .map(|(offset, prefix)| prefix.hold(offset));
+        let item = CellItem::Input(payload);
         match to {
             Destination::Held(held) => held.push((Arc::clone(consumer), item)),
             Destination::Mailbox(Some(p)) if !replay => {
                 deferred |= admit_from_cell(p, consumer, item, policy, nonparking_enabled())
             }
-            Destination::Mailbox(_) => admit_from_reader(consumer, item, policy),
+            Destination::Mailbox(_) | Destination::Redelivered => {
+                admit_from_reader(consumer, item, policy)
+            }
         }
     };
     let consumer_tasklet_id = edge.tasklet;
@@ -450,6 +461,9 @@ fn route_stream_frame(
     }
 
     let (consumed_offset, replay) = frame_facts(metadata);
+    if let Some(edge) = metadata.get("flz.edge") {
+        return redeliver_edge(instance, edge, payload, stream, consumed_offset);
+    }
     if consumed_offset.is_some() {
         instance.owed_arrived();
     }
@@ -483,6 +497,108 @@ fn route_stream_frame(
         replay,
         None,
     );
+}
+
+/// The records of `value`, emitted on `channel_id` for the input at `origin`,
+/// one per consumer edge, through the channel's codec: what a producer that
+/// records effects keeps so a restore can deliver the value again. A value
+/// the codec refuses is delivered live and recorded nowhere.
+pub fn edge_records(
+    instance: &OperatorInstance,
+    channel: &ChannelDescriptor,
+    channel_id: ChannelId,
+    origin: Option<u64>,
+    value: &Arc<dyn Any + Send + Sync>,
+) -> Vec<crate::flusher::EdgeRecord> {
+    channel
+        .consumers
+        .iter()
+        .filter_map(|edge| edge_record(instance, channel_id, edge.tasklet, origin, value))
+        .collect()
+}
+
+/// One consumer edge's record of `value`; see [`edge_records`].
+pub(crate) fn edge_record(
+    instance: &OperatorInstance,
+    channel_id: ChannelId,
+    consumer: u32,
+    origin: Option<u64>,
+    value: &Arc<dyn Any + Send + Sync>,
+) -> Option<crate::flusher::EdgeRecord> {
+    let codec = instance.topology.channel(channel_id)?.codec.as_ref()?;
+    match (codec.encode)(value.as_ref()) {
+        Ok(payload) => Some(crate::flusher::EdgeRecord {
+            channel: channel_id,
+            consumer,
+            origin,
+            payload,
+        }),
+        Err(error) => {
+            tracing::warn!(
+                target: "flezha::routing",
+                instance = %instance.instance_id,
+                channel = channel_id,
+                "an edge value the channel codec refused is not recorded: {error}"
+            );
+            None
+        }
+    }
+}
+
+/// An edge value a restore delivers again (`flz.edge` names its channel and
+/// consumer): decoded through the channel's codec and admitted to that one
+/// consumer, whose floor drops it when its own records acknowledge `origin`.
+fn redeliver_edge(
+    instance: &Arc<OperatorInstance>,
+    edge: &str,
+    payload: Vec<u8>,
+    stream: Arc<FlezhaStream>,
+    origin: Option<u64>,
+) {
+    let named = edge
+        .split_once(':')
+        .and_then(|(c, t)| Some((c.parse::<ChannelId>().ok()?, t.parse::<u32>().ok()?)));
+    let Some((channel_id, consumer)) = named else {
+        return;
+    };
+    let Some(channel) = instance.topology.channel(channel_id) else {
+        return;
+    };
+    let (Some(codec), Some(edge)) = (
+        channel.codec.as_ref(),
+        channel.consumers.iter().find(|e| e.tasklet == consumer),
+    ) else {
+        return;
+    };
+    let value = match (codec.decode)(payload) {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::warn!(
+                target: "flezha::routing",
+                instance = %instance.instance_id,
+                channel = channel_id,
+                "a re-delivered edge value did not decode: {error}"
+            );
+            return;
+        }
+    };
+    if let Err(error) = deliver_edge(
+        instance,
+        channel,
+        edge,
+        &value,
+        &stream,
+        origin,
+        false,
+        &mut Destination::Redelivered,
+    ) {
+        tracing::warn!(
+            target: "flezha::routing",
+            instance = %instance.instance_id,
+            channel = channel_id,
+            "a re-delivered edge value was not admitted: {error}"
+        );
+    }
 }
 
 /// What the controller stamped: the input-log offset `flz.offset` (an unbounded

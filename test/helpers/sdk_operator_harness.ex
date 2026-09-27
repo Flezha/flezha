@@ -81,13 +81,27 @@ defmodule FlezhaTest.Helper.SdkOperatorHarness do
     ctrl_sec
   end
 
-  @doc "The next `n` frames off the stream, in arrival order, as `{payload_id, frame, metadata}`."
+  @doc """
+  The next `n` frames off the stream, in arrival order, as `{payload_id,
+  frame, metadata}`. A processed-prefix marker is left in the mailbox for
+  `marker/0`: it is the Operator's report, not something its Cells wrote.
+  """
   def frames(n, acc \\ [])
   def frames(0, acc), do: Enum.reverse(acc)
 
   def frames(n, acc) do
-    assert_receive {:flz_data, _id, payload_id, frame, meta}, 2_000
+    assert_receive {:flz_data, _id, payload_id, frame, meta}
+                   when payload_id != "processed_prefix",
+                   2_000
+
     frames(n - 1, [{payload_id, frame, meta} | acc])
+  end
+
+  @doc "The next processed-prefix marker as `{prefix, streams}`."
+  def marker do
+    assert_receive {:flz_data, _id, "processed_prefix", frame, _meta}, 2_000
+    {:ok, %{seq: prefix, body: <<streams::16-big>>}} = Wire.decode_frame(frame)
+    {prefix, streams}
   end
 
   @doc "A record frame as `{seq, change, decoded_frame}`."

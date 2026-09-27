@@ -135,4 +135,56 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
     assert wait_until(fn -> (InputLog.watermark(operator_id) || -1) >= 5 end, 30_000),
            "min watermark never caught up to the consumed inputs"
   end
+
+  # The relay's record for `k:hold` is durable and the tally's is not: the
+  # runner dies with the tally blocked on it. The relay skips the re-forwarded
+  # input, so the tally has to receive the value from the relay's outbox.
+  test "a value lost from the consumer's mailbox is delivered again" do
+    namespace = unique("eff_once_edge")
+    operator_id = unique("tier_chain")
+    id_path = unique_id_path()
+    relay = {operator_id, "tier_relay", ""}
+
+    on_exit(fn -> cleanup(namespace, operator_id, id_path) end)
+
+    {port_a, _exec_a} = boot_runner(namespace, id_path)
+
+    sink = %Flezha.Plugin{
+      id: "tier_sink",
+      namespace: namespace,
+      operator_id: operator_id,
+      provider: Flezha.Plugin.Provider.BeamMsgForward,
+      opts: %{recv_pid: self(), include_metadata: true},
+      hooks: [{:on_output, []}]
+    }
+
+    builder = %Builder{
+      id: operator_id,
+      factory_id: "tier_chain",
+      init_values: %{},
+      opts: [plugins: [sink]]
+    }
+
+    assert {:ok, _info} = OperatorManager.start_operator(namespace, builder)
+    send_inputs(operator_id, namespace, ["k:a"])
+    assert await_changelog(%{"k" => "k=1"}, 30_000)
+
+    send_inputs(operator_id, namespace, ["k:hold"])
+
+    assert wait_until(fn -> {relay, 1} in InputLog.cell_offsets(operator_id) end, 30_000),
+           "the relay's record for the held input never became durable: " <>
+             inspect(
+               {InputLog.cell_offsets(operator_id), InputLog.tail(operator_id), peek_outputs()}
+             )
+
+    sigkill(os_pid(port_a))
+    boot_runner(namespace, id_path, env: [{"FLEZHA_BOUNDED_E2E_RELEASE", "1"}])
+
+    assert await_changelog(%{"k" => "k=2"}, 60_000),
+           "the tally never took the value the relay had committed: " <>
+             inspect(changelog(peek_outputs()))
+
+    Process.sleep(1_500)
+    assert changelog(peek_outputs()) == %{"k" => "k=2"}
+  end
 end

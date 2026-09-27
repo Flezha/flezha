@@ -202,15 +202,54 @@ defmodule Flezha.State.WalWriter.Epoch do
   defp baseline_result(seq, offset), do: {:ok, %{seq: seq, consumed_offset: offset}}
 
   def scan_consumed_at(device, path, upto) do
-    case RecordFrame.fold_records(device, path, -1, fn {seq, header, body}, acc ->
-           if seq > upto,
-             do: {:halt, acc},
-             else: {:cont, max(acc, consumed_offset_of(Wire.decode_effect_record(header, body)))}
-         end) do
+    case RecordFrame.fold_records(device, path, -1, consumed_through(upto)) do
       {:ok, offset} -> offset
       {:error, _refusal} = refused -> refused
     end
   end
+
+  @doc """
+  The highest consumed offset `cell_id`'s WAL records carry, read from the file
+  alone, with no writer started; `nil` when none carries one.
+  """
+  @spec consumed_offset_on_disk(Paths.cell_id()) :: non_neg_integer() | nil
+  def consumed_offset_on_disk(cell_id) do
+    case RecordFrame.fold_path(Paths.wal_path(cell_id), -1, consumed_through(:infinity)) do
+      {:ok, offset} when offset >= 0 -> offset
+      _none_or_refused -> nil
+    end
+  end
+
+  # The fold of the highest consumed offset the records up to seq `upto` carry.
+  defp consumed_through(upto) do
+    fn {seq, header, body}, acc ->
+      if seq > upto,
+        do: {:halt, acc},
+        else: {:cont, max(acc, consumed_offset_of(Wire.decode_effect_record(header, body)))}
+    end
+  end
+
+  @doc """
+  The inter-tasklet values `cell_id`'s WAL records kept for inputs above
+  `floor`, in record order, read from the file alone.
+  """
+  @spec edges_above(Paths.cell_id(), integer()) :: [Wire.edge()]
+  def edges_above(cell_id, floor) do
+    case RecordFrame.fold_path(Paths.wal_path(cell_id), [], fn {_seq, header, body}, acc ->
+           case Wire.decode_effect_record(header, body) do
+             %{edges: [_ | _] = edges} ->
+               {:cont, Enum.reverse(Enum.filter(edges, &above?(&1, floor)), acc)}
+
+             _no_edges ->
+               {:cont, acc}
+           end
+         end) do
+      {:ok, edges} -> Enum.reverse(edges)
+      {:error, _refusal} -> []
+    end
+  end
+
+  defp above?(%{origin: origin}, floor), do: is_integer(origin) and origin > floor
 
   # `-1` for a plain change record, or an effect record that consumed nothing.
   defp consumed_offset_of(nil), do: -1

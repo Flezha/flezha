@@ -379,18 +379,20 @@ pub(super) fn settle_item(
     let (edge_outputs, wire_outputs) = split_outputs(outputs);
     let consumed_offset = consumed_offset_of(&work.item);
     let dlq = park.map(|(error, attempts)| park_entry(slot, &work.item, error, attempts));
-    route_edge_outputs(slot, &stream, consumed_offset, edge_outputs);
+    let keeps_edges = slot.keeps_edges(consumed_offset);
+    let edges = route_edge_outputs(slot, &stream, consumed_offset, edge_outputs, keeps_edges);
     let effects = InvocationEffects {
         changes: effect.changes,
         timers: timers.clone(),
         outputs: Vec::new(),
+        edges,
         offset: consumed_offset,
         event_time: effect.event_time,
         checkpointed: effect.checkpoint,
         parked: dlq.is_some(),
     };
     let (tier_off_dlq, plugin_outputs) =
-        settle_into_buffer(slot, facts, effects, wire_outputs, dlq);
+        settle_into_buffer(slot, facts, effects, wire_outputs, dlq, hold_of(&work.item));
     commit_timers(slot, &timers, &stream);
     crate::timer::arm_interval_deadline(slot);
     ship_plugin_outputs(slot, &stream, plugin_outputs);
@@ -462,12 +464,14 @@ fn settle_bounded_effects(
         changes,
         timers,
         outputs: Vec::new(),
+        edges: Vec::new(),
         offset: None,
         event_time,
         checkpointed: false,
         parked: false,
     };
-    let (_park, plugin_outputs) = settle_into_buffer(slot, facts, effects, wire_outputs, None);
+    let (_park, plugin_outputs) =
+        settle_into_buffer(slot, facts, effects, wire_outputs, None, None);
     ship_plugin_outputs(slot, stream, plugin_outputs);
     if !slot.topology.records_effects(slot.persistence_enabled) {
         return;
@@ -588,6 +592,15 @@ fn firing_of(item: &CellItem) -> Option<(crate::timer::TimerKind, u64)> {
     }
 }
 
+/// The input's hold on its instance's processed prefix; the item keeps its
+/// own until it is dropped.
+fn hold_of(item: &CellItem) -> Option<Arc<crate::prefix::Hold>> {
+    match item {
+        CellItem::Input(p) => p.hold.clone(),
+        CellItem::Timer(_) | CellItem::CloseInterval => None,
+    }
+}
+
 /// The offset is core-authoritative; a firing consumes nothing.
 fn consumed_offset_of(item: &CellItem) -> Option<u64> {
     match item {
@@ -631,20 +644,23 @@ fn park_entry(slot: &Arc<CellSlot>, item: &CellItem, error: String, attempts: u3
     }
 }
 
-/// Edge values into consumer mailboxes, BEFORE the effect record is folded:
-/// an edge output has no durable copy, so a consumed offset durable ahead of
-/// it would be a permanent loss under effectively-once.
+/// Edge values into consumer mailboxes, BEFORE the effect record is folded,
+/// so no consumed offset is durable ahead of an undelivered value; where the
+/// Cell records effects, the values its record keeps for a restore to deliver
+/// again.
 fn route_edge_outputs(
     slot: &Arc<CellSlot>,
     stream: &Arc<FlezhaStream>,
     consumed_offset: Option<u64>,
     edge_outputs: Vec<schema::Output>,
-) {
+    record: bool,
+) -> Vec<crate::flusher::EdgeRecord> {
+    let mut recorded = Vec::new();
     if edge_outputs.is_empty() {
-        return;
+        return recorded;
     }
     let Some(instance) = slot.instance.upgrade() else {
-        return;
+        return recorded;
     };
     for output in edge_outputs {
         let schema::OutputTarget::Edge { channel, consumer } = output.target else {
@@ -657,6 +673,15 @@ fn route_edge_outputs(
             event_time: output.event_time,
             metadata: output.metadata,
         });
+        if record {
+            recorded.extend(crate::routing::edge_record(
+                &instance,
+                channel,
+                consumer,
+                consumed_offset,
+                &value,
+            ));
+        }
         match crate::routing::deliver_host_output(
             &instance,
             channel,
@@ -680,6 +705,7 @@ fn route_edge_outputs(
             ),
         }
     }
+    recorded
 }
 
 /// Fold the invocation into the buffer per its Cell's policy; a Cell that
@@ -691,6 +717,7 @@ fn settle_into_buffer(
     mut effects: InvocationEffects<Vec<u8>>,
     wire_outputs: Vec<schema::Output>,
     dlq: Option<DlqEntryBody>,
+    hold: Option<Arc<crate::prefix::Hold>>,
 ) -> (Option<DlqEntryBody>, Vec<schema::Output>) {
     let mut buffer = slot.flush_buffer.lock_recover();
     let Some(bytes) = buffer.as_any_mut().downcast_mut::<BytesBuffer>() else {
@@ -713,6 +740,7 @@ fn settle_into_buffer(
         effects,
         dlq,
     );
+    crate::cell::keep_hold(slot, bytes, hold);
     (tier_off_dlq, plugin_outputs)
 }
 

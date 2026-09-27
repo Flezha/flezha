@@ -541,7 +541,12 @@ defmodule Flezha.State.Paths do
 
         String.ends_with?(name, ".outbox.dedup") ->
           key = name |> String.trim_trailing(".outbox.dedup") |> decode_cell_key()
-          %{acc | outbox_files: [{key, Path.join(dir, name)} | acc.outbox_files]}
+
+          # A hydration writes the dedup cache of every identity it restores,
+          # the journal's included, which is still no Cell.
+          if key in @reserved_cell_keys,
+            do: acc,
+            else: %{acc | outbox_files: [{key, Path.join(dir, name)} | acc.outbox_files]}
 
         true ->
           case parse_snapshot_name(name) do

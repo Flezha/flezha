@@ -33,7 +33,6 @@ defmodule Flezha.Operator.Overwatch do
   alias Flezha.State.Outbox
   alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
-  alias Flezha.State.TaskJournal
   alias Flezha.Transport.LivenessCounters
 
   # Reply-frame metadata key carrying the `change_seq` a single selected Cell
@@ -82,10 +81,10 @@ defmodule Flezha.Operator.Overwatch do
     # forwarding to the channel".
     liveness_ref: nil,
     # A bind onto another runner (an un-park, a wake, a `:runner_migrate`, a
-    # restarted runner) runs in a `Task.Supervisor.async_nolink/3` task so it
-    # never blocks the Overwatch; this field carries the in-flight
-    # task's reference + pid so `terminate/2` can kill it cleanly. `nil`
-    # when no migrate is in flight.
+    # restarted runner) runs in a task linked to this process so it never
+    # blocks the Overwatch and never outlives it; this field carries the
+    # in-flight task's pid and what the bind carries. `nil` when no migrate
+    # is in flight.
     migrate_task: nil,
     # Outputs that arrived while a migrate task was binding, newest first,
     # delivered once its binding is adopted.
@@ -145,10 +144,8 @@ defmodule Flezha.Operator.Overwatch do
   `{:error, :send_buffer_full}`, with the frame unsent and nothing discarded.
   """
   @spec deliver(t(), {binary(), map()}) :: :ok | {:error, :no_stream | :send_buffer_full}
-  def deliver(%__MODULE__{} = state, payload) do
-    with :ok <- StreamChannel.io_in(state.channel, state.id, payload),
-         do: Replay.forwarded(state, payload)
-  end
+  def deliver(%__MODULE__{} = state, payload),
+    do: StreamChannel.io_in(state.channel, state.id, payload)
 
   # Every plugin verb is one bounded call into a running Overwatch. The bound
   # belongs here rather than to each caller: an Overwatch busy folding an entry
@@ -291,6 +288,10 @@ defmodule Flezha.Operator.Overwatch do
 
   defp continue_bind(stale_runner_id, operator, %__MODULE__{} = state) do
     class = operator_class(state)
+    # A move brings the source's journal, input log and Cells over before
+    # anything below reads them.
+    operator = Replay.adopt_moved_state(state, operator)
+    state = %__MODULE__{state | builder: operator}
 
     state = %__MODULE__{
       state
@@ -304,9 +305,8 @@ defmodule Flezha.Operator.Overwatch do
     # instance with undelivered input is not asleep any more: it binds and
     # consumes it. The floor is seeded first, since the log answers that
     # question against it.
-    if state.durable_bounded, do: TaskJournal.release_input(operator.id)
+    :ok = Replay.seed_floor(state)
     park = ClassRegistry.parked(class)
-    Replay.release_parked(state, park)
 
     if Migration.suspended_on_disk?(class) do
       {:noreply, Migration.enter_suspended(state, park), :hibernate}
@@ -675,10 +675,8 @@ defmodule Flezha.Operator.Overwatch do
     end
   end
 
-  # The in-flight `:runner_migrate` task posts its result via a plain `send/2`
-  # before the task process exits, so this clause runs before the `:DOWN`
-  # cleanup. The state update happens here; the `:DOWN` message is then drained
-  # by the dedicated clause below.
+  # The in-flight bind task posts its result via a plain `send/2` before it
+  # exits, so this clause runs before its `:EXIT` and clears the slot.
   @impl true
   def handle_info(
         {:migrate_task_result, _task_pid, result},
@@ -693,26 +691,10 @@ defmodule Flezha.Operator.Overwatch do
   # migrate already replaced `state.migrate_task`. Drop.
   def handle_info({:migrate_task_result, _task_pid, _result}, state), do: {:noreply, state}
 
-  # The task has exited normally (or crashed before posting a result). Clear the
-  # migrate_task slot so the next migrate can spawn.
+  # The bind task died before it reported: a failed bind.
   @impl true
-  def handle_info(
-        {:DOWN, ref, :process, _pid, _reason},
-        %__MODULE__{migrate_task: %{ref: ref}} = state
-      ) do
-    {:noreply, Migration.rehydrate_if_pending(%{state | migrate_task: nil}) |> release_outputs()}
-  end
-
-  # Task.Supervisor.async_nolink also sends `{ref, return_value}` from the task
-  # before it exits — the result was already consumed via the explicit
-  # `{:migrate_task_result, ...}` send/2 from inside the task body, so the
-  # auto-reply is redundant. Drop it; without this clause it crashes the
-  # Overwatch with FunctionClauseError.
-  @impl true
-  def handle_info({ref, _value}, state) when is_reference(ref) do
-    Process.demonitor(ref, [:flush])
-    {:noreply, state}
-  end
+  def handle_info({:EXIT, pid, reason}, %__MODULE__{migrate_task: %{pid: pid}} = state),
+    do: {:noreply, state |> Migration.bind_task_exited(reason) |> release_outputs()}
 
   # A monitored input log that exits with an append in flight reports it as a
   # `:DOWN` the request collection recognises; every other `:DOWN` is a plugin's.
@@ -724,13 +706,13 @@ defmodule Flezha.Operator.Overwatch do
     end
   end
 
+  # A linked helper (a bind task that reported, a restore it dispatched) ends
+  # normally as a matter of course; only a crash is worth a line.
   @impl true
-  def handle_info({:EXIT, pid, reason}, state) do
-    case reason do
-      :normal -> Logger.info("Process #{inspect(pid)} exited normally.")
-      _ -> Logger.error("Process #{inspect(pid)} exited with reason: #{inspect(reason)}")
-    end
+  def handle_info({:EXIT, _pid, :normal}, state), do: {:noreply, state}
 
+  def handle_info({:EXIT, pid, reason}, state) do
+    Logger.error("Process #{inspect(pid)} exited with reason: #{inspect(reason)}")
     {:noreply, state}
   end
 

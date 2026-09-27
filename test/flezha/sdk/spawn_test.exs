@@ -21,7 +21,7 @@ defmodule Flezha.SDK.SpawnTest do
 
   # A request made with this process as its runner, and the cast it sent.
   defp requested(opts \\ [id: "w1"]) do
-    handle = Spawn.request(self(), false, "worker", "payload", opts)
+    handle = Spawn.request(self(), false, "worker", "payload", opts, "")
     assert_receive {:"$gen_cast", {:spawn, _caller, %Spawn{}, "payload", _policy} = cast}
     {handle, cast}
   end

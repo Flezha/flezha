@@ -3,10 +3,10 @@ defmodule Flezha.Operator.Handover do
   Moving a live operator between controller nodes: what this node ships, what an
   arriving one applies, and when either may happen at all.
 
-  Two things travel, and the second exists because the first can be empty. The
-  SDK's serialized state comes from the **runner**, so a migration caused by that
-  runner's death ships nothing — and then the source controller's disk holds the
-  only surviving state, which the destination pulls by node name.
+  The SDK's serialized state travels, and it comes from the **runner**, so a
+  migration caused by that runner's death ships nothing. The source
+  controller's disk then holds the only surviving state, which the destination
+  already pulled at its start (`Replay.adopt_moved_state/2`), before it bound.
 
   Consent is the other half: a migration mid-correction, mid-iteration, or with
   an outbox still owing output would strand work on the departing node, so those
@@ -16,7 +16,6 @@ defmodule Flezha.Operator.Handover do
   alias Flezha.Config
   alias Flezha.Operator.Overwatch
   alias Flezha.Operator.Plugins
-  alias Flezha.Operator.Replay
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.ControlUnit
   alias Flezha.State.WalWriter
@@ -26,10 +25,9 @@ defmodule Flezha.Operator.Handover do
 
   @doc """
   The handover payload this node ships: identity, plugins and the SDK's
-  serialized state — plus the node whose disk holds the durable files. When the
-  source runner is already gone, `serialize_data` is the final state it handed
-  over if no runner has taken the operator over since, and nil otherwise, and
-  then the disk is the only surviving state.
+  serialized state. When the source runner is already gone, `serialize_data`
+  is the final state it handed over if no runner has taken the operator over
+  since, and nil otherwise, and then the disk is the only surviving state.
   """
   @spec prepare(Overwatch.t()) :: {map(), binary() | nil}
   def prepare(%Overwatch{} = state) do
@@ -44,8 +42,7 @@ defmodule Flezha.Operator.Handover do
       namespace: state.namespace,
       factory_id: state.factory_id,
       init_values: state.init_values,
-      plugins: Table.serializable_plugins(state.extensions),
-      source_node: node()
+      plugins: Table.serializable_plugins(state.extensions)
     }
 
     {handover, serialize_data}
@@ -97,43 +94,18 @@ defmodule Flezha.Operator.Handover do
     # the convergence loop diffs it as missing and heals it under backoff.
     {brought_up, _failed} = Plugins.bring_up(%Overwatch{state | extensions: rehydrated})
 
-    migrated =
-      %Overwatch{
-        state
-        | extensions: brought_up.extensions,
-          init_values: handover_state.init_values,
-          # Only a handover that actually reached a runner suppresses the WAL
-          # restore. One that carried nothing, or that found nothing bound to
-          # carry it to, must fall through to the operator's on-disk state —
-          # otherwise a migration away from a dead runner starts fresh AND
-          # locks the replay out, including the explicit `kick_restore` repair.
-          arrived_via_hotswap?: bound? and serialized_state != <<>>
-      }
-
-    if migrated.arrived_via_hotswap?,
-      do: migrated,
-      else: adopt_source_state(migrated, Map.get(handover_state, :source_node))
+    %Overwatch{
+      state
+      | extensions: brought_up.extensions,
+        init_values: handover_state.init_values,
+        # Only a handover that actually reached a runner suppresses the WAL
+        # restore. One that carried nothing, or that found nothing bound to
+        # carry it to, falls through to the on-disk state the bind already
+        # restored from — otherwise the explicit `kick_restore` repair would
+        # be locked out too.
+        arrived_via_hotswap?: bound? and serialized_state != <<>>
+    }
   end
-
-  # An empty handover means the source runner was already gone, so the source
-  # controller's DISK holds the only surviving state — and `state_root` is
-  # node-local, never assumed shared. The bind's one restore step pulls it
-  # (off-process, bounded by file size) before replaying, the same step a
-  # convergence resync runs; the source node rides the operator's opts so a
-  # later restore pulls too.
-  defp adopt_source_state(
-         %Overwatch{runner_id: runner_id, builder: %{opts: opts} = builder} = state,
-         source_node
-       )
-       when is_atom(source_node) and source_node != nil and is_binary(runner_id) do
-    opts = Keyword.put(opts, :state_source_node, source_node)
-    Replay.dispatch_restore(state, opts, runner_id)
-    %Overwatch{state | builder: %{builder | opts: opts}}
-  end
-
-  # No source to pull from, or nothing bound yet to replay onto — the ordinary
-  # bind-time restore covers the latter once a runner is resolved.
-  defp adopt_source_state(%Overwatch{} = state, _source_node), do: state
 
   @doc """
   Busy classification for ProcessHub's migration consent: defer while a

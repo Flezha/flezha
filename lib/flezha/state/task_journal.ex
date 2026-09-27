@@ -42,6 +42,7 @@ defmodule Flezha.State.TaskJournal do
   @type_iter_committed Codec.type_code(:iter_committed)
   @type_compensated Codec.type_code(:compensated)
   @type_rewound Codec.type_code(:rewound)
+  @type_input_released Codec.type_code(:input_released)
 
   @typedoc """
   One Cell a stage or an undo ran: its identity, the effect records it wrote
@@ -62,6 +63,7 @@ defmodule Flezha.State.TaskJournal do
           | :iter_committed
           | :compensated
           | :rewound
+          | :input_released
 
   @type entry :: %{
           seq: non_neg_integer(),
@@ -83,6 +85,7 @@ defmodule Flezha.State.TaskJournal do
                 completion: completion()
               }
             | %{cells_ran: [committed_cell()]}
+            | %{consumed_offset: non_neg_integer()}
             | %{}
         }
 
@@ -277,6 +280,21 @@ defmodule Flezha.State.TaskJournal do
   end
 
   @doc """
+  Journal that the instance consumed the input at `offset` without an
+  iteration commit (it dead-lettered it unread), durable before the reply,
+  then report it into the input log's watermark. The park that follows is
+  recorded only after this answers `:ok`, so the release survives a restart
+  that the park record would not carry it through. `nil` releases nothing.
+  """
+  @spec release_unread(binary(), non_neg_integer() | nil) :: :ok | {:error, term()}
+  def release_unread(_instance_id, nil), do: :ok
+
+  def release_unread(instance_id, offset) when is_binary(instance_id) and is_integer(offset) do
+    with :ok <- append(instance_id, @type_input_released, 0, 0, Codec.encode_offset(offset)),
+         do: release_input(instance_id, offset)
+  end
+
+  @doc """
   Decode every complete entry, in append order. `{:ok, []}` when the
   instance has no journal. Reads the file directly (no writer needed);
   stops at the first invalid record, mirroring the WAL torn-tail contract.
@@ -326,6 +344,7 @@ defmodule Flezha.State.TaskJournal do
             committed_tasks: [committed_task()],
             rewind_undo: [committed_task()],
             consumed_offset: non_neg_integer() | nil,
+            released_offset: non_neg_integer() | nil,
             completion: completion()
           }
           | nil
@@ -356,6 +375,7 @@ defmodule Flezha.State.TaskJournal do
           committed_tasks: for(%{type: :task_committed} = e <- entries, do: committed_task(e)),
           rewind_undo: rewind_undo(raw),
           consumed_offset: consumed_offset_of(last_iter),
+          released_offset: released_offset_of(raw),
           completion: completion_of(last_iter)
         }
     end
@@ -377,17 +397,22 @@ defmodule Flezha.State.TaskJournal do
   end
 
   @doc """
-  The highest input-log offset any iteration ever consumed, `nil` when none
-  has: the instance's floor in its input log. Unlike `consumed_offset/1` a rewind does
-  not move it back: the rewound iterations' inputs were released when they
-  committed, and a rewind is undo-and-continue, never a replay.
+  The highest input-log offset the instance ever consumed, by an iteration
+  commit or a release of an input it dead-lettered unread; `nil` when it
+  consumed none: the instance's floor in its input log. Unlike
+  `consumed_offset/1` a rewind does not move it back: the rewound iterations'
+  inputs were released when they committed, and a rewind is
+  undo-and-continue, never a replay.
   """
   @spec released_offset(binary()) :: non_neg_integer() | nil
   def released_offset(instance_id) when is_binary(instance_id) do
     {:ok, raw} = read(instance_id)
+    released_offset_of(raw)
+  end
 
+  defp released_offset_of(raw) do
     raw
-    |> Enum.filter(&(&1.type == :iter_committed))
+    |> Enum.filter(&(&1.type in [:iter_committed, :input_released]))
     |> Enum.map(&consumed_offset_of/1)
     |> Enum.reject(&is_nil/1)
     |> Enum.max(fn -> nil end)
@@ -767,8 +792,8 @@ defmodule Flezha.State.TaskJournal do
   defp encode_header(epoch, type, task_idx, iter),
     do: <<epoch::32-big, type::8, task_idx::16-big, iter::32-big, 0::40>>
 
-  # A barrier is batched and idempotent by identity; a rewind syncs inline:
-  # rare, and durable before the eviction.
-  defp append_opts(@type_rewound), do: [sync: :sync]
+  # A barrier is batched and idempotent by identity; a rewind and a release
+  # sync inline: rare, and durable before what follows them.
+  defp append_opts(type) when type in [@type_rewound, @type_input_released], do: [sync: :sync]
   defp append_opts(type) when type in @barrier_types, do: [sync: :batched, dedup: true]
 end

@@ -280,7 +280,7 @@ integration test that kills each party at every phase boundary.
 
 An invocation's consumed input offset SHALL NOT become durable before every inter-tasklet (edge) output that invocation produced has been admitted to its consumer's mailbox. An item with an undelivered edge output SHALL be treated as unresolved: its changes, its plugin outputs and its offset SHALL be held out of the flush buffer until the delivery completes, exactly as a failed-but-retryable attempt's changes are held until its item resolves.
 
-The reason is that an edge output is the one output kind with no durable copy: `OutputTarget::Edge` is excluded from the transactional outbox, so the only thing that can re-produce it is the producer re-running its input. If the offset is durable first, the crash-replay floor skips that input, the producer never re-runs, and the consumer is never fed — a permanent loss under a contract that promises effectively-once.
+An edge output SHALL also be durable in the producer's outbox, inside the effect record that consumed its input, exactly as a plugin-bound output is, and SHALL be delivered to its consumer from that outbox entry until the consumer's own record acknowledges it. A restore SHALL re-deliver an edge entry that no consumer record acknowledged, so a value admitted to a consumer's mailbox and lost with it before the consumer's record became durable is delivered again rather than lost; the producer's floor skipping the input no longer strands the consumer.
 
 With the ordering correct, at-least-once edge delivery composes into effectively-once without a second mechanism: the edge payload carries the producer's input offset, the consumer's own effect record acknowledges that offset, and the consumer's restored floor skips a re-emitted duplicate. A fan-out invocation SHALL hold its record until **every** consumer's push has landed; a replay after a partial fan-out re-emits to all consumers and each one's own floor decides whether it is a duplicate.
 
@@ -311,6 +311,11 @@ This requirement binds the host (C-ABI) resolution path, where an activation's o
 #### Scenario: The Elixir Cell holds its record until the edge is admitted
 - **WHEN** a tier-mode Elixir Tasklet emits towards a consumer whose mailbox of one is full and whose dispatch is held
 - **THEN** the producer's effect record for that input is not on the stream while the push waits, and ships as soon as the consumer admits it
+
+#### Scenario: A value lost from the consumer's mailbox is delivered again
+
+- **WHEN** a tier producer's effect record for offset 7 is durable, its edge value was admitted to the consumer's mailbox, and the runner dies before the consumer's record for offset 7 is durable
+- **THEN** after the restore the producer SHALL NOT re-run offset 7, the consumer SHALL receive the edge value from the producer's outbox, and the consumer's state SHALL reflect offset 7 exactly once
 
 ### Requirement: A durable bounded operator Cell writes the effect record without declaring the tier
 

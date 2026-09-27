@@ -49,6 +49,8 @@ pub mod park;
 pub mod persistent_id;
 pub mod poll_core;
 #[doc(hidden)]
+pub mod prefix;
+#[doc(hidden)]
 pub mod restore;
 #[doc(hidden)]
 pub mod retry;

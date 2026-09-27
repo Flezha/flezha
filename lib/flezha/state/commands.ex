@@ -188,6 +188,7 @@ defmodule Flezha.State.Commands do
           # resuming forward.
           rewind_undo: Enum.map(resume.rewind_undo, &committed_task/1),
           consumed_offset: resume.consumed_offset,
+          released_offset: resume.released_offset,
           # The last committed iteration ended the instance: a resume ends it at
           # once with this result instead of waiting for input.
           completed: resume.completion != nil,

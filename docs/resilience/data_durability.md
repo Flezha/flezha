@@ -58,7 +58,7 @@ re-attaches its full plugin set and the convergence loop re-adds anything missin
 | **Bounded operator runner SIGKILL** (durable, the default) | **No loss** of a committed tasklet; an uncommitted one re-runs | Never lost; released only after its stage commits | Respawns on a new runner, restores committed Cell state behind the restore-before-run gate, and resumes at the **first un-journaled tasklet**: `task.journal` records each completed tasklet, the effect records its Cells wrote and its handoff, and an entry is appended only once every record it names is durable, so committed tasks are skipped, not redone, over state that is on disk. Inspect with `flz state journal`. |
 | **Looping bounded operator runner SIGKILL** (durable) | **No loss** of a committed tasklet | Never lost; released only after its stage commits | Resumes at the iteration after the last `iter_committed`; the in-flight one re-runs from its own last committed task. Unconsumed input is still in the instance's durable input log. |
 | **Input sent to a suspended / crashed / migrating bounded instance** (durable) | **No loss** | n/a | Appended to the instance's durable input log (`input.log`) before forwarding, delivered on rehydrate; a suspended instance is woken by the append. |
-| **Input sent to a sleeping unbounded instance** (its class declares `sleep_when_idle`) | **No loss** | n/a | Appended to the instance's input log before forwarding; the append wakes it, its Cells are restored before the log's tail is re-forwarded, and the message is folded once. |
+| **Input sent to a sleeping unbounded instance** (its class declares `sleep_when_idle`) | **No loss** | n/a | Appended to the instance's input log before forwarding; the append wakes it, its Cells are restored before the log's tail is re-forwarded, and the message is folded once, also when the controller restarts while the instance is awake. |
 | **Controller redeploy while an instance of either kind is suspended** | **No loss** | n/a | Suspension is durable state (the park record in the class directory + input log + snapshots): the instance is rediscovered from disk, stays evicted, and rehydrates on the next input or its wake deadline. |
 | **Bounded operator runner SIGKILL** (persistence opted out) | **Full: re-runs from the top** | At-least-once | No WAL; the operator re-runs from the top on its next message and the messages waiting in its memory are lost. Idempotent by author contract, or don't opt out. |
 | **Bounded operator SIGKILL mid-compensation** (durable) | Compensation resumes | n/a | Compensation-intent / -done markers ride the restore; the respawn finishes the outstanding undo hooks and skips the done ones. |
@@ -119,8 +119,8 @@ and on a durable bounded operator's Cells.
 
 Nothing journals a default-tier input, which also decides the fate of input queued in a
 Cell's mailbox when a restore lands: with no log to re-forward from, the queue is the only
-copy, so the restore keeps it. Under the tier the restore discards it
-(`discard_queued_input_on_restore`) because the input log re-forwards it.
+copy, so the restore keeps it. Under the tier, and for a class that sleeps, the restore
+discards it (`discard_queued_input_on_restore`) because the input log re-forwards it.
 
 **Nothing drops by default.** `DropNothing` is the default overflow policy for every channel
 kind in both SDKs and the FFI host; an operator that prefers to shed declares
@@ -135,16 +135,13 @@ channel the shared transport reader stalls instead, which carries the backpressu
 controller. On a **plugin-bound** channel there is no SDK-side mailbox at all and the policy is
 a compile error. Nothing is discarded in any of them.
 
-Two windows this does **not** close, both named so nobody reads more into the guarantee:
-
-- **The consumer's volatile mailbox.** Once a push lands, the value lives only there until the
-  consumer's own record is durable, and a tier-class restore clears the mailbox
-  (`discard_queued_input_on_restore`); the controller re-forwards to the *entry* channel, where
-  the producer's own floor skips it. Closing it needs `OutputTarget::Edge` in the Cell's
-  outbox.
-- **The controller's send buffer**, which still discards the newest frame when a runner stops
-  reading (`flz_nif/src/driver/mod.rs`, `StreamState::offer`). The backpressure chain is complete inside the runner
-  and breaks at its last hop.
+Once a push lands, the value also rides the producer's record, wherever that record carries the
+consumed offset ([the input floor](#the-input-floor-a-processed-prefix)): a value lost with the consumer's mailbox, before the consumer's own
+record was durable, is delivered again from there, so the producer's floor skipping the
+re-forwarded input strands nothing. One window this does **not** close, named so nobody reads
+more into the guarantee: **the controller's send buffer**, which still discards the newest frame
+when a runner stops reading (`flz_nif/src/driver/mod.rs`, `StreamState::offer`). The
+backpressure chain is complete inside the runner and breaks at its last hop.
 
 ### Effectively-once tier (opt-in, `effectively_once()` on the channel builder)
 
@@ -159,28 +156,26 @@ guarantee.
   host never waits on the log (`InputLog.append_async/5`): the input is forwarded when the log
   answers, and a zero-credit park lands on the source's call alone. A repeat of a `flz.msg_id`
   the log still retains is absorbed; a message without an id is always appended. Retention
-  truncates only below the minimum durable consumed-offset across the instance's reporters (here
-  its Cells); a frozen watermark past the size threshold emits
+  truncates only below the instance's floor ([below](#the-input-floor-a-processed-prefix));
+  a frozen watermark past the size threshold emits
   `[:flezha, :state, :input_log_frozen_watermark]`.
 - **Atomic effect record.** State changes, outputs, consumed offset, dead-letter entry and event
   time form ONE `cell_effect_record` under ONE fsync. No partial combination is ever durable
   and effect records are never coalesced away.
-- **An inter-tasklet output's offset is never durable ahead of the output.** An edge value is
-  the one output kind with **no** durable copy (`OutputTarget::Edge` is excluded from the
-  Cell's outbox), so the only thing that can re-produce it is the producer re-running its
-  input. The invocation is therefore treated as unresolved until every edge push has been
-  admitted to its consumer's mailbox: its changes, its plugin outputs and its offset are held out
-  of the flush buffer until then, exactly as a failed-but-retryable attempt's changes are. Fold
-  first and a crash inside the flusher's ~5 ms linger leaves the offset durable, the replay floor
-  skipping that input, and the consumer never fed. A fan-out invocation holds its record until
-  **every** consumer's push has landed; a replay after a partial fan-out re-emits to all of them
-  and each consumer's own restored floor decides whether it is a duplicate — which is how
-  at-least-once edge delivery composes into effectively-once without a second mechanism.
-  *Not closed by this:* between the push landing and the consumer's own record becoming durable
-  the value lives only in the consumer's volatile mailbox, which a tier-class restore discards
-  (`discard_queued_input_on_restore`) and which the controller re-supplies only at the *entry*
-  channel, where the producer's floor skips it. Closing that needs `OutputTarget::Edge` in the
-  Cell's outbox.
+- **An inter-tasklet output's offset is never durable ahead of the output.** The invocation is
+  treated as unresolved until every edge push has been admitted to its consumer's mailbox: its
+  changes, its plugin outputs and its offset are held out of the flush buffer until then,
+  exactly as a failed-but-retryable attempt's changes are. A fan-out invocation holds its record
+  until **every** consumer's push has landed; a replay after a partial fan-out re-emits to all
+  of them and each consumer's own restored floor decides whether it is a duplicate — which is
+  how at-least-once edge delivery composes into effectively-once without a second mechanism.
+- **An inter-tasklet value rides its producer's record.** The effect record that consumed the
+  input also keeps each edge value, through the channel's codec, with the offset it derives
+  from. Between the push landing and the consumer's own record becoming durable the value
+  lives in the consumer's mailbox, which a crash or a restore loses; the restore then delivers
+  the kept value again to every consumer whose own records do not acknowledge that offset,
+  ahead of the re-forwarded tail, while the producer's floor skips the re-forwarded input. A
+  consumer that already took it drops it at its floor.
 - **Fsync-gated outbox.** Outputs reach the `:on_output` chain only after their record is
   fsynced, stamped `(flz.cell, flz.seq = outbox_seq, flz.epoch, flz.key)` — a sufficient handle
   for exact dedup. On restart the controller re-drives every record above the per-Cell
@@ -334,6 +329,34 @@ dedup-capable sink absorbs that duplicate exactly. Inspect what an instance's st
 channels) and what a Cell still owes or holds for a stage with
 `flz state outbox <operator/tasklet/key>` (`outbox_lag`, `held_for_stage`).
 
+## The input floor: a processed prefix
+
+An instance's floor decides what retention may release from its input log and where a bind's
+re-forward starts. It is not what the controller forwarded, and not any one Cell's progress.
+
+- **Every persistent Cell records the offset it consumed through**, in the record of the state
+  that input produced: the effect record under the tier, and outside it the change records a
+  drain writes, folded into one record that carries the highest offset. A restore, a hydration
+  and the controller's boot scan read a Cell's offset from its last record.
+- **Every Cell keeps a floor.** A restore seeds it from the Cell's records; it rises as the Cell
+  takes each input the controller forwarded. An input at or below it is dropped unrun, so a
+  tail re-forwarded twice is taken once.
+- **The runner reports a processed prefix.** After each drain pass it sends, for an instance
+  that took new input, a `processed_prefix` marker naming `P`: every input at or below `P` has
+  been processed by every Cell it reached, downstream Cells included, and every record it
+  produced is on the data stream ahead of the marker. An input still queued, in flight, retrying
+  or unflushed holds `P` below it; an idle Cell holds nothing. The marker never waits in the
+  reconnect ring, and a record the ring evicted is never covered.
+- **The controller confirms `P` durable.** It records where each of the instance's Cell writers
+  stood on the stream when the marker arrived, and confirms `P` once every one of them has been
+  fsynced past that point. A confirmed `P` is the floor. Before one is confirmed, and after a
+  controller restart, the floor falls back to the minimum durable consumed offset over the
+  instance's reporters, and the re-forward from there is safe because every Cell drops what it
+  already consumed.
+
+A plain sleeping stream therefore folds nothing twice across a controller restart while it is
+awake, and a stream keyed by one quiet key does not pin the log for everyone else.
+
 ## Bounded operators: the same durable input log
 
 The input half of the same story. A durable bounded instance's input goes through the one
@@ -345,12 +368,12 @@ log still retains is absorbed, so an at-least-once sender cannot produce a dupli
 while a message without an id is always appended.
 
 What differs is the reporter. A bounded operator's Cells report no consumed offset; its journal does,
-under its own reserved identity: each durable iteration commit (and a park that dead-lettered a
-message unread) reports the offset it consumed into the log's watermark, and every bind seeds
-that row from the highest offset any committed iteration consumed, and from the park record
-while the instance sleeps. The watermark is the
-instance's floor: retention reclaims below it, the bind re-forwards the retained records above
-it, and a rewind never lowers it, so a deferred truncation costs disk, never a re-delivery.
+under its own reserved identity: each durable iteration commit reports the offset it consumed
+into the log's watermark, and a message dead-lettered unread is journaled as released
+(`input_released`) before the instance sleeps. Every bind seeds that row from the highest offset
+the journal released, and the driver drops a re-forwarded message at or below it. The watermark
+is the instance's floor: retention reclaims below it, the bind re-forwards the retained records
+above it, and a rewind never lowers it, so a deferred truncation costs disk, never a re-delivery.
 
 **Source credit applies too.** A durable bounded operator's appends debit the same per-instance
 `:source_credit_window_bytes` window, drained as iterations commit, so a sender that has the
@@ -372,12 +395,13 @@ evicted; the controller writes its park record first. A bounded operator sleeps 
 boundary, an unbounded operator at iteration `0`.
 
 An unbounded operator that sleeps keeps durable input: every message is appended to its input log before it
-is forwarded, one append per message. Its Cells report no consumed offset, so its floor is what
-the controller forwarded to a bound runner, reported by the Overwatch after each forward and kept
-in the park record while it sleeps. The log therefore retains only what arrived while nobody
-could take it, and an input already handed to the runner is the runner's, as for any plain
-stream. The bind that wakes it restores every persisted Cell, awaited, before it re-forwards
-that tail. An unbounded operator that does not declare the setting pays nothing.
+is forwarded, one append per message. Its floor is the tier's: the offsets its Cells' records
+carry and the processed prefix the controller confirms
+([above](#the-input-floor-a-processed-prefix)). A forward alone releases nothing, so an input the
+runner took and lost before recording it is re-forwarded. A controller that boots while the
+instance sleeps reads the floor from its Cells' records. The bind that wakes it restores every
+persisted Cell, awaited, before it re-forwards the tail. An unbounded operator that does not
+declare the setting pays nothing.
 
 **Guarantee.** A message sent to a sleeping instance of either kind wakes it and is delivered
 once, across a controller restart while it sleeps. A sleeping bounded operator stopped by a user is

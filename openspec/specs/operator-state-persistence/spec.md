@@ -1460,3 +1460,48 @@ already reads as "do not run". The telemetry event SHALL be
 - **WHEN** it receives no Change for longer than the window
 - **THEN** `[:flezha, :state, :input_silence]` SHALL be emitted once for it
 
+### Requirement: Every persistent Cell's records carry the offset it consumed through, and the Cell skips at that floor
+
+A Cell of a persistent class SHALL write the input-log offset it consumed through in the same
+durable record as the state that input produced: the effect record under the effectively-once
+tier, and outside the tier every change record the Cell drains, carrying the highest offset
+folded into that record after coalescing. No other record SHALL hold a Cell's consumed offset. A
+controller boot scan, a hydration and a restore SHALL read a Cell's consumed offset from its last
+durable record of either kind; a Cell whose records carry none has consumed nothing the log still
+holds.
+
+Every persistent Cell SHALL keep a consumed floor: restored from its durable offset on
+`RestoreInitState`, and advanced when the Cell takes an input stamped with a higher `flz.offset`.
+A Cell SHALL drop an input stamped at or below its floor without running it, emitting or
+changing state. A class whose persistence is off SHALL keep no floor and SHALL be unchanged.
+
+The record that carries a Cell's consumed offset SHALL also keep every inter-tasklet value the
+input produced, with that offset as its origin, and a bind SHALL deliver each kept value whose
+origin is above the instance's floor to its consumer ahead of the re-forwarded tail. A consumer
+SHALL drop a delivered value at or below its own floor.
+
+#### Scenario: A plain persistent Cell restores its floor
+
+- **WHEN** a Cell of a sleeping class that does not declare the tier has durably folded offsets 0..2 and is restored after a controller restart
+- **THEN** its restored floor SHALL be 2, and re-forwarded offsets 0..2 SHALL change nothing and emit nothing
+
+#### Scenario: A torn tail cannot split a change from its offset
+
+- **WHEN** the WAL's last change record is torn by a crash
+- **THEN** the Cell's durable offset SHALL be the one carried by the last intact change record, and the torn record's input SHALL be owed again
+
+#### Scenario: A coalesced record carries the highest folded offset
+
+- **WHEN** a Cell folds offsets 10, 11 and 12 into changes the drain coalesces into one record
+- **THEN** that record SHALL carry offset 12
+
+#### Scenario: A value lost from a plain consumer's mailbox is delivered again
+
+- **WHEN** a producer of a sleeping class that does not declare the tier has durably recorded offset 7, its edge value was admitted to the consumer's mailbox, and the runner dies before the consumer's record for offset 7 is durable
+- **THEN** after the restore the producer SHALL drop the re-forwarded offset 7, the consumer SHALL receive the value from the producer's record, and its state SHALL reflect offset 7 once
+
+#### Scenario: A live floor drops a repeated input
+
+- **WHEN** a bound Cell has taken offset 12 and the same record at offset 12 reaches it again from a second bind
+- **THEN** the Cell SHALL drop it, and its state and outputs SHALL be as if it arrived once
+

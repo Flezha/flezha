@@ -291,6 +291,34 @@ defmodule FlezhaTest.State.TaskJournalTest do
     assert Flezha.State.InputLog.watermark(inst) == 4
   end
 
+  # An input dead-lettered unread before the instance slept is released in
+  # the journal, so the release outlives a restart before the next commit.
+  test "an input dead-lettered unread is released in the journal" do
+    inst = instance_id()
+    :ok = TaskJournal.release_unread(inst, nil)
+    assert TaskJournal.read(inst) == {:ok, []}
+
+    :ok = TaskJournal.release_unread(inst, 0)
+
+    assert {:ok, [%{type: :input_released, payload: %{consumed_offset: 0}}]} =
+             TaskJournal.read(inst)
+
+    assert TaskJournal.released_offset(inst) == 0
+    assert TaskJournal.consumed_offset(inst) == nil, "no iteration consumed it"
+    assert Flezha.State.InputLog.watermark(inst) == 0
+
+    :ets.match_delete(Flezha.State.InputLog.watermark_table(), {{inst, :_}, :_})
+    :ok = TaskJournal.release_input(inst)
+    assert Flezha.State.InputLog.watermark(inst) == 0, "the release survives the lost row"
+
+    assert %RunnerCommands.TaskJournalState{released_offset: 0, consumed_offset: nil} =
+             Commands.task_journal_state(inst)
+
+    rendered = ExUnit.CaptureIO.capture_io(fn -> Journal.state_journal(inst, "text", nil) end)
+    assert rendered =~ "input_released"
+    assert rendered =~ "released unread input-log offset: 0"
+  end
+
   test "a completion carrying an empty result still completes" do
     inst = instance_id()
     :ok = TaskJournal.append_iter_committed(inst, 0, 1, [], "")

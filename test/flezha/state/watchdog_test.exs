@@ -315,7 +315,7 @@ defmodule Flezha.State.WatchdogTest do
     bounded = "BoundedWatch" <> uniq()
     asleep = "SleepingWatch" <> uniq()
     ClassRegistry.put(bounded, :bounded)
-    :ok = ClassRegistry.put_parked(asleep, %{wake_deadline_ms: nil, consumed_offset: nil})
+    :ok = ClassRegistry.put_parked(asleep, %{wake_deadline_ms: nil})
 
     on_exit(fn ->
       ClassRegistry.put_parked(asleep, nil)

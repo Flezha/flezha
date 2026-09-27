@@ -247,7 +247,8 @@ tasklet committed in the in-flight iteration) from the journal alone.
 
 ### Requirement: The iteration entry type is active and the journal records no park
 
-The task-journal codec SHALL write and interpret the `iter_committed` entry type:
+The task-journal codec SHALL write and interpret the `iter_committed` and `input_released`
+entry types:
 `iter_committed` carries the iteration number, the consumed input-log offset (the `flz.offset`
 of the input that seeded the iteration) or the fact that the iteration consumed no journaled
 input, and, when a tasklet of that iteration called `ctx.complete(result)`, the completion and
@@ -255,12 +256,16 @@ its result. The absence of a consumed offset SHALL be recorded as absence, never
 since `0` is the log's first offset. Per-task `task_committed` entries SHALL carry the
 enclosing iteration in the `iter` field (0 for a non-looping chain) and, when that tasklet
 called `ctx.complete(result)`, its completion and result. An `iter_committed` or
-`task_committed` entry written before completions existed SHALL read as carrying none. The
-journal SHALL carry no `parked` entry type and the codec SHALL know none: where an instance
-sleeps is the class registry's per-instance park record, for either kind. The restore state
+`task_committed` entry written before completions existed SHALL read as carrying none. An
+`input_released` entry SHALL carry the input-log offset of an input the instance consumed without
+an iteration commit (an input dead-lettered unread before the instance slept); it SHALL be
+written before the park that follows it, and the journal's released offset SHALL be the highest
+offset any `iter_committed` or `input_released` entry carries. The journal SHALL carry no
+`parked` entry type and the codec SHALL know none: where an instance sleeps is the class
+registry's per-instance park record, for either kind. The restore state
 shipped on a rebind SHALL carry the latest committed iteration's completion, its consumed
-offset or its absence, and each committed tasklet's own, and SHALL carry no park flag or wake
-deadline. The `flz state journal` verb SHALL render the entry types, SHALL show a completing
+offset or its absence, the journal's released offset, and each committed tasklet's own, and
+SHALL carry no park flag or wake deadline. The `flz state journal` verb SHALL render the entry types, SHALL show a completing
 entry as completing, and SHALL show an iteration that consumed nothing as such rather than as
 offset `0`.
 
@@ -283,6 +288,11 @@ offset `0`.
 
 - **WHEN** a tasklet of iteration 3 calls `ctx.complete(result)` and iteration 3 commits
 - **THEN** the journal's `iter_committed(3)` entry and the completing tasklet's `task_committed` entry SHALL each carry the completion and `result`, and `flz state journal` SHALL render both as completing
+
+#### Scenario: An input dead-lettered unread is released in the journal
+
+- **WHEN** a durable instance waiting for a message dead-letters the message at offset 0 unread and then sleeps
+- **THEN** the journal SHALL hold an `input_released` entry for offset 0 before the park is recorded, `flz state journal` SHALL render it, and the journal's released offset SHALL be 0
 
 ### Requirement: The root stage of a timer-fed pass records its trigger, and a resume reads the chain and the consumed firing from it
 

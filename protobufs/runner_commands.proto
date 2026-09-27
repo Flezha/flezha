@@ -393,6 +393,10 @@ message TaskJournalState {
     // The entry channel the last committed iteration named; empty before
     // any iteration committed.
     string entry_channel = 12;
+    // The highest input-log offset the instance ever consumed, by an
+    // iteration commit or an input it dead-lettered unread; absent when none.
+    // The driver drops a re-forwarded input at or below it.
+    optional uint64 released_offset = 13;
 }
 
 // Per-Cell state restore handshake: Controller ships latest snapshot
@@ -623,12 +627,18 @@ message BoundedStop {
 // `if_running` is "deliver" (default; empty reads as deliver) or "error".
 // Rides the "control_command" payload_id like the other SDK-initiated
 // variants; old Controllers ignore it via Protox unknown-field handling, so
-// the requester simply times out.
+// the requester simply times out. `identity` names where the request came
+// from: the requesting instance, the input-log offset its tasklet was taking,
+// the call's position in that invocation, the factory and a hash of the
+// payload. A re-run of the invocation sends the same identity, and the
+// Controller resolves it to the operator the first request did. Empty when
+// the request came from outside a tasklet invocation.
 message SpawnBoundedRequest {
     string instance_id = 1;
     string factory_id = 2;
     bytes payload = 3;
     string if_running = 4;
+    string identity = 5;
 }
 
 // Controller -> SDK reply to SpawnBoundedRequest, carrying the originating

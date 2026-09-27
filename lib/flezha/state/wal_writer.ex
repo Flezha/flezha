@@ -74,16 +74,16 @@ defmodule Flezha.State.WalWriter do
   mailbox depth) the Change is shed (dropped, `wal_shed_total` incremented),
   and the resulting gap drives resync — back-pressure sheds, never blocks.
 
-  `credit_opts` carries the credit-grant ledger attribution for a
-  credit-speaking stream: `%{channel: pid, session: id, wire_size: bytes}`.
-  The writer reports every attributed byte back to
-  `channel` exactly once as a `{:credit_drained, session, bytes}` message —
-  on fsync for written records (durable drain, mints credit), or immediately
-  for a Change that never occupies the un-fsynced buffer (dedup drop, gap
-  rejection, shed, stale-writer refusal, epoch realign, truncation). The
-  session tag lets the
-  channel drop reports for bytes debited under a pre-reconnect session. An
-  empty map (the default) is the legacy path with zero accounting.
+  `credit_opts` names the stream channel that handed the Change over:
+  `%{channel: pid, session: id | nil, wire_size: bytes}`, `session` set on a
+  credit-speaking stream. The writer reports every attributed byte back to
+  `channel` exactly once as a `{:credit_drained, session, bytes, cell_id}`
+  message — on fsync for written records (durable drain, mints credit and
+  confirms processed-prefix markers), or immediately for a Change that never
+  occupies the un-fsynced buffer (dedup drop, gap rejection, shed,
+  stale-writer refusal, epoch realign, truncation). The session tag lets the
+  channel drop credit for bytes debited under a pre-reconnect session. An
+  empty map (the default) accounts nothing.
   """
   @spec append_async(
           GenServer.server(),
@@ -487,10 +487,10 @@ defmodule Flezha.State.WalWriter do
 
   @impl true
   def handle_cast({:append_async, seq, header, change_bytes, runner_id, credit_opts}, state) do
-    state = %{state | credit_active?: Map.has_key?(credit_opts, :channel)}
+    state = %{state | credit_active?: Map.get(credit_opts, :session) != nil}
 
     if Admission.over_hard_bound?(state) do
-      Admission.release_credit(credit_opts)
+      Admission.release_credit(state, credit_opts)
       {:noreply, Admission.shed(state, seq, runner_id)}
     else
       do_append_async(
@@ -538,7 +538,7 @@ defmodule Flezha.State.WalWriter do
   defp do_append_async(seq, header, change_bytes, runner_id, state, credit_opts) do
     case handle_call({:append, seq, header, change_bytes, runner_id}, nil, state) do
       {:reply, {:error, {:gap, expected: expected, got: got}}, new_state} ->
-        Admission.release_credit(credit_opts)
+        Admission.release_credit(new_state, credit_opts)
         Admission.emit_seq_gap(new_state.cell_id, expected, got)
         {:noreply, Admission.open_gap(new_state, runner_id, :seq_gap)}
 
@@ -546,7 +546,7 @@ defmodule Flezha.State.WalWriter do
         {:noreply, Admission.track_credit(new_state, credit_opts)}
 
       {:reply, _result, new_state} ->
-        Admission.release_credit(credit_opts)
+        Admission.release_credit(new_state, credit_opts)
         {:noreply, new_state}
     end
   end

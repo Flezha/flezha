@@ -18,8 +18,11 @@ defmodule Flezha.Runner.StreamChannel do
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.Runner.StreamChannel.Gate
+  alias Flezha.Runner.StreamChannel.Prefix
   alias Flezha.Runner.StreamChannel.Records
   alias Flezha.State.CreditLedger
+  alias Flezha.State.FsyncBatcher
+  alias Flezha.State.InputLog
   alias Flezha.Transport.LivenessCounters
   alias Flezha.Transport.Stream, as: TStream
 
@@ -118,6 +121,9 @@ defmodule Flezha.Runner.StreamChannel do
         name: name,
         last_seen: System.monotonic_time(:millisecond),
         liveness_ref: liveness_ref,
+        # Processed-prefix markers of this stream awaiting their writers'
+        # fsync (`Flezha.Runner.StreamChannel.Prefix`).
+        prefix: Prefix.new(),
         # Credit-grant session for this state stream, encoded in the shape:
         # `nil` (no offer yet) -> `{:offered, %CreditLedger{}}` (handshake
         # in flight) -> `%CreditLedger{}` (credit-speaking) or `:legacy`
@@ -213,7 +219,13 @@ defmodule Flezha.Runner.StreamChannel do
     # would forward onto the channel it was told is up and be dropped again.
     state = Gate.wake_waiters(state, :bind, {:stream_bound, state.name})
 
-    {:reply, :ok, %{state | stream_ref: new_ref, last_seen: System.monotonic_time(:millisecond)}}
+    {:reply, :ok,
+     %{
+       state
+       | stream_ref: new_ref,
+         prefix: Prefix.new(),
+         last_seen: System.monotonic_time(:millisecond)
+     }}
   end
 
   @impl true
@@ -331,6 +343,20 @@ defmodule Flezha.Runner.StreamChannel do
     {:noreply, mark_seen(state)}
   end
 
+  # A processed-prefix marker, behind the records it covers on this stream.
+  def handle_info({:flz_data, _stream_id, "processed_prefix", message, _metadata}, state) do
+    state =
+      case Records.processed_prefix(state, message) do
+        {:ok, rc, offset, streams} ->
+          state |> fence_once() |> confirm_prefix(&Prefix.marker(&1, rc, offset, streams))
+
+        :refused ->
+          state
+      end
+
+    {:noreply, mark_seen(state)}
+  end
+
   # Late-input correction (SDK → controller): a Cell saw an input behind its
   # event-time high-water but inside the declared window. Only the SDK can know
   # that — the event time comes from user code — so detection is its half and
@@ -431,30 +457,21 @@ defmodule Flezha.Runner.StreamChannel do
 
   def handle_info({:credit_nack, _session}, state), do: {:noreply, state}
 
-  # Durable-drain report from a WalWriter fed by this stream: `bytes` of
-  # credit already debited are freed (fsynced, or dropped without ever
-  # occupying the un-fsynced buffer). The ledger decides the batched grant —
-  # one CreditGrant when the un-fsynced buffer falls below the low watermark,
-  # never per record; a stalled fsync reports nothing so nothing is minted.
-  def handle_info(
-        {:credit_drained, session, bytes},
-        %{credit: %CreditLedger{session: session} = ledger} = state
-      ) do
-    {grant, ledger} = CreditLedger.drain(ledger, bytes)
-
-    if grant > 0 do
-      ControlChannel.send_control_async(
-        state.runner_id,
-        {:credit_grant, %RunnerCommands.CreditGrant{stream_id: session, bytes: grant}}
-      )
-    end
-
-    Records.put_ledger_level(state, ledger)
-    {:noreply, %{state | credit: ledger}}
+  # Durable-drain report from a WalWriter fed by this stream: `bytes` it was
+  # handed are fsynced, or dropped without ever occupying the un-fsynced
+  # buffer. Markers waiting on that writer may confirm, and a credit session
+  # frees the bytes.
+  def handle_info({:credit_drained, session, bytes, cell_id}, state) do
+    state = confirm_prefix(state, &Prefix.drained(&1, cell_id, bytes))
+    {:noreply, drain_credit(state, session, bytes)}
   end
 
-  # Drain report tagged with a superseded session (reconnect voided it) — stale.
-  def handle_info({:credit_drained, _session, _bytes}, state), do: {:noreply, state}
+  # The fence flush this stream asked for landed; a fence of a stream since
+  # replaced is stale.
+  def handle_info({:prefix_fenced, stream_ref}, %{stream_ref: stream_ref} = state),
+    do: {:noreply, confirm_prefix(state, &Prefix.fenced/1)}
+
+  def handle_info({:prefix_fenced, _stream_ref}, state), do: {:noreply, state}
 
   # The driver crossed a watermark on this stream's send buffer. A raise is
   # recorded nowhere: a sender discovers it from `send_frame/4`'s own answer,
@@ -503,6 +520,60 @@ defmodule Flezha.Runner.StreamChannel do
     {:noreply, state}
   end
 
+  # Durable-drain report of a credit session: `bytes` of credit already
+  # debited are freed. The ledger decides the batched grant — one CreditGrant
+  # when the un-fsynced buffer falls below the low watermark, never per record;
+  # a stalled fsync reports nothing so nothing is minted. A report of a
+  # superseded session (a reconnect voided it), or of a stream that speaks no
+  # credit, frees nothing.
+  defp drain_credit(%{credit: %CreditLedger{session: session} = ledger} = state, session, bytes) do
+    {grant, ledger} = CreditLedger.drain(ledger, bytes)
+
+    if grant > 0 do
+      ControlChannel.send_control_async(
+        state.runner_id,
+        {:credit_grant, %RunnerCommands.CreditGrant{stream_id: session, bytes: grant}}
+      )
+    end
+
+    Records.put_ledger_level(state, ledger)
+    %{state | credit: ledger}
+  end
+
+  defp drain_credit(state, _session, _bytes), do: state
+
+  # Records an earlier stream handed to the writers are not counted here; one
+  # batcher flush, asked for by the stream's first marker, makes them durable
+  # before any marker of this stream is confirmed. A stream that never carries
+  # a marker never forces a flush.
+  defp fence_once(state) do
+    case Prefix.ask_fence(state.prefix) do
+      {true, prefix} ->
+        channel = self()
+        stream_ref = state.stream_ref
+
+        Task.start(fn ->
+          :ok = FsyncBatcher.flush_all()
+          send(channel, {:prefix_fenced, stream_ref})
+        end)
+
+        %{state | prefix: prefix}
+
+      {false, _prefix} ->
+        state
+    end
+  end
+
+  defp confirm_prefix(state, step) do
+    {confirmed, prefix} = step.(state.prefix)
+
+    Enum.each(confirmed, fn {rc, offset, streams} ->
+      InputLog.confirm_prefix(rc, offset, streams: streams, stream: self())
+    end)
+
+    %{state | prefix: prefix}
+  end
+
   defp unbind(state) do
     publish_stream(state.name, nil, state.liveness_ref)
 
@@ -511,7 +582,7 @@ defmodule Flezha.Runner.StreamChannel do
     # undelivered instead of waiting out its hold on a dead binding.
     state = Gate.wake_waiters(state, :send_gate, {:send_gate, state.name, :closed})
 
-    %{state | stream_ref: nil} |> Records.reset_credit()
+    %{state | stream_ref: nil, prefix: Prefix.new()} |> Records.reset_credit()
   end
 
   @impl true

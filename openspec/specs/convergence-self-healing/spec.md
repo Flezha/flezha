@@ -552,8 +552,10 @@ against it and no backoff key advances.
 Every rebind path SHALL commit the registry binding only after the operator
 confirms the bind — the heal rebind and the runner-disconnect reroute
 alike. The Overwatch's `runner_migrate` SHALL take the one bind path for every
-state it is in: it spawns the supervised bind task an un-park spawns, which runs
-`Lifecycle.complete_init/4` against the target and reports its outcome; the
+state it is in: it starts the bind task an un-park starts, linked to the Overwatch, which runs
+`Lifecycle.complete_init/4` against the target and reports its outcome; the task and every
+process it starts SHALL stop when the Overwatch stops, killed or not, so no bind outlives the
+Overwatch that owns it; the
 Overwatch publishes the registry tag and the route when the task reports a bound
 state, and parks the operator with the attempt's reason when it reports a
 failure, so the failure is declared to the loop and rebound on the `{:parked, id}`
@@ -586,6 +588,11 @@ convergence tick.
 - **THEN** each replacement target is chosen by the factory-filtered placement
   function, and no operator is bound to a runner that does not advertise its
   factory
+
+#### Scenario: A killed Overwatch leaves no bind running
+
+- **WHEN** an Overwatch is killed while its bind task is restoring Cells and re-forwarding the tail
+- **THEN** the task and its restore processes SHALL stop with it, and the restarted Overwatch's bind SHALL be the only one that completes
 
 ### Requirement: A runner the classifier proves wedged is terminally restarted, not only evicted
 

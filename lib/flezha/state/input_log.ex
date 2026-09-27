@@ -2,8 +2,9 @@ defmodule Flezha.State.InputLog do
   @moduledoc """
   Per-instance offset-addressable journal of durable input.
 
-  An instance has durable input when it is an unbounded operator on the effectively-once
-  tier or a durable bounded operator; both journal through this one log. One GenServer
+  An instance has durable input when it is an unbounded operator on the
+  effectively-once tier or one that sleeps, or a durable bounded operator; all
+  journal through this one log. One GenServer
   per instance journals every inbound payload (post-`:on_input`) at
   `<state_root>/<namespace>/<state key>/input.log` before the Overwatch
   forwards it, at strictly monotonic offsets, and answers once the record is
@@ -14,13 +15,14 @@ defmodule Flezha.State.InputLog do
   rather than journaled twice.
 
   Retention is watermark-driven: each reporter's durable consumed-offset (an
-  unbounded Cell's effect record, a bounded operator's iteration commit under its
-  journal's identity) is reported into a public ETS table
-  (`record_consumed/3`) and the sweep truncates strictly below
-  `min(watermark, now - hold_window)`. A reporter that consumed nothing holds
-  the watermark at the log start; a frozen watermark over a growing log emits
-  `[:flezha, :state, :input_log_frozen_watermark]` naming the lagging reporter
-  instead of silently accumulating.
+  unbounded Cell's record, a bounded operator's iteration commit or released
+  input under its journal's identity) is reported into a public ETS table
+  (`record_consumed/3`), an unbounded operator's runner-reported processed
+  prefix is confirmed beside them (`confirm_prefix/2`), and the sweep truncates
+  strictly below `min(watermark, now - hold_window)`. A reporter that consumed
+  nothing holds the watermark at the log start; a frozen watermark over a
+  growing log emits `[:flezha, :state, :input_log_frozen_watermark]` naming the
+  lagging reporter instead of silently accumulating.
   """
 
   use GenServer
@@ -66,6 +68,10 @@ defmodule Flezha.State.InputLog do
 
   @watermarks :flezha_input_log_watermarks
 
+  # The confirmed processed prefix's row beside the reporters' Cell rows; an
+  # atom, so `cell_offsets/1` never takes it for a reporter.
+  @prefix_key :processed_prefix
+
   @msg_id_key "flz.msg_id"
 
   # Source-ingestion credit (`credit-grant-flow-control` §source): appends
@@ -103,7 +109,9 @@ defmodule Flezha.State.InputLog do
     # Answers owed until the records they name are synced, newest first, and
     # whether anything was written since the companion was last handed them.
     owed: [],
-    dirty: false
+    dirty: false,
+    # A multi-stream processed-prefix marker's confirmations so far, by offset.
+    prefix_votes: %{}
   ]
 
   # Cap on how many queued messages of one kind a handler folds into one pass
@@ -231,6 +239,22 @@ defmodule Flezha.State.InputLog do
     end
   end
 
+  @doc """
+  The offset of the retained record whose `flz.msg_id` is `msg_id`, or `nil`
+  when none is retained. A key with no log starts none.
+  """
+  @spec msg_offset(binary(), binary()) :: non_neg_integer() | nil
+  def msg_offset(operator_class, msg_id) do
+    if File.exists?(Paths.input_log_path(operator_class)) do
+      {:ok, pid} = Supervisor.find_or_start({operator_class, :input_log})
+
+      case call(pid, {:msg_offset, msg_id}) do
+        offset when is_integer(offset) -> offset
+        _none_or_refused -> nil
+      end
+    end
+  end
+
   defp retained_last_offset(operator_class) do
     case Supervisor.lookup({operator_class, :input_log}) do
       {:ok, pid} ->
@@ -339,6 +363,9 @@ defmodule Flezha.State.InputLog do
   @spec rewind_consumed(binary(), tuple(), non_neg_integer() | -1) :: :ok
   def rewind_consumed(operator_class, cell_id, offset) do
     ensure_watermark_table()
+    # The confirmed prefix covers inputs the correction is about to replay.
+    :ets.delete(@watermarks, {operator_class, @prefix_key})
+    notify_consumed(operator_class, @prefix_key, -1)
 
     if offset < 0 do
       :ets.delete(@watermarks, {operator_class, cell_id})
@@ -369,15 +396,55 @@ defmodule Flezha.State.InputLog do
   end
 
   @doc """
-  Minimum durable consumed-offset across the instance's reporters — its floor —
-  or `nil` when none has reported (the watermark then holds at the log start
-  and nothing truncates).
+  The instance's floor: the processed prefix its runner reported and the
+  controller confirmed durable (`confirm_prefix/2`), or before one is
+  confirmed, and after a restart, the minimum durable consumed-offset across
+  its reporters. `nil` when neither exists (the watermark then holds at the log
+  start and nothing truncates).
   """
   @spec watermark(binary()) :: non_neg_integer() | nil
   def watermark(operator_class) do
-    case cell_offsets(operator_class) do
-      [] -> nil
-      offsets -> offsets |> Enum.map(&elem(&1, 1)) |> Enum.min()
+    reporters = Map.new(cell_offsets(operator_class))
+
+    case :ets.lookup(@watermarks, {operator_class, @prefix_key}) do
+      [{_, offset}] -> floor_of(Map.put(reporters, @prefix_key, offset))
+      [] -> floor_of(reporters)
+    end
+  end
+
+  # The confirmed prefix when there is one, else the slowest reporter; `nil`
+  # for none.
+  defp floor_of(%{@prefix_key => prefix}), do: prefix
+  defp floor_of(consumed) when map_size(consumed) == 0, do: nil
+  defp floor_of(consumed), do: consumed |> Map.values() |> Enum.min()
+
+  @doc """
+  Confirm the instance's processed prefix: every input at or below `offset`
+  was processed and every record it produced is fsynced. It only moves
+  forward; a correction rewind clears it (`rewind_consumed/3`).
+
+  A runner that spread the instance's records over several streams sent the
+  marker on each (`streams:`); `stream:` names the one confirming here, and
+  the prefix moves once every one of them has.
+  """
+  @spec confirm_prefix(binary(), non_neg_integer(), keyword()) :: :ok
+  def confirm_prefix(operator_class, offset, opts \\ []) do
+    case Keyword.get(opts, :streams, 1) do
+      1 -> store_prefix(operator_class, offset)
+      streams -> vote_prefix(operator_class, offset, streams, Keyword.fetch!(opts, :stream))
+    end
+  end
+
+  defp store_prefix(operator_class, offset) do
+    ensure_watermark_table()
+    stored = advance_stored_offset({operator_class, @prefix_key}, offset)
+    notify_consumed(operator_class, @prefix_key, stored)
+  end
+
+  defp vote_prefix(operator_class, offset, streams, stream) do
+    case Supervisor.lookup({operator_class, :input_log}) do
+      {:ok, pid} -> GenServer.cast(pid, {:prefix_vote, offset, streams, stream})
+      :error -> :ok
     end
   end
 
@@ -512,6 +579,15 @@ defmodule Flezha.State.InputLog do
     {:reply, collect_range(state.file_handle, state.path, from, to), state}
   end
 
+  def handle_call({:msg_offset, msg_id}, _from, state) do
+    state = ensure_ids(state)
+
+    case retained(state, msg_id) do
+      {:duplicate, offset} -> {:reply, offset, state}
+      :none -> {:reply, nil, state}
+    end
+  end
+
   def handle_call({:offset_before_time, ts_ms}, _from, state) do
     {:reply, scan_offset_before(state.file_handle, state.path, ts_ms), state}
   end
@@ -550,6 +626,20 @@ defmodule Flezha.State.InputLog do
   def handle_cast(:fsync, state) do
     send(state.syncer, {:sync, Enum.reverse(state.owed)})
     {:noreply, %{state | owed: [], dirty: false}}
+  end
+
+  # One stream of a multi-stream marker confirmed `offset`: it is the prefix
+  # once `streams` distinct streams have, and a later offset confirmed so
+  # supersedes every earlier one still counting.
+  def handle_cast({:prefix_vote, offset, streams, stream}, state) do
+    votes = Map.update(state.prefix_votes, offset, MapSet.new([stream]), &MapSet.put(&1, stream))
+
+    if MapSet.size(votes[offset]) >= streams do
+      store_prefix(state.operator_class, offset)
+      {:noreply, %{state | prefix_votes: Map.reject(votes, fn {o, _} -> o <= offset end)}}
+    else
+      {:noreply, %{state | prefix_votes: votes}}
+    end
   end
 
   # A reporter's durable consumed-offset moved (an effect record or an
@@ -703,7 +793,8 @@ defmodule Flezha.State.InputLog do
   defp advance_watermark(%{consumed: consumed} = state) when map_size(consumed) == 0, do: state
 
   defp advance_watermark(state) do
-    wm = state.consumed |> Map.values() |> Enum.min()
+    wm = floor_of(state.consumed)
+
     {freed, offset_sizes} = pop_freed(state.offset_sizes, wm)
     {grant, ledger} = CreditLedger.drain(state.ledger, freed)
     state = %{state | ledger: ledger, offset_sizes: offset_sizes}

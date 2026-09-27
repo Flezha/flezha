@@ -12,10 +12,11 @@ declares `sleep_when_idle`) to the instance's durable input log (`durable-input-
 module, file and offset space for every such instance) with a monotonic offset **before**
 forwarding it to the runner, stamped `flz.offset`. An input carrying a `flz.msg_id` already
 retained in the log SHALL be absorbed at append; an input carrying no id SHALL always be
-appended. The log's floor SHALL be the strictest durable consumption the class records: the
-tier's per-Cell consumed offsets when the class declares the tier, the journal's iteration
-commit when the instance journals, and otherwise the offset the controller has forwarded to a
-bound runner, reported by the Overwatch once the forward is done. Entries at or below the floor
+appended. The log's floor SHALL be the durable consumption the instance's own records carry
+(`durable-input-log`): for an unbounded operator, whether it declares the tier or only sleeps,
+its Cells' durable consumed offsets and the processed prefix the controller confirms; for a
+bounded operator, the journal's iteration commits and released inputs. What the controller has
+forwarded SHALL NOT move the floor. Entries at or below the floor
 SHALL be released to the log's retention. Message payloads SHALL live only in the input log,
 never in `task.journal`. A class that declares none of the three SHALL have no durable input
 and SHALL pay no append.
@@ -31,10 +32,15 @@ and SHALL pay no append.
 - **WHEN** a message arrives for an unbounded class that declares `sleep_when_idle` while the instance is suspended
 - **THEN** it SHALL be appended to the instance's input log, the instance SHALL be rehydrated, and the message SHALL be delivered by the bind's re-forward, once
 
-#### Scenario: A plain sleeping unbounded operator's log holds only what nobody could take
+#### Scenario: A plain sleeping unbounded operator folds nothing twice after a controller restart
 
-- **WHEN** an unbounded operator that declares `sleep_when_idle` and neither the tier nor a journal is awake and bound, and the controller forwards the record at offset 9 to its runner
-- **THEN** the Overwatch SHALL report 9 consumed, retention MAY release records at or below 9, and a later rehydrate SHALL re-forward only records above 9
+- **WHEN** an unbounded operator that declares `sleep_when_idle` and not the tier has folded `a:100`, slept, woken on `a:1` and `a:2`, and the controller restarts while it is awake, then `a:10` is sent
+- **THEN** its total for `a` SHALL be 113, and none of the three earlier inputs SHALL be folded again
+
+#### Scenario: A forward alone does not release input
+
+- **WHEN** the controller forwards the record at offset 9 to the runner of a plain sleeping unbounded operator and the runner dies before the record's change is durable
+- **THEN** offset 9 SHALL NOT be released and the rebind SHALL re-forward it
 
 #### Scenario: Duplicate send is absorbed
 
@@ -148,8 +154,10 @@ bounded operator waits for a message. An eviction-hysteresis knob SHALL avoid pa
 under trickling input.
 
 The park record SHALL be a per-instance fact in the class registry's durable sidecar for either
-kind, holding the wake deadline when one was given; it SHALL NOT be a task-journal entry. The
-bind that wakes the instance SHALL clear it before the runner is told to start the instance.
+kind, holding the wake deadline when one was given and nothing else; it SHALL NOT be a
+task-journal entry and SHALL hold no consumed offset. The bind that wakes the instance SHALL
+clear it before the runner is told to start the instance; clearing it SHALL release nothing and
+lower no floor.
 
 The suspended Overwatch SHALL hibernate: a sleeper holds nothing of its bind on
 its heap (the restore frames and plugin setup are garbage once it parks).
@@ -218,7 +226,12 @@ its heap (the restore frames and plugin setup are garbage once it parks).
 #### Scenario: A message parked unread does not wake the instance again
 
 - **WHEN** a durable instance waiting for a message receives one it cannot read, parks it to the dead-letter queue, and then waits past the idle threshold
-- **THEN** its park SHALL carry that message's offset, the message SHALL no longer be owed, and the instance SHALL stay `suspended` rather than be rehydrated to receive it again; a rehydrated instance that was owed the message SHALL count it as received and park on the idle threshold
+- **THEN** the journal SHALL record that message's offset as released, the message SHALL no longer be owed, and the instance SHALL stay `suspended` rather than be rehydrated to receive it again; a rehydrated instance that was owed the message SHALL count it as received and park on the idle threshold
+
+#### Scenario: A woken instance keeps its release across a controller restart
+
+- **WHEN** a durable instance that dead-lettered a message unread and slept is woken, and the controller restarts before its next iteration commits
+- **THEN** the message SHALL NOT be owed again and SHALL NOT be dead-lettered a second time
 
 ### Requirement: A rehydrated instance waits for the input tail it is owed before it sleeps
 

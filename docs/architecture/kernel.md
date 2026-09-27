@@ -273,8 +273,9 @@ Deeper detail, including the WAL record format and every configuration knob:
 
 ## The minimum watermark and retention
 
-Under the tier, each cell reports the input-log offset it has durably consumed. The
-**minimum** across an operator's cells is the only offset that is safely done everywhere.
+Each cell of an unbounded operator with journaled input reports the input-log offset it has
+durably consumed. The **minimum** across an operator's cells is safely done everywhere, and it
+is the floor until the runner's processed prefix is confirmed (below).
 
 ```mermaid
 flowchart TB
@@ -300,6 +301,17 @@ flowchart TB
     classDef exec fill:#dcfce7,stroke:#166534,color:#111
     classDef store fill:#e5e7eb,stroke:#374151,color:#111
 ```
+
+The minimum alone would let one quiet cell pin the log: a key that took offset 1 and saw nothing
+since holds everyone at 1. So the runner also reports a **processed prefix**: after each drain
+pass, a `processed_prefix` marker naming `P` on the data stream behind the records it covers,
+meaning every input at or below `P` has been processed by every cell it reached and every
+record it produced was written. An input still pending anywhere holds `P` below it; an idle
+cell holds nothing. The controller confirms `P` once every cell writer of the instance has
+fsynced past where the stream stood when the marker arrived, and a confirmed `P` replaces the
+minimum as the floor. After a controller restart the floor falls back to the minimum until the
+next confirmation; the re-forward from there is safe, because every cell drops an input at or
+below what it already took.
 
 The watermark only ever advances from the **post-fsync** path, so it is a durable fact, not a
 hope. It does two jobs: it is the retention floor, and it is what mints source credit

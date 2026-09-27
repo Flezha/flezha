@@ -36,7 +36,10 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
       do: GenServer.start(__MODULE__, {owner, builder, registry})
 
     @doc "Payloads this instance was asked to ingest, oldest first."
-    def ingested(pid), do: GenServer.call(pid, :ingested)
+    def ingested(pid), do: pid |> ingested_with_metadata() |> Enum.map(&elem(&1, 0))
+
+    @doc "Payloads this instance was asked to ingest with their metadata, oldest first."
+    def ingested_with_metadata(pid), do: GenServer.call(pid, :ingested)
 
     @impl true
     def init({owner, builder, registry}) do
@@ -60,8 +63,8 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
 
     def handle_call(:ingested, _from, state), do: {:reply, Enum.reverse(state.ingested), state}
 
-    def handle_call({:ingest, message, _metadata}, _from, state),
-      do: {:reply, :ok, %{state | ingested: [message | state.ingested]}}
+    def handle_call({:ingest, message, metadata}, _from, state),
+      do: {:reply, :ok, %{state | ingested: [{message, metadata} | state.ingested]}}
 
     def handle_call(_msg, _from, state), do: {:reply, {:error, :unsupported}, state}
 

@@ -49,6 +49,7 @@ pub mod python_glue;
 pub mod ruby_glue;
 pub mod veneer;
 
+use std::collections::HashMap;
 use std::ffi::{c_char, CStr, CString};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock, TryLockError};
@@ -86,6 +87,9 @@ pub const FLZ_SPAWN_FAILED: i32 = 2;
 struct Outstanding {
     activation: EngineActivation,
     spawns: Vec<u64>,
+    /// Spawns asked for so far per input-log offset: a spawn's position in
+    /// the invocation that took that offset.
+    spawn_positions: HashMap<i64, u32>,
 }
 
 /// Opaque context handle.
@@ -390,6 +394,7 @@ pub unsafe extern "C" fn flz_core_poll(
             let outstanding = Outstanding {
                 activation: act,
                 spawns: Vec::new(),
+                spawn_positions: HashMap::new(),
             };
             ctx.outstanding
                 .insert(outstanding.activation.token, outstanding);
@@ -541,7 +546,10 @@ pub extern "C" fn flz_core_watch_stdin_eof(grace_ms: u32) {
 /// `factory_id` under `id`, or under an id the controller generates when `id`
 /// is empty. `if_running` (`"deliver"`, the default when empty, or `"error"`)
 /// applies only to an id that is already running. A nonzero `replay` sends
-/// nothing and resolves the handle to `skipped_on_replay` at once.
+/// nothing and resolves the handle to `skipped_on_replay` at once. `offset`
+/// is the input-log offset of the item the calling tasklet is taking (`-1`
+/// for none): with the Cell and the call's position it names the request, so
+/// a re-run of that item resolves to what the first run's request did.
 ///
 /// Never waits: `*handle_out` names the answer for [`flz_core_spawn_result`].
 /// A refusal reaches only that read. [`FLZ_ERR`] means an unreadable argument
@@ -560,6 +568,7 @@ pub unsafe extern "C" fn flz_core_spawn_request(
     payload_len: usize,
     if_running: *const c_char,
     replay: i32,
+    offset: i64,
     handle_out: *mut u64,
 ) -> i32 {
     let Some(ctx) = ctx.as_ref() else {
@@ -586,7 +595,21 @@ pub unsafe extern "C" fn flz_core_spawn_request(
         std::slice::from_raw_parts(payload, payload_len).to_vec()
     };
     let options = (!id.is_empty()).then(|| SpawnOptions::id(id).if_running(if_running));
-    let spawn = flz_core::spawn::request(factory_id.to_string(), payload, options, replay != 0);
+    let position = outstanding.spawn_positions.entry(offset).or_insert(0);
+    let origin_position = *position;
+    *position += 1;
+    let origin = flz_core::spawn::SpawnOrigin {
+        cell_identity: outstanding.activation.cell_identity(),
+        offset: u64::try_from(offset).ok(),
+        position: origin_position,
+    };
+    let spawn = flz_core::spawn::request(
+        factory_id.to_string(),
+        payload,
+        options,
+        replay != 0,
+        origin,
+    );
     let handle = ctx.last_spawn.fetch_add(1, Ordering::Relaxed) + 1;
     ctx.spawns.insert(handle, Arc::new(Mutex::new(spawn)));
     outstanding.spawns.push(handle);

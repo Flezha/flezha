@@ -115,24 +115,27 @@ it persisted, and neither is deleted to make a log parse.
 
 ### Requirement: Min-watermark retention
 
-The controller SHALL track the minimum durable consumed offset across all of an instance's
-reporters (the watermark) and SHALL truncate the input log only strictly below
-`min(watermark, now − hold_window)`. An unbounded operator's reporters are its Cells, each reporting from its
-durable effect records; a durable bounded operator's reporter is its journal, reporting the consumed
-offset of each iteration commit under the journal's reserved identity, seeded on every bind from
-the highest offset any committed iteration consumed. A reporter that has consumed nothing holds
-the watermark at the log start. A truncation SHALL rewrite the file only once the prefix below
-the floor exceeds the record-log cut threshold, so a loop's log is rewritten once per threshold
-rather than once per turn.
+The controller SHALL track the instance's floor and SHALL truncate the input log only strictly
+below `min(floor, now − hold_window)`. The floor SHALL be the confirmed processed prefix
+(Requirement: The instance floor is a processed prefix the controller confirms durable), and
+before one is confirmed, the minimum durable consumed offset across the instance's reporters (the
+watermark). An unbounded operator's reporters are its Cells, each reporting from its durable
+records (the effect record under the tier, the change record otherwise); a durable bounded
+operator's reporter is its journal, reporting the consumed offset of each iteration commit and
+each released input under the journal's reserved identity, seeded on every bind from the highest
+offset the journal released. A reporter that has consumed nothing holds the watermark at the log
+start. A truncation SHALL rewrite the file only once the prefix below the floor exceeds the
+record-log cut threshold, so a loop's log is rewritten once per threshold rather than once per
+turn.
 
 `hold_window` SHALL resolve **per instance** as the greater of the user-configured value and
 the instance's own declared `correction_window`. It SHALL default to zero for an instance that
 declares no correction window and for which the user has configured none, so a
-non-correcting instance truncates at its watermark exactly as it does with no hold window at all.
+non-correcting instance truncates at its floor exactly as it does with no hold window at all.
 
-#### Scenario: Truncation respects the slowest cell
+#### Scenario: Truncation respects the slowest cell before a marker is confirmed
 
-- **WHEN** cell A has durably consumed to offset 4711 and cell B to 4710
+- **WHEN** no processed prefix is confirmed yet, cell A has durably consumed to offset 4711 and cell B to 4710
 - **THEN** truncation removes only offsets below 4710
 
 #### Scenario: An iteration commit advances a bounded operator's watermark
@@ -154,14 +157,14 @@ non-correcting instance truncates at its watermark exactly as it does with no ho
 
 #### Scenario: A declared correction window holds the log
 
-- **WHEN** an unbounded operator declares `correction_window(60_000)`, every Cell has consumed to offset
-  4711, and offset 4711 was appended 10 s ago
+- **WHEN** an unbounded operator declares `correction_window(60_000)`, its floor is offset 4711,
+  and offset 4711 was appended 10 s ago
 - **THEN** offset 4711 is retained, because it is newer than the derived 60 s hold window
 
 #### Scenario: An operator with no correction window has no hold
 
 - **WHEN** an instance declares no correction window, the user configures no hold window,
-  and every reporter has consumed to offset 4711
+  and its floor is offset 4711
 - **THEN** truncation removes every offset below 4711 immediately
 
 ### Requirement: The log owns its watermark
@@ -409,30 +412,79 @@ metadata the record already holds.
 
 On every bind of an instance with durable input, of either kind, the controller SHALL re-forward
 the retained records strictly above the instance's floor, in offset order, each stamped with its
-original `flz.offset` and never re-journaled, exactly once per bind, before the instance's source
-plugins are brought up. The floor SHALL be the log's watermark: the minimum durable consumed
-offset over the instance's reporters. There SHALL be one such re-forward function, shared by a
-fresh bind, a crash resume, a migration, a rehydrate from suspension and the bind of an unbounded operator that
-could not carry an earlier input. Whether an instance owes undelivered input SHALL be answered
-from the log's tail and floor, without decoding the file.
+original `flz.offset` and never re-journaled, before the instance's source plugins are brought
+up. There SHALL be one such re-forward function, shared by a fresh bind, a crash resume, a
+migration, a rehydrate from suspension and the bind of an unbounded operator that could not carry
+an earlier input. A re-forward SHALL be safe to repeat: every receiver, a Cell or a bounded
+driver, SHALL drop an input at or below its own consumed floor, so a second bind, an orphaned
+bind or a repeated tail changes no state and emits nothing twice. Whether an instance owes
+undelivered input SHALL be answered from the log's tail and floor, without decoding the file.
 
 #### Scenario: A rehydrated bounded operator receives its tail once
 
-- **WHEN** a durable bounded instance whose journal has consumed offset 6 rehydrates while the
+- **WHEN** a durable bounded instance whose journal has released offset 6 rehydrates while the
   log holds offsets 0..9
-- **THEN** offsets 7..9 are forwarded once, in order, each stamped with its own `flz.offset`, and
+- **THEN** offsets 7..9 are forwarded in order, each stamped with its own `flz.offset`, and
   nothing at or below 6 is forwarded
 
 #### Scenario: A tier unbounded operator receives its tail once
 
-- **WHEN** an effectively-once unbounded operator whose slowest Cell has consumed to 4700 rebinds while the
-  log holds offsets up to 4720
-- **THEN** offsets 4701..4720 are forwarded once, in order, and a Cell ahead of 4700 skips the
-  offsets it already consumed
+- **WHEN** an effectively-once unbounded operator whose floor is 4700 rebinds while the log holds
+  offsets up to 4720
+- **THEN** offsets 4701..4720 are forwarded in order, and a Cell ahead of 4700 skips the offsets
+  it already consumed
+
+#### Scenario: A tail forwarded twice is taken once
+
+- **WHEN** the same tail 7..9 reaches a bounded driver twice, from an orphaned bind and from the
+  Overwatch's own bind
+- **THEN** each of 7, 8 and 9 SHALL seed exactly one iteration
 
 #### Scenario: Owed input is judged without a file read
 
 - **WHEN** the controller asks whether a suspended instance owes undelivered input
 - **THEN** the answer is derived from the log's last offset and the instance's floor, and no
   record body is decoded
+
+### Requirement: The instance floor is a processed prefix the controller confirms durable
+
+After each drain pass the runner SHALL send, for every instance that took new input, a marker
+naming offset `P`: every input at or below `P` has been processed and every record it produced,
+in any Cell of the instance including a downstream Cell fed by an edge, has been written to the
+data stream ahead of the marker. An input still queued, in flight, held back, retrying or
+unflushed in any Cell SHALL hold `P` below it; a Cell with nothing pending SHALL NOT hold `P`.
+The marker SHALL travel on the data stream behind the records it covers and SHALL never be held
+in the reconnect ring: a marker the wire refuses is dropped, and a runner that evicted a record
+of an instance from the ring SHALL send no marker covering that record's input.
+
+The controller SHALL confirm `P` only once every Cell writer of the instance has reported an
+fsync drain past the stream position it had reached when the marker arrived. A confirmed `P`
+SHALL be the instance's floor for retention and for where a bind's re-forward starts. Before any
+`P` is confirmed, and after a controller restart, the floor SHALL be the minimum durable
+consumed offset over the instance's reporters.
+
+#### Scenario: An idle Cell does not hold the floor
+
+- **WHEN** a stream keyed by symbol takes offset 1 for `BTC-USD` and offsets 2..1005 for `SOL-USD`, every record is fsynced, and no `BTC-USD` input follows
+- **THEN** the confirmed floor SHALL reach 1005 and retention MAY release every offset at or below 1005
+
+#### Scenario: A marker is not confirmed before its records are durable
+
+- **WHEN** the controller receives a marker for `P = 5` while the record for offset 4 is received but not yet fsynced, and the controller is killed before that fsync
+- **THEN** the floor SHALL NOT have reached 5, offset 4 SHALL still be in the input log after the restart, and the rebind SHALL re-forward it
+
+#### Scenario: Work pending downstream holds the floor
+
+- **WHEN** offset 7 has been folded by an entry Cell whose edge value is still unflushed in a downstream Cell
+- **THEN** no marker SHALL name a `P` at or above 7 until the downstream record is on the stream
+
+#### Scenario: A record lost from the reconnect ring is never covered
+
+- **WHEN** the reconnect ring evicts the record for offset 4 of an instance and later records of that instance are replayed after the reconnect
+- **THEN** the runner SHALL send no marker with `P` at or above 4 for that instance
+
+#### Scenario: A controller restart falls back safely
+
+- **WHEN** the controller restarts with a confirmed floor of 1005 and Cell offsets of 1 and 1005
+- **THEN** until the next confirmed marker the floor SHALL be 1, and a rebind SHALL re-forward from 2, every Cell skipping what it already consumed
 

@@ -88,3 +88,22 @@ A deferred Overwatch that reaches `max_defer_time` (or the drain deadline) SHALL
 - **WHEN** the hub force-migrates it to a peer node
 - **THEN** upstream logs the forced-migration warning, the target node rebinds the instance, its task-journal fold skips every committed task, and the interrupted iteration re-runs without protocol wedge — the runner-side driver either re-attaches or fails its pending ack within the existing 30 s bound and recovers via compensation + re-placement
 
+### Requirement: A move to another controller brings the durable state over before it binds
+
+The destination of a move to another controller SHALL start knowing the source node, whether
+the move is a hub redistribution, a drain or a forced migration, and its bind SHALL pull the
+source's journal, input log and Cell files through the existing synchronous foreign-state pull
+before it reads any resume state, sends `AddOperator` or re-forwards any input. A handover that
+arrives after the start SHALL NOT pull, restore or re-forward a second time. A destination that
+already holds the instance's durable state SHALL pull nothing.
+
+#### Scenario: A durable loop moved after its runner died resumes without re-running input
+
+- **WHEN** a durable bounded loop on controller A has committed iterations 0..2, A's only runner is killed, the loop moves to controller B, and one more message is sent
+- **THEN** B's bind SHALL carry the journal A held, no output of iterations 0..2 SHALL be emitted again, and the new message SHALL commit iteration 3 exactly once
+
+#### Scenario: The pull precedes the bind
+
+- **WHEN** a destination with no local state for the instance starts it after a move
+- **THEN** the `AddOperator` it sends SHALL carry the source's task journal and a resume cell count equal to the source's persisted Cells
+

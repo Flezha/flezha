@@ -407,6 +407,44 @@ fn a_durable_run_releases_what_it_parked_unread_when_it_suspends() {
     state_sink::reset_for_test();
 }
 
+/// A re-forward is safe to repeat: the driver drops a message its journal
+/// already released and runs the first one it has not.
+#[test]
+fn a_message_the_instance_already_took_starts_no_pass() {
+    use crate::command::CommandAction;
+    let _env = crate::runner::env_test_guard();
+    let (tx, rx) = unbounded::<RunnerMessage>();
+    crate::runner::install_reconnect_trigger(tx);
+    let _guard = state_sink::test_guard();
+    state_sink::reset_for_test();
+    let id = format!("host_bounded_taken_{}", std::process::id());
+    crate::host::register_host_class_json(host_class::bounded_json(&id, &["in"], 1).as_bytes())
+        .expect("class registers");
+    let _host = FakeHost::serve(|_| schema::Verdict::Ok);
+    let mut node = RunnerNode::new("test-ns".to_string());
+
+    let mut errors = Vec::new();
+    crate::pb::AddOperator {
+        operator_id: "host-taken-1".to_string(),
+        factory_id: id.clone(),
+        task_journal: Some(crate::pb::TaskJournalState {
+            released_offset: Some(5),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+    .handle(&mut node, "", &mut errors);
+    assert!(errors.is_empty(), "{errors:?}");
+
+    feed_at(&node, "host-taken-1", "in", 5, b"released");
+    assert_no_completion(&rx, "host-taken-1", Duration::from_millis(300));
+
+    feed_at(&node, "host-taken-1", "in", 6, b"fresh");
+    let (_outs, done) = drain(&rx, &Wire::new(), "host-taken-1");
+    assert_eq!(done.0, "ok", "offset 6 ran its pass: {done:?}");
+    state_sink::reset_for_test();
+}
+
 #[test]
 fn an_unbounded_given_the_unreadable_verdict_parks_the_item() {
     let _env = crate::runner::env_test_guard();

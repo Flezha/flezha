@@ -85,6 +85,7 @@ pub(super) fn build_host_cell_slot(
     let flusher_entry_id = facts.persistent.then(|| {
         CellFlusher::instance().register(
             Arc::clone(&parts.cell_identity),
+            args.prefix.clone(),
             Arc::clone(&flush_buffer),
             args.persistence_enabled,
             Arc::clone(&parts.change_seq),

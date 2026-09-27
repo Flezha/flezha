@@ -314,7 +314,9 @@ pub fn local_stop(ctx: CtxPtr) {
 }
 
 /// Request a spawn from the live activation `token`; the handle number, at
-/// once. An empty `id` asks the controller to generate one.
+/// once. An empty `id` asks the controller to generate one. `offset` is the
+/// input-log offset of the item the calling tasklet is taking.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_request(
     ctx: CtxPtr,
     token: u64,
@@ -323,6 +325,7 @@ pub fn spawn_request(
     payload: &[u8],
     if_running: &CStr,
     replay: bool,
+    offset: Option<u64>,
 ) -> Result<u64, Refusal> {
     let mut handle = 0;
     let status = unsafe {
@@ -335,6 +338,7 @@ pub fn spawn_request(
             payload.len(),
             if_running.as_ptr(),
             i32::from(replay),
+            offset.map_or(-1, |o| o as i64),
             &mut handle,
         )
     };

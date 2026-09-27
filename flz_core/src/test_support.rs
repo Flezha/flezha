@@ -114,6 +114,17 @@ pub(crate) mod host_class {
         keys: &[&str],
         consumers: &[u32],
     ) -> Arc<OperatorInstance> {
+        instance_of(id, entries, keys, consumers, true)
+    }
+
+    /// [`instance`], on the tier or off it.
+    pub(crate) fn instance_of(
+        id: &str,
+        entries: &[&str],
+        keys: &[&str],
+        consumers: &[u32],
+        tier: bool,
+    ) -> Arc<OperatorInstance> {
         let chain_list = consumers
             .iter()
             .map(|c| format!(r#"[{{"link":"into","tasklet":{c}}}]"#))
@@ -141,7 +152,7 @@ pub(crate) mod host_class {
             .join(",");
         let entry_json = entry_channels(entries, "");
         let json = format!(
-            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,"effectively_once":true,
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,"effectively_once":{tier},
                  "channels":[{entry_json}
                              {{"name":"mid","kind":"inter_task","producer":0,
                                "chains":[{chain_list}]}},

@@ -182,8 +182,9 @@ pub fn removed(inst: &OperatorInstance) {
 
 /// A message through the entrance: its items for the chain's roots are
 /// addressed here, on the reader, and the pass starts at once or waits in the
-/// queue. An entry edge that unwinds, or a key this partition member does not
-/// own, rides the channel's ladder off the reader and opens no pass.
+/// queue. A message this instance already took is dropped. An entry edge
+/// that unwinds, or a key this partition member does not own, rides the
+/// channel's ladder off the reader and opens no pass.
 pub fn message(
     inst: &OperatorInstance,
     channel: &ChannelDescriptor,
@@ -195,6 +196,9 @@ pub fn message(
     let Some(channel_id) = inst.topology.lookup_channel_id(&channel.name) else {
         return;
     };
+    if !r.run.take(offset) {
+        return;
+    }
     match r.address(channel, &channel.consumers, value, stream, None) {
         Ok(roots) => r.decide(|d| {
             d.arrived(Message {

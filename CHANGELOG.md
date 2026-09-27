@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Fixed: an instance's input floor is what it durably processed
+
+A plain sleeping stream folded inputs twice after a controller restart while it was awake, a
+dead-lettered input could be owed again after a restart, a durable loop moved off a dead runner
+could run input again, and a crash-resumed bounded operator could run a message twice. Every
+persistent Cell's records now carry the input offset it consumed through, every Cell drops an
+input at or below the floor it took, and the runner reports a processed prefix that the
+controller confirms once the records behind it are on disk; that prefix is the input log's
+floor. An inter-tasklet value rides its producer's record, so a value lost from a consumer's
+mailbox is delivered again, and a tasklet's spawn repeated by a crash re-run resolves to the
+worker it already started. Every SDK carries the change; the park record no longer holds an
+offset, and the task journal gains an `input_released` entry that `flz state journal` shows.
+
 ### Added: `flz runner list` shows each runner's process id
 
 A runner connected over the Unix socket is listed with the process id of the process on the

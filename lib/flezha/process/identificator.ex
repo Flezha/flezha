@@ -112,16 +112,18 @@ defmodule Flezha.Identificator do
 
   A `:hex` id is drawn again when the registry already holds it. A `:time` id
   names an operator, which this registry never holds; the start that claims
-  it is its only check.
+  it is its only check. `seed:` derives the suffix from the seed instead of
+  drawing it, in the same shape, so one seed always mints one id.
   """
   @spec mint(kind(), binary(), keyword()) :: binary()
   def mint(kind, prefix, opts \\ []) when is_binary(prefix) do
     shape = Map.get(rule(kind), :suffix, :hex)
     {separator, width} = Map.fetch!(@suffixes, shape)
     budget = limit(kind) - width - byte_size(separator) - Keyword.get(opts, :reserve, 0)
-    id = trim(prefix, budget) <> separator <> mint_suffix(shape)
+    suffix = seeded_suffix(shape, Keyword.get(opts, :seed)) || mint_suffix(shape)
+    id = trim(prefix, budget) <> separator <> suffix
 
-    if shape == :hex and Registry.lookup(__MODULE__, id) != [],
+    if shape == :hex and is_nil(opts[:seed]) and Registry.lookup(__MODULE__, id) != [],
       do: mint(kind, prefix, opts),
       else: id
   end
@@ -143,6 +145,17 @@ defmodule Flezha.Identificator do
     if String.valid?(cut),
       do: cut,
       else: whole_characters(binary_part(cut, 0, byte_size(cut) - 1))
+  end
+
+  defp seeded_suffix(_shape, nil), do: nil
+
+  defp seeded_suffix(shape, seed) when is_binary(seed) do
+    <<bits::binary-size(10), _::binary>> = :crypto.hash(:sha256, seed)
+
+    case shape do
+      :hex -> Base.encode16(binary_part(bits, 0, 6), case: :lower)
+      :time -> Base.encode32(bits, case: :lower, padding: false)
+    end
   end
 
   defp mint_suffix(:hex) do

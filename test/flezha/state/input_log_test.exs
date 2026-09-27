@@ -86,6 +86,65 @@ defmodule Flezha.State.InputLogTest do
     assert InputLog.read_range(class, 0, 9) |> Enum.map(&elem(&1, 0)) == [4, 5, 6, 7, 8, 9]
   end
 
+  describe "the confirmed processed prefix" do
+    # An idle Cell's own offset no longer holds the floor once the runner's
+    # prefix is confirmed past it.
+    test "is the floor, past an idle Cell", %{class: class} do
+      for i <- 0..9, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
+      InputLog.record_consumed(class, {class, "task", "BTC-USD"}, 1)
+      InputLog.record_consumed(class, {class, "task", "SOL-USD"}, 9)
+
+      assert InputLog.watermark(class) == 1
+      :ok = InputLog.confirm_prefix(class, 9)
+      assert InputLog.watermark(class) == 9
+
+      :ok = Sweep.run(class)
+      assert InputLog.read_range(class, 0, 9) |> Enum.map(&elem(&1, 0)) == [9]
+    end
+
+    # A controller restart loses the confirmed prefix; the floor falls back to
+    # the slowest Cell, and a rebind re-forwards from there.
+    test "falls back to the slowest Cell when it is lost", %{class: class} do
+      for i <- 0..5, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
+      InputLog.record_consumed(class, {class, "task", "a"}, 1)
+      InputLog.record_consumed(class, {class, "task", "b"}, 5)
+      :ok = InputLog.confirm_prefix(class, 5)
+
+      :ets.delete(InputLog.watermark_table(), {class, :processed_prefix})
+
+      assert InputLog.tail(class) == {:ok, 1, 5}
+      assert InputLog.undelivered(class) |> Enum.map(&elem(&1, 0)) == [2, 3, 4, 5]
+    end
+
+    # A runner that spread the instance over two streams sent the marker on
+    # each: one stream's confirmation alone moves nothing.
+    test "a multi-stream marker moves the floor once every stream confirmed", %{class: class} do
+      for i <- 0..3, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
+      InputLog.record_consumed(class, {class, "task", "a"}, 0)
+      stream_a = spawn(fn -> :ok end)
+      stream_b = spawn(fn -> :ok end)
+
+      :ok = InputLog.confirm_prefix(class, 3, streams: 2, stream: stream_a)
+      :ok = InputLog.confirm_prefix(class, 3, streams: 2, stream: stream_a)
+      _ = InputLog.last_offset(class)
+      assert InputLog.watermark(class) == 0
+
+      :ok = InputLog.confirm_prefix(class, 3, streams: 2, stream: stream_b)
+      _ = InputLog.last_offset(class)
+      assert InputLog.watermark(class) == 3
+    end
+
+    test "only moves forward, and a correction rewind clears it", %{class: class} do
+      InputLog.record_consumed(class, {class, "task", "a"}, 3)
+      :ok = InputLog.confirm_prefix(class, 7)
+      :ok = InputLog.confirm_prefix(class, 4)
+      assert InputLog.watermark(class) == 7
+
+      InputLog.rewind_consumed(class, {class, "task", "a"}, 2)
+      assert InputLog.watermark(class) == 2
+    end
+  end
+
   describe "the hold window (stream-late-input-correction G4)" do
     setup do
       original = Application.get_env(:flezha, :input_log_hold_window_ms, 0)

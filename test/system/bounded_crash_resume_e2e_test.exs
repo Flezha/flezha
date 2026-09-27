@@ -50,6 +50,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
   import FlezhaTest.Helper.TierE2EHarness,
     only: [
       cleanup: 3,
+      kill_overwatch: 2,
       os_pid: 1,
       sigkill: 1,
       unique: 1,
@@ -274,7 +275,15 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
     # booted with: inside `on_timer`, before `tick` commits, or in `relay`,
     # after it.
     test "a crash before the firing's root commits fires the timer again", ctx do
-      {collector, id, at} = crash_timer_pass(ctx, "timer", &(timer_commits(&1) == []))
+      assert_fired_once_after_crash(ctx, kill_overwatch?: false)
+    end
+
+    test "an Overwatch killed mid-bind fires the restored timer once", ctx do
+      assert_fired_once_after_crash(ctx, kill_overwatch?: true)
+    end
+
+    defp assert_fired_once_after_crash(ctx, opts) do
+      {collector, id, at} = crash_timer_pass(ctx, "timer", &(timer_commits(&1) == []), opts)
 
       assert NodeTestHelper.wait_until(
                fn -> collected(collector) == ["relay:armed:#{at}", "relay:fired:#{at}"] end,
@@ -282,6 +291,8 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
              ),
              "the restored timer did not fire into a fresh pass: #{inspect(collected(collector))}"
 
+      Process.sleep(1_500)
+      assert collected(collector) == ["relay:armed:#{at}", "relay:fired:#{at}"]
       assert timer_commits(id) == [at]
     end
 
@@ -354,7 +365,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
 
   # Arm a timer on a runner that parks its firing at `hold`, SIGKILL it once
   # `ready?` holds on the journal, and rebind onto a released replacement.
-  defp crash_timer_pass(ctx, hold, ready?) do
+  defp crash_timer_pass(ctx, hold, ready?, opts \\ []) do
     collector = spawn_link(fn -> collect_loop([]) end)
     namespace = unique("timer_resume")
     id = unique("timer_loop_bounded")
@@ -386,6 +397,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
 
     sigkill(os_pid(port_a))
     boot_runner(namespace, ctx, id_path, release?: true)
+    if opts[:kill_overwatch?], do: kill_overwatch(namespace, id)
 
     assert NodeTestHelper.wait_until(
              fn -> runner_a not in FleetManager.active_runners(namespace) end,
@@ -412,67 +424,79 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
     # the next iteration waits for a new message rather than running over the
     # same one again.
     test "the re-forwarded message drives one iteration after the resume, never two", ctx do
-      collector = spawn_link(fn -> collect_loop([]) end)
-      namespace = unique("bounded_msg_resume")
-      operator_id = unique("reply_block_loop_bounded")
-      id_path = unique_id_path()
-
-      on_exit(fn -> cleanup(namespace, operator_id, id_path) end)
-
-      {port_a, exec_a} = boot_runner(namespace, ctx, id_path, release?: false)
-
-      info =
-        start_bounded(namespace, operator_id, "reply_block_loop_bounded",
-          first_message: nil,
-          plugins: [forward_sink("reply_sink", collector)]
-        )
-
-      assert info.runner_id == exec_a
-
-      # The turn commits at the root, then the reply blocks until the release.
-      send_turn(namespace, operator_id, "reply-crash")
-
-      assert NodeTestHelper.wait_until(
-               fn -> root_committed_without_iteration?(operator_id) end,
-               30_000
-             ),
-             "the root never committed ahead of the iteration on the first runner"
-
-      refute Completion.exists?(operator_id)
-
-      sigkill(os_pid(port_a))
-      {_port_b, exec_b} = boot_runner(namespace, ctx, id_path, release?: true)
-      assert exec_b != exec_a, "replacement must mint a fresh session token"
-
-      assert NodeTestHelper.wait_until(
-               fn -> exec_a not in FleetManager.active_runners(namespace) end,
-               15_000
-             ),
-             "dead runner was never evicted after the replacement connected"
-
-      assert NodeTestHelper.wait_until(fn -> committed_iters(operator_id) == [0] end, 60_000),
-             "the resumed pass did not commit iteration 0: " <>
-               inspect(committed_iters(operator_id))
-
-      assert consumed_offsets(operator_id) == [0],
-             "the resumed pass did not seal with its message's offset"
-
-      # A second message is the next iteration; the crashed turn's reply is
-      # seen exactly once.
-      send_turn(namespace, operator_id, "next")
-
-      assert NodeTestHelper.wait_until(
-               fn -> committed_iters(operator_id) == [0, 1] end,
-               60_000
-             ),
-             "the next message did not run as iteration 1: " <>
-               inspect(committed_iters(operator_id))
-
-      assert consumed_offsets(operator_id) == [0, 1]
-
-      assert collector |> await_outputs(2, operator_id) |> Enum.map(&elem(&1, 0)) ==
-               ["reply:reply-crash", "reply:next"]
+      message_resume(ctx, kill_overwatch?: false)
     end
+
+    # The bind the replacement's connect starts is still restoring and
+    # re-forwarding when its Overwatch is killed; the restarted Overwatch binds
+    # again, and the tail reaches the driver twice.
+    test "an Overwatch killed mid-bind leaves the message one iteration", ctx do
+      message_resume(ctx, kill_overwatch?: true)
+    end
+  end
+
+  defp message_resume(ctx, opts) do
+    collector = spawn_link(fn -> collect_loop([]) end)
+    namespace = unique("bounded_msg_resume")
+    operator_id = unique("reply_block_loop_bounded")
+    id_path = unique_id_path()
+
+    on_exit(fn -> cleanup(namespace, operator_id, id_path) end)
+
+    {port_a, exec_a} = boot_runner(namespace, ctx, id_path, release?: false)
+
+    info =
+      start_bounded(namespace, operator_id, "reply_block_loop_bounded",
+        first_message: nil,
+        plugins: [forward_sink("reply_sink", collector)]
+      )
+
+    assert info.runner_id == exec_a
+
+    # The turn commits at the root, then the reply blocks until the release.
+    send_turn(namespace, operator_id, "reply-crash")
+
+    assert NodeTestHelper.wait_until(
+             fn -> root_committed_without_iteration?(operator_id) end,
+             30_000
+           ),
+           "the root never committed ahead of the iteration on the first runner"
+
+    refute Completion.exists?(operator_id)
+
+    sigkill(os_pid(port_a))
+    {_port_b, exec_b} = boot_runner(namespace, ctx, id_path, release?: true)
+    if opts[:kill_overwatch?], do: kill_overwatch(namespace, operator_id)
+    assert exec_b != exec_a, "replacement must mint a fresh session token"
+
+    assert NodeTestHelper.wait_until(
+             fn -> exec_a not in FleetManager.active_runners(namespace) end,
+             15_000
+           ),
+           "dead runner was never evicted after the replacement connected"
+
+    assert NodeTestHelper.wait_until(fn -> committed_iters(operator_id) == [0] end, 60_000),
+           "the resumed pass did not commit iteration 0: " <>
+             inspect(committed_iters(operator_id))
+
+    assert consumed_offsets(operator_id) == [0],
+           "the resumed pass did not seal with its message's offset"
+
+    # A second message is the next iteration; the crashed turn's reply is
+    # seen exactly once.
+    send_turn(namespace, operator_id, "next")
+
+    assert NodeTestHelper.wait_until(
+             fn -> committed_iters(operator_id) == [0, 1] end,
+             60_000
+           ),
+           "the next message did not run as iteration 1: " <>
+             inspect(committed_iters(operator_id))
+
+    assert consumed_offsets(operator_id) == [0, 1]
+
+    assert collector |> await_outputs(2, operator_id) |> Enum.map(&elem(&1, 0)) ==
+             ["reply:reply-crash", "reply:next"]
   end
 
   describe "a bounded output's identity (uds)" do

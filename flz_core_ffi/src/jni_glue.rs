@@ -395,11 +395,22 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_spawnRequest<'l>(
     payload: JByteArray,
     if_running: JString,
     replay: jboolean,
+    offset: jlong,
 ) -> jlong {
     let ctx = ctx_of(ctx);
+    let offset = u64::try_from(offset).ok();
     let handle = spawn_args(&mut env, &factory_id, &id, &payload, &if_running).and_then(
         |(factory, id, bytes, mode)| {
-            veneer::spawn_request(ctx, token as u64, &factory, &id, &bytes, &mode, replay != 0)
+            veneer::spawn_request(
+                ctx,
+                token as u64,
+                &factory,
+                &id,
+                &bytes,
+                &mode,
+                replay != 0,
+                offset,
+            )
         },
     );
     match handle {

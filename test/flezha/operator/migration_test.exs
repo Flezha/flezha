@@ -21,7 +21,8 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
   alias Flezha.Process.Timer
   alias Flezha.Operator.{Builder, ClassRegistry, Overwatch}
   alias Flezha.Plugin.Extension.Table
-  alias Flezha.State.{InputLog, TaskJournal, TestHelpers}
+  alias Flezha.State.{InputLog, TaskJournal, TestHelpers, WalWriter}
+  alias FlezhaTest.OutboxCase
 
   setup :set_mimic_global_until_exit
 
@@ -36,7 +37,7 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
 
   defp instance_id(), do: "susp_#{System.unique_integer([:positive])}"
 
-  defp park(deadline \\ nil), do: %{wake_deadline_ms: deadline, consumed_offset: nil}
+  defp park(deadline \\ nil), do: %{wake_deadline_ms: deadline}
 
   defp state(inst, overrides \\ []) do
     base = %Overwatch{
@@ -354,12 +355,21 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
     refute Flezha.Operator.Migration.suspended_on_disk?(inst), "its timer is due: it binds"
   end
 
-  test "a sleeping stream is rediscovered asleep at boot, and its forwarded floor with it" do
+  # A restart lost the Cell rows; a sleeper boots no Cell writer, so its
+  # floor is read from its Cells' own records.
+  test "a sleeping stream is rediscovered asleep at boot, its floor read from its Cells" do
     inst = instance_id()
     builder = %Builder{id: inst, factory_id: "counter", kind: :unbounded, opts: []}
     for n <- 0..1, do: {:ok, ^n} = InputLog.append(inst, "in-#{n}", %{})
     :ok = ClassRegistry.put_sleep_when_idle(inst, true)
-    :ok = ClassRegistry.put_parked(inst, %{wake_deadline_ms: nil, consumed_offset: 1})
+    :ok = ClassRegistry.put_parked(inst, park())
+
+    cell_id = {inst, "counter_tasklet", "a"}
+    {:ok, writer} = Flezha.State.Supervisor.find_or_start(cell_id)
+    :ok = WalWriter.append(writer, 0, OutboxCase.effect_header(), OutboxCase.effect_body([], 1))
+    WalWriter.close(writer)
+    :ets.match_delete(InputLog.watermark_table(), {{inst, :_}, :_})
+
     fresh = %Overwatch{id: inst, namespace: "default", factory_id: "counter", builder: builder}
 
     {:noreply, booted, :hibernate} =
@@ -367,9 +377,42 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
 
     assert booted.suspended
     assert booted.sleeps, "a message that finds it asleep is journaled"
+    assert InputLog.tail(inst) == {:ok, 1, 1}, "what its Cell consumed is not owed"
+  end
 
-    assert InputLog.tail(inst) == {:ok, 1, 1},
-           "what it was forwarded before the sleep is not owed"
+  # Off the tier a producer's record carrying its offset keeps its edge values:
+  # the bind delivers them ahead of the tail, since the producer skips the input.
+  test "a plain stream's bind delivers the edge values its Cells kept, then the tail" do
+    inst = instance_id()
+    for n <- 0..1, do: {:ok, ^n} = InputLog.append(inst, "in-#{n}", %{})
+
+    cell_id = {inst, "relay", ""}
+    edge = %{channel: 0, consumer: 1, origin: 1, payload: "kept"}
+
+    body =
+      Flezha.SDK.Wire.encode_effect_body(%{
+        changes: [],
+        outputs: [],
+        consumed_offset: 1,
+        edges: [edge]
+      })
+
+    {:ok, writer} = Flezha.State.Supervisor.find_or_start(cell_id)
+    :ok = WalWriter.append(writer, 0, OutboxCase.effect_header(), body)
+    WalWriter.close(writer)
+
+    test_pid = self()
+
+    stub(Flezha.Runner.StreamChannel, :io_in, fn _channel, _id, payload ->
+      send(test_pid, {:delivered, payload})
+      :ok
+    end)
+
+    Flezha.Operator.Replay.reforward_undelivered_tail(state(inst, durable_bounded: false))
+
+    assert_received {:delivered, {"kept", %{"flz.edge" => "0:1", "flz.offset" => "1"}}}
+    assert_received {:delivered, {"in-0", %{"flz.offset" => "0"}}}
+    assert_received {:delivered, {"in-1", %{"flz.offset" => "1"}}}
   end
 
   test "a stop of a sleeping bounded wakes it with the stop, and the bind sends it" do
@@ -817,6 +860,31 @@ defmodule FlezhaTest.Operator.OverwatchAsyncMigrateTest do
            "teardown returned in #{elapsed} ms; required < 1 s while migrate task is in flight"
   end
 
+  # A bind belongs to its Overwatch: killed, it takes the bind with it, so a
+  # restarted Overwatch's own bind is the only one that completes.
+  test "a killed Overwatch leaves no bind running", %{test_pid: test_pid, ets: ets} do
+    Application.put_env(:flezha, :overwatch_ping_fn, park_after_gate(ets))
+    operator = %Builder{id: "killed_during_migrate", factory_id: @factory, opts: []}
+    {:ok, overwatch_pid} = Overwatch.start_link({@namespace, "stale_ce", operator})
+    Process.unlink(overwatch_pid)
+
+    assert NodeTestHelper.wait_until(
+             fn ->
+               GenServer.call(overwatch_pid, :get_overwatch_state).init_error != nil
+             end,
+             2_000,
+             25
+           )
+
+    Application.put_env(:flezha, :overwatch_ping_fn, blocking_ping(test_pid))
+    :ok = GenServer.call(overwatch_pid, {:runner_migrate, "fake_new_runner"}, 1_000)
+    assert_receive {:ping_started, bind_task}, 500
+
+    task_ref = Process.monitor(bind_task)
+    Process.exit(overwatch_pid, :kill)
+    assert_receive {:DOWN, ^task_ref, :process, ^bind_task, :killed}, 1_000
+  end
+
   test "starting a second parked-unpark migrate while one is in flight returns :busy",
        %{test_pid: test_pid, ets: ets} do
     Application.put_env(:flezha, :overwatch_ping_fn, park_after_gate(ets))
@@ -944,7 +1012,7 @@ defmodule FlezhaTest.Operator.OverwatchAsyncMigrateTest do
   test "a handover away from a gone runner ships the snapshot no runner has taken over" do
     state = %{running_state() | snapshot: "final_state_of_runner_a"}
 
-    assert {%{source_node: _}, "final_state_of_runner_a"} =
+    assert {%{id: _}, "final_state_of_runner_a"} =
              Overwatch.prepare_handover_state(state)
   end
 
@@ -963,7 +1031,7 @@ defmodule FlezhaTest.Operator.OverwatchAsyncMigrateTest do
              Overwatch.handle_call(:create_snapshot, {self(), make_ref()}, state)
 
     # The runner is gone now, so the handover has nothing of its own to ship.
-    assert {%{source_node: _}, nil} = Overwatch.prepare_handover_state(read)
+    assert {%{id: _}, nil} = Overwatch.prepare_handover_state(read)
   end
 
   # fails when: `alter_handover_state` marks `arrived_via_hotswap?` even for a

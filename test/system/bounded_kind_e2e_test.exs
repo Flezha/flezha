@@ -23,6 +23,7 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
   alias Flezha.Service.OperatorManager
   alias Flezha.State.Completion
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.TierE2EHarness
 
   @namespace "task_kind_e2e"
   @factory "echo_bounded"
@@ -196,6 +197,47 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
              15_000
            ),
            "the completed instance was never deregistered"
+  end
+
+  # A crash re-run of the input that spawned a worker issues the same request
+  # again: the runner dies with the spawn answered and the input not durably
+  # consumed, and the re-run resolves to the worker the first run spawned.
+  test "a crash re-run of a tasklet's spawn resolves to the worker it already spawned" do
+    namespace = "spawn_rerun_e2e_#{System.unique_integer([:positive])}"
+    id_path = TierE2EHarness.unique_id_path()
+    runner_env = [{"FLEZHA_RUNNER_ID_PATH", id_path}]
+    {port_a, _runner_a} = NodeTestHelper.start_runner_port(namespace, env: runner_env)
+    requester = "spawn_hold_requester_#{System.unique_integer([:positive])}"
+    on_exit(fn -> TierE2EHarness.cleanup(namespace, requester, id_path) end)
+
+    assert {:ok, _} =
+             OperatorManager.start_operator(namespace, %Builder{
+               id: requester,
+               factory_id: "spawn_hold_requester"
+             })
+
+    assert :ok = OperatorManager.send_io_confirming(requester, namespace, "job-1", %{})
+
+    seen = NodeTestHelper.read_port(port_a, &(hold_results(&1) != []), 60_000)
+    assert [{first, "spawned"}] = hold_results(seen), "no spawn result in:\n#{seen}"
+
+    TierE2EHarness.sigkill(TierE2EHarness.os_pid(port_a))
+
+    {port_b, _runner_b} =
+      NodeTestHelper.start_runner_port(namespace,
+        env: [{"FLEZHA_BOUNDED_E2E_RELEASE", "1"} | runner_env]
+      )
+
+    on_exit(fn -> ensure_port_dead(port_b) end)
+    seen = NodeTestHelper.read_port(port_b, &(hold_results(&1) != []), 60_000)
+
+    assert [{^first, _outcome}] = hold_results(seen),
+           "the re-run did not resolve to #{first}:\n#{seen}"
+  end
+
+  defp hold_results(seen) do
+    for [_line, id, outcome] <- Regex.scan(~r/^spawn_result hold (\S+) (.+)$/m, seen),
+        do: {id, String.trim(outcome)}
   end
 
   defp once_results(seen) do

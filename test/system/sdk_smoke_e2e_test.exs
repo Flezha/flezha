@@ -38,7 +38,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
 
   # Unbounded operators that request bounded spawns: the bounded capability
   # lists them because its scenarios drive them, not because they are one.
-  @stream_requesters ~w(spawn_requester spawn_once_requester)
+  @stream_requesters ~w(spawn_requester spawn_hold_requester spawn_once_requester)
   # The bounded operator half of the shorthand capability.
   @bounded_short_forms ~w(sugar_bounded sugar_bounded_per_input)
 

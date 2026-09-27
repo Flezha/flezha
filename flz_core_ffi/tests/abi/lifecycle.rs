@@ -356,6 +356,7 @@ fn change_log() -> Vec<u8> {
         dlq: None,
         event_time: 1_234,
         timers: vec![],
+        edges: vec![],
     })
     .unwrap();
     let mut log = wal_record(1, 4, &[0xC1]);

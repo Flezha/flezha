@@ -164,17 +164,17 @@ pub fn snapshot_frame_crossing(slot: &Arc<CellSlot>) -> Result<(Vec<u8>, u64, us
     };
     flush(&mut slot.flush_buffer.lock_recover());
     let seq = slot.change_seq.load(Ordering::Acquire).saturating_sub(1);
-    // The snapshot body is the host's State alone; the timer ops the coming
-    // truncation would delete are re-stated as a full set AFTER the seq is
-    // read — landing at `snapshot_seq + 1`, which `truncate_up_to` keeps.
+    // The snapshot body is the host's State alone; what the coming truncation
+    // would delete is re-stated AFTER the seq is read — landing at
+    // `snapshot_seq + 1`, which `truncate_up_to` keeps.
     let register_ops = crate::timer::restated(slot, &slot.timers.lock_recover()).as_register_ops();
-    if !register_ops.is_empty() {
-        let mut buffer = slot.flush_buffer.lock_recover();
-        if let Some(bytes) = buffer.as_any_mut().downcast_mut::<BytesBuffer>() {
-            bytes.timer_ops = register_ops;
+    let mut buffer = slot.flush_buffer.lock_recover();
+    if let Some(bytes) = buffer.as_any_mut().downcast_mut::<BytesBuffer>() {
+        if bytes.restate_above_snapshot(register_ops) {
+            flush(&mut buffer);
         }
-        flush(&mut buffer);
     }
+    drop(buffer);
     let state = snapshot_state(
         crate::poll_core::global().host_command(slot, schema::ActivationKind::SnapshotRequest)?,
     )?;

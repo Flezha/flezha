@@ -139,10 +139,13 @@ defmodule Flezha.State.WalWriter.Admission do
     :ok
   end
 
-  # ---------- Credit-ledger attribution ----------
+  # ---------- Drain attribution ----------
 
   # Accumulate a written record's wire bytes against the stream channel that
-  # debited them; reported back on the next durable drain (fsync/truncate).
+  # handed it over; reported back, naming this Cell, on the next durable drain
+  # (fsync/truncate). The channel frees a credit session's debit with it and
+  # confirms processed-prefix markers against it, so it is reported whether
+  # or not the stream speaks credit (`session` is then `nil`).
   def track_credit(state, %{channel: ch, session: session, wire_size: n})
       when is_pid(ch) and n > 0 do
     %{state | credit_pending: Map.update(state.credit_pending, {ch, session}, n, &(&1 + n))}
@@ -151,20 +154,20 @@ defmodule Flezha.State.WalWriter.Admission do
   def track_credit(state, _), do: state
 
   # A Change that will never occupy the un-fsynced buffer (dedup drop, gap
-  # rejection, shed): its debit is released immediately.
-  def release_credit(%{channel: ch, session: session, wire_size: n})
+  # rejection, shed): it is drained at once.
+  def release_credit(state, %{channel: ch, session: session, wire_size: n})
       when is_pid(ch) and n > 0 do
-    send(ch, {:credit_drained, session, n})
+    send(ch, {:credit_drained, session, n, state.cell_id})
     :ok
   end
 
-  def release_credit(_), do: :ok
+  def release_credit(_state, _), do: :ok
 
   def flush_credit_pending(%{credit_pending: cp} = state) when map_size(cp) == 0, do: state
 
   def flush_credit_pending(state) do
     Enum.each(state.credit_pending, fn {{ch, session}, bytes} ->
-      send(ch, {:credit_drained, session, bytes})
+      send(ch, {:credit_drained, session, bytes, state.cell_id})
     end)
 
     %{state | credit_pending: %{}}

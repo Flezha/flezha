@@ -118,7 +118,9 @@ Concurrent `deliver`-mode requests that carry the same `(namespace, instance_id)
 
 The call SHALL return immediately with a local async result handle in every SDK. Transport, quota, or controller failures SHALL surface only via that handle (or one warning log if unobserved) and SHALL NOT fault the requesting tasklet's `run`, block its emit path, or affect its journaling/replay. No SDK SHALL wait for the controller's answer inside the call or raise a controller refusal from it.
 
-A replayed invocation SHALL issue no request and its handle SHALL resolve at once with outcome `skipped_on_replay`. Its `id` SHALL be the caller's id when the call gave one, and empty when it did not, because a generated id exists only in the controller's answer to the live run.
+A replayed invocation, the correction re-run the controller marks as a replay, SHALL issue no request and its handle SHALL resolve at once with outcome `skipped_on_replay`. Its `id` SHALL be the caller's id when the call gave one, and empty when it did not, because a generated id exists only in the controller's answer to the live run.
+
+A crash re-run is not a replay: an input that was not durably consumed runs live, and its spawn SHALL be issued again. Every spawn requested from a tasklet invocation SHALL carry an identity made of the requesting instance, the input's `flz.offset`, the call's position within the invocation, the factory and a hash of the payload. A request whose identity was already resolved SHALL resolve to the same operator the first request did and SHALL NOT start a second instance or deliver its payload a second time: without an id, the generated id SHALL be derived from the identity; with an id and `if_running: :deliver`, the delivered payload SHALL carry the identity as its `flz.msg_id`. A re-run whose request differs in factory or payload SHALL get a new identity and a new spawn, never another request's answer. Spawns requested from outside a tasklet (the CLI, the admin API, a schedule) SHALL carry no identity and are unchanged.
 
 #### Scenario: Controller unreachable
 
@@ -139,6 +141,26 @@ A replayed invocation SHALL issue no request and its handle SHALL resolve at onc
 
 - **WHEN** a tasklet that spawned with id `w1` is replayed
 - **THEN** the replayed handle SHALL resolve to `{id: "w1", outcome: skipped_on_replay}`
+
+#### Scenario: A crash re-run does not double a worker
+
+- **WHEN** a tasklet spawns `worker` with no id while taking offset 7, the spawn is answered `{id: "worker-<suffix>", outcome: spawned}`, and the runner dies before offset 7 is durably consumed
+- **THEN** the re-run's identical request SHALL resolve to `worker-<suffix>` and no second instance SHALL exist
+
+#### Scenario: A crash before the request reached the controller loses no worker
+
+- **WHEN** a tasklet taking offset 7 dies before its spawn request reaches the controller
+- **THEN** the re-run's request SHALL spawn the worker once
+
+#### Scenario: A re-run that asks for something else spawns anew
+
+- **WHEN** the re-run of offset 7 requests a different factory or payload at the same call position
+- **THEN** it SHALL be answered as a new spawn and SHALL NOT resolve to the first request's operator
+
+#### Scenario: A re-delivered payload to a named worker is absorbed
+
+- **WHEN** a tasklet delivers payload `p` to the running worker `w1` while taking offset 7, and the re-run delivers the same request again
+- **THEN** `w1`'s input log SHALL hold `p` once and `w1` SHALL receive it once
 
 ### Requirement: A spawn request SHALL be judged as the act it performs
 

@@ -481,13 +481,15 @@ pub fn spawn_request(
     payload: Buffer,
     if_running: String,
     replay: bool,
+    offset: Option<BigInt>,
 ) -> Result<BigInt> {
     let ctx = context()?;
     let token = from_big("token", &token)?;
+    let offset = offset.map(|o| from_big("offset", &o)).transpose()?;
     let factory = veneer::c_string("factory id", &factory_id)?;
     let id = veneer::c_string("id", &id)?;
     let mode = veneer::c_string("ifRunning", &if_running)?;
-    let handle = veneer::spawn_request(ctx, token, &factory, &id, &payload, &mode, replay)?;
+    let handle = veneer::spawn_request(ctx, token, &factory, &id, &payload, &mode, replay, offset)?;
     Ok(BigInt::from(handle))
 }
 

@@ -306,8 +306,9 @@ deliberately **not** credit: it drops the newest frame past 8 MiB, because parki
 freeze a controller serving thousands of operators behind one dead runner. See
 [`kernel.md`](kernel.md#flow-control-the-three-loops).
 
-**7. The minimum watermark is the retention signal.** The controller tracks `min(consumed
-offset)` across an operator's cells and truncates the input log below it, subject to the
+**7. The watermark is the retention signal.** The controller tracks `min(consumed offset)`
+across an operator's cells, replaces it with the runner's processed prefix once it has
+confirmed that prefix durable, and truncates the input log below it, subject to the
 correction hold window. A permanently-failing payload must never freeze it: after bounded operator
 retries the cell parks the payload durably to the dead-letter queue and advances its offset.
 Data is never lost and never silently dropped. See

@@ -104,7 +104,7 @@ defmodule Flezha.State.WalWriter.State do
           gap_open?: boolean(),
           awaiting_baseline?: boolean(),
           oldest_unsnapshotted_at: integer() | nil,
-          credit_pending: %{optional({pid(), binary()}) => pos_integer()},
+          credit_pending: %{optional({pid(), binary() | nil}) => pos_integer()},
           credit_active?: boolean(),
           refused_sessions: MapSet.t(binary()),
           pending_outbox: :queue.queue(map()),

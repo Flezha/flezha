@@ -29,9 +29,11 @@ defmodule Mix.Tasks.Bench do
       `cell` (the cell-stress shape, factory `cell_stress`, dimensions
       fixed at `8 × 20_000` so the numbers stay comparable across runs, swept
       across the comma-list in
-      `--pool-sizes`), or `dynamic` (the dynamic cell-mode shape, factory
+      `--pool-sizes`), `dynamic` (the dynamic cell-mode shape, factory
       `dynamic_cell`, lazy per-key Cells with 8 keys/operator,
-      dimensions from `-n` / `-m`).
+      dimensions from `-n` / `-m`), `tier` (the effectively-once tier, factory
+      `tier_store`, keyed like `dynamic`), or `sleeping` (a persistent stream
+      that sleeps when idle, factory `sleeping_counter`, keyed like `dynamic`).
     * `--pool-sizes` - Comma-separated worker-pool sizes (default: `"1,8"`),
       only honored when `--shape cell`. Each value spawns a fresh
       Rust runner binary with `FLEZHA_WORKER_POOL_SIZE=<N>` and
@@ -112,14 +114,11 @@ defmodule Mix.Tasks.Bench do
     Report.apply_log_level()
 
     case shape do
-      :regression ->
-        run_default_shape(runtime, num_operators, messages_per_operator, :regression, warmup)
-
-      :dynamic ->
-        run_default_shape(runtime, num_operators, messages_per_operator, :dynamic, warmup)
-
       :cell ->
         run_cell_shape(num_operators, messages_per_operator, pool_sizes, warmup)
+
+      shape ->
+        run_default_shape(runtime, num_operators, messages_per_operator, shape, warmup)
     end
   end
 
@@ -142,11 +141,11 @@ defmodule Mix.Tasks.Bench do
     )
   end
 
-  # ----- Single-namespace shapes: regression (default) and dynamic -----
+  # ----- Single-namespace shapes: every shape but cell -----
   #
   # `:regression` is byte-identical to the historical default behaviour.
-  # `:dynamic` reuses the same harness with the `dynamic_cell`
-  # factory and keyed inputs (see `input_for_shape/3`).
+  # The keyed shapes reuse the same harness with their own factory and keyed
+  # inputs (see `input_for_shape/3`).
 
   defp run_default_shape(runtime, num_operators, messages_per_operator, shape, warmup) do
     namespace =
@@ -255,9 +254,12 @@ defmodule Mix.Tasks.Bench do
   defp parse_shape("regression"), do: :regression
   defp parse_shape("cell"), do: :cell
   defp parse_shape("dynamic"), do: :dynamic
+  defp parse_shape("tier"), do: :tier
+  defp parse_shape("sleeping"), do: :sleeping
 
   defp parse_shape(other) do
-    raise "Unknown --shape value: #{inspect(other)}. Expected \"regression\", \"cell\", or \"dynamic\"."
+    raise "Unknown --shape value: #{inspect(other)}. Expected \"regression\", \"cell\", " <>
+            "\"dynamic\", \"tier\", or \"sleeping\"."
   end
 
   defp parse_pool_sizes(nil), do: [1, 8]
@@ -279,14 +281,8 @@ defmodule Mix.Tasks.Bench do
   defp factory_for_shape(:regression), do: "do_nothing"
   defp factory_for_shape(:cell), do: "cell_stress"
   defp factory_for_shape(:dynamic), do: "dynamic_cell"
-
-  defp dimensions_for_shape(:regression, opts) do
-    {opts[:num_operators] || 100, opts[:messages_per_operator] || 100}
-  end
-
-  defp dimensions_for_shape(:dynamic, opts) do
-    {opts[:num_operators] || 100, opts[:messages_per_operator] || 100}
-  end
+  defp factory_for_shape(:tier), do: "tier_store"
+  defp factory_for_shape(:sleeping), do: "sleeping_counter"
 
   defp dimensions_for_shape(:cell, opts) do
     if opts[:num_operators] || opts[:messages_per_operator] do
@@ -298,6 +294,10 @@ defmodule Mix.Tasks.Bench do
     end
 
     {8, 20_000}
+  end
+
+  defp dimensions_for_shape(_shape, opts) do
+    {opts[:num_operators] || 100, opts[:messages_per_operator] || 100}
   end
 
   defp run_performance_test(namespace, num_operators, test_messages_per_operator, shape, warmup) do
@@ -549,16 +549,17 @@ defmodule Mix.Tasks.Bench do
   # is targeted by the pipeline routing so it runs once per TaskletC emit.
   # The entry tasklet fans 8-wide → TaskletA runs 8× → 8 emits to B[p0] →
   # 8 emits to C[p0] → 8 emits to D[p0] → 8 plugin-bound emits per input.
-  defp expected_responses(:regression, total_messages), do: total_messages
+  # Every other shape's factory emits once per input.
   defp expected_responses(:cell, total_messages), do: total_messages * 8
-  # `dynamic_cell` emits once per input (one plugin-bound emit),
-  # so each dispatched input produces one `:on_output` event.
-  defp expected_responses(:dynamic, total_messages), do: total_messages
 
-  # Per-shape wire input. The dynamic shape prefixes a bounded key
-  # (`k0`..`k7`) so a steady burst exercises 8 dynamic Cells per operator
-  # without tripping the soft cap; other shapes are key-agnostic.
-  defp input_for_shape(:dynamic, operator_id, msg_num) do
+  defp expected_responses(_shape, total_messages), do: total_messages
+
+  # Per-shape wire input. The keyed shapes prefix a bounded key (`k0`..`k7`)
+  # so a steady burst exercises 8 Cells per operator without tripping the
+  # dynamic soft cap; `sleeping_counter` folds the value as an integer delta.
+  defp input_for_shape(:sleeping, _operator_id, msg_num), do: "k#{rem(msg_num, 8)}:1"
+
+  defp input_for_shape(shape, operator_id, msg_num) when shape in [:dynamic, :tier] do
     "k#{rem(msg_num, 8)}:test_msg_#{operator_id}_#{msg_num}"
   end
 

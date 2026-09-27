@@ -514,6 +514,7 @@ fn spawn_request(
     payload: RString,
     if_running: String,
     replay: bool,
+    offset: Option<u64>,
 ) -> Result<u64, Error> {
     let ruby = ruby();
     let ctx = context(&ruby)?;
@@ -524,7 +525,8 @@ fn spawn_request(
     // SAFETY: the GVL is held for the whole call, so nothing can move or free
     // the string's bytes while the core copies them.
     let payload = unsafe { payload.as_slice() };
-    veneer::spawn_request(ctx, token, &factory, &id, payload, &mode, replay).map_err(refused)
+    veneer::spawn_request(ctx, token, &factory, &id, payload, &mode, replay, offset)
+        .map_err(refused)
 }
 
 /// Read a spawn handle: `nil` while pending, otherwise its answer as JSON. A
@@ -655,7 +657,7 @@ pub fn init(ruby: &Ruby) -> Result<(), Error> {
     native.define_module_function("abandon", function!(abandon, 1))?;
     native.define_module_function("shutdown", function!(shutdown, 0))?;
     native.define_module_function("watch_stdin_eof", function!(watch_stdin_eof, 1))?;
-    native.define_module_function("spawn_request", function!(spawn_request, 6))?;
+    native.define_module_function("spawn_request", function!(spawn_request, 7))?;
     native.define_module_function("spawn_result", function!(spawn_result, 2))?;
     native.define_module_function("admin_call", function!(admin_call, 2))?;
     native.define_module_function("monotonic_nanos", function!(monotonic_nanos, 0))?;

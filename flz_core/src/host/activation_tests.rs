@@ -25,6 +25,8 @@ fn saturate_slot(slot: &Arc<CellSlot>) {
             stream: stream_pair().0,
             consumed_offset: None,
             replay: false,
+            forwarded: false,
+            hold: None,
         }),
     );
     assert!(slot.mailbox.claim_inflight());
@@ -45,6 +47,8 @@ fn work_and_effect(offset: u64, consumers: &[u32]) -> (ItemAttempt, schema::Item
             stream: stream_pair().0,
             consumed_offset: Some(offset),
             replay: false,
+            forwarded: false,
+            hold: None,
         }),
         now: None,
         attempt: 1,
@@ -185,6 +189,47 @@ fn a_fan_out_holds_its_record_until_every_consumer_has_the_value() {
     crate::poll_core::global().rearm_deferred_pushes(&producer);
     assert_eq!(full.mailbox.len(), 1, "the last consumer got its value");
     assert!(shipped(&producer) > before);
+}
+
+/// Outside the tier the record that carries the offset keeps the edge value
+/// beside it, so a restore can deliver it again to a consumer that lost it.
+#[test]
+fn outside_the_tier_the_record_carrying_the_offset_keeps_the_edge_value() {
+    use std::sync::Mutex;
+
+    let _guard = crate::state_sink::test_guard();
+    crate::state_sink::reset_for_test();
+    let records: Arc<Mutex<Vec<Vec<u8>>>> = Arc::default();
+    let seen = Arc::clone(&records);
+    crate::state_sink::install_global_sink(Arc::new(move |payload_id: &str, frame: &[u8]| {
+        if payload_id == crate::state_sink::CELL_EFFECT_RECORD_PAYLOAD_ID {
+            seen.lock().unwrap().push(frame.to_vec());
+        }
+        Ok(())
+    }));
+
+    let id = format!("edge_off_tier_{}", std::process::id());
+    let instance = host_class::instance_of(&id, &["in"], &[], &[1], false);
+    let producer = Arc::clone(&instance.cells[0][0]);
+    let (work, effect) = work_and_effect(7, &[1]);
+    settle_item(&producer, &work, effect, None);
+    crate::flusher::CellFlusher::instance().drain_now_for_tests();
+
+    let body = records
+        .lock()
+        .unwrap()
+        .iter()
+        .find_map(|frame| {
+            let id_len = u16::from_be_bytes([frame[0], frame[1]]) as usize;
+            let at = 2 + id_len + 8 + 16 + 4;
+            postcard::from_bytes::<crate::effect::EffectRecordBody>(&frame[at..frame.len() - 4])
+                .ok()
+                .filter(|body| body.consumed_offset == Some(7))
+        })
+        .expect("the producer's record for offset 7");
+    assert_eq!(body.edges.len(), 1);
+    assert_eq!((body.edges[0].consumer, body.edges[0].origin), (1, Some(7)));
+    crate::state_sink::reset_for_test();
 }
 
 /// An unbounded operator never completes: an effect asking to fails as the author's own

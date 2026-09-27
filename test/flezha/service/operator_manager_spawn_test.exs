@@ -149,6 +149,72 @@ defmodule FlezhaTest.Service.OperatorManagerSpawnTest do
     assert reason =~ "quota_exceeded"
   end
 
+  describe "a tasklet's request with an identity" do
+    defp identified(id, payload, if_running, identity),
+      do:
+        OperatorManager.spawn_or_deliver(
+          @namespace,
+          id,
+          @factory,
+          payload,
+          if_running,
+          @caller,
+          identity
+        )
+
+    # A crash re-run asks again with the same identity: the generated id is
+    # the identity's, so it resolves to the instance the first request started.
+    test "a repeat without an id resolves to the instance the first started", %{
+      registry: registry
+    } do
+      assert {:spawned, id} = identified("", "p1", :deliver, "origin-7")
+      assert id =~ ~r/\Aworker-[a-z2-7]{16}\z/
+      assert {:spawned, ^id} = identified("", "p1", :deliver, "origin-7")
+
+      assert [%{id: ^id} = started] = FakeStartRegistry.started()
+      assert Keyword.get(started.opts, :seed_input) == {"p1", %{"flz.msg_id" => "origin-7"}}
+      assert Instance.ingested(instance_pid(registry, id)) == []
+
+      assert {:spawned, other} = identified("", "p1", :deliver, "origin-8")
+      refute other == id, "another origin is another request"
+    end
+
+    test "a repeat of a completed instance answers it and starts nothing", %{
+      registry: registry
+    } do
+      {:spawned, id} = identified("", "p1", :deliver, "origin-9")
+      [_] = FakeStartRegistry.started()
+      :ets.delete(registry, id)
+      stub(Flezha.State.Completion, :exists?, fn class -> class == id end)
+
+      assert {:spawned, ^id} = identified("", "p1", :deliver, "origin-9")
+      assert FakeStartRegistry.started() == [], "nothing started again"
+    end
+
+    test "a delivery to a named instance carries the identity as its message id", %{
+      registry: registry
+    } do
+      assert {:spawned, "w1"} = identified("w1", "p1", :deliver, "origin-1")
+      assert {:delivered, "w1"} = identified("w1", "p2", :deliver, "origin-2")
+
+      assert Instance.ingested_with_metadata(instance_pid(registry, "w1")) == [
+               {"p2", %{"flz.msg_id" => "origin-2"}}
+             ]
+    end
+
+    test "a named repeat whose identity its log retains is answered from it" do
+      stub(Flezha.State.InputLog, :msg_offset, fn
+        "w1", "seeded" -> 0
+        "w1", "delivered" -> 4
+        _id, _identity -> nil
+      end)
+
+      assert {:spawned, "w1"} = identified("w1", "p", :error, "seeded")
+      assert {:delivered, "w1"} = identified("w1", "p", :error, "delivered")
+      assert FakeStartRegistry.started() == []
+    end
+  end
+
   describe "a request without an id" do
     test "spawns under a generated id and ignores the error policy", %{registry: registry} do
       assert {:spawned, first} =

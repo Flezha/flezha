@@ -91,6 +91,12 @@ defmodule Flezha.Service.Cli.Journal do
     |> Map.put(:rewound_to, entry.iter)
   end
 
+  defp journal_row(%{type: :input_released, payload: payload} = entry) do
+    entry
+    |> base_journal_row()
+    |> Map.put(:released_offset, payload.consumed_offset)
+  end
+
   defp journal_row(entry), do: base_journal_row(entry)
 
   defp base_journal_row(entry) do
@@ -190,6 +196,10 @@ defmodule Flezha.Service.Cli.Journal do
       IO.puts(
         "    opened by: timer #{timer.kind} #{timer.scheduled_at} on #{timer.tasklet}/#{timer.cell}"
       )
+    end
+
+    if Map.has_key?(row, :released_offset) do
+      IO.puts("    released unread input-log offset: #{row.released_offset}")
     end
 
     if Map.has_key?(row, :rewound_to) do

@@ -35,6 +35,8 @@ pub type SendFrameFn = Arc<dyn Fn(&str, &[u8]) -> Result<(), SendError> + Send +
 
 struct FlusherEntry {
     cell_identity: Arc<Vec<u8>>,
+    /// The instance's processed prefix, reported after each drain.
+    prefix: Option<Arc<crate::prefix::PrefixLedger>>,
     buffer: Arc<Mutex<Box<dyn FlushableBuffer>>>,
     persistence_enabled: bool,
     change_seq: Arc<AtomicU64>,
@@ -84,8 +86,16 @@ pub trait FlushableBuffer: Send + Any {
     /// Nothing flushable; an open checkpoint interval does not count.
     fn is_empty(&self) -> bool;
 
-    /// Drop an open checkpoint interval's accumulation, for a restore.
-    fn discard_staged(&mut self);
+    /// Drop everything not yet shipped, an open checkpoint interval's
+    /// accumulation included, for a restore.
+    fn discard_unshipped(&mut self);
+
+    /// Keep a settled input's hold on its instance's processed prefix until
+    /// the record it settled into is written.
+    fn keep_hold(&mut self, hold: Arc<crate::prefix::Hold>);
+
+    /// The holds the next drain releases once its frames are written.
+    fn take_holds(&mut self) -> Vec<Arc<crate::prefix::Hold>>;
 
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
@@ -163,9 +173,11 @@ impl CellFlusher {
     }
 
     /// Register a Cell's buffer; the id deregisters it on eviction.
+    #[allow(clippy::too_many_arguments)]
     pub fn register(
         &self,
         cell_identity: Arc<Vec<u8>>,
+        prefix: Option<Arc<crate::prefix::PrefixLedger>>,
         buffer: Arc<Mutex<Box<dyn FlushableBuffer>>>,
         persistence_enabled: bool,
         change_seq: Arc<AtomicU64>,
@@ -177,6 +189,7 @@ impl CellFlusher {
             id,
             FlusherEntry {
                 cell_identity,
+                prefix,
                 buffer,
                 persistence_enabled,
                 change_seq,
@@ -219,14 +232,21 @@ impl CellFlusher {
             if entry.push_deferred.load(Ordering::Acquire) {
                 continue;
             }
-            let mut guard = entry.buffer.lock_recover();
-            flush_one(
-                &mut **guard,
-                &entry.cell_identity,
-                &entry.change_seq,
-                &entry.header,
-                entry.persistence_enabled,
-            );
+            {
+                let mut guard = entry.buffer.lock_recover();
+                flush_one(
+                    &mut **guard,
+                    &entry.cell_identity,
+                    &entry.change_seq,
+                    &entry.header,
+                    entry.persistence_enabled,
+                );
+            }
+            // Behind this Cell's records; the first Cell of an instance to
+            // report takes the instance's move, the rest find nothing to send.
+            if let Some(prefix) = &entry.prefix {
+                prefix.report();
+            }
         }
     }
 }
@@ -242,6 +262,9 @@ pub fn flush_one(
     header: &HeaderTemplate,
     persistence_enabled: bool,
 ) -> Option<u64> {
+    // Released only once this drain's frames are written: an input stops
+    // holding its instance's processed prefix when its record is on the wire.
+    let _holds = buffer.take_holds();
     if buffer.is_empty() {
         return None;
     }

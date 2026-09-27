@@ -234,14 +234,14 @@ defmodule Flezha.Runner.ControlChannel.Requests do
     )
 
     namespace = state.namespace
-    park = %{wake_deadline_ms: deadline, consumed_offset: consumed_offset}
+    park = %{wake_deadline_ms: deadline}
 
     Task.start(fn ->
-      # Before the suspension asks the log whether input is still owed: a
-      # message the run parked unread is consumed, not owed.
-      TaskJournal.release_input(operator_id, consumed_offset)
-
-      Migration.suspend(namespace, operator_id, iter, park)
+      # Journaled before the park is recorded, and before the suspension asks
+      # the log whether input is still owed: a message the run parked unread
+      # is consumed, not owed, and the journal keeps that across a restart.
+      with :ok <- TaskJournal.release_unread(operator_id, consumed_offset),
+           do: Migration.suspend(namespace, operator_id, iter, park)
     end)
   end
 
@@ -298,7 +298,8 @@ defmodule Flezha.Runner.ControlChannel.Requests do
       instance_id: instance_id,
       factory_id: factory_id,
       payload: payload,
-      if_running: if_running
+      if_running: if_running,
+      identity: identity
     } = request
 
     namespace = state.namespace
@@ -312,7 +313,8 @@ defmodule Flezha.Runner.ControlChannel.Requests do
             factory_id,
             payload,
             if_running(if_running),
-            Session.runner_caller_context(namespace)
+            Session.runner_caller_context(namespace),
+            identity
           )
         end)
 

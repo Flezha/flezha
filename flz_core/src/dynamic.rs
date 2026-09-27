@@ -43,6 +43,7 @@ pub struct DynamicCellRegistry {
     instance: Weak<OperatorInstance>,
     instance_id: Arc<str>,
     persistence_enabled: bool,
+    prefix: Option<Arc<crate::prefix::PrefixLedger>>,
 }
 
 impl DynamicCellRegistry {
@@ -54,6 +55,7 @@ impl DynamicCellRegistry {
         instance: Weak<OperatorInstance>,
         instance_id: Arc<str>,
         persistence_enabled: bool,
+        prefix: Option<Arc<crate::prefix::PrefixLedger>>,
     ) -> Self {
         Self {
             cells: DashMap::new(),
@@ -65,6 +67,7 @@ impl DynamicCellRegistry {
             instance,
             instance_id,
             persistence_enabled,
+            prefix,
         }
     }
 
@@ -186,6 +189,7 @@ impl DynamicCellRegistry {
             cell_key: Some(key),
             cell_index: 0,
             persistence_enabled: self.persistence_enabled,
+            prefix: self.prefix.clone(),
         })
     }
 }

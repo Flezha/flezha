@@ -17,11 +17,11 @@ defmodule Flezha.Operator.Replay do
   alias Flezha.Config
 
   alias Flezha.Config.Durations
-  alias Flezha.Operator.ClassRegistry
   alias Flezha.Operator.Lookup
   alias Flezha.Operator.Overwatch
   alias Flezha.Process.Timer
   alias Flezha.Runner.StreamChannel.Gate
+  alias Flezha.Service.HubManager
   alias Flezha.State.Commands
   alias Flezha.State.DurabilityTier
   alias Flezha.State.InputLog
@@ -31,6 +31,7 @@ defmodule Flezha.Operator.Replay do
   alias Flezha.State.Restore
   alias Flezha.State.WalTransfer
   alias Flezha.State.WalWriter
+  alias Flezha.State.WalWriter.Epoch
 
   require Logger
 
@@ -126,13 +127,12 @@ defmodule Flezha.Operator.Replay do
 
   @doc """
   Whether the bind restores every persisted Cell, awaited, before it
-  re-forwards the input tail onto them: an unbounded operator whose input is durable (the
-  tier, or one that sleeps, whose tail is what arrived while it slept). A
-  bounded operator's run holds its tail behind its own restore gate instead.
+  re-forwards the input tail onto them: an unbounded operator whose input is
+  durable. A bounded operator's run holds its tail behind its own restore gate
+  instead.
   """
   @spec awaited_restore?(Overwatch.t()) :: boolean()
-  def awaited_restore?(%Overwatch{} = state),
-    do: floor_reporter(state) in [:cells, :forward]
+  def awaited_restore?(%Overwatch{} = state), do: floor_reporter(state) == :cells
 
   @doc """
   Enumerate this operator's persisted Cells and ship a `RestoreInitState` for
@@ -148,7 +148,9 @@ defmodule Flezha.Operator.Replay do
     operator_class = Keyword.get(operator_opts, :operator_class, state.id)
     overwatch = owner_pid(state)
 
-    spawn(fn ->
+    # Linked to its caller, the Overwatch or its bind task, so it stops with
+    # the bind it belongs to.
+    spawn_link(fn ->
       :ok = adopt_foreign_state(operator_opts, operator_class)
       replay_persisted_cells(operator_class, runner_id, overwatch)
     end)
@@ -172,6 +174,27 @@ defmodule Flezha.Operator.Replay do
     end
 
     :ok
+  end
+
+  @doc """
+  The operator a moved instance binds with: while a move starts its
+  destination, the hub still names the source's Overwatch, so the source node
+  rides the operator's opts and its durable files are pulled now, before the
+  bind reads any resume state. A fresh start, and a restart on this node, is
+  named here or nowhere, and binds as it is.
+  """
+  @spec adopt_moved_state(Overwatch.t(), Flezha.Operator.Builder.t()) ::
+          Flezha.Operator.Builder.t()
+  def adopt_moved_state(%Overwatch{} = state, operator) do
+    case HubManager.get_pid(state.namespace, state.id) do
+      {:ok, pid} when is_pid(pid) and node(pid) != node() ->
+        opts = Keyword.put(operator.opts, :state_source_node, node(pid))
+        :ok = adopt_foreign_state(opts, Overwatch.operator_class(state))
+        %{operator | opts: opts}
+
+      _here_or_nowhere ->
+        operator
+    end
   end
 
   # `:state_source_node` names the node an operator's durable state was last
@@ -353,65 +376,44 @@ defmodule Flezha.Operator.Replay do
 
   @doc """
   Who reports the instance's floor in its input log, which is what makes its
-  input durable: its Cells on the effectively-once tier, its journal when it
-  journals, the controller's forwards for a plain unbounded operator that sleeps (the log
-  then retains only what arrived while nobody could take it), or nobody, and
-  its input is not journaled.
+  input durable: its journal when it is a durable bounded operator, its Cells'
+  own records when it is an unbounded operator on the effectively-once tier or
+  one that sleeps, or nobody, and its input is not journaled.
   """
-  @spec floor_reporter(Overwatch.t()) :: :cells | :journal | :forward | nil
-  def floor_reporter(%Overwatch{effectively_once: true}), do: :cells
+  @spec floor_reporter(Overwatch.t()) :: :cells | :journal | nil
   def floor_reporter(%Overwatch{durable_bounded: true}), do: :journal
-  def floor_reporter(%Overwatch{sleeps: true}), do: :forward
+
+  def floor_reporter(%Overwatch{} = state) when state.effectively_once or state.sleeps,
+    do: :cells
+
   def floor_reporter(%Overwatch{}), do: nil
 
-  defp forward_reporter(operator_class),
-    do: {operator_class, operator_class, "_forwarded"}
-
   @doc """
-  A payload reached the bound runner: for a plain sleeping unbounded operator its offset is
-  now the runner's, and the instance's floor moves past it.
+  Seed the instance's floor in its input log from its own durable records,
+  before the log is asked anything: a bounded operator's journal, and a
+  sleeping unbounded operator's Cells when no Cell row is held (a controller
+  restart lost them, and a sleeper boots no Cell writer). Rows only move
+  forward, so seeding again is harmless.
   """
-  @spec forwarded(Overwatch.t(), {binary(), map()}) :: :ok
-  def forwarded(%Overwatch{} = state, {_message, %{"flz.offset" => offset}}) do
-    if floor_reporter(state) == :forward,
-      do: release(state, String.to_integer(offset)),
-      else: :ok
+  @spec seed_floor(Overwatch.t()) :: :ok
+  def seed_floor(%Overwatch{} = state) do
+    case floor_reporter(state) do
+      :journal -> TaskJournal.release_input(state.id)
+      :cells when state.sleeps -> seed_cell_floors(Overwatch.operator_class(state))
+      _no_floor_to_seed -> :ok
+    end
   end
 
-  def forwarded(%Overwatch{}, _payload), do: :ok
+  defp seed_cell_floors(operator_class) do
+    if InputLog.cell_offsets(operator_class) == [] do
+      for cell_id <- Paths.cells_of(operator_class),
+          offset = Epoch.consumed_offset_on_disk(cell_id),
+          offset != nil,
+          do: InputLog.record_consumed(operator_class, cell_id, offset)
+    end
 
-  @doc """
-  The park record `state` sleeps with. A plain sleeping unbounded operator's floor lives
-  only in memory while it is awake, so its record carries it, and a boot that
-  rediscovers the sleep reads it back through `release_parked/2`.
-  """
-  @spec floor_at_park(Overwatch.t(), ClassRegistry.park()) :: ClassRegistry.park()
-  def floor_at_park(%Overwatch{} = state, park) do
-    if floor_reporter(state) == :forward,
-      do: %{park | consumed_offset: InputLog.watermark(Overwatch.operator_class(state))},
-      else: park
+    :ok
   end
-
-  @doc """
-  Seed the instance's floor from its park record at boot: the offset a
-  bounded operator parked unread, or a plain sleeping unbounded operator's forwarded floor.
-  """
-  @spec release_parked(Overwatch.t(), ClassRegistry.park() | nil) :: :ok
-  def release_parked(%Overwatch{} = state, %{consumed_offset: offset}) when is_integer(offset),
-    do: release(state, offset)
-
-  def release_parked(%Overwatch{}, _park), do: :ok
-
-  defp release(%Overwatch{} = state, offset), do: release(floor_reporter(state), state, offset)
-
-  defp release(:journal, state, offset), do: TaskJournal.release_input(state.id, offset)
-
-  defp release(:forward, state, offset) do
-    class = Overwatch.operator_class(state)
-    InputLog.record_consumed(class, forward_reporter(class), offset)
-  end
-
-  defp release(_cells_or_nobody, _state, _offset), do: :ok
 
   # ---------- re-forwarding a durable tail ----------
 
@@ -429,8 +431,39 @@ defmodule Flezha.Operator.Replay do
   """
   @spec reforward_undelivered_tail(Overwatch.t()) :: Overwatch.t()
   def reforward_undelivered_tail(%Overwatch{} = state) do
+    redeliver_edges(state)
     replay_slice(state, InputLog.undelivered(Overwatch.operator_class(state)))
     state
+  end
+
+  # An unbounded operator's inter-tasklet value is durable in its producer's
+  # record wherever that record carries the offset: the values kept for inputs
+  # above the floor go first, in origin order, and a consumer whose own records
+  # acknowledge an origin drops its value. With nothing above the floor no value
+  # can be owed, and no record is read. A bounded operator's are its journal's.
+  defp redeliver_edges(%Overwatch{durable_bounded: true}), do: :ok
+
+  defp redeliver_edges(%Overwatch{} = state) do
+    operator_class = Overwatch.operator_class(state)
+
+    with {:ok, floor, last} when last > floor <- InputLog.tail(operator_class) do
+      operator_class
+      |> Paths.cells_of()
+      |> Enum.flat_map(&Epoch.edges_above(&1, floor))
+      |> Enum.sort_by(& &1.origin)
+      |> Enum.map(&edge_payload/1)
+      |> then(&reforward(state, &1))
+    end
+
+    :ok
+  end
+
+  defp edge_payload(edge) do
+    {edge.payload,
+     %{
+       "flz.edge" => "#{edge.channel}:#{edge.consumer}",
+       "flz.offset" => Integer.to_string(edge.origin)
+     }}
   end
 
   @doc """

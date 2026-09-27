@@ -134,10 +134,28 @@ arrives after `run/3` returned is dropped, and the warning is then what reaches 
 
 ## Replay issues nothing
 
-A replayed invocation — a crash-resume re-forward, a late-input correction re-running the
-slice — answers the outcome `skipped_on_replay` without touching the wire, so a replay never
-doubles the workers a run created. Its id is the one the call gave, or empty when it gave none:
-a generated id existed only in the controller's answer to the live run.
+A replayed invocation, a late-input correction re-running the slice, answers the outcome
+`skipped_on_replay` without touching the wire, so a replay never doubles the workers a run
+created. Its id is the one the call gave, or empty when it gave none: a generated id existed
+only in the controller's answer to the live run.
+
+## A crash re-run asks again, and gets the same answer
+
+A crash re-run is not a replay: an input the runner took but had not durably consumed is
+re-forwarded and runs live, so its spawn is requested again. Every request a tasklet makes
+carries an identity: the requesting Cell, the input-log offset it was taking, the call's position
+in the invocation, the factory and the payload. The controller answers a request whose identity
+it already resolved with the operator the first request resolved to:
+
+- **Without an id**, the generated id is derived from the identity, so the re-run resolves to the
+  worker the first run started (`spawned`, whether it still runs or has completed).
+- **With an id**, a delivery into the running worker carries the identity as its `flz.msg_id`,
+  so the worker's input log absorbs the second delivery and the worker receives the payload once.
+
+A re-run that asks for a different factory or payload at the same position is a new request and
+spawns anew. An invocation that took no offset (a timer firing, an input to a class with no
+durable input log) carries no identity, and neither does a spawn from the CLI, the admin API or a
+schedule.
 
 ## Inheritance and limits
 
@@ -158,8 +176,8 @@ scheduling (that is `flz schedule`), no cross-namespace reach.
 
 - **It always starts a new instance.** It can never deliver into a running one, because there
   is no id to find it by.
-- **Reissued after a lost or timed-out answer, it starts a second instance.** The first may
-  have started; nothing ties the second request to it.
+- **Reissued in the same invocation after a lost or timed-out answer, it starts a second
+  instance.** The reissue is a later call, so its identity differs from the first request's.
 - **Skipped on replay, it answers an empty id.** The id was generated during the live run.
 
 A caller that needs at most one instance, or the id on replay, passes its own id.

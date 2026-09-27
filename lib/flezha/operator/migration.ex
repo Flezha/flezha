@@ -407,14 +407,10 @@ defmodule Flezha.Operator.Migration do
   The runner asked to sleep: write the park record, durable before the
   eviction so a controller crash in between still rediscovers the sleep, then
   evict the instance from its runner and keep it suspended. Not a terminal
-  outcome: no completion record, no state deletion. A plain sleeping unbounded operator's
-  record carries its forwarded floor, which is the one thing about its input a
-  boot cannot read back.
+  outcome: no completion record, no state deletion.
   """
   @spec suspend_at(Overwatch.t(), non_neg_integer(), ClassRegistry.park()) :: Overwatch.t()
   def suspend_at(%Overwatch{} = state, iter, park) do
-    park = Replay.floor_at_park(state, park)
-
     case ClassRegistry.put_parked(Overwatch.operator_class(state), park) do
       :ok ->
         evict_parked(state, iter, park)
@@ -487,40 +483,48 @@ defmodule Flezha.Operator.Migration do
   # terminate / result-application surface is reviewable as a single unit.
   # ---------------------------------------------------------------
 
-  # Terminate any in-flight bind task so teardown is never blocked by the
-  # bind running inside it.
+  # A graceful stop ends the Overwatch with a reason its linked bind task
+  # would ignore, so teardown kills the task rather than wait on its bind.
   @spec terminate_migrate_task(Overwatch.t()) :: Overwatch.t()
   def terminate_migrate_task(%Overwatch{migrate_task: nil} = state), do: state
 
-  def terminate_migrate_task(%Overwatch{migrate_task: %{ref: ref, pid: pid}} = state) do
-    _ = Process.demonitor(ref, [:flush])
-    _ = Task.Supervisor.terminate_child(Flezha.Operator.MessageHandlerTaskSup, pid)
+  def terminate_migrate_task(%Overwatch{migrate_task: %{pid: pid}} = state) do
+    Process.unlink(pid)
+    Process.exit(pid, :kill)
     %{state | migrate_task: nil}
   end
 
   # Run `complete_init/5` on `runner_id` in a task so a slow bind never blocks
-  # the Overwatch. The task reports its outcome and decides nothing: a failure
-  # is a park the Overwatch declares. `then` is what a wake carries
-  # (`apply_migrate_result/2`).
+  # the Overwatch. The task is linked to the Overwatch, so a killed Overwatch
+  # takes its bind with it and no second bind outlives it. It reports its
+  # outcome and decides nothing: a failure is a park the Overwatch declares.
+  # `then` is what a wake carries (`apply_migrate_result/2`).
   defp start_bind(%Overwatch{} = state, runner_id, then) do
     operator = bind_operator(state)
     parent = self()
 
-    task =
-      Task.Supervisor.async_nolink(Flezha.Operator.MessageHandlerTaskSup, fn ->
-        case Lifecycle.complete_init(state, runner_id, operator, parent, :pinned) do
-          {:ok, recovered} ->
-            send(parent, {:migrate_task_result, self(), {:bound, recovered}})
-            :ok
+    pid =
+      spawn_link(fn ->
+        result =
+          case Lifecycle.complete_init(state, runner_id, operator, parent, :pinned) do
+            {:ok, recovered} -> {:bound, recovered}
+            {:error, err, parked} -> {:park, parked, err}
+          end
 
-          {:error, err, parked} ->
-            send(parent, {:migrate_task_result, self(), {:park, parked, err}})
-            :ok
-        end
+        send(parent, {:migrate_task_result, self(), result})
       end)
 
-    %Overwatch{state | migrate_task: %{ref: task.ref, pid: task.pid, then: then}}
+    %Overwatch{state | migrate_task: %{pid: pid, then: then}}
   end
+
+  @doc """
+  The bind task ended before it reported: its bind failed with `reason`. A
+  task that reported is no longer in flight, so its exit reaches here only
+  when it died first.
+  """
+  @spec bind_task_exited(Overwatch.t(), term()) :: Overwatch.t()
+  def bind_task_exited(%Overwatch{} = state, reason),
+    do: apply_migrate_result(state, {:park, state, {:bind_task_exit, reason}})
 
   @doc """
   Fold a bind task's result back into the state.
@@ -555,8 +559,11 @@ defmodule Flezha.Operator.Migration do
     %{recovered | migrate_task: nil, snapshot: nil}
   end
 
+  # A failed un-park with input journaled meanwhile tries again at once, as
+  # any bind that ends with work owed does.
   def apply_migrate_result(_state, {:park, parked, err}) do
     %{Lifecycle.park(parked, err) | migrate_task: nil, parked_in_flight: false}
+    |> rehydrate_if_pending()
   end
 
   defp carried(%Overwatch{migrate_task: %{then: then}}), do: then

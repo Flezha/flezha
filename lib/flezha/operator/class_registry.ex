@@ -115,13 +115,10 @@ defmodule Flezha.Operator.ClassRegistry do
   @type loop_mode :: :once | :per_input | :chained
 
   @typedoc """
-  An instance asleep: the durable wake deadline it parked with, and the
-  highest input-log offset its run parked to the dead-letter queue unread.
+  An instance asleep: the durable wake deadline it parked with. What it
+  consumed lives in its own records, never here.
   """
-  @type park :: %{
-          wake_deadline_ms: non_neg_integer() | nil,
-          consumed_offset: non_neg_integer() | nil
-        }
+  @type park :: %{wake_deadline_ms: non_neg_integer() | nil}
 
   @doc """
   Resolve a class's SDK-side declarations from the `AddOperator` response
@@ -686,12 +683,13 @@ defmodule Flezha.Operator.ClassRegistry do
   defp encode_declaration(tasks) when is_list(tasks), do: Enum.join(tasks, ",")
   defp encode_declaration(ms) when is_integer(ms), do: Integer.to_string(ms)
 
-  defp encode_declaration(%{wake_deadline_ms: deadline, consumed_offset: offset}),
-    do: "#{deadline || "-"},#{offset || "-"}"
+  defp encode_declaration(%{wake_deadline_ms: deadline}), do: "#{deadline || "-"}"
 
+  # A record written before the park stopped carrying an offset has one more
+  # field, which is not read.
   defp parse_park(text) do
-    [deadline, offset] = String.split(text, ",")
-    %{wake_deadline_ms: parse_optional(deadline), consumed_offset: parse_optional(offset)}
+    [deadline | _offset] = String.split(text, ",")
+    %{wake_deadline_ms: parse_optional(deadline)}
   end
 
   defp parse_optional("-"), do: nil

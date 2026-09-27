@@ -2,6 +2,7 @@ defmodule FlezhaTest.Handover do
   alias Flezha.Convergence.Loop
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
   alias Flezha.Identificator
+  alias Flezha.Operator.Builder
   alias Flezha.Operator.Replay
   alias Flezha.Payloader
   alias Flezha.Runner.FleetManager
@@ -9,6 +10,7 @@ defmodule FlezhaTest.Handover do
   alias Flezha.Service.OperatorManager
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Fixtures.OperatorFixture
+  alias FlezhaTest.Helper.BoundedResumeHarness
   alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.OperatorTestHelper
@@ -616,6 +618,112 @@ defmodule FlezhaTest.Handover do
     signal_runner(os_pid_b, "-KILL")
     assert_pulled_with(op, local_runner, "after_snapshot")
     NodeTestHelper.stop_peer_node(peer_pid, peer)
+  end
+
+  # A durable loop on the peer whose only runner dies is moved to this
+  # controller, which must bind it on the journal, input log and Cells the peer
+  # held: iterations committed there are not run again, and the next message
+  # commits exactly one more.
+  @tag :multi_node
+  @tag :durable_move
+  @tag timeout: 240_000
+  test "a durable loop moved after its runner died resumes without re-running input" do
+    {peer_pid, peer} = start_healing_peer(:durable_move)
+    :erpc.call(peer, Application, :put_env, [:flezha, :group_withdraw_grace_ms, 500])
+    _local_runner = NodeTestHelper.start_runner(@temp_namespace)
+    {_rem, os_pid} = start_remote_runner(peer)
+    collector = spawn_link(fn -> BoundedResumeHarness.collect_loop([]) end)
+    op = start_bounded_on_peer(peer, "keyed_loop_bounded", collector)
+
+    for _ <- 1..3, do: send_trade(op, "SOL-USD:1")
+
+    assert NodeTestHelper.wait_until(fn -> committed_iters(peer, op) == [0, 1, 2] end, 30_000),
+           "the loop never committed three iterations on the peer"
+
+    signal_runner(os_pid, "-KILL")
+
+    assert NodeTestHelper.wait_until(fn -> overwatch_node(op) == node() end, 150_000),
+           "the loop never moved to this controller"
+
+    send_trade(op, "SOL-USD:1")
+
+    assert NodeTestHelper.wait_until(
+             fn -> committed_iters(node(), op) == [0, 1, 2, 3] end,
+             30_000
+           ),
+           "the message sent after the move did not commit one iteration: " <>
+             inspect(
+               {committed_iters(node(), op), BoundedResumeHarness.collected(collector),
+                OperatorManager.get_overwatch_state(@temp_namespace, op)
+                |> then(fn {:ok, s} ->
+                  Map.take(s, [
+                    :runner_id,
+                    :suspended,
+                    :parked,
+                    :init_error,
+                    :migrate_task,
+                    :durable_bounded
+                  ])
+                end), Flezha.State.InputLog.tail(op),
+                FleetManager.active_runners(@temp_namespace)},
+               limit: :infinity
+             )
+
+    Process.sleep(1_500)
+
+    # An output the source's flush cursor had not passed is delivered again
+    # under the same identity, which a sink absorbs; no iteration ran twice.
+    emitted =
+      collector
+      |> BoundedResumeHarness.collected_with_meta()
+      |> Enum.uniq_by(fn {_payload, md} -> {md["flz.cell"], md["flz.seq"], md["flz.epoch"]} end)
+      |> Enum.map(&elem(&1, 0))
+
+    assert emitted == ["SOL-USD:1", "SOL-USD:2", "SOL-USD:3", "SOL-USD:4"]
+
+    NodeTestHelper.stop_peer_node(peer_pid, peer)
+  end
+
+  defp start_bounded_on_peer(peer, factory_id, collector) do
+    NodeTestHelper.wait_until(
+      fn -> peer in HubManager.get_hub_nodes(@temp_namespace, false) end,
+      10_000
+    ) || flunk("peer #{inspect(peer)} never joined the hub cluster")
+
+    Enum.find_value(1..20, fn i ->
+      id = "#{factory_id}_#{System.unique_integer([:positive])}_#{i}"
+
+      builder = %Builder{
+        id: id,
+        factory_id: factory_id,
+        kind: :bounded,
+        init_values: %{},
+        opts: [plugins: [BoundedResumeHarness.forward_sink("out", collector)]]
+      }
+
+      {:ok, _info} = OperatorManager.start_operator(@temp_namespace, builder)
+
+      if overwatch_node(id) == peer,
+        do: id,
+        else: OperatorManager.request_stop(@temp_namespace, id) && nil
+    end) || flunk("no bounded operator landed on #{inspect(peer)} in 20 attempts")
+  end
+
+  defp send_trade(op, text),
+    do: :ok = OperatorManager.send_io(op, @temp_namespace, text, %{"channel" => "trades"})
+
+  defp overwatch_node(op) do
+    case OperatorManager.get_operator_pid(@temp_namespace, op) do
+      {:ok, pid} when is_pid(pid) -> node(pid)
+      _ -> nil
+    end
+  end
+
+  defp committed_iters(node, op) do
+    case :erpc.call(node, Flezha.State.TaskJournal, :read, [op]) do
+      {:ok, entries} -> for %{type: :iter_committed, iter: iter} <- entries, do: iter
+      _ -> []
+    end
   end
 
   # Both controllers heal, as in production: only the peer's own loop may

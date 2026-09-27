@@ -47,23 +47,34 @@ defmodule Flezha.State.WalWriterCreditTest do
 
   defp drain_credit_reports() do
     receive do
-      {:credit_drained, _, _} -> drain_credit_reports()
+      {:credit_drained, _, _, _} -> drain_credit_reports()
     after
       200 -> :ok
     end
   end
 
-  test "written bytes are reported on fsync, tagged with the debiting session", %{pid: pid} do
+  test "written bytes are reported on fsync, tagged with the debiting session and the Cell",
+       %{pid: pid, cell_id: cell_id} do
     append!(pid, 0, "a", opts(70))
     append!(pid, 1, "b", opts(30))
     assert sync(pid) == 1
 
     # Append alone mints nothing.
-    refute_received {:credit_drained, _, _}
+    refute_received {:credit_drained, _, _, _}
 
     :ok = WalWriter.fsync(pid)
-    assert_receive {:credit_drained, @session, 100}
-    refute_received {:credit_drained, _, _}
+    assert_receive {:credit_drained, @session, 100, ^cell_id}
+    refute_received {:credit_drained, _, _, _}
+  end
+
+  # A processed-prefix marker is confirmed against these reports, so a stream
+  # that speaks no credit is told what drained too.
+  test "a stream with no credit session is still told what drained",
+       %{pid: pid, cell_id: cell_id} do
+    append!(pid, 0, "a", %{channel: self(), session: nil, wire_size: 40})
+    assert sync(pid) == 0
+    :ok = WalWriter.fsync(pid)
+    assert_receive {:credit_drained, nil, 40, ^cell_id}
   end
 
   test "a dedup-dropped Change releases its bytes immediately", %{pid: pid} do
@@ -71,11 +82,11 @@ defmodule Flezha.State.WalWriterCreditTest do
     assert sync(pid) == 0
 
     append!(pid, 0, "a", opts(50))
-    assert_receive {:credit_drained, @session, 50}
+    assert_receive {:credit_drained, @session, 50, _cell}
 
     # The written record's bytes still wait for the fsync.
     :ok = WalWriter.fsync(pid)
-    assert_receive {:credit_drained, @session, 50}
+    assert_receive {:credit_drained, @session, 50, _cell}
   end
 
   test "a gap-rejected Change releases its bytes immediately and declares the gap", %{pid: pid} do
@@ -84,7 +95,7 @@ defmodule Flezha.State.WalWriterCreditTest do
     assert sync(pid) == 0
 
     append!(pid, 5, "z", opts(60))
-    assert_receive {:credit_drained, @session, 60}
+    assert_receive {:credit_drained, @session, 60, _cell}
     assert_receive {:declare, :seq_gap, _, %{trigger: :seq_gap}}
   end
 
@@ -117,7 +128,7 @@ defmodule Flezha.State.WalWriterCreditTest do
     total =
       Stream.repeatedly(fn ->
         receive do
-          {:credit_drained, @session, n} -> n
+          {:credit_drained, @session, n, _cell} -> n
         after
           500 -> nil
         end

@@ -69,6 +69,17 @@ pub enum EnginePayload {
 }
 
 impl EngineActivation {
+    /// The wire identity of the Cell this activation runs on; empty for a
+    /// prepare crossing, which is bound to none.
+    pub fn cell_identity(&self) -> &[u8] {
+        match &self.payload {
+            EnginePayload::Work { slot, .. } | EnginePayload::Command { slot, .. } => {
+                &slot.cell_identity
+            }
+            EnginePayload::Prepare(_) => &[],
+        }
+    }
+
     /// The work batch's slot; only a work activation is bound to one.
     pub fn slot(&self) -> &Arc<CellSlot> {
         match &self.payload {

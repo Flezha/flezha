@@ -288,7 +288,13 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnBoundedTest do
   } do
     test_pid = self()
 
-    expect(OperatorManager, :spawn_or_deliver, fn ns, id, factory, payload, if_running, caller ->
+    expect(OperatorManager, :spawn_or_deliver, fn ns,
+                                                  id,
+                                                  factory,
+                                                  payload,
+                                                  if_running,
+                                                  caller,
+                                                  _identity ->
       send(test_pid, {:resolved, ns, id, factory, payload, if_running, caller})
       {:spawned, id}
     end)
@@ -307,7 +313,13 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnBoundedTest do
   end
 
   test "a request without an id answers the id the controller generated", %{channel: channel} do
-    expect(OperatorManager, :spawn_or_deliver, fn _ns, "", _factory, _payload, _policy, _ ->
+    expect(OperatorManager, :spawn_or_deliver, fn _ns,
+                                                  "",
+                                                  _factory,
+                                                  _payload,
+                                                  _policy,
+                                                  _,
+                                                  _identity ->
       {:spawned, "worker-k7m2qzxw4pd3fn2a"}
     end)
 
@@ -318,7 +330,13 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnBoundedTest do
   end
 
   test "the error policy is carried through verbatim", %{channel: channel} do
-    expect(OperatorManager, :spawn_or_deliver, fn _ns, id, _factory, _payload, :error, _ ->
+    expect(OperatorManager, :spawn_or_deliver, fn _ns,
+                                                  id,
+                                                  _factory,
+                                                  _payload,
+                                                  :error,
+                                                  _,
+                                                  _identity ->
       {:already_running, id}
     end)
 
@@ -329,7 +347,13 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnBoundedTest do
   end
 
   test "an unset policy reads as deliver rather than refusing the payload", %{channel: channel} do
-    expect(OperatorManager, :spawn_or_deliver, fn _ns, _id, _factory, _payload, if_running, _ ->
+    expect(OperatorManager, :spawn_or_deliver, fn _ns,
+                                                  _id,
+                                                  _factory,
+                                                  _payload,
+                                                  if_running,
+                                                  _,
+                                                  _identity ->
       assert if_running == :deliver
       {:delivered, "w1"}
     end)
@@ -340,7 +364,13 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnBoundedTest do
   end
 
   test "a refusal ships its reason so the requester can log something useful", %{channel: channel} do
-    expect(OperatorManager, :spawn_or_deliver, fn _ns, id, _factory, _payload, _policy, _ ->
+    expect(OperatorManager, :spawn_or_deliver, fn _ns,
+                                                  id,
+                                                  _factory,
+                                                  _payload,
+                                                  _policy,
+                                                  _,
+                                                  _identity ->
       {{:refused, "quota_exceeded"}, id}
     end)
 
@@ -352,7 +382,13 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnBoundedTest do
   test "resolution never blocks the channel", %{channel: channel} do
     parent = self()
 
-    expect(OperatorManager, :spawn_or_deliver, fn _ns, _id, _factory, _payload, _policy, _ ->
+    expect(OperatorManager, :spawn_or_deliver, fn _ns,
+                                                  _id,
+                                                  _factory,
+                                                  _payload,
+                                                  _policy,
+                                                  _,
+                                                  _identity ->
       send(parent, {:resolving, self()})
       NodeTestHelper.park()
       {:spawned, "w1"}

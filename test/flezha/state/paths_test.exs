@@ -96,6 +96,23 @@ defmodule Flezha.State.PathsTest do
       assert Paths.cells_of("wf-op") == []
     end
 
+    # KB-489: a hydration writes the dedup cache of every Cell it restores, the
+    # journal's reserved identity included; that file is still not a Cell.
+    test "a reserved identity's dedup side-file is no Cell" do
+      journal = Paths.journal_path("wf-hydrated")
+      File.mkdir_p!(Path.dirname(journal))
+      File.write!(journal, "journal-bytes")
+
+      assert :ok =
+               Flezha.State.Outbox.write(Paths.journal_id("wf-hydrated"), %{
+                 last_persisted_seq: 3,
+                 outbox_flushed_seq: -1,
+                 epoch: 0
+               })
+
+      assert Paths.cells_of("wf-hydrated") == []
+    end
+
     test "an unclaimed class resolves from the on-disk layout, else _system", %{tmp: base} do
       File.mkdir_p!(Path.join([base, "team-a", "disk-op", "task-0"]))
 

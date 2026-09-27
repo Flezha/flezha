@@ -219,4 +219,6 @@ pub struct BuildCellArgs<'a> {
     pub cell_key: Option<&'a str>,
     pub cell_index: usize,
     pub persistence_enabled: bool,
+    /// The instance's processed prefix, `None` for a bounded operator.
+    pub prefix: Option<Arc<crate::prefix::PrefixLedger>>,
 }

@@ -18,11 +18,13 @@ defmodule Flezha.State.TaskJournal.Codec do
   @type_iter_committed 3
   @type_compensated 5
   @type_rewound 6
+  @type_input_released 7
   @entry_types %{
     @type_task_committed => :task_committed,
     @type_iter_committed => :iter_committed,
     @type_compensated => :compensated,
-    @type_rewound => :rewound
+    @type_rewound => :rewound,
+    @type_input_released => :input_released
   }
 
   @doc "The on-disk type byte for an entry type name."
@@ -111,6 +113,16 @@ defmodule Flezha.State.TaskJournal.Codec do
 
   # The rewind target is the entry's own `iter` field — no payload to carry.
   defp decode_payload(:rewound, <<>>), do: {:ok, %{}}
+
+  defp decode_payload(:input_released, <<offset::binary-size(9)>>) do
+    case decode_offset(offset) do
+      {:ok, consumed_offset} when is_integer(consumed_offset) ->
+        {:ok, %{consumed_offset: consumed_offset}}
+
+      _ ->
+        {:error, :bad_payload}
+    end
+  end
 
   defp decode_payload(_name, _payload), do: {:error, :bad_payload}
 

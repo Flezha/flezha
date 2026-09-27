@@ -562,13 +562,14 @@ impl Core {
         payload: &[u8],
         if_running: &str,
         replay: bool,
+        offset: Option<u64>,
     ) -> PyResult<u64> {
         let ctx = self.ptr()?;
         let factory = veneer::c_string("factory id", factory_id)?;
         let id = veneer::c_string("id", id)?;
         let mode = veneer::c_string("if_running", if_running)?;
         Ok(veneer::spawn_request(
-            ctx, token, &factory, &id, payload, &mode, replay,
+            ctx, token, &factory, &id, payload, &mode, replay, offset,
         )?)
     }
 

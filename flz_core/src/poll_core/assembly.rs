@@ -1,6 +1,6 @@
 //! Batch assembly: everything the drain pop-loop decided, minus user code.
-//! Frees one blocked producer per pop; skips inputs at or below the durably
-//! consumed floor; buffers replay-slice members until the slice closes;
+//! Frees one blocked producer per pop; skips inputs at or below the Cell's
+//! consumed floor and advances it on a forwarded one; buffers replay-slice members until the slice closes;
 //! admits (or drops, or asks the controller for a correction of) late
 //! inputs; generates due event-time firings ahead of the input that advanced
 //! the high-water; validates timer firings against the pending set. The
@@ -213,13 +213,17 @@ fn stage_popped_item(
         }
         CellItem::Input(payload) => payload,
     };
-    // Effectively-once crash-replay: the controller re-forwards the
-    // journaled input tail; offsets this Cell already durably consumed
-    // (restored effect records) are skipped, never re-run.
+    // A re-forward is safe to repeat: an offset this Cell already took, from
+    // its restored records or live, is dropped unrun. Only a forwarded input
+    // moves the floor, since one input may emit several values downstream.
     if let Some(offset) = payload.consumed_offset {
-        if (offset as i64) <= slot.consumed_floor.load(Ordering::Acquire) {
+        let offset = offset as i64;
+        if offset <= slot.consumed_floor.load(Ordering::Acquire) {
             crate::cell::DISPATCHES_COMPLETED.fetch_add(1, Ordering::Relaxed);
             return Staged::Other;
+        }
+        if payload.forwarded {
+            slot.consumed_floor.fetch_max(offset, Ordering::AcqRel);
         }
     }
     // A replayed slice is held whole, ordered by event time, and only

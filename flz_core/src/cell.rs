@@ -35,6 +35,13 @@ pub struct CellPayload {
     /// inter-tasklet emit — a downstream Tasklet could not see the
     /// slice's end and would hold its drain forever.
     pub replay: bool,
+    /// Whether the controller forwarded this payload, rather than a Tasklet
+    /// of the instance emitting it: only such an input advances the Cell's
+    /// live consumed floor, since one input may emit several values.
+    pub forwarded: bool,
+    /// Holds the instance's processed prefix below `consumed_offset` until
+    /// the record this input settles into is written.
+    pub hold: Option<Arc<crate::prefix::Hold>>,
 }
 
 pub fn make_cell_payload(
@@ -48,6 +55,23 @@ pub fn make_cell_payload(
         stream: Arc::clone(stream),
         consumed_offset,
         replay,
+        forwarded: false,
+        hold: None,
+    }
+}
+
+/// Keep a settled input's hold with the Cell's buffer until the drain that
+/// ships its record; a Cell the flusher never drains has no record to wait
+/// for, and releases it at once.
+pub fn keep_hold(
+    slot: &CellSlot,
+    buffer: &mut dyn crate::flusher::FlushableBuffer,
+    hold: Option<Arc<crate::prefix::Hold>>,
+) {
+    if let Some(hold) = hold {
+        if slot.flusher_entry_id.is_some() {
+            buffer.keep_hold(hold);
+        }
     }
 }
 
@@ -147,8 +171,9 @@ pub struct CellSlot {
     /// Per-Cell WAL seq, stamped into a frame before it reaches the sink so
     /// a frame buffered across a reconnect replays with its original seq.
     pub change_seq: Arc<std::sync::atomic::AtomicU64>,
-    /// Highest input-log offset durably consumed before a restore (`-1` =
-    /// none); re-forwarded inputs at or below it are skipped.
+    /// Highest input-log offset this Cell took (`-1` = none): restored from
+    /// its durable records, advanced as it takes a forwarded input. An input
+    /// at or below it is dropped unrun.
     pub consumed_floor: std::sync::atomic::AtomicI64,
     /// Highest event time dispatched (`-1` = none); an input behind it is
     /// late. Restored from the snapshot header, never reset on a replay.
@@ -296,10 +321,19 @@ impl CellSlot {
         );
     }
 
-    /// Drop an open checkpoint interval's staged changes: a restore re-seats
-    /// the Cell on a past in which they were never applied.
-    pub fn discard_staged_interval(&self) {
-        self.flush_buffer.lock_recover().discard_staged();
+    /// Whether this Cell's record for an input at `offset` keeps the input's
+    /// inter-tasklet values: under a class that records effects, and wherever
+    /// the record carries the offset the Cell took, whose floor then skips the
+    /// re-forwarded input.
+    pub fn keeps_edges(&self, offset: Option<u64>) -> bool {
+        self.topology.records_effects(self.persistence_enabled)
+            || (self.flusher_entry_id.is_some() && offset.is_some())
+    }
+
+    /// Drop what the flush buffer has not shipped: a restore re-seats the
+    /// Cell on a past in which none of it was applied.
+    pub fn discard_unshipped(&self) {
+        self.flush_buffer.lock_recover().discard_unshipped();
     }
 
     /// Drop a half-filled correction slice: releasing it later would order its
@@ -311,11 +345,11 @@ impl CellSlot {
     }
 
     /// Drop queued input only where the controller re-forwards it from a
-    /// durable log (the effectively-once tier, durable bounded operators); anywhere
+    /// durable log (the effectively-once tier, a class that sleeps); anywhere
     /// else the mailbox is the input's only copy. Returns the count, added to
     /// [`RESTORE_DISCARDED_INPUTS`].
     pub fn discard_queued_input_on_restore(&self) -> usize {
-        if !self.topology.effectively_once {
+        if !self.topology.effectively_once && !self.topology.sleep_when_idle {
             return 0;
         }
         let discarded = self.mailbox.clear()

@@ -101,9 +101,13 @@ impl SinkState {
     }
 
     fn push_ring(&mut self, entry: Pending) {
-        if self.ring.len() >= ring_capacity() && self.ring.pop_front().is_some() {
+        if self.ring.len() >= ring_capacity() {
             // The ring holds the only copy: an eviction is a lost frame, and
-            // it is counted where every drop-oldest shed on this wire is.
+            // it is counted where every drop-oldest shed on this wire is. A
+            // lost record's input must never be covered by a marker.
+            if let Some(Pending::Record { frame, .. }) = self.ring.pop_front() {
+                crate::prefix::frame_evicted(&frame);
+            }
             crate::cell::note_dropped_oldest();
             self.evicted_since_install += 1;
             if self.evicted_since_install == 1 {
@@ -240,6 +244,18 @@ pub fn send(payload_id: &str, frame: Vec<u8>) {
         }
     };
     drive_reconnect_if(should_reconnect);
+}
+
+/// Ship one frame only if it can go out now, behind everything the ring holds:
+/// `false`, and nothing held, when no sink is installed, the ring still holds
+/// a frame, or the write fails. A processed-prefix marker must never overtake
+/// a record it covers, nor wait in the ring beside one that may be evicted.
+pub fn send_unheld(payload_id: &str, frame: Vec<u8>) -> bool {
+    let st = STATE.lock().expect("state_sink lock poisoned");
+    match st.sink.as_ref() {
+        Some(sink) if st.ring.is_empty() => sink(payload_id, &frame).is_ok(),
+        _ => false,
+    }
 }
 
 /// The guarantee a frame is owed. A writer names the class of the frame it is

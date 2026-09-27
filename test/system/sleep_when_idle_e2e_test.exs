@@ -20,12 +20,14 @@ defmodule FlezhaTest.System.SleepWhenIdleE2ETest do
   use FlezhaTest.SystemCase, capability: :state_persistence
 
   import FlezhaTest.Helper.TierE2EHarness,
-    only: [cleanup: 3, kill_overwatch: 2, unique: 1, unique_id_path: 0]
+    only: [cleanup: 3, force_fresh_rebind: 2, kill_overwatch: 2, unique: 1, unique_id_path: 0]
 
   import FlezhaTest.Helper.BoundedResumeHarness
 
   alias Flezha.Operator.{Builder, ClassRegistry, Replay}
+  alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Service.OperatorManager
+  alias Flezha.State.InputLog
   alias Flezha.State.Paths
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -79,6 +81,46 @@ defmodule FlezhaTest.System.SleepWhenIdleE2ETest do
       assert collected(collector) == ["a=2", "a=5"]
     end
 
+    # A controller restart while the stream is awake loses every in-memory
+    # floor row; the rebind re-forwards the retained log and nothing already
+    # folded is folded again.
+    test "a restart while awake folds nothing twice", ctx do
+      collector = spawn_link(fn -> collect_loop([]) end)
+      namespace = unique("sleep_unbounded_restart")
+      id = unique("sleeping_counter")
+      id_path = unique_id_path()
+      on_exit(fn -> cleanup(namespace, id, id_path) end)
+
+      boot_runner(namespace, ctx, id_path,
+        release?: false,
+        extra_env: [{"FLEZHA_PARK_IDLE_MS", "2000"}]
+      )
+
+      start_stream(namespace, id, "sleeping_counter",
+        plugins: [forward_sink("totals", collector)]
+      )
+
+      send_input(namespace, id, "a:100")
+      assert NodeTestHelper.wait_until(fn -> suspended?(namespace, id) end, 30_000)
+
+      send_input(namespace, id, "a:1")
+      send_input(namespace, id, "a:2")
+
+      assert NodeTestHelper.wait_until(
+               fn -> collected(collector) == ["a=100", "a=101", "a=103"] end,
+               30_000
+             )
+
+      refute suspended?(namespace, id)
+      forget_floor_rows(id)
+      force_fresh_rebind(namespace, id)
+      send_input(namespace, id, "a:10")
+
+      assert NodeTestHelper.wait_until(fn -> length(collected(collector)) >= 4 end, 30_000)
+      Process.sleep(1_000)
+      assert collected(collector) == ["a=100", "a=101", "a=103", "a=113"]
+    end
+
     test "a stop removes a sleeping stream and its directory", ctx do
       namespace = unique("sleep_unbounded_stop")
       id = unique("sleeping_counter")
@@ -126,6 +168,42 @@ defmodule FlezhaTest.System.SleepWhenIdleE2ETest do
       assert Replay.resume_cell_count(id) == 0, "a rebind would ship no RestoreInitState"
     end
 
+    # A message dead-lettered unread is consumed; the wake that clears the park
+    # record and a restart before the next commit must not make it owed again.
+    @tag capability: :bounded, skip: FlezhaTest.SystemCase.deferral(:bounded)
+    test "a woken instance keeps an unread message released across a restart", ctx do
+      namespace = unique("sleep_released")
+      id = unique("typed_once_bounded")
+      id_path = unique_id_path()
+      on_exit(fn -> cleanup(namespace, id, id_path) end)
+
+      {_port, runner_id} =
+        boot_runner(namespace, ctx, id_path,
+          release?: false,
+          extra_env: [{"FLEZHA_PARK_IDLE_MS", "3000"}]
+        )
+
+      start_bounded(namespace, id, "typed_once_bounded", first_message: nil)
+      :ok = OperatorManager.send_io(id, namespace, "not json", %{})
+
+      assert NodeTestHelper.wait_until(fn -> suspended?(namespace, id) end, 30_000)
+      assert [%{"generation" => 1}] = DlqStore.list(id)
+
+      {:ok, pid} = OperatorManager.get_operator_pid(namespace, id)
+      GenServer.call(pid, {:runner_migrate, runner_id}, 30_000)
+
+      assert NodeTestHelper.wait_until(fn -> ClassRegistry.parked(id) == nil end, 10_000),
+             "the wake did not clear the park record"
+
+      forget_floor_rows(id)
+      kill_overwatch(namespace, id)
+
+      assert NodeTestHelper.wait_until(fn -> registered?(namespace, id) end, 30_000)
+      Process.sleep(2_000)
+      assert InputLog.undelivered(id) == [], "the dead-lettered message is owed again"
+      assert [%{"generation" => 1}] = DlqStore.list(id)
+    end
+
     @tag capability: :bounded, skip: FlezhaTest.SystemCase.deferral(:bounded)
     test "a bounded operator that declares persistence off keeps no state and refuses a live read",
          ctx do
@@ -151,6 +229,10 @@ defmodule FlezhaTest.System.SleepWhenIdleE2ETest do
       refute File.exists?(Paths.journal_path(id))
     end
   end
+
+  # What a controller restart loses: the in-memory floor rows of the class.
+  defp forget_floor_rows(id),
+    do: :ets.match_delete(InputLog.watermark_table(), {{id, :_}, :_})
 
   defp start_stream(namespace, id, factory_id, opts) do
     builder = %Builder{id: id, factory_id: factory_id, init_values: %{}, opts: opts}

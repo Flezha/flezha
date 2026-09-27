@@ -30,6 +30,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.FleetManager.Marks
+  alias Flezha.Runner.StreamChannel.Prefix
   alias Flezha.State.CreditLedger
   alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
@@ -274,9 +275,38 @@ defmodule Flezha.Runner.StreamChannel.Records do
           credit_opts
         )
 
-        state
+        %{state | prefix: Prefix.received(state.prefix, record.cell_id, frame_bytes)}
     end
   end
+
+  @doc """
+  The instance and offset a processed-prefix marker names, and on how many
+  streams it was sent, when the session may speak for that instance. The
+  marker is a Cell frame whose identity names the instance and whose seq
+  carries the offset; a runner that spreads an instance's records over several
+  streams sends it on each and names their count in the body, an empty body
+  meaning one.
+  """
+  @spec processed_prefix(map(), binary()) ::
+          {:ok, binary(), non_neg_integer(), pos_integer()} | :refused
+  def processed_prefix(state, frame) do
+    with {:ok, %{cell_id: {rc, _, _}, seq: offset, body: body}} <- Wire.decode_frame(frame),
+         {:ok, streams} <- marker_streams(body),
+         true <- admit(state, rc, :processed_prefix) do
+      {:ok, rc, offset, streams}
+    else
+      false ->
+        :refused
+
+      {:error, reason} ->
+        Logger.warning("[stream] processed_prefix decode failed: #{inspect(reason)}")
+        :refused
+    end
+  end
+
+  defp marker_streams(<<>>), do: {:ok, 1}
+  defp marker_streams(<<streams::16-big>>) when streams > 0, do: {:ok, streams}
+  defp marker_streams(body), do: {:error, {:bad_marker_body, body}}
 
   # The DLQ append (an fsync) runs in the store process, never here — this
   # channel also carries the operator's output frames. The ack closure
@@ -350,12 +380,13 @@ defmodule Flezha.Runner.StreamChannel.Records do
   # Admit one state-change frame against the stream's credit ledger.
   # Returns `{credit_opts_for_append, state}` or `{:shed, state}` for a
   # frame overrunning an exhausted ledger (protocol violation — the seq gap
-  # it leaves drives the existing resync repair).
-  def credit_admit(%{credit: nil} = state, operator_class, _size) do
+  # it leaves drives the existing resync repair). Every admitted frame names
+  # this channel, so its writer reports the drain the markers confirm on.
+  def credit_admit(%{credit: nil} = state, operator_class, size) do
     if credit_enabled?() do
-      {%{}, offer_credit_window(state, operator_class)}
+      {unmetered(size), offer_credit_window(state, operator_class)}
     else
-      {%{}, state}
+      {unmetered(size), state}
     end
   end
 
@@ -373,8 +404,10 @@ defmodule Flezha.Runner.StreamChannel.Records do
   end
 
   # `:offered` (handshake in flight) and `:legacy` (nack / kill switch at
-  # offer time) both admit un-metered — byte-for-byte the pre-credit path.
-  def credit_admit(state, _class, _size), do: {%{}, state}
+  # offer time) both admit un-metered.
+  def credit_admit(state, _class, size), do: {unmetered(size), state}
+
+  defp unmetered(size), do: %{channel: self(), session: nil, wire_size: size}
 
   # Offer `CreditWindowInit` for this attach. Runs on the FIRST state-change
   # frame rather than at stream bind so the offer is guaranteed to originate

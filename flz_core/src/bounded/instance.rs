@@ -74,7 +74,23 @@ impl BoundedRun {
     pub fn bind(&self, resume: Resume) {
         let mut sheet = self.sheet();
         sheet.expected = resume.expected;
+        let released = resume.journal.as_ref().and_then(|j| j.released_offset);
+        sheet.taken = sheet.taken.max(released);
         sheet.journal = resume.journal;
+    }
+
+    /// Take a message's input-log offset: `false` for one this instance
+    /// already took, which a repeated re-forward delivers again.
+    pub(crate) fn take(&self, offset: Option<u64>) -> bool {
+        let Some(offset) = offset else {
+            return true;
+        };
+        let mut sheet = self.sheet();
+        if sheet.taken.is_some_and(|taken| offset <= taken) {
+            return false;
+        }
+        sheet.taken = Some(offset);
+        true
     }
 
     pub(crate) fn sheet(&self) -> MutexGuard<'_, PassSheet> {
@@ -138,8 +154,13 @@ pub(crate) struct PassSheet {
     pub(crate) pass: Option<Pass>,
     /// Triggers that arrived while no pass could start, in arrival order.
     pub(crate) queue: VecDeque<Trigger>,
-    /// The highest input-log offset parked unread, released by the park record.
+    /// The highest input-log offset parked unread, journaled as released
+    /// before the instance sleeps.
     pub(crate) parked_offset: Option<u64>,
+    /// The highest input-log offset this instance took: what its journal
+    /// released, raised by every message that arrives. A message at or below
+    /// it is a repeat of a re-forward and is dropped.
+    pub(crate) taken: Option<u64>,
     /// Unread messages still on their way to the dead-letter queue.
     pub(crate) parks_in_flight: usize,
     /// One attempt's outputs per `(node, Cell)`, until the item settles.
@@ -466,6 +487,9 @@ pub struct JournalResume {
     pub entry_channel: String,
     /// The input-log offset the last committed iteration consumed.
     pub consumed_offset: Option<u64>,
+    /// The highest input-log offset the journal released, by an iteration
+    /// commit or an input dead-lettered unread.
+    pub released_offset: Option<u64>,
     pub handoff: Vec<(u32, Vec<u8>)>,
     pub task_handoffs: Vec<EdgeHandoff>,
     pub committed_tasks: Vec<CommittedTask>,
@@ -518,6 +542,7 @@ impl From<&crate::pb::TaskJournalState> for JournalResume {
             iter: journal.iter,
             entry_channel: journal.entry_channel.clone(),
             consumed_offset: journal.consumed_offset,
+            released_offset: journal.released_offset,
             handoff: handoff_items(&journal.handoff),
             task_handoffs: journal
                 .task_handoffs

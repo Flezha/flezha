@@ -521,6 +521,11 @@ pub struct TaskJournalState {
     /// any iteration committed.
     #[prost(string, tag = "12")]
     pub entry_channel: ::prost::alloc::string::String,
+    /// The highest input-log offset the instance ever consumed, by an
+    /// iteration commit or an input it dead-lettered unread; absent when none.
+    /// The driver drops a re-forwarded input at or below it.
+    #[prost(uint64, optional, tag = "13")]
+    pub released_offset: ::core::option::Option<u64>,
 }
 /// Per-Cell state restore handshake: Controller ships latest snapshot
 /// bytes plus tail-WAL bytes, SDK applies them to the cell's State
@@ -784,7 +789,12 @@ pub struct BoundedStop {
 /// `if_running` is "deliver" (default; empty reads as deliver) or "error".
 /// Rides the "control_command" payload_id like the other SDK-initiated
 /// variants; old Controllers ignore it via Protox unknown-field handling, so
-/// the requester simply times out.
+/// the requester simply times out. `identity` names where the request came
+/// from: the requesting instance, the input-log offset its tasklet was taking,
+/// the call's position in that invocation, the factory and a hash of the
+/// payload. A re-run of the invocation sends the same identity, and the
+/// Controller resolves it to the operator the first request did. Empty when
+/// the request came from outside a tasklet invocation.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SpawnBoundedRequest {
     #[prost(string, tag = "1")]
@@ -795,6 +805,8 @@ pub struct SpawnBoundedRequest {
     pub payload: ::prost::alloc::vec::Vec<u8>,
     #[prost(string, tag = "4")]
     pub if_running: ::prost::alloc::string::String,
+    #[prost(string, tag = "5")]
+    pub identity: ::prost::alloc::string::String,
 }
 /// Controller -> SDK reply to SpawnBoundedRequest, carrying the originating
 /// request's reference_id so the SDK wakes the requester's result handle.

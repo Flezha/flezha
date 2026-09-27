@@ -18,6 +18,8 @@ defmodule Flezha.Service.OperatorManager do
   alias Flezha.Service.OperatorManager.Placement
   alias Flezha.Service.OperatorManager.Teardown
   alias Flezha.Shutdown
+  alias Flezha.State.Completion
+  alias Flezha.State.InputLog
   alias Flezha.State.Paths
 
   defdelegate assign_runner(arg1, arg2, arg3), to: Placement
@@ -582,9 +584,15 @@ defmodule Flezha.Service.OperatorManager do
   uniqueness check converts to the same delivery a later request would get, so
   exactly one instance exists and every payload lands exactly once.
 
-  An empty `instance_id` asks for a generated one: it names no running instance,
-  so nothing is looked up, `if_running` has no meaning, and every such request
-  spawns its own instance. A refusal answers the id the request carried.
+  An empty `instance_id` asks for a generated one: `if_running` has no meaning
+  there, and every request spawns its own instance. A refusal answers the id the
+  request carried.
+
+  `identity` names where a tasklet's request came from (`""` for none). A
+  generated id is derived from it, and the payload is journaled with it as its
+  `flz.msg_id`, so a re-run of the invocation that asks again resolves to the
+  operator the first request did, running or completed, and delivers nothing
+  twice.
 
   Each act is judged on this node as the act it is: a start against the
   `operator_start` row, which records it, and a delivery against `spawn_deliver`,
@@ -601,12 +609,54 @@ defmodule Flezha.Service.OperatorManager do
           String.t(),
           binary(),
           :deliver | :error,
-          Flezha.AuthZ.caller_context()
+          Flezha.AuthZ.caller_context(),
+          String.t()
         ) ::
           {spawn_outcome(), String.t()}
-  def spawn_or_deliver(namespace, instance_id, factory_id, payload, if_running, caller_context) do
+  def spawn_or_deliver(
+        namespace,
+        instance_id,
+        factory_id,
+        payload,
+        if_running,
+        caller_context,
+        identity \\ ""
+      ) do
+    case earlier_answer(namespace, instance_id, factory_id, identity) do
+      {:answered, answer} ->
+        answer
+
+      {:ask, id, repeat} ->
+        request = %{payload: payload, if_running: repeat || if_running, identity: identity}
+        spawn_or_resolve(namespace, id, factory_id, request, caller_context)
+    end
+  end
+
+  # What a run of the same invocation already got, for a tasklet's request: a
+  # generated id is the identity's, so a repeat finds its own instance, and a
+  # named instance keeps the identity with the payload it took. Otherwise the
+  # id to ask for, and `:repeat` when a generated id's start may find it taken.
+  defp earlier_answer(_namespace, instance_id, _factory_id, ""), do: {:ask, instance_id, nil}
+
+  defp earlier_answer(namespace, "", factory_id, identity) do
+    id = Identificator.mint(:operator, factory_id, seed: identity)
+
+    if exist?(namespace, id) or Completion.exists?(id),
+      do: {:answered, {:spawned, id}},
+      else: {:ask, id, :repeat}
+  end
+
+  defp earlier_answer(_namespace, instance_id, _factory_id, identity) do
+    case InputLog.msg_offset(instance_id, identity) do
+      0 -> {:answered, {:spawned, instance_id}}
+      offset when is_integer(offset) -> {:answered, {:delivered, instance_id}}
+      nil -> {:ask, instance_id, nil}
+    end
+  end
+
+  defp spawn_or_resolve(namespace, instance_id, factory_id, request, caller_context) do
     if instance_id != "" and exist?(namespace, instance_id) do
-      resolve_running(namespace, instance_id, payload, if_running, caller_context)
+      resolve_running(namespace, instance_id, request, caller_context)
     else
       case factory_kind(namespace, factory_id) do
         {:error, :no_such_factory} ->
@@ -616,7 +666,7 @@ defmodule Flezha.Service.OperatorManager do
           {:factory_not_bounded, instance_id}
 
         _bounded_or_refused ->
-          spawn_fresh(namespace, instance_id, factory_id, payload, if_running, caller_context)
+          spawn_fresh(namespace, instance_id, factory_id, request, caller_context)
       end
     end
   end
@@ -638,9 +688,10 @@ defmodule Flezha.Service.OperatorManager do
     end
   end
 
-  defp spawn_fresh(namespace, instance_id, factory_id, payload, if_running, caller_context) do
+  defp spawn_fresh(namespace, instance_id, factory_id, request, caller_context) do
     requested = if instance_id == "", do: nil, else: instance_id
-    {:ok, seed} = OperatorBuilder.seed_input(payload, nil)
+    {:ok, {message, metadata}} = OperatorBuilder.seed_input(request.payload, nil)
+    seed = {message, stamped(metadata, request)}
 
     start = fn _call ->
       namespace
@@ -655,10 +706,10 @@ defmodule Flezha.Service.OperatorManager do
         {:spawned, id}
 
       # Lost the id race: the winner spawned it, so this request becomes the
-      # delivery a request arriving a moment later would have made. A generated
+      # delivery a request arriving a moment later would have made. A drawn
       # id never gets here, because a claim it loses draws another.
       {:ok, %{id: id, outcome: :already_running}} ->
-        resolve_running(namespace, id, payload, if_running, caller_context)
+        resolve_running(namespace, id, request, caller_context)
 
       {:error, reason} ->
         {refused_start(reason, namespace, factory_id), instance_id}
@@ -678,17 +729,28 @@ defmodule Flezha.Service.OperatorManager do
 
   defp refused_start(reason, _namespace, _factory_id), do: {:refused, inspect(reason)}
 
-  defp resolve_running(_namespace, instance_id, _payload, :error, _caller_context),
+  # `:repeat` is a generated id whose identity already started it.
+  defp resolve_running(_namespace, instance_id, %{if_running: :repeat}, _caller_context),
+    do: {:spawned, instance_id}
+
+  defp resolve_running(_namespace, instance_id, %{if_running: :error}, _caller_context),
     do: {:already_running, instance_id}
 
-  defp resolve_running(namespace, instance_id, payload, :deliver, caller_context) do
-    deliver = fn _call -> send_io_confirming(instance_id, namespace, payload, %{}) end
+  defp resolve_running(namespace, instance_id, %{if_running: :deliver} = request, caller_context) do
+    deliver = fn _call ->
+      send_io_confirming(instance_id, namespace, request.payload, stamped(%{}, request))
+    end
 
     case Verb.run(:spawn_deliver, caller_context, [namespace, instance_id], deliver) do
       {:error, reason} -> {{:refused, inspect(reason)}, instance_id}
       _delivered_or_absorbed -> {:delivered, instance_id}
     end
   end
+
+  # A tasklet's payload carries its identity as its message id, which is what
+  # lets the instance's input log absorb a repeat.
+  defp stamped(metadata, %{identity: ""}), do: metadata
+  defp stamped(metadata, %{identity: identity}), do: Map.put(metadata, "flz.msg_id", identity)
 
   def create_snapshot(namespace, operator_id) do
     with_operator_pid(namespace, operator_id, fn pid ->

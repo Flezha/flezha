@@ -498,7 +498,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     refute_receive {:control_command, {:compact_cell, _}}, 300
   end
 
-  test "IterPark hands the park record to the instance's Overwatch" do
+  test "IterPark journals the unread release, then hands the park record to the instance's Overwatch" do
     inst = "park_inst_#{System.unique_integer([:positive])}"
     {control_channel, _stream_ref} = start_control_channel("park")
 
@@ -513,12 +513,14 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
     # The Overwatch writes the record durably before it evicts the instance.
-    assert_receive {:"$gen_cast",
-                    {:suspend, 3, %{wake_deadline_ms: 1_800_000_000_000, consumed_offset: 0}}},
+    assert_receive {:"$gen_cast", {:suspend, 3, %{wake_deadline_ms: 1_800_000_000_000} = park}},
                    1_000
 
-    # The message the run parked unread (offset 0) is released before the
-    # suspension asks the log whether input is owed.
+    refute Map.has_key?(park, :consumed_offset)
+
+    # The message the run parked unread (offset 0) is journaled as released
+    # before the suspension asks the log whether input is owed.
+    assert TaskJournal.released_offset(inst) == 0
     assert InputLog.watermark(inst) == 0
   end
 

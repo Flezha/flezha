@@ -306,7 +306,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
 
       # A drain report tagged with the dead session (a grant-in-flight
       # equivalent) must not mint anything on the new ledger.
-      send(ctx.channel, {:credit_drained, init1.stream_id, 999_999})
+      send(ctx.channel, {:credit_drained, init1.stream_id, 999_999, {ctx.class, "t", "k1"}})
       _ = GenServer.call(ctx.channel, :stream_ref_status)
 
       refute_received {:ctl_async, _, {:credit_grant, _}}
