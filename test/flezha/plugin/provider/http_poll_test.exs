@@ -271,6 +271,13 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       assert opts.plugin_id == opts.url
     end
 
+    test "with no plugin_id, the poller is named by the id the plugin was enabled under" do
+      origin = start_origin(body: "cfg-v1")
+
+      assert {:ok, opts} = prepare(origin, %{source_plugin_id: "config#p1"})
+      assert opts.plugin_id == "config#p1"
+    end
+
     test "activate returns without waiting on the request" do
       origin = start_origin(body: "cfg-v1", hold: self())
       {:ok, opts} = prepare(origin)

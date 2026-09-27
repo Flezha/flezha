@@ -47,6 +47,25 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketLifecycleTest do
     assert is_pid(prepared_opts.overwatcher_pid)
   end
 
+  # A partition group enables one plugin per member, each under the member's
+  # own id and all on the same URI. The worker is registered by `plugin_id`,
+  # so a default taken from the URI put every member on one socket, filtered
+  # to the first member's key groups.
+  test "with no plugin_id, the worker is named by the id the plugin was enabled under" do
+    members =
+      for id <- ["exchange#p0", "exchange#p1"] do
+        {:ok, prepared} =
+          prepare(Websocket, %{
+            uri: "wss://flezha-test.invalid:9/never-connect",
+            source_plugin_id: id
+          })
+
+        prepared.plugin_id
+      end
+
+    assert members == ["exchange#p0", "exchange#p1"]
+  end
+
   describe "post_connect is validated at preparation" do
     defp prepared(post_connect) do
       prepare(%{

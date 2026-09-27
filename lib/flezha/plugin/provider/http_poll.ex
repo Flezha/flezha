@@ -42,7 +42,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
         doc:
           "Entry channel the body is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it"
       ],
-      plugin_id: [type: :string, doc: "Plugin id; defaults to the redacted URL"],
+      plugin_id: [type: :string, doc: "Plugin id; defaults to the id it was enabled under"],
       headers: [type: :json, default: %{}, doc: "Request headers, as a JSON object"],
       interval_ms: [type: :int, default: 60_000, doc: "Milliseconds between polls"],
       timeout_ms: [type: :int, default: 10_000, min: 1, doc: "Budget for one request"],
@@ -98,7 +98,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
        Map.merge(opts, %{
          url: url,
          headers: headers,
-         plugin_id: opts.plugin_id || redact(url)
+         plugin_id: opts.plugin_id || opts[:source_plugin_id] || redact(url)
        })}
     end
   end

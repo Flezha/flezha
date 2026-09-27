@@ -48,7 +48,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
     feeds: true,
     options: [
       uri: [type: :string, required: true, doc: "The websocket endpoint to connect to"],
-      plugin_id: [type: :string, doc: "Plugin id; defaults to the URI"],
+      plugin_id: [type: :string, doc: "Plugin id; defaults to the id it was enabled under"],
       ignore_pattern: [
         type: :string,
         doc: "Substring marking a frame as a heartbeat rather than data"
@@ -190,7 +190,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
     with :ok <- one_channel_writer(opts),
          {:ok, subscription} <- Subscription.from_opts(opts),
          {:ok, sink} <- Sink.from_opts(opts) do
-      plugin_id = opts.plugin_id || opts.uri
+      plugin_id = opts.plugin_id || opts[:source_plugin_id] || opts.uri
       warn_best_effort_hop(opts, sink, plugin_id)
 
       Logger.info(

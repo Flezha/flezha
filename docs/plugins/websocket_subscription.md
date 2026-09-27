@@ -271,7 +271,7 @@ direction would close that cycle and hang the operator permanently.
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `uri` | string | &mdash; | yes | The websocket endpoint to connect to |
-| `plugin_id` | string | &mdash; | no | Plugin id; defaults to the URI |
+| `plugin_id` | string | &mdash; | no | Plugin id; defaults to the id it was enabled under |
 | `ignore_pattern` | string | &mdash; | no | Substring marking a frame as a heartbeat rather than data |
 | `post_connect` | json | `%{}` | no | Frame sent once the socket opens |
 | `ws_opts` | json | `[]` | no | Options passed to the socket library |
