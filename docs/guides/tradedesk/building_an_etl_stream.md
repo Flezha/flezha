@@ -190,7 +190,9 @@ average, so that one value is all it needs to decide. The operator puts no
 that keeps nothing.
 
 For each price 2 % or more above its average it does two things: it starts an
-order, and it emits a line saying so. For the other prices it does nothing.
+order, and it emits a line saying so. For the other prices it does nothing. The
+further a price is above its average, the more it buys: 10 for each percent, so
+a price 2.3 % above buys 23, and one 12 % above buys 120.
 
 The order is a workflow, `paper_order`, built as a bounded operator: the kind
 for work that runs a set of steps and then ends, such as placing one order. The
@@ -211,19 +213,20 @@ first input: the symbol, and how many to buy.
 public final class BuyAboveAverage {
 
     private static final double BUY_ABOVE_PCT = 2.0;
-    private static final int LOT = 10;
+    private static final int UNITS_PER_PERCENT = 10;
 
     public void run(Move move, TaskletCtx ctx) throws TaskletException {
         double percent = (move.price() - move.average()) / move.average() * 100.0;
         if (percent < BUY_ABOVE_PCT) {
             return;
         }
+        int quantity = (int) Math.round(percent * UNITS_PER_PERCENT);   // a stronger move buys more
 
-        ctx.spawnBounded("paper_order", new OrderTicket(move.symbol(), LOT));   // one bounded operator per order
+        ctx.spawnBounded("paper_order", new OrderTicket(move.symbol(), quantity));   // one bounded operator per order
 
         ctx.emit(String.format(
                 "%s %.4f is %.2f%% above its average of %.4f, buying %d",
-                move.symbol(), move.price(), percent, move.average(), LOT));
+                move.symbol(), move.price(), percent, move.average(), quantity));
     }
 }
 ```

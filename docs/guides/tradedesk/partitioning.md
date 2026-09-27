@@ -215,7 +215,7 @@ $ flz operator send 'prices#p0' --namespace trading --channel trades --text '{"c
 Delivered to 'prices#p0'.
 Delivered to 'prices#p0'.
 Delivered to 'prices#p0'.
-signals	EUR/USD 1.1100 is 2.29% above its average of 1.0852, buying 10
+signals	EUR/USD 1.1100 is 2.29% above its average of 1.0852, buying 23
 ```
 
 A message carries `"channel": "trade"`, which is how the desk tells a trade
@@ -227,7 +227,7 @@ The buy started an order, which ran its steps and ended. The runner's terminal
 shows the line `record_order` prints:
 
 ```output
-[book] EUR/USD 10 as ord-eeb8a7878c065e07e1a267e91ebfb029
+[book] EUR/USD 23 as ord-993c88bfb1bc7474a70cd3db8312b447
 ```
 
 > Send GBP/USD a trade, to the partition that owns it.

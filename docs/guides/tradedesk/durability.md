@@ -26,18 +26,19 @@ While the exchange is connected, new prices keep changing the windows, so a
 window read before a stop and one read after it would differ anyway. Pause the
 feed first, and every window stays exactly as it is.
 
-> Disable the exchange plugin from [`plugins.md`](plugins.md). The windows keep
-> what they have, and no new orders start.
+> Type `/pause` in the testnet's terminal. The exchange stops sending trades,
+> the windows keep what they have, and no new orders start.
 > {: .step}
 
-```sh
-$ flz plugin disable exchange --namespace trading
+```text
+/pause
 ```
 
 ```output
-Disabling plugin...
-Plugin exchange disabled successfully (plugin disabled on 3 partitions).
+market paused: nothing is generated until /resume
 ```
+
+The plugin stays connected; the exchange just has nothing to send.
 
 > Read every symbol's window, and keep the output to compare with later.
 > {: .step}
@@ -254,53 +255,6 @@ Operator: order_1
   Finished At (unix s): 1790449731
 ```
 
-## Undo an order
-
-The paper exchange fills at most 100 at a time, so a bigger order fails at
-`confirm_fill`. It is tried three times, and then everything that finished is
-undone, last step first.
-
-> Start an order for 500, and watch the runner's terminal. With ten seconds per
-> try, it takes about half a minute.
-> {: .step}
-
-```sh
-$ flz operator start paper_order --id order_2 --namespace trading --text '{"symbol": "EUR/USD", "quantity": 500}' --channel order
-```
-
-```output
-Started order_2
-```
-
-The runner's terminal:
-
-```output
-[book] EUR/USD 500 as ord-0e7ee9553cfe5eac606fd232fd7ab33c
-[flezha] tasklet confirm_fill attempt 1/3 failed (retrying in 66 ms): the exchange fills at most 100 a time, and this is 500
-[flezha] tasklet confirm_fill attempt 2/3 failed (retrying in 120 ms): the exchange fills at most 100 a time, and this is 500
-[undo] cancelled ord-0e7ee9553cfe5eac606fd232fd7ab33c
-[undo] released res-54e4641a002cc27f8d030507d8d5aea5
-```
-
-The order was cancelled, then the money released. Both undos read their id from
-the step's state, which is what makes them work after a crash too: the state
-comes back, while what a step handed on does not. The booking is not undone,
-because `record_order` has no `compensate`.
-
-```sh
-$ flz operator info order_2 --namespace trading
-```
-
-```output
-...
-Operator: order_2
-  Kind: bounded
-  Phase: finished
-  Status: error
-  Error: the exchange fills at most 100 a time, and this is 500
-  Finished At (unix s): 1790449785
-```
-
 ## Restart the controller
 
 The runner is not the only thing that can stop. The controller keeps its own
@@ -452,10 +406,55 @@ empty it before `flz operator scale`.
 
 ## Resume the exchange
 
-> Enable the exchange plugin again, with the same command as in
-> [`plugins.md`](plugins.md#connect-the-exchange). The desk picks up the prices
-> from where the windows stopped.
+> Type `/resume` in the testnet's terminal. The desk picks up the prices from
+> where the windows stopped.
 > {: .step}
+
+```text
+/resume
+```
+
+```output
+market resumed
+```
+
+## Undo an order
+
+The paper exchange fills at most 100 at a time, and the desk buys 10 for each
+percent a price is above its average, so a price more than 10 % above it asks
+for too much. That order fails at `confirm_fill`, is tried three times, and then
+everything that finished is undone, last step first.
+
+The testnet can make such a move on purpose: `/jump` sends one trade at a price
+that far from the current one, and the price then carries on as before, so
+exactly one order is too big.
+
+> Type `/jump EUR/USD 12` in the testnet's terminal, and watch the runner's
+> terminal. With ten seconds per try, the undo comes about half a minute later.
+> {: .step}
+
+```text
+/jump EUR/USD 12
+```
+
+```output
+EUR/USD moves 12% on its next trade (1 socket(s) subscribed)
+```
+
+Between the other symbols' bookings, the runner's terminal shows the one order:
+
+```output
+[book] EUR/USD 136 as ord-be4f7a593756acada0924d10da8d31c6
+[flezha] tasklet confirm_fill attempt 1/3 failed (retrying in 63 ms): the exchange fills at most 100 a time, and this is 136
+[flezha] tasklet confirm_fill attempt 2/3 failed (retrying in 66 ms): the exchange fills at most 100 a time, and this is 136
+[undo] cancelled ord-be4f7a593756acada0924d10da8d31c6
+[undo] released res-935e21608cc9ea9844b537d8c0c97517
+```
+
+The order was cancelled, then the money released. Both undos read their id from
+the step's state, which is what makes them work after a crash too: the state
+comes back, while what a step handed on does not. The booking is not undone,
+because `record_order` has no `compensate`.
 
 ## Where it is kept
 

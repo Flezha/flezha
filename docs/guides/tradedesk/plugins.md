@@ -179,9 +179,10 @@ window, and every buy starts an order, which the runner's terminal shows as it
 books it:
 
 ```output
-[book] GBP/USD 10 as ord-21602adfc1f57bec3240132312bb781c
-[book] EUR/USD 10 as ord-407143c71794975d0a78e8b9b9a4cb32
-[book] USD/JPY 10 as ord-31efc725fb34b9854c08fa6cd5568f84
+[book] EUR/USD 32 as ord-8e35b354af95a17c48f5a31db79f5f12
+[book] USD/JPY 21 as ord-3d5fdddd0094fb3152e57ef05b02be57
+[book] USD/JPY 20 as ord-d97916632aa66bf476f92947c24cb7b4
+[book] GBP/USD 38 as ord-84fdc7e4f95a38838fbcb5af0f93196c
 ```
 
 The windows fill up with the exchange's prices:
@@ -253,10 +254,10 @@ $ head -4 app_data/files/signals.txt
 ```
 
 ```output
-EUR/USD 1.0753 is 2.10% above its average of 1.0532, buying 10
-EUR/USD 1.0798 is 2.18% above its average of 1.0568, buying 10
-USD/JPY 155.4970 is 2.29% above its average of 152.0106, buying 10
-USD/JPY 157.3150 is 3.16% above its average of 152.4957, buying 10
+EUR/USD 1.0651 is 2.41% above its average of 1.0400, buying 24
+EUR/USD 1.0701 is 2.56% above its average of 1.0435, buying 26
+EUR/USD 1.0774 is 2.86% above its average of 1.0474, buying 29
+EUR/USD 1.0773 is 2.46% above its average of 1.0514, buying 25
 ```
 
 The sink was enabled once on every partition too, so three copies write to one
