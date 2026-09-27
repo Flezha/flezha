@@ -44,7 +44,7 @@ pub enum TopologyIssue {
 
     #[error(
         "tasklet `{name}` declares non-empty cell_keys() but does not override cells_for \
-         (set CELLS_FOR_OVERRIDDEN = true)"
+         (write its cells_for; a Rust tasklet also sets CELLS_FOR_OVERRIDDEN = true)"
     )]
     CellsForMissing { name: String },
 
