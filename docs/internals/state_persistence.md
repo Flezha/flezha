@@ -79,7 +79,7 @@ on the effectively-once tier writes.
 | `Flezha.State.TimeTravel` | Point-in-time query behind `flz state at`. |
 | `Flezha.State.TaskJournal` | Bounded operator step journal over the reserved writer: the markers `task_committed`, `iter_committed`, `compensated` and `rewound`, the committed record ranges per Cell a writer and a bind re-derive (`committed_records/1`), the channels the rewind guard reads (`staged_channels_above/2`), and the reporter of each consumed offset into the input log's watermark (`release_input/2`). It holds no output: the Cells' writers own delivery. |
 | `Flezha.State.WalTransfer` | Destination-pulled copy of one Cell's files between controllers. |
-| `Flezha.State.DurabilityTier` (+ `Shipper`, `Hydrator`, `Manifest`, `Backend`) | Opt-in remote artifact shipping and hydration; `backend: :none` wires nothing. See [`../operations/remote_durability_tier.md`](../operations/remote_durability_tier.md). |
+| `Flezha.State.DurabilityTier` (+ `Shipper`, `Hydrator`, `Manifest`, `Backend`) | Opt-in remote artifact shipping and hydration; `backend: :none` wires nothing. See [`../resilience/data_durability.md`](../resilience/data_durability.md). |
 
 ## Cross-controller transfer
 
@@ -665,5 +665,5 @@ fragment.
 - [`../sdk/protocol_spec.md`](../sdk/protocol_spec.md) — `CellState` selector fields, `flz.change_seq`, refusal tokens; `CreditWindowInit` / `CreditGrant`.
 - [`runner_identity.md`](runner_identity.md) — the takeover guard the owner-bound realign relies on.
 - [`convergence_loop.md`](convergence_loop.md) — the output-stall remediation ladder.
-- [`../operations/remote_durability_tier.md`](../operations/remote_durability_tier.md) — surviving the loss of the disk.
+- [`../resilience/data_durability.md`](../resilience/data_durability.md) — surviving the loss of the disk.
 - [`../../test/scripts/state_persistence.sh`](../../test/scripts/state_persistence.sh) — the manual smoke check for this capability's data-plane half.

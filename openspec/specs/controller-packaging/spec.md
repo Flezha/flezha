@@ -281,7 +281,7 @@ context the same size as a clean checkout's.
 
 ### Requirement: `elixir.yml` SHALL be Elixir+Rust only
 
-`.github/workflows/elixir.yml` SHALL NOT install Java or invoke Maven. It SHALL NOT run `cargo build --workspace` as a separate pre-step before `mix test`. Its path filters SHALL NOT include `test/apps/java_runner/**` (those changes belong to `java-sdk.yml`). The workflow SHALL run only `mix deps.get`, `mix compile --warnings-as-errors`, and `mix test` (which uses the default-excluded tag set, `:system` among it, and therefore spawns no runner; the SDK conformance gate is an untagged module and runs inside it).
+`.github/workflows/elixir.yml` SHALL NOT install Java or invoke Maven. It SHALL NOT run `cargo build --workspace` as a separate pre-step before `mix test`. Its path filters SHALL NOT include `test/apps/java_runner/**` (those changes belong to `java-sdk.yml`). Beside `mix deps.get` (in the shared `setup-beam` action), `mix compile --warnings-as-errors` and `mix test`, the workflow SHALL run only what that suite needs: the testnet build, the `rust_runner` pre-build, the QUIC certificate generation, the Rust crates' `cargo test`, and a gate that fails on an uncaptured `[error]` or `[critical]` line in the `mix test` output. `mix test` uses the default-excluded tag set, `:system` among it, and therefore spawns no runner; the SDK conformance gate is an untagged module and runs inside it.
 
 #### Scenario: elixir.yml does not set up Java
 

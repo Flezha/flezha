@@ -191,7 +191,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   dies with its disk is recoverable (`Flezha.State.DurabilityTier`); a production boot must choose
   a backend (`FLEZHA_DURABILITY_BACKEND`; `none` is local-only); local files stay authoritative.
   An **artifact** is one immutable shipped blob; the per-reference **manifest** naming a cut's
-  artifacts is written last, so a torn upload is invisible. See [`operations/remote_durability_tier.md`](operations/remote_durability_tier.md).
+  artifacts is written last, so a torn upload is invisible. See [`resilience/data_durability.md`](resilience/data_durability.md).
 - **Synchronous durability** — a bounded class declaring `SYNC_DURABILITY` / `syncDurability()`
   (its one class-level spelling in each SDK) has each commit barrier's ack gated on the remote
   ship (RPO 0). Unbounded classes are refused it (`SyncDurabilityOnUnbounded`).

@@ -28,7 +28,7 @@ c.merge(DetectorInput.class)
 
 The merge is a **subscription-time** construct: `Tasklet` is untouched, so
 dispatch, state, `cells_for`, retry/DLQ and the emit APIs all see one type.
-Full examples: `sdk/rust/examples/merged_input.rs`, Java `E09_MergedInput`.
+Full examples: `sdk/rust/examples/merged_input.rs`, Java `MergedInputTest` in `flezha-sdk-examples`.
 
 ## What a merge promises
 
@@ -119,7 +119,7 @@ chains meet waits only for the producers of the chain that runs.
 Tests: `sdk/rust/tests/merged_input.rs`; the bounded fixtures
 `MergeBounded`, `PanickingMergeBounded` and `PanickingTransformBounded` in
 `sdk/rust/src/bounded/mod.rs`, each run forward and resumed from a journal
-so both mapping sites are exercised; Java `E09_MergedInputTest`.
+so both mapping sites are exercised; Java `MergedInputTest`.
 
 ## See also
 

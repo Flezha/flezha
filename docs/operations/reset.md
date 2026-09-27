@@ -145,7 +145,7 @@ user asked to keep.
 ## Live-node guard
 
 The command probes the configured node with
-`flzvm rpc 'Flezha.Service.CliManager.controller_status("text")'`. Exit 0 with
+`flzvm rpc 'Flezha.Service.CliManager.boot_status([])'`. Exit 0 with
 non-empty output means "up" — the reset is refused with exit 4. Any other
 outcome (no node, timeout, distribution failure) means "not up" and the reset
 proceeds. There is no override flag: stop a wedged Controller with
@@ -219,7 +219,7 @@ hub starts, and the operators it names re-hydrate their state at bind — the
 wiped state, and the record of what exists, comes straight back. To start
 fresh, set the backend to `none` for that boot or purge the remote
 prefix/table first. See
-[`remote_durability_tier.md`](remote_durability_tier.md).
+[`../resilience/data_durability.md`](../resilience/data_durability.md).
 
 ## Recipes
 
@@ -265,6 +265,6 @@ Back up first when in doubt: `tar -czf backup.tgz app_data/`.
 ## See also
 
 - [`graceful_shutdown.md`](graceful_shutdown.md) — `flz controller stop` and its exit codes.
-- [`remote_durability_tier.md`](remote_durability_tier.md) — what re-hydrates after a reset.
+- [`../resilience/data_durability.md`](../resilience/data_durability.md) — what re-hydrates after a reset.
 - [`auto_restore_on_boot.md`](auto_restore_on_boot.md) — what the next boot does with whatever is left on disk.
 - [`../internals/state_persistence.md`](../internals/state_persistence.md) — the `app_data/state/` layout.

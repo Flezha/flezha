@@ -3,7 +3,7 @@
 For users running a Controller whose disk survived a restart. Covers the on-disk layers a
 restart recovers from, the boot sequence, what the orphan reconcile starts and stops, the
 safety matrix per scenario, the `flz boot` surface, start authority, the knobs and the disable
-flag. Losing the disk itself is the [remote durability tier](remote_durability_tier.md)'s
+flag. Losing the disk itself is the [remote durability tier](../resilience/data_durability.md)'s
 problem; with a backend configured, both layers below hydrate from it first.
 
 On boot the controller rehydrates the operator list from the durable ProcessHub registry and
@@ -159,6 +159,6 @@ re-registered after every boot. Roll back by flipping the variable and restartin
 
 ## See also
 
-- [Remote durability tier](remote_durability_tier.md) — surviving the loss of the disk
+- [Remote durability tier](../resilience/data_durability.md) — surviving the loss of the disk
 - [Graceful shutdown](graceful_shutdown.md) — the solo-node drain path that relies on this
 - [ProcessHub internals](../internals/process_hub.md) — the declared list and the reconcile

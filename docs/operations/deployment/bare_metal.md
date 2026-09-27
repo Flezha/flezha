@@ -263,7 +263,7 @@ target, and adding one is not a substitute for the remote durability tier:
 A controller that dies with its disk takes its operators' state, and the
 registry record of their existence, with it. The mechanism that survives that
 is the remote durability tier: see
-[`../remote_durability_tier.md`](../remote_durability_tier.md). A user running
+[`../../resilience/data_durability.md`](../../resilience/data_durability.md). A user running
 two controllers believing they cover each other is worse off than one running a
 single controller with the tier on.
 

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed: the local-only durability warning points at a page that exists
+
+A production controller started with `FLEZHA_DURABILITY_BACKEND` unset warns that its disk holds
+the only copy of its durable state and runs local-only. The warning, and the refusal of a backend
+missing an option, sent the reader to a page that is not published; they now name
+`docs/configuration.md`. The durability page no longer says such a controller refuses to start.
+
 ### Fixed: `flz operator list` reads `recovering` while operators move off a dead runner
 
 After a runner died, a partitioned operator whose members were being moved to another runner
@@ -2171,7 +2178,7 @@ timers, correction windows, keyed channels, dynamic-cell eviction and schema
 evolution — each proved by the live suite over UDS and QUIC.
 Claiming `keyed_channels` required minting the `flz.cell` / `flz.seq` /
 `flz.key` identity stamps in the SDK, which Java does and Node, Ruby and PHP do
-not. `workflow` is deferred by name to `sdk-durable-fixture-parity`.
+not.
 `mix bench.roundtrip --runtime python` lands with the change.
 
 `examples/python/durable_agent/` is the worked example: a durable agent loop

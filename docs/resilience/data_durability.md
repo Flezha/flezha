@@ -554,8 +554,8 @@ and does not itself rewind. The window is bounded by retention by construction.
 
 Everything above is local. A controller that dies **with its disk** takes its operators' state
 and the registry record of their existence with it; `WalTransfer` is a one-shot pull at
-migration time, not replication. A production boot must choose: with `FLEZHA_DURABILITY_BACKEND`
-unset the controller refuses to start, and `FLEZHA_DURABILITY_BACKEND=none` is byte-identical
+migration time, not replication. With `FLEZHA_DURABILITY_BACKEND` unset
+a production controller warns on every boot and runs local-only, and `FLEZHA_DURABILITY_BACKEND=none` is byte-identical
 to a build without the tier (`durability_posture: local_only`).
 
 When enabled, immutable artifacts — snapshots, WAL record bundles, task-journal suffixes, the
@@ -575,9 +575,7 @@ recovery, which hydrates the artifacts into the local layout and runs the ordina
 Async shipping never touches an ack path: a failing backend delays no append, fsync or
 watermark advance. What degrades is the guarantee, loudly — lag past `rpo_target_ms` (120 s)
 emits the alarm-grade `[:flezha, :state, :rpo_exceeded]`, surfaced by `flz controller status`
-and `/healthz` (`degraded, reason: durability_rpo_exceeded`). Configuration, lineage ownership
-across two controllers and the kill-the-disk drill:
-[`../operations/remote_durability_tier.md`](../operations/remote_durability_tier.md).
+and `/healthz` (`degraded, reason: durability_rpo_exceeded`).
 
 ## How to avoid loss: user playbook
 
@@ -622,4 +620,3 @@ across two controllers and the kill-the-disk drill:
 - [`bounded_operator.md`](bounded_operator.md) — commit path, crash-resume, suspension, retention
 - [`../architecture/kernel.md`](../architecture/kernel.md) — the write path, the effect record, the epoch rule, flow control
 - [`../internals/state_persistence.md`](../internals/state_persistence.md) — WAL layout, snapshots, retention knobs
-- [`../operations/remote_durability_tier.md`](../operations/remote_durability_tier.md) — surviving the loss of a disk

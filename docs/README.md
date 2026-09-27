@@ -101,7 +101,6 @@ answer "what are the options"; a guide answers "what do I type".
 | [`observability.md`](operations/observability.md) | Signals, sources, sinks, `flz observe`, Prometheus and OTLP export |
 | [`graceful_shutdown.md`](operations/graceful_shutdown.md) | Quiesce → drain → finalise, orchestrator grace periods, `flz controller stop` |
 | [`auto_restore_on_boot.md`](operations/auto_restore_on_boot.md) | How a controller restores its operators after any restart |
-| [`remote_durability_tier.md`](operations/remote_durability_tier.md) | Surviving the loss of a controller's disk: backends, RPO, recovery, drills |
 | [`reset.md`](operations/reset.md) | `flz reset`: wiping runtime data |
 | [`schedules.md`](operations/schedules.md) | `flz schedule`: cron-driven operator spawns |
 | [`memory_drift.md`](operations/memory_drift.md) | Localising controller memory growth |

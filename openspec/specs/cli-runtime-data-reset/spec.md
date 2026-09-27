@@ -65,7 +65,7 @@ The command SHALL be idempotent: a missing root directory is success, not error.
 
 `flz reset` SHALL detect a running Controller and refuse to act, exiting with a dedicated non-zero exit code and a message directing the user to `flz controller stop`.
 
-Detection SHALL use `flzvm rpc` against `Flezha.Service.CliManager.controller_status/1` (the same transport used by `flz controller stop`/`status`). The probe is bounded by `--probe-timeout-ms` (default `1000`).
+Detection SHALL use `flzvm rpc` against `Flezha.Service.CliManager.boot_status/1` (the same transport used by `flz controller stop`/`status`). The probe is bounded by `--probe-timeout-ms` (default `1000`).
 
 The probe SHALL be considered "Controller is up" when `flzvm rpc` exits 0 AND the RPC returns a parseable status reply. Any non-zero exit from `flzvm rpc` (no node, distribution refused, RPC timeout) SHALL be treated as "Controller is not up" and the reset SHALL proceed.
 

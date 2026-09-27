@@ -378,7 +378,7 @@ The backend contract is four blob operations — `put / get / list / put_if` —
 bytes and never re-implement WAL semantics. Boot ordering matters exactly once: on a fresh node
 the registry cspec is hydrated **before** the hub opens `registry.dets`, so the orphan reconcile
 can see the restored operators; cell state then hydrates through the ordinary bind. Full
-detail: [`remote_durability_tier.md`](../operations/remote_durability_tier.md).
+detail: [`../resilience/data_durability.md`](../resilience/data_durability.md).
 
 ---
 
