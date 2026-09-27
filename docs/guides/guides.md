@@ -42,6 +42,26 @@ and attaching a real input and output to it. The example is an echo that
 answers whatever you send it. The pages share one running controller, and the
 last one stops everything.
 
+> #### What you need {: .tip}
+>
+> - **For the controller**, a Linux machine on x86-64 to run the release, or
+>   Docker to run its image. [`controller_deployment.md`](controller_deployment.md)
+>   shows both.
+> - **For your runner**, one language: pick the one you want to write it in,
+>   and install only what its row lists.
+>
+> | Language | You need |
+> |---|---|
+> | Java | Java 21 and Maven |
+> | Rust | Rust with Cargo |
+> | Node | Node.js 20 or later, with npm |
+> | Python | Python 3.11 or later, with pip |
+> | Ruby | Ruby 3.3 or later, with Bundler |
+> | PHP | PHP 8.4 or later with `ext-ffi`, and Composer |
+> | Elixir | Elixir 1.17 or later |
+>
+> - **git**, to get the examples.
+
 | Guide | What you end up with |
 |---|---|
 | [`controller_deployment.md`](controller_deployment.md) | A controller running, four ways to choose from, and a check that it is up |
@@ -58,6 +78,11 @@ unbounded operator, compares each trade's price with its symbol's recent average
 when a price is far enough above it, a workflow, built as a bounded operator, places an
 order with paper money on a demo exchange.
 
+> #### What you need {: .tip}
+>
+> Everything Part 1 needed, and Node.js with npm to run the demo exchange,
+> which [`plugins.md`](tradedesk/plugins.md) starts.
+
 | Guide | What you do |
 |---|---|
 | [`authorization.md`](tradedesk/authorization.md) | Keep authorization on, claim the admin, and issue the key tradedesk's runner connects with |
@@ -65,7 +90,7 @@ order with paper money on a demo exchange.
 | [`building_an_etl_stream.md`](tradedesk/building_an_etl_stream.md) | Build the desk's ETL stream as an unbounded operator: chained tasklets, `flat_map`, `filter`, `key_by`, and state per symbol |
 | [`building_a_workflow.md`](tradedesk/building_a_workflow.md) | Build the paper-order workflow as a bounded operator: steps, retries and compensation, started by hand |
 | [`partitioning.md`](tradedesk/partitioning.md) | Start the desk: `--partitions`, `key_by`, how trades are routed, and `flz operator scale` |
-| [`plugins.md`](tradedesk/plugins.md) | Read the testnet's trades with the WebSocket plugin, and record filled orders with a file sink |
+| [`plugins.md`](tradedesk/plugins.md) | Read the demo exchange's trades with the WebSocket plugin, and write the buy signals to a file |
 | [`durability.md`](tradedesk/durability.md) | Stop and crash the runner and the controller, read the desk's state back, finish an order a crash interrupted, and handle a message that cannot be read |
 
 ## Part 3: Advanced topics
@@ -74,6 +99,16 @@ Subjects that go deeper. The example, not written yet, is an AI agent behind an
 HTTP service, where every user talks to a session of their own and many run at
 once. It runs in Docker Compose, which the first page sets up; the rest can be
 read in any order.
+
+> #### What you need {: .tip}
+>
+> Everything Part 1 needed, and:
+>
+> - **Docker, with Docker Compose**, from [`clustering.md`](advanced/clustering.md) on.
+> - **A Kubernetes cluster, such as k3s, and `kubectl`**, for
+>   [`kubernetes_deployment.md`](advanced/kubernetes_deployment.md).
+> - **Elixir 1.17 or later**, for
+>   [`elixir_applications.md`](advanced/elixir_applications.md).
 
 | Guide | Covers |
 |---|---|

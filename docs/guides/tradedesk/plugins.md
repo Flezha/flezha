@@ -25,15 +25,15 @@ flowchart LR
 ## Start the exchange
 
 The exchange is the testnet, Flezha's demo exchange. It streams made-up trades
-for EUR/USD, GBP/USD and USD/JPY over a WebSocket, and nothing on it is real
-money.
+for EUR/USD, GBP/USD and USD/JPY over a WebSocket.
 
-> Start the testnet in a terminal of its own, from `test/apps/testnet` in the
-> Flezha checkout. It needs Node.js, and it runs until you press Ctrl-C.
+> Clone the testnet, a repository of its own, and start it in a terminal of its
+> own. It needs Node.js, and it runs until you press Ctrl-C.
 > {: .step}
 
 ```sh
-$ cd test/apps/testnet
+$ git clone https://github.com/flezha/flezha_testnet.git
+$ cd flezha_testnet
 $ npm ci
 $ npm run build
 $ npm run start
