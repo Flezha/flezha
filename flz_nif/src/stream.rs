@@ -117,6 +117,14 @@ fn peer_certificate<'a>(env: Env<'a>, stream: StreamHandleArc) -> NifResult<Term
     })
 }
 
+/// The process id of the peer on this stream's connection, or `nil` for a
+/// QUIC peer and wherever the platform cannot say. Shown to the user so a
+/// runner can be told apart from the processes around it.
+#[rustler::nif]
+fn peer_pid(stream: StreamHandleArc) -> Option<u32> {
+    stream.peer_pid
+}
+
 /// Transfer ownership of a stream to a different Elixir process.
 #[rustler::nif]
 fn controlling_process(env: Env, stream: StreamHandleArc, new_owner: LocalPid) -> NifResult<Term> {

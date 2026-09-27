@@ -8,6 +8,7 @@ defmodule Flezha.Service.Cli.Listing do
   alias Flezha.AuthZ.NamespaceStore
   alias Flezha.Convergence.Verdict
   alias Flezha.Partition
+  alias Flezha.Runner.FleetManager
   alias Flezha.Service.Cli.Context
   alias Flezha.Service.Controller
   alias Flezha.Service.HubManager
@@ -72,25 +73,32 @@ defmodule Flezha.Service.Cli.Listing do
   end
 
   @doc """
-  Lists runners for a specific namespace. Bulleted rather than tabular: a
-  runner id is the whole row, so there is no second column to line up.
+  Lists runners for a specific namespace, each with the process id of the
+  runner on its socket where the transport can say, so a user can tell which
+  process a runner is. Bulleted rather than tabular: the id is the row, and the
+  process id follows it when there is one.
   """
   def list_runners(namespace, output_format, _call) do
     namespace_display = Namespace.or_default(namespace)
-    {:ok, runners} = Flezha.list_runners(namespace_display)
+    {:ok, rows} = FleetManager.global_runner_pids(namespace_display)
 
-    case {runners, output_format} do
+    case {rows, output_format} do
       {_, "json"} ->
-        IO.puts(Jason.encode!(%{runners: runners, namespace: namespace_display}))
+        pids = for {id, pid} <- rows, pid != nil, into: %{}, do: {id, pid}
+        runners = Enum.map(rows, &elem(&1, 0))
+        IO.puts(Jason.encode!(%{runners: runners, pids: pids, namespace: namespace_display}))
 
       {[], _} ->
         IO.puts("No runners found for namespace '#{namespace_display}'.")
 
       _ ->
         IO.puts("Runners in namespace '#{namespace_display}':")
-        Enum.each(runners, &IO.puts("  - #{&1}"))
+        Enum.each(rows, fn {id, pid} -> IO.puts("  - #{id}#{pid_suffix(pid)}") end)
     end
   end
+
+  defp pid_suffix(nil), do: ""
+  defp pid_suffix(pid), do: "  pid #{pid}"
 
   @doc """
   Lists a namespace's operators with the reconciler's per-operator health, assigned

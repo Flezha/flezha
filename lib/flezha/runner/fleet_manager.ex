@@ -246,19 +246,34 @@ defmodule Flezha.Runner.FleetManager do
   An unreachable peer contributes nothing rather than failing the read.
   """
   @spec global_runners(String.t()) :: {:ok, [binary()]}
-  def global_runners(namespace) do
-    runners =
-      [node() | Directory.runner_nodes(namespace)]
-      |> Parallel.map_nodes(&:erpc.call(&1, __MODULE__, :active_runners, [namespace]),
-        timeout: Durations.get(:runner_lookup_ms)
-      )
-      |> Enum.flat_map(fn
-        {_node, {:ok, ids}} -> ids
-        {_node, {:exit, _reason}} -> []
-      end)
-      |> Enum.uniq()
+  def global_runners(namespace),
+    do: {:ok, namespace |> across_runner_nodes(:active_runners) |> Enum.uniq()}
 
-    {:ok, runners}
+  @doc """
+  `{runner id, process id}` for every active runner in `namespace` across the
+  cluster, with `nil` where the runner's transport cannot say. Serves
+  `flz runner list`.
+  """
+  @spec global_runner_pids(String.t()) :: {:ok, [{binary(), non_neg_integer() | nil}]}
+  def global_runner_pids(namespace),
+    do: {:ok, namespace |> across_runner_nodes(:runner_pids) |> Enum.uniq_by(&elem(&1, 0))}
+
+  @doc false
+  # This node's half of `global_runner_pids/1`, reached over `:erpc`.
+  def runner_pids(namespace),
+    do: Enum.map(active_runners(namespace), &{&1, ControlChannel.peer_pid(&1)})
+
+  # Every node holding active runners in `namespace` answers `fun`; an
+  # unreachable peer contributes nothing rather than failing the read.
+  defp across_runner_nodes(namespace, fun) do
+    [node() | Directory.runner_nodes(namespace)]
+    |> Parallel.map_nodes(&:erpc.call(&1, __MODULE__, fun, [namespace]),
+      timeout: Durations.get(:runner_lookup_ms)
+    )
+    |> Enum.flat_map(fn
+      {_node, {:ok, rows}} -> rows
+      {_node, {:exit, _reason}} -> []
+    end)
   end
 
   def disconnect_runner(namespace, runner_id) do

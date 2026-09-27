@@ -45,6 +45,9 @@ pub struct StreamHandle {
     /// a QUIC peer that presented none. The connect path reads it to learn which
     /// namespace the connection proved.
     pub peer_cert: Option<Vec<u8>>,
+    /// The process id of the peer, as the kernel recorded it when the peer
+    /// connected. Only a UDS peer has one, and only where the platform can say.
+    pub peer_pid: Option<u32>,
 }
 
 impl Drop for StreamHandle {

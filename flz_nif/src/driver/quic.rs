@@ -327,6 +327,8 @@ impl Quic {
                 } else {
                     None
                 },
+                // A QUIC peer may be on another machine: no process id to read.
+                None,
             );
             streams.insert(nif_id, state);
             self.nif_stream_map.insert(nif_id, (ch, qstream_id));

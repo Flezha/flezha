@@ -156,16 +156,27 @@ defmodule Flezha.Runner.ControlChannel do
   enqueue into a closed transport with no failure signal.
   """
   @spec reset_stream_ref(binary()) :: :ok | {:error, :no_control_channel}
-  def reset_stream_ref(runner_id) when is_binary(runner_id) do
-    control_channel = Identificator.control_channel(runner_id)
+  def reset_stream_ref(runner_id) when is_binary(runner_id),
+    do: call_channel(runner_id, :reset_stream_ref, {:error, :no_control_channel}, :warning)
 
-    case GenServer.whereis(control_channel) do
+  @doc """
+  The process id of the runner on this channel's socket, or `nil` when there is
+  none to give: no channel, a channel between streams, or a transport that
+  cannot say. It is shown to the user and never trusted.
+  """
+  @spec peer_pid(binary()) :: non_neg_integer() | nil
+  def peer_pid(runner_id) when is_binary(runner_id),
+    do: call_channel(runner_id, :peer_pid, nil, false)
+
+  defp call_channel(runner_id, request, on_error, log) do
+    case GenServer.whereis(Identificator.control_channel(runner_id)) do
       nil ->
-        {:error, :no_control_channel}
+        on_error
 
       pid ->
-        SafeCall.bounded(pid, :reset_stream_ref, Durations.get(:control_call_timeout_ms),
-          on_error: {:error, :no_control_channel}
+        SafeCall.bounded(pid, request, Durations.get(:control_call_timeout_ms),
+          on_error: on_error,
+          log: log
         )
     end
   end
@@ -174,6 +185,11 @@ defmodule Flezha.Runner.ControlChannel do
   def handle_call(:reset_stream_ref, _from, state) do
     {:reply, :ok, %{state | stream_ref: nil}}
   end
+
+  def handle_call(:peer_pid, _from, %{stream_ref: nil} = state), do: {:reply, nil, state}
+
+  def handle_call(:peer_pid, _from, state),
+    do: {:reply, TStream.peer_pid(state.stream_ref), state}
 
   @impl true
   def handle_call({:send_control, bin}, _from, state) do

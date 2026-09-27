@@ -60,4 +60,12 @@ defmodule Flezha.Transport.Stream do
   @spec peer_certificate(handle()) :: binary() | nil
   def peer_certificate(%LocalStream{}), do: nil
   def peer_certificate(ref), do: Native.peer_certificate(ref)
+
+  @doc """
+  The process id of the runner on this stream's socket, or `nil`: only a UDS
+  stream can say, and an in-node stream has no peer process.
+  """
+  @spec peer_pid(handle()) :: non_neg_integer() | nil
+  def peer_pid(%LocalStream{}), do: nil
+  def peer_pid(ref), do: Native.peer_pid(ref)
 end

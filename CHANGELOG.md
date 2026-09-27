@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added: `flz runner list` shows each runner's process id
+
+A runner connected over the Unix socket is listed with the process id of the process on the
+other end, as the operating system reports it, so a runner can be found among the machine's
+processes, and crashed on purpose with `kill -9` when trying out recovery. The JSON form keeps
+its `runners` list and adds a `pids` object from runner id to process id. A runner connected
+over QUIC, which may be on another machine, is listed without one.
+
 ### Fixed: a sinkless short form that returns a value no longer parks its input
 
 In the Node, Python, Ruby and PHP SDKs, a tasklet with no outgoing channel whose `run` returned a

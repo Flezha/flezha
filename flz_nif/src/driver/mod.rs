@@ -179,7 +179,8 @@ impl<W> StreamState<W> {
     /// because an accepted stream is the same thing on every wire.
     ///
     /// `peer_cert` is what the wire's handshake proved about the peer, and only
-    /// QUIC has one to give.
+    /// QUIC has one to give; `peer_pid` is the peer's process id, which only a
+    /// UDS socket knows.
     pub(crate) fn accept(
         id: u64,
         acceptor: LocalPid,
@@ -187,6 +188,7 @@ impl<W> StreamState<W> {
         waker: &Arc<Waker>,
         wire: W,
         peer_cert: Option<Vec<u8>>,
+        peer_pid: Option<u32>,
     ) -> (Self, ResourceArc<StreamHandle>) {
         let owner = Arc::new(Mutex::new(acceptor));
         let gate = Arc::new(SendGate::new());
@@ -197,6 +199,7 @@ impl<W> StreamState<W> {
             owner: Arc::clone(&owner),
             gate: Arc::clone(&gate),
             peer_cert,
+            peer_pid,
         });
         (StreamState::new(id, owner, gate, wire), handle)
     }

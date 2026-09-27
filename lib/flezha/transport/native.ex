@@ -92,6 +92,13 @@ defmodule Flezha.Transport.Native do
   @spec peer_certificate(reference()) :: binary() | nil
   def peer_certificate(_stream_ref), do: :erlang.nif_error(:not_loaded)
 
+  @doc """
+  The process id of the peer on this stream's connection, as the kernel recorded
+  it at connect, or `nil` for a QUIC peer and where the platform cannot say.
+  """
+  @spec peer_pid(reference()) :: non_neg_integer() | nil
+  def peer_pid(_stream_ref), do: :erlang.nif_error(:not_loaded)
+
   # --- Where this controller's sockets are ---
 
   @doc """

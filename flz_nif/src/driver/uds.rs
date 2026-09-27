@@ -97,6 +97,51 @@ fn bind(
     })
 }
 
+/// The process id of the peer on the other end of `stream`, as the kernel
+/// recorded it when the peer connected. It is shown, never trusted: a runner
+/// proves its namespace with its credential, not with this.
+fn peer_pid(stream: &mio::net::UnixStream) -> Option<u32> {
+    use std::os::fd::AsRawFd;
+    let fd = stream.as_raw_fd();
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: `ucred` is plain data, and `len` tells the kernel its size.
+        let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
+        let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        let rc = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                (&mut cred as *mut libc::ucred).cast(),
+                &mut len,
+            )
+        };
+        (rc == 0 && cred.pid > 0).then_some(cred.pid as u32)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut pid: libc::pid_t = 0;
+        let mut len = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
+        // SAFETY: `pid` is plain data, and `len` tells the kernel its size.
+        let rc = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_LOCAL,
+                libc::LOCAL_PEERPID,
+                (&mut pid as *mut libc::pid_t).cast(),
+                &mut len,
+            )
+        };
+        (rc == 0 && pid > 0).then_some(pid as u32)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = fd;
+        None
+    }
+}
+
 /// The UDS wire.
 pub(crate) struct Uds {
     socket_path: PathBuf,
@@ -134,6 +179,7 @@ impl Uds {
     ) {
         let id = self.next_stream_id;
         self.next_stream_id += 1;
+        let pid = peer_pid(&stream);
         let token = Token(self.next_token_id);
         self.next_token_id += 1;
 
@@ -155,6 +201,7 @@ impl Uds {
             // A UDS peer completed no handshake: its namespace entitlement
             // comes from the credential it presents, never from the socket.
             None,
+            pid,
         );
         streams.insert(id, state);
         self.token_to_stream.insert(token, id);
@@ -317,5 +364,16 @@ pub(super) mod conformance {
         };
         let state = super::super::support::detached_stream(id, UdsWire { stream, token });
         (wire, state)
+    }
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod tests {
+    // fails when: the peer's process id is not read, so `flz runner list`
+    // cannot say which process a runner is.
+    #[test]
+    fn the_peer_pid_is_the_process_on_the_other_end() {
+        let (ours, _theirs) = mio::net::UnixStream::pair().expect("a socket pair");
+        assert_eq!(super::peer_pid(&ours), Some(std::process::id()));
     }
 }

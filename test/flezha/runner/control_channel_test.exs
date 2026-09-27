@@ -28,6 +28,18 @@ defmodule Flezha.Runner.ControlChannelSendControlTest do
     GenServer.stop(pid)
   end
 
+  # fails when: a channel with no stream asks the transport anyway, or a runner
+  # with no channel crashes the list instead of showing no process id.
+  test "peer_pid answers nil for a channel with no stream and for a runner with no channel" do
+    write_fun = fn _ref, _payload_id, _message, _metadata -> :ok end
+    {:ok, pid} = ControlChannel.start_link({"ns_pp", "exec_pp", nil, write_fun})
+
+    assert ControlChannel.peer_pid("exec_pp") == nil
+    assert ControlChannel.peer_pid("no_such_runner") == nil
+
+    GenServer.stop(pid)
+  end
+
   test "a channel that dies mid-call answers its caller instead of exiting it" do
     # The teardown race of KI-48: the supervisor's reverse-order sweep stops the
     # channel while a ControlUnit is still blocked in this call.

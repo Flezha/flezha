@@ -7,8 +7,16 @@ on the controller's disk, as it happens. When the runner comes back, the work
 carries on from where it was instead of starting again. Nothing in the desk's
 code saves or loads anything.
 
-On this page you stop and crash the desk on purpose, and check each time that
-nothing was lost.
+On this page you break the desk on purpose, one piece at a time, and check
+each time that nothing was lost. First you pause the demo exchange, so the
+prices hold still while you look. Then you stop the runner, crash it, and
+crash it again in the middle of an order, and each time you read back what the
+desk remembered. You restart the controller too, and watch everything come
+back.
+
+Last, you see what happens when something goes wrong for good: a message the
+desk cannot read is set aside instead of blocking the others, and an order the
+exchange refuses is undone, step by step.
 
 ## What the desk remembers
 
@@ -130,12 +138,23 @@ Every price is where it was.
 
 ## Crash the runner
 
-> Crash the runner with `kill -9`, from another terminal. The controller sees
-> it gone at once and marks the partitions `failed`, as before.
+> Crash the runner. `flz runner list` shows its process id, and `kill -9` with
+> that id, from another terminal, ends it at once. The controller sees it gone
+> and marks the partitions `failed`, as before.
 > {: .step}
 
 ```sh
-$ pkill -9 -f tradedesk.jar
+$ flz runner list --namespace trading
+```
+
+```output
+Fetching runners for namespace 'trading'...
+Runners in namespace 'trading':
+  - trading_1194c54f876f  pid 2534837
+```
+
+```sh
+$ kill -9 2534837
 ```
 
 > Start the runner again, and read the windows once more.
@@ -209,11 +228,12 @@ order is not `complete`. The runner's terminal shows the booking:
 [book] EUR/USD 10 as ord-6b2e13f521b6781afd9f710152cd2f25
 ```
 
-> Crash the runner while `confirm_fill` waits, then start it again.
+> Crash the runner while `confirm_fill` waits, the same way: `kill -9` with the
+> process id `flz runner list` shows now, then start it again.
 > {: .step}
 
 ```sh
-$ pkill -9 -f tradedesk.jar
+$ kill -9 <pid>
 ```
 
 About ten seconds after the runner is back, the order is done:
