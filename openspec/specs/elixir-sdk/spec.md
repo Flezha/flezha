@@ -753,7 +753,9 @@ unbounded operator's Cell set, held through the one module `Flezha.SDK.Operator`
 through: single and static Cells prewarmed at start, a keyed Cell minted on the first value of
 a pass addressed to its key, every value reaching its Cells through the same per-mode target
 resolution the unbounded operator routes with, one barrier queued behind each Cell the stage
-handed a value to, and the stage done when those reply. Every stage Cell SHALL be started with
+handed a value to, and the stage done when those reply; a Cell that exits before replying SHALL
+fail its stage as an exhausted ladder does, and an undo's Cell that exits SHALL count as a failed
+hook, the rest of the plan still running. Every stage Cell SHALL be started with
 the same ctx facts an unbounded Cell gets from its node's sink routes (`channel`, `keyed_sink?`,
 `key_required?`), so `Flezha.SDK.Ctx.emit_keyed/3` and `emit_with_meta/3` answer in a bounded operator
 tasklet exactly as in an unbounded tasklet. A durable class's Cell SHALL capture each sink output
@@ -796,6 +798,12 @@ declared to the controller in the `AddOperator` response.
   edge's `retry_max` / `retry_backoff_ms` exactly as an unbounded operator Cell reads them, differing only in
   that an exhausted ladder fails the tasklet instead of parking the input to the dead-letter queue
   and that a due firing is handed to the driver, which decides when it runs
+
+#### Scenario: A stage whose Cell dies ends the run instead of waiting for it
+
+- **WHEN** a stage's Cell is killed while its barrier is still queued behind the running input
+- **THEN** the driver fails that stage, the run unwinds and ships `BoundedCompleted` with status
+  `error` naming the tasklet, and a later stage never runs
 
 #### Scenario: A step commits while its sibling still runs
 
