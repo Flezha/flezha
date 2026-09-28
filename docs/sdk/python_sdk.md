@@ -284,9 +284,7 @@ c.input("orders").into(Bill).named("invoices").into(Dispatch).sink()
 
 A tasklet's input type is its `run`'s value annotation and its output type
 the output argument of its context hint, `Ctx[None, Invoice]`; a function
-short form's output is its return annotation. `sealed()` after a `sink`
-states that the channel ends there: it changes nothing in the declaration, and
-a later `into` on it is a type error.
+short form's output is its return annotation.
 
 pyright and mypy report that in the editor. What a type checker cannot see — a
 cycle, a missing entry channel, an unservable clock, a keyed channel with no

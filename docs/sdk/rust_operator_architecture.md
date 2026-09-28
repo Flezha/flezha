@@ -571,9 +571,7 @@ covered by the same refusal.
 
 A `PluginBound` channel has no SDK-side mailbox between the emit and the
 wire, so a policy declared on it is never consulted; backpressure there is the
-socket buffer plus transport flow control. `.sealed()` returns a finalized
-`Channel<T>` with no builder methods, which is how an author states
-terminality in the type — nothing, `.on_full(...)` included, chains after it.
+socket buffer plus transport flow control.
 
 The entry default has a co-tenancy cost: the wire reader services every
 Operator on one physical connection, and under `DropNothing` it parks on the
@@ -663,8 +661,7 @@ what rides the frame; naming one channel with both a sink and `.named(...)` is
 after the sink (hybrid — one typed value reaches the consumer mailboxes and,
 serialized, the plugin), `PluginBound` when nothing consumes the channel
 (terminal). Order of `sink_with` and `.into::<S>()` is irrelevant; a second
-sink on one channel is `TopologyIssue::DuplicatePluginSink`; wiring a
-consumer after `.sealed()` is a compile error.
+sink on one channel is `TopologyIssue::DuplicatePluginSink`.
 
 ```rust
 sma_stream                       // SmaTask's output handle, from `.into::<SmaTask>()`
@@ -725,7 +722,7 @@ port: [`state_persistence.md`](state_persistence.md).
 | Concern | File |
 |---|---|
 | `UnboundedOperator` trait; `Tasklet`, `Ctx`, `Change`, `ClockKind`, `TaskletError` | `sdk/rust/src/operator/mod.rs`; `sdk/rust/src/tasklet/{mod,ctx,change,clock,error}.rs` |
-| `ChannelBuilder`, `Stream<T>`, `TopologyIssue`, `Channel<T>` | `sdk/rust/src/channel/builder/`, `sdk/rust/src/channel/mod.rs` (kernel types: `flz_core/src/channel.rs`) |
+| `ChannelBuilder`, `Stream<T>`, `TopologyIssue` | `sdk/rust/src/channel/builder/`, `sdk/rust/src/channel/mod.rs` (kernel types: `flz_core/src/channel.rs`) |
 | Topology builder, mailbox-capacity resolution | `sdk/rust/src/operator/builder.rs` |
 | Authoring macros | `sdk/rust/macros/src/{tasklet,short_form,operator}.rs` |
 | Typed dispatcher and plugin-sink tail; poll-worker pool | `sdk/rust/src/operator/dispatcher.rs`, `poll_pool.rs` |

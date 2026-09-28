@@ -293,7 +293,7 @@ For any single Cell, two invocations of its Tasklet's `run(...)` method SHALL NO
 - **THEN** the Cell's State SHALL end with `[a, b, c]` in exactly that order
 
 ### Requirement: Typed channels with compile-time wiring checks
-All inter-Tasklet and Tasklet-to-plugin routing SHALL go through Channels declared on the Operator via the producer-first graph builder (`sdk-graph-authoring`). Each Channel SHALL carry a phantom type parameter `Channel<T>`, where `T` is taken from the producing Tasklet's `Output` type — there is no user-supplied type token and no `.from(...)` clause for inter-tasklet channels. The wiring API SHALL refuse to build in any of these cases:
+All inter-Tasklet and Tasklet-to-plugin routing SHALL go through Channels declared on the Operator via the producer-first graph builder (`sdk-graph-authoring`). Each Channel SHALL carry its payload type `T`, taken from the producing Tasklet's `Output` type — there is no user-supplied type token and no `.from(...)` clause for inter-tasklet channels. The wiring API SHALL refuse to build in any of these cases:
 
 - A consumer Tasklet whose `Input` associated type is not `T` is wired via `.into::<X>()` / `.into(X.class)` onto a stream of payload type `T`.
 - A node is wired as the producer of more than one output channel (the emit surface carries one output channel per tasklet, so a second one could never be routed).
@@ -415,11 +415,6 @@ The plugin sink SHALL be stored on the channel descriptor as a `plugin_sink: Opt
 - **WHEN** an Operator chains `.sink_with("p1", f1).sink_with("p2", f2)` on one stream
 - **THEN** registration SHALL fail with `TopologyIssue::DuplicatePluginSink { channel }` naming the channel
 
-#### Scenario: nothing chains after sealed
-- **WHEN** an Operator attempts `.sink("p").sealed().into::<S>()`
-- **THEN** the code SHALL fail to compile because `sealed` returns a finalized handle with no further methods
-- **AND** a trybuild test under `sdk/rust/tests/build_failures/` SHALL pin this as a stable compile error
-
 ### Requirement: Hybrid channel emission — consumer fan-out then single serializer call
 When a Tasklet's `Tasklet::run` calls `ctx.emit(value)` on a hybrid channel (`kind = InterTasklet, plugin_sink = Some(_)`), the dispatcher SHALL execute the following sequence on the producer thread:
 
@@ -522,10 +517,6 @@ The plugin sink SHALL be stored on the channel descriptor as `Optional<PluginSin
 #### Scenario: sink without a serializer uses the default codec (Java)
 - **WHEN** an Operator declares `.sink("indicators")` on a stream of a Jackson-serializable type
 - **THEN** the plugin sink SHALL serialize each value with Jackson JSON, identically to what `output("indicators")` would produce for the same value
-
-#### Scenario: nothing chains after sealed (Java)
-- **WHEN** an Operator attempts `.sink("p").sealed().into(S.class)`
-- **THEN** the code SHALL fail to type-check because `sealed` returns a finalized `Channel<T>` handle that exposes no further methods
 
 ### Requirement: Hybrid channel emission — consumer fan-out then single serializer call (Java SDK)
 When a Tasklet's `Tasklet.run` calls `ctx.emit(value)` on a hybrid channel (`kind == INTER_TASKLET`, `pluginSink.isPresent()`), the dispatcher SHALL execute the following sequence on the producer thread:

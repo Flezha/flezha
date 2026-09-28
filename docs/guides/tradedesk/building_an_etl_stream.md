@@ -1096,8 +1096,7 @@ public final class TradeWatcherOperator implements UnboundedOperator {
                 .keyBy(Trade::symbol)                                // one cell per symbol
                 .into(TrackPrices.class)
                 .into(BuyAboveAverage.class)
-                .sink("signals")
-                .sealed();
+                .sink("signals");
     }
 }
 ```
@@ -1107,8 +1106,7 @@ it is, and `data` holds its trades. It lives inside the operator, the only
 place that reads it. The default JSON decoding refuses a field the
 record does not name, so `@JsonIgnoreProperties`, here and on `Trade`, tells it
 to drop the exchange's other fields. `into` names the two tasklet classes
-above, `TrackPrices` and `BuyAboveAverage`. `sealed()` says the path ends at
-`signals`: a later `into` on it no longer compiles.
+above, `TrackPrices` and `BuyAboveAverage`, and `sink("signals")` is the sink.
 
 ### Rust
 
@@ -1137,8 +1135,7 @@ impl UnboundedOperator for TradeWatcherOperator {
             .key_by(|trade| trade.symbol.clone()) // one cell per symbol
             .into::<TrackPrices>()
             .into::<BuyAboveAverage>()
-            .sink_named("signals")
-            .sealed();
+            .sink_named("signals");
     }
 }
 ```
@@ -1149,8 +1146,7 @@ place that reads it. The subscription confirmation has neither field, and
 `#[serde(default)]` lets it decode as an empty message so the first `filter`
 can drop it; without it, the confirmation would fail to decode and be set
 aside. `into::<...>()` names the two tasklet types above, `TrackPrices` and
-`BuyAboveAverage`, and `sink_named("signals")` is the sink. `sealed()` says
-the path ends at `signals`: a later `into` on it no longer compiles.
+`BuyAboveAverage`, and `sink_named("signals")` is the sink.
 
 ### Node
 
@@ -1171,8 +1167,7 @@ export default defineUnbounded({
       .keyBy((trade) => trade.symbol) // one cell per symbol
       .into(TrackPrices)
       .into(BuyAboveAverage)
-      .sink('signals')
-      .sealed();
+      .sink('signals');
   },
 });
 ```
@@ -1182,10 +1177,8 @@ JSON decodes to, and each transform is a function over that object. The
 subscription confirmation has no `channel`, so the first `filter` reads
 `undefined` there and drops it. `flatMap` hands on each trade with every field
 the exchange sent; the tasklets read the ones they need. `into` names the two
-tasklets above, and `sink('signals')` is the sink. `sealed()` says the chain
-ends there: it changes nothing at runtime, and in TypeScript a later `into` on
-it does not compile. The module exports what `defineUnbounded` returned, and
-that export is what the runner registers.
+tasklets above, and `sink('signals')` is the sink. The module exports what
+`defineUnbounded` returned, and that export is what the runner registers.
 
 ### Python
 
@@ -1202,7 +1195,6 @@ def trade_watcher(c: flezha.Channels) -> None:
         .into(TrackPrices)
         .into(BuyAboveAverage)
         .sink("signals")
-        .sealed()
     )
 ```
 
@@ -1213,8 +1205,7 @@ subscription confirmation has no `channel`, so the first `filter` reads it with
 `.get` and drops it. `flat_map` hands on each trade with every field the
 exchange sent; the tasklets read the ones they need. `into` names the two
 tasklet classes above, `TrackPrices` and `BuyAboveAverage`, and
-`sink("signals")` is the sink. `sealed()` says the path ends at `signals`: a
-later `into` on it is a type error.
+`sink("signals")` is the sink.
 
 ### Ruby
 

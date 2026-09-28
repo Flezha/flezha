@@ -740,7 +740,6 @@ Declared on the stream handle returned by `input(...)` or a node's output.
 | `.keyed()` (`keyed`) | off | Every plugin emit must carry a natural key; the runtime stamps `flz.cell` / `flz.seq` / `flz.key`. Requires a `sink`; required on every plugin channel under `effectively_once()`. |
 | `.key_by(f)` (`keyBy`) | absent — one Cell | Route by a key function, making the consumer dynamic-cell. |
 | `.sink(name)` / `.sink_with(name, f)` (`sink`) | — | Wire the channel to a named plugin; a second sink on one channel is a registration error. |
-| `.sealed()` (`sealed`) | — | Type-level statement that nothing follows the channel; touches no builder state. |
 
 ### Tasklet-level options
 

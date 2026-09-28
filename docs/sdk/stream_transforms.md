@@ -139,7 +139,7 @@ Rust unifies both handles into one `Stream<'b, T, K>`, with
 surface as `EdgeStream<T>`, which `EntryChannel<T>` extends and `Stream<T>`
 implements. Both handles carry the transforms, the key and the consumer-side
 knobs (`on_full`, `retry_max`, `retry_backoff_ms`); producer-side methods
-(`named`, `keyed`, `sink`, `sealed`, `branch`) stay on `Stream` alone — an entry
+(`named`, `keyed`, `sink`, `branch`) stay on `Stream` alone — an entry
 channel has no producer.
 
 ## Where the code lives

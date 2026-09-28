@@ -38,7 +38,7 @@ A value SHALL leave a tasklet only through its context: `ctx.emit` (with its `ke
 - **THEN** it SHALL NOT be declared to the core, and no activation SHALL reach it
 
 #### Scenario: A bad topology is refused by name
-- **WHEN** a registered tasklet emits to a channel no tasklet consumes and the operator is not sealed on that edge
+- **WHEN** a registered tasklet emits to a channel no tasklet consumes
 - **THEN** registration SHALL raise naming the class, the method and the channel; no controller connection SHALL be attempted
 
 #### Scenario: A tasklet's body is its run method

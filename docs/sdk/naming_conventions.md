@@ -117,9 +117,7 @@ the defaults are passthrough for bytes, UTF-8 for strings, JSON otherwise.
 
 **There is exactly one egress method.** `sink` always returns the stream
 handle, so consumers wire after it; a channel is the plugin-bound terminal by
-having no further wiring, not by a second method. `.sealed()` is the optional
-terminator: it returns a non-chainable `Channel<T>` so a later consumer or
-transform does not compile, and changes nothing about the topology.
+having no further wiring, not by a second method.
 
 Channel config (`keyed`, `onFull` / `on_full`, `retryMax` / `retry_max`,
 `retryBackoffMs` / `retry_backoff_ms`, `named`) chains on the handle in any

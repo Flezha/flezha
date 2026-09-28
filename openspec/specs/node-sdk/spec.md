@@ -424,14 +424,6 @@ The cell mode SHALL be read per tasklet node from what is declared, never from a
 - **WHEN** a tasklet writing `cells: { keys: ['a', 'b'], cellsFor }` is reached by an edge declaring `keyBy`
 - **THEN** declaring the operator SHALL throw `DeclarationError` whose refusals contain `KeyByOnUnkeyableTarget`, naming the tasklet
 
-### Requirement: A Node chain states its end with sealed
-A Node stream handle SHALL offer `sealed()`, which SHALL return a `Sealed` handle carrying no builder method and SHALL add nothing to the declaration record, so that TypeScript refuses any `into`, transform or `sink` written after it while the declared topology stays the one written without it. Plain JavaScript runs no type checker, and a call on the sealed handle SHALL fail as a call of a missing method.
-
-#### Scenario: A sealed chain takes no further wiring
-
-- **WHEN** a TypeScript operator declares `c.input<Trade>('trades').into(Ohlc).sink('candles').sealed()` and a second chain writes `.sealed().into(Publish)`
-- **THEN** the first SHALL type-check and declare the same record as the chain without `sealed()`, and the second SHALL fail to type-check, pinned by an `@ts-expect-error` fixture
-
 ### Requirement: A Node cell belongs to one operator
 The Node runner SHALL keep a Cell's live state by its operator, its tasklet and its cell key, so that two operators of one factory served by the same runner, such as two instances of a bounded operator or two partitions of an unbounded one, never read or write each other's state. Every activation that reads or writes a Cell (work, restore fold, snapshot, live state read, migration serialize, apply state and compensate) SHALL address it this way.
 

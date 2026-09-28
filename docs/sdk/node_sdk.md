@@ -133,11 +133,6 @@ an `emit` on it does not compile.
   naming it, whether the definition carries it or inherits it. A field an
   earlier release read is refused naming what replaced it.
 
-**A chain can say where it ends.** `.sink('signals').sealed()` returns a
-handle with no builder method, so in TypeScript a later `into`, transform or
-sink on it does not compile. It changes nothing at runtime: the declared
-topology is the one written without it.
-
 **A wrong edge is a compile error.** `.into(tasklet)` accepts only a
 tasklet whose declared input the producing edge's value satisfies, so a
 mismatched wiring is rejected before the program runs. Those refusals are
