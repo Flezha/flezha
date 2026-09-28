@@ -30,7 +30,11 @@ defmodule Flezha.MixProject do
   # anywhere else, so one file serves both GitHub and this.
   # `mermaid` code fences render as diagrams. GitHub draws them itself; ExDoc
   # needs the library, injected here so one fence serves both.
-  defp mermaid(:html) do
+  # Picking a tab picks the same-labelled tab in every tabset on the page and
+  # on later pages. Tabs switch without ExDoc's click, which focuses the tab and
+  # would scroll to it; the scroll correction keeps the clicked tab in place
+  # while tabsets above it change height.
+  defp guide_scripts(:html) do
     """
     <script defer src="https://cdn.jsdelivr.net/npm/mermaid@10.2.3/dist/mermaid.min.js"></script>
     <script>
@@ -60,10 +64,56 @@ defmodule Flezha.MixProject do
         }
       });
     </script>
+    <script>
+      {
+        const storageKey = "flezha-tab";
+        const pages = ["controller_deployment", "runner_deployment", "running_operators", "sources_and_sinks", "stop_everything"];
+
+        const selectTab = (label, except) => {
+          for (const tab of document.querySelectorAll(".tabset-tab")) {
+            if (tab === except || tab.textContent.trim() !== label) continue;
+
+            for (const other of tab.parentNode.children) {
+              const selected = other === tab;
+              const panel = document.getElementById(other.getAttribute("aria-controls"));
+              other.setAttribute("aria-selected", selected);
+              other.tabIndex = selected ? 0 : -1;
+              panel.hidden = !selected;
+              panel.tabIndex = selected ? 0 : -1;
+            }
+          }
+        };
+
+        // ExDoc swaps pages in place, so the page is checked on every event.
+        const onSyncedPage = () => pages.includes(location.pathname.split("/").pop().replace(/\\.html$/, ""));
+
+        const syncTabs = (event) => {
+          const tablist = event.target.closest?.(".tabset-tablist");
+          if (!tablist || !onSyncedPage()) return;
+
+          const selected = tablist.querySelector("[aria-selected=true]");
+          const label = selected.textContent.trim();
+          const top = selected.getBoundingClientRect().top;
+          selectTab(label, selected);
+          window.scrollBy(0, selected.getBoundingClientRect().top - top);
+          try { localStorage.setItem(storageKey, label); } catch {}
+        };
+
+        document.addEventListener("click", syncTabs);
+        document.addEventListener("keydown", syncTabs);
+
+        // ExDoc builds the tabsets in its own `exdoc:loaded` listener, which runs after this one.
+        window.addEventListener("exdoc:loaded", () => setTimeout(() => {
+          let label = null;
+          try { label = localStorage.getItem(storageKey); } catch {}
+          if (label && onSyncedPage()) selectTab(label);
+        }));
+      }
+    </script>
     """
   end
 
-  defp mermaid(:epub), do: ""
+  defp guide_scripts(:epub), do: ""
 
   # A guide step is a one-paragraph blockquote classed `{: .step}`, right above
   # the command or code it introduces, saying what that block does. The `:has`
@@ -172,7 +222,7 @@ defmodule Flezha.MixProject do
         "docs/operations/authn_authz.md"
       ],
       before_closing_head_tag: &guide_styles/1,
-      before_closing_body_tag: &mermaid/1,
+      before_closing_body_tag: &guide_scripts/1,
       groups_for_extras: [
         "Guide Part 0: Start here": [
           "docs/guides/what_is_flezha.md",
