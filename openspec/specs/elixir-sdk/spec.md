@@ -394,15 +394,26 @@ The bounded call SHALL be the package's own `Flezha.SDK.SafeCall`, which the con
 
 ### Requirement: A crashed Cell is recovered by its Operator, and the recovery is a requirement
 
-The Operator process SHALL trap exits from the Cell processes it starts, SHALL
-drop a dead Cell from its live map on `:EXIT`, and SHALL recreate it on that
-key's next input. A crashed Cell SHALL NOT take the Operator down with it, and
-SHALL NOT leave the key permanently unroutable.
+The Operator process SHALL monitor the Cell processes it starts, SHALL drop a dead Cell from its
+live map on its `:DOWN`, and SHALL recreate it on that key's next input. A crashed Cell SHALL NOT
+leave the key permanently unroutable, and SHALL NOT take the Operator down with it except in the
+one case below, where recovering it in place would lose input.
+
+When a Cell exits abnormally (any reason but `:normal`, `:shutdown` or `{:shutdown, _}`) while the
+instance's processed-prefix ledger holds any input offset, the Operator SHALL NOT recreate it: it
+SHALL stop with the reason `{:cell_exited, reason}`, so that the runner reports the instance and the
+controller rebinds it and re-forwards its input log above the confirmed floor. A held offset is an
+input a Cell took and has not finished, and only durable input carries one, so this case arises
+only where the log can deliver the input again. A push that finds its Cell dead SHALL do the same
+when the ledger still holds an offset once the push's own hold is released, rather than mint a
+replacement that could take a later input and raise its floor past the lost ones. Before it exits
+abnormally, for this reason or any other, the Operator SHALL end every Cell it holds and wait for
+each to be gone, bounded by `sdk_shutdown_ack_ms`.
 
 A recreated Cell of a Tasklet that declares no `apply_change/2` starts
 fresh: its state is a plain term that nothing persists, so the in-flight value
 that ended the previous process and any in-memory state are lost. That is the
-documented behaviour of a persistence-free Tasklet — but it SHALL be stated,
+documented behaviour of a persistence-free Tasklet, but it SHALL be stated,
 because the other SDKs' hosts owe the same "a dead worker comes back" property
 and this is the reference for it.
 
@@ -419,6 +430,7 @@ key, so a key crashing on every input is visible rather than appearing as silent
 inactivity.
 
 #### Scenario: A crashed Cell does not take its Operator down
+- **GIVEN** an instance whose processed-prefix ledger holds no input offset
 - **WHEN** a Cell process exits abnormally
 - **THEN** the Operator SHALL remain alive, SHALL drop that Cell from its live map, and SHALL keep serving every other key
 
@@ -432,9 +444,23 @@ inactivity.
 - **THEN** each crash SHALL be logged naming the operator, node reference and cell key
 
 #### Scenario: A persistent Cell comes back on its own seq line
-- **GIVEN** a changeful Cell that has shipped records at seq 0 through 4
+- **GIVEN** a changeful Cell that has shipped records at seq 0 through 4, in an instance whose processed-prefix ledger holds no input offset
 - **WHEN** its process is killed untrappably and the next input for its key arrives
 - **THEN** the replacement dispatches from the state the seq-4 record left and ships that input's record at seq 5, and the controller's writer appends it
+
+#### Scenario: A Cell that dies with unfinished input ends its Operator
+- **GIVEN** an instance whose input carries offsets and a Cell running the input at offset 10 with the inputs at 11 and 12 pushed behind it
+- **WHEN** the Cell is killed untrappably, or exits through a process linked into it
+- **THEN** the Operator SHALL stop with `{:cell_exited, reason}`, no replacement Cell SHALL run any input, and the crash SHALL be logged naming the operator, node reference and cell key
+
+#### Scenario: A push to a dead Cell does not mint a replacement over held input
+- **GIVEN** an instance whose input carries offsets, a Cell that has died holding the input at offset 10, and an Operator that has not yet read its `:DOWN`
+- **WHEN** the Operator pushes the input at offset 11 to that Cell and the push finds it dead
+- **THEN** the Operator SHALL stop with `{:cell_exited, reason}` rather than mint a replacement for the key
+
+#### Scenario: An Operator's Cells are gone before its exit is seen
+- **WHEN** an Operator stops abnormally
+- **THEN** every Cell it held SHALL have exited before the Operator's own exit reaches the runner
 
 ### Requirement: The Elixir runner reports handout liveness on its heartbeat
 
@@ -1424,4 +1450,65 @@ The handshake's factory entries and every `FactoryDecl` the SDK ships in `Update
 
 - **WHEN** a module that `use`s `Flezha.SDK.Tasklet` defines `apply_change/2`, with or without a `state` block or a `defchange`
 - **THEN** compilation fails with a `CompileError` naming `apply_change/2` and `defchange`
+
+### Requirement: The Elixir runner reports an operator instance that exits abnormally
+
+The runner SHALL treat the exit of the process registered for an operator id, an unbounded
+Operator or a bounded driver, as the end of that instance: it SHALL remove the id from its operator
+map and its registry at once, so that no input is routed to the dead process and a later
+`AddOperator` for the id starts a fresh one. The exit of a process that is not the one registered
+for any id SHALL change nothing.
+
+An exit is clean when its reason is `:normal`, `:shutdown` or `{:shutdown, _}`, and abnormal
+otherwise. On an abnormal exit the runner SHALL send `OperatorExited { operator_id, reason }` on its
+control stream, `reason` being a bounded rendering of the exit reason, written with the `:control`
+class. It SHALL keep the report until an `AddOperator` or a `RemOperator` names that id, and SHALL
+send every report it keeps again after each `ConnectSocket` it answers successfully, because a
+control frame is never held and a report written while no control stream is bound is written
+nowhere. A clean exit SHALL send nothing, and a runner that is disconnecting or stopped SHALL send
+nothing.
+
+#### Scenario: A killed Operator is dropped and reported
+
+- **GIVEN** an unbounded instance `X` running on an Elixir runner
+- **WHEN** its Operator process is killed
+- **THEN** the runner SHALL remove `X` from its operator map and its registry, an input a primary
+  stream then reads for `X` SHALL reach no process, and the controller SHALL receive
+  `OperatorExited` naming `X` with a non-empty reason
+
+#### Scenario: A clean exit is not reported
+
+- **WHEN** the controller sends `RemOperator` for `X` and its Operator exits `:normal`
+- **THEN** the runner SHALL send no `OperatorExited`
+
+#### Scenario: A bounded driver that dies is reported
+
+- **GIVEN** a bounded instance `W` running on an Elixir runner
+- **WHEN** its driver process exits abnormally before it ships `BoundedCompleted`
+- **THEN** the runner SHALL remove `W` and send `OperatorExited` naming `W`
+
+#### Scenario: A report outlives a lost control stream
+
+- **GIVEN** an instance `X` whose Operator died while the runner had no control stream bound
+- **WHEN** the runner reconnects and answers the controller's `ConnectSocket`
+- **THEN** it SHALL send `OperatorExited` naming `X`, and SHALL NOT send it again after the
+  controller's `AddOperator` for `X` has arrived
+
+#### Scenario: The exit of a replaced process changes nothing
+
+- **GIVEN** an `AddOperator` for `X` that registered a new Operator while the previous one was
+  still exiting
+- **WHEN** the previous Operator's exit reaches the runner
+- **THEN** `X` SHALL stay registered to the new Operator and no `OperatorExited` SHALL be sent
+
+#### Scenario: Inputs a dead Cell held run again after the rebind
+
+- **GIVEN** an in-node Elixir runner and an unbounded instance on the effectively-once tier whose
+  changeful Cell for key `k` has finished the input at offset 9, is running the input at offset
+  10 and has 11 and 12 pushed behind it, while the Cell for key `j` has finished and recorded
+  offset 13
+- **WHEN** the Cell for `k` is killed
+- **THEN** the controller SHALL rebind the instance, the inputs at offsets 10, 11 and 12 SHALL each
+  run exactly once on the new Cell for `k` in that order, starting from the state its offset-9
+  record left, the input at offset 13 SHALL NOT run again, and the confirmed floor SHALL reach 13
 

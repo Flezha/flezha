@@ -5,7 +5,7 @@ pub struct CommandRequest {
     pub reference_id: ::prost::alloc::string::String,
     #[prost(
         oneof = "command_request::Command",
-        tags = "2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37"
+        tags = "2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38"
     )]
     pub command: ::core::option::Option<command_request::Command>,
 }
@@ -85,6 +85,8 @@ pub mod command_request {
         AdminRequest(super::AdminRequest),
         #[prost(message, tag = "37")]
         AdminResponse(super::AdminResponse),
+        #[prost(message, tag = "38")]
+        OperatorExited(super::OperatorExited),
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -859,4 +861,17 @@ pub struct AdminResponse {
     pub result: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub error: ::prost::alloc::string::String,
+}
+/// SDK -> Controller, one-way, over the "control_command" payload_id: the
+/// process of operator instance `operator_id` exited abnormally, so the runner
+/// no longer hosts it. `reason` renders the exit reason for the log, the
+/// telemetry and the park reason; nothing branches on it. The runner sends it
+/// again on every new control stream until the Controller answers with
+/// `AddOperator` or `RemOperator` for the id.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct OperatorExited {
+    #[prost(string, tag = "1")]
+    pub operator_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub reason: ::prost::alloc::string::String,
 }

@@ -884,6 +884,79 @@ A monitor exists so its OWNER can maintain its own bookkeeping — drop a route,
 - **WHEN** the convergence tree is read
 - **THEN** no module under it SHALL call `Process.monitor/1` and no `:DOWN` clause SHALL exist there
 
+### Requirement: A runner's report that an operator instance exited SHALL park it for the one rebind
+
+The controller SHALL read `OperatorExited { operator_id, reason }` on a runner's control stream as
+a runner-initiated frame, admit it through the ownership record, flush the reporting runner's
+stream channels off the control channel's process, and then tell the instance's Overwatch. The
+Overwatch SHALL act on a report only when it is current: the instance is bound to the reporting
+session, no bind task is in flight, it is not suspended, it is not already parked, and no
+completion is recorded for it. A report that lands while a bind task is in flight SHALL be held
+and judged by the same rules against the binding that task's result adopts, because the
+incarnation the bind started can exit before the bind reports. Any other report SHALL change
+nothing. A current report SHALL be
+logged, SHALL emit `[:flezha, :operator, :exited]` naming the namespace, the operator, the runner
+and the reason, and SHALL park the instance through the one park funnel with the reason
+`{:operator_exited, reason}`.
+
+That park SHALL be answered as every park is: `rebind_operator` on the `{:parked, operator_id}` key,
+whose bind task sends `AddOperator` with the resume state, restores and awaits every persisted Cell
+of an instance whose input is durable, and re-forwards the input log above the confirmed floor
+before the instance takes new input. No other rebind path SHALL be added.
+
+A park whose reason is `{:operator_exited, _}` SHALL count as repaired only once the probe sees the
+instance unparked and bound for at least the stable window a restarted plugin must stay up for,
+read from the same duration row, so that an instance which exits again inside that window is
+rebound when its key's rung allows and not at once. No new ladder or knob SHALL be introduced.
+
+#### Scenario: A killed instance is parked and rebound
+
+- **GIVEN** an unbounded instance `X` bound to a live Elixir runner and a running convergence loop
+- **WHEN** the runner reports `OperatorExited` for `X`
+- **THEN** `X` SHALL be parked with `{:operator_exited, reason}`, `[:flezha, :operator, :exited]`
+  SHALL be emitted, the loop SHALL plan `rebind_operator` for `X` on the declaring tick, an
+  `AddOperator` for `X` SHALL reach a runner advertising its factory, and `X` SHALL be observed
+  bound and unparked afterwards
+
+#### Scenario: A stale report changes nothing
+
+- **GIVEN** an instance `X` bound to session B
+- **WHEN** an `OperatorExited` for `X` is admitted from session A, which shares B's stable identity
+- **THEN** `X` SHALL NOT be parked and no rebind SHALL be planned for it
+
+#### Scenario: A report while a bind is in flight is judged against the binding it adopts
+
+- **GIVEN** an instance `X` whose bind task is running
+- **WHEN** an `OperatorExited` for `X` arrives, and the bind task then reports `X` bound
+- **THEN** `X` SHALL NOT be parked while the task runs, the task's result SHALL be adopted, and `X`
+  SHALL then be parked with `{:operator_exited, reason}` when the report came from the session the
+  adopted binding names, and left bound otherwise
+
+#### Scenario: A report for a suspended or completed instance changes nothing
+
+- **WHEN** an `OperatorExited` arrives for an instance that is suspended, or for a bounded instance
+  whose completion is recorded
+- **THEN** the instance SHALL NOT be parked or rebound, and a completed one's teardown SHALL proceed
+
+#### Scenario: A second report for a parked instance changes nothing
+
+- **GIVEN** an instance `X` already parked by a report
+- **WHEN** the runner sends the same report again
+- **THEN** `X` SHALL stay parked with its first reason and one rebind SHALL be planned
+
+#### Scenario: An instance that dies again inside the stable window waits its rung
+
+- **GIVEN** an instance `X` rebound after a report, whose park fact is still held
+- **WHEN** `X` is reported exited again before it has been bound for the stable window
+- **THEN** the report SHALL cause no immediate tick, and the next `rebind_operator` for `X` SHALL be
+  planned only once its `{:parked, X}` key's rung has elapsed
+
+#### Scenario: An instance that stays up clears its ladder
+
+- **GIVEN** an instance `X` rebound after a report
+- **WHEN** the probe has seen `X` bound and unparked for the stable window
+- **THEN** its park fact SHALL be dropped and its `{:parked, X}` key reset
+
 ## Removed Requirements
 
 ### Requirement: `Backoff.schedule_ms/0` is part of the public API

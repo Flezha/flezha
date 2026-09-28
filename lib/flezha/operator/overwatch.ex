@@ -76,6 +76,9 @@ defmodule Flezha.Operator.Overwatch do
     # Wall-clock ms at process start, for `flz operator info` uptime. Wall-clock
     # (not monotonic) so the value stays comparable when read from another node.
     started_at: nil,
+    # Wall-clock ms at which a bind task's binding was last adopted: how long a
+    # rebound instance has stayed up, for the convergence loop's stable window.
+    bound_at: nil,
     # Liveness counters ref (io_in_received / forwarded / filtered_nil) so a
     # stall can be localised to "WS plugin stopped feeding" vs "operator stopped
     # forwarding to the channel".
@@ -112,6 +115,9 @@ defmodule Flezha.Operator.Overwatch do
     # state is stale by the time it reports, and the journaled tail still
     # owes a wake.
     parked_in_flight: false,
+    # An exit report that landed while a bind task was binding, as
+    # `{runner_id, reason}`: judged once the bind's result is adopted.
+    exited_in_flight: nil,
     # Late-input correction window (ms), declared by the SDK. `nil` = the class
     # never corrects. Gates lateness handling and the event-time-ordered replay.
     correction_window_ms: nil,
@@ -572,6 +578,10 @@ defmodule Flezha.Operator.Overwatch do
   def handle_cast({:suspend, iter, park}, %__MODULE__{} = state) do
     {:noreply, Migration.suspend_at(state, iter, park), :hibernate}
   end
+
+  # The runner reports this instance's process exited.
+  def handle_cast({:operator_exited, runner_id, reason}, %__MODULE__{} = state),
+    do: {:noreply, Migration.park_exited(state, runner_id, reason)}
 
   # Replaces `state.snapshot` with the SDK's final state on graceful shutdown.
   # A handover ships it and the next running migrate seeds from it, until a

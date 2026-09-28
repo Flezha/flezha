@@ -330,6 +330,71 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
     assert ClassRegistry.parked(inst) == park()
   end
 
+  describe "a runner's exit report" do
+    defp report(state) do
+      {{:noreply, after_report}, _log} =
+        ExUnit.CaptureLog.with_log(fn ->
+          Overwatch.handle_cast({:operator_exited, "ex_1", ":killed"}, state)
+        end)
+
+      after_report
+    end
+
+    test "for the bound session parks the instance with the reason and reports it" do
+      inst = instance_id()
+
+      FlezhaTest.Helper.MessageTestHelper.forward_telemetry(
+        [:flezha, :operator, :exited],
+        :exited
+      )
+
+      parked = report(state(inst))
+
+      assert parked.init_error == {:operator_exited, ":killed"}
+
+      assert_received {:exited, %{count: 1},
+                       %{
+                         namespace: "default",
+                         operator_id: ^inst,
+                         runner_id: "ex_1",
+                         reason: ":killed"
+                       }}
+    end
+
+    test "while a bind is in flight is held, and judged against the binding it adopts" do
+      stub(Flezha.Service.HubManager, :operator_set_runner, fn _, _, _ -> :ok end)
+      binding = state(instance_id(), migrate_task: %{pid: self(), then: nil})
+
+      held = report(binding)
+      assert {held.init_error, held.exited_in_flight} == {nil, {"ex_1", ":killed"}}
+
+      for {runner_id, parked} <- [{"ex_1", {:operator_exited, ":killed"}}, {"ex_2", nil}] do
+        recovered = %{binding | migrate_task: nil, runner_id: runner_id}
+
+        {{:noreply, adopted}, _log} =
+          ExUnit.CaptureLog.with_log(fn ->
+            Overwatch.handle_info({:migrate_task_result, self(), {:bound, recovered}}, held)
+          end)
+
+        assert {adopted.init_error, adopted.exited_in_flight} == {parked, nil}
+      end
+    end
+
+    test "changes nothing when it is stale, answered already, or the run is over" do
+      inst = instance_id()
+      :ok = Flezha.State.Completion.write(inst, %{namespace: "default", status: "ok"})
+
+      for current <- [
+            state(instance_id(), runner_id: "ex_2"),
+            state(instance_id(), suspended: true),
+            state(instance_id(), init_error: {:operator_exited, ":boom"}),
+            state(inst)
+          ] do
+        assert report(current) == current
+      end
+    end
+  end
+
   test "whether an instance sleeps is read from its park record and its log, for either kind" do
     for kind <- [:unbounded, :bounded] do
       inst = instance_id()

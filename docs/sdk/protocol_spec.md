@@ -392,6 +392,7 @@ message CommandResponse {
 | 35 | `SpawnBoundedResponse` | C → R | none |
 | 36 | `AdminRequest` | R → C | `AdminResponse` (tag 37) under the same `reference_id` |
 | 37 | `AdminResponse` | C → R | none |
+| 38 | `OperatorExited` | R → C | none |
 
 Tags 15, 17 and 25 are message types that only ever ride as a
 `CommandResponse.raw_data`, never as a `CommandRequest`.
@@ -711,6 +712,37 @@ Cells' effect records instead, and that debt (exact and durable) is waited for
 under a 60 s bound, until every Cell writer of the instance owes nothing; an
 entry still held for a stage marker is owed nothing. Field 5 was a `direct_outputs` count and is
 reserved; a runner that still sets it is simply not read.
+
+### OperatorExited
+
+`OperatorExited { operator_id, reason }` travels runner → controller,
+one-way, when the process of an operator instance of either kind exits
+abnormally: any reason but a clean stop, which a `RemOperator`, a finished
+bounded run or a graceful shutdown produce. The runner has already dropped the
+instance, so nothing it reads is routed to the dead process and the next
+`AddOperator` for the id starts a fresh one. `reason` renders the exit reason
+for the log, the telemetry and the park reason; nothing branches on it. The
+runner keeps the report until an `AddOperator` or `RemOperator` names the id,
+and sends it again after every `ConnectSocket` it answers, because a report
+written while no control stream is bound reaches no one.
+
+The controller admits it through the instance's ownership record, as every
+frame naming an operator is: a runner that does not own the instance is told
+`RemOperator` once and nothing else happens. An admitted report first flushes
+the runner's stream channels, so every frame the dead incarnation wrote is read,
+and then reaches the instance's Overwatch, which acts only on a current report:
+the instance is bound to the reporting session, no bind is in flight, it is
+neither suspended nor already parked, and no completion is recorded for it. A
+report that lands while a bind is in flight is held and judged against the
+binding that bind adopts, since the incarnation it started can die first. A
+current report parks the instance with the reason
+`{:operator_exited, reason}`, and the convergence loop rebinds it as it
+un-parks any operator: `AddOperator` with the resume state, the persisted Cells
+restored, then the input log re-forwarded above the confirmed floor. A park
+this report caused counts as repaired only once the rebound instance has stayed
+bound for the stable window, so one that dies on every bind is retried on its
+backoff rung. Only the Elixir runtime sends this frame; the `flz_core`
+runtimes decode it as a notification they never act on.
 
 ### CellState
 

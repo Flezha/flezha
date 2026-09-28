@@ -100,7 +100,8 @@ defmodule Flezha.Runner.StreamPool do
   @doc """
   Flush `runner_id`'s channels: answer only once every frame already in each
   channel's mailbox has been routed and cast onward. What a completed
-  bounded operator's teardown drives before its Overwatch is stopped.
+  bounded operator's teardown drives before its Overwatch is stopped, and an
+  exit report before its Overwatch is told.
 
   The barrier is the CALL, not what it asks — a `GenServer.call` is a message
   in the channel's FIFO mailbox, so any call it answers proves the frames

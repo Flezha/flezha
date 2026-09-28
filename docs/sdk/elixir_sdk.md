@@ -486,7 +486,11 @@ timers with its state. A Single or Static Cell that crashes outside the ladder i
 again at once, as it was at start, so the timers its slot holds are re-armed before any
 input; it cannot loop, because everything a Tasklet raises rides the ladder and parks —
 only a crash outside it re-mints, and a fresh Cell dispatches nothing until an input or a
-due timer reaches it.
+due timer reaches it. That holds while the instance has no unfinished input. A Cell that
+dies outside the ladder while the instance holds an input with an offset (one it took or
+queued and has not finished) ends its Operator instead: the runner reports the instance,
+and the controller rebinds it, restores its Cells and re-forwards the input log above the
+confirmed floor, so those inputs run again rather than behind a replacement's floor.
 
 **Observability.** Registrations, firings, cancellations and refusals are one
 `[:flezha, :sdk, :timers]` telemetry event carrying `event:` and `tasklet:` — this SDK's

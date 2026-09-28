@@ -47,6 +47,7 @@ message CommandRequest {
         SpawnBoundedResponse spawn_bounded_response = 35;
         AdminRequest admin_request = 36;
         AdminResponse admin_response = 37;
+        OperatorExited operator_exited = 38;
     }
 }
 
@@ -684,4 +685,15 @@ message AdminRequest {
 message AdminResponse {
     string result = 1;
     string error = 2;
+}
+
+// SDK -> Controller, one-way, over the "control_command" payload_id: the
+// process of operator instance `operator_id` exited abnormally, so the runner
+// no longer hosts it. `reason` renders the exit reason for the log, the
+// telemetry and the park reason; nothing branches on it. The runner sends it
+// again on every new control stream until the Controller answers with
+// `AddOperator` or `RemOperator` for the id.
+message OperatorExited {
+    string operator_id = 1;
+    string reason = 2;
 }

@@ -323,11 +323,14 @@ defmodule Flezha.Convergence.Facts do
   end
 
   # A park is repaired once the probe sees the operator unparked, and gone
-  # once the probe sees no operator at all.
-  defp repaired?(:operator_parked, ref, _args, reality) do
+  # once the probe sees no operator at all. One a runner's exit report caused
+  # also waits until the rebound instance has stayed bound for the window a
+  # restarted plugin must stay up for, so one that dies again on every bind
+  # waits its key's rung rather than being rebound at bind speed.
+  defp repaired?(:operator_parked, ref, args, reality) do
     case get_in(reality, [:operators, ref]) do
       %{bound_runner: :unknown} -> false
-      %{park_reason: reason} -> is_nil(reason)
+      %{park_reason: reason} = observed -> is_nil(reason) and stayed_up?(args, observed)
       _ -> true
     end
   end
@@ -341,7 +344,7 @@ defmodule Flezha.Convergence.Facts do
         false
 
       %{plugin_uptimes: uptimes} ->
-        Map.get(uptimes, plugin_id, -1) >= Durations.get(:plugin_stable_uptime_ms)
+        Map.get(uptimes, plugin_id, -1) >= stable_uptime_ms()
 
       _ ->
         true
@@ -367,6 +370,11 @@ defmodule Flezha.Convergence.Facts do
   end
 
   defp repaired?(_kind, _target, _args, _reality), do: false
+
+  defp stayed_up?(%{reason: {:operator_exited, _}}, observed),
+    do: (Map.get(observed, :bound_for_ms) || -1) >= stable_uptime_ms()
+
+  defp stayed_up?(_args, _observed), do: true
 
   defp nobody_names?(reality, runner_id) do
     reality

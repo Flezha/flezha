@@ -193,6 +193,44 @@ defmodule Flezha.Convergence.LoopTest do
       assert attempt({:parked, "op"}) == 0
     end
 
+    # fails when: an instance that dies again on every bind is rebound at bind
+    # speed. Its exit park stays held while the rebound instance is younger
+    # than the stable window, so a second report re-declares a known key,
+    # which ticks nothing, and its rebind waits the rung the first one walked.
+    test "an instance that keeps exiting is rebound on its rung, and one that stays up clears it" do
+      test_pid = self()
+      stub(Heal, :execute, fn op -> send(test_pid, {:healed, op.primitive}) && :ok end)
+      exited = {:operator_exited, ":killed"}
+      park = {:operator_parked, {:ns, "op"}, %{reason: exited, transport: nil}}
+      observe = fn fields -> stub(Probe, :snapshot, fn -> reality(fields) end) end
+
+      up_for = fn ms ->
+        %{parked?: false, park_reason: nil, bound_runner: @fresh, bound_for_ms: ms}
+      end
+
+      observe.(%{parked?: true, park_reason: exited, bound_runner: @fresh})
+      Facts.declare(park)
+      assert_receive {:healed, :rebind_operator}, 1_000
+      assert attempt({:parked, "op"}) == 1
+
+      observe.(up_for.(10))
+      :ok = Loop.tick_now()
+      assert attempt({:parked, "op"}) == 1, "the exit park cleared inside the stable window"
+
+      watch_ticks()
+      observe.(%{parked?: true, park_reason: exited, bound_runner: @fresh})
+      Facts.declare(park)
+      _ = :sys.get_state(Loop)
+      refute_received {:tick_state, _}, "a re-declared exit park ticked at once"
+
+      :ok = Loop.tick_now()
+      refute_received {:healed, _}, "the second rebind did not wait its rung"
+
+      observe.(up_for.(Facts.stable_uptime_ms()))
+      :ok = Loop.tick_now()
+      assert attempt({:parked, "op"}) == 0
+    end
+
     # A rung already walked, eligible again: what a rebind that finds no runner
     # must leave exactly as it is.
     defp seed_rung(key, attempt) do

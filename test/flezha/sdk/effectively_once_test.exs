@@ -235,23 +235,22 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
     assert {1, %{changes: [], consumed_offset: 3}} = effect(after_restore)
   end
 
-  test "a replacement after an untrappable kill re-holds the staged interval at the slot's seq" do
+  # The staged inputs are still held, so no replacement is minted over them:
+  # the Operator ends, and the controller's rebind re-forwards them.
+  test "an untrappable kill with an interval staged ends the Operator and ships nothing" do
+    Process.flag(:trap_exit, true)
     %{op: op} = start_operator(CheckpointBatchedOp)
     pid = cell!(op, @task)
     push(op, "k1=a", 1)
     push(op, "k2=b", 2)
     assert {:ok, _state, 0} = Cell.read(pid, 1_000)
 
-    ref = Process.monitor(pid)
-    push(op, "kill", 3)
-    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}, 2_000
+    ExUnit.CaptureLog.capture_log(fn ->
+      push(op, "kill", 3)
+      assert_receive {:EXIT, ^op, {:cell_exited, :killed}}, 2_000
+    end)
 
-    push(op, "commit:now", 4)
-    assert [only] = frames(1)
-    assert {0, body} = effect(only)
-    assert length(body.changes) == 2
-    assert Enum.map(body.outputs, & &1.payload) == ["k1=a", "k2=b"]
-    assert body.consumed_offset == 4
+    refute_receive {:flz_data, _, "cell_effect_record", _, _}, 100
   end
 
   test "an inter-tasklet output holds its record until the consumer admits the push" do

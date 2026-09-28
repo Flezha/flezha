@@ -2,7 +2,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   @moduledoc """
   The requests a runner's SDK initiates on its control stream: the ones that
   act on one operator (a graceful-shutdown notification, a bounded operator
-  completion, an iteration park, a durability barrier) and the ones scoped to
+  completion, an iteration park, an exit report, a durability barrier) and the ones scoped to
   the runner or its namespace (a factory update, a tasklet-requested spawn,
   an admin call).
 
@@ -243,6 +243,30 @@ defmodule Flezha.Runner.ControlChannel.Requests do
       with :ok <- TaskJournal.release_unread(operator_id, consumed_offset),
            do: Migration.suspend(namespace, operator_id, iter, park)
     end)
+  end
+
+  @doc """
+  The runner reports that an instance's process exited abnormally and that it
+  no longer hosts it. Tell the instance's Overwatch, which parks it for the
+  convergence loop's rebind when the report is current.
+
+  Off this process, behind a flush of the runner's stream channels: every
+  frame the dead incarnation wrote is read before the rebind restores its
+  Cells, and the flush waits on channels this process does not own.
+  """
+  @spec operator_exited(map(), RunnerCommands.OperatorExited.t()) :: :ok
+  def operator_exited(state, %RunnerCommands.OperatorExited{} = exited) do
+    %RunnerCommands.OperatorExited{operator_id: operator_id, reason: reason} = exited
+    %{namespace: namespace, runner_id: runner_id} = state
+
+    if Records.admit(state, operator_id, :operator_exited) do
+      Task.start(fn ->
+        StreamPool.flush_channels(runner_id)
+        Migration.operator_exited(namespace, operator_id, runner_id, reason)
+      end)
+    end
+
+    :ok
   end
 
   @doc """

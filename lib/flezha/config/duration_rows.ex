@@ -131,7 +131,7 @@ defmodule Flezha.Config.DurationRows do
     {:convergence_tick_ms, :ms, 5_000, key: true, env: "FLEZHA_CONVERGENCE_TICK_MS"},
     {:convergence_unmet_intent_grace_ms, :ms, 120_000,
      key: true, env: "FLEZHA_CONVERGENCE_UNMET_INTENT_GRACE_MS"},
-    {:plugin_stable_uptime_ms, :ms, 60_000, []},
+    {:plugin_stable_uptime_ms, :ms, 60_000, key: true},
 
     # ---- plugins -----------------------------------------------------------
     # Headroom above the Overwatch call for provider health probes: each

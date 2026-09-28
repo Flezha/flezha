@@ -285,6 +285,9 @@ defmodule Flezha.Runner.ControlChannel do
       {:iter_park, %{} = park, _reference_id} ->
         Requests.iter_park(state, park)
 
+      {:operator_exited, %{} = exited, _reference_id} ->
+        Requests.operator_exited(state, exited)
+
       {:update_factories, %{} = update, _reference_id} ->
         Requests.update_factories(state, update)
 
@@ -440,6 +443,7 @@ defmodule Flezha.Runner.ControlChannel do
     :task_commit,
     :iter_commit,
     :iter_park,
+    :operator_exited,
     :update_factories,
     :spawn_bounded_request,
     :admin_request

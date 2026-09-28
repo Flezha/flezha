@@ -145,7 +145,8 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
         | Some(Command::IterPark(_))
         | Some(Command::UpdateFactories(_))
         | Some(Command::SpawnBoundedRequest(_))
-        | Some(Command::AdminRequest(_)) => CommandActionType::NotificationIgnore,
+        | Some(Command::AdminRequest(_))
+        | Some(Command::OperatorExited(_)) => CommandActionType::NotificationIgnore,
         Some(Command::RunnerShutdownAck(_)) => CommandActionType::AckSignal(Ok(String::new())),
         Some(Command::SpawnBoundedResponse(reply)) => CommandActionType::AckSignal(ack_result(
             crate::spawn::encode_ack(&reply.outcome, &reply.instance_id),
@@ -353,6 +354,25 @@ mod tests {
         match out {
             FrameOutcome::Command(_, ref_id) => assert_eq!(ref_id, "ref-shutdown"),
             FrameOutcome::PeerClosed => panic!("well-formed request must not be PeerClosed"),
+        }
+    }
+
+    #[test]
+    fn an_exit_report_is_a_notification_this_side_only_sends() {
+        let bytes = CommandRequest {
+            reference_id: "ref-exited".to_string(),
+            command: Some(Command::OperatorExited(crate::pb::OperatorExited {
+                operator_id: "op-1".to_string(),
+                reason: ":killed".to_string(),
+            })),
+        }
+        .encode_to_vec();
+
+        match get_handler("payload", &bytes).expect("an exit report must decode") {
+            FrameOutcome::Command(CommandActionType::NotificationIgnore, ref_id) => {
+                assert_eq!(ref_id, "ref-exited")
+            }
+            other => panic!("an exit report must be ignored, got {:?}", other),
         }
     }
 

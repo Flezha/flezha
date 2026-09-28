@@ -450,6 +450,46 @@ defmodule Flezha.Convergence.HealTest do
 
       assert released == [Planner.ladder_key("op_moved")]
     end
+
+    test "an exit park is held until the rebound instance stays bound for the stable window" do
+      window = Facts.stable_uptime_ms()
+      exited = %{reason: {:operator_exited, ":killed"}, transport: nil}
+
+      facts =
+        Map.new(
+          [
+            {"exit_young", exited},
+            {"exit_old", exited},
+            {"exit_parked", exited},
+            {"plain", %{reason: :boom}}
+          ],
+          fn {id, args} -> {{:operator_parked, {@stall_ns, id}}, %{at: 0, args: args}} end
+        )
+
+      unparked = %{bound_runner: "e_live", park_reason: nil}
+
+      reality = %{
+        operators: %{
+          {@stall_ns, "exit_young"} => Map.put(unparked, :bound_for_ms, window - 1),
+          {@stall_ns, "exit_old"} => Map.put(unparked, :bound_for_ms, window),
+          {@stall_ns, "exit_parked"} => %{
+            bound_runner: "e_live",
+            park_reason: exited.reason,
+            bound_for_ms: window
+          },
+          {@stall_ns, "plain"} => Map.put(unparked, :bound_for_ms, nil)
+        }
+      }
+
+      {held, released} = Facts.settle(facts, reality, 60_000, 1_000)
+
+      assert Enum.sort(Map.keys(held)) == [
+               {:operator_parked, {@stall_ns, "exit_parked"}},
+               {:operator_parked, {@stall_ns, "exit_young"}}
+             ]
+
+      assert Enum.sort(released) == [{:parked, "exit_old"}, {:parked, "plain"}]
+    end
   end
 
   describe "reconcile-round cooperation (D7)" do
