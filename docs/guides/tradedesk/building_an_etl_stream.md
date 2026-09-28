@@ -955,9 +955,8 @@ defmodule Tradedesk.BuyAboveAverage do
       # A stronger move buys more.
       quantity = round(percent * @units_per_percent)
 
-      order = Jason.encode!(%{symbol: symbol, quantity: quantity})
       # One bounded operator per order.
-      spawn_bounded(ctx, "order_executor", order)
+      spawn_bounded(ctx, "order_executor", %{symbol: symbol, quantity: quantity})
 
       emit(
         ctx,
@@ -977,10 +976,9 @@ It takes the move and emits a line, and has no `state` block, because it
 remembers nothing. The move arrives as the map `track_prices` emitted, with
 atom keys: a value that goes from one tasklet to the next on the same runner
 stays an Elixir term. It does two things per input through the context:
-`spawn_bounded/3` starts a bounded operator, and `emit/2` sends the line. The
-order a bounded operator is started with is bytes, so the tasklet encodes it
-as JSON with `Jason`, and `order_executor` decodes it into the `OrderTicket`
-its first step takes, declared in
+`spawn_bounded/3` starts a bounded operator, and `emit/2` sends the line.
+`spawn_bounded/3` sends the order, a map, as JSON, and `order_executor` decodes
+it into the `OrderTicket` its first step takes, declared in
 [`building_a_workflow.md`](building_a_workflow.md). `spawn_bounded/3` answers
 a handle that reports whether the order started; the desk does not read it.
 

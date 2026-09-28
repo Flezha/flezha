@@ -301,8 +301,9 @@ output's natural key on a sink declared `keyed/1`; on a node with no keyed sink 
 `{:error, {:key_not_allowed_on_non_keyed_channel, channel}}`, and a keyless emit from a
 Single Cell on a keyed sink answers `{:error, {:key_required_on_keyed_channel, channel}}`),
 `apply/3` (fold a change and record it; a `defchange` recorder calls it),
-`complete/2` (end a bounded instance with a result), `now/1` (the declared clock's value, once per
-invocation; the scheduled timestamp inside `on_timer/4`), `cell_key/1`, and the timer four
+`complete/2` (end a bounded instance with a result, encoded as `spawn_bounded` encodes its
+payload), `now/1` (the declared clock's value, once per invocation; the scheduled timestamp
+inside `on_timer/4`), `cell_key/1`, and the timer four
 — `timer_after/2` (milliseconds after `now/1`), `timer_at_event_time/2`,
 `cancel_processing_time_timer/2`, `cancel_event_time_timer/2` — the registrations answering
 `{:ok, at}`, the absolute timestamp a cancel takes, or
@@ -310,8 +311,9 @@ invocation; the scheduled timestamp inside `on_timer/4`), `cell_key/1`, and the 
 `{:error, {:timer_cap_exceeded, tasklet, max}}`; inside a bounded operator's tasklet all four answer
 `{:error, :timers_unavailable}` (see [Timers and clocks](#timers-and-clocks)).
 `spawn_bounded(ctx, factory_id, payload, opts)` requests spawn-or-deliver of a bounded operator
-instance, `id:` and `if_running:` optional, and answers a `Flezha.SDK.Spawn` handle at once
-that resolves to `{:ok, %{id: id, outcome: outcome}}`; the contract is
+instance, `id:` and `if_running:` optional, with `payload` sent as a sink with no codec sends a
+value (bytes as they are, anything else as JSON; a term with no JSON form raises), and answers
+a `Flezha.SDK.Spawn` handle at once that resolves to `{:ok, %{id: id, outcome: outcome}}`; the contract is
 `docs/sdk/tasklet_requested_spawn.md`. A spawn without `id:` always starts a new
 instance, starts a second one when reissued after a lost answer, and answers an empty id when
 skipped on replay; pass `id:` when that matters.

@@ -155,6 +155,33 @@ defmodule Flezha.SDK.SpawnTest do
       assert_received {:"$gen_cast", {:spawn, ^caller, %Spawn{instance_id: "w2"}, _, :deliver}}
     end
 
+    test "a payload is encoded as a sink with no codec encodes it, and a term with no JSON form raises" do
+      ctx = Ctx.new(Spawner, nil, 0, runner: self())
+
+      _handle = Ctx.spawn_bounded(ctx, "worker", %{symbol: "EURUSD", quantity: 3})
+      assert_received {:"$gen_cast", {:spawn, _, %Spawn{}, json, _}}
+      assert Jason.decode!(json) == %{"symbol" => "EURUSD", "quantity" => 3}
+
+      _handle = Ctx.spawn_bounded(ctx, "worker", "as is")
+      assert_received {:"$gen_cast", {:spawn, _, %Spawn{}, "as is", _}}
+
+      assert_raise Protocol.UndefinedError, fn -> Ctx.spawn_bounded(ctx, "worker", {:no, :json}) end
+      refute_received {:"$gen_cast", _}
+    end
+
+    test "complete encodes its result by the same rule, and nil carries none" do
+      ctx = Ctx.new(Spawner, nil, 0)
+
+      Ctx.complete(ctx, %{filled: 3})
+      assert Ctx.completion(ctx) == ~s({"filled":3})
+      Ctx.complete(ctx, "done")
+      assert Ctx.completion(ctx) == "done"
+      Ctx.complete(ctx, nil)
+      assert Ctx.completion(ctx) == ""
+
+      assert_raise Protocol.UndefinedError, fn -> Ctx.complete(ctx, {:no, :json}) end
+    end
+
     test "if_running without an id raises naming both, and sends nothing" do
       ctx = Ctx.new(Spawner, nil, 0, runner: self())
 
