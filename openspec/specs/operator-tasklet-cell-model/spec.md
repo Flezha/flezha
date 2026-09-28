@@ -652,13 +652,13 @@ Concurrent producers pushing inputs for the same brand-new key SHALL all observe
 - **THEN** the runtime SHALL allocate exactly one `CellSlot` for `"user-99"` and all N inputs SHALL land on its single mailbox in some serial order
 
 ### Requirement: Per-Tasklet idle-TTL eviction is opt-in (no eviction by default)
-`Tasklet::cell_idle_ttl()` SHALL return `Option<Duration>` and SHALL default to `None`. When it returns `None`, the Tasklet's dynamic Cells SHALL NOT be evicted — they live for the lifetime of the Operator (as static Cells do) and no reaper thread SHALL be spawned for the Tasklet.
+`Tasklet::cell_idle_ttl()` SHALL return `Option<Duration>` and SHALL default to `None`. When it returns `None`, the Tasklet's dynamic Cells SHALL NOT be evicted: they live for the lifetime of the Operator (as static Cells do) and no reaper thread SHALL be spawned for the Tasklet.
 
 When `cell_idle_ttl()` returns `Some(ttl)`, the SDK SHALL run one reaper thread for the Tasklet that periodically evicts Cells whose time since last input push exceeds `ttl`. The reaper SHALL acquire the Cell's `inflight` CAS before evicting and SHALL confirm its mailbox is empty; if the CAS is contended, the reaper SHALL skip the Cell and try again on the next sweep. Eviction SHALL increment the per-Tasklet `cells_evicted_total` counter.
 
 The reaper SHALL sweep on a cadence derived as `min(ttl / 4, 30s)`, overridable globally via the `FLEZHA_REAP_INTERVAL_MS` environment variable for testing.
 
-The Elixir SDK carries the same rule in its own core under its own spelling: `cell_idle_ttl_ms/0` (default `nil`), one `:reap` tick per Operator process at the same cadence, and the Operator's routing serialisation as the drain gate — while the sweep runs no push can be routed, a Cell mid-dispatch or holding queued or deferred work is skipped until the next sweep, and an idle one evicts synchronously so its `delete_cell_state` precedes any successor's first record on the same stream.
+The Elixir SDK carries the same rule in its own core under its own spelling: `idle_ttl_seconds/0`, a positive whole number of seconds (default `nil`), one `:reap` tick per Operator process at the same cadence, and the Operator's routing serialisation as the drain gate: while the sweep runs no push can be routed, a Cell mid-dispatch or holding queued or deferred work is skipped until the next sweep, and an idle one evicts synchronously so its `delete_cell_state` precedes any successor's first record on the same stream.
 
 #### Scenario: No eviction by default
 - **WHEN** a dynamic-mode Tasklet does not override `cell_idle_ttl()` (it returns `None`)

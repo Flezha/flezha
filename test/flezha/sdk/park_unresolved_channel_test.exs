@@ -12,29 +12,27 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
   """
   use ExUnit.Case, async: true
 
-  alias Flezha.SDK.{Channels, Ctx, Cell}
+  alias Flezha.SDK.{Channels, Cell}
   alias Flezha.SDK.Operator.Inbox
   alias Flezha.SDK.Wire
   import FlezhaTest.Helper.SdkOperatorHarness
 
   defmodule TaskA do
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "task_a"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "task_a"
 
+    @impl true
     def run(input, state, ctx) do
-      Ctx.emit(ctx, input)
+      emit(ctx, input)
       {:ok, state}
     end
   end
 
   defmodule TaskB do
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "task_b"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "task_b"
 
+    @impl true
     def run(input, state, ctx) do
-      Ctx.emit(ctx, input)
+      emit(ctx, input)
       {:ok, state}
     end
   end

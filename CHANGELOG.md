@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Changed (BREAKING): an Elixir tasklet writes each change with `defchange`
+
+In the Elixir SDK the idle TTL is `idle_ttl_seconds`, a positive whole number of seconds, in place
+of `cell_idle_ttl_ms`. The clock follows from what the tasklet writes: `event_time/1` (renamed
+from `event_time_of/1`) makes it event time, `logical_clock: true` makes it logical, and both at
+once do not compile; the `clock:` option and `clock/0` are gone. A `state` block declares a
+state's fields and defaults and generates no change: the `set_<field>` and `push_<field>`
+recorders and their `{:set, ...}` and `{:push, ...}` clauses are gone, and `defchange` is the one
+way to change state, with or without a block. A module that `use`s `Flezha.SDK.Tasklet` or an
+operator macro and writes `apply_change/2` by hand does not compile; the hand-written
+`@behaviour` form, which does, is the reference form. `complete/2` is imported like `emit/2`. A
+retired option, or a `clock/0`, `event_time_of/1` or `cell_idle_ttl_ms/0` written in a `use`
+module, does not compile, naming what replaced it, and one in a hand-written module is refused
+at registration as `RetiredCallback`, beside the new `TwoClocks`. Saved state is unaffected as
+long as a change keeps its term, with two exceptions. A change a `set_<field>` or
+`push_<field>` recorder wrote (`{:set, field, value}`, `{:push, field, item}`) folds only through
+a `defchange` that records the same tuple, such as `defchange set(state, field, value)`. A change
+a hand-written `apply_change/2` took as a bare term (a string, an atom, a map) is not a term
+`defchange` records, so a log holding one no longer folds and that operator's saved state must be
+cleared once.
+
+### Fixed: an Elixir tasklet's `stable_id` differs between cells
+
+`stable_id/1` in the Elixir SDK hashed an empty identity at seq 0 in every cell, so two bounded
+instances, or two cells, answered the same ids: every tradedesk order was booked and reserved
+under one id. It now derives from the cell's identity and the change seq the invocation starts
+at, as the other SDKs do, so two cells never share an id and an invocation that runs again gets
+the ids it had. The seq moves on only when an invocation records a change, a timer op or an
+effect, so a cell that records nothing answers the same ids on every invocation. Existing Elixir
+cells now answer different ids than before: an input first run before the upgrade and run again
+after it gets a new id, so an effect keyed by that id is not idempotent across the upgrade.
+
 ### Changed (BREAKING): a Node tasklet emits only through its context
 
 A value leaves a Node tasklet only through `ctx.emit` or `ctx.emitTo`: what `run` returns is no

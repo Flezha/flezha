@@ -517,7 +517,7 @@ defmodule Flezha.SDK.PersistenceTest do
       ref = Process.monitor(pid)
       send(pid, :go)
       assert_receive {:flz_data, _, "op-1", "x", _}, 2_000
-      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 2_000
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 3_000
       assert_receive {:dynamic, %{count: 1}, %{operator_id: "op-1", event: :evicted}}, 1_000
       assert {:error, :cell_evicted} = Operator.lookup(op, "gated_ttl", "x")
     end

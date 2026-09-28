@@ -8,7 +8,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
   """
   use ExUnit.Case, async: true
 
-  alias Flezha.SDK.{Channels, Ctx, Cell, Hold, Record, Spawn}
+  alias Flezha.SDK.{Channels, Cell, Hold, Record, Spawn}
   alias Flezha.SDK.Cell.{State, Tier}
   alias Flezha.SDK.Operator.Inbox
   alias Flezha.SDK.Wire
@@ -23,17 +23,21 @@ defmodule Flezha.SDK.CorrectionWindowTest do
   # answered into the output it records.
   defmodule SpawningCorrectionTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "spawning_correction_tasklet"
-    def clock, do: :event_time
+    use Flezha.SDK.Tasklet, name: "spawning_correction_tasklet"
+    @impl true
     defdelegate init_state(key), to: CorrectionTask
-    defdelegate apply_change(state, at), to: CorrectionTask
-    defdelegate event_time_of(input), to: CorrectionTask
+    @impl true
+    defdelegate event_time(input), to: CorrectionTask
 
+    defchange fold(s, at) do
+      %{s | order: [at | s.order]}
+    end
+
+    @impl true
     def run(input, s, ctx) do
-      handle = Ctx.spawn_bounded(ctx, "worker", input, id: "w-" <> input)
-      Ctx.emit_keyed(ctx, "fold", inspect(Spawn.try_result(handle)))
-      {:ok, Ctx.apply(ctx, s, Ctx.now(ctx))}
+      handle = spawn_bounded(ctx, "worker", input, id: "w-" <> input)
+      emit_keyed(ctx, "fold", inspect(Spawn.try_result(handle)))
+      {:ok, fold(s, ctx, now(ctx))}
     end
   end
 
@@ -73,7 +77,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
 
     {seq,
      Enum.map(body.changes, fn c ->
-       {:ok, at} = Record.decode_body(c)
+       {:ok, {:fold, at}} = Record.decode_body(c)
        at
      end)}
   end

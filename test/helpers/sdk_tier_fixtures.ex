@@ -9,32 +9,38 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
   in, which is the only thing a correction changes.
   """
 
-  alias Flezha.SDK.{Channels, Ctx}
+  alias Flezha.SDK.Channels
 
   defmodule TierStoreTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "tier_store_tasklet"
+    use Flezha.SDK.Tasklet, name: "tier_store_tasklet"
+    @impl true
     def init_state(_), do: %{}
-    def apply_change(s, {k, v}), do: Map.put(s, k, v)
+
+    defchange set(s, k, v) do
+      Map.put(s, k, v)
+    end
+
+    @impl true
     def state_from_json(json), do: json
 
     # `commit:` closes the interval and records nothing, as the reference's
     # `checkpoint_store_tasklet` does; `poison` exhausts the ladder.
+    @impl true
     def run("poison" <> _, _s, _ctx), do: {:error, {:non_retryable, "poison value"}}
 
     # Ends the process untrappably mid-dispatch, before any record ships.
     def run("kill", _s, _ctx), do: Process.exit(self(), :kill)
 
     def run("commit:" <> _, s, ctx) do
-      Ctx.checkpoint(ctx)
+      checkpoint(ctx)
       {:ok, s}
     end
 
     def run(input, s, ctx) do
       [k, v] = String.split(input, "=", parts: 2)
-      s = Ctx.apply(ctx, s, {k, v})
-      Ctx.emit_keyed(ctx, k, input)
+      s = set(s, ctx, k, v)
+      emit_keyed(ctx, k, input)
       {:ok, s}
     end
   end
@@ -128,23 +134,28 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule TierTimerTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "tier_timer"
+    use Flezha.SDK.Tasklet, name: "tier_timer"
+    @impl true
     def init_state(_), do: %{}
-    def apply_change(s, {k, v}), do: Map.put(s, k, v)
+
+    defchange set(s, k, v) do
+      Map.put(s, k, v)
+    end
 
     # `arm:<at>` registers a processing-time timer that is already overdue, so
     # the firing needs no wall-clock wait.
+    @impl true
     def run("arm:" <> at, s, ctx) do
-      {:ok, _at} = Ctx.timer_after(ctx, String.to_integer(at))
+      {:ok, _at} = timer_after(ctx, String.to_integer(at))
       {:ok, s}
     end
 
     def run("poison" <> _, _s, _ctx), do: {:error, {:non_retryable, "poison value"}}
 
+    @impl true
     def on_timer(at, _kind, s, ctx) do
-      s = Ctx.apply(ctx, s, {"fired", at})
-      Ctx.emit_keyed(ctx, "fired", "fired@#{at}")
+      s = set(s, ctx, "fired", at)
+      emit_keyed(ctx, "fired", "fired@#{at}")
       {:ok, s}
     end
   end
@@ -167,15 +178,13 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule HeldConsumerTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "held_consumer"
-    def init_state(_), do: nil
-    def mailbox_capacity, do: 1
+    use Flezha.SDK.Tasklet, name: "held_consumer", mailbox_capacity: 1
 
     # Only a `hold` value blocks, and it blocks on its own mailbox until the
     # test releases it — no registered name and no `:persistent_term`, so the
     # module stays `async: true`. The timeout is the fixture's own safety
     # net: a missed release leaves no process wedged past the suite.
+    @impl true
     def run("hold" <> _, s, _ctx) do
       receive do
         :release -> :ok
@@ -191,15 +200,19 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule EdgeProducerTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "edge_producer"
+    use Flezha.SDK.Tasklet, name: "edge_producer"
+    @impl true
     def init_state(_), do: %{}
-    def apply_change(s, {k, v}), do: Map.put(s, k, v)
 
+    defchange set(s, k, v) do
+      Map.put(s, k, v)
+    end
+
+    @impl true
     def run(input, s, ctx) do
       [k, v] = String.split(input, "=", parts: 2)
-      s = Ctx.apply(ctx, s, {k, v})
-      Ctx.emit(ctx, input)
+      s = set(s, ctx, k, v)
+      emit(ctx, input)
       {:ok, s}
     end
   end
@@ -222,15 +235,14 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule StatelessTierTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "stateless_tier"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "stateless_tier"
 
     # No `apply_change/2`: the class holds nothing, and under the tier its
     # output and its offset still have to reach the controller.
+    @impl true
     def run(input, s, ctx) do
       [k, _v] = String.split(input, "=", parts: 2)
-      Ctx.emit_keyed(ctx, k, input)
+      emit_keyed(ctx, k, input)
       {:ok, s}
     end
   end
@@ -256,24 +268,27 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
   # is about fold ORDER. Input is `<event_time>:<label>`.
   defmodule CorrectionTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "correction_tasklet"
-    def clock, do: :event_time
+    use Flezha.SDK.Tasklet, name: "correction_tasklet"
+    @impl true
     def init_state(_), do: %{order: []}
 
-    # Newest first, and the Change IS the event time: nothing here needs the
-    # app fixture's bucketing, its JSON shape or its tuple.
-    def apply_change(s, at), do: %{s | order: [at | s.order]}
+    # Newest first, and the change carries only the event time: nothing here
+    # needs the app fixture's bucketing or its JSON shape.
+    defchange fold(s, at) do
+      %{s | order: [at | s.order]}
+    end
 
-    def event_time_of(input) do
+    @impl true
+    def event_time(input) do
       {at, _rest} = Integer.parse(input)
       at
     end
 
+    @impl true
     def run(input, s, ctx) do
-      at = Ctx.now(ctx)
-      Ctx.emit_keyed(ctx, "fold", input)
-      {:ok, Ctx.apply(ctx, s, at)}
+      at = now(ctx)
+      emit_keyed(ctx, "fold", input)
+      {:ok, fold(s, ctx, at)}
     end
   end
 

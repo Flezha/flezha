@@ -327,11 +327,11 @@ assertThat(TaskletTestHarness.of(new CountTasklet()).withWallClock(t0)
 
 ## Elixir SDK
 
-The authoring surface is `use Flezha.SDK.Tasklet` with a `state do field … end` block:
-the block generates `apply_change/2`, which declares the tasklet changeful,
-`state_from_json/1`, which turns a JSON object read back from the controller into the state
-term, and the recorders, each journaling through `Flezha.SDK.Ctx.apply/3`, the recorded
-mutation path. `compact_after_bytes` is the compaction threshold, and
+The authoring surface is `use Flezha.SDK.Tasklet` with a `state do field … end` block and
+`defchange`: the block generates `state_from_json/1`, which turns a JSON object read back
+from the controller into the state term, and each `defchange` generates an `apply_change/2`
+clause, which declares the tasklet changeful, and its recorder, journaling through
+`Flezha.SDK.Ctx.apply/3`, the recorded mutation path. `compact_after_bytes` is the compaction threshold, and
 `UnboundedOperator.persistence_enabled/0` is the class toggle;
 `schema_version/0` and `min_readable_schema_version/0` declare the version and the readable
 floor, and `migrate_state/2` / `migrate_change/2` read an older version's DECODED term into

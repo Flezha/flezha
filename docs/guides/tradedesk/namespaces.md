@@ -164,8 +164,12 @@ $desk = Flezha::createRunner('trading');
 ### Elixir
 
 ```elixir
-desk = Flezha.SDK.create_runner("trading", transport: :uds)
+children = [{Flezha.SDK, namespace: "trading", transport: :uds}]
 ```
+
+The runner is a child of your application's supervision tree, and
+[`building_an_etl_stream.md`](building_an_etl_stream.md#the-runner) adds the
+desk's operators to it.
 
 <!-- tabs-close -->
 

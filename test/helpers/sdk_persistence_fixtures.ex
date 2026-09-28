@@ -6,57 +6,78 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   sinks whose frames are stamped.
   """
 
-  alias Flezha.SDK.Ctx
+  # The counter's one change, for every tasklet here that counts as it does.
+  defmodule Delta do
+    @moduledoc false
+    defmacro __using__(_opts) do
+      quote do
+        require Flezha.SDK.State
+
+        Flezha.SDK.State.defchange delta(s, n) do
+          %{s | value: s.value + n}
+        end
+      end
+    end
+  end
 
   defmodule CounterTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "counter"
+    use Flezha.SDK.Tasklet, name: "counter"
+    @impl true
     def init_state(_), do: %{value: 0}
-    def apply_change(s, {:delta, n}), do: %{s | value: s.value + n}
+
+    use Delta
+
+    @impl true
     def state_from_json(%{"value" => v}), do: %{value: v}
 
     # `:kill` ends the process untrappably mid-dispatch, before any record ships.
+    @impl true
     def run(:kill, _s, _ctx), do: Process.exit(self(), :kill)
 
     def run(input, s, ctx) do
-      s = Ctx.apply(ctx, s, {:delta, input})
-      Ctx.emit(ctx, Integer.to_string(s.value))
+      s = delta(s, ctx, input)
+      emit(ctx, Integer.to_string(s.value))
       {:ok, s}
     end
   end
 
   defmodule EchoTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "echo"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "echo"
 
+    @impl true
     def run(input, s, ctx) do
-      Ctx.emit(ctx, input)
+      emit(ctx, input)
       {:ok, s}
     end
   end
 
   defmodule ThriftyTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "thrifty"
+    use Flezha.SDK.Tasklet, name: "thrifty", compact_after_bytes: 1_048_576
+    @impl true
     def init_state(_), do: %{value: 0}
-    def compact_after_bytes, do: 1_048_576
-    defdelegate apply_change(s, c), to: CounterTask
+
+    use Delta
+
+    @impl true
     defdelegate run(input, s, ctx), to: CounterTask
   end
 
   defmodule StaticCounterTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "scounter"
-    def cell_keys, do: ["a", "b"]
+    use Flezha.SDK.Tasklet, name: "scounter", cell_keys: ["a", "b"]
+    @impl true
     def cells_for(_input), do: ["a"]
+    @impl true
     defdelegate init_state(key), to: CounterTask
-    defdelegate apply_change(s, change), to: CounterTask
+
+    use Delta
+
+    @impl true
     defdelegate state_from_json(json), to: CounterTask
+    @impl true
     defdelegate run(input, s, ctx), to: CounterTask
   end
 
@@ -152,15 +173,17 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   # stamps' position after the metadata are both observable on one dispatch.
   defmodule StampedTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "stamped"
+    use Flezha.SDK.Tasklet, name: "stamped"
+    @impl true
     def init_state(_), do: %{value: 0}
-    def apply_change(s, {:delta, n}), do: %{s | value: s.value + n}
 
+    use Delta
+
+    @impl true
     def run(input, s, ctx) do
-      s = Ctx.apply(ctx, s, {:delta, input})
-      :ok = Ctx.emit_with_meta(ctx, "a", %{"tag" => "x"})
-      :ok = Ctx.emit(ctx, "b")
+      s = delta(s, ctx, input)
+      :ok = emit_with_meta(ctx, "a", %{"tag" => "x"})
+      :ok = emit(ctx, "b")
       {:ok, s}
     end
   end
@@ -169,12 +192,11 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   # readable off the park it produces.
   defmodule RefusingTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "refusing"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "refusing"
 
+    @impl true
     def run(input, s, ctx) do
-      case Ctx.emit(ctx, input) do
+      case emit(ctx, input) do
         :ok -> {:ok, s}
         {:error, reason} -> {:error, {:non_retryable, inspect(reason)}}
       end
@@ -241,12 +263,15 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   # Two live Cells at most: a third key's input has nowhere to go.
   defmodule CappedTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "capped"
-    def max_cells, do: 2
+    use Flezha.SDK.Tasklet, name: "capped", max_cells: 2
+    @impl true
     defdelegate init_state(key), to: CounterTask
-    defdelegate apply_change(s, change), to: CounterTask
+
+    use Delta
+
+    @impl true
     defdelegate state_from_json(json), to: CounterTask
+    @impl true
     defdelegate run(input, s, ctx), to: CounterTask
   end
 
@@ -269,29 +294,29 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   # Emits what `Ctx.now/1` served: the seq the dispatch started at.
   defmodule LogicalClockTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "logical"
-    def clock, do: :logical
+    use Flezha.SDK.Tasklet, name: "logical", logical_clock: true
+    @impl true
     def init_state(_), do: %{value: 0}
-    def apply_change(s, {:delta, n}), do: %{s | value: s.value + n}
 
+    use Delta
+
+    @impl true
     def run(input, s, ctx) do
-      Ctx.emit(ctx, Integer.to_string(Ctx.now(ctx)))
-      {:ok, Ctx.apply(ctx, s, {:delta, input})}
+      emit(ctx, Integer.to_string(now(ctx)))
+      {:ok, delta(s, ctx, input)}
     end
   end
 
   # Emits what `Ctx.now/1` served: the input's own timestamp.
   defmodule EventTimeTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "event_time"
-    def clock, do: :event_time
-    def event_time_of(input), do: input
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "event_time"
+    @impl true
+    def event_time(input), do: input
 
+    @impl true
     def run(_input, s, ctx) do
-      Ctx.emit(ctx, Integer.to_string(Ctx.now(ctx)))
+      emit(ctx, Integer.to_string(now(ctx)))
       {:ok, s}
     end
   end
@@ -299,12 +324,11 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   # Emits what `Ctx.now/1` served under the default clock: the epoch millisecond.
   defmodule NowTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "now"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "now"
 
+    @impl true
     def run(_input, s, ctx) do
-      Ctx.emit(ctx, Integer.to_string(Ctx.now(ctx)))
+      emit(ctx, Integer.to_string(now(ctx)))
       {:ok, s}
     end
   end
@@ -314,24 +338,32 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   # firing journals the timestamp it was handed and emits it.
   defmodule TimerTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "timer"
+    use Flezha.SDK.Tasklet, name: "timer"
+    @impl true
     def init_state(_), do: %{value: 0, fired: []}
-    def apply_change(s, {:delta, n}), do: %{s | value: s.value + n}
-    def apply_change(s, {:fired, at}), do: %{s | fired: s.fired ++ [at]}
+
+    use Delta
+
+    defchange fired(s, at) do
+      %{s | fired: s.fired ++ [at]}
+    end
+
+    @impl true
     def state_from_json(%{"value" => v, "fired" => f}), do: %{value: v, fired: f}
 
+    @impl true
     def run(input, s, ctx) do
-      s = Ctx.apply(ctx, s, {:delta, input})
-      {:ok, _at} = Ctx.timer_after(ctx, input * 1_000)
-      Ctx.emit(ctx, Integer.to_string(s.value))
+      s = delta(s, ctx, input)
+      {:ok, _at} = timer_after(ctx, input * 1_000)
+      emit(ctx, Integer.to_string(s.value))
       {:ok, s}
     end
 
     # `now/1` inside a firing is the scheduled timestamp, whatever the clock.
+    @impl true
     def on_timer(at, _kind, s, ctx) do
-      s = Ctx.apply(ctx, s, {:fired, at})
-      Ctx.emit(ctx, "fired@#{at}@#{Ctx.now(ctx)}")
+      s = fired(s, ctx, at)
+      emit(ctx, "fired@#{at}@#{now(ctx)}")
       {:ok, s}
     end
   end
@@ -340,25 +372,25 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   # timer at event time 0 (the high-water stays), `<t>` is a tick at `t`.
   defmodule EventTimerTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "event_timer"
-    def clock, do: :event_time
-    def event_time_of({:arm, _at}), do: 0
-    def event_time_of({:tick, t}), do: t
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "event_timer"
+    @impl true
+    def event_time({:arm, _at}), do: 0
+    def event_time({:tick, t}), do: t
 
+    @impl true
     def run({:arm, at}, s, ctx) do
-      {:ok, ^at} = Ctx.timer_at_event_time(ctx, at)
+      {:ok, ^at} = timer_at_event_time(ctx, at)
       {:ok, s}
     end
 
     def run({:tick, t}, s, ctx) do
-      Ctx.emit(ctx, "tick@#{t}")
+      emit(ctx, "tick@#{t}")
       {:ok, s}
     end
 
+    @impl true
     def on_timer(at, kind, s, ctx) do
-      Ctx.emit(ctx, "fired@#{at}:#{kind}:#{Ctx.now(ctx)}")
+      emit(ctx, "fired@#{at}:#{kind}:#{now(ctx)}")
       {:ok, s}
     end
   end
@@ -367,21 +399,21 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   # so an input pushed meanwhile is dispatched after the firing.
   defmodule GatedTimerTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "gated_timer"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "gated_timer"
 
+    @impl true
     def run("arm", s, ctx) do
-      {:ok, _at} = Ctx.timer_after(ctx, 0)
-      Ctx.emit(ctx, "armed")
+      {:ok, _at} = timer_after(ctx, 0)
+      emit(ctx, "armed")
       {:ok, s}
     end
 
     def run(input, s, ctx) do
-      Ctx.emit(ctx, input)
+      emit(ctx, input)
       {:ok, s}
     end
 
+    @impl true
     def on_timer(_at, _kind, s, ctx) do
       send(Process.whereis(:timer_gate_probe), :firing)
 
@@ -389,7 +421,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
         :go -> :ok
       end
 
-      Ctx.emit(ctx, "fired")
+      emit(ctx, "fired")
       {:ok, s}
     end
   end
@@ -397,33 +429,37 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   # A firing that fails non-retryably: the park must carry the removal.
   defmodule PoisonTimerTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "poison_timer"
+    use Flezha.SDK.Tasklet, name: "poison_timer"
+    @impl true
     def init_state(_), do: %{armed: 0}
-    def apply_change(s, {:armed, n}), do: %{s | armed: s.armed + n}
 
+    defchange armed(s, n) do
+      %{s | armed: s.armed + n}
+    end
+
+    @impl true
     def run("arm", s, ctx) do
-      {:ok, _at} = Ctx.timer_after(ctx, 0)
-      {:ok, Ctx.apply(ctx, s, {:armed, 1})}
+      {:ok, _at} = timer_after(ctx, 0)
+      {:ok, armed(s, ctx, 1)}
     end
 
     def run(input, s, ctx) do
-      Ctx.emit(ctx, input)
+      emit(ctx, input)
       {:ok, s}
     end
 
+    @impl true
     def on_timer(_at, _kind, _s, _ctx), do: {:error, {:non_retryable, "poison firing"}}
   end
 
   # Registers and never handles.
   defmodule NoHandlerTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "no_handler"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "no_handler"
 
+    @impl true
     def run("arm", s, ctx) do
-      {:ok, _at} = Ctx.timer_after(ctx, 0)
+      {:ok, _at} = timer_after(ctx, 0)
       {:ok, s}
     end
   end
@@ -431,29 +467,36 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   # Remembers what it armed so a later input can cancel it.
   defmodule CancelTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "cancel"
+    use Flezha.SDK.Tasklet, name: "cancel"
+    @impl true
     def init_state(_), do: %{armed: nil}
-    def apply_change(s, {:armed, at}), do: %{s | armed: at}
+
+    defchange armed(s, at) do
+      %{s | armed: at}
+    end
+
+    @impl true
     def state_from_json(%{"armed" => at}), do: %{armed: at}
 
+    @impl true
     def run("arm", s, ctx) do
-      {:ok, at} = Ctx.timer_after(ctx, 60_000)
-      {:ok, Ctx.apply(ctx, s, {:armed, at})}
+      {:ok, at} = timer_after(ctx, 60_000)
+      {:ok, armed(s, ctx, at)}
     end
 
     def run("cancel", s, ctx) do
-      Ctx.emit(ctx, "cancelled:#{Ctx.cancel_processing_time_timer(ctx, s.armed)}")
+      emit(ctx, "cancelled:#{cancel_processing_time_timer(ctx, s.armed)}")
       {:ok, s}
     end
 
     def run(input, s, ctx) do
-      Ctx.emit(ctx, input)
+      emit(ctx, input)
       {:ok, s}
     end
 
+    @impl true
     def on_timer(at, _kind, s, ctx) do
-      Ctx.emit(ctx, "fired@#{at}")
+      emit(ctx, "fired@#{at}")
       {:ok, s}
     end
   end
@@ -461,39 +504,49 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   # Arms 100 ms out, dies untrappably on demand: the replacement owes the timer.
   defmodule KillableTimerTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "killable_timer"
+    use Flezha.SDK.Tasklet, name: "killable_timer"
+    @impl true
     def init_state(_), do: %{fired: []}
-    def apply_change(s, {:fired, at}), do: %{s | fired: s.fired ++ [at]}
+
+    defchange fired(s, at) do
+      %{s | fired: s.fired ++ [at]}
+    end
+
+    @impl true
     def run("kill", _s, _ctx), do: Process.exit(self(), :kill)
 
     def run("arm", s, ctx) do
-      {:ok, _at} = Ctx.timer_after(ctx, 100)
+      {:ok, _at} = timer_after(ctx, 100)
       {:ok, s}
     end
 
+    @impl true
     def on_timer(at, _kind, s, ctx) do
-      Ctx.emit(ctx, "fired@#{at}")
-      {:ok, Ctx.apply(ctx, s, {:fired, at})}
+      emit(ctx, "fired@#{at}")
+      {:ok, fired(s, ctx, at)}
     end
   end
 
-  # A dynamic Cell idle-evicted after 100 ms, holding a timer a minute out.
+  # A dynamic Cell idle-evicted after one second, holding a timer a minute out.
   defmodule TtlTimerTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "ttl_timer"
-    def cell_idle_ttl_ms, do: 100
+    use Flezha.SDK.Tasklet, name: "ttl_timer", idle_ttl_seconds: 1
+    @impl true
     def init_state(_), do: %{armed: 0}
-    def apply_change(s, {:armed, n}), do: %{s | armed: s.armed + n}
 
-    def run(_input, s, ctx) do
-      {:ok, _at} = Ctx.timer_after(ctx, 60_000)
-      {:ok, Ctx.apply(ctx, s, {:armed, 1})}
+    defchange armed(s, n) do
+      %{s | armed: s.armed + n}
     end
 
+    @impl true
+    def run(_input, s, ctx) do
+      {:ok, _at} = timer_after(ctx, 60_000)
+      {:ok, armed(s, ctx, 1)}
+    end
+
+    @impl true
     def on_timer(at, _kind, s, ctx) do
-      Ctx.emit(ctx, "fired@#{at}")
+      emit(ctx, "fired@#{at}")
       {:ok, s}
     end
   end
@@ -501,16 +554,15 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   # One pending timer at most; emits what each registration answered.
   defmodule CappedTimersTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "capped_timers"
-    def max_timers_per_cell, do: 1
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "capped_timers", max_timers_per_cell: 1
 
+    @impl true
     def run(n, s, ctx) do
-      Ctx.emit(ctx, inspect(Ctx.timer_after(ctx, n * 1_000)))
+      emit(ctx, inspect(timer_after(ctx, n * 1_000)))
       {:ok, s}
     end
 
+    @impl true
     def on_timer(_at, _kind, s, _ctx), do: {:ok, s}
   end
 
@@ -666,15 +718,18 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
     end
   end
 
-  # Idle-evicted after 100 ms, on a sweep every 25 ms.
+  # Idle-evicted after one second.
   defmodule TtlTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "ttl"
-    def cell_idle_ttl_ms, do: 100
+    use Flezha.SDK.Tasklet, name: "ttl", idle_ttl_seconds: 1
+    @impl true
     defdelegate init_state(key), to: CounterTask
-    defdelegate apply_change(s, change), to: CounterTask
+
+    use Delta
+
+    @impl true
     defdelegate state_from_json(json), to: CounterTask
+    @impl true
     defdelegate run(input, s, ctx), to: CounterTask
   end
 
@@ -698,17 +753,15 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   # NoChange tasklet, so its eviction ships no delete frame.
   defmodule GatedTtlTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "gated_ttl"
-    def cell_idle_ttl_ms, do: 1
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "gated_ttl", idle_ttl_seconds: 1
 
+    @impl true
     def run(input, s, ctx) do
       receive do
         :go -> :ok
       end
 
-      Ctx.emit(ctx, input)
+      emit(ctx, input)
       {:ok, s}
     end
   end
@@ -728,23 +781,27 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   # the change, and both read back from version 1 through the migrations.
   defmodule CounterV2Task do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
+    use Flezha.SDK.Tasklet, name: "counter", schema_version: 2, min_readable_schema_version: 1
 
-    alias Flezha.SDK.Ctx
-
-    def name, do: "counter"
-    def schema_version, do: 2
-    def min_readable_schema_version, do: 1
+    @impl true
     def init_state(_), do: %{value: 0, unit: "n"}
-    def apply_change(s, {:delta, n, _note}), do: %{s | value: s.value + n}
+
+    defchange delta(s, n, _note) do
+      %{s | value: s.value + n}
+    end
+
+    @impl true
     def migrate_state(1, %{value: v}), do: {:ok, %{value: v, unit: "n"}}
     def migrate_state(1, _other), do: {:error, "bad shape"}
+    @impl true
     def migrate_change(1, {:delta, n}), do: {:ok, {:delta, n, "migrated"}}
+    @impl true
     def state_from_json(%{"value" => v, "unit" => u}), do: %{value: v, unit: u}
 
+    @impl true
     def run(input, s, ctx) do
-      s = Ctx.apply(ctx, s, {:delta, input, "live"})
-      Ctx.emit(ctx, Integer.to_string(s.value))
+      s = delta(s, ctx, input, "live")
+      emit(ctx, Integer.to_string(s.value))
       {:ok, s}
     end
   end
@@ -752,12 +809,13 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   # Claims to read version 1 and declares no migration.
   defmodule FlooredTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "floored"
-    def schema_version, do: 2
-    def min_readable_schema_version, do: 1
+    use Flezha.SDK.Tasklet, name: "floored", schema_version: 2, min_readable_schema_version: 1
+    @impl true
     defdelegate init_state(key), to: CounterTask
-    defdelegate apply_change(s, change), to: CounterTask
+
+    use Delta
+
+    @impl true
     defdelegate run(input, s, ctx), to: CounterTask
   end
 

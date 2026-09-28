@@ -139,12 +139,16 @@ defmodule Tally do
   use Flezha.SDK.Tasklet, name: "tally"
 
   state do
-    field :count, :integer, default: 0
+    field(:count, :integer, default: 0)
+  end
+
+  defchange counted(state) do
+    %{state | count: state.count + 1}
   end
 
   @impl true
   def run(word, state, ctx) do
-    state = set_count(state, ctx, state.count + 1)
+    state = counted(state, ctx)
     emit(ctx, "#{word} #{state.count}")
     {:ok, state}
   end

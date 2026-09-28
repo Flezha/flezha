@@ -584,7 +584,91 @@ declared for them. The box below lists what `#[Task]` declares.
 
 ### Elixir
 
-TODO: not written yet.
+The whole example:
+[`sdk/elixir/examples/tradedesk`](https://github.com/flezha/flezha_elixir_sdk/tree/main/examples/tradedesk).
+
+```elixir
+# lib/tradedesk/track_prices.ex: keeps a symbol's last ten prices, and compares each new one with their average.
+defmodule Tradedesk.TrackPrices do
+  use Flezha.SDK.Tasklet, name: "track_prices"
+
+  @window 10
+
+  state do
+    # What each symbol's cell remembers.
+    field(:prices, :list, default: [])
+  end
+
+  # How a price joins the window.
+  defchange price_seen(window, price) do
+    %{window | prices: Enum.take(window.prices ++ [price], -@window)}
+  end
+
+  @impl true
+  def run(%{"symbol" => symbol, "price" => price}, window, ctx) when is_number(price) do
+    # A symbol's first trade has nothing to compare with.
+    if window.prices != [] do
+      average = Enum.sum(window.prices) / length(window.prices)
+      emit(ctx, %{symbol: symbol, price: price, average: average})
+    end
+
+    {:ok, price_seen(window, ctx, price)}
+  end
+
+  # JSON checks no types.
+  def run(%{"price" => price}, _window, _ctx),
+    do: {:error, "the price is not a number: #{inspect(price)}"}
+end
+```
+
+**Flezha calls `run/3` once for every trade**, and passes it three things:
+
+- the input: one trade, as it arrives on the tasklet's channel. The operator
+  decodes the exchange's JSON into a map with string keys, and `run/3` matches
+  its `"symbol"` and `"price"`.
+- `window`, this symbol's cell state, what it remembers: the map the `state`
+  block starts it as, `%{prices: []}`.
+- `ctx`, the context, the tasklet's way of talking to Flezha. `emit(ctx, ...)`
+  hands a move on.
+
+`run/3` answers `{:ok, state}` with the state the cell keeps, and a value
+leaves only through `emit/2`, released once `run/3` has answered `{:ok, _}`.
+The first trade of a symbol emits nothing, because `run/3` only calls `emit/2`
+when there is an average to compare with. JSON carries no types, so the first
+clause takes only a price that is a number, and the second refuses anything
+else with `{:error, reason}`;
+[`durability.md`](durability.md#the-dead-letter-queue) shows where such a trade
+goes.
+
+**The state changes only through a change.** `defchange price_seen(window,
+price)` is written once and generates both halves: the fold, which adds the
+price and drops the oldest once there are more than ten, and the recorder
+`price_seen(window, ctx, price)`, which runs the fold, writes the change
+`{:price_seen, price}` down and answers the new window. After a crash Flezha
+runs the fold again for every change it wrote, which is how the window comes
+back. A state is an immutable value, so there is no other way to change it
+that could slip past the record.
+
+The trade and the move are plain maps, so nothing else is declared for them.
+The box below lists what `use Flezha.SDK.Tasklet` declares.
+
+> #### What `use Flezha.SDK.Tasklet` declares {: .info}
+>
+> The module you write is the module the operator names in `into(...)`. `use`
+> takes the tasklet's name and settings, and an option that is misspelt, or no
+> longer exists, does not compile:
+>
+> | Option | What it is |
+> |---|---|
+> | `name` | required: the name the tasklet's state is saved under, so choose it once |
+> | `cell_keys` | fixed cell keys, with a `cells_for/1` function that routes each input |
+> | `mailbox_capacity`, `max_cells`, `idle_ttl_seconds` | the cell's mailbox, the cap on cells, and how long an idle cell lives |
+> | `schema_version`, `logical_clock` | the version of the saved state, and a clock that counts changes |
+>
+> A `state` block declares the state's fields and their defaults, and each
+> `defchange` one change to it. Optional hooks, such as `init_state/1`,
+> `event_time/1`, a timer's `on_timer/4` or an undo's `compensate/3`, are
+> declared by writing the function.
 
 <!-- tabs-close -->
 
@@ -855,7 +939,50 @@ returns reports whether the order started; the desk does not read it.
 
 ### Elixir
 
-TODO: not written yet.
+```elixir
+# lib/tradedesk/buy_above_average.ex: buys when a price is far enough above its average.
+defmodule Tradedesk.BuyAboveAverage do
+  use Flezha.SDK.Tasklet, name: "buy_above_average"
+
+  @buy_above_pct 2.0
+  @units_per_percent 10
+
+  @impl true
+  def run(%{symbol: symbol, price: price, average: average}, state, ctx) do
+    percent = (price - average) / average * 100.0
+
+    if percent >= @buy_above_pct do
+      # A stronger move buys more.
+      quantity = round(percent * @units_per_percent)
+
+      order = Jason.encode!(%{symbol: symbol, quantity: quantity})
+      # One bounded operator per order.
+      spawn_bounded(ctx, "order_executor", order)
+
+      emit(
+        ctx,
+        "#{symbol} #{decimals(price, 4)} is #{decimals(percent, 2)}% above its average " <>
+          "of #{decimals(average, 4)}, buying #{quantity}"
+      )
+    end
+
+    {:ok, state}
+  end
+
+  defp decimals(number, places), do: :erlang.float_to_binary(number / 1, decimals: places)
+end
+```
+
+It takes the move and emits a line, and has no `state` block, because it
+remembers nothing. The move arrives as the map `track_prices` emitted, with
+atom keys: a value that goes from one tasklet to the next on the same runner
+stays an Elixir term. It does two things per input through the context:
+`spawn_bounded/3` starts a bounded operator, and `emit/2` sends the line. The
+order a bounded operator is started with is bytes, so the tasklet encodes it
+as JSON with `Jason`, and `order_executor` decodes it into the `OrderTicket`
+its first step takes, declared in
+[`building_a_workflow.md`](building_a_workflow.md). `spawn_bounded/3` answers
+a handle that reports whether the order started; the desk does not read it.
 
 <!-- tabs-close -->
 
@@ -1148,7 +1275,34 @@ tasklet classes above, `TrackPrices` and `BuyAboveAverage`, and
 
 ### Elixir
 
-TODO: not written yet.
+```elixir
+# lib/tradedesk/trade_watcher.ex: the unbounded operator. Trades in, signals out.
+defmodule Tradedesk.TradeWatcher do
+  use Flezha.SDK.UnboundedOperator, factory_id: "trade_watcher"
+
+  @impl true
+  def channels(c) do
+    c
+    |> input_with("trades", &Jason.decode/1)
+    |> filter(&(&1["channel"] == "trade"))
+    |> flat_map(& &1["data"])
+    |> filter(&(&1["ord_type"] == "market"))
+    |> key_by(& &1["symbol"])
+    |> into(Tradedesk.TrackPrices)
+    |> into(Tradedesk.BuyAboveAverage)
+    |> sink("signals")
+  end
+end
+```
+
+The entry channel hands on the bytes each message arrives as, so
+`input_with/3` names a parser, `Jason.decode/1`, and every transform is a
+function over the map it decodes to. The subscription confirmation has no
+`"channel"`, so the first `filter` reads `nil` there and drops it. `flat_map`
+hands on each trade with every field the exchange sent; the tasklets match the
+ones they need. `into` names the two tasklet modules above, and
+`sink("signals")` is the sink. `use Flezha.SDK.UnboundedOperator` imports the
+builder, so the pipe needs no module prefix.
 
 <!-- tabs-close -->
 
@@ -1259,7 +1413,30 @@ $runner->awaitTermination();
 
 ### Elixir
 
-TODO: not written yet.
+```elixir
+# lib/tradedesk/application.ex: the runner. Joins trading and offers the prices factory.
+defmodule Tradedesk.Application do
+  use Application
+
+  @impl true
+  def start(_type, _args) do
+    namespace = List.first(System.argv(), "trading")
+
+    children = [
+      # `:uds` because this node is not the controller's.
+      {Flezha.SDK, namespace: namespace, operators: [Tradedesk.TradeWatcher], transport: :uds}
+    ]
+
+    Supervisor.start_link(children, strategy: :one_for_one)
+  end
+end
+```
+
+The runner is a child of the desk's own supervision tree, and `operators:` is
+where a factory is registered: listing `Tradedesk.TradeWatcher` there is this
+section's step. `mix run --no-halt` starts the application, and the runner
+connects once its child has started. The namespace is the first argument after
+`--`, and `trading` when there is none.
 
 <!-- tabs-close -->
 

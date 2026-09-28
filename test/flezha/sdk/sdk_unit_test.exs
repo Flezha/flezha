@@ -2,7 +2,7 @@ defmodule Flezha.SDK.UnitTest do
   use ExUnit.Case, async: true
 
   alias Flezha.Identificator
-  alias Flezha.SDK.{Channels, Codec, Ctx, Declarations, KeyGroup, PersistentId, Topology}
+  alias Flezha.SDK.{Channels, Codec, Ctx, Declarations, KeyGroup, PersistentId, Tasklet, Topology}
   alias Flezha.SDK.Proto.RunnerCommands
   alias Flezha.SDK.Transport
   alias FlezhaTest.Helper.SdkTierFixtures.{CheckpointBatchedOp, TierStoreOp}
@@ -14,14 +14,13 @@ defmodule Flezha.SDK.UnitTest do
   # --- fixtures ---
 
   defmodule EchoTask do
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "echo"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "echo"
 
+    @impl true
     def run(input, state, ctx),
       do:
         (
-          Ctx.emit(ctx, input)
+          emit(ctx, input)
           {:ok, state}
         )
   end
@@ -40,9 +39,10 @@ defmodule Flezha.SDK.UnitTest do
   end
 
   defmodule KeyedTask do
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "keyed"
+    use Flezha.SDK.Tasklet, name: "keyed"
+    @impl true
     def init_state(_), do: 0
+    @impl true
     def run(_input, state, _ctx), do: {:ok, state + 1}
   end
 
@@ -62,21 +62,24 @@ defmodule Flezha.SDK.UnitTest do
   end
 
   defmodule EventTimeTask do
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "event_time_task"
+    use Flezha.SDK.Tasklet, name: "event_time_task"
+    @impl true
     def init_state(_), do: 0
-    def clock, do: :event_time
-    def event_time_of(input), do: String.to_integer(input)
-    def apply_change(s, _), do: s
+    @impl true
+    def event_time(input), do: String.to_integer(input)
+
+    defchange noop(s) do
+      s
+    end
+
+    @impl true
     def run(_input, state, _ctx), do: {:ok, state}
   end
 
   defmodule StaticTask do
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "static"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "static", cell_keys: ["a", "b"]
+    @impl true
     def run(_i, s, _c), do: {:ok, s}
-    def cell_keys, do: ["a", "b"]
   end
 
   defmodule StaticOp do
@@ -149,28 +152,21 @@ defmodule Flezha.SDK.UnitTest do
   # [Name]}` case whose shape is a fixture row is retired — the conformance run
   # drives those rows through this builder.
 
-  test "UnservableClock, EventTimeClockWithoutExtractor, UnknownClock — a clock the runtime cannot serve" do
+  test "UnservableClock, TwoClocks — a clock the runtime cannot serve" do
     defmodule LogicalNoChange do
-      @behaviour Flezha.SDK.Tasklet
-      def name, do: "logical_no_change"
-      def clock, do: :logical
-      def init_state(_), do: nil
+      use Flezha.SDK.Tasklet, name: "logical_no_change", logical_clock: true
+      @impl true
       def run(_i, s, _ctx), do: {:ok, s}
     end
 
-    defmodule EventTimeNoExtractor do
+    # Only the hand-written form can declare both: the `use` form does not compile.
+    defmodule TwoClocksByHand do
       @behaviour Flezha.SDK.Tasklet
-      def name, do: "event_time_no_extractor"
-      def clock, do: :event_time
-      def init_state(_), do: nil
-      def run(_i, s, _ctx), do: {:ok, s}
-    end
-
-    defmodule Sundial do
-      @behaviour Flezha.SDK.Tasklet
-      def name, do: "sundial"
-      def clock, do: :sundial
-      def init_state(_), do: nil
+      def name, do: "two_clocks_by_hand"
+      def init_state(_key), do: 0
+      def logical_clock, do: true
+      def event_time(input), do: String.to_integer(input)
+      def apply_change(s, _change), do: s
       def run(_i, s, _ctx), do: {:ok, s}
     end
 
@@ -179,16 +175,19 @@ defmodule Flezha.SDK.UnitTest do
 
       def channels(c) do
         c |> Channels.input("a") |> Channels.into(LogicalNoChange)
-        c |> Channels.input("b") |> Channels.into(EventTimeNoExtractor)
-        c |> Channels.input("c") |> Channels.into(Sundial)
+        c |> Channels.input("b") |> Channels.into(TwoClocksByHand)
       end
     end
 
     assert {:error, {:invalid_topology, issues}} = Topology.build(ClockOp)
     assert {:UnservableClock, inspect(LogicalNoChange)} in issues
-    assert {:EventTimeClockWithoutExtractor, inspect(EventTimeNoExtractor)} in issues
-    assert {:UnknownClock, inspect(Sundial)} in issues
-    assert length(issues) == 3
+    assert {:TwoClocks, inspect(TwoClocksByHand)} in issues
+    assert length(issues) == 2
+
+    # What each writes is the clock `now/1` serves.
+    assert Tasklet.clock(LogicalNoChange) == :logical
+    assert Tasklet.clock(EventTimeTask) == :event_time
+    assert Tasklet.clock(StaticTask) == :wall
   end
 
   test "KeyedOnEntry — an entry channel has no output of its own to stamp" do

@@ -87,6 +87,14 @@ closes, and says so as it drains:
 A Node runner stops cleanly on Ctrl-C, on a SIGTERM and when its standard input
 closes, and prints the same line as it drains.
 
+An Elixir runner stops cleanly on a SIGTERM, and on Ctrl-C twice: the first
+opens the BEAM's break menu. It does not read its standard input, so closing it
+stops nothing. It says so as it stops:
+
+```output
+17:59:38.776 [notice] SIGTERM received - shutting down
+```
+
 > Stop the runner with Ctrl-C in its terminal.
 > {: .step}
 
@@ -262,6 +270,35 @@ A Node runner's journal lists the same steps too, with `88 byte(s)` and
 promise inside `run`, so it too waits inside `run` and the rest of this section
 reads the same for it: after a crash the ten seconds start again.
 
+An Elixir runner's journal lists `reserve_funds` and `place_order` only, with
+`163 byte(s)` and `157 byte(s)` as their handoffs. Its order runs
+`record_order` after `confirm_fill` rather than beside it
+([`building_a_workflow.md`](building_a_workflow.md#several-tasklets-step-by-step)),
+so nothing is booked yet. After the crash below both run, the ten seconds
+starting again, and the journal ends with them in that order, here for an
+order started as `order_2`:
+
+```output
+...
+  seq=2 task_committed task_idx=2 iter=0 epoch=0
+    ran: order_2/confirm_fill/
+    handoff: 0 item(s), 0 byte(s)
+    completes the instance: result 57 byte(s)
+
+  seq=3 task_committed task_idx=3 iter=0 epoch=0
+    ran: order_2/record_order/
+    handoff: 0 item(s), 0 byte(s)
+
+
+  leaves: 2,3  complete: true
+```
+
+Its terminal shows the one booking after the crash, once the fill is
+confirmed. While `confirm_fill` waits, the order's driver answers nothing, so
+the restarted runner may also log `[convergence] bounded call failed ...
+request=:restore_landed reason={:timeout, ...}` for the orders that were
+waiting; they finish all the same.
+
 A PHP runner's `confirm_fill` waits on a timer rather than inside `run`
 ([`building_a_workflow.md`](building_a_workflow.md#a-step-that-can-fail)), so its
 journal already shows the step committed, and the first pass with it:
@@ -374,6 +411,12 @@ by itself once it is back:
 ...
 [flezha] Control channel attempt 7 in 3.265s...
 [flezha] Connected after 6 attempts
+```
+
+An Elixir runner logs each lost connection and reconnects the same way:
+
+```output
+18:01:13.214 [warning] [Flezha.SDK] connection lost (connection_closed); reconnecting (attempt 1)
 ```
 
 Your admin token still works, and `trading` is still there:
@@ -495,6 +538,26 @@ the price the same way, and the entry is that tasklet's, in EUR/USD's cell:
 ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
 trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trades      1    8s        TypeError: the price is not a number: "one euro"
 ```
+
+An Elixir runner reads the trade as a map, so its `track_prices` refuses the
+price the same way, answering `{:error, reason}`, and the entry is that
+tasklet's, in EUR/USD's cell. Its tries are logged at the `debug` level, which
+a `mix run` in the `dev` environment shows:
+
+```output
+18:01:56.188 [debug] [Flezha.SDK] trade_watcher#p1/node/EUR/USD attempt 1/3 failed: the price is not a number: "one euro"; retrying
+
+18:01:56.243 [debug] [Flezha.SDK] trade_watcher#p1/node/EUR/USD attempt 2/3 failed: the price is not a number: "one euro"; retrying
+```
+
+```output
+ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
+trade_watcher#p1/track_prices/239d0c721a1951a6              EUR/USD         trades      1    0s        the price is not a number: "one euro"
+```
+
+What an Elixir tasklet was handed is a decoded map rather than bytes, so
+`flz dlq show` prints `payload <not byte-representable; entry is not
+replayable>`: such an entry can be dropped but not sent through again.
 
 `flz dlq list` shows what a partition has set aside:
 
@@ -659,6 +722,27 @@ tries, because the wait holds nothing else up:
 [book] EUR/USD 26 as ord-e2b95dca4b993989b1bf0ae12b069bfd
 [undo] cancelled ord-1583d35b849ecc1e5be0c67eb19126b1
 [undo] released res-765f48effc6403ca7079785ffc7b8820
+```
+
+An Elixir runner waits the ten seconds on every try too, logging each try at
+the `debug` level, and books the order only once the last try is spent, since
+its `record_order` runs after `confirm_fill`. Other orders' bookings land
+between the tries, because the wait holds only this order:
+
+```output
+18:02:08.648 [debug] [Flezha.SDK] order_executor-budumazzynqzj2sv/node/single attempt 1/3 failed: the exchange fills at most 100 a time, and this is 112; retrying
+[book] USD/JPY 25 as ord-26d8f3c5d820d24b3a2c636b54983dcb
+[book] USD/JPY 21 as ord-da3c2d9f91117708d2114c3d101a7417
+[book] USD/JPY 20 as ord-81dbf988bcb56ed05657cbe3ef0d5ba9
+
+18:02:18.710 [debug] [Flezha.SDK] order_executor-budumazzynqzj2sv/node/single attempt 2/3 failed: the exchange fills at most 100 a time, and this is 112; retrying
+
+18:02:28.578 [debug] [Flezha.SDK] controller reply for an unknown reference spawn-bounded--293
+[book] EUR/USD 112 as ord-7c9bcb97db0573d442af80b583685823
+[undo] cancelled ord-7c9bcb97db0573d442af80b583685823
+
+18:02:28.791 [debug] [Flezha.SDK] order_executor-budumazzynqzj2sv compensating task 1
+[undo] released res-d87a1120f8b43bb4c83b0db5eba68eba
 ```
 
 The order was cancelled, then the money released. Both undos read their id from

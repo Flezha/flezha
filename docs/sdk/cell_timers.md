@@ -78,7 +78,8 @@ arrived" — a session timeout, an idle flush, a join expiry — and the
 event-time timer is for a deadline the data itself reaches, such as a window
 boundary. `timer_at_event_time` is refused
 (`EventTimeTimerWithoutEventTimeClock`) unless the Tasklet declares
-writes `event_time(input)` (Rust) or `eventTime(input)` (Java).
+writes `event_time(input)` (Rust) or `eventTime(input)` (Java), or defines
+`event_time/1` (Elixir).
 
 **`timer_after(d)` anchors on `ctx.now()`**, not an ambient read, so a
 replayed invocation registers the same absolute timestamp the live one did.

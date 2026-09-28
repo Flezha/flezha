@@ -212,7 +212,7 @@ defmodule Flezha.SDK.CommandsTest do
       %{op: op} = start_operator(TtlOp)
       Inbox.input(op, "in", "5", %{})
       [_, _] = frames(2)
-      assert_receive {:flz_data, _, "delete_cell_state", _, _}, 2_000
+      assert_receive {:flz_data, _, "delete_cell_state", _, _}, 3_000
       s = server_state(op, nil)
 
       Commands.dispatch(

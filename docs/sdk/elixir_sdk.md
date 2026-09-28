@@ -111,13 +111,19 @@ end
 Both operator macros import `Flezha.SDK.Channels`, so a whole pipe — a merge
 included — is written with no module prefix. `use Flezha.SDK.Tasklet` imports
 `Flezha.SDK.Ctx`'s authoring functions (every one but `apply/3`, which would
-shadow `Kernel.apply/3`, and `complete/2`) and leaves `init_state/1` answering
-`nil` unless the module writes one, so a stateless tasklet writes only
-`run/3`. A bounded tasklet ends its instance with
-`Flezha.SDK.Ctx.complete/2`, honoured once its iteration commits.
+shadow `Kernel.apply/3`) and leaves `init_state/1` answering `nil` unless the
+module writes one, so a stateless tasklet writes only `run/3`. A bounded
+tasklet ends its instance with `complete(ctx, result)`, honoured once its
+iteration commits.
 
 An unknown option is a `CompileError` naming it, and so is a missing required
-one (`name` for a tasklet, `factory_id` for an operator).
+one (`name` for a tasklet, `factory_id` for an operator). `idle_ttl_seconds`
+takes a positive integer and `logical_clock` a boolean; any other value is a
+`CompileError` naming the option. The retired `cell_idle_ttl_ms` and `clock`
+options, and a `clock/0`, `event_time_of/1` or `cell_idle_ttl_ms/0` written in
+the module with `def` or `defp`, are `CompileError`s naming what replaced them.
+A hand-written `apply_change/2` is one too: in the `use` form a change is
+written with `defchange` ([Persistence](#persistence)).
 
 > A tasklet nested inside an operator module inherits that module's imports
 > lexically, so `use Flezha.SDK.Tasklet` takes the builder's back — a nested
@@ -181,18 +187,22 @@ end
 
 `run/3` is written as in a tasklet: the ctx functions are imported, a `state`
 block and `defchange` work, and the options `use Flezha.SDK.Tasklet` takes
-(`max_cells:`, `clock:`, ...) apply to the generated tasklet. `sink` is
+(`max_cells:`, `logical_clock:`, ...) apply to the generated tasklet. `sink` is
 optional; with none, nothing leaves the tasklet but its state:
 
 ```elixir
 defmodule Counter do
-  use Flezha.SDK.UnboundedOperator, factory_id: "counter", input: "ticks"
+  use Flezha.SDK.UnboundedOperator, factory_id: "counter", input: "ticks", max_cells: 10
 
   state do
     field(:seen, :list, default: [])
   end
 
-  def run(tick, state, ctx), do: {:ok, push_seen(state, ctx, tick)}
+  defchange seen(state, item) do
+    %{state | seen: state.seen ++ [item]}
+  end
+
+  def run(input, state, ctx), do: {:ok, seen(state, ctx, input)}
 end
 ```
 
@@ -208,7 +218,8 @@ short-form option on a full form each name the option, a `loop_mode:` other
 than `:once`, `:per_input` or `:chained` (or a `rollback_mode:` other than
 `:all_or_nothing` or `:keep_progress`) names the value, and
 `use Flezha.SDK.Tasklet` refuses `kind`, `sink` and `input`, naming the
-operator macros. A hand-written `loop_mode/0` or `rollback_mode/0` outside
+operator macros. `event_time/1` beside `logical_clock: true` names both and the
+module the author wrote. A hand-written `loop_mode/0` or `rollback_mode/0` outside
 those values is refused at `register_factory/2` as
 `{:InvalidMode, factory_id, knob, value}`. This SDK cannot see a tasklet's
 output type, so it owes no `SinkWithoutOutput` and its manifest does not list
@@ -217,41 +228,64 @@ output type, so it owes no `SinkWithoutOutput` and its manifest does not list
 ### The behaviours beneath
 
 The plain `@behaviour` form compiles as well, and is what the macros expand
-to:
+to. It is the reference form, shown on this page and in no guide: every
+callback is written by hand, and a change is recorded through the module's own
+`apply_change/2` and `Flezha.SDK.Ctx.apply/3`.
 
 ```elixir
-defmodule MyOperator do
-  @behaviour Flezha.SDK.UnboundedOperator     # optional: description/0
-  def factory_id, do: "my_op"
+defmodule HandWritten do
+  @moduledoc false
+  @behaviour Flezha.SDK.Tasklet
 
-  def channels(c) do
-    import Flezha.SDK.Channels
-    c |> input("in") |> into(MyTask) |> sink("out")
+  @impl true
+  def name, do: "hand_written"
+  @impl true
+  def init_state(_key), do: 0
+  @impl true
+  def idle_ttl_seconds, do: 1
+  @impl true
+  def event_time(input), do: String.to_integer(input)
+  @impl true
+  def apply_change(count, {:add, n}), do: count + n
+
+  @impl true
+  def run(input, count, ctx) do
+    Ctx.emit(ctx, Integer.to_string(Ctx.now(ctx)))
+    {:ok, Ctx.apply(ctx, count, {:add, String.to_integer(input)})}
   end
 end
 
-defmodule MyTask do
-  @behaviour Flezha.SDK.Tasklet
-  def name, do: "my_task"
-  def init_state(_cell_key), do: %{}
-  def run(input, state, ctx) do
-    Flezha.SDK.Ctx.emit(ctx, transform(input))
-    {:ok, state}
+defmodule HandWrittenOperator do
+  @moduledoc false
+  @behaviour Flezha.SDK.UnboundedOperator
+
+  @impl true
+  def factory_id, do: "hand_written_operator"
+
+  @impl true
+  def channels(c) do
+    c |> Channels.input("in") |> Channels.into(HandWritten) |> Channels.sink("out")
   end
 end
 ```
+
+`Ctx` and `Channels` are aliases of `Flezha.SDK.Ctx` and `Flezha.SDK.Channels`.
+No macro sees this form, so what the `use` form refuses at compile time is
+refused at registration instead: both clocks as `{:TwoClocks, name}`, and a
+retired `clock/0`, `event_time_of/1` or `cell_idle_ttl_ms/0` as
+`{:RetiredCallback, name, callback, replacement}`.
 
 `run/3` returns `{:ok, new_state} | {:error, reason} | {:error, {:non_retryable, reason}}`;
 emits flush only on `{:ok, _}`. Optional `Tasklet` callbacks: `cell_keys/0` (static
 keyset), `cells_for/1`, `mailbox_capacity/0` (1024; env `FLEZHA_MAILBOX_CAPACITY`, range
 `1..1_048_576`), `max_cells/0` (100_000 — the cap on a dynamic node's live Cells: at it
 a new key's input is dropped and counted, an existing key's is served),
-`cell_idle_ttl_ms/0` (nil; see [Dynamic cells](#dynamic-cells)), the persistence
+`idle_ttl_seconds/0` (nil; see [Dynamic cells](#dynamic-cells)), the persistence
 three — `apply_change/2` (declares a changeful, persisted tasklet; see
 [Persistence](#persistence)), `compact_after_bytes/0` (8 MiB) and `state_from_json/1` — and
 the schema four — `schema_version/0` (1), `min_readable_schema_version/0` (the version),
 `migrate_state/2`, `migrate_change/2` (see [Schema evolution](#schema-evolution)) — and the
-timer four — `clock/0` (`:wall`), `event_time_of/1`, `on_timer/4`, `max_timers_per_cell/0`
+timer four — `logical_clock/0` (`false`), `event_time/1`, `on_timer/4`, `max_timers_per_cell/0`
 (10 000; see [Timers and clocks](#timers-and-clocks)).
 `UnboundedOperator` takes an optional `persistence_enabled/0` (default `true`) and
 `sleep_when_idle/0` (default `false`); `BoundedOperator` takes the same two, its
@@ -266,7 +300,8 @@ a stage's ladder is the edge's `retry_max` / `retry_backoff_ms`, as an unbounded
 output's natural key on a sink declared `keyed/1`; on a node with no keyed sink they answer
 `{:error, {:key_not_allowed_on_non_keyed_channel, channel}}`, and a keyless emit from a
 Single Cell on a keyed sink answers `{:error, {:key_required_on_keyed_channel, channel}}`),
-`apply/3` (fold a change and record it), `now/1` (the declared clock's value, once per
+`apply/3` (fold a change and record it; a `defchange` recorder calls it),
+`complete/2` (end a bounded instance with a result), `now/1` (the declared clock's value, once per
 invocation; the scheduled timestamp inside `on_timer/4`), `cell_key/1`, and the timer four
 — `timer_after/2` (milliseconds after `now/1`), `timer_at_event_time/2`,
 `cancel_processing_time_timer/2`, `cancel_event_time_timer/2` — the registrations answering
@@ -381,8 +416,9 @@ one the controller's range assignment calls ([`partitioned_operators.md`](partit
 A dynamic node mints one Cell per key up to its `max_cells/0`; at the cap a new key's
 input is dropped and counted (`[:flezha, :sdk, :dynamic]` telemetry, `event: :capped`), an
 existing key's is served, and a restore that would materialise a key past the cap is refused.
-With `cell_idle_ttl_ms/0` declared, the Operator runs one `:reap` tick at
-`FLEZHA_REAP_INTERVAL_MS`, else `min(ttl / 4, 30 s)` and at least 1 ms. The sweep runs in
+With `idle_ttl_seconds/0` declared, a positive whole number of seconds, the
+Operator runs one `:reap` tick at `FLEZHA_REAP_INTERVAL_MS`, else
+`min(ttl / 4, 30 s)` and at least 1 ms. The sweep runs in
 the Operator's own process — while it runs no push is routed, which is the drain gate — and
 asks each Cell whether it has been idle past the TTL holding no work (a bounded probe; a
 busy one is skipped until the next sweep), then evicts an idle one synchronously: the Cell
@@ -397,11 +433,13 @@ operator's lifetime.
 
 ## Timers and clocks
 
-`clock/0` names what `Ctx.now/1` serves, read once per invocation: `:wall` (the epoch
-millisecond at dispatch entry, the default), `:logical` (the Cell's durable change seq —
-`terminal + 1` after a restore — refused as `UnservableClock` on a tasklet without
-`apply_change/2`) or `:event_time` (what `event_time_of/1` extracts from the input; refused
-as `EventTimeClockWithoutExtractor` without it). Inside `on_timer/4`, `now/1` is the
+The clock `Ctx.now/1` serves, read once per invocation, follows from what the tasklet
+writes: event time when it defines `event_time/1` (what that answers for the input), the
+logical clock when it declares `logical_clock: true` (the Cell's durable change seq —
+`terminal + 1` after a restore — refused as `UnservableClock` on a tasklet with no
+`defchange`), and otherwise the wall clock, the epoch millisecond at dispatch entry. Both
+at once is a `CompileError` naming `event_time/1` and `logical_clock`. Inside
+`on_timer/4`, `now/1` is the
 scheduled timestamp under every clock, so a chained `timer_after/2` schedules off the timer
 that woke it and a replay registers the same instant.
 
@@ -427,8 +465,8 @@ due message folds every timer due by then onto the Cell's own input queue, ascen
 the drain that serialises inputs serialises firings, whatever order two same-millisecond
 messages arrive in; a due message that finds no room comes back 5 ms later, never drops; a
 firing whose timer has left the pending set fires nothing. An **event-time** timer
-(`timer_at_event_time/2`, `:event_time` clock only) fires at admission: when an input's
-`event_time_of/1` advances the Cell's high-water past it, every due timer is queued ahead
+(`timer_at_event_time/2`, event-time clock only) fires at admission: when an input's
+`event_time/1` advances the Cell's high-water past it, every due timer is queued ahead
 of that input, ascending — a Cell nothing arrives at never fires one. The order on the
 wire is the same for both: the dispatch's change records, then its timer ops, then — once
 the timers are armed and counted — its outputs.
@@ -457,41 +495,44 @@ runner restarts) and `timers_fired`.
 ## Persistence
 
 A tasklet that exports `apply_change(state, change)` is changeful and persisted; one
-without it is the reference's `NoChange` — its state is a plain term nothing ships.
-`Flezha.SDK.Ctx.apply(ctx, state, change)` is the only recorded mutation path: it returns
-`apply_change(state, change)` and records the change, and `run/3` returns the state it
-produced — one fold, one push, so a replay of the recorded changes is the state.
+without it is the reference's `NoChange` — its state is a plain term nothing ships. In the
+`use` form a change is written once with `defchange`, which generates both halves: the
+`apply_change/2` clause that folds it and a recorder that records it through
+`Flezha.SDK.Ctx.apply/3` and answers the new state, which `run/3` returns — one fold, one
+push, so a replay of the recorded changes is the state.
 
 ```elixir
-defmodule Counter do
+defmodule Tally do
+  @moduledoc false
   use Flezha.SDK.Tasklet, name: "counter"
 
   @impl true
-  def init_state(_key), do: %{value: 0}
+  def init_state(_key), do: 0
+
+  defchange add(count, n) do
+    count + n
+  end
 
   @impl true
-  def apply_change(s, {:delta, n}), do: %{s | value: s.value + n}
-
-  @impl true
-  def state_from_json(%{"value" => v}), do: %{value: v}
-
-  @impl true
-  def run(n, s, ctx), do: {:ok, Flezha.SDK.Ctx.apply(ctx, s, {:delta, n})}
+  def run(_input, count, ctx), do: {:ok, add(count, ctx, 1)}
 end
 ```
 
+Each input records the change `{:add, 1}`, and a restore folds the log back to the count.
+
 ### The `state` block, and `defchange`
 
-`use Flezha.SDK.Tasklet` makes a `state` block available, which writes that
-whole path for the field-granular half — §3's derivation:
+`use Flezha.SDK.Tasklet` makes a `state` block available, which declares the
+fields a map state carries and their defaults — §3's derivation:
 
 ```elixir
 defmodule Position do
-  use Flezha.SDK.Tasklet, name: "position"
+  @moduledoc false
+  use Flezha.SDK.Tasklet, name: "position_state"
 
   state do
-    field :qty, :integer, default: 0
-    field :fill_ids, :list, default: []
+    field(:qty, :integer, default: 0)
+    field(:fill_ids, :list, default: [])
   end
 
   defchange record_fill(state, qty, id) do
@@ -500,27 +541,25 @@ defmodule Position do
 
   @impl true
   def run({:fill, qty, id}, state, ctx), do: {:ok, record_fill(state, ctx, qty, id)}
-  def run({:set, qty}, state, ctx), do: {:ok, set_qty(state, ctx, qty)}
 end
 ```
 
 A `field` takes a name, a type (`:integer`, `:float`, `:string`, `:boolean`,
 `:list`, `:map`, `:term`) and a `default:`. The block generates `init_state/1`
 returning the map of defaults (overridable, for a state that depends on the
-cell key), `state_from_json/1` reading each field by its string key,
-`apply_change/2` clauses for `{:set, field, value}` on every field and
-`{:push, field, item}` on every `:list` field, and the recorders
-`set_<field>(state, ctx, value)` and `push_<field>(state, ctx, item)` — each
-journaling exactly one change through `Flezha.SDK.Ctx.apply/3`.
+cell key) and `state_from_json/1` reading each field by its string key. It
+generates no change: a block with no `defchange` is a changeless tasklet.
 
-`defchange` is the manual boundary: a mutation that is conditional, spans
-several fields, or is computed from the prior state is not one generated
-variant, so it is written once and generated into both halves — the
-`apply_change/2` clause and the recorder — which is what makes it **one**
-journal record rather than several.
+`defchange name(state, args…)` is the one way to change state, with or without
+a block. It generates the `apply_change(state, {:name, args…})` clause and the
+recorder `name(state, ctx, args…)`, so a mutation spanning several fields is
+**one** journal record rather than several: `record_fill(state, ctx, 3, "f1")`
+records `{:record_fill, 3, "f1"}`. An argument the fold ignores is written
+`_note`, as in any function.
 
-A module with a `state` block that also writes `apply_change/2` or
-`state_from_json/1` by hand fails to compile, naming both: the block owns them.
+A module that `use`s `Flezha.SDK.Tasklet` or an operator macro and writes
+`apply_change/2` by hand fails to compile, naming `apply_change/2` and
+`defchange`, and so does a block beside a hand-written `state_from_json/1`.
 
 Renaming or retyping a field is a non-additive state edit and takes a
 schema-version bump, exactly as [§3.0 of the authoring
@@ -690,7 +729,7 @@ late input may land and still be corrected; `beyond_window_policy/2` declares wh
 one that lands further back — `:process_as_arrival`, the default and the behaviour of a class
 with no window at all, or `:drop`. The declaration requires `effectively_once/1` (only the
 tier journals inputs before forwarding them, so only the tier has a durable input to replay)
-and at least one `:event_time`-clocked Tasklet (there is nothing else to order a replay by).
+and at least one Tasklet that writes `event_time/1` (there is nothing else to order a replay by).
 It ships `correction_window_ms` and `beyond_window_policy`, which is what makes the controller
 derive the input-log hold window and the snapshot age floor from the declaration rather than
 from a user setting.

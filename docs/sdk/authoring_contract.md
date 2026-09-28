@@ -21,9 +21,11 @@ declarations through `use` macros — `use Flezha.SDK.Tasklet`,
 `use Flezha.SDK.UnboundedOperator` and `use Flezha.SDK.BoundedOperator` take
 the scalar settings as options named after the behaviour's own callbacks and
 define only the callbacks written, so every default stays where
-`function_exported?` resolves it; a `state do field … end` block is its §3
-derive layer and `defchange` its manual boundary. The plain `@behaviour` form
-keeps working unchanged — see [`elixir_sdk.md`](elixir_sdk.md). The Node SDK exposes factory functions —
+`function_exported?` resolves it; a `state do field … end` block declares a
+state's fields and defaults, and `defchange` is the one way to write a change.
+The plain `@behaviour` form, every callback and `apply_change/2` written by
+hand, is the reference form: it keeps working, and is documented in
+[`elixir_sdk.md`](elixir_sdk.md) only. The Node SDK exposes factory functions —
 `defineTasklet`, `defineUnbounded`, `defineBounded`, `registerFactory`, wired by a fluent
 channel builder — and no decorators, because a decorator needs a build step,
 does not apply to a plain function, and cannot reshape the decorated type,
@@ -64,7 +66,7 @@ after a restart, and nothing reports the difference until the restart.
 | --- | --- |
 | Rust | The borrow checker. `ctx.state()` hands out `&State` and `ctx.change(..)` is the only path to a mutation; there is no `&mut State` to assign through, so an unrecorded mutation does not compile. |
 | Java | One recorded path. `ctx.change(...)` applies a change through its `applyTo` and records it; `ctx.state()` hands out the live object, so an unrecorded mutation compiles and runs, and `TaskletTestHarness.replayEquals()` is what catches it. |
-| Elixir | Immutability plus one recorded path. `Flezha.SDK.Ctx.apply/3` folds a change through `apply_change/2` and records it; `run/3` returns the state it produced, and the contract is that the two agree — the recorded changes are what a restore folds. A `state do field … end` block generates that path: `set_<field>` / `push_<field>` and `defchange`'s named recorder each journal exactly one change through `Ctx.apply/3`, so the hand-written fold is only for what the block does not cover. Deterministic effects come from the same ctx: `Ctx.stable_id/1` answers the frozen FNV-1a-128 over the Cell's identity, the invocation's starting seq and a per-invocation ordinal, and `Ctx.checkpoint/1` closes an effectively-once interval. There is no replay harness yet, so the contract is stated rather than checked. |
+| Elixir | Immutability plus one recorded path. `Flezha.SDK.Ctx.apply/3` folds a change through `apply_change/2` and records it; `run/3` returns the state it produced, and the contract is that the two agree — the recorded changes are what a restore folds. In the `use` form `defchange` writes that path: each named change generates its fold clause and a recorder that journals exactly one change through `Ctx.apply/3`, and a hand-written `apply_change/2` does not compile. Deterministic effects come from the same ctx: `Ctx.stable_id/1` answers the frozen FNV-1a-128 over the Cell's identity, the invocation's starting seq and a per-invocation ordinal, and `Ctx.checkpoint/1` closes an effectively-once interval. There is no replay harness yet, so the contract is stated rather than checked. |
 | Node | Runtime rejection. `ctx.state` is a deep read-only view; an assignment throws naming the field and pointing at `ctx.change`. `applyChange` and the restore fold hold the value itself. |
 | Ruby | Documented rule, no runtime check. Node's guard is a `Proxy`; Ruby has no counterpart that does not cost an allocation per field read, so `ctx.change` is the path and the rule is stated rather than paid for on every access. |
 | PHP | Documented rule, no runtime check, for Ruby's reason. `$ctx->state` is writable, `$ctx->change()` is the path, and `Harness::assertReplayEquals()` is what makes the rule safe — it catches an unrecorded mutation and an impure fold alike. |
@@ -87,7 +89,7 @@ backstop for what typing cannot see.
 | Rust | yes | 29 compile-fail tests in `sdk/rust/tests/ui/` |
 | Java | yes, through the generic `Tasklet<…>` arguments | `sdk/java/.../UnboundedOperatorConfigurationException` cases |
 | Node | yes, through the channel builder's type parameters | `@ts-expect-error` fixtures in `sdk/node/types-tests/`, compiled under `tsc --noEmit`, plus a negative control that strips the directives and requires each pinned line to still produce a diagnostic |
-| Elixir | no — the language cannot | registration-time refusals only |
+| Elixir | no — the language cannot | registration-time refusals, plus the `use` macros' `CompileError`s for a declaration named wrongly, in `sdk/elixir/test/flezha/sdk/authoring_macros_test.exs` and `tasklet_clock_test.exs` |
 | Ruby | no — the language cannot | registration-time refusals only, in `sdk/ruby/test/authoring_test.rb` |
 | PHP | no — the language cannot | registration-time refusals only, in `sdk/php/tests/AuthoringTest.php` |
 | Python | yes, through the generic `Edge[T]` / `Tasklet[I, O]` parameters over a `py.typed` package | `sdk/python/tests/typing_fixtures/wrong_edge.py`, which `sdk/python/tests/test_typing.py` requires pyright to reject, against `well_typed.py` as the negative control |
@@ -197,20 +199,16 @@ implementing `Change<State>` whose `apply_to` performs the mutation, recorded
 with `ctx.change(...)`. A change enum is encoded by variant index, so a new
 variant goes at the end.
 
-**Elixir derives field-granular changes from a block.** `use Flezha.SDK.Tasklet`
-makes `state do field :qty, :integer, default: 0 end` available. A `field`
-takes a name, a type (`:integer`, `:float`, `:string`, `:boolean`, `:list`,
-`:map`, `:term`) and a `default`, and the block generates `init_state/1`
-returning the map of defaults, `state_from_json/1` reading each field's string
-key, `apply_change/2` clauses for `{:set, field, value}` on every field and
-`{:push, field, item}` on every `:list` field, and the recorders
-`set_<field>(state, ctx, value)` and `push_<field>(state, ctx, item)`, each
-journaling through `Flezha.SDK.Ctx.apply/3`. A module with a `state` block that
-also writes `apply_change/2` or `state_from_json/1` by hand fails to compile,
-naming both: the block owns them. §3.1's keyed-map and deque modes are
-**deferred for Elixir** — its block carries the field and `:list` modes only.
-A field-granular derivation is likewise **deferred for Python, Node, Ruby and
-PHP**, which declare their change types by hand. Java declares its change types
+**Elixir declares its changes by name.** `use Flezha.SDK.Tasklet` makes
+`state do field :qty, :integer, default: 0 end` available. A `field` takes a
+name, a type (`:integer`, `:float`, `:string`, `:boolean`, `:list`, `:map`,
+`:term`) and a `default`, and the block generates `init_state/1` returning the
+map of defaults and `state_from_json/1` reading each field's string key. It
+generates no change: every change is a `defchange`, with or without a block,
+and a `use` module that writes `apply_change/2` by hand fails to compile, so
+a field-granular derivation is **deferred for Elixir**. A field-granular
+derivation is likewise **deferred for Python, Node, Ruby and PHP**, which
+declare their change types by hand. Java declares its change types
 by hand too, as its one form: a record implementing `Change<State>` whose
 `applyTo` performs the mutation.
 
@@ -222,7 +220,7 @@ error rather than journaling incorrectly. In
 Elixir, `defchange name(state, args…) do body end` is that hand-written change:
 it generates the `apply_change(state, {:name, args…})` clause and the recorder
 `name(state, ctx, args…)`, so a mutation spanning several fields is one journal
-record.
+record. In Elixir it is the one way to change state.
 
 ### 3.0 Changing a State or Change type after it has been deployed
 
@@ -405,7 +403,7 @@ explicit author choice — never inferred from the `run` body. Each opt-in maps
 | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | none                                                                         | single-cell (empty `cell_keys()`)                                                 |
 | `keys = [..]` + a written `cells_for` / `@Tasklet.Spec(keys = {..})` + a written `cellsFor` | `cell_keys()` = keys, `CELLS_FOR_OVERRIDDEN = true` (Rust), the written `cells_for` routes |
-| `idle_ttl_seconds = s` / `max_cells = n` (Rust; dynamic knobs)            | `cell_idle_ttl()` / `max_cells()` overrides — the KEY is not here. Java writes `@Tasklet.Spec(idleTtlSeconds = s, maxCells = n)`; Elixir declares `cell_idle_ttl_ms/0` / `max_cells/0` |
+| `idle_ttl_seconds = s` / `max_cells = n` (Rust; dynamic knobs)            | `cell_idle_ttl()` / `max_cells()` overrides — the KEY is not here. Java writes `@Tasklet.Spec(idleTtlSeconds = s, maxCells = n)`; Elixir writes `use Flezha.SDK.Tasklet, idle_ttl_seconds: s, max_cells: n` |
 
 Declaring only one of `keys` / `cells_for` is refused. Static keying is
 declared **on the tasklet**; dynamic keying is declared **on the wiring** —

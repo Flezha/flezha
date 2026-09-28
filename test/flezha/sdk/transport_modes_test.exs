@@ -11,24 +11,22 @@ defmodule Flezha.SDK.InNodeE2ETest do
 
   alias Flezha.Operator.Builder
   alias Flezha.Runner.FleetManager
-  alias Flezha.SDK.Ctx
   alias Flezha.Service.OperatorManager
   alias FlezhaTest.Helper.NodeTestHelper
 
   @probe :sdk_in_node_probe
 
   defmodule ProbeTask do
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "probe"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "probe"
 
+    @impl true
     def run(input, s, ctx) do
       case Process.whereis(:sdk_in_node_probe) do
         nil -> :ok
         pid -> send(pid, {:sdk_probe_ran, input})
       end
 
-      Ctx.emit(ctx, input)
+      emit(ctx, input)
       {:ok, s}
     end
   end
@@ -146,7 +144,6 @@ defmodule Flezha.SDK.SocketRoundtripTest do
 
   alias Flezha.Operator.Builder
   alias Flezha.Runner.FleetManager
-  alias Flezha.SDK.Ctx
   alias Flezha.Service.OperatorManager
   alias Flezha.Socket.Support
   alias Flezha.Transport.Native
@@ -155,17 +152,16 @@ defmodule Flezha.SDK.SocketRoundtripTest do
   @probe :sdk_socket_probe
 
   defmodule ProbeTask do
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "probe"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "probe"
 
+    @impl true
     def run(input, s, ctx) do
       case Process.whereis(:sdk_socket_probe) do
         nil -> :ok
         pid -> send(pid, {:sdk_socket_ran, input})
       end
 
-      Ctx.emit(ctx, input)
+      emit(ctx, input)
       {:ok, s}
     end
   end
@@ -314,21 +310,19 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
 
   alias Flezha.Operator.Builder
   alias Flezha.Runner.FleetManager
-  alias Flezha.SDK.Ctx
   alias Flezha.SDK.RunnerServer
   alias Flezha.Service.OperatorManager
   alias Flezha.Transport.Server, as: TransportServer
   alias FlezhaTest.Helper.NodeTestHelper
 
   defmodule EchoTask do
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "echo"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "echo"
 
+    @impl true
     def run(input, s, ctx),
       do:
         (
-          Ctx.emit(ctx, input)
+          emit(ctx, input)
           {:ok, s}
         )
   end
@@ -354,11 +348,16 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
   end
 
   defmodule StoreTask do
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "lr_store_tasklet"
+    use Flezha.SDK.Tasklet, name: "lr_store_tasklet"
+    @impl true
     def init_state(_), do: %{inputs: []}
-    def apply_change(s, {:push, v}), do: %{s | inputs: s.inputs ++ [v]}
-    def run(input, s, ctx), do: {:ok, Ctx.apply(ctx, s, {:push, input})}
+
+    defchange push(s, v) do
+      %{s | inputs: s.inputs ++ [v]}
+    end
+
+    @impl true
+    def run(input, s, ctx), do: {:ok, push(s, ctx, input)}
   end
 
   defmodule StoreOp do
@@ -695,7 +694,7 @@ defmodule Flezha.SDK.SpawnBoundedE2ETest do
 
   alias Flezha.Operator.Builder
   alias Flezha.Runner.FleetManager
-  alias Flezha.SDK.{Ctx, Spawn}
+  alias Flezha.SDK.Spawn
   alias Flezha.Service.OperatorManager
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -704,13 +703,12 @@ defmodule Flezha.SDK.SpawnBoundedE2ETest do
   # One spawn per `<instance id>:<policy>:<payload>` input, read inside the
   # invocation that made it. An empty instance id spawns without one.
   defmodule Requester do
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "requester"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "requester"
 
+    @impl true
     def run(input, s, ctx) do
       [instance_id, policy, payload] = String.split(input, ":", parts: 3)
-      handle = Ctx.spawn_bounded(ctx, "sdk_spawned_inbox", payload, options(instance_id, policy))
+      handle = spawn_bounded(ctx, "sdk_spawned_inbox", payload, options(instance_id, policy))
       result = Spawn.await(handle)
 
       case Process.whereis(:sdk_spawn_probe) do
@@ -738,10 +736,9 @@ defmodule Flezha.SDK.SpawnBoundedE2ETest do
 
   # What the spawned instance consumes, one iteration per input.
   defmodule Received do
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "received"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "received"
 
+    @impl true
     def run(input, s, _ctx) do
       case Process.whereis(:sdk_spawn_probe) do
         nil -> :ok

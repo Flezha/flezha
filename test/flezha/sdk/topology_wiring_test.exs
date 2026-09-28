@@ -20,23 +20,23 @@ defmodule Flezha.SDK.TopologyWiringTest do
   """
   use ExUnit.Case, async: true
 
-  alias Flezha.SDK.{Channels, Ctx, Topology}
+  alias Flezha.SDK.{Channels, Topology}
 
   defmodule EchoTask do
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "echo"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "echo"
 
+    @impl true
     def run(input, state, ctx) do
-      Ctx.emit(ctx, input)
+      emit(ctx, input)
       {:ok, state}
     end
   end
 
   defmodule KeyedTask do
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "keyed"
+    use Flezha.SDK.Tasklet, name: "keyed"
+    @impl true
     def init_state(_), do: 0
+    @impl true
     def run(_input, state, _ctx), do: {:ok, state + 1}
   end
 

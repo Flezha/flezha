@@ -17,14 +17,13 @@ defmodule Flezha.SDK.DispatchTest do
   # --- fixtures ---
 
   defmodule EchoTask do
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "echo"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "echo"
 
+    @impl true
     def run(input, s, ctx),
       do:
         (
-          Ctx.emit(ctx, input)
+          emit(ctx, input)
           {:ok, s}
         )
   end
@@ -43,12 +42,11 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   defmodule MetaEchoTask do
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "meta_echo"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "meta_echo"
 
+    @impl true
     def run(input, s, ctx) do
-      :ok = Ctx.emit_with_meta(ctx, input, %{"tag" => "x"})
+      :ok = emit_with_meta(ctx, input, %{"tag" => "x"})
       {:ok, s}
     end
   end
@@ -62,10 +60,9 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   defmodule OrderedTask do
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "ordered"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "ordered"
 
+    @impl true
     def run(input, s, _ctx) do
       send(:dispatch_probe |> Process.whereis(), {:ran, input})
       {:ok, s}
@@ -101,10 +98,9 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   defmodule FlakyTask do
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "flaky"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "flaky"
 
+    @impl true
     def run(input, s, ctx) do
       n = :counters.get(probe_counter(), 1)
       :counters.add(probe_counter(), 1, 1)
@@ -112,7 +108,7 @@ defmodule Flezha.SDK.DispatchTest do
       if n < 2 do
         raise("boom #{n}")
       else
-        Ctx.emit(ctx, input)
+        emit(ctx, input)
         {:ok, s}
       end
     end
@@ -134,16 +130,14 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   defmodule PoisonTask do
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "poison"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "poison"
+    @impl true
     def run(_input, _s, _ctx), do: {:error, {:non_retryable, "always"}}
   end
 
   defmodule RaiserTask do
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "raiser"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "raiser"
+    @impl true
     def run(_input, _s, _ctx), do: raise("boom")
   end
 
@@ -178,10 +172,9 @@ defmodule Flezha.SDK.DispatchTest do
   # Blocks until released, so a dispatch can be observed mid-flight; the input
   # `kill` ends the Cell process untrappably, which no `after` can cover.
   defmodule GatedTask do
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "gated"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "gated"
 
+    @impl true
     def run(input, s, ctx) do
       send(:dispatch_probe, {:running, input, self()})
       if input == "kill", do: Process.exit(self(), :kill)
@@ -192,7 +185,7 @@ defmodule Flezha.SDK.DispatchTest do
         5_000 -> :ok
       end
 
-      Ctx.emit(ctx, input)
+      emit(ctx, input)
       {:ok, s}
     end
   end
@@ -393,18 +386,15 @@ defmodule Flezha.SDK.DispatchTest do
   # releases it, so a burst finds the mailbox full for as long as the test
   # wants rather than for as long as a sleep lasts.
   defmodule SlowTask do
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "slow"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "slow", mailbox_capacity: 1
 
+    @impl true
     def run(input, s, ctx) do
       send(:dispatch_probe, {:running, input, self()})
       receive(do: (:release -> :ok))
-      Ctx.emit(ctx, input)
+      emit(ctx, input)
       {:ok, s}
     end
-
-    def mailbox_capacity, do: 1
   end
 
   test "drop_newest sheds at capacity; the runner stays responsive" do
@@ -445,18 +435,15 @@ defmodule Flezha.SDK.DispatchTest do
 
   test "the undeclared default discards nothing; every input arrives" do
     defmodule DefaultSlowTask do
-      @behaviour Flezha.SDK.Tasklet
-      def name, do: "default_slow"
-      def init_state(_), do: nil
+      use Flezha.SDK.Tasklet, name: "default_slow", mailbox_capacity: 1
 
+      @impl true
       def run(input, s, ctx) do
         send(:dispatch_probe, {:running, input, self()})
         receive(do: (:release -> :ok))
-        Ctx.emit(ctx, input)
+        emit(ctx, input)
         {:ok, s}
       end
-
-      def mailbox_capacity, do: 1
     end
 
     defmodule DefaultOp do

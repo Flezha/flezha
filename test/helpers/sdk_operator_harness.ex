@@ -114,7 +114,8 @@ defmodule FlezhaTest.Helper.SdkOperatorHarness do
   @doc "`pid`, the Cell at `{operator_id, tasklet, key}`, is evicted: its delete frame lands, then it ends."
   def assert_evicted(pid, {operator_id, tasklet, key}) do
     ref = Process.monitor(pid)
-    assert_receive {:flz_data, _, "delete_cell_state", frame, _}, 2_000
+    # A one-second TTL, then the next sweep a quarter of it later.
+    assert_receive {:flz_data, _, "delete_cell_state", frame, _}, 3_000
     assert {:ok, {^operator_id, ^tasklet, ^key}} = Wire.decode_cell_id(frame)
     assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 1_000
   end

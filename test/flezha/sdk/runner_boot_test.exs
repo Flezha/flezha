@@ -16,12 +16,11 @@ defmodule Flezha.SDK.RunnerBootTest do
 
   defmodule BootTask do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "boot_probe"
-    def init_state(_key), do: nil
+    use Flezha.SDK.Tasklet, name: "boot_probe"
 
+    @impl true
     def run(value, state, ctx) do
-      Flezha.SDK.Ctx.emit(ctx, value)
+      emit(ctx, value)
       {:ok, state}
     end
   end

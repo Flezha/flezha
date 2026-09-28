@@ -36,7 +36,7 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
 
     assert [first] = frames(1)
     assert {0, body} = effect(first)
-    assert body.changes == [Record.encode_body({"k1", "a"})]
+    assert body.changes == [Record.encode_body({:set, "k1", "a"})]
     assert body.outputs == [%{channel: "sink", key: "k1", metadata: [], payload: "k1=a"}]
     assert body.consumed_offset == 3
     assert body.dlq == nil
@@ -58,7 +58,7 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
 
     log =
       effect_record(0, %{
-        changes: [Record.encode_body({"k0", "seed"})],
+        changes: [Record.encode_body({:set, "k0", "seed"})],
         outputs: [],
         consumed_offset: 5,
         dlq: nil,
@@ -117,7 +117,12 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
     push(op, "commit:now", 3)
     assert [f2] = frames(1)
     assert {2, body} = effect(f2)
-    assert body.changes == [Record.encode_body({"k1", "a"}), Record.encode_body({"k2", "b"})]
+
+    assert body.changes == [
+             Record.encode_body({:set, "k1", "a"}),
+             Record.encode_body({:set, "k2", "b"})
+           ]
+
     assert body.consumed_offset == 3
     assert body.outputs == []
   end
@@ -201,7 +206,7 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
     assert [fired] = frames(1)
     assert {1, body} = effect(fired)
     assert body.consumed_offset == nil
-    assert body.changes == [Record.encode_body({"fired", op_registered.scheduled_at})]
+    assert body.changes == [Record.encode_body({:set, "fired", op_registered.scheduled_at})]
     assert [%{key: "fired"}] = body.outputs
     assert [%{register: false, scheduled_at: at}] = body.timers
     assert at == op_registered.scheduled_at

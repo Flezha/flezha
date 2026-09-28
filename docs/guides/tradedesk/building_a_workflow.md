@@ -484,7 +484,76 @@ lists what the attribute carries.
 
 ### Elixir
 
-TODO: not written yet.
+The whole example:
+[`sdk/elixir/examples/tradedesk`](https://github.com/flezha/flezha_elixir_sdk/tree/main/examples/tradedesk).
+
+```elixir
+# lib/tradedesk/reserve_funds.ex: step one. Puts the money aside, and releases it on an undo.
+defmodule Tradedesk.ReserveFunds do
+  use Flezha.SDK.Tasklet, name: "reserve_funds"
+
+  # What this step remembers.
+  state do
+    field(:id, :string, default: "")
+  end
+
+  # How the id is written down.
+  defchange reserving(reservation, id) do
+    %{reservation | id: id}
+  end
+
+  # The step: reserve the money under an id, remember the id, and hand the
+  # order on.
+  @impl true
+  def run(order, reservation, ctx) do
+    # The same id when the step runs again.
+    id = "res-" <> stable_id(ctx)
+    emit(ctx, %{order: order, reservation_id: id})
+    {:ok, reserving(reservation, ctx, id)}
+  end
+
+  # The undo: release the money, by the id the state kept.
+  @impl true
+  def compensate(_outputs, reservation, _ctx) do
+    IO.puts("[undo] released #{reservation.id}")
+    {:ok, reservation}
+  end
+end
+```
+
+**Flezha calls `run/3` with the order**, and passes it three things: the
+input, the state and the context, as it did for the ETL stream's tasklets.
+
+- `order` is the input, what arrives on the step's channel. For the first
+  step, that is the order the instance was started with, the `OrderTicket`
+  struct the operator decodes its JSON into.
+- `reservation` is the step's state, the map its `state` block starts as
+  `%{id: ""}`.
+- `ctx` is the context, the step's way of talking to Flezha. `emit(ctx, ...)`
+  hands a value to the next step, and `stable_id(ctx)` gives an id that stays
+  the same when the step runs again, so a retry does not put the money aside
+  twice.
+
+`reserving(reservation, ctx, id)` is the recorder `defchange` generated: it
+writes the change `{:reserving, id}` down and answers the state with the id
+in it, which `run/3` returns.
+
+**Flezha calls `compensate/3` only when the order fails**, and passes it three
+things:
+
+- `_outputs` is what `run/3` handed on, a list.
+- `reservation` is the same state `run/3` wrote the id into.
+- `_ctx` is the context again.
+
+The id is read from the state, not from what was handed on, because after a
+crash Flezha brings back the step's state but not what it handed on, so the
+list can be empty. Writing `compensate/3` is what gives a step an undo, and a
+step without one is skipped. It can run twice, when a crash comes in the middle
+of an undo, so it has to be safe to repeat.
+
+The operator names the module, `Tradedesk.ReserveFunds`.
+[What `use Flezha.SDK.Tasklet` declares](building_an_etl_stream.md#keep-each-symbol-s-prices)
+lists its options.
 
 <!-- tabs-close -->
 
@@ -718,7 +787,38 @@ final class PlaceOrder extends Tasklet
 
 ### Elixir
 
-TODO: not written yet.
+```elixir
+# lib/tradedesk/place_order.ex: step two. Places the order, and cancels it on an undo.
+defmodule Tradedesk.PlaceOrder do
+  use Flezha.SDK.Tasklet, name: "place_order"
+
+  # What this step remembers.
+  state do
+    field(:order_id, :string, default: "")
+  end
+
+  # How the id is written down.
+  defchange placing(placement, order_id) do
+    %{placement | order_id: order_id}
+  end
+
+  # The step: place the order under an id, remember the id, and hand the order
+  # on.
+  @impl true
+  def run(%{order: order}, placement, ctx) do
+    order_id = "ord-" <> stable_id(ctx)
+    emit(ctx, %{order: order, order_id: order_id})
+    {:ok, placing(placement, ctx, order_id)}
+  end
+
+  # The undo: cancel the order, by the id the state kept.
+  @impl true
+  def compensate(_outputs, placement, _ctx) do
+    IO.puts("[undo] cancelled #{placement.order_id}")
+    {:ok, placement}
+  end
+end
+```
 
 <!-- tabs-close -->
 
@@ -963,7 +1063,41 @@ desk keeps the defaults.
 
 ### Elixir
 
-TODO: not written yet.
+```elixir
+# lib/tradedesk/confirm_fill.ex: asks the exchange whether the order filled, and ends the order with the answer.
+defmodule Tradedesk.ConfirmFill do
+  use Flezha.SDK.Tasklet, name: "confirm_fill"
+
+  @exchange_max 100
+
+  @impl true
+  def run(%{order: order, order_id: order_id}, state, ctx) do
+    # The paper exchange takes ten seconds to answer. Each cell is a process of
+    # its own, so only this order waits; every other cell keeps running.
+    Process.sleep(10_000)
+
+    if order.quantity > @exchange_max do
+      # Tried again, then the order is undone.
+      {:error,
+       "the exchange fills at most #{@exchange_max} a time, and this is #{order.quantity}"}
+    else
+      complete(ctx, "filled #{order.symbol} #{order.quantity} as #{order_id}")
+      {:ok, state}
+    end
+  end
+end
+```
+
+A cell is a BEAM process of its own, so `Process.sleep/1` here holds only
+this order: the price stream and every other order keep running while it
+waits. What it does hold is the rest of this order. Until `run/3` returns, the
+order's driver waits for the cell, so `record_order` runs only after the fill
+is confirmed, and after the last try of a refused one.
+
+An `{:error, reason}` answer, or anything `run/3` raises, is retried. The
+number of tries and the wait are set where the operator connects the step,
+with `retry_max/2` and `retry_backoff_ms/2`; the desk keeps the defaults. An
+`{:error, {:non_retryable, reason}}` answer is not retried.
 
 <!-- tabs-close -->
 
@@ -1090,7 +1224,22 @@ nothing on, which is the plainest shape a tasklet has.
 
 ### Elixir
 
-TODO: not written yet.
+```elixir
+# lib/tradedesk/record_order.ex: writes the placed order into the desk's book.
+defmodule Tradedesk.RecordOrder do
+  use Flezha.SDK.Tasklet, name: "record_order"
+
+  @impl true
+  def run(%{order: order, order_id: order_id}, state, _ctx) do
+    IO.puts("[book] #{order.symbol} #{order.quantity} as #{order_id}")
+    {:ok, state}
+  end
+end
+```
+
+With no `state` block and no `emit/2`, it keeps nothing and hands nothing on,
+which is the plainest shape a tasklet has. `IO.puts/1` writes to the runner's
+terminal.
 
 <!-- tabs-close -->
 
@@ -1323,7 +1472,52 @@ instance would run the steps again, and nothing sends one.
 
 ### Elixir
 
-TODO: not written yet.
+```elixir
+# lib/tradedesk/order_executor.ex: the bounded operator. One instance is one order.
+defmodule Tradedesk.OrderExecutor do
+  use Flezha.SDK.BoundedOperator, factory_id: "order_executor"
+
+  defmodule OrderTicket do
+    defstruct [:symbol, :quantity]
+
+    def decode(json) do
+      case Jason.decode(json) do
+        {:ok, %{"symbol" => symbol, "quantity" => quantity}}
+        when is_binary(symbol) and is_integer(quantity) ->
+          {:ok, %__MODULE__{symbol: symbol, quantity: quantity}}
+
+        _other ->
+          {:error, "an order is {\"symbol\": <text>, \"quantity\": <whole number>}"}
+      end
+    end
+  end
+
+  @impl true
+  def channels(c) do
+    placed =
+      c
+      |> input_with("order", &OrderTicket.decode/1)
+      |> into(Tradedesk.ReserveFunds)
+      |> into(Tradedesk.PlaceOrder)
+
+    # Two arms on the one placed channel.
+    placed |> into(Tradedesk.ConfirmFill)
+    placed |> into(Tradedesk.RecordOrder)
+  end
+end
+```
+
+The order is the entry's first message, and it arrives as bytes, so
+`input_with/3` names the parser that turns its JSON into an `OrderTicket`, the
+struct `reserve_funds` takes; a message that is not an order is refused there.
+The four modules it names in `into` are the four steps themselves:
+`ReserveFunds`, `PlaceOrder`, `ConfirmFill` and `RecordOrder`. Elixir has no
+`branch`: the placed channel is a value, `placed`, and naming it in two `into`
+calls is the fan-out, each arm getting the same placed order.
+
+An Elixir order runs the two arms one after the other, the fill first, because
+the driver waits for each step's cell in turn: the book is written once the
+fill is confirmed, rather than beside it.
 
 <!-- tabs-close -->
 
@@ -1437,7 +1631,30 @@ $runner->awaitTermination();
 
 ### Elixir
 
-TODO: not written yet.
+```elixir
+# lib/tradedesk/application.ex: the runner. Joins trading and registers both factories.
+defmodule Tradedesk.Application do
+  use Application
+
+  @impl true
+  def start(_type, _args) do
+    namespace = List.first(System.argv(), "trading")
+
+    children = [
+      # `:uds` because this node is not the controller's.
+      {Flezha.SDK,
+       namespace: namespace,
+       operators: [Tradedesk.TradeWatcher, Tradedesk.OrderExecutor],
+       transport: :uds}
+    ]
+
+    Supervisor.start_link(children, strategy: :one_for_one)
+  end
+end
+```
+
+`operators:` takes both kinds: the kind is read from each module's `use`,
+never named by the list.
 
 <!-- tabs-close -->
 

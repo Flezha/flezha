@@ -263,13 +263,19 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
 
   defmodule FailingTasklet do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "backoff_drill_tasklet"
+    use Flezha.SDK.Tasklet, name: "backoff_drill_tasklet"
+    @impl true
     def init_state(_), do: %{}
-    def apply_change(s, _change), do: s
+
+    defchange noop(s) do
+      s
+    end
+
+    @impl true
     def state_from_json(json), do: json
 
     # Every input fails, so the ladder walks to its retry_max and parks.
+    @impl true
     def run(_input, _state, _ctx), do: {:error, "backoff drill: always fails"}
   end
 

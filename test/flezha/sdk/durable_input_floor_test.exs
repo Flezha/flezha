@@ -16,14 +16,18 @@ defmodule Flezha.SDK.DurableInputFloorTest do
 
   defmodule Store do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "store"
+    use Flezha.SDK.Tasklet, name: "store"
+    @impl true
     def init_state(_), do: %{}
-    def apply_change(s, {k, v}), do: Map.put(s, k, v)
+
+    defchange set(s, k, v) do
+      Map.put(s, k, v)
+    end
 
     # A `hold:<pid>` tells that test process it is inside `run`, then blocks
     # on its own mailbox until the test releases it; the timeout is the
     # fixture's safety net.
+    @impl true
     def run("hold:" <> test, s, _ctx) do
       send(:erlang.list_to_pid(String.to_charlist(test)), {:holding, self()})
 
@@ -40,42 +44,49 @@ defmodule Flezha.SDK.DurableInputFloorTest do
 
     def run(input, s, ctx) do
       [k, v] = String.split(input, "=", parts: 2)
-      {:ok, Ctx.apply(ctx, s, {k, v})}
+      {:ok, set(s, ctx, k, v)}
     end
   end
 
   defmodule SmallStore do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "small_store"
+    use Flezha.SDK.Tasklet, name: "small_store", mailbox_capacity: 1
+    @impl true
     def init_state(key), do: Store.init_state(key)
-    def mailbox_capacity, do: 1
-    def apply_change(s, change), do: Store.apply_change(s, change)
+
+    defchange set(s, k, v) do
+      Map.put(s, k, v)
+    end
+
+    @impl true
     def run(input, s, ctx), do: Store.run(input, s, ctx)
   end
 
   defmodule Splitter do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "splitter"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "splitter"
 
+    @impl true
     def run(input, s, ctx) do
-      for part <- String.split(input, ","), do: Ctx.emit(ctx, part)
+      for part <- String.split(input, ","), do: emit(ctx, part)
       {:ok, s}
     end
   end
 
   defmodule Relay do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "relay"
+    use Flezha.SDK.Tasklet, name: "relay"
+    @impl true
     def init_state(_), do: 0
-    def apply_change(count, :relayed), do: count + 1
 
+    defchange relayed(count) do
+      count + 1
+    end
+
+    @impl true
     def run(input, count, ctx) do
-      Ctx.emit(ctx, input)
-      {:ok, Ctx.apply(ctx, count, :relayed)}
+      emit(ctx, input)
+      {:ok, relayed(count, ctx)}
     end
   end
 
@@ -179,7 +190,7 @@ defmodule Flezha.SDK.DurableInputFloorTest do
 
       assert [record] = frames(1)
       assert {0, %{consumed_offset: 3, changes: [change]}} = effect(record)
-      assert {:ok, {"x", "1"}} = Record.decode_body(change)
+      assert {:ok, {:set, "x", "1"}} = Record.decode_body(change)
     end
 
     test "a re-forward of an input the Cell took is dropped, and a restore takes the floor from the records" do
@@ -192,7 +203,7 @@ defmodule Flezha.SDK.DurableInputFloorTest do
 
       log =
         effect_record(0, %{
-          changes: [Record.encode_body({"x", "seed"})],
+          changes: [Record.encode_body({:set, "x", "seed"})],
           outputs: [],
           consumed_offset: 5
         })

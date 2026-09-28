@@ -6,23 +6,22 @@ defmodule FlezhaTest.Helper.SdkSpawnFixtures do
   nobody reads has something to be logged for.
   """
 
-  alias Flezha.SDK.{Channels, Ctx, Spawn}
+  alias Flezha.SDK.{Channels, Spawn}
 
   defmodule Spawner do
     @moduledoc false
-    @behaviour Flezha.SDK.Tasklet
-    def name, do: "spawner"
-    def init_state(_), do: nil
+    use Flezha.SDK.Tasklet, name: "spawner"
 
+    @impl true
     def run("unread:" <> instance_id, state, ctx) do
-      Ctx.spawn_bounded(ctx, "worker", "payload", id: instance_id)
-      Ctx.emit(ctx, "sent")
+      spawn_bounded(ctx, "worker", "payload", id: instance_id)
+      emit(ctx, "sent")
       {:ok, state}
     end
 
     def run(instance_id, state, ctx) do
-      handle = Ctx.spawn_bounded(ctx, "worker", "payload", id: instance_id)
-      Ctx.emit(ctx, inspect(Spawn.await(handle, 5_000)))
+      handle = spawn_bounded(ctx, "worker", "payload", id: instance_id)
+      emit(ctx, inspect(Spawn.await(handle, 5_000)))
       {:ok, state}
     end
   end

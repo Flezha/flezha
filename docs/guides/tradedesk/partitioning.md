@@ -164,7 +164,15 @@ terminal rather than with standard input closed.
 
 ### Elixir
 
-TODO: not written yet.
+```sh
+$ mix deps.get
+$ FLEZHA_NAMESPACE_SECRET=flzt_3j5bftycxn43ivwoxbd2peghazjgtnru5bxqgshvfqcft7lrdsra mix run --no-halt
+```
+
+Start it from the project's folder. The first `mix deps.get` and compile build
+the SDK's socket client with a Rust toolchain, which takes a few minutes. The
+runner does not read its standard input, so it runs until the node stops:
+Ctrl-C twice, or a SIGTERM.
 
 <!-- tabs-close -->
 
