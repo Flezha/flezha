@@ -40,10 +40,10 @@ by the same fluent channel builder — with the scalar declarations in a
 build step ([`php_sdk.md`](php_sdk.md)). The Python SDK exposes decorators —
 `@flezha.tasklet`, `@flezha.state`, `@flezha.unbounded_operator`,
 `@flezha.bounded_operator`, wired by the same fluent channel builder — over a
-handler that is a plain function when it is a transform and a class when it has
-hooks, with the input, output, state and change types all read from the type
-hints, which is what makes a wrong edge a type-checker error before it is a
-registration one ([`python_sdk.md`](python_sdk.md)). A surface one
+named tasklet class whose `run` takes the value and a `Ctx[State, Output]` and
+whose other methods are the hooks, with the input, output, state and change
+types all read from the type hints, which is what makes a wrong edge a
+type-checker error before it is a registration one ([`python_sdk.md`](python_sdk.md)). A surface one
 binding gains, every binding gains in the same change or defers by name:
 [`../architecture/runner.md` → "One change, every SDK"](../architecture/runner.md#one-change-every-sdk).
 
@@ -123,7 +123,7 @@ three types, and §2.2 says where the rest comes from.
 | `type Output = O`, else nothing                     | `Output`, default `()`: no output channel           |
 | `type State = S`, else nothing                      | `State`, default `()`: stateless                    |
 | `type Change = C` (a `Change<S>`), else nothing     | `Change`, default `NoChange`: nothing journaled     |
-| `name = "…"` (required)                             | `NAME` — Rust: the key; Python: the function name; Ruby: the class name in snake_case; Java names every tasklet in `@Tasklet.Spec(name = …)`; PHP in `#[Task(name: …)]` |
+| `name = "…"` (required)                             | `NAME` — Rust: the key; Python: the `name` of `@flezha.tasklet(name=…)`; Ruby: the class name in snake_case; Java names every tasklet in `@Tasklet.Spec(name = …)`; PHP in `#[Task(name: …)]` |
 | `fn event_time`, else `logical_clock`, else nothing | `CLOCK`: `EventTime`, `Logical`, else `Wall`        |
 | `fn init_state`, else nothing                       | `init_state` returning `State::default()`           |
 | `fn compensate` / `fn cells_for` / `fn max_cells` / `fn mailbox_capacity` | the matching `*_OVERRIDDEN` flag set to `true` |
@@ -329,6 +329,10 @@ through its typed context, so emitting nothing is not calling `emit`. A Java `ru
 returns nothing and emits through `ctx.emit`, so emitting nothing is not
 calling it. A PHP `run`, a tasklet's or a short form's, is declared `: void`
 and emits through `$ctx->emit`, so emitting nothing is not calling it either.
+A Python function short form emits what it returns, `None` emitting nothing. A
+Python tasklet class's `run`, and a short form declared on a class, returns
+`None` and emits through `ctx.emit`, and a `run` that returns a value fails
+the input.
 
 **Keyed output.** On a `.keyed()` output channel the plain emit carries
 the emitting Cell's **own key** (the key its input routed by), so a keyed
@@ -492,7 +496,7 @@ is an address a user types and a rename must not move it.
 | --- | --- | --- |
 | Rust | `#[flezha::unbounded_operator(id = "echo", sink = "out", input = "in")] fn echo(s: String) -> String`, or the same attribute on an `impl Tasklet for Echo` block | `#[flezha::bounded_operator(...)]` |
 | Java | `@UnboundedOperator(id = "echo", sink = "out", input = "in") class Echo implements Tasklet<String, Void, String> { void run(String s, Ctx<Void, String> ctx) }` | `@BoundedOperator(...)` |
-| Python | `@flezha.unbounded_operator(id="echo", sink="out", input="in", codec="text") def echo(s: str) -> str` | `@flezha.bounded_operator(...)` |
+| Python | `@flezha.unbounded_operator(id="echo", sink="out", input="in", codec="text") def echo(s: str) -> str`, or the same decorator on a class whose `run(self, s, ctx)` emits through `ctx` | `@flezha.bounded_operator(...)` |
 | Node | `defineUnbounded({ factoryId: 'echo', sink: 'out', input: 'in', codec: 'text', run })` | `defineBounded({ ... })` |
 | Ruby | `class Echo < Flezha::UnboundedOperator; factory_id "echo"; sink "out"; input "in"; codec :text; def run(s, ctx) = s; end` | `< Flezha::BoundedOperator` |
 | PHP | `#[Operator(factoryId: 'echo', sink: 'out', input: 'in', codec: ChannelCodec::Text)] final class Echo extends UnboundedOperator { public function run(mixed $s, Ctx $ctx): void }` | `extends BoundedOperator` |

@@ -33,15 +33,19 @@ The Python test app SHALL terminate when its standard input reaches end of file,
 
 The SDK SHALL ship a tasklet test harness at parity with those the Rust and Java SDKs already provide: construction from an initial state or from a restore payload, application of inputs, timer firing, event-time advance, inspection of recorded changes and emits, and a replay-equality gate that folds the recorded change log against a freshly constructed initial state and reports a mismatch with both states for inspection.
 
-A handler SHALL remain an ordinary callable that a plain unit test can invoke with no runtime present and no controller running.
+The harness SHALL construct a cell's initial state as the runtime does, from `init_state` when the tasklet writes it and otherwise from its state class, and SHALL apply the runtime's rule for what a hook returns through the same shared call: a function short form's return value is emitted, and a tasklet class hook that returns a value fails the invocation. A tasklet SHALL be testable through the harness with no runner started and no controller running, and a function short form's body SHALL remain an ordinary callable that a plain unit test can invoke directly.
 
 #### Scenario: Replay equality is gated in a unit test
 - **WHEN** a handler whose change log does not reproduce its terminal state is exercised through the harness
 - **THEN** the replay-equality gate SHALL report a mismatch carrying the expected and actual states
 
 #### Scenario: A handler is testable with no runtime
-- **WHEN** a decorated handler is called directly from a unit test with no runner started
-- **THEN** it SHALL execute as an ordinary function
+- **WHEN** a tasklet class is driven through `TaskletTestHarness` with `apply_inputs`, and a function short form's generated tasklet is called directly, both from a unit test with no runner started
+- **THEN** the harness SHALL report the values the tasklet passed to `ctx.emit` and the changes it recorded, and the function SHALL execute as an ordinary function
+
+#### Scenario: The harness refuses a returned value as the runner does
+- **WHEN** the harness feeds an input to a tasklet class whose unannotated `run` returns a value
+- **THEN** the invocation SHALL fail with the same non-retryable message the runner produces, naming the tasklet, `run` and `ctx.emit`
 
 ### Requirement: Python Is a Measured Runtime, Not an Assumed One
 

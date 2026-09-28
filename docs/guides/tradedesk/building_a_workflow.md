@@ -220,7 +220,79 @@ TODO: not written yet.
 
 ### Python
 
-TODO: not written yet.
+The whole example:
+[`sdk/python/examples/tradedesk`](https://github.com/flezha/flezha_python_sdk/tree/main/examples/tradedesk).
+
+```python
+# reserve_funds.py: step one. Puts the money aside, and releases it on an undo.
+class OrderTicket(TypedDict):  # the order an instance is started with
+    symbol: str
+    quantity: int
+
+
+class Reserved(TypedDict):  # what it hands on
+    order: OrderTicket
+    reservation_id: str
+
+
+@flezha.state
+@dataclass
+class Reservation:  # what this step remembers
+    id: str = ""
+
+
+class Reserving(TypedDict):  # how the id is written down
+    id: str
+
+
+@flezha.tasklet(name="reserve_funds")
+class ReserveFunds:
+    # The step: reserve the money under an id, remember the id, and hand the order on.
+    def run(self, order: OrderTicket, ctx: flezha.Ctx[Reservation, Reserved]) -> None:
+        reservation_id = f"res-{ctx.stable_id()}"  # the same id when the step runs again
+        ctx.change(Reserving(id=reservation_id))
+        ctx.emit(Reserved(order=order, reservation_id=reservation_id))
+
+    def apply_change(self, reservation: Reservation, change: Reserving) -> None:
+        reservation.id = change["id"]
+
+    # The undo: release the money, by the id the state kept.
+    def compensate(self, outputs: list[Reserved], ctx: flezha.Ctx[Reservation, Reserved]) -> None:
+        print(f"[undo] released {ctx.state.id}", flush=True)
+```
+
+**Flezha calls `run` with the order**, and passes it two things: the input and
+the context, as it did for the ETL stream's tasklets.
+
+- `order` is the input, what arrives on the step's channel. For the first
+  step, that is the order the instance was started with, an `OrderTicket`: the
+  dict `{"symbol": ..., "quantity": ...}` its JSON decodes to.
+- `ctx` is the context, the step's way of talking to Flezha.
+  `ctx.change(...)` writes the id down in the step's state, and `ctx.state`
+  reads it back. `ctx.emit(...)` hands a value to the next step, and
+  `ctx.stable_id()` gives an id that stays the same when the step runs again,
+  so a retry does not put the money aside twice.
+
+`Ctx[Reservation, Reserved]` names both: the step starts its state as
+`Reservation()`, records the change `Reserving`, folded by `apply_change`, and
+hands on a `Reserved`, the order and the id.
+
+**Flezha calls `compensate` only when the order fails**, and passes it two
+things:
+
+- `outputs` is what `run` handed on, a list.
+- `ctx` is the context again, and `ctx.state` is the same state `run` wrote the
+  id into.
+
+The id is read from the state, not from what was handed on, because after a
+crash Flezha brings back the step's state but not what it handed on, so the
+list can be empty. Writing a `compensate` is what gives a step an undo, and a
+step without one is skipped. It can run twice, when a crash comes in the middle
+of an undo, so it has to be safe to repeat.
+
+The operator names the class itself, `ReserveFunds`.
+[What `@flezha.tasklet` declares](building_an_etl_stream.md#keep-each-symbol-s-prices)
+lists what the decorator takes.
 
 ### Ruby
 
@@ -410,7 +482,40 @@ TODO: not written yet.
 
 ### Python
 
-TODO: not written yet.
+```python
+# place_order.py: step two. Places the order, and cancels it on an undo.
+class PlacedOrder(TypedDict):  # what it hands on
+    order: OrderTicket
+    order_id: str
+
+
+@flezha.state
+@dataclass
+class Placement:  # what this step remembers
+    order_id: str = ""
+
+
+class Placing(TypedDict):  # how the id is written down
+    order_id: str
+
+
+@flezha.tasklet(name="place_order")
+class PlaceOrder:
+    # The step: place the order under an id, remember the id, and hand the order on.
+    def run(self, reserved: Reserved, ctx: flezha.Ctx[Placement, PlacedOrder]) -> None:
+        order_id = f"ord-{ctx.stable_id()}"
+        ctx.change(Placing(order_id=order_id))
+        ctx.emit(PlacedOrder(order=reserved["order"], order_id=order_id))
+
+    def apply_change(self, placement: Placement, change: Placing) -> None:
+        placement.order_id = change["order_id"]
+
+    # The undo: cancel the order, by the id the state kept.
+    def compensate(
+        self, outputs: list[PlacedOrder], ctx: flezha.Ctx[Placement, PlacedOrder]
+    ) -> None:
+        print(f"[undo] cancelled {ctx.state.order_id}", flush=True)
+```
 
 ### Ruby
 
@@ -547,7 +652,33 @@ TODO: not written yet.
 
 ### Python
 
-TODO: not written yet.
+```python
+# confirm_fill.py: asks the exchange whether the order filled, and ends the order with the answer.
+EXCHANGE_MAX = 100
+
+
+@flezha.tasklet(name="confirm_fill")
+class ConfirmFill:
+    def run(self, placed: PlacedOrder, ctx: flezha.Ctx[None, None]) -> None:
+        time.sleep(10)  # the paper exchange takes ten seconds to answer
+        quantity = placed["order"]["quantity"]
+        if quantity > EXCHANGE_MAX:  # tried again, then the order is undone
+            raise RuntimeError(
+                f"the exchange fills at most {EXCHANGE_MAX} a time, and this is {quantity}"
+            )
+        ctx.complete(f"filled {placed['order']['symbol']} {quantity} as {placed['order_id']}")
+```
+
+The wait holds one worker of the default thread executor; under the asyncio
+executor it would hold up the one loop. When every worker has been busy for
+100 ms the runner adds one, up to `FLEZHA_WORKER_POOL_MAX` (ten times the
+processor count by default), so the price stream keeps flowing while an order
+waits; more orders waiting at once than that would stall it.
+
+An exception raised from `run` is retried. The number of tries and the wait
+are set where the operator connects the step, with `retry_max` and
+`retry_backoff_ms`; the desk keeps the defaults. `NonRetryableError` is the one
+that is not retried.
 
 ### Ruby
 
@@ -672,7 +803,17 @@ TODO: not written yet.
 
 ### Python
 
-TODO: not written yet.
+```python
+# record_order.py: writes the placed order into the desk's book.
+@flezha.tasklet(name="record_order")
+class RecordOrder:
+    def run(self, placed: PlacedOrder, ctx: flezha.Ctx[None, None]) -> None:
+        order = placed["order"]
+        print(f"[book] {order['symbol']} {order['quantity']} as {placed['order_id']}", flush=True)
+```
+
+`Ctx[None, None]` names no state and no output, so it keeps nothing and hands
+nothing on, which is the plainest shape a tasklet has.
 
 ### Ruby
 
@@ -819,7 +960,27 @@ TODO: not written yet.
 
 ### Python
 
-TODO: not written yet.
+```python
+# order_executor.py: the bounded operator. One instance is one order.
+@flezha.bounded_operator("order_executor")
+def order_executor(c: flezha.Channels) -> None:
+    (
+        c.input("order")
+        .into(ReserveFunds)  # step one
+        .into(PlaceOrder)  # step two, once step one is done
+        .branch(
+            lambda fill: fill.into(ConfirmFill),  # two arms, side by side
+            lambda book: book.into(RecordOrder),
+        )
+    )
+```
+
+The order is the entry's first message, and the entry names no codec, so
+`reserve_funds` gets the dict its JSON decodes to, the `OrderTicket` declared
+beside it and sent by `BuyAboveAverage` in the ETL stream when it starts an
+order. The four classes it names in `into` are the four steps themselves:
+`ReserveFunds`, `PlaceOrder`, `ConfirmFill` and `RecordOrder`. Each arm of
+`branch` is a function that gets the same edge.
 
 ### Ruby
 
@@ -917,7 +1078,21 @@ TODO: not written yet.
 
 ### Python
 
-TODO: not written yet.
+```python
+# runner.py: the runner. Joins trading and registers both factories.
+def main() -> None:
+    namespace = sys.argv[1] if len(sys.argv) > 1 else "trading"
+    flezha.configure_logging("info")
+
+    runner = (
+        flezha.create_runner(namespace)
+        .register_factory(trade_watcher)
+        .register_factory(order_executor)
+    )
+
+    # Blocks until shutdown: a SIGTERM, Ctrl-C, or standard input closing.
+    runner.run()
+```
 
 ### Ruby
 

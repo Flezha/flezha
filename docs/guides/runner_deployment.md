@@ -528,19 +528,23 @@ The whole example:
 
 ```python
 # echo_tasklet.py: the tasklet. The processing stage the graph routes each message into.
-@flezha.tasklet(name="echo")    # state is saved under this name, so choose it once
-def echo(value: str) -> str:
-    return f"echo: {value}"  # what it returns is emitted
+@flezha.tasklet(name="echo")  # the durable identity: state is filed under it
+class Echo:
+    def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+        ctx.emit(f"echo: {value}")
 ```
 
-A function becomes a tasklet through the decorator. It declares no state, so it
-keeps nothing between messages, and where its result goes is not its business.
+`name` is required, and it is the tasklet's identity: its state is saved under
+that name, so choose it once, while the class can be renamed freely. `run` gets
+each message and emits through `ctx`; it returns nothing. `Ctx[None, str]`
+names no state and a `str` output, so it keeps nothing between messages and
+journals nothing, and where its output goes is not its business.
 
 ```python
 # echo_operator.py: the operator. The graph, and the unit the controller schedules.
-@flezha.unbounded_operator("echo")
+@flezha.unbounded_operator("echo")  # the stable identity `flz operator start` takes
 def echo_operator(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(echo).sink("out")
+    c.input("in", codec="text").into(Echo).sink("out")
 ```
 
 `codec="text"` hands the tasklet the bytes `flz operator send --text` delivers

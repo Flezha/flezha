@@ -287,12 +287,17 @@ The defined modes are:
 - **THEN** the SDK reports a clear authoring error directing the author to a hand-written `Change`, and SHALL NOT generate silent or incorrect journaling
 
 ### Requirement: Emit-or-skip output return
-The authoring contract SHALL define an optional-output return shape for a short form declared on a function (Rust `#[flezha::unbounded_operator]` / `#[flezha::bounded_operator]` on a `fn`): a function returning an optional `Output` emits when present and emits nothing when absent. The unit return (no output channel) and the unconditional `Output` return (always emit) are unchanged. A Java, Rust or PHP tasklet's `run` returns no output and emits through its context, typed in Java and Rust, so the shape does not apply there: emitting nothing is not calling `emit`. A PHP short form is a class whose `run` is a tasklet's, so it emits through its context too.
+The authoring contract SHALL define an optional-output return shape for a short form declared on a function (Rust `#[flezha::unbounded_operator]` / `#[flezha::bounded_operator]` on a `fn`): a function returning an optional `Output` emits when present and emits nothing when absent. The unit return (no output channel) and the unconditional `Output` return (always emit) are unchanged. A Java, Rust or PHP tasklet's `run` returns no output and emits through its context, typed in Java and Rust, so the shape does not apply there: emitting nothing is not calling `emit`. A PHP short form is a class whose `run` is a tasklet's, so it emits through its context too. A Python short form declared on a function (`@flezha.unbounded_operator` / `@flezha.bounded_operator`) takes the same shape, `None` being its absent value; a Python tasklet class's `run`, and a Python short form declared on a class, returns `None` and emits through its typed context, so the shape does not apply there.
 
 #### Scenario: A function short form emits on present and skips on absent
 
 - **WHEN** a Rust function short form returns an optional `Output`
 - **THEN** the operator emits the value when present and emits nothing when absent, without the author touching the context
+
+#### Scenario: A Python function short form emits on a value and skips on None
+
+- **WHEN** a Python function short form returns `None` for one input and a value for the next
+- **THEN** the operator emits nothing for the first input and emits the value for the second, without the author touching the context
 
 #### Scenario: A Java tasklet that emits nothing
 
@@ -308,6 +313,11 @@ The authoring contract SHALL define an optional-output return shape for a short 
 
 - **WHEN** a PHP tasklet's or short form's `run` returns without calling `$ctx->emit` or `$ctx->emitKeyed` for an input
 - **THEN** nothing SHALL be emitted for that input, and PHP SHALL refuse to load a `run` that returns a value
+
+#### Scenario: A Python tasklet that emits nothing
+
+- **WHEN** a Python tasklet class's `run`, or a Python short form declared on a class, returns `None` without calling `ctx.emit` for an input
+- **THEN** nothing SHALL be emitted for that input, and a `run` that returns a value SHALL be refused
 
 ### Requirement: Single hand-written path determinism
 The authoring contract SHALL state how each SDK keeps a tasklet's live and replay paths from diverging. A tasklet mutating state only through generated journaling recorders (Elixir's `state` block) has exactly one hand-written path (`run`) and one generated replay path (the generated change-application); the two cannot diverge because the replay path is generated from the same recorder definitions. A Rust or Java tasklet's change applies itself (`apply_to` / `applyTo`), and that one fold is what `ctx.change` runs live and what a restore runs on replay. The replay-determinism conformance test remains the gate for all tasklets.

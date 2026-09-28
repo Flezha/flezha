@@ -74,6 +74,9 @@ A PHP runner also stops cleanly when its standard input closes. A SIGTERM
 ends it at once for now, as a crash does, on a PHP built with Zend signal
 handling, so stop it with Ctrl-C.
 
+A Python runner stops cleanly on Ctrl-C, on a SIGTERM and when its standard
+input closes.
+
 > Stop the runner with Ctrl-C in its terminal.
 > {: .step}
 
@@ -235,6 +238,9 @@ order is not `complete`. The runner's terminal shows the booking:
 A Rust runner's journal lists the same steps, with `46 byte(s)` as the handoff
 of each of the first two: every SDK writes the values it hands on in its own
 encoding.
+
+A Python runner's journal lists the same steps too, with `89 byte(s)` and
+`83 byte(s)` as the handoffs of the first two.
 
 A PHP runner's `confirm_fill` waits on a timer rather than inside `run`
 ([`building_a_workflow.md`](building_a_workflow.md#a-step-that-can-fail)), so its
@@ -434,6 +440,18 @@ trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trad
 Its entry is `trade_watcher#p1/track_prices/307bcbd6439a080f` in the
 `flz dlq show` and `flz dlq drop` below.
 
+A Python runner reads the trade as a dict too, so its `track_prices` refuses
+the price the same way, and the entry is that tasklet's, in EUR/USD's cell:
+
+```output
+[flezha] tasklet track_prices parking poison payload to DLQ after 3 attempt(s): TypeError: the price is not a number: 'one euro'
+```
+
+```output
+ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
+trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trades      1    5s        TypeError: the price is not a number: 'one euro'
+```
+
 `flz dlq list` shows what a partition has set aside:
 
 ```sh
@@ -562,6 +580,17 @@ booking:
 [flezha] tasklet confirm_fill attempt 2/3 failed (retrying in 108 ms): RuntimeException: the exchange fills at most 100 a time, and this is 120
 [undo] cancelled ord-601b85a308803b3d10634c4833c8b7de
 [undo] released res-0a63b28bebbc54f887a0ac0c6891cc3f
+```
+
+A Python runner waits the ten seconds on every try, as a Java runner does, and
+names the exception's class before the message:
+
+```output
+[book] EUR/USD 130 as ord-147cb3cb7525c45f615cf36ae92ed0be
+[flezha] tasklet confirm_fill attempt 1/3 failed (retrying in 31 ms): RuntimeError: the exchange fills at most 100 a time, and this is 130
+[flezha] tasklet confirm_fill attempt 2/3 failed (retrying in 120 ms): RuntimeError: the exchange fills at most 100 a time, and this is 130
+[undo] cancelled ord-147cb3cb7525c45f615cf36ae92ed0be
+[undo] released res-494fc55d64e4cc925b295bd07fa3b41f
 ```
 
 The order was cancelled, then the money released. Both undos read their id from

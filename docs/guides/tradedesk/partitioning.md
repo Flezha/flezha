@@ -121,7 +121,18 @@ TODO: not written yet.
 
 ### Python
 
-TODO: not written yet.
+```sh
+$ pip install -r requirements.txt
+$ FLEZHA_NAMESPACE_SECRET=flzt_3j5bftycxn43ivwoxbd2peghazjgtnru5bxqgshvfqcft7lrdsra python3 runner.py
+```
+
+A Python runner also stops when its standard input closes, so start it from a
+terminal rather than with standard input closed. It prints one line as it
+connects, naming its tier and its worker threads:
+
+```output
+[flezha] runner up on namespace trading: gil tier, thread executor, 9 threads, base 8 ceiling 80
+```
 
 ### Ruby
 

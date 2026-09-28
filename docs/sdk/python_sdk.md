@@ -58,59 +58,93 @@ imports none of them unconditionally.
 Modules and classes, registered explicitly. There is no autoload, no path walk
 and no package scan: what runs is what you named.
 
+A tasklet is a class decorated `@flezha.tasklet(name=...)`, whose
+`run(self, value, ctx)` is the handler and whose other methods are the hooks.
+From [`sdk/python/examples/local_word_count.py`](../../sdk/python/examples/local_word_count.py):
+
 ```python
-from dataclasses import dataclass, field
+@tasklet(name="split")
+class Split:
+    def run(self, line: str, ctx: Ctx[None, str]) -> None:
+        for word in line.split():
+            ctx.emit(word.lower())
 
-import flezha
+
+@state
+@dataclass
+class Count:
+    seen: int = 0
 
 
-@flezha.state
 @dataclass
 class Seen:
-    count: int = 0
+    seen: int
 
 
-@dataclass
-class Bumped:
-    by: int
+@tasklet(name="tally", idle_ttl_seconds=300)
+class Tally:
+    def run(self, word: str, ctx: Ctx[Count, str]) -> None:
+        seen = ctx.state.seen + 1
+        ctx.change(Seen(seen=seen))
+        ctx.emit(f"{word} {seen}")
+
+    def apply_change(self, state: Count, change: Seen) -> None:
+        state.seen = change.seen
 
 
-class Upcase:
-    def run(self, value: str, ctx: flezha.Ctx[Seen]) -> str:
-        ctx.change(Bumped(by=1))
-        return value.upper()
-
-    def initial_state(self, cell_key: str | None) -> Seen:
-        return Seen()
-
-    def apply_change(self, state: Seen, change: Bumped) -> None:
-        state.count += change.by
-
-
-upcase = flezha.tasklet(Upcase)
-
-
-@flezha.unbounded_operator("upcase")
-def upcase_operator(c: flezha.Channels) -> None:
-    c.input("input", codec="text").into(upcase).sink("out")
-
-
-flezha.create_runner("default").register_factory(upcase_operator).run()
+@unbounded_operator("local_word_count_example")
+def word_count(c: Channels) -> None:
+    # One Cell per word: the hop from `Split` to `Tally` is the runtime's,
+    # not this file's.
+    c.input("lines", codec="text").into(Split).key_by(lambda word: word).into(Tally).keyed().sink(
+        "totals"
+    )
 ```
 
-A tasklet is a function when it is a transform and a class when it has state,
-timers, a clock extractor or a compensation. Both produce the same
-`Tasklet`, and either way the handler stays an ordinary callable a plain
-`pytest` test can invoke with no runtime present:
+- **`name` is required.** It is the tasklet's durable identity: its state is
+  saved under it, so a renamed class keeps its state. A tasklet with no name,
+  and a function handed to `flezha.tasklet`, are refused with
+  `DeclarationError`; a whole one-tasklet operator written as a function is
+  [the short form](#the-short-form).
+- **A value leaves only through `ctx`.** `run`, `on_timer` and `compensate`
+  take the context as their last parameter and return `None`, plain or
+  `async def`. A hook written without the context, or annotated to return a
+  type, is refused at declaration, naming the hook. One that returns a value
+  anyway fails that input without a retry, naming the tasklet, the hook and
+  `ctx.emit`.
+- **The context names the state and the output**, `Ctx[State, Output]`, with
+  `None` in either position for none. `ctx.emit` takes an `Output`, so a type
+  checker reports an emit of the wrong type.
+- **State starts from the state class.** It is `state=`, else the state
+  argument of `run`'s context hint, else what `init_state` returns. A new
+  cell's state is `init_state(cell_key)` when the class writes one, and
+  otherwise the state class called with no arguments, the origin for a
+  parameterised builtin, so `Ctx[dict[str, int], ...]` starts at `{}`. A state
+  class that needs arguments, with no `init_state`, is refused at declaration,
+  naming it. `Tally` starts from `Count()`. A class that still writes
+  `initial_state` is refused, naming `init_state`.
+- **A change is plain data.** `ctx.change(value)` journals it and
+  `apply_change(state, change)` folds it, live and again on every restore. A
+  change with no state to fold into is refused at declaration.
+- **The clock follows from what the class writes**: event time when it writes
+  `event_time(value) -> int`, logical with `logical_clock=True`, the wall clock
+  otherwise. Both at once is refused, naming both.
+- **Cells come from the wiring.** `cell_keys=[...]`, with a `cells_for` method,
+  gives the tasklet those cells; a `key_by` on the edge that feeds it gives it
+  a cell per key, created on first sight; anything else gives it one cell.
+  `Tally` is dynamic in `word_count` because of the `key_by` before it, and
+  would be single in an operator that wired it without one.
 
-```python
-@flezha.tasklet
-def price(tick: Tick) -> Quote: ...
+The keywords `flezha.tasklet` takes beside `name`:
 
-
-def test_price() -> None:
-    assert price(Tick(...)) == Quote(...)
-```
+| Keyword | What it declares |
+| --- | --- |
+| `cell_keys` | a fixed set of cells, routed by `cells_for` |
+| `idle_ttl_seconds` | how long an idle dynamic cell lives, a positive whole number of seconds; unset keeps it |
+| `max_cells`, `mailbox_capacity` | the cap on cells, and each cell's mailbox |
+| `logical_clock` | a clock that counts the tasklet's changes |
+| `schema_version`, `min_readable_schema_version` | the saved state's version, and the oldest it reads through `migrate_state` / `migrate_change` |
+| `state`, `change` | the state and change classes, when the hints do not name them |
 
 ### The short form
 
@@ -119,8 +153,8 @@ single-tasklet operator when they decorate a tasklet's body instead of a
 channels body: one declaration, no `flezha.tasklet` beside it. The decorator
 names the kind. `id` is the factory id and is always written; `sink`, `input`
 and `codec` (the entry codec `Channels.input` takes) are optional, and so are
-the tasklet's own keywords (`cell_keys`, `clock`, `mailbox_capacity`,
-`schema_version` and the rest `flezha.tasklet` takes, except `name`).
+the tasklet's own keywords (`cell_keys`, `logical_clock`, `idle_ttl_seconds`,
+`mailbox_capacity` and the rest `flezha.tasklet` takes, except `name`).
 
 ```python
 @flezha.unbounded_operator(id="upcase", sink="out", codec="text")
@@ -137,26 +171,40 @@ runner = flezha.create_runner("default")
 runner.register_factory(upcase).register_factory(place).run()
 ```
 
-The body is a function, or a class whose `run` is the handler and whose other
-methods are the hooks. A function is a channels body when it takes one
-parameter annotated `flezha.Channels`, or not annotated at all; any other
-function is a tasklet body.
+The body is one of two:
 
-With no `sink`, the operator declares its entry channel and the tasklet and
-no plugin channel, which is how an operator that only keeps state is written:
+- **A function** whose one parameter is the input and whose return value is
+  emitted, `None` emitting nothing. It takes no context: a function with a
+  second parameter is refused, naming it and pointing at the class body. The
+  function stays an ordinary callable, `upcase.tasklet("a")`, so a plain test
+  calls it with no runtime present.
+- **A class** that follows the everyday form: `run(self, value, ctx) -> None`,
+  emitting through the context, with state, hooks, clock and settings exactly
+  as a `flezha.tasklet` class declares them, and no `name`.
+
+A function is a channels body when it takes one parameter annotated
+`flezha.Channels`, or not annotated at all; any other function is a tasklet
+body.
+
+A class body is how a one-tasklet operator with state is written, from
+`sdk/python/test_app/fixtures.py`:
 
 ```python
-@flezha.unbounded_operator(id="counter", input="ticks", codec="text")
-class Counter:
-    def run(self, value: str, ctx: flezha.Ctx[Seen]) -> None:
-        ctx.change(Bumped(by=1))
+@flezha.unbounded_operator(id="sugar_store_input", sink="sugar_store_sink", codec="text")
+class SugarStoreInput:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], str]) -> None:
+        ctx.change({"push": value})
+        ctx.emit(value)
 
-    def initial_state(self, cell_key: str | None) -> Seen:
-        return Seen()
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
+        return {"text_inputs": []}
 
-    def apply_change(self, state: Seen, change: Bumped) -> None:
-        state.count += change.by
+    def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
+        state["text_inputs"].append(change["push"])
 ```
+
+With no `sink`, the operator declares its entry channel and the tasklet and no
+plugin channel, which is how an operator that only keeps state is written.
 
 The generated operator is the one you would have written by hand with that
 single tasklet: an entry channel named `input` (or the `input` keyword's
@@ -183,8 +231,9 @@ none of them, and nothing is harvested: an operator a runner declares is one
 you registered.
 
 Three refusals name themselves. `ShortFormWithTopology` (a class with `run`
-that also declares `channels`) and `SinkWithoutOutput` (a `sink` on a body with
-no return annotation, or `None`) are raised where the decorator runs, and
+that also declares `channels`) and `SinkWithoutOutput` (a `sink` on a function
+with no return annotation, or `None`, or on a class whose context names no
+output) are raised where the decorator runs, and
 `DuplicateFactoryId` where a second operator under one factory id is
 registered. A missing `id`, a class-level setting other than `loop_mode` on a
 short form, and `sink`, `input`, `codec` or a tasklet keyword on a channels
@@ -228,10 +277,16 @@ The graph is wired from the annotations, and the package ships `py.typed`, so a
 wrong edge is a **type error before it is a runtime error**:
 
 ```python
-c.input("orders").into(bill).named("invoices").into(dispatch)
-#                                              ^^^^ bill produces Invoice,
-#                                                   dispatch takes Shipment
+c.input("orders").into(Bill).named("invoices").into(Dispatch).sink()
+#                                              ^^^^ Bill emits Invoice,
+#                                                   Dispatch takes Shipment
 ```
+
+A tasklet's input type is its `run`'s value annotation and its output type
+the output argument of its context hint, `Ctx[None, Invoice]`; a function
+short form's output is its return annotation. `sealed()` after a `sink`
+states that the channel ends there: it changes nothing in the declaration, and
+a later `into` on it is a type error.
 
 pyright and mypy report that in the editor. What a type checker cannot see — a
 cycle, a missing entry channel, an unservable clock, a keyed channel with no
@@ -239,8 +294,9 @@ plugin wire — is refused at the `register_factory` call site, naming the handl
 and the defect, before any input is served. That pairing is what this SDK has
 in place of the Rust SDK's `tests/ui` compile-fail pins.
 
-The state type is what `initial_state` returns and the change type is what
-`apply_change` folds, so a declaration cannot disagree with the code.
+The state type is what the context hint names, or `state=`, and the change
+type is what `apply_change` folds, so a declaration cannot disagree with the
+code. A `TypedDict` is a plain dict at run time and is stored as one.
 
 ### Declared state is mutated only through changes
 
@@ -478,19 +534,32 @@ refused at startup, naming it. Walk-through:
 
 ## Testing your handlers
 
-```python
-from flezha.testing import TaskletTestHarness
+A tasklet class is driven through `flezha.testing.TaskletTestHarness`, from
+[`sdk/python/examples/durable_agent/test_agent.py`](../../sdk/python/examples/durable_agent/test_agent.py):
 
-harness = TaskletTestHarness(upcase)
-harness.apply_inputs(["a", "b"])
-assert harness.state.count == 2
-assert harness.replay_equals()
+```python
+def harness() -> TaskletTestHarness[Conversation]:
+    return TaskletTestHarness(agent, cell_key="user-1")
+
+
+def test_the_transcript_survives_a_restart() -> None:
+    """What the fold produces from the log IS what a restart produces."""
+    h = harness()
+    h.apply_inputs(["first", "second", "book table-9"])
+    assert h.replay_equals()
+    assert h.state.booked == ["table-9"]
 ```
 
 The harness drives the same `invoke` every activation kind goes through, and
 `replay_equals()` folds through the same `fold_restore` a real restore calls —
 so what it proves is what the runner does, rather than something that agrees
-with it. It also drives `async def` handlers, so a test needs no event loop.
+with it. A cell's state starts as the runtime starts it, from `init_state` or
+the state class, and `initial_state=` gives a test its own starting state.
+Each call answers an `Outcome` with the values passed to `ctx.emit` and the
+changes recorded, and a hook that returns a value raises the runner's
+`NonRetryableError`. It also drives `async def` handlers, so a test needs no
+event loop. A function short form's body needs no harness:
+`upcase.tasklet("a")` calls it.
 
 ## Deferred, by name
 

@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Changed (BREAKING): a Python tasklet is a named class that emits only through its context
+
+`@flezha.tasklet(name=...)` decorates a class whose `run(self, value, ctx)` returns `None`: a
+value leaves only through `ctx.emit`, and a function handed to `flezha.tasklet` is refused,
+pointing at the short form. `name` is required, so renaming a class never moves its saved
+state. `run`, `on_timer` and `compensate` take the context last; one annotated to return a type
+is refused at declaration, and one that returns a value anyway fails that input without a retry.
+The context is `Ctx[State, Output]`, so pyright checks what `ctx.emit` is handed and checks a
+named tasklet at the edge. The initial-state hook is `init_state`, and optional: a new cell
+starts from the state class the context names, called with no arguments. The idle TTL is
+`idle_ttl_seconds` in whole seconds, the clock follows from what the class writes (`event_time`
+makes it event time, `logical_clock=True` logical, both are refused), and a tasklet fed through
+`key_by` gets a cell per key from the wiring alone. `dynamic_cells`, `idle_ttl_ms` and `clock`
+are gone and refused as unknown keywords. A function short form still returns its output, and
+takes no context; a class short form follows the class form. `Edge.sealed()` ends a channel for
+the type checker, and a `TypedDict` state or change is stored as the plain dict it is. The
+harness's `Outcome.returned` is gone. Saved state is unaffected as long as each tasklet keeps the
+name it had (an unnamed tasklet was named after its function or class in snake case, so write
+that name), with one exception: a tasklet fed through `key_by` that did not carry
+`dynamic_cells` ran as one cell and now gets a cell per key, so its old single-cell state is
+never read again and each key's cell starts from `init_state` or the state class. The reverse
+holds too: a `dynamic_cells=True` tasklet fed by no `key_by` edge, which the core routed by the
+keys its producer or entry frame carried, is now single, so its per-key cells are never read
+again and every key folds into one new cell. A class that still writes `initial_state` is
+refused, naming `init_state`.
+
+### Fixed: two operators of one factory on a Python runner no longer share a cell
+
+A Python runner kept a cell's state by tasklet and cell key alone, so two operators of one
+factory served by the same runner, such as two instances of a bounded operator running at once
+or two partitions of a stream, read and wrote each other's state. Each operator now has cells of
+its own.
+
 ### Changed (BREAKING): a PHP tasklet names itself and emits only through its context
 
 A PHP tasklet's `run` is declared `: void`, for a tasklet and a short form alike: a value leaves

@@ -247,7 +247,100 @@ TODO: not written yet.
 
 ### Python
 
-TODO: not written yet.
+The whole example:
+[`sdk/python/examples/tradedesk`](https://github.com/flezha/flezha_python_sdk/tree/main/examples/tradedesk).
+
+```python
+# track_prices.py: keeps a symbol's last ten prices, and compares each new one with their average.
+WINDOW = 10
+
+
+class Trade(TypedDict):  # the exchange sends more than the desk reads
+    symbol: str
+    price: float
+    ord_type: str
+
+
+class Move(TypedDict):
+    symbol: str
+    price: float
+    average: float
+
+
+@flezha.state
+@dataclass
+class PriceWindow:  # what each symbol's cell remembers
+    prices: list[float] = field(default_factory=list)
+
+
+class PriceSeen(TypedDict):  # how a price joins the window
+    price: float
+
+
+@flezha.tasklet(name="track_prices")
+class TrackPrices:
+    def run(self, trade: Trade, ctx: flezha.Ctx[PriceWindow, Move]) -> None:
+        price = trade["price"]
+        if not isinstance(price, int | float):  # JSON checks no types
+            raise TypeError(f"the price is not a number: {price!r}")
+        prices = ctx.state.prices
+        if prices:  # a symbol's first trade has nothing to compare with
+            average = sum(prices) / len(prices)
+            ctx.emit(Move(symbol=trade["symbol"], price=price, average=average))
+        ctx.change(PriceSeen(price=price))
+
+    def apply_change(self, window: PriceWindow, seen: PriceSeen) -> None:
+        window.prices.append(seen["price"])
+        if len(window.prices) > WINDOW:
+            del window.prices[0]
+```
+
+**Flezha calls `run` once for every trade**, and passes it two things:
+
+- `trade` is the input: one trade, as it arrives on the tasklet's channel. The
+  exchange's JSON arrives as a dict, and the desk reads its `symbol` and
+  `price`.
+- `ctx` is the context, the tasklet's way of talking to Flezha. `ctx.state` is
+  this symbol's cell state, what it remembers: a `PriceWindow`.
+  `ctx.emit(...)` hands a `Move` on, and `ctx.change(...)` records a change to
+  the state.
+
+`Ctx[PriceWindow, Move]` names what the cell remembers and what goes out, and
+`run`'s first parameter names what comes in. A new cell starts from
+`PriceWindow()`, the class the context names, so the tasklet writes no
+`init_state`. `run` returns nothing: a value leaves only through `ctx.emit`.
+The first trade of a symbol emits nothing, because `run` only calls
+`ctx.emit` when there is an average to compare with. JSON carries no types, so
+`run` checks that the price is a number before it counts it; anything else is
+refused, and [`durability.md`](durability.md#the-dead-letter-queue) shows where
+such a trade goes.
+
+**The state changes only through a change.** A change is plain data, here the
+`PriceSeen` dict, and `apply_change` folds it into the state: it adds the price
+and drops the oldest once there are more than ten. `ctx.change` runs
+`apply_change` and writes the change down, and after a crash Flezha runs
+`apply_change` again for every change it wrote, which is how the window comes
+back. `@flezha.state` refuses an assignment to a field of the window made
+anywhere else, since it would work until the first crash and then be gone.
+
+`Trade`, `Move` and `PriceSeen` are `TypedDict`s: plain dicts at run time,
+which a type checker still checks. The box below lists what
+`@flezha.tasklet` declares.
+
+> #### What `@flezha.tasklet` declares {: .info}
+>
+> Nothing is generated: the decorated class is what the operator names in
+> `into(...)`. The decorator takes the tasklet's name and settings:
+>
+> | Keyword | What it is |
+> |---|---|
+> | `name` | required: the name the tasklet's state is saved under, so choose it once |
+> | `cell_keys` | fixed cell keys, with a `cells_for` method that routes each input |
+> | `mailbox_capacity`, `max_cells`, `idle_ttl_seconds` | the cell's mailbox, the cap on cells, and how long an idle cell lives |
+> | `schema_version`, `logical_clock` | the version of the saved state, and a clock that counts changes |
+>
+> Optional hooks, such as `init_state`, a timer's `on_timer` or an undo's
+> `compensate`, are declared by writing the method.
 
 ### Ruby
 
@@ -475,7 +568,36 @@ TODO: not written yet.
 
 ### Python
 
-TODO: not written yet.
+```python
+# buy_above_average.py: buys when a price is far enough above its average.
+BUY_ABOVE_PCT = 2.0
+UNITS_PER_PERCENT = 10
+
+
+@flezha.tasklet(name="buy_above_average")
+class BuyAboveAverage:
+    def run(self, move: Move, ctx: flezha.Ctx[None, str]) -> None:
+        percent = (move["price"] - move["average"]) / move["average"] * 100.0
+        if percent < BUY_ABOVE_PCT:
+            return
+        quantity = round(percent * UNITS_PER_PERCENT)  # a stronger move buys more
+
+        order = OrderTicket(symbol=move["symbol"], quantity=quantity)
+        ctx.spawn_bounded("order_executor", order)  # one bounded operator per order
+
+        ctx.emit(
+            f"{move['symbol']} {move['price']:.4f} is {percent:.2f}% above its average "
+            f"of {move['average']:.4f}, buying {quantity}"
+        )
+```
+
+`Ctx[None, str]`: it keeps no state, because it remembers nothing, and emits a
+line. It does two things per input through the context: it starts a bounded
+operator and it emits. `spawn_bounded` sends the order, a dict, as JSON, and
+`order_executor` reads it back as the `OrderTicket` its first step takes,
+declared in [`building_a_workflow.md`](building_a_workflow.md). The handle it
+returns reports whether the order started; the desk does not read it, and never
+waits on it, since waiting would hold the price stream up.
 
 ### Ruby
 
@@ -699,7 +821,32 @@ TODO: not written yet.
 
 ### Python
 
-TODO: not written yet.
+```python
+# trade_watcher.py: the unbounded operator. Trades in, signals out.
+@flezha.unbounded_operator("trade_watcher")
+def trade_watcher(c: flezha.Channels) -> None:
+    (
+        c.input("trades")
+        .filter(lambda message: message.get("channel") == "trade")  # trade messages only
+        .flat_map(lambda message: message["data"])  # a message into its trades
+        .filter(lambda trade: trade["ord_type"] == "market")  # market orders only
+        .key_by(lambda trade: trade["symbol"])  # one cell per symbol
+        .into(TrackPrices)
+        .into(BuyAboveAverage)
+        .sink("signals")
+        .sealed()
+    )
+```
+
+The operator is a function over the channel builder, and the decorator names
+its factory. The entry names no codec, so each message arrives as the dict its
+JSON decodes to, and each transform is a function over that dict. The
+subscription confirmation has no `channel`, so the first `filter` reads it with
+`.get` and drops it. `flat_map` hands on each trade with every field the
+exchange sent; the tasklets read the ones they need. `into` names the two
+tasklet classes above, `TrackPrices` and `BuyAboveAverage`, and
+`sink("signals")` is the sink. `sealed()` says the path ends at `signals`: a
+later `into` on it is a type error.
 
 ### Ruby
 
@@ -790,7 +937,19 @@ TODO: not written yet.
 
 ### Python
 
-TODO: not written yet.
+```python
+# runner.py: the runner. Joins trading and offers the prices factory.
+def main() -> None:
+    namespace = sys.argv[1] if len(sys.argv) > 1 else "trading"
+    flezha.configure_logging("info")
+
+    runner = flezha.create_runner(namespace).register_factory(trade_watcher)
+
+    # Blocks until shutdown: a SIGTERM, Ctrl-C, or standard input closing.
+    runner.run()
+```
+
+`run()` is `start()` followed by `await_termination()`.
 
 ### Ruby
 
