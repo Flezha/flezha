@@ -332,7 +332,9 @@ and emits through `$ctx->emit`, so emitting nothing is not calling it either.
 A Python function short form emits what it returns, `None` emitting nothing. A
 Python tasklet class's `run`, and a short form declared on a class, returns
 `None` and emits through `ctx.emit`, and a `run` that returns a value fails
-the input.
+the input. A Node `run`, a tasklet's or a short form's, is typed to return
+`void | Promise<void>` and emits through `ctx.emit`, so TypeScript refuses one
+that returns a value, and the SDK ignores what a plain JavaScript `run` returns.
 
 **Keyed output.** On a `.keyed()` output channel the plain emit carries
 the emitting Cell's **own key** (the key its input routed by), so a keyed
@@ -497,7 +499,7 @@ is an address a user types and a rename must not move it.
 | Rust | `#[flezha::unbounded_operator(id = "echo", sink = "out", input = "in")] fn echo(s: String) -> String`, or the same attribute on an `impl Tasklet for Echo` block | `#[flezha::bounded_operator(...)]` |
 | Java | `@UnboundedOperator(id = "echo", sink = "out", input = "in") class Echo implements Tasklet<String, Void, String> { void run(String s, Ctx<Void, String> ctx) }` | `@BoundedOperator(...)` |
 | Python | `@flezha.unbounded_operator(id="echo", sink="out", input="in", codec="text") def echo(s: str) -> str`, or the same decorator on a class whose `run(self, s, ctx)` emits through `ctx` | `@flezha.bounded_operator(...)` |
-| Node | `defineUnbounded({ factoryId: 'echo', sink: 'out', input: 'in', codec: 'text', run })` | `defineBounded({ ... })` |
+| Node | `defineUnbounded({ factoryId: 'echo', sink: 'out', input: 'in', codec: 'text', run: (s, ctx) => ctx.emit(s) })` | `defineBounded({ ... })` |
 | Ruby | `class Echo < Flezha::UnboundedOperator; factory_id "echo"; sink "out"; input "in"; codec :text; def run(s, ctx) = ctx.emit(s); end` | `< Flezha::BoundedOperator` |
 | PHP | `#[Operator(factoryId: 'echo', sink: 'out', input: 'in', codec: ChannelCodec::Text)] final class Echo extends UnboundedOperator { public function run(mixed $s, Ctx $ctx): void }` | `extends BoundedOperator` |
 | Elixir | `use Flezha.SDK.UnboundedOperator, factory_id: "echo", sink: "out", input: "in"` with `run/3` | `use Flezha.SDK.BoundedOperator, ...` |
@@ -697,7 +699,9 @@ whose tasklet bodies declare no output type the SDK can read (Node, Ruby,
 PHP, Elixir) owes no `SinkWithoutOutput` and says so in its conformance
 manifest. In Ruby no `run` answers output either: what it answers is ignored and
 a value leaves only through `ctx.emit`, so nothing in a class says whether it
-emits. A declaration with neither body, or with no written identity, is
+emits. A Node definition names its output type only in TypeScript types, erased
+before the SDK runs, and its `run` returns nothing either, so nothing the SDK
+can see says whether a short form emits. A declaration with neither body, or with no written identity, is
 refused by the rule every operator already obeys, not by a short-form name.
 There is no other short-form refusal: an operator declaration always has a
 kind, and `input` and `codec` need no sink.

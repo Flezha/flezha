@@ -216,7 +216,67 @@ what the whole operator takes.
 
 ### Node
 
-TODO: not written yet.
+The whole example:
+[`sdk/node/examples/tradedesk`](https://github.com/flezha/flezha_node_sdk/tree/main/examples/tradedesk).
+
+```javascript
+// reserve_funds.mjs: step one. Puts the money aside, and releases it on an undo.
+import { defineTasklet } from '@flezha/sdk';
+
+export const ReserveFunds = defineTasklet({
+  name: 'reserve_funds',
+
+  // What this step remembers, and how the id is written down.
+  initState: () => ({ id: '' }),
+  applyChange: (state, change) => {
+    state.id = change.id;
+  },
+
+  // The step: reserve the money under an id, remember the id, and hand the order on.
+  run: (order, ctx) => {
+    const id = `res-${ctx.stableId()}`; // the same id when the step runs again
+    ctx.change({ id });
+    ctx.emit({ order, reservationId: id });
+  },
+
+  // The undo: release the money, by the id the state kept.
+  compensate: (_outputs, ctx) => {
+    console.log(`[undo] released ${ctx.state.id}`);
+  },
+});
+```
+
+**Flezha calls `run` with the order**, and passes it two things: the input and
+the context, as it did for the ETL stream's tasklets.
+
+- `order` is the input, what arrives on the step's channel. For the first
+  step, that is the order the instance was started with, the object
+  `{ symbol, quantity }` its JSON decodes to.
+- `ctx` is the context, the step's way of talking to Flezha.
+  `ctx.change(...)` writes the id down in the step's state, and `ctx.state`
+  reads it back. `ctx.emit(...)` hands a value to the next step, and
+  `ctx.stableId()` gives an id that stays the same when the step runs again, so
+  a retry does not put the money aside twice.
+
+The step starts its state as `{ id: '' }`, records the change `{ id }`, folded
+by `applyChange`, and hands on the order and the id.
+
+**Flezha calls `compensate` only when the order fails**, and passes it two
+things:
+
+- `_outputs` is what `run` handed on, a list.
+- `ctx` is the context again, and `ctx.state` is the same state `run` wrote the
+  id into.
+
+The id is read from the state, not from what was handed on, because after a
+crash Flezha brings back the step's state but not what it handed on, so the
+list can be empty. Writing a `compensate` is what gives a step an undo, and a
+step without one is skipped. It can run twice, when a crash comes in the middle
+of an undo, so it has to be safe to repeat.
+
+The operator names what `defineTasklet` returned, `ReserveFunds`.
+[What a `defineTasklet` definition carries](building_an_etl_stream.md#keep-each-symbol-s-prices)
+lists its fields.
 
 ### Python
 
@@ -534,7 +594,32 @@ impl Tasklet for PlaceOrder {
 
 ### Node
 
-TODO: not written yet.
+```javascript
+// place_order.mjs: step two. Places the order, and cancels it on an undo.
+import { defineTasklet } from '@flezha/sdk';
+
+export const PlaceOrder = defineTasklet({
+  name: 'place_order',
+
+  // What this step remembers, and how the id is written down.
+  initState: () => ({ orderId: '' }),
+  applyChange: (state, change) => {
+    state.orderId = change.orderId;
+  },
+
+  // The step: place the order under an id, remember the id, and hand the order on.
+  run: (reserved, ctx) => {
+    const orderId = `ord-${ctx.stableId()}`;
+    ctx.change({ orderId });
+    ctx.emit({ order: reserved.order, orderId });
+  },
+
+  // The undo: cancel the order, by the id the state kept.
+  compensate: (_outputs, ctx) => {
+    console.log(`[undo] cancelled ${ctx.state.orderId}`);
+  },
+});
+```
 
 ### Python
 
@@ -725,7 +810,39 @@ desk keeps the defaults.
 
 ### Node
 
-TODO: not written yet.
+```javascript
+// confirm_fill.mjs: asks the exchange whether the order filled, and ends the order with the answer.
+import { setTimeout as sleep } from 'node:timers/promises';
+
+import { defineTasklet } from '@flezha/sdk';
+
+const EXCHANGE_MAX = 100;
+
+export const ConfirmFill = defineTasklet({
+  name: 'confirm_fill',
+
+  run: async (placed, ctx) => {
+    await sleep(10_000); // the paper exchange takes ten seconds to answer
+    const { symbol, quantity } = placed.order;
+    if (quantity > EXCHANGE_MAX) {
+      // tried again, then the order is undone
+      throw new Error(`the exchange fills at most ${EXCHANGE_MAX} a time, and this is ${quantity}`);
+    }
+    ctx.complete(`filled ${symbol} ${quantity} as ${placed.orderId}`);
+  },
+});
+```
+
+The wait is awaited, so it holds nothing: `run` returns a promise, the event
+loop serves every other cell while it is pending, and the price stream keeps
+flowing while an order waits. A blocking wait, such as a busy loop or
+`Atomics.wait`, would hold the one loop and stall every cell on the runner for
+the ten seconds.
+
+An error thrown from `run`, or a promise it returns that rejects, is retried.
+The number of tries and the wait are set where the operator connects the step,
+with `retryMax` and `retryBackoffMs`; the desk keeps the defaults. An error
+carrying `nonRetryable: true` is not retried.
 
 ### Python
 
@@ -906,7 +1023,22 @@ nothing on, which is the plainest shape a tasklet has.
 
 ### Node
 
-TODO: not written yet.
+```javascript
+// record_order.mjs: writes the placed order into the desk's book.
+import { defineTasklet } from '@flezha/sdk';
+
+export const RecordOrder = defineTasklet({
+  name: 'record_order',
+
+  run: (placed) => {
+    const { symbol, quantity } = placed.order;
+    console.log(`[book] ${symbol} ${quantity} as ${placed.orderId}`);
+  },
+});
+```
+
+With no `initState` written and no `ctx.emit`, it keeps nothing and hands
+nothing on, which is the plainest shape a tasklet has.
 
 ### Python
 
@@ -1076,7 +1208,34 @@ The four types it names in `into::<...>()` are the four steps themselves:
 
 ### Node
 
-TODO: not written yet.
+```javascript
+// order_executor_operator.mjs: the bounded operator. One instance is one order.
+import { defineBounded } from '@flezha/sdk';
+
+import { ConfirmFill } from './confirm_fill.mjs';
+import { PlaceOrder } from './place_order.mjs';
+import { RecordOrder } from './record_order.mjs';
+import { ReserveFunds } from './reserve_funds.mjs';
+
+export default defineBounded({
+  factoryId: 'order_executor',
+  channels: (c) => {
+    c.input('order')
+      .into(ReserveFunds) // step one
+      .into(PlaceOrder) // step two, once step one is done
+      .branch([
+        (fill) => fill.into(ConfirmFill), // two arms, side by side
+        (book) => book.into(RecordOrder),
+      ]);
+  },
+});
+```
+
+The order is the entry's first message, and the entry names no codec, so
+`reserve_funds` gets the object its JSON decodes to: the one `BuyAboveAverage`
+in the ETL stream sends when it starts an order. The four tasklets it names in
+`into` are the four steps themselves. `branch` takes a list of arms, and each
+is a function that gets the same edge.
 
 ### Python
 
@@ -1216,7 +1375,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Node
 
-TODO: not written yet.
+```javascript
+// runner.mjs: the runner. Joins trading and registers both factories.
+import { createRunner } from '@flezha/sdk';
+
+const runner = createRunner(process.argv[2] ?? 'trading');
+await runner.registerFactory('./trade_watcher_operator.mjs');
+await runner.registerFactory('./order_executor_operator.mjs');
+
+// Resolves once the runner is connected and serving. The process then keeps
+// running until a SIGTERM, Ctrl-C, or its standard input closing.
+await runner.run();
+```
 
 ### Python
 

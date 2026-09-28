@@ -117,7 +117,15 @@ $ FLEZHA_NAMESPACE_SECRET=flzt_3j5bftycxn43ivwoxbd2peghazjgtnru5bxqgshvfqcft7lrd
 
 ### Node
 
-TODO: not written yet.
+```sh
+$ npm install
+$ FLEZHA_NAMESPACE_SECRET=flzt_3j5bftycxn43ivwoxbd2peghazjgtnru5bxqgshvfqcft7lrdsra node runner.mjs
+```
+
+Start it from the project's folder, because the operators' module specifiers
+resolve against the working directory. A Node runner also stops when its
+standard input closes, so start it from a terminal rather than with standard
+input closed.
 
 ### Python
 

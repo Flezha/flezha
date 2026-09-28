@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Changed (BREAKING): a Node tasklet emits only through its context
+
+A value leaves a Node tasklet only through `ctx.emit` or `ctx.emitTo`: what `run` returns is no
+longer emitted, for a tasklet and a short form alike. `run`, `onTimer` and `compensate` are typed
+to return `void | Promise<void>`, so TypeScript refuses one that returns a value, and a plain
+JavaScript `run` that still returns its output now emits nothing. The output type is the
+definition's type arguments or the annotation on `ctx`, never the body's return type. The
+initial-state hook is `initState`; the idle TTL is `idleTtlSeconds`, a positive whole number of
+seconds, beside a top-level `maxCells`; the clock follows from what the definition writes
+(`eventTime` makes it event time, `logicalClock: true` logical, and both are refused); and a
+tasklet fed through `keyBy` gets a cell per key from the wiring alone. `dynamicCells`, `clock`,
+`initialState` and the `ClockKind` and `DynamicCells` types are gone, and `defineTasklet` refuses
+any field it does not read, naming it and what replaced it. A stream handle gains `sealed()`,
+which ends a chain for the type checker and changes nothing at runtime. Saved state is unaffected,
+since every tasklet keeps its name, with two exceptions. A tasklet fed through `keyBy` that did not
+carry `dynamicCells` ran as one cell and now gets a cell per key, so its old single-cell state is
+never read again and each key's cell starts from `initState`. The reverse holds too: a
+`dynamicCells` tasklet fed by no `keyBy` edge is now single, so its per-key cells are never read
+again and every key folds into one new cell.
+
+### Fixed: two operators of one factory on a Node runner no longer share a cell
+
+A Node runner kept a cell's state by tasklet and cell key alone, so two operators of one factory
+served by the same runner, such as two instances of a bounded operator running at once, read and
+wrote each other's state. Each operator now has cells of its own.
+
 ### Changed (BREAKING): a Ruby tasklet names itself and emits only through its context
 
 A value leaves a Ruby tasklet only through `ctx.emit` or `ctx.emit_to`: what `run`, `on_timer`

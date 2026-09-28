@@ -58,23 +58,25 @@ naming the host it detected, the package it looked for and the build above.
 ## Writing an operator
 
 ```ts
-import { createRunner, defineUnbounded, defineTasklet } from '@flezha/sdk';
+import { createRunner, defineUnbounded, defineTasklet, type Ctx } from '@flezha/sdk';
 
 interface Trade { symbol: string; price: number; at: number }
 interface Candle { symbol: string; close: number }
+interface Window { high: number; low: number; close: number }
+interface Close { close: number }
 
 const Ohlc = defineTasklet({
   name: 'ohlc',
-  dynamicCells: { idleTtlMs: 60_000 },
-  initialState: () => ({ high: 0, low: 0, close: 0 }),
-  applyChange: (state, change: { close: number }) => {
+  idleTtlSeconds: 60,
+  initState: () => ({ high: 0, low: 0, close: 0 }),
+  applyChange: (state, change: Close) => {
     state.close = change.close;
     state.high = Math.max(state.high, change.close);
     state.low = state.low === 0 ? change.close : Math.min(state.low, change.close);
   },
-  run: (trade: Trade, ctx): Candle => {
+  run: (trade: Trade, ctx: Ctx<Candle, Window, Close>) => {
     ctx.change({ close: trade.price });
-    return { symbol: trade.symbol, close: ctx.state.close };
+    ctx.emit({ symbol: trade.symbol, close: ctx.state.close });
   },
 });
 
@@ -91,6 +93,50 @@ const runner = createRunner('default');
 await runner.registerFactory('./candles.js');
 await runner.run();
 ```
+
+**A value leaves a tasklet only through its context.** `ctx.emit(value)`
+sends one value on the tasklet's output, with `{ key, channel, metadata }` as
+options, and `ctx.emitTo(channel, value)` names one of several. `run`,
+`onTimer` and `compensate` are typed to return `void | Promise<void>`, so
+TypeScript refuses one that returns a value. Plain JavaScript runs no type
+checker, and the SDK ignores what a hook returns: a `.mjs` tasklet whose last
+expression was its output emits nothing.
+
+**The output type is declared, never read off the body.** Name it with the
+type arguments, `defineTasklet<Trade, Candle>({ ... })`, or with the
+annotation on the context, as `Ohlc` does. TypeScript infers no type argument
+once one is written, so a stateful tasklet that uses type arguments writes all
+four (input, output, state, change); `ctx: Ctx<Candle, Window, Close>` names
+the last three in one place. A tasklet that names no output type has none, so
+an `emit` on it does not compile.
+
+**A tasklet's settings are fields of its definition.**
+
+- `initState(cellKey)` is the cell's starting state, and its absence declares a
+  stateless tasklet. `applyChange(state, change)` folds one recorded change,
+  live and on restore; a change is plain data, any value MessagePack carries
+  (`stateCodec` and `changeCodec` take a codec of your own). `applyChange`
+  without `initState` is refused.
+- The cell mode is read from the wiring. A tasklet reached through `keyBy`,
+  on a stream or on a merge, gets a cell per key; one reached by no `keyBy`
+  has one cell; `cells: { keys, cellsFor }` declares a fixed key set, and
+  `keyBy` into one is refused as `KeyByOnUnkeyableTarget`. The mode belongs to
+  the node, so one definition can be keyed in one operator and single in
+  another.
+- `idleTtlSeconds` evicts a keyed cell idle that long, a positive whole number
+  of seconds; unset never evicts. `maxCells` caps the keyed cells held at once.
+- The clock follows from what the definition writes: `eventTime(input)` puts it
+  on event time, `logicalClock: true` on the logical clock, and anything else on
+  the wall clock. Writing both is refused. A logical clock needs `applyChange`,
+  and without it the core refuses the operator as `UnservableClock`.
+- A field `defineTasklet` does not read is refused while the module loads,
+  naming it, whether the definition carries it or inherits it. A field an
+  earlier release read is refused naming what replaced it.
+
+**A chain can say where it ends.** `.sink('signals').sealed()` returns a
+handle with no builder method, so in TypeScript a later `into`, transform or
+sink on it does not compile. It changes nothing at runtime: the declared
+topology is the one written without it.
 
 **A wrong edge is a compile error.** `.into(tasklet)` accepts only a
 tasklet whose declared input the producing edge's value satisfies, so a
@@ -141,17 +187,19 @@ An operator of one tasklet can be one declaration: `defineUnbounded` or
 `defineBounded` carrying that tasklet's `run` body in place of `channels`.
 The function's name is the kind. `factoryId` is required, `sink` is optional,
 `input` names the entry channel, and `codec` is the entry codec `c.input`
-takes. The tasklet's own fields (`initialState`, `applyChange`, `cells`,
-`clock`, `mailboxCapacity`, `schemaVersion` and the rest `defineTasklet`
-reads) are written beside `run`.
+takes. The tasklet's own fields (`initState`, `applyChange`, `cells`,
+`eventTime`, `mailboxCapacity`, `schemaVersion` and the rest `defineTasklet`
+reads) are written beside `run`, and `run` is a tasklet's: it emits through
+`ctx`, and moving its fields into a `defineTasklet` call grows it into the full
+form unchanged.
 
-```ts
+```javascript
 // upcase.mjs
 export const upcase = defineUnbounded({
   factoryId: 'upcase',
   sink: 'out',
   codec: 'text',
-  run: (value) => value.toUpperCase(),
+  run: (value, ctx) => ctx.emit(value.toUpperCase()),
 });
 
 // place.mjs
@@ -160,7 +208,7 @@ export const place = defineBounded({
   sink: 'placed',
   input: 'order',
   codec: 'text',
-  run: (order) => order,
+  run: (order, ctx) => ctx.emit(order),
 });
 ```
 
@@ -182,25 +230,25 @@ message: `flz operator start --text '<payload>'`, or a start followed by
 never read. With `loopMode: 'per_input'` it runs once per message and does
 not complete after the first:
 
-```ts
+```javascript
 export const chat = defineBounded({
   factoryId: 'chat',
   sink: 'replies',
   codec: 'text',
   loopMode: 'per_input',
-  run: (turn) => turn,
+  run: (turn, ctx) => ctx.emit(turn),
 });
 ```
 
 With no `sink` there is no plugin channel, so the tasklet has no output
-channel either: its `run` keeps state and returns nothing.
+channel either: its `run` keeps state and emits nothing.
 
-```ts
+```javascript
 export const counter = defineUnbounded({
   factoryId: 'counter',
   input: 'ticks',
   codec: 'text',
-  initialState: () => ({ seen: [] }),
+  initState: () => ({ seen: [] }),
   applyChange: (state, change) => {
     state.seen.push(change);
   },
@@ -223,12 +271,13 @@ operator, of either kind, under a factory id it holds. A key written where it
 does not belong is refused naming the key: a class-level setting other than a
 bounded operator's `loopMode`, `name` or `kind` beside `run`, `sink`, `input`, `codec`
 or a tasklet field beside `channels`, and `kind`, `sink`, `input` or `codec` on
-a `defineTasklet`. There is no `SinkWithoutOutput`: a plain `.mjs` author runs
-no type checker and this SDK ships no build step, so a body that
-returns nothing cannot be seen here. The manifest leaves
-`shorthand_typed_output` off and the conformance row skips by name. For the same
-reason a `loopMode` or `rollbackMode` outside the declared values is refused
-where `defineBounded` runs, naming the value.
+a `defineTasklet`. There is no `SinkWithoutOutput`: a plain `.mjs` definition
+declares no output type the SDK can read, a TypeScript one names it only in
+types erased before the SDK runs, and no `run` returns output, so nothing the
+SDK can see says whether a short form emits. The manifest leaves
+`shorthand_typed_output` off and the conformance row skips by name. A `.mjs`
+author runs no type checker, so a `loopMode` or `rollbackMode` outside the
+declared values is refused where `defineBounded` runs, naming the value.
 
 ## The parallelism model, as arithmetic
 

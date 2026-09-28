@@ -457,13 +457,14 @@ The whole example:
 import { defineTasklet } from '@flezha/sdk';
 
 export const EchoTasklet = defineTasklet({
-  name: 'echo',                         // state is saved under this name, so choose it once
-  run: (input) => `echo: ${input}`,     // what it returns is emitted
+  name: 'echo',                                     // state is saved under this name, so choose it once
+  run: (input, ctx) => ctx.emit(`echo: ${input}`),  // a value leaves only through ctx.emit
 });
 ```
 
-With no `initialState` and no `applyChange`, it keeps nothing between messages
-and journals nothing.
+`run` gets each message and emits through `ctx`; what it returns is not
+output. With no `initState` and no `applyChange`, it keeps nothing between
+messages and journals nothing.
 
 ```javascript
 // echo_operator.mjs: the operator. The graph, and the unit the controller schedules.

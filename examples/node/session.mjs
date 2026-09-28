@@ -20,11 +20,11 @@ const IDLE_MS = 30_000n;
  */
 export const Session = defineTasklet({
   name: 'session',
-  // Cells appear on first sight of a key and are evicted after an idle
-  // spell. The key itself comes from the wiring, below.
-  dynamicCells: { idleTtlMs: 300_000 },
+  // Cells appear on first sight of a key and are evicted after five idle
+  // minutes. The key itself comes from the wiring, below.
+  idleTtlSeconds: 300,
 
-  initialState: () => ({ events: [], deadline: 0n, closed: false }),
+  initState: () => ({ events: [], deadline: 0n, closed: false }),
 
   applyChange: (state, change) => {
     switch (change.kind) {

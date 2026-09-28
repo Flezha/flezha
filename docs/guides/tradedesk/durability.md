@@ -84,6 +84,9 @@ closes, and says so as it drains:
 [flezha] termination signal received; draining
 ```
 
+A Node runner stops cleanly on Ctrl-C, on a SIGTERM and when its standard input
+closes, and prints the same line as it drains.
+
 > Stop the runner with Ctrl-C in its terminal.
 > {: .step}
 
@@ -253,6 +256,11 @@ A Ruby runner's journal lists the same steps too, with `96 byte(s)` and
 `89 byte(s)` as the handoffs of the first two. Its `confirm_fill` waits inside
 `run`, as a Java runner's does, so the rest of this section reads the same for
 it.
+
+A Node runner's journal lists the same steps too, with `88 byte(s)` and
+`82 byte(s)` as the handoffs of the first two. Its `confirm_fill` awaits a timer
+promise inside `run`, so it too waits inside `run` and the rest of this section
+reads the same for it: after a crash the ten seconds start again.
 
 A PHP runner's `confirm_fill` waits on a timer rather than inside `run`
 ([`building_a_workflow.md`](building_a_workflow.md#a-step-that-can-fail)), so its
@@ -476,6 +484,18 @@ ENTRY                                                       CELL            CHAN
 trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trades      1    6s        ArgumentError: the price is not a number: "one euro"
 ```
 
+A Node runner reads the trade as a plain object, so its `track_prices` refuses
+the price the same way, and the entry is that tasklet's, in EUR/USD's cell:
+
+```output
+[flezha] tasklet track_prices parking poison payload to DLQ after 3 attempt(s): TypeError: the price is not a number: "one euro"
+```
+
+```output
+ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
+trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trades      1    8s        TypeError: the price is not a number: "one euro"
+```
+
 `flz dlq list` shows what a partition has set aside:
 
 ```sh
@@ -626,6 +646,19 @@ class before the message:
 [flezha] tasklet confirm_fill attempt 2/3 failed (retrying in 62 ms): RuntimeError: the exchange fills at most 100 a time, and this is 124
 [undo] cancelled ord-a40ba575b8a83599f33dad116255f5c3
 [undo] released res-b159dff9228e6788657db153453c4bda
+```
+
+A Node runner waits the ten seconds on every try too, and names the error's
+class before the message. A booking of another order can land between the
+tries, because the wait holds nothing else up:
+
+```output
+[book] EUR/USD 114 as ord-1583d35b849ecc1e5be0c67eb19126b1
+[flezha] tasklet confirm_fill attempt 1/3 failed (retrying in 41 ms): Error: the exchange fills at most 100 a time, and this is 114
+[flezha] tasklet confirm_fill attempt 2/3 failed (retrying in 94 ms): Error: the exchange fills at most 100 a time, and this is 114
+[book] EUR/USD 26 as ord-e2b95dca4b993989b1bf0ae12b069bfd
+[undo] cancelled ord-1583d35b849ecc1e5be0c67eb19126b1
+[undo] released res-765f48effc6403ca7079785ffc7b8820
 ```
 
 The order was cancelled, then the money released. Both undos read their id from

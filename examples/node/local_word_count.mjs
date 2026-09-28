@@ -22,8 +22,8 @@ const Split = defineTasklet({
 
 const Tally = defineTasklet({
   name: 'tally',
-  dynamicCells: { idleTtlMs: 300_000 },
-  initialState: () => ({ seen: 0 }),
+  idleTtlSeconds: 300,
+  initState: () => ({ seen: 0 }),
   applyChange: (state, change) => {
     state.seen = change.seen;
   },

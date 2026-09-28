@@ -243,7 +243,84 @@ exchange sends. The box below lists what `#[tasklet]` writes.
 
 ### Node
 
-TODO: not written yet.
+The whole example:
+[`sdk/node/examples/tradedesk`](https://github.com/flezha/flezha_node_sdk/tree/main/examples/tradedesk).
+
+```javascript
+// track_prices.mjs: keeps a symbol's last ten prices, and compares each new one with their average.
+import { defineTasklet } from '@flezha/sdk';
+
+const WINDOW = 10;
+
+export const TrackPrices = defineTasklet({
+  name: 'track_prices',
+
+  initState: () => ({ prices: [] }), // what each symbol's cell remembers
+
+  applyChange: (state, change) => {
+    state.prices.push(change.price); // how a price joins the window
+    if (state.prices.length > WINDOW) state.prices.shift();
+  },
+
+  run: (trade, ctx) => {
+    const { price } = trade;
+    if (typeof price !== 'number') {
+      throw new TypeError(`the price is not a number: ${JSON.stringify(price)}`); // JSON checks no types
+    }
+    const { prices } = ctx.state;
+    if (prices.length > 0) {
+      // a symbol's first trade has nothing to compare with
+      const average = prices.reduce((sum, each) => sum + each, 0) / prices.length;
+      ctx.emit({ symbol: trade.symbol, price, average });
+    }
+    ctx.change({ price });
+  },
+});
+```
+
+**Flezha calls `run` once for every trade**, and passes it two things:
+
+- `trade` is the input: one trade, as it arrives on the tasklet's channel. The
+  exchange's JSON arrives as the object it decodes to, and the desk reads its
+  `symbol` and `price`.
+- `ctx` is the context, the tasklet's way of talking to Flezha. `ctx.state` is
+  this symbol's cell state, what it remembers: the object `initState` starts it
+  as. `ctx.emit(...)` hands a move on, and `ctx.change(...)` records a change
+  to the state.
+
+What `run` returns is not output: a value leaves only through `ctx.emit`. The
+first trade of a symbol emits nothing, because `run` only calls `ctx.emit` when
+there is an average to compare with. JSON carries no types, so `run` checks
+that the price is a number before it counts it; anything else is refused, and
+[`durability.md`](durability.md#the-dead-letter-queue) shows where such a trade
+goes.
+
+**The state changes only through a change.** A change is plain data, here
+`{ price }`, and `applyChange` folds it into the state: it adds the price and
+drops the oldest once there are more than ten. `ctx.change` runs `applyChange`
+and writes the change down, and after a crash Flezha runs `applyChange` again
+for every change it wrote, which is how the window comes back. `ctx.state` is
+read-only: assigning to one of its fields throws, naming the field.
+
+The trade, the move and the window are plain objects, so nothing else is
+declared for them. The box below lists what a tasklet's definition carries.
+
+> #### What a `defineTasklet` definition carries {: .info}
+>
+> `defineTasklet` takes one object, and what it returns is what the operator
+> names in `into(...)`. A field it does not read is refused while the module
+> loads, naming it:
+>
+> | Field | What it is |
+> |---|---|
+> | `name` | required: the name the tasklet's state is saved under, so choose it once |
+> | `run` | required: the body, called once per input |
+> | `initState`, `applyChange` | the cell's starting state, and how a change folds into it |
+> | `cells` | fixed cell keys, with a `cellsFor` function that routes each input |
+> | `mailboxCapacity`, `maxCells`, `idleTtlSeconds` | the cell's mailbox, the cap on cells, and how long an idle cell lives |
+> | `schemaVersion`, `logicalClock`, `eventTime` | the version of the saved state, a clock that counts changes, and one read off each input |
+>
+> A timer's `onTimer` and an undo's `compensate` are fields too.
 
 ### Python
 
@@ -636,7 +713,39 @@ failure.
 
 ### Node
 
-TODO: not written yet.
+```javascript
+// buy_above_average.mjs: buys when a price is far enough above its average.
+import { defineTasklet } from '@flezha/sdk';
+
+const BUY_ABOVE_PCT = 2.0;
+const UNITS_PER_PERCENT = 10;
+
+export const BuyAboveAverage = defineTasklet({
+  name: 'buy_above_average',
+
+  run: (move, ctx) => {
+    const percent = ((move.price - move.average) / move.average) * 100.0;
+    if (percent < BUY_ABOVE_PCT) return;
+
+    const quantity = Math.round(percent * UNITS_PER_PERCENT); // a stronger move buys more
+
+    const order = { symbol: move.symbol, quantity };
+    ctx.spawnBounded('order_executor', order); // one bounded operator per order
+
+    ctx.emit(
+      `${move.symbol} ${move.price.toFixed(4)} is ${percent.toFixed(2)}% above its average ` +
+        `of ${move.average.toFixed(4)}, buying ${quantity}`,
+    );
+  },
+});
+```
+
+It takes the move and emits a line, and writes no `initState`, because it
+remembers nothing. It does two things per input through the context: it starts
+a bounded operator and it emits. `spawnBounded` sends the order, a plain
+object, as JSON, and `order_executor` reads it back as the object its first
+step takes, declared in [`building_a_workflow.md`](building_a_workflow.md). The
+handle it returns reports whether the order started; the desk does not read it.
 
 ### Python
 
@@ -918,7 +1027,38 @@ the path ends at `signals`: a later `into` on it no longer compiles.
 
 ### Node
 
-TODO: not written yet.
+```javascript
+// trade_watcher_operator.mjs: the unbounded operator. Trades in, signals out.
+import { defineUnbounded } from '@flezha/sdk';
+
+import { BuyAboveAverage } from './buy_above_average.mjs';
+import { TrackPrices } from './track_prices.mjs';
+
+export default defineUnbounded({
+  factoryId: 'trade_watcher',
+  channels: (c) => {
+    c.input('trades')
+      .filter((message) => message.channel === 'trade') // trade messages only
+      .flatMap((message) => message.data) // a message into its trades
+      .filter((trade) => trade.ord_type === 'market') // market orders only
+      .keyBy((trade) => trade.symbol) // one cell per symbol
+      .into(TrackPrices)
+      .into(BuyAboveAverage)
+      .sink('signals')
+      .sealed();
+  },
+});
+```
+
+The operator's entry names no codec, so each message arrives as the object its
+JSON decodes to, and each transform is a function over that object. The
+subscription confirmation has no `channel`, so the first `filter` reads
+`undefined` there and drops it. `flatMap` hands on each trade with every field
+the exchange sent; the tasklets read the ones they need. `into` names the two
+tasklets above, and `sink('signals')` is the sink. `sealed()` says the chain
+ends there: it changes nothing at runtime, and in TypeScript a later `into` on
+it does not compile. The module exports what `defineUnbounded` returned, and
+that export is what the runner registers.
 
 ### Python
 
@@ -1058,7 +1198,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Node
 
-TODO: not written yet.
+```javascript
+// runner.mjs: the runner. Joins trading and offers the prices factory.
+import { createRunner } from '@flezha/sdk';
+
+const runner = createRunner(process.argv[2] ?? 'trading');
+await runner.registerFactory('./trade_watcher_operator.mjs');
+
+// Resolves once the runner is connected and serving. The process then keeps
+// running until a SIGTERM, Ctrl-C, or its standard input closing.
+await runner.run();
+```
+
+The operator is registered by module specifier, a path that resolves against
+the working directory, so start the runner from the project's folder.
+`registerFactory` imports the module, which is why it is awaited, and `run()`
+resolves once the runner is connected and serving.
 
 ### Python
 
