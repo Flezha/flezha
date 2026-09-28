@@ -270,30 +270,10 @@ A Node runner's journal lists the same steps too, with `88 byte(s)` and
 promise inside `run`, so it too waits inside `run` and the rest of this section
 reads the same for it: after a crash the ten seconds start again.
 
-An Elixir runner's journal lists `reserve_funds` and `place_order` only, with
-`163 byte(s)` and `157 byte(s)` as their handoffs. Its order runs
-`record_order` beside `confirm_fill`, so the terminal shows the booking, but
-commits the two steps only once both have finished. After the crash below both
-run again, the ten seconds starting again, and the journal ends with them in
-that order, here for an order started as `order_2`:
-
-```output
-...
-  seq=2 task_committed task_idx=2 iter=0 epoch=0
-    ran: order_2/confirm_fill/
-    handoff: 0 item(s), 0 byte(s)
-    completes the instance: result 57 byte(s)
-
-  seq=3 task_committed task_idx=3 iter=0 epoch=0
-    ran: order_2/record_order/
-    handoff: 0 item(s), 0 byte(s)
-
-
-  leaves: 2,3  complete: true
-```
-
-Its terminal shows the booking a second time after the crash, because
-`record_order` had not been committed.
+An Elixir runner's journal lists the same steps too, with `163 byte(s)` and
+`157 byte(s)` as the handoffs of the first two. Its `confirm_fill` sleeps inside
+`run`, so it too waits inside `run` and the rest of this section reads the same
+for it: after a crash the ten seconds start again.
 
 A PHP runner's `confirm_fill` waits on a timer rather than inside `run`
 ([`building_a_workflow.md`](building_a_workflow.md#a-step-that-can-fail)), so its

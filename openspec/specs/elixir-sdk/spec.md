@@ -736,9 +736,10 @@ channel. A missing inter-tasklet codec SHALL be named by no SDK, this one includ
 inter-tasklet value has a serialization everywhere, so there is nothing for an author to
 declare and nothing to refuse.
 
-A structured class SHALL drive its DAG frontier by frontier, over the chain of the pass's origin:
+A structured class SHALL drive its DAG stage by stage, over the chain of the pass's origin:
 the entry channel the pass's message arrived on, or the tasklet whose timer's firing opened the pass.
-A tasklet becomes runnable only once every producer feeding it in
+Each stage SHALL commit as soon as its Cells have drained, whatever its siblings are still doing,
+one `TaskCommit` in flight at a time. A tasklet becomes runnable only once every producer feeding it in
 that chain has committed, so a fan-out interleaves independently, a fan-in is dispatched exactly
 once with the accumulated batch of this pass's producers, and a producer of another chain is
 never waited for. A message SHALL enter through the same `resolve_channel`, `parse` and park
@@ -791,6 +792,12 @@ declared to the controller in the `AddOperator` response.
   edge's `retry_max` / `retry_backoff_ms` exactly as an unbounded operator Cell reads them, differing only in
   that an exhausted ladder fails the tasklet instead of parking the input to the dead-letter queue
   and that a due firing is handed to the driver, which decides when it runs
+
+#### Scenario: A step commits while its sibling still runs
+
+- **WHEN** a pass fans out to two tasklets, one that finishes at once and one still running
+- **THEN** the finished one's `TaskCommit` is sent before the running one ends, so a crash then
+  re-runs only the one that had not committed
 
 #### Scenario: A keyed bounded tasklet mints its Cells on dispatch
 

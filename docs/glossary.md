@@ -48,10 +48,11 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   A `per_input` bounded operator reads an unbounded input in bounded runs.
 - **Unbounded operator** — the always-on kind: an endless input, no barrier, per-cell recovery.
   Implements `UnboundedOperator`. See [`architecture/stream_profile.md`](architecture/stream_profile.md).
-- **Bounded operator** — the terminating kind: a DAG of tasklets run level by level behind a
-  commit barrier, with an inbox, saga compensation, a durable loop and suspension. Implements
-  `BoundedOperator`; ends on chain completion, a tasklet's `ctx.complete(result)`, a loop
-  that runs out of work, `max_duration` or `flz operator stop`. See
+- **Bounded operator** — the terminating kind: a DAG of tasklets, each run once its producers
+  have committed and committed behind a barrier as soon as its cells finish, with an inbox,
+  saga compensation, a durable loop and suspension. Implements `BoundedOperator`; ends on
+  chain completion, a tasklet's `ctx.complete(result)`, a loop that runs out of work,
+  `max_duration` or `flz operator stop`. See
   [`architecture/bounded_profile.md`](architecture/bounded_profile.md).
 - **Tasklet** — a typed stage inside an operator, declaring `Input`, `Output`, `State`,
   `Change` and `Clock` types. A tasklet has exactly one output channel, is wired to the others by
