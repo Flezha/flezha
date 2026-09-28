@@ -1090,9 +1090,8 @@ end
 
 A cell is a BEAM process of its own, so `Process.sleep/1` here holds only
 this order: the price stream and every other order keep running while it
-waits. What it does hold is the rest of this order. Until `run/3` returns, the
-order's driver waits for the cell, so `record_order` runs only after the fill
-is confirmed, and after the last try of a refused one.
+waits. What it does hold is the rest of this order: `record_order` runs beside
+it, but the order goes on to its end only once `run/3` returns.
 
 An `{:error, reason}` answer, or anything `run/3` raises, is retried. The
 number of tries and the wait are set where the operator connects the step,
@@ -1514,10 +1513,6 @@ The four modules it names in `into` are the four steps themselves:
 `ReserveFunds`, `PlaceOrder`, `ConfirmFill` and `RecordOrder`. Elixir has no
 `branch`: the placed channel is a value, `placed`, and naming it in two `into`
 calls is the fan-out, each arm getting the same placed order.
-
-An Elixir order runs the two arms one after the other, the fill first, because
-the driver waits for each step's cell in turn: the book is written once the
-fill is confirmed, rather than beside it.
 
 <!-- tabs-close -->
 

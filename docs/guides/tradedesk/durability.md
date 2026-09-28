@@ -272,11 +272,10 @@ reads the same for it: after a crash the ten seconds start again.
 
 An Elixir runner's journal lists `reserve_funds` and `place_order` only, with
 `163 byte(s)` and `157 byte(s)` as their handoffs. Its order runs
-`record_order` after `confirm_fill` rather than beside it
-([`building_a_workflow.md`](building_a_workflow.md#several-tasklets-step-by-step)),
-so nothing is booked yet. After the crash below both run, the ten seconds
-starting again, and the journal ends with them in that order, here for an
-order started as `order_2`:
+`record_order` beside `confirm_fill`, so the terminal shows the booking, but
+commits the two steps only once both have finished. After the crash below both
+run again, the ten seconds starting again, and the journal ends with them in
+that order, here for an order started as `order_2`:
 
 ```output
 ...
@@ -293,11 +292,8 @@ order started as `order_2`:
   leaves: 2,3  complete: true
 ```
 
-Its terminal shows the one booking after the crash, once the fill is
-confirmed. While `confirm_fill` waits, the order's driver answers nothing, so
-the restarted runner may also log `[convergence] bounded call failed ...
-request=:restore_landed reason={:timeout, ...}` for the orders that were
-waiting; they finish all the same.
+Its terminal shows the booking a second time after the crash, because
+`record_order` had not been committed.
 
 A PHP runner's `confirm_fill` waits on a timer rather than inside `run`
 ([`building_a_workflow.md`](building_a_workflow.md#a-step-that-can-fail)), so its
@@ -725,24 +721,19 @@ tries, because the wait holds nothing else up:
 ```
 
 An Elixir runner waits the ten seconds on every try too, logging each try at
-the `debug` level, and books the order only once the last try is spent, since
-its `record_order` runs after `confirm_fill`. Other orders' bookings land
-between the tries, because the wait holds only this order:
+the `debug` level, and books the order at once, beside the tries, here for an
+order of 500 started as `order_too_big`:
 
 ```output
-18:02:08.648 [debug] [Flezha.SDK] order_executor-budumazzynqzj2sv/node/single attempt 1/3 failed: the exchange fills at most 100 a time, and this is 112; retrying
-[book] USD/JPY 25 as ord-26d8f3c5d820d24b3a2c636b54983dcb
-[book] USD/JPY 21 as ord-da3c2d9f91117708d2114c3d101a7417
-[book] USD/JPY 20 as ord-81dbf988bcb56ed05657cbe3ef0d5ba9
+[book] EUR/USD 500 as ord-e015c2df9402f4625d9cef4def51f243
 
-18:02:18.710 [debug] [Flezha.SDK] order_executor-budumazzynqzj2sv/node/single attempt 2/3 failed: the exchange fills at most 100 a time, and this is 112; retrying
+20:04:04.357 [debug] [Flezha.SDK] order_too_big/node/single attempt 1/3 failed: the exchange fills at most 100 a time, and this is 500; retrying
 
-18:02:28.578 [debug] [Flezha.SDK] controller reply for an unknown reference spawn-bounded--293
-[book] EUR/USD 112 as ord-7c9bcb97db0573d442af80b583685823
-[undo] cancelled ord-7c9bcb97db0573d442af80b583685823
+20:04:14.417 [debug] [Flezha.SDK] order_too_big/node/single attempt 2/3 failed: the exchange fills at most 100 a time, and this is 500; retrying
+[undo] cancelled ord-e015c2df9402f4625d9cef4def51f243
 
-18:02:28.791 [debug] [Flezha.SDK] order_executor-budumazzynqzj2sv compensating task 1
-[undo] released res-d87a1120f8b43bb4c83b0db5eba68eba
+20:04:24.547 [debug] [Flezha.SDK] order_too_big compensating task 1
+[undo] released res-e0d09a3a6a33661df98dd0a4768bb45a
 ```
 
 The order was cancelled, then the money released. Both undos read their id from

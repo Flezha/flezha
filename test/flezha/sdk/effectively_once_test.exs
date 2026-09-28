@@ -259,8 +259,7 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
     producer = cell!(op, "edge_producer")
 
     # This one's push was admitted before the consumer went into `run/3`, so
-    # its record ships; the consumer is inside `run/3` from here on and
-    # answers no further push.
+    # its record ships; the consumer is inside `run/3` from here on.
     push(op, "hold=1", 1)
     assert [f0] = frames(1)
     assert {0, %{consumed_offset: 1}} = effect(f0)
@@ -268,17 +267,23 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
     consumer = cell!(op, "held_consumer")
     assert {:error, :busy} = Cell.read(consumer, 200)
 
+    # The consumer's one queue slot is free while it runs, so this push is
+    # admitted at once, and its record ships.
+    push(op, "k1=a", 2)
+    assert [f1] = frames(1)
+    assert {1, %{consumed_offset: 2}} = effect(f1)
+
     # Queued into the producer directly: the router is exercised for the EMIT,
     # and a synchronous enqueue then read is what makes "the settle has
-    # happened" a fact rather than a wait. The router is now inside the push
-    # the consumer will not answer, and this offset may not become durable
-    # ahead of the output it produced.
-    :ok = Cell.enqueue_block(producer, %Cell.Input{value: "k2=b", offset: 2})
-    assert {:ok, %{"k2" => "b"}, 2} = Cell.read(producer, 1_000)
+    # happened" a fact rather than a wait. The consumer's queue is full now,
+    # so the router is inside a push it will not admit, and this offset may
+    # not become durable ahead of the output it produced.
+    :ok = Cell.enqueue_block(producer, %Cell.Input{value: "k2=b", offset: 3})
+    assert {:ok, %{"k2" => "b"}, 3} = Cell.read(producer, 1_000)
     refute_received {:flz_data, _, "cell_effect_record", _, _}
 
     send(consumer, :release)
-    assert [f1] = frames(1)
-    assert {1, %{consumed_offset: 2}} = effect(f1)
+    assert [f2] = frames(1)
+    assert {2, %{consumed_offset: 3}} = effect(f2)
   end
 end

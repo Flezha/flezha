@@ -380,7 +380,9 @@ beside `dispatches` and `blocked_parks`, the same keys the other SDKs report, an
 
 **This SDK was the reference design for how `flz_core` now waits.** A full mailbox never blocks
 a scheduler here: `handle_call({:enqueue, …})` DEFERS its reply and holds the value in a
-`waiters` FIFO that `admit_waiter/1` drains in order. `flz_core` held the producing OS thread
+`waiters` FIFO, and each dequeue hands its freed slot to the oldest waiter. A push that finds a
+free slot in the Cell's `Flezha.SDK.Cell.Room` is a cast instead, so the router never waits on
+a Cell that is only busy running a tasklet. `flz_core` held the producing OS thread
 instead until `nonblocking-drop-nothing-backpressure` gave it the same shape (a push holdback on
 the producing Cell). So this SDK needed no mechanism change — only the reporting half, because
 heartbeat keys are a cross-SDK contract: `pending_pushes` / `pending_push_oldest_ms` count the
