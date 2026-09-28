@@ -67,7 +67,6 @@ defmodule Flezha.MixProject do
     <script>
       {
         const storageKey = "flezha-tab";
-        const pages = ["controller_deployment", "runner_deployment", "running_operators", "sources_and_sinks", "stop_everything"];
 
         const selectTab = (label, except) => {
           for (const tab of document.querySelectorAll(".tabset-tab")) {
@@ -84,12 +83,9 @@ defmodule Flezha.MixProject do
           }
         };
 
-        // ExDoc swaps pages in place, so the page is checked on every event.
-        const onSyncedPage = () => pages.includes(location.pathname.split("/").pop().replace(/\\.html$/, ""));
-
         const syncTabs = (event) => {
           const tablist = event.target.closest?.(".tabset-tablist");
-          if (!tablist || !onSyncedPage()) return;
+          if (!tablist) return;
 
           const selected = tablist.querySelector("[aria-selected=true]");
           const label = selected.textContent.trim();
@@ -106,7 +102,7 @@ defmodule Flezha.MixProject do
         window.addEventListener("exdoc:loaded", () => setTimeout(() => {
           let label = null;
           try { label = localStorage.getItem(storageKey); } catch {}
-          if (label && onSyncedPage()) selectTab(label);
+          if (label) selectTab(label);
         }));
       }
     </script>
