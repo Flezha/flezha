@@ -1,23 +1,36 @@
 # Running operators
 
+This page turns the `echo` factory your runner registered into a running
+operator, sends it a message and watches what comes out: with `flz` first, then
+from your own code.
+
 ## What an operator is
 
-What you wrote is a **declaration**: a graph from an input to an output, with the
-steps in between. It runs nothing by itself. Your runner registers it
-as a **factory**, under a **factory id**, and an operator is one running instance created from
-that declaration when you ask the controller for one. If the analogy helps, the
-declaration is the definition and an operator is a thing made from it.
+It works like a template and the instances made from it. The code you wrote in
+[the runner guide](runner_deployment.md#the-operator) is the template: a graph
+from an input to an output, with steps in between, and it runs nothing by
+itself. An operator is one running instance of it, with its own name, its own
+state and its own place in the cluster. If you think in classes and objects, it
+is the same relation. In Flezha's words:
 
-One declaration backs as many operators as you need, each under a name you
-choose and each independent of the rest: its own cells, its own state, its
-own placement in the cluster. Ten exchanges to watch is one declaration started
-ten times. What the declaration itself is, and why it is the unit the controller
-schedules, is in [the runner guide](runner_deployment.md#the-operator).
+| Flezha          | In general terms    | Here                        |
+|-----------------|---------------------|-----------------------------|
+| **factory**     | a template          | the operator code you wrote |
+| **factory id**  | the template's name | `echo`                      |
+| **operator**    | an instance         | the one this page starts    |
+| **operator id** | the instance's name | `my_echo`                   |
 
-A runner runs every operator the controller places on it. An operator runs its
-tasklets, and each tasklet runs in one or more **cells**: one cell by default,
-or one per key when its input is keyed, each with state of its own. `echo` is
-the smallest there is, one tasklet in one cell. A bigger runner looks like this:
+**One factory, as many operators as you need.** Every start makes another
+independent instance, so watching ten exchanges is one factory started ten
+times. Hundreds or thousands of operators from one factory are an ordinary
+deployment, and Flezha is built for exactly that: the controller places each one
+on a runner that registered the factory, moves it when that runner goes away,
+and more runners mean room for more operators.
+
+Inside, an operator runs its tasklets, and each tasklet runs in one or more
+**cells**: one by default, or one per key when its input is keyed, each with
+state of its own. `echo` is the smallest case, one tasklet in one cell. A runner
+with two bigger operators looks like this:
 
 ```mermaid
 flowchart TB
