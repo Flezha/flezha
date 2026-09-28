@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added: the Elixir builder has `branch`
+
+`branch/2` fans a stream out to a list of arms, each a function called with that same stream,
+and answers the stream: `placed |> branch([&into(&1, ConfirmFill), &into(&1, RecordOrder)])`
+builds the topology two `into/2` calls off the held handle build. It is imported with the rest
+of the builder, and a branch of fewer than two arms is refused as `BranchTooFewArms`, as in
+every other SDK.
+
 ### Changed (BREAKING): an Elixir tasklet writes each change with `defchange`
 
 In the Elixir SDK the idle TTL is `idle_ttl_seconds`, a positive whole number of seconds, in place

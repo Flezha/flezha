@@ -1493,15 +1493,11 @@ defmodule Tradedesk.OrderExecutor do
 
   @impl true
   def channels(c) do
-    placed =
-      c
-      |> input_with("order", &OrderTicket.decode/1)
-      |> into(Tradedesk.ReserveFunds)
-      |> into(Tradedesk.PlaceOrder)
-
-    # Two arms on the one placed channel.
-    placed |> into(Tradedesk.ConfirmFill)
-    placed |> into(Tradedesk.RecordOrder)
+    c
+    |> input_with("order", &OrderTicket.decode/1)
+    |> into(Tradedesk.ReserveFunds)
+    |> into(Tradedesk.PlaceOrder)
+    |> branch([&into(&1, Tradedesk.ConfirmFill), &into(&1, Tradedesk.RecordOrder)])
   end
 end
 ```
@@ -1510,9 +1506,8 @@ The order is the entry's first message, and it arrives as bytes, so
 `input_with/3` names the parser that turns its JSON into an `OrderTicket`, the
 struct `reserve_funds` takes; a message that is not an order is refused there.
 The four modules it names in `into` are the four steps themselves:
-`ReserveFunds`, `PlaceOrder`, `ConfirmFill` and `RecordOrder`. Elixir has no
-`branch`: the placed channel is a value, `placed`, and naming it in two `into`
-calls is the fan-out, each arm getting the same placed order.
+`ReserveFunds`, `PlaceOrder`, `ConfirmFill` and `RecordOrder`. Each arm of
+`branch` is a function that gets the same stream.
 
 <!-- tabs-close -->
 

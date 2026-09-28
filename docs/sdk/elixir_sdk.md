@@ -321,7 +321,8 @@ skipped on replay; pass `id:` when that matters.
 `input`/`input_with` → `into`/`into_named` → `keyed` → `sink`/`sink_with`, with
 `map`/`filter`/`flat_map`/`key_by` as edge transforms (fused into one closure per consumer
 edge), plus `named`, `on_full`, `retry_max`, `retry_backoff_ms`, and `merge/1` with
-`route_latest/4` ([`multi_input_tasklets.md`](multi_input_tasklets.md)). Fan-out is handle reuse;
+`route_latest/4` ([`multi_input_tasklets.md`](multi_input_tasklets.md)). Fan-out is handle reuse,
+or `branch/2`, which calls each arm of a list with the same stream and answers it;
 unnamed mentions of one module unify (fan-in). A sink names the channel it terminates:
 `sink("input")` makes the frame `channel = "input"`, which is what reaches a forward
 target's `input` entry, and `sink/1` leaves the name derived — `named/2`'s name, else the
@@ -338,9 +339,7 @@ The names are the reference vocabulary every SDK answers with
 than submits: it is its own core and inherits nothing from `flz_core`, so what
 it shares is the fixture — `test/fixtures/reference_topologies.txt`, one row per
 refusal, driven against every SDK by the same conformance run
-([`conformance.md`](conformance.md) § The refusal table). One name is absent
-here and the fixture's `needs` column says why: `BranchTooFewArms` needs a
-`branch`, which the v1 subset does not carry.
+([`conformance.md`](conformance.md) § The refusal table).
 
 Six calls declare the class rather than an edge and answer the token so they pipe in any
 order: `effectively_once/1`, `checkpoint_ack/1` / `checkpoint_every/2` /
@@ -763,9 +762,8 @@ other SDK registers, and the scenarios are `test/system/late_input_correction_e2
 ## Scope
 
 The manifest at [`test/apps/elixir_runner/conformance.json`](../../test/apps/elixir_runner/conformance.json)
-defers nothing: every capability is carried with the reference's fixtures. The one builder
-surface this SDK does not author is `branch`, since fan-out is handle reuse; a call to it fails
-registration naming the operator module.
+defers nothing: every capability is carried with the reference's fixtures. A call into a
+builder function this SDK does not carry fails registration naming the operator module.
 
 ## The package
 

@@ -109,7 +109,7 @@ commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 # documented subset lacks that surface skips the row BY NAME and the seam test
 # counts the skip against the declared surface. The surfaces named here:
 #   merge      a merge terminator
-#   branch     the branch sugar (the Elixir v1 subset has none)
+#   branch     the branch sugar
 #   bounded    a bounded class kind
 #   detached   a tasklet no entry can reach — unauthorable in a fluent
 #              builder, where a node exists only once something wires it

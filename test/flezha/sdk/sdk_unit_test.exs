@@ -248,10 +248,74 @@ defmodule Flezha.SDK.UnitTest do
     assert Ctx.take_emits(plain) == [{:a, %{}, nil}]
   end
 
+  # --- branch: fan-out sugar over one handle ---
+
+  defmodule BranchedOp do
+    use Flezha.SDK.UnboundedOperator, factory_id: "branched"
+
+    @impl true
+    def channels(c) do
+      c
+      |> input("in")
+      |> map(&String.upcase/1)
+      |> branch([&into(&1, EchoTask), &into(&1, KeyedTask)])
+      |> sink()
+    end
+  end
+
+  defmodule ReusedHandleOp do
+    @behaviour Flezha.SDK.UnboundedOperator
+    def factory_id, do: "reused_handle"
+
+    def channels(c) do
+      upper = c |> Channels.input("in") |> Channels.map(&String.upcase/1)
+      Channels.into(upper, EchoTask)
+      Channels.into(upper, KeyedTask)
+      Channels.sink(upper)
+    end
+  end
+
+  test "branch builds the topology the same handle wired twice builds, and answers that handle" do
+    assert {:ok, branched} = Topology.build(BranchedOp)
+    assert {:ok, reused} = Topology.build(ReusedHandleOp)
+
+    assert fan_out(branched) == [
+             {{:sink, nil}, ["A"]},
+             {EchoTask, ["A"]},
+             {KeyedTask, ["A"]}
+           ]
+
+    assert fan_out(branched) == fan_out(reused)
+  end
+
+  test "a branch of no arms is refused like a branch of one" do
+    defmodule NoArms do
+      def factory_id, do: "no_arms"
+
+      def channels(c),
+        do: c |> Channels.input("in") |> Channels.branch([]) |> Channels.into(EchoTask)
+    end
+
+    assert {:BranchTooFewArms, 0} = one_issue(NoArms)
+  end
+
+  # Every route off the `in` entry: what it reaches and what it makes of "a".
+  defp fan_out(topology) do
+    for route <- topology.routes[{:entry, "in"}] do
+      target =
+        case route.to do
+          {:node, ref} -> Map.fetch!(topology.node_modules, ref)
+          sink -> sink
+        end
+
+      {target, route.transform.("a")}
+    end
+  end
+
   test "a builder call into a deferred surface fails registration naming the module" do
     defmodule Deferred do
       def factory_id, do: "def"
-      def channels(c), do: Channels.branch(c)
+      def channels(c), do: Channels.window(c)
     end
 
     assert {:error, {:invalid_topology, [{:DeferredBuilderSurface, Deferred, _}]}} =
