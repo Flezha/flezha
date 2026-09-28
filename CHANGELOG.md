@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Changed (BREAKING): a Ruby tasklet names itself and emits only through its context
+
+A value leaves a Ruby tasklet only through `ctx.emit` or `ctx.emit_to`: what `run`, `on_timer`
+and `compensate` answer is ignored, for a tasklet and a short form alike, so a `run` ending in
+`ctx.change(...)` no longer emits the folded value. Ruby answers its last expression, so a
+non-nil answer is not refused. `Ctx#emit_returned` and the harness's `Outcome#returned` are gone.
+Every tasklet class writes `tasklet_name`, and one wired without it is refused when its operator
+is declared, so renaming a class never moves its saved state. The initial-state hook is
+`init_state`, and optional under `state_type`: a new cell then starts from `state_type.new`. The
+idle TTL is `idle_ttl_seconds` in whole seconds and `max_cells` is a setting of its own; the
+clock follows from what the class writes (`event_time` makes it event time, `logical_clock`
+logical, both are refused); `migrate_state` and `migrate_change` are instance methods receiving
+the stored bytes; and a tasklet fed through `key_by` gets a cell per key from the wiring alone.
+`dynamic_cells`, `idle_ttl_ms`, `clock` and the migration blocks are gone and raise
+`NoMethodError` naming what replaced them, and a class that still defines `initial_state` is
+refused naming `init_state`. Saved state is unaffected as long as each tasklet keeps the name it
+had (an unnamed tasklet was named after its class in snake case, so write that name), with two
+exceptions. A tasklet fed through `key_by` that did not carry `dynamic_cells` ran as one cell and
+now gets a cell per key, so its old single-cell state is never read again and each key's cell
+starts from `init_state`. The reverse holds too: a `dynamic_cells` tasklet fed by no `key_by`
+edge is now single, so its per-key cells are never read again and every key folds into one new
+cell.
+
+### Fixed: two operators of one factory on a Ruby runner no longer share a cell
+
+A Ruby runner kept a cell's state by tasklet and cell key alone, so two operators of one factory
+served by the same runner, such as two instances of a bounded operator running at once, read and
+wrote each other's state, from two worker threads at once. Each operator now has cells of its
+own.
+
 ### Changed (BREAKING): a Python tasklet is a named class that emits only through its context
 
 `@flezha.tasklet(name=...)` decorates a class whose `run(self, value, ctx)` returns `None`: a

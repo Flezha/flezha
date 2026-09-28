@@ -344,7 +344,79 @@ which a type checker still checks. The box below lists what
 
 ### Ruby
 
-TODO: not written yet.
+The whole example:
+[`sdk/ruby/examples/tradedesk`](https://github.com/flezha/flezha_ruby_sdk/tree/main/examples/tradedesk).
+
+```ruby
+# track_prices.rb: keeps a symbol's last ten prices, and compares each new one with their average.
+class TrackPrices < Flezha::Tasklet
+  tasklet_name "track_prices"
+
+  WINDOW = 10
+
+  def init_state(_cell_key) = { prices: [] }                 # what each symbol's cell remembers
+
+  def apply_change(state, change)
+    state[:prices] << change[:price]                         # how a price joins the window
+    state[:prices].shift if state[:prices].size > WINDOW
+  end
+
+  def run(trade, ctx)
+    price = trade[:price]
+    raise ArgumentError, "the price is not a number: #{price.inspect}" unless price.is_a?(Numeric) # JSON checks no types
+
+    prices = ctx.state[:prices]
+    unless prices.empty? # a symbol's first trade has nothing to compare with
+      ctx.emit({ symbol: trade[:symbol], price: price, average: prices.sum.fdiv(prices.size) })
+    end
+    ctx.change({ price: price })
+  end
+end
+```
+
+**Flezha calls `run` once for every trade**, and passes it two things:
+
+- `trade` is the input: one trade, as it arrives on the tasklet's channel. The
+  exchange's JSON arrives as a Hash with Symbol keys, and the desk reads its
+  `:symbol` and `:price`.
+- `ctx` is the context, the tasklet's way of talking to Flezha. `ctx.state` is
+  this symbol's cell state, what it remembers: the Hash `init_state` starts it
+  as. `ctx.emit(...)` hands a move on, and `ctx.change(...)` records a change
+  to the state.
+
+What `run` answers is not output: a value leaves only through `ctx.emit`. The
+first trade of a symbol emits nothing, because `run` only calls `ctx.emit` when
+there is an average to compare with. JSON carries no types, so `run` checks
+that the price is a number before it counts it; anything else is refused, and
+[`durability.md`](durability.md#the-dead-letter-queue) shows where such a trade
+goes.
+
+**The state changes only through a change.** A change is plain data, here
+`{ price: ... }`, and `apply_change` folds it into the state: it adds the price
+and drops the oldest once there are more than ten. `ctx.change` runs
+`apply_change` and writes the change down, and after a crash Flezha runs
+`apply_change` again for every change it wrote, which is how the window comes
+back. `ctx.state` can be written directly too, but that would work until the
+first crash and then be gone.
+
+The trade, the move and the window are plain Hashes, so nothing else is
+declared for them. The box below lists what a tasklet's class body declares.
+
+> #### What a `Flezha::Tasklet` class body declares {: .info}
+>
+> Nothing is generated: the class you write is the class the operator names in
+> `into(...)`. Its class body is read when the runner registers the operator,
+> and carries the tasklet's name and settings:
+>
+> | Declaration | What it is |
+> |---|---|
+> | `tasklet_name` | required: the name the tasklet's state is saved under, so choose it once. Not `name`, which is the class's own name in Ruby |
+> | `cell_keys` | fixed cell keys, with a `cells_for` method that routes each input |
+> | `mailbox_capacity`, `max_cells`, `idle_ttl_seconds` | the cell's mailbox, the cap on cells, and how long an idle cell lives |
+> | `schema_version`, `logical_clock` | the version of the saved state, and a clock that counts changes |
+>
+> Optional hooks, such as `init_state`, a timer's `on_timer` or an undo's
+> `compensate`, are declared by writing the method.
 
 ### PHP
 
@@ -601,7 +673,36 @@ waits on it, since waiting would hold the price stream up.
 
 ### Ruby
 
-TODO: not written yet.
+```ruby
+# buy_above_average.rb: buys when a price is far enough above its average.
+class BuyAboveAverage < Flezha::Tasklet
+  tasklet_name "buy_above_average"
+
+  BUY_ABOVE_PCT = 2.0
+  UNITS_PER_PERCENT = 10
+
+  def run(move, ctx)
+    percent = (move[:price] - move[:average]) / move[:average] * 100.0
+    return if percent < BUY_ABOVE_PCT
+
+    quantity = (percent * UNITS_PER_PERCENT).round           # a stronger move buys more
+
+    order = { symbol: move[:symbol], quantity: quantity }
+    ctx.spawn_bounded("order_executor", order)               # one bounded operator per order
+
+    ctx.emit(format("%<symbol>s %<price>.4f is %<percent>.2f%% above its average of %<average>.4f, buying %<quantity>d",
+                    symbol: move[:symbol], price: move[:price], percent: percent,
+                    average: move[:average], quantity: quantity))
+  end
+end
+```
+
+It takes the move and emits a line, and writes no `init_state`, because it
+remembers nothing. It does two things per input through the context: it starts
+a bounded operator and it emits. `spawn_bounded` sends the order, a Hash, as
+JSON, and `order_executor` reads it back as the Hash its first step takes,
+declared in [`building_a_workflow.md`](building_a_workflow.md). The handle it
+returns reports whether the order started; the desk does not read it.
 
 ### PHP
 
@@ -850,7 +951,31 @@ later `into` on it is a type error.
 
 ### Ruby
 
-TODO: not written yet.
+```ruby
+# trade_watcher_operator.rb: the unbounded operator. Trades in, signals out.
+class TradeWatcherOperator < Flezha::UnboundedOperator
+  factory_id "trade_watcher"
+
+  channels do |c|
+    c.input("trades")
+     .filter { |message| message[:channel] == "trade" }      # trade messages only
+     .flat_map { |message| message[:data] }                  # a message into its trades
+     .filter { |trade| trade[:ord_type] == "market" }        # market orders only
+     .key_by { |trade| trade[:symbol] }                      # one cell per symbol
+     .into(TrackPrices)
+     .into(BuyAboveAverage)
+     .sink("signals")
+  end
+end
+```
+
+The operator's entry names no codec, so each message arrives as the Hash its
+JSON decodes to, with Symbol keys, and each transform is a block over that
+Hash. The subscription confirmation has no `:channel`, so the first `filter`
+reads `nil` there and drops it. `flat_map` hands on each trade with every field
+the exchange sent; the tasklets read the ones they need. `into` names the two
+tasklet classes above, `TrackPrices` and `BuyAboveAverage`, and
+`sink("signals")` is the sink.
 
 ### PHP
 
@@ -953,7 +1078,18 @@ def main() -> None:
 
 ### Ruby
 
-TODO: not written yet.
+```ruby
+# runner.rb: the runner. Joins trading and offers the prices factory.
+runner = Flezha.create_runner(ARGV[0] || "trading")
+               .register_factory(TradeWatcherOperator)
+               .boot
+
+# Blocks until shutdown: a SIGTERM, Ctrl-C, or standard input closing.
+runner.await_termination
+```
+
+`boot` connects and starts serving, and `await_termination` blocks until
+shutdown; `run` is the two in one call.
 
 ### PHP
 

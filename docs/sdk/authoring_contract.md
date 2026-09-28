@@ -123,7 +123,7 @@ three types, and §2.2 says where the rest comes from.
 | `type Output = O`, else nothing                     | `Output`, default `()`: no output channel           |
 | `type State = S`, else nothing                      | `State`, default `()`: stateless                    |
 | `type Change = C` (a `Change<S>`), else nothing     | `Change`, default `NoChange`: nothing journaled     |
-| `name = "…"` (required)                             | `NAME` — Rust: the key; Python: the `name` of `@flezha.tasklet(name=…)`; Ruby: the class name in snake_case; Java names every tasklet in `@Tasklet.Spec(name = …)`; PHP in `#[Task(name: …)]` |
+| `name = "…"` (required)                             | `NAME` — Rust: the key; Python: the `name` of `@flezha.tasklet(name=…)`; Ruby: `tasklet_name "…"` in the class body; Java names every tasklet in `@Tasklet.Spec(name = …)`; PHP in `#[Task(name: …)]` |
 | `fn event_time`, else `logical_clock`, else nothing | `CLOCK`: `EventTime`, `Logical`, else `Wall`        |
 | `fn init_state`, else nothing                       | `init_state` returning `State::default()`           |
 | `fn compensate` / `fn cells_for` / `fn max_cells` / `fn mailbox_capacity` | the matching `*_OVERRIDDEN` flag set to `true` |
@@ -498,7 +498,7 @@ is an address a user types and a rename must not move it.
 | Java | `@UnboundedOperator(id = "echo", sink = "out", input = "in") class Echo implements Tasklet<String, Void, String> { void run(String s, Ctx<Void, String> ctx) }` | `@BoundedOperator(...)` |
 | Python | `@flezha.unbounded_operator(id="echo", sink="out", input="in", codec="text") def echo(s: str) -> str`, or the same decorator on a class whose `run(self, s, ctx)` emits through `ctx` | `@flezha.bounded_operator(...)` |
 | Node | `defineUnbounded({ factoryId: 'echo', sink: 'out', input: 'in', codec: 'text', run })` | `defineBounded({ ... })` |
-| Ruby | `class Echo < Flezha::UnboundedOperator; factory_id "echo"; sink "out"; input "in"; codec :text; def run(s, ctx) = s; end` | `< Flezha::BoundedOperator` |
+| Ruby | `class Echo < Flezha::UnboundedOperator; factory_id "echo"; sink "out"; input "in"; codec :text; def run(s, ctx) = ctx.emit(s); end` | `< Flezha::BoundedOperator` |
 | PHP | `#[Operator(factoryId: 'echo', sink: 'out', input: 'in', codec: ChannelCodec::Text)] final class Echo extends UnboundedOperator { public function run(mixed $s, Ctx $ctx): void }` | `extends BoundedOperator` |
 | Elixir | `use Flezha.SDK.UnboundedOperator, factory_id: "echo", sink: "out", input: "in"` with `run/3` | `use Flezha.SDK.BoundedOperator, ...` |
 
@@ -695,7 +695,9 @@ refusal table's short-form rows are checked against:
 They are not `TopologyIssue` variants: the core never sees a short form. An SDK
 whose tasklet bodies declare no output type the SDK can read (Node, Ruby,
 PHP, Elixir) owes no `SinkWithoutOutput` and says so in its conformance
-manifest. A declaration with neither body, or with no written identity, is
+manifest. In Ruby no `run` answers output either: what it answers is ignored and
+a value leaves only through `ctx.emit`, so nothing in a class says whether it
+emits. A declaration with neither body, or with no written identity, is
 refused by the rule every operator already obeys, not by a short-form name.
 There is no other short-form refusal: an operator declaration always has a
 kind, and `input` and `codec` need no sink.

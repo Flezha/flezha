@@ -586,15 +586,18 @@ The whole example:
 ```ruby
 # echo_tasklet.rb: the tasklet. The processing stage the graph routes each message into.
 class EchoTasklet < Flezha::Tasklet
-  tasklet_name "echo"                            # state is saved under this name, so choose it once
+  tasklet_name "echo" # the durable identity: state is filed under it
 
-  def run(input, _ctx) = "echo: #{input}"        # what it returns is emitted
+  def run(input, ctx) = ctx.emit("echo: #{input}")
 end
 ```
 
-Without `tasklet_name` the name is the class name in snake case. Which optional
-hooks a tasklet has is read from the methods it defines, so with no
-`initial_state` and no `apply_change` it keeps nothing and journals nothing.
+`tasklet_name` is required, and it is the tasklet's identity: its state is
+saved under that name, so choose it once, while the class can be renamed
+freely. It is not `name`, which is the class's own name in Ruby. `run` gets
+each message and emits through `ctx`; what it returns is not output. Which
+optional hooks a tasklet has is read from the methods it defines, so with no
+`init_state` and no `apply_change` it keeps nothing and journals nothing.
 
 ```ruby
 # echo_operator.rb: the operator. The graph, and the unit the controller schedules.

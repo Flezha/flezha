@@ -296,7 +296,63 @@ lists what the decorator takes.
 
 ### Ruby
 
-TODO: not written yet.
+The whole example:
+[`sdk/ruby/examples/tradedesk`](https://github.com/flezha/flezha_ruby_sdk/tree/main/examples/tradedesk).
+
+```ruby
+# reserve_funds.rb: step one. Puts the money aside, and releases it on an undo.
+class ReserveFunds < Flezha::Tasklet
+  tasklet_name "reserve_funds"
+
+  # What this step remembers, and how the id is written down.
+  def init_state(_cell_key) = { id: "" }
+  def apply_change(state, change) = state[:id] = change[:id]
+
+  # The step: reserve the money under an id, remember the id, and hand the order on.
+  def run(order, ctx)
+    id = "res-#{ctx.stable_id}" # the same id when the step runs again
+    ctx.change({ id: id })
+    ctx.emit({ order: order, reservation_id: id })
+  end
+
+  # The undo: release the money, by the id the state kept.
+  def compensate(_outputs, ctx)
+    puts "[undo] released #{ctx.state[:id]}"
+  end
+end
+```
+
+**Flezha calls `run` with the order**, and passes it two things: the input and
+the context, as it did for the ETL stream's tasklets.
+
+- `order` is the input, what arrives on the step's channel. For the first
+  step, that is the order the instance was started with, the Hash
+  `{ symbol: ..., quantity: ... }` its JSON decodes to.
+- `ctx` is the context, the step's way of talking to Flezha.
+  `ctx.change(...)` writes the id down in the step's state, and `ctx.state`
+  reads it back. `ctx.emit(...)` hands a value to the next step, and
+  `ctx.stable_id` gives an id that stays the same when the step runs again, so
+  a retry does not put the money aside twice.
+
+The step starts its state as `{ id: "" }`, records the change `{ id: ... }`,
+folded by `apply_change`, and hands on the order and the id.
+
+**Flezha calls `compensate` only when the order fails**, and passes it two
+things:
+
+- `_outputs` is what `run` handed on, a list.
+- `ctx` is the context again, and `ctx.state` is the same state `run` wrote the
+  id into.
+
+The id is read from the state, not from what was handed on, because after a
+crash Flezha brings back the step's state but not what it handed on, so the
+list can be empty. Writing a `compensate` is what gives a step an undo, and a
+step without one is skipped. It can run twice, when a crash comes in the middle
+of an undo, so it has to be safe to repeat.
+
+The operator names the class itself, `ReserveFunds`.
+[What a `Flezha::Tasklet` class body declares](building_an_etl_stream.md#keep-each-symbol-s-prices)
+lists what the class body carries.
 
 ### PHP
 
@@ -519,7 +575,28 @@ class PlaceOrder:
 
 ### Ruby
 
-TODO: not written yet.
+```ruby
+# place_order.rb: step two. Places the order, and cancels it on an undo.
+class PlaceOrder < Flezha::Tasklet
+  tasklet_name "place_order"
+
+  # What this step remembers, and how the id is written down.
+  def init_state(_cell_key) = { order_id: "" }
+  def apply_change(state, change) = state[:order_id] = change[:order_id]
+
+  # The step: place the order under an id, remember the id, and hand the order on.
+  def run(reserved, ctx)
+    order_id = "ord-#{ctx.stable_id}"
+    ctx.change({ order_id: order_id })
+    ctx.emit({ order: reserved[:order], order_id: order_id })
+  end
+
+  # The undo: cancel the order, by the id the state kept.
+  def compensate(_outputs, ctx)
+    puts "[undo] cancelled #{ctx.state[:order_id]}"
+  end
+end
+```
 
 ### PHP
 
@@ -682,7 +759,37 @@ that is not retried.
 
 ### Ruby
 
-TODO: not written yet.
+```ruby
+# confirm_fill.rb: asks the exchange whether the order filled, and ends the order with the answer.
+class ConfirmFill < Flezha::Tasklet
+  tasklet_name "confirm_fill"
+
+  EXCHANGE_MAX = 100
+
+  def run(placed, ctx)
+    sleep 10                                                 # the paper exchange takes ten seconds to answer
+    quantity = placed[:order][:quantity]
+    if quantity > EXCHANGE_MAX                               # tried again, then the order is undone
+      raise "the exchange fills at most #{EXCHANGE_MAX} a time, and this is #{quantity}"
+    end
+
+    ctx.complete("filled #{placed[:order][:symbol]} #{quantity} as #{placed[:order_id]}")
+  end
+end
+```
+
+Under the default thread executor the wait holds one worker, and `sleep` lets
+the other workers run meanwhile. When every worker has been busy for 100 ms the
+runner adds one, up to `FLEZHA_WORKER_POOL_MAX` (ten times the processor count
+by default), so the price stream keeps flowing while an order waits; more
+orders waiting at once than that would stall it. Under the fiber executor
+(`FLEZHA_RUBY_EXECUTOR=fibers`, with the `async` gem) `sleep` yields its fiber
+instead, so the wait stalls nothing and that cap does not apply.
+
+An exception raised from `run` is retried. The number of tries and the wait
+are set where the operator connects the step, with `retry_max` and
+`retry_backoff_ms`; the desk keeps the defaults. `Flezha::NonRetryableError` is
+the one that is not retried.
 
 ### PHP
 
@@ -817,7 +924,20 @@ nothing on, which is the plainest shape a tasklet has.
 
 ### Ruby
 
-TODO: not written yet.
+```ruby
+# record_order.rb: writes the placed order into the desk's book.
+class RecordOrder < Flezha::Tasklet
+  tasklet_name "record_order"
+
+  def run(placed, _ctx)
+    order = placed[:order]
+    puts "[book] #{order[:symbol]} #{order[:quantity]} as #{placed[:order_id]}"
+  end
+end
+```
+
+With no `init_state` written and no `ctx.emit`, it keeps nothing and hands
+nothing on, which is the plainest shape a tasklet has.
 
 ### PHP
 
@@ -984,7 +1104,29 @@ order. The four classes it names in `into` are the four steps themselves:
 
 ### Ruby
 
-TODO: not written yet.
+```ruby
+# order_executor_operator.rb: the bounded operator. One instance is one order.
+class OrderExecutorOperator < Flezha::BoundedOperator
+  factory_id "order_executor"
+
+  channels do |c|
+    c.input("order")
+     .into(ReserveFunds)                                     # step one
+     .into(PlaceOrder)                                       # step two, once step one is done
+     .branch(
+       ->(fill) { fill.into(ConfirmFill) },                  # two arms, side by side
+       ->(book) { book.into(RecordOrder) }
+     )
+  end
+end
+```
+
+The order is the entry's first message, and the entry names no codec, so
+`reserve_funds` gets the Hash its JSON decodes to: the one `BuyAboveAverage` in
+the ETL stream sends when it starts an order. The four classes it names in
+`into` are the four steps themselves: `ReserveFunds`, `PlaceOrder`,
+`ConfirmFill` and `RecordOrder`. Each arm of `branch` is a lambda that gets the
+same edge.
 
 ### PHP
 
@@ -1096,7 +1238,20 @@ def main() -> None:
 
 ### Ruby
 
-TODO: not written yet.
+```ruby
+# runner.rb: the runner. Joins trading and registers both factories.
+# The desk prints its bookings and undos; written at once, they reach a log in
+# the order they happened.
+$stdout.sync = true
+
+runner = Flezha.create_runner(ARGV[0] || "trading")
+               .register_factory(TradeWatcherOperator)
+               .register_factory(OrderExecutorOperator)
+               .boot
+
+# Blocks until shutdown: a SIGTERM, Ctrl-C, or standard input closing.
+runner.await_termination
+```
 
 ### PHP
 

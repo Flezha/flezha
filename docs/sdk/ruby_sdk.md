@@ -38,37 +38,96 @@ where the gem loads it from.
 ## Authoring
 
 Classes, registered explicitly. There is no autoload, no load-path walk and no
-package scan: what runs is what you named.
+package scan: what runs is what you named. This is
+`sdk/ruby/examples/local_word_count.rb`'s graph:
 
 ```ruby
-require "flezha"
+class Split < Flezha::Tasklet
+  tasklet_name "split"
 
-class Upcase < Flezha::Tasklet
-  def initial_state(_cell_key) = { seen: 0 }
-  def apply_change(state, change) = state[:seen] += change[:by]
-
-  def run(input, ctx)
-    ctx.change({ by: 1 })
-    input.upcase
+  def run(line, ctx)
+    line.split.each { |word| ctx.emit(word.downcase) }
+    nil
   end
 end
 
-class UpcaseOperator < Flezha::UnboundedOperator
-  factory_id "upcase"
+class Tally < Flezha::Tasklet
+  tasklet_name "tally"
+  # One Cell per word, because the edge into it is keyed; an idle word's Cell
+  # is evicted after five minutes.
+  idle_ttl_seconds 300
+
+  def init_state(_key) = { seen: 0 }
+  def apply_change(state, change) = state[:seen] = change[:seen]
+
+  def run(word, ctx)
+    seen = ctx.state[:seen] + 1
+    ctx.change({ seen: seen })
+    ctx.emit("#{word} #{seen}")
+  end
+end
+
+class WordCount < Flezha::UnboundedOperator
+  factory_id "local_word_count_example"
   channels do |c|
-    c.input("input", codec: :text)
-     .into(Upcase)
-     .sink("out")
+    c.input("lines", codec: :text)
+     .into(Split)
+     # One Cell per word: the hop from `Split` to `Tally` is the runtime's,
+     # not this file's.
+     .key_by { |word| word }
+     .into(Tally).keyed
+     .sink("totals")
   end
 end
-
-Flezha.create_runner("default").register_factory(UpcaseOperator).run
 ```
+
+**A value leaves a tasklet only through its context**: `ctx.emit`, with its
+`key:`, `channel:` and `metadata:` keywords, or `ctx.emit_to(channel, value)`.
+What `run`, `on_timer` and `compensate` answer is ignored. Every Ruby method
+answers its last expression, so a `run` whose last line computes a value is
+ordinary Ruby, and the SDK neither emits nor refuses it; `Split` above could
+drop its `nil`.
+
+**Every tasklet writes `tasklet_name`**, and a class wired without one is
+refused when its operator is declared, naming the class. The name is the
+tasklet's identity: its Cells' state is saved under it, so a class can be
+renamed freely and the name is chosen once. It is not inherited, so a
+subclass writes its own. It is spelled `tasklet_name` rather than `name`
+because `name` is `Class#name`, which every Ruby tool reads as the constant's
+name.
 
 Which optional hooks a tasklet declares is read from the methods it defines —
 `apply_change` present means it folds changes, `on_timer` present means it may
 register timers, `cells_for` present means it fans out over a static key set
-— so a declaration and its implementation cannot disagree.
+— so a declaration and its implementation cannot disagree. A method from an
+older form, `initial_state`, is refused naming `init_state`, and a retired
+class-body declaration raises `NoMethodError` naming what replaced it.
+
+- **State.** A new Cell starts from `init_state(cell_key)` when the class
+  defines it, else from `state_type.new` when the class declares `state_type`,
+  else it has no state. A `state_type` whose `new` needs an argument, with no
+  `init_state`, is refused at registration, and so is an `apply_change` with
+  neither `init_state` nor `state_type`.
+- **Changes.** A change is any value the codec carries, such as a `Hash`,
+  recorded with `ctx.change` and folded by `apply_change(state, change)`, which
+  mutates the state in place. No change class is needed; `change_type` is
+  there for an author who wants one.
+- **Cell mode.** The wiring decides it. A tasklet reached through `key_by`,
+  on an edge or a merge, has one Cell per key; one writing `cell_keys` has that
+  static set; anything else has a single Cell. One class can be keyed in one
+  operator and single in another. A `cell_keys` tasklet fed by `key_by` is
+  refused as `KeyByOnUnkeyableTarget`.
+- **Eviction.** `idle_ttl_seconds`, a positive whole number of seconds, evicts
+  a keyed Cell that has been idle that long; unset, none is evicted.
+  `max_cells` caps a keyed tasklet's Cells.
+- **Clock.** Defining `event_time(input)` makes the clock event time, and
+  `ctx.now` then answers what it extracted. The `logical_clock` flag in the
+  class body makes it logical, which needs a state to count. Otherwise it is
+  the wall clock. `event_time` beside `logical_clock` is refused naming both.
+- **Migrations.** A tasklet whose `min_readable_schema_version` is below its
+  `schema_version` defines `migrate_state(from_version, bytes)` or
+  `migrate_change(from_version, bytes)`, which receive the stored bytes and
+  answer the value; with neither it is refused at registration.
 
 Everything a type system would have caught is refused at registration instead,
 naming the class, the handler and the defect. That is the same set, for the
@@ -90,7 +149,7 @@ class Upcase < Flezha::UnboundedOperator
   sink "out"
   codec :text
 
-  def run(value, _ctx) = value.upcase
+  def run(value, ctx) = ctx.emit(value.upcase)
 end
 
 class Place < Flezha::BoundedOperator
@@ -99,7 +158,7 @@ class Place < Flezha::BoundedOperator
   input "order"
   codec :text
 
-  def run(order, _ctx) = order
+  def run(order, ctx) = ctx.emit(order)
 end
 
 Flezha.create_runner("default").register_factory(Upcase).register_factory(Place).run
@@ -124,7 +183,7 @@ class Chat < Flezha::BoundedOperator
   codec :text
   loop_mode :per_input
 
-  def run(turn, _ctx) = turn
+  def run(turn, ctx) = ctx.emit(turn)
 end
 ```
 
@@ -137,21 +196,20 @@ class Counter < Flezha::UnboundedOperator
   input "ticks"
   codec :text
 
-  def initial_state(_cell_key) = { seen: [] }
+  def init_state(_cell_key) = { seen: [] }
   def apply_change(state, change) = state[:seen] << change[:push]
 
-  def run(tick, ctx)
-    ctx.change({ push: tick })
-    nil
-  end
+  def run(tick, ctx) = ctx.change({ push: tick })
 end
 ```
 
 The tasklet's settings and hooks are written on the class and handed to the
-generated tasklet: settings such as `cell_keys`, `dynamic_cells`,
-`clock`, `mailbox_capacity`, `schema_version` and `state_type`, the ones a
-`Flezha::Tasklet` class body declares, and hook methods such as
-`initial_state`, `apply_change` and `cells_for`.
+generated tasklet: settings such as `cell_keys`, `idle_ttl_seconds`,
+`max_cells`, `logical_clock`, `mailbox_capacity`, `schema_version` and
+`state_type`, the ones a `Flezha::Tasklet` class body declares, and hook
+methods such as `init_state`, `apply_change`, `cells_for` and `event_time`. A
+short form's `run` emits through its `ctx` exactly as a tasklet's does, and
+what it answers is ignored.
 
 Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
 edge, an edge's retry budget, any other class setting. A class setting other
@@ -236,6 +294,7 @@ class declares `state_type` / `change_type` and supplies `to_h` and `.from_h`:
 
 ```ruby
 class Basket < Flezha::Tasklet
+  tasklet_name "basket"
   state_type Cart          # Cart#to_h and Cart.from_h
   change_type Added
 end

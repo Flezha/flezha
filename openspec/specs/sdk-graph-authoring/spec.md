@@ -277,7 +277,7 @@ The Java, Rust and Elixir SDKs carry the same formats without a codec argument: 
 
 #### Scenario: A text channel is one word
 
-- **WHEN** a Ruby operator declares `c.input("in", codec: :text).into(Echo).sink("out")`, the bytes `hello` arrive on `in`, and the tasklet returns `"echo: hello"`
+- **WHEN** a Ruby operator declares `c.input("in", codec: :text).into(Echo).sink("out")`, the bytes `hello` arrive on `in`, and the tasklet emits `"echo: hello"`
 - **THEN** the tasklet SHALL receive the string `hello`, and the plugin frame SHALL carry the bytes `echo: hello`, identical to what a Java operator declaring `c.input(String.class, "in")` and `.sink("out")` sends for the same output
 
 #### Scenario: A sink call is its name alone in every dynamic SDK
@@ -288,6 +288,11 @@ The Java, Rust and Elixir SDKs carry the same formats without a codec argument: 
 #### Scenario: A PHP sink call is its name alone when the tasklet emits
 
 - **WHEN** a PHP operator declares its sink as `sink('out')` with no codec and no encoder, and the tasklet's `run`, declared `: void`, calls `$ctx->emit('echo: hello')`
+- **THEN** registration SHALL succeed and the plugin frame SHALL carry the bytes `echo: hello`, with no quotes and no MessagePack header
+
+#### Scenario: A Ruby sink call is its name alone when the tasklet emits
+
+- **WHEN** a Ruby operator declares its sink as `sink("out")` with no codec and no encoder, and the tasklet's `run` calls `ctx.emit("echo: hello")`
 - **THEN** registration SHALL succeed and the plugin frame SHALL carry the bytes `echo: hello`, with no quotes and no MessagePack header
 
 #### Scenario: An undeclared entry reads JSON in every dynamic SDK

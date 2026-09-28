@@ -136,7 +136,13 @@ connects, naming its tier and its worker threads:
 
 ### Ruby
 
-TODO: not written yet.
+```sh
+$ bundle install
+$ FLEZHA_NAMESPACE_SECRET=flzt_3j5bftycxn43ivwoxbd2peghazjgtnru5bxqgshvfqcft7lrdsra bundle exec ruby runner.rb
+```
+
+A Ruby runner also stops when its standard input closes, so start it from a
+terminal rather than with standard input closed.
 
 ### PHP
 

@@ -77,6 +77,13 @@ handling, so stop it with Ctrl-C.
 A Python runner stops cleanly on Ctrl-C, on a SIGTERM and when its standard
 input closes.
 
+A Ruby runner stops cleanly on Ctrl-C, on a SIGTERM and when its standard input
+closes, and says so as it drains:
+
+```output
+[flezha] termination signal received; draining
+```
+
 > Stop the runner with Ctrl-C in its terminal.
 > {: .step}
 
@@ -241,6 +248,11 @@ encoding.
 
 A Python runner's journal lists the same steps too, with `89 byte(s)` and
 `83 byte(s)` as the handoffs of the first two.
+
+A Ruby runner's journal lists the same steps too, with `96 byte(s)` and
+`89 byte(s)` as the handoffs of the first two. Its `confirm_fill` waits inside
+`run`, as a Java runner's does, so the rest of this section reads the same for
+it.
 
 A PHP runner's `confirm_fill` waits on a timer rather than inside `run`
 ([`building_a_workflow.md`](building_a_workflow.md#a-step-that-can-fail)), so its
@@ -452,6 +464,18 @@ ENTRY                                                       CELL            CHAN
 trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trades      1    5s        TypeError: the price is not a number: 'one euro'
 ```
 
+A Ruby runner reads the trade as a Hash, so its `track_prices` refuses the
+price the same way, and the entry is that tasklet's, in EUR/USD's cell:
+
+```output
+[flezha] tasklet track_prices parking poison payload to DLQ after 3 attempt(s): ArgumentError: the price is not a number: "one euro"
+```
+
+```output
+ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
+trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trades      1    6s        ArgumentError: the price is not a number: "one euro"
+```
+
 `flz dlq list` shows what a partition has set aside:
 
 ```sh
@@ -591,6 +615,17 @@ names the exception's class before the message:
 [flezha] tasklet confirm_fill attempt 2/3 failed (retrying in 120 ms): RuntimeError: the exchange fills at most 100 a time, and this is 130
 [undo] cancelled ord-147cb3cb7525c45f615cf36ae92ed0be
 [undo] released res-494fc55d64e4cc925b295bd07fa3b41f
+```
+
+A Ruby runner waits the ten seconds on every try too, and names the exception's
+class before the message:
+
+```output
+[book] EUR/USD 124 as ord-a40ba575b8a83599f33dad116255f5c3
+[flezha] tasklet confirm_fill attempt 1/3 failed (retrying in 40 ms): RuntimeError: the exchange fills at most 100 a time, and this is 124
+[flezha] tasklet confirm_fill attempt 2/3 failed (retrying in 62 ms): RuntimeError: the exchange fills at most 100 a time, and this is 124
+[undo] cancelled ord-a40ba575b8a83599f33dad116255f5c3
+[undo] released res-b159dff9228e6788657db153453c4bda
 ```
 
 The order was cancelled, then the money released. Both undos read their id from
