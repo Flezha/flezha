@@ -255,7 +255,90 @@ TODO: not written yet.
 
 ### PHP
 
-TODO: not written yet.
+The whole example:
+[`sdk/php/examples/tradedesk`](https://github.com/flezha/flezha_php_sdk/tree/main/examples/tradedesk).
+
+```php
+// src/TrackPrices.php: keeps a symbol's last ten prices, and compares each new one with their average.
+#[Task(name: 'track_prices')]
+final class TrackPrices extends Tasklet
+{
+    private const WINDOW = 10;
+
+    public function initState(?string $cellKey): mixed
+    {
+        return ['prices' => []];                             // what each symbol's cell remembers
+    }
+
+    public function applyChange(mixed &$state, mixed $change): void
+    {
+        $state['prices'][] = $change['price'];               // how a price joins the window
+        if (count($state['prices']) > self::WINDOW) {
+            array_shift($state['prices']);
+        }
+    }
+
+    public function run(mixed $input, Ctx $ctx): void
+    {
+        if (!is_int($input['price']) && !is_float($input['price'])) {   // JSON checks no types
+            throw new \InvalidArgumentException('the price is not a number: ' . json_encode($input['price']));
+        }
+        $prices = $ctx->state['prices'];
+        if ($prices !== []) {                                // a symbol's first trade has nothing to compare with
+            $ctx->emit([
+                'symbol' => $input['symbol'],
+                'price' => $input['price'],
+                'average' => array_sum($prices) / count($prices),
+            ]);
+        }
+        $ctx->change(['price' => $input['price']]);
+    }
+}
+```
+
+**Flezha calls `run` once for every trade**, and passes it two things:
+
+- `$input` is the input: one trade, as it arrives on the tasklet's channel. The
+  exchange's JSON arrives as an array, and the desk reads its `symbol` and
+  `price`.
+- `$ctx` is the context, the tasklet's way of talking to Flezha.
+  `$ctx->state` is this symbol's cell state, what it remembers: the array
+  `initState` starts it as. `$ctx->emit(...)` hands a move on, and
+  `$ctx->change(...)` records a change to the state.
+
+`run` returns nothing: a value leaves only through `$ctx->emit`. The first
+trade of a symbol emits nothing, because `run` only calls `$ctx->emit` when
+there is an average to compare with. JSON carries no types, so `run` checks
+that the price is a number before it counts it; anything else is refused, and
+[`durability.md`](durability.md#the-dead-letter-queue) shows where such a trade
+goes.
+
+**The state changes only through a change.** A change is plain data, here
+`['price' => ...]`, and `applyChange` folds it into the state: it adds the price
+and drops the oldest once there are more than ten. `$ctx->change` runs
+`applyChange` and writes the change down, and after a crash Flezha runs
+`applyChange` again for every change it wrote, which is how the window comes
+back. `$ctx->state` can be written directly too, but that would work until the
+first crash and then be gone.
+
+The trade, the move and the window are plain arrays, so nothing else is
+declared for them. The box below lists what `#[Task]` declares.
+
+> #### What `#[Task]` declares {: .info}
+>
+> Nothing is generated: the class you write is the class the operator names in
+> `into(...)`. `#[Task]` is read when the runner registers the operator, and
+> carries the tasklet's name and settings:
+>
+> | Argument | What it is |
+> |---|---|
+> | `name` | required: the name the tasklet's state is saved under, so choose it once |
+> | `cellKeys` | fixed cell keys, with a `cellsFor` method that routes each input |
+> | `mailboxCapacity`, `maxCells`, `idleTtlSeconds` | the cell's mailbox, the cap on cells, and how long an idle cell lives |
+> | `schemaVersion`, `logicalClock` | the version of the saved state, and a clock that counts changes |
+>
+> Optional hooks, such as `initState`, a timer's `onTimer` or an undo's
+> `compensate`, are declared by writing the method.
 
 ### Elixir
 
@@ -400,7 +483,43 @@ TODO: not written yet.
 
 ### PHP
 
-TODO: not written yet.
+```php
+// src/BuyAboveAverage.php: buys when a price is far enough above its average.
+#[Task(name: 'buy_above_average')]
+final class BuyAboveAverage extends Tasklet
+{
+    private const BUY_ABOVE_PCT = 2.0;
+    private const UNITS_PER_PERCENT = 10;
+
+    public function run(mixed $input, Ctx $ctx): void
+    {
+        $percent = ($input['price'] - $input['average']) / $input['average'] * 100.0;
+        if ($percent < self::BUY_ABOVE_PCT) {
+            return;
+        }
+        $quantity = (int) round($percent * self::UNITS_PER_PERCENT);   // a stronger move buys more
+
+        $order = ['symbol' => $input['symbol'], 'quantity' => $quantity];
+        $ctx->spawnBounded('order_executor', $order);        // one bounded operator per order
+
+        $ctx->emit(sprintf(
+            '%s %.4f is %.2f%% above its average of %.4f, buying %d',
+            $input['symbol'],
+            $input['price'],
+            $percent,
+            $input['average'],
+            $quantity,
+        ));
+    }
+}
+```
+
+It takes the move and emits a line, and writes no `initState`, because it
+remembers nothing. It does two things per input through the context: it starts
+a bounded operator and it emits. `spawnBounded` sends the order, an array, as
+JSON, and `order_executor` reads it back as the array its first step takes,
+declared in [`building_a_workflow.md`](building_a_workflow.md). The handle it
+returns reports whether the order started; the desk does not read it.
 
 ### Elixir
 
@@ -588,7 +707,32 @@ TODO: not written yet.
 
 ### PHP
 
-TODO: not written yet.
+```php
+// src/TradeWatcherOperator.php: the unbounded operator. Trades in, signals out.
+#[Operator(factoryId: 'trade_watcher')]
+final class TradeWatcherOperator extends UnboundedOperator
+{
+    public static function channels(Builder $c): void
+    {
+        $c->input('trades')
+            ->filter(fn (array $message) => ($message['channel'] ?? null) === 'trade') // trade messages only
+            ->flatMap(fn (array $message) => $message['data'])                         // a message into its trades
+            ->filter(fn (array $trade) => $trade['ord_type'] === 'market')             // market orders only
+            ->keyBy(fn (array $trade) => $trade['symbol'])                             // one cell per symbol
+            ->into(TrackPrices::class)
+            ->into(BuyAboveAverage::class)
+            ->sink('signals');
+    }
+}
+```
+
+The operator's entry names no codec, so each message arrives as the array its
+JSON decodes to, and each transform is a closure over that array. The
+subscription confirmation has no `channel`, so the first `filter` reads it with
+`?? null` and drops it. `flatMap` hands on each trade with every field the
+exchange sent; the tasklets read the ones they need. `into` names the two
+tasklet classes above, `TrackPrices` and `BuyAboveAverage`, and
+`sink('signals')` is the sink.
 
 ### Elixir
 
@@ -654,7 +798,14 @@ TODO: not written yet.
 
 ### PHP
 
-TODO: not written yet.
+```php
+// runner.php: the runner. Joins trading and offers the prices factory.
+$runner = Flezha::createRunner($argv[1] ?? 'trading')
+    ->registerFactory(TradeWatcherOperator::class)
+    ->start();
+
+$runner->awaitTermination();
+```
 
 ### Elixir
 

@@ -646,19 +646,21 @@ The whole example:
 
 ```php
 // src/EchoTasklet.php: the tasklet. The processing stage the graph routes each message into.
-#[Task(name: 'echo')]                   // state is saved under this name, so choose it once
+#[Task(name: 'echo')]
 final class EchoTasklet extends Tasklet
 {
-    public function run(mixed $input, Ctx $ctx): mixed
+    public function run(mixed $input, Ctx $ctx): void
     {
-        return 'echo: ' . $input;       // what it returns is emitted
+        $ctx->emit('echo: ' . $input);
     }
 }
 ```
 
-Only `run()` is required. Which optional hooks a tasklet has is read from the
-methods it overrides, so with no `state` and no `applyChange` it keeps nothing and
-journals nothing.
+`name` is required, and it is the tasklet's identity: its state is saved under
+that name, so choose it once, while the class can be renamed freely. `run` gets
+each message and emits through `$ctx`; it returns nothing. Which optional hooks
+a tasklet has is read from the methods it overrides, so with no `initState` and
+no `applyChange` it keeps nothing and journals nothing.
 
 ```php
 // src/EchoOperator.php: the operator. The graph, and the unit the controller schedules.

@@ -228,7 +228,71 @@ TODO: not written yet.
 
 ### PHP
 
-TODO: not written yet.
+The whole example:
+[`sdk/php/examples/tradedesk`](https://github.com/flezha/flezha_php_sdk/tree/main/examples/tradedesk).
+
+```php
+// src/ReserveFunds.php: step one. Puts the money aside, and releases it on an undo.
+#[Task(name: 'reserve_funds')]
+final class ReserveFunds extends Tasklet
+{
+    public function initState(?string $cellKey): mixed
+    {
+        return ['id' => ''];                                 // what this step remembers
+    }
+
+    public function applyChange(mixed &$state, mixed $change): void
+    {
+        $state['id'] = $change['id'];                        // how the id is written down
+    }
+
+    // The step: reserve the money under an id, remember the id, and hand the order on.
+    public function run(mixed $input, Ctx $ctx): void
+    {
+        $id = 'res-' . $ctx->stableId();                     // the same id when the step runs again
+        $ctx->change(['id' => $id]);
+        $ctx->emit(['order' => $input, 'reservation_id' => $id]);
+    }
+
+    // The undo: release the money, by the id the state kept.
+    public function compensate(array $outputs, Ctx $ctx): void
+    {
+        echo "[undo] released {$ctx->state['id']}\n";
+    }
+}
+```
+
+**Flezha calls `run` with the order**, and passes it two things: the input and
+the context, as it did for the ETL stream's tasklets.
+
+- `$input` is the input, what arrives on the step's channel. For the first
+  step, that is the order the instance was started with, the array
+  `['symbol' => ..., 'quantity' => ...]`.
+- `$ctx` is the context, the step's way of talking to Flezha.
+  `$ctx->change(...)` writes the id down in the step's state, and
+  `$ctx->state` reads it back. `$ctx->emit(...)` hands a value to the next
+  step, and `$ctx->stableId()` gives an id that stays the same when the step
+  runs again, so a retry does not put the money aside twice.
+
+The step starts its state as `['id' => '']`, records the change `['id' => ...]`,
+folded by `applyChange`, and hands on the order and the id.
+
+**Flezha calls `compensate` only when the order fails**, and passes it two
+things:
+
+- `$outputs` is what `run` handed on, a list.
+- `$ctx` is the context again, and `$ctx->state` is the same state `run` wrote
+  the id into.
+
+The id is read from the state, not from what was handed on, because after a
+crash Flezha brings back the step's state but not what it handed on, so the
+list can be empty. Writing a `compensate` is what gives a step an undo, and a
+step without one is skipped. It can run twice, when a crash comes in the middle
+of an undo, so it has to be safe to repeat.
+
+The operator names the class itself, `ReserveFunds`.
+[What `#[Task]` declares](building_an_etl_stream.md#keep-each-symbol-s-prices)
+lists what the attribute carries.
 
 ### Elixir
 
@@ -354,7 +418,36 @@ TODO: not written yet.
 
 ### PHP
 
-TODO: not written yet.
+```php
+// src/PlaceOrder.php: step two. Places the order, and cancels it on an undo.
+#[Task(name: 'place_order')]
+final class PlaceOrder extends Tasklet
+{
+    public function initState(?string $cellKey): mixed
+    {
+        return ['order_id' => ''];                           // what this step remembers
+    }
+
+    public function applyChange(mixed &$state, mixed $change): void
+    {
+        $state['order_id'] = $change['order_id'];            // how the id is written down
+    }
+
+    // The step: place the order under an id, remember the id, and hand the order on.
+    public function run(mixed $input, Ctx $ctx): void
+    {
+        $orderId = 'ord-' . $ctx->stableId();
+        $ctx->change(['order_id' => $orderId]);
+        $ctx->emit(['order' => $input['order'], 'order_id' => $orderId]);
+    }
+
+    // The undo: cancel the order, by the id the state kept.
+    public function compensate(array $outputs, Ctx $ctx): void
+    {
+        echo "[undo] cancelled {$ctx->state['order_id']}\n";
+    }
+}
+```
 
 ### Elixir
 
@@ -462,7 +555,56 @@ TODO: not written yet.
 
 ### PHP
 
-TODO: not written yet.
+```php
+// src/ConfirmFill.php: asks the exchange whether the order filled, and ends the order with the answer.
+#[Task(name: 'confirm_fill')]
+final class ConfirmFill extends Tasklet
+{
+    private const EXCHANGE_MAX = 100;
+
+    public function initState(?string $cellKey): mixed
+    {
+        return ['placed' => null];                           // the order the exchange is asked about
+    }
+
+    public function applyChange(mixed &$state, mixed $change): void
+    {
+        $state['placed'] = $change;
+    }
+
+    public function run(mixed $input, Ctx $ctx): void
+    {
+        $ctx->change($input);
+        $ctx->timerAfter(10_000);                            // the paper exchange answers ten seconds later
+    }
+
+    public function onTimer(Timer $timer, Ctx $ctx): void
+    {
+        $placed = $ctx->state['placed'];
+        $quantity = $placed['order']['quantity'];
+        if ($quantity > self::EXCHANGE_MAX) {
+            throw new \RuntimeException(                     // tried again, then the order is undone
+                'the exchange fills at most ' . self::EXCHANGE_MAX . " a time, and this is $quantity",
+            );
+        }
+        $ctx->complete("filled {$placed['order']['symbol']} $quantity as {$placed['order_id']}");
+    }
+}
+```
+
+A PHP runner serves every operator on one thread, so a ten-second `sleep()` here
+would hold up the price stream as well. The step asks for a timer instead:
+`run` keeps the placed order in the cell and calls `$ctx->timerAfter(10_000)`,
+and ten seconds later Flezha calls `onTimer`, which reads the exchange's answer.
+The timer is saved with the cell, so a runner that crashes while it waits fires
+it once it is back. A timer outlives `run` only while the instance does, which
+is why `order_executor` below keeps its instance running until this step calls
+`$ctx->complete`.
+
+An exception thrown from `onTimer` is retried as one from `run` is, straight
+away rather than ten seconds apart. The number of tries and the wait are set
+where the operator connects the step, with `retryMax` and `retryBackoffMs`; the
+desk keeps the defaults.
 
 ### Elixir
 
@@ -538,7 +680,20 @@ TODO: not written yet.
 
 ### PHP
 
-TODO: not written yet.
+```php
+// src/RecordOrder.php: writes the placed order into the desk's book.
+#[Task(name: 'record_order')]
+final class RecordOrder extends Tasklet
+{
+    public function run(mixed $input, Ctx $ctx): void
+    {
+        echo "[book] {$input['order']['symbol']} {$input['order']['quantity']} as {$input['order_id']}\n";
+    }
+}
+```
+
+With no `initState` written and no `$ctx->emit`, it keeps nothing and hands
+nothing on, which is the plainest shape a tasklet has.
 
 ### Elixir
 
@@ -672,7 +827,37 @@ TODO: not written yet.
 
 ### PHP
 
-TODO: not written yet.
+```php
+// src/OrderExecutorOperator.php: the bounded operator. One instance is one order.
+#[Operator(factoryId: 'order_executor')]
+#[Bounded(loopMode: LoopMode::PerInput)]
+final class OrderExecutorOperator extends BoundedOperator
+{
+    public static function channels(Builder $c): void
+    {
+        $c->input('order')
+            ->into(ReserveFunds::class)                               // step one
+            ->into(PlaceOrder::class)                                 // step two, once step one is done
+            ->branch(
+                fn (Edge $fill) => $fill->into(ConfirmFill::class),   // two arms, side by side
+                fn (Edge $book) => $book->into(RecordOrder::class),
+            );
+    }
+}
+```
+
+The order is the entry's first message, and the entry names no codec, so
+`reserve_funds` gets the array its JSON decodes to: the one `BuyAboveAverage`
+in the ETL stream sends when it starts an order. The four classes it names in
+`into` are the four steps themselves: `ReserveFunds`, `PlaceOrder`,
+`ConfirmFill` and `RecordOrder`. Each arm of `branch` is a closure that gets the
+same edge.
+
+`#[Bounded(loopMode: LoopMode::PerInput)]` is where the PHP desk departs from
+the default above: the instance stays after its steps have run, until
+`confirm_fill`'s timer calls `$ctx->complete`. A default instance would end
+with its last step, and its pending timer with it. A second message to an
+instance would run the steps again, and nothing sends one.
 
 ### Elixir
 
@@ -740,7 +925,15 @@ TODO: not written yet.
 
 ### PHP
 
-TODO: not written yet.
+```php
+// runner.php: the runner. Joins trading and registers both factories.
+$runner = Flezha::createRunner($argv[1] ?? 'trading')
+    ->registerFactory(TradeWatcherOperator::class)
+    ->registerFactory(OrderExecutorOperator::class)
+    ->start();
+
+$runner->awaitTermination();
+```
 
 ### Elixir
 

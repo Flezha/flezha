@@ -25,9 +25,9 @@ The runner SHALL map onto the ABI lifecycle `flz_core_context_new(SCHEMA_VERSION
 - **THEN** it SHALL raise an error naming the required extension and ini setting, rather than a bare "Class FFI not found" fatal
 
 ### Requirement: Tasklet authoring surface and per-cell dispatch
-The PHP SDK SHALL define a `Tasklet` interface whose implementations declare their initial `State`, a `run()` invoked per input, and an `applyChange()` that folds a Change into State, with a `Ctx` supplying `emit()`, `emitKeyed()`, `now()`, `stableId()`, `checkpoint()` and the timer registrations.
+The PHP SDK SHALL define an abstract `Flezha\Tasklet` class whose subclasses declare their initial `State` by overriding `initState(?string $cellKey)`, a `run(mixed $input, Ctx $ctx): void` invoked per input, and an `applyChange(mixed &$state, mixed $change)` that folds a Change into State, with a `Ctx` supplying `emit()`, `emitKeyed()`, `change()`, `now()`, `stableId()`, `checkpoint()` and the timer registrations. Overriding a hook SHALL be what declares it. A value SHALL leave a tasklet only through `$ctx->emit()` or `$ctx->emitKeyed()`: `run` returns nothing, and the SDK SHALL NOT emit a value returned from any hook.
 
-Per-cell ordering and exclusivity SHALL be the core's, not the SDK's — the SDK SHALL NOT implement mailboxes, drain gates, or ordering of its own.
+Per-cell ordering and exclusivity SHALL be the core's, not the SDK's: the SDK SHALL NOT implement mailboxes, drain gates, or ordering of its own.
 
 #### Scenario: Different cells of one tasklet run concurrently
 - **WHEN** the threaded executor is selected and inputs for two distinct cell keys arrive together
@@ -48,6 +48,14 @@ Per-cell ordering and exclusivity SHALL be the core's, not the SDK's — the SDK
 #### Scenario: A non-retryable error parks immediately
 - **WHEN** `run()` throws the SDK's non-retryable tasklet exception
 - **THEN** the activation SHALL park without further attempts
+
+#### Scenario: A value leaves a tasklet only through the context
+- **WHEN** a tasklet's `run` calls `$ctx->emit('a')` and `$ctx->emitKeyed('k', 'b')` for one input, and for the next input calls neither
+- **THEN** the first input SHALL emit `a` and `b` keyed `k`, and the second SHALL emit nothing, under the dispatcher and under `Testing\Harness` alike
+
+#### Scenario: The initial state comes from initState
+- **WHEN** a tasklet overrides `initState(?string $cellKey)` and a Cell is created for key `A`
+- **THEN** the Cell's state SHALL start as what `initState('A')` returns, and a single-cell tasklet's as what `initState(null)` returns
 
 ### Requirement: Deterministic effects through Ctx
 The PHP SDK SHALL serve time from `Ctx::now()` and identifiers from `Ctx::stableId()`, evaluating the declared clock once per invocation and never reading ambient wall-clock or randomness on the authoring surface.
@@ -135,6 +143,8 @@ The PHP SDK SHALL handle every command activation kind the core hands out: `Rest
 ### Requirement: Cell modes and the prepare crossing
 The PHP SDK SHALL support single, static-keyed and dynamic cell modes, and SHALL answer the core's batched `KeyRequest` prepare crossing with routing keys and extracted event times for the payloads it is given.
 
+The cell mode SHALL be read per tasklet node from what is declared, never from a flag: static when the tasklet's `#[Task]` carries `cellKeys`, dynamic when a chain of the operator keys its values with `keyBy` before the `into` or merge that reaches the tasklet, and single otherwise. A tasklet carrying `cellKeys` and fed by `keyBy` SHALL be refused at registration with the core's `KeyByOnUnkeyableTarget`.
+
 Dynamic mode SHALL honour the declared idle TTL and cell cap through the core's existing eviction, without a PHP-side registry.
 
 #### Scenario: A dynamic cell is created on first key
@@ -144,6 +154,18 @@ Dynamic mode SHALL honour the declared idle TTL and cell cap through the core's 
 #### Scenario: A failing key function climbs the entry retry ladder
 - **WHEN** the key function throws for one payload in a prepare batch
 - **THEN** that payload SHALL climb the entry channel's retry→park ladder, and the other payloads in the batch SHALL be unaffected
+
+#### Scenario: keyBy alone makes a tasklet dynamic
+- **WHEN** an operator declares `$c->input('orders')->keyBy(fn (array $o): string => $o['customer'])->into(Counter::class)` and `Counter`'s `#[Task]` carries only its `name`
+- **THEN** the declaration record SHALL carry `cell_mode` `dynamic` for `Counter`, and each customer SHALL get its own Cell
+
+#### Scenario: One class takes its mode from each wiring
+- **WHEN** one tasklet class is wired through `keyBy` in one operator and without it in another
+- **THEN** the first operator's record SHALL carry `cell_mode` `dynamic` for it and the second's `single`
+
+#### Scenario: A static key set fed by keyBy is refused
+- **WHEN** a tasklet carrying `#[Task(name: 'routed', cellKeys: ['a', 'b'])]` is reached by an edge declaring `keyBy`
+- **THEN** registration SHALL throw `DeclarationException` carrying `KeyByOnUnkeyableTarget` and naming the tasklet
 
 ### Requirement: Tiers, checkpoint intervals and DLQ park
 The PHP SDK SHALL carry tier semantics on activation completion: changes, outputs, timer ops and `checkpoint` ride the `ItemEffect`, the core builds effect records and owns offsets, and a park mints a DLQ entry exactly where the typed layer does.
@@ -269,11 +291,11 @@ The SDK SHALL prove the set by one conformance run over every row of
 ### Requirement: The single-tasklet short form is four attribute arguments
 The short form SHALL be declared with the `#[Operator]` attribute a full-form operator already carries, on a class extending `Flezha\UnboundedOperator` or `Flezha\BoundedOperator`, and SHALL NOT be declared with `#[Task]`, which SHALL accept none of `kind`, `sink`, `input` or `codec` and SHALL throw naming the argument and `#[Operator]` when one is given. `#[Operator]` SHALL accept `sink`, `input` and `codec` (a `ChannelCodec`) beside the `factoryId` it already requires; the kind is the base class the attributed class extends and SHALL NOT be an argument. `Flezha\OperatorKind` SHALL be deleted, its only readers being the removed `kind`.
 
-A class SHALL be a short form exactly when it defines the tasklet body `run(mixed $input, Ctx $ctx): mixed` and does not override the topology body `channels`, which is the mechanism `Definition` already uses to read which hooks a class overrides; defining `run` and overriding `channels` SHALL throw `DeclarationException` naming `ShortFormWithTopology`, and doing neither SHALL throw naming the missing body. A short-form class MAY define the tasklet hooks a `Flezha\Tasklet` subclass defines (`state`, `applyChange`), which the generated tasklet takes.
+A class SHALL be a short form exactly when it defines the tasklet body `run(mixed $input, Ctx $ctx): void` and does not override the topology body `channels`, which is the mechanism `Definition` already uses to read which hooks a class overrides; defining `run` and overriding `channels` SHALL throw `DeclarationException` naming `ShortFormWithTopology`, and doing neither SHALL throw naming the missing body. A short-form class MAY define the tasklet hooks a `Flezha\Tasklet` subclass defines (`initState`, `applyChange`), which the generated tasklet takes. A value SHALL leave a short form's `run` only through `$ctx->emit()` or `$ctx->emitKeyed()`, as it leaves a tasklet's, and `Flezha\Operator::run` SHALL be declared `: void` so PHP holds the short form to it.
 
 `sink` SHALL be optional. The class SHALL carry a generated operator of its base class's kind whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` argument's value) into a generated tasklet named `factoryId` and, when a `sink` is written, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A bounded short form MAY carry `#[Bounded(loopMode: ...)]` beside `#[Operator]` and SHALL be a `once` bounded operator when it does not, with every other bounded setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state; a `#[Bounded operator]` on a short form that sets any argument other than `loopMode`, or `persistent: false` on `#[Operator]`, SHALL throw `DeclarationException` naming the setting and the full form. The entry SHALL be decoded by `codec` where one is written, whether or not a `sink` is. An absent `factoryId` SHALL throw naming the required argument, and the SDK SHALL NOT derive one from the class.
 
-`Runner::registerFactory` SHALL accept such a class string and register the generated operator, throwing `DeclarationException` at registration with the refusal's name in its refusals and at the start of its message. A duplicate factory id SHALL throw with a message beginning `DuplicateFactoryId`. The PHP SDK owes no `SinkWithoutOutput`: `Flezha\Tasklet::run` is declared `: mixed` and PHP refuses an override narrowing that to `: void`, so a tasklet declaring no output cannot be written; the manifest SHALL NOT list `shorthand_typed_output`.
+`Runner::registerFactory` SHALL accept such a class string and register the generated operator, throwing `DeclarationException` at registration with the refusal's name in its refusals and at the start of its message. A duplicate factory id SHALL throw with a message beginning `DuplicateFactoryId`. The PHP SDK owes no `SinkWithoutOutput`: a PHP tasklet declares no output type, and `run` is declared `: void` for every tasklet and short form, so nothing in a class says whether it emits; the manifest SHALL NOT list `shorthand_typed_output`.
 
 #### Scenario: An attributed class is a whole unbounded operator
 
@@ -283,7 +305,7 @@ A class SHALL be a short form exactly when it defines the tasklet body `run(mixe
 #### Scenario: An attributed class is a whole bounded operator
 
 - **WHEN** a class extending `Flezha\BoundedOperator` is attributed `#[Operator(factoryId: 'place', sink: 'placed', input: 'order', codec: ChannelCodec::Text)]` and defines `run`, the runner is given `registerFactory(Place::class)`, an instance is started, and one message is sent on `order`
-- **THEN** `run` receives the message as text, its return value reaches `placed`, and the instance completes
+- **THEN** `run` receives the message as text, the value it passes to `$ctx->emit` reaches `placed`, and the instance completes
 
 #### Scenario: A short-form bounded operator declares its loop mode
 
@@ -292,7 +314,7 @@ A class SHALL be a short form exactly when it defines the tasklet body `run(mixe
 
 #### Scenario: A short form with no sink is declared
 
-- **WHEN** a class extending `Flezha\UnboundedOperator` is attributed `#[Operator(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]` and defines `run`, `state` and `applyChange`
+- **WHEN** a class extending `Flezha\UnboundedOperator` is attributed `#[Operator(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]` and defines `run`, `initState` and `applyChange`
 - **THEN** the operator declares `ticks` into the generated tasklet and no plugin channel
 
 #### Scenario: An input and codec need no sink
@@ -307,8 +329,8 @@ A class SHALL be a short form exactly when it defines the tasklet body `run(mixe
 
 #### Scenario: A tasklet cannot declare no output
 
-- **WHEN** a class extending `Flezha\Tasklet` declares `public function run(mixed $input, Ctx $ctx): void`
-- **THEN** it SHALL fail to load, because `Tasklet::run` is declared `: mixed`, so no PHP tasklet can declare no output and the SDK owes no `SinkWithoutOutput`
+- **WHEN** a class extending `Flezha\Tasklet` or `Flezha\UnboundedOperator` declares `public function run(mixed $input, Ctx $ctx): mixed`, or returns a value from a `run` declared `: void`
+- **THEN** it SHALL fail to load, because `run` is declared `: void`; no PHP tasklet declares an output type, so the SDK owes no `SinkWithoutOutput`
 
 #### Scenario: A sink on a tasklet attribute is refused
 
@@ -343,4 +365,65 @@ A class SHALL be a short form exactly when it defines the tasklet body `run(mixe
 
 - **WHEN** a tasklet of a running `PerInput` bounded operator calls `$ctx->timerAfter(300)` in `run`
 - **THEN** the call returns the scheduled timestamp, the effect carries the timer op, and `onTimer` runs on that Cell at that timestamp, opening a pass at that tasklet
+
+### Requirement: A PHP tasklet names itself and declares its settings on one attribute
+A PHP tasklet SHALL be a class extending `Flezha\Tasklet` and carrying `#[Task(...)]`, and its `#[Task]` SHALL carry a non-empty `name`. Registration SHALL refuse a tasklet class whose declaration has no `name`, or an empty one, with a `DeclarationException` naming the class, and SHALL NOT derive a name from the class. `name` SHALL NOT be inherited from a parent class, so every concrete subclass writes its own. The short form SHALL keep naming its tasklet after its factory id and SHALL keep refusing a `name`.
+
+The idle TTL SHALL be `idleTtlSeconds`, a whole number of seconds, and the declaration record SHALL carry it as `idle_ttl_ms`, that number times 1000. Unset SHALL mean no eviction.
+
+The clock SHALL follow from what the class writes: event time when it overrides `eventTime()`, logical when its `#[Task]` carries `logicalClock: true`, and the wall clock otherwise. A class that does both SHALL be refused at registration with a `DeclarationException` naming `eventTime` and `logicalClock`. A logical clock on a tasklet that does not override `initState` SHALL keep the core's `UnservableClock` refusal. The SDK SHALL NOT have a `Flezha\Clock` enum or a `clock` argument.
+
+A change SHALL be any value the codec carries, recorded with `$ctx->change($value)` and folded by the tasklet's `applyChange(mixed &$state, mixed $change)`, and no change class SHALL be required. The optional `stateType` and `changeType` Codable classes SHALL stay. `migrateState(int $fromVersion, string $bytes)` and `migrateChange(int $fromVersion, string $bytes)` SHALL keep receiving bytes.
+
+`#[Task]` SHALL NOT accept `dynamicCells`, `clock` or `idleTtlMs`.
+
+#### Scenario: A tasklet without a name is refused
+
+- **WHEN** a class extending `Flezha\Tasklet` carries `#[Task(cellKeys: ['a'])]`, or no `#[Task]` at all, and an operator wiring it is registered
+- **THEN** registration throws `DeclarationException` naming the class and the missing `name`, and nothing is registered
+
+#### Scenario: A renamed class keeps its state
+
+- **WHEN** a tasklet class carrying `#[Task(name: 'totals')]` is renamed between two runs, keeping the attribute
+- **THEN** its Cells restore from the state saved under `totals`
+
+#### Scenario: A subclass writes its own name
+
+- **WHEN** a class extends a named tasklet class and carries `#[Task(mailboxCapacity: 8)]` with no `name`
+- **THEN** registration refuses it naming the subclass, and the parent's other declarations are still merged into a subclass that does write a `name`
+
+#### Scenario: The idle TTL is whole seconds
+
+- **WHEN** a tasklet fed by `keyBy` carries `#[Task(name: 'sessions', idleTtlSeconds: 3_600)]`
+- **THEN** the declaration record carries `idle_ttl_ms` `3600000` for that tasklet
+
+#### Scenario: Overriding eventTime makes the clock event time
+
+- **WHEN** a tasklet overrides `eventTime()` and its `#[Task]` says nothing about the clock
+- **THEN** the declaration carries clock `event_time`, and `$ctx->now()` inside `run` returns what `eventTime()` extracted from that input
+
+#### Scenario: logicalClock declares the logical clock
+
+- **WHEN** a tasklet overriding `initState` and `applyChange` carries `#[Task(name: 'ledger', logicalClock: true)]`
+- **THEN** the declaration carries clock `logical`, and `$ctx->now()` serves the Cell's change sequence
+
+#### Scenario: Event time and the logical clock together are refused
+
+- **WHEN** a tasklet overrides `eventTime()` and carries `logicalClock: true`
+- **THEN** registration throws `DeclarationException` naming `eventTime` and `logicalClock`
+
+#### Scenario: A logical clock on a stateless tasklet is refused
+
+- **WHEN** a tasklet that does not override `initState` carries `logicalClock: true`
+- **THEN** registration throws `DeclarationException` carrying the core's `UnservableClock`
+
+#### Scenario: A change needs no class
+
+- **WHEN** a tasklet calls `$ctx->change(['kind' => 'event', 'deadline' => $at])` and its `applyChange` folds that array into an array state
+- **THEN** the change is journaled as JSON, folded live, and folded again to an equal state on restore, with no class defined for it
+
+#### Scenario: A retired tasklet argument is refused
+
+- **WHEN** a class carries `#[Task(name: 'x', dynamicCells: true)]`, `#[Task(name: 'x', clock: ...)]` or `#[Task(name: 'x', idleTtlMs: 1000)]`
+- **THEN** PHP refuses the unknown named argument when the SDK reads the attribute, naming it, and the class is not registered
 

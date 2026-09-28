@@ -285,6 +285,11 @@ The Java, Rust and Elixir SDKs carry the same formats without a codec argument: 
 - **WHEN** a Ruby, Python, Node or PHP operator declares its sink as `sink("out")` with no codec and no encoder, and the tasklet returns the string `echo: hello`
 - **THEN** registration SHALL succeed and the plugin frame SHALL carry the bytes `echo: hello`, with no quotes and no MessagePack header, in each of the four SDKs
 
+#### Scenario: A PHP sink call is its name alone when the tasklet emits
+
+- **WHEN** a PHP operator declares its sink as `sink('out')` with no codec and no encoder, and the tasklet's `run`, declared `: void`, calls `$ctx->emit('echo: hello')`
+- **THEN** registration SHALL succeed and the plugin frame SHALL carry the bytes `echo: hello`, with no quotes and no MessagePack header
+
 #### Scenario: An undeclared entry reads JSON in every dynamic SDK
 
 - **WHEN** a Ruby, Python, Node or PHP operator declares an entry with no codec and no decoder, and the bytes `{"a":1}` arrive on it

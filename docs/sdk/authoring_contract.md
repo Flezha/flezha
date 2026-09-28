@@ -123,7 +123,7 @@ three types, and §2.2 says where the rest comes from.
 | `type Output = O`, else nothing                     | `Output`, default `()`: no output channel           |
 | `type State = S`, else nothing                      | `State`, default `()`: stateless                    |
 | `type Change = C` (a `Change<S>`), else nothing     | `Change`, default `NoChange`: nothing journaled     |
-| `name = "…"` (required)                             | `NAME` — Rust: the key; Python: the function name; Ruby and PHP: the class name in snake_case; Java names every tasklet in `@Tasklet.Spec(name = …)` |
+| `name = "…"` (required)                             | `NAME` — Rust: the key; Python: the function name; Ruby: the class name in snake_case; Java names every tasklet in `@Tasklet.Spec(name = …)`; PHP in `#[Task(name: …)]` |
 | `fn event_time`, else `logical_clock`, else nothing | `CLOCK`: `EventTime`, `Logical`, else `Wall`        |
 | `fn init_state`, else nothing                       | `init_state` returning `State::default()`           |
 | `fn compensate` / `fn cells_for` / `fn max_cells` / `fn mailbox_capacity` | the matching `*_OVERRIDDEN` flag set to `true` |
@@ -327,7 +327,8 @@ return (no output channel) and the unconditional `O` return (always emit) are
 the other two shapes. A Rust tasklet's `run` returns no output and emits
 through its typed context, so emitting nothing is not calling `emit`. A Java `run`
 returns nothing and emits through `ctx.emit`, so emitting nothing is not
-calling it.
+calling it. A PHP `run`, a tasklet's or a short form's, is declared `: void`
+and emits through `$ctx->emit`, so emitting nothing is not calling it either.
 
 **Keyed output.** On a `.keyed()` output channel the plain emit carries
 the emitting Cell's **own key** (the key its input routed by), so a keyed
@@ -494,7 +495,7 @@ is an address a user types and a rename must not move it.
 | Python | `@flezha.unbounded_operator(id="echo", sink="out", input="in", codec="text") def echo(s: str) -> str` | `@flezha.bounded_operator(...)` |
 | Node | `defineUnbounded({ factoryId: 'echo', sink: 'out', input: 'in', codec: 'text', run })` | `defineBounded({ ... })` |
 | Ruby | `class Echo < Flezha::UnboundedOperator; factory_id "echo"; sink "out"; input "in"; codec :text; def run(s, ctx) = s; end` | `< Flezha::BoundedOperator` |
-| PHP | `#[Operator(factoryId: 'echo', sink: 'out', input: 'in', codec: ChannelCodec::Text)] final class Echo extends UnboundedOperator { public function run(mixed $s, Ctx $ctx): mixed }` | `extends BoundedOperator` |
+| PHP | `#[Operator(factoryId: 'echo', sink: 'out', input: 'in', codec: ChannelCodec::Text)] final class Echo extends UnboundedOperator { public function run(mixed $s, Ctx $ctx): void }` | `extends BoundedOperator` |
 | Elixir | `use Flezha.SDK.UnboundedOperator, factory_id: "echo", sink: "out", input: "in"` with `run/3` | `use Flezha.SDK.BoundedOperator, ...` |
 
 **`sink` is optional.** With a `sink`, the generated operator declares an

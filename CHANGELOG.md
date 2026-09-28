@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Changed (BREAKING): a PHP tasklet names itself and emits only through its context
+
+A PHP tasklet's `run` is declared `: void`, for a tasklet and a short form alike: a value leaves
+only through `$ctx->emit()` or `$ctx->emitKeyed()`, and PHP refuses a `run` that returns one.
+`#[Task]` requires a `name`, and a class without one is refused at registration, so renaming a
+class never moves its saved state. The initial-state hook is `initState(?string $cellKey)`, the
+idle TTL is `idleTtlSeconds` in whole seconds, and the clock follows from what the class writes:
+an `eventTime` override makes it event time, `logicalClock: true` makes it logical, and both
+together are refused. A tasklet fed through `keyBy` gets a cell per key from the wiring alone.
+`dynamicCells`, `idleTtlMs`, the `clock` argument and the `Flezha\Clock` enum are gone, and a
+class still writing one is refused naming it. A change stays plain data folded by `applyChange`.
+Saved state is unaffected as long as each tasklet keeps the name it had (an unnamed tasklet was
+named after its class in snake case, so write that name), with one exception: a tasklet fed
+through `keyBy` that did not carry `dynamicCells` ran as one cell and now gets a cell per key, so
+its old single-cell state is never read again and each key's cell starts from `initState`.
+
+### Fixed: two operators of one factory on a PHP runner no longer share a cell
+
+A PHP runner kept a cell's state by tasklet and cell key alone, so two operators of one factory
+served by the same runner, such as two instances of a bounded operator running at once, read and
+wrote each other's state. A step of one order could then act on another order's values. Each
+operator now has cells of its own.
+
 ### Changed (BREAKING): a Java tasklet is one class, and nothing is generated
 
 The Java SDK has one way to write a tasklet: your own class implements

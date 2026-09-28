@@ -129,7 +129,13 @@ TODO: not written yet.
 
 ### PHP
 
-TODO: not written yet.
+```sh
+$ composer install
+$ FLEZHA_NAMESPACE_SECRET=flzt_3j5bftycxn43ivwoxbd2peghazjgtnru5bxqgshvfqcft7lrdsra php runner.php
+```
+
+A PHP runner also stops when its standard input closes, so start it from a
+terminal rather than with standard input closed.
 
 ### Elixir
 

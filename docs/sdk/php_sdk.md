@@ -76,48 +76,97 @@ use Flezha\Flezha;
 use Flezha\Graph\Builder;
 use Flezha\Tasklet;
 use Flezha\UnboundedOperator;
+use Flezha\Timer;
 
-#[Task(dynamicCells: true)]
-final class OrderTotals extends Tasklet
+#[Task(name: 'session', idleTtlSeconds: 3_600)]
+final class Session extends Tasklet
 {
-    public function state(?string $cellKey): mixed
+    private const QUIET_MS = 30_000;
+
+    public function initState(?string $cellKey): mixed
     {
-        return ['total' => 0];
+        return ['events' => 0, 'deadline' => null];
     }
 
     public function applyChange(mixed &$state, mixed $change): void
     {
-        $state['total'] += $change;
+        if ($change['kind'] === 'event') {
+            $state['events']++;
+            $state['deadline'] = $change['deadline'];
+
+            return;
+        }
+        $state['events'] = 0;
+        $state['deadline'] = null;
     }
 
-    public function run(mixed $input, Ctx $ctx): mixed
+    public function run(mixed $input, Ctx $ctx): void
     {
-        $ctx->change((int) $input['amount']);
+        // Cancel the timer this cell is holding before arming the next one,
+        // by the timestamp its registration answered.
+        if ($ctx->state['deadline'] !== null) {
+            $ctx->cancelTimer('processing_time', (int) $ctx->state['deadline']);
+        }
+        $ctx->change(['kind' => 'event', 'deadline' => $ctx->timerAfter(self::QUIET_MS)]);
+    }
 
-        return $ctx->state['total'];
+    public function onTimer(Timer $timer, Ctx $ctx): void
+    {
+        $events = $ctx->state['events'];
+        $ctx->change(['kind' => 'closed', 'deadline' => null]);
+        $ctx->emit(['session' => $ctx->cellKey, 'events' => $events, 'closed_at' => $ctx->now()]);
     }
 }
 
-#[Operator(factoryId: 'order_totals')]
-final class OrderTotalsOperator extends UnboundedOperator
+#[Operator(factoryId: 'sessions')]
+final class SessionOperator extends UnboundedOperator
 {
     public static function channels(Builder $c): void
     {
-        $c->input('orders')
-            ->keyBy(static fn (array $o): string => $o['customer'])
-            ->into(OrderTotals::class)->keyed()
-            ->sink('totals');
+        $c->input('events')
+            ->keyBy(static fn (array $e): string => (string) $e['session'])
+            ->into(Session::class)->keyed()
+            ->sink('closed');
     }
 }
 
-Flezha::createRunner('default')->registerFactory(OrderTotalsOperator::class)->run();
+Flezha::createRunner('default')->registerFactory(SessionOperator::class)->run();
 ```
 
-A `#[Task]` attribute carries the scalar declarations; the methods carry the
-behaviour. Only `run()` is required. Which optional hooks a tasklet declares
-is read from the methods it **overrides** — `applyChange` overridden means it
-folds changes, `onTimer` overridden means it may register timers — so a
-declaration and its implementation cannot disagree.
+That is `examples/E04_SessionTimeout.php`. A tasklet is a class extending
+`Tasklet` with a `#[Task]` attribute. The attribute carries the scalar
+declarations; the methods carry the behaviour. Only `run()` is required. Which
+optional hooks a tasklet declares is read from the methods it **overrides**:
+`initState` overridden means it keeps state, `applyChange` that it folds
+changes, `onTimer` that it may register timers. A declaration and its
+implementation therefore cannot disagree.
+
+- **`name` is required.** It is part of every cell's durable path, so renaming
+  the class keeps the state and renaming `name` declares a different tasklet.
+  A class with no `name`, or an empty one, is refused at registration naming
+  the class, and a subclass writes its own: every other `#[Task]` argument is
+  merged down the class hierarchy, `name` never is.
+- **`run` returns `void`.** A value leaves a tasklet only through
+  `$ctx->emit()` or `$ctx->emitKeyed()`, and an input that should produce
+  nothing simply emits nothing. PHP itself refuses a `run` that returns a value.
+- **`initState(?string $cellKey)`** is a cell's state before anything has
+  happened to it; `$cellKey` is null for a single-cell tasklet.
+- **A change is plain data.** `$ctx->change(['kind' => 'event', ...])` records
+  any value JSON carries, and `applyChange(mixed &$state, mixed $change)` folds
+  it, live and again on restore. No change class is needed; the optional
+  `stateType` and `changeType` below are for an author who wants typed values.
+- **The cell mode comes from the wiring.** A tasklet fed through `keyBy` gets a
+  cell per key, one declaring `cellKeys` a cell per listed key, and any other
+  one cell. `keyBy` into a tasklet declaring `cellKeys` is refused as
+  `KeyByOnUnkeyableTarget`.
+- **`idleTtlSeconds`** evicts a dynamic cell idle that long, in whole seconds;
+  unset never evicts. `maxCells` caps how many are live.
+- **The clock follows from what the class writes.** Overriding
+  `eventTime(mixed $input): int` makes it event time,
+  `#[Task(logicalClock: true)]` makes it the cell's change sequence, and
+  otherwise it is the wall clock; `$ctx->now()` serves whichever it is. Doing both is refused naming
+  `eventTime` and `logicalClock`, and a logical clock on a tasklet with no
+  `initState` is refused as `UnservableClock`.
 
 Everything a type system would have caught is refused at registration, naming
 the class, the handler and the defect: the same set, in the same vocabulary, as
@@ -163,18 +212,18 @@ channel, and `codec` the entry codec the builder's `input` takes.
 #[Operator(factoryId: 'upcase', sink: 'out', codec: ChannelCodec::Text)]
 final class Upcase extends UnboundedOperator
 {
-    public function run(mixed $input, Ctx $ctx): mixed
+    public function run(mixed $input, Ctx $ctx): void
     {
-        return strtoupper($input);
+        $ctx->emit(strtoupper($input));
     }
 }
 
 #[Operator(factoryId: 'place', sink: 'placed', input: 'order', codec: ChannelCodec::Text)]
 final class Place extends BoundedOperator
 {
-    public function run(mixed $input, Ctx $ctx): mixed
+    public function run(mixed $input, Ctx $ctx): void
     {
-        return $input;
+        $ctx->emit($input);
     }
 }
 
@@ -190,7 +239,7 @@ value) decoded by `codec`, the tasklet, a plugin sink named by `sink`, a
 factory id equal to `factoryId`, and every class-level setting at its default.
 The tasklet is named `factoryId` verbatim, so the full form that wires a
 tasklet of that name keeps every cell where it was. It runs the class's
-`run` and takes whichever hooks the class defines (`state`, `applyChange`, ...),
+`run` and takes whichever hooks the class defines (`initState`, `applyChange`, ...),
 and a `#[Task]` on the class carries its settings, all but `name`. A bounded operator
 short form is a `once` bounded operator, run once over its first message:
 `flz operator start --text '<payload>'`, or a start followed by
@@ -203,9 +252,9 @@ mode, the one class-level setting a short form takes:
 #[Bounded(loopMode: LoopMode::PerInput)]
 final class Chat extends BoundedOperator
 {
-    public function run(mixed $input, Ctx $ctx): mixed
+    public function run(mixed $input, Ctx $ctx): void
     {
-        return $input;
+        $ctx->emit($input);
     }
 }
 ```
@@ -218,7 +267,7 @@ state needs:
 #[Operator(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]
 final class Counter extends UnboundedOperator
 {
-    public function state(?string $cellKey): mixed
+    public function initState(?string $cellKey): mixed
     {
         return ['seen' => []];
     }
@@ -228,11 +277,9 @@ final class Counter extends UnboundedOperator
         $state['seen'][] = $change;
     }
 
-    public function run(mixed $input, Ctx $ctx): mixed
+    public function run(mixed $input, Ctx $ctx): void
     {
         $ctx->change($input);
-
-        return null;
     }
 }
 ```
@@ -256,10 +303,10 @@ class defining `channels()` is refused too: a full form's tasklet settings go
 on its tasklet classes. A hook a short form defines is held to the signature
 `Tasklet` gives it, and one PHP would refuse on a tasklet is refused naming
 the hook. There is no
-`SinkWithoutOutput`: `run` is declared `: mixed` on both `Tasklet` and
-`Operator`, and PHP forbids an override narrowing that to `: void`, so a body
-declaring no output cannot be written at all. The manifest leaves
-`shorthand_typed_output` off and the conformance row skips by name.
+`SinkWithoutOutput`: `run` is declared `: void` on both `Tasklet` and
+`Operator`, a value leaves only through `$ctx->emit()`, and no body declares
+an output type, so nothing in a class says whether it emits. The manifest
+leaves `shorthand_typed_output` off and the conformance row skips by name.
 
 ### Channel payloads
 
@@ -311,7 +358,7 @@ final class Totals implements \Flezha\Codable
     public static function fromArray(array $data): static { return new self((int) $data['count']); }
 }
 
-#[Task(stateType: Totals::class)]
+#[Task(name: 'counting', stateType: Totals::class)]
 final class Counting extends Tasklet { /* ... */ }
 ```
 
@@ -323,7 +370,7 @@ nothing else.
 
 Without a declared type, plain arrays and scalars are carried directly. What
 JSON cannot represent — an object that is not `Codable`, a byte string, `NAN` —
-is refused at **registration**, against what `state()` returns, so an author
+is refused at **registration**, against what `initState()` returns, so an author
 learns at startup rather than at the first restore.
 
 The same encoding answers `flz state get` and a migration handover, because it
@@ -335,8 +382,8 @@ already is JSON. There is no second form to convert between.
 same dispatch and restore functions a runner uses:
 
 ```php
-$harness = new Harness(OrderTotals::class, cellKey: 'alice');
-$harness->feed(['amount' => 5]);
+$harness = new Harness(Session::class, cellKey: 'alice');
+$harness->feed(['session' => 'alice']);
 $harness->assertReplayEquals();
 ```
 

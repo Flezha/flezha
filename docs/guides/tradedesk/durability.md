@@ -70,6 +70,10 @@ A runner can stop in two ways, and they differ in what reaches the controller:
 - **A crash**, such as `kill -9`, a power cut or the machine dying. There is no
   goodbye, and the controller keeps every change the runner had already sent.
 
+A PHP runner also stops cleanly when its standard input closes. A SIGTERM
+ends it at once for now, as a crash does, on a PHP built with Zend signal
+handling, so stop it with Ctrl-C.
+
 > Stop the runner with Ctrl-C in its terminal.
 > {: .step}
 
@@ -232,6 +236,45 @@ A Rust runner's journal lists the same steps, with `46 byte(s)` as the handoff
 of each of the first two: every SDK writes the values it hands on in its own
 encoding.
 
+A PHP runner's `confirm_fill` waits on a timer rather than inside `run`
+([`building_a_workflow.md`](building_a_workflow.md#a-step-that-can-fail)), so its
+journal already shows the step committed, and the first pass with it:
+
+```output
+task-journal for instance order_1:
+...
+  seq=3 task_committed task_idx=2 iter=0 epoch=0
+    ran: order_1/confirm_fill/ record=0
+    handoff: 0 item(s), 0 byte(s)
+
+  seq=4 iter_committed task_idx=0 iter=0 epoch=0
+    handoff: 0 item(s), 0 byte(s)
+    consumed input-log offset: 0
+
+
+  leaves: 2,3  complete: false
+```
+
+The timer was asked for a fixed moment, ten seconds after the order started,
+and the restarted runner keeps that moment rather than waiting ten seconds
+again. So a PHP order is done at its original deadline, or at once when the
+runner is back later than that. The timer opens a second pass that runs
+`confirm_fill` alone and ends the order:
+
+```output
+...
+  seq=5 task_committed task_idx=2 iter=1 epoch=0
+    ran: order_1/confirm_fill/
+    handoff: 0 item(s), 0 byte(s)
+    completes the instance: result 57 byte(s)
+    opened by: timer processing_time 1790589337022 on confirm_fill/
+
+  seq=6 iter_committed task_idx=0 iter=1 epoch=0
+    handoff: 0 item(s), 0 byte(s)
+    consumed input-log offset: 0
+    completes the instance: result 57 byte(s)
+```
+
 > Crash the runner while `confirm_fill` waits, the same way: `kill -9` with the
 > process id `flz runner list` shows now, then start it again.
 > {: .step}
@@ -376,6 +419,21 @@ A Rust runner names serde's reason instead:
 A Rust runner's entry carries that reason in its `ERROR` column and in
 `flz dlq show` below.
 
+JSON carries no types for a PHP runner, so the price reaches `track_prices`,
+which refuses it, and the entry is that tasklet's, in EUR/USD's cell:
+
+```output
+[flezha] tasklet track_prices parking poison payload to DLQ after 3 attempt(s): InvalidArgumentException: the price is not a number: "one euro"
+```
+
+```output
+ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
+trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trades      1    3s        InvalidArgumentException: the price is not a number: "one eu
+```
+
+Its entry is `trade_watcher#p1/track_prices/307bcbd6439a080f` in the
+`flz dlq show` and `flz dlq drop` below.
+
 `flz dlq list` shows what a partition has set aside:
 
 ```sh
@@ -492,6 +550,18 @@ A Rust runner prints the tasklet's error kind before the message:
 [flezha] tasklet confirm_fill attempt 2/3 failed (retrying in 120 ms): tasklet error: the exchange fills at most 100 a time, and this is 120
 [undo] cancelled ord-26188e006a7df8374b811618b39c770a
 [undo] released res-9282a7ff442753844305a0393c154b6b
+```
+
+A PHP runner waits the ten seconds once, on `confirm_fill`'s timer, and tries
+the refusal again straight away, so its undo comes about ten seconds after the
+booking:
+
+```output
+[book] EUR/USD 120 as ord-601b85a308803b3d10634c4833c8b7de
+[flezha] tasklet confirm_fill attempt 1/3 failed (retrying in 29 ms): RuntimeException: the exchange fills at most 100 a time, and this is 120
+[flezha] tasklet confirm_fill attempt 2/3 failed (retrying in 108 ms): RuntimeException: the exchange fills at most 100 a time, and this is 120
+[undo] cancelled ord-601b85a308803b3d10634c4833c8b7de
+[undo] released res-0a63b28bebbc54f887a0ac0c6891cc3f
 ```
 
 The order was cancelled, then the money released. Both undos read their id from
