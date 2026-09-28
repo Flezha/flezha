@@ -738,8 +738,8 @@ tag. Every end-to-end scenario SHALL stay in this tree.
 fail when the list and the directory disagree. The release SHALL publish the
 set as one archive with its checksum. Each SDK's tests SHALL resolve the fixture
 directory once, in this order: the directory `FLEZHA_CONTRACT_DIR` names, else
-`contract/` at the package root, else `test/fixtures` of the tree the package
-sits in, and SHALL fail rather than skip when none resolves.
+`test/fixtures` of the tree the package sits in, else `contract/` at the
+package root, and SHALL fail rather than skip when none resolves.
 
 #### Scenario: A fixture without a manifest line fails the gate
 - **WHEN** a file with the fixture header exists under `test/fixtures/` and `contract.txt` does not list it
@@ -748,6 +748,10 @@ sits in, and SHALL fail rather than skip when none resolves.
 #### Scenario: The suite runs from a vendored copy
 - **WHEN** an SDK suite runs from a tree that carries `contract/` and no `test/fixtures`
 - **THEN** every fixture-reading test SHALL run against the vendored copy
+
+#### Scenario: An in-tree copy does not shadow the checkout
+- **WHEN** a package inside the core tree also carries a `contract/`
+- **THEN** the fixture-reading tests SHALL read the enclosing tree's `test/fixtures`
 
 #### Scenario: No fixtures is a failure
 - **WHEN** none of the three locations resolves

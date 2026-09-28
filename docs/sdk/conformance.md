@@ -351,8 +351,12 @@ Every SDK's tests resolve the directory those paths hang off **once**, in this
 order:
 
 1. the directory `FLEZHA_CONTRACT_DIR` names,
-2. else `contract/` at the package root,
-3. else the nearest enclosing tree that carries the manifest.
+2. else the nearest enclosing tree that carries the manifest,
+3. else `contract/` at the package root.
+
+Inside this tree the live files therefore always win over a `contract/` an
+earlier fetch left in a package, and a standalone SDK repository, which has no
+enclosing tree, still reads its vendored copy.
 
 None of the three resolving is a **failure naming all three**, never a skip. A
 skip is how twelve of the PHP package's tests stopped running outside a
