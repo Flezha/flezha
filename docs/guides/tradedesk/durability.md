@@ -1,26 +1,15 @@
 # Durability
 
-Durability is what keeps the desk's work when something stops: the runner is
-stopped or crashes, or the controller is restarted. Flezha writes down every
-change a tasklet makes to what it remembers, and every step an order finishes,
-on the controller's disk, as it happens. When the runner comes back, the work
-carries on from where it was instead of starting again. Nothing in the desk's
-code saves or loads anything.
+Flezha writes down every change a tasklet makes to its state, and every step an
+order finishes, on the controller's disk as it happens. When a runner or the
+controller comes back after a stop or a crash, the desk carries on from where
+it was. Nothing in the desk's code saves or loads anything.
 
-On this page you break the desk on purpose, one piece at a time, and check
-each time that nothing was lost. First you pause the demo exchange, so the
-prices hold still while you look. Then you stop the runner, crash it, and
-crash it again in the middle of an order, and each time you read back what the
-desk remembered. You restart the controller too, and watch everything come
-back.
-
-Last, you see what happens when something goes wrong for good: a message the
-desk cannot read is set aside instead of blocking the others, and an order the
-exchange refuses is undone, step by step.
+On this page you stop and crash the desk on purpose and check that nothing was
+lost. Then you see what happens to a message the desk cannot read, and to an
+order the exchange refuses.
 
 ## What the desk remembers
-
-The desk remembers three things, and each one comes back after a stop:
 
 | What | Where it lives | Written in |
 |---|---|---|
@@ -30,12 +19,8 @@ The desk remembers three things, and each one comes back after a stop:
 
 ## Pause the exchange
 
-While the exchange is connected, new prices keep changing the windows, so a
-window read before a stop and one read after it would differ anyway. Pause the
-feed first, and every window stays exactly as it is.
-
-> Type `/pause` in the testnet's terminal. The exchange stops sending trades,
-> the windows keep what they have, and no new orders start.
+> Type `/pause` in the testnet's terminal, so the prices hold still, then read
+> every symbol's window and keep the output to compare with later.
 > {: .step}
 
 ```text
@@ -45,11 +30,6 @@ feed first, and every window stays exactly as it is.
 ```output
 market paused: nothing is generated until /resume
 ```
-
-The plugin stays connected; the exchange just has nothing to send.
-
-> Read every symbol's window, and keep the output to compare with later.
-> {: .step}
 
 ```sh
 $ flz state get trade_watcher/track_prices --namespace trading
@@ -61,77 +41,20 @@ state get trade_watcher/track_prices:
   state:      {"track_prices":{"EUR/USD":{"prices":[1.13378,1.14873,1.1487,1.13987,1.13993,1.14014,1.14012,1.14368,1.1327,1.13267]},"GBP/USD":{"prices":[1.37453,1.37442,1.37448,1.3887,1.38872,1.40792,1.40786,1.40481,1.40493,1.40494]},"USD/JPY":{"prices":[161.741,161.744,160.871,159.473,159.473,161.233,162.522,162.519,162.525,162.162]}}}
 ```
 
-## Stop the runner
+## Stop and crash the runner
 
-A runner can stop in two ways, and they differ in what reaches the controller:
+A clean stop (Ctrl-C, or SIGTERM) hands the runner's last changes to the
+controller before it exits. A crash (`kill -9`, a power cut) hands over
+nothing, and does not need to: every change reached the controller as it was
+made.
 
-- **A clean stop**, with Ctrl-C or a SIGTERM from whatever runs it. The runner
-  hands its last changes to the controller before it exits, so nothing is lost.
-- **A crash**, such as `kill -9`, a power cut or the machine dying. There is no
-  goodbye, and the controller keeps every change the runner had already sent.
-
-A PHP runner also stops cleanly when its standard input closes. A SIGTERM
-ends it at once for now, as a crash does, on a PHP built with Zend signal
-handling, so stop it with Ctrl-C.
-
-A Python runner stops cleanly on Ctrl-C, on a SIGTERM and when its standard
-input closes.
-
-A Ruby runner stops cleanly on Ctrl-C, on a SIGTERM and when its standard input
-closes, and says so as it drains:
-
-```output
-[flezha] termination signal received; draining
-```
-
-A Node runner stops cleanly on Ctrl-C, on a SIGTERM and when its standard input
-closes, and prints the same line as it drains.
-
-An Elixir runner stops cleanly on a SIGTERM, and on Ctrl-C twice: the first
-opens the BEAM's break menu. It does not read its standard input, so closing it
-stops nothing. It says so as it stops:
-
-```output
-17:59:38.776 [notice] SIGTERM received - shutting down
-```
-
-> Stop the runner with Ctrl-C in its terminal.
+> Stop the runner with Ctrl-C (twice for an Elixir runner), then start it again
+> with the same command as in
+> [`partitioning.md`](partitioning.md#start-the-desk).
 > {: .step}
 
-With no runner, the partitions have nowhere to run. The controller marks them
-`failed`, and they wait:
-
-```sh
-$ flz operator info trade_watcher --namespace trading
-```
-
-```output
-Fetching operator information for namespace 'trading'...
-Operator information for namespace 'trading':
-
-Partition group: trade_watcher (3/3)
-  p0  trade_watcher#p0               key groups 0-84  trading_90cb7c5b6846  failed
-  p1  trade_watcher#p1               key groups 85-169  trading_90cb7c5b6846  failed
-  p2  trade_watcher#p2               key groups 170-255  trading_90cb7c5b6846  failed
-  coverage: all 256 key groups owned exactly once
-...
-```
-
-A window cannot be read now either, because `flz state get` asks the runner
-that holds it, and there is none:
-
-```sh
-$ flz state get trade_watcher/track_prices --namespace trading
-```
-
-```output
-error: state get: no running operator `trade_watcher#p0` in any namespace
-```
-
-> Start the runner again, with the same command as in
-> [`partitioning.md`](partitioning.md#start-the-desk). Within a few seconds the
-> partitions are back on it, `healthy`.
-> {: .step}
+While the runner is gone, its partitions show `failed`. Within a few seconds of
+the restart they are back, `healthy`, on the new runner:
 
 ```sh
 $ flz operator info trade_watcher --namespace trading
@@ -146,26 +69,8 @@ Partition group: trade_watcher (3/3)
 ...
 ```
 
-The runner has a new id, because every run of it is a new session, and the
-partitions moved to it. Their windows came with them:
-
-```sh
-$ flz state get trade_watcher/track_prices --namespace trading
-```
-
-```output
-state get trade_watcher/track_prices:
-  change_seq: -
-  state:      {"track_prices":{"EUR/USD":{"prices":[1.13378,1.14873,1.1487,1.13987,1.13993,1.14014,1.14012,1.14368,1.1327,1.13267]},"GBP/USD":{"prices":[1.37453,1.37442,1.37448,1.3887,1.38872,1.40792,1.40786,1.40481,1.40493,1.40494]},"USD/JPY":{"prices":[161.741,161.744,160.871,159.473,159.473,161.233,162.522,162.519,162.525,162.162]}}}
-```
-
-Every price is where it was.
-
-## Crash the runner
-
-> Crash the runner. `flz runner list` shows its process id, and `kill -9` with
-> that id, from another terminal, ends it at once. The controller sees it gone
-> and marks the partitions `failed`, as before.
+> Now crash it: find its process id, `kill -9` it from another terminal, and
+> start it again.
 > {: .step}
 
 ```sh
@@ -182,34 +87,16 @@ Runners in namespace 'trading':
 $ kill -9 2534837
 ```
 
-> Start the runner again, and read the windows once more.
-> {: .step}
-
-```sh
-$ flz state get trade_watcher/track_prices --namespace trading
-```
-
-```output
-state get trade_watcher/track_prices:
-  change_seq: -
-  state:      {"track_prices":{"EUR/USD":{"prices":[1.13378,1.14873,1.1487,1.13987,1.13993,1.14014,1.14012,1.14368,1.1327,1.13267]},"GBP/USD":{"prices":[1.37453,1.37442,1.37448,1.3887,1.38872,1.40792,1.40786,1.40481,1.40493,1.40494]},"USD/JPY":{"prices":[161.741,161.744,160.871,159.473,159.473,161.233,162.522,162.519,162.525,162.162]}}}
-```
-
-The same windows again. A crash had no chance to hand anything over, and it
-did not need to: every change had reached the controller as it was made.
+After either restart, `flz state get` prints the same windows as before.
 
 ## An order in the middle of a crash
 
-An order writes down each step the moment it finishes, in its journal. When the
-runner crashes in the middle of an order, the order continues at the first step
-that had not finished. The steps before it do not run again, so the money is
-not put aside twice and the order is not placed twice.
+An order writes each step to its journal the moment the step finishes. After a
+crash it continues at the first unfinished step, so the money is not reserved
+twice and the order is not placed twice. `confirm_fill` waits ten seconds for
+the exchange, which is your window to crash the runner.
 
-`confirm_fill` waits ten seconds for the paper exchange to answer, which is
-the time you have to crash the runner in the middle of an order.
-
-> Start an order by hand, and read its journal right away, within the ten
-> seconds.
+> Start an order, and read its journal within the ten seconds.
 > {: .step}
 
 ```sh
@@ -229,112 +116,28 @@ task-journal for instance order_1:
 
   seq=0 task_committed task_idx=0 iter=0 epoch=0
     ran: order_1/reserve_funds/ record=0
-    handoff: 1 item(s), 102 byte(s)
-      edge: channel_id=1 1 item(s), 102 byte(s)
-
+    ...
   seq=1 task_committed task_idx=1 iter=0 epoch=0
     ran: order_1/place_order/ record=0
-    handoff: 1 item(s), 103 byte(s)
-      edge: channel_id=2 1 item(s), 103 byte(s)
-
+    ...
   seq=2 task_committed task_idx=3 iter=0 epoch=0
     ran: order_1/record_order/
-    handoff: 0 item(s), 0 byte(s)
-
-
-  leaves: 2,3  complete: false
-```
-
-Each `task_committed` is a step that finished: the money is reserved, the order
-is placed and booked. `confirm_fill` is still waiting for the exchange, so the
-order is not `complete`. The runner's terminal shows the booking:
-
-```output
-[book] EUR/USD 10 as ord-6b2e13f521b6781afd9f710152cd2f25
-```
-
-A Rust runner's journal lists the same steps, with `46 byte(s)` as the handoff
-of each of the first two: every SDK writes the values it hands on in its own
-encoding.
-
-A Python runner's journal lists the same steps too, with `89 byte(s)` and
-`83 byte(s)` as the handoffs of the first two.
-
-A Ruby runner's journal lists the same steps too, with `96 byte(s)` and
-`89 byte(s)` as the handoffs of the first two. Its `confirm_fill` waits inside
-`run`, as a Java runner's does, so the rest of this section reads the same for
-it.
-
-A Node runner's journal lists the same steps too, with `88 byte(s)` and
-`82 byte(s)` as the handoffs of the first two. Its `confirm_fill` awaits a timer
-promise inside `run`, so it too waits inside `run` and the rest of this section
-reads the same for it: after a crash the ten seconds start again.
-
-An Elixir runner's journal lists the same steps too, with `163 byte(s)` and
-`157 byte(s)` as the handoffs of the first two. Its `confirm_fill` sleeps inside
-`run`, so it too waits inside `run` and the rest of this section reads the same
-for it: after a crash the ten seconds start again.
-
-A PHP runner's `confirm_fill` waits on a timer rather than inside `run`
-([`building_a_workflow.md`](building_a_workflow.md#a-step-that-can-fail)), so its
-journal already shows the step committed, and the first pass with it:
-
-```output
-task-journal for instance order_1:
-...
-  seq=3 task_committed task_idx=2 iter=0 epoch=0
-    ran: order_1/confirm_fill/ record=0
-    handoff: 0 item(s), 0 byte(s)
-
-  seq=4 iter_committed task_idx=0 iter=0 epoch=0
-    handoff: 0 item(s), 0 byte(s)
-    consumed input-log offset: 0
-
+    ...
 
   leaves: 2,3  complete: false
 ```
 
-The timer was asked for a fixed moment, ten seconds after the order started,
-and the restarted runner keeps that moment rather than waiting ten seconds
-again. So a PHP order is done at its original deadline, or at once when the
-runner is back later than that. The timer opens a second pass that runs
-`confirm_fill` alone and ends the order:
+Three steps are done: the money is reserved, and the order is placed and
+booked. `confirm_fill` is still waiting.
 
-```output
-...
-  seq=5 task_committed task_idx=2 iter=1 epoch=0
-    ran: order_1/confirm_fill/
-    handoff: 0 item(s), 0 byte(s)
-    completes the instance: result 57 byte(s)
-    opened by: timer processing_time 1790589337022 on confirm_fill/
-
-  seq=6 iter_committed task_idx=0 iter=1 epoch=0
-    handoff: 0 item(s), 0 byte(s)
-    consumed input-log offset: 0
-    completes the instance: result 57 byte(s)
-```
-
-> Crash the runner while `confirm_fill` waits, the same way: `kill -9` with the
-> process id `flz runner list` shows now, then start it again.
+> Crash the runner while `confirm_fill` waits, and start it again.
 > {: .step}
 
-```sh
-$ kill -9 <pid>
-```
-
-About ten seconds after the runner is back, the order is done:
-
-```sh
-$ flz state journal order_1 --namespace trading
-```
+About ten seconds later the journal ends with `confirm_fill`, and the order is
+`complete: true`:
 
 ```output
-task-journal for instance order_1:
 ...
-  seq=2 task_committed task_idx=3 iter=0 epoch=0
-    ran: order_1/record_order/
-    handoff: 0 item(s), 0 byte(s)
-
   seq=3 task_committed task_idx=2 iter=0 epoch=0
     ran: order_1/confirm_fill/
     handoff: 0 item(s), 0 byte(s)
@@ -344,99 +147,35 @@ task-journal for instance order_1:
   leaves: 2,3  complete: true
 ```
 
-Only `confirm_fill` ran after the crash. The runner's terminal still shows the
-one booking from before it, and no second one, because `record_order` had
-finished and was not run again.
+Only `confirm_fill` ran after the crash. The runner's terminal shows one
+`[book]` line for the order, not two.
 
-```sh
-$ flz operator info order_1 --namespace trading
-```
-
-```output
-...
-Operator: order_1
-  Kind: bounded
-  Phase: finished
-  Status: ok
-  Finished At (unix s): 1790449731
-```
+A PHP runner's `confirm_fill` waits on a timer set for a fixed moment, so it
+finishes at the original deadline, or at once if the runner is back later than
+that, rather than ten seconds after the restart.
 
 ## Restart the controller
 
-The runner is not the only thing that can stop. The controller keeps its own
-records on disk, and reads them back when it starts.
-
-> Stop the controller, then start it again the way
+> Stop the controller with `flz controller stop`, and start it again the way
 > [`authorization.md`](authorization.md#claim-the-admin) did. Leave the runner
 > running.
 > {: .step}
 
-```sh
-$ flz controller stop
-```
+The runner reconnects by itself once the controller is back:
 
 ```output
-...
-[shutdown] complete duration_ms=9 outcome=clean
-```
-
-While the controller is gone, the runner keeps trying to reach it, and connects
-by itself once it is back:
-
-```output
-...
-[flezha] Control channel attempt 7 in 3.265s...
 [flezha] Connected after 6 attempts
 ```
 
-An Elixir runner logs each lost connection and reconnects the same way:
-
-```output
-18:01:13.214 [warning] [Flezha.SDK] connection lost (connection_closed); reconnecting (attempt 1)
-```
-
-Your admin token still works, and `trading` is still there:
-
-```sh
-$ flz auth whoami
-```
-
-```output
-principal: admin-c5257dbf521257b2
-namespace: _system
-role:      admin
-```
-
-```sh
-$ flz namespace list
-```
-
-```output
-...
-  NAMESPACE                          RUNNING
-  _system                            yes
-  trading                            yes
-```
-
-The partitions take up to a minute to be placed on the runner again. Then they
-are `healthy`, and every window is where it was:
-
-```sh
-$ flz state get trade_watcher/track_prices --namespace trading
-```
-
-```output
-state get trade_watcher/track_prices:
-  change_seq: -
-  state:      {"track_prices":{"EUR/USD":{"prices":[1.13378,1.14873,1.1487,1.13987,1.13993,1.14014,1.14012,1.14368,1.1327,1.13267]},"GBP/USD":{"prices":[1.37453,1.37442,1.37448,1.3887,1.38872,1.40792,1.40786,1.40481,1.40493,1.40494]},"USD/JPY":{"prices":[161.741,161.744,160.871,159.473,159.473,161.233,162.522,162.519,162.525,162.162]}}}
-```
+Your admin token and the `trading` namespace are still there. Within a minute
+the partitions are placed on the runner again, and `flz state get` prints the
+same windows as before.
 
 ## The dead-letter queue
 
-Some messages cannot be handled at all, however often they are tried. Such a
-message is tried three times, then set aside in the **dead-letter queue**, so
-the messages behind it are not held up. It is kept there, on the controller's
-disk, until you decide what to do with it.
+A message that fails however often it is tried is tried three times, then set
+aside in the **dead-letter queue** on the controller's disk, so the messages
+behind it are not held up.
 
 > Send `trade_watcher#p1` a trade whose price is not a number.
 > {: .step}
@@ -449,191 +188,138 @@ $ flz operator send 'trade_watcher#p1' --namespace trading --channel trades --te
 Delivered to 'trade_watcher#p1'.
 ```
 
-The runner's terminal shows the three tries, the last one ending:
-
-```output
-[flezha] prepare for channel `trades` parking payload to DLQ after 3 attempt(s): java.lang.IllegalArgumentException: entry channel: JSON deserialization failed: Cannot deserialize value of type `double` from String "one euro": not a valid `double` value (as String to convert)
-```
-
-A Rust runner names serde's reason instead:
-
-```output
-[flezha] entry channel `trades` parking payload to DLQ after 3 attempt(s): entry channel: JSON deserialization failed: invalid type: string "one euro", expected f64 at line 1 column 71
-```
-
-A Rust runner's entry carries that reason in its `ERROR` column and in
-`flz dlq show` below.
-
-JSON carries no types for a PHP runner, so the price reaches `track_prices`,
-which refuses it, and the entry is that tasklet's, in EUR/USD's cell:
-
-```output
-[flezha] tasklet track_prices parking poison payload to DLQ after 3 attempt(s): InvalidArgumentException: the price is not a number: "one euro"
-```
-
-```output
-ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
-trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trades      1    3s        InvalidArgumentException: the price is not a number: "one eu
-```
-
-Its entry is `trade_watcher#p1/track_prices/307bcbd6439a080f` in the
-`flz dlq show` and `flz dlq drop` below.
-
-A Python runner reads the trade as a dict too, so its `track_prices` refuses
-the price the same way, and the entry is that tasklet's, in EUR/USD's cell:
-
-```output
-[flezha] tasklet track_prices parking poison payload to DLQ after 3 attempt(s): TypeError: the price is not a number: 'one euro'
-```
-
-```output
-ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
-trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trades      1    5s        TypeError: the price is not a number: 'one euro'
-```
-
-A Ruby runner reads the trade as a Hash, so its `track_prices` refuses the
-price the same way, and the entry is that tasklet's, in EUR/USD's cell:
-
-```output
-[flezha] tasklet track_prices parking poison payload to DLQ after 3 attempt(s): ArgumentError: the price is not a number: "one euro"
-```
-
-```output
-ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
-trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trades      1    6s        ArgumentError: the price is not a number: "one euro"
-```
-
-A Node runner reads the trade as a plain object, so its `track_prices` refuses
-the price the same way, and the entry is that tasklet's, in EUR/USD's cell:
-
-```output
-[flezha] tasklet track_prices parking poison payload to DLQ after 3 attempt(s): TypeError: the price is not a number: "one euro"
-```
-
-```output
-ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
-trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trades      1    8s        TypeError: the price is not a number: "one euro"
-```
-
-An Elixir runner reads the trade as a map, so its `track_prices` refuses the
-price the same way, answering `{:error, reason}`, and the entry is that
-tasklet's, in EUR/USD's cell. Its tries are logged at the `debug` level, which
-a `mix run` in the `dev` environment shows:
-
-```output
-18:01:56.188 [debug] [Flezha.SDK] trade_watcher#p1/node/EUR/USD attempt 1/3 failed: the price is not a number: "one euro"; retrying
-
-18:01:56.243 [debug] [Flezha.SDK] trade_watcher#p1/node/EUR/USD attempt 2/3 failed: the price is not a number: "one euro"; retrying
-```
-
-```output
-ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
-trade_watcher#p1/track_prices/239d0c721a1951a6              EUR/USD         trades      1    0s        the price is not a number: "one euro"
-```
-
-What an Elixir tasklet was handed is a decoded map rather than bytes, so
-`flz dlq show` prints `payload <not byte-representable; entry is not
-replayable>`: such an entry can be dropped but not sent through again.
-
-`flz dlq list` shows what a partition has set aside:
+`flz dlq list` shows what the partition has set aside:
 
 ```sh
 $ flz dlq list 'trade_watcher#p1' --namespace trading
 ```
+
+<!-- tabs-open -->
+
+### Java
+
+The typed `Trade` record cannot be read, so the entry channel refuses the
+trade before any tasklet sees it:
 
 ```output
 ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
 trade_watcher#p1/trades/307bcbd6439a080f                           _entry          trades      1    3s        java.lang.IllegalArgumentException: entry channel: JSON dese
 ```
 
-`flz dlq show` reads one entry, with the message itself:
+### Rust
+
+The typed `Trade` struct cannot be read, so the entry channel refuses the
+trade before any tasklet sees it. The entry is `trade_watcher#p1/trades/...`
+in cell `_entry`, and its error is serde's reason, as the runner logs it:
+
+```output
+[flezha] entry channel `trades` parking payload to DLQ after 3 attempt(s): entry channel: JSON deserialization failed: invalid type: string "one euro", expected f64 at line 1 column 71
+```
+
+### Node
+
+`track_prices` reads the trade as a plain object and refuses the price itself:
+
+```output
+ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
+trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trades      1    8s        TypeError: the price is not a number: "one euro"
+```
+
+### Python
+
+`track_prices` reads the trade as a dict and refuses the price itself:
+
+```output
+ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
+trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trades      1    5s        TypeError: the price is not a number: 'one euro'
+```
+
+### Ruby
+
+`track_prices` reads the trade as a Hash and refuses the price itself:
+
+```output
+ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
+trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trades      1    6s        ArgumentError: the price is not a number: "one euro"
+```
+
+### PHP
+
+`track_prices` reads the trade as an array and refuses the price itself:
+
+```output
+ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
+trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trades      1    3s        InvalidArgumentException: the price is not a number: "one eu
+```
+
+### Elixir
+
+`track_prices` reads the trade as a map and refuses the price itself. The
+retries are logged at the `debug` level:
+
+```output
+ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
+trade_watcher#p1/track_prices/239d0c721a1951a6              EUR/USD         trades      1    0s        the price is not a number: "one euro"
+```
+
+The tasklet was handed a decoded map rather than bytes, so this entry can be
+dropped but not replayed.
+
+<!-- tabs-close -->
+
+`flz dlq show` prints one entry, with the message itself. Use the `ENTRY` your
+list printed:
 
 ```sh
-$ flz dlq show 'trade_watcher#p1/trades/307bcbd6439a080f' --namespace trading
+$ flz dlq show '<entry>' --namespace trading
 ```
 
 ```output
-id                "307bcbd6439a080f"
-operator_class    "trade_watcher#p1"
-tasklet_id        "trades"
-cell_key          "_entry"
-channel           "trades"
-origin_offset     nil
-error             "java.lang.IllegalArgumentException: entry channel: JSON deserialization failed: ..."
+...
 attempts          3
-generation        1
 status            "parked"
-ts_ms             1790449871673
-payload_bytes     96
 payload            {"channel": "trade", "data": [{"symbol": "EUR/USD", "price": "one euro", "ord_type": "market"}]}
 ```
 
-An entry is either sent through again or thrown away. `flz dlq replay` sends it
-through again, which is for a message that failed because of something since
-fixed, such as a bug in the operator. This one will never be readable, so drop
-it:
+`flz dlq replay` sends an entry through again, for a message that failed
+because of a bug since fixed. This one will never be readable.
 
 > Drop the entry.
 > {: .step}
 
 ```sh
-$ flz dlq drop 'trade_watcher#p1/trades/307bcbd6439a080f' --namespace trading
+$ flz dlq drop '<entry>' --namespace trading
 ```
 
 ```output
-dropped trade_watcher#p1/trades/307bcbd6439a080f
+dropped <entry>
 ```
 
-```sh
-$ flz dlq list 'trade_watcher#p1' --namespace trading
-```
+A partition group cannot be rescaled while its dead-letter queue holds entries
+([`partitioning.md`](partitioning.md#change-the-number-of-partitions)).
 
-```output
-dead-letter queue is empty
-```
+## Undo an order
 
-A partition group with entries in its dead-letter queue cannot be rescaled, as
-[`partitioning.md`](partitioning.md#change-the-number-of-partitions) says, so
-empty it before `flz operator scale`.
+The exchange fills at most 100 at a time, so an order bigger than that fails at
+`confirm_fill`, is tried three times, and then every finished step is undone,
+last step first. The testnet's `/jump` makes one such order on purpose: it
+moves the next trade's price far enough to ask for more than 100.
 
-## Resume the exchange
-
-> Type `/resume` in the testnet's terminal. The desk picks up the prices from
-> where the windows stopped.
+> Type `/resume` and then `/jump EUR/USD 12` in the testnet's terminal, and
+> watch the runner's terminal.
 > {: .step}
 
 ```text
 /resume
-```
-
-```output
-market resumed
-```
-
-## Undo an order
-
-The paper exchange fills at most 100 at a time, and the desk buys 10 for each
-percent a price is above its average, so a price more than 10 % above it asks
-for too much. That order fails at `confirm_fill`, is tried three times, and then
-everything that finished is undone, last step first.
-
-The testnet can make such a move on purpose: `/jump` sends one trade at a price
-that far from the current one, and the price then carries on as before, so
-exactly one order is too big.
-
-> Type `/jump EUR/USD 12` in the testnet's terminal, and watch the runner's
-> terminal. With ten seconds per try, the undo comes about half a minute later.
-> {: .step}
-
-```text
 /jump EUR/USD 12
 ```
 
-```output
-EUR/USD moves 12% on its next trade (1 socket(s) subscribed)
-```
+About half a minute later, after three tries of ten seconds each, the order is
+undone:
 
-Between the other symbols' bookings, the runner's terminal shows the one order:
+<!-- tabs-open -->
+
+### Java
 
 ```output
 [book] EUR/USD 136 as ord-be4f7a593756acada0924d10da8d31c6
@@ -643,7 +329,7 @@ Between the other symbols' bookings, the runner's terminal shows the one order:
 [undo] released res-935e21608cc9ea9844b537d8c0c97517
 ```
 
-A Rust runner prints the tasklet's error kind before the message:
+### Rust
 
 ```output
 [book] EUR/USD 120 as ord-26188e006a7df8374b811618b39c770a
@@ -653,43 +339,10 @@ A Rust runner prints the tasklet's error kind before the message:
 [undo] released res-9282a7ff442753844305a0393c154b6b
 ```
 
-A PHP runner waits the ten seconds once, on `confirm_fill`'s timer, and tries
-the refusal again straight away, so its undo comes about ten seconds after the
-booking:
+### Node
 
-```output
-[book] EUR/USD 120 as ord-601b85a308803b3d10634c4833c8b7de
-[flezha] tasklet confirm_fill attempt 1/3 failed (retrying in 29 ms): RuntimeException: the exchange fills at most 100 a time, and this is 120
-[flezha] tasklet confirm_fill attempt 2/3 failed (retrying in 108 ms): RuntimeException: the exchange fills at most 100 a time, and this is 120
-[undo] cancelled ord-601b85a308803b3d10634c4833c8b7de
-[undo] released res-0a63b28bebbc54f887a0ac0c6891cc3f
-```
-
-A Python runner waits the ten seconds on every try, as a Java runner does, and
-names the exception's class before the message:
-
-```output
-[book] EUR/USD 130 as ord-147cb3cb7525c45f615cf36ae92ed0be
-[flezha] tasklet confirm_fill attempt 1/3 failed (retrying in 31 ms): RuntimeError: the exchange fills at most 100 a time, and this is 130
-[flezha] tasklet confirm_fill attempt 2/3 failed (retrying in 120 ms): RuntimeError: the exchange fills at most 100 a time, and this is 130
-[undo] cancelled ord-147cb3cb7525c45f615cf36ae92ed0be
-[undo] released res-494fc55d64e4cc925b295bd07fa3b41f
-```
-
-A Ruby runner waits the ten seconds on every try too, and names the exception's
-class before the message:
-
-```output
-[book] EUR/USD 124 as ord-a40ba575b8a83599f33dad116255f5c3
-[flezha] tasklet confirm_fill attempt 1/3 failed (retrying in 40 ms): RuntimeError: the exchange fills at most 100 a time, and this is 124
-[flezha] tasklet confirm_fill attempt 2/3 failed (retrying in 62 ms): RuntimeError: the exchange fills at most 100 a time, and this is 124
-[undo] cancelled ord-a40ba575b8a83599f33dad116255f5c3
-[undo] released res-b159dff9228e6788657db153453c4bda
-```
-
-A Node runner waits the ten seconds on every try too, and names the error's
-class before the message. A booking of another order can land between the
-tries, because the wait holds nothing else up:
+Another order's booking can land between the tries, because the wait holds
+nothing else up:
 
 ```output
 [book] EUR/USD 114 as ord-1583d35b849ecc1e5be0c67eb19126b1
@@ -700,9 +353,42 @@ tries, because the wait holds nothing else up:
 [undo] released res-765f48effc6403ca7079785ffc7b8820
 ```
 
-An Elixir runner waits the ten seconds on every try too, logging each try at
-the `debug` level, and books the order at once, beside the tries, here for an
-order of 500 started as `order_too_big`:
+### Python
+
+```output
+[book] EUR/USD 130 as ord-147cb3cb7525c45f615cf36ae92ed0be
+[flezha] tasklet confirm_fill attempt 1/3 failed (retrying in 31 ms): RuntimeError: the exchange fills at most 100 a time, and this is 130
+[flezha] tasklet confirm_fill attempt 2/3 failed (retrying in 120 ms): RuntimeError: the exchange fills at most 100 a time, and this is 130
+[undo] cancelled ord-147cb3cb7525c45f615cf36ae92ed0be
+[undo] released res-494fc55d64e4cc925b295bd07fa3b41f
+```
+
+### Ruby
+
+```output
+[book] EUR/USD 124 as ord-a40ba575b8a83599f33dad116255f5c3
+[flezha] tasklet confirm_fill attempt 1/3 failed (retrying in 40 ms): RuntimeError: the exchange fills at most 100 a time, and this is 124
+[flezha] tasklet confirm_fill attempt 2/3 failed (retrying in 62 ms): RuntimeError: the exchange fills at most 100 a time, and this is 124
+[undo] cancelled ord-a40ba575b8a83599f33dad116255f5c3
+[undo] released res-b159dff9228e6788657db153453c4bda
+```
+
+### PHP
+
+`confirm_fill` waits the ten seconds once, on its timer, and retries straight
+away, so the undo comes about ten seconds after the booking:
+
+```output
+[book] EUR/USD 120 as ord-601b85a308803b3d10634c4833c8b7de
+[flezha] tasklet confirm_fill attempt 1/3 failed (retrying in 29 ms): RuntimeException: the exchange fills at most 100 a time, and this is 120
+[flezha] tasklet confirm_fill attempt 2/3 failed (retrying in 108 ms): RuntimeException: the exchange fills at most 100 a time, and this is 120
+[undo] cancelled ord-601b85a308803b3d10634c4833c8b7de
+[undo] released res-0a63b28bebbc54f887a0ac0c6891cc3f
+```
+
+### Elixir
+
+The tries are logged at the `debug` level:
 
 ```output
 [book] EUR/USD 500 as ord-e015c2df9402f4625d9cef4def51f243
@@ -716,74 +402,50 @@ order of 500 started as `order_too_big`:
 [undo] released res-e0d09a3a6a33661df98dd0a4768bb45a
 ```
 
-The order was cancelled, then the money released. Both undos read their id from
-the step's state, which is what makes them work after a crash too: the state
-comes back, while what a step handed on does not. The booking is not undone,
-because `record_order` has no `compensate`.
+<!-- tabs-close -->
+
+The order is cancelled, then the money released. Each undo reads its id from
+its step's state, which survives a crash. The booking stays, because
+`record_order` has no `compensate`.
 
 ## Where it is kept
 
-The controller keeps everything it saves on its own disk, in the folder it was
-started in: each namespace's state under `app_data/state/<namespace>/`, apart
-from every other's, and the namespaces, tokens and keys under `app_data/auth/`.
-That includes the write-ahead log, the running record of every change, which is
-always on the local disk, whatever else is configured.
+The controller keeps everything on its own disk, under `app_data/` in the folder
+it was started in: each namespace's state and write-ahead log under
+`app_data/state/<namespace>/`, and namespaces, tokens and keys under
+`app_data/auth/`.
 
-The local disk is enough as long as it survives: a crashed runner or a restarted
-controller gets everything back from it. A controller that loses its disk loses
-what was on it. For that case the controller can also send a copy of everything
-it saves to storage that lives somewhere else, chosen with
-`FLEZHA_DURABILITY_BACKEND`:
+That is enough while the disk survives. To survive losing it, set
+`FLEZHA_DURABILITY_BACKEND` and the controller also ships a copy elsewhere:
 
 | Backend | Where the copy goes |
 |---|---|
-| `none` | nowhere: the local disk is the only copy. This is the default |
+| `none` | nowhere; the local disk is the only copy (the default) |
 | `postgres` | a table in a PostgreSQL database |
 | `s3` | a bucket on Amazon S3 or any S3-compatible store |
-| `local_path` | a folder that outlives the controller's own disk, such as a network mount |
+| `local_path` | a folder that outlives the controller's disk, such as a network mount |
 
-The two copies are kept on different schedules:
-
-- **The controller's disk** gets every change within a few milliseconds, always,
-  whichever backend is set.
-- **The extra copy** follows in the background: a workflow's after every
-  finished step, a stream's at least every 30 seconds
-  (`FLEZHA_DURABILITY_SHIP_INTERVAL_MS`). The 30 seconds applies to this copy
-  only, and only matters if the controller loses its disk.
-
-A controller that starts on an empty disk fetches the copy and carries on from
-it. Part 2 keeps the default, the local disk, and
+The local disk gets every change within a few milliseconds. The copy follows in
+the background: a workflow's after every finished step, a stream's at least
+every 30 seconds (`FLEZHA_DURABILITY_SHIP_INTERVAL_MS`). A controller that
+starts on an empty disk fetches the copy and carries on from it.
 [`configuration.md`](../../configuration.md#state-wal-and-durability) lists the
-settings for each backend.
+settings.
 
-> #### Fast in memory, saved in the background {: .info}
+> #### The cost of saving in the background {: .info}
 >
-> A cell's state lives in the memory of the runner that runs it, so a tasklet
-> reads and changes it at memory speed, with no disk in the way. Every change is
-> also sent to the controller, which adds it to the write-ahead log, and neither
-> step holds the tasklet up: the runner sends its changes in small batches about
-> every 5 milliseconds, and the controller writes its log to disk (an `fsync`)
-> in batches, also about every 5 milliseconds, rather than once per change. The
-> copy to Postgres or S3, when one is set, is sent in the background as well.
->
-> The cost is a small window. A runner that crashes, rather than stopping
-> cleanly, can lose its last few milliseconds of changes. A clean stop, with
-> Ctrl-C or a SIGTERM, hands everything to the controller first and loses
-> nothing.
->
-> A workflow is the exception, on purpose: a bounded operator waits until each
-> finished step is on the controller's disk before the next step starts, so a
-> finished step is kept even when the runner crashes.
-
-## What this page does not cover
-
-Delivery. After a crash, a value the desk sent out just before it can reach a
-sink a second time, so `signals.txt` can hold a line twice. Making every value
-arrive exactly once is Part 3's
-[`effectively_once.md`](../advanced/effectively_once.md).
+> A tasklet changes its state in the runner's memory, and the runner sends its
+> changes to the controller in batches about every 5 milliseconds. So a runner
+> that crashes can lose its last few milliseconds of changes; a clean stop loses
+> nothing. A workflow is the exception: each finished step is on the
+> controller's disk before the next one starts.
 
 ## Next
 
-That is the end of Part 2: the desk trades on its own, remembers what it needs,
-and survives a stop or a crash of its runner or its controller.
+After a crash, a value the desk sent just before it can reach a sink twice, so
+`signals.txt` can hold a line twice. Part 3's
+[`effectively_once.md`](../advanced/effectively_once.md) makes every value
+arrive exactly once.
+
+That is the end of Part 2.
 [Part 3](../guides.md#part-3-advanced-topics) goes deeper.

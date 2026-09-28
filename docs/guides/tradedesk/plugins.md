@@ -124,10 +124,11 @@ connection open and pushes each message in as it arrives.
 
 ## Each partition asks for its own symbols
 
-`trade_watcher` is a group of three partitions, and a plugin enabled on the
-group is enabled once on every partition, each copy named after its partition.
-The testnet's terminal shows three connections, one per partition, and each
-subscribing only what its partition owns:
+A plugin enabled on the `trade_watcher` group runs once per partition, and each
+copy subscribes only the symbols its partition owns, by the same hash
+[`partitioning.md`](partitioning.md#which-partition-a-symbol-goes-to) routes a
+trade by. So no trade is received only to be thrown away. The testnet shows
+three connections:
 
 ```output
 Testnet client connected on /
@@ -138,10 +139,6 @@ Subscribing trade/EUR/USD (trade every 1500ms)
 Subscribing trade/USD/JPY (trade every 1500ms)
 ```
 
-Each copy filters the list by the key groups its partition owns, with the same
-hash [`partitioning.md`](partitioning.md#which-partition-a-symbol-goes-to)
-routes a trade by. So a trade only ever arrives at the partition that keeps its
-symbol's window, and no message is received only to be thrown away.
 `flz operator info` shows each copy's subscriptions:
 
 ```sh
@@ -151,50 +148,26 @@ $ flz operator info trade_watcher --namespace trading
 ```output
 ...
 Operator: trade_watcher#p1
-  Kind: unbounded
-  Phase: running
-  Health: healthy
-  Runner ID: trading_3c3e00db7694
-  Group ID: trading
-  Uptime (ms): 270801
-  Default Input Type: 2
+  ...
   Plugins:
     - exchange#p1: Flezha.Plugin.Provider.Websocket
-        last_error: (none)
-        inflight: 0
+        ...
         applied: EUR/USD, USD/JPY
         desired: EUR/USD, USD/JPY
-        last_reconcile: %{removed: 0, added: 2, sent: true}
 ...
 ```
 
-`desired` is what the plugin was asked for, and `applied` what the exchange has
-confirmed. `exchange#p2` shows GBP/USD, and `exchange#p0` nothing:
-`trade_watcher#p0` owns none of the three pairs.
+`desired` is what the plugin asked for, `applied` what the exchange confirmed.
+`exchange#p2` has GBP/USD, and `exchange#p0` none.
 
 ## Trades arrive on their own
 
 From here on the desk works by itself. Every price goes into its symbol's
-window, and every buy starts an order, which the runner's terminal shows as it
-books it:
+window, and every buy starts an order, which the runner's terminal shows:
 
 ```output
 [book] EUR/USD 32 as ord-8e35b354af95a17c48f5a31db79f5f12
 [book] USD/JPY 21 as ord-3d5fdddd0094fb3152e57ef05b02be57
-[book] USD/JPY 20 as ord-d97916632aa66bf476f92947c24cb7b4
-[book] GBP/USD 38 as ord-84fdc7e4f95a38838fbcb5af0f93196c
-```
-
-The windows fill up with the exchange's prices:
-
-```sh
-$ flz state get trade_watcher/track_prices --namespace trading
-```
-
-```output
-state get trade_watcher/track_prices:
-  change_seq: -
-  state:      {"track_prices":{"EUR/USD":{"prices":[1.08753,1.07444,1.06346,1.06353,1.05102,1.04646,1.04639,1.05715,1.05565,1.04751]},"GBP/USD":{"prices":[1.3921,1.40845,1.40833,1.39296,1.37753,1.34887,1.34884,1.33784,1.33782,1.34824]},"USD/JPY":{"prices":[147.097,147.375,147.371,147.052,147.54,147.537,146.216,146.206,146.212,145.232]}}}
 ```
 
 ## Not every message is a trade
