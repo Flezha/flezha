@@ -29,6 +29,17 @@ exists.
 6. **Run only the tests the change affects**, by file. Repeat a test under load
    only when it depends on timing. No full suite: the supervisor runs it every
    five to ten items.
+   **Use the campaign's tools, never hand steps.** `wip/tools/` has the
+   environment script (a private controller, ports, the demo exchange, the shared
+   native build: never build your own), the verify command (every gate, one line
+   each) and the walk scripts. Anything you would repeat across many files is a
+   codemod; anything you would type live more than twice is a script. A missing
+   tool you need is written there and kept, not improvised in your scratchpad.
+   Long output goes to a file: you read its summary and failures only.
+   **Build and test at milestones, never after each edit.** Finish a whole
+   section (the API, all fixtures, the example, the docs), then build once and
+   run that section's tests once. A red: fix every failure from inspection in
+   one batch, rerun only the failing tests. A full suite runs once, at the end.
 7. **Run `/cx-refine` over your own diff** before you report, and apply what it
    finds that keeps behaviour unchanged.
 

@@ -112,11 +112,53 @@ read again. These defaults hold for every campaign.
 - **Only the tests the change affects.** A test is repeated under load only when
   it depends on timing. The full suite runs once every five to ten items, and a
   red there is diagnosed before the next item starts.
+- **Build and test at milestones, never after each edit.** A milestone is a
+  finished section of work: the API changed, all fixtures moved, the example
+  written, the docs done. Between milestones the worker edits and reads; it does
+  not build or run tests. At a milestone: one build and the tests that section
+  touched. Each full suite (the SDK's, the core `mix test`, the system and e2e
+  runs) runs once, at the end. A red is fixed in one batch from inspection and
+  only the failing tests rerun; the full suite runs once more at most. One row
+  of 2026-09-28 built its SDK 39 times, another ran the core suite 7 times.
 - **Paperwork is what someone reads**: the commit, one `DONE.md` line carrying the
   reproduction command and its key output, and the bug-list row moved. A dev
   note only for a trap the next session would fall into. No evidence pasted into
   `WORK.md`, no `LOG.md` entry per item, and `STATE.md` rewritten when the phase
   changes, not at every event.
+
+## Tools, not hand steps
+
+Time goes into steps, not code: on 2026-09-28 each row took 330 to 460 agent
+steps, and most of them were the same setup, checks and live commands typed by
+hand in every row. Whatever a campaign does in every row is done by a script.
+
+- **Scripts are part of the kit.** A campaign keeps, under `wip/tools/`:
+  - an environment script that brings up a private controller release, state
+    directory, ports, the demo exchange and fresh native libraries in one
+    command, and a teardown that stops all of it. No worker builds its own by
+    hand, and none points a controller at a shared state directory;
+  - one verify command that runs every gate an item needs (the specs, the
+    citation gate, the naming gate, the formatters, the tests the change
+    touched) and prints one line per gate, the log kept on disk. The worker runs
+    it at each milestone; the supervisor runs the same command to verify;
+  - walk scripts for any guide the campaign changes: each runs the page's steps
+    against a real controller and writes the output blocks. A guide's output is
+    never typed by hand, and the walk is re-run by the next change to that page;
+  - a codemod for any change repeated across many files, its diff read and the
+    milestone tests run on it. Hand edits are for what a script cannot express.
+
+  A script that already exists is extended, never copied. The first row that
+  needs one writes it, and it is tracked for every campaign after.
+- **Build expensive things once and share them.** Native libraries and the
+  controller release are built once per core commit, into a shared cache under
+  the campaign's scratch space, and every worker uses that build. A worker
+  rebuilds only what its own change touched.
+- **Pipeline, not queue.** The next item is screened while the current one is
+  coded. The critic reads the code as soon as the code is finished, while the
+  worker writes the docs; the docs get a short second look. Items whose files do
+  not overlap run in parallel by default; only shared files, ordered steps (an
+  archive order, a shared page) and live runs against one controller are
+  serialized, and the rules say which.
 
 ## Definition of done, for every item
 

@@ -48,12 +48,16 @@ Per item: only the tests the change affects. The full suite: once every <5 to
 
 ## Subagents
 
-- Default: supervisor plus one coder, sequential, shared tree.
+- Default: supervisor plus one coder per row. Rows whose files do not overlap run
+  in parallel, each coder in its own git worktree or submodule; list here what
+  stays serialized (shared pages, an archive order, live runs on one controller).
 - Reproduction runs one row ahead of the coder, read only, its test a draft
   under `wip/repro/<row-id>/` (`wip/briefs/reproduce.md`), except while the row
   in flight measures performance.
 - Every item ends with `/cx-refine` over its diff, run by the coder before it
   reports.
+- The critic reads the code as soon as the code is done, while the coder writes
+  the docs; the docs get a short second look.
 - Critic: only for a bigger change (more than a few dozen production lines, a new
   module or public surface, or concurrency, authorization or durability logic
   beyond a few lines). A fresh agent, never a fork, diff only, a word limit. The
@@ -63,6 +67,12 @@ Per item: only the tests the change affects. The full suite: once every <5 to
 - Fan out to at most 5 for read only work: surveys, sweeps, reproductions.
 - Parallel writers only in separate git worktrees, one item each, never in the
   shared tree.
+
+## Tools
+
+The `wip/tools/` scripts this campaign uses (environment up and down, the
+verify command, walk scripts, codemods), which exist and which the first row that
+needs them writes. The shared build cache: where it lives and what it holds.
 
 ## Timeboxes
 

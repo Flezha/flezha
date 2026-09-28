@@ -88,10 +88,15 @@ would fall into.
    The exit condition is written on day one, so "is it done" is never a matter
    of opinion.
 3. Put the rows in `WORK.md`, in order. Each row names the command that proves
-   the defect is real and what done means for it.
-4. Work the cycle. `python3 wip/status.py` at any time for the counts, the net
+   the defect is real and what done means for it. Mark which rows can run in
+   parallel: rows whose files do not overlap do.
+4. Check the kit in `wip/tools/` against the campaign: the environment script,
+   the verify command, a walk script for each guide the campaign changes, and a
+   codemod for any change repeated across many files. What is missing is written
+   by the first row that needs it, and kept.
+5. Work the cycle. `python3 wip/status.py` at any time for the counts, the net
    production lines and what is next.
-5. `bash wip/reap.sh` at session start, at every heartbeat and at every item
+6. `bash wip/reap.sh` at session start, at every heartbeat and at every item
    boundary. Add `--kill` to clean up what the work started.
 
 Before a reset, the issue inbox is drained by hand into the standing bug list:
