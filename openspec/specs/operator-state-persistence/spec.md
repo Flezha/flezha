@@ -424,7 +424,7 @@ The SDK SHALL verify the header at read time on **every** restore path — the t
 
 ### Requirement: Idempotent emits with stable dedup keys
 
-The Rust SDK runtime SHALL automatically attach `flezha.dedup_key = "{operator_class}/{tasklet_id}/{cell_key}/{change_seq}"` to outgoing plugin-bound emit metadata for any emit issued during a `state.apply(...)`-driven `Tasklet::run` invocation. The agent's plugin-provider path SHALL NOT alter or strip this metadata key; it SHALL flow through to the sink verbatim.
+The Rust SDK runtime SHALL automatically attach `flezha.dedup_key = "{operator_class}/{tasklet_id}/{cell_key}/{change_seq}"` to outgoing plugin-bound emit metadata for any emit issued during a `Tasklet::run` invocation that records changes through `ctx.change(...)`. The agent's plugin-provider path SHALL NOT alter or strip this metadata key; it SHALL flow through to the sink verbatim.
 
 The Kafka producer plugin (`Flezha.Plugin.Provider.Kafka`) SHALL use the `flezha.dedup_key` value as the Kafka producer key (taking precedence over any other configured keying strategy). Other plugin providers MAY use the key for sink-specific dedup purposes; the contract is that the key is opaque metadata.
 
@@ -687,7 +687,7 @@ The rule SHALL be the same for an unbounded instance and a bounded instance: a b
 
 Top-level keys that do not match any Tasklet name SHALL be ignored (with an `eprintln!` log line at the SDK boundary). Inner-object keys that do not match a declared `cell_key` SHALL also be ignored.
 
-If `init_values` is empty (`""` on the wire), the SDK SHALL leave each Cell's state untouched after the cold-start `Tasklet::init_state(cell_key, None)` returned by the build path.
+If `init_values` is empty (`""` on the wire), the SDK SHALL leave each Cell's state untouched after the cold-start `Tasklet::init_state(cell_key)` returned by the build path.
 
 `MigrationDeserialization{factory_id, operator_id, serialized_state}` SHALL reuse the same `apply_init_values` path: the `serialized_state` payload is the UTF-8 JSON blob produced by `serialize_operator_state` on the source runner; applying it to a freshly-started instance restores byte-identical state.
 
@@ -709,7 +709,7 @@ If `init_values` is empty (`""` on the wire), the SDK SHALL leave each Cell's st
 #### Scenario: Empty init_values uses the default path
 
 - **WHEN** the SDK receives `AddOperator{...init_values: ""}`
-- **THEN** the SDK SHALL leave each Cell's state at the value `Tasklet::init_state(cell_key, None)` returned at build time
+- **THEN** the SDK SHALL leave each Cell's state at the value `Tasklet::init_state(cell_key)` returned at build time
 
 #### Scenario: Round-trip via MigrationSerialization / MigrationDeserialization
 

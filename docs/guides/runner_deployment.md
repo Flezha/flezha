@@ -371,18 +371,28 @@ The whole example:
 
 ```rust
 // src/tasklet.rs: the tasklet. The processing stage the graph routes each message into.
-use flezha_runner::tasklet;
+use flezha_runner::{tasklet, Ctx, Tasklet, TaskletError};
 
-#[tasklet(id = "echo")]                  // state is saved under this name, so choose it once
-pub fn echo(input: String) -> String {
-    format!("echo: {input}")             // what it returns is emitted
+#[derive(Default)]
+pub struct Echo;
+
+#[tasklet(name = "echo")]
+impl Tasklet for Echo {
+    type Input = String;
+    type Output = String;
+
+    fn run(&mut self, input: String, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
+        ctx.emit(format!("echo: {input}"))
+    }
 }
 ```
 
-**`#[tasklet]` turns the function into a tasklet type**, `Echo`, named after
-the function, and that type is what the operator routes into. The input and
-output types are read from the signature. There is no `&mut` state parameter, so
-it keeps nothing between messages and journals nothing.
+**The tasklet is your own type**, `Echo`, and that type is what the operator
+routes into. `#[tasklet]` generates no type: it fills in what the block leaves
+out. `name` is the tasklet's identity: its state is saved under that name, so
+choose it once, while the type can be renamed freely. `run` gets each message
+and emits through `ctx`, whose `emit` takes the declared `Output`. With no
+`type State` written, it keeps nothing between messages and journals nothing.
 
 ```rust
 // src/operator.rs: the operator. The graph, and the unit the controller schedules.
@@ -394,9 +404,7 @@ impl UnboundedOperator for EchoOperator {
     }
 
     fn channels(c: &ChannelBuilder) {
-        c.input::<String>("in")
-            .into::<Echo>()
-            .sink_named("out");
+        c.input::<String>("in").into::<Echo>().sink_named("out");
     }
 }
 ```

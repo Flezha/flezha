@@ -74,7 +74,7 @@ For Cells whose Operator has `persistence_enabled = false`, OR whose agent-side 
 #### Scenario: Cell restart via changelog
 
 - **WHEN** a Cell reconnects AND its Operator has `persistence_enabled = true` AND the agent has a non-empty WAL or snapshot under the `operator-state-persistence` capability
-- **THEN** the agent SHALL deliver state via `RestoreInitState{cell_id, snapshot_bytes, change_log_bytes}`; the init-state plugin chain MUST NOT run for that Cell; the SDK SHALL restore via `init_state(cell_key, Some(payload))` + runtime auto-snapshot-decode + change-log fold per `operator-state-persistence`
+- **THEN** the agent SHALL deliver state via `RestoreInitState{cell_id, snapshot_bytes, change_log_bytes}`; the init-state plugin chain MUST NOT run for that Cell; the SDK SHALL restore via `init_state(cell_key)` + runtime auto-snapshot-decode + change-log fold per `operator-state-persistence`
 
 #### Scenario: Cell restart with persistence disabled at Operator class
 

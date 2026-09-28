@@ -1,7 +1,7 @@
 # rust-sdk-dispatch Specification
 
 ## Purpose
-This capability covers the Rust SDK's Operator/Tasklet/Cell dispatch path: sticky per-Cell ordering invariants under ThreadPool dispatch, dispatch throughput reporting on the reference workload, the per-message dispatch-overhead budget, live Operator-instance registry concurrency, reconnect semantics across transient and intentional disconnects, command-dispatch byte-stability for surviving wire commands, the per-Cell flusher's single-thread linger drain (with toggle-aware semantics for `persistence_enabled = false`), the bounded operator `state.apply` hot-path cost, drain-time coalescing, the public `TaskletTestHarness` testing surface, and the 16-byte version header stamped on persisted Changes.
+This capability covers the Rust SDK's Operator/Tasklet/Cell dispatch path: sticky per-Cell ordering invariants under ThreadPool dispatch, dispatch throughput reporting on the reference workload, the per-message dispatch-overhead budget, live Operator-instance registry concurrency, reconnect semantics across transient and intentional disconnects, command-dispatch byte-stability for surviving wire commands, the per-Cell flusher's single-thread linger drain (with toggle-aware semantics for `persistence_enabled = false`), the `ctx.change` hot-path cost, drain-time coalescing, the public `TaskletTestHarness` testing surface, and the 16-byte version header stamped on persisted Changes.
 ## Requirements
 ### Requirement: Sticky Per-Cell Ordering Under ThreadPool Dispatch
 
@@ -136,12 +136,12 @@ When `true`, the flusher SHALL invoke `send_frame` for each frame and propagate 
 
 #### Scenario: Toggle-off drain discards without wire I/O
 
-- **WHEN** an Operator with `persistence_enabled = false` records 10 Changes via `state.apply(...)` and the flusher's linger elapses
+- **WHEN** an Operator with `persistence_enabled = false` records 10 Changes via `ctx.change(...)` and the flusher's linger elapses
 - **THEN** the Cell's flush buffer SHALL be empty after the tick AND the Cell's `send_frame` function SHALL NOT have been invoked AND the Cell's `change_seq` SHALL have advanced by the post-coalesce record count
 
 #### Scenario: Toggle-on drain invokes send_frame per frame
 
-- **WHEN** an Operator with `persistence_enabled = true` records 10 Changes (no coalescing) via `state.apply(...)` and the flusher's linger elapses
+- **WHEN** an Operator with `persistence_enabled = true` records 10 Changes (no coalescing) via `ctx.change(...)` and the flusher's linger elapses
 - **THEN** the Cell's `send_frame` function SHALL have been invoked exactly 10 times with frame bytes built from `[cell_id][seq: u64 BE][header: 16B][change_bytes][crc32: u32 BE]`
 
 #### Scenario: send_frame failure preserves seq monotonicity
@@ -151,34 +151,34 @@ When `true`, the flusher SHALL invoke `send_frame` for each frame and propagate 
 
 ### Requirement: Hot-path cost is bounded to one Vec::push per state.apply
 
-The Rust SDK's `state.apply(change)` SHALL pay exactly: one `Tasklet::apply_change(state, &change)` call (user-supplied; cost varies) plus one `Vec::push(change)` tasklet. The hot path SHALL NOT serialize, fsync, network-send, or acquire any lock beyond the existing per-Cell sticky CAS and the `&mut self` borrow on the buffer (which is already exclusive via the runner thread's ownership of the cell's buffer for the duration of `Tasklet::run`).
+The Rust SDK's `ctx.change(change)` SHALL pay exactly: one `change.apply_to(state)` call (user-supplied; cost varies) plus one `Vec::push(change)` tasklet. The hot path SHALL NOT serialize, fsync, network-send, or acquire any lock beyond the existing per-Cell sticky CAS and the `&mut self` borrow on the buffer (which is already exclusive via the runner thread's ownership of the cell's buffer for the duration of `Tasklet::run`).
 
-The microbench `state_apply_throughput` (`sdk/rust/benches/state.rs`) SHALL exercise this requirement and report nanoseconds per `state.apply(...)` call across change-payload-size and coalesce-key dimensions; CI SHALL fail the build if any dimension regresses >50% from the recorded baseline.
+The microbench `state_apply_throughput` (`sdk/rust/benches/state.rs`) SHALL exercise this requirement and report nanoseconds per `ctx.change(...)` call across change-payload-size and coalesce-key dimensions; CI SHALL fail the build if any dimension regresses >50% from the recorded baseline.
 
 #### Scenario: No serialization on state.apply
 
-- **WHEN** a Tasklet's `run` calls `state.apply(MyChange::Foo)` 100 times in a tight loop
+- **WHEN** a Tasklet's `run` calls `ctx.change(MyChange::Foo)` 100 times in a tight loop
 - **THEN** zero serialization calls (`serde::Serialize::serialize`, `postcard::to_allocvec`, `bincode::serialize`, etc.) SHALL be issued from the runner thread during these 100 calls
 
 #### Scenario: No I/O on state.apply
 
-- **WHEN** a Tasklet's `run` calls `state.apply(MyChange::Foo)` 100 times
+- **WHEN** a Tasklet's `run` calls `ctx.change(MyChange::Foo)` 100 times
 - **THEN** zero `write`, `send`, `fsync`, `fdatasync`, or NIF-call syscalls SHALL be issued from the runner thread during these 100 calls
 
 #### Scenario: state_apply_throughput microbench reports < 200 ns/op for SmallChange + NoCoalesceKey
 
 - **WHEN** the `state_apply_throughput` Criterion bench runs with `change_kind = SmallChange (8B)` and `coalesce_kind = NoCoalesceKey` and the buffer is preallocated to capacity 1024
-- **THEN** the reported median time per `state.apply(...)` SHALL be < 200 ns on the reference host
+- **THEN** the reported median time per `ctx.change(...)` SHALL be < 200 ns on the reference host
 
 ### Requirement: Coalescing is applied at drain time, not on the hot path
 
-The Rust SDK SHALL apply coalescing inside `FlushableBuffer::drain_to_frames`, AFTER the buffer's Mutex is acquired by the flusher. The hot path of `state.apply(...)` SHALL NOT touch any coalescing data structure.
+The Rust SDK SHALL apply coalescing inside `FlushableBuffer::drain_to_frames`, AFTER the buffer's Mutex is acquired by the flusher. The hot path of `ctx.change(...)` SHALL NOT touch any coalescing data structure.
 
 The drain-time coalescing algorithm SHALL: (a) build a `HashMap<CoalesceKey, usize>` mapping each key to the index of the latest record carrying that key; (b) build a parallel `Vec<bool>` mask marking earlier records with the same key as discarded; (c) emit kept records in their original buffer order. Records with `coalesce_key() == None` SHALL be retained verbatim.
 
 #### Scenario: Same-key records collapse to latest
 
-- **WHEN** a Tasklet records 50 `BarTick { interval: M1, ts: T }` Changes via `state.apply(...)` within one linger window, all returning `Some(CoalesceKey::from_hash(&(M1, T)))` from `coalesce_key()`
+- **WHEN** a Tasklet records 50 `BarTick { interval: M1, ts: T }` Changes via `ctx.change(...)` within one linger window, all returning `Some(CoalesceKey::from_hash(&(M1, T)))` from `coalesce_key()`
 - **THEN** the flusher's drain SHALL emit exactly one frame whose Change is the 50th `BarTick`
 
 #### Scenario: No-key records are preserved verbatim
@@ -195,30 +195,35 @@ The drain-time coalescing algorithm SHALL: (a) build a `HashMap<CoalesceKey, usi
 
 The Rust SDK SHALL export `TaskletTestHarness::<S: Tasklet>` under `flezha_runner::testing::TaskletTestHarness`, gated by `cfg(any(test, feature = "testing"))`. The harness SHALL support:
 
-- `TaskletTestHarness::<S>::new()` (requires `S: Default`) — constructs a harness with `S::init_state(None, None)`.
-- `TaskletTestHarness::<S>::with_initial_state(state: S::State)` — explicit initial state.
-- `TaskletTestHarness::<S>::with_payload(cell_key, payload)` — replicates the runtime's snapshot+changelog restoration flow.
-- `apply_inputs(iter: impl IntoIterator<Item = S::Input>) -> &mut Self` — invokes `S::run` for each input on the harness's owned state, recording emits and Changes.
-- `expect_changes(self, expected: &[S::Change]) -> Self` (consuming) — asserts equality, requires `S::Change: PartialEq + Debug`.
-- `expect_emits<C>(self, expected: &[C]) -> Self` (consuming) — asserts emits of type `C` equal expected.
-- `expect_state(self, expected: &S::State) -> Self` (consuming) — asserts state equality, requires `S::State: PartialEq + Debug`.
-- `replay(initial: S::State, log: &[S::Change]) -> S::State` — folds the log via `S::apply_change`.
-- `replay_equals(&self) -> Result<(), ReplayMismatch>` — replays self.recorded_changes against a re-constructed initial state and asserts byte-equality (via `serde::Serialize` round-trip) with `self.state`.
+- `TaskletTestHarness::<S>::new()` (requires `S: Default`), which constructs a harness with `S::init_state(None)`.
+- `TaskletTestHarness::<S>::with_initial_state(state: S::State)`, an explicit initial state.
+- `TaskletTestHarness::<S>::with_payload(cell_key, payload)`, which replicates the runtime's snapshot and change-log restoration flow.
+- `apply_inputs(iter: impl IntoIterator<Item = S::Input>) -> &mut Self`, which invokes `S::run` for each input on the harness's owned state, recording emits and every `ctx.change` call.
+- `expect_changes(self, expected: &[S::Change]) -> Self` (consuming), which asserts equality and requires `S::Change: PartialEq + Debug`.
+- `expect_emits(self, expected: &[S::Output]) -> Self` (consuming), which asserts the emitted values equal expected.
+- `expect_state(self, expected: &S::State) -> Self` (consuming), which asserts state equality and requires `S::State: PartialEq + Debug`.
+- `replay(initial: S::State, log: &[S::Change]) -> S::State`, which encodes each change as the runtime's flusher writes it, decodes it as the restore fold reads it, and folds it through its `apply_to`, so a change that does not survive persistence fails the replay.
+- `replay_equals(&self) -> Result<(), ReplayMismatch>`, which replays the recorded changes against the captured initial state and asserts byte-equality (via `serde::Serialize` round-trip) with the harness's state.
 
 #### Scenario: Harness asserts on recorded Changes
 
-- **WHEN** a test runs `TaskletTestHarness::<CounterTasklet>::new().apply_inputs(vec![Input::Add(5), Input::Add(3)]).expect_changes(&[CounterChange { delta: 5 }, CounterChange { delta: 3 }])`
-- **THEN** the chain SHALL succeed and produce a harness whose `recorded_changes` equals the expected slice
+- **WHEN** a test calls `apply_inputs(vec![Input::Add(5), Input::Add(3)])` on a `TaskletTestHarness::<Counter>::new()` and then `expect_changes(&[Added { delta: 5 }, Added { delta: 3 }])`
+- **THEN** the assertion SHALL succeed, because the recorded changes equal the expected slice
 
 #### Scenario: Harness replays for determinism check
 
-- **WHEN** a test runs `TaskletTestHarness::<CounterTasklet>::new().apply_inputs(inputs).replay_equals()`
-- **THEN** the result SHALL be `Ok(())` because `CounterTasklet::apply_change` is deterministic
+- **WHEN** a test calls `apply_inputs(inputs)` on a `TaskletTestHarness::<Counter>::new()` and then `replay_equals()`
+- **THEN** the result SHALL be `Ok(())` because `Added::apply_to` is deterministic
 
-#### Scenario: Harness detects non-deterministic apply_change
+#### Scenario: Harness detects a non-deterministic apply_to
 
-- **WHEN** a Tasklet's `apply_change` reads `SystemTime::now()` and uses it to seed a state field, AND the harness runs `replay_equals()`
+- **WHEN** a change's `apply_to` reads ambient state, such as `SystemTime::now()` or a process-wide counter, into a state field, AND the harness runs `replay_equals()`
 - **THEN** the result SHALL be `Err(ReplayMismatch { expected_serialized, actual_serialized })` whose `Display` impl renders a hex-diff identifying the divergent state field
+
+#### Scenario: A change that does not survive persistence fails the replay
+
+- **WHEN** a change type skips a field when serialized, and the harness runs `replay_equals()` after recording one
+- **THEN** the result SHALL be `Err(ReplayMismatch { .. })`, because the replayed state folds the change as the runtime would restore it
 
 #### Scenario: Harness compiled-out without testing feature
 
@@ -301,7 +306,7 @@ The Rust SDK's payload-id constants (those that map to the binary framing's `pay
 
 ### Requirement: Test fixtures' Tasklets exercise the output channel path
 
-The test fixtures under `test/apps/rust_runner/src/main.rs` SHALL emit at least one output frame per input received, via `TaskletCtx::output(channel, value, metadata)`, on Operators exercised by the controller's plugin tests with an `:on_output` hook. Specifically:
+The test fixtures under `test/apps/rust_runner/src/main.rs` SHALL emit at least one output frame per input received, via `ctx.emit(value)`, on Operators exercised by the controller's plugin tests with an `:on_output` hook. Specifically:
 
 - `StoreInputOperator::StoreInputTasklet::run` SHALL emit the input string on a sink Channel (named `"output"`) after applying the `PushText` change.
 - `CompareFilterOperator::CompareFilterTasklet::run` SHALL emit the input string on a sink Channel when `state.comparable == input` (matching the existing test's expectation of `"hello world"` round-tripping through the filter).
@@ -701,3 +706,4 @@ The `bench-regression` GitHub Actions job SHALL run that bench, SHALL read both 
 - **WHEN** the cell-stress bench (`8 operators × 4 tasklets × 8 cells × 20K msg/operator`, fan-out per input to all 8 cells of the entry tasklet; invoked via `mix bench --shape cell --pool-sizes 1,8`) is run on an 8-core host
 - **THEN** the throughput at pool size 8 SHALL be at least 4× the throughput at pool size 1, demonstrating that cell-mode dispatch is not the bottleneck
 - **AND** the `bench-cell-scaling` CI job SHALL read the measured ratio from the run's structured report and report it to the PR check output without blocking the merge (informational gate)
+

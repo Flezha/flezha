@@ -454,11 +454,11 @@ flowchart TB
         DISP["⚙️ Dispatcher<br/>once per invocation: evaluate the declared Clock,<br/>snapshot change_seq, reset the ordinal counter"]:::exec
         CTX["ctx, the tasklet context"]:::exec
         DISP --> CTX
-        CTX -->|"ctx.now()"| T["time · WallClock | EventTimeFrom&lt;F&gt; | LogicalClock"]:::store
+        CTX -->|"ctx.now()"| T["time · wall | event time | logical"]:::store
         CTX -->|"ctx.stable_id()"| ID["FNV-1a-128 over<br/>cell identity ‖ change_seq ‖ ordinal"]:::store
         CTX -->|"ctx.emit_keyed(key, value)"| EM["keyed emit"]:::store
     end
-    BAD["❌ SystemTime::now() · Uuid::new_v4() · an external read<br/>inside run / apply_change / compensate"]:::risk
+    BAD["❌ SystemTime::now() · Uuid::new_v4() · an external read<br/>inside run / apply_to / compensate"]:::risk
     HARNESS["TaskletTestHarness<br/>replay_equals — the state gate<br/>replay_emits_equal — the output gate"]:::ctrl
 
     BAD -.->|"breaks replay — every re-run yields new values"| GOOD
@@ -470,17 +470,16 @@ flowchart TB
     classDef risk fill:#fee2e2,stroke:#991b1b,color:#111
 ```
 
-The `Clock` trait is sealed — there are exactly three implementations, and a custom one is a
-compile error:
+A tasklet declares one of exactly three clocks (`ClockKind` in Rust), by what it writes:
 
-| Clock | Value per invocation |
-| --- | --- |
-| `WallClock` | epoch milliseconds, read **once** at dispatch entry |
-| `EventTimeFrom<F>` | `F::extract(&input)` — the event time carried by the input itself |
-| `LogicalClock` | the cell's durable `change_seq` |
+| Clock | Declared by | Value per invocation |
+| --- | --- | --- |
+| wall | nothing (the default) | epoch milliseconds, read **once** at dispatch entry |
+| event time | a written `event_time(&input)` | the event time carried by the input itself |
+| logical | `logical_clock` on the attribute | the cell's durable `change_seq` |
 
-`EventTimeFrom` is the only clock that is fully deterministic across a replay, which is why
-late-input correction requires it. `LogicalClock` over a stateless tasklet is refused at build
+Event time is the only clock that is fully deterministic across a replay, which is why
+late-input correction requires it. A logical clock over a stateless tasklet is refused at build
 time — there is no sequence to serve.
 
 `ctx.stable_id()` replaces a random UUID with a hash of *where and when* the invocation

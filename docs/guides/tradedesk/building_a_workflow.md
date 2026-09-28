@@ -123,7 +123,96 @@ what the whole operator takes.
 
 ### Rust
 
-TODO: not written yet.
+The whole example:
+[`sdk/rust/examples/tradedesk`](https://github.com/flezha/flezha_rust_sdk/tree/main/examples/tradedesk).
+
+```rust
+// src/reserve_funds.rs: step one. Puts the money aside, and releases it on an undo.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Reserved {
+    pub order: OrderTicket,
+    pub reservation_id: String,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct Reservation {
+    id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Reserving(String);
+
+impl Change<Reservation> for Reserving {
+    fn apply_to(&self, reservation: &mut Reservation) {
+        reservation.id = self.0.clone();
+    }
+}
+
+#[derive(Default)]
+pub struct ReserveFunds;
+
+#[tasklet(name = "reserve_funds")]
+impl Tasklet for ReserveFunds {
+    type Input = OrderTicket;
+    type Output = Reserved;
+    type State = Reservation;
+    type Change = Reserving;
+
+    // The step: reserve the money under an id, remember the id, and hand the order on.
+    fn run(&mut self, order: OrderTicket, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
+        let id = format!("res-{}", ctx.stable_id()); // the same id when the step runs again
+        ctx.change(Reserving(id.clone()));
+        ctx.emit(Reserved {
+            order,
+            reservation_id: id,
+        })
+    }
+
+    // The undo: release the money, by the id the state kept.
+    fn compensate(
+        &mut self,
+        _: Vec<Arc<Reserved>>,
+        ctx: &mut Ctx<'_, Self>,
+    ) -> Result<(), TaskletError> {
+        println!("[undo] released {}", ctx.state().id);
+        Ok(())
+    }
+}
+```
+
+**Flezha calls `run` with the order**, and passes it two things: the input and
+the context, as it did for the ETL stream's tasklets.
+
+- `order` is the input, what arrives on the step's channel. For the first step,
+  that is the order the instance was started with, an `OrderTicket`.
+- `ctx` is the context, the step's way of talking to Flezha. `ctx.change(...)`
+  writes the id down in the step's state, the `Reservation` struct above, and
+  `ctx.state()` reads it back. `ctx.emit(...)` hands a value to the next step,
+  and `ctx.stable_id()` gives an id that stays the same when the step runs
+  again, so a retry does not put the money aside twice.
+
+The step takes an `OrderTicket`, remembers a `Reservation`, and hands on a
+`Reserved`, the order and the id. `Reserving` is the change that writes the id
+down, applied by its `apply_to`.
+
+**Flezha calls `compensate` only when the order fails**, and passes it two
+things:
+
+- the first is what `run` handed on, a `Vec` of `Reserved`.
+- `ctx` is the context again, and `ctx.state()` is the same state `run` wrote
+  the id into.
+
+The id is read from the state, not from what was handed on, because after a
+crash Flezha brings back the step's state but not what it handed on, so the
+list can be empty. Writing a `compensate` is what gives a step an undo, and a
+step without one is skipped. It can run twice, when a crash comes in the middle
+of an undo, so it has to be safe to repeat.
+
+The operator names the type itself, `ReserveFunds`.
+[What `#[tasklet]` writes](building_an_etl_stream.md#keep-each-symbol-s-prices)
+lists what the attribute carries. `OrderTicket` is declared with the operator, in
+[Several tasklets, step by step](#several-tasklets-step-by-step), because it is
+what the whole operator takes.
 
 ### Node
 
@@ -197,7 +286,59 @@ public final class PlaceOrder implements Tasklet<Reserved, PlaceOrder.Placement,
 
 ### Rust
 
-TODO: not written yet.
+```rust
+// src/place_order.rs: step two. Places the order, and cancels it on an undo.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PlacedOrder {
+    pub order: OrderTicket,
+    pub order_id: String,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct Placement {
+    order_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Placing(String);
+
+impl Change<Placement> for Placing {
+    fn apply_to(&self, placement: &mut Placement) {
+        placement.order_id = self.0.clone();
+    }
+}
+
+#[derive(Default)]
+pub struct PlaceOrder;
+
+#[tasklet(name = "place_order")]
+impl Tasklet for PlaceOrder {
+    type Input = Reserved;
+    type Output = PlacedOrder;
+    type State = Placement;
+    type Change = Placing;
+
+    // The step: place the order under an id, remember the id, and hand the order on.
+    fn run(&mut self, reserved: Reserved, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
+        let order_id = format!("ord-{}", ctx.stable_id());
+        ctx.change(Placing(order_id.clone()));
+        ctx.emit(PlacedOrder {
+            order: reserved.order,
+            order_id,
+        })
+    }
+
+    // The undo: cancel the order, by the id the state kept.
+    fn compensate(
+        &mut self,
+        _: Vec<Arc<PlacedOrder>>,
+        ctx: &mut Ctx<'_, Self>,
+    ) -> Result<(), TaskletError> {
+        println!("[undo] cancelled {}", ctx.state().order_id);
+        Ok(())
+    }
+}
+```
 
 ### Node
 
@@ -276,7 +417,36 @@ the desk keeps the defaults.
 
 ### Rust
 
-TODO: not written yet.
+```rust
+// src/confirm_fill.rs: asks the exchange whether the order filled, and ends the order with the answer.
+const EXCHANGE_MAX: u32 = 100;
+
+#[derive(Default)]
+pub struct ConfirmFill;
+
+#[tasklet(name = "confirm_fill")]
+impl Tasklet for ConfirmFill {
+    type Input = PlacedOrder;
+
+    fn run(&mut self, placed: PlacedOrder, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
+        std::thread::sleep(Duration::from_secs(10)); // the paper exchange takes ten seconds to answer
+        let quantity = placed.order.quantity;
+        if quantity > EXCHANGE_MAX {
+            return Err(TaskletError::Custom(format!(
+                "the exchange fills at most {EXCHANGE_MAX} a time, and this is {quantity}"
+            ))); // tried again, then the order is undone
+        }
+        ctx.complete(format!(
+            "filled {} {quantity} as {}",
+            placed.order.symbol, placed.order_id
+        ))
+    }
+}
+```
+
+An `Err` from `run` is retried. The number of tries and the wait are set where
+the operator connects the step, with `retry_max` and `retry_backoff_ms`; the
+desk keeps the defaults.
 
 ### Node
 
@@ -332,7 +502,27 @@ the plainest shape a tasklet has.
 
 ### Rust
 
-TODO: not written yet.
+```rust
+// src/record_order.rs: writes the placed order into the desk's book.
+#[derive(Default)]
+pub struct RecordOrder;
+
+#[tasklet(name = "record_order")]
+impl Tasklet for RecordOrder {
+    type Input = PlacedOrder;
+
+    fn run(&mut self, placed: PlacedOrder, _: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
+        println!(
+            "[book] {} {} as {}",
+            placed.order.symbol, placed.order.quantity, placed.order_id
+        );
+        Ok(())
+    }
+}
+```
+
+With no `type State` and no `type Output` written, it keeps nothing and hands
+nothing on, which is the plainest shape a tasklet has.
 
 ### Node
 
@@ -431,7 +621,42 @@ The four classes it names in `into` are the four steps themselves:
 
 ### Rust
 
-TODO: not written yet.
+```rust
+// src/order_executor.rs: the bounded operator. One instance is one order.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct OrderTicket {
+    pub symbol: String,
+    pub quantity: u32,
+}
+
+pub struct OrderExecutorOperator;
+
+impl BoundedOperator for OrderExecutorOperator {
+    fn factory_id() -> &'static str {
+        "order_executor"
+    }
+
+    fn channels(c: &ChannelBuilder) {
+        c.input::<OrderTicket>("order")
+            .into::<ReserveFunds>() // step one
+            .into::<PlaceOrder>() // step two, once step one is done
+            .branch([
+                &|fill| {
+                    fill.into::<ConfirmFill>(); // two arms, side by side
+                },
+                &|book| {
+                    book.into::<RecordOrder>();
+                },
+            ]);
+    }
+}
+```
+
+`OrderTicket` is the order an instance is started with: `reserve_funds` takes
+it, and `BuyAboveAverage` in the ETL stream sends it when it starts an order.
+The four types it names in `into::<...>()` are the four steps themselves:
+`ReserveFunds`, `PlaceOrder`, `ConfirmFill` and `RecordOrder`. Each arm of
+`branch` is a closure that gets the same handle.
 
 ### Node
 
@@ -483,7 +708,23 @@ public static void main(String[] args) throws Exception {
 
 ### Rust
 
-TODO: not written yet.
+```rust
+// src/main.rs: the runner. Joins trading and registers both factories.
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let namespace = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "trading".to_string());
+
+    let runner = Flezha::create_runner(namespace)?;
+    runner
+        .register_factory(trade_watcher::TradeWatcherOperator)?
+        .register_factory(order_executor::OrderExecutorOperator)?
+        .start()?;
+
+    runner.await_termination()?;
+    Ok(())
+}
+```
 
 ### Node
 

@@ -163,7 +163,7 @@ pub enum TopologyIssue {
     #[error(
         "operator declares correction_window() but tasklet `{tasklet}` declares clock \
          `{clock_type}`; correction orders a replayed slice by event time, which only \
-         `EventTimeFrom` yields"
+         an event-time clock yields"
     )]
     CorrectionWithoutEventTime { tasklet: String, clock_type: String },
 

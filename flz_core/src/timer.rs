@@ -18,6 +18,7 @@ use flz_transport::transport::FlezhaStream;
 use serde::{Deserialize, Serialize};
 
 use crate::cell::CellSlot;
+use crate::host::HostClock;
 pub use crate::schema::{TimerKind, TimerOp};
 use crate::util::LockRecover;
 
@@ -125,28 +126,20 @@ pub struct TimerFire {
 // ----------------------------------------------------------------- session
 
 /// What a Tasklet declares about its timers, resolved once: the cap, the
-/// names a refusal reports, whether its clock serves event time, its
-/// counters.
+/// name a refusal reports, its clock, its counters.
 #[derive(Clone)]
 pub struct TimerPolicy {
     max_per_cell: usize,
     tasklet: &'static str,
-    event_time_clock: bool,
-    clock: &'static str,
+    clock: HostClock,
     counters: Arc<TimerCounters>,
 }
 
 impl TimerPolicy {
-    pub fn new(
-        max_per_cell: usize,
-        tasklet: &'static str,
-        event_time_clock: bool,
-        clock: &'static str,
-    ) -> Self {
+    pub fn new(max_per_cell: usize, tasklet: &'static str, clock: HostClock) -> Self {
         Self {
             max_per_cell,
             tasklet,
-            event_time_clock,
             clock,
             counters: counters_for(tasklet),
         }
@@ -205,11 +198,11 @@ impl TimerSession {
     }
 
     pub fn register_at_event_time(&mut self, scheduled_at: u64) -> Result<u64, TimerRefusal> {
-        if !self.policy.event_time_clock {
+        if self.policy.clock != HostClock::EventTime {
             self.note_refused();
             return Err(TimerRefusal::EventTimeWithoutEventTimeClock {
                 tasklet: self.policy.tasklet.to_string(),
-                clock: self.policy.clock.to_string(),
+                clock: self.policy.clock.name().to_string(),
             });
         }
         self.register(TimerKind::EventTime, scheduled_at)
@@ -519,8 +512,7 @@ mod tests {
         let policy = TimerPolicy {
             max_per_cell: 1,
             tasklet: "counter_probe_tasklet",
-            event_time_clock: false,
-            clock: "WallClock",
+            clock: HostClock::Wall,
             counters: counters_for("counter_probe_tasklet"),
         };
         let mut live = PendingTimers::default();

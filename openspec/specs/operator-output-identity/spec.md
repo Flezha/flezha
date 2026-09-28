@@ -24,7 +24,7 @@ source of truth for whether output identity exists on that channel.
 
 ### Requirement: `emit_keyed` supplies the natural key on keyed channels
 
-`TaskletCtx::emit_keyed(key, value)` SHALL emit on the invocation's channel with
+`ctx.emit_keyed(key, value)` SHALL emit on the invocation's channel with
 the caller-supplied natural key, in a bounded tasklet exactly as in an unbounded tasklet: no SDK
 SHALL refuse a keyed emit, or drop its key or metadata, because the tasklet runs inside a
 bounded operator. On a keyed channel, plain `emit` /

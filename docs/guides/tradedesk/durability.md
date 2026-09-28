@@ -228,6 +228,10 @@ order is not `complete`. The runner's terminal shows the booking:
 [book] EUR/USD 10 as ord-6b2e13f521b6781afd9f710152cd2f25
 ```
 
+A Rust runner's journal lists the same steps, with `46 byte(s)` as the handoff
+of each of the first two: every SDK writes the values it hands on in its own
+encoding.
+
 > Crash the runner while `confirm_fill` waits, the same way: `kill -9` with the
 > process id `flz runner list` shows now, then start it again.
 > {: .step}
@@ -363,6 +367,15 @@ The runner's terminal shows the three tries, the last one ending:
 [flezha] prepare for channel `trades` parking payload to DLQ after 3 attempt(s): java.lang.IllegalArgumentException: entry channel: JSON deserialization failed: Cannot deserialize value of type `double` from String "one euro": not a valid `double` value (as String to convert)
 ```
 
+A Rust runner names serde's reason instead:
+
+```output
+[flezha] entry channel `trades` parking payload to DLQ after 3 attempt(s): entry channel: JSON deserialization failed: invalid type: string "one euro", expected f64 at line 1 column 71
+```
+
+A Rust runner's entry carries that reason in its `ERROR` column and in
+`flz dlq show` below.
+
 `flz dlq list` shows what a partition has set aside:
 
 ```sh
@@ -469,6 +482,16 @@ Between the other symbols' bookings, the runner's terminal shows the one order:
 [flezha] tasklet confirm_fill attempt 2/3 failed (retrying in 66 ms): the exchange fills at most 100 a time, and this is 136
 [undo] cancelled ord-be4f7a593756acada0924d10da8d31c6
 [undo] released res-935e21608cc9ea9844b537d8c0c97517
+```
+
+A Rust runner prints the tasklet's error kind before the message:
+
+```output
+[book] EUR/USD 120 as ord-26188e006a7df8374b811618b39c770a
+[flezha] tasklet confirm_fill attempt 1/3 failed (retrying in 45 ms): tasklet error: the exchange fills at most 100 a time, and this is 120
+[flezha] tasklet confirm_fill attempt 2/3 failed (retrying in 120 ms): tasklet error: the exchange fills at most 100 a time, and this is 120
+[undo] cancelled ord-26188e006a7df8374b811618b39c770a
+[undo] released res-9282a7ff442753844305a0393c154b6b
 ```
 
 The order was cancelled, then the money released. Both undos read their id from

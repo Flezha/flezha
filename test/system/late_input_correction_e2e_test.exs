@@ -3,7 +3,7 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
   End-to-end proof for `stream-late-input-correction` against a live Rust
   runner.
 
-  The `candle` fixture declares the tier, an `EventTimeFrom` clock, a keyed sink
+  The `candle` fixture declares the tier, an event-time clock, a keyed sink
   and a 10-minute `correction_window`. Its state records the event times in the
   order they were folded — which is the assertion surface, because the whole
   claim of this change is about *order*, not about values.

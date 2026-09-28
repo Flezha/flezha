@@ -290,18 +290,10 @@ fn refuse_tier_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) {
             if task_decl.clock != HostClock::EventTime {
                 issues.push(TopologyIssue::CorrectionWithoutEventTime {
                     tasklet: task_decl.name.clone(),
-                    clock_type: clock_name(task_decl.clock).to_string(),
+                    clock_type: task_decl.clock.name().to_string(),
                 });
             }
         }
-    }
-}
-
-fn clock_name(clock: HostClock) -> &'static str {
-    match clock {
-        HostClock::Wall => "wall",
-        HostClock::Logical => "logical",
-        HostClock::EventTime => "event_time",
     }
 }
 
@@ -417,7 +409,7 @@ fn refuse_tasklet(task_decl: &HostTaskletDecl, issues: &mut Vec<TopologyIssue>) 
     if task_decl.clock == HostClock::Logical && task_decl.change_is_nochange {
         issues.push(TopologyIssue::UnservableClock {
             tasklet: task_decl.name.clone(),
-            clock_type: clock_name(task_decl.clock).to_string(),
+            clock_type: task_decl.clock.name().to_string(),
         });
     }
     if task_decl.mailbox_capacity == 0 {

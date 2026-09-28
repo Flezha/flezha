@@ -12,22 +12,20 @@ A Tasklet registers a timer from `run` (or from a firing), and the runtime
 calls `on_timer` when it comes due, with no input to carry it:
 
 ```rust
+#[tasklet(name = "session")]
 impl Tasklet for Session {
     // …
-    fn run(&mut self, input: Click, mut state: StateHandle<'_, Self>, ctx: &mut TaskletCtx<'_>)
-        -> Result<(), TaskletError>
-    {
-        state.apply(SessionChange::Touched(input.at));
+    fn run(&mut self, input: Click, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
+        ctx.change(SessionChange::Touched(input.at));
         ctx.timer_after(Duration::from_secs(30))?;   // push the idle deadline out
         Ok(())
     }
 
-    fn on_timer(&mut self, fired_at: u64, _kind: TimerKind,
-                mut state: StateHandle<'_, Self>, ctx: &mut TaskletCtx<'_>)
+    fn on_timer(&mut self, fired_at: u64, _kind: TimerKind, ctx: &mut Ctx<'_, Self>)
         -> Result<(), TaskletError>
     {
-        state.apply(SessionChange::Closed(fired_at));
-        ctx.emit(state.summary())
+        ctx.change(SessionChange::Closed(fired_at));
+        ctx.emit(ctx.state().summary())
     }
 }
 ```
@@ -80,11 +78,11 @@ arrived" — a session timeout, an idle flush, a join expiry — and the
 event-time timer is for a deadline the data itself reaches, such as a window
 boundary. `timer_at_event_time` is refused
 (`EventTimeTimerWithoutEventTimeClock`) unless the Tasklet declares
-`type Clock = EventTimeFrom<_>` (Rust) or writes `eventTime(input)` (Java).
+writes `event_time(input)` (Rust) or `eventTime(input)` (Java).
 
 **`timer_after(d)` anchors on `ctx.now()`**, not an ambient read, so a
 replayed invocation registers the same absolute timestamp the live one did.
-Under an `EventTimeFrom` clock the anchor is the input's event time: a
+Under an event-time clock the anchor is the input's event time: a
 caught-up stream schedules the same instant a wall clock would, and a replay
 of history schedules a past instant, which fires at once.
 

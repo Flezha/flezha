@@ -111,7 +111,9 @@ $ FLEZHA_NAMESPACE_SECRET=flzt_3j5bftycxn43ivwoxbd2peghazjgtnru5bxqgshvfqcft7lrd
 
 ### Rust
 
-TODO: not written yet.
+```sh
+$ FLEZHA_NAMESPACE_SECRET=flzt_3j5bftycxn43ivwoxbd2peghazjgtnru5bxqgshvfqcft7lrdsra cargo run --release
+```
 
 ### Node
 

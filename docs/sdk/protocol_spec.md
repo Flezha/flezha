@@ -1066,7 +1066,7 @@ dropped; the stream stays open because the outer framing was intact.
 ## 11. Per-Cell State Persistence
 
 This section is the wire contract for persistence. The per-SDK trait surface
-(`Tasklet::init_state` / `apply_change`, codecs, schema versions) is in
+(`Tasklet::init_state` / `Change::apply_to`, codecs, schema versions) is in
 [`state_persistence.md`](state_persistence.md); the controller's on-disk
 layout, WAL writer and `flz state` CLI are in
 [`../internals/state_persistence.md`](../internals/state_persistence.md).
@@ -1159,9 +1159,9 @@ as concatenated fields and `Option` as `0x00 | 0x01 ++ T`.
   every kept value whose origin is above the instance's floor again, ahead of
   the re-forwarded tail (`flz.edge`, below); a consumer whose own records took
   that offset drops it.
-- `event_time` is what the Tasklet's declared clock evaluated to (extracted
-  event time under `EventTimeFrom`, wall-clock ms under `WallClock`, the change
-  seq under `LogicalClock`); late-input correction and `{:timestamp, ts}`
+- `event_time` is what the Tasklet's declared clock evaluated to (the input's
+  event time under an event-time clock, wall-clock ms under the wall clock, the
+  change seq under the logical clock); late-input correction and `{:timestamp, ts}`
   time travel resolve against it.
 - `timers` makes a timer **firing** exactly-once: the Changes `on_timer`
   applied, its emits and the fired timer's removal are one record, which
@@ -1309,7 +1309,7 @@ The runner resolves every record's header — the snapshot included — against
 the running Tasklet's `schema_version` and `min_readable_schema_version`
 before decoding anything (see "Schema evolution" below), decodes
 `snapshot_bytes` (when non-empty) into `State`, folds the
-change-log records through the Tasklet's `apply_change`, and re-arms the
+change-log records through each change's `apply_to`, and re-arms the
 Cell's change seq to `max(change-log terminal, terminal_seq) + 1` — a
 snapshot-only restore (empty WAL tail after a compaction) has no record to
 derive the seq from, and a seq below the snapshot's would have its next
@@ -1726,7 +1726,7 @@ metadata:
 |-----|-------|-----------|
 | `flz.cell` | `<operator_instance_id>/<tasklet_name>/<cell_key>` | replay-stable |
 | `flz.seq` | `<change_seq>.<emit_ordinal>` — the Cell's durable change seq after the flush-before-emit drain, plus the emit's ordinal within the invocation | replay-stable while state advances |
-| `flz.key` | the emitting Cell's own key, or the caller's natural key from `TaskletCtx::emit_keyed(key, value)` | replay-stable by the determinism contract |
+| `flz.key` | the emitting Cell's own key, or the caller's natural key from `Ctx::emit_keyed(key, value)` | replay-stable by the determinism contract |
 
 On a keyed channel a plain `emit` / `emit_with_meta` carries the emitting
 Cell's own key — equal to the key its input routed by — and `emit_keyed` is

@@ -82,7 +82,7 @@ as the missing piece.
 
 A migration SHALL be deterministic: the same bytes and the same `from_version`
 SHALL produce the same value on every invocation, for the same reason
-`apply_change` must — crash-resume, retry-replay and rewind all re-enter the
+a change's `apply_to` must — crash-resume, retry-replay and rewind all re-enter the
 restore fold.
 
 #### Scenario: a declared migration restores state across a shape change

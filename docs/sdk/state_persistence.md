@@ -15,25 +15,25 @@ its own core and carries the same rules re-expressed in Elixir
 ### State, Change and the fold
 
 A Tasklet declares a per-Cell `State` and a `Change` type — one logical mutation record
-(`delta: i64`, `Push(input)`). The author folds it with `apply_change(state, change)`; the
+(`delta: i64`, `Push(input)`). The change folds itself with `apply_to(state)`; the
 runtime persists the record through the per-Cell flush buffer. Two contracts hold in both
-SDKs: `apply_change` MUST be a pure, deterministic fold — replay is the recovery primitive
+SDKs: `apply_to` MUST be a pure, deterministic fold — replay is the recovery primitive
 (crash-resume, retry, rewind, effectively-once), so ambient time, randomness and external
-reads inside `run` / `apply_change` violate the contract; time comes from `ctx.now()` (the
-declared `Clock`), identifiers from `ctx.stable_id()`, and the harness gate `replay_equals`
-/ `replayEquals()` catches a divergence. And `state.apply(change)` (Java: `ctx.change(change)`)
+reads inside `run` / `apply_to` violate the contract; time comes from `ctx.now()` (the
+declared clock), identifiers from `ctx.stable_id()`, and the harness gate `replay_equals`
+/ `replayEquals()` catches a divergence. And `ctx.change(change)` (Java: `ctx.change(change)`)
 is the only recorded mutation path: one fold, one push.
 
 `NoChange` (Rust, uninhabited) and a `Void` state (Java) opt a Tasklet out: the runtime
 detects it and registers nothing with the flusher. Three clocks serve `ctx.now()`: the wall
 clock (epoch ms, read once per invocation), event time (extracted from the input) and the
-logical clock (the durable change seq — needs a real Change type). Rust declares them as the
-sealed `Clock` type `WallClock` / `EventTimeFrom` / `LogicalClock`; Java reads them off the
+logical clock (the durable change seq — needs a real Change type). Rust reads them off the
+tasklet, a written `event_time` or `logical_clock` on `#[flezha::tasklet]`; Java reads them off the
 class: a written `eventTime(input)`, or `@Tasklet.Spec(logicalClock = true)`. `coalesce_key()` (default none) is opt-in batching: Changes sharing a key
 within one linger window collapse to the most recent record at drain time; keyless Changes
-are kept verbatim — right for "current value of X", wrong for "+1" deltas. The sugared tier
-(`#[derive(flezha::State)]`, Rust) generates the field-granular Change type and its fold; see
-[`authoring_contract.md`](authoring_contract.md#3-state--change-derivation-and-the-manual-boundary).
+are kept verbatim — right for "current value of X", wrong for "+1" deltas. The shapes for a
+keyed or collection change are in
+[`authoring_contract.md`](authoring_contract.md#31-keyed-and-collection-changes).
 
 Timers are folded state: registrations, cancellations and firings are records in the
 Cell's own change log (`format_id = 3` timer-ops records, or the `timers` field of an
@@ -82,9 +82,8 @@ change_log_bytes, terminal_seq, has_compensation_intent, has_compensation_done }
 `snapshot_bytes` is the raw encoded `State` (the controller strips the snapshot file's
 header before shipping), `change_log_bytes` the WAL tail in the controller's on-disk record
 framing. Under the Cell's exclusivity gate the runtime calls the author's
-`init_state(cell_key, Some(payload))` (the author may inspect byte sizes but never decodes
-them; a Java cell's state comes from its state class or its written `initState(cellKey)`),
-replaces the state with the decoded
+`init_state(cell_key)` (a Java cell's state comes from its state class or its written
+`initState(cellKey)`), replaces the state with the decoded
 snapshot when present, folds every record in seq order (plain Changes, the Changes enclosed
 in effect records, timer ops into the pending-timer set), re-arms the change seq to
 `terminal_seq + 1` (terminal = highest folded seq, never below the command's
@@ -173,49 +172,46 @@ restore rejects any `sdk_lang` but its own before it reads the format byte:
 
 ### Trait surface
 
-Everything an author needs is re-exported from `flezha_runner::state`.
+The tasklet is your own type; `#[flezha::tasklet]` completes its `impl Tasklet` block
+([`authoring_contract.md`](authoring_contract.md#22-one-form-completed-by-what-it-declares)).
 
 ```rust
-use flezha_runner::tasklet::{Tasklet, TaskletCtx, TaskletError};
-use flezha_runner::state::{Change, RestoreInitPayload, StateHandle, WallClock};
+use flezha_runner::{tasklet, Change, Ctx, Tasklet, TaskletError};
 
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 struct CounterState { value: i64 }
+
 #[derive(serde::Serialize, serde::Deserialize)]
-struct CounterChange { delta: i64 }
-impl Change for CounterChange {}   // override `coalesce_key` to opt into coalescing
+struct Added { delta: i64 }
+
+impl Change<CounterState> for Added {   // override `coalesce_key` to opt into coalescing
+    fn apply_to(&self, s: &mut CounterState) { s.value = s.value.saturating_add(self.delta); }
+}
 
 #[derive(Default)]
 struct CounterTasklet;
+
+#[tasklet(name = "counter_tasklet")]
 impl Tasklet for CounterTasklet {
     type Input = i64;
-    type Output = ();
     type State = CounterState;
-    type Change = CounterChange;   // `NoChange` opts out
-    type Clock = WallClock;
-    type Config = ();
-    fn name() -> &'static str { "counter_tasklet" }
-    fn init_state(_: Option<&str>, _: Option<RestoreInitPayload<'_>>) -> CounterState { CounterState::default() }
-    fn apply_change(s: &mut CounterState, c: &CounterChange) { s.value = s.value.saturating_add(c.delta); }
-    fn run(&mut self, input: i64, mut state: StateHandle<'_, Self>, _ctx: &mut TaskletCtx<'_>)
-        -> Result<(), TaskletError> {
-        state.apply(CounterChange { delta: input });
+    type Change = Added;   // left out, it is `NoChange` and nothing is journaled
+
+    fn run(&mut self, input: i64, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
+        ctx.change(Added { delta: input });
         Ok(())
     }
 }
 ```
 
-Stable Rust has no associated-type defaults, so every impl writes `type Change` and
-`type Clock` explicitly. `Change` is `Serialize + DeserializeOwned + Send + Sync + 'static`;
-`State` is `Serialize + DeserializeOwned` so the runtime can also serialise it for
-`CellState` / migration. `EventTimeFrom<F>` requires `F: TimeExtractor<Input>` — an
-unservable clock is a compile error. A non-`NoChange` Change without an `apply_change`
-override panics at the first fold with a message naming the fix. `StateHandle<'_, S>`
-implements `Deref<Target = S::State>` and one mutation method, `apply(change)`; it
-deliberately does not implement `DerefMut`, so a direct field write does not compile — the
-structural form of the "no forgotten Change" invariant. The buffer behind the handle is
-shared so an emit can drain just-applied Changes onto the durable path before the matching
-output frame (flush-before-emit).
+`Change<S>` is `Serialize + DeserializeOwned + Send + Sync + 'static`; `State` is
+`Serialize + DeserializeOwned` so the runtime can also serialise it for `CellState` /
+migration. `ctx.state()` hands out `&State` and `ctx.change(c)` is the one mutation path,
+which applies `c.apply_to` and records the change; there is no `&mut State` anywhere, so a
+direct field write does not compile — the structural form of the "no forgotten Change"
+invariant. The buffer behind the context is shared so an emit can drain just-applied
+Changes onto the durable path before the matching output frame (flush-before-emit). A
+change enum is encoded by variant index, so a new variant goes at the end.
 
 ### TaskletTestHarness
 
@@ -232,11 +228,11 @@ harness.replay_emits_equal(&[1, 2, 3, 4]).expect("deterministic emits");
 
 | Group | API |
 |---|---|
-| Construct | `new()` (`init_state(None, None)`); `with_initial_state(state)`; `with_payload(key, payload) -> Result<Self, RestoreError>` — runs the real snapshot + change-log fold |
+| Construct | `new()` (`init_state(None)`); `with_initial_state(state)`; `with_payload(key, payload) -> Result<Self, RestoreError>` — runs the real snapshot + change-log fold |
 | Configure | `with_keyed_channel()`, `with_cell_key(key)`, `with_wall_clock(ms)`, `with_wall_clock_script(vec)` |
-| Drive | `apply_inputs(iter)` — the declared Clock is evaluated as the dispatcher does; a `run` error panics the test. Timers: `fire_timer(kind, at)`, `advance_event_time(high_water)`, `pending_timers(kind)`, `recorded_timer_ops()` |
-| Assert | `expect_changes`, `expect_emits::<C>`, `expect_state`, `recorded_changes()`, `emitted_meta()`, `state()`, static `replay(initial, log)` |
-| Gates | `replay_equals()` folds the recorded Changes and timer ops against the captured initial state and compares canonical JSON of state and pending timers (map key order is not significant; `Vec` order is); `Err(ReplayMismatch { expected_serialized, actual_serialized })` renders a hex dump. `replay_emits_equal(inputs)`: two passes from the same baseline must produce byte-identical emits and metadata (`flz.*` stamps in keyed mode) |
+| Drive | `apply_inputs(iter)` — the declared clock is evaluated as the dispatcher does; a `run` error panics the test. Timers: `fire_timer(kind, at)`, `advance_event_time(high_water)`, `pending_timers(kind)`, `recorded_timer_ops()` |
+| Assert | `expect_changes`, `expect_emits` (typed as the tasklet's `Output`), `expect_state`, `recorded_changes()`, `emitted_meta()`, `state()`, static `replay(initial, log)` |
+| Gates | `replay_equals()` folds the recorded Changes (each encoded and decoded as the runtime persists it, so a change that does not survive the round trip fails here) and timer ops against the captured initial state and compares canonical JSON of state and pending timers (map key order is not significant; `Vec` order is); `Err(ReplayMismatch { expected_serialized, actual_serialized })` renders a hex dump. `replay_emits_equal(inputs)`: two passes from the same baseline must produce byte-identical emits and metadata (`flz.*` stamps in keyed mode) |
 
 ## Java SDK
 

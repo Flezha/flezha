@@ -440,7 +440,7 @@ pub trait TaskletDispatcher: Send + Sync + 'static {
     /// `instance/tasklet/key`, the string the `flz.cell` stamp carries.
     fn cell_label(&self) -> &str;
 
-    /// The payload's event time, `None` unless the clock is `EventTimeFrom`;
+    /// The payload's event time, `None` unless the clock is event time;
     /// how the drain sorts a replayed slice by a key only the author's
     /// extractor can produce.
     fn event_time_of(&self, payload: &CellPayload) -> Option<u64>;

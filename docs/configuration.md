@@ -718,7 +718,7 @@ delivery-tier or bounded declarations.
 | `checkpoint_ack()` (`checkpointAck`) | off — acknowledge per input | Hold the consumed offset until the interval closes, so state and offset advance together. Requires `effectively_once()`. |
 | `checkpoint_every(n)` (`checkpointEvery`) | absent — only `ctx.checkpoint()` closes the interval | Close the interval after `n` inputs; an explicit checkpoint still closes it early. Implies `checkpoint_ack()`, and so requires `effectively_once()` too. |
 | `outputs_at_checkpoint(max_delay_ms)` (`outputsAtCheckpoint`) | absent — outputs flush as produced | Hold the interval's outputs and ship them inside its checkpoint record as one batch. `max_delay_ms` is required and bounds how long a quiet Cell holds an output. Implies `checkpoint_ack()`, and so requires `effectively_once()` too. |
-| `correction_window(window_ms)` (`correctionWindow`) | absent — a late input is just an input | A late input inside the window rewinds the Cell to a baseline and replays the affected slice in event-time order. Needs an `EventTimeFrom` clock. |
+| `correction_window(window_ms)` (`correctionWindow`) | absent — a late input is just an input | A late input inside the window rewinds the Cell to a baseline and replays the affected slice in event-time order. Needs an event-time clock. |
 | `beyond_window_policy(policy)` (`beyondWindowPolicy`) | `ProcessAsArrival` | Fate of an input later than the window: process it as an arrival, or `Drop` it. |
 
 `outputs_at_checkpoint` is a dial, not a switch: the interval closes on
@@ -749,10 +749,10 @@ Overridden on the `Tasklet` trait (Rust) or Tasklet class (Java).
 | Override | Default | What it does |
 |---|---|---|
 | `compact_after_bytes()` (`compactAfterBytes`) | 8 MiB, in lockstep with `:default_compact_after_bytes` | Per-Cell WAL size reported to the controller as the snapshot-compaction trigger. |
-| `mailbox_capacity()` (`mailboxCapacity`) | `1024`, range `1..=1_048_576` | Bounded mailbox depth per Cell; precedence is the override, then `FLEZHA_MAILBOX_CAPACITY`, then the default. Rust overrides must also set `MAILBOX_CAPACITY_OVERRIDDEN = true`. |
+| `mailbox_capacity()` (`mailboxCapacity`) | `1024`, range `1..=1_048_576` | Bounded mailbox depth per Cell; precedence is the override, then `FLEZHA_MAILBOX_CAPACITY`, then the default. Rust sets it with the `capacity` key on `#[flezha::tasklet]`. |
 | `cell_idle_ttl()` (`cellIdleTtl`; Elixir `cell_idle_ttl_ms/0`) | `None` — no eviction | Evict a dynamic Cell after this idle period; eviction is destructive (slot, WAL and snapshot dropped). |
 | `max_cells()` (Elixir `max_cells/0`) | `100_000` | Soft cap on live dynamic Cells per Tasklet; new keys past it are dropped. |
-| `type Clock` | — (must be declared) | `WallClock`, `EventTimeFrom<..>` or `LogicalClock`; decides `ctx.now()` and event-time ordering. |
+| `CLOCK` (set by a written `event_time`, or the `logical_clock` key) | wall clock | Wall clock, event time or logical clock; decides `ctx.now()` and event-time ordering. |
 
 ### Bounded class options
 

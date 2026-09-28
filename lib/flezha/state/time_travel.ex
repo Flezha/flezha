@@ -105,7 +105,7 @@ defmodule Flezha.State.TimeTravel do
 
   # The highest seq whose record time is at or before `ts` — exactly, from the
   # record itself. Effect records carry the invocation's clock value, which under
-  # a `WallClock` is when it ran and under an `EventTimeFrom` is the event's own
+  # a wall clock is when it ran and under an event-time clock is the event's own
   # time; either reading is the one a query for "the state as of T" wants.
   #
   # Falls back to the newest snapshot seq only when nothing is datable — a WAL of

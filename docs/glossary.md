@@ -181,7 +181,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   `flz dlq list|show|replay|drop`; bounded operators abort-and-compensate instead. See [`resilience/data_durability.md`](resilience/data_durability.md).
 - **Late-input correction** — a declared `correction_window()` lets an event behind the event-time
   high-water mark rewind the cell to a baseline, replay the retained slice in event-time order
-  and republish under a bumped epoch. Requires the tier, an `EventTimeFrom` clock and keyed plugin
+  and republish under a bumped epoch. Requires the tier, an event-time clock and keyed plugin
   channels; the window raises the input-log hold window and the snapshot age floor to meet itself.
 - **Live read vs time-travel read** — `flz state get <operator/tasklet[/cell_key]>` asks the
   runner holding the cell for its in-memory value (possibly ahead of what is durable, stamped

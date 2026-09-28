@@ -105,7 +105,7 @@ crash-replay can re-emit. A channel declared `.keyed()` stamps every plugin-boun
 (the Cell's own key, or the key an emit supplied via `ctx.emit_keyed(key, value)`). The stamps
 derive only from replay-stable inputs, so a restore replay re-emits **identical** stamps and a
 consumer that upserts on `flz.key` absorbs duplicates exactly. The determinism contract — no
-ambient time, UUIDs or external reads in `run` / `apply_change` / `compensate`; use `ctx.now()`
+ambient time, UUIDs or external reads in `run` / `apply_to` / `compensate`; use `ctx.now()`
 and `ctx.stable_id()` — is documented on the `Tasklet` trait and checked by
 `TaskletTestHarness::replay_emits_equal`.
 
@@ -522,7 +522,7 @@ SDK build time:
 | Prerequisite | Why |
 | --- | --- |
 | `effectively_once()` | append-before-forward is what puts the late input in the log |
-| an `EventTimeFrom` clock | nothing else yields a time to order a replayed slice by |
+| an event-time clock | nothing else yields a time to order a replayed slice by |
 | every plugin channel `.keyed()` | a bumped epoch overwrites *by key*; an append channel would duplicate (already implied by the tier) |
 
 **Retention is derived from the declaration.** `InputLog.hold_window_ms/1` resolves to

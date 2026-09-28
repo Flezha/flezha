@@ -2,74 +2,70 @@
 
 ## Purpose
 
-The rust-sdk-tasklet-macros capability is the Rust realization of the SDK authoring contract. It provides the `#[flezha::tasklet]` attribute macro (signature-to-types inference, `&mut` state inference, cell/mailbox/clock opt-ins, static and dynamic modes), the `#[derive(flezha::State)]` derive (field-granular `Change` enum + `apply_change` journaled through the existing WAL), and the `flezha::operator!` declarative macro for linear pipelines, each naming the type the author registers explicitly. All macros expand to the existing `UnboundedOperator`/`Tasklet`/`Change`/`Channel` traits with zero engine, protocol, or WAL change; macro-generated and hand-written tasklets compose in the same operator.
+The rust-sdk-tasklet-macros capability is the Rust realization of the SDK authoring contract. It provides the `#[flezha::tasklet]` attribute macro, which completes the author's `impl Tasklet` block with the items it leaves out (name, settings, hook flags, clock, default state and types) and generates no type, the `#[flezha::unbounded_operator]` / `#[flezha::bounded_operator]` short forms on a stateless function or an `impl Tasklet` block, and the `flezha::operator!` declarative macro for linear pipelines, each naming the type the author registers explicitly. All macros expand to the existing `UnboundedOperator`/`Tasklet`/`Change`/`Channel` traits with zero engine, protocol, or WAL change; macro-generated and hand-written tasklets compose in the same operator.
 ## Requirements
 ### Requirement: `#[flezha::tasklet]` attribute macro
 
-The Rust SDK SHALL provide a `#[flezha::tasklet]` attribute macro applied to a single `run` function that generates a complete `Tasklet` implementation conforming to the authoring contract. The attribute SHALL declare a tasklet and nothing else: it SHALL NOT accept `kind`, `sink`, `input` or `on_full`, which describe an operator and its entry channel, and SHALL fail to compile naming the key and directing the author to `#[flezha::unbounded_operator]` or `#[flezha::bounded_operator]` when one is written. The generated tasklet's `name()` SHALL be the `id` when one is written.
+The Rust SDK SHALL provide a `#[flezha::tasklet]` attribute macro applied to an `impl Tasklet for T` block, where `T` is the author's own type. It SHALL generate no type: it SHALL only add to that block the items the author did not write, namely the `NAME` const from the required `name` key, the setting items for the keys written, the `COMPENSATE_OVERRIDDEN`, `CELLS_FOR_OVERRIDDEN`, `MAX_CELLS_OVERRIDDEN` and `MAILBOX_CAPACITY_OVERRIDDEN` flags from the matching `fn` the block writes (`compensate`, `cells_for`, `max_cells`, `mailbox_capacity`) or the matching key (`max_cells`, `capacity`), the `CLOCK` const, `init_state` returning `Default::default()` when none is written, and `State = ()`, `Change = NoChange` and `Output = ()` when not written. An item the block writes that the attribute would also add, and an unknown key, SHALL fail to compile naming it. The attribute SHALL NOT accept `kind`, `sink`, `input` or `on_full`, which describe an operator and its entry channel, and SHALL fail to compile naming the key and directing the author to `#[flezha::unbounded_operator]` or `#[flezha::bounded_operator]` when one is written. The attribute on a function SHALL fail to compile, directing the author to the `impl` block.
 
-#### Scenario: Stateless tasklet collapses to a function
+#### Scenario: A stateless tasklet writes only its types and run
 
-- **WHEN** `#[flezha::tasklet(id = "do_nothing")]` annotates `fn do_nothing(input: String) -> Vec<u8>`
-- **THEN** the macro generates a `Default` tasklet type `DoNothing`, a `Tasklet` impl with `Input = String`, `Output = Vec<u8>`, `State = ()`, `Change = NoChange`, `Clock = WallClock`, `Config = ()`, `name`, `init_state`, and a `run` wrapper that emits the returned value, and no operator impl
+- **WHEN** `#[flezha::tasklet(name = "echo")]` annotates `impl Tasklet for Echo` writing `type Input = String`, `type Output = String` and `run`
+- **THEN** the block compiles with `State = ()`, `Change = NoChange`, `NAME = "echo"`, a default `init_state` and the wall clock, and no type other than `Echo` exists for it
 
-#### Scenario: Stateful tasklet infers State from the mutable parameter
+#### Scenario: A stateful tasklet names its state and change
 
-- **WHEN** `#[flezha::tasklet(id = "store_input")]` annotates `fn store_input(input: String, state: &mut StoreInputState) -> String`
-- **THEN** the generated `Tasklet` impl sets `State = StoreInputState` and routes mutations through the existing state-handle path
+- **WHEN** a `#[flezha::tasklet(name = "quiet_symbol")]` block writes `type State = LastTrade` and `type Change = Traded`
+- **THEN** `ctx.state()` reads a `LastTrade` and `ctx.change` takes a `Traded`, and `init_state` returns `LastTrade::default()`
 
-#### Scenario: Generated tasklet type is referenceable in channels
+#### Scenario: The author's type is referenceable in channels
 
-- **WHEN** a tasklet is generated from `fn static_entry(..)`
-- **THEN** a PascalCase tasklet type (e.g. `StaticEntry`) is produced that can be named in an explicit `channels()` body of an operator of either kind via `.from`/`.into`
+- **WHEN** a tasklet is declared on `struct StaticEntry` with `#[flezha::tasklet]`
+- **THEN** `StaticEntry` itself can be named in a `channels()` body of an operator of either kind via `.from`/`.into`
+
+#### Scenario: A written hook sets its flag
+
+- **WHEN** a `#[flezha::tasklet]` block writes `fn compensate`
+- **THEN** `COMPENSATE_OVERRIDDEN` SHALL be `true` for the tasklet, and the runtime SHALL run it on a rollback
 
 #### Scenario: An operator key on a tasklet is refused
 
-- **WHEN** `#[flezha::tasklet(id = "do_nothing", sink = "echo")]`, or the same with `kind`, `input` or `on_full`, annotates a run function
+- **WHEN** `#[flezha::tasklet(name = "do_nothing", sink = "echo")]`, or the same with `kind`, `input` or `on_full`, annotates an `impl Tasklet` block
 - **THEN** the macro fails to compile naming the key and the short-form attribute that carries it
+
+#### Scenario: The attribute on a function is refused
+
+- **WHEN** `#[flezha::tasklet(name = "echo")]` annotates `fn echo(input: String) -> String`
+- **THEN** the macro fails to compile, directing the author to `impl Tasklet` or to the short-form attributes
 
 ### Requirement: Attribute opt-ins for cell and mailbox behavior
 
-The `#[flezha::tasklet]` macro SHALL accept attribute opt-ins that map to the corresponding `Tasklet` overrides without dropping to a raw impl.
+The `#[flezha::tasklet]` macro SHALL accept keys that set the corresponding `Tasklet` items without the author writing them: `keys`, `capacity`, `max_cells`, `idle_ttl_seconds`, `schema_version`, `min_readable_schema_version`, `compact_after_bytes`, `max_timers_per_cell` and `logical_clock`. `cells_for` SHALL be a hook the block writes, not a key.
 
 #### Scenario: Static cell keys and cells_for
 
-- **WHEN** `#[flezha::tasklet(id = "static_entry_tasklet", keys = ["a","b","c","d"], cells_for = part)]` is used with a free function `part`
-- **THEN** the generated impl sets `cell_keys()` to the listed keys, marks cell overridden, and delegates `cells_for` to `part`
+- **WHEN** `#[flezha::tasklet(name = "static_entry_tasklet", keys = ["a","b","c","d"])]` annotates a block that writes `fn cells_for`
+- **THEN** the tasklet's `cell_keys()` are the listed keys, `CELLS_FOR_OVERRIDDEN` is `true`, and inputs are routed by the written `cells_for`
 
-#### Scenario: Mailbox capacity and overflow policy
+#### Scenario: Mailbox capacity
 
-- **WHEN** `capacity` and `on_full` attributes are supplied
-- **THEN** the generated impl overrides `mailbox_capacity()` and the channel's overflow policy accordingly
+- **WHEN** a `capacity` key is supplied
+- **THEN** the tasklet's `mailbox_capacity()` returns it and `MAILBOX_CAPACITY_OVERRIDDEN` is `true`
 
-#### Scenario: Clock override
+#### Scenario: Logical clock
 
-- **WHEN** a `clock` attribute names a supported clock
-- **THEN** the generated `Tasklet` uses that clock instead of `WallClock`
+- **WHEN** `#[flezha::tasklet(name = "seq", logical_clock)]` annotates a block with a non-`NoChange` change
+- **THEN** the tasklet's `CLOCK` is `Logical`
 
 #### Scenario: Dynamic-mode knobs
 
-- **WHEN** `#[flezha::tasklet(id = "rsi", idle_ttl = 5000, max_cells = 10)]` is used
-- **THEN** the generated impl applies the `cell_idle_ttl()` / `max_cells()` overrides, leaves `cell_keys()` empty, and declares no key of its own — the key is `key_by` on the wiring
+- **WHEN** `#[flezha::tasklet(name = "rsi", idle_ttl_seconds = 5, max_cells = 10)]` is used
+- **THEN** the tasklet's `cell_idle_ttl()` and `max_cells()` return those values, `cell_keys()` is empty, and the tasklet declares no key of its own, because the key is `key_by` on the wiring
 
-#### Scenario: The sugar offers no dynamic key hook
+#### Scenario: The attribute offers no dynamic key hook
 
-- **WHEN** a `#[flezha::tasklet]` declares a `cell_key` attribute
+- **WHEN** a `#[flezha::tasklet]` declares a `cell_key` key
 - **THEN** the macro fails to compile with a message directing the author to declare `.key_by(f)` on the stream that feeds the tasklet
-
-### Requirement: `#[derive(flezha::State)]` change derivation
-
-The Rust SDK SHALL provide a `#[derive(flezha::State)]` derive that generates a `Change` enum and `apply_change` for field-granular mutations, journaled through the existing WAL.
-
-#### Scenario: Field mutations are journaled
-
-- **WHEN** a state struct derives `flezha::State` and a `Vec` field is pushed to inside `run`
-- **THEN** a generated change variant records the mutation and it is applied via the generated `apply_change`
-
-#### Scenario: Unsupported mutation reports an error
-
-- **WHEN** a mutation cannot be expressed as a field-granular change
-- **THEN** the SDK requires a hand-written `Change` and the derive does not silently produce incorrect journaling
 
 ### Requirement: `flezha::operator!` linear-pipeline macro
 
@@ -97,85 +93,32 @@ The Rust SDK SHALL provide a `flezha::operator!` declarative macro that declares
 
 ### Requirement: Sugared and raw tasklets compose
 
-An operator SHALL be able to mix macro-generated tasklets and hand-written tasklets.
+An operator SHALL be able to mix tasklets declared with `#[flezha::tasklet]` and tasklets whose `impl Tasklet` block states every item by hand.
 
 #### Scenario: Mixed operator builds and runs
 
-- **WHEN** an operator wires a `#[flezha::tasklet]`-generated tasklet to a hand-written `impl Tasklet` tasklet
+- **WHEN** an operator wires a `#[flezha::tasklet]` tasklet to a tasklet whose `impl Tasklet` writes `NAME`, `CLOCK`, its flags and `init_state` by hand
 - **THEN** the operator compiles, registers, and processes input through both tasklets correctly
-
-### Requirement: Map-aware `#[derive(flezha::State)]` journaling mutators
-
-`#[derive(flezha::State)]` SHALL generate journaling mutators, `Change` variants, and `apply_change` arms for map fields annotated `#[journal(map_set | map_vec | map_deque)]`, in addition to the existing flat-field derivation. The generated mutators perform the mutation live and record it as a `Change`; the generated `apply_change` replays it. Flat-field and map fields on the same struct SHALL compose into a single `Change` enum.
-
-- `map_set` on `HashMap<K, V>` → `set_<field>(key, V)`, variant `Set<Field>(K, V)`.
-- `map_vec` on `HashMap<K, Vec<U>>` → `push_<field>(key, U)`, `drain_<field>_front(key, usize)`, `replace_last_<field>(key, U)`.
-- `map_deque` on `HashMap<K, VecDeque<U>>` → `push_back_<field>(key, U)`, `pop_front_<field>(key, usize)`.
-
-#### Scenario: map_vec field generates collection mutators
-
-- **WHEN** a `#[derive(flezha::State)]` struct has a `#[journal(map_vec)] closes: HashMap<String, Vec<f64>>` field
-- **THEN** the derive generates `push_closes`, `drain_closes_front`, and `replace_last_closes` mutators, the matching `Change` variants, and an `apply_change` that replays each on the keyed vector
-
-#### Scenario: map_set field generates a keyed setter
-
-- **WHEN** a `#[derive(flezha::State)]` struct has a `#[journal(map_set)] by_product: HashMap<String, ProductState>` field
-- **THEN** the derive generates `set_by_product(key, ProductState)`, a `SetByProduct(String, ProductState)` variant, and an `apply_change` arm that inserts the value
-
-#### Scenario: Mixed flat and map fields compose
-
-- **WHEN** a struct mixes a flat field and a `#[journal(...)]` map field
-- **THEN** both contribute variants to a single generated `Change` enum and arms to a single `apply_change`
-
-#### Scenario: Unannotated or mismatched map field errors
-
-- **WHEN** a map field lacks a `#[journal(...)]` annotation, or its type does not match the declared mode
-- **THEN** the derive emits a `compile_error!` directing the author to a hand-written `Change`, and generates no journaling for that field
-
-### Requirement: `Option<Output>` return in `#[flezha::tasklet]`
-
-`#[flezha::tasklet]` SHALL accept a `run` function returning `Option<Output>` (or `Result<Option<Output>, TaskletError>`), emitting on `Some` and emitting nothing on `None`. The existing unit return (no output) and unconditional `Output` return (always emit) SHALL be unchanged.
-
-#### Scenario: Optional return drives conditional emit
-
-- **WHEN** a `#[flezha::tasklet]` `run` returns `Option<Output>`
-- **THEN** the generated `run` emits via the tasklet context on `Some` and emits nothing on `None`, without the author referencing `TaskletCtx`
-
-#### Scenario: Generated behaviour equals hand-written
-
-- **WHEN** a tasklet authored with map-aware `#[derive(flezha::State)]` + `#[flezha::tasklet]` returning `Option<Output>` is expanded
-- **THEN** its behaviour is identical to the hand-written `Tasklet`/`Change` impl, and `TaskletTestHarness::replay_equals` passes
-
-### Requirement: `init` opt-in on `#[flezha::tasklet]`
-
-`#[flezha::tasklet]` SHALL accept an `init = fn` argument naming a function `fn(Option<&str>) -> State`. When present, the generated `Tasklet::init_state` SHALL delegate to it, passing the cell key. When absent, `init_state` SHALL keep returning `State::default()` (stateful) or unit (stateless), unchanged. Declaring `init` on a stateless tasklet (no `&mut State` parameter) SHALL be a `compile_error!`. The restore payload SHALL NOT be passed to the init function.
-
-#### Scenario: init delegates init_state to the named function
-
-- **WHEN** a `#[flezha::tasklet(init = my_init)]` stateful tasklet is expanded
-- **THEN** its `init_state(cell_key, _)` returns `my_init(cell_key)`, so each static cell starts from key-derived state, and `TaskletTestHarness::replay_equals` passes for the tasklet
-
-#### Scenario: init on a stateless tasklet fails to compile
-
-- **WHEN** `#[flezha::tasklet(init = …)]` is applied to a `run` with no `&mut State` parameter
-- **THEN** expansion emits a `compile_error!` stating `init` requires a state parameter
 
 ### Requirement: `#[flezha::unbounded_operator]` and `#[flezha::bounded_operator]` short-form attributes
 
-The Rust SDK SHALL provide two attribute macros applied to a single `run` function that declare a whole single-tasklet operator of the kind the attribute names: `#[flezha::unbounded_operator]` and `#[flezha::bounded_operator]`. Each SHALL require an `id`, SHALL accept an optional `sink` naming a plugin channel, an optional `input` naming the entry channel, naming it `input` when the key is absent, and an optional `on_full` setting that entry channel's overflow policy. `#[flezha::bounded_operator]` SHALL additionally accept an optional `loop_mode` key taking `"once"`, `"per_input"` or `"chained"`, which the generated operator SHALL return from `loop_mode()`, and SHALL fail to compile naming any other value; `#[flezha::unbounded_operator]` SHALL refuse the key naming the bounded attribute. No other class-level setting SHALL be a key of either attribute. The kind SHALL NOT be expressible as a key. Two attributes are taken rather than one `#[flezha::operator]` because `flezha::operator!` is already a `#[proc_macro]` of that name in the same module (`sdk/rust/macros/src/lib.rs:42`).
+The Rust SDK SHALL provide two attribute macros that declare a whole single-tasklet operator of the kind the attribute names: `#[flezha::unbounded_operator]` and `#[flezha::bounded_operator]`. Each SHALL require an `id`, SHALL accept an optional `sink` naming a plugin channel, an optional `input` naming the entry channel, naming it `input` when the key is absent, and an optional `on_full` setting that entry channel's overflow policy. `#[flezha::bounded_operator]` SHALL additionally accept an optional `loop_mode` key taking `"once"`, `"per_input"` or `"chained"`, which the operator SHALL return from `loop_mode()`, and SHALL fail to compile naming any other value; `#[flezha::unbounded_operator]` SHALL refuse the key naming the bounded attribute. The kind SHALL NOT be expressible as a key. Two attributes are taken rather than one `#[flezha::operator]` because `flezha::operator!` is already a `#[proc_macro]` of that name in the same module (`sdk/rust/macros/src/lib.rs:42`).
 
-Each attribute SHALL emit **two** types: the operator type under the author's PascalCase name (`Echo` for `fn echo`), implementing `UnboundedOperator` or `BoundedOperator`, each with `channels()`, with `factory_id()` equal to the `id` and every other operator item at its trait default; and the tasklet type beside it under that name suffixed `Tasklet` (`EchoTasklet`), carrying the `Tasklet` impl the `#[flezha::tasklet]` attribute would generate for the same function. The generated tasklet's `name()` SHALL be the `id` verbatim. `EchoTasklet` SHALL be nameable in another operator's `channels()` body, of either kind.
+Each attribute SHALL take one of two targets:
 
-With a `sink`, the generated topology SHALL wire the entry channel into the tasklet and the tasklet to that plugin sink. With no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A `sink` on a run function with a unit return and no `emits` SHALL fail to compile with a message beginning `SinkWithoutOutput`.
+- **A function with no state parameter**, returning `Output`, `Option<Output>`, `()` or a `Result` of those. The attribute SHALL emit two types: the operator type under the author's PascalCase name (`Echo` for `fn echo`), implementing `UnboundedOperator` or `BoundedOperator` with `channels()`, `factory_id()` equal to the `id` and every other operator item at its trait default; and the tasklet type beside it under that name suffixed `Tasklet` (`EchoTasklet`), an `impl Tasklet` in the one tasklet form whose `run` emits what the function returns (`Some` emits, `None` does not). A function with a `&mut` parameter SHALL fail to compile with a message beginning `ShortFormStateOnFunction` that directs the author to the `impl` target.
+- **An `impl Tasklet for X` block.** The attribute SHALL do the `#[flezha::tasklet]` attribute's work on the block, accepting the tasklet setting keys beside the operator keys and naming the tasklet after the `id`, and SHALL implement the operator trait on `X` itself, generating no type. `#[flezha::tasklet]` on the same block SHALL fail to compile.
+
+The tasklet's name SHALL be the `id` verbatim. With a `sink`, the topology SHALL wire the entry channel into the tasklet and the tasklet to that plugin sink. With no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A `sink` on a function with a unit return, or on a block whose `Output` is `()`, SHALL fail to compile with a message beginning `SinkWithoutOutput`.
 
 #### Scenario: An unbounded short form emits an operator and a tasklet
 
 - **WHEN** `#[flezha::unbounded_operator(id = "do_nothing", sink = "echo")]` annotates `fn do_nothing(input: String) -> Vec<u8>`
-- **THEN** the macro generates `DoNothing` implementing `UnboundedOperator` with `factory_id()` `do_nothing` and a `channels()` body wiring `input` into `DoNothingTasklet` and `DoNothingTasklet` to the `echo` plugin sink, and `DoNothingTasklet` implementing `Tasklet` with `Input = String`, `Output = Vec<u8>`, `State = ()`, `Change = NoChange`, `Clock = WallClock`, `Config = ()` and `name()` `do_nothing`
+- **THEN** the macro generates `DoNothing` implementing `UnboundedOperator` with `factory_id()` `do_nothing` and a `channels()` body wiring `input` into `DoNothingTasklet` and `DoNothingTasklet` to the `echo` plugin sink, and `DoNothingTasklet` implementing `Tasklet` with `Input = String`, `Output = Vec<u8>`, `State = ()`, `Change = NoChange` and `NAME` `do_nothing`
 
 #### Scenario: The operator takes the author's name
 
-- **WHEN** a short form is registered
+- **WHEN** a function short form is registered
 - **THEN** `runner.register_factory(DoNothing)` SHALL register the operator, and `DoNothing` SHALL NOT implement `Tasklet`
 
 #### Scenario: A bounded short form implements the bounded operator trait
@@ -195,13 +138,18 @@ With a `sink`, the generated topology SHALL wire the entry channel into the task
 
 #### Scenario: A short form with no sink wires only the entry channel
 
-- **WHEN** `#[flezha::unbounded_operator(id = "counter", input = "ticks")]` annotates `fn counter(input: String, state: &mut CounterState)`
-- **THEN** `Counter`'s `channels()` body wires `ticks` into `CounterTasklet` and declares no plugin sink, and the operator registers and runs
+- **WHEN** `#[flezha::unbounded_operator(id = "counter", input = "ticks")]` annotates `impl Tasklet for Counter` with `type Input = String`
+- **THEN** `Counter`'s `channels()` body wires `ticks` into `Counter` and declares no plugin sink, and the operator registers and runs
 
-#### Scenario: A stateful short form infers State from the mutable parameter
+#### Scenario: A stateful short form sits on the impl block
 
-- **WHEN** `#[flezha::unbounded_operator(id = "store_input", sink = "sink")]` annotates `fn store_input(input: String, state: &mut StoreInputState) -> String`
-- **THEN** `StoreInputTasklet`'s `Tasklet` impl sets `State = StoreInputState` and routes mutations through the existing state-handle path
+- **WHEN** `#[flezha::unbounded_operator(id = "store_input", sink = "sink", max_cells = 10)]` annotates `impl Tasklet for StoreInput` with `type State = StoreInputState` and `type Change = Stored`
+- **THEN** `StoreInput` implements both `Tasklet` and `UnboundedOperator`, its tasklet is named `store_input` with cells capped at 10, and `runner.register_factory(StoreInput)` registers it with no generated type
+
+#### Scenario: A function short form with state is refused
+
+- **WHEN** `#[flezha::unbounded_operator(id = "store_input")]` annotates `fn store_input(input: String, state: &mut S) -> String`
+- **THEN** the macro fails to compile with a message beginning `ShortFormStateOnFunction`
 
 #### Scenario: The generated tasklet is nameable in another topology
 
@@ -211,16 +159,16 @@ With a `sink`, the generated topology SHALL wire the entry channel into the task
 #### Scenario: The attribute keeps the default entry channel name
 
 - **WHEN** `#[flezha::unbounded_operator(id = "do_nothing", sink = "echo")]` declares no `input` key
-- **THEN** the generated operator's entry channel SHALL be named `input`
+- **THEN** the operator's entry channel SHALL be named `input`
 
 #### Scenario: The attribute names the generated entry channel
 
 - **WHEN** `#[flezha::unbounded_operator(id = "do_nothing", sink = "echo", input = "prices")]` annotates a run function
-- **THEN** the generated operator's entry channel SHALL be named `prices`
+- **THEN** the operator's entry channel SHALL be named `prices`
 
 #### Scenario: A sink on a unit return is refused
 
-- **WHEN** `#[flezha::unbounded_operator(id = "drain", sink = "out")]` annotates a run function with a unit return and no `emits`
+- **WHEN** `#[flezha::unbounded_operator(id = "drain", sink = "out")]` annotates a run function with a unit return
 - **THEN** the macro fails to compile with a message beginning `SinkWithoutOutput`
 
 #### Scenario: An empty entry channel name is rejected
@@ -235,7 +183,7 @@ With a `sink`, the generated topology SHALL wire the entry channel into the task
 
 ### Requirement: The Rust bounded operator trait carries the unbounded operator's body and none of its settings
 
-`BoundedOperator` SHALL declare `fn channels(c: &ChannelBuilder);`, required as `UnboundedOperator::channels` is, and SHALL declare no `tasklets`, `retry_attempts`, `retry_backoff`, `barrier_retry_attempts` or `wake_after` item; its items SHALL be `factory_id`, `channels`, `max_duration`, `self_terminating`, `loop_mode`, `rollback_mode`, `PERSISTENCE_ENABLED` and `SYNC_DURABILITY`. `build_spec` SHALL refuse a bounded operator whose `channels` set the builder's `effectively_once`, any checkpoint flag or the correction window, with `BuildBoundedError` variants named `EffectivelyOnceOnBounded`, `CheckpointOnBounded` and `CorrectionWindowOnBounded`, and `ZeroRetryBackoff` SHALL NOT exist. A bounded cell SHALL write no effect record: the collecting path SHALL carry no effectively-once branch, and `bounded_metadata` in the shared core SHALL advertise no `effectively_once` for a bounded class. The step ladder SHALL take the consuming edge's `RetryPolicy` from the partition's dispatcher, as the stream ladders do, and the barrier re-send count SHALL be a constant beside the acknowledgement timeout. The `TaskletCtx` a bounded cell's `run` and `on_timer` receive SHALL carry the same timer session an unbounded cell's does, so `timer_after`, `timer_at_event_time`, `cancel_processing_time_timer` and `cancel_event_time_timer` answer as in an unbounded operator; only a `compensate` hook's context SHALL answer `TaskletError::TimersUnavailable`. `sdk/rust/public-api.txt` SHALL record the new signature and none of the removed items.
+`BoundedOperator` SHALL declare `fn channels(c: &ChannelBuilder);`, required as `UnboundedOperator::channels` is, and SHALL declare no `tasklets`, `retry_attempts`, `retry_backoff`, `barrier_retry_attempts` or `wake_after` item; its items SHALL be `factory_id`, `channels`, `max_duration`, `self_terminating`, `loop_mode`, `rollback_mode`, `PERSISTENCE_ENABLED` and `SYNC_DURABILITY`. `build_spec` SHALL refuse a bounded operator whose `channels` set the builder's `effectively_once`, any checkpoint flag or the correction window, with `BuildBoundedError` variants named `EffectivelyOnceOnBounded`, `CheckpointOnBounded` and `CorrectionWindowOnBounded`, and `ZeroRetryBackoff` SHALL NOT exist. A bounded cell SHALL write no effect record: the collecting path SHALL carry no effectively-once branch, and `bounded_metadata` in the shared core SHALL advertise no `effectively_once` for a bounded class. The step ladder SHALL take the consuming edge's `RetryPolicy` from the partition's dispatcher, as the stream ladders do, and the barrier re-send count SHALL be a constant beside the acknowledgement timeout. The `Ctx` a bounded cell's `run` and `on_timer` receive SHALL carry the same timer session an unbounded cell's does, so `timer_after`, `timer_at_event_time`, `cancel_processing_time_timer` and `cancel_event_time_timer` answer as in an unbounded operator; only a `compensate` hook's context SHALL answer `TaskletError::TimersUnavailable`. `sdk/rust/public-api.txt` SHALL record the new signature and none of the removed items.
 
 #### Scenario: A bounded operator writes channels and no retry knob
 

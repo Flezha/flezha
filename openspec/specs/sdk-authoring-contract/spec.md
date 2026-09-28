@@ -24,7 +24,7 @@ The authoring sugar in every SDK SHALL be pure expansion over the existing `Unbo
 - **THEN** the operator behaves identically with no other change required
 
 ### Requirement: Canonical signature-to-types inference
-The contract SHALL define one canonical mapping from a sugared `run` declaration to the tasklet's associated types, and every SDK MUST implement it identically.
+The contract SHALL define one canonical mapping from a tasklet declared as a function to the tasklet's types, and every SDK that declares a tasklet as a function (Rust's `#[flezha::unbounded_operator]` / `#[flezha::bounded_operator]` on a function, Python's decorated function) MUST implement it identically. A Rust or Java tasklet written as a type names its types on that type instead: `type Input` / `type Output` in the Rust `impl Tasklet` block, the `Tasklet<Input, State, Output>` arguments in Java.
 
 #### Scenario: Input and Output inferred from signature
 
@@ -38,21 +38,26 @@ The contract SHALL define one canonical mapping from a sugared `run` declaration
 
 #### Scenario: Defaults for unspecified types
 
-- **WHEN** a sugared tasklet does not specify clock or config
-- **THEN** `Clock` defaults to the wall clock and `Config` defaults to the unit type
+- **WHEN** a tasklet declared as a function specifies no clock
+- **THEN** it runs on the wall clock
 
 ### Requirement: State parameter drives stateful inference
-A mutable-state parameter on the `run` declaration SHALL be the single signal that a tasklet is stateful, and its type SHALL become the tasklet `State`.
+A function-declared tasklet SHALL keep no state in Rust: `#[flezha::unbounded_operator]` or `#[flezha::bounded_operator]` on a function with a `&mut` parameter SHALL fail to compile with a message beginning `ShortFormStateOnFunction`, and a stateful Rust tasklet SHALL name `type State` on its `impl Tasklet` block. In an SDK that infers a function tasklet's state from a parameter, a mutable-state parameter SHALL be the single signal that the tasklet is stateful, and its type SHALL become the tasklet `State`.
 
 #### Scenario: Mutable state parameter sets State type
 
-- **WHEN** a `run` declaration includes a mutable reference parameter of type `S`
+- **WHEN**, in an SDK that infers state from a parameter, a `run` declaration includes a mutable reference parameter of type `S`
 - **THEN** the tasklet's `State` is `S` and the tasklet is treated as stateful
 
 #### Scenario: No state parameter means stateless
 
 - **WHEN** a `run` declaration has no mutable-state parameter
 - **THEN** `State` is the unit type and `Change` is the no-op change type
+
+#### Scenario: A Rust function with a state parameter is refused
+
+- **WHEN** `#[flezha::unbounded_operator(id = "store_input")]` annotates `fn store_input(input: String, state: &mut S) -> String`
+- **THEN** the macro fails to compile with a message beginning `ShortFormStateOnFunction`
 
 ### Requirement: State-to-Change derivation with explicit boundary
 The contract SHALL define how a state type's field mutations derive a `Change` type and `apply_change`, and SHALL define the explicit boundary beyond which a hand-written `Change` is required.
@@ -282,30 +287,40 @@ The defined modes are:
 - **THEN** the SDK reports a clear authoring error directing the author to a hand-written `Change`, and SHALL NOT generate silent or incorrect journaling
 
 ### Requirement: Emit-or-skip output return
-The authoring contract SHALL define an optional-output return shape for an SDK whose logic function returns its output (Rust `#[flezha::tasklet]`): a `run` returning an optional `Output` emits when present and emits nothing when absent. The unit return (no output channel) and the unconditional `Output` return (always emit) are unchanged. The Java SDK's `run` returns `void` and emits through its typed `ctx.emit(Output)`, so the shape does not apply there: emitting nothing is not calling `emit`.
+The authoring contract SHALL define an optional-output return shape for a short form declared on a function (Rust `#[flezha::unbounded_operator]` / `#[flezha::bounded_operator]` on a `fn`): a function returning an optional `Output` emits when present and emits nothing when absent. The unit return (no output channel) and the unconditional `Output` return (always emit) are unchanged. A Java or Rust tasklet's `run` returns no output and emits through its typed context, so the shape does not apply there: emitting nothing is not calling `emit`.
 
-#### Scenario: Optional output emits on present, skips on absent
+#### Scenario: A function short form emits on present and skips on absent
 
-- **WHEN** a `#[flezha::tasklet]` `run` returns an optional `Output`
-- **THEN** the generated tasklet emits the value when present and emits nothing when absent, without the author touching the tasklet context
+- **WHEN** a Rust function short form returns an optional `Output`
+- **THEN** the operator emits the value when present and emits nothing when absent, without the author touching the context
 
 #### Scenario: A Java tasklet that emits nothing
 
 - **WHEN** a Java tasklet's `run` returns without calling `ctx.emit` for an input
 - **THEN** nothing SHALL be emitted for that input
 
+#### Scenario: A Rust tasklet that emits nothing
+
+- **WHEN** a Rust tasklet's `run` returns `Ok(())` without calling `ctx.emit` for an input
+- **THEN** nothing SHALL be emitted for that input
+
 ### Requirement: Single hand-written path determinism
-The authoring contract SHALL state that a tasklet mutating state only through generated journaling mutators has exactly one hand-written path (`run`) and one generated replay path (the generated change-application); the two cannot diverge because the replay path is generated from the same mutator definitions. The replay-determinism conformance test remains the gate for all tasklets (sugared and hand-written).
+The authoring contract SHALL state how each SDK keeps a tasklet's live and replay paths from diverging. A tasklet mutating state only through generated journaling recorders (Elixir's `state` block) has exactly one hand-written path (`run`) and one generated replay path (the generated change-application); the two cannot diverge because the replay path is generated from the same recorder definitions. A Rust or Java tasklet's change applies itself (`apply_to` / `applyTo`), and that one fold is what `ctx.change` runs live and what a restore runs on replay. The replay-determinism conformance test remains the gate for all tasklets.
 
 #### Scenario: Sugared tasklet cannot drift between live and replay
 
-- **WHEN** a tasklet mutates state solely through generated journaling mutators
+- **WHEN** an Elixir tasklet mutates state solely through its `state` block's generated recorders
 - **THEN** its replay path is generated (not hand-written), so a live-vs-replay mutation divergence is unrepresentable, and the replay-determinism harness passes
 
 #### Scenario: Replay-safety guards are unnecessary for idempotent set journaling
 
-- **WHEN** a tasklet that previously hand-wrote an idempotency guard for replay safety migrates to map-set journaling
+- **WHEN** a tasklet that previously hand-wrote an idempotency guard for replay safety moves to a change that records the computed value (a set)
 - **THEN** the guard is unnecessary because replay re-assigns the computed value rather than re-folding an input, and removing it does not change replay equality
+
+#### Scenario: A Rust change folds the same live and on replay
+
+- **WHEN** a Rust tasklet records its changes through `ctx.change` and the harness runs `replay_equals()`
+- **THEN** the replay folds each recorded change, encoded and decoded as the runtime persists it, through the same `apply_to` the live run used, and the result equals the live state
 
 ### Requirement: Per-cell state init opt-in
 The tasklet authoring sugar SHALL offer an opt-in that maps a cell's key to its initial state, replacing the default `init_state` that returns the state's default value. The opt-in names a function of the cell key returning the state (`fn(Option<&str>) -> State` in Rust; an `@InitState`-annotated `State name(Optional<String> cellKey)` method in Java). The generated `init_state` SHALL delegate to it, passing the cell key — absent in single-cell mode and in the test-harness default construction. The opt-in is pure expansion onto the existing `Tasklet::init_state` trait method; it SHALL NOT receive the restore payload, which the runtime continues to apply after `init_state` returns. The opt-in SHALL require a stateful tasklet; declaring it on a stateless tasklet SHALL be a compile-time error (never silently ignored).
@@ -357,40 +372,14 @@ The contract is written once and implemented per language, but the languages do 
 - **WHEN** the contract's per-SDK table is read after the Python SDK lands
 - **THEN** Python's level SHALL read as runtime rejection of direct attribute assignment, with the reserved runtime path for applying changes and restoring state named as the exception
 
-### Requirement: Sugared run may declare a context parameter for multi-emit
-
-The Rust authoring sugar (`#[tasklet]`) SHALL accept a `run` signature with a trailing tasklet-context parameter and a unit return: `fn run(input: I, state: …, ctx: &mut TaskletCtx)` (the state parameter remains optional, driving stateful inference exactly as today; a `Result<(), _>` return is a unit return for this purpose). The generated implementation SHALL pass the invocation's context through, so the body performs any number of `emit` / `emit_keyed` calls itself. Inference of Input, State, and Change from the remaining signature SHALL be unchanged, and the expansion SHALL remain the same code a hand-written implementation would contain. The Java SDK has no sugar: every Java `run` takes the context and emits through it.
-
-Because the body owns every emit, the return type no longer declares the output type, and an `emits = Type` attribute SHALL declare it instead; absent, the tasklet declares no output channel. Three conflicts SHALL each be rejected with an error naming them: `key = …` together with a context parameter (the body keys its own emits), a non-unit return together with a context parameter (one tasklet, one emit path), and `emits` without a context parameter (there the return type already answers).
-
-#### Scenario: Multi-emit under sugar
-
-- **WHEN** a sugared tasklet declares `run(input, state, ctx)` returning unit and its body calls `ctx.emit_keyed` three times for one input
-- **THEN** three keyed values SHALL be emitted for that invocation, identically to a hand-written implementation with the same body
-
-#### Scenario: key attribute is rejected on the context shape
-
-- **WHEN** a sugared tasklet declares both a context parameter and a `key = …` attribute
-- **THEN** macro expansion SHALL fail with an error naming the conflict
-
-#### Scenario: the output type of a context-parameter run
-
-- **WHEN** a sugared tasklet declares a context parameter and `emits = Candle`
-- **THEN** the generated implementation SHALL declare `Output = Candle`, so the wiring types that tasklet's output channel exactly as a return-typed one would
-
-#### Scenario: emits without a context parameter is rejected
-
-- **WHEN** a sugared tasklet declares `emits` but no context parameter
-- **THEN** macro expansion SHALL fail with an error naming the conflict, since the return type already declares the output type
-
 ### Requirement: Hand-written implementations receive inferable defaults
 
-Hand-written tasklet implementations SHALL NOT be charged ceremony for information the declaration already states, in each SDK's idiom:
+Tasklet authors SHALL NOT be charged ceremony for information the declaration already states, in each SDK's idiom:
 
-- **Java**: the author's class is the one tasklet form. Its `Input`, `State` and `Output` SHALL be read from the implementing class's generic supertype chain (direct `implements Tasklet<…>` with concrete arguments, or a concrete subclass of a generic intermediate class). When one cannot be resolved, registration SHALL fail with an error naming the class and the unresolved type parameter, never guessing. The name and scalar settings SHALL be read from `@Tasklet.Spec`, the initial state from the state class's no-arg constructor, and the Kryo user types from discovery, each unless the class overrides the matching hook (`initState`, `kryoTypes`), and an override SHALL always win. Whether an **optional hook** is declared SHALL be derived from the implementing class rather than from a companion boolean: the interface SHALL carry no `*Overridden()` method, and registration SHALL read `eventTime`, `compensate`, `cellsFor`, `initState` and `kryoTypes` by comparing each hook's declaring class against the interface's own; `onTimer`, `migrateState` and `migrateChange` need no reading, because the runtime calls them only when a timer fires or an older record is restored. This keeps Java level with the Ruby and PHP bindings, where a declaration and its implementation cannot disagree.
-- **Rust**: a `SimpleTasklet` trait SHALL declare only `Input`, `Output`, `State` plus `name`, `init_state`, and `run`; a blanket implementation SHALL lift every `SimpleTasklet` to `Tasklet` with `Clock = WallClock`, `Config = ()`, and the `State` type's derived change type. Implementing `Tasklet` directly SHALL remain fully supported, and a type SHALL NOT implement both.
+- **Java**: the author's class is the one tasklet form. Its `Input`, `State` and `Output` SHALL be read from the implementing class's generic supertype chain (direct `implements Tasklet<…>` with concrete arguments, or a concrete subclass of a generic intermediate class). When one cannot be resolved, registration SHALL fail with an error naming the class and the unresolved type parameter, never guessing. The name and scalar settings SHALL be read from `@Tasklet.Spec`, the initial state from the state class's no-arg constructor, and the Kryo user types from discovery, each unless the class overrides the matching hook (`initState`, `kryoTypes`), and an override SHALL always win. Whether an **optional hook** is declared SHALL be derived from the implementing class rather than from a companion boolean: the interface SHALL carry no `*Overridden()` method, and registration SHALL read `onTimer`, `eventTime`, `compensate`, `cellsFor`, `initState`, `migrateState` and `migrateChange` by comparing each hook's declaring class against the interface's own. This keeps Java level with the Ruby and PHP bindings, where a declaration and its implementation cannot disagree.
+- **Rust**: the author's type is the one tasklet form, `impl Tasklet for T` under `#[flezha::tasklet]`. The attribute SHALL write every item the block does not: `NAME`, the settings given as keys, the `*_OVERRIDDEN` flags derived from the hooks the block writes, `CLOCK`, `init_state` as `Default::default()`, and `State = ()`, `Change = NoChange` and `Output = ()`. It SHALL generate no type. A block that writes every item itself SHALL remain fully supported without the attribute. There SHALL be no `SimpleTasklet` trait.
 
-The mandatory authoring surface for the common case therefore reduces to a name and `run` in Java, and to name, state initialization, and `run` in Rust.
+The mandatory authoring surface for the common case therefore reduces to a name and `run` in both SDKs.
 
 #### Scenario: Java types resolved from the implements clause
 
@@ -402,19 +391,19 @@ The mandatory authoring surface for the common case therefore reduces to a name 
 - **WHEN** a class implements `Tasklet` with a type argument still generic at the concrete class
 - **THEN** registration SHALL fail with an error naming the class and the unresolved type parameter, and nothing SHALL be registered
 
-#### Scenario: Rust simplified tier defaults the tail types
+#### Scenario: The Rust attribute writes what the block leaves out
 
-- **WHEN** a type implements `SimpleTasklet` with `Input = Trade`, `Output = Candle`, `State = CellState`
-- **THEN** it SHALL be registrable wherever a `Tasklet` is accepted, with `Clock = WallClock`, `Config = ()`, and the derived change type of `CellState`
+- **WHEN** a `#[flezha::tasklet(name = "echo")]` block writes only `Input`, `Output` and `run`
+- **THEN** it SHALL be registrable wherever a `Tasklet` is accepted, with `State = ()`, `Change = NoChange`, the wall clock and `NAME` `echo`
 
 #### Scenario: Explicit override wins
 
-- **WHEN** a Java class overrides `kryoTypes()` (or a Rust implementation implements `Tasklet` directly with a non-default `Clock`)
+- **WHEN** a Java class overrides `kryoTypes()`, or a Rust `#[flezha::tasklet]` block writes `init_state`
 - **THEN** the explicit declaration SHALL be used, defaults notwithstanding
 
-#### Scenario: A Java hook cannot be written and left unclaimed
+#### Scenario: A hook cannot be written and left unclaimed
 
-- **WHEN** a Java class declares one of the optional hooks and writes nothing else about it
+- **WHEN** a Java class declares one of the optional hooks, or a Rust `#[flezha::tasklet]` block writes `compensate` or `cells_for`, and writes nothing else about it
 - **THEN** registration SHALL treat the hook as declared, and the binding SHALL offer no way to write the hook while leaving it inactive
 
 ### Requirement: Every SDK binding passes the shared conformance suite

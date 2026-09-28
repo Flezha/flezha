@@ -218,7 +218,7 @@ All but `state` need `--features bench-internals`.
 | `dispatch`                    | `operator_dispatch/regression_100x1x1x10k`, `cell_stress_8x4x8x20k`                                                | Criterion mirrors of the `mix bench` shapes. The worker pool is process-global and sized once — sweep by re-running under different `FLEZHA_WORKER_POOL_SIZE` values. |
 | `dynamic_cell_steady_state` | `dynamic_cell/steady_state_1k_cells`                                                                           | 1,000 active dynamic Cells, no eviction, 200K inputs round-robined: one `cell_key` call plus one `DashMap` lookup per input. |
 | `hybrid_channel_throughput`   | `pure_inter_tasklet_1c`, `pure_inter_tasklet_3c`, `pure_plugin_bound`, `hybrid_1c`, `hybrid_3c`                 | Per-emit cost of hybrid (`sink_with`) channels vs pure inter-tasklet and pure plugin-bound ones. |
-| `state`                       | `state_apply/{small,large}_{no_key,keyed}_{no_prealloc,prealloc_1024}`                                              | The `state.apply` hot path — one `apply_change` plus one `Vec::push`, no serialization or I/O.   |
+| `state`                       | `state_apply/{small,large}_{no_key,keyed}_{no_prealloc,prealloc_1024}`                                              | The `ctx.change` hot path — one `apply_to` plus one `Vec::push`, no serialization or I/O.   |
 
 ```sh
 cargo bench --bench correctness -p flezha_runner --features bench-internals -- throughput_single_cell

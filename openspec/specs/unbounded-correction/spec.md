@@ -2,12 +2,12 @@
 
 ## Purpose
 
-The unbounded-correction capability lets an unbounded operator fix the past when a source sends a late or corrected event: an operator with the effectively-once tier, an `EventTimeFrom` clock, and keyed plugin channels may declare a `correction_window`, and an input that lands behind the Cell's event-time high-water but inside that window triggers an automatic restore-and-replay of the input-log slice above a rewound baseline, event-time-ordered, under a bumped epoch — so conforming sinks overwrite the stale rows by natural key and converge on the corrected values. Inputs are journaled before they are forwarded, so the late input is already in the log at its arrival offset and the slice contains it by construction. Beyond-window inputs follow a declared policy, bursts of late inputs coalesce into one correction per Cell, and the same transaction backs the administration verb `flz operator replay`.
+The unbounded-correction capability lets an unbounded operator fix the past when a source sends a late or corrected event: an operator with the effectively-once tier, an event-time clock, and keyed plugin channels may declare a `correction_window`, and an input that lands behind the Cell's event-time high-water but inside that window triggers an automatic restore-and-replay of the input-log slice above a rewound baseline, event-time-ordered, under a bumped epoch — so conforming sinks overwrite the stale rows by natural key and converge on the corrected values. Inputs are journaled before they are forwarded, so the late input is already in the log at its arrival offset and the slice contains it by construction. Beyond-window inputs follow a declared policy, bursts of late inputs coalesce into one correction per Cell, and the same transaction backs the administration verb `flz operator replay`.
 ## Requirements
 ### Requirement: Correction window declaration with validated prerequisites
 
 An unbounded operator MAY declare a `correction_window`. Declaration SHALL
-require the effectively-once tier, an `EventTimeFrom` clock, and keyed plugin
+require the effectively-once tier, an event-time clock, and keyed plugin
 channels, and SHALL be refused with a typed error naming the missing prerequisite
 otherwise. Those three are authoring errors the engine cannot repair.
 
@@ -36,7 +36,7 @@ existing one and is not re-expressed.
 
 #### Scenario: Declaration without event time refused
 
-- **WHEN** an operator declares `correction_window` with `type Clock = WallClock`
+- **WHEN** an operator declares `correction_window` on the wall clock
 - **THEN** operator start fails with a typed error naming the clock requirement
 
 #### Scenario: Declaration derives its own hold window

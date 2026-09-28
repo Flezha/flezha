@@ -168,59 +168,6 @@ The counters SHALL use `Ordering::Relaxed` for both reads and writes. The counte
 - **WHEN** an entry channel under `DropNewest` policy receives 5 frames while the consumer mailbox is full
 - **THEN** `drops_newest_total` SHALL increase by 5; `drops_oldest_total` SHALL be unchanged; `pushes_blocked_total` SHALL be unchanged; `pushes_total` SHALL be unchanged
 
-### Requirement: Tasklet declares Change associated type and apply_change function (Rust SDK)
-The Rust SDK's `Tasklet` trait SHALL declare an associated `type Change: flezha_runner::state::Change` with default `flezha_runner::state::NoChange`. The `Change` trait SHALL bound on `Serialize + DeserializeOwned + Send + Sync + 'static` and SHALL declare `fn coalesce_key(&self) -> Option<CoalesceKey>` defaulting to `None`.
-
-The `Tasklet` trait SHALL declare a function `fn apply_change(state: &mut Self::State, change: &Self::Change)` whose default implementation panics with a descriptive error string for any `Change` other than `NoChange`, and is a no-op for `NoChange`. Tasklets declaring a non-`NoChange` Change SHALL override `apply_change` to make their state mutation deterministic.
-
-`apply_change` SHALL be deterministic: replay equality is required. The Rust SDK SHALL NOT enforce purity in the type system; instead, `flezha_runner::testing::TaskletTestHarness::<S>::replay_equals` SHALL be the determinism gate exercised by user tests.
-
-#### Scenario: Default Change is NoChange skips persistence machinery
-
-- **WHEN** a Rust Tasklet does not declare its `type Change` and the runtime constructs a Cell for it
-- **THEN** `Tasklet::Change` SHALL resolve to `NoChange`, the runtime SHALL detect this via `TypeId::of::<S::Change>() == TypeId::of::<NoChange>()` at operator-build time and SHALL NOT register a flush buffer or invoke the per-Cell flusher for this Cell
-
-#### Scenario: User-defined Change opts the Tasklet into persistence
-
-- **WHEN** a Rust Tasklet declares `type Change = MyChange` (any non-`NoChange` user type implementing the `Change` trait)
-- **THEN** the runtime SHALL register a typed flush buffer (`Vec<MyChange>`) on each Cell of that Tasklet and SHALL include those Cells in the per-process flusher's drain rotation
-
-#### Scenario: Default apply_change panics on non-NoChange Change without override
-
-- **WHEN** a Rust Tasklet declares `type Change = MyChange` but does NOT override `apply_change`
-- **THEN** the operator registration step SHALL succeed (the trait default impl exists) but the first `state.apply(MyChange::Foo)` call SHALL panic with a descriptive error pointing the user at the missing override
-
-#### Scenario: Determinism verified by replay_equals
-
-- **WHEN** a test invokes `TaskletTestHarness::<S>::new().apply_inputs(inputs).replay_equals()` against a deterministic `apply_change`
-- **THEN** the returned `Result<(), ReplayMismatch>` SHALL be `Ok(())` and the test SHALL pass; for a non-deterministic `apply_change` (e.g. one that reads `SystemTime::now()`), the result SHALL be `Err(ReplayMismatch { ... })` carrying serialized expected and actual states
-
-### Requirement: Tasklet declares Clock associated type with default WallClock (Rust SDK)
-The Rust SDK's `Tasklet` trait SHALL declare an associated `type Clock: flezha_runner::state::Clock` with default `WallClock`. `Clock` SHALL be a sealed trait with v1 implementations `WallClock`, `LogicalClock`, and `EventTimeFrom<F>`. v1 of the Rust SDK SHALL fully wire only `WallClock`; Tasklets declaring a non-default Clock SHALL fail Operator startup with `OperatorStartError::ClockNotImplementedYet { clock_type }` until a follow-up change wires `LogicalClock` and `EventTimeFrom`.
-
-#### Scenario: Default Clock is WallClock
-
-- **WHEN** a Rust Tasklet does not declare its `type Clock`
-- **THEN** `Tasklet::Clock` SHALL resolve to `WallClock` and Operator startup SHALL succeed
-
-#### Scenario: Non-WallClock fails startup in v1
-
-- **WHEN** a Rust Tasklet declares `type Clock = LogicalClock`
-- **THEN** `register_stream::<R>()` SHALL fail with `OperatorStartError::ClockNotImplementedYet { clock_type: "LogicalClock" }` and the operator SHALL NOT be registered
-
-### Requirement: Tasklet declares Config associated type with typed constructor (Rust SDK)
-The Rust SDK's `Tasklet` trait SHALL declare an associated `type Config: DeserializeOwned + Send + Sync + 'static` with default `()`, and a constructor `fn from_config(cfg: Self::Config) -> Self`. When `Config = ()` (the default), `from_config(())` SHALL invoke `Self::default()` (requiring `Tasklet: Default` for unit-Config tasklets; this is satisfied by the existing `operator-mvp-rust` requirement).
-
-#### Scenario: Default unit Config
-
-- **WHEN** a Rust Tasklet does not declare `type Config`
-- **THEN** the runtime SHALL invoke `Tasklet::default()` (via the trait default's `from_config(())`) at Cell init
-
-#### Scenario: User-defined typed Config
-
-- **WHEN** a Rust Tasklet declares `type Config = MyConfig` and the operator-start metadata carries matching bytes
-- **THEN** the runtime SHALL deserialize the bytes into `MyConfig` (postcard) and SHALL invoke `MyTasklet::from_config(cfg)` to construct the Tasklet at Cell init; deserialization failure SHALL produce `OperatorStartError::ConfigDeserializeFailed { tasklet, source }`
-
 ### Requirement: Tasklet declares SCHEMA_VERSION const
 The Rust SDK's `Tasklet` trait SHALL declare `const SCHEMA_VERSION: u32 = 1`. The runtime SHALL stamp this value into the 16-byte header of every persisted Change record for this Tasklet. Users SHALL bump `SCHEMA_VERSION` when they make a non-additive Change-schema edit (e.g. removing or renaming a Change variant).
 
@@ -241,24 +188,6 @@ The Rust SDK's `Tasklet` trait SHALL declare `fn compact_after_bytes() -> usize 
 
 - **WHEN** a Rust Tasklet declares `fn compact_after_bytes() -> usize { 16 * 1024 * 1024 }`
 - **THEN** the operator-start metadata SHALL carry `compact_after_bytes = 16777216` for this Tasklet
-
-### Requirement: Tasklet run receives StateHandle, not direct mutable reference (Rust SDK)
-The Rust SDK's `Tasklet::run` SHALL receive `state: StateHandle<'_, Self>` instead of `state: &mut Self::State`. `StateHandle<'a, S: Tasklet>` SHALL implement `std::ops::Deref<Target = S::State>` for read access and SHALL expose a single mutation method `apply(&mut self, change: S::Change)` that runs `S::apply_change(state, &change)` and pushes the Change onto the per-Cell flush buffer. `StateHandle` SHALL NOT implement `DerefMut`.
-
-#### Scenario: Direct mutation does not compile
-
-- **WHEN** a Rust Tasklet's `run` body attempts `state.field = value` directly via `StateHandle`
-- **THEN** the Rust compiler SHALL fail with a "trait bound `DerefMut` not satisfied" error and the program MUST NOT build
-
-#### Scenario: Mutation via apply succeeds, runs apply_change, and records
-
-- **WHEN** a Rust Tasklet's `run` body calls `state.apply(MyChange::Foo)`
-- **THEN** `S::apply_change(state, &MyChange::Foo)` SHALL run on the underlying state AND `MyChange::Foo` SHALL be appended to the per-Cell flush buffer (as observed by `TaskletTestHarness::recorded_changes()` and by the per-process flusher on its next tick)
-
-#### Scenario: Read access via Deref is allocation-free
-
-- **WHEN** a Rust Tasklet's `run` body reads `state.some_field`
-- **THEN** the read SHALL succeed via `StateHandle`'s `Deref` impl with no Change recording, no buffer mutation, and zero heap allocations
 
 ### Requirement: Operator declares PERSISTENCE_ENABLED const, frozen at instance start (Rust SDK)
 The Rust SDK's `UnboundedOperator` and `BoundedOperator` traits SHALL each declare `const PERSISTENCE_ENABLED: bool = true` and `const SLEEP_WHEN_IDLE: bool` (`false` on `UnboundedOperator`, `Self::PERSISTENCE_ENABLED` on `BoundedOperator`). The runtime SHALL resolve a per-instance `persistence_enabled: bool` when the instance is started from the class's `PERSISTENCE_ENABLED`, for either kind, and SHALL declare both consts to the controller in the class's `AddOperator` response (`persistent = "false"` when off, `sleep_when_idle = "true"` when on). A class declaring `SLEEP_WHEN_IDLE = true` with `PERSISTENCE_ENABLED = false` SHALL be refused at registration as `SleepWithoutPersistence`.
@@ -290,26 +219,8 @@ The resolved value SHALL be bound to the `OperatorInstance` and SHALL be propaga
 - **WHEN** an `OperatorInstance` is constructed with resolved `persistence_enabled = true`, AND the class is redeployed with the const `false` while the instance runs
 - **THEN** the running `OperatorInstance` SHALL continue with `persistence_enabled = true`; the new value SHALL take effect only after `stop_operator(instance_id)` and a subsequent `start_operator(...)` invocation
 
-### Requirement: init_state accepts optional restoration payload (Rust SDK)
-The Rust SDK's `Tasklet::init_state` signature SHALL be `fn init_state(cell_key: Option<&str>, init_payload: Option<RestoreInitPayload<'_>>) -> Self::State`. When `init_payload = None`, `init_state` SHALL behave as a fresh-start constructor. When `init_payload = Some(payload)`, the user MAY inspect or ignore the payload bytes; the runtime SHALL automatically apply the payload (snapshot decode + change-log fold via `Tasklet::apply_change`) AFTER `init_state` returns, replacing the user-constructed state with the restored state.
-
-#### Scenario: Cold start passes None
-
-- **WHEN** a Rust Cell is constructed for the first time with no prior persisted state on the agent
-- **THEN** the runtime SHALL invoke `init_state(cell_key, None)`
-
-#### Scenario: Restart passes Some payload
-
-- **WHEN** a Rust Cell is reconnected and the agent has snapshot or WAL bytes for it
-- **THEN** the runtime SHALL invoke `init_state(cell_key, Some(payload))` AND, after `init_state` returns, the runtime SHALL decode `payload.snapshot_bytes` into `Self::State` (replacing the user's value) if the snapshot is non-empty, AND the runtime SHALL fold `payload.change_log_bytes` via `Tasklet::apply_change` in seq order
-
-#### Scenario: User can inspect payload without applying
-
-- **WHEN** a Rust Tasklet's `init_state` reads `payload.change_log_bytes.len()` for instrumentation purposes
-- **THEN** the read SHALL succeed; the runtime SHALL still apply the payload after `init_state` returns; the user's instrumentation SHALL not affect the restored state
-
 ### Requirement: Per-Cell flush buffer registered for non-NoChange Tasklets
-The Rust SDK's `CellSlot` SHALL hold a type-erased flush buffer (`Arc<Mutex<Box<dyn FlushableBuffer>>>`) for any Cell whose Tasklet's `Change` type is not `NoChange`. The buffer SHALL be a `Vec<S::Change>` initially empty; `state.apply(...)` SHALL push onto it. The per-process flusher SHALL acquire the Mutex on each linger tick to drain the buffer.
+The Rust SDK's `CellSlot` SHALL hold a type-erased flush buffer (`Arc<Mutex<Box<dyn FlushableBuffer>>>`) for any Cell whose Tasklet's `Change` type is not `NoChange`. The buffer SHALL be a `Vec<S::Change>` initially empty; `ctx.change(...)` SHALL push onto it. The per-process flusher SHALL acquire the Mutex on each linger tick to drain the buffer.
 
 For Cells whose Tasklet's `Change == NoChange`, the runtime SHALL NOT allocate a flush buffer or register the Cell with the flusher.
 
@@ -455,7 +366,7 @@ The wire bytes are produced by the channel's `pluginSink.serializer` / `plugin_s
 - **AND** the SDK's topology builder on either side SHALL NOT reject either declaration, because each channel still has exactly one producer Tasklet within its own SDK
 
 ### Requirement: TaskletCtx emit semantics
-A Tasklet's `run` method SHALL receive a mutable reference to a `TaskletCtx`. The Tasklet SHALL emit zero, one, or more outputs by calling `ctx.emit::<C>(value)` for each output, where `C` is the channel-payload type (which the compiler resolves to the matching channel via the wiring declaration). For outputs that need a string-keyed user metadata bag attached, the Tasklet SHALL call `ctx.emit_with_meta::<C>(value, HashMap<String, String>)` instead. The `run` method's return type SHALL be `Result<(), TaskletError>` for success / hard-error signaling. Producing no output SHALL be expressed by simply not calling `ctx.emit` (or `ctx.emit_with_meta`); there SHALL be no explicit "no-output" return variant.
+A Tasklet's `run` method SHALL receive a mutable reference to its context, `Ctx`. The Tasklet SHALL emit zero, one, or more outputs by calling `ctx.emit(value)` for each output, the value typed as the Tasklet's `Output` (the wiring declaration resolves the matching channel). For outputs that need a string-keyed user metadata bag attached, the Tasklet SHALL call `ctx.emit_with_meta(value, HashMap<String, String>)` instead. The `run` method's return type SHALL be `Result<(), TaskletError>` for success / hard-error signaling. Producing no output SHALL be expressed by simply not calling `ctx.emit` (or `ctx.emit_with_meta`); there SHALL be no explicit "no-output" return variant.
 
 `ctx.emit_with_meta` SHALL be valid only for channels declared with `.to_plugin("name")`. Calling `emit_with_meta` on a channel that flows to another Tasklet inside the same Operator SHALL return a `TaskletError` and SHALL NOT propagate the value or the metadata. The error message SHALL name the offending channel and instruct the user to either move the metadata into the typed value or add `.to_plugin(...)` to the channel.
 
@@ -542,7 +453,7 @@ The serializer SHALL run exactly once per `ctx.emit` invocation regardless of co
 - **AND** when the producer unparks, the serializer SHALL be invoked exactly once and the plugin sink SHALL receive the corresponding bytes
 
 ### Requirement: emit_with_meta is valid on hybrid channels
-`TaskletCtx::emit_with_meta(value, meta)` SHALL accept the call when either:
+`ctx.emit_with_meta(value, meta)` SHALL accept the call when either:
 
 - the channel is `kind = PluginBound` (existing rule), OR
 - the channel has `plugin_sink = Some(_)` (new rule for hybrid channels).
@@ -825,7 +736,7 @@ The system SHALL name the workload hierarchy **Operator → Tasklet → Cell**, 
 
 An **Operator** is the deployable unit: it has an id and a namespace, is placed on a Runner, and is started, stopped, migrated, suspended, and crash-resumed. It carries a kind (`unbounded`, `bounded`) and MUST remain able to accept further kinds as a qualifier.
 
-A **Tasklet** is a typed stage inside an Operator. It declares `Input`, `Output`, `State`, `Change`, and `Clock`, implements `run` / `apply_change` / `compensate`, and is wired to other Tasklets by Channels. A Tasklet stands for the whole life of its Operator; it is not invoked once and completed.
+A **Tasklet** is a typed stage inside an Operator. It declares `Input`, `Output`, `State`, `Change`, and a clock, implements `run` / `compensate` over changes that apply themselves, and is wired to other Tasklets by Channels. A Tasklet stands for the whole life of its Operator; it is not invoked once and completed.
 
 A **Cell** is one keyed instance of a Tasklet. It owns its mailbox, its state, its WAL, its snapshots, and its outbox dedup, and it is the unit of idle eviction and compaction. A Cell exists whether or not its Tasklet declares state, and whether or not it carries a key.
 
@@ -1038,4 +949,77 @@ substrings of. Registration SHALL be refused and the topology discarded.
 - **WHEN** an Operator's `channels(c)` method calls `c.channel(T.class, "foo").from(S.class).sink("p1", f1).sink("p2", f2)`
 - **THEN** `FlezhaRunner.registerFactory(R.class)` SHALL throw `UnboundedOperatorConfigurationException` whose message names `DuplicatePluginSink` and the channel `"foo"`
 - **AND** the registered topology SHALL be discarded
+
+### Requirement: A Rust change applies itself through the context
+The Rust SDK's `Change<S>` trait SHALL bound on `Serialize + DeserializeOwned + Send + Sync + 'static`, SHALL declare `fn apply_to(&self, state: &mut S)` and SHALL keep `fn coalesce_key(&self) -> Option<CoalesceKey>` defaulting to `None`. The `Tasklet` trait SHALL declare `type Change: Change<Self::State>` and SHALL NOT declare `apply_change`. `NoChange` SHALL implement `Change<S>` for every `S`. `ctx.change(change)` SHALL call `change.apply_to` on the cell's state and push the change onto the cell's flush buffer; the restore fold and `TaskletTestHarness::replay` SHALL call `apply_to` in seq order. A `Change` enum's variants SHALL keep the append-only rule, since postcard encodes the variant index.
+
+#### Scenario: A change is applied and recorded
+
+- **WHEN** a tasklet's `run` calls `ctx.change(Traded { quiet_at: 42, .. })`
+- **THEN** `Traded::apply_to` SHALL run on the cell's state, and the change SHALL be in the cell's flush buffer
+
+#### Scenario: A restart folds the log through apply_to
+
+- **WHEN** a cell whose log holds three changes is restored
+- **THEN** each change's `apply_to` SHALL run in seq order, and the result SHALL equal the state before the restart
+
+#### Scenario: A stateless tasklet keeps no buffer
+
+- **WHEN** a tasklet leaves `State` and `Change` to the attribute's defaults
+- **THEN** its `Change` SHALL be `NoChange`, and no flush buffer SHALL be registered for its cells
+
+### Requirement: A Rust tasklet reads and changes its state through `Ctx`
+The Rust SDK's `Tasklet::run` SHALL be `fn run(&mut self, input: Self::Input, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError>`, and `on_timer` and `compensate` SHALL take the same `&mut Ctx<'_, Self>` in place of a state handle and a tasklet context. `Ctx<'_, S>` SHALL expose `state(&self) -> &S::State` and `change(&mut self, S::Change)`, SHALL NOT implement `DerefMut` or hand out `&mut S::State`, and SHALL type `emit`, `emit_with_meta`, `emit_keyed` and `emit_keyed_with_meta` as `S::Output`. It SHALL carry every other method the tasklet context carries today. `StateHandle` and `TaskletCtx` SHALL NOT be public.
+
+#### Scenario: Direct mutation does not compile
+
+- **WHEN** a tasklet's `run` body attempts `ctx.state().field = value`
+- **THEN** the Rust compiler SHALL refuse it, and the program MUST NOT build
+
+#### Scenario: An emit of the wrong type does not compile
+
+- **WHEN** a tasklet with `Output = String` calls `ctx.emit(42u64)`
+- **THEN** the Rust compiler SHALL refuse it
+
+#### Scenario: Reading the state is allocation-free
+
+- **WHEN** a tasklet's `run` reads `ctx.state().some_field`
+- **THEN** the read SHALL record no change and allocate nothing
+
+### Requirement: A Rust tasklet's clock follows from what it declares
+The Rust SDK's `Tasklet` trait SHALL declare `const CLOCK: ClockKind`, with `ClockKind` one of `Wall`, `EventTime` and `Logical`, and `fn event_time(input: &Self::Input) -> u64`. The dispatcher SHALL evaluate the clock once per invocation before user code runs:
+
+- **Wall**: epoch milliseconds at dispatch entry.
+- **EventTime**: `event_time` applied to the input being dispatched.
+- **Logical**: the durable change seq, re-armed to `terminal + 1` on restore.
+
+`#[tasklet]` SHALL set `CLOCK` to `EventTime` when the block writes `event_time`, to `Logical` with the `logical_clock` key, and to `Wall` otherwise, and SHALL fail to compile when both are declared. A `Logical` clock with `Change = NoChange` SHALL fail registration with `UnservableClock`.
+
+#### Scenario: The default clock is the wall clock
+
+- **WHEN** a `#[tasklet]` block writes no `event_time` and no `logical_clock` key
+- **THEN** `ctx.now()` SHALL return epoch milliseconds read once at dispatch entry
+
+#### Scenario: Writing event_time makes the clock event time
+
+- **WHEN** a `#[tasklet]` block writes `fn event_time(trade: &Trade) -> u64 { trade.at }` and a trade with `at = 1720000000000` is dispatched
+- **THEN** `ctx.now()` inside that invocation SHALL return `1720000000000`, and event-time timers SHALL fire against it
+
+#### Scenario: Two clocks do not compile
+
+- **WHEN** a `#[tasklet(logical_clock)]` block also writes `event_time`
+- **THEN** the macro SHALL fail to compile naming both
+
+### Requirement: A Rust tasklet's state starts from `init_state(cell_key)`
+The Rust SDK's `Tasklet` trait SHALL declare `fn init_state(cell_key: Option<&str>) -> Self::State` with no restore payload parameter. `#[tasklet]` SHALL write it as `Default::default()` when the block writes none. The runtime SHALL call it for every new cell and SHALL apply any restore payload after it returns.
+
+#### Scenario: A new cell's state is the default
+
+- **WHEN** a `#[tasklet]` block with `State = LastTrade` writes no `init_state` and a cell is created
+- **THEN** that cell's `ctx.state()` SHALL equal `LastTrade::default()`
+
+#### Scenario: A written init_state receives the cell key
+
+- **WHEN** a block writes `init_state` and a cell keyed `"1h"` is created
+- **THEN** `init_state` SHALL be called with `Some("1h")`
 

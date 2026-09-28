@@ -5,7 +5,7 @@ TBD - created by archiving change cell-timers. Update Purpose after archive.
 ## Requirements
 ### Requirement: A Tasklet SHALL be able to register per-Cell timers of two kinds
 
-`TaskletCtx` SHALL offer `timer_at_event_time(ts_ms)` and `timer_after(duration)`
+The tasklet context (`Ctx`) SHALL offer `timer_at_event_time(ts_ms)` and `timer_after(duration)`
 (Rust) / `timerAtEventTime(long)` and `timerAfter(Duration)` (Java) / `Flezha.SDK.Ctx.timer_at_event_time/2` and `timer_after/2` taking milliseconds and answering `{:ok, at}` (Elixir), each returning
 the absolute millisecond timestamp the timer is scheduled at, and each SHALL offer a
 cancellation taking that timestamp. Registering the same kind and timestamp twice on
@@ -39,8 +39,8 @@ Cell.
 
 ### Requirement: A fired timer SHALL invoke `on_timer` with the scheduled timestamp
 
-`Tasklet` SHALL gain `on_timer(fired_at, kind, state, ctx)` receiving the same
-`StateHandle` and `TaskletCtx` as `run`, so it MAY apply changes, emit, and
+`Tasklet` SHALL gain `on_timer(fired_at, kind, ctx)` receiving the same `Ctx`
+as `run`, so it MAY apply changes, emit, and
 register further timers. `fired_at` SHALL be the timestamp the timer was **scheduled
 at**, never the wall-clock time at which it actually fired. The default
 implementation SHALL panic with a message naming the Tasklet, because registering

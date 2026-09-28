@@ -223,6 +223,10 @@ $ flz dlq list 'trade_watcher#p1' --namespace trading
 dead-letter queue is empty
 ```
 
+In Rust, the confirmation's missing fields decode as empty, through
+`#[serde(default)]` on `TradeMessage`, so without the filter it would reach
+`flat_map` and yield no trade rather than being set aside.
+
 ## Write the signals to a file
 
 Everything `buy_above_average` emits leaves `trade_watcher` on its `signals`

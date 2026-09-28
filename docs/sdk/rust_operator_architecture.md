@@ -41,8 +41,9 @@ underneath in [`poll_core.md`](poll_core.md) and
   `AddOperator`. Each instance owns its per-Cell state and mailboxes;
   instances are independent and routed by `operator_id` (the SDK calls it
   `instance_id`).
-- **Tasklet** — the unit of compute: typed `Input` / `Output` / `State` /
-  `Change` / `Clock` / `Config`, a sync `run`, and a cell-mode declaration.
+- **Tasklet** — the unit of compute: the author's own type, with typed
+  `Input` / `Output` / `State` / `Change`, a `NAME`, a clock, a sync `run`,
+  and a cell-mode declaration.
 - **Cell** — one lane of a Tasklet with its own state and mailbox. Modes
   (`CellMode`): `Single` (default, one Cell), `Static` (fixed
   `cell_keys()`, routed by `cells_for`), `Dynamic` (declared on the
@@ -117,7 +118,7 @@ restored; declaring it with persistence off fails `register_factory` with
 
 ```rust
 use flezha_runner::{
-    Flezha, ChannelBuilder, UnboundedOperator, Tasklet, TaskletCtx, TaskletError,
+    tasklet, ChannelBuilder, Ctx, Flezha, Tasklet, TaskletError, UnboundedOperator,
 };
 ```
 
@@ -147,34 +148,59 @@ call them after `start()`, bind the runner: a chained
 shuts the runner down; write `let runner = Flezha::create_runner(ns)?;` and
 then `runner.start()?;` (`run()` is immune, because it blocks until shutdown).
 
-## Authoring sugar (default path)
+## Writing a tasklet
 
-`#[flezha_runner::tasklet]`, `#[derive(flezha_runner::State)]` and
-`flezha_runner::operator!` (crate `flezha-macros`) are pure expansion over
-the `UnboundedOperator` / `Tasklet` / `Change` traits: a sugared tasklet and
-a hand-written one compose in one operator, and ejecting a sugared tasklet
-is a paste of its expansion. The contract binding every SDK is
+A tasklet is your own type. `#[flezha_runner::tasklet(name = "...")]` sits on its
+`impl Tasklet` block and generates no type: it writes the items the block leaves
+out, which are `NAME`, the settings given as keys, the `*_OVERRIDDEN` flags from
+the hooks the block writes, `CLOCK`, a default `init_state`, and `State = ()`,
+`Change = NoChange`, `Output = ()`. The contract binding every SDK is
 [`authoring_contract.md`](authoring_contract.md).
 
 ```rust
+use flezha_runner::{tasklet, Change, Ctx, Tasklet, TaskletError};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Clone, Default, flezha_runner::State)]
-struct OhlcState { candles: Vec<f64> }
+#[derive(Default)]
+pub struct Parse;
 
-#[flezha_runner::tasklet(id = "parse_op")]
-fn parse(input: String) -> f64 {
-    input.parse().unwrap_or(0.0)
+#[tasklet(name = "parse_op")]
+impl Tasklet for Parse {
+    type Input = String;
+    type Output = f64;
+
+    fn run(&mut self, input: String, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
+        ctx.emit(input.parse().unwrap_or(0.0))
+    }
 }
 
-// `&mut State` ⇒ stateful; the return value is auto-emitted.
-#[flezha_runner::tasklet(id = "ohlc_op", keys = ["1m", "1h", "1d", "1w"], cells_for = all_tfs)]
-fn ohlc(price: f64, state: &mut OhlcState) -> Vec<u8> {
-    state.push_candles(price);            // journaled via #[derive(State)]
-    format!("{price}").into_bytes()
+#[derive(Serialize, Deserialize, Default)]
+pub struct Candles { closes: Vec<f64> }
+
+#[derive(Serialize, Deserialize)]
+pub struct Closed(f64);
+
+impl Change<Candles> for Closed {
+    fn apply_to(&self, state: &mut Candles) { state.closes.push(self.0); }
 }
 
-fn all_tfs(_: &f64) -> Vec<&'static str> { vec!["1m", "1h", "1d", "1w"] }
+#[derive(Default)]
+pub struct Ohlc;
+
+#[tasklet(name = "ohlc_op", keys = ["1m", "1h", "1d", "1w"])]
+impl Tasklet for Ohlc {
+    type Input = f64;
+    type Output = Vec<u8>;
+    type State = Candles;
+    type Change = Closed;
+
+    fn cells_for(_: &f64) -> Vec<&'static str> { vec!["1m", "1h", "1d", "1w"] }
+
+    fn run(&mut self, price: f64, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
+        ctx.change(Closed(price));               // applied and journaled
+        ctx.emit(format!("{price}").into_bytes())
+    }
+}
 
 // A linear pipeline needs no `channels()` body. The macro begins with the type
 // it declares, which is what the author registers.
@@ -185,15 +211,21 @@ flezha_runner::operator! {
 }
 ```
 
-A single-tasklet operator needs no `operator!`: its `run` function takes
-`#[flezha_runner::unbounded_operator]` or `#[flezha_runner::bounded_operator]`
-instead (the short form, below). Attribute opt-ins: `id`, `emits`, `keys` +
-`cells_for` (static mode), `key`, `idle_ttl` + `max_cells` (dynamic-mode
-knobs; the key itself is declared on the wiring with `.key_by(f)`), `capacity`,
-`clock`, and on the short-form attributes `sink`, `input` and `on_full`, which
-describe the operator's entry channel.
-Nothing is harvested: every operator a runner declares is one the author
-registered. Fan-out and multi-input stay on an explicit `channels()` body.
+`ctx.state()` reads the Cell's state and `ctx.change(c)` is the only way to
+change it: it runs `c.apply_to(state)` and records `c` for the flusher. There is
+no `&mut State` anywhere, so a mutation the runtime did not record does not
+compile. Emits are typed as the tasklet's `Output`.
+
+Hooks are declared by writing them: `event_time` (which makes the clock event
+time), `on_timer`, `compensate` (bounded saga), `cells_for`, `init_state`,
+`migrate_state`, `migrate_change`. Settings are keys on the attribute:
+`keys` (static mode, with a written `cells_for`), `max_cells` and
+`idle_ttl_seconds` (dynamic-mode knobs; the key itself is declared on the
+wiring with `.key_by(f)`), `capacity`, `schema_version`,
+`min_readable_schema_version`, `compact_after_bytes`, `max_timers_per_cell`,
+and `logical_clock`. Nothing is harvested: every operator a runner declares is
+one the author registered. Fan-out and multi-input stay on an explicit
+`channels()` body.
 
 Both shorthands name their entry channel `input` unless the author says
 otherwise: `input = "prices"` on the attribute, `input::<String>("prices")` on
@@ -203,9 +235,11 @@ takes its name in.
 ### The short form
 
 `#[flezha_runner::unbounded_operator]` or `#[flezha_runner::bounded_operator]`
-on a `run` function declares a whole operator of the kind the attribute names.
-It emits two types: the operator under the function's PascalCase name, which
-is what you register, and the tasklet beside it, suffixed `Tasklet`:
+declares a whole one-tasklet operator of the kind the attribute names. On a
+function with no state, it emits two types: the operator under the function's
+PascalCase name, which is what you register, and the tasklet beside it,
+suffixed `Tasklet`. The function returns its output: a value emits, an
+`Option` emits when present, `()` declares no output.
 
 ```rust
 #[flezha_runner::unbounded_operator(id = "upcase", sink = "out")]
@@ -237,60 +271,85 @@ message to a `once` instance is accepted and never read. It may declare
 another loop mode, `#[flezha_runner::bounded_operator(id = "chat", sink =
 "replies", loop_mode = "per_input")]`, and then runs once per message.
 
-`sink` is optional. With none, the entry channel feeds the tasklet and no
-plugin channel is declared: the operator that only keeps state.
+A one-tasklet operator with state or hooks puts the same attribute on its
+`impl Tasklet` block. The attribute completes the block as `#[tasklet]` does,
+names the tasklet after the `id`, takes the tasklet setting keys beside the
+operator keys, and implements the operator trait on your own type, which is
+what you register. `sink` is optional; with none, the entry channel feeds the
+tasklet and no plugin channel is declared: the operator that only keeps state.
 
 ```rust
-#[derive(Serialize, Deserialize, Clone, Default, flezha_runner::State)]
-struct CounterState { seen: Vec<String> }
+#[derive(Serialize, Deserialize, Default)]
+pub struct Seen { ticks: Vec<String> }
+
+#[derive(Serialize, Deserialize)]
+pub struct Ticked(String);
+
+impl Change<Seen> for Ticked {
+    fn apply_to(&self, state: &mut Seen) { state.ticks.push(self.0.clone()); }
+}
+
+#[derive(Default)]
+pub struct Counter;
 
 #[flezha_runner::unbounded_operator(id = "counter", input = "ticks")]
-fn counter(tick: String, state: &mut CounterState) {
-    state.push_seen(tick);
+impl Tasklet for Counter {
+    type Input = String;
+    type State = Seen;
+    type Change = Ticked;
+
+    fn run(&mut self, tick: String, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
+        ctx.change(Ticked(tick));
+        Ok(())
+    }
 }
+
+runner.register_factory(Counter)?;
 ```
 
 Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
-edge, a loop mode, a retry ladder, the effectively-once tier, a correction
+edge, a retry ladder, the effectively-once tier, a correction
 window. Rust names no entry codec — an entry decodes by its declared type — so
 the short form takes no `codec` key.
 
-The refusals are compile errors. A `sink` on a unit return with no `emits`
-fails with a message beginning `SinkWithoutOutput`, and a missing `id` names the
-attribute. A hand-written `UnboundedOperator` or `BoundedOperator` impl beside a
-short form is rustc's conflicting-implementation error, which the contract calls
-`ShortFormWithTopology`. `#[flezha_runner::tasklet]` declares a tasklet
-only and refuses `sink`, `input`, `kind` and `on_full`.
+The refusals are compile errors. A `sink` on a unit return, or on a block
+whose `Output` is `()`, fails with a message beginning `SinkWithoutOutput`; a
+function with a `&mut` parameter fails with one beginning
+`ShortFormStateOnFunction`; a missing `id` names the attribute. A hand-written
+`UnboundedOperator` or `BoundedOperator` impl beside a short form is rustc's
+conflicting-implementation error, which the contract calls
+`ShortFormWithTopology`. `#[flezha_runner::tasklet]` declares a tasklet only:
+it refuses `sink`, `input`, `kind` and `on_full`, a function target, and a
+block that also carries a short-form attribute.
 
-## Escape hatch: the raw traits
+## The reference form
 
-The sugar expands to this. Reach for it when the topology is not a single
-tasklet or a linear chain.
+An `impl Tasklet` block without the attribute writes every item the attribute
+would add. It is what the attribute expands to, it composes with the everyday
+form in one operator, and it is shown here only: the guides always use the
+attribute.
 
 ```rust
-use flezha_runner::{ChannelBuilder, Flezha, Tasklet, TaskletCtx, TaskletError, UnboundedOperator};
-use flezha_runner::state::{NoChange, RestoreInitPayload, StateHandle, WallClock};
+use flezha_runner::{ChannelBuilder, ClockKind, Ctx, Flezha, NoChange, Tasklet, TaskletError, UnboundedOperator};
 
 #[derive(Default)]
 struct ParseTask;
+
 impl Tasklet for ParseTask {
     type Input = String;
     type Output = f64;
     type State = ();
     type Change = NoChange;   // opts out of persistence
-    type Clock = WallClock;
-    type Config = ();
+    const NAME: &'static str = "parse_op";
+    const CLOCK: ClockKind = ClockKind::Wall;
 
-    fn name() -> &'static str { "parse_op" }
-    fn init_state(_: Option<&str>, _: Option<RestoreInitPayload<'_>>) {}
+    fn init_state(_: Option<&str>) {}
 
-    fn run(&mut self, input: String, _: StateHandle<'_, Self>, ctx: &mut TaskletCtx<'_>)
-        -> Result<(), TaskletError>
-    {
+    fn run(&mut self, input: String, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
         let price: f64 = input.parse().map_err(|e: std::num::ParseFloatError| {
             TaskletError::Custom(e.to_string())
         })?;
-        ctx.emit::<f64>(price)
+        ctx.emit(price)
     }
 }
 
@@ -313,17 +372,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-A static-mode Tasklet (`OhlcTask`) also declares `cell_keys()`, overrides
-`cells_for(&Input) -> Vec<&'static str>` and sets
-`const CELLS_FOR_OVERRIDDEN: bool = true` (a keyset without the override is
-`TopologyIssue::CellsForMissing`). A stateful Tasklet declares a real
-`Change` and overrides `apply_change(&mut State, &Change)`; state is read via
-the `StateHandle`'s `Deref` and mutated with `state.apply(change)`. `run`,
-`apply_change` and `compensate` must be deterministic — time via `ctx.now()`,
-ids via `ctx.stable_id()`. `SimpleTasklet` is the tier between the attribute
-and the full trait. Other hooks: `from_config`, `on_timer`,
-`max_timers_per_cell` (10 000), `compact_after_bytes` (8 MiB), `compensate`
-+ `COMPENSATE_OVERRIDDEN` (bounded saga), `SCHEMA_VERSION`.
+In this form nothing is derived, so the author also writes each flag the
+attribute would set: a static-mode Tasklet (`OhlcTask`) declares `cell_keys()`,
+writes `cells_for(&Input) -> Vec<&'static str>` and sets
+`const CELLS_FOR_OVERRIDDEN: bool = true` (a keyset without it is
+`TopologyIssue::CellsForMissing`); a written `compensate` needs
+`COMPENSATE_OVERRIDDEN = true` to run on a rollback, and a written `max_cells`
+or `mailbox_capacity` its `*_OVERRIDDEN` flag. A forgotten flag silently keeps
+the hook off, which is the reason the everyday form derives them. `CLOCK` is
+`ClockKind::EventTime` for a tasklet that writes `event_time`, whose default
+panics naming the tasklet; `ClockKind::Logical` needs a real `Change`, or
+registration fails with `UnservableClock`.
+
+A stateful Tasklet names its `Change`, a type implementing `Change<State>` whose
+`apply_to` performs the mutation. A change enum is encoded by variant index,
+so **a new variant goes at the end**: inserting one in the middle moves the
+index every later variant was saved under. Reordering, removing or retyping a
+variant or a field is a non-additive edit that needs a `SCHEMA_VERSION` bump
+([`authoring_contract.md` §3.0](authoring_contract.md#30-changing-a-state-or-change-type-after-it-has-been-deployed)).
+`run`, `apply_to` and `compensate` must be deterministic — time via
+`ctx.now()`, ids via `ctx.stable_id()`. Other items: `on_timer`,
+`max_timers_per_cell` (10 000), `compact_after_bytes` (8 MiB),
+`SCHEMA_VERSION`. Saved state is keyed by `NAME`, never by the Rust type, so a
+type can be renamed freely; renaming `NAME` declares a different tasklet.
 
 ### Java SDK parity
 
@@ -392,7 +463,7 @@ Dynamic mode is declared on the **wiring** — an edge carrying `.key_by(f)`
 makes its consumer dynamic — so a reader of `channels()` sees where work fans
 out. A dynamic Tasklet owns zero Cells at startup; the first input whose
 key function returns `key` creates a `CellSlot` (cold
-`init_state(Some(key), None)`) in the Tasklet's `DynamicCellRegistry`.
+`init_state(Some(key))`) in the Tasklet's `DynamicCellRegistry`.
 Concurrent producers for a fresh key share one slot. Declaring `.key_by` into
 a Tasklet with a non-empty `cell_keys()` is refused
 (`TopologyIssue::KeyByOnUnkeyableTarget`). Two per-Tasklet knobs:
@@ -615,15 +686,15 @@ by the `channel` metadata key; Rust and Java frames are byte-identical there.
 Each `CellSlot` holds `CellState<S> { tasklet: S, state: S::State }`
 behind a `Mutex` the inflight CAS keeps uncontended: the Tasklet value is a
 per-Cell scratch buffer, `S::State` is the domain state, `init_state` runs
-once per Cell and later runs mutate in place through the `StateHandle`.
+once per Cell and later runs change it through `Ctx::change`.
 State migration (`MigrationSerialization` / `CellState`) walks the Cells
 per Tasklet and produces the JSON shape in
 [`protocol_spec.md`](protocol_spec.md) "Operator state JSON shape".
 
-Persistence rides the `Change` trait: `state.apply(change)` is a `Vec::push`
+Persistence rides the `Change` trait: `ctx.change(change)` is a `Vec::push`
 on the hot path; serialization, coalescing and the wire send happen on one
 per-process flusher thread on a 5 ms linger (`FLEZHA_FLUSH_LINGER_MS`).
-`type Change = NoChange` opts a Tasklet out. The class toggle
+A tasklet that leaves `Change` at `NoChange` opts out. The class toggle
 `PERSISTENCE_ENABLED` (default `true`, on both kind traits) is frozen at
 instance start and announced to the controller, which a user can override
 per class with `:operator_persistence`. Trait surface, wire format,
@@ -653,10 +724,10 @@ port: [`state_persistence.md`](state_persistence.md).
 
 | Concern | File |
 |---|---|
-| `UnboundedOperator` trait; `Tasklet`, `TaskletCtx`, `TaskletError`, `SimpleTasklet` | `sdk/rust/src/operator/mod.rs`; `sdk/rust/src/tasklet/{mod,ctx,error,simple}.rs` |
+| `UnboundedOperator` trait; `Tasklet`, `Ctx`, `Change`, `ClockKind`, `TaskletError` | `sdk/rust/src/operator/mod.rs`; `sdk/rust/src/tasklet/{mod,ctx,change,clock,error}.rs` |
 | `ChannelBuilder`, `Stream<T>`, `TopologyIssue`, `Channel<T>` | `sdk/rust/src/channel/builder/`, `sdk/rust/src/channel/mod.rs` (kernel types: `flz_core/src/channel.rs`) |
 | Topology builder, mailbox-capacity resolution | `sdk/rust/src/operator/builder.rs` |
-| Authoring macros | `sdk/rust/macros/src/{tasklet,state,operator}.rs` |
+| Authoring macros | `sdk/rust/macros/src/{tasklet,short_form,operator}.rs` |
 | Typed dispatcher and plugin-sink tail; poll-worker pool | `sdk/rust/src/operator/dispatcher.rs`, `poll_pool.rs` |
 | Poll engine (handout, admission, ladder, deferred wakes) | `flz_core/src/poll_core/` |
 | `OperatorInstance`, `KeyGroupRange`; `OperatorTopology`, `CellMode`; registries | `flz_core/src/operator/{instance,topology,registry}.rs` |

@@ -133,7 +133,113 @@ operator below, and the box below lists what `@Tasklet.Spec` declares.
 
 ### Rust
 
-TODO: not written yet.
+The whole example:
+[`sdk/rust/examples/tradedesk`](https://github.com/flezha/flezha_rust_sdk/tree/main/examples/tradedesk).
+
+```rust
+// src/track_prices.rs: keeps a symbol's last ten prices, and compares each new one with their average.
+#[derive(Clone, Deserialize)]
+pub struct Trade {
+    pub symbol: String,
+    pub price: f64,
+    pub ord_type: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Move {
+    pub symbol: String,
+    pub price: f64,
+    pub average: f64,
+}
+
+const WINDOW: usize = 10;
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct PriceWindow {
+    prices: VecDeque<f64>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PriceSeen(f64);
+
+impl Change<PriceWindow> for PriceSeen {
+    fn apply_to(&self, window: &mut PriceWindow) {
+        window.prices.push_back(self.0);
+        if window.prices.len() > WINDOW {
+            window.prices.pop_front();
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct TrackPrices;
+
+#[tasklet(name = "track_prices")]
+impl Tasklet for TrackPrices {
+    type Input = Trade;
+    type Output = Move;
+    type State = PriceWindow;
+    type Change = PriceSeen;
+
+    fn run(&mut self, trade: Trade, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
+        let prices = &ctx.state().prices;
+        if !prices.is_empty() {
+            // a symbol's first trade has nothing to compare with
+            let average = prices.iter().sum::<f64>() / prices.len() as f64;
+            ctx.emit(Move {
+                symbol: trade.symbol,
+                price: trade.price,
+                average,
+            })?;
+        }
+        ctx.change(PriceSeen(trade.price));
+        Ok(())
+    }
+}
+```
+
+**Flezha calls `run` once for every trade**, and passes it two things:
+
+- `trade` is the input: one trade, as it arrives on the tasklet's channel.
+- `ctx` is the context, the tasklet's way of talking to Flezha. `ctx.state()`
+  is this symbol's cell state, what it remembers: the `PriceWindow` above.
+  `ctx.emit(...)` hands a `Move` on, and `ctx.change(...)` records a change to
+  the state.
+
+The four associated types name what comes in, what goes out, what the cell
+remembers, and the change that records it. The first trade of a symbol emits
+nothing, because `run` only calls `ctx.emit` when there is an average to
+compare with.
+
+**The state changes only through a change.** `PriceSeen` is the one change the
+window records: a struct that carries the price, with an `apply_to` that adds
+it and drops the oldest once there are more than ten. `ctx.change` runs
+`apply_to` and writes the change down, and after a crash Flezha runs `apply_to`
+again for every change it wrote, which is how the window comes back.
+`ctx.state()` only lends the state for reading, so assigning one of its fields
+does not compile.
+
+`Trade`, `Move`, `PriceWindow` and `PriceSeen` sit in the tasklet's file,
+because nothing else uses them. serde ignores the fields of a message that a
+struct does not name, so `Trade` reads the three it needs from what the
+exchange sends. The box below lists what `#[tasklet]` writes.
+
+> #### What `#[tasklet]` writes {: .info}
+>
+> No type is generated: the type you write is the type the operator names in
+> `into::<...>()`. The attribute only adds to its `impl` block what the block
+> leaves out, and takes the tasklet's name and settings as keys:
+>
+> | Key | What it is |
+> |---|---|
+> | `name` | required: the name the tasklet's state is saved under, so choose it once |
+> | `keys` | fixed cell keys, with a `cells_for` function that routes each input |
+> | `capacity`, `max_cells`, `idle_ttl_seconds` | the cell's mailbox, the cap on cells, and how long an idle cell lives |
+> | `schema_version`, `logical_clock` | the version of the saved state, and a clock that counts changes |
+>
+> A block that writes no `type State` keeps nothing. Optional hooks, such as a
+> timer's `on_timer` or an undo's `compensate`, are declared by writing the
+> function.
 
 ### Node
 
@@ -236,7 +342,49 @@ order it takes, declared in [`building_a_workflow.md`](building_a_workflow.md).
 
 ### Rust
 
-TODO: not written yet.
+```rust
+// src/buy_above_average.rs: buys when a price is far enough above its average.
+const BUY_ABOVE_PCT: f64 = 2.0;
+const UNITS_PER_PERCENT: f64 = 10.0;
+
+#[derive(Default)]
+pub struct BuyAboveAverage;
+
+#[tasklet(name = "buy_above_average")]
+impl Tasklet for BuyAboveAverage {
+    type Input = Move;
+    type Output = String;
+
+    fn run(&mut self, m: Move, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
+        let percent = (m.price - m.average) / m.average * 100.0;
+        if percent < BUY_ABOVE_PCT {
+            return Ok(());
+        }
+        let quantity = (percent * UNITS_PER_PERCENT).round() as u32; // a stronger move buys more
+
+        let ticket = OrderTicket {
+            symbol: m.symbol.clone(),
+            quantity,
+        };
+        let order = serde_json::to_vec(&ticket).map_err(|e| TaskletError::Custom(e.to_string()))?;
+        let _ = ctx.spawn_bounded("order_executor", order); // one bounded operator per order
+
+        ctx.emit(format!(
+            "{} {:.4} is {:.2}% above its average of {:.4}, buying {}",
+            m.symbol, m.price, percent, m.average, quantity
+        ))
+    }
+}
+```
+
+It takes the move and emits a line, and writes no `type State`, because it
+remembers nothing. It does two things per input through the context: it starts
+a bounded operator and it emits. `spawn_bounded` takes the order's bytes, so
+the ticket is written as JSON with `serde_json`, and `order_executor` decodes it
+back into an `OrderTicket`, the order it takes, declared in
+[`building_a_workflow.md`](building_a_workflow.md). The handle it returns
+reports whether the order started; dropping it with `let _` still logs a
+failure.
 
 ### Node
 
@@ -386,7 +534,45 @@ above, `TrackPrices` and `BuyAboveAverage`. `sealed()` says the path ends at
 
 ### Rust
 
-TODO: not written yet.
+```rust
+// src/trade_watcher.rs: the unbounded operator. Trades in, signals out.
+#[derive(Clone, Deserialize)]
+pub struct TradeMessage {
+    #[serde(default)]
+    channel: String,
+    #[serde(default)]
+    data: Vec<Trade>,
+}
+
+pub struct TradeWatcherOperator;
+
+impl UnboundedOperator for TradeWatcherOperator {
+    fn factory_id() -> &'static str {
+        "trade_watcher"
+    }
+
+    fn channels(c: &ChannelBuilder) {
+        c.input::<TradeMessage>("trades")
+            .filter(|message| message.channel == "trade") // trade messages only
+            .flat_map(|message| message.data) // a message into its trades
+            .filter(|trade| trade.ord_type == "market") // market orders only
+            .key_by(|trade| trade.symbol.clone()) // one cell per symbol
+            .into::<TrackPrices>()
+            .into::<BuyAboveAverage>()
+            .sink_named("signals")
+            .sealed();
+    }
+}
+```
+
+`TradeMessage` is the exchange's message: `channel` says what kind of message
+it is, and `data` holds its trades. It lives in the operator's file, the only
+place that reads it. The subscription confirmation has neither field, and
+`#[serde(default)]` lets it decode as an empty message so the first `filter`
+can drop it; without it, the confirmation would fail to decode and be set
+aside. `into::<...>()` names the two tasklet types above, `TrackPrices` and
+`BuyAboveAverage`, and `sink_named("signals")` is the sink. `sealed()` says
+the path ends at `signals`: a later `into` on it no longer compiles.
 
 ### Node
 
@@ -437,7 +623,22 @@ public static void main(String[] args) throws Exception {
 
 ### Rust
 
-TODO: not written yet.
+```rust
+// src/main.rs: the runner. Joins trading and offers the prices factory.
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let namespace = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "trading".to_string());
+
+    let runner = Flezha::create_runner(namespace)?;
+    runner
+        .register_factory(trade_watcher::TradeWatcherOperator)?
+        .start()?;
+
+    runner.await_termination()?;
+    Ok(())
+}
+```
 
 ### Node
 

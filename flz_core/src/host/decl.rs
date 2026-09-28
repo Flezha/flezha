@@ -14,6 +14,17 @@ pub enum HostClock {
     EventTime,
 }
 
+impl HostClock {
+    /// The name refusals and timer errors print for this clock.
+    pub fn name(self) -> &'static str {
+        match self {
+            HostClock::Wall => "wall",
+            HostClock::Logical => "logical",
+            HostClock::EventTime => "event_time",
+        }
+    }
+}
+
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HostChannelDecl {
