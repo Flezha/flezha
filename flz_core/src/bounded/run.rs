@@ -192,6 +192,7 @@ pub fn message(
     value: &Value,
     stream: &Arc<FlezhaStream>,
     offset: Option<u64>,
+    call: Option<&Arc<str>>,
 ) {
     let Some(r) = Run::of(inst) else { return };
     let Some(channel_id) = inst.topology.lookup_channel_id(&channel.name) else {
@@ -205,11 +206,21 @@ pub fn message(
             d.arrived(Message {
                 channel: channel_id,
                 offset,
+                call: call.cloned(),
                 roots,
             })
         }),
-        Err(error) => entry_ladder(inst, channel_id, value, stream, offset, error),
+        Err(error) => entry_ladder(inst, channel_id, value, stream, offset, call, error),
     }
+}
+
+/// The outside call the pass `slot` is running in carries, if any: what a
+/// `response()` end's output answers.
+pub fn pass_call(slot: &CellSlot) -> Option<Arc<str>> {
+    let inst = slot.instance.upgrade()?;
+    let r = Run::of(&inst)?;
+    let sheet = r.run.sheet();
+    sheet.pass.as_ref()?.call.clone()
 }
 
 /// A message on its way into the dead-letter queue instead of a pass; the
@@ -567,6 +578,7 @@ fn entry_ladder(
     value: &Value,
     stream: &Arc<FlezhaStream>,
     offset: Option<u64>,
+    call: Option<&Arc<str>>,
     error: String,
 ) {
     let Some(owner) = inst.bounded.as_ref().and_then(|run| run.me.upgrade()) else {
@@ -574,6 +586,7 @@ fn entry_ladder(
     };
     let value = Arc::clone(value);
     let stream = Arc::clone(stream);
+    let call = call.cloned();
     let held = Arc::clone(&owner);
     crate::retry::spawn_park_thread(&owner, "flezha-edge-transform-park", move || {
         let Some(channel) = held.topology.channel(channel_id) else {
@@ -584,6 +597,7 @@ fn entry_ladder(
             &format!("entry channel `{}` into its chain", channel.name),
             crate::retry::ParkTarget::edge(channel),
             offset,
+            call.as_ref(),
             None,
             error,
             || {
@@ -595,6 +609,7 @@ fn entry_ladder(
                     d.arrived(Message {
                         channel: channel_id,
                         offset,
+                        call: call.clone(),
                         roots,
                     })
                 });
@@ -637,6 +652,7 @@ impl Run<'_> {
                 edge,
                 value,
                 stream,
+                None,
                 None,
                 false,
                 &mut Destination::Held(&mut items),
@@ -772,9 +788,7 @@ impl Run<'_> {
         };
         let seeded = self.seed(source, mid.as_deref());
         self.decide(|d| match seeded {
-            Ok(Some((origin, channel, offset, roots, seed))) => {
-                d.start_pass(origin, channel, offset, roots, seed)
-            }
+            Ok(Some((origin, message, seed))) => d.start_pass(origin, message, seed),
             Ok(None) => d.finish_clean(),
             Err(error) => d.compensate_on(error),
         });
@@ -785,15 +799,24 @@ impl Run<'_> {
         &self,
         source: Source,
         mid: Option<&MidResume>,
-    ) -> Result<Option<(PassOrigin, ChannelId, Option<u64>, Vec<Release>, Seed)>, BoundedError>
-    {
+    ) -> Result<Option<(PassOrigin, Message, Seed)>, BoundedError> {
         let message = |channel| PassOrigin::Message { channel };
-        let (origin, channel, offset, mut roots) = match source {
-            Source::Message(m) => (message(m.channel), m.channel, m.offset, m.roots),
-            Source::Carry(carry) => (message(carry.channel), carry.channel, None, carry.items),
+        // Only a message's pass carries its offset and its call.
+        let without_input = |channel, roots| Message {
+            channel,
+            offset: None,
+            call: None,
+            roots,
+        };
+        let (origin, mut pass) = match source {
+            Source::Message(m) => (message(m.channel), m),
+            Source::Carry(carry) => (
+                message(carry.channel),
+                without_input(carry.channel, carry.items),
+            ),
             Source::Firing(_) => return Ok(None),
             Source::Resumed { .. } if mid.is_none() => return Ok(None),
-            Source::Resumed { origin, channel } => (origin, channel, None, Vec::new()),
+            Source::Resumed { origin, channel } => (origin, without_input(channel, Vec::new())),
             Source::Journal { channel, handoff } => {
                 let values = seed_from_journal(&self.inst.topology, &handoff, None)?;
                 if values.is_empty() && mid.is_none() {
@@ -801,17 +824,18 @@ impl Run<'_> {
                 }
                 let stream = unwired_stream();
                 let roots = self.to_roots(channel, &values, &stream, None);
-                (message(channel), channel, None, roots)
+                (message(channel), without_input(channel, roots))
             }
         };
         let seed = match mid {
             Some(mid) => {
-                roots.retain(|r| !mid.committed_nodes.contains(&r.node));
+                pass.roots
+                    .retain(|r| !mid.committed_nodes.contains(&r.node));
                 resumed_seed(self, mid, self.resumed_chain(&origin)?)?
             }
             None => Seed::default(),
         };
-        Ok(Some((origin, channel, offset, roots, seed)))
+        Ok(Some((origin, pass, seed)))
     }
 
     /// The chain an interrupted pass of `origin` resumes over.
@@ -1166,7 +1190,7 @@ impl Decide<'_, '_, '_> {
     fn open_timer_pass(&mut self, node: usize, firing: FiringKey) -> Option<&mut Stage> {
         self.disarm(Deadline::ParkIdle);
         let (channel, offset) = self.entry_point();
-        let mut pass = Pass::new(PassOrigin::Timer { node, firing }, channel, offset);
+        let mut pass = Pass::new(PassOrigin::Timer { node, firing }, channel, offset, None);
         pass.stages.insert(node, Stage::owing(1));
         self.s.pass = Some(pass);
         self.s.phase = Phase::Running;
@@ -1225,14 +1249,13 @@ impl Decide<'_, '_, '_> {
         }
     }
 
-    fn start_pass(
-        &mut self,
-        origin: PassOrigin,
-        channel: ChannelId,
-        offset: Option<u64>,
-        roots: Vec<Release>,
-        seed: Seed,
-    ) {
+    fn start_pass(&mut self, origin: PassOrigin, message: Message, seed: Seed) {
+        let Message {
+            channel,
+            offset,
+            call,
+            roots,
+        } = message;
         if self.s.phase != Phase::Starting {
             return;
         }
@@ -1242,7 +1265,7 @@ impl Decide<'_, '_, '_> {
         if matches!(origin, PassOrigin::Message { .. }) {
             self.s.entry = Some((channel, offset));
         }
-        let mut pass = Pass::new(origin, channel, offset);
+        let mut pass = Pass::new(origin, channel, offset, call);
         pass.completion = seed.completion;
         for node in seed.committed_nodes {
             let mut stage = Stage::owing(0);
@@ -1592,6 +1615,7 @@ impl Decide<'_, '_, '_> {
             .collect();
         let channel = pass.channel;
         let offset = pass.consumed_offset;
+        let call = pass.call.clone();
         let failure = pass.failure.clone();
         let message_pass = matches!(pass.origin, PassOrigin::Message { .. });
         for id in owed_acks {
@@ -1611,7 +1635,7 @@ impl Decide<'_, '_, '_> {
                     .is_some_and(|c| c.roots.contains(&f.node))
         });
         if let Some(unread) = unread {
-            self.fx.parked = Some(MessagePark::unread(channel, offset, unread));
+            self.fx.parked = Some(MessagePark::unread(channel, offset, call, unread));
             self.s.parks_in_flight += 1;
             self.r.run.pass_dead.store(false, Ordering::Release);
             return self.enter_waiting();
@@ -1620,7 +1644,7 @@ impl Decide<'_, '_, '_> {
             .clone()
             .filter(|f| message_pass && self.fails_turn(f))
         {
-            return self.dead_letter(channel, offset, failure);
+            return self.dead_letter(channel, offset, call, failure);
         }
         let error = failure
             .map(|f| f.error)
@@ -1643,8 +1667,14 @@ impl Decide<'_, '_, '_> {
     /// A failed turn: its iteration commits as dead-lettered, the controller
     /// parking its message first, and on the ack the turn is undone. A run
     /// that journals nothing keeps no input log, so it parks the turn itself,
-    /// with neither bytes nor offset, and undoes it at once.
-    fn dead_letter(&mut self, channel: ChannelId, offset: Option<u64>, failure: Failure) {
+    /// with neither bytes nor offset but with its call, and undoes it at once.
+    fn dead_letter(
+        &mut self,
+        channel: ChannelId,
+        offset: Option<u64>,
+        call: Option<Arc<str>>,
+        failure: Failure,
+    ) {
         let dead_letter = crate::pb::DeadLetter {
             tasklet: self.r.task(failure.node).name.to_string(),
             attempts: failure.attempts,
@@ -1652,7 +1682,7 @@ impl Decide<'_, '_, '_> {
             cell_key: failure.cell_key.as_deref().unwrap_or_default().to_string(),
         };
         if !self.r.journaling() {
-            self.fx.parked = Some(MessagePark::turn(channel, &dead_letter));
+            self.fx.parked = Some(MessagePark::turn(channel, call, &dead_letter));
             return self.undo_turn();
         }
         let frame = Frame::Iteration {
@@ -2050,18 +2080,26 @@ struct MessagePark {
     channel: ChannelId,
     turn: bool,
     offset: Option<u64>,
+    call: Option<Arc<str>>,
     payload: Option<Vec<u8>>,
     error: String,
     attempts: u32,
 }
 
 impl MessagePark {
-    /// A message the entry channel could not read, with its bytes and offset.
-    fn unread(channel: ChannelId, offset: Option<u64>, failure: &Failure) -> Self {
+    /// A message the entry channel could not read, with its bytes, offset and
+    /// call.
+    fn unread(
+        channel: ChannelId,
+        offset: Option<u64>,
+        call: Option<Arc<str>>,
+        failure: &Failure,
+    ) -> Self {
         Self {
             channel,
             turn: false,
             offset,
+            call,
             payload: failure.payload.clone(),
             error: failure.error.message.clone(),
             attempts: failure.attempts,
@@ -2069,12 +2107,17 @@ impl MessagePark {
     }
 
     /// A failed turn of a run that keeps no input log: neither bytes nor
-    /// offset.
-    fn turn(channel: ChannelId, dead_letter: &crate::pb::DeadLetter) -> Self {
+    /// offset, only the call the pass carried.
+    fn turn(
+        channel: ChannelId,
+        call: Option<Arc<str>>,
+        dead_letter: &crate::pb::DeadLetter,
+    ) -> Self {
         Self {
             channel,
             turn: true,
             offset: None,
+            call,
             payload: None,
             error: format!(
                 "tasklet `{}` failed after {} attempt(s): {}",
@@ -2375,6 +2418,7 @@ impl Run<'_> {
                 .push(crate::host::StagedEntry {
                     bytes: value.bytes.clone(),
                     consumed_offset: None,
+                    call: None,
                     replay: false,
                     stream: Arc::clone(&payload.stream),
                     stage: Some(node),
@@ -2428,6 +2472,7 @@ impl Run<'_> {
                 channel,
                 turn,
                 offset,
+                call,
                 payload,
                 error,
                 attempts,
@@ -2445,6 +2490,7 @@ impl Run<'_> {
                     target,
                     &held.instance_id,
                     offset,
+                    call.as_ref(),
                     payload,
                     error,
                     attempts,

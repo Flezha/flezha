@@ -89,6 +89,31 @@ const CASES: &[(&[&str], &str)] = &[
         ],
         r#"Flezha.Service.CliManager.operator_send("prod", "op1", "a\"b\\cä", "", [])"#,
     ),
+    // `call`'s deadline defaults and has no short spelling: `-t` is `--text`.
+    (
+        &["operator", "call", "echo", "-t", "hello"],
+        r#"Flezha.Service.CliManager.operator_call("", "echo", "hello", "", [timeout_ms: 30000])"#,
+    ),
+    (
+        &[
+            "operator",
+            "call",
+            "--timeout",
+            "100",
+            "--key",
+            "EURUSD",
+            "prices",
+            "--text",
+            "x",
+        ],
+        r#"Flezha.Service.CliManager.operator_call("", "prices", "x", "", [key: "EURUSD", timeout_ms: 100])"#,
+    ),
+    (
+        &[
+            "operator", "send", "prices", "--key", "EURUSD", "--text", "x",
+        ],
+        r#"Flezha.Service.CliManager.operator_send("", "prices", "x", "", [key: "EURUSD"])"#,
+    ),
     (
         &["audit", "read", "--source", "x\"y", "f.log"],
         r#"Flezha.Service.CliManager.audit_log_render_read("f.log", [source: "x\"y"])"#,

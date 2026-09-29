@@ -54,6 +54,10 @@ pub struct DerivedChannel {
     pub consumers: Vec<DerivedEdge>,
     /// The plugin descriptor this channel serializes onto.
     pub sink: Option<String>,
+    /// The channel ends in `response()`: its outputs answer the caller whose
+    /// input caused them. A plugin end like a sink, never beside one.
+    #[serde(skip)]
+    pub response: bool,
     /// Which rung of [`name`](Self::name) answered: a `sink(...)` with no
     /// `named(...)` beside it. Recorded where the naming links are read rather
     /// than walked again, so a refusal about a name and the name itself cannot
@@ -284,6 +288,8 @@ fn refuse_channel(decl: &HostClassDecl, channel: &DerivedChannel, issues: &mut V
             channel: channel.name.clone(),
         });
     }
+    // A sink de-duplicates by a natural key; an answer is identified by its
+    // call, so a response end needs none.
     if decl.effectively_once && !channel_decl.keyed && channel.sink.is_some() {
         issues.push(TopologyIssue::UnkeyedChannelUnderEffectivelyOnce {
             channel: channel.name.clone(),

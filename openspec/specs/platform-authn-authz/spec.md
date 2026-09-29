@@ -835,3 +835,23 @@ Every act record the verb seam writes, and every `:authorization_denied` record,
 - **THEN** the record SHALL be decoded and rendered as it was before, with no
   error
 
+### Requirement: An outside call SHALL be judged and audited as `operator.send`
+
+A call made through `flz operator call` or the published `Flezha.Service.Operator.call/6` SHALL be
+authorized as `operator.send` in the operator's namespace, the action of the act it performs: an
+input delivered to the operator, whose answer belongs to the caller that sent it. It SHALL be bound
+to its own `Flezha.AuthZ.Verbs` row, `operator_call`, and SHALL write the audit record
+`operator_send` writes, after the act, naming the operator, with the error code on a failure. A
+refused call SHALL deliver no input. A call a plugin makes on the operator it is enabled on through
+`Host.inject/5` is that operator's own input and SHALL NOT be judged again.
+
+#### Scenario: A caller without the send right is refused
+
+- **WHEN** authorization is enforced and a caller bound to `viewer` on the operator's namespace runs `flz operator call`
+- **THEN** the call SHALL be refused as `operator.send`, exit 4, and no input SHALL reach the operator
+
+#### Scenario: A call is audited like a send
+
+- **WHEN** a caller bound to `app` calls an operator
+- **THEN** the audit log SHALL hold one record for the act naming the operator, in the shape an `operator send` writes
+

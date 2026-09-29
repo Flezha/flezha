@@ -189,6 +189,7 @@ the value and the type.
 | `FLEZHA_PROCESS_HUB_RECONCILE_INTERVAL_MS` | `30000` | `:process_hub_reconcile_interval_ms` (not in test) |
 | `FLEZHA_BOOT_REPLAY_TIMEOUT_MS` | `60000` | `:boot_replay_timeout_ms` (not in test) |
 | `FLEZHA_AUTO_RESTORE_ENABLED` | `true` | `:auto_restore_enabled` (not in test); true only for `true`/`1` |
+| `FLEZHA_CALL_PENDING_MAX` | `10000` | `:call_pending_max`; the answers one callee operator owes to the outside callers waiting on it. A call past it is refused `call.busy` before anything is ingested; the operator's own outbound calls never count against it |
 
 ### Resilience and convergence
 
@@ -611,6 +612,8 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:hub_runner_assign_wait_ms` | `2_000` | `lib/flezha/service/hub_manager.ex` |
 | `:migration_consent[:consent_timeout_ms]` / `[:retry_interval_ms]` / `[:max_defer_ms]` | `5_000` / `2_000` / `:graceful_shutdown_timeout_ms` (derived) | `lib/flezha/service/hub_manager.ex` |
 | `:overwatch_call_timeout_ms` | `5_000` | `lib/flezha/service/operator_manager.ex` |
+| `:call_pending_max` | `10_000` | `lib/flezha/operator/calls.ex`; the answers one operator owes the outside callers waiting on it |
+| `:call_grace_ms` | `1_000` | `lib/flezha/operator/calls.ex`; how long an outside caller waits past its call's deadline, so the operator's own `call.timeout` reaches it first |
 | `:overwatch_ping_enabled` | `true` | `lib/flezha/operator/lifecycle.ex` |
 | `:overwatch_ping_timeout_ms` | `2_000` | `lib/flezha/runner/control_unit.ex` |
 | `:overwatch_task_warn_ms` | `2_000` | `lib/flezha/operator/overwatch.ex` |

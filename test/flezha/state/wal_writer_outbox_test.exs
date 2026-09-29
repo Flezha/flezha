@@ -267,6 +267,34 @@ defmodule Flezha.State.WalWriterOutboxTest do
     assert InputLog.watermark(rc) == 11
   end
 
+  # fails when: a tier park stops telling the Overwatch, once its entry is
+  # durable, that the called input it parked is dead-lettered.
+  test "tier-on park of a called input answers its caller once the entry is durable", %{
+    rc: rc,
+    cell_id: cell_id,
+    base: base
+  } do
+    redirect_dlq_dir(base)
+    {:ok, 0} = InputLog.append(rc, "poison", %{"flz.reply_to" => "w:caller"})
+    {:ok, 1} = InputLog.append(rc, "poison", %{})
+    pid = armed_writer(rc, cell_id)
+    dlq = %{channel: "in", error: "kaboom", attempts: 3, payload: "poison"}
+
+    :ok = WalWriter.append(pid, 0, effect_header(), effect_body([], 0, dlq))
+    refute_received {:"$gen_cast", {:dead_lettered, _, _, _}}
+
+    :ok = WalWriter.fsync(pid)
+    assert_receive {:"$gen_cast", {:dead_lettered, "w:caller", ref, "kaboom"}}, 2_000
+    assert [entry] = DlqStore.list(rc)
+    assert ref == "#{rc}/task/#{entry["id"]}"
+
+    # A parked input no caller waits on owes nobody.
+    :ok = WalWriter.append(pid, 1, effect_header(), effect_body([], 1, dlq))
+    :ok = WalWriter.fsync(pid)
+    assert wait_until(fn -> length(DlqStore.list(rc)) == 2 end, 2_000)
+    refute_received {:"$gen_cast", {:dead_lettered, _, _, _}}
+  end
+
   # KI-1: the outer window's own furthest offset must not overwrite the higher
   # one a window nested inside its dispatch already reported.
   test "a nested window's advance survives the outer window closing", %{

@@ -22,6 +22,7 @@ defmodule Flezha.Service.CliManagerBootTest do
   alias Flezha.Boot.Readiness
   alias Flezha.Convergence.Snapshot
   alias Flezha.Service.CliManager
+  alias FlezhaTest.Helper.CliCapture
 
   setup do
     Snapshot.reset_recovery_states()
@@ -111,31 +112,11 @@ defmodule Flezha.Service.CliManagerBootTest do
   end
 
   # `boot_await` exits `{:shutdown, 7}` after printing on stderr, or returns after
-  # printing on stdout. `capture_io/2` runs its function in the calling process,
-  # so the nested captures hand their results back through the dictionary and
-  # either outcome is one assertable string.
+  # printing on stdout; either outcome is one assertable string.
   defp await(timeout_ms) do
-    stderr =
-      capture_io(:stderr, fn ->
-        stdout =
-          capture_io(fn ->
-            result =
-              try do
-                CliManager.boot_await(timeout_ms)
-                :ok
-              catch
-                :exit, reason -> reason
-              end
-
-            Process.put(:await_result, result)
-          end)
-
-        Process.put(:await_stdout, stdout)
-      end)
-
-    case Process.get(:await_result) do
-      :ok -> {:ok, Process.get(:await_stdout)}
-      reason -> {reason, stderr}
+    case CliCapture.run(fn -> CliManager.boot_await(timeout_ms) end) do
+      {{:ok, _}, out, _err} -> {:ok, out}
+      {{:exit, reason}, _out, err} -> {reason, err}
     end
   end
 end

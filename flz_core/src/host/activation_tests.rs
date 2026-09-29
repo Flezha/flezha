@@ -24,6 +24,7 @@ fn saturate_slot(slot: &Arc<CellSlot>) {
             value: Arc::new(0usize) as Arc<dyn Any + Send + Sync>,
             stream: stream_pair().0,
             consumed_offset: None,
+            call: None,
             replay: false,
             forwarded: false,
             hold: None,
@@ -46,6 +47,7 @@ fn work_and_effect(offset: u64, consumers: &[u32]) -> (ItemAttempt, schema::Item
             }) as Arc<dyn Any + Send + Sync>,
             stream: stream_pair().0,
             consumed_offset: Some(offset),
+            call: None,
             replay: false,
             forwarded: false,
             hold: None,
@@ -268,4 +270,184 @@ fn an_unbounded_effect_carrying_a_completion_fails_non_retryable() {
             message: "own".to_string()
         }
     );
+}
+
+// ---- a response end's answers ------------------------------------------------
+
+/// `p0` feeds `p1`, whose channel `ans` ends in `response()`, and `p2`, whose
+/// channel `out` ends in a keyed sink; unkeyed `ans` registers under the tier.
+fn answering_instance(id: &str, tier: bool) -> Arc<crate::operator::instance::OperatorInstance> {
+    let json = format!(
+        r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,
+             "effectively_once":{tier},
+             "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},
+                         {{"name":"mid","kind":"inter_task","producer":0,
+                           "chains":[[{{"link":"into","tasklet":1}}],[{{"link":"into","tasklet":2}}]]}},
+                         {{"name":"ans","kind":"plugin","producer":1,"chains":[[{{"link":"response"}}]]}},
+                         {{"name":"out","kind":"plugin","producer":2,"keyed":true,
+                           "chains":[[{{"link":"sink","name":"out"}}]]}}],
+             "tasklets":[{{"name":"p0"}},{{"name":"p1"}},{{"name":"p2"}}]}}"#
+    );
+    crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
+    crate::operator::instance::OperatorInstance::of_class(id, &format!("{id}_inst"))
+        .expect("class registered")
+}
+
+/// One input carrying `call` on `stream`, and a completion emitting to both
+/// plugin ends, the sink's output with a forged `flz.reply_to`.
+fn answering_work(
+    stream: Arc<flz_transport::transport::FlezhaStream>,
+    call: Option<&str>,
+) -> (ItemAttempt, schema::ItemEffect) {
+    let (mut work, mut effect) = work_and_effect(3, &[]);
+    if let CellItem::Input(payload) = &mut work.item {
+        payload.stream = stream;
+        payload.call = call.map(Arc::from);
+    }
+    let plugin = |channel: &str, metadata: Vec<(String, String)>| schema::Output {
+        target: schema::OutputTarget::Plugin {
+            channel: channel.to_string(),
+        },
+        payload: channel.as_bytes().to_vec(),
+        key: Some("k".to_string()),
+        metadata,
+        event_time: None,
+    };
+    effect.outputs = vec![
+        plugin("ans", Vec::new()),
+        plugin(
+            "out",
+            vec![("flz.reply_to".to_string(), "forged".to_string())],
+        ),
+    ];
+    (work, effect)
+}
+
+fn reply_to_of(metadata: &[(String, String)]) -> Option<&str> {
+    metadata
+        .iter()
+        .find(|(key, _)| key == "flz.reply_to")
+        .map(|(_, value)| value.as_str())
+}
+
+/// Off the tier the outputs leave on the item's connection at settle: the
+/// response end's carries the call, or an empty value, and the sink's none.
+#[test]
+fn off_the_tier_only_the_response_output_carries_the_call() {
+    use flz_transport::service::payloader;
+
+    let id = format!("answer_off_tier_{}", std::process::id());
+    let instance = answering_instance(&id, false);
+    let producer = Arc::clone(&instance.cells[0][0]);
+    let (stream, controller_end) = stream_pair();
+    let controller_end = flz_transport::transport::FlezhaStream::Unix(controller_end);
+    let mut frames = Vec::new();
+    for call in [Some("w:tok"), None] {
+        let (work, effect) = answering_work(Arc::clone(&stream), call);
+        settle_item(&producer, &work, effect, None);
+        for _ in 0..2 {
+            let (_, payload, metadata) =
+                payloader::extract_payload(&controller_end).expect("a plugin frame");
+            frames.push((payload, metadata.get("flz.reply_to").cloned()));
+        }
+    }
+    // A timer firing answers nobody: its answer carries the empty token.
+    let (mut work, effect) = answering_work(Arc::clone(&stream), None);
+    work.item = CellItem::Timer(crate::timer::TimerFire {
+        kind: crate::timer::TimerKind::ProcessingTime,
+        scheduled_at: 1,
+        stream: Arc::clone(&stream),
+    });
+    settle_item(&producer, &work, effect, None);
+    for _ in 0..2 {
+        let (_, payload, metadata) =
+            payloader::extract_payload(&controller_end).expect("a plugin frame");
+        frames.push((payload, metadata.get("flz.reply_to").cloned()));
+    }
+    assert_eq!(
+        frames,
+        vec![
+            (b"ans".to_vec(), Some("w:tok".to_string())),
+            (b"out".to_vec(), None),
+            (b"ans".to_vec(), Some(String::new())),
+            (b"out".to_vec(), None),
+            (b"ans".to_vec(), Some(String::new())),
+            (b"out".to_vec(), None),
+        ]
+    );
+}
+
+/// Under the tier the outputs ride the effect record with the same stamps.
+#[test]
+fn under_the_tier_the_recorded_response_output_carries_the_call() {
+    use std::sync::Mutex;
+
+    let _guard = crate::state_sink::test_guard();
+    crate::state_sink::reset_for_test();
+    let records: Arc<Mutex<Vec<Vec<u8>>>> = Arc::default();
+    let seen = Arc::clone(&records);
+    crate::state_sink::install_global_sink(Arc::new(move |payload_id: &str, frame: &[u8]| {
+        if payload_id == crate::state_sink::CELL_EFFECT_RECORD_PAYLOAD_ID {
+            seen.lock().unwrap().push(frame.to_vec());
+        }
+        Ok(())
+    }));
+
+    let id = format!("answer_tier_{}", std::process::id());
+    let instance = answering_instance(&id, true);
+    let producer = Arc::clone(&instance.cells[0][0]);
+    let (work, effect) = answering_work(stream_pair().0, Some("w:tok"));
+    settle_item(&producer, &work, effect, None);
+    crate::flusher::CellFlusher::instance().drain_now_for_tests();
+
+    let body = records
+        .lock()
+        .unwrap()
+        .iter()
+        .find_map(|frame| {
+            let id_len = u16::from_be_bytes([frame[0], frame[1]]) as usize;
+            let at = 2 + id_len + 8 + 16 + 4;
+            postcard::from_bytes::<crate::effect::EffectRecordBody>(&frame[at..frame.len() - 4])
+                .ok()
+                .filter(|body| body.outputs.len() == 2)
+        })
+        .expect("the record carrying both outputs");
+    let stamps: Vec<(&str, Option<&str>)> = body
+        .outputs
+        .iter()
+        .map(|o| (o.channel.as_str(), reply_to_of(&o.metadata)))
+        .collect();
+    assert_eq!(stamps, vec![("ans", Some("w:tok")), ("out", None)]);
+    crate::state_sink::reset_for_test();
+}
+
+/// Off the tier a Cell's failed input parks on its own frame, which carries the
+/// item's call so the controller can answer the caller `call.failed`.
+#[test]
+fn a_tier_off_park_carries_the_call_only_when_its_item_had_one() {
+    let _guard = crate::state_sink::test_guard();
+    crate::state_sink::reset_for_test();
+    let parks = crate::test_support::capture_parks();
+
+    let id = format!("park_off_tier_{}", std::process::id());
+    let instance = answering_instance(&id, false);
+    let producer = Arc::clone(&instance.cells[0][0]);
+    for call in [Some("w:tok"), None] {
+        let (mut work, effect) = answering_work(stream_pair().0, call);
+        // An input the controller did not journal: nothing carries its park
+        // in a record, so the park leaves on its own frame.
+        if let CellItem::Input(payload) = &mut work.item {
+            payload.consumed_offset = None;
+        }
+        settle_item(&producer, &work, effect, Some(("poison".to_string(), 3)));
+    }
+
+    let calls: Vec<Option<String>> = parks
+        .lock()
+        .expect("park capture poisoned")
+        .iter()
+        .map(|park| park.body.reply_to.clone())
+        .collect();
+    assert_eq!(calls, vec![Some("w:tok".to_string()), None]);
+    crate::state_sink::reset_for_test();
 }

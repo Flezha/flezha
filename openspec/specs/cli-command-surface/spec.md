@@ -576,3 +576,46 @@ it SHALL honour a `--json` or `--output json` written anywhere in it.
 - **THEN** stderr SHALL carry the JSON error with code `usage.unknown_option`, details naming
   `--nope`, and the exit code SHALL be 2
 
+### Requirement: `flz operator call` SHALL print the answer and exit by the failure's class
+
+`flz operator call <operator_id>` SHALL read `--text` / `-t` (required, the input's payload),
+`--channel` / `-c` (the entry channel, optional), `--key` (a partition group's key, optional),
+`--timeout` (the deadline in milliseconds, no short spelling, default 30 000) and `--namespace`,
+declared in its verb row like every verb's. It SHALL call the operator through the published
+`Flezha.Service.Operator.call/6`, print the answer's payload on stdout followed by one newline,
+and exit 0. A failure SHALL be rendered on stderr in the error model of `give-every-error-a-code`
+and SHALL exit with the code of its class: `call.timeout` 7, a denied act 4,
+`operator.not_found` 5, `call.target_unkeyed` 2. Its help screen SHALL be pinned by a capture.
+
+#### Scenario: An answer is printed
+
+- **WHEN** `flz operator call echo --text hello` is run against an operator that answers with its input
+- **THEN** stdout SHALL be `hello` and one newline, stderr SHALL be empty, and the exit code SHALL be 0
+
+#### Scenario: A timeout exits 7
+
+- **WHEN** `flz operator call slow --text x --timeout 100` is run against an operator whose turn takes longer
+- **THEN** stderr SHALL carry `call.timeout`, stdout SHALL be empty, and the exit code SHALL be 7
+
+#### Scenario: The timeout has no short spelling
+
+- **WHEN** `flz operator call echo -t hello` is run
+- **THEN** `-t` SHALL be read as `--text`, and the deadline SHALL be the default
+
+### Requirement: `flz operator send` and `flz operator call` SHALL reach a partition group's member by key
+
+`flz operator send` SHALL read `--key`, and both verbs SHALL resolve a partition group id and a key
+to the member whose key-group range owns the key, by the one resolution `flz state get` uses. A
+group named with no key SHALL fail naming the group's members, and SHALL NOT answer that the
+operator was not found.
+
+#### Scenario: `send` to a group reaches the owner
+
+- **WHEN** `flz operator send prices --key EURUSD --channel trades --text '{"pair":"EURUSD"}'` is run against a group of two members
+- **THEN** the member owning `EURUSD` SHALL receive the input, and the verb SHALL report the delivery
+
+#### Scenario: `send` to a group without a key names the members
+
+- **WHEN** `flz operator send prices --text x` is run against a partition group
+- **THEN** it SHALL fail naming `prices#p0` and `prices#p1`, and SHALL NOT print `operator 'prices' not found`
+

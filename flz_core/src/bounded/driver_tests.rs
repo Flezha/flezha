@@ -201,6 +201,18 @@ fn feed(wire: &Wire, node: &RunnerNode, id: &str, message: &[u8]) {
     );
 }
 
+/// One message into operator `id` on its first entry channel, called by the
+/// outside call `token`.
+fn feed_call(wire: &Wire, node: &RunnerNode, id: &str, message: &[u8], token: &str) {
+    let metadata = HashMap::from([("flz.reply_to".to_string(), token.to_string())]);
+    node.operator_dispatch_handle().dispatch(
+        id,
+        message.to_vec(),
+        &metadata,
+        Arc::clone(&wire.stream),
+    );
+}
+
 /// One message into bounded operator `id` naming `channel`, at input-log `offset`.
 fn feed_at(node: &RunnerNode, id: &str, channel: &str, offset: u64, message: &[u8]) {
     let metadata = HashMap::from([
@@ -348,7 +360,7 @@ fn a_message_the_host_cannot_read_parks_under_the_entry_channel_and_the_run_wait
     let wire = Wire::new();
     assert!(start(&mut node, &id, "host-unread-1", "", 0).is_empty());
 
-    feed(&wire, &node, "host-unread-1", b"bad");
+    feed_call(&wire, &node, "host-unread-1", b"bad", "w:unread");
     spin_until("the unreadable message to be parked", || {
         !parks.lock().expect("park capture poisoned").is_empty()
     });
@@ -360,6 +372,11 @@ fn a_message_the_host_cannot_read_parks_under_the_entry_channel_and_the_run_wait
     assert_eq!(park.body.entry.attempts, 2, "after the stage's ladder");
     assert_eq!(park.body.entry.error, "not json");
     assert_eq!(park.body.entry.payload.as_deref(), Some(&b"bad"[..]));
+    assert_eq!(
+        park.body.reply_to.as_deref(),
+        Some("w:unread"),
+        "its own call"
+    );
     assert_eq!(park.identity.1, "in");
     assert_no_completion(&rx, "host-unread-1", Duration::from_millis(300));
 
@@ -474,19 +491,30 @@ fn an_unbounded_given_the_unreadable_verdict_parks_the_item() {
     let registry = Arc::new(crate::operator::registry::OperatorRegistry::new());
     registry.register(Arc::clone(&instance));
 
-    crate::routing::OperatorDispatchHandle { registry }.dispatch(
-        &instance.instance_id,
-        b"bad".to_vec(),
-        &Default::default(),
-        stream_pair().0,
-    );
+    let handle = crate::routing::OperatorDispatchHandle { registry };
+    let called = HashMap::from([("flz.reply_to".to_string(), "w:bad".to_string())]);
+    for metadata in [called, HashMap::new()] {
+        handle.dispatch(
+            &instance.instance_id,
+            b"bad".to_vec(),
+            &metadata,
+            stream_pair().0,
+        );
+    }
 
-    spin_until("the unreadable item to be parked", || {
-        !parks.lock().expect("park capture poisoned").is_empty()
+    spin_until("both unreadable items to be parked", || {
+        parks.lock().expect("park capture poisoned").len() == 2
     });
-    let park = parks.lock().expect("park capture poisoned").remove(0);
-    assert_eq!(park.body.entry.error, "not json");
-    assert_eq!(park.body.entry.payload.as_deref(), Some(&b"bad"[..]));
+    let parked = std::mem::take(&mut *parks.lock().expect("park capture poisoned"));
+    assert!(parked.iter().all(|park| park.body.entry.error == "not json"
+        && park.body.entry.payload.as_deref() == Some(&b"bad"[..])));
+    let mut calls: Vec<Option<String>> = parked.into_iter().map(|p| p.body.reply_to).collect();
+    calls.sort();
+    assert_eq!(
+        calls,
+        vec![None, Some("w:bad".to_string())],
+        "a park frame carries the call only when its item had one"
+    );
     state_sink::reset_for_test();
 }
 
@@ -1329,7 +1357,7 @@ fn a_run_that_journals_nothing_parks_its_failed_turn_and_answers_the_next() {
     let wire = Wire::new();
     bind_turns(&mut node, &id, "turn-optout-1", true, None);
 
-    feed(&wire, &node, "turn-optout-1", b"boom");
+    feed_call(&wire, &node, "turn-optout-1", b"boom", "w:boom");
     spin_until("the failed turn to be parked", || {
         !parks.lock().expect("park capture poisoned").is_empty()
     });
@@ -1345,6 +1373,11 @@ fn a_run_that_journals_nothing_parks_its_failed_turn_and_answers_the_next() {
     assert_eq!(park.body.entry.channel, "in");
     assert_eq!(park.body.entry.payload, None);
     assert_eq!(park.body.origin_offset, None);
+    assert_eq!(
+        park.body.reply_to.as_deref(),
+        Some("w:boom"),
+        "the pass's call"
+    );
     assert!(
         park.body
             .entry
@@ -1358,5 +1391,46 @@ fn a_run_that_journals_nothing_parks_its_failed_turn_and_answers_the_next() {
     feed(&wire, &node, "turn-optout-1", b"again");
     assert_eq!(outputs(&wire, "turn-optout-1", 1), [b"re:again".to_vec()]);
     assert_no_completion(&rx, "turn-optout-1", Duration::from_millis(200));
+    state_sink::reset_for_test();
+}
+
+/// A two-stage `per_input` pass answers the call its message carried from the
+/// second stage, which never saw the message; a message nobody called is
+/// answered with the empty token.
+#[test]
+fn a_per_input_pass_answers_its_call_from_its_last_stage() {
+    let (_env, _sink, rx) = turn_env();
+    let id = format!("turn_answer_{}", std::process::id());
+    let json = turn_json(&id, false, "per_input", "keep_progress")
+        .replace(r#"{"link":"sink","name":"out"}"#, r#"{"link":"response"}"#);
+    crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
+    let mid = crate::operator::registry::get_class(&id)
+        .and_then(|topology| topology.lookup_channel_id("mid"))
+        .expect("the class declares `mid`");
+    let _host = turn_host(mid, Arc::default());
+    let mut node = RunnerNode::new("test-ns".to_string());
+    let wire = Wire::new();
+    bind_turns(&mut node, &id, "turn-answer-1", true, None);
+
+    feed_call(&wire, &node, "turn-answer-1", b"hello", "w:one");
+    feed(&wire, &node, "turn-answer-1", b"plain");
+    let mut answers = Vec::new();
+    while answers.len() < 2 {
+        let (payload_id, payload, metadata) = wire
+            .frames
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap_or_else(|_| panic!("the run answered {answers:?} and then nothing"));
+        if payload_id == "turn-answer-1" {
+            answers.push((payload, metadata.get("flz.reply_to").cloned()));
+        }
+    }
+    assert_eq!(
+        answers,
+        vec![
+            (b"re:hello".to_vec(), Some("w:one".to_string())),
+            (b"re:plain".to_vec(), Some(String::new())),
+        ]
+    );
+    assert_no_completion(&rx, "turn-answer-1", Duration::from_millis(200));
     state_sink::reset_for_test();
 }

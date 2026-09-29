@@ -68,6 +68,7 @@ pub fn route_to_consumers(
     value: &Arc<dyn Any + Send + Sync>,
     stream: &Arc<FlezhaStream>,
     consumed_offset: Option<u64>,
+    call: Option<&Arc<str>>,
     replay: bool,
     producer: Option<&Arc<CellSlot>>,
 ) -> bool {
@@ -76,7 +77,9 @@ pub fn route_to_consumers(
             Some(producer) => {
                 crate::bounded::hold_emit(instance, Some(channel), value, stream, producer)
             }
-            None => crate::bounded::message(instance, channel, value, stream, consumed_offset),
+            None => {
+                crate::bounded::message(instance, channel, value, stream, consumed_offset, call)
+            }
         }
         return false;
     }
@@ -89,6 +92,7 @@ pub fn route_to_consumers(
             value,
             stream,
             consumed_offset,
+            call,
             replay,
             &mut Destination::Mailbox(producer),
         ) {
@@ -100,6 +104,7 @@ pub fn route_to_consumers(
                 value,
                 stream,
                 consumed_offset,
+                call,
                 replay,
                 e.to_string(),
             ),
@@ -130,6 +135,7 @@ pub(crate) fn deliver_edge(
     value: &Arc<dyn Any + Send + Sync>,
     stream: &Arc<FlezhaStream>,
     consumed_offset: Option<u64>,
+    call: Option<&Arc<str>>,
     replay: bool,
     to: &mut Destination<'_>,
 ) -> Result<bool, Error> {
@@ -141,6 +147,7 @@ pub(crate) fn deliver_edge(
             value,
             stream,
             consumed_offset,
+            call,
             replay,
             to,
         ),
@@ -152,6 +159,7 @@ pub(crate) fn deliver_edge(
                 &v,
                 stream,
                 consumed_offset,
+                call,
                 replay,
                 to,
             )
@@ -170,6 +178,7 @@ pub(crate) fn deliver_host_output(
     value: &Arc<dyn Any + Send + Sync>,
     stream: &Arc<FlezhaStream>,
     consumed_offset: Option<u64>,
+    call: Option<&Arc<str>>,
     producer: &Arc<CellSlot>,
 ) -> Result<bool, Error> {
     let channel = instance.topology.channel(channel_id).ok_or_else(|| {
@@ -194,6 +203,7 @@ pub(crate) fn deliver_host_output(
         value,
         stream,
         consumed_offset,
+        call,
         false,
         &mut Destination::Mailbox(Some(producer)),
     )
@@ -210,6 +220,7 @@ fn deliver_to_consumer(
     value: &Arc<dyn Any + Send + Sync>,
     stream: &Arc<FlezhaStream>,
     consumed_offset: Option<u64>,
+    call: Option<&Arc<str>>,
     replay: bool,
     to: &mut Destination<'_>,
 ) -> Result<bool, Error> {
@@ -222,6 +233,7 @@ fn deliver_to_consumer(
     let mut admit = |consumer: &Arc<CellSlot>| {
         let mut payload = make_cell_payload(value, stream, consumed_offset, replay);
         payload.forwarded = forwarded;
+        payload.call = call.cloned();
         payload.hold = consumed_offset
             .zip(instance.prefix.as_ref())
             .map(|(offset, prefix)| prefix.hold(offset));
@@ -459,15 +471,15 @@ fn route_stream_frame(
         return;
     }
 
-    let (consumed_offset, replay) = frame_facts(metadata);
+    let (consumed_offset, call, replay) = frame_facts(metadata);
     if let Some(edge) = metadata.get("flz.edge") {
-        return redeliver_edge(instance, edge, payload, stream, consumed_offset);
+        return redeliver_edge(instance, edge, payload, stream, consumed_offset, call);
     }
     if consumed_offset.is_some() {
         instance.owed_arrived();
     }
     let Some((channel_id, channel)) =
-        entry_channel_or_park(instance, &payload, metadata, consumed_offset)
+        entry_channel_or_park(instance, &payload, metadata, consumed_offset, call.as_ref())
     else {
         return;
     };
@@ -479,6 +491,7 @@ fn route_stream_frame(
         payload,
         &stream,
         consumed_offset,
+        call.as_ref(),
         replay,
     ) else {
         return;
@@ -493,6 +506,7 @@ fn route_stream_frame(
         &typed_payload,
         &stream,
         consumed_offset,
+        call.as_ref(),
         replay,
         None,
     );
@@ -553,6 +567,7 @@ fn redeliver_edge(
     payload: Vec<u8>,
     stream: Arc<FlezhaStream>,
     origin: Option<u64>,
+    call: Option<Arc<str>>,
 ) {
     let named = edge
         .split_once(':')
@@ -588,6 +603,7 @@ fn redeliver_edge(
         &value,
         &stream,
         origin,
+        call.as_ref(),
         false,
         &mut Destination::Redelivered,
     ) {
@@ -601,14 +617,22 @@ fn redeliver_edge(
 }
 
 /// What the controller stamped: the input-log offset `flz.offset` (an unbounded
-/// or a bounded operator with durable input) and whether the frame is a replayed
-/// slice member.
-fn frame_facts(metadata: &HashMap<String, String>) -> (Option<u64>, bool) {
+/// or a bounded operator with durable input), the outside call waiting on the
+/// input (`flz.reply_to`) and whether the frame is a replayed slice member.
+fn frame_facts(metadata: &HashMap<String, String>) -> (Option<u64>, Option<Arc<str>>, bool) {
     let consumed_offset = metadata
         .get("flz.offset")
         .and_then(|s| s.parse::<u64>().ok());
-    (consumed_offset, metadata.contains_key("flz.replay"))
+    let call = metadata
+        .get(CALL_KEY)
+        .filter(|token| !token.is_empty())
+        .map(|token| Arc::from(token.as_str()));
+    (consumed_offset, call, metadata.contains_key("flz.replay"))
 }
+
+/// The metadata key a call's token rides: stamped by the controller on the
+/// input, and by the runner on every output of a `response()` end.
+pub const CALL_KEY: &str = "flz.reply_to";
 
 /// The reason a frame that named no channel did not enter: there was nothing
 /// to default to. Both cores report it in these words.
@@ -624,6 +648,7 @@ fn entry_channel_or_park<'a, V: EntryView>(
     payload: &[u8],
     metadata: &HashMap<String, String>,
     consumed_offset: Option<u64>,
+    call: Option<&Arc<str>>,
 ) -> Option<(ChannelId, &'a ChannelDescriptor)> {
     let topology = instance.topology();
     // The name the frame asked for; empty when it asked for none and there is
@@ -641,7 +666,7 @@ fn entry_channel_or_park<'a, V: EntryView>(
             None => "",
         },
     };
-    park_unresolved_entry(instance, requested, payload, consumed_offset);
+    park_unresolved_entry(instance, requested, payload, consumed_offset, call);
     None
 }
 
@@ -666,6 +691,7 @@ fn park_unresolved_entry<V: EntryView>(
     requested: &str,
     payload: &[u8],
     consumed_offset: Option<u64>,
+    call: Option<&Arc<str>>,
 ) {
     let declared = instance.topology().declared_names(ChannelKind::Entry);
     let error = unresolved_entry_error(&declared, requested);
@@ -677,6 +703,7 @@ fn park_unresolved_entry<V: EntryView>(
     let parked = Arc::clone(instance);
     let requested = requested.to_string();
     let payload = payload.to_vec();
+    let call = call.cloned();
     crate::retry::spawn_park_thread(instance, "flezha-unresolved-entry-park", move || {
         crate::retry::run_entrance_ladder(
             &*parked,
@@ -685,6 +712,7 @@ fn park_unresolved_entry<V: EntryView>(
             // never reaches, are the target's to decide.
             crate::retry::ParkTarget::unresolved(&requested),
             consumed_offset,
+            call.as_ref(),
             Some(payload),
             error,
             // Unreachable at a budget of one, and the truth at any other:
@@ -697,6 +725,7 @@ fn park_unresolved_entry<V: EntryView>(
 /// The value a frame becomes on its entry channel, or `None` when it left
 /// the reader's hands — staged for a prepare crossing, or a failing parse on
 /// the ladder.
+#[allow(clippy::too_many_arguments)]
 fn enter_channel(
     instance: &Arc<OperatorInstance>,
     channel_id: u32,
@@ -704,11 +733,13 @@ fn enter_channel(
     payload: Vec<u8>,
     stream: &Arc<FlezhaStream>,
     consumed_offset: Option<u64>,
+    call: Option<&Arc<str>>,
     replay: bool,
 ) -> Option<Arc<dyn Any + Send + Sync>> {
     let entry = crate::host::StagedEntry {
         bytes: payload,
         consumed_offset,
+        call: call.cloned(),
         replay,
         stream: Arc::clone(stream),
         stage: None,
@@ -721,6 +752,7 @@ fn enter_channel(
     let deliver = || {
         let instance = Arc::clone(instance);
         let stream = Arc::clone(stream);
+        let call = call.cloned();
         Box::new(move |value: Arc<dyn Any + Send + Sync>| {
             let channel = instance
                 .topology
@@ -732,6 +764,7 @@ fn enter_channel(
                 &value,
                 &stream,
                 consumed_offset,
+                call.as_ref(),
                 replay,
                 None,
             );
@@ -744,6 +777,7 @@ fn enter_channel(
         channel,
         payload,
         consumed_offset,
+        call,
         deliver,
     )
 }
@@ -757,6 +791,7 @@ fn wrap_entry<V: EntryView>(
     channel: &ChannelDescriptor,
     payload: Vec<u8>,
     consumed_offset: Option<u64>,
+    call: Option<&Arc<str>>,
     deliver: impl FnOnce() -> EntryDeliver,
 ) -> Option<Arc<dyn Any + Send + Sync>> {
     let retry_bytes = channel.entry_parsed.then(|| payload.clone());
@@ -778,6 +813,7 @@ fn wrap_entry<V: EntryView>(
                     bytes,
                     first_error: e,
                     consumed_offset,
+                    call: call.cloned(),
                     deliver: deliver(),
                 }),
                 None => eprintln!(

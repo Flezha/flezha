@@ -24,6 +24,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperatorManager
   alias FlezhaTest.Helper.ConvergenceFixtures
+  alias FlezhaTest.Helper.CliCapture
 
   setup :set_mimic_global_until_exit
 
@@ -154,7 +155,14 @@ defmodule Flezha.Service.CliManagerPartitionTest do
       stub(OperatorManager, :get_operator_ids, fn _ns -> {:ok, Enum.map(rows, & &1.id)} end)
 
       stub(OperatorManager, :get_overwatch_state, fn ns, _id ->
-        {:ok, %{runner_id: "r2", namespace: ns, extensions: %{}, default_input_type: "bytes"}}
+        {:ok,
+         %{
+           runner_id: "r2",
+           namespace: ns,
+           extensions: %{},
+           default_input_type: "bytes",
+           calls: %Flezha.Operator.Calls{}
+         }}
       end)
 
       stub(HubManager, :get_hub_nodes, fn _ns, true -> [node()] end)
@@ -482,22 +490,8 @@ defmodule Flezha.Service.CliManagerPartitionTest do
     end
 
     defp run_state_get(path) do
-      capture_io(:stderr, fn ->
-        printed =
-          capture_io(fn ->
-            try do
-              CliManager.state_get(path)
-            catch
-              :exit, _ -> :ok
-            end
-          end)
-
-        send(self(), {:stdout, printed})
-      end)
-
-      receive do
-        {:stdout, printed} -> printed
-      end
+      {_outcome, out, _err} = CliCapture.run(fn -> CliManager.state_get(path) end)
+      out
     end
 
     test "a keyed read goes to exactly the member owning the key's group" do

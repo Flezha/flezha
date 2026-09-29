@@ -475,6 +475,7 @@ told nothing about whether the name exists.
 | `operator_scale` | `operator_scale` | `operator.scale` | ops | argument 1 (the namespace named) | after on `bounded_service` |
 | `operator_rewind` | `operator_rewind` | `operator.rewind` | ops | argument 1 (the namespace named) | after on `bounded_service` |
 | `operator_send` | `operator_send` | `operator.send` | spawner | argument 1 (the namespace named) | after on `operator_service` |
+| `operator_call` | `operator_call` | `operator.send` | spawner | argument 1 (the namespace named) | after on `operator_service` |
 | `spawn_deliver` | runner session only | `operator.send` | spawner | argument 1 (the namespace named) | - |
 | `operator_replay` | `operator_replay` | `operator.replay` | ops | the stored row's `namespace` | after on `operator_service` |
 | `operator_listen` | `operator_listen` | `operator.listen` | app | argument 1 (the namespace named) | after on `plugin_service` |
@@ -515,7 +516,7 @@ told nothing about whether the name exists.
 | `state_journal` | `state_journal` | `state.records` | ops | the stored row's `namespace` | - |
 | `state_metrics` | published surface only | `state.list` | viewer | `_system` | - |
 
-Four of those choices are worth stating plainly.
+Six of those choices are worth stating plainly.
 
 **A parked payload is business data.** `dlq list` and `dlq show` are
 `ops`', not the viewer's, because a DLQ entry holds the record that failed —
@@ -545,6 +546,12 @@ that names a running instance feeds it, and that delivery is judged as
 permitted delivery because it happens once per event. A refused one is audited as
 `authorization_denied`, like every refusal. The start a spawn makes is
 `operator_start` and is recorded like any other.
+
+**A call is a send.** `flz operator call` and `Flezha.Service.Operator.call/6`
+deliver an input whose answer belongs to the caller that sent it, so they are
+judged as `operator.send` and audited with the record a send writes, naming the
+operator. A plugin's call on the operator it is enabled on is that operator's
+own input and is not judged again. See [`../sdk/calls.md`](../sdk/calls.md).
 
 **`flz auth whoami` is a gated read.** It answers the identity a token
 resolves to, so while authorization is enforced an invocation with no token is

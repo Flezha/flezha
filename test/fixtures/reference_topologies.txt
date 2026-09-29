@@ -71,6 +71,7 @@ commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 #   <x>.map                    a chain nothing closes
 #   <x>.sink(<name>)           terminate x on the plugin layer, naming it
 #   <x>.sink                   the same, leaving the name derived
+#   <x>.response               terminate x on the caller's answer (`response()`)
 #   <x>.named(<name>)          override x's derived channel name
 #   <x>.keyed                  opt x into output identity
 #   <x>.retry_max(<n>)         the channel's attempt ceiling
@@ -121,6 +122,8 @@ commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 #              from one. The row stays for the five builders that can
 #   shorthand  the §5 single-tasklet short form. Every SDK carries it, so no
 #              manifest may lack this one
+#   response   the `response()` plugin end. Every SDK carries it, so no
+#              manifest may lack this one
 #   shorthand_typed_output  a short form on a tasklet whose output the SDK can
 #              see at declaration time. Rust, Java and Python (return hint)
 #              can; Node, Ruby, PHP and Elixir cannot
@@ -145,6 +148,8 @@ topology.unkeyed_edge_into_dynamic_tasklet | unkeyed_dynamic  | entry(in); entry
 topology.mailbox_capacity_zero     | mailbox_zero     | entry(in); in.into(plain); plain.mailbox(0)                                           | -
 topology.mailbox_capacity_too_large | mailbox_huge     | entry(in); in.into(plain); plain.mailbox(2000000)                                     | -
 topology.duplicate_plugin_sink     | dup_sink         | entry(in); in.into(plain); plain.sink(out); plain.sink(out)                           | -
+topology.channel_ends_twice        | response_beside_sink | entry(in); in.into(plain); plain.sink(out); plain.response                        | response
+topology.channel_ends_twice        | two_responses    | entry(in); in.into(plain); plain.named(answer); plain.response; plain.response        | response
 topology.keyed_channel_without_plugin_wire | keyed_no_wire    | entry(in); in.into(plain); plain.keyed; plain.into(second)                            | -
 topology.channel_named_twice       | named_twice      | entry(in); in.into(plain); plain.named(a); plain.sink(b)                              | -
 topology.duplicate_sink_name       | two_channels_one_sink | entry(in); in.into(plain); in.into(second); plain.sink(out); second.sink(out)    | -
@@ -185,6 +190,8 @@ ok                                 | sink_names_channel | entry(in); in.into(pla
 ok                                 | checkpoint_ack   | class.persistent; class.effectively_once; class.checkpoint_ack; entry(in); in.into(plain) | -
 ok                                 | checkpoint_every | class.persistent; class.effectively_once; class.checkpoint_every(500); entry(in); in.into(plain) | -
 ok                                 | hold_outputs     | class.persistent; class.effectively_once; class.outputs_at_checkpoint(50); entry(in); in.into(plain) | -
+ok                                 | two_response_ends | entry(in); in.into(plain); in.into(second); plain.named(accepted); plain.response; second.named(refused); second.response | response
+ok                                 | eo_unkeyed_response | class.persistent; class.effectively_once; entry(in); in.into(plain); plain.named(answer); plain.response | response
 ok                                 | hybrid_channel   | cited above                                                                           | -
 ok                                 | commit_block_chain | cited above                                                                         | bounded
 
@@ -200,6 +207,11 @@ sink_names_channel | 1 | items_output | plugin | 0 | - | items_output
 checkpoint_ack | 0 | in | entry | - | 0 | -
 checkpoint_every | 0 | in | entry | - | 0 | -
 hold_outputs | 0 | in | entry | - | 0 | -
+two_response_ends | 0 | in | entry | - | 0,1 | -
+two_response_ends | 1 | accepted | plugin | 0 | - | -
+two_response_ends | 2 | refused | plugin | 1 | - | -
+eo_unkeyed_response | 0 | in | entry | - | 0 | -
+eo_unkeyed_response | 1 | answer | plugin | 0 | - | -
 
 # The variants `check` raises from a record's raw shape, or registration raises
 # after it, which no builder writes and so no row states: `unrowed | <code>`.

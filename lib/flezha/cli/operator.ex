@@ -264,39 +264,43 @@ defmodule Flezha.Service.Cli.Operator do
   @doc """
   Inject a payload into an operator's input stream (the SDK-facing `send_io`
   route), blocking for the confirming verdict so a parked or absent target is
-  reported rather than silently dropped. `channel` is optional (`""` = none).
+  reported rather than silently dropped. `channel` is optional (`""` = none);
+  `key` in the options names the member of a partition group that takes it.
 
   With `await_ms` in the options the output listener is attached first, then
   the payload is delivered and every output frame within the window is
   printed.
   """
   def operator_send(namespace, operator_id, message, channel, %{opts: opts}) do
-    deliver = fn -> deliver(namespace, operator_id, message, channel) end
+    namespace = Namespace.or_default(namespace)
 
-    case Keyword.fetch(opts, :await_ms) do
-      :error ->
-        deliver.()
+    with {:ok, member} <-
+           OperatorManager.resolve_member(namespace, operator_id, Keyword.get(opts, :key)) do
+      deliver = fn -> deliver(namespace, member, message, channel) end
 
-      {:ok, window} ->
-        listen(
-          namespace,
-          operator_id,
-          :on_output,
-          :text,
-          Context.integer!(window, "--await"),
-          deliver
-        )
+      case Keyword.fetch(opts, :await_ms) do
+        :error ->
+          deliver.()
+
+        {:ok, window} ->
+          listen(
+            namespace,
+            operator_id,
+            :on_output,
+            :text,
+            Context.integer!(window, "--await"),
+            deliver
+          )
+      end
     end
   end
 
   defp deliver(namespace, operator_id, message, channel) do
-    metadata = if channel in [nil, ""], do: %{}, else: %{"channel" => channel}
-
     case OperatorManager.send_io_confirming(
            operator_id,
-           Namespace.or_default(namespace),
+           namespace,
            message,
-           metadata
+           OperatorManager.channel_metadata(channel)
          ) do
       :ok ->
         IO.puts("Delivered to '#{operator_id}'.")
@@ -309,6 +313,38 @@ defmodule Flezha.Service.Cli.Operator do
 
       {:error, _reason} = refused ->
         refused
+    end
+  end
+
+  @doc """
+  Call an operator with one input and print its answer's payload: the output
+  a `response()` end produced from it. `timeout_ms` in the options is the
+  deadline; `key` names the member of a partition group that takes the input.
+  """
+  def operator_call(namespace, operator_id, message, channel, %{opts: opts}) do
+    written = Keyword.fetch!(opts, :timeout_ms)
+
+    deadline_ms =
+      case Context.integer!(written, "--timeout") do
+        ms when ms > 0 ->
+          ms
+
+        _ ->
+          Context.fail!(
+            Flezha.Error.new("usage.invalid_number", option: "--timeout", value: written)
+          )
+      end
+
+    with {:ok, answer, _metadata} <-
+           OperatorManager.call_operator(
+             Namespace.or_default(namespace),
+             operator_id,
+             message,
+             OperatorManager.channel_metadata(channel),
+             deadline_ms,
+             Keyword.get(opts, :key)
+           ) do
+      IO.puts(answer)
     end
   end
 

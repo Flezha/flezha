@@ -382,6 +382,9 @@ four does not type-check, and from JavaScript it is refused when the operator
 is declared, as is a codec given beside a function on one channel, naming the
 operator and the channel.
 
+`.response()` ends a channel on the answer to an outside call instead of a sink,
+and takes the sink's arguments, an encoder or `{ codec }`: [`calls.md`](calls.md).
+
 A JSON number is a double, so an integer above 2^53 loses precision on the way
 in and out. A `bigint`, `undefined` or a function has no JSON form and fails
 the emit naming the channel; `'msgpack'` carries a `bigint` at any width.

@@ -159,10 +159,30 @@ defmodule Flezha.Service.Operator do
       operator_id,
       namespace,
       message,
-      channel_metadata(channel)
+      OperatorManager.channel_metadata(channel)
     )
   end
 
-  defp channel_metadata(channel) when channel in [nil, ""], do: %{}
-  defp channel_metadata(channel), do: %{"channel" => channel}
+  @doc """
+  Call `operator_id` with `message` and wait for its answer: the one output
+  a `response()` end produced from it, as `{:ok, payload, %{"channel" =>
+  channel}}`, or a coded error saying why none came.
+
+  `opts` carries `deadline_ms` (required, a positive integer) and `key`, the
+  key whose member of a partition group takes the input. The call is judged
+  as a send: its act is an input, and its answer is the sender's own.
+  """
+  @spec call(String.t(), String.t(), binary(), String.t(), keyword(), caller_context()) ::
+          {:ok, binary(), map()} | {:error, term()}
+  verb call(namespace, operator_id, message, channel, opts, caller_context),
+    verb: :operator_call do
+    OperatorManager.call_operator(
+      namespace,
+      operator_id,
+      message,
+      OperatorManager.channel_metadata(channel),
+      Keyword.fetch!(opts, :deadline_ms),
+      Keyword.get(opts, :key)
+    )
+  end
 end

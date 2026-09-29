@@ -83,6 +83,61 @@ defmodule FlezhaTest.Handover do
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end
 
+  # fails when: the waiting callers stay behind with the departing Overwatch,
+  # which then answers them `call.callee_ended` as it stops, or the arriving one
+  # does not re-arm their deadlines.
+  @tag :multi_node
+  @tag :drain_migration_calls
+  test "a caller waiting on an operator that drains to a peer is answered from there" do
+    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:drain_calls_node)
+    operator_id = start_operator_on_peer(peer_node, "drain_call")
+    {:ok, source} = OperatorManager.get_operator_pid(@default_namespace, operator_id)
+
+    # `store_input` declares no response() end, so nothing answers either call
+    # before the move; the answer is handed to the arriving Overwatch below.
+    # The drain takes seconds, so both deadlines outlast it.
+    started = System.monotonic_time(:millisecond)
+
+    answered =
+      Task.async(fn -> Flezha.Operator.Calls.call(source, "x", %{}, 40_000, operator_id) end)
+
+    timed =
+      Task.async(fn -> Flezha.Operator.Calls.call(source, "y", %{}, 15_000, operator_id) end)
+
+    assert NodeTestHelper.wait_until(
+             fn -> map_size(:sys.get_state(source).calls.rows) == 2 end,
+             5_000
+           )
+
+    [token] =
+      for {token, %{deadline_ms: 40_000}} <- :sys.get_state(source).calls.rows, do: token
+
+    assert :ok = shutdown_peer(peer_node, 30_000)
+
+    assert NodeTestHelper.wait_until(
+             fn ->
+               match?(
+                 {:ok, %{arrived_via_hotswap?: true}},
+                 OperatorManager.get_overwatch_state(@default_namespace, operator_id)
+               )
+             end,
+             5_000,
+             25
+           )
+
+    {:ok, target} = OperatorManager.get_operator_pid(@default_namespace, operator_id)
+    assert node(target) == node()
+    refute Task.yield(answered, 0), "the moved caller was answered by the departing node"
+    GenServer.cast(target, {:io_out, "moved", %{"flz.reply_to" => token}})
+    assert {:ok, "moved", _} = Task.await(answered, 5_000)
+    assert {:error, %Flezha.Error{code: "call.timeout"}} = Task.await(timed, 20_000)
+
+    assert System.monotonic_time(:millisecond) - started >= 15_000,
+           "the moved deadline came early"
+
+    NodeTestHelper.stop_peer_node(peer_pid, peer_node)
+  end
+
   @tag :multi_node
   @tag :drain_migration_forced
   test "a deferring operator is force-migrated at the drain deadline without wedging" do

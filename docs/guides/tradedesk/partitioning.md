@@ -237,9 +237,10 @@ Partition group: trade_watcher (2/2)
 ## Send it trades
 
 Trades are sent by hand here, one message at a time, in the exchange's format.
-By hand, you name the partition that owns the symbol: `trade_watcher` is the
-name of the group, not of an operator that takes messages, so `flz operator send
-trade_watcher` answers `operator 'trade_watcher' not found`. The next page
+By hand, you name the partition that owns the symbol, or give the symbol as
+`--key` and let the group pick it: `trade_watcher` is the name of the group, not
+of an operator that takes messages, so `flz operator send trade_watcher` with no
+key is refused, naming `trade_watcher#p0` and `trade_watcher#p1`. The next page
 connects the exchange, and there each partition receives its own symbols without
 being named.
 

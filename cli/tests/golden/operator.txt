@@ -12,6 +12,7 @@ COMMANDS:
     info        Get operator info
     listen      Print the frames an operator emits or ingests
     send        Send a payload to an operator's input stream
+    call        Send one input and print the operator's answer
     rewind      Rewind a bounded loop to a committed iteration
     replay      Re-run a Cell's retained inputs from a point in the past
     help        Show this help message
@@ -21,6 +22,8 @@ EXAMPLES:
     flz operator scale ohlc 5
     flz operator send orchestrator --text '{"task":"refactor"}'
     flz operator send my_echo --text 'hello world' --await 2000
+    flz operator send prices --key EURUSD --text x
+    flz operator call echo --text hello
     flz operator listen my_echo --duration-ms 10000
     flz operator rewind chat-1 --to-iteration 3
     flz operator replay candles/aggregate/BTC --from 1720000000000

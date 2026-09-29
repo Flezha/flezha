@@ -162,6 +162,13 @@ defmodule Flezha.AuthZ.Verbs do
       audit: {:after, :operator_service},
       target: [:_, :operator]
     ],
+    # An outside call is an input whose answer is the sender's own.
+    operator_call: [
+      action: :"operator.send",
+      scope: {:argument, 1},
+      audit: {:after, :operator_service},
+      target: [:_, :operator]
+    ],
     # A tasklet's `ctx.spawn_bounded` feeding a running instance: the right
     # `operator_send` judges, with no record of its own because it runs once per
     # event. A refusal is still audited, by the policy point.

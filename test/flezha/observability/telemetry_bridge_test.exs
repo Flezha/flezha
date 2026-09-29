@@ -5,7 +5,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Observability.{Registry, Signal, TelemetryBridge}
   alias Flezha.Observability.TestSinks.Counting
-  alias Flezha.Operator.{Lifecycle, Overwatch}
+  alias Flezha.Operator.{Calls, Lifecycle, Overwatch}
   alias FlezhaTest.Helper.DlqFixtures
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -262,6 +262,42 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     assert parked.metadata[:operator_id] == "obs_park_operator"
     assert parked.metadata[:plugin_id] == "exchange_sink"
     assert parked.metadata[:reason] == reason
+  end
+
+  test "a call's four events reach the bus from the table's own call sites" do
+    call_sink = :"obs_tbridge_call_sink_#{:erlang.unique_integer([:positive])}"
+    ref = :counters.new(1, [:atomics])
+
+    {:ok, _pid} =
+      Registry.register_sink(%{
+        name: call_sink,
+        module: Counting,
+        config: %{counter_ref: ref, parent: self(), sources: [:flezha_call]}
+      })
+
+    on_exit(fn -> Registry.unregister_sink(call_sink) end)
+    drain_mailbox()
+
+    callee = %{namespace: "default", operator_id: "obs_call_operator"}
+    {:ok, answered, calls} = Calls.admit(%Calls{}, callee, {self(), make_ref()}, "in", 5_000)
+    {:ok, waiting, calls} = Calls.admit(calls, callee, {self(), make_ref()}, "in", 5_000)
+    {:diverted, calls} = Calls.divert(calls, callee, "a", %{"flz.reply_to" => answered})
+    {:diverted, calls} = Calls.divert(calls, callee, "b", %{"flz.reply_to" => answered})
+    _ = Calls.expire(calls, callee, waiting)
+    _ = Calls.refused(callee, "call.busy", %{pending_max: 1})
+
+    for {name, measurement} <- [
+          flezha_call_answer_duration: :duration_us,
+          flezha_call_answers_dropped_total: :count,
+          flezha_call_timeouts_total: :count,
+          flezha_call_refused_total: :count
+        ] do
+      signal = receive_until(fn s -> s.source == :flezha_call and s.name == name end, 500)
+      assert signal, "#{name} never reached the bus"
+      assert signal.kind == :metric
+      assert is_integer(signal.measurements[measurement])
+      assert signal.metadata[:operator_id] == "obs_call_operator"
+    end
   end
 
   test "DLQ park / retention / usage counters reach the bus through the real store" do

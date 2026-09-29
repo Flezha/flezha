@@ -43,4 +43,33 @@ The exit code follows the class, so a script can tell "fix the arguments" from
 
 [`errors.md`](../errors.md) lists every code.
 
+## Calling an operator
+
+`flz operator send` delivers an input and reports the delivery. `flz operator
+call` delivers one and waits for the operator's answer, the output a
+`response()` end of its graph produced from that input
+([`calls.md`](../sdk/calls.md)):
+
+```
+$ flz operator call echo --text hello
+hello
+```
+
+Stdout carries the answer's payload and a newline and nothing else, so a script
+can use it as it is. `--timeout` is how long the operator has to answer, in
+milliseconds (default 30000); it has no short spelling, because `-t` is
+`--text`. Past it the verb fails with `call.timeout` and exits 7, while the
+input stays accepted and its turn still runs.
+
+A partition group is one id for several members, so both verbs take `--key`,
+the key whose member should take the input:
+
+```
+$ flz operator send prices --key EURUSD --text x
+Delivered to 'prices#p0'.
+```
+
+Without it, either verb fails with `call.target_unkeyed`, naming the members,
+and exits 2.
+
 TODO: not written yet.

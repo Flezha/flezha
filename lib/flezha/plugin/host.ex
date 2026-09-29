@@ -17,6 +17,8 @@ defmodule Flezha.Plugin.Host do
   every producer makes, and the mode says what the producer needs back.
   """
 
+  alias Flezha.Operator.Calls
+
   @valid_kinds [:fold, :transform, :fanout, :request, :timer]
 
   @typedoc """
@@ -27,8 +29,10 @@ defmodule Flezha.Plugin.Host do
   * `:verdict` waits and answers what the host decided, which a poller reads to
     know whether to advance its content hash.
   * `:fire_and_forget` does not wait. The host owns the payload from the cast.
+  * `:call` sends one input and waits for the host's answer to it, the output
+    a `response()` end of its graph produced.
   """
-  @type inject_mode() :: :confirming | :verdict | :fire_and_forget
+  @type inject_mode() :: :confirming | :verdict | :fire_and_forget | :call
 
   @doc """
   Hand one record to the host operator. The ONE call a source makes: five
@@ -36,11 +40,14 @@ defmodule Flezha.Plugin.Host do
   pick the wrong one, and the mode is what actually differs between them.
 
   A `:verdict` answers `:ok` or `{:error, reason}`, and a host it could not reach
-  is `{:error, {:unreachable, reason}}`; the other two answer `:ok`, because there
-  is nothing else to say.
+  is `{:error, {:unreachable, reason}}`. A `:call` takes the call's deadline in
+  milliseconds as its last argument and answers `{:ok, payload, %{"channel" =>
+  channel}}` or `{:error, %Flezha.Error{}}`: `call.timeout` at the deadline,
+  `call.unavailable` for a host it could not reach. The other two answer `:ok`,
+  because there is nothing else to say.
   """
   @spec inject(GenServer.server(), binary(), map(), inject_mode(), timeout()) ::
-          :ok | {:error, term()}
+          :ok | {:ok, binary(), map()} | {:error, term()}
   def inject(overwatch, message, metadata, mode, timeout \\ :infinity)
 
   def inject(overwatch, message, metadata, :confirming, timeout) do
@@ -64,6 +71,11 @@ defmodule Flezha.Plugin.Host do
   def inject(overwatch, message, metadata, :fire_and_forget, _timeout) do
     GenServer.cast(overwatch, {:io_in, message, metadata})
   end
+
+  # A plugin calls the operator it is enabled on: its own input, so nothing
+  # resolves or authorizes it again.
+  def inject(overwatch, message, metadata, :call, deadline_ms),
+    do: Calls.call(overwatch, message, metadata, deadline_ms, inspect(overwatch))
 
   @doc """
   Commit a value a provider's worker holds of its own onto the plugin's options,

@@ -288,15 +288,15 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     outputs = assert_batch(2_000)
     assert length(outputs) == 2
 
-    # The chain crashes partway through the batch. `run/2` reports only after
+    # The chain crashes partway through the batch. `run/3` reports only after
     # the whole batch has run, so neither entry is settled and the hold the
     # dead run took is never answered.
     capture_log(fn ->
       {:ok, runner} =
         Task.start(fn ->
-          Outbox.run(outputs, fn payload, metadata ->
+          Outbox.run(outputs, :ok, fn payload, metadata, :ok ->
             :ok = Outbox.hold(metadata)
-            if payload == "b", do: raise("chain crashed")
+            if payload == "b", do: raise("chain crashed"), else: :ok
           end)
         end)
 

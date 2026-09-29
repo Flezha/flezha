@@ -69,6 +69,7 @@ Flezha.Service.Observability.query/2
 Flezha.Service.Observability.subscribe/2
 Flezha.Service.Observability.tail/2
 Flezha.Service.Observability.unsubscribe/2
+Flezha.Service.Operator.call/6
 Flezha.Service.Operator.cell_state/4
 Flezha.Service.Operator.kind_known?/2
 Flezha.Service.Operator.list_namespaces/1

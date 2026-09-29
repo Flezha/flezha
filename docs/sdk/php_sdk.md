@@ -333,6 +333,10 @@ for anything else, and a codec given beside a callable on one channel is refused
 when the operator is declared, naming the operator and the channel. PHP ships
 no MessagePack library, so the enum has no MessagePack case.
 
+`->response()` ends a channel on the answer to an outside call instead of a
+sink, and takes the sink's arguments, `?callable $encode` and
+`?ChannelCodec $codec`: [`calls.md`](calls.md).
+
 A JSON integer outside PHP's 64-bit range decodes as a `float`. `NAN`, `INF`, a
 string that is not valid UTF-8 or an object that is not `Codable` has no JSON
 form, and sending one to a sink that names no codec fails the emit naming the

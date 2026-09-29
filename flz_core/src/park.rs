@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -28,6 +28,9 @@ pub struct ParkBody {
     pub park_id: String,
     pub origin_offset: Option<u64>,
     pub entry: crate::flusher::DlqEntryBody,
+    /// The token of the outside call waiting on the parked input, if any
+    /// (`flz.reply_to`), so the controller can answer it `call.failed`.
+    pub reply_to: Option<String>,
 }
 
 /// Acked park ids, consumed as their waiters wake.
@@ -127,12 +130,14 @@ pub fn park_tier_off(
     cell_identity: &[u8],
     cell_label: &str,
     origin_offset: Option<u64>,
+    reply_to: Option<&Arc<str>>,
     entry: crate::flusher::DlqEntryBody,
 ) {
     let body = ParkBody {
         park_id: mint_park_id(cell_label),
         origin_offset,
         entry,
+        reply_to: reply_to.map(|token| token.to_string()),
     };
     park_blocking(cell_identity, &body);
 }
@@ -177,6 +182,7 @@ mod tests {
                 attempts: 3,
                 payload: Some(vec![1, 2]),
             },
+            reply_to: Some("w:t".into()),
         };
         let bytes = postcard::to_allocvec(&body).unwrap();
         assert_eq!(
@@ -188,6 +194,7 @@ mod tests {
                 0x04, b'b', b'o', b'o', b'm', // entry.error "boom"
                 0x03, // entry.attempts 3
                 0x01, 0x02, 0x01, 0x02, // entry.payload Some([1,2])
+                0x01, 0x03, b'w', b':', b't', // reply_to Some("w:t")
             ]
         );
     }

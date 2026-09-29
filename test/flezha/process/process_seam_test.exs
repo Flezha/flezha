@@ -74,7 +74,9 @@ defmodule Flezha.Process.SeamTest do
       # one monitor for one owner, held in a named field, with no map to book
       "lib/flezha/state/input_log.ex",
       "lib/flezha/plugin/provider/http_poll/poll_worker.ex",
-      "lib/flezha/plugin/provider/operator_forward/forward_worker.ex"
+      "lib/flezha/plugin/provider/operator_forward/forward_worker.ex",
+      # a synchronous wait's own monitor, as `GenServer.call` takes one
+      "lib/flezha/operator/calls.ex"
     ]
   end
 

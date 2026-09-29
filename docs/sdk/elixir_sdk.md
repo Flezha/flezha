@@ -329,8 +329,9 @@ or `branch/2`, which calls each arm of a list with the same stream and answers i
 unnamed mentions of one module unify (fan-in). A sink names the channel it terminates:
 `sink("input")` makes the frame `channel = "input"`, which is what reaches a forward
 target's `input` entry, and `sink/1` leaves the name derived — `named/2`'s name, else the
-tasklet's `name/0`. Naming one channel twice is refused. The user's metadata rides the
-frame. Cell mode is derived: non-empty `cell_keys/0` → static; a keyed edge into a
+tasklet's `name/0`. Naming one channel twice is refused. `response/1`, or `response_with/2`
+with a serializer, ends a channel on the answer to an outside call instead of a sink
+([`calls.md`](calls.md)). The user's metadata rides the frame. Cell mode is derived: non-empty `cell_keys/0` → static; a keyed edge into a
 keyless tasklet → dynamic; else single. Refusals accumulate into one
 `{:error, %Flezha.SDK.Error{}}` carrying the first issue's code and every issue in
 `details.issues` — e.g. `topology.transform_after_key_by`, `topology.retry_max_zero`,

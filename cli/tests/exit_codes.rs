@@ -50,6 +50,7 @@ fn every_verb_passes_the_childs_code_through(cli: &Refusing) -> Vec<String> {
         &["operator", "state", "op1"],
         &["controller", "start"],
         &["operator", "send", "op1", "--text", "hi"],
+        &["operator", "call", "op1", "--text", "hi"],
         &["operator", "list"],
         &["boot", "status"],
         &["controller", "status"],
@@ -173,6 +174,26 @@ fn only_a_daemon_start_announces_a_start() -> Vec<String> {
         .collect()
 }
 
+/// `flz operator call` exits by what the controller answered: 0 with the answer
+/// on stdout, else the class of the failure it rendered (`call.timeout` 7,
+/// `operator.not_found` 5, `call.target_unkeyed` 2).
+fn a_call_exits_by_its_answers_class() -> Vec<String> {
+    [(0, "hello\n"), (7, ""), (5, ""), (2, "")]
+        .iter()
+        .filter_map(|(code, answer)| {
+            let script = format!("#!/bin/sh\nprintf '{answer}'\nexit {code}\n");
+            let out = Shim::new(FLZ_BIN, &script).run(&["operator", "call", "op1", "-t", "hi"]);
+            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+            (out.status.code() != Some(*code) || stdout != *answer).then(|| {
+                format!(
+                    "flz operator call, flzvm exit {code}: exit {:?}, stdout {stdout:?}",
+                    out.status.code()
+                )
+            })
+        })
+        .collect()
+}
+
 /// One `#[test]`, several phases: the fixture execs a *copy* of the binary, and a
 /// copy written while a sibling thread forks is `ExecutableFileBusy` in the
 /// child that inherited the write handle. One thread, one copy, no race.
@@ -184,6 +205,7 @@ fn every_verb_answers_a_refused_flzvm_with_the_code_it_promises() {
     wrong.extend(a_missing_flzvm_is_refused_rather_than_panicked());
     wrong.extend(an_unreachable_controller_is_its_own_class());
     wrong.extend(only_a_daemon_start_announces_a_start());
+    wrong.extend(a_call_exits_by_its_answers_class());
 
     assert!(
         wrong.is_empty(),

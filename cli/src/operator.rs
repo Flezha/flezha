@@ -22,6 +22,10 @@ const TO_ITERATION: OptSpec = OptSpec::number("--to-iteration", "--to-iteration"
 const FROM: OptSpec = OptSpec::text("--from", "-f", "<seq|timestamp>").required();
 const INPUT: OptSpec = OptSpec::switch("--input", "--input");
 const AWAIT: OptSpec = OptSpec::number("--await", "--await", "<ms>");
+const KEY: OptSpec = OptSpec::text("--key", "--key", "<key>");
+/// `call`'s deadline: no short spelling, since `-t` is `--text`.
+const CALL_TIMEOUT: OptSpec = OptSpec::number("--timeout", "--timeout", "<ms>");
+const CALL_TIMEOUT_DEFAULT_MS: &str = "30000";
 
 pub(crate) const TABLE: Command = Command {
     path: "flz operator",
@@ -68,7 +72,12 @@ pub(crate) const TABLE: Command = Command {
             .screen(help::OPERATOR_LISTEN),
         Verb::new("send", handle_send)
             .taking(OPERATOR_ID)
-            .reading(&[PAYLOAD, CHANNEL, AWAIT, NAMESPACE]),
+            .reading(&[PAYLOAD, CHANNEL, KEY, AWAIT, NAMESPACE]),
+        Verb::new("call", handle_call)
+            .taking(OPERATOR_ID)
+            .reading(&[PAYLOAD, CHANNEL, KEY, CALL_TIMEOUT, NAMESPACE])
+            .strict()
+            .screen(help::OPERATOR_CALL),
         Verb::new("rewind", handle_rewind)
             .taking(OPERATOR_ID)
             .reading(&[TO_ITERATION, NAMESPACE]),
@@ -190,12 +199,12 @@ fn handle_stop(read: &Reading) {
 }
 
 /// `flz operator send <operator_id> --text <payload> [--channel <ch>]
-/// [--await <ms>]`: inject a payload into an operator's input stream (the
-/// SDK-facing `send_io` route). Blocks for the confirming verdict so a parked or
-/// absent target is reported rather than silently dropped. `--await` rides the
-/// options list only when written.
+/// [--key <k>] [--await <ms>]`: inject a payload into an operator's input
+/// stream (the SDK-facing `send_io` route). Blocks for the confirming verdict
+/// so a parked or absent target is reported rather than silently dropped.
+/// `--key` and `--await` ride the options list only when written.
 fn handle_send(read: &Reading) {
-    let mut opts: Vec<Opt> = Vec::new();
+    let mut opts: Vec<Opt> = key_opt(read);
 
     if let Some(ms) = read.opt(AWAIT.long) {
         opts.push(("await_ms", ms.to_string()));
@@ -213,6 +222,36 @@ fn handle_send(read: &Reading) {
         &opts,
         read,
     );
+}
+
+/// `flz operator call <operator_id> --text <payload> [--channel <ch>]
+/// [--key <k>] [--timeout <ms>]`: send one input and print the answer a
+/// `response()` end produced from it; a failure exits by its class.
+fn handle_call(read: &Reading) {
+    let mut opts: Vec<Opt> = key_opt(read);
+    let timeout = read
+        .opt(CALL_TIMEOUT.long)
+        .unwrap_or(CALL_TIMEOUT_DEFAULT_MS);
+    opts.push(("timeout_ms", timeout.to_string()));
+
+    rpc::run(
+        "operator_call",
+        &[
+            text(read.namespace()),
+            text(read.pos(OPERATOR_ID[0].name)),
+            text(read.opt(PAYLOAD.long).unwrap_or_default()),
+            text(read.opt(CHANNEL.long).unwrap_or_default()),
+        ],
+        &opts,
+        read,
+    );
+}
+
+/// A partition group's member is named by `--key`; absent, no option rides.
+fn key_opt(read: &Reading) -> Vec<Opt<'static>> {
+    read.opt(KEY.long)
+        .map(|key| vec![("key", text(key))])
+        .unwrap_or_default()
 }
 
 /// `flz operator rewind <instance> --to-iteration N` — take a bounded loop back

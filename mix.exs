@@ -209,6 +209,7 @@ defmodule Flezha.MixProject do
         "docs/guides/advanced/kubernetes_deployment.md",
         "docs/quickstart.md",
         "docs/sdk/admin.md",
+        "docs/sdk/calls.md",
         "docs/plugins/file.md",
         "docs/plugins/http_poll.md",
         "docs/plugins/websocket_subscription.md",

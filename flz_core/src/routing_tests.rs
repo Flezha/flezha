@@ -158,6 +158,7 @@ fn parsing_bounded(id: &'static str) -> Arc<OperatorInstance> {
             wrap_input: Some(wrap),
             entry_parsed: true,
             plugin_sink: None,
+            response: false,
             keyed: false,
             overflow_policy: OverflowPolicy::DropNothing,
             retry: RetryPolicy {
@@ -612,6 +613,7 @@ fn a_host_payload_fanned_across_keys_reaches_every_keyed_cell() {
         &value,
         &dead_stream(),
         None,
+        None,
         false,
         None,
     );
@@ -663,6 +665,7 @@ fn a_held_destination_collects_the_addressed_item_instead_of_admitting_it() {
         &host_value(b"staged"),
         &dead_stream(),
         None,
+        None,
         false,
         &mut Destination::Held(&mut held),
     )
@@ -694,4 +697,46 @@ fn a_non_parking_admission_into_a_full_mailbox_defers_whatever_the_switch_says()
     assert!(deferred, "the caller's non-parking form returns at once");
     assert_eq!(producer.push_holdback.lock().unwrap().len(), 1);
     assert_eq!(consumer.mailbox.len(), 1, "the full mailbox took nothing");
+}
+
+/// The call an item in `slot`'s mailbox carries.
+fn queued_call(slot: &CellSlot) -> Option<String> {
+    match slot.mailbox.pop().expect("an item is queued") {
+        CellItem::Input(payload) => payload.call.map(|token| token.to_string()),
+        CellItem::Timer(_) | CellItem::CloseInterval => panic!("an input was queued"),
+    }
+}
+
+/// The token rides where the offset rides: onto the entry item, and from a
+/// Cell's inter-tasklet emit onto the downstream item. An input without the
+/// key, or with an empty one, carries none.
+#[test]
+fn an_inputs_call_rides_its_entry_item_and_every_value_derived_from_it() {
+    let (instance, producer, consumer) = tier_edge("call_rides_the_edge");
+    let mut called = journaled_metadata("in", 1);
+    called.insert(CALL_KEY.to_string(), "w:t".to_string());
+    feed_with(&instance, &called, b"called");
+    assert_eq!(queued_call(&producer).as_deref(), Some("w:t"));
+
+    feed_with(&instance, &journaled_metadata("in", 2), b"sent");
+    assert_eq!(queued_call(&producer), None);
+    let mut empty = journaled_metadata("in", 3);
+    empty.insert(CALL_KEY.to_string(), String::new());
+    feed_with(&instance, &empty, b"empty");
+    assert_eq!(queued_call(&producer), None, "an empty token names no call");
+
+    let mid = instance.topology.lookup_channel_id("mid").expect("`mid`");
+    let token: Arc<str> = Arc::from("w:t");
+    deliver_host_output(
+        &instance,
+        mid,
+        1,
+        &host_value(b"derived"),
+        &dead_stream(),
+        Some(1),
+        Some(&token),
+        &producer,
+    )
+    .expect("the edge delivers");
+    assert_eq!(queued_call(&consumer).as_deref(), Some("w:t"));
 }

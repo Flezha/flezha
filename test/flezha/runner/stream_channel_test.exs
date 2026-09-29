@@ -530,6 +530,43 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
     end
   end
 
+  # fails when: an off-tier park stops telling the Overwatch, once its entry is
+  # durable, that the called input it parked is dead-lettered.
+  test "a park frame carrying a call's token answers the caller once its entry is durable" do
+    FlezhaTest.Helper.DlqFixtures.isolated_dir()
+    set_mimic_global_until_exit()
+    stub(Flezha.Runner.ControlChannel, :send_control_async, fn _runner, _command -> :ok end)
+    rc = "parked_call_#{System.unique_integer([:positive])}"
+    :ok = ClassRegistry.put_overwatch(rc, self(), "runner-a")
+    on_exit(fn -> ClassRegistry.delete(rc) end)
+
+    park = fn offset, reply_to ->
+      body =
+        Wire.encode_park_body(%{
+          park_id: "p#{offset}",
+          origin_offset: offset,
+          channel: "in",
+          error: "kaboom",
+          attempts: 3,
+          payload: "poison",
+          reply_to: reply_to
+        })
+
+      header = Flezha.SDK.RecordFrame.encode_header(1, 1, 1, 0, <<>>)
+      frame = Wire.encode_frame(Wire.encode_cell_id(rc, "task", "k"), 0, header, body)
+      StreamChannel.Records.handle_park_payload(%{runner_id: "r1", identity: "runner-a"}, frame)
+    end
+
+    park.(3, "w:caller")
+    assert_receive {:"$gen_cast", {:dead_lettered, "w:caller", ref, "kaboom"}}, 2_000
+    assert [%{"id" => id}] = Flezha.Dlq.Store.list(rc)
+    assert ref == "#{rc}/task/#{id}"
+
+    park.(4, nil)
+    assert NodeTestHelper.wait_until(fn -> length(Flezha.Dlq.Store.list(rc)) == 2 end, 2_000)
+    refute_received {:"$gen_cast", {:dead_lettered, _, _, _}}
+  end
+
   # The stream's last frame was `ms` ago: the liveness window lapses without
   # the test waiting it out.
   defp age_stream(pid, ms) do

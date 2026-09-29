@@ -212,7 +212,7 @@ defmodule Flezha.State.WalWriter.Settlement do
         :ok
 
       dlq ->
-        {:ok, _ref} =
+        {:ok, ref} =
           DlqStore.append(
             DlqEntry.new!(%{
               operator_class: rc,
@@ -225,6 +225,11 @@ defmodule Flezha.State.WalWriter.Settlement do
               payload: dlq.payload
             })
           )
+
+        # A caller waiting on the parked input rides its input-log record.
+        if is_integer(entry.consumed_offset),
+          do:
+            DlqStore.answer_call(rc, InputLog.reply_to(rc, entry.consumed_offset), ref, dlq.error)
     end
 
     # An integer offset on a checkpoint-ack class means an interval just closed:

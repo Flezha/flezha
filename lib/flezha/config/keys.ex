@@ -291,6 +291,10 @@ defmodule Flezha.Config.Keys do
      key: true, derived: {:factor, :wal_high_watermark_bytes, 4}},
     {:wal_pending_msg_cap, :positive_int, 5_000, key: true},
     {:outbox_inflight_max, :positive_int, 1_000, key: true},
+    # The answers one callee operator owes the outside callers waiting on it;
+    # a call past it is refused `call.busy` before anything is ingested. Its
+    # own outbound calls never count against it.
+    {:call_pending_max, :positive_int, 10_000, key: true, env: "FLEZHA_CALL_PENDING_MAX"},
     {:record_log_cut_after_bytes, :int, 65_536, key: true},
     # Per-operator-class user overrides: a map from class to value, read
     # ahead of the SDK's own declaration and of the global default below it.

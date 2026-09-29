@@ -7,6 +7,7 @@ defmodule Flezha.Service.Cli.Info do
   alias Flezha.AuthZ.Namespace
   alias Flezha.Convergence.Snapshot
   alias Flezha.Convergence.Verdict
+  alias Flezha.Operator.Calls
   alias Flezha.Partition
   alias Flezha.Plugin.Extension.Table.Health, as: TableHealth
   alias Flezha.SDK.KeyGroup
@@ -68,6 +69,7 @@ defmodule Flezha.Service.Cli.Info do
               health: Snapshot.operator_health(namespace_display, operator_id),
               uptime_ms: operator_uptime_ms(state),
               default_input_type: state.default_input_type,
+              waiting_callers: Calls.waiting(state.calls),
               failed_turns: failed_turns_json(failed_turns(operator_id, state)),
               plugins: format_plugins_json(state.extensions)
             }
@@ -325,6 +327,7 @@ defmodule Flezha.Service.Cli.Info do
     IO.puts("  Group ID: #{state.namespace}")
     IO.puts("  Uptime (ms): #{operator_uptime_ms(state)}")
     IO.puts("  Default Input Type: #{state.default_input_type}")
+    IO.puts("  Waiting callers: #{Calls.waiting(state.calls)}")
     IO.puts("  Plugins:")
 
     case state.extensions do

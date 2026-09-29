@@ -182,6 +182,10 @@ pub struct ChannelDescriptor {
     pub entry_parsed: bool,
     /// The plugin egress; hybrid or terminal is read off `consumers`.
     pub plugin_sink: Option<PluginSink>,
+    /// The channel's plugin end is a `response()`, not a sink: every output
+    /// carries `flz.reply_to` and answers its caller instead of reaching a
+    /// plugin. A typed channel still serializes through `plugin_sink`.
+    pub response: bool,
     /// `.keyed()`: plugin emits require a key and carry `flz.*` stamps.
     pub keyed: bool,
     pub overflow_policy: OverflowPolicy,

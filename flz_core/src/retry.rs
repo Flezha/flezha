@@ -127,6 +127,7 @@ pub struct EntryParseLadder<V: EntryView> {
     pub bytes: Vec<u8>,
     pub first_error: String,
     pub consumed_offset: Option<u64>,
+    pub call: Option<Arc<str>>,
     pub deliver: EntryDeliver,
 }
 
@@ -152,6 +153,7 @@ fn run_entry_parse_ladder<V: EntryView>(ladder: EntryParseLadder<V>) {
         &format!("entry channel `{}`", channel.name),
         ParkTarget::entry(channel),
         ladder.consumed_offset,
+        ladder.call.as_ref(),
         Some(ladder.bytes.clone()),
         ladder.first_error.clone(),
         || {
@@ -165,11 +167,13 @@ fn run_entry_parse_ladder<V: EntryView>(ladder: EntryParseLadder<V>) {
 
 /// The ladder for a payload that has not reached `instance` yet: climbed as
 /// [`run_retry_park_ladder`] climbs, and `instance` told when it parked.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_entrance_ladder<V: EntryView>(
     instance: &V,
     label: &str,
     target: ParkTarget<'_>,
     consumed_offset: Option<u64>,
+    call: Option<&Arc<str>>,
     payload: Option<Vec<u8>>,
     first_error: String,
     attempt_step: impl FnMut() -> Result<(), String>,
@@ -179,6 +183,7 @@ pub(crate) fn run_entrance_ladder<V: EntryView>(
         target,
         instance.instance_id(),
         consumed_offset,
+        call,
         payload,
         first_error,
         attempt_step,
@@ -193,11 +198,13 @@ pub(crate) fn run_entrance_ladder<V: EntryView>(
 /// step. A [`ParkTarget`] travels rather than a `ChannelDescriptor`, because a
 /// frame naming a channel the operator does not declare has no descriptor to
 /// park under and must park all the same. `true` when the ladder parked.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_retry_park_ladder(
     label: &str,
     target: ParkTarget<'_>,
     instance_id: &str,
     consumed_offset: Option<u64>,
+    call: Option<&Arc<str>>,
     payload: Option<Vec<u8>>,
     first_error: String,
     attempt_step: impl FnMut() -> Result<(), String>,
@@ -211,6 +218,7 @@ pub(crate) fn run_retry_park_ladder(
         target,
         instance_id,
         consumed_offset,
+        call,
         payload,
         error,
         attempts,
@@ -243,12 +251,15 @@ pub(crate) fn climb_ladder(
 
 /// Park what a ladder could not deliver after `attempts`, under the
 /// target's identity; the tail every exhausted ladder ends in, whether it
-/// climbed here or at a bounded stage's barrier.
+/// climbed here or at a bounded stage's barrier. `call` rides the park frame
+/// so the controller can answer a caller waiting on the parked input.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn park_exhausted(
     label: &str,
     target: ParkTarget<'_>,
     instance_id: &str,
     consumed_offset: Option<u64>,
+    call: Option<&Arc<str>>,
     payload: Option<Vec<u8>>,
     error: String,
     attempts: u32,
@@ -277,6 +288,7 @@ pub(crate) fn park_exhausted(
             attempts,
             payload,
         },
+        reply_to: call.map(|token| token.to_string()),
     };
     crate::park::park_blocking(&identity, &body);
 }
@@ -291,6 +303,7 @@ pub(crate) fn spawn_edge_ladder(
     value: &Arc<dyn Any + Send + Sync>,
     stream: &Arc<FlezhaStream>,
     consumed_offset: Option<u64>,
+    call: Option<&Arc<str>>,
     replay: bool,
     error: String,
 ) {
@@ -306,6 +319,7 @@ pub(crate) fn spawn_edge_ladder(
         first_error: error,
         stream: Arc::clone(stream),
         consumed_offset,
+        call: call.cloned(),
         replay,
     };
     spawn_park_thread(instance, "flezha-edge-transform-park", move || {
@@ -357,6 +371,7 @@ struct EdgeLadder {
     first_error: String,
     stream: Arc<FlezhaStream>,
     consumed_offset: Option<u64>,
+    call: Option<Arc<str>>,
     replay: bool,
 }
 
@@ -377,6 +392,7 @@ fn run_edge_ladder(ladder: EdgeLadder) {
         ParkTarget::edge(channel),
         &ladder.instance.instance_id,
         ladder.consumed_offset,
+        ladder.call.as_ref(),
         None,
         ladder.first_error,
         || {
@@ -390,6 +406,7 @@ fn run_edge_ladder(ladder: EdgeLadder) {
                 &ladder.value,
                 &ladder.stream,
                 ladder.consumed_offset,
+                ladder.call.as_ref(),
                 ladder.replay,
                 &mut crate::routing::Destination::Mailbox(None),
             )
@@ -430,6 +447,7 @@ mod tests {
             },
             "op-1",
             Some(9),
+            Some(&Arc::from("w:tok")),
             Some(b"poison".to_vec()),
             "the routing thread's failure".to_string(),
             || {
@@ -455,6 +473,11 @@ mod tests {
             "the last failure is the reason"
         );
         assert_eq!(body.origin_offset, Some(9));
+        assert_eq!(
+            body.reply_to.as_deref(),
+            Some("w:tok"),
+            "the park names its call"
+        );
         assert_eq!(body.entry.payload.as_deref(), Some(&b"poison"[..]));
         state_sink::reset_for_test();
     }

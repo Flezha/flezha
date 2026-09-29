@@ -347,6 +347,9 @@ callable takes the place of a codec for anything else. A codec name outside the
 four, or a codec named beside a callable on one channel, is refused when the
 operator is declared, naming the operator and the channel.
 
+`.response()` ends a channel on the answer to an outside call instead of a sink,
+and takes the sink's `encode=` and `codec=`: [`calls.md`](calls.md).
+
 Python's integers survive JSON at any width. A `datetime`, a set, a dataclass,
 `NaN` or an infinity has no JSON form, so sending one to a sink that names no
 codec fails the emit naming the channel; `codec="msgpack"` or an encoder carries

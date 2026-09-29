@@ -49,6 +49,7 @@ codes! {
     MailboxCapacityZero => "topology.mailbox_capacity_zero",
     MailboxCapacityTooLarge => "topology.mailbox_capacity_too_large",
     DuplicatePluginSink => "topology.duplicate_plugin_sink",
+    ChannelEndsTwice => "topology.channel_ends_twice",
     ChannelNamedTwice => "topology.channel_named_twice",
     DuplicateSinkName => "topology.duplicate_sink_name",
     KeyedChannelWithoutPluginWire => "topology.keyed_channel_without_plugin_wire",

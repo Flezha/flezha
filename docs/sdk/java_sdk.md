@@ -248,8 +248,13 @@ public class Counter implements Tasklet<String, Counter.Seen, Void> {
 
 Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
 edge, an edge's retry ladder, the effectively-once tier, a correction window,
-any bounded setting other than the loop mode. Java names no entry codec: an
-entry decodes by its declared type, so the short form takes no `codec` element.
+any bounded setting other than the loop mode, a `.response()` end. Java names
+no entry codec: an entry decodes by its declared type, so the short form takes
+no `codec` element.
+
+`.response()` ends a channel on the answer to an outside call instead of a sink,
+and `.response(Function<T, byte[]>)` takes a serializer as `.sink` does:
+[`calls.md`](calls.md).
 
 `id` must be written: the factory id is an address a user types, and a
 class rename must not move it. The written `id` also names the tasklet, so a

@@ -20,6 +20,7 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Intent
   alias Flezha.Convergence.Snapshot
+  alias Flezha.Operator.Calls
   alias Flezha.Service.CliManager
   alias Flezha.Service.OperatorManager
   alias Flezha.State.Completion
@@ -48,7 +49,8 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
       namespace: @namespace,
       started_at: System.system_time(:millisecond) - uptime_ms,
       default_input_type: "2",
-      extensions: %{plugins: %{}}
+      extensions: %{plugins: %{}},
+      calls: %Calls{}
     }
   end
 
@@ -88,6 +90,17 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
     out = capture_io(fn -> CliManager.operator_info(@namespace, output: "json") end)
     %{"operators" => [proc]} = Jason.decode!(out)
     assert proc["failed_turns"] == %{"count" => 1, "last_iteration" => 3}
+  end
+
+  test "the callers waiting on an operator are counted on both surfaces" do
+    callee = %{namespace: @namespace, operator_id: "op-1"}
+    {:ok, _token, calls} = Calls.admit(%Calls{}, callee, {self(), make_ref()}, "in", 5_000)
+    stub_one(%{bounded_state(0) | calls: calls})
+
+    assert capture_io(fn -> CliManager.operator_info(@namespace) end) =~ "Waiting callers: 1"
+
+    out = capture_io(fn -> CliManager.operator_info(@namespace, output: "json") end)
+    assert %{"operators" => [%{"waiting_callers" => 1}]} = Jason.decode!(out)
   end
 
   test "an unbounded operator reports its kind too" do

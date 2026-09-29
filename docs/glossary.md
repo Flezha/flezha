@@ -69,6 +69,15 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **Channel** — the typed edge between stages: **entry** (input from outside), **inter-tasklet**,
   or **plugin-bound** (output to a sink, declared with `.sink(name)`). Terminality is derived from
   the wiring, never declared.
+- **Response end**: `response()`, a plugin end that turns each output of its channel into the
+  answer to the outside call whose input caused it; no plugin, listener or sink sees that output.
+  A channel carries one plugin end, a sink or a response. See [`sdk/calls.md`](sdk/calls.md).
+- **Call**: one input an outside caller (`flz operator call`, `Flezha.Service.Operator.call/6`
+  or a feeding plugin) sends to an operator, waiting up to a deadline for the first answer a
+  response end produces from it. See [`sdk/calls.md`](sdk/calls.md).
+- **Call token**: `flz.reply_to`, the input metadata key the controller mints for each call
+  and the runner core carries to every output the input causes. Nothing else can set it, and
+  no tasklet sees it. See [`sdk/calls.md`](sdk/calls.md#the-call-token).
 - **Edge transform** — a `map` / `filter` / `flat_map` on a stream handle between two `.into`
   calls; everything before the closing `.into` fuses into one closure on that consumer edge and
   costs no tasklet, cell, mailbox or hop. See [`sdk/stream_transforms.md`](sdk/stream_transforms.md).

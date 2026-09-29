@@ -101,7 +101,7 @@ defmodule Flezha.State.Outbox do
   @doc """
   Stamp one durable outbox output with its output identity, the confirmation
   token its entry is owed under, and the decoded ack the dispatcher settles it
-  with (`run/2`).
+  with (`run/3`).
 
   The one place a durable output is minted — which is what makes the token
   impossible to forget. `identity` is `output_stamps/1`'s
@@ -134,22 +134,26 @@ defmodule Flezha.State.Outbox do
   def dispatch(overwatch, outputs), do: GenServer.cast(overwatch, {:io_out_batch, outputs})
 
   @doc """
-  Run a dispatch batch's chains as the dispatcher: `fun` is the chain, every
-  `hold/1` an output's run takes is counted against that output, and the
+  Run a dispatch batch's chains as the dispatcher: `fun` is the chain, folding
+  `acc` from one output's run to the next, and the last `acc` is returned.
+  Every `hold/1` an output's run takes is counted against that output, and the
   batch's entries are settled with their counts in one report per owning
   writer. A chain that crashes settles nothing — not its own entry and not the
   rest of the batch — and the resettle tick re-dispatches what stayed pending.
   """
-  @spec run([output()], (binary(), map() -> term())) :: :ok
-  def run(outputs, fun) when is_function(fun, 2) do
-    outputs
-    |> Enum.reduce(%{}, fn {payload, metadata, %{owner: owner, key: key}}, settled ->
-      Process.put(@run_key, {ack(metadata), 0})
-      fun.(payload, metadata)
-      {_token, holds} = Process.delete(@run_key)
-      Map.update(settled, owner, [{key, holds}], &[{key, holds} | &1])
-    end)
-    |> report_per_owner(:outbox_settled_many)
+  @spec run([output()], acc, (binary(), map(), acc -> acc)) :: acc when acc: term()
+  def run(outputs, acc, fun) when is_function(fun, 3) do
+    {acc, settled} =
+      Enum.reduce(outputs, {acc, %{}}, fn {payload, metadata, %{owner: owner, key: key}},
+                                          {acc, settled} ->
+        Process.put(@run_key, {ack(metadata), 0})
+        acc = fun.(payload, metadata, acc)
+        {_token, holds} = Process.delete(@run_key)
+        {acc, Map.update(settled, owner, [{key, holds}], &[{key, holds} | &1])}
+      end)
+
+    report_per_owner(settled, :outbox_settled_many)
+    acc
   end
 
   @doc """

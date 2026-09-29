@@ -166,7 +166,11 @@ defmodule Flezha.State.TestHelpers do
   exactly as the dispatcher does, so its entries settle in ONE report.
   """
   def run_batch(outputs, chain \\ fn _payload, _metadata -> :ok end),
-    do: :ok = Outbox.run(outputs, chain)
+    do:
+      Outbox.run(outputs, :ok, fn payload, metadata, :ok ->
+        chain.(payload, metadata)
+        :ok
+      end)
 
   @doc "The metadata a stamped output carries — what a sink confirms against."
   def metadata_of({_payload, metadata, _ack}), do: metadata

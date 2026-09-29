@@ -16,6 +16,7 @@ defmodule Flezha.Operator.Migration do
   """
 
   alias Flezha.Identificator
+  alias Flezha.Operator.Calls
   alias Flezha.Operator.ClassRegistry
   alias Flezha.Operator.Lifecycle
   alias Flezha.Operator.Overwatch
@@ -368,11 +369,25 @@ defmodule Flezha.Operator.Migration do
   @impl Flezha.Shutdown.Step
   def shutdown_steps do
     [
+      %{scope: :process, order: 5, name: :calls, run: &calls_step/2},
       %{scope: :process, order: 10, name: :migrate_task, run: &migrate_task_step/2},
       %{scope: :process, order: 20, name: :class_registry, run: &class_registry_step/2},
       %{scope: :process, order: 30, name: :control_unit, run: &control_unit_step/2},
       %{scope: :process, order: 40, name: :plugin_table, run: &plugin_table_step/2}
     ]
+  end
+
+  # Every caller still waiting learns at once that no answer will come: the
+  # bounded run's terminal status when it ended as one, `stopped` otherwise.
+  defp calls_step({state, _reason}, _budget) do
+    status =
+      case Completion.read(Overwatch.operator_class(state)) do
+        {:ok, %{status: status}} -> status
+        _no_terminal_record -> "stopped"
+      end
+
+    _ = Calls.end_all(state.calls, Overwatch.callee(state), status)
+    :ok
   end
 
   defp migrate_task_step({state, _reason}, _budget) do

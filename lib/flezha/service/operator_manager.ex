@@ -8,7 +8,9 @@ defmodule Flezha.Service.OperatorManager do
   alias Flezha.Config.Durations
   alias Flezha.Identificator
   alias Flezha.Operator.Builder, as: OperatorBuilder
+  alias Flezha.Operator.Calls
   alias Flezha.Operator.PartitionGroup
+  alias Flezha.Partition
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.FleetManager
   alias Flezha.SDK.SafeCall
@@ -426,6 +428,47 @@ defmodule Flezha.Service.OperatorManager do
       |> GenServer.call({:ingest, message, metadata}, timeout)
       |> named_verdict(operator_id)
     end
+  end
+
+  @doc "The input metadata naming the entry channel `channel`; `nil` or `\"\"` names none."
+  @spec channel_metadata(String.t() | nil) :: map()
+  def channel_metadata(channel) when channel in [nil, ""], do: %{}
+  def channel_metadata(channel), do: %{"channel" => channel}
+
+  @doc """
+  The operator an input to `operator_id` in `namespace` reaches: the operator
+  itself, or, when `operator_id` names a partition group, the member whose
+  key-group range owns `key`. A group named with no key, or with a key no
+  member owns, is refused naming its members.
+  """
+  @spec resolve_member(String.t(), String.t(), String.t() | nil) ::
+          {:ok, String.t()}
+          | {:error, {:unkeyed, String.t(), [String.t()]}}
+          | {:error, {:operator_not_found, String.t(), String.t()}}
+  def resolve_member(namespace, operator_id, key) do
+    with false <- exist?(namespace, operator_id),
+         [_ | _] = members <- PartitionGroup.members(namespace, operator_id) do
+      case key && Enum.find(members, &Partition.owns?(&1.partition.range, key)) do
+        nil -> {:error, {:unkeyed, operator_id, Enum.map(members, & &1.id)}}
+        member -> {:ok, member.id}
+      end
+    else
+      true -> {:ok, operator_id}
+      [] -> {:error, {:operator_not_found, namespace, operator_id}}
+    end
+  end
+
+  @doc """
+  Call `operator_id` (a partition group's member by `key`) with one input and
+  wait for its answer: the one output a `response()` end produced from it, or
+  a coded error saying why none came by `deadline_ms`.
+  """
+  @spec call_operator(String.t(), String.t(), binary(), map(), pos_integer(), String.t() | nil) ::
+          {:ok, binary(), map()} | {:error, term()}
+  def call_operator(namespace, operator_id, message, metadata, deadline_ms, key) do
+    with {:ok, member} <- resolve_member(namespace, operator_id, key),
+         {:ok, pid} <- get_operator_pid(namespace, member),
+         do: Calls.call(pid, message, metadata, deadline_ms, member)
   end
 
   # The ingest path answers for itself; a caller is told which operator.

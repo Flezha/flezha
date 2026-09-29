@@ -993,3 +993,32 @@ runner and assert, on every host runtime, that the record precedes the entry nam
 - **WHEN** `outbox_block_bounded` runs on a host runtime with `FLEZHA_FLUSH_LINGER_MS=20000` and the first tasklet commits
 - **THEN** the Cell WAL holds the record before the journal holds `task_committed(0)`, and the entry names that record's seq
 
+### Requirement: Answering an outside call SHALL be a required capability every SDK proves
+
+`call_response` SHALL join the capability vocabulary and the required set, so no manifest may defer
+it. Every manifest SHALL list it under `fixtures` with exactly the reference's ids: `call_echo`, an
+unbounded operator whose one tasklet answers with its input through `response()`;
+`call_downstream`, an unbounded operator whose second tasklet answers; `call_split`, an unbounded
+operator whose one tasklet feeds two filtered paths, each ending in `response()` through a tasklet
+of its own; and `call_turn`, a durable `:per_input` bounded operator whose turn answers through
+`response()`. Every test app SHALL declare each fixture through its SDK's builder, and SHALL list
+the `response` step under `topology_surfaces`. `test/system/call_response_e2e_test.exs` SHALL be
+tagged `capability: :call_response` and SHALL drive every fixture on the selected runtime through
+`Flezha.Service.Operator.call/6`, and the reference refusal rows for `ChannelEndsTwice` SHALL be
+driven through every runtime's real boot like every other reference refusal.
+
+#### Scenario: Every runtime answers both kinds
+
+- **WHEN** the scenario calls `call_echo` and `call_turn` on any runtime with the payload `hello`
+- **THEN** both calls SHALL answer `hello`, the bounded one after its turn's commit
+
+#### Scenario: Every runtime answers from the path the input took
+
+- **WHEN** the scenario calls `call_split` with an input its filter sends down the refused path
+- **THEN** the answer SHALL be the refused path's output, and nothing SHALL be dropped as `answered`
+
+#### Scenario: A manifest deferring the capability fails the gate
+
+- **WHEN** a manifest lists `call_response` under `deferred`
+- **THEN** the gate SHALL fail naming the manifest and the required capability
+

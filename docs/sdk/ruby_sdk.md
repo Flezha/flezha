@@ -278,6 +278,9 @@ of a codec for anything else. A codec name outside the four, or a codec named
 beside a callable on one channel, is refused when the class is declared, naming
 the class and the channel.
 
+`.response` ends a channel on the answer to an outside call instead of a sink,
+and takes the sink's `encode:` and `codec:`: [`calls.md`](calls.md).
+
 Ruby's integers survive JSON at any width. A `Float` that is `NaN` or infinite,
 or a `String` that is not valid UTF-8, cannot be sent as JSON and fails the emit
 naming the channel.

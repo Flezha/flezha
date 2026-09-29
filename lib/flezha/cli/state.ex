@@ -11,9 +11,7 @@ defmodule Flezha.Service.Cli.State do
   alias Flezha.Config
   alias Flezha.Operator.ClassRegistry
   alias Flezha.Operator.Lookup
-  alias Flezha.Operator.PartitionGroup
   alias Flezha.Operator.Replay
-  alias Flezha.Partition
   alias Flezha.Service.Cli.Context
   alias Flezha.Service.OperatorManager
   alias Flezha.State.Commands
@@ -110,9 +108,12 @@ defmodule Flezha.Service.Cli.State do
         {:ok, namespace, [operator_id]}
 
       :error ->
-        with {:ok, namespace} <- group_namespace(operator_id),
-             members = PartitionGroup.members(namespace, operator_id) do
-          {:ok, namespace, owning_members(members, cell_key)}
+        with {:ok, namespace} <- group_namespace(operator_id) do
+          case OperatorManager.resolve_member(namespace, operator_id, cell_key) do
+            {:ok, member} -> {:ok, namespace, [member]}
+            {:error, {:unkeyed, _group, members}} -> {:ok, namespace, members}
+            {:error, _gone} -> {:error, {:no_operator, operator_id}}
+          end
         end
     end
   end
@@ -121,15 +122,6 @@ defmodule Flezha.Service.Cli.State do
     case OperatorManager.namespace_of_group(operator_id) do
       {:ok, namespace} -> {:ok, namespace}
       :error -> {:error, {:no_operator, operator_id}}
-    end
-  end
-
-  defp owning_members(members, nil), do: Enum.map(members, & &1.id)
-
-  defp owning_members(members, cell_key) do
-    case Enum.find(members, &Partition.owns?(&1.partition.range, cell_key)) do
-      nil -> Enum.map(members, & &1.id)
-      member -> [member.id]
     end
   end
 

@@ -109,6 +109,19 @@ SDK raises or returns its one error type carrying them.
 |---|---|---|---|---|
 | `boot.not_ready` | unavailable | 7 | the controller is not ready: its readiness is {verdict}, with {unmet} unmet | `flz boot status` |
 
+### call
+
+| Code | Class | Exit | Message | Hint |
+|---|---|---|---|---|
+| `call.absorbed` | conflict | 6 | operator '{operator}' took the call's input without running it: it was a duplicate, or an input hook filtered it out, so no answer will come |  |
+| `call.busy` | unavailable | 7 | operator '{operator}' already owes answers to {pending_max} waiting callers; nothing was sent, try again later | `raise FLEZHA_CALL_PENDING_MAX if the operator is meant to hold more waiting callers` |
+| `call.callee_ended` | unavailable | 7 | operator '{operator}' ended ({status}) before it answered the call |  |
+| `call.failed` | unavailable | 7 | operator '{operator}' dead-lettered the call's input as '{dlq_ref}': {error} | `flz dlq list {operator}` |
+| `call.not_accepted` | conflict | 6 | operator '{operator}' runs once over one input and has already taken it, so it cannot take the call's input |  |
+| `call.target_unkeyed` | invalid | 2 | '{operator}' is a partition group; name the key whose member should take the input, or one of its members: {members} | `pass --key <key>` |
+| `call.timeout` | unavailable | 7 | operator '{operator}' did not answer within {deadline_ms} ms; the input stays accepted and its turn still runs |  |
+| `call.unavailable` | unavailable | 7 | operator '{operator}' cannot answer the call: {reason} |  |
+
 ### cli
 
 | Code | Class | Exit | Message | Hint |
@@ -512,6 +525,7 @@ SDK raises or returns its one error type carrying them.
 | `topology.cells_for_missing` | invalid | 2 | tasklet '{name}' declares non-empty cell_keys but does not override cells_for; write its cells_for (a Rust tasklet also sets CELLS_FOR_OVERRIDDEN) |  |
 | `topology.chained_loop_terminal_without_handoff` | invalid | 2 | a durable handoff-chained loop's terminal tasklet '{tasklet}' releases no inter-tasklet handoff; iteration N+1 is seeded from iteration N's terminal batch, and a tasklet that owns no output channel, or whose only output is plugin-bound, has nothing the journal carries. Take the sink off the terminal's own channel, or declare the loop per_input; wiring another tasklet behind the sink only moves the rule onto that one |  |
 | `topology.change_without_state` | invalid | 2 | tasklet '{tasklet}' declares applyChange but no initial state, so there is nothing for a change to fold into |  |
+| `topology.channel_ends_twice` | invalid | 2 | channel '{channel}' declares two plugin ends; a channel ends in one sink or one response(), so route the value through a pass-through tasklet to give it both |  |
 | `topology.channel_name_too_long` | invalid | 2 | channel '{channel}' has a {len}-byte name; the name rides every frame this channel produces, under a one-byte length prefix, so it may be at most {max} bytes |  |
 | `topology.channel_named_twice` | invalid | 2 | channel '{channel}' is named twice: named('{named}') and sink('{sink}') both name it. A sink names the channel it terminates, so write the name once: sink('{named}') to keep the channel's name, or named('{named}') with a sink that takes no name |  |
 | `topology.checkpoint_ack_without_tier` | invalid | 2 | the operator declares checkpoint_ack without effectively_once; the checkpoint is where the tier's consumed offset advances, and an at-least-once operator has no durable offset to hold back (nor a durable input log to replay the interval from) |  |

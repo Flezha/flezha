@@ -22,6 +22,7 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
   alias Flezha.Service.Cli
   alias Flezha.Service.Cli.Controller
   alias Flezha.Service.CliManager
+  alias FlezhaTest.Helper.CliCapture
   alias FlezhaTest.Helper.NodeTestHelper
 
   # One real failure per family that renders one, through the wire seam that
@@ -44,7 +45,7 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
       wrong =
         for {family, fun} <- failures(), reduce: [] do
           acc ->
-            {outcome, out, err} = drive(fun)
+            {outcome, out, err} = CliCapture.run(fun)
 
             cond do
               not match?({:exit, {:shutdown, code}} when code in 1..7, outcome) ->
@@ -66,7 +67,7 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
 
     test "carries one prefix, whatever family rendered it" do
       for {family, fun} <- failures() do
-        {_outcome, _out, err} = drive(fun)
+        {_outcome, _out, err} = CliCapture.run(fun)
 
         assert String.starts_with?(err, "error: "),
                "#{family} rendered #{inspect(err)}, which does not start with the one prefix"
@@ -103,14 +104,14 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
       ]
 
       for {code, fun} <- cases do
-        {outcome, _out, err} = drive(fun)
+        {outcome, _out, err} = CliCapture.run(fun)
         assert outcome == {:exit, {:shutdown, code}}, "#{err} exited #{inspect(outcome)}"
       end
     end
 
     test "under --json the error is one object on stderr, and stdout carries none of it" do
       {outcome, out, err} =
-        drive(fn -> CliManager.disable_plugin("ghost", output: "json") end)
+        CliCapture.run(fn -> CliManager.disable_plugin("ghost", output: "json") end)
 
       assert outcome == {:exit, {:shutdown, 5}}
       assert out == ""
@@ -142,7 +143,8 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
       expression =
         ~s|Flezha.Service.Cli.Context.render!(Flezha.Error.new("namespace.not_found", namespace: "ghost"), [])|
 
-      {outcome, out, err} = drive(fn -> :erpc.call(peer, Kernel.CLI, :rpc_eval, [expression]) end)
+      {outcome, out, err} =
+        CliCapture.run(fn -> :erpc.call(peer, Kernel.CLI, :rpc_eval, [expression]) end)
 
       assert err =~ "error: namespace 'ghost' does not exist (namespace.not_found)",
              "the failure stayed on #{peer}; the caller's stderr held #{inspect(err)}"
@@ -207,26 +209,5 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
                "`Context.fail!/1` or `Context.notifier/0`:\n" <>
                Enum.join(offenders, "\n")
     end
-  end
-
-  # Run `fun` with the two streams captured apart, and answer what it did:
-  # `{:exit, reason}` for a verb that halted, `{:ok, value}` for one that
-  # returned. `capture_io/2` runs its function in the calling process, so the
-  # nested captures hand their results back through the mailbox.
-  defp drive(fun) do
-    err =
-      capture_io(:stderr, fn ->
-        out = capture_io(fn -> send(self(), {:outcome, outcome(fun)}) end)
-        receive do: ({:outcome, outcome} -> send(self(), {:pair, outcome, out}))
-      end)
-
-    assert_received {:pair, outcome, out}
-    {outcome, out, err}
-  end
-
-  defp outcome(fun) do
-    {:ok, fun.()}
-  catch
-    :exit, reason -> {:exit, reason}
   end
 end

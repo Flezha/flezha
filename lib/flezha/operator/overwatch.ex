@@ -17,6 +17,7 @@ defmodule Flezha.Operator.Overwatch do
 
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Facts
+  alias Flezha.Operator.Calls
   alias Flezha.Operator.ClassRegistry
   alias Flezha.Operator.Handover
   alias Flezha.Operator.Ingest
@@ -45,7 +46,7 @@ defmodule Flezha.Operator.Overwatch do
   require Logger
 
   use GenServer
-  use Flezha.Process.Timer, keys: [:wake, :correction]
+  use Flezha.Process.Timer, keys: [:wake, :correction, :call]
   use ProcessHub.Strategy.Migration.HotSwap
   use ProcessHub.Strategy.Migration.MigrationConsent
 
@@ -124,7 +125,14 @@ defmodule Flezha.Operator.Overwatch do
     # Cells with a correction in flight, and the oldest event time each was
     # asked to correct back to. Concurrent requests for one Cell coalesce
     # into the one replay that reaches furthest back.
-    corrections: %{}
+    corrections: %{},
+    # The outside callers waiting on this operator for an answer; each row's
+    # deadline is armed under the timer family `:call`.
+    calls: %Calls{},
+    # Whether a `:once` or `:chained` bounded instance has taken its one
+    # input in this process, so a later call is refused; a durable instance
+    # also asks its input log (`Ingest.first_input?/1`), which outlives it.
+    fed: false
   ]
 
   @type t :: %__MODULE__{}
@@ -152,6 +160,10 @@ defmodule Flezha.Operator.Overwatch do
   @spec deliver(t(), {binary(), map()}) :: :ok | {:error, :no_stream | :send_buffer_full}
   def deliver(%__MODULE__{} = state, payload),
     do: StreamChannel.io_in(state.channel, state.id, payload)
+
+  @doc "Who this operator's call table answers for."
+  @spec callee(t()) :: Calls.callee()
+  def callee(%__MODULE__{} = state), do: %{namespace: state.namespace, operator_id: state.id}
 
   # Every plugin verb is one bounded call into a running Overwatch. The bound
   # belongs here rather than to each caller: an Overwatch busy folding an entry
@@ -488,6 +500,37 @@ defmodule Flezha.Operator.Overwatch do
     end
   end
 
+  # An outside call: refused at once when nothing can answer it, else a row
+  # with its deadline and the confirming ingest of an input carrying the token
+  # the row is keyed by. Every answer arrives later, from the row.
+  @impl true
+  def handle_call({:call, message, metadata, deadline_ms}, from, %__MODULE__{} = state)
+      when is_integer(deadline_ms) and deadline_ms > 0 do
+    case call_refusal(state) do
+      nil ->
+        channel = Map.get(metadata, "channel")
+
+        case Calls.admit(state.calls, callee(state), from, channel, deadline_ms) do
+          {:ok, token, calls} ->
+            state =
+              arm_timer(
+                %{state | calls: calls},
+                {:call, token},
+                deadline_ms,
+                {:call_deadline, token}
+              )
+
+            {:noreply, Ingest.call(state, message, Calls.entry_metadata(metadata, token), token)}
+
+          {:error, error} ->
+            {:reply, {:error, error}, state}
+        end
+
+      {code, details} ->
+        {:reply, {:error, Calls.refused(callee(state), code, details)}, state}
+    end
+  end
+
   @impl true
   def handle_call(:create_snapshot, _from, %__MODULE__{} = state),
     do: {:reply, {:ok, Handover.create_snapshot(state.id, state.runner_id)}, state}
@@ -547,18 +590,22 @@ defmodule Flezha.Operator.Overwatch do
     {:noreply, %__MODULE__{state | held_outputs: [frame | state.held_outputs]}}
   end
 
-  def handle_cast({:io_out_batch, outputs}, state) do
-    Outbox.run(outputs, fn message, metadata ->
-      Plugins.transform_io(state, :on_output, message, metadata)
-    end)
+  def handle_cast({:io_out_batch, outputs}, state),
+    do: {:noreply, Outbox.run(outputs, state, &output(&3, &1, &2))}
 
+  def handle_cast({:io_out, message, metadata}, state) do
+    state = output(state, message, metadata)
+    Outbox.settled(metadata)
     {:noreply, state}
   end
 
-  def handle_cast({:io_out, message, metadata}, state) do
-    Plugins.transform_io(state, :on_output, message, metadata)
-    Outbox.settled(metadata)
-    {:noreply, state}
+  # A dead-letter entry for an input a caller may be waiting on is durable.
+  @impl true
+  def handle_cast({:dead_lettered, token, entry_ref, error}, %__MODULE__{} = state) do
+    details = %{dlq_ref: entry_ref, error: error}
+
+    {:noreply,
+     %{state | calls: Calls.refuse(state.calls, callee(state), token, "call.failed", details)}}
   end
 
   @impl true
@@ -662,6 +709,21 @@ defmodule Flezha.Operator.Overwatch do
   end
 
   @impl true
+  def handle_info({:call_deadline, token}, %__MODULE__{} = state) do
+    state = timer_fired(state, {:call, token})
+    {:noreply, %{state | calls: Calls.expire(state.calls, callee(state), token)}}
+  end
+
+  # The rows went with a handover: the arriving process answers them now.
+  @impl true
+  def handle_info(:calls_handed_over, %__MODULE__{} = state) do
+    state =
+      Enum.reduce(Map.keys(state.calls.rows), state, &cancel_timer(&2, {:call, &1}))
+
+    {:noreply, %{state | calls: Calls.depart(state.calls)}}
+  end
+
+  @impl true
   def handle_info({:extension_timer, name, plugin_id}, %__MODULE__{} = state) do
     {:noreply, %{state | extensions: Table.fire_timer(state.extensions, name, plugin_id)}}
   end
@@ -744,6 +806,29 @@ defmodule Flezha.Operator.Overwatch do
         Logger.warning("[Overwatch] #{state.id} dropped an unexpected message: #{inspect(msg)}")
         {:noreply, state}
     end
+  end
+
+  # One output on either route: an answer goes to its caller and never reaches
+  # the `:on_output` chain, so no plugin, listener or sink sees it.
+  defp output(%__MODULE__{} = state, message, metadata) do
+    case Calls.divert(state.calls, callee(state), message, metadata) do
+      :output ->
+        Plugins.transform_io(state, :on_output, message, metadata)
+        state
+
+      {:diverted, calls} ->
+        %{state | calls: calls}
+    end
+  end
+
+  # Why a call cannot be taken at all: a parked operator, or a single-pass
+  # bounded instance that has already been given its input.
+  defp call_refusal(%__MODULE__{init_error: reason}) when reason != nil,
+    do: {"call.unavailable", %{reason: "the operator is parked"}}
+
+  defp call_refusal(%__MODULE__{} = state) do
+    if Ingest.single_input?(state) and (state.fed or not Ingest.first_input?(state)),
+      do: {"call.not_accepted", %{}}
   end
 
   # Deliver what arrived while a migrate task was binding, in arrival order;

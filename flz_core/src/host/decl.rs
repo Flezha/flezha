@@ -49,8 +49,9 @@ pub struct HostChannelDecl {
 
 /// One link of a fluent chain declared off a channel handle, in the order the
 /// builder was called. A chain closed by `Into` or `Merge` wires an edge;
-/// `Sink` terminates the channel on a plugin; `Branch` records the sugar's
-/// arity and closes the chain it stands in.
+/// `Sink` terminates the channel on a plugin, `Response` on the caller's
+/// answer; `Branch` records the sugar's arity and closes the chain it stands
+/// in.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 #[serde(tag = "link", rename_all = "snake_case")]
 pub enum HostLink {
@@ -68,6 +69,9 @@ pub enum HostLink {
         #[serde(default)]
         name: Option<String>,
     },
+    /// Terminates the channel on the answer to the outside call its input
+    /// carried. Takes no name: nothing outside the operator addresses it.
+    Response,
     /// Closes the chain onto a consumer edge into a tasklet index.
     Into {
         tasklet: u32,

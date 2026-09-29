@@ -14,9 +14,11 @@ defmodule Flezha.Operator.Handover do
   """
 
   alias Flezha.Config
+  alias Flezha.Operator.Calls
   alias Flezha.Operator.Overwatch
   alias Flezha.Operator.Plugins
   alias Flezha.Plugin.Extension.Table
+  alias Flezha.Process.Timer
   alias Flezha.Runner.ControlUnit
   alias Flezha.State.WalWriter
   alias Flezha.State.WriterRegistry
@@ -24,10 +26,14 @@ defmodule Flezha.Operator.Handover do
   require Logger
 
   @doc """
-  The handover payload this node ships: identity, plugins and the SDK's
-  serialized state. When the source runner is already gone, `serialize_data`
-  is the final state it handed over if no runner has taken the operator over
-  since, and nil otherwise, and then the disk is the only surviving state.
+  The handover payload this node ships: identity, plugins, the callers waiting
+  on the operator with the time each has left, and the SDK's serialized state.
+  When the source runner is already gone, `serialize_data` is the final state
+  it handed over if no runner has taken the operator over since, and nil
+  otherwise, and then the disk is the only surviving state.
+
+  The waiting callers leave with the payload: this process drops its rows
+  (`:calls_handed_over`), so its terminate owes them nothing.
   """
   @spec prepare(Overwatch.t()) :: {map(), binary() | nil}
   def prepare(%Overwatch{} = state) do
@@ -42,9 +48,11 @@ defmodule Flezha.Operator.Handover do
       namespace: state.namespace,
       factory_id: state.factory_id,
       init_values: state.init_values,
-      plugins: Table.serializable_plugins(state.extensions)
+      plugins: Table.serializable_plugins(state.extensions),
+      calls: Calls.export(state.calls)
     }
 
+    send(self(), :calls_handed_over)
     {handover, serialize_data}
   end
 
@@ -98,6 +106,7 @@ defmodule Flezha.Operator.Handover do
       state
       | extensions: brought_up.extensions,
         init_values: handover_state.init_values,
+        calls: Calls.absorb(Map.get(handover_state, :calls, [])),
         # Only a handover that actually reached a runner suppresses the WAL
         # restore. One that carried nothing, or that found nothing bound to
         # carry it to, falls through to the on-disk state the bind already
@@ -105,6 +114,22 @@ defmodule Flezha.Operator.Handover do
         # be locked out too.
         arrived_via_hotswap?: bound? and serialized_state != <<>>
     }
+    |> arm_call_deadlines()
+  end
+
+  # Each carried row keeps the deadline it had on the source node.
+  defp arm_call_deadlines(%Overwatch{calls: calls} = state) do
+    timers =
+      Enum.reduce(Map.keys(calls.rows), state.timers, fn token, timers ->
+        Timer.arm(
+          timers,
+          {:call, token},
+          Calls.remaining_ms(calls, token),
+          {:call_deadline, token}
+        )
+      end)
+
+    %Overwatch{state | timers: timers}
   end
 
   @doc """

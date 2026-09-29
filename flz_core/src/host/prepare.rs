@@ -49,6 +49,7 @@ struct HostPrepareQueue {
 pub struct StagedEntry {
     pub bytes: Vec<u8>,
     pub consumed_offset: Option<u64>,
+    pub call: Option<Arc<str>>,
     pub replay: bool,
     pub stream: Arc<flz_transport::transport::FlezhaStream>,
     /// The bounded stage that owes this value until its answer addresses
@@ -269,6 +270,7 @@ fn deliver_prepared(
         &value,
         &entry.stream,
         entry.consumed_offset,
+        entry.call.as_ref(),
         entry.replay,
         None,
     );
@@ -327,6 +329,7 @@ fn spawn_prepare_ladder(
                 &label,
                 crate::retry::ParkTarget::entry(channel),
                 entry.consumed_offset,
+                entry.call.as_ref(),
                 Some(entry.bytes.clone()),
                 first_error.message,
                 attempt,

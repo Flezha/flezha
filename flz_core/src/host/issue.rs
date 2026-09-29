@@ -68,6 +68,11 @@ pub enum TopologyIssue {
     DuplicatePluginSink {
         channel: String,
     },
+    /// A `sink` beside a `response()`, or two `response()` ends, on one
+    /// channel: a channel carries at most one plugin end.
+    ChannelEndsTwice {
+        channel: String,
+    },
     ChannelNamedTwice {
         channel: String,
         named: String,
@@ -207,6 +212,7 @@ impl TopologyIssue {
             Self::MailboxCapacityZero { .. } => Code::MailboxCapacityZero,
             Self::MailboxCapacityTooLarge { .. } => Code::MailboxCapacityTooLarge,
             Self::DuplicatePluginSink { .. } => Code::DuplicatePluginSink,
+            Self::ChannelEndsTwice { .. } => Code::ChannelEndsTwice,
             Self::ChannelNamedTwice { .. } => Code::ChannelNamedTwice,
             Self::DuplicateSinkName { .. } => Code::DuplicateSinkName,
             Self::KeyedChannelWithoutPluginWire { .. } => Code::KeyedChannelWithoutPluginWire,
@@ -287,7 +293,9 @@ impl TopologyIssue {
                 ("tasklet", tasklet.clone().into()),
                 ("value", (*value).into()),
             ],
-            Self::DuplicatePluginSink { channel } => vec![("channel", channel.clone().into())],
+            Self::DuplicatePluginSink { channel } | Self::ChannelEndsTwice { channel } => {
+                vec![("channel", channel.clone().into())]
+            }
             Self::ChannelNamedTwice {
                 channel,
                 named,

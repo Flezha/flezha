@@ -376,9 +376,17 @@ pub(super) fn settle_item(
     let outputs = if parked { Vec::new() } else { effect.outputs };
     let (edge_outputs, wire_outputs) = split_outputs(outputs);
     let consumed_offset = consumed_offset_of(&work.item);
+    let call = call_of(&work.item);
     let dlq = park.map(|(error, attempts)| park_entry(slot, &work.item, error, attempts));
     let keeps_edges = slot.keeps_edges(consumed_offset);
-    let edges = route_edge_outputs(slot, &stream, consumed_offset, edge_outputs, keeps_edges);
+    let edges = route_edge_outputs(
+        slot,
+        &stream,
+        consumed_offset,
+        call,
+        edge_outputs,
+        keeps_edges,
+    );
     let effects = InvocationEffects {
         changes: effect.changes,
         timers: timers.clone(),
@@ -389,8 +397,15 @@ pub(super) fn settle_item(
         checkpointed: effect.checkpoint,
         parked: dlq.is_some(),
     };
-    let (tier_off_dlq, plugin_outputs) =
-        settle_into_buffer(slot, facts, effects, wire_outputs, dlq, hold_of(&work.item));
+    let (tier_off_dlq, plugin_outputs) = settle_into_buffer(
+        slot,
+        facts,
+        effects,
+        wire_outputs,
+        call,
+        dlq,
+        hold_of(&work.item),
+    );
     commit_timers(slot, &timers, &stream);
     crate::timer::arm_interval_deadline(slot);
     ship_plugin_outputs(slot, &stream, plugin_outputs);
@@ -401,6 +416,7 @@ pub(super) fn settle_item(
             &slot.cell_identity,
             slot.dispatcher.cell_label(),
             consumed_offset,
+            call,
             entry,
         );
     }
@@ -468,8 +484,16 @@ fn settle_bounded_effects(
         checkpointed: false,
         parked: false,
     };
-    let (_park, plugin_outputs) =
-        settle_into_buffer(slot, facts, effects, wire_outputs, None, None);
+    let call = crate::bounded::pass_call(slot);
+    let (_park, plugin_outputs) = settle_into_buffer(
+        slot,
+        facts,
+        effects,
+        wire_outputs,
+        call.as_ref(),
+        None,
+        None,
+    );
     ship_plugin_outputs(slot, stream, plugin_outputs);
     if !slot.topology.records_effects(slot.persistence_enabled) {
         return;
@@ -607,6 +631,14 @@ fn consumed_offset_of(item: &CellItem) -> Option<u64> {
     }
 }
 
+/// The outside call waiting on the item's input; a firing answers nobody.
+fn call_of(item: &CellItem) -> Option<&Arc<str>> {
+    match item {
+        CellItem::Input(p) => p.call.as_ref(),
+        CellItem::Timer(_) | CellItem::CloseInterval => None,
+    }
+}
+
 /// A firing commits its own removal first, whatever the host reported: the
 /// pending set is the core's, and a timer left in it fires again. A failed
 /// invocation commits nothing else, so a poison firing parks once instead of
@@ -650,6 +682,7 @@ fn route_edge_outputs(
     slot: &Arc<CellSlot>,
     stream: &Arc<FlezhaStream>,
     consumed_offset: Option<u64>,
+    call: Option<&Arc<str>>,
     edge_outputs: Vec<schema::Output>,
     record: bool,
 ) -> Vec<crate::flusher::EdgeRecord> {
@@ -687,6 +720,7 @@ fn route_edge_outputs(
             &value,
             stream,
             consumed_offset,
+            call,
             slot,
         ) {
             // A push this Cell could not deliver is HELD, not lost:
@@ -708,15 +742,17 @@ fn route_edge_outputs(
 
 /// Fold the invocation into the buffer per its Cell's policy; a Cell that
 /// records no effects hands its wire outputs and park back to ship after the
-/// buffer ops.
+/// buffer ops. Both routes leave from here, so the answers are stamped here.
 fn settle_into_buffer(
     slot: &Arc<CellSlot>,
     facts: &HostTaskletFacts,
     mut effects: InvocationEffects<Vec<u8>>,
-    wire_outputs: Vec<schema::Output>,
+    mut wire_outputs: Vec<schema::Output>,
+    call: Option<&Arc<str>>,
     dlq: Option<DlqEntryBody>,
     hold: Option<Arc<crate::prefix::Hold>>,
 ) -> (Option<DlqEntryBody>, Vec<schema::Output>) {
+    stamp_answers(slot, call, &mut wire_outputs);
     let mut buffer = slot.flush_buffer.lock_recover();
     let Some(bytes) = buffer.as_any_mut().downcast_mut::<BytesBuffer>() else {
         return (None, Vec::new());
@@ -740,6 +776,31 @@ fn settle_into_buffer(
     );
     crate::cell::keep_hold(slot, bytes, hold);
     (tier_off_dlq, plugin_outputs)
+}
+
+/// Every output of a `response()` end carries `flz.reply_to`, the call's
+/// token or an empty value when its input carried none; no other output
+/// carries the key, whatever the host put in its metadata.
+fn stamp_answers(slot: &CellSlot, call: Option<&Arc<str>>, outputs: &mut [schema::Output]) {
+    for output in outputs {
+        let schema::OutputTarget::Plugin { channel } = &output.target else {
+            continue;
+        };
+        output
+            .metadata
+            .retain(|(key, _)| key != crate::routing::CALL_KEY);
+        let response = slot
+            .topology
+            .lookup_channel_id(channel)
+            .and_then(|id| slot.topology.channel(id))
+            .is_some_and(|descriptor| descriptor.response);
+        if response {
+            output.metadata.push((
+                crate::routing::CALL_KEY.to_string(),
+                call.map_or_else(String::new, |token| token.to_string()),
+            ));
+        }
+    }
 }
 
 fn output_records(wire_outputs: Vec<schema::Output>) -> Vec<OutputRecord> {

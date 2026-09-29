@@ -95,6 +95,10 @@ defmodule Flezha.Service.CliManagerSendTest do
   defp run_send(inst, verdict, channel) do
     test = self()
 
+    stub(Flezha.Service.OperatorManager, :resolve_member, fn "default", ^inst, nil ->
+      {:ok, inst}
+    end)
+
     stub(Flezha.Service.OperatorManager, :send_io_confirming, fn id, ns, msg, md ->
       Kernel.send(test, {:sent, id, ns, msg, md})
       verdict
@@ -147,6 +151,7 @@ defmodule Flezha.Service.CliManagerRewindTest do
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Service.CliManager
+  alias FlezhaTest.Helper.CliCapture
 
   setup :set_mimic_global_until_exit
 
@@ -171,22 +176,10 @@ defmodule Flezha.Service.CliManagerRewindTest do
   # succeeds returns normally and reports on stdout. Both streams are captured
   # so a test can assert on whichever this rewind produced.
   defp rewind(inst, to_iter) do
-    stderr =
-      capture_io(:stderr, fn ->
-        stdout =
-          capture_io(fn ->
-            try do
-              CliManager.operator_rewind("default", inst, to_iter)
-            catch
-              :exit, _ -> :ok
-            end
-          end)
+    {_outcome, out, err} =
+      CliCapture.run(fn -> CliManager.operator_rewind("default", inst, to_iter) end)
 
-        send(self(), {:stdout, stdout})
-      end)
-
-    assert_received {:stdout, stdout}
-    stdout <> stderr
+    out <> err
   end
 
   test "a rewind that goes through reports where the loop resumes" do

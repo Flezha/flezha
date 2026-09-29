@@ -392,6 +392,29 @@ EXAMPLES:
     flz operator listen my_echo --input
     flz operator listen ohlc --json"#;
 
+pub(crate) const OPERATOR_CALL: Help = r#"flz operator call - Send one input and print the operator's answer
+
+USAGE:
+    flz operator call <operator_id> --text <payload> [OPTIONS]
+
+OPTIONS:
+    -t, --text <payload>      The input's payload (required)
+    -c, --channel <ch>        The entry channel the input arrives on
+    --key <key>               The key whose member of a partition group takes the input
+    --timeout <ms>            How long the operator has to answer (default 30000)
+    --namespace <ns>          Namespace the operator runs in (default: default)
+
+OUTPUT:
+    The answer's payload and a newline: the output a response() end of the
+    operator's graph produced from the input. A failure is printed on stderr
+    with its code and exits by its class: call.timeout 7, a denied call 4,
+    operator.not_found 5, call.target_unkeyed 2.
+
+EXAMPLES:
+    flz operator call echo --text hello
+    flz operator call prices --key EURUSD --text '{"pair":"EURUSD"}'
+    flz operator call slow --text x --timeout 100"#;
+
 pub(crate) const OPERATOR: Help = r#"flz operator - Operator management commands
 
 USAGE:
@@ -406,6 +429,7 @@ COMMANDS:
     info        Get operator info
     listen      Print the frames an operator emits or ingests
     send        Send a payload to an operator's input stream
+    call        Send one input and print the operator's answer
     rewind      Rewind a bounded loop to a committed iteration
     replay      Re-run a Cell's retained inputs from a point in the past
     help        Show this help message
@@ -415,6 +439,8 @@ EXAMPLES:
     flz operator scale ohlc 5
     flz operator send orchestrator --text '{"task":"refactor"}'
     flz operator send my_echo --text 'hello world' --await 2000
+    flz operator send prices --key EURUSD --text x
+    flz operator call echo --text hello
     flz operator listen my_echo --duration-ms 10000
     flz operator rewind chat-1 --to-iteration 3
     flz operator replay candles/aggregate/BTC --from 1720000000000

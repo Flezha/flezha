@@ -279,6 +279,27 @@ defmodule Flezha.State.InputLog do
     call(pid, {:read_range, from, to})
   end
 
+  @doc """
+  The tokens of the outside calls the retained records in `from..to` carry
+  (`flz.reply_to`), by offset; a record that carries none is absent.
+  """
+  @spec calls(binary(), non_neg_integer(), non_neg_integer()) :: %{non_neg_integer() => binary()}
+  def calls(operator_class, from, to) do
+    case read_range(operator_class, from, to) do
+      records when is_list(records) ->
+        for {offset, _message, %{"flz.reply_to" => token}} <- records,
+            into: %{},
+            do: {offset, token}
+
+      {:error, _reason} ->
+        %{}
+    end
+  end
+
+  @doc "The token of the outside call the record at `offset` carries, `nil` when none."
+  @spec reply_to(binary(), non_neg_integer()) :: binary() | nil
+  def reply_to(operator_class, offset), do: Map.get(calls(operator_class, offset, offset), offset)
+
   # ---------- Min-watermark tracker (public ETS, rebuildable cache) ----------
 
   @doc """

@@ -480,6 +480,44 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
     assert_received {:delivered, {"in-1", %{"flz.offset" => "1"}}}
   end
 
+  # fails when: an edge value a restore delivers again loses the call its origin
+  # input carried, so the downstream answer never reaches the waiting caller.
+  test "a re-delivered edge value carries the call its origin input carried" do
+    inst = instance_id()
+    {:ok, 0} = InputLog.append(inst, "in-0", %{})
+    {:ok, 1} = InputLog.append(inst, "in-1", %{"flz.reply_to" => "w:caller"})
+
+    edges = [
+      %{channel: 0, consumer: 1, origin: 0, payload: "plain"},
+      %{channel: 0, consumer: 1, origin: 1, payload: "called"}
+    ]
+
+    body =
+      Flezha.SDK.Wire.encode_effect_body(%{
+        changes: [],
+        outputs: [],
+        consumed_offset: 1,
+        edges: edges
+      })
+
+    {:ok, writer} = Flezha.State.Supervisor.find_or_start({inst, "relay", ""})
+    :ok = WalWriter.append(writer, 0, OutboxCase.effect_header(), body)
+    WalWriter.close(writer)
+
+    test_pid = self()
+
+    stub(Flezha.Runner.StreamChannel, :io_in, fn _channel, _id, payload ->
+      send(test_pid, {:delivered, payload})
+      :ok
+    end)
+
+    Flezha.Operator.Replay.reforward_undelivered_tail(state(inst, durable_bounded: false))
+
+    assert_received {:delivered, {"plain", plain}}
+    refute Map.has_key?(plain, "flz.reply_to")
+    assert_received {:delivered, {"called", %{"flz.edge" => "0:1", "flz.reply_to" => "w:caller"}}}
+  end
+
   test "a stop of a sleeping bounded wakes it with the stop, and the bind sends it" do
     inst = instance_id()
     stub(Flezha.Service.OperatorManager, :assign_runner, fn _, _, _ -> "ex_2" end)

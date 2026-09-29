@@ -175,6 +175,12 @@ defmodule Flezha.Service.CliManager.ListenTest do
   end
 
   describe "operator_send/5 with await_ms" do
+    # `op` is a plain operator: the send reaches it by its own id.
+    setup do
+      stub(OperatorManager, :resolve_member, fn "ns", "op", nil -> {:ok, "op"} end)
+      :ok
+    end
+
     test "attaches before it delivers, prints the verdict, then what came back", %{parent: test} do
       stub(OperatorManager, :send_io_confirming, fn "op", "ns", "hello", %{} ->
         send(test, {:call, :deliver, nil})

@@ -1,0 +1,22 @@
+flz operator call - Send one input and print the operator's answer
+
+USAGE:
+    flz operator call <operator_id> --text <payload> [OPTIONS]
+
+OPTIONS:
+    -t, --text <payload>      The input's payload (required)
+    -c, --channel <ch>        The entry channel the input arrives on
+    --key <key>               The key whose member of a partition group takes the input
+    --timeout <ms>            How long the operator has to answer (default 30000)
+    --namespace <ns>          Namespace the operator runs in (default: default)
+
+OUTPUT:
+    The answer's payload and a newline: the output a response() end of the
+    operator's graph produced from the input. A failure is printed on stderr
+    with its code and exits by its class: call.timeout 7, a denied call 4,
+    operator.not_found 5, call.target_unkeyed 2.
+
+EXAMPLES:
+    flz operator call echo --text hello
+    flz operator call prices --key EURUSD --text '{"pair":"EURUSD"}'
+    flz operator call slow --text x --timeout 100

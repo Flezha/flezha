@@ -9,11 +9,11 @@ defmodule Flezha.Service.CliManagerStateGetTest do
   # async: false: Mimic global mode; Mimic stubs.
   use ExUnit.Case, async: false
 
-  import ExUnit.CaptureIO
   import Mimic
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Service.CliManager
+  alias FlezhaTest.Helper.CliCapture
 
   setup :set_mimic_global_until_exit
 
@@ -33,23 +33,8 @@ defmodule Flezha.Service.CliManagerStateGetTest do
   # stderr; a successful read prints on stdout and returns. Capture both and
   # swallow the exit, so every verdict stays assertable as one string.
   defp get(path, format \\ "text") do
-    stderr =
-      capture_io(:stderr, fn ->
-        printed =
-          capture_io(fn ->
-            try do
-              CliManager.state_get(path, output: format)
-            catch
-              :exit, _ -> :ok
-            end
-          end)
-
-        send(self(), {:stdout, printed})
-      end)
-
-    receive do
-      {:stdout, printed} -> printed <> stderr
-    end
+    {_outcome, out, err} = CliCapture.run(fn -> CliManager.state_get(path, output: format) end)
+    out <> err
   end
 
   test "a live Cell is printed with the seq it was read at" do

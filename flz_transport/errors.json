@@ -306,6 +306,52 @@
         {"tag": "not_ready", "args": ["verdict", "unmet"]}
       ]
     },
+    "call.absorbed": {
+      "class": "conflict",
+      "message": "operator '{operator}' took the call's input without running it: it was a duplicate, or an input hook filtered it out, so no answer will come",
+      "details": ["operator"]
+    },
+    "call.busy": {
+      "class": "unavailable",
+      "message": "operator '{operator}' already owes answers to {pending_max} waiting callers; nothing was sent, try again later",
+      "hint": "raise FLEZHA_CALL_PENDING_MAX if the operator is meant to hold more waiting callers",
+      "details": ["operator", "pending_max"]
+    },
+    "call.callee_ended": {
+      "class": "unavailable",
+      "message": "operator '{operator}' ended ({status}) before it answered the call",
+      "details": ["operator", "status"]
+    },
+    "call.failed": {
+      "class": "unavailable",
+      "message": "operator '{operator}' dead-lettered the call's input as '{dlq_ref}': {error}",
+      "hint": "flz dlq list {operator}",
+      "details": ["operator", "dlq_ref", "error"]
+    },
+    "call.not_accepted": {
+      "class": "conflict",
+      "message": "operator '{operator}' runs once over one input and has already taken it, so it cannot take the call's input",
+      "details": ["operator"]
+    },
+    "call.target_unkeyed": {
+      "class": "invalid",
+      "message": "'{operator}' is a partition group; name the key whose member should take the input, or one of its members: {members}",
+      "hint": "pass --key <key>",
+      "details": ["operator", "members"],
+      "reasons": [
+        {"tag": "unkeyed", "args": ["operator", "members"]}
+      ]
+    },
+    "call.timeout": {
+      "class": "unavailable",
+      "message": "operator '{operator}' did not answer within {deadline_ms} ms; the input stays accepted and its turn still runs",
+      "details": ["operator", "deadline_ms"]
+    },
+    "call.unavailable": {
+      "class": "unavailable",
+      "message": "operator '{operator}' cannot answer the call: {reason}",
+      "details": ["operator", "reason"]
+    },
     "cli.auth_dir_missing": {
       "class": "not_found",
       "message": "the auth directory {path} does not exist, so there is nothing to recover",
@@ -2511,6 +2557,11 @@
       "class": "invalid",
       "message": "tasklet '{tasklet}' declares applyChange but no initial state, so there is nothing for a change to fold into",
       "details": ["tasklet"]
+    },
+    "topology.channel_ends_twice": {
+      "class": "invalid",
+      "message": "channel '{channel}' declares two plugin ends; a channel ends in one sink or one response(), so route the value through a pass-through tasklet to give it both",
+      "details": ["channel"]
     },
     "topology.channel_name_too_long": {
       "class": "invalid",

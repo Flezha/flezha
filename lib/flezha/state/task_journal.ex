@@ -616,7 +616,7 @@ defmodule Flezha.State.TaskJournal do
       cell_key: @turn_slot,
       channel: turn.entry_channel,
       origin_offset: turn.consumed_offset,
-      error: "tasklet `#{turn.tasklet}` failed after #{turn.attempts} attempt(s): #{turn.error}",
+      error: turn_error(turn),
       attempts: turn.attempts,
       payload: turn_payload(instance_id, turn.consumed_offset)
     }
@@ -624,6 +624,23 @@ defmodule Flezha.State.TaskJournal do
     with {:ok, entry} <- Entry.new(fields),
          do: {:ok, :gen_server.send_request(Store, {:append, entry}, label, reqids)}
   end
+
+  @doc """
+  Answer the outside caller waiting on a failed turn's input, if one is:
+  called once the turn's `dead_lettered` record is durable and before its
+  input is released, since the token rides the input-log record the turn
+  consumed.
+  """
+  @spec answer_turn_call(binary(), map(), String.t()) :: :ok
+  def answer_turn_call(_instance_id, %{consumed_offset: nil}, _entry_ref), do: :ok
+
+  def answer_turn_call(instance_id, turn, entry_ref) do
+    token = InputLog.reply_to(instance_id, turn.consumed_offset)
+    Store.answer_call(instance_id, token, entry_ref, turn_error(turn))
+  end
+
+  defp turn_error(turn),
+    do: "tasklet `#{turn.tasklet}` failed after #{turn.attempts} attempt(s): #{turn.error}"
 
   @doc """
   Remove the instance's `_turn` DLQ entries whose origin offset is above its

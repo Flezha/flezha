@@ -107,6 +107,9 @@ defmodule Flezha.Config.DurationRows do
     {:migration_retry_interval_ms, :ms, 2_000,
      key: {:migration_consent, :retry_interval_ms}, env: "FLEZHA_MIGRATION_RETRY_INTERVAL_MS"},
     {:operator_call_timeout_ms, :ms, 1_000, []},
+    # What an outside caller waits past its call's deadline, so the callee's
+    # own `call.timeout` always reaches it first.
+    {:call_grace_ms, :ms, 1_000, key: true},
     {:overwatch_call_timeout_ms, :ms, 5_000, key: true},
     {:overwatch_ping_timeout_ms, :ms, 2_000, key: true, env: "FLEZHA_OVERWATCH_PING_TIMEOUT_MS"},
     {:overwatch_task_warn_ms, :ms, 2_000, key: true},

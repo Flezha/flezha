@@ -116,6 +116,13 @@ defmodule Flezha.Observability.TelemetryBridge do
     # A bounded session's turn that failed and was parked, the session going on.
     [:flezha, :bounded, :turn_dead_lettered] =>
       {:flezha_bounded, :flezha_bounded_turns_dead_lettered_total, :metric},
+    # An outside caller's call: how long each answer took, and the calls that
+    # ended with none, counted by reason or code.
+    [:flezha, :call, :answered] => {:flezha_call, :flezha_call_answer_duration, :metric},
+    [:flezha, :call, :timeout] => {:flezha_call, :flezha_call_timeouts_total, :metric},
+    [:flezha, :call, :answer_dropped] =>
+      {:flezha_call, :flezha_call_answers_dropped_total, :metric},
+    [:flezha, :call, :refused] => {:flezha_call, :flezha_call_refused_total, :metric},
     # A runner's report that an instance's process died, which parks it.
     [:flezha, :operator, :exited] => {:flezha_operator, :operator_exited, :event},
     # The backoff table's two events: every wait a ladder takes and every reset

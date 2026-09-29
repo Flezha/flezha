@@ -657,6 +657,36 @@ mod journal_codec_tests {
     }
 
     #[test]
+    fn a_response_link_marks_its_descriptor_and_a_sink_does_not() {
+        let derived = check_class_json(
+            r#"{"factory_id":"response_link","sdk_lang":1,"sdk_version":"0.1.0",
+                 "channels":[{"name":"in","kind":"entry",
+                              "chains":[[{"link":"into","tasklet":0}],[{"link":"into","tasklet":1}]]},
+                             {"name":"ans","kind":"inter_task","producer":0,
+                              "chains":[[{"link":"response"}]]},
+                             {"name":"out","kind":"inter_task","producer":1,
+                              "chains":[[{"link":"sink","name":"out"}]]}],
+                 "tasklets":[{"name":"p0"},{"name":"p1"}]}"#
+                .as_bytes(),
+        )
+        .expect("the class is well formed");
+        let built: Vec<(String, ChannelKind, bool)> =
+            build_channels(&derived.decl, &derived.channels)
+                .0
+                .into_iter()
+                .map(|c| (c.name.to_string(), c.kind, c.response))
+                .collect();
+        assert_eq!(
+            built,
+            vec![
+                ("in".to_string(), ChannelKind::Entry, false),
+                ("ans".to_string(), ChannelKind::PluginBound, true),
+                ("out".to_string(), ChannelKind::PluginBound, false),
+            ]
+        );
+    }
+
+    #[test]
     fn a_codec_rides_an_inter_task_channel_and_nothing_else() {
         let rows = channels(
             r#"{"factory_id":"codec_kinds","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,

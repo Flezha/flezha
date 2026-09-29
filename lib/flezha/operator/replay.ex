@@ -449,29 +449,46 @@ defmodule Flezha.Operator.Replay do
   # above the floor go first, in origin order, and a consumer whose own records
   # acknowledge an origin drops its value. With nothing above the floor no value
   # can be owed, and no record is read. A bounded operator's are its journal's.
+  # Each value carries the call its origin input carried, so a downstream answer
+  # still reaches a caller who waits.
   defp redeliver_edges(%Overwatch{durable_bounded: true}), do: :ok
 
   defp redeliver_edges(%Overwatch{} = state) do
     operator_class = Overwatch.operator_class(state)
 
     with {:ok, floor, last} when last > floor <- InputLog.tail(operator_class) do
-      operator_class
-      |> Paths.cells_of()
-      |> Enum.flat_map(&Epoch.edges_above(&1, floor))
-      |> Enum.sort_by(& &1.origin)
-      |> Enum.map(&edge_payload/1)
+      edges =
+        operator_class
+        |> Paths.cells_of()
+        |> Enum.flat_map(&Epoch.edges_above(&1, floor))
+        |> Enum.sort_by(& &1.origin)
+
+      calls = origin_calls(operator_class, edges)
+
+      edges
+      |> Enum.map(&edge_payload(&1, calls))
       |> then(&reforward(state, &1))
     end
 
     :ok
   end
 
-  defp edge_payload(edge) do
-    {edge.payload,
-     %{
-       "flz.edge" => "#{edge.channel}:#{edge.consumer}",
-       "flz.offset" => Integer.to_string(edge.origin)
-     }}
+  # The token each origin's input-log record carries, read in one range.
+  defp origin_calls(_operator_class, []), do: %{}
+
+  defp origin_calls(operator_class, edges),
+    do: InputLog.calls(operator_class, hd(edges).origin, List.last(edges).origin)
+
+  defp edge_payload(edge, calls) do
+    metadata = %{
+      "flz.edge" => "#{edge.channel}:#{edge.consumer}",
+      "flz.offset" => Integer.to_string(edge.origin)
+    }
+
+    case Map.fetch(calls, edge.origin) do
+      {:ok, token} -> {edge.payload, Map.put(metadata, "flz.reply_to", token)}
+      :error -> {edge.payload, metadata}
+    end
   end
 
   @doc """

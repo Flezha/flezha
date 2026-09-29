@@ -31,6 +31,7 @@ defmodule Flezha.Dlq.Store do
   alias Flezha.Config.Durations
   alias Flezha.Dlq.Entry
   alias Flezha.Layout.Table, as: Layout
+  alias Flezha.Operator.Lookup
   alias Flezha.State.DurabilityTier
   alias Flezha.State.Paths
 
@@ -49,6 +50,22 @@ defmodule Flezha.Dlq.Store do
   """
   @spec append(pid() | atom(), Entry.t()) :: {:ok, String.t()} | {:error, term()}
   def append(server \\ __MODULE__, entry), do: GenServer.call(server, {:append, entry}, 30_000)
+
+  @doc """
+  Tell the operator serving `operator_class` that the input an outside caller
+  waits on under `token` is dead-lettered as `entry_ref`, so the caller is
+  answered `call.failed` with `error`. Every park route calls this once its
+  park is durable; a park whose input carried no call owes nobody.
+  """
+  @spec answer_call(binary(), binary() | nil, String.t(), String.t()) :: :ok
+  def answer_call(_operator_class, nil, _entry_ref, _error), do: :ok
+
+  def answer_call(operator_class, token, entry_ref, error) do
+    with {:ok, overwatch} <- Lookup.overwatch(operator_class),
+         do: GenServer.cast(overwatch, {:dead_lettered, token, entry_ref, error})
+
+    :ok
+  end
 
   @doc """
   Non-blocking append for the data-channel path: `on_durable.(entry_ref)`

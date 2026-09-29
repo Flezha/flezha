@@ -151,6 +151,7 @@ fn build_channel(
         // descriptor carries no serializer — the kind is the whole record
         // of its plugin egress.
         plugin_sink: None,
+        response: derived.response,
         keyed: channel_decl.keyed,
         overflow_policy: match channel_decl.overflow {
             HostOverflow::DropNothing => OverflowPolicy::DropNothing,

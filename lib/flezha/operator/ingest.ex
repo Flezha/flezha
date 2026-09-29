@@ -4,8 +4,10 @@ defmodule Flezha.Operator.Ingest do
   it, make it durable, and forward it to the bound stream channel.
 
   Every way in — the `:io_in` cast, the blocking `:io_in` call, the confirming
-  `:ingest` call, a suspended instance's deferred append and a spawn's seed —
-  runs exactly `ingest/4`.
+  `:ingest` call, an outside `:call`, a suspended instance's deferred append
+  and a spawn's seed — runs exactly `ingest/4`. Only a call's input carries a
+  `flz.reply_to`: every other way in loses the key, and no `:on_input` hook
+  can add, drop or rewrite it.
 
   A durable append is asynchronous: the payload is handed to the log, the entry
   point's reply stays owed, and the log's answer (`journal_reply/2`) forwards
@@ -15,6 +17,8 @@ defmodule Flezha.Operator.Ingest do
   transaction assume none can arrive while it runs.
   """
 
+  alias Flezha.Operator.Calls
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.Operator.Migration
   alias Flezha.Operator.Overwatch
   alias Flezha.Operator.Plugins
@@ -37,8 +41,10 @@ defmodule Flezha.Operator.Ingest do
   Who is owed the outcome: nobody for a cast, or the entry point and its
   caller. The blocking `:io_in` call acts on accepted vs parked and nothing
   finer, so it is told `:ok`; the confirming `:ingest` call is told the verdict.
+  A `:call` is owed its answer by the call row its token names, so only a
+  verdict that ends the call is acted on (`answer_call/3`).
   """
-  @type reply_to :: :cast | {:io_in | :ingest, GenServer.from()}
+  @type reply_to :: :cast | {:io_in | :ingest, GenServer.from()} | {:call, Calls.token()}
 
   @doc """
   Ingest one inbound message. Answers the payload to forward, or `:pending`
@@ -48,10 +54,36 @@ defmodule Flezha.Operator.Ingest do
   @spec ingest(Overwatch.t(), binary(), map(), reply_to()) ::
           {payload() | :pending, Overwatch.t()}
   def ingest(%Overwatch{} = state, message, metadata, reply_to) do
-    metadata = Map.put_new(metadata, "input_type", state.default_input_type)
-    payload = Plugins.transform_io(state, :on_input, message, metadata)
+    metadata =
+      metadata
+      |> admitted_token(reply_to)
+      |> Map.put_new("input_type", state.default_input_type)
+
+    payload =
+      case Plugins.transform_io(state, :on_input, message, metadata) do
+        {message, hooked} -> {message, Calls.restore(hooked, metadata)}
+        filtered -> filtered
+      end
+
     record_io(state.liveness_ref, payload)
     journal_input(state, payload, reply_to)
+  end
+
+  # The token a call's entry point minted is the only one an input may carry.
+  defp admitted_token(metadata, {:call, _token}), do: metadata
+  defp admitted_token(metadata, _reply_to), do: Calls.strip(metadata)
+
+  @doc """
+  Ingest an outside call's input, `metadata` already carrying its `token`: the
+  caller keeps waiting on an input that was accepted, even by an instance that
+  was asleep, and is answered at once when the input was absorbed or refused.
+  """
+  @spec call(Overwatch.t(), binary(), map(), Calls.token()) :: Overwatch.t()
+  def call(%Overwatch{} = state, message, metadata, token) do
+    case confirming_ingest(state, message, metadata, {:call, token}) do
+      {:pending, state} -> state
+      {verdict, state} -> answer_call(state, token, verdict)
+    end
   end
 
   @doc """
@@ -71,8 +103,11 @@ defmodule Flezha.Operator.Ingest do
   # journals nothing, and is answered — and wakes — at once.
   def confirming_ingest(%Overwatch{suspended: true} = state, message, metadata, reply_to) do
     case ingest(state, message, metadata, reply_to) do
-      {:pending, state} -> {:pending, state}
-      {_filtered, state} -> {told(reply_to, {:ok, :suspended}), Migration.rehydrate(state)}
+      {:pending, state} ->
+        {:pending, state}
+
+      {_filtered, state} ->
+        {told(reply_to, filtered_asleep(reply_to)), Migration.rehydrate(state)}
     end
   end
 
@@ -82,6 +117,10 @@ defmodule Flezha.Operator.Ingest do
       {payload, state} -> {told(reply_to, verdict(state, payload)), state}
     end
   end
+
+  # A filtered input produces nothing, so a call on it can never be answered.
+  defp filtered_asleep({:call, _token}), do: {:ok, :absorbed}
+  defp filtered_asleep(_reply_to), do: {:ok, :suspended}
 
   @doc """
   The input log's answer to an append `ingest/4` handed it — or the log's exit,
@@ -136,9 +175,21 @@ defmodule Flezha.Operator.Ingest do
 
   def first_input?(%Overwatch{}), do: true
 
+  @doc """
+  Whether the instance reads one input only: a `:once` or `:chained` bounded
+  operator's pass never reads a second.
+  """
+  @spec single_input?(Overwatch.t()) :: boolean()
+  def single_input?(%Overwatch{factory_id: nil}), do: false
+
+  def single_input?(%Overwatch{} = state),
+    do: ClassRegistry.partitioning(state.factory_id).loop_mode in [:once, :chained]
+
   defp journal_input(state, nil, _reply_to), do: {nil, state}
 
   defp journal_input(%Overwatch{} = state, payload, reply_to) do
+    state = if single_input?(state), do: %Overwatch{state | fed: true}, else: state
+
     if Replay.floor_reporter(state),
       do: {:pending, append_async(state, payload, reply_to, 1)},
       else: {payload, state}
@@ -192,17 +243,41 @@ defmodule Flezha.Operator.Ingest do
   # rehydrating bind, which is what the reply reports and what the append wakes.
   defp settle(%Overwatch{suspended: true} = state, reply_to, payload)
        when payload != :refused do
-    reply(reply_to, told(reply_to, {:ok, :suspended}))
-    Migration.rehydrate(state)
+    state
+    |> owe(reply_to, told(reply_to, {:ok, :suspended}))
+    |> Migration.rehydrate()
   end
 
-  defp settle(%Overwatch{} = state, reply_to, payload) do
-    reply(reply_to, told(reply_to, verdict(state, payload)))
+  defp settle(%Overwatch{} = state, reply_to, payload),
+    do: owe(state, reply_to, told(reply_to, verdict(state, payload)))
+
+  defp owe(state, {:call, token}, verdict), do: answer_call(state, token, verdict)
+
+  defp owe(state, reply_to, reply) do
+    reply(reply_to, reply)
     state
   end
 
   defp reply(:cast, _reply), do: :ok
   defp reply({_entry_point, from}, reply), do: GenServer.reply(from, reply)
+
+  # An accepted input leaves the caller waiting for its answer, an asleep
+  # instance's too, since the append wakes it; every other verdict ends the call.
+  defp answer_call(state, _token, verdict) when verdict in [:ok, {:ok, :suspended}], do: state
+
+  defp answer_call(%Overwatch{} = state, token, verdict) do
+    {code, details} =
+      case verdict do
+        {:ok, :absorbed} -> {"call.absorbed", %{}}
+        {:error, :refused} -> {"call.unavailable", %{reason: "its input log refused the input"}}
+        {:error, :not_ready} -> {"call.unavailable", %{reason: "no runner can take the input"}}
+      end
+
+    %Overwatch{
+      state
+      | calls: Calls.refuse(state.calls, Overwatch.callee(state), token, code, details)
+    }
+  end
 
   defp told({:io_in, _from}, _verdict), do: :ok
   defp told(_reply_to, verdict), do: verdict

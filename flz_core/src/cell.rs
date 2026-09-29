@@ -30,6 +30,10 @@ pub struct CellPayload {
     /// Input-log offset this payload derives from (`flz.offset`, inherited
     /// across inter-tasklet emits); `None` outside the effectively-once tier.
     pub consumed_offset: Option<u64>,
+    /// The outside call waiting on the input this payload derives from
+    /// (`flz.reply_to`), inherited across inter-tasklet emits like the
+    /// offset; never on a timer firing.
+    pub call: Option<Arc<str>>,
     /// A member of a replayed slice (`flz.replay`): held until the slice
     /// closes and dispatched in event-time order. Never inherited by an
     /// inter-tasklet emit — a downstream Tasklet could not see the
@@ -54,6 +58,7 @@ pub fn make_cell_payload(
         value: Arc::clone(value),
         stream: Arc::clone(stream),
         consumed_offset,
+        call: None,
         replay,
         forwarded: false,
         hold: None,

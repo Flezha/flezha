@@ -191,10 +191,12 @@ pub(crate) struct Release {
 }
 
 /// A message's pass, seeded when it arrived: the entry channel whose chain it
-/// runs, its input-log offset and its items for the chain's roots.
+/// runs, its input-log offset, the outside call waiting on it and its items
+/// for the chain's roots.
 pub(crate) struct Message {
     pub(crate) channel: ChannelId,
     pub(crate) offset: Option<u64>,
+    pub(crate) call: Option<Arc<str>>,
     pub(crate) roots: Vec<Release>,
 }
 
@@ -359,6 +361,10 @@ pub(crate) struct Pass {
     pub(crate) origin: PassOrigin,
     pub(crate) channel: ChannelId,
     pub(crate) consumed_offset: Option<u64>,
+    /// The outside call the pass's message carried: every output its stages
+    /// settle on a `response()` end answers it. `None` for a timer-fed or a
+    /// carry-fed pass.
+    pub(crate) call: Option<Arc<str>>,
     pub(crate) stages: BTreeMap<usize, Stage>,
     /// Items a join received from each committed producer, waiting for the
     /// rest; released in producer order, whichever committed first.
@@ -377,11 +383,13 @@ impl Pass {
         origin: PassOrigin,
         channel: ChannelId,
         consumed_offset: Option<u64>,
+        call: Option<Arc<str>>,
     ) -> Self {
         Self {
             origin,
             channel,
             consumed_offset,
+            call,
             stages: BTreeMap::new(),
             banked: HashMap::new(),
             waiting: HashMap::new(),

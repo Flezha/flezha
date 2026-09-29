@@ -13,26 +13,17 @@ defmodule FlezhaTest.Operator.IngestTest do
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
-  alias Flezha.Operator.{Builder, Overwatch}
+  alias Flezha.Operator.Overwatch
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Service.OperatorManager
   alias Flezha.State.{InputLog, Supervisor, TestHelpers}
   alias Flezha.Transport.LivenessCounters
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.OverwatchHost, as: Host
+
+  import Host, only: [state: 1, state: 2]
 
   defp instance_id(), do: "confirm_#{System.unique_integer([:positive])}"
-
-  # A live process around the struct, for the cases whose unit is the host's
-  # loop: a durable log answers the host's mailbox, and a parked caller is a
-  # call that has not returned.
-  defmodule Host do
-    use GenServer
-    def start_link(state), do: GenServer.start_link(__MODULE__, state)
-    def init(state), do: {:ok, state}
-    defdelegate handle_call(msg, from, state), to: Overwatch
-    defdelegate handle_cast(msg, state), to: Overwatch
-    defdelegate handle_info(msg, state), to: Overwatch
-  end
 
   # Stand-in stream: the forward lands through `StreamChannel.io_in/3`, so the
   # test answers it and records what reached it. Returns an inert channel name.
@@ -45,19 +36,6 @@ defmodule FlezhaTest.Operator.IngestTest do
     end)
 
     :fake_channel
-  end
-
-  defp state(inst, overrides \\ []) do
-    base = %Overwatch{
-      id: inst,
-      namespace: "default",
-      runner_id: "ex_1",
-      factory_id: "chat",
-      builder: %Builder{id: inst, factory_id: "chat", kind: :unbounded, opts: []},
-      extensions: Table.new(Overwatch.__extensions_catalog__())
-    }
-
-    struct!(base, overrides)
   end
 
   defp with_filter(state, pattern) do

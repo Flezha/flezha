@@ -316,8 +316,9 @@ defmodule Flezha.Runner.ControlChannel.Commits do
     state
   end
 
-  defp turn_dead_lettered(%{operator_id: operator_id} = metadata, entry_ref) do
+  defp turn_dead_lettered(%{operator_id: operator_id} = metadata, turn, entry_ref) do
     stall(:dead_lettered, operator_id)
+    TaskJournal.answer_turn_call(operator_id, turn, entry_ref)
     iteration_committed(operator_id, metadata.consumed_offset)
 
     Logger.warning(
@@ -465,14 +466,16 @@ defmodule Flezha.Runner.ControlChannel.Commits do
       attempts: attempts
     }
 
+    turn =
+      metadata
+      |> Map.take([:consumed_offset, :tasklet, :attempts])
+      |> Map.merge(%{entry_channel: channel, error: error})
+
     %{
       operator_id: operator_id,
       barrier: {:dead_lettered, iter, offset, channel, tasklet, attempts, nil},
       records: [],
-      turn:
-        metadata
-        |> Map.take([:consumed_offset, :tasklet, :attempts])
-        |> Map.merge(%{entry_channel: channel, error: error}),
+      turn: turn,
       telemetry:
         {[:flezha, :state, :iter_commit], %{count: 1},
          Map.take(metadata, [:namespace, :operator_id, :iter, :consumed_offset])},
@@ -481,7 +484,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
         {:iter_commit_response,
          %RunnerCommands.IterCommitResponse{operator_id: operator_id, iter: iter}},
       # Takes the DLQ entry the park answered with; `turn_parked/3` binds it.
-      post: &turn_dead_lettered(metadata, &1)
+      post: &turn_dead_lettered(metadata, turn, &1)
     }
   end
 

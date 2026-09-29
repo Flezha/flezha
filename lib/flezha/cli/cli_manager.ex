@@ -131,6 +131,9 @@ defmodule Flezha.Service.CliManager do
   verb operator_send(namespace, operator_id, message, channel, opts \\ []),
     to: Cli.Operator
 
+  verb operator_call(namespace, operator_id, message, channel, opts \\ []),
+    to: Cli.Operator
+
   verb operator_start(namespace, factory_id, init_values, opts_json \\ "{}", opts \\ []),
     to: Cli.Operator,
     target: &Flezha.Service.OperatorManager.start_target/2

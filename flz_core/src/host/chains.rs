@@ -56,6 +56,7 @@ fn derive_channel(
             .cloned()
             .unwrap_or_else(|| channel_decl.name.clone()),
         sink: None,
+        response: false,
         consumers: Vec::new(),
     };
     let mut walk = Walk {
@@ -76,15 +77,17 @@ fn derive_channel(
         producer: channel_decl.producer,
         consumers: derived.consumers,
         sink: derived.sink,
+        response: derived.response,
         named_by_sink: named.is_none() && from_sink.is_some(),
     }
 }
 
 /// Terminality is read off the wiring, never off which method was called: a
-/// sink with nothing consuming behind it IS the plugin-bound terminal, and a
-/// channel carrying both stays what it was declared.
+/// plugin end (a sink or a response) with nothing consuming behind it IS the
+/// plugin-bound terminal, and a channel carrying both stays what it was
+/// declared.
 fn derived_kind(channel_decl: &HostChannelDecl, derived: &Chains) -> HostChannelKind {
-    if derived.sink.is_some() && derived.consumers.is_empty() {
+    if derived.ends() && derived.consumers.is_empty() {
         HostChannelKind::Plugin
     } else {
         channel_decl.kind
@@ -150,7 +153,15 @@ struct Walk<'a> {
 struct Chains {
     name: String,
     sink: Option<String>,
+    response: bool,
     consumers: Vec<DerivedEdge>,
+}
+
+impl Chains {
+    /// Whether the channel already carries its one plugin end.
+    fn ends(&self) -> bool {
+        self.sink.is_some() || self.response
+    }
 }
 
 /// One fluent sequence, left to right. The links are judged in the order the
@@ -167,9 +178,7 @@ fn walk_chain(
     for link in links {
         // A link declared behind a terminator would reshape a value already
         // serialized or already delivered.
-        if (shape.closed || derived.sink.is_some())
-            && matches!(link, HostLink::Transform | HostLink::Key)
-        {
+        if (shape.closed || derived.ends()) && matches!(link, HostLink::Transform | HostLink::Key) {
             issues.push(TopologyIssue::TransformAfterTerminal {
                 channel: channel.clone(),
             });
@@ -213,8 +222,9 @@ struct Shape {
     closed: bool,
 }
 
-/// The terminators: a sink, an edge, a merge source, a branch arity. Each ends
-/// the chain, and the first three are what a channel's derivation is read off.
+/// The terminators: a sink, a response, an edge, a merge source, a branch
+/// arity. Each ends the chain, and all but the arity are what a channel's
+/// derivation is read off.
 fn close_chain(
     walk: &mut Walk<'_>,
     link: &HostLink,
@@ -231,8 +241,17 @@ fn close_chain(
         HostLink::Sink { .. } => {
             if derived.sink.is_some() {
                 issues.push(TopologyIssue::DuplicatePluginSink { channel });
+            } else if derived.response {
+                issues.push(TopologyIssue::ChannelEndsTwice { channel });
             } else {
                 derived.sink = Some(channel);
+            }
+        }
+        HostLink::Response => {
+            if derived.ends() {
+                issues.push(TopologyIssue::ChannelEndsTwice { channel });
+            } else {
+                derived.response = true;
             }
         }
         HostLink::Into { tasklet } => {

@@ -345,3 +345,55 @@ The Java, Rust and Elixir SDKs carry the same formats without a codec argument: 
 - **WHEN** a tasklet emits the number 42 to a sink declared with codec `bytes`
 - **THEN** the invocation SHALL fail with an error naming the channel, and no plugin frame SHALL carry the value; a Ruby or PHP string, which is the byte value in those languages, SHALL pass through unchanged
 
+### Requirement: `response()` SHALL end a channel on the caller's answer in every SDK
+
+Every SDK's graph builder SHALL offer `response()` on a stream handle, spelled `.response()` in
+Rust, Java and Node, `response()` in Python and Ruby, `->response()` in PHP and `response/1` in
+Elixir. It SHALL take the serialization arguments `sink` takes in that SDK and nothing else: a
+named codec or an encoder in Node, Python, Ruby and PHP, the declared output type in Rust and Java,
+and in Elixir an optional serializer through `response_with/2`. It SHALL take no name: the channel
+keeps the name it would have without the end. It SHALL return the handle, so consumers MAY be
+wired after it on the same channel, exactly as after `sink`; a channel ending in `response()` with
+no consumer SHALL be declared plugin-bound. The builder SHALL record it as a `response` link in the
+channel's chain, from which the runtime derives the end. `response()` SHALL NOT be a plugin egress:
+nothing it carries reaches a plugin. A graph MAY end any number of channels in `response()`, in an
+unbounded and in a bounded operator.
+
+#### Scenario: One graph, two answering paths
+
+- **WHEN** an unbounded operator declares `admitted |> filter(&accepted?/1) |> into(Accept) |> response()` and `admitted |> filter(&refused?/1) |> into(Refuse) |> response()`
+- **THEN** registration SHALL succeed with two plugin-bound channels, `Accept`'s and `Refuse`'s, each ending in a response
+
+#### Scenario: A response channel feeds a consumer too
+
+- **WHEN** a bounded operator declares `.into(Turn).response().into(Log)` on one handle
+- **THEN** the channel produced by `Turn` SHALL keep its inter-tasklet kind, list `Log` as its consumer, and each emitted value SHALL both answer and reach `Log`
+
+#### Scenario: Every SDK spells it
+
+- **WHEN** the same one-tasklet operator ending in `response()` is declared in each of the seven SDKs
+- **THEN** each declaration SHALL register, and each SDK's runner SHALL answer an outside call with the same payload for the same input
+
+### Requirement: A channel SHALL carry at most one plugin end
+
+A channel SHALL end in at most one of `sink` and `response()`. A channel declaring `sink` and
+`response()`, or `response()` twice, SHALL fail registration as `ChannelEndsTwice`, code
+`topology.channel_ends_twice`, naming the channel, judged by `flz_core::host::register::check` for
+the six SDKs that share `flz_core` and by the Elixir SDK's re-expression of it. Two `sink` ends on
+one channel SHALL stay `DuplicatePluginSink`. `UnkeyedChannelUnderEffectivelyOnce` SHALL apply to
+a channel ending in `sink` only; a channel ending in `response()` SHALL need no key under the
+effectively-once tier. `test/fixtures/reference_topologies.txt` SHALL carry a `ChannelEndsTwice`
+row for `sink` beside `response()` and for two `response()` ends, and `ok` rows for two channels
+each ending in `response()` and for an unkeyed `response()` under the tier, with their derived
+lines; the step vocabulary SHALL gain `<x>.response`.
+
+#### Scenario: A sink beside a response is refused
+
+- **WHEN** an operator declares `.into(Plain).sink("out")` and `.response()` on the same handle
+- **THEN** registration SHALL fail with `topology.channel_ends_twice` naming `Plain`'s channel, in every SDK
+
+#### Scenario: An unkeyed answer under the tier is accepted
+
+- **WHEN** a persistent, effectively-once unbounded operator declares `.into(Plain).response()` without `keyed`
+- **THEN** registration SHALL succeed, while the same declaration ending in `sink("out")` SHALL still fail as `UnkeyedChannelUnderEffectivelyOnce`
+

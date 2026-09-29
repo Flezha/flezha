@@ -337,11 +337,13 @@ defmodule Flezha.Runner.StreamChannel.Records do
       DlqStore.park_async(
         {rc, sh, pk},
         park,
-        fn _entry_ref ->
+        fn entry_ref ->
           ControlChannel.send_control_async(
             runner_id,
             {:park_payload_ack, %RunnerCommands.ParkPayloadAck{park_id: park.park_id}}
           )
+
+          DlqStore.answer_call(rc, park.reply_to, entry_ref, park.error)
         end
       )
     else
