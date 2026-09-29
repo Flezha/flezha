@@ -322,7 +322,10 @@ defmodule Flezha.Runner.ControlUnit do
       # `nil` unless the instance has a journal to resume from.
       resume_cell_count: Keyword.get(operator.opts, :resume_cell_count, 0),
       inbox_tail_count: Keyword.get(operator.opts, :inbox_tail_count, 0),
-      task_journal: Keyword.get(operator.opts, :task_journal)
+      task_journal: Keyword.get(operator.opts, :task_journal),
+      # This controller parks a failed turn a bounded driver sends on
+      # `IterCommit.dead_letter`, whatever the bind.
+      dead_letter_turns: true
     }
 
     command = with_partition_identity(command, operator.opts)

@@ -808,4 +808,122 @@ defmodule FlezhaTest.State.TaskJournalTest do
     assert TaskJournal.committed_iterations(inst) == [1]
     assert %{iter: 2, consumed_offset: 2} = TaskJournal.restore_state(inst)
   end
+
+  describe "a dead-lettered turn" do
+    # Iterations 0 and 1 commit; iteration 2's first tasklet commits, its turn
+    # fails, and the turn is dead-lettered: seqs 0..4, then the record at 5.
+    # `records?: false` names no effect record, so none holds a cut.
+    defp dead_letter_iteration_2(inst, seg, records? \\ true) do
+      cell = fn iter -> if records?, do: ran(seg, {iter, iter}), else: ran(seg) end
+
+      for iter <- 0..1 do
+        :ok = TaskJournal.append_task_committed(inst, 0, iter, [cell.(iter)], [])
+        :ok = TaskJournal.append_iter_committed(inst, iter, iter, [])
+      end
+
+      :ok = TaskJournal.append_task_committed(inst, 0, 2, [cell.(2)], [{1, "noted"}])
+      :ok = TaskJournal.append_dead_lettered(inst, 2, 2, "in", "answer", 3, "c/_turn/e2")
+    end
+
+    test "resumes after it with its committed tasklets owed undo" do
+      inst = instance_id()
+      seg = seg_identity(inst, "TaskA", "s0")
+      dead_letter_iteration_2(inst, seg)
+
+      resume = TaskJournal.restore_state(inst)
+      assert %{iter: 3, consumed_offset: 2, entry_channel: "in", handoff: []} = resume
+      assert resume.committed_task_idxs == []
+      assert resume.completion == nil
+      assert [%{task_idx: 0, iter: 2}] = resume.rewind_undo
+
+      assert TaskJournal.consumed_offset(inst) == 2
+      assert TaskJournal.released_offset(inst) == 2
+      assert TaskJournal.committed_iterations(inst) == [0, 1, 2]
+      assert TaskJournal.current_epoch(inst) == 0
+    end
+
+    test "the owed undo shrinks as each compensated entry lands" do
+      inst = instance_id()
+      seg = seg_identity(inst, "TaskA", "s0")
+      dead_letter_iteration_2(inst, seg)
+
+      :ok = TaskJournal.append_compensated(inst, 0, 2, [ran(seg, {3, 3})])
+      assert TaskJournal.restore_state(inst).rewind_undo == []
+
+      # The next turn commits as iteration 3, owing nothing.
+      :ok = TaskJournal.append_task_committed(inst, 0, 3, [ran(seg, {4, 4})], [])
+      :ok = TaskJournal.append_iter_committed(inst, 3, 3, [])
+      assert %{iter: 4, rewind_undo: []} = TaskJournal.restore_state(inst)
+    end
+
+    test "counts on every later iteration record, and a rewind over it plans nothing twice" do
+      inst = instance_id()
+      seg = seg_identity(inst, "TaskA", "s0")
+      dead_letter_iteration_2(inst, seg)
+      assert TaskJournal.failed_turns(inst) == {1, 2}
+
+      :ok = TaskJournal.append_compensated(inst, 0, 2, [])
+      :ok = TaskJournal.append_task_committed(inst, 0, 3, [ran(seg, {4, 4})], [])
+      :ok = TaskJournal.append_iter_committed(inst, 3, 3, [])
+      assert TaskJournal.failed_turns(inst) == {1, 2}
+
+      {:ok, entries} = TaskJournal.read(inst)
+
+      assert [nil, nil, {1, 2}] =
+               for(%{type: :iter_committed, payload: p} <- entries, do: p.failed_turns)
+
+      # The failed turn is a valid target and inside the committed range; the
+      # coverage guard skips it, and a rewind below it owes only iteration 3.
+      assert TaskJournal.staged_channels_above(inst, 1) == []
+      :ok = TaskJournal.append_rewound(inst, 1)
+      assert [%{task_idx: 0, iter: 3}] = TaskJournal.restore_state(inst).rewind_undo
+      assert TaskJournal.failed_turns(inst) == {1, 2}
+    end
+
+    test "survives the cut until its undo is journaled" do
+      inst = instance_id()
+      cuttable(inst)
+      seg = seg_identity(inst, "TaskA", "s0")
+      dead_letter_iteration_2(inst, seg, false)
+
+      # The dead-lettered record is the head; its owed task stays with it.
+      cut_and_await(inst, [4, 5])
+      assert %{iter: 3, rewind_undo: [%{iter: 2}]} = TaskJournal.restore_state(inst)
+
+      :ok = TaskJournal.append_compensated(inst, 0, 2, [])
+      cut_and_await(inst, [5, 6])
+      assert %{iter: 3, consumed_offset: 2, rewind_undo: []} = TaskJournal.restore_state(inst)
+      assert TaskJournal.failed_turns(inst) == {1, 2}
+    end
+
+    test "leaves an iteration commit's bytes as they were while no turn failed" do
+      inst = instance_id()
+      :ok = TaskJournal.append_iter_committed(inst, 0, 4, [{1, "h"}])
+
+      [body] =
+        Flezha.State.RecordLog.read(Paths.journal_path(inst), fn _seq, _header, body ->
+          {:ok, body}
+        end)
+
+      assert body ==
+               Codec.encode_entry(3, 0, 0, [
+                 <<1, 4::64-big, 0::16-big>>,
+                 Codec.encode_handoff([{1, "h"}])
+               ])
+    end
+
+    test "renders as a journal row naming the tasklet and the entry" do
+      inst = instance_id()
+      dead_letter_iteration_2(inst, seg_identity(inst, "TaskA", "s0"))
+
+      out =
+        ExUnit.CaptureIO.capture_io(fn ->
+          Journal.state_journal(inst, %{opts: []})
+        end)
+
+      assert out =~ "dead_lettered task_idx=0 iter=2"
+      assert out =~ "consumed input-log offset: 2"
+      assert out =~ "turn failed in answer after 3 attempt(s); parked as c/_turn/e2"
+    end
+  end
 end

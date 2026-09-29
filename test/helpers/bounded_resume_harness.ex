@@ -203,25 +203,14 @@ defmodule FlezhaTest.Helper.BoundedResumeHarness do
 
     assert registered?(namespace, operator_id)
 
-    # SIGKILL A; the replacement (release env set) re-presents A's stable id
-    # with a new incarnation, so its connect evicts the dead session and binds
-    # the instance onto it on both transports, unless the scenario gives it an
+    # `before_rebind` reads the durable state the crash left, before the rebind
+    # (which is what triggers the restore); `:heal` gives the replacement an
     # identity of its own.
-    sigkill(os_pid(port_a))
-
-    # Scenario hook on the durable state the crash left, before the rebind
-    # (which is what triggers the restore).
-    if before_rebind, do: before_rebind.(operator_id)
-
     id_path_b = if rebind == :heal, do: unique_id_path(), else: id_path
-    {_port_b, exec_b} = boot_runner(namespace, ctx, id_path_b, release?: true)
-    assert exec_b != exec_a, "replacement must mint a fresh session token"
 
-    assert NodeTestHelper.wait_until(
-             fn -> exec_a not in FleetManager.active_runners(namespace) end,
-             15_000
-           ),
-           "dead runner was never evicted after the replacement connected"
+    replace_runner(namespace, ctx, {port_a, exec_a}, id_path_b,
+      before_boot: fn -> if before_rebind, do: before_rebind.(operator_id) end
+    )
 
     # The resumed operator completes with the expected terminal status.
     await_status(operator_id, terminal_status, 60_000)
@@ -230,6 +219,26 @@ defmodule FlezhaTest.Helper.BoundedResumeHarness do
            "completed operator was never deregistered"
 
     operator_id
+  end
+
+  # SIGKILL the runner; a released replacement booted on `id_path` re-presents
+  # its stable id with a new incarnation (or, on an id of its own, is healed
+  # onto), so its connect evicts the dead session and the instance is bound
+  # onto it. `before_boot` runs between the kill and the boot. Returns the
+  # replacement's `{port, runner_id}`.
+  def replace_runner(namespace, ctx, {port, dead}, id_path, opts \\ []) do
+    sigkill(os_pid(port))
+    if before_boot = Keyword.get(opts, :before_boot), do: before_boot.()
+    {_port, runner_id} = replacement = boot_runner(namespace, ctx, id_path, release?: true)
+    assert runner_id != dead, "replacement must mint a fresh session token"
+
+    assert NodeTestHelper.wait_until(
+             fn -> dead not in FleetManager.active_runners(namespace) end,
+             15_000
+           ),
+           "dead runner was never evicted after the replacement connected"
+
+    replacement
   end
 
   @doc """

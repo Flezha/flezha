@@ -5,7 +5,7 @@
 //! acts after it: no frame is sent, no item admitted and no author code run
 //! while the lock is held, and nothing waits.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -14,7 +14,8 @@ use flz_transport::transport::FlezhaStream;
 
 use super::commit::{ack_timeout, iteration_frame, task_frame, undo_frame, BARRIER_SENDS};
 use super::compensation::{
-    plan_compensation, rewind_steps, saga_steps, stages_from_intents, CellRun, RecordSpan,
+    plan_compensation, rewind_steps, saga_steps, stages_from_intents, unwind_steps, CellRun,
+    RecordSpan,
 };
 use super::instance::{
     AfterUndo, Attempt, Barrier, BarrierFor, BoundedRun, Carry, CellPos, Deadline, Failure, Firing,
@@ -244,6 +245,7 @@ pub fn hold_emit(
         None => Ok(Vec::new()),
     };
     r.decide(|d| {
+        let cell_key = cell.1.clone();
         let attempt = d.s.attempts.entry((node, cell)).or_default();
         if !plugin_bound {
             attempt.outputs.push(Arc::clone(value));
@@ -253,10 +255,12 @@ pub fn hold_emit(
             Err(error) => {
                 attempt.failure.get_or_insert(Failure {
                     node,
+                    cell_key,
                     error: BoundedError::non_retryable(error),
                     payload: None,
                     attempts: 1,
                     ran: true,
+                    refused: false,
                 });
             }
         }
@@ -316,13 +320,16 @@ pub fn note_failure(
 ) {
     with_cell(slot, |r, node, cell| {
         r.decide(|d| {
+            let cell_key = cell.1.clone();
             let attempt = d.s.attempts.entry((node, cell)).or_default();
             attempt.failure.get_or_insert(Failure {
                 node,
+                cell_key,
                 error,
                 payload,
                 attempts,
                 ran: false,
+                refused: false,
             });
         });
     });
@@ -1013,13 +1020,7 @@ impl Decide<'_, '_, '_> {
         // A rewind unwinds the iterations above its target before the loop
         // resumes at it; the journal already folded the forward state back.
         if !rewind.is_empty() {
-            self.s.phase = Phase::Compensating;
-            self.s.undo = Some(Undo {
-                steps: rewind,
-                cells: Vec::new(),
-                then: AfterUndo::Resume,
-            });
-            return self.undo_step();
+            return self.begin_undo(rewind, AfterUndo::Resume);
         }
         self.resume();
     }
@@ -1340,10 +1341,12 @@ impl Decide<'_, '_, '_> {
             }
             Err(error) => self.fail(Failure {
                 node,
+                cell_key: None,
                 error: BoundedError::non_retryable(error),
                 payload: None,
                 attempts: 1,
                 ran: false,
+                refused: false,
             }),
         }
         self.owe_less(node, 1);
@@ -1379,10 +1382,12 @@ impl Decide<'_, '_, '_> {
     fn stage_failed(&mut self, node: usize, error: String) {
         self.fail(Failure {
             node,
+            cell_key: None,
             error: BoundedError::from(error),
             payload: None,
             attempts: 1,
             ran: false,
+            refused: true,
         });
         if let Some(stage) = self.s.pass.as_mut().and_then(|p| p.stages.get_mut(&node)) {
             stage.state = StageState::Done;
@@ -1606,16 +1611,70 @@ impl Decide<'_, '_, '_> {
                     .is_some_and(|c| c.roots.contains(&f.node))
         });
         if let Some(unread) = unread {
-            self.fx.park_unread = Some((channel, offset, unread.clone()));
+            self.fx.parked = Some(MessagePark::unread(channel, offset, unread));
             self.s.parks_in_flight += 1;
             self.r.run.pass_dead.store(false, Ordering::Release);
             return self.enter_waiting();
+        }
+        if let Some(failure) = failure
+            .clone()
+            .filter(|f| message_pass && self.fails_turn(f))
+        {
+            return self.dead_letter(channel, offset, failure);
         }
         let error = failure
             .map(|f| f.error)
             .unwrap_or_else(|| BoundedError::from("cancelled"));
         let (status, error) = self.abnormal(&error);
         self.compensate(AfterUndo::Terminal(status, error));
+    }
+
+    /// Whether `failure` ends only its turn: a tasklet's failure, not its
+    /// commit's, in a `PerInput` keep-progress loop with no stop asked, bound
+    /// by a controller that parks the turn.
+    fn fails_turn(&self, failure: &Failure) -> bool {
+        self.r.spec.loop_mode == LoopMode::PerInput
+            && self.r.spec.rollback_mode == RollbackMode::KeepProgress
+            && self.s.dead_letter_turns
+            && !failure.refused
+            && !self.cancelled()
+    }
+
+    /// A failed turn: its iteration commits as dead-lettered, the controller
+    /// parking its message first, and on the ack the turn is undone. A run
+    /// that journals nothing keeps no input log, so it parks the turn itself,
+    /// with neither bytes nor offset, and undoes it at once.
+    fn dead_letter(&mut self, channel: ChannelId, offset: Option<u64>, failure: Failure) {
+        let dead_letter = crate::pb::DeadLetter {
+            tasklet: self.r.task(failure.node).name.to_string(),
+            attempts: failure.attempts,
+            error: failure.error.message,
+            cell_key: failure.cell_key.as_deref().unwrap_or_default().to_string(),
+        };
+        if !self.r.journaling() {
+            self.fx.parked = Some(MessagePark::turn(channel, &dead_letter));
+            return self.undo_turn();
+        }
+        let frame = Frame::Iteration {
+            iter: self.s.iter,
+            offset,
+            channel,
+            values: Vec::new(),
+            completion: None,
+            dead_letter: Some(dead_letter),
+        };
+        self.s.phase = Phase::Sealing;
+        let id = self.barrier(BarrierFor::DeadLetter);
+        self.fx.frames.push((id, frame));
+    }
+
+    /// The failed turn's iteration is committed: what it ran is undone as a
+    /// rewind undoes an iteration, and the loop waits for its next message.
+    fn undo_turn(&mut self) {
+        let done = std::mem::take(&mut self.s.done);
+        self.s.pass = None;
+        self.s.iter += 1;
+        self.begin_undo(unwind_steps(self.r, &[done]), AfterUndo::Resume);
     }
 
     /// The iteration boundary: a `Once` pass ends here; a loop commits the
@@ -1646,6 +1705,7 @@ impl Decide<'_, '_, '_> {
             channel: pass.channel,
             values,
             completion,
+            dead_letter: None,
         };
         self.s.phase = Phase::Sealing;
         let id = self.barrier(BarrierFor::Iteration);
@@ -1695,7 +1755,12 @@ impl Decide<'_, '_, '_> {
                     self.iter_acked();
                 }
             }
-            (BarrierFor::Iteration, Err(error)) => {
+            (BarrierFor::DeadLetter, Ok(())) => {
+                if self.s.phase == Phase::Sealing {
+                    self.undo_turn();
+                }
+            }
+            (BarrierFor::Iteration | BarrierFor::DeadLetter, Err(error)) => {
                 let error = BoundedError::from(format!(
                     "iteration commit {} refused by controller: {error}",
                     self.s.iter
@@ -1737,7 +1802,9 @@ impl Decide<'_, '_, '_> {
                     .s
                     .barriers
                     .iter()
-                    .filter(|(_, b)| b.target == BarrierFor::Iteration)
+                    .filter(|(_, b)| {
+                        matches!(b.target, BarrierFor::Iteration | BarrierFor::DeadLetter)
+                    })
                     .map(|(&id, _)| id)
                     .collect();
                 for id in owed {
@@ -1819,7 +1886,9 @@ impl Decide<'_, '_, '_> {
         self.fx.drop_acks.push(barrier.reference_id);
         let what = match barrier.target {
             BarrierFor::Stage(node) => format!("commit {node}"),
-            BarrierFor::Iteration => format!("iteration commit {}", self.s.iter),
+            BarrierFor::Iteration | BarrierFor::DeadLetter => {
+                format!("iteration commit {}", self.s.iter)
+            }
             BarrierFor::Undo => "compensation".to_string(),
         };
         let error = format!(
@@ -1839,13 +1908,18 @@ impl Decide<'_, '_, '_> {
     fn compensate(&mut self, then: AfterUndo) {
         self.r.run.pass_dead.store(true, Ordering::Release);
         self.s.pass = None;
-        self.s.phase = Phase::Compensating;
         let steps = saga_steps(
             self.r,
             &self.s.committed,
             &self.s.done,
             &self.s.compensation_done,
         );
+        self.begin_undo(steps, then);
+    }
+
+    /// Carry out `steps`, one event at a time, then `then`.
+    fn begin_undo(&mut self, steps: VecDeque<UndoStep>, then: AfterUndo) {
+        self.s.phase = Phase::Compensating;
         self.s.undo = Some(Undo {
             steps,
             cells: Vec::new(),
@@ -1971,6 +2045,46 @@ fn node_completion(runs: &[CellRun]) -> Option<Vec<u8>> {
 
 // ---- effects, after the lock --------------------------------------------------
 
+/// A message on its way into the dead-letter queue: unread, or its turn's.
+struct MessagePark {
+    channel: ChannelId,
+    turn: bool,
+    offset: Option<u64>,
+    payload: Option<Vec<u8>>,
+    error: String,
+    attempts: u32,
+}
+
+impl MessagePark {
+    /// A message the entry channel could not read, with its bytes and offset.
+    fn unread(channel: ChannelId, offset: Option<u64>, failure: &Failure) -> Self {
+        Self {
+            channel,
+            turn: false,
+            offset,
+            payload: failure.payload.clone(),
+            error: failure.error.message.clone(),
+            attempts: failure.attempts,
+        }
+    }
+
+    /// A failed turn of a run that keeps no input log: neither bytes nor
+    /// offset.
+    fn turn(channel: ChannelId, dead_letter: &crate::pb::DeadLetter) -> Self {
+        Self {
+            channel,
+            turn: true,
+            offset: None,
+            payload: None,
+            error: format!(
+                "tasklet `{}` failed after {} attempt(s): {}",
+                dead_letter.tasklet, dead_letter.attempts, dead_letter.error
+            ),
+            attempts: dead_letter.attempts,
+        }
+    }
+}
+
 /// A barrier frame to build and send.
 enum Frame {
     Task {
@@ -1986,6 +2100,7 @@ enum Frame {
         channel: ChannelId,
         values: Vec<Value>,
         completion: Option<Vec<u8>>,
+        dead_letter: Option<crate::pb::DeadLetter>,
     },
     Built(Box<Command>),
 }
@@ -2001,7 +2116,7 @@ struct Effects {
     arm: Vec<(Deadline, u64)>,
     admit: Vec<Release>,
     cancel_retries: Vec<Arc<CellSlot>>,
-    park_unread: Option<(ChannelId, Option<u64>, Failure)>,
+    parked: Option<MessagePark>,
     completed: Option<(String, String, Vec<u8>)>,
     run_undo: Option<(Arc<CellSlot>, Vec<Value>)>,
     start: Option<Source>,
@@ -2024,7 +2139,7 @@ impl Run<'_> {
             arm,
             admit,
             cancel_retries,
-            park_unread,
+            parked,
             completed,
             run_undo,
             start,
@@ -2070,8 +2185,8 @@ impl Run<'_> {
         for slot in cancel_retries {
             items_dropped(&slot, core.cancel_retry(&slot));
         }
-        if let Some((channel, offset, failure)) = park_unread {
-            self.park_unread(channel, offset, failure);
+        if let Some(parked) = parked {
+            self.park_message(parked);
         }
         if let Some((status, error, result)) = completed {
             self.log_dropped_timers();
@@ -2126,7 +2241,16 @@ impl Run<'_> {
                 channel,
                 values,
                 completion,
-            } => iteration_frame(self, iter, offset, channel, &values, completion),
+                dead_letter,
+            } => iteration_frame(
+                self,
+                iter,
+                offset,
+                channel,
+                &values,
+                completion,
+                dead_letter,
+            ),
             Frame::Built(command) => Ok(*command),
         };
         let reference_id = {
@@ -2291,25 +2415,43 @@ impl Run<'_> {
         );
     }
 
-    /// An unreadable message into the dead-letter queue under its entry
-    /// channel, off this thread as every park is; the run counts it
-    /// consumed once the park is durable.
-    fn park_unread(&self, channel: ChannelId, offset: Option<u64>, failure: Failure) {
+    /// A message into the dead-letter queue, off this thread as every park
+    /// is: an unreadable one under its entry channel, which the run counts
+    /// consumed once the park is durable; a failed turn's under `_turn`.
+    fn park_message(&self, park: MessagePark) {
         let Some(owner) = self.run.me.upgrade() else {
             return;
         };
         let held = Arc::clone(&owner);
-        crate::retry::spawn_park_thread(&owner, "flezha-bounded-unread-park", move || {
+        crate::retry::spawn_park_thread(&owner, "flezha-bounded-message-park", move || {
+            let MessagePark {
+                channel,
+                turn,
+                offset,
+                payload,
+                error,
+                attempts,
+            } = park;
             if let Some(descriptor) = held.topology.channel(channel) {
+                let (label, target) = match turn {
+                    true => (
+                        "turn on entry channel",
+                        crate::retry::ParkTarget::turn(descriptor),
+                    ),
+                    false => ("entry channel", crate::retry::ParkTarget::entry(descriptor)),
+                };
                 crate::retry::park_exhausted(
-                    &format!("entry channel `{}`", descriptor.name),
-                    crate::retry::ParkTarget::entry(descriptor),
+                    &format!("{label} `{}`", descriptor.name),
+                    target,
                     &held.instance_id,
                     offset,
-                    failure.payload,
-                    failure.error.message,
-                    failure.attempts,
+                    payload,
+                    error,
+                    attempts,
                 );
+            }
+            if turn {
+                return;
             }
             if let Some(r) = Run::of(&held) {
                 r.decide(|d| {

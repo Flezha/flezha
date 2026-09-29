@@ -23,13 +23,14 @@ pub(crate) type Value = Arc<dyn Any + Send + Sync>;
 pub(crate) type CellPos = (usize, Option<Arc<str>>);
 
 /// What a bind carries into an instance: the input the controller still owes
-/// it and, for a bounded operator, the Cell restores to wait for and the committed
-/// journal.
+/// it and, for a bounded operator, the Cell restores to wait for, the committed
+/// journal, and whether the controller parks a failed turn.
 #[derive(Default)]
 pub struct Resume {
     pub expected: usize,
     pub owed_inbox: u32,
     pub journal: Option<JournalResume>,
+    pub dead_letter_turns: bool,
 }
 
 /// An instance's deadline on the poll core's deferred-wake list: `ParkIdle`
@@ -77,6 +78,7 @@ impl BoundedRun {
         let released = resume.journal.as_ref().and_then(|j| j.released_offset);
         sheet.taken = sheet.taken.max(released);
         sheet.journal = resume.journal;
+        sheet.dead_letter_turns = resume.dead_letter_turns;
     }
 
     /// Take a message's input-log offset: `false` for one this instance
@@ -128,6 +130,9 @@ pub(crate) struct PassSheet {
     pub(crate) iter: u32,
     /// The bind is complete: the gate may open.
     pub(crate) bound: bool,
+    /// The controller parks a failed turn of a `PerInput` keep-progress loop,
+    /// so the loop goes on past it rather than ending.
+    pub(crate) dead_letter_turns: bool,
     pub(crate) expected: usize,
     pub(crate) restored: usize,
     /// The saga markers the restores shipped back: Cells whose tasklet
@@ -301,6 +306,9 @@ pub(crate) struct Attempt {
 #[derive(Clone)]
 pub(crate) struct Failure {
     pub(crate) node: usize,
+    /// The failing Cell's key; `None` for a declared Cell and for a failure
+    /// no Cell raised.
+    pub(crate) cell_key: Option<Arc<str>>,
     pub(crate) error: BoundedError,
     /// The failing item's wire bytes, for an unreadable message's park.
     pub(crate) payload: Option<Vec<u8>>,
@@ -308,6 +316,9 @@ pub(crate) struct Failure {
     /// The tasklet ran to its end and only an output's edge failed: the Cell
     /// ran, so it is undone with the rest.
     pub(crate) ran: bool,
+    /// The controller refused or never acked a stage's commit: the pass
+    /// failed on its barrier, not on a tasklet.
+    pub(crate) refused: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -382,11 +393,13 @@ impl Pass {
     }
 }
 
-/// What a barrier waits to hear: which stage, the iteration, or an undo.
+/// What a barrier waits to hear: which stage, the iteration, the iteration
+/// of a failed turn, or an undo.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BarrierFor {
     Stage(usize),
     Iteration,
+    DeadLetter,
     Undo,
 }
 

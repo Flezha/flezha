@@ -19,12 +19,14 @@ defmodule Flezha.State.TaskJournal.Codec do
   @type_compensated 5
   @type_rewound 6
   @type_input_released 7
+  @type_dead_lettered 8
   @entry_types %{
     @type_task_committed => :task_committed,
     @type_iter_committed => :iter_committed,
     @type_compensated => :compensated,
     @type_rewound => :rewound,
-    @type_input_released => :input_released
+    @type_input_released => :input_released,
+    @type_dead_lettered => :dead_lettered
   }
 
   @doc "The on-disk type byte for an entry type name."
@@ -91,13 +93,37 @@ defmodule Flezha.State.TaskJournal.Codec do
        ) do
     with {:ok, consumed_offset} <- decode_offset(offset),
          {:ok, handoff, rest} <- decode_handoff(rest),
-         {:ok, completion} <- decode_completion(rest) do
+         {:ok, completion, rest} <- take_completion(rest),
+         {:ok, failed_turns} <- decode_failed_turns(rest) do
       {:ok,
        %{
          consumed_offset: consumed_offset,
          entry_channel: entry_channel,
          handoff: handoff,
-         completion: completion
+         completion: completion,
+         failed_turns: failed_turns
+       }}
+    else
+      _ -> {:error, :bad_payload}
+    end
+  end
+
+  defp decode_payload(
+         :dead_lettered,
+         <<offset::binary-size(9), rest::binary>>
+       ) do
+    with {:ok, consumed_offset} <- decode_offset(offset),
+         {:ok, [entry_channel, tasklet], rest} <- decode_strings(rest, 2, []),
+         <<attempts::32-big, rest::binary>> <- rest,
+         {:ok, [dlq_entry], <<count::32-big>>} <- decode_strings(rest, 1, []) do
+      {:ok,
+       %{
+         consumed_offset: consumed_offset,
+         entry_channel: entry_channel,
+         tasklet: tasklet,
+         attempts: attempts,
+         dlq_entry: dlq_entry,
+         count: count
        }}
     else
       _ -> {:error, :bad_payload}
@@ -201,17 +227,46 @@ defmodule Flezha.State.TaskJournal.Codec do
   def encode_completion(nil), do: <<>>
   def encode_completion(result), do: <<1, byte_size(result)::32-big, result::binary>>
 
-  defp decode_completion(bin) do
-    case take_completion(bin) do
-      {:ok, completion, <<>>} -> {:ok, completion}
-      _ -> {:error, :bad_payload}
-    end
-  end
-
   defp take_completion(<<1, len::32-big, result::binary-size(len), rest::binary>>),
     do: {:ok, result, rest}
 
   defp take_completion(rest), do: {:ok, nil, rest}
+
+  @doc """
+  A `dead_lettered` payload: the consumed offset, the entry channel, the
+  failing tasklet, its attempts, the DLQ entry the turn was parked as and the
+  instance's running count of dead-lettered turns, this one included.
+  """
+  @spec encode_dead_letter(
+          non_neg_integer() | nil,
+          binary(),
+          binary(),
+          non_neg_integer(),
+          binary(),
+          pos_integer()
+        ) :: iodata()
+  def encode_dead_letter(consumed_offset, entry_channel, tasklet, attempts, dlq_entry, count),
+    do: [
+      encode_offset(consumed_offset),
+      Enum.map([entry_channel, tasklet], &[<<byte_size(&1)::16-big>>, &1]),
+      <<attempts::32-big, byte_size(dlq_entry)::16-big>>,
+      dlq_entry,
+      <<count::32-big>>
+    ]
+
+  @doc """
+  The trailing segment of an `iter_committed` payload, after the completion:
+  the instance's running count of dead-lettered turns and the iteration of the
+  latest, so the count outlives a journal cut. Empty while none was, which
+  keeps every other entry's bytes as they were.
+  """
+  @spec encode_failed_turns({non_neg_integer(), non_neg_integer()} | nil) :: binary()
+  def encode_failed_turns(nil), do: <<>>
+  def encode_failed_turns({count, last}), do: <<3, count::32-big, last::32-big>>
+
+  defp decode_failed_turns(<<>>), do: {:ok, nil}
+  defp decode_failed_turns(<<3, count::32-big, last::32-big>>), do: {:ok, {count, last}}
+  defp decode_failed_turns(_), do: {:error, :bad_payload}
 
   @doc """
   The trailing trigger segment of a `task_committed` payload, after the

@@ -347,6 +347,14 @@
         {"tag": "oversized_handoff", "args": ["size", "max"]}
       ]
     },
+    "commit.turn_not_parked": {
+      "class": "unavailable",
+      "message": "the failed turn could not be parked in the dead-letter queue: {reason}",
+      "details": ["reason"],
+      "reasons": [
+        {"tag": "turn_not_parked", "args": ["reason"]}
+      ]
+    },
     "commit.record_not_durable": {
       "class": "unavailable",
       "message": "the record at seq {seq} of Cell '{cell}' did not become durable in time",

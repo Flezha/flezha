@@ -63,6 +63,8 @@ pub enum RollbackMode {
     /// Any failure undoes every completed tasklet in reverse. The default.
     AllOrNothing,
     /// Committed iterations are kept; a failure undoes only the in-flight one.
+    /// In a `PerInput` loop a failed turn is dead-lettered and undone, and the
+    /// loop takes its next message.
     KeepProgress,
 }
 

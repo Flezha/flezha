@@ -67,7 +67,7 @@ event that seeds it.
 
 ### Requirement: A bounded operator runs to an exit trigger and deregisters terminally
 
-A bounded operator SHALL be spawned on demand with `init_values` meaning initial state per tasklet name, exactly as an unbounded operator's `init_values` do, and SHALL take its input as messages on its entry channels, representing **one job/session**. It SHALL be **structured**: Tasklets, Channels, and Cells on the same per-cell engine as an unbounded operator, each tasklet run once every producer feeding it has committed and **done when all its cells finish**, then committed without waiting for its siblings (see `bounded-operator-structure`). A bounded operator SHALL **receive its input after it starts** through the same entrance an unbounded operator uses, **loop** by its declared loop mode, MAY be bounded by a declared maximum duration, be stopped externally, declare per-tasklet compensation hooks with an author-selected rollback mode (see `bounded-operator-saga`), and, being **durable by default** (opt-out per class), resume from durable state across a crash (see `bounded-operator-durability`). It SHALL terminate on the first exit trigger (all tasklets done with no loop active, a tasklet's `ctx.complete`, a loop running out of work, duration, or external stop). On termination, the SDK SHALL emit a `BoundedCompleted` control message carrying the terminal result/error payload and a status (`ok | error | cancelled`); the Controller SHALL then drive the **single** standard operator teardown, running compensation first when terminating abnormally, so the bounded operator is deregistered, its plugins disabled, and its quota released, terminal in every case, with convergence never acting on it, and its data retained for the finished-job window. A tasklet failing after its retry ladder SHALL be terminal with no automatic platform retry.
+A bounded operator SHALL be spawned on demand with `init_values` meaning initial state per tasklet name, exactly as an unbounded operator's `init_values` do, and SHALL take its input as messages on its entry channels, representing **one job/session**. It SHALL be **structured**: Tasklets, Channels, and Cells on the same per-cell engine as an unbounded operator, each tasklet run once every producer feeding it has committed and **done when all its cells finish**, then committed without waiting for its siblings (see `bounded-operator-structure`). A bounded operator SHALL **receive its input after it starts** through the same entrance an unbounded operator uses, **loop** by its declared loop mode, MAY be bounded by a declared maximum duration, be stopped externally, declare per-tasklet compensation hooks with an author-selected rollback mode (see `bounded-operator-saga`), and, being **durable by default** (opt-out per class), resume from durable state across a crash (see `bounded-operator-durability`). It SHALL terminate on the first exit trigger (all tasklets done with no loop active, a tasklet's `ctx.complete`, a loop running out of work, duration, or external stop). On termination, the SDK SHALL emit a `BoundedCompleted` control message carrying the terminal result/error payload and a status (`ok | error | cancelled`); the Controller SHALL then drive the **single** standard operator teardown, running compensation first when terminating abnormally, so the bounded operator is deregistered, its plugins disabled, and its quota released, terminal in every case, with convergence never acting on it, and its data retained for the finished-job window. A tasklet failing after its retry ladder SHALL be terminal with no automatic platform retry, except in a `per_input` loop declaring keep-progress, where it fails only the turn it ran in: the turn is dead-lettered and undone, and the loop takes its next message (see `bounded-durable-loop`).
 
 #### Scenario: Clean completion deregisters the bounded operator
 
@@ -76,7 +76,7 @@ A bounded operator SHALL be spawned on demand with `init_values` meaning initial
 
 #### Scenario: Failure compensates then terminates with no auto-retry
 
-- **WHEN** a bounded operator's tasklet returns an error after partial progress
+- **WHEN** a bounded operator's tasklet returns an error after partial progress, and the operator is not a `per_input` loop declaring keep-progress
 - **THEN** the SDK SHALL fire compensation for completed tasklets in reverse order (per the operator's rollback mode), emit `BoundedCompleted` with status `error` and the error payload, and the Controller SHALL tear it down terminally without convergence rebinding it
 
 #### Scenario: External stop is terminal
@@ -93,6 +93,12 @@ A bounded operator SHALL be spawned on demand with `init_values` meaning initial
 
 - **WHEN** a bounded operator whose tasklet `reserve_funds` holds state is started with `init_values` `{"reserve_funds": {"budget": 100}}`
 - **THEN** that tasklet's Cell SHALL start with the state `{"budget": 100}` before the first message is read, and no entry channel SHALL receive the document
+
+#### Scenario: A per-input keep-progress turn's failure is not terminal
+
+- **WHEN** a tasklet of a `per_input` keep-progress operator fails after its retry ladder
+- **THEN** the SDK SHALL NOT emit `BoundedCompleted`, the turn SHALL be dead-lettered and
+  undone, and the operator SHALL stay registered and take its next message
 
 ### Requirement: A bounded operator is fed by messages on its entry channels in every loop mode
 

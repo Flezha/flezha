@@ -126,6 +126,7 @@ SDK raises or returns its one error type carrying them.
 | `commit.not_owner` | conflict | 6 | this controller does not own operator '{operator}', so its commit is refused |  |
 | `commit.oversized_handoff` | invalid | 2 | a tasklet's handoff of {size} bytes is over the {max}-byte limit |  |
 | `commit.record_not_durable` | unavailable | 7 | the record at seq {seq} of Cell '{cell}' did not become durable in time |  |
+| `commit.turn_not_parked` | unavailable | 7 | the failed turn could not be parked in the dead-letter queue: {reason} |  |
 
 ### controller
 

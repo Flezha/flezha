@@ -135,21 +135,26 @@ pub(super) fn saga_steps(
     steps
 }
 
-/// Undo the tasklets a rewind unwound, in reverse iteration and chain order —
-/// always all-or-nothing. It ignores the per-Cell done markers (a Cell in two
-/// rewound iterations is undone twice) and journals one `compensated` entry
-/// per tasklet, even an empty one, so the journal alone says what is still
-/// outstanding.
+/// Undo the tasklets a rewind unwound, as [`unwind_steps`] undoes them.
 pub(super) fn rewind_steps(r: &Run<'_>, unwound: &[CommittedTask]) -> VecDeque<UndoStep> {
     let by_iter: Vec<Vec<StageRecord>> = stages_by_iter(r, unwound).into_values().collect();
+    unwind_steps(r, &by_iter)
+}
+
+/// Undo whole iterations (a rewind's, a failed turn's) in reverse iteration
+/// and chain order. It ignores the per-Cell done markers (a Cell in two
+/// unwound iterations is undone twice) and journals one `compensated` entry
+/// per tasklet, even an empty one, so the journal alone says what is still
+/// outstanding.
+pub(super) fn unwind_steps(r: &Run<'_>, iterations: &[Vec<StageRecord>]) -> VecDeque<UndoStep> {
     let mut steps = VecDeque::new();
-    for record in plan_compensation(RollbackMode::AllOrNothing, &by_iter, &[]) {
+    for record in plan_compensation(RollbackMode::AllOrNothing, iterations, &[]) {
         if r.task(record.stage_idx).compensate_overridden {
             for run in &record.cells {
                 steps.push_back(UndoStep::Cell {
                     iter: record.iter,
                     cell: Arc::clone(&run.cell),
-                    outputs: Vec::new(),
+                    outputs: run.outputs.iter().map(Arc::clone).collect(),
                     marks: false,
                 });
             }

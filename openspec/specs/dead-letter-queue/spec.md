@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The dead-letter-queue capability guarantees that a permanently-failing (poison) payload in an Unbounded operator is never silently dropped and never freezes the operator's progress. A failing tasklet invocation — returned error or panic/unhandled exception, one policy in both SDKs — is retried up to a per-channel budget (default 3 total attempts, exponential backoff + jitter; author-classified non-retryable errors park immediately). After exhaustion the payload is durably parked to the controller's DLQ store (`app_data/dlq/<operator_class>/<tasklet_id>/`, JSONL metadata index + per-entry payload blobs) strictly BEFORE the cell advances: tier-off sessions hold the cell until the fsynced append is acknowledged (`park_payload` data-stream frame + `ParkPayloadAck` control command), while effectively-once sessions record the park and the consumed-offset advance in one atomic WAL record so a crash can never advance past a lost park — parking un-freezes the min-watermark, keeping input-log retention and source credit moving. Users inspect, replay (explicit-only, through the ordinary input path), or drop entries via `flz dlq`; retention is bounded by age and total size with loud telemetry per deletion. Bounded operators are out of scope — their escape is AbortAll + saga compensation.
+The dead-letter-queue capability guarantees that a permanently-failing (poison) payload in an Unbounded operator is never silently dropped and never freezes the operator's progress. A failing tasklet invocation — returned error or panic/unhandled exception, one policy in both SDKs — is retried up to a per-channel budget (default 3 total attempts, exponential backoff + jitter; author-classified non-retryable errors park immediately). After exhaustion the payload is durably parked to the controller's DLQ store (`app_data/dlq/<operator_class>/<tasklet_id>/`, JSONL metadata index + per-entry payload blobs) strictly BEFORE the cell advances: tier-off sessions hold the cell until the fsynced append is acknowledged (`park_payload` data-stream frame + `ParkPayloadAck` control command), while effectively-once sessions record the park and the consumed-offset advance in one atomic WAL record so a crash can never advance past a lost park — parking un-freezes the min-watermark, keeping input-log retention and source credit moving. Users inspect, replay (explicit-only, through the ordinary input path), or drop entries via `flz dlq`; retention is bounded by age and total size with loud telemetry per deletion. A bounded operator's escape is AbortAll + saga compensation, with two exceptions that park: a message its entry channel cannot read, and a failed turn of a `per_input` loop declaring keep-progress, whose message the controller parks under the `_turn` slot before the turn is undone and the loop takes its next message.
 ## Requirements
 ### Requirement: Failing tasklet invocations are retried with backoff before parking
 
@@ -75,15 +75,6 @@ The CLI SHALL provide `flz dlq list <operator>` (entries with cell, channel, err
 - **WHEN** a user runs `flz dlq drop`
 - **THEN** the entry and payload are deleted and an audit event records the drop with the entry's identity
 
-### Requirement: Bounded profile is explicitly out of scope with a documented equivalence
-
-The dead-letter queue SHALL apply to Unbounded operators only. For Bounded operators a permanently-failing cell SHALL continue to fail its tasklet (AbortAll) and trigger saga compensation — the profile's existing escape. Documentation SHALL state this equivalence and that configurable `on_cell_failure` policies (DeadLetter | MinSuccess) remain deferred.
-
-#### Scenario: Bounded operator failure path unchanged
-
-- **WHEN** a Bounded operator's cell fails permanently
-- **THEN** the tasklet aborts and compensation runs exactly as before this change, and nothing is written to the DLQ store
-
 ### Requirement: A parked entry SHALL be built by one constructor
 
 Every writer that parks a payload SHALL build the entry through one constructor
@@ -140,4 +131,85 @@ question it raises. An operator declaring none SHALL say so rather than printing
 - **GIVEN** a parked entry recorded against the requested channel `not_prices`
 - **WHEN** the user replays it after the operator is redeclared with a channel of that name
 - **THEN** the payload SHALL reach that channel
+
+### Requirement: A bounded operator SHALL dead-letter only an unreadable message and a failed per-input turn
+
+A bounded operator SHALL write to the dead-letter queue in two cases only: a message its
+entry channel cannot read, which is parked without a pass under the entry channel's slot as
+today, and a failed turn of a `per_input` loop declaring keep-progress (see
+`bounded-durable-loop`). In every other case a permanently-failing cell SHALL continue to
+fail its tasklet (AbortAll) and trigger saga compensation, the profile's existing escape.
+Documentation SHALL state both cases and this equivalence, and that configurable
+`on_cell_failure` policies (DeadLetter | MinSuccess) remain deferred.
+
+A failed turn's entry SHALL be filed under the operator's class and the slot `_turn`, with
+the cell key `_turn`, the turn's entry channel as its channel, the input-log offset the
+turn consumed as its origin offset, the failing tasklet and its error text as its error,
+and the tasklet's attempts. Its payload SHALL be the turn's message bytes as the input log
+recorded them, which the controller SHALL read from the instance's input log before the
+append (the offset is still above the instance's floor then, so the record is retained). A
+class that keeps no input log SHALL park the entry with no payload. The entry's identity
+SHALL be the store's existing origin identity, `_turn@<offset>`, so a turn that fails again
+after a crash lands on the same entry. At every bind of a durable bounded instance, the
+controller SHALL remove the instance's `_turn` entries whose origin offset is above the
+instance's floor before it re-forwards the input-log tail, because such a turn never
+reached its `dead_lettered` record and will run again.
+
+#### Scenario: Bounded operator failure path unchanged
+
+- **WHEN** a bounded operator that is not a `per_input` keep-progress loop has a cell that
+  fails permanently on a message it could read
+- **THEN** the tasklet aborts and compensation runs exactly as before this change, and
+  nothing is written to the DLQ store
+
+#### Scenario: A failed turn is parked with its message
+
+- **WHEN** a durable `per_input` keep-progress session dead-letters the turn it took from
+  offset 7 on entry channel `in`
+- **THEN** `flz dlq show` of the entry SHALL show the slot `_turn`, the channel `in`, the
+  origin offset 7, the failing tasklet in the error, and the exact bytes that were sent
+
+#### Scenario: A turn that did not reach its record is not left in the queue
+
+- **GIVEN** a session whose turn at offset 9 was parked and whose runner died before the
+  `dead_lettered` record was journaled
+- **WHEN** the instance is rebound and the re-run of the turn succeeds
+- **THEN** the DLQ SHALL hold no entry for offset 9
+
+### Requirement: An unbounded operator's failure handling SHALL NOT change
+
+The failure handling of an unbounded operator SHALL be the reference the bounded turn
+follows and SHALL NOT change with it: the retry ladder, the park before the Cell advances
+on either tier, the entry's slot, identity and fields, and `flz dlq` SHALL behave exactly as
+before this change.
+
+#### Scenario: The stream suite is untouched
+
+- **WHEN** `test/system/dlq_e2e_test.exs` runs under each of the seven runtimes after this
+  change
+- **THEN** it SHALL pass unmodified
+
+### Requirement: A replayed turn SHALL enter its session as a new turn
+
+`flz dlq replay` of a `_turn` entry SHALL send the entry's bytes to the operator's entry
+channel through the ordinary input path, as every replay does: the session SHALL take it as
+a new message with a new input-log offset, after any message already waiting, as the next
+iteration. A replayed turn SHALL answer no caller of the original message. A replay that
+fails again SHALL be dead-lettered as a new entry under its new offset, and the replayed
+entry SHALL be removed once the replay grace has passed, as a replay of an entry that
+carries an origin offset is today. A replay of an entry without payload bytes SHALL be
+refused as it is today, and a replay to a session that has ended SHALL be refused with the
+code a replay to a missing operator answers.
+
+#### Scenario: A replayed turn is answered
+
+- **GIVEN** a session that dead-lettered the message `boom` while the model was down
+- **WHEN** the model is back and `flz dlq replay <entry>` is run
+- **THEN** the session SHALL answer `boom` as its next iteration and the entry SHALL be
+  removed
+
+#### Scenario: A replay to an ended session is refused
+
+- **WHEN** the session has completed and its `_turn` entry is replayed
+- **THEN** the replay SHALL be refused and the entry SHALL stay parked
 

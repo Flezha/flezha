@@ -15,7 +15,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
 
   import FlezhaTest.Helper.MimicGlobal
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+  import FlezhaTest.Helper.NodeTestHelper, only: [override_log_level: 1, wait_until: 2]
 
   alias Flezha.Operator.ClassRegistry
   alias Flezha.Runner.{ControlChannel, ControlUnit}
@@ -526,6 +526,112 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     assert InputLog.watermark(inst) == 0
   end
 
+  describe "a dead-lettered iteration commit" do
+    setup do
+      FlezhaTest.Helper.DlqFixtures.isolated_dir()
+      on_exit(override_log_level(:warning))
+      inst = "dl_inst_#{System.unique_integer([:positive])}"
+      {control_channel, stream_ref} = start_control_channel("dl")
+      own(inst, control_channel)
+      %{inst: inst, channel: control_channel, stream_ref: stream_ref}
+    end
+
+    defp send_dead_letter(%{channel: channel, stream_ref: stream_ref}, inst, offset, ref) do
+      payload = build_dead_letter_payload(inst, 2, offset, ref)
+      send(channel, {:flz_data, :stream_id, "control_command", payload, %{}})
+      assert_receive {:test_writer_called, ^stream_ref, reply}, 2_000
+      assert {:iter_commit_response, response} = decode_reply(reply).command
+      response
+    end
+
+    test "parks the message, journals the record naming its entry, acks, then releases", ctx do
+      %{inst: inst} = ctx
+      test_pid = self()
+      handler = "dead-lettered-#{inst}"
+
+      :telemetry.attach(
+        handler,
+        [:flezha, :bounded, :turn_dead_lettered],
+        fn _e, m, md, _ -> send(test_pid, {:dead_lettered, m, md}) end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler) end)
+
+      for {turn, n} <- Enum.with_index(["hello", "boom", "again"]),
+          do: {:ok, ^n} = InputLog.append(inst, turn, %{})
+
+      log =
+        ExUnit.CaptureLog.capture_log([level: :warning], fn ->
+          assert %{error: nil, iter: 2} = send_dead_letter(ctx, inst, 1, "ref-dl-1")
+          assert_receive {:dead_lettered, %{count: 1}, metadata}, 2_000
+          assert %{iter: 2, consumed_offset: 1, tasklet: "answer", attempts: 3} = metadata
+        end)
+
+      assert [entry] = Flezha.Dlq.Store.list(inst)
+
+      assert %{
+               "tasklet_id" => "_turn",
+               "cell_key" => "_turn",
+               "channel" => "in",
+               "origin_offset" => 1,
+               "attempts" => 3,
+               "error" => "tasklet `answer` failed after 3 attempt(s): model unavailable"
+             } = entry
+
+      ref = "#{inst}/_turn/#{entry["id"]}"
+      assert {:ok, _entry, "boom"} = Flezha.Dlq.Store.get(ref)
+
+      assert {:ok, [%{type: :dead_lettered, iter: 2, payload: payload}]} = TaskJournal.read(inst)
+      assert %{consumed_offset: 1, tasklet: "answer", dlq_entry: ^ref, count: 1} = payload
+      assert log =~ "dead-lettered as #{ref}"
+
+      assert wait_until(fn -> InputLog.watermark(inst) == 1 end, 2_000)
+      assert [{2, "again", _}] = InputLog.undelivered(inst)
+    end
+
+    test "a re-sent commit lands on the same entry", ctx do
+      %{inst: inst} = ctx
+      {:ok, 0} = InputLog.append(inst, "boom", %{})
+
+      assert %{error: nil} = send_dead_letter(ctx, inst, 0, "ref-dl-a")
+      assert %{error: nil} = send_dead_letter(ctx, inst, 0, "ref-dl-b")
+
+      assert [_one] = Flezha.Dlq.Store.list(inst)
+      assert {:ok, [%{type: :dead_lettered}]} = TaskJournal.read(inst)
+    end
+
+    test "a record no longer in the log parks without its bytes and says so", ctx do
+      %{inst: inst} = ctx
+
+      log =
+        ExUnit.CaptureLog.capture_log([level: :warning], fn ->
+          assert %{error: nil} = send_dead_letter(ctx, inst, 5, "ref-dl-gone")
+        end)
+
+      assert log =~ "no longer in the log; it is parked without its bytes"
+      assert [%{"origin_offset" => 5, "payload_bytes" => nil}] = Flezha.Dlq.Store.list(inst)
+      assert {:ok, [%{type: :dead_lettered}]} = TaskJournal.read(inst)
+    end
+
+    test "a park the store refuses journals nothing and answers an error", ctx do
+      %{inst: inst} = ctx
+      {:ok, 0} = InputLog.append(inst, "boom", %{})
+      # The store cannot make the entry's directory.
+      blocker = Path.dirname(Flezha.Dlq.Store.task_dir(inst, "_turn"))
+      File.mkdir_p!(Path.dirname(blocker))
+      File.write!(blocker, "")
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert %{error: %RunnerCommands.Error{code: "commit.turn_not_parked"}} =
+                 send_dead_letter(ctx, inst, 0, "ref-dl-refused")
+      end)
+
+      assert {:ok, []} = TaskJournal.read(inst)
+      assert InputLog.watermark(inst) in [-1, nil]
+    end
+  end
+
   defp start_control_channel(suffix) do
     %{channel: channel, stream_ref: stream_ref} = start_runner(suffix)
     {channel, stream_ref}
@@ -624,6 +730,23 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
           end),
         completes: Keyword.has_key?(opts, :completes_with),
         result: Keyword.get(opts, :completes_with, "")
+      }
+    })
+  end
+
+  defp build_dead_letter_payload(operator_id, iter, consumed_offset, reference_id) do
+    ControlFrameTestHelper.encode_request(reference_id, {
+      :iter_commit,
+      %RunnerCommands.IterCommit{
+        operator_id: operator_id,
+        iter: iter,
+        consumed_offset: consumed_offset,
+        entry_channel: "in",
+        dead_letter: %RunnerCommands.DeadLetter{
+          tasklet: "answer",
+          attempts: 3,
+          error: "model unavailable"
+        }
       }
     })
   end

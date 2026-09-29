@@ -45,6 +45,17 @@ impl<'a> ParkTarget<'a> {
         Self::declared(channel, "_edge")
     }
 
+    /// A bounded operator's failed turn on its entry channel, under the one
+    /// `_turn` slot whichever tasklet failed.
+    pub(crate) fn turn(channel: &'a ChannelDescriptor) -> Self {
+        Self {
+            channel: &channel.name,
+            tasklet_id: "_turn",
+            cell_suffix: "_turn",
+            retry: channel.retry,
+        }
+    }
+
     /// A name off the wire the operator does not declare: parked at a budget
     /// of one, because the same declared set answers every re-attempt, and
     /// under this side's own slot, because a frame-controlled name never

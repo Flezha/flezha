@@ -74,6 +74,22 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
     assert out =~ "Uptime (ms):"
   end
 
+  test "a session that dead-lettered a turn shows how many and the latest iteration" do
+    stub_one(bounded_state(0))
+
+    out = capture_io(fn -> CliManager.operator_info(@namespace) end)
+    refute out =~ "Failed turns"
+
+    :ok = Flezha.State.TaskJournal.append_dead_lettered("op-1", 3, 3, "in", "answer", 3, "e")
+
+    out = capture_io(fn -> CliManager.operator_info(@namespace) end)
+    assert out =~ "Failed turns: 1 (last: iteration 3)"
+
+    out = capture_io(fn -> CliManager.operator_info(@namespace, output: "json") end)
+    %{"operators" => [proc]} = Jason.decode!(out)
+    assert proc["failed_turns"] == %{"count" => 1, "last_iteration" => 3}
+  end
+
   test "an unbounded operator reports its kind too" do
     stub_one(%{bounded_state(0) | builder: %{kind: :unbounded}})
 

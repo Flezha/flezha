@@ -128,6 +128,10 @@ message AddOperator {
     // only once they have arrived: forwarded after the bind under load, they
     // would otherwise reach a driver that has already parked and be dropped.
     uint32 inbox_tail_count = 11;
+    // The controller parks a failed turn sent as `IterCommit.dead_letter`.
+    // Without it a bounded driver ends the instance on a failed turn, because
+    // an older controller would journal the commit and drop the message.
+    bool dead_letter_turns = 12;
 }
 
 // SDK -> Controller, as the CommandResponse raw_data of AddOperator.
@@ -329,6 +333,23 @@ message IterCommit {
     // The entry channel whose chain the iteration ran; a resumed chained
     // loop feeds its carry back into that chain.
     string entry_channel = 7;
+    // Set when the iteration's turn failed in a `per_input` keep-progress
+    // loop: the controller parks the message at `consumed_offset` in the
+    // dead-letter queue, journals `dead_lettered` instead of `iter_committed`,
+    // and only then answers; the driver then undoes the turn and takes the
+    // next message as iteration `iter + 1`. Sent only to a controller that set
+    // `AddOperator.dead_letter_turns`.
+    optional DeadLetter dead_letter = 8;
+}
+
+// The failure a dead-lettered turn ends on: the tasklet whose Cell failed,
+// its attempts, the author's error text, and the Cell's key (empty for a
+// declared Cell).
+message DeadLetter {
+    string tasklet = 1;
+    uint32 attempts = 2;
+    string error = 3;
+    string cell_key = 4;
 }
 
 // Controller -> SDK reply to IterCommit, emitted only AFTER the journal entry

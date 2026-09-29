@@ -23,6 +23,9 @@ defmodule Flezha.State.TaskJournal do
   marker bumps the epoch, which keys every later barrier's identity.
   """
 
+  require Logger
+
+  alias Flezha.Dlq.{Entry, Store}
   alias Flezha.Operator.ClassRegistry
   alias Flezha.SDK.Wire
 
@@ -43,6 +46,12 @@ defmodule Flezha.State.TaskJournal do
   @type_compensated Codec.type_code(:compensated)
   @type_rewound Codec.type_code(:rewound)
   @type_input_released Codec.type_code(:input_released)
+  @type_dead_lettered Codec.type_code(:dead_lettered)
+
+  @iteration_types [:iter_committed, :dead_lettered]
+
+  # The one DLQ slot, and cell key, every failed turn of an instance parks under.
+  @turn_slot "_turn"
 
   @typedoc """
   One Cell a stage or an undo ran: its identity, the effect records it wrote
@@ -64,6 +73,7 @@ defmodule Flezha.State.TaskJournal do
           | :compensated
           | :rewound
           | :input_released
+          | :dead_lettered
 
   @type entry :: %{
           seq: non_neg_integer(),
@@ -82,7 +92,16 @@ defmodule Flezha.State.TaskJournal do
                 consumed_offset: non_neg_integer() | nil,
                 entry_channel: String.t(),
                 handoff: [handoff_item()],
-                completion: completion()
+                completion: completion(),
+                failed_turns: {pos_integer(), non_neg_integer()} | nil
+              }
+            | %{
+                consumed_offset: non_neg_integer() | nil,
+                entry_channel: String.t(),
+                tasklet: String.t(),
+                attempts: non_neg_integer(),
+                dlq_entry: String.t(),
+                count: pos_integer()
               }
             | %{cells_ran: [committed_cell()]}
             | %{consumed_offset: non_neg_integer()}
@@ -107,6 +126,8 @@ defmodule Flezha.State.TaskJournal do
           | {:compensated, non_neg_integer(), non_neg_integer(), [committed_cell()]}
           | {:iter_committed, non_neg_integer(), non_neg_integer() | nil, String.t(),
              [handoff_item()], completion()}
+          | {:dead_lettered, non_neg_integer(), non_neg_integer() | nil, String.t(), String.t(),
+             non_neg_integer(), String.t()}
 
   @typedoc "The result a tasklet's `complete` asked for, or `nil` when none did."
   @type completion :: binary() | nil
@@ -201,6 +222,38 @@ defmodule Flezha.State.TaskJournal do
   end
 
   @doc """
+  Append one `dead_lettered` entry: the turn of iteration `iter`, which
+  consumed the input at `consumed_offset` on `entry_channel`, failed in
+  `tasklet` after `attempts` and was parked as the DLQ entry `dlq_entry`.
+  Every fold reads it as that iteration's commit, and its tasklets committed
+  forward as owed undo until a `compensated` entry covers each.
+  """
+  @spec append_dead_lettered(
+          binary(),
+          non_neg_integer(),
+          non_neg_integer() | nil,
+          String.t(),
+          String.t(),
+          non_neg_integer(),
+          String.t()
+        ) :: :ok | {:error, term()}
+  def append_dead_lettered(
+        instance_id,
+        iter,
+        consumed_offset,
+        entry_channel,
+        tasklet,
+        attempts,
+        dlq_entry
+      )
+      when is_binary(instance_id) do
+    append_barrier(
+      instance_id,
+      {:dead_lettered, iter, consumed_offset, entry_channel, tasklet, attempts, dlq_entry}
+    )
+  end
+
+  @doc """
   Journal one commit barrier without waiting: the append is issued with
   `:gen_server.send_request/4` under `label` into `reqids`, and its answer —
   `{:ok, seq}` or `{:duplicate, seq}` once the batch holding the record has
@@ -212,9 +265,9 @@ defmodule Flezha.State.TaskJournal do
   @spec append_async(binary(), barrier(), :gen_server.request_id_collection(), term()) ::
           {:ok, :gen_server.request_id_collection()} | {:error, term()}
   def append_async(instance_id, barrier, reqids, label) when is_binary(instance_id) do
-    {type, task_idx, iter, payload} = barrier_record(barrier)
+    {type, task_idx, iter, payload, epoch} = barrier_entry(instance_id, barrier)
 
-    with {:ok, header, body} <- encode(instance_id, type, task_idx, iter, payload, nil) do
+    with {:ok, header, body} <- encode(instance_id, type, task_idx, iter, payload, epoch) do
       log_id = Paths.journal_id(instance_id)
       {:ok, RecordLog.append_async(log_id, header, body, append_opts(type), reqids, label)}
     end
@@ -313,7 +366,8 @@ defmodule Flezha.State.TaskJournal do
   Fold the journal into the crash-resume state shipped on
   `AddOperator.task_journal` (`nil` when the instance has no journal).
 
-  The resume point is the iteration **after** the highest `iter_committed`:
+  The resume point is the iteration **after** the highest `iter_committed` or
+  `dead_lettered` (a failed turn consumed its input and commits its iteration):
   `committed_task_idxs` are the tasklets already committed inside that
   still-in-flight iteration (skipped on resume) and `task_handoffs` what each of
   them released, so every uncommitted child branch re-seeds from exactly its own
@@ -333,7 +387,9 @@ defmodule Flezha.State.TaskJournal do
   compensation planner before resuming forward. Each undo journals its own
   `compensated` entry, which shrinks `rewind_undo` on the next fold, so a crash
   mid-rewind resumes with exactly the outstanding work and no double
-  compensation. An empty list means no rewind is pending.
+  compensation. An empty list means no rewind is pending. A dead-lettered
+  turn's committed tasklets are owed undo the same way, until a `compensated`
+  entry covers each.
   """
   @spec restore_state(binary()) ::
           %{
@@ -359,7 +415,7 @@ defmodule Flezha.State.TaskJournal do
 
       _ ->
         entries = live_entries(raw)
-        last_iter = latest_iter_committed(entries)
+        last_iter = latest_iteration(entries)
         # The iteration in flight: the one after the highest committed, 0 before any.
         resume_iter = if last_iter, do: last_iter.iter + 1, else: 0
 
@@ -393,7 +449,7 @@ defmodule Flezha.State.TaskJournal do
   """
   @spec consumed_offset(binary()) :: non_neg_integer() | nil
   def consumed_offset(instance_id) when is_binary(instance_id) do
-    instance_id |> live() |> latest_iter_committed() |> consumed_offset_of()
+    instance_id |> live() |> latest_iteration() |> consumed_offset_of()
   end
 
   @doc """
@@ -412,7 +468,7 @@ defmodule Flezha.State.TaskJournal do
 
   defp released_offset_of(raw) do
     raw
-    |> Enum.filter(&(&1.type in [:iter_committed, :input_released]))
+    |> Enum.filter(&(&1.type in [:input_released | @iteration_types]))
     |> Enum.map(&consumed_offset_of/1)
     |> Enum.reject(&is_nil/1)
     |> Enum.max(fn -> nil end)
@@ -463,7 +519,8 @@ defmodule Flezha.State.TaskJournal do
   """
   @spec committed_iterations(binary()) :: [non_neg_integer()]
   def committed_iterations(instance_id) when is_binary(instance_id) do
-    for %{type: :iter_committed, iter: iter} <- live(instance_id),
+    for %{type: type, iter: iter} <- live(instance_id),
+        type in @iteration_types,
         uniq: true,
         do: iter
   end
@@ -473,14 +530,18 @@ defmodule Flezha.State.TaskJournal do
   the tasklet that wrote it: everything a rewind to `to_iter` would have to
   undo, read from the stage entries alone, since compaction may have truncated
   the records themselves. The rewind guard refuses when one of these tasklets
-  cannot compensate.
+  cannot compensate. A dead-lettered iteration is left out: its outputs were
+  settled when its turn failed.
   """
   @spec staged_channels_above(binary(), non_neg_integer()) ::
           [{non_neg_integer(), binary()}]
   def staged_channels_above(instance_id, to_iter) when is_binary(instance_id) do
-    for %{type: :task_committed, iter: iter, task_idx: task_idx, payload: payload} <-
-          live(instance_id),
+    entries = live(instance_id)
+    failed = for %{type: :dead_lettered, iter: iter} <- entries, do: iter
+
+    for %{type: :task_committed, iter: iter, task_idx: task_idx, payload: payload} <- entries,
         iter > to_iter,
+        iter not in failed,
         cell <- payload.cells_ran,
         channel <- cell.channels,
         uniq: true,
@@ -532,6 +593,70 @@ defmodule Flezha.State.TaskJournal do
     case record_writer(cell_id) do
       {:ok, writer} -> {:ok, WalWriter.await_durable_async(writer, seq, reqids, label)}
       {:error, _reason} -> {:error, record_not_durable(cell_id, seq)}
+    end
+  end
+
+  @doc """
+  Park a failed turn's message in the dead-letter queue without waiting, as
+  the "records" step of its dead-lettered iteration commit: the bytes at the
+  turn's consumed offset are read from the instance's input log (retained,
+  since the floor is still below it) and appended under the `_turn` slot,
+  keyed by `_turn@<offset>` so a re-parked turn lands on the same entry. The
+  append is issued under `label` into `reqids`; its answer, `{:ok, entry_ref}`
+  once the entry is durable, comes back as a message for
+  `:gen_server.check_response/3`. A turn whose record is gone parks without
+  its bytes, and says so.
+  """
+  @spec park_turn_async(binary(), map(), :gen_server.request_id_collection(), term()) ::
+          {:ok, :gen_server.request_id_collection()} | {:error, term()}
+  def park_turn_async(instance_id, turn, reqids, label) when is_binary(instance_id) do
+    fields = %{
+      operator_class: instance_id,
+      tasklet_id: @turn_slot,
+      cell_key: @turn_slot,
+      channel: turn.entry_channel,
+      origin_offset: turn.consumed_offset,
+      error: "tasklet `#{turn.tasklet}` failed after #{turn.attempts} attempt(s): #{turn.error}",
+      attempts: turn.attempts,
+      payload: turn_payload(instance_id, turn.consumed_offset)
+    }
+
+    with {:ok, entry} <- Entry.new(fields),
+         do: {:ok, :gen_server.send_request(Store, {:append, entry}, label, reqids)}
+  end
+
+  @doc """
+  Remove the instance's `_turn` DLQ entries whose origin offset is above its
+  floor: each is a turn parked before a crash that landed ahead of its
+  `dead_lettered` record, and which the bind is about to run again. An entry
+  at or below the floor belongs to a recorded dead letter and stays.
+  """
+  @spec drop_unrecorded_turns(binary()) :: :ok
+  def drop_unrecorded_turns(instance_id) when is_binary(instance_id) do
+    floor = released_offset(instance_id)
+
+    for %{"tasklet_id" => @turn_slot, "origin_offset" => offset, "id" => id} <-
+          Store.list(instance_id),
+        is_integer(offset) and (floor == nil or offset > floor),
+        do: Store.resolve("#{instance_id}/#{@turn_slot}/#{id}")
+
+    :ok
+  end
+
+  defp turn_payload(_instance_id, nil), do: nil
+
+  defp turn_payload(instance_id, offset) do
+    case InputLog.read_range(instance_id, offset, offset) do
+      [{^offset, message, _metadata}] ->
+        message
+
+      _gone_or_refused ->
+        Logger.warning(
+          "[task_journal] #{instance_id}: the failed turn at input-log offset #{offset} " <>
+            "is no longer in the log; it is parked without its bytes"
+        )
+
+        nil
     end
   end
 
@@ -599,28 +724,31 @@ defmodule Flezha.State.TaskJournal do
   end
 
   # The tasklets the latest rewind unwound (journaled before its marker, above
-  # its target) that no `compensated` entry has undone yet. A `compensated` entry
-  # always follows the task it undoes, so "undone" is "some compensation for this
-  # (task_idx, iter) appended after this commit" — which stays right across a
-  # re-run (the re-run's commit is newer than the old undo) and across a second
-  # rewind (the first rewind's undo records are not re-planned).
+  # its target) and those of every dead-lettered turn (journaled before its
+  # record, in its iteration) that no `compensated` entry has undone yet. A
+  # `compensated` entry always follows the task it undoes, so "undone" is "some
+  # compensation for this (task_idx, iter) appended after this commit", which
+  # stays right across a re-run (the re-run's commit is newer than the old
+  # undo) and across a second rewind (the first rewind's undo records are not
+  # re-planned). A turn a rewind also unwound is owed once.
   defp rewind_undo(raw), do: Enum.map(rewind_undo_entries(raw), &committed_task/1)
 
   defp rewind_undo_entries(raw) do
-    case latest_rewound(raw) do
-      nil ->
-        []
+    rewound? =
+      case latest_rewound(raw) do
+        nil -> fn _entry -> false end
+        %{seq: marker_seq, iter: to_iter} -> &(&1.seq < marker_seq and &1.iter > to_iter)
+      end
 
-      %{seq: marker_seq, iter: to_iter} ->
-        undone = for %{type: :compensated} = c <- raw, do: {c.task_idx, c.iter, c.seq}
+    failed = for %{type: :dead_lettered, seq: seq, iter: iter} <- raw, do: {seq, iter}
+    undone = for %{type: :compensated} = c <- raw, do: {c.task_idx, c.iter, c.seq}
 
-        for %{type: :task_committed} = e <- raw,
-            e.seq < marker_seq and e.iter > to_iter,
-            not Enum.any?(undone, fn {task, iter, seq} ->
-              task == e.task_idx and iter == e.iter and seq > e.seq
-            end),
-            do: e
-    end
+    for %{type: :task_committed} = e <- raw,
+        rewound?.(e) or Enum.any?(failed, fn {seq, iter} -> e.seq < seq and e.iter == iter end),
+        not Enum.any?(undone, fn {task, iter, seq} ->
+          task == e.task_idx and iter == e.iter and seq > e.seq
+        end),
+        do: e
   end
 
   defp latest_rewound(raw), do: raw |> Enum.filter(&(&1.type == :rewound)) |> List.last()
@@ -632,13 +760,14 @@ defmodule Flezha.State.TaskJournal do
   defp cut_floor(raw) do
     entries = live_entries(raw)
 
-    with %{seq: head} <- latest_iter_committed(entries) do
+    with %{seq: head} <- latest_iteration(entries) do
       owed = for %{seq: seq} = entry <- entries, seq < head, owes_output?(entry), do: seq
 
       unwound =
-        case rewind_undo_entries(raw) do
-          [] -> []
-          undo -> [latest_rewound(raw).seq | Enum.map(undo, & &1.seq)]
+        case {rewind_undo_entries(raw), latest_rewound(raw)} do
+          {[], _marker} -> []
+          {undo, nil} -> Enum.map(undo, & &1.seq)
+          {undo, marker} -> [marker.seq | Enum.map(undo, & &1.seq)]
         end
 
       Enum.min([head | owed ++ unwound])
@@ -669,9 +798,11 @@ defmodule Flezha.State.TaskJournal do
       trigger: payload.trigger
     }
 
-  defp latest_iter_committed(entries) do
+  # The iteration record carrying the resume point: an iteration commit, or a
+  # turn that was dead-lettered, which consumed its input all the same.
+  defp latest_iteration(entries) do
     entries
-    |> Enum.filter(&(&1.type == :iter_committed))
+    |> Enum.filter(&(&1.type in @iteration_types))
     |> case do
       [] -> nil
       committed -> Enum.max_by(committed, & &1.seq)
@@ -684,14 +815,16 @@ defmodule Flezha.State.TaskJournal do
   defp entry_channel_of(nil), do: ""
   defp entry_channel_of(%{payload: %{entry_channel: channel}}), do: channel
 
-  defp completion_of(nil), do: nil
-  defp completion_of(%{payload: %{completion: completion}}), do: completion
+  defp completion_of(%{type: :iter_committed, payload: %{completion: completion}}),
+    do: completion
+
+  defp completion_of(_none_or_dead_lettered), do: nil
 
   # Seed for a fresh iteration: the previous iteration's terminal handoff (a
   # handoff-chained loop's input; ignored by an input-driven one, which re-seeds
   # from its input log's undelivered tail).
-  defp iter_handoff(nil), do: []
-  defp iter_handoff(%{payload: %{handoff: handoff}}), do: handoff
+  defp iter_handoff(%{type: :iter_committed, payload: %{handoff: handoff}}), do: handoff
+  defp iter_handoff(_none_or_dead_lettered), do: []
 
   # Seed for each resumed branch: what its parent released. Keyed by the
   # committing tasklet, so a child takes its own parent's edge and never a
@@ -712,10 +845,28 @@ defmodule Flezha.State.TaskJournal do
   @spec current_epoch(binary()) :: non_neg_integer()
   def current_epoch(instance_id) when is_binary(instance_id) do
     {:ok, entries} = read(instance_id)
+    epoch_of(entries)
+  end
 
-    case entries do
-      [] -> 0
-      _ -> List.last(entries).epoch
+  defp epoch_of([]), do: 0
+  defp epoch_of(entries), do: List.last(entries).epoch
+
+  @doc """
+  How many turns the instance has dead-lettered and the iteration of the
+  latest, from its latest iteration record, which carries the running count
+  so it survives a journal cut and a rewind; `nil` while none was.
+  """
+  @spec failed_turns(binary()) :: {pos_integer(), non_neg_integer()} | nil
+  def failed_turns(instance_id) when is_binary(instance_id) do
+    {:ok, raw} = read(instance_id)
+    failed_turns_of(raw)
+  end
+
+  defp failed_turns_of(raw) do
+    case latest_iteration(raw) do
+      %{type: :dead_lettered, iter: iter, payload: %{count: count}} -> {count, iter}
+      %{payload: %{failed_turns: failed}} -> failed
+      nil -> nil
     end
   end
 
@@ -729,28 +880,45 @@ defmodule Flezha.State.TaskJournal do
 
   # ---------- Append ----------
 
-  @barrier_types [@type_task_committed, @type_iter_committed, @type_compensated]
+  @barrier_types [
+    @type_task_committed,
+    @type_iter_committed,
+    @type_compensated,
+    @type_dead_lettered
+  ]
 
   defp append_barrier(instance_id, barrier) do
-    {type, task_idx, iter, payload} = barrier_record(barrier)
-    append(instance_id, type, task_idx, iter, payload)
+    {type, task_idx, iter, payload, epoch} = barrier_entry(instance_id, barrier)
+    append(instance_id, type, task_idx, iter, payload, epoch)
   end
 
-  defp barrier_record({:task_committed, task_idx, iter, cells_ran, handoff, completion, trigger}),
-    do:
-      {@type_task_committed, task_idx, iter,
-       [
-         Codec.encode_cells(cells_ran),
-         Codec.encode_handoff(handoff),
-         Codec.encode_completion(completion),
-         Codec.encode_trigger(trigger)
-       ]}
+  # One journal read gives a barrier its epoch and, for an iteration record,
+  # the running count of dead-lettered turns it carries on.
+  defp barrier_entry(instance_id, barrier) do
+    {:ok, raw} = read(instance_id)
+    {type, task_idx, iter, payload} = barrier_record(barrier, failed_turns_of(raw))
+    {type, task_idx, iter, payload, epoch_of(raw)}
+  end
 
-  defp barrier_record({:compensated, task_idx, iter, cells_ran}),
+  defp barrier_record(
+         {:task_committed, task_idx, iter, cells_ran, handoff, completion, trigger},
+         _failed
+       ),
+       do:
+         {@type_task_committed, task_idx, iter,
+          [
+            Codec.encode_cells(cells_ran),
+            Codec.encode_handoff(handoff),
+            Codec.encode_completion(completion),
+            Codec.encode_trigger(trigger)
+          ]}
+
+  defp barrier_record({:compensated, task_idx, iter, cells_ran}, _failed),
     do: {@type_compensated, task_idx, iter, Codec.encode_cells(cells_ran)}
 
   defp barrier_record(
-         {:iter_committed, iter, consumed_offset, entry_channel, handoff, completion}
+         {:iter_committed, iter, consumed_offset, entry_channel, handoff, completion},
+         failed
        ),
        do:
          {@type_iter_committed, 0, iter,
@@ -759,8 +927,26 @@ defmodule Flezha.State.TaskJournal do
             <<byte_size(entry_channel)::16-big>>,
             entry_channel,
             Codec.encode_handoff(handoff),
-            Codec.encode_completion(completion)
+            Codec.encode_completion(completion),
+            Codec.encode_failed_turns(failed)
           ]}
+
+  defp barrier_record(
+         {:dead_lettered, iter, consumed_offset, entry_channel, tasklet, attempts, dlq_entry},
+         failed
+       ) do
+    {count, _last} = failed || {0, nil}
+
+    {@type_dead_lettered, 0, iter,
+     Codec.encode_dead_letter(
+       consumed_offset,
+       entry_channel,
+       tasklet,
+       attempts,
+       dlq_entry,
+       count + 1
+     )}
+  end
 
   # `epoch` defaults to the instance's current one (a journal read); a rewind
   # passes the bumped one. An entry the journal already holds (a re-sent

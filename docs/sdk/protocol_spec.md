@@ -640,6 +640,7 @@ message AddOperator {
     uint32 key_group_from = 9;         // inclusive key-group range, 0..255
     uint32 key_group_to = 10;
     uint32 inbox_tail_count = 11;      // input-log records the bind re-forwards
+    bool dead_letter_turns = 12;       // the controller parks a failed turn (IterCommit.dead_letter)
 }
 ```
 
@@ -1645,7 +1646,9 @@ message IterCommit {
     bool completes = 5;                     // a tasklet of this iteration called `ctx.complete`
     bytes result = 6;                       // the resolved result the instance ends with
     string entry_channel = 7;               // the entry channel whose chain the iteration ran
+    optional DeadLetter dead_letter = 8;    // set when the iteration's turn failed
 }
+message DeadLetter { string tasklet = 1; uint32 attempts = 2; string error = 3; string cell_key = 4; }
 message IterCommitResponse { string operator_id = 1; uint32 iter = 2; Error error = 3; }
 ```
 
@@ -1672,6 +1675,18 @@ settled prefix exceeds `:record_log_cut_after_bytes` (64 KiB) and skipped for
 a class whose tasklets declare `compensate`. The instance enters iteration
 `iter + 1` only on success, so a crash re-runs at most the in-flight
 iteration.
+
+`dead_letter` marks an iteration whose turn failed, in a `per_input` loop
+declaring keep-progress bound with `AddOperator.dead_letter_turns`. The
+controller first parks the message at `consumed_offset`, read from the
+instance's input log, under the `_turn` slot, then appends ONE
+`dead_lettered` entry naming the DLQ entry instead of `iter_committed`, then
+acks; a park that fails or does not answer in time is refused as
+`commit.turn_not_parked` and nothing is journaled. After the ack the driver
+undoes the turn's committed tasklets (one `TaskCommit` with `compensating`
+set per tasklet, no done markers) and takes the next message as `iter + 1`.
+A driver bound without `dead_letter_turns` ends the instance on the failure
+instead.
 
 ### Control command `IterPark` (runner → controller)
 

@@ -142,3 +142,29 @@ A tasklet that wrote no plugin output SHALL require no coverage.
 - **WHEN** a compensable class's Cell was compacted past the records iteration 5 wrote, and the user rewinds to iteration 3
 - **THEN** the guard still names the channels iteration 5 wrote on, from the `task_committed` entries alone
 
+### Requirement: A rewind SHALL treat a dead-lettered iteration as committed and already undone
+
+A `dead_lettered` iteration SHALL count as a committed iteration for `flz operator rewind`:
+it SHALL be a valid `--to-iteration` target, it SHALL fall inside the committed range a
+refusal reports, and the loop resumed after a rewind to it SHALL take its next input as the
+following iteration. A rewind to an iteration below it SHALL NOT compensate any of its
+tasklets a second time, because each undo the failure ran is a journaled `compensated`
+entry, and an undo the failure still owes when the rewind is asked SHALL run once. The
+compensation-coverage guard SHALL NOT refuse a rewind over a dead-lettered iteration for a
+tasklet without a hook, because that iteration's outputs were settled when it failed. A
+rewind SHALL NOT touch the dead-letter queue.
+
+#### Scenario: Rewinding past a failed turn undoes nothing twice
+
+- **GIVEN** a keep-progress session with iterations 1 and 2 committed, 3 dead-lettered after
+  its first tasklet's undo ran, and 4 committed
+- **WHEN** the user rewinds to iteration 1
+- **THEN** iterations 4 and 2 SHALL be compensated, iteration 3's first tasklet SHALL NOT be
+  compensated again, the DLQ entry of iteration 3 SHALL stay, and the next input SHALL be
+  iteration 2
+
+#### Scenario: A failed turn is a valid target
+
+- **WHEN** the user rewinds to a dead-lettered iteration 3 of a session that has committed 5
+- **THEN** iterations 5 and 4 SHALL be compensated and the next input SHALL be iteration 4
+

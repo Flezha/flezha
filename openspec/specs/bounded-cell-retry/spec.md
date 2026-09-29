@@ -49,18 +49,27 @@ A cell SHALL fail its tasklet after the configured attempts are exhausted, surfa
 the original error into the existing abnormal-termination path: the tasklet
 does not commit, AbortAll/compensation runs per the existing saga contract, and
 the operator terminates with status `error`. No new terminal state SHALL be
-introduced. Each retry attempt SHALL emit telemetry (instance, tasklet,
-cell, attempt, delay).
+introduced. In a `per_input` loop declaring keep-progress the exhausted Cell SHALL fail
+only the turn: the pass stops, the turn is dead-lettered and undone, and the operator does
+not terminate (see `bounded-durable-loop`); the same holds for a non-retryable error.
+Each retry attempt SHALL emit telemetry (instance, tasklet, cell, attempt, delay).
 
 #### Scenario: Persistent failure aborts after the ladder
 
-- **WHEN** a cell errors retryably on every one of its 3 attempts
+- **WHEN** a cell errors retryably on every one of its 3 attempts, in an operator that is not a `per_input` loop declaring keep-progress
 - **THEN** the tasklet SHALL fail with the original error, completed tasklets SHALL be compensated, and the run SHALL terminate with status `error`
 
 #### Scenario: Retries are observable
 
 - **WHEN** a cell is retried
 - **THEN** a telemetry event with the instance, tasklet, cell, attempt number, and applied delay SHALL be emitted
+
+#### Scenario: Exhaustion in a per-input keep-progress loop fails the turn
+
+- **WHEN** a cell of a `per_input` keep-progress operator errors retryably on every one of
+  its 3 attempts
+- **THEN** the tasklet SHALL fail with the original error, the turn SHALL be dead-lettered
+  with `attempts` 3 and that error, and the operator SHALL NOT terminate
 
 ### Requirement: Authors can classify errors as non-retryable and tune the policy
 

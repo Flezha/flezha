@@ -116,9 +116,14 @@ seals the member's journal at its resume point: an all-or-nothing rollback SHALL
 to that seal and no further, and a member's rollback SHALL never touch another member's
 iterations.
 
+A failed turn of a `per_input` keep-progress loop SHALL NOT be an abnormal termination: it
+SHALL be dead-lettered and undone as "A per-input keep-progress loop SHALL dead-letter a
+failed turn and take the next input" states, keeping every journaled iteration as
+keep-progress always does, and the loop SHALL go on.
+
 #### Scenario: Keep-progress keeps journaled iterations across a crash
 
-- **WHEN** a keep-progress looping instance has journaled iterations 1–4, crashes, resumes, and iteration 5 then fails terminally
+- **WHEN** a keep-progress `chained` looping instance has journaled iterations 1–4, crashes, resumes, and iteration 5 then fails terminally
 - **THEN** only iteration 5's completed tasklets SHALL be compensated and iterations 1–4 SHALL be kept
 
 #### Scenario: All-or-nothing unwinds journaled iterations too
@@ -130,6 +135,11 @@ iterations.
 
 - **WHEN** an all-or-nothing member sealed at iteration 6 by a rescale commits iterations 7 and 8 and fails in iteration 9
 - **THEN** compensation SHALL undo iteration 9's completed tasklets, then 8 and 7, and SHALL NOT compensate any iteration at or below 6
+
+#### Scenario: A per-input keep-progress failure keeps the loop
+
+- **WHEN** a keep-progress `per_input` instance has journaled iterations 1–4 and iteration 5's turn fails after its retries
+- **THEN** only iteration 5's completed tasklets SHALL be undone, iterations 1–4 SHALL be kept, and the instance SHALL wait for its next message as iteration 6
 
 ### Requirement: A tasklet ends its bounded operator after the iteration commits
 
@@ -185,4 +195,145 @@ An iteration opened by a timer firing SHALL take the next iteration number and S
 
 - **WHEN** a timer firing's chain in a `chained` loop reaches the loop's leaf and the leaf releases batch `C`
 - **THEN** `iter_committed` for that iteration SHALL carry `C` and the next carry-fed iteration SHALL be seeded from `C`
+
+### Requirement: A per-input keep-progress loop SHALL dead-letter a failed turn and take the next input
+
+A bounded instance SHALL NOT end when its loop mode is `per_input`, its rollback mode is
+keep-progress, and a pass seeded by a message fails because a tasklet's Cell exhausted its
+retry ladder or raised a non-retryable error. The driver SHALL instead, in this order:
+
+1. stop the pass, as today: no Cell of the pass runs again and nothing it had not committed
+   is kept;
+2. send the iteration's commit marked dead-lettered, carrying the iteration number, the
+   message's input-log offset, its entry channel, the failing tasklet, its attempts and its
+   error text, and wait for the controller's durable answer;
+3. undo the iteration's committed tasklets the way a rewind undoes an unwound iteration:
+   each tasklet's `compensate` hook runs over what it recorded, each undo is journaled as a
+   `compensated` entry, and no compensation-done marker is written;
+4. wait for the next message as the next iteration.
+
+On the dead-lettered commit the controller SHALL first park the message in the
+dead-letter queue (see `dead-letter-queue`) and wait for the entry to be durable, then
+journal the record `dead_lettered` (the iteration, the consumed offset, the entry channel,
+the tasklet, the attempts and the running count of dead-lettered turns), wait for it to be
+durable, answer, and then release the offset into the input log's watermark and cut the
+journal as an iteration commit does. The task-journal fold SHALL treat a `dead_lettered`
+record as an iteration commit for the resume point, the consumed offset, the floor and the
+journal cut, and SHALL list the iteration's committed tasklets that no `compensated` entry
+covers as owed undo, in the same `rewind_undo` a rewind fills. The epoch SHALL NOT change.
+
+A class that opted out of persistence journals nothing and keeps no input log: its driver
+SHALL park the failed turn through the ordinary park path, with no payload bytes and no
+offset, undo in memory, and wait for the next message.
+
+Everything else SHALL end the instance as it does today: a failure under all-or-nothing; a
+failure in a `once` or a `chained` loop; a failure in a pass a timer firing opened; a stage
+or iteration commit the controller refuses; a stop; `max_duration`. An unreadable message
+SHALL keep being parked without a pass, as today. Both bounded drivers SHALL behave alike:
+the shared core's, which runs the bounded operators of the Rust, Java, Node, Python, Ruby
+and PHP SDKs, and the Elixir SDK's.
+
+#### Scenario: A model error does not end the session
+
+- **GIVEN** a durable `per_input` keep-progress session whose tasklet fails every attempt on
+  the message `boom`
+- **WHEN** it is sent `hello`, then `boom`, then `again`
+- **THEN** `hello` and `again` SHALL each be answered, `boom` SHALL be one entry in the DLQ,
+  the instance SHALL still be running, and its journal SHALL hold, in order, an
+  `iter_committed` for the iteration that took `hello`, a `dead_lettered` record for the one
+  that took `boom` and an `iter_committed` for the one that took `again`
+
+#### Scenario: A turn's committed tasklets are undone
+
+- **GIVEN** a two-tasklet keep-progress session whose first tasklet declares `compensate`
+  and whose second fails on `boom`
+- **WHEN** it is sent `boom`
+- **THEN** the first tasklet's `compensate` SHALL run once over what it recorded for that
+  turn, a `compensated` entry SHALL follow the `dead_lettered` record, and the next message
+  SHALL be answered
+
+#### Scenario: A crash during the undo resumes the undo, not the turn
+
+- **WHEN** the runner is killed after the `dead_lettered` record is durable and before the
+  first tasklet's undo is journaled, and the instance is rebound
+- **THEN** the resumed instance SHALL run that undo once, SHALL NOT run the turn again, SHALL
+  NOT end, and SHALL answer the next message
+
+#### Scenario: A crash before the dead-letter commit re-runs the turn
+
+- **WHEN** the runner is killed after the message was parked and before the
+  `dead_lettered` record was journaled, and the instance is rebound
+- **THEN** the turn SHALL run again over the re-forwarded message; if it fails again the DLQ
+  SHALL hold one entry for it, and if it succeeds the DLQ SHALL hold none
+
+#### Scenario: All-or-nothing still ends the session
+
+- **WHEN** a `per_input` all-or-nothing instance's turn fails after its retries
+- **THEN** it SHALL compensate and end with status `error`, exactly as before this change,
+  and nothing SHALL be written to the DLQ
+
+#### Scenario: Other loop modes still end
+
+- **WHEN** a keep-progress `chained` instance's pass fails after its retries
+- **THEN** it SHALL end with status `error`, and nothing SHALL be written to the DLQ
+
+#### Scenario: A stop during a turn still ends the session
+
+- **WHEN** a keep-progress `per_input` instance is stopped while a turn runs
+- **THEN** it SHALL end with status `cancelled` and nothing SHALL be written to the DLQ
+
+#### Scenario: A session that opted out of persistence goes on too
+
+- **WHEN** a `per_input` keep-progress class with persistence off fails a turn
+- **THEN** a DLQ entry without payload bytes SHALL be written and the instance SHALL answer
+  its next message
+
+### Requirement: A dead-lettered turn SHALL be visible
+
+A dead-lettered turn SHALL be visible wherever a person or a program looks for it:
+`flz dlq list <operator>` SHALL show its entry under the `_turn` slot with the entry
+channel, the offset, the error and the attempts; `flz operator info <operator>` SHALL show
+`Failed turns: <count> (last: iteration <n>)` for an instance that has dead-lettered any,
+read from the latest iteration record's running count so it survives a journal cut and a
+restart; `flz state journal <operator>` SHALL show the `dead_lettered` row with its iteration,
+offset and tasklet; the controller SHALL execute
+`[:flezha, :bounded, :turn_dead_lettered]` with a count of 1 and the namespace, operator,
+iteration, offset, tasklet and attempts, bridged to the metric
+`flezha_bounded_turns_dead_lettered_total`; and it SHALL log one warning line naming the
+operator, the iteration, the tasklet and the DLQ entry. Once `send-a-part-while-it-runs` has
+landed, the park SHALL reach the operator's listeners as its `input.dead_lettered` notice,
+released once the `dead_lettered` record is durable; whichever of the two changes lands
+second SHALL wire the turn's park to that notice.
+
+#### Scenario: Every surface shows the failed turn
+
+- **WHEN** a session dead-letters the turn of its iteration `n`
+- **THEN** `flz dlq list` SHALL show one `_turn` entry, `flz operator info` SHALL print
+  `Failed turns: 1 (last: iteration <n>)`, `flz state journal` SHALL show a `dead_lettered`
+  row for iteration `n`, and one `turn_dead_lettered` event SHALL have been executed
+
+### Requirement: A caller waiting on a dead-lettered turn SHALL be answered with an error
+
+A caller SHALL be answered with an error in the error model's shape when the message of a
+dead-lettered turn was a call awaiting an answer (the reply of
+`call-an-operator-and-get-its-response`, or an outside caller of `answer-an-outside-caller`),
+once the `dead_lettered` record is durable, and SHALL NOT be left to its deadline. The durable
+`dead_lettered` record SHALL be that answer's release point: the controller SHALL hand the
+turn's reply token, read from the input-log record it already reads for the park, to the
+instance's Overwatch once the record is durable, as the other park routes hand theirs. The
+error SHALL be the one those changes define for a dead-lettered call input (`call.failed` in
+their drafts), its details naming the DLQ entry and the author's error text. A class that
+opted out of persistence has no `dead_lettered` record: its turn's park frame SHALL carry the
+pass's reply token, and its caller SHALL be answered as that park route answers, once the
+DLQ append is durable. This change dead-letters the turn and the call changes own the
+answer; the requirement SHALL hold in both directions once both have landed, whichever lands
+second wiring the hand-off, and a replay of the entry SHALL answer no caller.
+
+#### Scenario: A called session's failed turn answers its caller
+
+- **GIVEN** an operator that calls a `per_input` keep-progress session whose turn fails on
+  `boom`
+- **WHEN** the caller sends `boom`
+- **THEN** the caller SHALL receive an error answer naming the DLQ entry before its deadline,
+  and the session SHALL answer its next call
 

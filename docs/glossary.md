@@ -179,7 +179,8 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **Dead-letter queue (DLQ)** — the controller's durable store for poison payloads
   (`Flezha.Dlq.Store`, `app_data/dlq/<operator_class>/<tasklet_id>/`): retry, park durably,
   advance. Entries are idempotent on their origin, retention is 30 days and 4 GiB, the surface is
-  `flz dlq list|show|replay|drop`; bounded operators abort-and-compensate instead. See [`resilience/data_durability.md`](resilience/data_durability.md).
+  `flz dlq list|show|replay|drop`; a bounded operator parks only an unreadable message and a
+  failed turn of a `per_input` keep-progress loop, and otherwise aborts and compensates. See [`resilience/data_durability.md`](resilience/data_durability.md).
 - **Late-input correction** — a declared `correction_window()` lets an event behind the event-time
   high-water mark rewind the cell to a baseline, replay the retained slice in event-time order
   and republish under a bumped epoch. Requires the tier, an event-time clock and keyed plugin

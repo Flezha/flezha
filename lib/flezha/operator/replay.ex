@@ -431,10 +431,18 @@ defmodule Flezha.Operator.Replay do
   """
   @spec reforward_undelivered_tail(Overwatch.t()) :: Overwatch.t()
   def reforward_undelivered_tail(%Overwatch{} = state) do
+    drop_unrecorded_turns(state)
     redeliver_edges(state)
     replay_slice(state, InputLog.undelivered(Overwatch.operator_class(state)))
     state
   end
+
+  # A durable bounded operator's turn that was parked but never reached its
+  # `dead_lettered` record runs again over this tail, so its entry goes first.
+  defp drop_unrecorded_turns(%Overwatch{durable_bounded: true} = state),
+    do: TaskJournal.drop_unrecorded_turns(Overwatch.operator_class(state))
+
+  defp drop_unrecorded_turns(%Overwatch{}), do: :ok
 
   # An unbounded operator's inter-tasklet value is durable in its producer's
   # record wherever that record carries the offset: the values kept for inputs

@@ -11,7 +11,9 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   Invariant: records, then journal, then ack. A stage barrier names the effect
   records its Cells wrote; the entry is appended only once each is durable on
   its Cell's writer, and the ack carries the append's outcome in its `error`
-  field (empty = durable). The ack gates the post-ack work: releasing the
+  field (empty = durable). A dead-lettered iteration commit's record is its
+  turn's message, parked in the dead-letter queue before the entry naming it
+  is appended. The ack gates the post-ack work: releasing the
   named records' outputs, and for an iteration commit the input-log release
   and the journal cut. The ack itself is written by the channel, the one
   process that writes control frames.
@@ -21,6 +23,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
 
   require Logger
 
+  alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Identificator
   alias Flezha.Runner.ControlChannel
@@ -60,7 +63,8 @@ defmodule Flezha.Runner.ControlChannel.Commits do
 
   # A barrier whose first copy is still waiting on its records is a re-send:
   # the one wait answers both. One naming records waits for each to be durable
-  # before its entry is appended; any other is appended at once.
+  # before its entry is appended, a dead-lettered turn for its park; any other
+  # is appended at once.
   @impl true
   def handle_cast({:commit, reference_id, frame}, state) do
     if Map.has_key?(state.waiting, reference_id) do
@@ -68,9 +72,10 @@ defmodule Flezha.Runner.ControlChannel.Commits do
     else
       commit = decode(frame, state)
 
-      case commit.records do
-        [] -> {:noreply, append(state, reference_id, commit)}
-        records -> {:noreply, await_records(state, reference_id, commit, records)}
+      case commit do
+        %{turn: _turn} -> {:noreply, park_turn(state, reference_id, commit)}
+        %{records: []} -> {:noreply, append(state, reference_id, commit)}
+        %{records: records} -> {:noreply, await_records(state, reference_id, commit, records)}
       end
     end
   end
@@ -89,14 +94,18 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   def handle_info({:commit_shipped, reference_id, commit, ship}, state),
     do: {:noreply, ack(state, reference_id, commit, ship)}
 
-  # The ack deadline elapsed with a named record still not durable.
+  # The ack deadline elapsed with a named record, or a turn's park, still not
+  # durable.
   def handle_info({:records_overdue, reference_id}, state) do
     case Map.fetch(state.waiting, reference_id) do
       {:ok, %{owed: owed}} ->
-        [{cell_id, seq} | _] = Enum.sort(owed)
+        reason =
+          case Enum.sort(owed) do
+            [:turn] -> {:turn_not_parked, "the dead-letter queue did not answer in time"}
+            [{cell_id, seq} | _] -> TaskJournal.record_not_durable(cell_id, seq)
+          end
 
-        {:noreply,
-         records_failed(state, reference_id, TaskJournal.record_not_durable(cell_id, seq))}
+        {:noreply, records_failed(state, reference_id, reason)}
 
       :error ->
         {:noreply, state}
@@ -109,7 +118,12 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   def handle_info(msg, state) do
     case :gen_server.check_response(msg, state.reqids, true) do
       {answer, {:record, reference_id, cell_id, seq}, reqids} ->
-        {:noreply, record_answered(%{state | reqids: reqids}, reference_id, cell_id, seq, answer)}
+        result = record_durable(answer, cell_id, seq)
+        {:noreply, owed_answered(%{state | reqids: reqids}, reference_id, {cell_id, seq}, result)}
+
+      {answer, {:turn, reference_id}, reqids} ->
+        {:noreply,
+         owed_answered(%{state | reqids: reqids}, reference_id, :turn, turn_parked(answer))}
 
       {{:reply, _synced}, {reference_id, commit}, reqids} ->
         {:noreply, settle(%{state | reqids: reqids}, reference_id, commit, :ok)}
@@ -140,43 +154,88 @@ defmodule Flezha.Runner.ControlChannel.Commits do
     end)
     |> case do
       {:ok, reqids} ->
-        timer =
-          Process.send_after(
-            self(),
-            {:records_overdue, reference_id},
-            Durations.get(:sdk_commit_ack_ms)
-          )
-
         owed = MapSet.new(records, fn {cell_id, _first, seq} -> {cell_id, seq} end)
-        wait = %{commit: commit, owed: owed, timer: timer}
-        %{state | reqids: reqids, waiting: Map.put(state.waiting, reference_id, wait)}
+        owe(%{state | reqids: reqids}, reference_id, commit, owed)
 
       reason ->
         settle(state, reference_id, commit, {:error, reason})
     end
   end
 
-  defp record_answered(state, reference_id, cell_id, seq, answer) do
-    case {Map.fetch(state.waiting, reference_id), answer} do
+  # The barrier waits for `owed` under the deadline the SDK re-sends on.
+  defp owe(state, reference_id, commit, owed) do
+    timer =
+      Process.send_after(
+        self(),
+        {:records_overdue, reference_id},
+        Durations.get(:sdk_commit_ack_ms)
+      )
+
+    wait = %{commit: commit, owed: owed, timer: timer}
+    %{state | waiting: Map.put(state.waiting, reference_id, wait)}
+  end
+
+  # A dead-lettered turn's park is issued like a record wait and is owed as
+  # one, under the same deadline.
+  defp park_turn(state, reference_id, commit) do
+    case TaskJournal.park_turn_async(commit.operator_id, commit.turn, state.reqids, {
+           :turn,
+           reference_id
+         }) do
+      {:ok, reqids} ->
+        owe(%{state | reqids: reqids}, reference_id, commit, MapSet.new([:turn]))
+
+      {:error, reason} ->
+        settle(state, reference_id, commit, {:error, {:turn_not_parked, reason}})
+    end
+  end
+
+  # One item a waiting barrier owes has answered. `{:ok, fill}` settles it,
+  # `fill` adding to the commit what the answer taught it, and the entry is
+  # appended once nothing is owed; `{:error, reason}` fails the barrier.
+  defp owed_answered(state, reference_id, item, result) do
+    case {Map.fetch(state.waiting, reference_id), result} do
       # A wait the barrier no longer holds: it failed, or its deadline passed.
-      {:error, _answer} ->
+      {:error, _result} ->
         state
 
-      {{:ok, wait}, {:reply, {:ok, _seq}}} ->
-        owed = MapSet.delete(wait.owed, {cell_id, seq})
+      {{:ok, wait}, {:ok, fill}} ->
+        wait = %{wait | owed: MapSet.delete(wait.owed, item), commit: fill.(wait.commit)}
 
-        if MapSet.size(owed) == 0 do
+        if MapSet.size(wait.owed) == 0 do
           Process.cancel_timer(wait.timer)
           state = %{state | waiting: Map.delete(state.waiting, reference_id)}
           append(state, reference_id, wait.commit)
         else
-          put_in(state.waiting[reference_id].owed, owed)
+          put_in(state.waiting[reference_id], wait)
         end
 
-      {{:ok, _wait}, _refused_or_gone} ->
-        records_failed(state, reference_id, TaskJournal.record_not_durable(cell_id, seq))
+      {{:ok, _wait}, {:error, reason}} ->
+        records_failed(state, reference_id, reason)
     end
   end
+
+  defp record_durable({:reply, {:ok, _synced}}, _cell_id, _seq), do: {:ok, & &1}
+
+  defp record_durable(_refused_or_gone, cell_id, seq),
+    do: {:error, TaskJournal.record_not_durable(cell_id, seq)}
+
+  # The park is durable: the `dead_lettered` entry names its DLQ entry, and the
+  # post-ack step reports it.
+  defp turn_parked({:reply, {:ok, entry_ref}}) do
+    {:ok,
+     fn commit ->
+       stall(:turn_parked, commit.operator_id)
+
+       %{
+         Map.delete(commit, :turn)
+         | barrier: put_elem(commit.barrier, 6, entry_ref),
+           post: fn -> commit.post.(entry_ref) end
+       }
+     end}
+  end
+
+  defp turn_parked(refused_or_gone), do: {:error, {:turn_not_parked, inspect(refused_or_gone)}}
 
   defp records_failed(state, reference_id, reason) do
     {%{commit: commit, timer: timer}, waiting} = Map.pop(state.waiting, reference_id)
@@ -257,6 +316,35 @@ defmodule Flezha.Runner.ControlChannel.Commits do
     state
   end
 
+  defp turn_dead_lettered(%{operator_id: operator_id} = metadata, entry_ref) do
+    stall(:dead_lettered, operator_id)
+    iteration_committed(operator_id, metadata.consumed_offset)
+
+    Logger.warning(
+      "[control_channel] operator #{inspect(operator_id)} iteration #{metadata.iter}: " <>
+        "the turn failed in tasklet #{metadata.tasklet} and was dead-lettered as #{entry_ref}"
+    )
+
+    :telemetry.execute([:flezha, :bounded, :turn_dead_lettered], %{count: 1}, metadata)
+  end
+
+  # An iteration boundary is durable: the input it consumed is released into
+  # the input log's watermark and the journal prefix the fold no longer needs
+  # is cut.
+  defp iteration_committed(operator_id, consumed_offset) do
+    TaskJournal.release_input(operator_id, consumed_offset)
+    TaskJournal.cut(operator_id)
+  end
+
+  # The crash drills' seam: a function under `:commit_stall_fn` is called at a
+  # named step of a dead-lettered commit, and may block there.
+  defp stall(step, operator_id) do
+    case Config.get(:commit_stall_fn) do
+      fun when is_function(fun, 2) -> fun.(step, operator_id)
+      _unset -> :ok
+    end
+  end
+
   defp status(:ok), do: :ok
   defp status({:error, _}), do: :error
 
@@ -320,7 +408,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   # the fold no longer needs. A failure in either costs work, never
   # correctness: the iteration is already committed. The cuts are the
   # writers' to run, so this process never waits on a file rewrite.
-  defp decode(%RunnerCommands.IterCommit{} = commit, state) do
+  defp decode(%RunnerCommands.IterCommit{dead_letter: nil} = commit, state) do
     %RunnerCommands.IterCommit{
       operator_id: operator_id,
       iter: iter,
@@ -349,10 +437,51 @@ defmodule Flezha.Runner.ControlChannel.Commits do
       response:
         {:iter_commit_response,
          %RunnerCommands.IterCommitResponse{operator_id: operator_id, iter: iter}},
-      post: fn ->
-        TaskJournal.release_input(operator_id, consumed_offset)
-        TaskJournal.cut(operator_id)
-      end
+      post: fn -> iteration_committed(operator_id, consumed_offset) end
+    }
+  end
+
+  # A turn that failed in a `per_input` keep-progress loop (`bounded-durable-loop`):
+  # its message is parked first, then ONE `dead_lettered(iter, consumed_offset)`
+  # record naming the DLQ entry commits the iteration, then the ack, after
+  # which the driver undoes the turn. The post-ack work is an iteration
+  # commit's, and the turn is reported.
+  defp decode(%RunnerCommands.IterCommit{dead_letter: dead_letter} = commit, state) do
+    %RunnerCommands.IterCommit{
+      operator_id: operator_id,
+      iter: iter,
+      consumed_offset: offset,
+      entry_channel: channel
+    } = commit
+
+    %RunnerCommands.DeadLetter{tasklet: tasklet, attempts: attempts, error: error} = dead_letter
+
+    metadata = %{
+      namespace: state.namespace,
+      operator_id: operator_id,
+      iter: iter,
+      consumed_offset: offset,
+      tasklet: tasklet,
+      attempts: attempts
+    }
+
+    %{
+      operator_id: operator_id,
+      barrier: {:dead_lettered, iter, offset, channel, tasklet, attempts, nil},
+      records: [],
+      turn:
+        metadata
+        |> Map.take([:consumed_offset, :tasklet, :attempts])
+        |> Map.merge(%{entry_channel: channel, error: error}),
+      telemetry:
+        {[:flezha, :state, :iter_commit], %{count: 1},
+         Map.take(metadata, [:namespace, :operator_id, :iter, :consumed_offset])},
+      label: "task-journal dead-lettered iteration operator=#{inspect(operator_id)} iter=#{iter}",
+      response:
+        {:iter_commit_response,
+         %RunnerCommands.IterCommitResponse{operator_id: operator_id, iter: iter}},
+      # Takes the DLQ entry the park answered with; `turn_parked/3` binds it.
+      post: &turn_dead_lettered(metadata, &1)
     }
   end
 

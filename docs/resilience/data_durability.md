@@ -61,6 +61,7 @@ re-attaches its full plugin set and the convergence loop re-adds anything missin
 | **Input sent to a sleeping unbounded instance** (its class declares `sleep_when_idle`) | **No loss** | n/a | Appended to the instance's input log before forwarding; the append wakes it, its Cells are restored before the log's tail is re-forwarded, and the message is folded once, also when the controller restarts while the instance is awake. |
 | **Controller redeploy while an instance of either kind is suspended** | **No loss** | n/a | Suspension is durable state (the park record in the class directory + input log + snapshots): the instance is rediscovered from disk, stays evicted, and rehydrates on the next input or its wake deadline. |
 | **Bounded operator runner SIGKILL** (persistence opted out) | **Full: re-runs from the top** | At-least-once | No WAL; the operator re-runs from the top on its next message and the messages waiting in its memory are lost. Idempotent by author contract, or don't opt out. |
+| **Failed turn of a `per_input` keep-progress session** (durable) | **No loss**: the turn's message is parked | The turn's committed outputs stay out; its `compensate` hooks undo them | The message is parked in the DLQ before the iteration is journaled `dead_lettered`; the turn is undone and the next message runs. A crash after the record re-runs the owed undo; a crash before it re-runs the turn and parks it at most once. |
 | **Bounded operator SIGKILL mid-compensation** (durable) | Compensation resumes | n/a | Compensation-intent / -done markers ride the restore; the respawn finishes the outstanding undo hooks and skips the done ones. |
 | **Elixir operator process dies** (killed, or any crash outside a clean stop) | Whatever its class keeps after any rebind | Whatever its class keeps after any rebind | The runner drops the instance and reports `OperatorExited`; the controller parks it and the convergence loop rebinds it, restoring its Cells before the input log's tail above the floor is re-forwarded. A durable bounded run resumes from its journal. |
 | **Elixir Cell dies with unfinished input** (killed, or an exit linked into it) | **No loss** of input that has an offset | At-least-once, or effectively-once on the tier | The Operator ends instead of re-minting the Cell, and the rebind above re-forwards the log, so every input the dead Cell held runs again. With no offset held, the Cell is minted again from its slot. An instance that dies on every bind is retried on its backoff rung. |
@@ -491,10 +492,17 @@ re-parks with `generation` incremented; `drop` is audited. Retention bounds the 
 AND size (30 d / 4 GiB, more restrictive wins); a retention deletion is genuine loss and is
 loud: `[:flezha, :dlq, :retention_dropped]`, exported as `dlq_dropped_by_retention_total`.
 
-**Bounded operator equivalence.** The DLQ applies to Unbounded operators only. A bounded operator Cell runs the
-same first rung — retried in place, non-retryable errors skipping the ladder (see
-[Cell retry](bounded_operator.md#cell-retry-the-rung-before-the-abort)) — but its terminal
-escape is not a park: the tasklet fails, AbortAll fires and saga compensation unwinds.
+**Bounded operators.** A bounded operator Cell runs the same first rung: retried in place,
+non-retryable errors skipping the ladder (see
+[Cell retry](bounded_operator.md#cell-retry-the-rung-before-the-abort)). Its terminal escape is
+usually not a park: the tasklet fails, AbortAll fires and saga compensation unwinds. Two cases
+park. A message the entry channel cannot read parks under the channel. A failed turn of a
+`per_input` loop declaring keep-progress parks under the `_turn` slot: the controller reads the
+turn's bytes from the instance's input log and appends the entry (keyed `_turn@<offset>`, so a
+re-run that fails again lands on it) before it journals the iteration as `dead_lettered`; the
+turn's committed tasklets are then undone and the session takes its next message. A replay sends
+the bytes back as a new message; a replay to an ended session is refused. See
+[A failed turn of a keep-progress session](bounded_operator.md#a-failed-turn-of-a-keep-progress-session).
 
 ## Late-input correction: fix the past, and the sinks fix themselves
 

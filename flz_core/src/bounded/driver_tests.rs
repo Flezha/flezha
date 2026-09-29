@@ -885,3 +885,478 @@ fn a_host_bounded_tasklets_timer_fires_into_a_pass_of_its_own() {
         "the firing ran with no second message"
     );
 }
+
+// ---- a failed turn of a per-input keep-progress loop ------------------------
+
+/// `p0` forwards each message to `p1` on `mid`, arms a timer on `arm` whose
+/// firing fails, and declares an undo; `p1` answers `re:<message>` on `out`
+/// and fails every attempt of its three on `boom`.
+fn turn_json(id: &str, persistent: bool, loop_mode: &str, rollback: &str) -> String {
+    format!(
+        r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":{persistent},
+             "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},
+                         {{"name":"mid","kind":"inter_task","producer":0,
+                           "retry_max":3,"retry_backoff_ms":1,
+                           "chains":[[{{"link":"into","tasklet":1}}]]}},
+                         {{"name":"out","kind":"plugin","producer":1,
+                           "chains":[[{{"link":"sink","name":"out"}}]]}}],
+             "tasklets":[{{"name":"p0","compensate_overridden":true}},{{"name":"p1"}}],
+             "bounded":{{"loop_mode":"{loop_mode}","rollback_mode":"{rollback}"}}}}"#
+    )
+}
+
+/// A host for [`turn_json`], counting the undos `p0` ran.
+fn turn_host(mid: u32, undos: Arc<std::sync::atomic::AtomicUsize>) -> FakeHost {
+    FakeHost::answering(move |payload, applied| match payload {
+        EnginePayload::Command {
+            kind: schema::ActivationKind::CompensateRun { .. },
+            ..
+        } => {
+            undos.fetch_add(1, Ordering::SeqCst);
+            schema::ActivationOutcome::Work(vec![schema::ItemEffect {
+                outputs: Vec::new(),
+                ..effect(schema::Verdict::Ok, &[])
+            }])
+        }
+        EnginePayload::Work { slot, items } => schema::ActivationOutcome::Work(
+            items
+                .iter()
+                .map(|item| turn_effect(slot, mid, item))
+                .collect(),
+        ),
+        other => answer(other, applied, &|_: &[u8]| schema::Verdict::Ok),
+    })
+}
+
+fn turn_effect(
+    slot: &crate::cell::CellSlot,
+    mid: u32,
+    item: &crate::poll_core::ItemAttempt,
+) -> schema::ItemEffect {
+    let failed = |message: &str| {
+        effect(
+            schema::Verdict::RetryableError {
+                message: message.to_string(),
+            },
+            &[],
+        )
+    };
+    let bytes = match &item.item {
+        crate::cell::CellItem::Input(payload) => host_bytes(&payload.value),
+        _ => return failed("the firing failed"),
+    };
+    if slot.tasklet_id != 0 {
+        return match bytes.as_slice() {
+            b"boom" => failed("model unavailable"),
+            _ => effect(
+                schema::Verdict::Ok,
+                format!("re:{}", String::from_utf8_lossy(&bytes)).as_bytes(),
+            ),
+        };
+    }
+    let mut forwarded = schema::ItemEffect {
+        outputs: vec![schema::Output {
+            target: schema::OutputTarget::Edge {
+                channel: mid,
+                consumer: 1,
+            },
+            key: None,
+            event_time: None,
+            metadata: Vec::new(),
+            payload: bytes.clone(),
+        }],
+        ..effect(schema::Verdict::Ok, &[])
+    };
+    if bytes == b"arm" {
+        forwarded.timers = vec![crate::timer::TimerOp::register(
+            crate::timer::TimerKind::ProcessingTime,
+            crate::util::wall_now_ms() + 30,
+        )];
+    }
+    forwarded
+}
+
+/// Register a [`turn_json`] class and serve it; the host's undo count.
+fn turn_class(
+    id: &str,
+    persistent: bool,
+    loop_mode: &str,
+    rollback: &str,
+) -> (FakeHost, Arc<std::sync::atomic::AtomicUsize>) {
+    crate::host::register_host_class_json(
+        turn_json(id, persistent, loop_mode, rollback).as_bytes(),
+    )
+    .expect("class registers");
+    let mid = crate::operator::registry::get_class(id)
+        .and_then(|topology| topology.lookup_channel_id("mid"))
+        .expect("the class declares `mid`");
+    let undos = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    (turn_host(mid, Arc::clone(&undos)), undos)
+}
+
+/// Bind `id` as the controller does, saying whether it parks a failed turn.
+fn bind_turns(
+    node: &mut RunnerNode,
+    factory: &str,
+    id: &str,
+    dead_letter_turns: bool,
+    task_journal: Option<crate::pb::TaskJournalState>,
+) {
+    use crate::command::CommandAction;
+    let mut errors = Vec::new();
+    crate::pb::AddOperator {
+        operator_id: id.to_string(),
+        factory_id: factory.to_string(),
+        task_journal,
+        dead_letter_turns,
+        ..Default::default()
+    }
+    .handle(node, "", &mut errors);
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
+/// What the controller saw of one bounded instance: its iteration commits,
+/// the tasklets whose undo it journaled, and its completion.
+#[derive(Default)]
+struct Seen {
+    iters: Vec<crate::pb::IterCommit>,
+    undone: Vec<(u32, u32)>,
+    done: Option<(String, String)>,
+}
+
+/// Answer `id`'s barriers as the controller does, refusing those `refuse`
+/// names, until `until` holds or the run completes.
+fn pump_turns(
+    rx: &Receiver<RunnerMessage>,
+    id: &str,
+    seen: &mut Seen,
+    refuse: impl Fn(&crate::pb::command_request::Command) -> bool,
+    until: impl Fn(&Seen) -> bool,
+) {
+    use crate::pb::command_request::Command;
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !until(seen) && seen.done.is_none() {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        match rx.recv_timeout(remaining) {
+            Ok(RunnerMessage::EmitControlRequest {
+                reference_id,
+                command,
+            }) => {
+                let answer = if refuse(&command) {
+                    Err(crate::FlezhaError::with(
+                        "commit.not_owner",
+                        [("operator", id.into())],
+                    ))
+                } else {
+                    Ok(String::new())
+                };
+                match *command {
+                    Command::IterCommit(commit) if commit.operator_id == id => {
+                        seen.iters.push(commit)
+                    }
+                    Command::TaskCommit(commit)
+                        if commit.operator_id == id && commit.compensating =>
+                    {
+                        seen.undone.push((commit.task_idx, commit.iter))
+                    }
+                    _ => {}
+                }
+                crate::shutdown::signal_result(&reference_id, answer);
+            }
+            Ok(RunnerMessage::EmitBoundedCompleted {
+                operator_id,
+                status,
+                error,
+                ..
+            }) if operator_id == id => seen.done = Some((status, error)),
+            Ok(_) => {}
+            Err(_) => panic!("bounded {id} stalled; the controller saw {:?}", seen.iters),
+        }
+    }
+}
+
+fn never(_: &crate::pb::command_request::Command) -> bool {
+    false
+}
+
+/// Every test here binds and feeds under the same guards.
+fn turn_env() -> (
+    std::sync::MutexGuard<'static, ()>,
+    std::sync::MutexGuard<'static, ()>,
+    Receiver<RunnerMessage>,
+) {
+    let env = crate::runner::env_test_guard();
+    let sink = state_sink::test_guard();
+    state_sink::reset_for_test();
+    let (tx, rx) = unbounded::<RunnerMessage>();
+    crate::runner::install_reconnect_trigger(tx);
+    (env, sink, rx)
+}
+
+#[test]
+fn a_failed_turn_is_dead_lettered_undone_once_and_the_next_message_is_the_next_iteration() {
+    let (_env, _sink, rx) = turn_env();
+    let _parks = capture_parks();
+    let id = format!("turn_dead_letter_{}", std::process::id());
+    let (_host, undos) = turn_class(&id, true, "per_input", "keep_progress");
+    let mut node = RunnerNode::new("test-ns".to_string());
+    bind_turns(&mut node, &id, "turn-1", true, None);
+    let mut seen = Seen::default();
+
+    for (offset, message) in [(0, &b"hello"[..]), (1, b"boom"), (2, b"again")] {
+        feed_at(&node, "turn-1", "in", offset, message);
+    }
+    pump_turns(&rx, "turn-1", &mut seen, never, |s| s.iters.len() == 3);
+
+    let commits: Vec<_> = seen
+        .iters
+        .iter()
+        .map(|c| (c.iter, c.consumed_offset, c.dead_letter.is_some()))
+        .collect();
+    assert_eq!(
+        commits,
+        [(0, Some(0), false), (1, Some(1), true), (2, Some(2), false)]
+    );
+    let dead_letter = seen.iters[1].dead_letter.as_ref().expect("dead-lettered");
+    assert_eq!(
+        (dead_letter.tasklet.as_str(), dead_letter.attempts),
+        ("p1", 3)
+    );
+    assert!(
+        dead_letter.error.contains("model unavailable"),
+        "{dead_letter:?}"
+    );
+    assert_eq!(seen.iters[1].entry_channel, "in");
+    assert_eq!(undos.load(Ordering::SeqCst), 1, "p0's hook ran once");
+    assert_eq!(
+        seen.undone,
+        [(0, 1)],
+        "one undo entry, for p0 of iteration 1"
+    );
+    assert!(seen.done.is_none(), "{:?}", seen.done);
+    node.stop_operator("turn-1");
+    state_sink::reset_for_test();
+}
+
+#[test]
+fn a_resume_owing_a_failed_turns_undo_runs_it_once_and_waits() {
+    let (_env, _sink, rx) = turn_env();
+    let id = format!("turn_resume_{}", std::process::id());
+    let (_host, undos) = turn_class(&id, true, "per_input", "keep_progress");
+    let mut node = RunnerNode::new("test-ns".to_string());
+    let p0 = crate::flusher::encode_cell_identity("turn-resume-1", "p0", "");
+    let owed = crate::pb::TaskCommittedTask {
+        task_idx: 0,
+        iter: 1,
+        cells_ran: vec![p0],
+        ..Default::default()
+    };
+    let journal = crate::pb::TaskJournalState {
+        iter: 2,
+        entry_channel: "in".to_string(),
+        consumed_offset: Some(1),
+        released_offset: Some(1),
+        committed_tasks: vec![owed.clone()],
+        rewind_undo: vec![owed],
+        ..Default::default()
+    };
+    bind_turns(&mut node, &id, "turn-resume-1", true, Some(journal));
+    let mut seen = Seen::default();
+
+    pump_turns(&rx, "turn-resume-1", &mut seen, never, |s| {
+        !s.undone.is_empty()
+    });
+    assert_eq!(seen.undone, [(0, 1)]);
+    assert_eq!(undos.load(Ordering::SeqCst), 1);
+
+    feed_at(&node, "turn-resume-1", "in", 2, b"again");
+    pump_turns(&rx, "turn-resume-1", &mut seen, never, |s| {
+        !s.iters.is_empty()
+    });
+    assert_eq!(seen.iters[0].iter, 2, "the turn did not run again");
+    assert_eq!(undos.load(Ordering::SeqCst), 1);
+    assert!(seen.done.is_none(), "{:?}", seen.done);
+    node.stop_operator("turn-resume-1");
+    state_sink::reset_for_test();
+}
+
+/// Every run here fails and ends as it did before a failed turn could be
+/// dead-lettered.
+fn ends_on_failure(
+    id: &str,
+    persistent: bool,
+    loop_mode: &str,
+    rollback: &str,
+    dead_letter_turns: bool,
+    refuse: impl Fn(&crate::pb::command_request::Command) -> bool,
+    messages: &[&[u8]],
+) -> Seen {
+    let (_env, _sink, rx) = turn_env();
+    let _parks = capture_parks();
+    let factory = format!("{id}_{}", std::process::id());
+    let (_host, _undos) = turn_class(&factory, persistent, loop_mode, rollback);
+    let mut node = RunnerNode::new("test-ns".to_string());
+    bind_turns(&mut node, &factory, id, dead_letter_turns, None);
+    let mut seen = Seen::default();
+    for (offset, message) in messages.iter().enumerate() {
+        feed_at(&node, id, "in", offset as u64, message);
+    }
+    pump_turns(&rx, id, &mut seen, refuse, |_| false);
+    state_sink::reset_for_test();
+    seen
+}
+
+/// An instance id, whether its class persists, its loop and rollback modes,
+/// whether its bind parks failed turns, and the messages it is sent.
+type EndingCase = (
+    &'static str,
+    bool,
+    &'static str,
+    &'static str,
+    bool,
+    &'static [&'static [u8]],
+);
+
+#[test]
+fn a_failure_the_dead_letter_does_not_cover_still_ends_the_run() {
+    use crate::pb::command_request::Command;
+    let cases: [EndingCase; 4] = [
+        (
+            "turn_all",
+            true,
+            "per_input",
+            "all_or_nothing",
+            true,
+            &[b"boom"],
+        ),
+        (
+            "turn_chained",
+            false,
+            "chained",
+            "keep_progress",
+            true,
+            &[b"boom"],
+        ),
+        (
+            "turn_unflagged",
+            true,
+            "per_input",
+            "keep_progress",
+            false,
+            &[b"boom"],
+        ),
+        (
+            "turn_timer",
+            false,
+            "per_input",
+            "keep_progress",
+            true,
+            &[b"arm"],
+        ),
+    ];
+    for (id, persistent, loop_mode, rollback, flag, messages) in cases {
+        let seen = ends_on_failure(id, persistent, loop_mode, rollback, flag, never, messages);
+        assert_eq!(
+            seen.done.as_ref().map(|d| d.0.as_str()),
+            Some("error"),
+            "{id}"
+        );
+        assert!(
+            seen.iters.iter().all(|c| c.dead_letter.is_none()),
+            "{id} dead-lettered its turn"
+        );
+    }
+
+    // A stage commit the controller refuses is not the turn's failure.
+    let refuse_stage = |c: &Command| matches!(c, Command::TaskCommit(t) if !t.compensating);
+    let seen = ends_on_failure(
+        "turn_refused",
+        true,
+        "per_input",
+        "keep_progress",
+        true,
+        refuse_stage,
+        &[b"hello"],
+    );
+    assert_eq!(seen.done.as_ref().map(|d| d.0.as_str()), Some("error"));
+    assert!(seen.iters.is_empty());
+
+    // Nor is a refused dead-letter commit: the run ends on it.
+    let refuse_dead_letter =
+        |c: &Command| matches!(c, Command::IterCommit(i) if i.dead_letter.is_some());
+    let seen = ends_on_failure(
+        "turn_park_refused",
+        true,
+        "per_input",
+        "keep_progress",
+        true,
+        refuse_dead_letter,
+        &[b"boom"],
+    );
+    let (status, error) = seen.done.expect("the run ended");
+    assert_eq!(status, "error");
+    assert!(error.contains("refused by controller"), "{error}");
+}
+
+#[test]
+fn a_stop_during_a_turn_ends_it_cancelled() {
+    let (_env, _sink, rx) = turn_env();
+    let id = format!("turn_stop_{}", std::process::id());
+    let (_host, _undos) = turn_class(&id, true, "per_input", "keep_progress");
+    let mut node = RunnerNode::new("test-ns".to_string());
+    bind_turns(&mut node, &id, "turn-stop-1", true, None);
+    let mut seen = Seen::default();
+
+    feed_at(&node, "turn-stop-1", "in", 0, b"hello");
+    pump_turns(&rx, "turn-stop-1", &mut seen, never, |s| {
+        !s.iters.is_empty()
+    });
+    let instance = node.get_operator("turn-stop-1").expect("running");
+    crate::bounded::stop(&instance);
+    pump_turns(&rx, "turn-stop-1", &mut seen, never, |_| false);
+    assert_eq!(seen.done.map(|d| d.0), Some("cancelled".to_string()));
+    assert!(seen.iters.iter().all(|c| c.dead_letter.is_none()));
+    state_sink::reset_for_test();
+}
+
+#[test]
+fn a_run_that_journals_nothing_parks_its_failed_turn_and_answers_the_next() {
+    let (_env, _sink, rx) = turn_env();
+    let parks = capture_parks();
+    let id = format!("turn_optout_{}", std::process::id());
+    let (_host, undos) = turn_class(&id, false, "per_input", "keep_progress");
+    let mut node = RunnerNode::new("test-ns".to_string());
+    let wire = Wire::new();
+    bind_turns(&mut node, &id, "turn-optout-1", true, None);
+
+    feed(&wire, &node, "turn-optout-1", b"boom");
+    spin_until("the failed turn to be parked", || {
+        !parks.lock().expect("park capture poisoned").is_empty()
+    });
+    let park = parks.lock().expect("park capture poisoned").remove(0);
+    assert_eq!(
+        park.identity,
+        (
+            "turn-optout-1".to_string(),
+            "_turn".to_string(),
+            "_turn".to_string()
+        )
+    );
+    assert_eq!(park.body.entry.channel, "in");
+    assert_eq!(park.body.entry.payload, None);
+    assert_eq!(park.body.origin_offset, None);
+    assert!(
+        park.body
+            .entry
+            .error
+            .starts_with("tasklet `p1` failed after 3 attempt(s): "),
+        "{}",
+        park.body.entry.error
+    );
+    spin_until("p0's undo", || undos.load(Ordering::SeqCst) == 1);
+
+    feed(&wire, &node, "turn-optout-1", b"again");
+    assert_eq!(outputs(&wire, "turn-optout-1", 1), [b"re:again".to_vec()]);
+    assert_no_completion(&rx, "turn-optout-1", Duration::from_millis(200));
+    state_sink::reset_for_test();
+}

@@ -77,7 +77,7 @@ on the effectively-once tier writes.
 | `Flezha.State.Watchdog` | Sensor: compaction triggers and timeouts, output stalls, disk-quota and RPO alarms. |
 | `Flezha.State.Retention` / `Completion` | Sweeper for time-travel retention, finished bounded operators (`completion.record`) and input logs. |
 | `Flezha.State.TimeTravel` | Point-in-time query behind `flz state at`. |
-| `Flezha.State.TaskJournal` | Bounded operator step journal over the reserved writer: the markers `task_committed`, `iter_committed`, `compensated` and `rewound`, the committed record ranges per Cell a writer and a bind re-derive (`committed_records/1`), the channels the rewind guard reads (`staged_channels_above/2`), and the reporter of each consumed offset into the input log's watermark (`release_input/2`). It holds no output: the Cells' writers own delivery. |
+| `Flezha.State.TaskJournal` | Bounded operator step journal over the reserved writer: the markers `task_committed`, `iter_committed`, `dead_lettered`, `compensated` and `rewound`, the park of a failed turn (`park_turn_async/4`) and the bind's removal of one that never reached its record (`drop_unrecorded_turns/1`), the committed record ranges per Cell a writer and a bind re-derive (`committed_records/1`), the channels the rewind guard reads (`staged_channels_above/2`), and the reporter of each consumed offset into the input log's watermark (`release_input/2`). It holds no output: the Cells' writers own delivery. |
 | `Flezha.State.WalTransfer` | Destination-pulled copy of one Cell's files between controllers. |
 | `Flezha.State.DurabilityTier` (+ `Shipper`, `Hydrator`, `Manifest`, `Backend`) | Opt-in remote artifact shipping and hydration; `backend: :none` wires nothing. See [`../resilience/data_durability.md`](../resilience/data_durability.md). |
 
@@ -200,13 +200,21 @@ records it wrote and their plugin channels, the serialized inter-task handoff, t
 and the timer trigger), `3 = iter_committed` (a loop iteration finished: the input-log offset it
 consumed, the entry channel whose chain it ran, and its terminal handoff), `5 = compensated`
 (the Cells a compensation hook ran on, each naming its undo records), `6 = rewound` (the loop
-was rewound to the iteration in this entry's `iter` field). Types 2 and 4 are unused. The
+was rewound to the iteration in this entry's `iter` field), `7 = input_released` (an input
+dead-lettered unread), `8 = dead_lettered` (a keep-progress session's turn failed: the offset it
+consumed, the entry channel, the failing tasklet, its attempts, the DLQ entry and the running
+count of failed turns; every fold reads it as the iteration's commit, its committed tasklets owed
+undo until `compensated` covers each). Types 2 and 4 are unused. The
 journal holds markers only: a Cell's state changes and plugin outputs live in its own effect
 records, which the writer has made durable before the entry naming them is appended.
 
 ```text
 task_committed: [cells][handoff][completion][trigger]
-iter_committed: [offset][len: u16 BE][entry_channel][handoff][completion]
+iter_committed: [offset][len: u16 BE][entry_channel][handoff][completion][failed_turns]
+dead_lettered:  [offset][len: u16 BE][entry_channel][len: u16 BE][tasklet]
+                [attempts: u32 BE][len: u16 BE][dlq_entry][count: u32 BE]
+failed_turns:   <empty>                                   # no turn has failed
+                | [3: u8][count: u32 BE][last_iter: u32 BE]
 compensated:    [cells]
 rewound:        <empty>          # the target iteration is the `iter` field
 cells:          [n: u16 BE] n × ([len: u16 BE][cell_identity][records]

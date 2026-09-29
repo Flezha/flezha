@@ -212,6 +212,7 @@ defmodule Flezha.Config.Keys do
      key: true, env: "FLEZHA_PLACEMENT_LOAD_CAP_PERCENT"},
     {:overwatch_ping_enabled, :bool, true, key: true},
     {:overwatch_ping_fn, :term, nil, key: true},
+    {:commit_stall_fn, :term, nil, key: true},
     {:state_resync_fun, :term, nil, key: true},
 
     # ---- shutdown -----------------------------------------------------------

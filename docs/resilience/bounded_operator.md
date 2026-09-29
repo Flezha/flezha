@@ -181,7 +181,8 @@ an unbounded operator; a bounded class declares none of its own.
 
 - `TaskletError::non_retryable(..)` skips the ladder; every other error — a panic included,
   which the author never got to classify — is retryable. Where an unbounded operator parks an exhausted
-  input to the dead-letter queue, a bounded operator fails the tasklet and compensates.
+  input to the dead-letter queue, a bounded operator fails the tasklet and compensates, unless it
+  is a `per_input` loop declaring keep-progress (next section).
 - A retry re-hands the failed item and the items queued behind it, never one that already
   settled, over the state its failed attempt already applied — the at-least-once contract
   crash-resume imposes. A failed attempt's outputs are dropped, never double-emitted. The
@@ -195,8 +196,39 @@ an unbounded operator; a bounded class declares none of its own.
   the retry counter the unbounded operator's ladder feeds, shipped in `data_heartbeat` metadata.
 
 An exhausted ladder fails the stage where an unbounded operator would park the item: no commit, nothing
-leaked, compensation, status `error`. Nothing bounded operator is ever written to the DLQ store — abort-and-compensate is the escape
-where an unbounded operator would [park the payload](data_durability.md#dead-letter-queue-poison-payloads-park-never-drop).
+leaked, compensation, status `error`. Abort-and-compensate is the escape where an unbounded operator
+would [park the payload](data_durability.md#dead-letter-queue-poison-payloads-park-never-drop), with
+one exception: a failed turn of a keep-progress session.
+
+## A failed turn of a keep-progress session
+
+A session is a `per_input` loop, one turn per message. When it declares keep-progress
+(`rollback_mode(KeepProgress)`), a turn whose tasklet exhausts its ladder, or raises a
+non-retryable error, ends only that turn, the way an unbounded operator parks a poison input and
+goes on:
+
+1. The pass stops; nothing it had not committed is kept.
+2. The driver sends the iteration's `IterCommit` marked `dead_letter` (the failing tasklet, its
+   attempts, its error). The controller parks the turn's message in the dead-letter queue, read
+   from the instance's input log, then journals `dead_lettered` for the iteration, then acks.
+3. The driver undoes the turn's committed tasklets as a rewind undoes an iteration: each
+   `compensate` hook runs once, each undo is journaled as `compensated`.
+4. The next message runs as the next iteration.
+
+The entry sits under the operator's `_turn` slot with the entry channel, the input-log offset and
+the exact bytes, so `flz dlq replay` sends it back to the session as a new message. A crash
+anywhere in this resumes it: after the `dead_lettered` record the rebind runs the undo still owed
+and waits for input; before it, the turn runs again and the bind removes an entry above the
+instance's floor, so the message is parked at most once. A class that opted out of persistence
+parks the turn without its bytes and undoes it in memory.
+
+It shows up as `Failed turns: <count> (last: iteration <n>)` in `flz operator info`, a
+`dead_lettered` row in `flz state journal`, the `flezha_bounded_turns_dead_lettered_total`
+metric and a warning line. A rewind counts the iteration as committed and undoes none of it twice,
+and leaves the entry alone.
+
+Everything else still ends the session: all-or-nothing, a `once` or `chained` loop, a pass a timer
+opened, a commit the controller refuses, a stop and `max_duration`.
 
 ## Rewind: taking a loop back to a committed iteration
 

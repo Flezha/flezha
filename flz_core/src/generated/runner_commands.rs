@@ -191,6 +191,11 @@ pub struct AddOperator {
     /// would otherwise reach a driver that has already parked and be dropped.
     #[prost(uint32, tag = "11")]
     pub inbox_tail_count: u32,
+    /// The controller parks a failed turn sent as `IterCommit.dead_letter`.
+    /// Without it a bounded driver ends the instance on a failed turn, because
+    /// an older controller would journal the commit and drop the message.
+    #[prost(bool, tag = "12")]
+    pub dead_letter_turns: bool,
 }
 /// SDK -> Controller, as the CommandResponse raw_data of AddOperator.
 /// Carries the operator class's SDK-side declarations (operator metadata)
@@ -202,8 +207,10 @@ pub struct AddOperator {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AddOperatorResponse {
     #[prost(map = "string, string", tag = "1")]
-    pub metadata:
-        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
+    pub metadata: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RemOperator {
@@ -441,6 +448,28 @@ pub struct IterCommit {
     /// loop feeds its carry back into that chain.
     #[prost(string, tag = "7")]
     pub entry_channel: ::prost::alloc::string::String,
+    /// Set when the iteration's turn failed in a `per_input` keep-progress
+    /// loop: the controller parks the message at `consumed_offset` in the
+    /// dead-letter queue, journals `dead_lettered` instead of `iter_committed`,
+    /// and only then answers; the driver then undoes the turn and takes the
+    /// next message as iteration `iter + 1`. Sent only to a controller that set
+    /// `AddOperator.dead_letter_turns`.
+    #[prost(message, optional, tag = "8")]
+    pub dead_letter: ::core::option::Option<DeadLetter>,
+}
+/// The failure a dead-lettered turn ends on: the tasklet whose Cell failed,
+/// its attempts, the author's error text, and the Cell's key (empty for a
+/// declared Cell).
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DeadLetter {
+    #[prost(string, tag = "1")]
+    pub tasklet: ::prost::alloc::string::String,
+    #[prost(uint32, tag = "2")]
+    pub attempts: u32,
+    #[prost(string, tag = "3")]
+    pub error: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub cell_key: ::prost::alloc::string::String,
 }
 /// Controller -> SDK reply to IterCommit, emitted only AFTER the journal entry
 /// is durable (fsync). Same reference_id / terminal-error contract as

@@ -65,7 +65,8 @@ pub(super) fn task_frame(
 
 /// `IterCommit` for a finished iteration, naming the entry channel whose
 /// chain it ran (so a resumed chained loop re-enters that chain) and the
-/// completion a tasklet asked for.
+/// completion a tasklet asked for; or for a turn that failed, carrying the
+/// failure the controller parks its message under.
 pub(super) fn iteration_frame(
     r: &Run<'_>,
     iter: u32,
@@ -73,6 +74,7 @@ pub(super) fn iteration_frame(
     channel_id: ChannelId,
     values: &[Value],
     completion: Option<Vec<u8>>,
+    dead_letter: Option<crate::pb::DeadLetter>,
 ) -> Result<Command, BoundedError> {
     // The terminal handoff re-seeds iteration N+1 of a handoff-chained loop
     // after a crash; a message-fed loop re-seeds from its input log instead
@@ -99,6 +101,7 @@ pub(super) fn iteration_frame(
         completes: completion.is_some(),
         result: completion.unwrap_or_default(),
         entry_channel,
+        dead_letter,
     }))
 }
 

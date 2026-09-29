@@ -85,6 +85,14 @@ defmodule Flezha.Service.Cli.Journal do
     |> journal_completion(payload.completion)
   end
 
+  defp journal_row(%{type: :dead_lettered, payload: payload} = entry) do
+    entry
+    |> base_journal_row()
+    |> Map.merge(
+      Map.take(payload, [:consumed_offset, :entry_channel, :tasklet, :attempts, :dlq_entry])
+    )
+  end
+
   # A `rewound` entry's `iter` IS the iteration it rewound to; spell that out
   # rather than leaving the reader to infer it from a bare `iter=` column.
   defp journal_row(%{type: :rewound} = entry) do
@@ -206,6 +214,13 @@ defmodule Flezha.Service.Cli.Journal do
 
     if Map.has_key?(row, :rewound_to) do
       IO.puts("    rewound to iteration: #{row.rewound_to}")
+    end
+
+    if Map.has_key?(row, :dlq_entry) do
+      IO.puts(
+        "    turn failed in #{row.tasklet} after #{row.attempts} attempt(s); " <>
+          "parked as #{row.dlq_entry}"
+      )
     end
 
     IO.puts("")

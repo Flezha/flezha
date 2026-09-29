@@ -465,6 +465,37 @@ defmodule FlezhaTest.Operator.BindReforwardTest do
       assert_receive {:flz_data, _, _, "m3", %{"flz.offset" => "3"}}
       assert drain_frames() == []
     end
+
+    test "loses the turn parked above its floor before the tail is re-forwarded", ctx do
+      FlezhaTest.Helper.DlqFixtures.isolated_dir()
+      for i <- 0..3, do: {:ok, _} = InputLog.append(ctx.class, "m#{i}", %{})
+      # Iteration 1's turn failed and was recorded; the turn at 3 was parked
+      # and the runner died before its record.
+      :ok = TaskJournal.append_dead_lettered(ctx.class, 1, 1, "in", "answer", 3, "e1")
+
+      for offset <- [1, 3] do
+        {:ok, _ref} =
+          Flezha.Dlq.Store.append(
+            Flezha.Dlq.Entry.new!(
+              operator_class: ctx.class,
+              tasklet_id: "_turn",
+              cell_key: "_turn",
+              channel: "in",
+              origin_offset: offset,
+              error: "failed",
+              payload: "m#{offset}"
+            )
+          )
+      end
+
+      state = overwatch(ctx, durable_bounded: true)
+      bind_stream(ctx)
+      assert %Overwatch{} = Replay.reforward_undelivered_tail(state)
+
+      assert [%{"origin_offset" => 1}] = Flezha.Dlq.Store.list(ctx.class)
+      assert_receive {:flz_data, _, _, "m2", %{"flz.offset" => "2"}}
+      assert_receive {:flz_data, _, _, "m3", %{"flz.offset" => "3"}}
+    end
   end
 
   describe "a flapping stream" do

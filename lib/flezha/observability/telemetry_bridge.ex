@@ -117,6 +117,9 @@ defmodule Flezha.Observability.TelemetryBridge do
     # from the table's one transition function.
     [:flezha, :plugin, :phase] => {:flezha_plugin, :phase, :event},
     [:flezha, :operator, :parked] => {:flezha_operator, :operator_parked_total, :metric},
+    # A bounded session's turn that failed and was parked, the session going on.
+    [:flezha, :bounded, :turn_dead_lettered] =>
+      {:flezha_bounded, :flezha_bounded_turns_dead_lettered_total, :metric},
     # A runner's report that an instance's process died, which parks it.
     [:flezha, :operator, :exited] => {:flezha_operator, :operator_exited, :event},
     # The backoff table's two events: every wait a ladder takes and every reset

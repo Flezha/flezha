@@ -16,6 +16,7 @@ defmodule Flezha.Service.Cli.Info do
   alias Flezha.State.Completion
   alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
+  alias Flezha.State.TaskJournal
 
   @doc "Shows detailed information about operators and their enabled plugins."
   def operator_info(namespace, %{opts: opts}) do
@@ -67,6 +68,7 @@ defmodule Flezha.Service.Cli.Info do
               health: Snapshot.operator_health(namespace_display, operator_id),
               uptime_ms: operator_uptime_ms(state),
               default_input_type: state.default_input_type,
+              failed_turns: failed_turns_json(failed_turns(operator_id, state)),
               plugins: format_plugins_json(state.extensions)
             }
 
@@ -233,6 +235,16 @@ defmodule Flezha.Service.Cli.Info do
   defp nil_if_empty(s) when is_binary(s) and byte_size(s) > 0, do: s
   defp nil_if_empty(_), do: nil
 
+  # The turns a bounded session dead-lettered, from its journal; `nil` for any
+  # other operator and for a session none of whose turns failed.
+  defp failed_turns(operator_id, %{builder: %{kind: :bounded}}),
+    do: TaskJournal.failed_turns(operator_id)
+
+  defp failed_turns(_operator_id, _state), do: nil
+
+  defp failed_turns_json(nil), do: nil
+  defp failed_turns_json({count, last}), do: %{count: count, last_iteration: last}
+
   defp operator_kind(%{builder: %{kind: kind}}) when is_atom(kind), do: Atom.to_string(kind)
   defp operator_kind(_), do: "unbounded"
 
@@ -305,6 +317,10 @@ defmodule Flezha.Service.Cli.Info do
     IO.puts("  Kind: #{operator_kind(state)}")
     IO.puts("  Phase: #{operator_phase(namespace, operator_id, state)}")
     IO.puts("  Health: #{Snapshot.operator_health(namespace, operator_id)}")
+
+    with {count, last} <- failed_turns(operator_id, state),
+         do: IO.puts("  Failed turns: #{count} (last: iteration #{last})")
+
     IO.puts("  Runner ID: #{state.runner_id}")
     IO.puts("  Group ID: #{state.namespace}")
     IO.puts("  Uptime (ms): #{operator_uptime_ms(state)}")

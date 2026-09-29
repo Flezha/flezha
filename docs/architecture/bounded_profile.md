@@ -253,8 +253,12 @@ The retry ladder is strictly **pre-commit**. A journaled tasklet is never retrie
 ladder resumes as an ordinary uncommitted-tasklet re-run with the attempt counter reset. A
 panic stays retryable, because the author never got the chance to classify it.
 
-This is the bounded profile's equivalent of the unbounded operator's dead-letter queue: nothing is written
-to a DLQ store, because abort-and-compensate *is* the escape.
+This is the bounded profile's equivalent of the unbounded operator's dead-letter queue:
+abort-and-compensate is the escape. Two cases park instead: a message the entry channel cannot
+read, and a failed turn of a `per_input` keep-progress loop, whose message the controller parks
+under the `_turn` slot on the iteration's dead-lettered commit before the turn is undone and the
+loop takes its next message (see
+[`../resilience/bounded_operator.md`](../resilience/bounded_operator.md#a-failed-turn-of-a-keep-progress-session)).
 
 ## Saga compensation
 
