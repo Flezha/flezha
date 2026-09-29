@@ -19,6 +19,7 @@ use super::decl::{
     HostChannelKind, HostCheckpointOutputs, HostClassDecl, HostClock, HostOverflow,
     HostRollbackMode, HostTaskletDecl,
 };
+use super::issue::TopologyIssue;
 use super::register::DerivedChannel;
 use crate::bounded::spec::{graph_order, BoundedSpec, GraphSeed, TaskDag};
 use crate::bounded::{LoopMode, RollbackMode};
@@ -30,6 +31,7 @@ use crate::operator::topology::{
     AckGranularity, BeyondWindowPolicy, CellMode, CheckpointOutputs, CheckpointPolicy,
     CorrectionPolicy, OperatorTopology, TaskletDescriptor,
 };
+use crate::ErrorModel;
 
 /// The class facts every tasklet and the topology read, resolved once so
 /// they agree.
@@ -303,10 +305,7 @@ fn rollback_of(mode: HostRollbackMode) -> RollbackMode {
 pub(super) fn build_host_dag(topology: &OperatorTopology) -> Result<TaskDag, Error> {
     let entries = topology.entry_consumers();
     if entries.is_empty() {
-        return Err(Error::Declaration(
-            "a structured bounded class declares an entry channel its messages arrive on"
-                .to_string(),
-        ));
+        return Err(Error::Declaration(TopologyIssue::NoEntryChannel.to_error()));
     }
     refuse_several_outputs(topology)?;
     let n = topology.tasklets.len();
@@ -316,13 +315,19 @@ pub(super) fn build_host_dag(topology: &OperatorTopology) -> Result<TaskDag, Err
         .collect();
     let walk = graph_order(n, &inter_task_edges(topology), &roots, GraphSeed::Roots);
     if walk.order.len() != n {
-        let missing = walk
-            .on_cycle
-            .map(|i| topology.tasklets[i as usize].name.to_string())
-            .unwrap_or_default();
-        return Err(Error::Declaration(format!(
-            "tasklet `{missing}` is on a cycle or not reachable from any entry channel"
-        )));
+        let name = |i: TaskletId| topology.tasklets[i as usize].name.to_string();
+        let issue = match walk.on_cycle {
+            Some(on_cycle) => TopologyIssue::Cycle {
+                tasklet: name(on_cycle),
+            },
+            None => TopologyIssue::UnreachableTasklet {
+                tasklet: (0..n as TaskletId)
+                    .find(|i| !walk.order.contains(i))
+                    .map(name)
+                    .unwrap_or_default(),
+            },
+        };
+        return Err(Error::Declaration(issue.to_error()));
     }
     Ok(TaskDag::from_walk(walk, entries))
 }
@@ -354,11 +359,12 @@ fn refuse_several_outputs(topology: &OperatorTopology) -> Result<(), Error> {
             .filter(|c| c.producer == Some(task_id as u32))
             .count();
         if produced > 1 {
-            return Err(Error::Declaration(format!(
-                "tasklet `{}` produces more than one channel; a tasklet emits on exactly \
-                 one output channel",
-                topology.tasklets[task_id].name
-            )));
+            return Err(Error::Declaration(
+                TopologyIssue::MultipleOutputChannels {
+                    tasklet: topology.tasklets[task_id].name.to_string(),
+                }
+                .to_error(),
+            ));
         }
     }
     Ok(())

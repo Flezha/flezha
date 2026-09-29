@@ -206,7 +206,7 @@ cleanly and yields pairs the sender never wrote. An empty map serializes to zero
 bytes (`Metadata Size = 0`). Entry order is unspecified.
 
 A channel name rides every frame its channel produces, as the `channel` value,
-so an over-long one is refused at registration with `ChannelNameTooLong` rather
+so an over-long one is refused at registration with `topology.channel_name_too_long` rather
 than at emit.
 
 #### Reserved metadata keys
@@ -351,8 +351,16 @@ message CommandRequest {
 message CommandResponse {
     string reference_id = 1;         // echoes the request
     string status = 2;               // "success" | "error"
-    repeated string errors = 3;      // human-readable, first token canonical where stated
+    repeated Error errors = 3;       // why, when status is "error" (§10)
     bytes raw_data = 4;              // command-specific reply payload, often empty
+}
+
+message Error {
+    string code = 1;                 // stable, family.snake (docs/errors.md)
+    string class = 2;                // internal | invalid | unreachable | denied | not_found | conflict | unavailable
+    string message = 3;              // one plain sentence
+    string details_json = 4;         // a JSON object: the facts the message names
+    string hint = 5;                 // the next command, or empty
 }
 ```
 
@@ -393,6 +401,7 @@ message CommandResponse {
 | 36 | `AdminRequest` | R → C | `AdminResponse` (tag 37) under the same `reference_id` |
 | 37 | `AdminResponse` | C → R | none |
 | 38 | `OperatorExited` | R → C | none |
+| 39 | `ConnectRefused` | C → R | none; the controller closes the stream after it |
 
 Tags 15, 17 and 25 are message types that only ever ride as a
 `CommandResponse.raw_data`, never as a `CommandRequest`.
@@ -453,7 +462,10 @@ One frame, payload id `connect_control_channel`, empty metadata, JSON message:
   of the `runner@<namespace>` principal). It is what the runner ASKS for: the
   controller checks it against what the connection proved and refuses a frame
   naming a namespace the credential does not entitle, naming both namespaces in
-  the refusal. `_system` is refused on every transport.
+  the refusal. `_system` is refused on every transport. A refused connect is
+  answered with one `ConnectRefused { error }` frame (tag 39) before the
+  controller closes the stream, so the runner reports the code (for example
+  `runner.namespace_not_proven`) instead of retrying in silence.
 - `factory_ids` / `factories` — every factory the runner currently declares
   (`factories` adds an optional `description`, the class's `sdk_lang` and its
   `kind`, `"unbounded"` or `"bounded"`), read at write time so a reconnect
@@ -678,7 +690,7 @@ under its entry channel and opens no pass.
 ### RemOperator
 
 `RemOperator { operator_id: string }` removes the instance from the registry
-(hard teardown). Error: `UnboundedOperator instance not found`.
+(hard teardown). Error: `runtime.operator_not_found`.
 
 ### BoundedStop
 
@@ -763,12 +775,12 @@ pending changes: the value is at or ahead of the durable state, and
 `flz.change_seq` tells a reader which version it got. A read triggers no
 compaction, snapshot or WAL truncation.
 
-| Refusal token (leads the error string) | Meaning |
+| Refusal code (the `Error.code`) | Meaning |
 |---|---|
-| `cell_key_without_tasklet` | a Cell key is unique only within its Tasklet |
-| `tasklet_not_found` | the Operator declares no Tasklet by that name |
-| `cell_not_found` | that Tasklet holds no Cell by that key |
-| `cell_evicted` | the Cell was idle-evicted; eviction is destructive, so there is no durable value either |
+| `state.cell_key_without_tasklet` | a Cell key is unique only within its Tasklet |
+| `state.tasklet_not_found` | the Operator declares no Tasklet by that name |
+| `state.cell_not_found` | that Tasklet holds no Cell by that key |
+| `state.cell_evicted` | the Cell was idle-evicted; eviction is destructive, so there is no durable value either |
 
 The operations surface is `flz state get`
 ([`../internals/state_persistence.md`](../internals/state_persistence.md)).
@@ -777,9 +789,9 @@ The operations surface is `flz state get`
 
 `CellApplyState { operator_id, factory_id, state_binary: bytes }` is
 reserved: the controller never sends it. A `flz_core` runner answers an
-unknown instance with `UnboundedOperator instance with id {id} not found` and a
-known one with `status: "error"`, `errors: ["apply_state_not_supported"]` —
-the canonical token an SDK without apply support MUST return.
+unknown instance with `runtime.operator_not_found` and a known one with
+`status: "error"` and the code `state.apply_not_supported`, the code an SDK
+without apply support MUST return.
 
 ### MigrationSerialization
 
@@ -801,11 +813,11 @@ never reconnect.
 
 `OperatorMessage { operator_id, payload: bytes }` is answered with
 `status: "success"` and `raw_data` = `OperatorMessageResponse { payload:
-bytes, error: string }`. An empty `error` means success and the controller
-reads `payload`; a non-empty `error` means the instance reported a failure and
-the controller SHALL discard `payload`. A `flz_core` runner always answers
-`error: "operator does not support handle_message"` with an empty payload —
-the kernel has no per-instance message hook. Sent by
+bytes, error: Error }`. An absent `error` means success and the controller
+reads `payload`; a present one means the instance reported a failure and the
+controller SHALL discard `payload`. A `flz_core` runner always answers the
+code `runtime.operator_message_unsupported` with an empty payload — the kernel
+has no per-instance message hook. Sent by
 `Flezha.Plugin.Provider.MessageForward` via
 `ControlUnit.send_operator_message/3`
 ([`../plugins/message_handlers.md`](../plugins/message_handlers.md)); the
@@ -896,11 +908,13 @@ delivery answers `refused`. See
 ### SpawnBoundedResponse
 
 `SpawnBoundedResponse { outcome, error, instance_id }` returns controller →
-runner under the request's `reference_id`; `outcome` ∈ `spawned`, `delivered`,
-`already_running`, `factory_unknown`, `factory_not_bounded` (a factory its
-runners announced as an unbounded operator, decided before anything is placed), `refused`;
-`error` details a `refused`,
-and `instance_id` is the id the request resolved to: the requester's own, or
+runner under the request's `reference_id`; `outcome` is a success word,
+`spawned` or `delivered`, and is empty when `error` carries the refusal under
+the controller's own code: `operator.already_running`,
+`operator.factory_unknown`, `operator.factory_not_bounded` (a factory its
+runners announced as an unbounded operator, decided before anything is placed),
+an `authz.*` or `quota.exceeded` code, or any other. `instance_id` is the id
+the request resolved to: the requester's own, or
 the generated one (empty when a request that carried none started nothing). It resolves the requester's result handle and never faults the
 requesting tasklet (an unobserved handle logs the failure once); against an
 older controller the request is ignored and the requester times out.
@@ -926,7 +940,8 @@ call. Unbound, that is `runner`, and every administration verb is refused.
 `AdminResponse { result, error }` returns controller → runner under the
 request's `reference_id`. `result` is the published function's own answer
 rendered as JSON; `error` carries a refusal (policy, quota, a name that
-resolves to nothing, or the effect's own failure) and is empty otherwise.
+resolves to nothing, or the effect's own failure) under the code a `flz` user
+sees for the same refusal, and is absent otherwise.
 Against an older controller the request is ignored and the requester times out.
 
 The persistence commands (`RestoreInitState`, `CompactCell`,
@@ -1072,12 +1087,16 @@ Total frame: 32 + 4 + 24 = 60 bytes
 
 ## 10. Error Handling
 
-**Command errors.** A failing handler replies `status: "error"` with
-human-readable strings in `errors` (e.g.
-`"Factory with id unknown_factory does not exist"`) and normally an empty
-`raw_data`. Where §6 or §11 names a canonical token
-(`apply_state_not_supported`, `cell_key_without_tasklet`, …) the token
-leads the string so the controller maps it without parsing prose.
+**Command errors.** A failing handler replies `status: "error"` with one
+`Error` per failure in `errors` and normally an empty `raw_data`. Every failure
+on the wire is that one message: a command reply, `TaskCommitResponse`,
+`IterCommitResponse`, `OperatorMessageResponse`, `SpawnBoundedResponse`,
+`AdminResponse` and `ConnectRefused`. The receiver branches on `code` (for
+example `runtime.class_not_registered`, `state.cell_key_without_tasklet`,
+`state.apply_not_supported`), never on `message`, which may be reworded.
+`class` tells a caller what it can do about it, and `details_json` carries the
+facts the message names. Every code, its class and its message are listed in
+[`../errors.md`](../errors.md).
 
 **Connection close detection.** On the controller a closed control stream
 arrives as `{:flz_closed, ...}` from the NIF driver and the `ControlChannel`
@@ -1535,7 +1554,7 @@ message TimerTrigger {
     uint64 scheduled_at = 3;   // its scheduled timestamp
 }
 
-message TaskCommitResponse { string operator_id = 1; uint32 task_idx = 2; string error = 3; }
+message TaskCommitResponse { string operator_id = 1; uint32 task_idx = 2; Error error = 3; }
 ```
 
 Emitted at each tasklet barrier of a **durable structured** bounded operator
@@ -1627,7 +1646,7 @@ message IterCommit {
     bytes result = 6;                       // the resolved result the instance ends with
     string entry_channel = 7;               // the entry channel whose chain the iteration ran
 }
-message IterCommitResponse { string operator_id = 1; uint32 iter = 2; string error = 3; }
+message IterCommitResponse { string operator_id = 1; uint32 iter = 2; Error error = 3; }
 ```
 
 Emitted at each **iteration** boundary of a looping durable structured
@@ -1763,8 +1782,8 @@ metadata:
 On a keyed channel a plain `emit` / `emit_with_meta` carries the emitting
 Cell's own key — equal to the key its input routed by — and `emit_keyed` is
 for the output whose natural key differs. A single-Cell Tasklet has no such
-key and its plain emit fails with `KeyRequiredOnKeyedChannel`; on a non-keyed
-channel `emit_keyed` fails with `KeyNotAllowedOnNonKeyedChannel` — the channel
+key and its plain emit fails with `runtime.key_required_on_keyed_channel`; on a non-keyed
+channel `emit_keyed` fails with `runtime.key_not_allowed_on_non_keyed_channel` — the channel
 declaration is the single source of truth for whether output identity exists.
 The controller passes the stamps through the `:on_output` plugin chain
 unchanged.

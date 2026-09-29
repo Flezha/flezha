@@ -234,7 +234,7 @@ defmodule Flezha.Plugin.Installer do
   defp do_upgrade(plugin_id, new_path, opts) do
     case Store.get(plugin_id) do
       nil ->
-        {:error, :not_found}
+        {:error, {:plugin_not_installed, plugin_id}}
 
       old_row ->
         old_modules = Loader.modules_of(plugin_id)
@@ -405,10 +405,10 @@ defmodule Flezha.Plugin.Installer do
   defp do_uninstall(plugin_id, _opts) do
     case Store.get(plugin_id) do
       nil ->
-        {:error, :not_found}
+        {:error, {:plugin_not_installed, plugin_id}}
 
       %{status: :enabled} ->
-        {:error, :plugin_enabled}
+        {:error, {:plugin_enabled, plugin_id}}
 
       row ->
         dependents = DependencyResolver.find_dependents(plugin_id, Store.all())
@@ -429,13 +429,13 @@ defmodule Flezha.Plugin.Installer do
   defp do_enable(plugin_id, opts) do
     case Store.get(plugin_id) do
       nil ->
-        {:error, :not_found}
+        {:error, {:plugin_not_installed, plugin_id}}
 
       %{status: :enabled} ->
-        {:error, :already_enabled}
+        {:error, {:already_enabled, plugin_id}}
 
       %{status: :load_failed} ->
-        {:error, :load_failed}
+        {:error, {:load_failed, plugin_id}}
 
       row ->
         case enable_provisions(plugin_id, row, opts) do
@@ -452,7 +452,7 @@ defmodule Flezha.Plugin.Installer do
   defp do_disable(plugin_id, _opts) do
     case Store.get(plugin_id) do
       nil ->
-        {:error, :not_found}
+        {:error, {:plugin_not_installed, plugin_id}}
 
       %{status: :disabled} ->
         :ok

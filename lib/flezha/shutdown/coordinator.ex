@@ -96,11 +96,12 @@ defmodule Flezha.Shutdown.Coordinator do
 
   This is how a signal and `flz controller stop` end a controller. `report`
   runs before `:init.stop/0`, so a caller can print the outcome while the node
-  still answers. A coordinator that exits is reported as `{:exit, reason}` and
-  the node is stopped anyway. The stop re-enters `Flezha.Application.prep_stop/1`,
-  whose drain lands on the `phase: :done` short-circuit.
+  still answers, and its answer is returned. A coordinator that exits is
+  reported as `{:exit, reason}` and the node is stopped anyway. The stop
+  re-enters `Flezha.Application.prep_stop/1`, whose drain lands on the
+  `phase: :done` short-circuit.
   """
-  @spec shutdown_and_stop(atom(), keyword(), (term() -> any())) :: :ok
+  @spec shutdown_and_stop(atom(), keyword(), (term() -> answer)) :: answer when answer: term()
   def shutdown_and_stop(reason, opts \\ [], report \\ fn _outcome -> :ok end) do
     outcome =
       try do
@@ -109,8 +110,9 @@ defmodule Flezha.Shutdown.Coordinator do
         :exit, exit_reason -> {:exit, exit_reason}
       end
 
-    report.(outcome)
+    answer = report.(outcome)
     :init.stop()
+    answer
   end
 
   @doc """

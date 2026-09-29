@@ -75,5 +75,6 @@ pub mod pb {
     include!("generated/runner_commands.rs");
 }
 
-pub use error::Error;
+pub use error::{Code, Error};
+pub use flz_transport::errors::{ErrorModel, FlezhaError};
 pub use schema::SCHEMA_VERSION;

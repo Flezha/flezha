@@ -21,21 +21,21 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
 
   alias Flezha.Service.Cli
   alias Flezha.Service.Cli.Controller
+  alias Flezha.Service.CliManager
   alias FlezhaTest.Helper.NodeTestHelper
 
-  @call %{opts: []}
-
-  # One real failure per family that renders one. Each is reached with the
-  # controller as this suite boots it: no runner, no operator, no plugin.
+  # One real failure per family that renders one, through the wire seam that
+  # renders it. Each is reached with the controller as this suite boots it: no
+  # runner, no operator, no plugin.
   defp failures do
     [
-      {"operator", fn -> Cli.Operator.operator_stop("default", "no-such-op-xyz", @call) end},
-      {"operator", fn -> Cli.Operator.cell_state("default", "no-such-op-xyz", @call) end},
-      {"plugin", fn -> Cli.Plugin.disable_plugin("no-such-plugin-xyz", @call) end},
-      {"state", fn -> Cli.State.state_retention("some_class", "not-a-number", @call) end},
-      {"observe", fn -> Cli.Observe.observability_render_enable("no-such-source-xyz", @call) end},
-      {"schedule", fn -> Cli.Schedule.schedule_add("s", %{opts: [cron: "* * * * *"]}) end},
-      {"schedule", fn -> Cli.Schedule.schedule_add("s", %{opts: [init_values: "not json"]}) end}
+      {"operator", fn -> CliManager.operator_stop("default", "no-such-op-xyz") end},
+      {"operator", fn -> CliManager.cell_state("default", "no-such-op-xyz") end},
+      {"plugin", fn -> CliManager.disable_plugin("no-such-plugin-xyz") end},
+      {"state", fn -> CliManager.state_retention("some_class", "not-a-number") end},
+      {"observe", fn -> CliManager.observability_render_enable("no-such-source-xyz") end},
+      {"schedule", fn -> CliManager.schedule_add("s", cron: "* * * * *") end},
+      {"schedule", fn -> CliManager.schedule_add("s", init_values: "not json") end}
     ]
   end
 
@@ -47,8 +47,8 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
             {outcome, out, err} = drive(fun)
 
             cond do
-              outcome != {:exit, {:shutdown, 1}} ->
-                ["#{family}: exited #{inspect(outcome)}, want {:exit, {:shutdown, 1}}" | acc]
+              not match?({:exit, {:shutdown, code}} when code in 1..7, outcome) ->
+                ["#{family}: exited #{inspect(outcome)}, want a class's exit code" | acc]
 
               err == "" ->
                 ["#{family}: printed nothing on stderr" | acc]
@@ -85,6 +85,49 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
     end
   end
 
+  describe "the class of a failure" do
+    # The two classes only `flz` decides, a malformed command line and a
+    # controller it cannot reach, are proved through the binary in
+    # `cli/tests/dispatch.rs` and `cli/tests/exit_codes.rs`; a refusal for want
+    # of a role in `test/flezha/authz/enforcement_test.exs`, a conflict in the
+    # authz render tests, and a controller that is not ready in
+    # `cli_manager_boot_test.exs`.
+    test "each refusal exits with its class's code" do
+      Process.put(:flezha_uncatalogued_expected, true)
+      injected = Flezha.Error.from_reason(:reason_no_catalogue_names, :"namespace.create")
+
+      cases = [
+        {2, fn -> CliManager.state_retention("some_class", "not-a-number") end},
+        {5, fn -> CliManager.disable_plugin("no-such-plugin-xyz") end},
+        {1, fn -> Cli.Context.render!(injected, []) end}
+      ]
+
+      for {code, fun} <- cases do
+        {outcome, _out, err} = drive(fun)
+        assert outcome == {:exit, {:shutdown, code}}, "#{err} exited #{inspect(outcome)}"
+      end
+    end
+
+    test "under --json the error is one object on stderr, and stdout carries none of it" do
+      {outcome, out, err} =
+        drive(fn -> CliManager.disable_plugin("ghost", output: "json") end)
+
+      assert outcome == {:exit, {:shutdown, 5}}
+      assert out == ""
+      assert [line] = String.split(err, "\n", trim: true)
+
+      assert Jason.decode!(line) == %{
+               "error" => %{
+                 "code" => "plugin.not_found",
+                 "class" => "not_found",
+                 "message" => "plugin 'ghost' is not enabled",
+                 "details" => %{"plugin" => "ghost"},
+                 "hint" => "flz plugin list"
+               }
+             }
+    end
+  end
+
   describe "a failure rendered on the controller" do
     @describetag :capture_log
 
@@ -96,21 +139,20 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
       {_pid, peer} = NodeTestHelper.start_bare_peer(:caller_stderr)
       {:ok, _apps} = :erpc.call(peer, :application, :ensure_all_started, [:elixir])
 
-      {outcome, out, err} =
-        drive(fn ->
-          :erpc.call(peer, Kernel.CLI, :rpc_eval, [~s|Flezha.Service.Cli.Context.fail!("boom")|])
-        end)
+      expression =
+        ~s|Flezha.Service.Cli.Context.render!(Flezha.Error.new("namespace.not_found", namespace: "ghost"), [])|
 
-      assert err =~ "error: boom",
+      {outcome, out, err} = drive(fn -> :erpc.call(peer, Kernel.CLI, :rpc_eval, [expression]) end)
+
+      assert err =~ "error: namespace 'ghost' does not exist (namespace.not_found)",
              "the failure stayed on #{peer}; the caller's stderr held #{inspect(err)}"
 
       assert out == ""
 
       # `Kernel.CLI.exec_fun/2` halts `{:shutdown, int}` with that int and
-      # prints nothing; every other reason it prints `** (exit) …` for before
-      # halting 1. Both halt 1, so no `flz` exit code moves and the sentence
-      # above is not buried.
-      assert {:ok, {:exit, {:shutdown, 1}, _stack}} = outcome
+      # prints nothing, so the class's code reaches `flz` and the sentence above
+      # is not buried under an exit banner.
+      assert {:ok, {:exit, {:shutdown, 5}, _stack}} = outcome
     end
   end
 
@@ -162,7 +204,7 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
       assert offenders == [],
              "a CLI module writing to `:stderr` writes to the node it runs on, " <>
                "which under `flzvm rpc` is the controller. Use " <>
-               "`Context.fail!/2`, `Context.halt!/1` or `Context.notifier/0`:\n" <>
+               "`Context.fail!/1` or `Context.notifier/0`:\n" <>
                Enum.join(offenders, "\n")
     end
   end

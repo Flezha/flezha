@@ -19,15 +19,22 @@ defmodule Flezha.AuthZ.NamespaceTest do
     end
 
     test "rejects malformed names" do
-      assert {:error, :invalid_namespace_name} = Namespace.validate_name("Team-Orders")
-      assert {:error, :invalid_namespace_name} = Namespace.validate_name("-leading-hyphen")
-      assert {:error, :invalid_namespace_name} = Namespace.validate_name("1starts-with-digit")
-      assert {:error, :invalid_namespace_name} = Namespace.validate_name("_team-orders")
+      assert {:error, {:invalid_namespace_name, "Team-Orders"}} =
+               Namespace.validate_name("Team-Orders")
 
-      assert {:error, :invalid_namespace_name} =
+      assert {:error, {:invalid_namespace_name, "-leading-hyphen"}} =
+               Namespace.validate_name("-leading-hyphen")
+
+      assert {:error, {:invalid_namespace_name, "1starts-with-digit"}} =
+               Namespace.validate_name("1starts-with-digit")
+
+      assert {:error, {:invalid_namespace_name, "_team-orders"}} =
+               Namespace.validate_name("_team-orders")
+
+      assert {:error, {:invalid_namespace_name, _}} =
                Namespace.validate_name(String.duplicate("a", 64))
 
-      assert {:error, :invalid_namespace_name} = Namespace.validate_name(:atom)
+      assert {:error, {:invalid_namespace_name, :atom}} = Namespace.validate_name(:atom)
     end
   end
 

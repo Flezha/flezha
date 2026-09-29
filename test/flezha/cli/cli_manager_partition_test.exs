@@ -105,8 +105,8 @@ defmodule Flezha.Service.CliManagerPartitionTest do
       stub(HubManager, :operator_rows, fn _ns -> rows end)
       stub(OperatorManager, :get_operator_ids, fn _ns -> {:ok, Enum.map(rows, & &1.id)} end)
 
-      stub(OperatorManager, :get_overwatch_state, fn _ns, _id ->
-        {:error, :not_running}
+      stub(OperatorManager, :get_overwatch_state, fn ns, id ->
+        {:error, {:operator_not_found, ns, id}}
       end)
 
       capture_io(fn -> CliManager.operator_info("default") end)
@@ -165,13 +165,15 @@ defmodule Flezha.Service.CliManagerPartitionTest do
     test "info reads recovering for the group's members and each operator", %{rows: rows} do
       ConvergenceFixtures.stub_registry_rows("trading", rows, 2_000)
 
-      text = capture_io(fn -> CliManager.operator_info("trading", "text") end)
+      text = capture_io(fn -> CliManager.operator_info("trading") end)
       assert text =~ ~r/p0  prices#p0 .*runner-0  recovering\n/
       assert length(Regex.scan(~r/Health: recovering\n/, text)) == 3
       assert text =~ "Health: healthy"
       refute text =~ "failed"
 
-      json = Jason.decode!(capture_io(fn -> CliManager.operator_info("trading", "json") end))
+      json =
+        Jason.decode!(capture_io(fn -> CliManager.operator_info("trading", output: "json") end))
+
       [%{"members" => members}] = json["groups"]
       assert Enum.map(members, & &1["health"]) == List.duplicate("recovering", 3)
 
@@ -187,10 +189,12 @@ defmodule Flezha.Service.CliManagerPartitionTest do
     test "cluster status counts recovering inside the grace", %{rows: rows} do
       ConvergenceFixtures.stub_registry_rows("trading", rows, 2_000)
 
-      json = Jason.decode!(capture_io(fn -> CliManager.cluster_status("trading", "json") end))
+      json =
+        Jason.decode!(capture_io(fn -> CliManager.cluster_status("trading", output: "json") end))
+
       assert json["operator_health"] == %{"recovering" => 3, "healthy" => 1}
 
-      text = capture_io(fn -> CliManager.cluster_status("trading", "text") end)
+      text = capture_io(fn -> CliManager.cluster_status("trading") end)
       assert text =~ "recovering=3"
       refute text =~ "failed"
     end
@@ -198,10 +202,12 @@ defmodule Flezha.Service.CliManagerPartitionTest do
     test "cluster status and info read failed past the grace", %{rows: rows} do
       ConvergenceFixtures.stub_registry_rows("trading", rows, 500_000)
 
-      json = Jason.decode!(capture_io(fn -> CliManager.cluster_status("trading", "json") end))
+      json =
+        Jason.decode!(capture_io(fn -> CliManager.cluster_status("trading", output: "json") end))
+
       assert json["operator_health"] == %{"failed" => 3, "healthy" => 1}
 
-      text = capture_io(fn -> CliManager.operator_info("trading", "text") end)
+      text = capture_io(fn -> CliManager.operator_info("trading") end)
       assert length(Regex.scan(~r/Health: failed\n/, text)) == 3
       refute text =~ "recovering"
     end
@@ -209,7 +215,8 @@ defmodule Flezha.Service.CliManagerPartitionTest do
 
   describe "operator start rendering" do
     defp start(format, opts_json \\ "{}", opts),
-      do: CliManager.operator_start("default", "candles", "{}", format, opts_json, opts)
+      do:
+        CliManager.operator_start("default", "candles", "{}", opts_json, [output: format] ++ opts)
 
     defp started_as(test_pid) do
       stub(OperatorManager, :start_operator, fn _ns, op, opts ->
@@ -239,7 +246,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
 
       err = capture_io(:stderr, fn -> catch_exit(start("text", id: "demo", channel: "order")) end)
 
-      assert err =~ "error: --channel names the entry channel of --text; give --text too"
+      assert err =~ "and no --text was given (operator.channel_without_text)"
       refute_received {:started, _, _}
     end
 
@@ -285,16 +292,16 @@ defmodule Flezha.Service.CliManagerPartitionTest do
 
     test "a stale-row refusal still exits as an error" do
       stub(OperatorManager, :start_operator, fn _ns, _op, _opts ->
-        {:error, %{operator_id: "demo", node: node(), reason: "operator id already in use"}}
+        {:error, {:id_in_use, "demo"}}
       end)
 
       out =
         capture_io(:stderr, fn ->
-          assert catch_exit(start("text", id: "demo")) == {:shutdown, 1}
+          assert catch_exit(start("text", id: "demo")) == {:shutdown, 6}
         end)
 
-      assert out =~ "starting operator"
-      assert out =~ "operator id already in use"
+      assert out =~ "demo"
+      assert out =~ "(operator.already_running)"
     end
 
     test "a converge reports started and already-running members distinctly" do
@@ -443,7 +450,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
       end)
 
       stub(OperatorManager, :request_stop, fn _ns, id ->
-        if id == "ohlc#p1", do: {:error, :wedged}, else: :ok
+        if id == "ohlc#p1", do: {:error, {:operator_not_running, id}}, else: :ok
       end)
 
       out =
@@ -455,8 +462,8 @@ defmodule Flezha.Service.CliManagerPartitionTest do
           end
         end)
 
-      assert out =~ "ohlc#p1"
-      assert out =~ "wedged"
+      assert out =~ "ohlc#p1 (operator 'ohlc#p1' is not running"
+      assert out =~ "(operator.group_stop_partial)"
     end
   end
 

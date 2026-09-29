@@ -60,19 +60,18 @@ defmodule Flezha.Plugin.Provider.File.Storage.Local do
         {:ok, opts}
 
       {:ok, %File.Stat{}} ->
-        {:error,
-         "file plugin path #{dir} is not a directory, and commit: rename writes parts into one"}
+        {:error, {:file_path_not_directory, dir}}
 
       {:error, :enoent} ->
         with :ok <- File.mkdir(dir), :ok <- File.chmod(dir, 0o700) do
           {:ok, opts}
         else
           {:error, reason} ->
-            {:error, "file plugin path #{dir}: the directory cannot be made: #{inspect(reason)}"}
+            {:error, {:file_directory_unmakeable, dir, reason}}
         end
 
       {:error, reason} ->
-        {:error, "file plugin path #{dir} cannot be read: #{inspect(reason)}"}
+        {:error, {:file_path_unreadable, dir, reason}}
     end
   end
 
@@ -100,10 +99,10 @@ defmodule Flezha.Plugin.Provider.File.Storage.Local do
         refuse_missing_parent(target, path, root, real_root)
 
       {:error, :too_many_links} ->
-        {:error, "file plugin path #{path} crosses more than #{@max_link_hops} symbolic links"}
+        {:error, {:file_path_too_many_links, path, @max_link_hops}}
 
       {:error, reason} ->
-        {:error, "file plugin path #{path} cannot be resolved: #{inspect(reason)}"}
+        {:error, {:file_path_unreadable, path, reason}}
     end
   end
 
@@ -142,18 +141,15 @@ defmodule Flezha.Plugin.Provider.File.Storage.Local do
   defp inside?(_path, "/"), do: true
   defp inside?(path, root), do: String.starts_with?(path, root <> "/")
 
-  defp refuse_root(root),
-    do: {:error, "the file plugin root folder #{root} does not exist or is not a directory"}
+  defp refuse_root(root), do: {:error, {:file_root_missing, root}}
 
-  defp refuse_outside(path, root),
-    do: {:error, "file plugin path #{path} resolves outside the root folder #{root}"}
+  defp refuse_outside(path, root), do: {:error, {:file_path_outside_root, path, root}}
 
   # A directory outside the root is not named: whether it exists is nothing an
   # enable is entitled to learn.
   defp refuse_missing_parent(target, path, root, real_root) do
     if inside?(target, root) or inside?(target, real_root),
-      do:
-        {:error, "file plugin path #{path}: the directory #{Path.dirname(target)} does not exist"},
+      do: {:error, {:file_directory_missing, path, Path.dirname(target)}},
       else: refuse_outside(path, root)
   end
 

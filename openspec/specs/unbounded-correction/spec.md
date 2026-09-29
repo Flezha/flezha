@@ -24,12 +24,12 @@ never be committed silently.
 
 In the Elixir SDK, whose runner core inherits nothing from `flz_core`, the three
 prerequisites are re-expressed as build-time refusals carrying the reference's
-names: `CorrectionWithoutTier`, `CorrectionWithoutEventTime` and
-`CorrectionWindowZero`. The keyed-channel prerequisite needs no refusal of its
+names: `topology.correction_without_tier`, `topology.correction_without_event_time` and
+`topology.correction_window_zero`. The keyed-channel prerequisite needs no refusal of its
 own there, because a window requires the tier and the tier already refuses an
-unkeyed plugin channel with `UnkeyedChannelUnderEffectivelyOnce`; a shedding
+unkeyed plugin channel with `topology.unkeyed_channel_under_effectively_once`; a shedding
 overflow policy is refused the same way, by the tier's own
-`DroppingPolicyUnderEffectivelyOnce`. The declaration reaches the controller as
+`topology.dropping_policy_under_effectively_once`. The declaration reaches the controller as
 `correction_window_ms` and `beyond_window_policy` on `AddOperatorResponse.metadata`,
 so the derivation of the hold window and the snapshot age floor is the controller's
 existing one and is not re-expressed.
@@ -68,7 +68,7 @@ existing one and is not re-expressed.
 #### Scenario: The Elixir SDK refuses the declaration at build time
 
 - **WHEN** an Elixir class declares `correction_window/2` without `effectively_once/1`, or over Tasklets none of which declares an `:event_time` clock, or with a window of zero
-- **THEN** registration answers `{:error, {:invalid_topology, issues}}` naming `CorrectionWithoutTier`, `CorrectionWithoutEventTime` (with the Tasklet and the clock it declares) or `CorrectionWindowZero`, and no Cell is started
+- **THEN** registration is refused with the SDK's one error type whose `details.issues` name `topology.correction_without_tier`, `topology.correction_without_event_time` (with the Tasklet and the clock it declares) or `topology.correction_window_zero`, and no Cell is started
 
 ### Requirement: Late inputs inside the window trigger automatic correction
 
@@ -199,7 +199,7 @@ flight.
 input window from the given point through the current operator code and
 republish outputs under a bumped epoch, using the same correction transaction
 with an empty splice. Targets older than retention SHALL be refused with an
-`outside_retention` error naming the earliest available point.
+error coded `operator.outside_retention` (class `invalid`, exit 2), its details naming the earliest available point.
 
 A Cell of a bounded class SHALL be refused before anything is rewound, with an
 error stating that a bounded operator's baseline is an iteration boundary across every Cell of the
@@ -220,7 +220,7 @@ instance's input log SHALL be untouched by the refusal.
 
 - **WHEN** the user requests a replay from a timestamp older than the
   retained window
-- **THEN** the verb fails with `outside_retention` and reports the earliest
+- **THEN** the verb fails with the code `operator.outside_retention` and reports the earliest
   available target
 
 #### Scenario: Replay of a bounded operator Cell is refused naming the instance-wide baseline

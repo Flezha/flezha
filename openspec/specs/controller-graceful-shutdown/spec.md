@@ -181,12 +181,13 @@ The CLI SHALL accept the following flags:
 - `--no-wait`: issues the shutdown RPC and exits immediately without waiting for completion.
 - `--force`: skips quiesce + drain entirely; equivalent to running `:init.stop()` with `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED=false`. Used as a user escape hatch.
 
-Exit codes:
+Exit codes follow the error catalogue's classes:
 
 - `0` — clean shutdown (all Operators migrated to peers, or no peers and local termination).
-- `1` — partial drain (timeout elapsed; some Operators still local at finalise).
-- `2` — already shutting down (idempotent re-issue; the in-flight shutdown completed cleanly OR with a partial outcome — exit code reflects that outcome).
-- `3` — controller not reachable on the CLI socket.
+- `7` (unavailable) — partial drain, `shutdown.partial_drain` (timeout elapsed; some Operators still local at finalise; the details name them).
+- A re-issue while a shutdown is already in flight is idempotent: it follows the in-flight shutdown and exits with that shutdown's outcome, `0` or `7`.
+- `3` (unreachable) — controller not reachable on the CLI socket, `controller.unreachable`.
+- `4` (denied) — the stop was refused for want of a token or a role, with the `authz.*` code; it SHALL NOT be reported as unreachable.
 
 The RPC SHALL work whether the controller is running as a release, under `mix run --no-halt`, or under `iex -S mix` — it depends only on the CLI socket existing.
 
@@ -212,7 +213,7 @@ The RPC SHALL work whether the controller is running as a release, under `mix ru
 
 - **GIVEN** the controller socket at `${FLEZHA_SOCKET_FILES_PATH}/runner_control_channel.sock` does not exist or is not connectable
 - **WHEN** a user runs `flz controller stop`
-- **THEN** the CLI prints `error: controller not reachable on <socket_path>` to stderr and exits with status `3`
+- **THEN** the CLI prints an `error:` line naming `<socket_path>` and ending `(controller.unreachable)` to stderr and exits with status `3`
 
 ### Requirement: Configuration knobs SHALL surface graceful-shutdown behaviour to users
 

@@ -185,8 +185,11 @@ defmodule Flezha.Schedule.Job do
     }
 
     case Cron.parse(entry.cron) do
-      {:ok, cron} -> {:ok, %{state | cron: cron}, {:continue, :start}}
-      {:error, msg} -> {:ok, dormant(state, "unparsable cron: #{msg}")}
+      {:ok, cron} ->
+        {:ok, %{state | cron: cron}, {:continue, :start}}
+
+      {:error, reason} ->
+        {:ok, dormant(state, Flezha.Error.from_reason(reason, :"schedule.add").message)}
     end
   end
 

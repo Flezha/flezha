@@ -14,7 +14,10 @@ OPTIONS:
     --force           Skip drain — finalise (flush WAL + close transports) only
 
 EXIT CODES:
-    0   Clean shutdown (or `--force` finalised cleanly)
-    1   Partial drain (timeout elapsed; some Operators still local)
-    2   Already shutting down (the in-flight outcome is reported)
-    3   Controller not reachable on the CLI socket
+    0   Clean shutdown (or `--force` finalised cleanly); a stop issued while one
+        is in flight follows it and exits with its outcome
+    3   Controller not reachable (controller.unreachable)
+    4   Refused for want of a token or a role (authz.*)
+    7   Partial drain: the timeout elapsed with Operators still local
+        (shutdown.partial_drain)
+    Every code is listed in docs/errors.md.

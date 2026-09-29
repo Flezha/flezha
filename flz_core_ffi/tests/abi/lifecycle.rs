@@ -17,7 +17,7 @@ use flz_transport::transport::FlezhaStream;
 use prost::Message;
 
 use crate::harness::{
-    abi_complete, abi_complete_mapped, abi_poll, last_error, ok_effect, through_veneers,
+    abi_complete, abi_complete_mapped, abi_poll, last_document, ok_effect, through_veneers,
     work_payloads, Controller, Demanded,
 };
 
@@ -76,10 +76,10 @@ fn a_local_mode_call_on_a_context_with_no_local_run_is_refused(ctx: *mut FlzCont
     let channel = CString::new("lines").expect("a channel name");
     let status = unsafe { flz_core_local_feed(ctx, channel.as_ptr(), b"x".as_ptr(), 1) };
     assert_eq!(status, FLZ_ERR, "a feed with no local run must refuse");
-    assert!(
-        last_error(ctx).contains("no local run"),
-        "the refusal says what is missing: {}",
-        last_error(ctx)
+    assert_eq!(
+        last_document(ctx).code,
+        "runtime.no_local_run",
+        "the refusal says what is missing"
     );
     assert_eq!(
         unsafe { flz_core_local_run_until_idle(ctx, 1) },
@@ -101,10 +101,16 @@ fn a_mismatched_schema_is_refused() {
     let err = unsafe { CStr::from_ptr(flz_core_init_error()) }
         .to_string_lossy()
         .into_owned();
-    assert!(
-        err.contains(&format!("{}", flz_core::SCHEMA_VERSION))
-            && err.contains(&format!("{}", flz_core::SCHEMA_VERSION + 1)),
-        "refusal names both versions: {err}"
+    let err = flz_transport::errors::FlezhaError::from_document(&err)
+        .unwrap_or_else(|| panic!("a creation failure is a JSON error document: {err}"));
+    assert_eq!(err.code, "runtime.schema_mismatch");
+    assert_eq!(
+        (err.details["shim"].as_u64(), err.details["core"].as_u64()),
+        (
+            Some(u64::from(flz_core::SCHEMA_VERSION + 1)),
+            Some(u64::from(flz_core::SCHEMA_VERSION))
+        ),
+        "the refusal names both versions"
     );
 }
 
@@ -195,10 +201,12 @@ fn abandon_re_hands_the_batch(ctx: *mut FlzContext, act: schema::Activation) -> 
         FLZ_ERR,
         "an already-answered token is refused, not silently accepted"
     );
-    assert!(
-        last_error(ctx).contains(&format!("{}", act.token)),
-        "the refusal names the token: {}",
-        last_error(ctx)
+    let refusal = last_document(ctx);
+    assert_eq!(refusal.code, "runtime.unknown_activation_token");
+    assert_eq!(
+        refusal.details["token"].as_u64(),
+        Some(act.token),
+        "the refusal names the token"
     );
 
     let (status, act) = abi_poll(ctx, 2_000);

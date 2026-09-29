@@ -158,7 +158,7 @@ implementation therefore cannot disagree.
 - **The cell mode comes from the wiring.** A tasklet fed through `keyBy` gets a
   cell per key, one declaring `cellKeys` a cell per listed key, and any other
   one cell. `keyBy` into a tasklet declaring `cellKeys` is refused as
-  `KeyByOnUnkeyableTarget`.
+  `topology.key_by_on_unkeyable_target`.
 - **`idleTtlSeconds`** evicts a dynamic cell idle that long, in whole seconds;
   unset never evicts. `maxCells` caps how many are live.
 - **The clock follows from what the class writes.** Overriding
@@ -166,7 +166,7 @@ implementation therefore cannot disagree.
   `#[Task(logicalClock: true)]` makes it the cell's change sequence, and
   otherwise it is the wall clock; `$ctx->now()` serves whichever it is. Doing both is refused naming
   `eventTime` and `logicalClock`, and a logical clock on a tasklet with no
-  `initState` is refused as `UnservableClock`.
+  `initState` is refused as `topology.unservable_clock`.
 
 Everything a type system would have caught is refused at registration, naming
 the class, the handler and the defect: the same set, in the same vocabulary, as
@@ -184,21 +184,21 @@ durability. Retry is the edge's for both kinds: `retryMax` and
 A setting of one kind written on the other is refused by name, never dropped.
 The builder's `effectivelyOnce()`, checkpoint calls and `correctionWindow()`
 reach the core from a bounded operator too, which refuses them as
-`EffectivelyOnceOnBounded`, `CheckpointOnBounded` and
-`CorrectionWindowOnBounded` when the runner starts. `#[Bounded operator]` on a class
+`topology.effectively_once_on_bounded`, `topology.checkpoint_on_bounded` and
+`topology.correction_window_on_bounded` when the runner starts. `#[Bounded operator]` on a class
 extending `UnboundedOperator` is refused at `registerFactory`, naming the
-attribute and the class, and as `SyncDurabilityOnUnbounded` when it sets
+attribute and the class, and as `topology.sync_durability_on_unbounded` when it sets
 `syncDurability: true`.
 
 `#[Operator]` carries the two settings of both kinds: `persistent` (default
 `true`) and `sleepWhenIdle`, which defaults to `persistent` on a bounded operator and
 to `false` on an unbounded operator. `sleepWhenIdle: true` with `persistent: false` is
-refused as `SleepWithoutPersistence` when the runner starts.
+refused as `topology.sleep_without_persistence` when the runner starts.
 
 A bounded tasklet registers timers as an unbounded tasklet does, and a firing
 runs as a pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-bounded-operator));
 only inside a `compensate` hook do `timerAfter`, `timerAtEventTime` and
-`cancelTimer` throw naming `TimersUnavailable`.
+`cancelTimer` throw naming `runtime.timers_unavailable`.
 
 ### The short form
 
@@ -295,15 +295,15 @@ The factory id is always written: it is an address a user types, and a
 class rename must not move it, so a class with no `#[Operator]` is refused as
 any operator is. `registerFactory`, where this SDK places every refusal,
 refuses a class defining both `run` and `channels()` naming
-`ShortFormWithTopology`, and one defining neither naming both. A second
+`topology.short_form_with_topology`, and one defining neither naming both. A second
 operator of either kind under a factory id the runner holds is refused naming
-`DuplicateFactoryId`. `#[Task]` takes no `kind`, `sink`, `input` or `codec`,
+`topology.duplicate_factory_id`. `#[Task]` takes no `kind`, `sink`, `input` or `codec`,
 and a tasklet carrying one is refused naming `#[Operator]`. `#[Task]` on a
 class defining `channels()` is refused too: a full form's tasklet settings go
 on its tasklet classes. A hook a short form defines is held to the signature
 `Tasklet` gives it, and one PHP would refuse on a tasklet is refused naming
 the hook. There is no
-`SinkWithoutOutput`: `run` is declared `: void` on both `Tasklet` and
+`topology.sink_without_output`: `run` is declared `: void` on both `Tasklet` and
 `Operator`, a value leaves only through `$ctx->emit()`, and no body declares
 an output type, so nothing in a class says whether it emits. The manifest
 leaves `shorthand_typed_output` off and the conformance row skips by name.

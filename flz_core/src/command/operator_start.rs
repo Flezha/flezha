@@ -5,13 +5,19 @@ use prost::Message;
 use super::{CommandAction, Reply};
 use crate::bounded::spec::BoundedSpec;
 use crate::bounded::LoopMode;
+use crate::error::Code;
 use crate::operator::instance::KeyGroupRange;
 use crate::operator::topology::OperatorTopology;
 use crate::pb::{AddOperator, AddOperatorResponse};
 use crate::runner::RunnerNode;
 
 impl CommandAction for AddOperator {
-    fn handle(&self, runner: &mut RunnerNode, _message: &str, errors: &mut Vec<String>) -> Reply {
+    fn handle(
+        &self,
+        runner: &mut RunnerNode,
+        _message: &str,
+        errors: &mut Vec<crate::Error>,
+    ) -> Reply {
         let instance_id = self.operator_id.clone();
         let factory_id = self.factory_id.clone();
         // The class says what kind it is; the wire's kind string is not asked.
@@ -24,9 +30,7 @@ impl CommandAction for AddOperator {
         if !runner.has_operator(&instance_id) {
             match &class {
                 Some(topology) => self.start(runner, topology, &factory_id, &instance_id, errors),
-                None => errors.push(format!(
-                    "Operator class with factory_id {factory_id} is not registered"
-                )),
+                None => errors.push(class_not_registered(&factory_id)),
             }
         }
 
@@ -49,7 +53,7 @@ impl AddOperator {
         topology: &OperatorTopology,
         factory_id: &str,
         instance_id: &str,
-        errors: &mut Vec<String>,
+        errors: &mut Vec<crate::Error>,
     ) {
         if let Some(refusal) = partition_refusal(self, topology, factory_id) {
             errors.push(refusal);
@@ -71,7 +75,7 @@ impl AddOperator {
         };
         if let Err(e) = crate::command::cell_state::apply_init_values(&instance, &self.init_values)
         {
-            errors.push(e.to_string());
+            errors.push(e);
             // A bounded operator refused before it ran leaves nothing behind.
             if bounded {
                 runner.stop_operator(instance_id);
@@ -112,11 +116,16 @@ fn has_keyed_entry_tasklet(topology: &crate::operator::topology::OperatorTopolog
         .any(|tasklet| matches!(tasklet.mode, CellMode::Dynamic | CellMode::Static))
 }
 
+/// A bind or migration naming a class this runner never registered.
+pub(super) fn class_not_registered(factory_id: &str) -> crate::Error {
+    crate::Error::Declaration(Code::ClassNotRegistered.with([("factory", factory_id.into())]))
+}
+
 fn partition_refusal(
     command: &AddOperator,
     topology: &OperatorTopology,
     factory_id: &str,
-) -> Option<String> {
+) -> Option<crate::Error> {
     if command.partition_count < 2 {
         return None;
     }
@@ -127,24 +136,19 @@ fn partition_refusal(
         .as_ref()
         .filter(|spec| spec.loop_mode != LoopMode::PerInput)
     {
-        return Some(format!(
-            "PartitionsWithoutPerInputLoop: class {} reads one message (loop_mode {}), so \
-             its {} partitions would each wait for a message that reaches one of them; \
-             declare loop_mode per_input before partitioning",
-            factory_id,
-            spec.loop_mode.as_str(),
-            command.partition_count
+        return Some(crate::Error::Declaration(
+            Code::PartitionsWithoutPerInputLoop.with([
+                ("factory", factory_id.into()),
+                ("loop_mode", spec.loop_mode.as_str().into()),
+                ("partitions", command.partition_count.into()),
+            ]),
         ));
     }
     if has_keyed_entry_tasklet(topology) {
         None
     } else {
-        Some(format!(
-            "PartitionsWithoutKeyedTasklet: class {} has no keyed entry-fed tasklet, \
-             so its {} partitions would each fold a slice of the input into a private copy \
-             of the same state — declare `key_by` on the entry edge (or cell keys on the \
-             tasklet) before partitioning",
-            factory_id, command.partition_count
+        Some(crate::Error::Declaration(
+            Code::PartitionsWithoutKeyedTasklet.with([("factory", factory_id.into())]),
         ))
     }
 }
@@ -351,6 +355,7 @@ mod partition_tests {
     //! range on a keyed one.
 
     use super::{partition_refusal, AddOperator, AddOperatorResponse, KeyGroupRange, Message};
+    use crate::ErrorModel;
 
     fn register(id: &str, cell_mode: &str, cell_keys: &str) {
         let json = format!(
@@ -385,11 +390,8 @@ mod partition_tests {
 
         let refusal =
             partition_refusal(&partitioned(&id, 3), &class_of(&id), &id).expect("refused");
-        assert!(
-            refusal.contains("PartitionsWithoutKeyedTasklet"),
-            "{refusal}"
-        );
-        assert!(refusal.contains("key_by"), "{refusal}");
+        assert_eq!(refusal.code(), "topology.partitions_without_keyed_tasklet");
+        assert_eq!(refusal.to_error().details["factory"], id.as_str());
     }
 
     #[test]
@@ -482,13 +484,11 @@ mod partition_tests {
 
             let refusal =
                 partition_refusal(&partitioned(&id, 2), &class_of(&id), &id).expect("refused");
-            assert!(
-                refusal.starts_with("PartitionsWithoutPerInputLoop"),
-                "{refusal}"
-            );
-            assert!(refusal.contains(&id), "{refusal}");
-            assert!(refusal.contains(loop_mode), "{refusal}");
-            assert!(refusal.contains("loop_mode per_input"), "{refusal}");
+            assert_eq!(refusal.code(), "topology.partitions_without_per_input_loop");
+            let details = refusal.to_error().details;
+            assert_eq!(details["factory"], id.as_str());
+            assert_eq!(details["loop_mode"], loop_mode);
+            assert_eq!(details["partitions"], 2);
             assert_eq!(declared_loop_mode(&id).as_deref(), Some(loop_mode));
 
             let mut single = partitioned(&id, 2);
@@ -508,10 +508,7 @@ mod partition_tests {
         register_bounded(&keyless, "single", "per_input");
         let refusal = partition_refusal(&partitioned(&keyless, 2), &class_of(&keyless), &keyless)
             .expect("refused");
-        assert!(
-            refusal.starts_with("PartitionsWithoutKeyedTasklet"),
-            "{refusal}"
-        );
+        assert_eq!(refusal.code(), "topology.partitions_without_keyed_tasklet");
     }
 
     #[test]

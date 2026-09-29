@@ -17,7 +17,7 @@ defmodule Flezha.Plugin.Provider.File do
   written back as the one spelling every log line, event and verdict names, and
   the plugin id the plugin was enabled under when the options name none.
   """
-  @spec prepare(map()) :: {:ok, map()} | {:error, binary()}
+  @spec prepare(map()) :: {:ok, map()} | {:error, term()}
   def prepare(opts) do
     with {:ok, path} <- Storage.Config.resolve_path(opts.path) do
       {:ok,

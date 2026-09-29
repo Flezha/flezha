@@ -11,18 +11,13 @@ defmodule Flezha.Service.Cli.Observe do
   @doc """
   CLI entry point for `flz observe sources`. Renders text or JSON.
   """
-  def observability_render_sources(format, _call) when format in ["text", "json"] do
-    case ObsSvc.sources() do
-      {:ok, sources} -> render_sources_output(sources, format)
-      {:error, reason} -> render_error(reason)
-    end
+  def observability_render_sources(%{opts: opts}) do
+    with {:ok, sources} <- ObsSvc.sources(),
+         do: render_sources_output(sources, Context.format(opts))
   end
 
-  def observability_render_sinks(format, _call) when format in ["text", "json"] do
-    case ObsSvc.sinks() do
-      {:ok, sinks} -> render_sinks_output(sinks, format)
-      {:error, reason} -> render_error(reason)
-    end
+  def observability_render_sinks(%{opts: opts}) do
+    with {:ok, sinks} <- ObsSvc.sinks(), do: render_sinks_output(sinks, Context.format(opts))
   end
 
   @doc """
@@ -30,43 +25,30 @@ defmodule Flezha.Service.Cli.Observe do
   streams signals as NDJSON (one signal per line) until the calling
   RPC connection closes.
   """
-  def observability_render_tail(source_str, format, %{opts: opts})
-      when format in ["text", "json"] do
+  def observability_render_tail(source_str, %{opts: opts}) do
     source = registered_source!(source_str)
 
-    case ObsSvc.tail_source(source) do
-      :ok ->
-        Context.receive_for(Context.window(opts), &tail_message(&1, format))
-        :ok
-
-      {:error, reason} ->
-        render_error(reason)
+    with :ok <- ObsSvc.tail_source(source) do
+      Context.receive_for(Context.window(opts), &tail_message(&1, Context.format(opts)))
+      :ok
     end
   end
 
   def observability_render_enable(source_str, _call) do
     source = registered_source!(source_str)
 
-    case ObsSvc.enable(source) do
-      :ok ->
-        IO.puts("source #{source} enabled")
-        :ok
-
-      {:error, reason} ->
-        render_error(reason)
+    with :ok <- ObsSvc.enable(source) do
+      IO.puts("source #{source} enabled")
+      :ok
     end
   end
 
   def observability_render_disable(source_str, _call) do
     source = registered_source!(source_str)
 
-    case ObsSvc.disable(source) do
-      :ok ->
-        IO.puts("source #{source} disabled")
-        :ok
-
-      {:error, reason} ->
-        render_error(reason)
+    with :ok <- ObsSvc.disable(source) do
+      IO.puts("source #{source} disabled")
+      :ok
     end
   end
 
@@ -179,17 +161,7 @@ defmodule Flezha.Service.Cli.Observe do
         Context.atom!(written, Enum.map(sources, & &1.name), "source")
 
       {:error, reason} ->
-        render_error(reason)
+        Context.fail!(reason)
     end
   end
-
-  defp render_error(reason), do: Context.fail!(reason, &observe_message/1)
-
-  defp observe_message(:pubsub_sink_disabled),
-    do:
-      "pubsub sink is disabled; enable :observability, :pubsub_sink_enabled " <>
-        "to use `flz observe tail`"
-
-  defp observe_message(:observability_disabled), do: "observability is disabled"
-  defp observe_message(_reason), do: nil
 end

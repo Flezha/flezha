@@ -13,7 +13,6 @@ defmodule Flezha.Service.OperatorManager.Init do
   alias Flezha.SDK.SafeCall
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperatorManager.Teardown
-  alias Flezha.Service.Validator
   alias ProcessHub.Service.DeclaredChildren
 
   # Losing the id claim is not a failed start: another path already runs this
@@ -31,7 +30,7 @@ defmodule Flezha.Service.OperatorManager.Init do
 
       :duplicate
     else
-      {:error, %{operator_id: operator_id, node: node(), reason: Validator.id_in_use()}}
+      {:error, {:id_in_use, operator_id}}
     end
   end
 
@@ -273,7 +272,7 @@ defmodule Flezha.Service.OperatorManager.Init do
         )
 
         _ = stop_child_quietly(namespace, operator.id)
-        {:error, %{operator_id: operator.id, node: node(), reason: reason}}
+        {:error, start_failure(operator.id, {:operator_exited, reason})}
     end
 
     case SafeCall.bounded(pid, :registry_runner_set, Durations.get(:overwatch_call_timeout_ms),
@@ -290,7 +289,7 @@ defmodule Flezha.Service.OperatorManager.Init do
 
       {:error, reason} ->
         _ = stop_child_quietly(namespace, operator.id)
-        {:error, %{operator_id: operator.id, node: node(), reason: reason}}
+        {:error, start_failure(operator.id, reason)}
 
       answered ->
         answered
@@ -316,15 +315,20 @@ defmodule Flezha.Service.OperatorManager.Init do
       )
 
       _ = stop_child_quietly(namespace, operator.id)
-      {:error, %{operator_id: operator.id, node: node(), reason: reason}}
+      {:error, start_failure(operator.id, reason)}
     end
   end
 
   defp settle_claim(exist?, namespace, operator, reason) do
     if claim_loss?(reason),
       do: claim_lost(exist?, namespace, operator.id),
-      else: {:error, %{operator_id: operator.id, node: node(), reason: reason}}
+      else: {:error, start_failure(operator.id, reason)}
   end
+
+  # A failure the runner already answered with its own error is that error;
+  # anything else is the cause the start stopped at, kept for the details.
+  defp start_failure(_operator_id, %Flezha.Error{} = error), do: error
+  defp start_failure(operator_id, reason), do: {:start_failed, operator_id, reason}
 
   # The registry refused the id: a live instance already holds it. Taking the
   # failure path on that verdict would call `stop_child_quietly/2` on the id —
@@ -332,7 +336,8 @@ defmodule Flezha.Service.OperatorManager.Init do
   # claim exists to prevent.
   def claim_loss?(:already_started), do: true
   def claim_loss?({:already_started, _ids}), do: true
-  def claim_loss?(reason), do: reason == Validator.id_in_use()
+  def claim_loss?({:id_in_use, _id}), do: true
+  def claim_loss?(_reason), do: false
 
   defp stop_child_quietly(namespace, operator_id) do
     _ = Teardown.hub_stop_children(namespace, [operator_id], 5_000)

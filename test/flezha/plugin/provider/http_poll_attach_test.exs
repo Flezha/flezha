@@ -22,30 +22,27 @@ defmodule Flezha.Plugin.Provider.HttpPollAttachTest do
 
   describe "attach-time validation" do
     test "rejects a non-http scheme, a hostless url, and embedded credentials" do
-      assert {:error, message} = attach(%{url: "ftp://x/y", channel: @channel})
-      assert message =~ "http or https"
+      assert {:error, {:url_scheme_unsupported, "http_poll", :url, _}} =
+               attach(%{url: "ftp://x/y", channel: @channel})
 
-      assert {:error, message} = attach(%{url: "/relative", channel: @channel})
-      assert message =~ "http or https"
+      assert {:error, {:url_scheme_unsupported, "http_poll", :url, _}} =
+               attach(%{url: "/relative", channel: @channel})
 
-      assert {:error, message} = attach(%{url: "http://", channel: @channel})
-      assert message =~ "no host"
+      assert {:error, {:url_without_host, "http_poll", :url, _}} =
+               attach(%{url: "http://", channel: @channel})
 
-      assert {:error, message} =
+      assert {:error, {:url_has_credentials, "http_poll", :url, :headers} = reason} =
                attach(%{url: "https://u:hunter2@api/c", channel: @channel})
 
-      assert message =~ "must not embed credentials"
-      refute message =~ "hunter2"
+      refute inspect(reason) =~ "hunter2"
     end
 
     test "rejects a missing url or channel" do
-      assert {:error, message} = attach(%{channel: @channel})
-      assert message =~ ":url"
+      assert {:error, {:options_required, "http_poll", [:url]}} = attach(%{channel: @channel})
 
       # Either spelling names the entry channel, so the refusal for naming
       # neither names both rather than one row.
-      assert {:error, message} = attach(%{url: "http://x/y"})
-      assert message =~ "requires an entry channel"
+      assert {:error, {:entry_channel_required, "http_poll"}} = attach(%{url: "http://x/y"})
 
       assert {:error, _} = attach(%{url: "http://x/y", channel: ""})
       assert {:ok, _} = attach(%{url: "http://x/y", channel_in: @channel})
@@ -61,83 +58,65 @@ defmodule Flezha.Plugin.Provider.HttpPollAttachTest do
 
       assert opts.idle_after_ms == 5_000
 
-      assert {:error, message} =
+      assert {:error, {:option_below_minimum, :idle_after_ms, -1, 0}} =
                attach(%{
                  url: "http://x/y",
                  channel: @channel,
                  idle_after_ms: -1
                })
 
-      assert message =~ "idle_after_ms"
-
-      assert {:error, message} =
+      assert {:error, {:invalid_option_value, :idle_after_ms, "soon"}} =
                attach(%{
                  url: "http://x/y",
                  channel: @channel,
                  idle_after_ms: "soon"
                })
-
-      assert message =~ "idle_after_ms"
     end
 
     test "rejects an interval below the minimum and a non-positive tunable" do
-      assert {:error, message} =
+      assert {:error, {:option_below_minimum, :interval_ms, 500, 1000}} =
                attach(%{url: "http://x/y", channel: @channel, interval_ms: 500})
 
-      assert message =~ "is below the minimum 1000"
-
-      assert {:error, message} =
+      assert {:error, {:option_below_minimum, :timeout_ms, 0, 1}} =
                attach(%{url: "http://x/y", channel: @channel, timeout_ms: 0})
-
-      assert message =~ "is below the minimum 1"
     end
 
     test "rejects a timeout that can outlast its own interval" do
-      assert {:error, message} =
+      assert {:error, {:timeout_not_below_interval, 10_000, 1_000}} =
                attach(%{
                  url: "http://x/y",
                  channel: @channel,
                  interval_ms: 1_000,
                  timeout_ms: 10_000
                })
-
-      assert message =~ "must be below interval_ms"
     end
 
     test "rejects a body cap above the ceiling and non-numeric tunables" do
-      assert {:error, message} =
+      assert {:error, {:option_above_maximum, :max_body_bytes, 1_073_741_824, 67_108_864}} =
                attach(%{
                  url: "http://x/y",
                  channel: @channel,
                  max_body_bytes: 1_073_741_824
                })
 
-      assert message =~ "is above the maximum 67108864"
-
-      assert {:error, message} =
+      assert {:error, {:invalid_option_value, :interval_ms, "soon"}} =
                attach(%{
                  url: "http://x/y",
                  channel: @channel,
                  interval_ms: "soon"
                })
-
-      assert message =~ "interval_ms"
     end
 
     test "rejects malformed headers and accepts a JSON object" do
-      assert {:error, message} =
+      assert {:error, {:invalid_option_value, :headers, "nope"}} =
                attach(%{url: "http://x/y", channel: @channel, headers: "nope"})
 
-      assert message =~ "Invalid value for headers"
-
-      assert {:error, message} =
+      assert {:error, {:headers_invalid, "http_poll", :headers}} =
                attach(%{
                  url: "http://x/y",
                  channel: @channel,
                  headers: %{"a" => %{"nested" => true}}
                })
-
-      assert message =~ "scalar"
 
       assert {:ok, opts} =
                attach(%{
@@ -153,15 +132,11 @@ defmodule Flezha.Plugin.Provider.HttpPollAttachTest do
       # `SpecDecoder` hands a `--plugins` spec straight to `init_provider/1`
       # without ever building the provider struct, so a check that lived only
       # in `build/1` would never run in production.
-      assert {:error, message} =
+      assert {:error, {:unknown_options, "http_poll", ["method"]}} =
                attach(%{url: "http://x/y", channel: @channel, method: "POST"})
 
-      assert message =~ "unknown option(s) for http_poll: method"
-
-      assert {:error, message} =
+      assert {:error, {:unknown_options, "http_poll", ["method"]}} =
                HttpPoll.build(%{"url" => "http://x/y", "channel" => @channel, "method" => "POST"})
-
-      assert message =~ "unknown option(s) for http_poll: method"
     end
 
     test "accepts the identity the host merges in" do
@@ -226,28 +201,23 @@ defmodule Flezha.Plugin.Provider.HttpPollAttachTest do
     end
 
     test "a placeholder with no partition identity is refused, naming it" do
-      assert {:error, message} =
+      assert {:error, {:partition_placeholder_unfilled, :url, "{{partition_index}}"}} =
                attach(%{
                  url: "https://api.example/trades?shard={{partition_index}}",
                  channel: @channel
                })
-
-      assert message =~ "{{partition_index}}"
-      assert message =~ "no partition identity"
     end
 
     test "validation sees the rendered url, not the template" do
       # The substitution lands in the scheme, so only a check that runs AFTER
       # rendering can catch it — at init, not at request time.
-      assert {:error, message} =
+      assert {:error, {:url_scheme_unsupported, "http_poll", :url, _}} =
                attach(%{
                  url: "{{partition_index}}://api.example/x",
                  channel: @channel,
                  partition_index: 1,
                  partition_count: 3
                })
-
-      assert message =~ "http or https"
     end
 
     test "a url without placeholders is untouched by a partitioned plugin" do

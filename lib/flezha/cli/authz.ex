@@ -19,7 +19,7 @@ defmodule Flezha.Service.Cli.Authz do
   def token_row([token_id | _]) do
     case find_token_by_id(token_id) do
       {:ok, entry} -> {:ok, %{namespace: entry.namespace, entry: entry}}
-      :error -> Context.fail!("token revoke: :not_found")
+      :error -> {:error, {:token_not_found, token_id}}
     end
   end
 
@@ -32,7 +32,7 @@ defmodule Flezha.Service.Cli.Authz do
   end
 
   @doc "CLI entry: `flz auth bootstrap <token>`. The one-time token is its own credential."
-  def authz_render_bootstrap(token, opts \\ []) when is_binary(token) do
+  def authz_render_bootstrap(token, %{opts: opts}) when is_binary(token) do
     case Bootstrap.claim(token, opts) do
       {:ok, %{principal: principal, minted_token: nil}} ->
         IO.puts("bootstrap claimed; admin@_system bound to #{principal}")
@@ -41,25 +41,10 @@ defmodule Flezha.Service.Cli.Authz do
         IO.puts("bootstrap claimed; admin@_system bound to #{principal}")
         IO.puts("admin token (shown once, store it now): #{minted}")
 
-      {:error, reason} ->
-        Context.fail!("auth bootstrap: " <> bootstrap_message(reason))
+      {:error, _reason} = refused ->
+        refused
     end
   end
-
-  defp bootstrap_message(:bootstrap_already_completed),
-    do:
-      "this controller's admin is already claimed, so there is no bootstrap token to claim; " <>
-        "if its admin token is lost, run `flz auth rebootstrap` and claim the token it writes"
-
-  defp bootstrap_message({:bootstrap_token_missing, path}),
-    do:
-      "no bootstrap token at #{path}; a controller writes one at boot while no admin is claimed, " <>
-        "relative to the directory it was started from"
-
-  defp bootstrap_message(:bootstrap_token_mismatch),
-    do: "the token does not match the one in the bootstrap token file"
-
-  defp bootstrap_message(reason), do: Context.format_reason(reason)
 
   @doc "The identity a verified token resolves to."
   def authz_whoami(%{context: context}) do
@@ -96,16 +81,13 @@ defmodule Flezha.Service.Cli.Authz do
       IO.puts("token issued for #{principal} (#{role}@#{namespace})")
       IO.puts("id:    #{String.slice(entry.token_hash, 0, 12)}")
       IO.puts("token (shown once, store it now): #{raw}")
-    else
-      {:error, reason} -> Context.fail!("token issue: #{Context.format_reason(reason)}")
     end
   end
 
   @doc "CLI entry: `flz token revoke <id>`."
   def authz_render_token_revoke(token_id, call) do
-    case TokenStore.revoke(token_id, revoked_by_principal: actor(call)) do
-      {:ok, entry} -> IO.puts("revoked token #{String.slice(entry.token_hash, 0, 12)}")
-      {:error, reason} -> Context.fail!("token revoke: #{Context.format_reason(reason)}")
+    with {:ok, entry} <- TokenStore.revoke(token_id, revoked_by_principal: actor(call)) do
+      IO.puts("revoked token #{String.slice(entry.token_hash, 0, 12)}")
     end
   end
 
@@ -148,15 +130,6 @@ defmodule Flezha.Service.Cli.Authz do
          :ok <- RoleStore.bind(principal, namespace, role, bound_by: actor(call)) do
       IO.puts("bound #{principal} as #{role}@#{namespace}")
       print_identity(principal)
-    else
-      {:error, {:bound_elsewhere, held}} ->
-        Context.fail!(
-          "role bind: #{principal} holds roles in #{held}; " <>
-            "unbind it there before binding it in #{namespace}"
-        )
-
-      {:error, reason} ->
-        Context.fail!("role bind: #{Context.format_reason(reason)}")
     end
   end
 
@@ -177,8 +150,6 @@ defmodule Flezha.Service.Cli.Authz do
          :ok <- RoleStore.unbind(principal, role) do
       IO.puts("unbound #{role} from #{principal}")
       print_identity(principal)
-    else
-      {:error, reason} -> Context.fail!("role unbind: #{Context.format_reason(reason)}")
     end
   end
 
@@ -209,24 +180,19 @@ defmodule Flezha.Service.Cli.Authz do
            NamespaceStore.create(name, quotas: quotas, created_by_principal: actor(call)) do
       IO.puts("namespace #{name} created")
       print_namespace_entry(entry)
-    else
-      {:error, reason} -> Context.fail!("namespace create: #{Context.format_reason(reason)}")
     end
   end
 
   @doc "CLI entry: `flz namespace delete <name>`."
   def authz_render_namespace_delete(name, _call) do
-    case Namespace.remove(name) do
-      :ok -> IO.puts("namespace #{name} deleted")
-      {:error, reason} -> Context.fail!("namespace delete: #{Context.format_reason(reason)}")
-    end
+    with :ok <- Namespace.remove(name), do: IO.puts("namespace #{name} deleted")
   end
 
   @doc "CLI entry: `flz namespace show <name>`."
   def authz_render_namespace_show(name, _call) do
     case NamespaceStore.get(name) do
       {:ok, entry} -> print_namespace_entry(entry)
-      :error -> Context.fail!("namespace show: :not_found")
+      :error -> {:error, {:not_found, name}}
     end
   end
 
@@ -236,8 +202,6 @@ defmodule Flezha.Service.Cli.Authz do
          {:ok, entry} <- NamespaceStore.set_quotas(name, overrides) do
       IO.puts("namespace #{name} quotas updated")
       print_namespace_entry(entry)
-    else
-      {:error, reason} -> Context.fail!("namespace set-quota: #{Context.format_reason(reason)}")
     end
   end
 
@@ -271,15 +235,23 @@ defmodule Flezha.Service.Cli.Authz do
   # documented quota fields, values must be non-negative integers (validated
   # again by `Namespace.build_quotas/1`).
   defp parse_quota_overrides(quotas_json) when is_binary(quotas_json) do
-    {:ok,
-     quotas_json
-     |> Context.json!("quota overrides")
-     |> Map.new(fn {k, v} -> {String.to_existing_atom(k), parse_quota_value(v)} end)}
-  rescue
-    ArgumentError -> {:error, :unknown_quota_field}
+    quotas_json
+    |> Context.json!("quota overrides")
+    |> Enum.reduce_while({:ok, %{}}, fn {key, value}, {:ok, acc} ->
+      case quota_field(key) do
+        {:ok, field} -> {:cont, {:ok, Map.put(acc, field, parse_quota_value(value))}}
+        :error -> {:halt, {:error, {:unknown_quota_field, key}}}
+      end
+    end)
   end
 
   defp parse_quota_overrides(%{} = quotas), do: {:ok, quotas}
+
+  defp quota_field(key) do
+    {:ok, String.to_existing_atom(key)}
+  rescue
+    ArgumentError -> :error
+  end
 
   defp parse_quota_value(v) when is_integer(v), do: v
   defp parse_quota_value(v) when is_binary(v), do: Context.integer!(v, "quota value")

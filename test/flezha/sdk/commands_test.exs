@@ -107,7 +107,7 @@ defmodule Flezha.SDK.CommandsTest do
         s
       )
 
-      assert_receive {:replied, "error", ["cell_key_without_tasklet: " <> _], <<>>, %{}},
+      assert_receive {:replied, "error", [%{code: "state.cell_key_without_tasklet"}], <<>>, %{}},
                      2_000
 
       Commands.dispatch(
@@ -117,7 +117,7 @@ defmodule Flezha.SDK.CommandsTest do
         s
       )
 
-      assert_receive {:replied, "error", ["tasklet_not_found: " <> _], <<>>, %{}}, 2_000
+      assert_receive {:replied, "error", [%{code: "state.tasklet_not_found"}], <<>>, %{}}, 2_000
 
       Commands.dispatch(
         :cell_state,
@@ -126,7 +126,7 @@ defmodule Flezha.SDK.CommandsTest do
         s
       )
 
-      assert_receive {:replied, "error", ["cell_not_found: " <> _], <<>>, %{}}, 2_000
+      assert_receive {:replied, "error", [%{code: "state.cell_not_found"}], <<>>, %{}}, 2_000
 
       Commands.dispatch(
         :cell_state,
@@ -135,7 +135,8 @@ defmodule Flezha.SDK.CommandsTest do
         s
       )
 
-      assert_receive {:replied, "error", ["UnboundedOperator instance with id op-9 not found"],
+      assert_receive {:replied, "error",
+                      [%{code: "runtime.operator_not_found", details: %{"operator" => "op-9"}}],
                       <<>>, %{}},
                      2_000
     end
@@ -224,9 +225,8 @@ defmodule Flezha.SDK.CommandsTest do
 
       assert_receive {:replied, "error", [reason], <<>>, %{}}, 2_000
 
-      assert reason ==
-               "cell_evicted: Cell `k5` of tasklet `ttl` was idle-evicted; eviction is " <>
-                 "destructive, so there is no durable value to serve"
+      assert %{code: "state.cell_evicted", details: %{"tasklet" => "ttl", "cell_key" => "k5"}} =
+               reason
 
       Commands.dispatch(
         :cell_state,
@@ -235,7 +235,7 @@ defmodule Flezha.SDK.CommandsTest do
         s
       )
 
-      assert_receive {:replied, "error", ["cell_not_found: " <> _], <<>>, %{}}, 2_000
+      assert_receive {:replied, "error", [%{code: "state.cell_not_found"}], <<>>, %{}}, 2_000
     end
 
     test "restore and compaction answer through the commands with their protobuf replies" do
@@ -273,9 +273,11 @@ defmodule Flezha.SDK.CommandsTest do
 
       Commands.dispatch(:restore_init_state, bad, respond(), s)
 
-      assert_receive {:replied, "error",
-                      ["restore_init_state: record stamped schema_version 7" <> _], raw, %{}},
+      assert_receive {:replied, "error", [%{code: "state.restore_failed", details: details}], raw,
+                      %{}},
                      2_000
+
+      assert details["reason"] =~ "record stamped schema_version 7"
 
       assert {:ok, %{terminal_seq: 0}} = RunnerCommands.RestoreInitStateResponse.decode(raw)
 
@@ -308,7 +310,7 @@ defmodule Flezha.SDK.CommandsTest do
         s
       )
 
-      assert_receive {:replied, "error", ["compact_cell: " <> _], raw, %{}}, 2_000
+      assert_receive {:replied, "error", [%{code: "runtime.operator_not_found"}], raw, %{}}, 2_000
 
       assert {:ok, %{snapshot_seq: 0, snapshot_bytes_size: 0}} =
                RunnerCommands.CompactCellResponse.decode(raw)
@@ -327,7 +329,9 @@ defmodule Flezha.SDK.CommandsTest do
       assert {:ok, %{value: 5}, 0} = Cell.read(cell!(op, "scounter", "a"), 1_000)
       assert {:ok, %{value: 0}, 0} = Cell.read(cell!(op, "scounter", "b"), 1_000)
       assert :ok = Commands.apply_json(op, "op-1", "")
-      assert {:error, "init_values: not a JSON object"} = Commands.apply_json(op, "op-1", "[1]")
+
+      assert {:error, %{code: "state.init_values_not_object", details: %{"kind" => "array"}}} =
+               Commands.apply_json(op, "op-1", "[1]")
 
       %{op: single} = start_operator(CounterOp)
       s = server_state(single, nil)

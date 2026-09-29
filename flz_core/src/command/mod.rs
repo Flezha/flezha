@@ -9,6 +9,7 @@ use crate::command;
 use crate::pb::command_request::Command;
 use crate::pb::{CommandRequest, CommandResponse};
 use crate::runner::RunnerNode;
+use crate::ErrorModel;
 
 mod bounded_stop;
 mod cell_apply_state;
@@ -40,7 +41,7 @@ pub trait CommandAction {
         &self,
         runner: &mut RunnerNode,
         command_struct: &str,
-        errors: &mut Vec<String>,
+        errors: &mut Vec<crate::Error>,
     ) -> Reply;
 
     /// The reply plus its frame metadata; overridden only by a command whose
@@ -49,7 +50,7 @@ pub trait CommandAction {
         &self,
         runner: &mut RunnerNode,
         command_struct: &str,
-        errors: &mut Vec<String>,
+        errors: &mut Vec<crate::Error>,
     ) -> (Reply, HashMap<String, String>) {
         (self.handle(runner, command_struct, errors), HashMap::new())
     }
@@ -146,7 +147,10 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
         | Some(Command::UpdateFactories(_))
         | Some(Command::SpawnBoundedRequest(_))
         | Some(Command::AdminRequest(_))
-        | Some(Command::OperatorExited(_)) => CommandActionType::NotificationIgnore,
+        | Some(Command::OperatorExited(_))
+        // The control reader answers a refusal itself, before the handshake
+        // it ends; one arriving later has no session to refuse.
+        | Some(Command::ConnectRefused(_)) => CommandActionType::NotificationIgnore,
         Some(Command::RunnerShutdownAck(_)) => CommandActionType::AckSignal(Ok(String::new())),
         Some(Command::SpawnBoundedResponse(reply)) => CommandActionType::AckSignal(ack_result(
             crate::spawn::encode_ack(&reply.outcome, &reply.instance_id),
@@ -163,12 +167,11 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
     })
 }
 
-/// A reply's `error` field as the waiter's result: empty is `Ok(outcome)`.
-fn ack_result(outcome: String, error: String) -> crate::shutdown::AckResult {
-    if error.is_empty() {
-        Ok(outcome)
-    } else {
-        Err(error)
+/// A reply's `error` field as the waiter's result: absent is `Ok(outcome)`.
+fn ack_result(outcome: String, error: Option<crate::pb::Error>) -> crate::shutdown::AckResult {
+    match error {
+        None => Ok(outcome),
+        Some(error) => Err(error.into()),
     }
 }
 
@@ -276,7 +279,7 @@ fn exec_control(
     message: &[u8],
     reference_id: String,
 ) -> std::io::Result<Vec<u8>> {
-    let mut errors: Vec<String> = vec![];
+    let mut errors: Vec<crate::Error> = vec![];
     let mut status = String::from("success");
 
     let message_str = std::str::from_utf8(message).unwrap_or("");
@@ -289,7 +292,10 @@ fn exec_control(
     let command_response: CommandResponse = CommandResponse {
         reference_id,
         status,
-        errors,
+        errors: errors
+            .iter()
+            .map(|error| crate::pb::Error::from(&error.to_error()))
+            .collect(),
         raw_data: reply.bytes,
     };
 
@@ -300,6 +306,7 @@ fn exec_control(
 
 #[cfg(test)]
 mod tests {
+    use flz_transport::errors::FlezhaError;
     use prost::Message;
 
     use super::*;
@@ -378,13 +385,13 @@ mod tests {
 
     #[test]
     fn a_spawn_reply_wakes_the_requesters_handle_with_its_outcome_and_id() {
-        let reply = |outcome: &str, error: &str, instance_id: &str| {
+        let reply = |outcome: &str, error: Option<&FlezhaError>, instance_id: &str| {
             let bytes = CommandRequest {
                 reference_id: "ref-spawn".to_string(),
                 command: Some(Command::SpawnBoundedResponse(
                     crate::pb::SpawnBoundedResponse {
                         outcome: outcome.to_string(),
-                        error: error.to_string(),
+                        error: error.map(crate::pb::Error::from),
                         instance_id: instance_id.to_string(),
                     },
                 )),
@@ -401,17 +408,25 @@ mod tests {
         };
 
         assert_eq!(
-            reply("spawned", "", "worker-k7m2qzxw4pd3fn2a"),
+            reply("spawned", None, "worker-k7m2qzxw4pd3fn2a"),
             Ok(crate::spawn::encode_ack(
                 "spawned",
                 "worker-k7m2qzxw4pd3fn2a"
             ))
         );
         assert_eq!(
-            reply("delivered", "", "w1"),
+            reply("delivered", None, "w1"),
             Ok(crate::spawn::encode_ack("delivered", "w1"))
         );
-        assert_eq!(reply("refused", "quota", ""), Err("quota".to_string()));
+        let quota = FlezhaError::with(
+            "quota.exceeded",
+            [
+                ("kind", "max_operators".into()),
+                ("current", 3.into()),
+                ("limit", 3.into()),
+            ],
+        );
+        assert_eq!(reply("", Some(&quota), ""), Err(quota));
     }
 
     /// Every command runs on the coordinator thread, which owns the control

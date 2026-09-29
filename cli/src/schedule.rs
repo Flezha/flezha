@@ -28,15 +28,13 @@ pub(crate) const TABLE: Command = Command {
                 PLUGINS,
             ])
             .strict(),
-        Verb::new("list", |read| {
-            rpc::run("schedule_list", &[], &[], read.token(), rpc::PROPAGATE)
-        }),
+        Verb::new("list", |read| rpc::run("schedule_list", &[], &[], read)),
         Verb::new("remove", |read| {
-            rpc::one_arg(read, NAME[0].name, "schedule_remove", rpc::PROPAGATE)
+            rpc::one_arg(read, NAME[0].name, "schedule_remove")
         })
         .taking(NAME),
         Verb::new("run", |read| {
-            rpc::one_arg(read, NAME[0].name, "schedule_run", rpc::PROPAGATE)
+            rpc::one_arg(read, NAME[0].name, "schedule_run")
         })
         .taking(NAME),
     ],
@@ -73,11 +71,5 @@ fn handle_add(read: &Reading) {
         opts.push(("plugins", text(plugins)));
     }
 
-    rpc::run(
-        "schedule_add",
-        &[text(read.pos(NAME[0].name))],
-        &opts,
-        read.token(),
-        rpc::PROPAGATE,
-    );
+    rpc::run("schedule_add", &[text(read.pos(NAME[0].name))], &opts, read);
 }

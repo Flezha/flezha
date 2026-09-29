@@ -10,7 +10,12 @@ use crate::pb::MigrationDeserialization;
 use crate::runner::RunnerNode;
 
 impl CommandAction for MigrationDeserialization {
-    fn handle(&self, runner: &mut RunnerNode, _message: &str, errors: &mut Vec<String>) -> Reply {
+    fn handle(
+        &self,
+        runner: &mut RunnerNode,
+        _message: &str,
+        errors: &mut Vec<crate::Error>,
+    ) -> Reply {
         // A hot-swap handover carries no partition identity: the destination's
         // `AddOperator` ran first and already registered the instance with
         // its range, so this call resolves to that instance.
@@ -25,9 +30,9 @@ impl CommandAction for MigrationDeserialization {
                     let json_str = match std::str::from_utf8(&self.serialized_state) {
                         Ok(s) => s,
                         Err(e) => {
-                            errors.push(format!(
-                                "MigrationDeserialization: serialized_state is not UTF-8: {}",
-                                e
+                            errors.push(crate::Error::State(
+                                crate::Code::MigrationUnreadable
+                                    .with([("reason", e.to_string().into())]),
                             ));
                             return Reply {
                                 payload_id: "migration_deserialization",
@@ -36,7 +41,7 @@ impl CommandAction for MigrationDeserialization {
                         }
                     };
                     if let Err(e) = apply_init_values(&instance, json_str) {
-                        errors.push(e.to_string());
+                        errors.push(e);
                     }
                 }
                 Reply {
@@ -45,9 +50,8 @@ impl CommandAction for MigrationDeserialization {
                 }
             }
             None => {
-                errors.push(format!(
-                    "UnboundedOperator class with factory_id {} is not registered",
-                    self.factory_id
+                errors.push(super::operator_start::class_not_registered(
+                    &self.factory_id,
                 ));
                 Reply {
                     payload_id: "migration_deserialization",

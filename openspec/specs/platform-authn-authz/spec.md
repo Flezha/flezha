@@ -30,11 +30,11 @@ The system SHALL provide a token registry (`Flezha.AuthZ.TokenStore`) persisted 
 
 #### Scenario: Revoked token is rejected at verification
 - **WHEN** a token has been revoked via `TokenStore.revoke/2` and `TokenStore.verify/1` is called with the raw value
-- **THEN** verification SHALL return `{:error, :token_revoked}`
+- **THEN** verification SHALL return `{:error, %Flezha.Error{code: "authz.token_revoked"}}`
 
 #### Scenario: Expired token is rejected at verification
 - **WHEN** a token's `expires_at` has passed
-- **THEN** `TokenStore.verify/1` SHALL return `{:error, :token_expired}`
+- **THEN** `TokenStore.verify/1` SHALL return `{:error, %Flezha.Error{code: "authz.token_expired"}}`
 
 #### Scenario: A non-expiring token is reachable from the operations surface
 - **WHEN** a user issues a token asking for no expiry
@@ -62,11 +62,11 @@ The system SHALL expose exactly one authorization decision function `Flezha.Auth
 
 #### Scenario: Denial returns forbidden tuple
 - **WHEN** a `viewer` invokes a service function whose action requires `ops` or higher
-- **THEN** the service function SHALL return `{:error, {:forbidden, :role_insufficient}}` AND SHALL NOT perform the requested action
+- **THEN** `authorize/3` SHALL answer `{:error, {:forbidden, :role_insufficient}}`, the service function SHALL return `{:error, %Flezha.Error{code: "authz.role_insufficient", class: :denied}}`, AND it SHALL NOT perform the requested action
 
 #### Scenario: Wrong-namespace denial
 - **WHEN** an `ops` on `team-orders` invokes a service function whose `scope.namespace` is `team-payments`
-- **THEN** the service function SHALL return `{:error, {:forbidden, :namespace_mismatch}}`
+- **THEN** `authorize/3` SHALL answer `{:error, {:forbidden, :namespace_mismatch}}` and the service function SHALL return `{:error, %Flezha.Error{code: "authz.namespace_mismatch"}}`
 
 #### Scenario: Disabled mode returns ok unconditionally
 - **WHEN** `:authn_authz, :enabled` is `false` and any caller invokes any service function
@@ -80,11 +80,11 @@ A runner connection's roles SHALL be resolved from the role store keyed on its p
 
 #### Scenario: Admin on team-orders cannot mutate team-payments
 - **WHEN** `admin@team-orders` invokes a service call whose `scope.namespace` is `team-payments` and whose action is `:authz.token_issue`
-- **THEN** the call SHALL return `{:error, {:forbidden, :cross_namespace_admin_denied}}`
+- **THEN** the call SHALL return `{:error, %Flezha.Error{code: "authz.cross_namespace_admin_denied"}}`
 
 #### Scenario: Runner role cannot read audit
 - **WHEN** an SDK Runner with role `runner` invokes any function in `Flezha.Service.AuditLog`
-- **THEN** the call SHALL return `{:error, {:forbidden, :role_insufficient}}`
+- **THEN** the call SHALL return `{:error, %Flezha.Error{code: "authz.role_insufficient"}}`
 
 #### Scenario: The runner grant is one action
 - **WHEN** the runner role's grants are enumerated
@@ -127,12 +127,12 @@ A runner connection's roles SHALL be resolved from the role store keyed on its p
 - **WHEN** `runner@team-orders` holds `spawner` and no other role on
   `team-orders` and the application code on that connection asks to stop an
   operator, or to enable or disable a plugin
-- **THEN** each call SHALL be refused with `role_insufficient`
+- **THEN** each call SHALL be refused with `authz.role_insufficient`
 
 #### Scenario: A spawner starts nothing in another namespace
 - **WHEN** `runner@team-orders` is bound to `spawner` on `team-orders` and a start
   is judged for that identity in `team-payments`
-- **THEN** it SHALL be refused with `namespace_mismatch`
+- **THEN** it SHALL be refused with `authz.namespace_mismatch`
 
 #### Scenario: No credential is issued for a runner principal's role
 - **WHEN** a caller asks `flz token issue` for a credential with the role
@@ -155,26 +155,26 @@ A runner connection's roles SHALL be resolved from the role store keyed on its p
 - **WHEN** `runner@team-orders` holds `stopper` and no other role on `team-orders`
   and the application code on that connection asks to stop an operator there
 - **THEN** the stop SHALL be authorized, and a start, a send, and a plugin enable
-  or disable on that connection SHALL each be refused with `role_insufficient`
+  or disable on that connection SHALL each be refused with `authz.role_insufficient`
 
 #### Scenario: A stopper stops nothing in another namespace
 - **WHEN** `runner@team-orders` is bound to `stopper` on `team-orders` and a stop
   is judged for that identity in `team-payments`
-- **THEN** it SHALL be refused with `namespace_mismatch`
+- **THEN** it SHALL be refused with `authz.namespace_mismatch`
 
 #### Scenario: Spawner and stopper combine
 - **WHEN** `runner@team-orders` is bound to `spawner` and then to `stopper` on
   `team-orders`
 - **THEN** a start, a send and a stop by that connection in `team-orders` SHALL
   each be authorized, and a plugin enable SHALL be refused with
-  `role_insufficient`
+  `authz.role_insufficient`
 
 #### Scenario: A runner connection never holds an administration role
 - **WHEN** `runner@team-orders` is bound to `spawner` and to `admin` on
   `team-orders`, and the application code on that connection asks to set the
   namespace's quotas or to delete the namespace
 - **THEN** the connection SHALL hold `spawner` alone, and each call SHALL be
-  refused with `role_insufficient`
+  refused with `authz.role_insufficient`
 
 #### Scenario: A runner principal bound only to an administration role is a runner
 - **WHEN** `runner@team-orders` holds only `ops` on `team-orders` and a
@@ -702,14 +702,14 @@ The role store SHALL hold, for each principal, one namespace and a non-empty set
   start an operator, to stop one and to enable a plugin there, and to stop one in
   `team-payments`
 - **THEN** the start SHALL be authorized by `spawner` and the stop by `stopper`,
-  the plugin enable SHALL be refused with `role_insufficient`, and the stop in
-  `team-payments` SHALL be refused with `namespace_mismatch`
+  the plugin enable SHALL be refused with `authz.role_insufficient`, and the stop in
+  `team-payments` SHALL be refused with `authz.namespace_mismatch`
 
 #### Scenario: A token is judged by its own role
 - **WHEN** `alice` holds `ops` on `team-orders` in the role store and presents
   a token issued to her with the role `viewer` on `team-orders`, and asks to stop
   an operator there
-- **THEN** the stop SHALL be refused with `role_insufficient`
+- **THEN** the stop SHALL be refused with `authz.role_insufficient`
 
 #### Scenario: A claim replaces the claimant's roles
 - **WHEN** the bootstrap token is claimed naming a principal that holds `ops`

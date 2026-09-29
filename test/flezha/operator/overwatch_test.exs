@@ -216,7 +216,7 @@ defmodule FlezhaTest.Operator.OverwatchInitStateTest do
       opts: [plugins: [plugin]]
     }
 
-    assert {:error, %{reason: :intentional_failure}} =
+    assert {:error, {:start_failed, ^operator_id, :intentional_failure}} =
              OperatorManager.start_operator(@namespace, operator)
 
     assert OperatorManager.exist?(@namespace, operator_id) == false
@@ -280,7 +280,7 @@ defmodule FlezhaTest.Operator.OverwatchCellStateGateTest do
 
       # A synchronous {:reply, error, state} (no spawn) proves the runner was
       # not contacted for state.
-      assert {:reply, {:error, :persistence_off}, ^state} =
+      assert {:reply, {:error, {:persistence_off, ^id}}, ^state} =
                Overwatch.handle_call({:get_cell_state, %{}}, {self(), make_ref()}, state)
 
       :ok = ClassRegistry.put_persistent(id, true)
@@ -291,7 +291,7 @@ defmodule FlezhaTest.Operator.OverwatchCellStateGateTest do
     Application.put_env(:flezha, :operator_persistence, %{"opted_out" => false})
     state = state_for(:unbounded, "opted_out")
 
-    assert {:reply, {:error, :persistence_off}, ^state} =
+    assert {:reply, {:error, {:persistence_off, "opted_out"}}, ^state} =
              Overwatch.handle_call({:get_cell_state, %{}}, {self(), make_ref()}, state)
   end
 end

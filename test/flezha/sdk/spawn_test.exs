@@ -14,7 +14,7 @@ defmodule Flezha.SDK.SpawnTest do
 
   import FlezhaTest.Helper.SdkOperatorHarness
 
-  alias Flezha.SDK.{Codec, Counters, Ctx, Hold, RunnerServer, Spawn}
+  alias Flezha.SDK.{Codec, Counters, Ctx, Error, Hold, RunnerServer, Spawn}
   alias Flezha.SDK.Operator.Inbox
   alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.SdkSpawnFixtures.{Spawner, SpawnerOp}
@@ -28,7 +28,7 @@ defmodule Flezha.SDK.SpawnTest do
 
   # A request answered as the runner server answers one, claimed first so the
   # mapping is read without the unread warning.
-  defp resolve(outcome, error \\ "") do
+  defp resolve(outcome, error \\ nil) do
     {handle, {:spawn, caller, spawn, _payload, _policy}} = requested()
     Spawn.answer(caller, %{spawn | claimed?: true}, {outcome, "w1"}, error)
     Spawn.await(handle, 1_000)
@@ -40,11 +40,12 @@ defmodule Flezha.SDK.SpawnTest do
     %RunnerServer.State{control_handle: sdk_side, control: Hold.new()}
   end
 
-  # The controller's answer to `reference_id`, as the control stream delivers it.
-  defp answered(reference_id, outcome, error, instance_id) do
+  # The controller's answer to `reference_id`, as the control stream delivers it:
+  # an outcome word, or the refusal `code` names as the wire's `Error`.
+  defp answered(reference_id, outcome, code, instance_id) do
     response = %RunnerCommands.SpawnBoundedResponse{
       outcome: outcome,
-      error: error,
+      error: code && code |> Flezha.Error.new() |> Flezha.Error.to_wire(),
       instance_id: instance_id
     }
 
@@ -67,23 +68,24 @@ defmodule Flezha.SDK.SpawnTest do
       {handle, {:spawn, caller, spawn, _payload, :deliver}} = requested([])
       assert spawn.instance_id == ""
 
-      Spawn.answer(caller, %{spawn | claimed?: true}, {"spawned", "worker-k7m2qzxw4pd3fn2a"}, "")
+      Spawn.answer(caller, %{spawn | claimed?: true}, {"spawned", "worker-k7m2qzxw4pd3fn2a"}, nil)
 
       assert Spawn.await(handle, 1_000) ==
                {:ok, %{id: "worker-k7m2qzxw4pd3fn2a", outcome: :spawned}}
     end
 
-    test "the error policy and an unknown factory resolve errors naming the ids" do
-      assert resolve("already_running") == {:error, {:already_running, "w1"}}
-      assert resolve("factory_unknown") == {:error, {:factory_unknown, "worker"}}
+    test "a refusal is the controller's own error, whatever the outcome word says" do
+      for code <- ["operator.already_running", "operator.factory_unknown", "quota.exceeded"] do
+        refusal = Error.new(code)
+        assert resolve("", refusal) == {:error, refusal}
+      end
     end
 
-    test "a refusal carries the controller's reason" do
-      assert resolve("refused", "quota_exceeded") == {:error, {:refused, "quota_exceeded"}}
-    end
+    test "an outcome this SDK does not know is an unreadable reply naming the word" do
+      assert {:error, %Error{code: "runtime.unreadable_reply", details: details}} =
+               resolve("adopted")
 
-    test "an outcome this SDK does not know is a refusal naming the word" do
-      assert resolve("adopted") == {:error, {:refused, "unknown outcome `adopted`"}}
+      assert details["reply"] =~ "adopted"
     end
   end
 
@@ -92,13 +94,13 @@ defmodule Flezha.SDK.SpawnTest do
       {handle, {:spawn, caller, spawn, _payload, _policy}} = requested()
       assert Spawn.try_result(handle) == :pending
 
-      Spawn.answer(caller, %{spawn | claimed?: true}, {"spawned", "w1"}, "")
+      Spawn.answer(caller, %{spawn | claimed?: true}, {"spawned", "w1"}, nil)
       assert Spawn.try_result(handle) == {:ok, %{id: "w1", outcome: :spawned}}
     end
 
     test "a reply that never arrives times out rather than hanging" do
       {handle, _cast} = requested()
-      assert Spawn.await(handle, 50) == {:error, :timeout}
+      assert {:error, %Error{code: "spawn.timeout"}} = Spawn.await(handle, 50)
     end
 
     test "await waits no longer than the deadline the request was made with" do
@@ -107,7 +109,7 @@ defmodule Flezha.SDK.SpawnTest do
 
       {micros, result} = :timer.tc(fn -> Spawn.await(passed, 10_000) end)
 
-      assert result == {:error, :timeout}
+      assert {:error, %Error{code: "spawn.timeout"}} = result
       assert micros < 5_000_000, "await waited #{div(micros, 1_000)} ms past its deadline"
     end
   end
@@ -116,11 +118,11 @@ defmodule Flezha.SDK.SpawnTest do
     test "with no runner the request resolves unavailable at once and sends nothing" do
       ctx = Ctx.new(Spawner, nil, 0)
 
-      assert Spawn.try_result(Ctx.spawn_bounded(ctx, "worker", "payload", id: "w1")) ==
-               {:error, :unavailable}
+      assert {:error, %Error{code: "spawn.unavailable"}} =
+               Spawn.try_result(Ctx.spawn_bounded(ctx, "worker", "payload", id: "w1"))
 
-      assert Spawn.try_result(Ctx.spawn_bounded(ctx, "worker", "payload")) ==
-               {:error, :unavailable}
+      assert {:error, %Error{code: "spawn.unavailable"}} =
+               Spawn.try_result(Ctx.spawn_bounded(ctx, "worker", "payload"))
 
       refute_received {:"$gen_cast", _}
     end
@@ -165,7 +167,10 @@ defmodule Flezha.SDK.SpawnTest do
       _handle = Ctx.spawn_bounded(ctx, "worker", "as is")
       assert_received {:"$gen_cast", {:spawn, _, %Spawn{}, "as is", _}}
 
-      assert_raise Protocol.UndefinedError, fn -> Ctx.spawn_bounded(ctx, "worker", {:no, :json}) end
+      assert_raise Protocol.UndefinedError, fn ->
+        Ctx.spawn_bounded(ctx, "worker", {:no, :json})
+      end
+
       refute_received {:"$gen_cast", _}
     end
 
@@ -218,7 +223,7 @@ defmodule Flezha.SDK.SpawnTest do
           assert waiters == %{}
         end)
 
-      assert Spawn.try_result(handle) == {:error, :unavailable}
+      assert {:error, %Error{code: "spawn.unavailable"}} = Spawn.try_result(handle)
       assert warnings_naming(log, "w-down") == 1
     end
 
@@ -239,7 +244,7 @@ defmodule Flezha.SDK.SpawnTest do
       assert %{instance_id: "w1", factory_id: "worker", payload: "payload", if_running: "error"} =
                request
 
-      assert {:noreply, s} = RunnerServer.handle_info(answered(id, "delivered", "", "w1"), s)
+      assert {:noreply, s} = RunnerServer.handle_info(answered(id, "delivered", nil, "w1"), s)
       assert s.waiters == %{}
       assert Spawn.await(handle, 1_000) == {:ok, %{id: "w1", outcome: :delivered}}
 
@@ -261,7 +266,7 @@ defmodule Flezha.SDK.SpawnTest do
       assert %{instance_id: "", factory_id: "worker", if_running: "deliver"} = request
 
       generated = "worker-k7m2qzxw4pd3fn2a"
-      assert {:noreply, s} = RunnerServer.handle_info(answered(id, "spawned", "", generated), s)
+      assert {:noreply, s} = RunnerServer.handle_info(answered(id, "spawned", nil, generated), s)
       assert s.waiters == %{}
       assert Spawn.await(handle, 1_000) == {:ok, %{id: generated, outcome: :spawned}}
     end
@@ -274,7 +279,7 @@ defmodule Flezha.SDK.SpawnTest do
           RunnerServer.handle_cast(cast, %RunnerServer.State{})
         end)
 
-      assert Spawn.try_result(handle) == {:error, :unavailable}
+      assert {:error, %Error{code: "spawn.unavailable"}} = Spawn.try_result(handle)
       assert warnings_naming(log, "") == 1
     end
 
@@ -294,7 +299,7 @@ defmodule Flezha.SDK.SpawnTest do
           assert settled.waiters == %{}
         end)
 
-      assert Spawn.try_result(handle) == {:error, :timeout}
+      assert {:error, %Error{code: "spawn.timeout"}} = Spawn.try_result(handle)
       assert warnings_naming(log, "w-unanswered") == 1
     end
 
@@ -309,10 +314,10 @@ defmodule Flezha.SDK.SpawnTest do
 
       log =
         AuthTestHelper.capture_log_at(:warning, fn ->
-          RunnerServer.handle_info(answered(id, "refused", "quota_exceeded", "w-claimed"), s)
+          RunnerServer.handle_info(answered(id, "", "quota.exceeded", "w-claimed"), s)
         end)
 
-      assert Spawn.await(handle, 1_000) == {:error, {:refused, "quota_exceeded"}}
+      assert {:error, %Error{code: "quota.exceeded"}} = Spawn.await(handle, 1_000)
       assert warnings_naming(log, "w-claimed") == 0
     end
   end
@@ -325,10 +330,15 @@ defmodule Flezha.SDK.SpawnTest do
       assert_receive {:"$gen_cast", {:spawn, caller, %Spawn{} = spawn, "payload", :deliver}},
                      2_000
 
-      Spawn.answer(caller, %{spawn | claimed?: true}, {"refused", "w-refused"}, "quota_exceeded")
+      Spawn.answer(
+        caller,
+        %{spawn | claimed?: true},
+        {"", "w-refused"},
+        Error.new("quota.exceeded")
+      )
 
       assert [{"op-1", payload, _meta}] = frames(1)
-      assert payload == inspect({:error, {:refused, "quota_exceeded"}})
+      assert payload =~ ~s(code: "quota.exceeded")
       refute_received {:"$gen_cast", {:spawn, _, _, _, _}}
       assert Counters.dispatches(counters) == 1
     end
@@ -349,7 +359,7 @@ defmodule Flezha.SDK.SpawnTest do
       log =
         AuthTestHelper.capture_log_at(:warning, fn ->
           RunnerServer.handle_info(
-            answered(spawn.reference_id, "factory_unknown", "", "w-unread"),
+            answered(spawn.reference_id, "", "operator.factory_unknown", "w-unread"),
             s
           )
         end)

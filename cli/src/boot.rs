@@ -26,7 +26,7 @@ pub(crate) const TABLE: Command = Command {
 };
 
 fn handle_status(read: &Reading) {
-    rpc::run("boot_status", &[], &[], read.token(), rpc::PROPAGATE);
+    rpc::run("boot_status", &[], &[], read);
 }
 
 const DEFAULT_TIMEOUT_MS: u64 = 60_000;
@@ -36,16 +36,6 @@ const DEFAULT_TIMEOUT_MS: u64 = 60_000;
 /// the boot it waits for; 200 ms is the pace the controller polls its own
 /// verdict at once reached (`boot_await_poll_ms`).
 const UNREACHABLE_PAUSE: Duration = Duration::from_millis(200);
-
-/// Still unreachable when the budget ran out. `:noconnection` is all the
-/// reason says, so the line names what it stands for when the controller's host
-/// can be reached, with the settings that decide this shell's cookie and node name.
-const NEVER_REACHED: rpc::Failure = rpc::PROPAGATE.saying(
-    "boot await: unreachable (:noconnection): the controller is not up yet or stopped \
-     after it was reached, or this shell's cookie (RELEASE_COOKIE, FLEZHA_COOKIE_FILE, \
-     FLEZHA_STATE_DIR) or node name (FLEZHA_NODE_NAME, FLEZHA_NODE_HOST) is not the \
-     controller's",
-);
 
 /// One budget, spent on reaching the node and then on the node's own wait: the
 /// first request carries all of it, and each retry what is left. A reached
@@ -58,13 +48,19 @@ fn handle_await(read: &Reading) {
     let left_ms = || timeout_ms.saturating_sub(started.elapsed().as_millis() as u64);
     let mut budget_ms = timeout_ms;
 
-    while let Err(unreachable) = rpc::run_if_reachable(
-        rpc::expression("boot_await", &[budget_ms.to_string()], &[], read.token()),
-        rpc::PROPAGATE,
-    ) {
+    // Still unreachable when the budget runs out is `controller.unreachable`,
+    // whose message names what a failed connect cannot tell apart.
+    while rpc::run_if_reachable(&rpc::expression(
+        "boot_await",
+        &[budget_ms.to_string()],
+        &[],
+        read,
+    ))
+    .is_err()
+    {
         let left = left_ms();
         if left == 0 {
-            return rpc::verdict(Ok(unreachable), NEVER_REACHED);
+            rpc::unreachable();
         }
         thread::sleep(UNREACHABLE_PAUSE.min(Duration::from_millis(left)));
         budget_ms = left_ms();

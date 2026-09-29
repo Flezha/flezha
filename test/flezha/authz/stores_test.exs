@@ -96,7 +96,7 @@ defmodule Flezha.AuthZ.StoresTest do
 
     test "rejects invalid role" do
       {:ok, _} = RoleStore.start_link([])
-      assert {:error, :unknown_role} = RoleStore.bind("eve", "_system", :superuser)
+      assert {:error, {:unknown_role, :superuser}} = RoleStore.bind("eve", "_system", :superuser)
     end
 
     test "a second bind adds a role rather than replacing the first" do
@@ -122,7 +122,9 @@ defmodule Flezha.AuthZ.StoresTest do
       {:ok, _} = RoleStore.start_link([])
       :ok = RoleStore.bind(@runner, @ns, :app)
 
-      assert {:error, {:bound_elsewhere, @ns}} = RoleStore.bind(@runner, "team-payments", :viewer)
+      assert {:error, {:bound_elsewhere, @runner, @ns}} =
+               RoleStore.bind(@runner, "team-payments", :viewer)
+
       assert {:ok, %{namespace: @ns, roles: [:app]}} = RoleStore.lookup(@runner)
     end
 
@@ -224,7 +226,7 @@ defmodule Flezha.AuthZ.StoresTest do
                )
 
       assert {:ok, _} = NamespaceStore.get("team-orders")
-      assert {:error, :already_exists} = NamespaceStore.create("team-orders")
+      assert {:error, {:namespace_exists, "team-orders"}} = NamespaceStore.create("team-orders")
 
       assert {:ok, %{quotas: %{max_operators: 25}}} =
                NamespaceStore.set_quotas("team-orders", %{max_operators: 25})
@@ -234,8 +236,10 @@ defmodule Flezha.AuthZ.StoresTest do
 
       # A delete that removed nothing says so, the way `create` refuses a name
       # that is already taken.
-      assert {:error, :not_found} = NamespaceStore.delete("team-orders")
-      assert {:error, :not_found} = NamespaceStore.delete("never-existed-here")
+      assert {:error, {:not_found, "team-orders"}} = NamespaceStore.delete("team-orders")
+
+      assert {:error, {:not_found, "never-existed-here"}} =
+               NamespaceStore.delete("never-existed-here")
 
       assert {:error, :cannot_delete_system_namespace} = NamespaceStore.delete("_system")
     end
@@ -267,24 +271,28 @@ defmodule Flezha.AuthZ.StoresTest do
                10
              )
 
-      assert {:error, :token_expired} = TokenStore.verify(raw)
+      assert {:error, %Flezha.Error{code: "authz.token_expired"}} = TokenStore.verify(raw)
     end
 
     test "revoked token is rejected" do
       {:ok, _} = TokenStore.start_link([])
       {:ok, raw, _} = TokenStore.issue("alice", "_system", :ops, 3600)
       {:ok, _} = TokenStore.revoke_by_token(raw)
-      assert {:error, :token_revoked} = TokenStore.verify(raw)
+      assert {:error, %Flezha.Error{code: "authz.token_revoked"}} = TokenStore.verify(raw)
     end
 
     test "unknown token returns :unknown" do
       {:ok, _} = TokenStore.start_link([])
-      assert {:error, :unknown} = TokenStore.verify("flzt_definitelynotissued")
+
+      assert {:error, %Flezha.Error{code: "authz.token_unknown"}} =
+               TokenStore.verify("flzt_definitelynotissued")
     end
 
     test "malformed token rejected pre-hash" do
       {:ok, _} = TokenStore.start_link([])
-      assert {:error, :malformed} = TokenStore.verify("not-a-token")
+
+      assert {:error, %Flezha.Error{code: "authz.token_malformed"}} =
+               TokenStore.verify("not-a-token")
     end
 
     test "list filters by namespace" do

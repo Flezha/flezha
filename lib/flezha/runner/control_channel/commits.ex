@@ -77,7 +77,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
 
   def handle_cast({:refuse, reference_id, frame}, state) do
     commit = decode(frame, state)
-    error = {:error, "not the owner of #{commit.operator_id}"}
+    error = {:error, {:not_owner, commit.operator_id}}
     {:noreply, ack(state, reference_id, commit, error)}
   end
 
@@ -226,27 +226,30 @@ defmodule Flezha.Runner.ControlChannel.Commits do
 
   # The protocol's core invariant, in one place: the reply to a durability
   # handshake is emitted only AFTER the journal answered, carries the append's
-  # outcome in its `error` field (empty = durable), and gates whatever post-ack
+  # outcome in its `error` field (absent = durable), and gates whatever post-ack
   # work the barrier owes.
   defp ack(state, reference_id, commit, result) do
     error =
       case result do
-        :ok -> ""
-        {:error, reason} when is_binary(reason) -> reason
-        {:error, reason} -> inspect(reason)
+        :ok -> nil
+        {:error, reason} -> Flezha.Error.from_reason(reason, :"wire.commit")
       end
 
-    if error != "", do: Logger.warning("[control_channel] #{commit.label} failed: #{error}")
+    if error,
+      do:
+        Logger.warning(
+          "[control_channel] #{commit.label} failed: #{error.message} (#{error.code})"
+        )
 
     {tag, response} = commit.response
 
     ControlChannel.send_control_async(
       state.runner_id,
-      {tag, %{response | error: error}},
+      {tag, %{response | error: error && Flezha.Error.to_wire(error)}},
       reference_id
     )
 
-    if error == "" do
+    if is_nil(error) do
       commit.post.()
       DurabilityTier.on_bounded_commit(commit.operator_id)
     end

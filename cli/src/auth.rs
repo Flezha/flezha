@@ -1,7 +1,8 @@
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::exit;
+
+use flz_transport::errors::FlezhaError;
 
 use crate::args::{app_data_root, Positional, Reading, APP_DATA_ROOT};
 use crate::dispatch::{self, Command, Missing, Verb};
@@ -13,9 +14,7 @@ pub(crate) const TABLE: Command = Command {
     help: help::AUTH,
     verbs: &[
         Verb::new("bootstrap", handle_bootstrap).taking(&[Positional::required("<token>")]),
-        Verb::new("whoami", |read| {
-            rpc::token_only(read, "authz_render_whoami")
-        }),
+        Verb::new("whoami", |read| rpc::bare(read, "authz_render_whoami")),
         Verb::new("rebootstrap", handle_rebootstrap).reading(&[APP_DATA_ROOT]),
     ],
     help_verbs: dispatch::HELP_VERBS,
@@ -28,8 +27,7 @@ fn handle_bootstrap(read: &Reading) {
         "authz_render_bootstrap",
         &[text(read.pos("<token>"))],
         &[],
-        read.token(),
-        rpc::PROPAGATE,
+        read,
     );
 }
 
@@ -51,11 +49,10 @@ fn handle_rebootstrap(read: &Reading) {
     };
 
     if !auth_dir.is_dir() {
-        eprintln!(
-            "Error: auth directory {} does not exist — nothing to recover.",
-            auth_dir.display()
-        );
-        exit(1);
+        rpc::fail(FlezhaError::with(
+            "cli.auth_dir_missing",
+            [("path", auth_dir.display().to_string().into())],
+        ));
     }
 
     if controller_is_up(DEFAULT_PROBE_TIMEOUT_MS) {
@@ -97,11 +94,10 @@ fn recover_offline(auth_dir: &Path) {
 fn mint_bootstrap_token() -> String {
     let mut raw = [0u8; 32];
     if let Err(e) = getrandom::getrandom(&mut raw) {
-        eprintln!(
-            "Error: could not read OS entropy for a bootstrap token: {}",
-            e
-        );
-        exit(1);
+        rpc::fail(FlezhaError::with(
+            "cli.entropy_unavailable",
+            [("reason", e.to_string().into())],
+        ));
     }
     raw.iter().map(|b| format!("{:02x}", b)).collect()
 }
@@ -110,8 +106,7 @@ fn mint_bootstrap_token() -> String {
 /// credential, and the directory's mode is not enough on its own.
 fn write_owner_only(path: &Path, bytes: &[u8]) {
     if let Err(e) = fs::File::create(path).and_then(|mut f| f.write_all(bytes)) {
-        eprintln!("Error: could not write {}: {}", path.display(), e);
-        exit(1);
+        write_failed(path, e);
     }
 
     #[cfg(unix)]
@@ -119,8 +114,17 @@ fn write_owner_only(path: &Path, bytes: &[u8]) {
         use std::os::unix::fs::PermissionsExt;
 
         if let Err(e) = fs::set_permissions(path, fs::Permissions::from_mode(0o600)) {
-            eprintln!("Error: could not restrict {}: {}", path.display(), e);
-            exit(1);
+            write_failed(path, e);
         }
     }
+}
+
+fn write_failed(path: &Path, e: std::io::Error) -> ! {
+    rpc::fail(FlezhaError::with(
+        "cli.write_failed",
+        [
+            ("path", path.display().to_string().into()),
+            ("reason", e.to_string().into()),
+        ],
+    ))
 }

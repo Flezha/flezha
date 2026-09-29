@@ -20,13 +20,13 @@ defmodule Flezha.Plugin.Provider.File.Storage do
   Resolve a plugin's `path` inside `root` into the one target every log line and
   verdict names, or refuse it naming what stopped it.
   """
-  @callback resolve(path :: binary(), root :: binary()) :: {:ok, target()} | {:error, binary()}
+  @callback resolve(path :: binary(), root :: binary()) :: {:ok, target()} | {:error, term()}
 
   @doc """
   Make ready what a sink's layout needs before its worker exists, or refuse a
   layout this storage cannot carry, naming the option.
   """
-  @callback prepare_sink(opts :: map()) :: {:ok, map()} | {:error, binary()}
+  @callback prepare_sink(opts :: map()) :: {:ok, map()} | {:error, term()}
 
   @doc "`root` as a user reads it."
   @callback shown(root :: binary()) :: binary()

@@ -72,11 +72,16 @@ impl KeyGroupRange {
         if group >= self.from && group <= self.to {
             return Ok(());
         }
-        Err(crate::error::Error::Partition(format!(
-            "key '{}' hashes to key group {}, which partition {} of {} does not own \
-             (it owns groups {}..{}) — the routing item / flz.key must equal the key_by result",
-            key, group, self.index, self.count, self.from, self.to
-        )))
+        Err(crate::error::Error::Partition(
+            crate::Code::KeyOutsidePartition.with([
+                ("key", key.into()),
+                ("group", group.into()),
+                ("partition", self.index.into()),
+                ("partitions", self.count.into()),
+                ("from", self.from.into()),
+                ("to", self.to.into()),
+            ]),
+        ))
     }
 
     /// Whether `key` belongs here — the filtering form a static tasklet
@@ -196,9 +201,9 @@ impl OperatorInstance {
     /// share, so neither can drift from how a registered class is built.
     pub fn of_class(factory_id: &str, instance_id: &str) -> Result<Arc<Self>, crate::error::Error> {
         let topology = crate::operator::registry::get_class(factory_id).ok_or_else(|| {
-            crate::error::Error::Declaration(format!(
-                "no operator class is registered as `{factory_id}`"
-            ))
+            crate::error::Error::Declaration(
+                crate::Code::ClassNotRegistered.with([("factory", factory_id.into())]),
+            )
         })?;
         Ok(Self::new(topology, Arc::from(instance_id)))
     }

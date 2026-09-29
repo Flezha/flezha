@@ -9,12 +9,14 @@ use std::path::PathBuf;
 use std::process::exit;
 use std::time::Instant;
 
+use flz_transport::errors::FlezhaError;
+
 use clear::measure_and_clear;
 use plan::{build_plan, opt_in_flags, preflight_guard, Action, Root};
 use report::{print_human, print_json};
 
-use crate::args::{app_data_root, OptSpec, Reading, APP_DATA_ROOT, JSON_SWITCH, OUTPUT};
-use crate::rpc::{controller_is_up, DEFAULT_PROBE_TIMEOUT_MS};
+use crate::args::{app_data_root, OptSpec, Reading, APP_DATA_ROOT};
+use crate::rpc::{self, controller_is_up, DEFAULT_PROBE_TIMEOUT_MS};
 
 pub(crate) const YES: OptSpec = OptSpec::switch("--yes", "--yes");
 pub(crate) const DRY_RUN: OptSpec = OptSpec::switch("--dry-run", "--dry-run");
@@ -43,8 +45,6 @@ pub(crate) const OPTIONS: &[OptSpec] = &[
     INCLUDE_PLUGINS,
     INCLUDE_SOCKETS,
     ALL,
-    OUTPUT,
-    JSON_SWITCH,
     PROBE_TIMEOUT_MS,
     APP_DATA_ROOT,
 ];
@@ -98,9 +98,8 @@ pub(crate) fn handle_reset_command(read: &Reading) {
     // Pre-flight: refuse if any planned clearance points at the configured
     // root itself, at the same path as another planned root, or onto, into or
     // around a root the run keeps.
-    if let Err(msg) = preflight_guard(&roots, &flags.app_data_root) {
-        eprintln!("{}", msg);
-        exit(1);
+    if let Err(refusal) = preflight_guard(&roots, &flags.app_data_root) {
+        rpc::fail(refusal);
     }
 
     let apply = flags.yes && !flags.dry_run;
@@ -123,10 +122,10 @@ pub(crate) fn handle_reset_command(read: &Reading) {
 /// touched.
 fn refuse_if_controller_is_up(flags: &Flags) {
     if controller_is_up(flags.probe_timeout_ms) {
-        eprintln!(
-            "flz reset refuses to run while the controller is up. Stop it first with: flz controller stop"
-        );
-        exit(4);
+        rpc::fail(FlezhaError::new(
+            "reset.controller_running",
+            Default::default(),
+        ));
     }
 }
 
@@ -170,23 +169,33 @@ fn verdict(
     first_error: Option<(PathBuf, io::Error)>,
 ) -> i32 {
     if let Some((path, err)) = first_error {
-        eprintln!("error: {} ({})", path.display(), err);
-        // Distinguish "before any action" (3) from "partial" (2): if at least
-        // one Clear root completed (non-zero files removed OR walk succeeded
-        // and apply ran), treat as partial.
+        // "Partial" when at least one Clear root completed (files removed, or a
+        // walk that ran with apply on); otherwise nothing was touched.
         let any_cleared = apply
             && roots
                 .iter()
                 .any(|r| matches!(r.action, Action::Clear) && (r.files > 0 || r.bytes > 0));
-        return if any_cleared { 2 } else { 3 };
+        let code = if any_cleared {
+            "reset.partial"
+        } else {
+            "reset.path_unreadable"
+        };
+        rpc::fail(FlezhaError::with(
+            code,
+            [
+                ("path", path.display().to_string().into()),
+                ("reason", err.to_string().into()),
+            ],
+        ));
     }
 
-    // Plan-only mode. `--dry-run` exits 0; bare invocation exits 1.
+    // Plan-only mode. `--dry-run` exits 0; a bare invocation printed the plan
+    // and forgot the flag.
     if !apply && !flags.dry_run {
-        eprintln!(
-            "dry-run mode (no --yes given); pass --yes to apply or --dry-run to preview without an error code"
-        );
-        return 1;
+        rpc::fail(FlezhaError::new(
+            "reset.confirmation_required",
+            Default::default(),
+        ));
     }
 
     0

@@ -279,21 +279,22 @@ The class declaration SHALL carry `schema_version` and
 
 The C ABI SHALL expose `flz_core_check_class`, which takes the same declaration record
 `flz_core_declare_class` takes and registers nothing: on acceptance it SHALL hand out the
-derived declaration as JSON, and on refusal it SHALL hand out the verdict as JSON —
-`{"issues":[{"name","text"}, …]}` — so that no SDK parses prose to learn which refusals
-fired. The refusal status SHALL still be the failing one and `flz_core_last_error` SHALL
-carry the same verdict rendered for a reader, so a caller that ignores the buffer refuses
-rather than registers.
+derived declaration as JSON. On refusal it SHALL answer the failing status, and
+`flz_core_last_error` SHALL carry the JSON error document of the error model. Its code SHALL
+be the first issue's `topology.*` code, and its `details.issues` SHALL list every issue that
+fired, each with its own `code`, `message` and `details`, so that no SDK parses prose to learn
+which refusals fired. A caller that ignores the error refuses rather than registers.
 `flz_core_declare_class` SHALL be that check followed by registration, and its refusal
-text SHALL be the same rendering so a suite asserting a substring of one refusal still
-holds. The record SHALL carry each channel's ordered chains and the raw checkpoint flags,
-and the key set SHALL be pinned by `test/fixtures/host_class_decl_keys.txt` as today.
+SHALL be the same error document. The record SHALL carry each channel's ordered chains and
+the raw checkpoint flags, and the key set SHALL be pinned by
+`test/fixtures/host_class_decl_keys.txt` as today.
 
 #### Scenario: A test asks for the verdict without registering
 
 - **WHEN** an SDK's conformance run submits a fixture row's record to `flz_core_check_class`
-- **THEN** it receives the derived declaration for a well-formed row, or a verdict naming
-  every refusal for a malformed one, and no class is registered
+- **THEN** it receives the derived declaration for a well-formed row, or an error document
+  whose `details.issues` names every refusal by its `topology.*` code for a malformed one, and
+  no class is registered
 
 #### Scenario: A stale builder is refused, not degraded
 
@@ -386,9 +387,11 @@ spawn-and-wait entry (`flz_core_spawn_bounded` is removed):
   already resolved to `skipped_on_replay`, carrying the given id or an empty id.
 - `flz_core_spawn_result(ctx, handle, timeout_ms, out)` SHALL answer pending, or the resolved result
   carrying the instance id the request resolved to and the outcome (`spawned`, `delivered` or
-  `skipped_on_replay`), or the failure (`already_running`, `factory_unknown`,
-  `factory_not_bounded`, `refused` with its reason, `timeout`, `unavailable`) the way every
-  other entry reports a failure. A timeout of zero
+  `skipped_on_replay`), or the failure, reported the way every other entry reports one: the status
+  `FLZ_ERR` and the JSON error document in `flz_core_last_error`, whose code is the
+  controller's (`operator.already_running`, `operator.factory_unknown`,
+  `operator.factory_not_bounded`, or any other refusal's own code) or the core's
+  (`spawn.timeout`, `spawn.unavailable`). A timeout of zero
   SHALL never wait, including while another thread's read of the same handle is waiting. A handle
   read to resolution SHALL answer every later read the same while its activation is outstanding.
 
@@ -412,10 +415,52 @@ released rather than wait.
 - **THEN** the reaper SHALL log the refusal once, naming the instance id (empty when none was given), the factory id and the reason, and a later `flz_core_spawn_result` on that handle SHALL answer that it was released
 
 #### Scenario: An unbounded factory is a named failure through the ABI
-- **WHEN** the controller answers a request with outcome `factory_not_bounded`
-- **THEN** `flz_core_spawn_result` SHALL report the failure `factory_not_bounded`, distinct from `factory_unknown` and from `refused`, and every veneer SHALL surface it under that name
+- **WHEN** the controller refuses a request with the code `operator.factory_not_bounded`
+- **THEN** `flz_core_spawn_result` SHALL report that code, distinct from `operator.factory_unknown`, and every veneer SHALL surface it as the `code` of its one error type
 
 #### Scenario: The blocking spawn entry is gone
 - **WHEN** the ABI surface fixture is compared with the exported symbols
 - **THEN** it SHALL list `flz_core_spawn_request` and `flz_core_spawn_result` and SHALL NOT list `flz_core_spawn_bounded`
+
+### Requirement: The ABI SHALL carry every failure as the one error document
+
+Every C ABI entry that fails SHALL answer its failing status and SHALL leave in
+`flz_core_last_error` the JSON error document `{"error": {"code", "class", "message",
+"details", "hint"}}` rendered from the catalogue. No entry SHALL hand a failure out through
+a second buffer. Each veneer SHALL parse that document into its SDK's one error type, and
+SHALL NOT match on message text.
+
+#### Scenario: One channel for every failure
+
+- **WHEN** an administration call, a spawn result, a class check and a context creation
+  each fail through the ABI
+- **THEN** each SHALL leave a document in `flz_core_last_error` that parses as JSON with an
+  `error.code` found in the catalogue, and no veneer SHALL read a second failure buffer
+
+#### Scenario: A veneer does not scrape text
+
+- **WHEN** the veneers' sources are searched for a match on the text of a core refusal
+- **THEN** none SHALL be found; every veneer SHALL branch on `code` or `class`
+
+### Requirement: The ABI SHALL render a refusal a host makes itself
+
+`flz_core_error_document(code, details_json)` SHALL answer the JSON error document the
+catalogue renders for `code` with its details filled from `details_json`, borrowed until the
+next call on the same thread, and NULL when an argument is not UTF-8 or the details are not a
+JSON object. A host that makes a refusal itself SHALL build its one error type from this
+document, or from its glue's wrapper of the same renderer, and SHALL NOT hold a copy of the
+catalogue. The Java SDK's API module is the one exception: it compiles and tests without the
+native module, so it renders from the catalogue packaged into it, held to the shared rendering
+fixture.
+
+#### Scenario: A host refusal reads as the core's
+
+- **WHEN** a host asks for `runtime.identity_too_long` with
+  `{"part": "tasklet name", "value": "t", "limit": 255}`
+- **THEN** the document's message SHALL be `the tasklet name 't' is longer than 255 bytes`
+
+#### Scenario: Details that are not an object render nothing
+
+- **WHEN** a host passes `[]` as the details
+- **THEN** the entry SHALL answer NULL
 

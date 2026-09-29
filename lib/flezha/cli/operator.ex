@@ -26,8 +26,8 @@ defmodule Flezha.Service.Cli.Operator do
   the factory's, announced by its runners. Answers `{:ok, %{id:, outcome:}}`,
   which the start's audit record reads.
   """
-  def operator_start(namespace, factory_id, init_values, format, opts_json, %{opts: opts}) do
-    format = Context.atom!(format, [:text, :json], "format")
+  def operator_start(namespace, factory_id, init_values, opts_json, %{opts: opts}) do
+    format = frame_format(opts)
 
     opts_kw =
       Context.json!(opts_json, "--partitions/--snapshot-interval")
@@ -57,7 +57,7 @@ defmodule Flezha.Service.Cli.Operator do
     case Builder.seed_input(text, channel) do
       {:ok, nil} -> opts_kw
       {:ok, seed} -> Keyword.put(opts_kw, :seed_input, seed)
-      {:error, reason} -> Context.halt!("error: #{reason}; give --text too")
+      {:error, reason} -> Context.fail!(reason)
     end
   end
 
@@ -70,13 +70,7 @@ defmodule Flezha.Service.Cli.Operator do
         {1, rest}
 
       {raw, rest} ->
-        case Context.integer!(raw, "--partitions") do
-          n when n >= 1 ->
-            {n, rest}
-
-          _ ->
-            Context.fail!("starting operator: --partitions must be a positive integer")
-        end
+        {positive!(raw, "--partitions"), rest}
     end
   end
 
@@ -93,8 +87,8 @@ defmodule Flezha.Service.Cli.Operator do
           answer
         end
 
-      {:error, reason} ->
-        Context.fail!("starting operator: #{Context.format_reason(reason)}")
+      {:error, _reason} = refused ->
+        refused
     end
   end
 
@@ -164,8 +158,7 @@ defmodule Flezha.Service.Cli.Operator do
     answer
   end
 
-  defp render_start({:error, reason}, _format),
-    do: Context.fail!("starting operator: #{Context.format_reason(reason)}")
+  defp render_start({:error, _reason} = refused, _format), do: refused
 
   @doc "Stops an operator (cooperatively for a bounded operator, hard otherwise)."
   def operator_stop(namespace, operator_id, _call) do
@@ -185,12 +178,13 @@ defmodule Flezha.Service.Cli.Operator do
         IO.puts("Operator group #{group_id} stopped (#{length(results)} partitions)")
 
       failed ->
-        Context.fail!(
-          "stopping operator group #{group_id}: " <>
-            Enum.map_join(failed, "; ", fn {id, err} -> "#{id}: #{inspect(err)}" end)
-        )
+        {:error, {:group_stop_partial, group_id, Enum.map(failed, &member_failure/1)}}
     end
   end
+
+  # A member that did not stop, named with its own refusal.
+  defp member_failure({id, {:error, reason}}),
+    do: "#{id} (#{Flezha.Error.from_reason(reason, :"operator.stop").message})"
 
   defp stop_one(namespace, operator_id) do
     case OperatorManager.request_stop(namespace, operator_id) do
@@ -203,8 +197,8 @@ defmodule Flezha.Service.Cli.Operator do
             "It will finish in-flight work, then complete (cancelled) and be removed."
         )
 
-      {:error, reason} ->
-        Context.fail!("stopping operator: #{Context.format_reason(reason)}")
+      {:error, _reason} = refused ->
+        refused
     end
   end
 
@@ -217,14 +211,7 @@ defmodule Flezha.Service.Cli.Operator do
   reached or the new member set fails preflight.
   """
   def operator_scale(namespace, group_id, target, opts_json, _call) do
-    target =
-      case Context.integer!(target, "<partitions>") do
-        n when n >= 1 ->
-          n
-
-        _ ->
-          Context.fail!("scaling operator: <partitions> must be a positive integer")
-      end
+    target = positive!(target, "<partitions>")
 
     opts =
       case Context.json!(opts_json, "--timeout") do
@@ -248,8 +235,8 @@ defmodule Flezha.Service.Cli.Operator do
           )
         end
 
-      {:error, reason} ->
-        Context.fail!("scaling operator: #{Context.format_reason(reason)}")
+      {:error, _reason} = refused ->
+        refused
     end
   end
 
@@ -266,43 +253,12 @@ defmodule Flezha.Service.Cli.Operator do
   def operator_rewind(namespace, operator_id, to_iter, _call) do
     namespace = Namespace.or_default(namespace)
 
-    case Bounded.rewind_instance(namespace, operator_id, to_iter) do
-      {:error, :operator_not_running} ->
-        Context.fail!("operator '#{operator_id}' not found")
-
-      outcome ->
-        print_rewind(operator_id, to_iter, outcome)
+    with :ok <- Bounded.rewind_instance(namespace, operator_id, to_iter) do
+      IO.puts(
+        "Operator '#{operator_id}' rewound to iteration #{to_iter}. " <>
+          "Iterations above it were compensated; the loop resumes at #{to_iter + 1}."
+      )
     end
-  end
-
-  defp print_rewind(operator_id, to_iter, :ok) do
-    IO.puts(
-      "Operator '#{operator_id}' rewound to iteration #{to_iter}. " <>
-        "Iterations above it were compensated; the loop resumes at #{to_iter + 1}."
-    )
-  end
-
-  defp print_rewind(_operator_id, _to_iter, {:error, {:uncommitted_iteration, []}}) do
-    Context.fail!("this operator has no committed iterations to rewind to")
-  end
-
-  defp print_rewind(_operator_id, to_iter, {:error, {:uncommitted_iteration, committed}}) do
-    Context.fail!(
-      "Error: iteration #{to_iter} has not committed. " <>
-        "Committed iterations: #{Enum.min(committed)}..#{Enum.max(committed)}"
-    )
-  end
-
-  defp print_rewind(_operator_id, _to_iter, {:error, {:uncovered, channels}}) do
-    Context.fail!(
-      "Error: refusing to rewind — these channels were written by an unwound " <>
-        "tasklet that declares no `compensate` hook, so the output cannot be " <>
-        "undone: #{Enum.join(channels, ", ")}"
-    )
-  end
-
-  defp print_rewind(_operator_id, _to_iter, {:error, reason}) do
-    Context.fail!("Error rewinding operator: #{Context.format_reason(reason)}")
   end
 
   @doc """
@@ -351,14 +307,8 @@ defmodule Flezha.Service.Cli.Operator do
       {:ok, :suspended} ->
         IO.puts("Journaled for suspended '#{operator_id}' — delivers on wake.")
 
-      {:error, :not_ready} ->
-        Context.fail!("operator '#{operator_id}' is not ready to accept input.")
-
-      {:error, :not_found} ->
-        Context.fail!("operator '#{operator_id}' not found.")
-
-      {:error, :refused} ->
-        Context.fail!("input refused — durable append failed for '#{operator_id}'.")
+      {:error, _reason} = refused ->
+        refused
     end
   end
 
@@ -375,24 +325,8 @@ defmodule Flezha.Service.Cli.Operator do
         IO.puts("State for operator '#{operator_id}' in namespace '#{namespace_display}':")
         IO.puts(inspect(state))
 
-      {:error, :not_found} ->
-        IO.puts("Operator '#{operator_id}' not found in namespace '#{namespace_display}'.")
-
-      {:error, :persistence_off} ->
-        Context.fail!(
-          "Operator '#{operator_id}' in namespace '#{namespace_display}' has no per-cell state: " <>
-            "its class declares persistence off, so its Cells hold no durable state and " <>
-            "live reads are refused."
-        )
-
-      {:error, reason} when is_binary(reason) ->
-        Context.fail!("Error getting operator state: #{reason}")
-
-      {:error, reason} ->
-        Context.fail!("Error getting operator state: #{Context.format_reason(reason)}")
-
-      other ->
-        IO.puts("Unexpected result: #{inspect(other)}")
+      {:error, _reason} = refused ->
+        refused
     end
   end
 
@@ -403,11 +337,19 @@ defmodule Flezha.Service.Cli.Operator do
   `input`, until the window closes, the caller goes away or this process is
   told to exit.
   """
-  def operator_listen(namespace, operator_id, direction, format, %{opts: opts}) do
+  def operator_listen(namespace, operator_id, direction, %{opts: opts}) do
     chain = @chains[Context.atom!(direction, Keyword.keys(@chains), "direction")]
-    format = Context.atom!(format, [:text, :json], "format")
+    listen(namespace, operator_id, chain, frame_format(opts), Context.window(opts), fn -> :ok end)
+  end
 
-    listen(namespace, operator_id, chain, format, Context.window(opts), fn -> :ok end)
+  defp frame_format(opts), do: if(Context.format(opts) == "json", do: :json, else: :text)
+
+  # A count the caller typed that must be at least one.
+  defp positive!(written, option) do
+    case Context.integer!(written, option) do
+      n when n >= 1 -> n
+      n -> Context.fail!(Flezha.Error.new("usage.not_positive", option: option, value: n))
+    end
   end
 
   # `before` runs after the attach, so a frame it causes cannot pass the
@@ -454,10 +396,10 @@ defmodule Flezha.Service.Cli.Operator do
         :ok
 
       {:ok, :already_enabled} ->
-        Context.fail!("listening to '#{operator_id}': listener id #{plugin_id} is already in use")
+        Context.fail!({:plugin_id_taken, plugin_id, namespace, operator_id})
 
       {:error, reason} ->
-        Context.fail!("listening to '#{operator_id}': #{Context.format_reason(reason)}")
+        Context.fail!(reason)
     end
   end
 

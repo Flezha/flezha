@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use super::cell::BytesBuffer;
 use crate::cell::CellSlot;
-use crate::error::Error;
+use crate::error::{Code, Error};
 use crate::flusher::FlushableBuffer;
 use crate::header::{HeaderTemplate, RestoreError, SchemaDecision};
 use crate::schema::{self, TimerOp};
@@ -19,10 +19,26 @@ use crate::util::LockRecover;
 
 /// A refusal from the core is the restore's failure, reported by name — the
 /// host never sees the record.
-fn note_error<T>(result: Result<T, RestoreError>, errors: &mut Vec<String>) -> Option<T> {
-    result
-        .map_err(|e| errors.push(format!("restore_init_state: {e}")))
-        .ok()
+fn note_error<T>(result: Result<T, RestoreError>, errors: &mut Vec<Error>) -> Option<T> {
+    result.map_err(|e| errors.push(restore_failed(e))).ok()
+}
+
+/// A restore that could not complete, with the refusal's own words as the
+/// reason.
+pub fn restore_failed(reason: impl std::fmt::Display) -> Error {
+    Error::State(Code::RestoreFailed.with([("reason", reason.to_string().into())]))
+}
+
+/// A host's own failure of the `command` activation.
+fn host_failed(command: &str, reason: String) -> Error {
+    Error::HostCrossing(
+        Code::HostCommandFailed.with([("command", command.into()), ("reason", reason.into())]),
+    )
+}
+
+/// A host answer of another kind than the `command` activation asks for.
+fn wrong_outcome(command: &str) -> Error {
+    Error::HostCrossing(Code::HostWrongOutcome.with([("command", command.into())]))
 }
 
 /// The host's sink: change bodies are collected verbatim for the crossing,
@@ -70,7 +86,7 @@ pub fn restore_fold_exclusive(
     snapshot_header: &[u8],
     snapshot_bytes: &[u8],
     change_log_bytes: &[u8],
-    errors: &mut Vec<String>,
+    errors: &mut Vec<Error>,
 ) -> Option<crate::restore::RestoreOutcome> {
     let facts = slot.dispatcher.host_facts()?;
     let expected = facts.header();
@@ -103,18 +119,15 @@ pub fn restore_fold_exclusive(
             })
         }
         Ok(schema::ActivationOutcome::Failed(err)) => {
-            errors.push(format!(
-                "restore_init_state: host fold failed: {}",
-                err.message
-            ));
+            errors.push(host_failed("restore_fold", err.message));
             None
         }
         Ok(_) => {
-            errors.push("restore_init_state: host answered with a non-restore outcome".to_string());
+            errors.push(wrong_outcome("restore_fold"));
             None
         }
         Err(e) => {
-            errors.push(format!("restore_init_state: {e}"));
+            errors.push(e);
             None
         }
     }
@@ -127,7 +140,7 @@ fn resolve_snapshot(
     min_readable: u32,
     snapshot_header: &[u8],
     snapshot_bytes: &[u8],
-    errors: &mut Vec<String>,
+    errors: &mut Vec<Error>,
 ) -> Option<(Option<schema::RestoreBody>, bool)> {
     if snapshot_bytes.is_empty() {
         return Some((None, false));
@@ -149,9 +162,10 @@ fn resolve_snapshot(
 /// then cross a [`schema::ActivationKind::SnapshotRequest`] and frame the
 /// host-encoded state. Runs under the cell gate.
 pub fn snapshot_frame_crossing(slot: &Arc<CellSlot>) -> Result<(Vec<u8>, u64, usize), Error> {
-    let facts = slot.dispatcher.host_facts().ok_or_else(|| {
-        Error::HostCrossing("snapshot_frame_crossing: not a host-run tasklet".to_string())
-    })?;
+    let facts = slot
+        .dispatcher
+        .host_facts()
+        .ok_or_else(|| Error::HostCrossing(Code::NotHostTasklet.with([])))?;
     let header = facts.header();
     let flush = |buffer: &mut Box<dyn FlushableBuffer>| {
         crate::flusher::flush_one(
@@ -188,13 +202,8 @@ pub fn snapshot_frame_crossing(slot: &Arc<CellSlot>) -> Result<(Vec<u8>, u64, us
 fn snapshot_state(outcome: schema::ActivationOutcome) -> Result<Vec<u8>, Error> {
     match outcome {
         schema::ActivationOutcome::Snapshot { state } => Ok(state),
-        schema::ActivationOutcome::Failed(err) => Err(Error::HostCrossing(format!(
-            "host snapshot failed: {}",
-            err.message
-        ))),
-        _ => Err(Error::HostCrossing(
-            "host answered with a non-snapshot outcome".to_string(),
-        )),
+        schema::ActivationOutcome::Failed(err) => Err(host_failed("snapshot_request", err.message)),
+        _ => Err(wrong_outcome("snapshot_request")),
     }
 }
 
@@ -206,23 +215,23 @@ pub fn state_json_locked(
     migration: bool,
     wait: Duration,
 ) -> Result<(serde_json::Value, u64), Error> {
-    let kind = if migration {
-        schema::ActivationKind::MigrationSerialize
+    let (kind, command) = if migration {
+        (
+            schema::ActivationKind::MigrationSerialize,
+            "migration_serialize",
+        )
     } else {
-        schema::ActivationKind::LiveStateRead
+        (schema::ActivationKind::LiveStateRead, "live_state_read")
     };
     let json = match crate::poll_core::global().host_command_within(slot, kind, wait)? {
         schema::ActivationOutcome::StateJson { json }
         | schema::ActivationOutcome::MigrationState { json } => json,
-        schema::ActivationOutcome::Failed(err) => return Err(Error::HostCrossing(err.message)),
-        _ => {
-            return Err(Error::HostCrossing(
-                "host answered with a non-state outcome".to_string(),
-            ))
-        }
+        schema::ActivationOutcome::Failed(err) => return Err(host_failed(command, err.message)),
+        _ => return Err(wrong_outcome(command)),
     };
-    let value = serde_json::from_slice(&json)
-        .map_err(|e| Error::HostCrossing(format!("host state JSON failed to parse: {e}")))?;
+    let value = serde_json::from_slice(&json).map_err(|e| {
+        Error::HostCrossing(Code::HostStateUnreadable.with([("reason", e.to_string().into())]))
+    })?;
     let seq = slot.change_seq.load(Ordering::Relaxed);
     Ok((value, seq))
 }
@@ -230,14 +239,14 @@ pub fn state_json_locked(
 /// Apply-state (migration in / init_values) for a host-run Cell. MUST run
 /// under the cell gate.
 pub fn apply_state_locked(slot: &Arc<CellSlot>, value: &serde_json::Value) -> Result<(), Error> {
-    let state_json = serde_json::to_vec(value).map_err(|e| Error::HostCrossing(e.to_string()))?;
+    let state_json = serde_json::to_vec(value).map_err(|e| {
+        Error::HostCrossing(Code::StateUnencodable.with([("reason", e.to_string().into())]))
+    })?;
     match crate::poll_core::global()
         .host_command(slot, schema::ActivationKind::ApplyState { state_json })?
     {
         schema::ActivationOutcome::StateApplied => Ok(()),
-        schema::ActivationOutcome::Failed(err) => Err(Error::HostCrossing(err.message)),
-        _ => Err(Error::HostCrossing(
-            "host answered with a non-apply outcome".to_string(),
-        )),
+        schema::ActivationOutcome::Failed(err) => Err(host_failed("apply_state", err.message)),
+        _ => Err(wrong_outcome("apply_state")),
     }
 }

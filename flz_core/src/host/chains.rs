@@ -269,10 +269,11 @@ fn wire_consumer(
     issues: &mut Vec<TopologyIssue>,
 ) {
     let Some(task_decl) = walk.decl.tasklets.get(tasklet as usize) else {
-        issues.push(TopologyIssue::Declaration(format!(
-            "channel `{channel}` names consumer {tasklet} but the class declares {} tasklet(s)",
-            walk.decl.tasklets.len()
-        )));
+        issues.push(TopologyIssue::ConsumerOutOfRange {
+            channel: channel.to_string(),
+            consumer: tasklet,
+            tasklets: walk.decl.tasklets.len(),
+        });
         return;
     };
     match derived.consumers.iter().find(|e| e.tasklet == tasklet) {

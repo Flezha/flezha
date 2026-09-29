@@ -8,19 +8,13 @@ defmodule Flezha.Service.Cli.Dlq do
   """
 
   alias Flezha.Dlq.Store
-  alias Flezha.Service.Cli.Context
   alias Flezha.Service.Dlq, as: DlqSvc
 
   @doc "The row a `dlq list` is judged by: the named class's namespace, `_system` for none."
   def class_row([operator_class | _]), do: DlqSvc.class_row(class_filter(operator_class))
 
-  @doc "The entry a `dlq show | replay | drop` names, or the family's not-found."
-  def locate([entry_ref | _]) do
-    case DlqSvc.entry_row(entry_ref) do
-      {:ok, _row} = located -> located
-      {:error, reason} -> render_dlq_error(reason)
-    end
-  end
+  @doc "The entry a `dlq show | replay | drop` names, or the refusal naming it."
+  def locate([entry_ref | _]), do: DlqSvc.entry_row(entry_ref)
 
   @doc """
   `flz dlq list [operator]` — parked entries, nearest-to-expiry (oldest)
@@ -54,8 +48,8 @@ defmodule Flezha.Service.Cli.Dlq do
       {:ok, {:re_parked, generation}} ->
         IO.puts("replay failed; #{entry_ref} re-parked with generation #{generation}")
 
-      {:error, reason} ->
-        render_dlq_error(reason)
+      {:error, _reason} = refused ->
+        refused
     end
   end
 
@@ -119,17 +113,4 @@ defmodule Flezha.Service.Cli.Dlq do
 
     IO.puts("payload            #{rendered}")
   end
-
-  defp render_dlq_error(reason), do: Context.fail!(reason, &dlq_message/1)
-
-  defp dlq_message(:not_found), do: "DLQ entry not found"
-  defp dlq_message(:bad_entry_ref), do: "expected <operator>/<tasklet>/<entry-id>"
-
-  defp dlq_message(:payload_not_replayable),
-    do: "entry carries no payload bytes (inter-tasklet input); inspect or drop it"
-
-  defp dlq_message(:operator_not_running),
-    do: "the entry's operator is not running; start it before replaying"
-
-  defp dlq_message(_reason), do: nil
 end

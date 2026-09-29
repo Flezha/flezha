@@ -33,7 +33,7 @@ defmodule Flezha.Schedule.StoreTest do
 
     assert :ok = Store.remove("digest")
     assert :error = Store.get("digest")
-    assert {:error, :not_found} = Store.remove("digest")
+    assert {:error, {:schedule_not_found, "digest"}} = Store.remove("digest")
   end
 
   test "the plugin spec round-trips verbatim and defaults to none" do
@@ -60,33 +60,33 @@ defmodule Flezha.Schedule.StoreTest do
 
   test "a duplicate name is rejected" do
     assert {:ok, _} = Store.add(fields())
-    assert {:error, :already_exists} = Store.add(fields())
+    assert {:error, {:schedule_exists, _name}} = Store.add(fields())
   end
 
   test "validation failures store nothing and name the invalid field" do
-    assert {:error, {:invalid_cron, msg}} = Store.add(fields(%{cron: "61 * * * *"}))
-    assert msg =~ "minute"
+    assert {:error, {:cron_invalid_field, _cron, "minute", "61", 0, 59}} =
+             Store.add(fields(%{cron: "61 * * * *"}))
 
     assert {:error, {:invalid_timezone, "Mars/Olympus"}} =
              Store.add(fields(%{timezone: "Mars/Olympus"}))
 
-    assert {:error, {:invalid_name, _}} = Store.add(fields(%{name: "has spaces"}))
-    assert {:error, {:invalid_name, _}} = Store.add(fields(%{name: "a@b"}))
+    assert {:error, {:invalid_schedule_name, "has spaces", 11}} =
+             Store.add(fields(%{name: "has spaces"}))
+
+    assert {:error, {:invalid_schedule_name, "a@b", 11}} = Store.add(fields(%{name: "a@b"}))
     # 12 bytes composes `<name>@<slot>` beyond the 32-byte operator id limit.
-    assert {:error, {:invalid_name, msg}} = Store.add(fields(%{name: "daily_digest"}))
-    assert msg =~ "at most 11 bytes"
-    assert {:error, {:invalid_factory, _}} = Store.add(fields(%{factory_id: ""}))
-    assert {:error, {:invalid_init_values, _}} = Store.add(fields(%{init_values: "nope"}))
-    assert {:error, {:invalid_first_message, msg}} = Store.add(fields(%{channel: "requests"}))
-    assert msg =~ "--text"
+    assert {:error, {:invalid_schedule_name, "daily_digest", 11}} =
+             Store.add(fields(%{name: "daily_digest"}))
 
-    assert {:error, {:invalid_first_message, "the first message and its channel are text"}} =
-             Store.add(fields(%{text: 42}))
+    assert {:error, :factory_required} = Store.add(fields(%{factory_id: ""}))
+    assert {:error, :init_values_not_object} = Store.add(fields(%{init_values: "nope"}))
+    assert {:error, :channel_without_text} = Store.add(fields(%{channel: "requests"}))
+    assert {:error, :first_message_not_text} = Store.add(fields(%{text: 42}))
 
-    assert {:error, {:invalid_plugins, _}} =
+    assert {:error, :plugins_not_array} =
              Store.add(fields(%{plugins: "{\"not\":\"an array\"}"}))
 
-    assert {:error, {:invalid_plugins, _}} = Store.add(fields(%{plugins: "not json"}))
+    assert {:error, :plugins_not_array} = Store.add(fields(%{plugins: "not json"}))
 
     assert Store.list() == []
   end

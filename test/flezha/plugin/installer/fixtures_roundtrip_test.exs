@@ -79,7 +79,7 @@ defmodule Flezha.Plugin.Installer.FixturesRoundtripTest do
   end
 
   test "module_mismatch.fpz fails with :module_mismatch", %{fixtures_dir: f} do
-    assert {:error, {:manifest_invalid, {:module_mismatch, _info}}} =
+    assert {:error, {:module_mismatch, _expected, _produced}} =
              Installer.install(Path.join(f, "module_mismatch.fpz"))
   end
 

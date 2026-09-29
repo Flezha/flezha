@@ -434,19 +434,19 @@ Two `needs` surfaces say what a spelling can write:
 
 Rust, Java and — through the `use` macro — Elixir cannot boot a program that
 does not compile, so for a row they refuse at compile time the app answers
-`"outcome": "cited"` with the refusal's name and the repository-relative path of
+`"outcome": "cited"` with the refusal's code and the repository-relative path of
 the compile-fail test that pins it:
 
 ```json
 {"topology": "shorthand_with_topology", "outcome": "cited",
- "names": ["ShortFormWithTopology"],
+ "names": ["topology.short_form_with_topology"],
  "citation": "sdk/rust/tests/ui/operator_with_hand_written_impl.rs"}
 ```
 
-The drill checks the cited file exists and carries the name, so a citation
+The drill checks the cited file exists and carries the code, so a citation
 nothing holds fails the same way a missing refusal does. Under
-`FLEZHA_REFUSAL_FIXTURE` the app prints the name and the path and exits
-non-zero. `DuplicateFactoryId` is a runtime refusal in all seven, so that row
+`FLEZHA_REFUSAL_FIXTURE` the app prints the code and the path and exits
+non-zero. `topology.duplicate_factory_id` is a runtime refusal in all seven, so that row
 boots for real everywhere.
 
 ## Golden declaration snapshots
@@ -568,10 +568,10 @@ refusals. The C ABI entry is `flz_core_check_class`, read-only beside
 `flz_core_declare_class`; the Elixir SDK is its own core and re-expresses the
 same check against the same fixture.
 
-`test/fixtures/reference_topologies.txt` carries one row per refusal: the name,
+`test/fixtures/reference_topologies.txt` carries one row per refusal: the code,
 a topology id, the authoring steps in a language-neutral spelling, and the
 surface the row needs. `test/sdk_conformance/topology_check_test.exs` fails when
-a name has no row or a row has no name — a refusal that exists is a refusal
+a code has no row or a row has no code — a refusal that exists is a refusal
 every SDK is measured against.
 
 A new SDK's arm is one row interpreter in its test app. It maps the step
@@ -580,7 +580,7 @@ tasklets, and writes a report:
 
 ```json
 {"runtime": "node",
- "rows": [{"topology": "dup_key_by", "outcome": "refused", "names": ["DuplicateKeyBy"]},
+ "rows": [{"topology": "dup_key_by", "outcome": "refused", "names": ["topology.duplicate_key_by"]},
           {"topology": "branch_one_arm", "outcome": "skipped", "needs": "branch"},
           {"topology": "fan_in_noop", "outcome": "accepted",
            "derived": [{"index": 0, "name": "in", "kind": "entry",
@@ -589,10 +589,10 @@ tasklets, and writes a report:
 
 `test/system/topology_refusal_e2e_test.exs` reads it: ran plus skipped must equal
 the table, every skip must name a surface the manifest's `topology_surfaces`
-does not list, every malformed row must refuse with the fixture's name, and every
+does not list, every malformed row must refuse with the fixture's code, and every
 well-formed row must derive to the fixture's lines. The same module boots each
 app under `FLEZHA_REFUSAL_FIXTURE=<topology id>` — the app registers only that
-row's topology — and asserts the runner dies with the refusal's name in its
+row's topology — and asserts the runner dies with the refusal's code in its
 output. A runner that refuses at boot never connects, so the assertion reads the
 exit status and the output, not a control frame.
 

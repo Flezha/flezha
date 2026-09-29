@@ -49,11 +49,11 @@ defmodule Flezha.Schedule.Cron do
     {:weekdays, "day-of-week", 0, 7}
   ]
 
-  @spec parse(String.t()) :: {:ok, t()} | {:error, String.t()}
+  @spec parse(String.t()) :: {:ok, t()} | {:error, tuple()}
   def parse(expr) when is_binary(expr) do
     case String.split(expr) do
       [_, _, dom, _, dow] = raw ->
-        with {:ok, sets} <- parse_fields(raw) do
+        with {:ok, sets} <- parse_fields(expr, raw) do
           {:ok,
            struct!(
              __MODULE__,
@@ -67,8 +67,7 @@ defmodule Flezha.Schedule.Cron do
         end
 
       parts ->
-        {:error,
-         "cron expression must have 5 fields (minute hour day month weekday), got #{length(parts)}"}
+        {:error, {:cron_field_count, expr, length(parts)}}
     end
   end
 
@@ -178,13 +177,16 @@ defmodule Flezha.Schedule.Cron do
   defp normalize_weekdays(set),
     do: MapSet.new(set, fn day -> rem(day, 7) end)
 
-  defp parse_fields(raw) do
+  defp parse_fields(expr, raw) do
     @fields
     |> Enum.zip(raw)
     |> Enum.reduce_while({:ok, %{}}, fn {{key, label, min, max}, field}, {:ok, acc} ->
       case parse_field(field, min, max) do
-        {:ok, set} -> {:cont, {:ok, Map.put(acc, key, set)}}
-        {:error, msg} -> {:halt, {:error, "#{label} field #{msg}"}}
+        {:ok, set} ->
+          {:cont, {:ok, Map.put(acc, key, set)}}
+
+        {:error, element} ->
+          {:halt, {:error, {:cron_invalid_field, expr, label, element, min, max}}}
       end
     end)
   end
@@ -216,7 +218,7 @@ defmodule Flezha.Schedule.Cron do
          {:ok, {lo, hi}} <- parse_range(range_part, min, max) do
       {:ok, Enum.take_every(lo..hi, step)}
     else
-      _ -> {:error, "has invalid element #{inspect(element)} (allowed #{min}-#{max})"}
+      _ -> {:error, element}
     end
   end
 

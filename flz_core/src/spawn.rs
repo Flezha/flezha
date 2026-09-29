@@ -13,6 +13,9 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
+use flz_transport::errors::{ErrorModel, FlezhaError};
+
+use crate::error::Code;
 use crate::shutdown::AckResult;
 
 /// How long after its request a spawn result is awaited before it is reported
@@ -26,8 +29,8 @@ pub enum IfRunning {
     /// Deliver the payload to the running instance's inbox.
     #[default]
     Deliver,
-    /// Leave the running instance alone and report
-    /// [`SpawnError::AlreadyRunning`].
+    /// Leave the running instance alone and fail the request with the
+    /// controller's `operator.already_running`.
     Error,
 }
 
@@ -143,39 +146,37 @@ pub struct SpawnResult {
 
 /// Why a spawn request reached no instance. None of these fault the requesting
 /// tasklet: they resolve its handle.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SpawnError {
-    #[error("an instance of `{0}` is already running and if_running was Error")]
-    AlreadyRunning(String),
-
-    #[error("no connected runner registers factory `{0}`")]
-    FactoryUnknown(String),
-
-    #[error("factory `{0}` is unbounded, and only a bounded operator is spawned")]
-    FactoryNotBounded(String),
-
-    #[error("the controller refused the spawn: {0}")]
-    Refused(String),
-
-    #[error("no spawn result within {}s", SPAWN_RESULT_TIMEOUT.as_secs())]
+    /// The controller's refusal under its own code: `operator.already_running`,
+    /// `operator.factory_unknown`, `operator.factory_not_bounded`, a policy
+    /// or quota refusal, or any other.
+    Refused(FlezhaError),
+    /// No answer arrived within [`SPAWN_RESULT_TIMEOUT`].
     Timeout,
-
-    #[error("no control plane to request a spawn on")]
+    /// No control plane to request a spawn on.
     Unavailable,
 }
 
-impl SpawnError {
-    pub fn as_wire(&self) -> &'static str {
+impl ErrorModel for SpawnError {
+    fn to_error(&self) -> FlezhaError {
         match self {
-            SpawnError::AlreadyRunning(_) => "already_running",
-            SpawnError::FactoryUnknown(_) => "factory_unknown",
-            SpawnError::FactoryNotBounded(_) => "factory_not_bounded",
-            SpawnError::Refused(_) => "refused",
-            SpawnError::Timeout => "timeout",
-            SpawnError::Unavailable => "unavailable",
+            SpawnError::Refused(error) => error.clone(),
+            SpawnError::Timeout => {
+                Code::SpawnTimeout.with([("seconds", SPAWN_RESULT_TIMEOUT.as_secs().into())])
+            }
+            SpawnError::Unavailable => Code::SpawnUnavailable.with([]),
         }
     }
 }
+
+impl std::fmt::Display for SpawnError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.to_error().message)
+    }
+}
+
+impl std::error::Error for SpawnError {}
 
 /// The ack a controller's spawn reply wakes its handle with. The reply reports
 /// two values through a channel that carries one string, and an outcome word
@@ -304,7 +305,7 @@ impl SpawnHandle {
         };
         let left = self.deadline.saturating_duration_since(Instant::now());
         let answer = match rx.recv_timeout(timeout.min(left)) {
-            Ok(reply) => interpret(&self.instance_id, &self.factory_id, reply),
+            Ok(reply) => interpret(&self.instance_id, reply),
             Err(RecvTimeoutError::Timeout) if timeout < left => return false,
             Err(_) => {
                 crate::shutdown::drop_pending_ack(&self.reference_id);
@@ -342,14 +343,9 @@ impl Drop for SpawnHandle {
     }
 }
 
-/// Map a controller reply onto the public result. `already_running`,
-/// `factory_unknown` and `factory_not_bounded` arrive as outcomes rather than
-/// errors because they are the controller's decision, not a failed exchange.
-fn interpret(
-    instance_id: &str,
-    factory_id: &str,
-    reply: AckResult,
-) -> Result<SpawnResult, SpawnError> {
+/// Map a controller reply onto the public result: a refusal carries the
+/// controller's own error, a success one of the two outcome words.
+fn interpret(instance_id: &str, reply: AckResult) -> Result<SpawnResult, SpawnError> {
     let ack = reply.map_err(SpawnError::Refused)?;
     let (outcome, resolved) = decode_ack(&ack);
     let id = if resolved.is_empty() {
@@ -360,10 +356,11 @@ fn interpret(
     let outcome = match outcome {
         "spawned" => SpawnOutcome::Spawned,
         "delivered" => SpawnOutcome::Delivered,
-        "already_running" => return Err(SpawnError::AlreadyRunning(id.to_string())),
-        "factory_unknown" => return Err(SpawnError::FactoryUnknown(factory_id.to_string())),
-        "factory_not_bounded" => return Err(SpawnError::FactoryNotBounded(factory_id.to_string())),
-        other => return Err(SpawnError::Refused(format!("unknown outcome `{other}`"))),
+        other => {
+            return Err(SpawnError::Refused(
+                Code::UnreadableReply.with([("reply", format!("spawn outcome '{other}'").into())]),
+            ))
+        }
     };
     Ok(SpawnResult {
         id: id.to_string(),
@@ -373,7 +370,8 @@ fn interpret(
 
 fn warn(instance_id: &str, factory_id: &str, error: &SpawnError) {
     crate::shutdown::say(&format!(
-        "[flezha] spawn_bounded(factory `{factory_id}`, id `{instance_id}`) failed: {error}"
+        "[flezha] spawn_bounded(factory `{factory_id}`, id `{instance_id}`) failed ({}): {error}",
+        error.code()
     ));
 }
 
@@ -540,28 +538,24 @@ mod tests {
     }
 
     #[test]
-    fn the_error_policy_and_an_unknown_factory_come_back_as_errors() {
-        assert_eq!(
-            answer(Ok(encode_ack("already_running", "w1"))),
-            Err(SpawnError::AlreadyRunning("w1".to_string()))
-        );
-        assert_eq!(
-            answer(Ok(encode_ack("factory_unknown", ""))),
-            Err(SpawnError::FactoryUnknown("worker".to_string()))
-        );
-        assert_eq!(
-            answer(Ok(encode_ack("factory_not_bounded", ""))),
-            Err(SpawnError::FactoryNotBounded("worker".to_string())),
-            "an unbounded factory is its own answer, neither unknown nor refused"
-        );
+    fn a_refusal_carries_the_controllers_own_code() {
+        for code in [
+            "operator.already_running",
+            "operator.factory_unknown",
+            "operator.factory_not_bounded",
+            "quota.exceeded",
+        ] {
+            let refusal = FlezhaError::new(code, Default::default());
+            let answer = answer(Err(refusal.clone()));
+            assert_eq!(answer, Err(SpawnError::Refused(refusal)));
+            assert_eq!(answer.unwrap_err().code(), code);
+        }
     }
 
     #[test]
-    fn a_refusal_carries_the_controllers_reason() {
-        assert_eq!(
-            answer(Err("quota_exceeded".to_string())),
-            Err(SpawnError::Refused("quota_exceeded".to_string()))
-        );
+    fn an_outcome_word_the_runner_does_not_know_is_an_unreadable_reply() {
+        let answer = answer(Ok(encode_ack("refused", "w1")));
+        assert_eq!(answer.unwrap_err().code(), "runtime.unreadable_reply");
     }
 
     #[test]
@@ -645,28 +639,12 @@ mod tests {
         assert_eq!(SpawnOutcome::Spawned.as_wire(), "spawned");
         assert_eq!(SpawnOutcome::Delivered.as_wire(), "delivered");
         assert_eq!(SpawnOutcome::SkippedOnReplay.as_wire(), "skipped_on_replay");
-        let words: Vec<&str> = [
-            SpawnError::AlreadyRunning("w1".to_string()),
-            SpawnError::FactoryUnknown("worker".to_string()),
-            SpawnError::FactoryNotBounded("worker".to_string()),
-            SpawnError::Refused("quota".to_string()),
-            SpawnError::Timeout,
-            SpawnError::Unavailable,
-        ]
-        .iter()
-        .map(SpawnError::as_wire)
-        .collect();
-        assert_eq!(
-            words,
-            [
-                "already_running",
-                "factory_unknown",
-                "factory_not_bounded",
-                "refused",
-                "timeout",
-                "unavailable"
-            ]
-        );
+        let codes: Vec<String> = [SpawnError::Timeout, SpawnError::Unavailable]
+            .iter()
+            .map(|error| error.to_error().code)
+            .collect();
+        assert_eq!(codes, ["spawn.timeout", "spawn.unavailable"]);
+        assert_eq!(SpawnError::Timeout.code(), "spawn.timeout");
         assert_eq!(IfRunning::default(), IfRunning::Deliver);
         for policy in [IfRunning::Deliver, IfRunning::Error] {
             assert_eq!(IfRunning::from_wire(policy.as_wire()), Some(policy));

@@ -32,7 +32,7 @@ defmodule Flezha.Cluster.ManualDiscovery do
       if is_list(static_nodes) do
         {:ok, __MODULE__}
       else
-        {:error, "Invalid static nodes configuration. Expected a empty list or a list of nodes."}
+        {:error, {:invalid_static_nodes, static_nodes}}
       end
     end
   end

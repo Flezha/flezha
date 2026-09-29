@@ -9,7 +9,12 @@ use crate::pb::MigrationSerialization;
 use crate::runner::RunnerNode;
 
 impl CommandAction for MigrationSerialization {
-    fn handle(&self, runner: &mut RunnerNode, _message: &str, _errors: &mut Vec<String>) -> Reply {
+    fn handle(
+        &self,
+        runner: &mut RunnerNode,
+        _message: &str,
+        _errors: &mut Vec<crate::Error>,
+    ) -> Reply {
         let serialized_state = match runner.get_operator(&self.operator_id) {
             Some(instance) => serialize_operator_state(&instance),
             None => Vec::new(),

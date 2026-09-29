@@ -3,8 +3,25 @@
 //! from any host language, and `deny_unknown_fields` makes a field the core
 //! never learned a refusal rather than a silent degrade.
 
-fn decl(json: &str) -> Result<(), String> {
-    crate::host::register_host_class_json(json.as_bytes()).map_err(|e| e.to_string())
+use flz_transport::errors::{ErrorModel, FlezhaError};
+use serde_json::{Map, Value};
+
+fn decl(json: &str) -> Result<(), FlezhaError> {
+    crate::host::register_host_class_json(json.as_bytes()).map_err(|e| e.to_error())
+}
+
+/// The details of the refusal `code` among everything `err` names: one of its
+/// `details.issues`, or the error itself.
+fn issue<'e>(err: &'e FlezhaError, code: &str) -> &'e Map<String, Value> {
+    err.details
+        .get("issues")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|listed| listed["code"] == code)
+        .and_then(|listed| listed["details"].as_object())
+        .or_else(|| (err.code == code).then_some(&err.details))
+        .unwrap_or_else(|| panic!("{code} is not among the refusals: {err:?}"))
 }
 
 fn factory(name: &str) -> String {
@@ -15,7 +32,7 @@ mod checkpoint_interval_decl_tests {
     //! The checkpoint interval's declaration crosses the C ABI as JSON, so its
     //! refusals live here rather than in a typed SDK.
 
-    use super::{decl, factory};
+    use super::{decl, factory, issue};
     use crate::operator::topology::CheckpointOutputs;
 
     fn tier_class(id: &str, extra: &str) -> String {
@@ -75,10 +92,7 @@ mod checkpoint_interval_decl_tests {
         ))
         .expect_err("an unbounded output hold must not be declarable");
 
-        assert!(
-            err.contains("checkpoint_max_delay_ms"),
-            "the refusal names the missing field: {err}"
-        );
+        issue(&err, "topology.at_checkpoint_without_max_delay");
     }
 
     #[test]
@@ -105,7 +119,7 @@ mod checkpoint_interval_decl_tests {
         ))
         .expect_err("an interval that closes every zero inputs is not an interval");
 
-        assert!(err.contains("CheckpointEveryZero"), "{err}");
+        issue(&err, "topology.checkpoint_every_zero");
     }
 }
 
@@ -113,7 +127,7 @@ mod sync_durability_decl_tests {
     //! Synchronous remote durability is a bounded-only declaration
     //! (`remote-durability-tier`).
 
-    use super::{decl, factory};
+    use super::{decl, factory, issue};
 
     #[test]
     fn a_stream_class_declaring_sync_durability_is_refused_by_name() {
@@ -125,10 +139,11 @@ mod sync_durability_decl_tests {
         ))
         .expect_err("an unbounded class must not be able to declare sync durability");
 
-        assert!(err.contains(&id), "the refusal names the class: {err}");
-        assert!(
-            err.contains("sync_durability"),
-            "the refusal names the reason: {err}"
+        let details = issue(&err, "topology.sync_durability_on_unbounded");
+        assert_eq!(
+            details["factory_id"],
+            id.as_str(),
+            "the refusal names the class"
         );
     }
 
@@ -142,7 +157,7 @@ mod sync_durability_decl_tests {
         ))
         .expect_err("there is no barrier to ship for a class that journals nothing");
 
-        assert!(err.contains("sync_durability requires persistent"), "{err}");
+        issue(&err, "topology.sync_durability_without_persistence");
     }
 
     #[test]
@@ -192,7 +207,7 @@ mod dropping_policy_decl_tests {
     //! see it: both facts — the tier and the correction window — are frozen at
     //! registration, so the contradiction is decidable before any data moves.
 
-    use super::{decl, factory};
+    use super::{decl, factory, issue};
 
     /// One entry channel with a declared overflow policy, plus whatever
     /// durability contract `extra` adds.
@@ -213,12 +228,9 @@ mod dropping_policy_decl_tests {
             let id = factory(&format!("shed_tier_{policy}"));
             let err = decl(&class(&id, policy, r#""effectively_once":true,"#))
                 .expect_err("shedding under the tier must not be declarable");
-            assert!(err.contains("`in`"), "the refusal names the channel: {err}");
-            assert!(err.contains(policy), "the refusal names the policy: {err}");
-            assert!(
-                err.contains("effectively_once"),
-                "the refusal names the conflicting declaration: {err}"
-            );
+            let details = issue(&err, "topology.dropping_policy_under_effectively_once");
+            assert_eq!(details["channel"], "in", "the refusal names the channel");
+            assert_eq!(details["policy"], policy, "the refusal names the policy");
         }
     }
 
@@ -231,8 +243,8 @@ mod dropping_policy_decl_tests {
             r#""effectively_once":true,"correction_window_ms":600000,"#,
         ))
         .expect_err("shedding under a correction window must not be declarable");
-        assert!(err.contains("`in`"), "{err}");
-        assert!(err.contains("correction window implies the tier"), "{err}");
+        let details = issue(&err, "topology.dropping_policy_under_effectively_once");
+        assert_eq!(details["channel"], "in");
     }
 
     #[test]
@@ -292,7 +304,7 @@ mod sdk_lang_declaration_tests {
     //! untagged class reaches placement, and a placed class is handed durable
     //! bodies only its own SDK can decode.
 
-    use super::{decl, factory};
+    use super::{decl, factory, issue};
 
     fn class(id: &str, lang: &str) -> String {
         format!(
@@ -308,7 +320,13 @@ mod sdk_lang_declaration_tests {
         let id = factory("host_lang_absent");
         let err = decl(&class(&id, "")).expect_err("an untagged class is refused");
 
-        assert!(err.contains("sdk_lang"), "{err}");
+        let details = issue(&err, "topology.declaration_unreadable");
+        assert!(
+            details["reason"]
+                .as_str()
+                .is_some_and(|r| r.contains("sdk_lang")),
+            "the refusal names the missing field: {err:?}"
+        );
         assert!(
             crate::operator::registry::get_class(&id).is_none(),
             "a refused declaration registers nothing"
@@ -320,7 +338,7 @@ mod sdk_lang_declaration_tests {
         let id = factory("host_lang_zero");
         let err = decl(&class(&id, r#""sdk_lang":0,"#)).expect_err("sdk_lang 0 is reserved");
 
-        assert!(err.contains("sdk_lang"), "{err}");
+        assert_eq!(issue(&err, "topology.unknown_sdk_lang")["sdk_lang"], 0);
     }
 
     #[test]
@@ -328,7 +346,7 @@ mod sdk_lang_declaration_tests {
         let id = factory("host_lang_unallocated");
         let err = decl(&class(&id, r#""sdk_lang":99,"#)).expect_err("99 is allocated to no SDK");
 
-        assert!(err.contains("99"), "{err}");
+        assert_eq!(issue(&err, "topology.unknown_sdk_lang")["sdk_lang"], 99);
     }
 
     /// The declared language and format reach the restore template and the
@@ -517,7 +535,7 @@ mod sdk_version_decl_tests {
     //! against, so the value crosses the ABI on the declaration rather than
     //! being read from the core's own package metadata.
 
-    use super::{decl, factory};
+    use super::{decl, factory, issue};
 
     #[test]
     fn the_declared_version_reaches_the_record_header() {
@@ -561,7 +579,7 @@ mod sdk_version_decl_tests {
             ))
             .expect_err("a class that names no SDK version is refused");
 
-            assert!(err.contains("sdk_version"), "{err}");
+            issue(&err, "topology.unusable_sdk_version");
             assert!(
                 crate::operator::registry::get_class(&id).is_none(),
                 "a refused declaration registers nothing"
@@ -614,9 +632,10 @@ mod journal_codec_tests {
     fn a_durable_chained_loop_whose_terminal_only_sinks_is_refused() {
         let err = super::decl(&chained_loop(r#"[{"link":"sink","name":"s"}]"#))
             .expect_err("a plugin-bound terminal carries no handoff");
-        assert!(
-            err.contains("releases no inter-tasklet handoff") && err.contains("p0"),
-            "the refusal names the shape and the terminal tasklet: {err}"
+        let details = super::issue(&err, "topology.chained_loop_terminal_without_handoff");
+        assert_eq!(
+            details["tasklet"], "p0",
+            "the refusal names the terminal tasklet"
         );
     }
 

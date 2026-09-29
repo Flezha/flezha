@@ -104,7 +104,7 @@ def word_count(c: Channels) -> None:
 - **`name` is required.** It is the tasklet's durable identity: its state is
   saved under it, so a renamed class keeps its state. A tasklet with no name,
   and a function handed to `flezha.tasklet`, are refused with
-  `DeclarationError`; a whole one-tasklet operator written as a function is
+  `FlezhaError` (`topology.tasklet_name_missing`, `topology.invalid_tasklet`); a whole one-tasklet operator written as a function is
   [the short form](#the-short-form).
 - **A value leaves only through `ctx`.** `run`, `on_timer` and `compensate`
   take the context as their last parameter and return `None`, plain or
@@ -230,11 +230,11 @@ edge, an edge's retry budget, any other class setting. The short form declares
 none of them, and nothing is harvested: an operator a runner declares is one
 you registered.
 
-Three refusals name themselves. `ShortFormWithTopology` (a class with `run`
-that also declares `channels`) and `SinkWithoutOutput` (a `sink` on a function
+Three refusals name themselves. `topology.short_form_with_topology` (a class with `run`
+that also declares `channels`) and `topology.sink_without_output` (a `sink` on a function
 with no return annotation, or `None`, or on a class whose context names no
 output) are raised where the decorator runs, and
-`DuplicateFactoryId` where a second operator under one factory id is
+`topology.duplicate_factory_id` where a second operator under one factory id is
 registered. A missing `id`, a class-level setting other than `loop_mode` on a
 short form, and `sink`, `input`, `codec` or a tasklet keyword on a channels
 body are refused where the decorator runs too, as is `kind`, `sink`, `input`
@@ -248,28 +248,28 @@ retries a failing tasklet on the edge that feeds it: `retry_max` and
 `retry_max(1)` is fail-fast. The decorator's own keywords are `persistent`,
 `loop_mode` (`"once"`, `"per_input"`, `"chained"`), `rollback_mode`
 (`"all_or_nothing"`, `"keep_progress"`), `max_duration_ms` and
-`sync_durability`; a mode outside its values raises `DeclarationError` naming
+`sync_durability`; a mode outside its values raises `FlezhaError` (`topology.invalid_mode`) naming
 the keyword and the value where the decorator runs.
 
 Every builder call reaches the core whatever the kind, and a setting of the
 other kind is refused under its own name when the runner declares its
 operators, before it connects: `effectively_once()` on a bounded operator as
-`EffectivelyOnceOnBounded`, any checkpoint call as
-`CheckpointOnBounded`, `correction_window` as `CorrectionWindowOnBounded`,
+`topology.effectively_once_on_bounded`, any checkpoint call as
+`topology.checkpoint_on_bounded`, `correction_window` as `topology.correction_window_on_bounded`,
 and `sync_durability=True` on `@flezha.unbounded_operator` as
-`SyncDurabilityOnUnbounded`. The decorator keyword is the one spelling of
+`topology.sync_durability_on_unbounded`. The decorator keyword is the one spelling of
 synchronous durability; `Channels` has no such call.
 
 Both decorators take `persistent` (default `True`) and `sleep_when_idle`, which
 defaults to `persistent` on a bounded operator and to `False` on an unbounded operator;
 `sleep_when_idle=True` with `persistent=False` is refused as
-`SleepWithoutPersistence` when the runner declares its operators.
+`topology.sleep_without_persistence` when the runner declares its operators.
 
 A bounded tasklet registers timers as an unbounded tasklet does, and a firing
 runs as a pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-bounded-operator));
 only inside a `compensate` hook do `ctx.timer_after`, `ctx.timer_at_event_time`
-and `ctx.cancel_timer` raise an `EmitError` naming `TimersUnavailable`. A `ctx.spawn_bounded` naming an unbounded factory
-resolves its handle to `SpawnFactoryNotBoundedError`.
+and `ctx.cancel_timer` raise a `FlezhaError` with the code `runtime.timers_unavailable`. A `ctx.spawn_bounded`
+naming an unbounded factory resolves its handle to a `FlezhaError` with the code `operator.factory_not_bounded`.
 
 ### Type hints are the declaration
 

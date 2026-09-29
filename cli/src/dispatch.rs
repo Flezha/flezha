@@ -12,10 +12,12 @@
 //! handler is given its answer and nothing else — there is no argument list to
 //! fall back on, so a verb cannot read a word its row does not declare.
 
-use std::process::exit;
+use flz_transport::errors::FlezhaError;
+use serde_json::Value;
 
 use crate::args::{self, Open, OptSpec, Positional, Reading};
 use crate::help::{self, Help};
+use crate::rpc;
 
 /// What a verb does with the words the walk read for it.
 pub(crate) enum Body {
@@ -139,23 +141,23 @@ pub(crate) enum Missing {
 
 pub(crate) const HELP_VERBS: &[&str] = &["help", "--help", "-h"];
 
-/// What a command says about a word that names none of its verbs. Rendered
-/// from the table, so a verb added to it is offered by name without a sentence
+/// What a command says about a word that names none of its verbs. Built from
+/// the table, so a verb added to it is offered by name without a sentence
 /// being edited anywhere.
-fn unrecognised(cmd: &'static Command, word: &str) -> String {
+fn unrecognised(cmd: &'static Command, word: &str) -> FlezhaError {
     let mut names: Vec<&str> = cmd.verbs.iter().map(|verb| verb.name).collect();
     if cmd.help_verbs.contains(&"help") && !names.contains(&"help") {
         names.push("help");
     }
 
-    let quoted: Vec<String> = names.iter().map(|name| format!("'{}'", name)).collect();
-    let offered = match quoted.split_last() {
-        Some((last, [])) => last.clone(),
-        Some((last, rest)) => format!("{} or {}", rest.join(", "), last),
-        None => "nothing".to_string(),
-    };
-
-    format!("Error: Invalid argument '{}'. Use {}.", word, offered)
+    FlezhaError::with(
+        "usage.unknown_command",
+        [
+            ("command", cmd.path.into()),
+            ("word", word.into()),
+            ("allowed", Value::from(names)),
+        ],
+    )
 }
 
 /// One verb: read the caller's words against its row, answer a request for
@@ -182,14 +184,13 @@ fn leaf(cmd: &'static Command, verb: &'static Verb, handler: fn(&Reading), argv:
 
 pub(crate) fn run(cmd: &'static Command, args: &[String]) {
     let Some(word) = args.first() else {
-        match cmd.missing {
-            Missing::Refuse => eprintln!(
-                "Error: Invalid number of arguments. See `{} help`.",
-                cmd.path
-            ),
-            Missing::Screen => help::render(cmd.help),
+        if let Missing::Screen = cmd.missing {
+            help::render(cmd.help);
         }
-        exit(1);
+        rpc::fail(FlezhaError::with(
+            "usage.command_required",
+            [("command", cmd.path.into())],
+        ));
     };
 
     // The table wins over the help spellings, so a command that implements
@@ -205,11 +206,10 @@ pub(crate) fn run(cmd: &'static Command, args: &[String]) {
         return help::render(cmd.help);
     }
 
-    eprintln!("{}", unrecognised(cmd, word));
     if cmd.unknown_prints_help {
         help::render(cmd.help);
     }
-    exit(1);
+    rpc::fail(unrecognised(cmd, word));
 }
 
 #[cfg(test)]
@@ -402,7 +402,7 @@ mod tests {
 
         match (read, saying) {
             (Ok(_), _) => Some(format!("{} {}: {:?} was accepted", path, verb.name, case)),
-            (Err(refusal), Some(want)) if !refusal.contains(&want) => Some(format!(
+            (Err(refusal), Some(want)) if !refusal.message.contains(&want) => Some(format!(
                 "{} {}: {:?} -> {:?}, want a refusal saying {:?}",
                 path, verb.name, case, refusal, want
             )),

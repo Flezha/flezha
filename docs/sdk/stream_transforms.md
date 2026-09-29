@@ -68,7 +68,7 @@ obligations follow:
   `Tasklet` behind `key_by`, which buys per-Cell parallelism. This is an
   authoring obligation, not a refusal.
 
-The key closure sees the **post-transform** value (hence `TransformAfterKeyBy`)
+The key closure sees the **post-transform** value (hence `topology.transform_after_key_by`)
 and is total: it names a Cell and never declines — drop inputs with a
 `filter` declared before the key. A keyed edge makes its consumer dynamic;
 `cell_keys` / `cells_for`, `cell_idle_ttl` and `max_cells` stay on
@@ -102,20 +102,20 @@ names — it inherits no code.
 
 | Name | Fires when |
 | --- | --- |
-| `DuplicateKeyBy` | two `key_by` on one edge (or on one merge) |
-| `TransformAfterTerminal` | a transform or key declared on a handle already closed by a plugin sink |
-| `TransformAfterKeyBy` | a transform declared after the key it would feed |
-| `DanglingTransformChain` | a transform chain no `.into(...)` ever closed |
-| `KeyByOnUnkeyableTarget` | a `key_by` edge wires a Tasklet declaring a non-empty `cell_keys()` |
-| `UnkeyedEdgeIntoDynamicTasklet` | a keyless edge feeds a Tasklet another edge keyed into dynamic mode |
-| `EdgeAlreadyWired` | a consumer edge re-declared where either side carries a transform or a key |
+| `topology.duplicate_key_by` | two `key_by` on one edge (or on one merge) |
+| `topology.transform_after_terminal` | a transform or key declared on a handle already closed by a plugin sink |
+| `topology.transform_after_key_by` | a transform declared after the key it would feed |
+| `topology.dangling_transform_chain` | a transform chain no `.into(...)` ever closed |
+| `topology.key_by_on_unkeyable_target` | a `key_by` edge wires a Tasklet declaring a non-empty `cell_keys()` |
+| `topology.unkeyed_edge_into_dynamic_tasklet` | a keyless edge feeds a Tasklet another edge keyed into dynamic mode |
+| `topology.edge_already_wired` | a consumer edge re-declared where either side carries a transform or a key |
 
 The whole vocabulary is `flz_core/src/host/issue.rs`; the table above is the
 transform half of it. `test/fixtures/reference_topologies.txt` carries one row
 per name, and `test/sdk_conformance/topology_check_test.exs` fails if a name
 has no row or a row has no name.
 
-`TransformAfterTerminal` makes the declaration order load-bearing where a
+`topology.transform_after_terminal` makes the declaration order load-bearing where a
 channel carries both a sink and a transformed consumer: close the transform on
 its `.into(...)` first, then attach the sink to the held handle.
 

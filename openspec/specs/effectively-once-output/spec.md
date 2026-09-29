@@ -352,5 +352,5 @@ so the Cell's WAL matches the host's memory on every path.
 #### Scenario: A bounded class cannot declare the tier
 
 - **WHEN** a bounded class declares `effectively_once` in any SDK
-- **THEN** registration is refused naming `EffectivelyOnceOnBounded`, and a durable bounded class that declares nothing writes effect records
+- **THEN** registration is refused naming `topology.effectively_once_on_bounded`, and a durable bounded class that declares nothing writes effect records
 

@@ -504,6 +504,7 @@ defmodule Flezha.Transport.Server do
 
         emit_connect_rejected(reason, :authorization, state.transport)
 
+        answer_refusal(stream_ref, reason)
         safe_close(stream_ref)
         {:noreply, state}
     end
@@ -518,6 +519,25 @@ defmodule Flezha.Transport.Server do
       %{count: 1},
       %{reason: reason, transport: transport, stage: stage}
     )
+  end
+
+  # A refused runner is told why before its stream closes, in the same frame
+  # every control command rides, so it reports the refusal rather than retrying
+  # a connection that will never be admitted. The runner may already be gone.
+  defp answer_refusal(stream_ref, reason) do
+    error = Flezha.Error.from_reason(reason, :"wire.connect")
+
+    request = %RunnerCommands.CommandRequest{
+      command:
+        {:connect_refused, %RunnerCommands.ConnectRefused{error: Flezha.Error.to_wire(error)}}
+    }
+
+    {:ok, iodata, _size} = Protox.encode(request)
+    TStream.send_frame(stream_ref, "control_command", IO.iodata_to_binary(iodata), %{})
+  rescue
+    _ -> :ok
+  catch
+    _kind, _reason -> :ok
   end
 
   # Closing a rejected/already-gone stream must never crash the transport

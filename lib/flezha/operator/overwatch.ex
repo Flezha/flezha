@@ -791,13 +791,13 @@ defmodule Flezha.Operator.Overwatch do
   defp read_cell_state(%__MODULE__{} = state, from, selector) do
     cond do
       not PersistenceResolver.persistence_enabled?(operator_class(state)) ->
-        {:reply, {:error, :persistence_off}, state}
+        {:reply, {:error, {:persistence_off, state.id}}, state}
 
       state.suspended ->
-        {:reply, {:error, {:not_resident, :suspended}}, state}
+        {:reply, {:error, {:not_resident, :suspended, state.id}}, state}
 
       is_nil(state.runner_id) ->
-        {:reply, {:error, {:not_resident, :unbound}}, state}
+        {:reply, {:error, {:not_resident, :unbound, state.id}}, state}
 
       true ->
         operator_id = state.id

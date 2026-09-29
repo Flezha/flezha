@@ -303,7 +303,7 @@ When `persistence_enabled = false`, the controller SHALL NOT allocate WAL or sna
 any of that Operator's Cells, SHALL ignore (drop with a counter increment) any incoming
 `cell_state_change` or `cell_state_snapshot` frames for those Cells, SHALL NOT issue
 `RestoreInitState` on reconnect, and SHALL refuse a live Cell-state read as
-`{:error, :persistence_off}`.
+the code `state.persistence_off`.
 
 #### Scenario: Default-on with no override
 
@@ -313,7 +313,7 @@ any of that Operator's Cells, SHALL ignore (drop with a counter increment) any i
 #### Scenario: The class's opt-out reaches the controller
 
 - **WHEN** a class of either kind declares persistence off in its SDK and an instance of it is added
-- **THEN** the `AddOperator` response SHALL carry `persistent = "false"`, the controller SHALL resolve `persistence_enabled = false` for the class, no restore SHALL be shipped on its next bind, and its live Cell-state read SHALL answer `{:error, :persistence_off}`
+- **THEN** the `AddOperator` response SHALL carry `persistent = "false"`, the controller SHALL resolve `persistence_enabled = false` for the class, no restore SHALL be shipped on its next bind, and its live Cell-state read SHALL be refused with the code `state.persistence_off`
 
 #### Scenario: Runner override takes precedence
 

@@ -157,7 +157,7 @@ defmodule FlezhaTest.System.SleepWhenIdleE2ETest do
 
       assert NodeTestHelper.wait_until(
                fn ->
-                 OperatorManager.get_cell_state(namespace, id) == {:error, :persistence_off}
+                 OperatorManager.get_cell_state(namespace, id) == {:error, {:persistence_off, id}}
                end,
                30_000
              ),
@@ -222,7 +222,7 @@ defmodule FlezhaTest.System.SleepWhenIdleE2ETest do
 
       assert NodeTestHelper.wait_until(fn -> collected(collector) != [] end, 30_000)
 
-      assert OperatorManager.get_cell_state(namespace, id) == {:error, :persistence_off}
+      assert OperatorManager.get_cell_state(namespace, id) == {:error, {:persistence_off, id}}
       refute ClassRegistry.persistent?(id)
       refute ClassRegistry.sleep_when_idle?(id), "an opted-out bounded does not sleep"
       assert Paths.cells_of(id) == []

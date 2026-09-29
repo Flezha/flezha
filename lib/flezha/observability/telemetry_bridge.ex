@@ -74,6 +74,8 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :state, :artifact_missing] => {:flezha_durability, :artifact_missing, :event},
     [:flezha, :state, :durability_gc] => {:flezha_durability, :durability_gc, :metric},
     [:flezha, :leadership, :transition] => {:flezha_leadership, :transition, :event},
+    # A reason that reached a caller with no catalogue code: a defect to read.
+    [:flezha, :error, :uncatalogued] => {:flezha_error, :uncatalogued, :event},
     [:flezha, :reconcile, :action] => {:flezha_reconcile, :action, :event},
     [:flezha, :reconcile, :health] => {:flezha_reconcile, :health, :event},
     [:flezha, :stream, :drop] => {:flezha_stream, :drop, :metric},

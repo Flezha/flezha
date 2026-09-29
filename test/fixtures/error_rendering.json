@@ -1,0 +1,80 @@
+[
+  {
+    "code": "namespace.not_found",
+    "details": {
+      "namespace": "ghost"
+    },
+    "text": "error: namespace 'ghost' does not exist (namespace.not_found)\nhint: flz namespace list",
+    "json": "{\"error\":{\"code\":\"namespace.not_found\",\"class\":\"not_found\",\"message\":\"namespace 'ghost' does not exist\",\"details\":{\"namespace\":\"ghost\"},\"hint\":\"flz namespace list\"}}"
+  },
+  {
+    "code": "namespace.not_found",
+    "details": {
+      "namespace": "café \"quoted\" \\ back\nline\ttab"
+    },
+    "text": "error: namespace 'café \"quoted\" \\ back\nline\ttab' does not exist (namespace.not_found)\nhint: flz namespace list",
+    "json": "{\"error\":{\"code\":\"namespace.not_found\",\"class\":\"not_found\",\"message\":\"namespace 'café \\\"quoted\\\" \\\\ back\\nline\\ttab' does not exist\",\"details\":{\"namespace\":\"café \\\"quoted\\\" \\\\ back\\nline\\ttab\"},\"hint\":\"flz namespace list\"}}"
+  },
+  {
+    "code": "namespace.not_found",
+    "details": {},
+    "text": "error: namespace '{namespace}' does not exist (namespace.not_found)\nhint: flz namespace list",
+    "json": "{\"error\":{\"code\":\"namespace.not_found\",\"class\":\"not_found\",\"message\":\"namespace '{namespace}' does not exist\",\"details\":{},\"hint\":\"flz namespace list\"}}"
+  },
+  {
+    "code": "quota.exceeded",
+    "details": {
+      "kind": "max_operators",
+      "current": 3,
+      "limit": 3
+    },
+    "text": "error: the namespace's max_operators quota is reached (3 of 3) (quota.exceeded)\nhint: flz namespace show",
+    "json": "{\"error\":{\"code\":\"quota.exceeded\",\"class\":\"conflict\",\"message\":\"the namespace's max_operators quota is reached (3 of 3)\",\"details\":{\"current\":3,\"kind\":\"max_operators\",\"limit\":3},\"hint\":\"flz namespace show\"}}"
+  },
+  {
+    "code": "quota.exceeded",
+    "details": {
+      "kind": "max_state_bytes",
+      "current": 1.5,
+      "limit": true,
+      "extra": {
+        "z": 1,
+        "a": [
+          1,
+          "two",
+          null
+        ]
+      }
+    },
+    "text": "error: the namespace's max_state_bytes quota is reached (1.5 of true) (quota.exceeded)\nhint: flz namespace show",
+    "json": "{\"error\":{\"code\":\"quota.exceeded\",\"class\":\"conflict\",\"message\":\"the namespace's max_state_bytes quota is reached (1.5 of true)\",\"details\":{\"current\":1.5,\"extra\":{\"a\":[1,\"two\",null],\"z\":1},\"kind\":\"max_state_bytes\",\"limit\":true},\"hint\":\"flz namespace show\"}}"
+  },
+  {
+    "code": "usage.unknown_option",
+    "details": {
+      "option": "--nope",
+      "usage": [
+        "flz operator start",
+        "<factory>"
+      ]
+    },
+    "text": "error: unknown option '--nope' (usage.unknown_option)\nhint: flz operator start, <factory>",
+    "json": "{\"error\":{\"code\":\"usage.unknown_option\",\"class\":\"invalid\",\"message\":\"unknown option '--nope'\",\"details\":{\"option\":\"--nope\",\"usage\":[\"flz operator start\",\"<factory>\"]},\"hint\":\"flz operator start, <factory>\"}}"
+  },
+  {
+    "code": "internal.uncatalogued",
+    "details": {
+      "reason": "{:brand_new, %{a: 1}}"
+    },
+    "text": "error: an unexpected failure: {:brand_new, %{a: 1}} (internal.uncatalogued)",
+    "json": "{\"error\":{\"code\":\"internal.uncatalogued\",\"class\":\"internal\",\"message\":\"an unexpected failure: {:brand_new, %{a: 1}}\",\"details\":{\"reason\":\"{:brand_new, %{a: 1}}\"},\"hint\":null}}"
+  },
+  {
+    "code": "controller.unreachable",
+    "details": {
+      "socket": "/run/flezha/runner_control_channel.sock"
+    },
+    "text": "error: the controller could not be reached (its control socket is /run/flezha/runner_control_channel.sock): it is not up yet or it stopped after it was reached, this shell's cookie (RELEASE_COOKIE, FLEZHA_COOKIE_FILE, FLEZHA_STATE_DIR) is not the controller's, or its node name (FLEZHA_NODE_NAME, FLEZHA_NODE_HOST) is not (controller.unreachable)\nhint: flz controller start",
+    "json": "{\"error\":{\"code\":\"controller.unreachable\",\"class\":\"unreachable\",\"message\":\"the controller could not be reached (its control socket is /run/flezha/runner_control_channel.sock): it is not up yet or it stopped after it was reached, this shell's cookie (RELEASE_COOKIE, FLEZHA_COOKIE_FILE, FLEZHA_STATE_DIR) is not the controller's, or its node name (FLEZHA_NODE_NAME, FLEZHA_NODE_HOST) is not\",\"details\":{\"socket\":\"/run/flezha/runner_control_channel.sock\"},\"hint\":\"flz controller start\"}}"
+  }
+]

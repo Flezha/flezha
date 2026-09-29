@@ -59,7 +59,8 @@ defmodule Flezha.Operator.Builder do
   so one without `text` is refused.
   """
   @spec seed_input(binary() | nil, binary() | nil) ::
-          {:ok, {binary(), map()} | nil} | {:error, String.t()}
+          {:ok, {binary(), map()} | nil}
+          | {:error, :channel_without_text | :first_message_not_text}
   def seed_input(nil, nil), do: {:ok, nil}
   def seed_input(text, nil) when is_binary(text), do: {:ok, {text, %{}}}
 
@@ -67,9 +68,9 @@ defmodule Flezha.Operator.Builder do
     do: {:ok, {text, %{"channel" => channel}}}
 
   def seed_input(nil, channel) when is_binary(channel),
-    do: {:error, "--channel names the entry channel of --text"}
+    do: {:error, :channel_without_text}
 
-  def seed_input(_text, _channel), do: {:error, "the first message and its channel are text"}
+  def seed_input(_text, _channel), do: {:error, :first_message_not_text}
 
   defp required(fields) do
     case Enum.reject([:factory_id], &Keyword.has_key?(fields, &1)) do

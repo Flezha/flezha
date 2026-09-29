@@ -1,4 +1,4 @@
-use std::process::exit;
+use flz_transport::errors::FlezhaError;
 
 use crate::args::{OptSpec, Positional, Reading};
 use crate::dispatch::{self, Command, Missing, Verb};
@@ -25,17 +25,10 @@ pub(crate) const TABLE: Command = Command {
             ])
             .reading(&[TTL]),
         Verb::new("revoke", |read| {
-            rpc::one_arg(
-                read,
-                "<token-id>",
-                "authz_render_token_revoke",
-                rpc::PROPAGATE,
-            )
+            rpc::one_arg(read, "<token-id>", "authz_render_token_revoke")
         })
         .taking(&[Positional::required("<token-id>")]),
-        Verb::new("list", |read| {
-            rpc::token_only(read, "authz_render_token_list")
-        }),
+        Verb::new("list", |read| rpc::bare(read, "authz_render_token_list")),
     ],
     help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Screen,
@@ -51,8 +44,7 @@ fn handle_issue(read: &Reading) {
             text(read.pos("<viewer|ops|admin|runner>")),
         ],
         &[("ttl", ttl_literal(read.opt(TTL.long)))],
-        read.token(),
-        rpc::PROPAGATE,
+        read,
     );
 }
 
@@ -65,10 +57,10 @@ fn ttl_literal(written: Option<&str>) -> String {
         None => "86400".to_string(),
         Some(NEVER) => ":never".to_string(),
         Some(seconds) => match seconds.parse::<u64>() {
-            Ok(0) | Err(_) => {
-                eprintln!("Error: --ttl requires a positive integer (seconds) or 'never'");
-                exit(1);
-            }
+            Ok(0) | Err(_) => rpc::fail(FlezhaError::with(
+                "authz.invalid_ttl",
+                [("ttl", seconds.into())],
+            )),
             Ok(positive) => positive.to_string(),
         },
     }

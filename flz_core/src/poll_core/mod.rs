@@ -24,7 +24,7 @@ use dashmap::DashMap;
 use wake::{DeferredWake, Wake, WakeKey, WakeTiebreak};
 
 use crate::cell::{CellItem, CellSlot};
-use crate::error::Error;
+use crate::error::{Code, Error};
 use crate::util::LockRecover;
 
 /// One item on its ladder, as the engine hands it out. Cloning is shallow.
@@ -604,9 +604,9 @@ impl PollCore {
     ) -> Result<crate::schema::ActivationOutcome, Error> {
         let describe = command_kind_name(&kind);
         if self.shutting_down.load(Ordering::Acquire) {
-            return Err(Error::HostCrossing(format!(
-                "{describe}: runner is shutting down"
-            )));
+            return Err(Error::HostCrossing(
+                Code::RunnerShuttingDown.with([("activation", describe.into())]),
+            ));
         }
         let (tx, rx) = crossbeam::channel::bounded(1);
         self.submit_direct(EnginePayload::Command {
@@ -621,13 +621,13 @@ impl PollCore {
         match rx.recv_timeout(wait) {
             Ok(outcome) => Ok(outcome),
             Err(crossbeam::channel::RecvTimeoutError::Timeout) => {
-                Err(Error::HostCrossing(format!(
-                    "{describe}: host did not complete the activation within {}s",
-                    wait.as_secs()
-                )))
+                Err(Error::HostCrossing(Code::HostTimeout.with([
+                    ("activation", describe.into()),
+                    ("seconds", wait.as_secs().into()),
+                ])))
             }
             Err(crossbeam::channel::RecvTimeoutError::Disconnected) => Err(Error::HostCrossing(
-                format!("{describe}: host context dropped the activation"),
+                Code::HostDroppedActivation.with([("activation", describe.into())]),
             )),
         }
     }

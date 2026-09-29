@@ -74,7 +74,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Sink do
   queue is allocated and no acknowledgement window opened, whatever its `sink_*`
   rows say.
   """
-  @spec from_opts(map()) :: {:ok, t() | nil} | {:error, binary()}
+  @spec from_opts(map()) :: {:ok, t() | nil} | {:error, term()}
   def from_opts(opts) do
     if ProviderBehaviour.io_bound?(opts) do
       with {:ok, template} <- template(Map.get(opts, :sink_template)),
@@ -107,7 +107,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Sink do
     if String.contains?(value, @payload_placeholder) do
       {:ok, value}
     else
-      {:error, "websocket sink_template must contain the #{@payload_placeholder} placeholder"}
+      {:error, {:template_missing_placeholder, :sink_template, @payload_placeholder}}
     end
   end
 
@@ -121,10 +121,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Sink do
     if is_binary(template) and String.contains?(template, Subscription.req_id_placeholder()) do
       :ok
     else
-      {:error,
-       "websocket sink_ack_mode \"required\" needs a sink_template containing " <>
-         "the #{Subscription.req_id_placeholder()} placeholder — a frame the upstream " <>
-         "cannot correlate cannot be acknowledged"}
+      {:error, {:ack_needs_correlation, Subscription.req_id_placeholder()}}
     end
   end
 

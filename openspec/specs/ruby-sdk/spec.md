@@ -71,7 +71,7 @@ The Ruby authoring surface SHALL carry both operator kinds — unbounded and bou
 
 #### Scenario: Two channels merge into one tasklet
 - **WHEN** an operator declares `c.merge.from(ticks) { |t| … }.from(quotes) { |q| … }.key_by { |v| v[:symbol] }.into(Detector)`
-- **THEN** registration SHALL succeed with one Detector node fed by two consumer edges, each applying its own mapping, a value from either entry SHALL reach `run` as the mapped value keyed by `symbol`, a duplicated source SHALL refuse with `DuplicateMergeSource` and a single source with `MergeTooFewSources`
+- **THEN** registration SHALL succeed with one Detector node fed by two consumer edges, each applying its own mapping, a value from either entry SHALL reach `run` as the mapped value keyed by `symbol`, a duplicated source SHALL refuse with `topology.duplicate_merge_source` and a single source with `topology.merge_too_few_sources`
 
 #### Scenario: One input becomes three deliveries
 - **WHEN** an edge declares `.flat_map { |line| line.split(",") }` into a tasklet and the dispatcher is handed `a,b,c`
@@ -128,14 +128,14 @@ The SDK SHALL prove the set by one conformance run over every row of
 #### Scenario: A merge row runs through the SDK's own merge handle
 
 - **WHEN** the Ruby interpreter reaches `merge_one_source` or `merge_same_twice`
-- **THEN** it authors the row with `c.merge.from(...)…into(...)` rather than raising, registration refuses with `MergeTooFewSources` or `DuplicateMergeSource`, and the manifest's `topology_surfaces` lists `merge`
+- **THEN** it authors the row with `c.merge.from(...)…into(...)` rather than raising, registration refuses with `topology.merge_too_few_sources` or `topology.duplicate_merge_source`, and the manifest's `topology_surfaces` lists `merge`
 
 ### Requirement: The single-tasklet short form is a class-body declaration
 The short form SHALL be a `Flezha::UnboundedOperator` or `Flezha::BoundedOperator` subclass, the same base a full-form operator subclasses, and SHALL NOT be a `Flezha::Tasklet` subclass; `Flezha::Tasklet` SHALL lose its `sink` class-body declaration and SHALL raise naming the operator base when one is written. The class body SHALL declare `factory_id "name"`, as a full-form operator already does, and MAY declare `sink "name"`, `input "name"` and `codec :text`, each its own class-body call so that none rides another. The kind is the base class and SHALL NOT be a keyword.
 
-Such a class SHALL be a short form exactly when it defines `run` and not `channels`; defining both SHALL be refused, and defining neither SHALL be refused naming the missing body. A short-form class MAY define the tasklet hooks a `Flezha::Tasklet` subclass defines (`init_state`, `apply_change`, `cells_for`, `event_time`, `on_timer`, `compensate`, `migrate_state`, `migrate_change`) and write its tasklet settings in its class body, which the generated tasklet takes. A value SHALL leave a short form's `run` only through `ctx.emit` or `ctx.emit_to`, as it leaves a tasklet's, and what `run` answers SHALL NOT be emitted. `sink` SHALL be optional. The class SHALL carry a generated operator of its base's kind whose factory id is `factory_id`, wiring an entry channel named `input` (or the `input` value) into a generated tasklet named `factory_id` and, when a `sink` is declared, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A bounded short form MAY declare `loop_mode :per_input` (or `:once`, `:chained`) in its class body and SHALL be a `once` bounded operator when it does not, with every other bounded setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state; any other class setting written on a short form SHALL be refused naming it. The entry SHALL be decoded by `codec` where one is declared, whether or not a `sink` is.
+Such a class SHALL be a short form exactly when it defines `run` and not `channels`; defining both SHALL be refused, and defining neither SHALL be refused naming the missing body. `sink` SHALL be optional. The class SHALL carry a generated operator of its base's kind whose factory id is `factory_id`, wiring an entry channel named `input` (or the `input` value) into a generated tasklet named `factory_id` and, when a `sink` is declared, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A bounded short form MAY declare `loop_mode :per_input` (or `:once`, `:chained`) in its class body and SHALL be a `once` bounded operator when it does not, with every other bounded setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state; any other class setting written on a short form SHALL be refused naming it. The entry SHALL be decoded by `codec` where one is declared, whether or not a `sink` is.
 
-`Runner#register_factory` SHALL accept such a class and register the generated operator; the refusals SHALL be raised there, at registration, as the Ruby contract places every refusal: `Flezha::DeclarationError` whose refusals and message begin with `ShortFormWithTopology`. A class with no `factory_id` SHALL be refused naming the required declaration, and SHALL NOT take a factory id from the class constant. The Ruby SDK owes no `SinkWithoutOutput`: a Ruby tasklet declares no output type and no `run` answers output, so nothing in a class says whether it emits; the manifest SHALL NOT list `shorthand_typed_output`. A duplicate factory id SHALL raise with a message beginning `DuplicateFactoryId`.
+`Runner#register_factory` SHALL accept such a class and register the generated operator; the refusals SHALL be raised there, at registration, as the Ruby contract places every refusal: `Flezha::Error` whose code is `topology.short_form_with_topology`. A class with no `factory_id` SHALL be refused naming the required declaration, and SHALL NOT take a factory id from the class constant. The Ruby SDK cannot see a tasklet's output type, owes no `topology.sink_without_output`, and SHALL NOT list `shorthand_typed_output` in its manifest. A duplicate factory id SHALL raise `Flezha::Error` with the code `topology.duplicate_factory_id`.
 
 #### Scenario: An operator class with a run body is a whole unbounded operator
 
@@ -154,7 +154,7 @@ Such a class SHALL be a short form exactly when it defines `run` and not `channe
 
 #### Scenario: A short form with no sink is declared
 
-- **WHEN** a class declares `factory_id "counter"`, `input "ticks"`, `codec :text`, `init_state`, `apply_change` and `run`, with no `sink`
+- **WHEN** a class declares `factory_id "counter"`, `input "ticks"`, `codec :text`, `initial_state`, `apply_change` and `run`, with no `sink`
 - **THEN** the operator declares `ticks` into the generated tasklet and no plugin channel
 
 #### Scenario: An input and codec need no sink
@@ -170,7 +170,7 @@ Such a class SHALL be a short form exactly when it defines `run` and not `channe
 #### Scenario: A channels body beside a run body is refused
 
 - **WHEN** a `Flezha::UnboundedOperator` subclass defines both `channels` and `run`
-- **THEN** `register_factory` raises `Flezha::DeclarationError` naming `ShortFormWithTopology`
+- **THEN** `register_factory` raises `Flezha::Error` whose code is `topology.short_form_with_topology`
 
 #### Scenario: A sink on a tasklet is refused
 
@@ -180,16 +180,16 @@ Such a class SHALL be a short form exactly when it defines `run` and not `channe
 #### Scenario: A derived factory id is refused
 
 - **WHEN** a `Flezha::UnboundedOperator` subclass declares `sink "out"` and `run` and no `factory_id`
-- **THEN** `register_factory` raises `Flezha::DeclarationError` naming the required `factory_id`, and no controller connection is attempted
+- **THEN** `register_factory` raises `Flezha::Error` naming the required `factory_id`, and no controller connection is attempted
 
 ### Requirement: A Ruby bounded class carries what its builder recorded
 
-`Flezha::BoundedOperator#build_spec` SHALL build the `ClassSpec` from every flag the builder recorded, exactly as the unbounded operator's does, and `to_host_class_decl` SHALL put every recorded key on the wire for either kind, so an unbounded-only builder call on a bounded operator reaches the core and is refused under its name (`EffectivelyOnceOnBounded`, `CheckpointOnBounded`, `CorrectionWindowOnBounded`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `Flezha::DeclarationError` naming it. `Flezha::BoundedOperator` SHALL declare no `retry_attempts`, `retry_backoff_ms`, `barrier_retry_attempts` or `wake_after_ms` setting, and the declaration SHALL carry no `wake_after_ms`; the builder SHALL carry no `sync_durability` call, the class-body flag being the one spelling. A `Ctx` inside a bounded operator SHALL offer `timer_after`, `timer_at_event_time` and `cancel_timer` exactly as inside a stream, and a tasklet's `on_timer` SHALL run on its firing in both kinds; only a `compensate` hook's `Ctx` SHALL raise an error naming `TimersUnavailable` from them.
+`Flezha::BoundedOperator#build_spec` SHALL build the `ClassSpec` from every flag the builder recorded, exactly as the unbounded operator's does, and `to_host_class_decl` SHALL put every recorded key on the wire for either kind, so an unbounded-only builder call on a bounded operator reaches the core and is refused under its name (`topology.effectively_once_on_bounded`, `topology.checkpoint_on_bounded`, `topology.correction_window_on_bounded`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `Flezha::Error` naming it. `Flezha::BoundedOperator` SHALL declare no `retry_attempts`, `retry_backoff_ms`, `barrier_retry_attempts` or `wake_after_ms` setting, and the declaration SHALL carry no `wake_after_ms`; the builder SHALL carry no `sync_durability` call, the class-body flag being the one spelling. A `Ctx` inside a bounded operator SHALL offer `timer_after`, `timer_at_event_time` and `cancel_timer` exactly as inside a stream, and a tasklet's `on_timer` SHALL run on its firing in both kinds; only a `compensate` hook's `Ctx` SHALL raise an error naming `runtime.timers_unavailable` from them.
 
 #### Scenario: A tier call on a bounded operator reaches the core
 
 - **WHEN** a `Flezha::BoundedOperator` subclass's `channels` block calls `c.effectively_once`, the runner registers it and starts
-- **THEN** declaring it to the core raises naming `EffectivelyOnceOnBounded`, and the operator is not declared
+- **THEN** declaring it to the core raises naming `topology.effectively_once_on_bounded`, and the operator is not declared
 
 #### Scenario: A retired setting is refused
 
@@ -202,22 +202,22 @@ Such a class SHALL be a short form exactly when it defines `run` and not `channe
 - **THEN** the call returns the scheduled timestamp, the effect carries the timer op, and `on_timer` runs on that Cell at that timestamp, opening a pass at that tasklet
 
 ### Requirement: A Ruby tasklet names itself and declares its settings in its class body
-A Ruby tasklet SHALL be a class `< Flezha::Tasklet` whose class body writes `tasklet_name "..."`, a non-empty name. Declaring an operator that wires a tasklet class with no `tasklet_name`, or an empty one, SHALL raise `Flezha::DeclarationError` naming the class, and the SDK SHALL NOT derive a name from the class. `tasklet_name` SHALL NOT be inherited, so every concrete subclass writes its own. The declaration SHALL keep the name `tasklet_name` because `name` is `Class#name`. The short form SHALL keep naming its tasklet after its factory id.
+A Ruby tasklet SHALL be a class `< Flezha::Tasklet` whose class body writes `tasklet_name "..."`, a non-empty name. Declaring an operator that wires a tasklet class with no `tasklet_name`, or an empty one, SHALL raise `Flezha::Error` naming the class, and the SDK SHALL NOT derive a name from the class. `tasklet_name` SHALL NOT be inherited, so every concrete subclass writes its own. The declaration SHALL keep the name `tasklet_name` because `name` is `Class#name`. The short form SHALL keep naming its tasklet after its factory id.
 
-The idle TTL SHALL be `idle_ttl_seconds`, a positive whole number of seconds written in the class body, and the declaration record SHALL carry it as `idle_ttl_ms`, that number times 1000; any other value SHALL be refused with `Flezha::DeclarationError` naming `idle_ttl_seconds` where the class body writes it. Unset SHALL mean no eviction. `max_cells` SHALL be a class-body setting of its own.
+The idle TTL SHALL be `idle_ttl_seconds`, a positive whole number of seconds written in the class body, and the declaration record SHALL carry it as `idle_ttl_ms`, that number times 1000; any other value SHALL be refused with `Flezha::Error` naming `idle_ttl_seconds` where the class body writes it. Unset SHALL mean no eviction. `max_cells` SHALL be a class-body setting of its own.
 
-The clock SHALL follow from what the class writes: event time when it defines `event_time`, logical when its class body writes the `logical_clock` flag, and the wall clock otherwise. A class that does both SHALL be refused at registration with `Flezha::DeclarationError` naming `event_time` and `logical_clock`. A logical clock on a tasklet that has no state (it defines no `init_state` and declares no `state_type`) SHALL keep the core's `UnservableClock` refusal.
+The clock SHALL follow from what the class writes: event time when it defines `event_time`, logical when its class body writes the `logical_clock` flag, and the wall clock otherwise. A class that does both SHALL be refused at registration with `Flezha::Error` naming `event_time` and `logical_clock`. A logical clock on a tasklet that has no state (it defines no `init_state` and declares no `state_type`) SHALL keep the core's `topology.unservable_clock` refusal.
 
-A Cell's initial state SHALL be what `init_state(cell_key)` answers when the class defines it, else `state_type.new` when the class declares `state_type`, else `nil`. With `state_type` and no `init_state`, registration SHALL build one state and SHALL raise `Flezha::DeclarationError` naming the class, `state_type` and `init_state` when that raises. A class defining `apply_change` with neither `init_state` nor `state_type` SHALL be refused at registration, naming `apply_change`, `init_state` and `state_type`.
+A Cell's initial state SHALL be what `init_state(cell_key)` answers when the class defines it, else `state_type.new` when the class declares `state_type`, else `nil`. With `state_type` and no `init_state`, registration SHALL build one state and SHALL raise `Flezha::Error` naming the class, `state_type` and `init_state` when that raises. A class defining `apply_change` with neither `init_state` nor `state_type` SHALL be refused at registration, naming `apply_change`, `init_state` and `state_type`.
 
 A change SHALL be any value the codec carries, recorded with `ctx.change(value)` and folded by the tasklet's `apply_change(state, change)`, and no change class SHALL be required. The optional `state_type` and `change_type` declarations SHALL stay. Schema migrations SHALL be the instance methods `migrate_state(from_version, bytes)` and `migrate_change(from_version, bytes)`, declared by defining them like every other hook, and SHALL keep receiving the stored bytes.
 
-A tasklet class body SHALL NOT offer `dynamic_cells`, `clock`, `idle_ttl_ms`, or a `migrate_state` / `migrate_change` block. A class that defines the retired `initial_state` method SHALL be refused at registration with `Flezha::DeclarationError` naming `init_state`.
+A tasklet class body SHALL NOT offer `dynamic_cells`, `clock`, `idle_ttl_ms`, or a `migrate_state` / `migrate_change` block. A class that defines the retired `initial_state` method SHALL be refused at registration with `Flezha::Error` naming `init_state`.
 
 #### Scenario: A tasklet without a name is refused
 
 - **WHEN** a class `< Flezha::Tasklet` writes `cell_keys "a"` and no `tasklet_name`, or is written with `Class.new(Flezha::Tasklet)` and no `tasklet_name`, and an operator wiring it is declared
-- **THEN** declaring it raises `Flezha::DeclarationError` naming the class (or saying it is anonymous) and the missing `tasklet_name`, and nothing is declared
+- **THEN** declaring it raises `Flezha::Error` naming the class (or saying it is anonymous) and the missing `tasklet_name`, and nothing is declared
 
 #### Scenario: A renamed class keeps its state
 
@@ -237,7 +237,7 @@ A tasklet class body SHALL NOT offer `dynamic_cells`, `clock`, `idle_ttl_ms`, or
 #### Scenario: A fractional idle TTL is refused
 
 - **WHEN** a tasklet class body writes `idle_ttl_seconds 0.2`
-- **THEN** loading it raises `Flezha::DeclarationError` naming `idle_ttl_seconds` and the value
+- **THEN** loading it raises `Flezha::Error` naming `idle_ttl_seconds` and the value
 
 #### Scenario: Defining event_time makes the clock event time
 
@@ -252,12 +252,12 @@ A tasklet class body SHALL NOT offer `dynamic_cells`, `clock`, `idle_ttl_ms`, or
 #### Scenario: Event time and the logical clock together are refused
 
 - **WHEN** a tasklet defines `event_time` and writes `logical_clock`
-- **THEN** registration raises `Flezha::DeclarationError` naming `event_time` and `logical_clock`
+- **THEN** registration raises `Flezha::Error` naming `event_time` and `logical_clock`
 
 #### Scenario: A logical clock on a stateless tasklet is refused
 
 - **WHEN** a tasklet that defines no `init_state` and declares no `state_type` writes `logical_clock`
-- **THEN** registration raises `Flezha::DeclarationError` carrying the core's `UnservableClock`
+- **THEN** registration raises `Flezha::Error` carrying the core's `topology.unservable_clock`
 
 #### Scenario: The initial state comes from init_state
 
@@ -272,12 +272,12 @@ A tasklet class body SHALL NOT offer `dynamic_cells`, `clock`, `idle_ttl_ms`, or
 #### Scenario: A state_type that cannot be built is refused
 
 - **WHEN** a tasklet declares `state_type` naming a class whose `new` requires an argument, and defines no `init_state`
-- **THEN** registration raises `Flezha::DeclarationError` naming the class, `state_type` and `init_state`
+- **THEN** registration raises `Flezha::Error` naming the class, `state_type` and `init_state`
 
 #### Scenario: A fold with no state is refused
 
 - **WHEN** a tasklet defines `apply_change` and neither `init_state` nor `state_type`
-- **THEN** registration raises `Flezha::DeclarationError` naming `apply_change`, `init_state` and `state_type`
+- **THEN** registration raises `Flezha::Error` naming `apply_change`, `init_state` and `state_type`
 
 #### Scenario: A change needs no class
 
@@ -292,7 +292,7 @@ A tasklet class body SHALL NOT offer `dynamic_cells`, `clock`, `idle_ttl_ms`, or
 #### Scenario: A retired initial_state method is refused
 
 - **WHEN** a tasklet class defines `initial_state(cell_key)` and an operator wiring it is declared
-- **THEN** declaring it raises `Flezha::DeclarationError` naming `init_state`, rather than running the tasklet with no state
+- **THEN** declaring it raises `Flezha::Error` naming `init_state`, rather than running the tasklet with no state
 
 #### Scenario: A retired declaration is refused
 
@@ -300,7 +300,7 @@ A tasklet class body SHALL NOT offer `dynamic_cells`, `clock`, `idle_ttl_ms`, or
 - **THEN** loading it raises `NoMethodError` naming the declaration, the declaration no longer existing
 
 ### Requirement: A Ruby tasklet's cell mode is read from the wiring
-The Ruby SDK SHALL declare each tasklet node's cell mode from what is written, never from a flag: static when the tasklet's class body writes `cell_keys`, dynamic when a chain of the operator keys its values with `key_by` before the `into` or merge that reaches the node, and single otherwise. The mode SHALL belong to the node, so one class MAY take a different mode in each operator that wires it. A tasklet writing `cell_keys` and fed by `key_by` SHALL be refused at registration with the core's `KeyByOnUnkeyableTarget`. A dynamic node SHALL carry the tasklet's `idle_ttl_seconds` and `max_cells`.
+The Ruby SDK SHALL declare each tasklet node's cell mode from what is written, never from a flag: static when the tasklet's class body writes `cell_keys`, dynamic when a chain of the operator keys its values with `key_by` before the `into` or merge that reaches the node, and single otherwise. The mode SHALL belong to the node, so one class MAY take a different mode in each operator that wires it. A tasklet writing `cell_keys` and fed by `key_by` SHALL be refused at registration with the core's `topology.key_by_on_unkeyable_target`. A dynamic node SHALL carry the tasklet's `idle_ttl_seconds` and `max_cells`.
 
 #### Scenario: key_by alone makes a tasklet dynamic
 
@@ -320,5 +320,5 @@ The Ruby SDK SHALL declare each tasklet node's cell mode from what is written, n
 #### Scenario: A static key set fed by key_by is refused
 
 - **WHEN** a tasklet writing `tasklet_name "routed"` and `cell_keys "a", "b"` is reached by an edge declaring `key_by`
-- **THEN** registration raises `Flezha::DeclarationError` carrying `KeyByOnUnkeyableTarget` and naming the tasklet
+- **THEN** registration raises `Flezha::Error` carrying `topology.key_by_on_unkeyable_target` and naming the tasklet
 

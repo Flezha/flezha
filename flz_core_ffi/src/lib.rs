@@ -9,6 +9,15 @@
 //! different `SCHEMA_VERSION` is refused with an error naming both versions,
 //! before any controller connection is attempted.
 //!
+//! # Failures: one error document
+//!
+//! Every failing entry answers its failing status ([`FLZ_ERR`], or NULL from
+//! [`flz_core_context_new`]) and leaves the JSON error document
+//! `{"error":{"code","class","message","details","hint"}}` in
+//! [`flz_core_last_error`] (or [`flz_core_init_error`]). No entry hands a
+//! failure out through a buffer of its own; a caller branches on `code` and
+//! `class`, never on `message`.
+//!
 //! # Diagnostics: this crate installs no tracing subscriber
 //!
 //! Deliberate, and the reason is the shape of a veneer host. This crate is
@@ -61,6 +70,7 @@ use flz_core::poll_core::{EngineActivation, Polled, Starvation};
 use flz_core::runner::{ClientResponseMessage, RunnerMessage};
 use flz_core::schema;
 use flz_core::spawn::{IfRunning, SpawnHandle, SpawnOptions};
+use flz_core::ErrorModel;
 /// The local-mode entry points, exported from the crate root like every other
 /// C symbol: the module is a source-file split, not an ABI boundary.
 pub use local::*;
@@ -73,14 +83,12 @@ pub const FLZ_STARVATION_OBSERVED: i32 = 1;
 pub const FLZ_POLL_TIMEOUT: i32 = 0;
 /// The context is shutting down; every blocked poller is released.
 pub const FLZ_POLL_SHUTTING_DOWN: i32 = 2;
-/// Generic failure; read [`flz_core_last_error`].
+/// Failure; [`flz_core_last_error`] holds the JSON error document.
 pub const FLZ_ERR: i32 = -1;
 /// Success for non-poll calls.
 pub const FLZ_OK: i32 = 0;
 /// A spawn result read found no answer yet; the out buffer is untouched.
 pub const FLZ_SPAWN_PENDING: i32 = 1;
-/// A spawn resolved to a failure; the out buffer holds it as JSON.
-pub const FLZ_SPAWN_FAILED: i32 = 2;
 
 /// A polled activation the host has not answered, with the spawn handles its
 /// tasklets made: they live exactly as long as it does.
@@ -123,11 +131,18 @@ struct LocalSession {
 
 thread_local! {
     static INIT_ERROR: std::cell::RefCell<Option<CString>> = const { std::cell::RefCell::new(None) };
+    static RENDERED: std::cell::RefCell<Option<CString>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The JSON error document a failing entry leaves behind. JSON escapes every
+/// control character, so the document never holds the NUL a C string ends at.
+fn error_document(error: &Error) -> CString {
+    CString::new(error.to_error().json()).unwrap_or_default()
 }
 
 fn set_init_error(error: Error) {
     INIT_ERROR.with(|slot| {
-        *slot.borrow_mut() = Some(CString::new(error.to_string()).unwrap_or_default());
+        *slot.borrow_mut() = Some(error_document(&error));
     });
 }
 
@@ -147,8 +162,7 @@ impl FlzContext {
     /// Record `error` as the context's last error; the status every failing
     /// entry point returns. The one place an [`Error`] becomes a C string.
     fn fail(&self, error: Error) -> i32 {
-        *self.last_error.lock().unwrap_or_else(|p| p.into_inner()) =
-            Some(CString::new(error.to_string()).unwrap_or_default());
+        *self.last_error.lock().unwrap_or_else(|p| p.into_inner()) = Some(error_document(&error));
         FLZ_ERR
     }
 
@@ -190,9 +204,9 @@ pub extern "C" fn flz_core_schema_version() -> u32 {
 }
 
 /// Create a context. `shim_schema_version` is the version the calling shim
-/// was built against; a mismatch returns NULL and
-/// [`flz_core_init_error`] names both versions. No controller connection is
-/// attempted here.
+/// was built against; a mismatch returns NULL and [`flz_core_init_error`]
+/// holds `runtime.schema_mismatch`, naming both versions. No controller
+/// connection is attempted here.
 #[no_mangle]
 pub extern "C" fn flz_core_context_new(shim_schema_version: u32) -> *mut FlzContext {
     if shim_schema_version != flz_core::SCHEMA_VERSION {
@@ -214,8 +228,9 @@ pub extern "C" fn flz_core_context_new(shim_schema_version: u32) -> *mut FlzCont
     }))
 }
 
-/// The error that made the last [`flz_core_context_new`] on THIS thread
-/// return NULL, or NULL. Borrowed until the next failing creation.
+/// The JSON error document of the failure that made the last
+/// [`flz_core_context_new`] on THIS thread return NULL, or NULL. Borrowed
+/// until the next failing creation.
 #[no_mangle]
 pub extern "C" fn flz_core_init_error() -> *const c_char {
     INIT_ERROR.with(|slot| {
@@ -226,8 +241,8 @@ pub extern "C" fn flz_core_init_error() -> *const c_char {
     })
 }
 
-/// The last error recorded on `ctx`, or NULL. Borrowed until the next
-/// failing call on the same context.
+/// The JSON error document of the last failure recorded on `ctx`, or NULL.
+/// Borrowed until the next failing call on the same context.
 ///
 /// # Safety
 /// `ctx` must be a live pointer from [`flz_core_context_new`].
@@ -243,11 +258,53 @@ pub unsafe extern "C" fn flz_core_last_error(ctx: *const FlzContext) -> *const c
         .unwrap_or(std::ptr::null())
 }
 
+/// The JSON error document the catalogue renders for `code` with its details
+/// filled from `details_json`: the refusal a host makes itself, reading as the
+/// core's own. `Err` names the argument that is not a JSON object.
+pub fn render_error_document(code: &str, details_json: &str) -> Result<String, String> {
+    match serde_json::from_str::<serde_json::Value>(details_json) {
+        Ok(serde_json::Value::Object(details)) => {
+            Ok(flz_core::FlezhaError::new(code, details).json())
+        }
+        _ => Err("error details must be a JSON object".to_string()),
+    }
+}
+
+/// [`render_error_document`] for a host with no glue of its own, or NULL when
+/// an argument is not UTF-8 or the details are not a JSON object. Borrowed
+/// until the next call on THIS thread.
+///
+/// # Safety
+/// `code` and `details_json` must be valid NUL-terminated strings.
+#[no_mangle]
+pub unsafe extern "C" fn flz_core_error_document(
+    code: *const c_char,
+    details_json: *const c_char,
+) -> *const c_char {
+    if code.is_null() || details_json.is_null() {
+        return std::ptr::null();
+    }
+    let (Ok(code), Ok(details)) = (
+        CStr::from_ptr(code).to_str(),
+        CStr::from_ptr(details_json).to_str(),
+    ) else {
+        return std::ptr::null();
+    };
+    let Ok(document) = render_error_document(code, details) else {
+        return std::ptr::null();
+    };
+    RENDERED.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        *slot = CString::new(document).ok();
+        slot.as_ref().map_or(std::ptr::null(), |s| s.as_ptr())
+    })
+}
+
 /// Declare a host class from its JSON form — the complete host-class
 /// declaration (`flz_core::host::HostClassDecl`): channels graph, cell
 /// modes, clock kinds, delivery tier, correction window, header lang/format,
 /// mailbox/retry/overflow policies. A declaration the core cannot honor is
-/// refused with an error naming the field.
+/// refused with the same error document [`flz_core_check_class`] leaves.
 ///
 /// # Safety
 /// `ctx` must be live; `json`/`json_len` must describe a valid UTF-8 buffer.
@@ -283,12 +340,12 @@ pub unsafe extern "C" fn flz_core_declare_class(
 /// Judge a host class declaration without registering it: the read-only half
 /// of [`flz_core_declare_class`]. On [`FLZ_OK`], `*buf_out`/`*len_out` hold
 /// the DERIVED declaration as JSON — the consumers, channel kinds, sink names
-/// and acknowledgement granularity the core read off the record. On
-/// [`FLZ_ERR`] they hold the verdict as DATA — `{"issues":[{"name","text"}, …]}`
-/// — so no caller parses prose to learn which refusals fired.
-/// [`flz_core_last_error`] carries the same verdict rendered for a reader, and
-/// the status is still [`FLZ_ERR`] so a caller that ignores the buffer fails
-/// rather than registers. Free the buffer with [`flz_core_buf_free`].
+/// and acknowledgement granularity the core read off the record; free it with
+/// [`flz_core_buf_free`]. On [`FLZ_ERR`] the out pointers are untouched and
+/// [`flz_core_last_error`] holds the refusal: its code is the first issue's
+/// `topology.*` code, and `details.issues` lists every issue that fired as
+/// `{code, message, details}`, so no caller parses prose to learn which
+/// refusals fired.
 ///
 /// This is what a conformance run submits: every SDK's builder can ask for
 /// the verdict its author would get, with nothing registered and no runner.
@@ -318,19 +375,6 @@ pub unsafe extern "C" fn flz_core_check_class(
             FLZ_OK
         }
         Err(issues) => {
-            let verdict = serde_json::json!({
-                "issues": issues
-                    .iter()
-                    .map(|issue| {
-                        serde_json::json!({"name": issue.name(), "text": issue.to_string()})
-                    })
-                    .collect::<Vec<_>>(),
-            });
-            hand_out(
-                serde_json::to_vec(&verdict).unwrap_or_default(),
-                buf_out,
-                len_out,
-            );
             ctx.fail(flz_core::Error::Declaration(flz_core::host::render_issues(&issues)).into())
         }
     }
@@ -338,7 +382,8 @@ pub unsafe extern "C" fn flz_core_check_class(
 
 /// Connect to the controller and start the runner loop. Transport
 /// configuration (socket path, `FLEZHA_TRANSPORT`) rides the same
-/// environment the Rust SDK reads.
+/// environment the Rust SDK reads. A connect the controller refuses fails
+/// with the controller's own error (for example `runner.namespace_not_proven`).
 ///
 /// # Safety
 /// `ctx` must be live; `namespace` must be a NUL-terminated string.
@@ -364,7 +409,10 @@ pub unsafe extern "C" fn flz_core_start(ctx: *mut FlzContext, namespace: *const 
         confirm_tx,
         bridge,
     );
-    match confirm_rx.recv_timeout(Duration::from_secs(10)) {
+    match confirm_rx.recv_timeout(Duration::from_secs(error::CONNECT_CONFIRM_SECS)) {
+        Ok(ClientResponseMessage::ConnectRefused(refusal)) => {
+            ctx.fail(flz_core::Error::Connect(refusal).into())
+        }
         Ok(_) => FLZ_OK,
         Err(_) => ctx.fail(Error::ConnectUnconfirmed),
     }
@@ -579,7 +627,7 @@ pub unsafe extern "C" fn flz_core_spawn_request(
         CStr::from_ptr(id).to_str(),
         CStr::from_ptr(if_running).to_str(),
     ) else {
-        return ctx.fail(Error::SpawnArgsUtf8);
+        return ctx.fail(Error::Utf8("spawn arguments"));
     };
     let Some(if_running) = IfRunning::from_wire(if_running) else {
         return ctx.fail(Error::SpawnIfRunning(if_running.to_string()));
@@ -620,18 +668,14 @@ pub unsafe extern "C" fn flz_core_spawn_request(
 /// Read a spawn handle, waiting up to `timeout_ms` for the controller's answer;
 /// a timeout of 0 never waits. [`FLZ_OK`]: `out` holds
 /// `{"id","outcome"}`, the id the request resolved to and one of `spawned`,
-/// `delivered`, `skipped_on_replay`. [`FLZ_SPAWN_FAILED`]: `out` holds
-/// `{"id","error","message"}`, `error` one of `already_running`,
-/// `factory_unknown`, `factory_not_bounded`, `refused`, `timeout`,
-/// `unavailable`. A resolved handle
-/// answers every later read the same. [`FLZ_SPAWN_PENDING`]: no answer yet,
-/// `out` untouched. [`FLZ_ERR`]: the handle was released, because the
-/// activation that made it was completed or abandoned. Free `out` with
-/// [`flz_core_buf_free`].
-///
-/// A failure rides the buffer rather than [`flz_core_last_error`] because a
-/// host raises one error per kind, and the last-error slot is shared by every
-/// thread on the context.
+/// `delivered`, `skipped_on_replay`; free it with [`flz_core_buf_free`].
+/// [`FLZ_SPAWN_PENDING`]: no answer yet, `out` untouched. [`FLZ_ERR`]: `out`
+/// untouched and [`flz_core_last_error`] holds the failure, whose code is the
+/// controller's (`operator.already_running`, `operator.factory_unknown`,
+/// `operator.factory_not_bounded`, or any other refusal's own), the core's
+/// (`spawn.timeout`, `spawn.unavailable`), or `runtime.spawn_handle_released`
+/// for a handle whose activation was completed or abandoned. A resolved handle
+/// answers every later read the same.
 ///
 /// # Safety
 /// `ctx` must be live; `out`/`out_len` must be valid writable pointers.
@@ -663,22 +707,14 @@ pub unsafe extern "C" fn flz_core_spawn_result(
     let Some(answer) = held.wait_timeout(Duration::from_millis(timeout_ms)) else {
         return FLZ_SPAWN_PENDING;
     };
-    let (status, json) = match answer {
-        Ok(result) => (
-            FLZ_OK,
-            serde_json::json!({"id": result.id, "outcome": result.outcome.as_wire()}),
-        ),
-        Err(error) => (
-            FLZ_SPAWN_FAILED,
-            serde_json::json!({
-                "id": held.id(),
-                "error": error.as_wire(),
-                "message": error.to_string(),
-            }),
-        ),
-    };
-    hand_out(serde_json::to_vec(&json).unwrap_or_default(), out, out_len);
-    status
+    match answer {
+        Ok(result) => {
+            let json = serde_json::json!({"id": result.id, "outcome": result.outcome.as_wire()});
+            hand_out(serde_json::to_vec(&json).unwrap_or_default(), out, out_len);
+            FLZ_OK
+        }
+        Err(error) => ctx.fail(Error::Spawn(error)),
+    }
 }
 
 /// Administer the namespace this runner's connection proved: one entry for the
@@ -709,7 +745,7 @@ pub unsafe extern "C" fn flz_core_admin_call(
     };
     let (Ok(verb), Ok(args)) = (CStr::from_ptr(verb).to_str(), CStr::from_ptr(args).to_str())
     else {
-        return ctx.fail(Error::AdminArgsUtf8);
+        return ctx.fail(Error::Utf8("administration arguments"));
     };
     match flz_core::admin::call(verb, args) {
         Ok(result) => {
@@ -758,4 +794,114 @@ pub unsafe extern "C" fn flz_core_context_free(ctx: *mut FlzContext) {
 pub extern "C" fn flz_core_set_log_callback(
     _callback: Option<extern "C" fn(level: i32, message: *const c_char)>,
 ) {
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixListener;
+
+    use flz_core::pb;
+    use flz_transport::errors::FlezhaError;
+    use prost::Message;
+
+    use super::*;
+
+    /// A host's own refusal renders as the catalogue says; details that are
+    /// not a JSON object render nothing.
+    #[test]
+    fn a_host_refusal_renders_through_the_catalogue() {
+        let code = CString::new("runtime.identity_too_long").unwrap();
+        let details = CString::new(r#"{"part":"tasklet name","value":"t","limit":255}"#).unwrap();
+        let document = unsafe { flz_core_error_document(code.as_ptr(), details.as_ptr()) };
+        let document = unsafe { CStr::from_ptr(document) }
+            .to_string_lossy()
+            .into_owned();
+        let error = FlezhaError::from_document(&document).expect("an error document");
+        assert_eq!(error.code, "runtime.identity_too_long");
+        assert_eq!(
+            error.message,
+            "the tasklet name 't' is longer than 255 bytes"
+        );
+
+        let list = CString::new("[]").unwrap();
+        assert!(unsafe { flz_core_error_document(code.as_ptr(), list.as_ptr()) }.is_null());
+    }
+
+    /// A refused check leaves one error document naming every issue, and
+    /// hands nothing out through the buffer.
+    #[test]
+    fn a_refused_check_names_every_issue_in_the_error_document() {
+        let decl = br#"{"factory_id":"ffi_check","sdk_lang":1,"sdk_version":"0.1.0",
+            "sleep_when_idle":true,"persistent":false,"tasklets":[],"channels":[]}"#;
+        let ctx = flz_core_context_new(flz_core::SCHEMA_VERSION);
+        let mut buf: *mut u8 = std::ptr::null_mut();
+        let mut len = 0;
+        let status =
+            unsafe { flz_core_check_class(ctx, decl.as_ptr(), decl.len(), &mut buf, &mut len) };
+
+        assert_eq!(status, FLZ_ERR);
+        assert!(buf.is_null(), "a refusal rides last_error alone");
+        let document = unsafe { CStr::from_ptr(flz_core_last_error(ctx)) }
+            .to_string_lossy()
+            .into_owned();
+        let error = FlezhaError::from_document(&document).expect("an error document");
+        let codes: Vec<&str> = error.details["issues"]
+            .as_array()
+            .expect("details.issues")
+            .iter()
+            .filter_map(|issue| issue["code"].as_str())
+            .collect();
+        assert_eq!(
+            codes,
+            ["topology.no_tasklets", "topology.sleep_without_persistence"]
+        );
+        assert_eq!(error.code, codes[0], "the first issue names the refusal");
+        unsafe { flz_core_context_free(ctx) };
+    }
+
+    /// A connect the controller refuses fails the start with the
+    /// controller's own error. The runner is process-global, so this is the
+    /// only start this test binary makes.
+    #[test]
+    fn a_refused_connect_fails_the_start_with_the_controllers_error() {
+        let dir = std::env::temp_dir().join(format!("flz-ffi-refused-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("socket dir");
+        std::env::set_var("FLEZHA_TRANSPORT", "uds");
+        std::env::set_var("FLEZHA_SOCKET_FILES_PATH", &dir);
+        std::env::set_var("FLEZHA_RUNNER_ID_PATH", dir.join("runner.id"));
+        let path = flz_transport::utility::socket_dir::control_socket_path_in(&dir)
+            .expect("control socket path");
+        let listener = UnixListener::bind(path).expect("bind the control socket");
+
+        let refusal = FlezhaError::new("runner.namespace_not_proven", Default::default());
+        let frame = flz_transport::service::payloader::build_without_metadata(
+            "control_command",
+            &pb::CommandRequest {
+                reference_id: String::new(),
+                command: Some(pb::command_request::Command::ConnectRefused(
+                    pb::ConnectRefused {
+                        error: Some(pb::Error::from(&refusal)),
+                    },
+                )),
+            }
+            .encode_to_vec(),
+        );
+        let controller = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("the runner connects");
+            let _ = stream.read(&mut [0u8; 4096]);
+            stream.write_all(&frame).expect("write the refusal");
+        });
+
+        let ctx = flz_core_context_new(flz_core::SCHEMA_VERSION);
+        let namespace = CString::new("unproven").expect("a namespace");
+        let status = unsafe { flz_core_start(ctx, namespace.as_ptr()) };
+        controller.join().expect("the controller answered");
+
+        assert_eq!(status, FLZ_ERR, "a refused connect is not a started runner");
+        let document = unsafe { CStr::from_ptr(flz_core_last_error(ctx)) }
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(FlezhaError::from_document(&document), Some(refusal));
+    }
 }

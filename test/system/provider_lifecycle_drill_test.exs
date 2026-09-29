@@ -390,7 +390,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   defp assert_info_block(ctx, plugin_id) do
     output =
       ExUnit.CaptureIO.capture_io(fn ->
-        CliManager.operator_info(ctx.namespace, "text", [])
+        CliManager.operator_info(ctx.namespace)
       end)
 
     assert output =~ plugin_id, "flz operator info does not name the enabled plugin"

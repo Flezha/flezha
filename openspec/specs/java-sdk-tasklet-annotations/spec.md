@@ -8,9 +8,9 @@ The java-sdk-tasklet-annotations capability is the Java realization of the SDK a
 
 The Java SDK SHALL provide annotations `@UnboundedOperator` and `@BoundedOperator` in `com.flezha.sdk.authoring`, retained at runtime, applied to a class that implements `Tasklet`, declaring a whole single-tasklet operator of the kind the annotation names. Each SHALL require a non-empty `id`, SHALL accept an optional `sink`, an optional `onFull`, and an optional `input` defaulting to the empty string, which registration SHALL lower to the entry channel name `input`, and SHALL NOT accept a `kind` member. `@BoundedOperator` SHALL additionally accept `loopMode()`, a `LoopMode` defaulting to `ONCE`. No other member SHALL exist on either annotation: the output type comes from the tasklet's `Output`, keyed emits are the body's `ctx.emitKeyed`, and cell keys and mailbox capacity are `@Tasklet.Spec` members.
 
-`FlezhaRunner.registerFactory` and `unregisterFactory` SHALL accept such a class and build, at registration, an operator whose `factoryId()` is the `id`, whose topology wires the entry channel into the class and, when a `sink` is written, the class to that plugin sink, whose bounded `loopMode()` is the annotation's, and whose every other operator method is at its interface default. With no `sink`, the topology SHALL declare the entry channel and the tasklet and no plugin channel. The tasklet's name SHALL be the `id`. The class SHALL need no `@Tasklet.Spec`; one written there carries the tasklet's settings, and its `name` SHALL equal the `id`, or registration SHALL fail with an error beginning `ShortFormNameMismatch` naming both. Nothing SHALL be generated and nothing SHALL register itself.
+`FlezhaRunner.registerFactory` and `unregisterFactory` SHALL accept such a class and build, at registration, an operator whose `factoryId()` is the `id`, whose topology wires the entry channel into the class and, when a `sink` is written, the class to that plugin sink, whose bounded `loopMode()` is the annotation's, and whose every other operator method is at its interface default. With no `sink`, the topology SHALL declare the entry channel and the tasklet and no plugin channel. The tasklet's name SHALL be the `id`. The class SHALL need no `@Tasklet.Spec`; one written there carries the tasklet's settings, and its `name` SHALL equal the `id`, or registration SHALL fail with a `FlezhaException` whose code is `topology.short_form_name_mismatch`, naming both. Nothing SHALL be generated and nothing SHALL register itself.
 
-Registration SHALL refuse, each with an error naming the class: an empty or absent `id`, naming the required member; a `sink` on a class whose `Output` is `Void`, with a message beginning `SinkWithoutOutput`; and an annotated class that also implements `UnboundedOperator` or `BoundedOperator`, with a message beginning `ShortFormWithTopology`.
+Registration SHALL refuse, each with a `FlezhaException` naming the class: an empty or absent `id` as `topology.missing_factory_id`; a `sink` on a class whose `Output` is `Void` as `topology.sink_without_output`; and an annotated class that also implements `UnboundedOperator` or `BoundedOperator` as `topology.short_form_with_topology`.
 
 #### Scenario: An annotated class is a whole unbounded operator
 
@@ -55,12 +55,12 @@ Registration SHALL refuse, each with an error naming the class: an empty or abse
 #### Scenario: An annotation with no id is refused
 
 - **WHEN** a class `Upcase` is annotated `@UnboundedOperator(sink = "out")` with no `id`
-- **THEN** registration SHALL fail naming the required `id`, and SHALL NOT derive a factory id from the class name
+- **THEN** registration SHALL fail with the code `topology.missing_factory_id`, and SHALL NOT derive a factory id from the class name
 
 #### Scenario: An annotated class implementing an operator interface is refused
 
 - **WHEN** a class annotated `@UnboundedOperator` also implements `UnboundedOperator`
-- **THEN** registration SHALL fail with a message beginning `ShortFormWithTopology`
+- **THEN** registration SHALL fail with the code `topology.short_form_with_topology`
 
 #### Scenario: A short form takes settings from @Tasklet.Spec
 
@@ -70,18 +70,18 @@ Registration SHALL refuse, each with an error naming the class: an empty or abse
 #### Scenario: A short form whose tasklet name differs from its id is refused
 
 - **WHEN** a class carries `@UnboundedOperator(id = "counter")` and `@Tasklet.Spec(name = "tally")`
-- **THEN** registration SHALL fail with a message beginning `ShortFormNameMismatch` naming `counter` and `tally`
+- **THEN** registration SHALL fail with the code `topology.short_form_name_mismatch`, naming `counter` and `tally`
 
 #### Scenario: A sink on a Void output is refused
 
 - **WHEN** a class `Drain implements Tasklet<String, Void, Void>` is annotated `@UnboundedOperator(id = "drain", sink = "out")`
-- **THEN** registration SHALL fail with a message beginning `SinkWithoutOutput`
+- **THEN** registration SHALL fail with the code `topology.sink_without_output`
 
 ### Requirement: `@Tasklet.Spec` declares a tasklet's name and settings
 
 The Java SDK SHALL provide a class annotation `@Tasklet.Spec`, nested in the `com.flezha.sdk.tasklet.Tasklet` interface, retained at runtime and read at registration, which every class implementing `Tasklet` SHALL carry, except a short-form class, whose tasklet takes the operator's `id` as its name. It SHALL have a required `name`, the tasklet's durable name under which its state is saved, and SHALL NOT derive a name from the class name. Its optional members SHALL be `keys` (static cell keys), `capacity` (mailbox capacity), `maxCells`, `idleTtlSeconds` (the idle TTL in seconds, 0 for no eviction), `maxTimersPerCell`, `compactAfterBytes`, `schemaVersion`, `minReadableSchemaVersion` and `logicalClock`, each with the meaning and default the method of the same purpose has today. Reading a member SHALL behave exactly as the corresponding method override would.
 
-Registration SHALL fail with an error beginning `TaskletSpecMissing` and naming the class when a tasklet class that is not a short form does not carry the annotation, and SHALL fail naming the member and its value when `name` is empty or a count or duration member is negative.
+Registration SHALL fail with a `FlezhaException` whose code is `topology.tasklet_name_missing`, naming the class, when a tasklet class that is not a short form does not carry the annotation or its `name` is empty, and with `topology.negative_setting`, naming the member and its value, when a count or duration member is negative.
 
 #### Scenario: The annotation names the tasklet
 
@@ -101,12 +101,12 @@ Registration SHALL fail with an error beginning `TaskletSpecMissing` and naming 
 #### Scenario: A tasklet without the annotation is refused
 
 - **WHEN** a class implementing `Tasklet` without `@Tasklet.Spec` is named in an operator's wiring
-- **THEN** registration SHALL fail with an error beginning `TaskletSpecMissing` naming the class
+- **THEN** registration SHALL fail with the code `topology.tasklet_name_missing`, naming the class
 
 #### Scenario: A negative member is refused
 
 - **WHEN** a tasklet carries `@Tasklet.Spec(name = "x", idleTtlSeconds = -1)`
-- **THEN** registration SHALL fail naming `idleTtlSeconds` and the value
+- **THEN** registration SHALL fail with the code `topology.negative_setting`, naming `idleTtlSeconds` and the value
 
 ### Requirement: The Java SDK generates no tasklet or operator class
 

@@ -120,7 +120,7 @@ an `emit` on it does not compile.
 - The cell mode is read from the wiring. A tasklet reached through `keyBy`,
   on a stream or on a merge, gets a cell per key; one reached by no `keyBy`
   has one cell; `cells: { keys, cellsFor }` declares a fixed key set, and
-  `keyBy` into one is refused as `KeyByOnUnkeyableTarget`. The mode belongs to
+  `keyBy` into one is refused as `topology.key_by_on_unkeyable_target`. The mode belongs to
   the node, so one definition can be keyed in one operator and single in
   another.
 - `idleTtlSeconds` evicts a keyed cell idle that long, a positive whole number
@@ -128,7 +128,7 @@ an `emit` on it does not compile.
 - The clock follows from what the definition writes: `eventTime(input)` puts it
   on event time, `logicalClock: true` on the logical clock, and anything else on
   the wall clock. Writing both is refused. A logical clock needs `applyChange`,
-  and without it the core refuses the operator as `UnservableClock`.
+  and without it the core refuses the operator as `topology.unservable_clock`.
 - A field `defineTasklet` does not read is refused while the module loads,
   naming it, whether the definition carries it or inherits it. A field an
   earlier release read is refused naming what replaced it.
@@ -144,9 +144,9 @@ sinks — is refused at registration, naming the handler and the defect.
 **A setting of one kind is refused by name on the other.** Both kinds use one
 builder, and the declaration carries everything it recorded: the
 effectively-once tier, a checkpoint setting or a correction window on a
-bounded operator is refused at registration as `EffectivelyOnceOnBounded`,
-`CheckpointOnBounded` or `CorrectionWindowOnBounded`, and
-`syncDurability: true` on an unbounded operator as `SyncDurabilityOnUnbounded`. A bounded operator's
+bounded operator is refused at registration as `topology.effectively_once_on_bounded`,
+`topology.checkpoint_on_bounded` or `topology.correction_window_on_bounded`, and
+`syncDurability: true` on an unbounded operator as `topology.sync_durability_on_unbounded`. A bounded operator's
 own options (`loopMode`, `rollbackMode`, `maxDurationMs`)
 written on `defineUnbounded`, full form or short, are refused where it runs,
 naming them. Synchronous durability is only the definition's `syncDurability`
@@ -156,7 +156,7 @@ field; the builder has no call for it.
 takes `persistent` (default `true`) and `sleepWhenIdle`, which defaults to
 `persistent` on a bounded operator and to `false` on an unbounded operator; `sleepWhenIdle: true`
 with `persistent: false` is refused at registration as
-`SleepWithoutPersistence`.
+`topology.sleep_without_persistence`.
 
 **Retry belongs to the edge, for both kinds.** `retryMax` and `retryBackoffMs`
 on the channel that feeds a tasklet (3 attempts from a 50 ms base by default),
@@ -165,7 +165,7 @@ and `retryMax(1)` fails fast.
 **A bounded tasklet's timers work as an unbounded tasklet's.** A firing runs as a
 pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-bounded-operator)); only
 inside a `compensate` hook do `timerAfter`, `timerAtEventTime` and
-`cancelTimer` throw an error beginning `TimersUnavailable`.
+`cancelTimer` throw an error beginning `runtime.timers_unavailable`.
 
 **State is mutated only through declared changes.** Assigning to a field of
 `ctx.state` throws, naming the field and the change-based path: declared state
@@ -260,13 +260,13 @@ maximum duration).
 
 The spec is built where `defineUnbounded` or `defineBounded` runs, so a
 malformed short form is refused while the module loads rather than inside
-`run()`. Two refusals name themselves: `ShortFormWithTopology` (`run` beside
-`channels`), and `DuplicateFactoryId`, raised when the runner declares a second
+`run()`. Two refusals name themselves: `topology.short_form_with_topology` (`run` beside
+`channels`), and `topology.duplicate_factory_id`, raised when the runner declares a second
 operator, of either kind, under a factory id it holds. A key written where it
 does not belong is refused naming the key: a class-level setting other than a
 bounded operator's `loopMode`, `name` or `kind` beside `run`, `sink`, `input`, `codec`
 or a tasklet field beside `channels`, and `kind`, `sink`, `input` or `codec` on
-a `defineTasklet`. There is no `SinkWithoutOutput`: a plain `.mjs` definition
+a `defineTasklet`. There is no `topology.sink_without_output`: a plain `.mjs` definition
 declares no output type the SDK can read, a TypeScript one names it only in
 types erased before the SDK runs, and no `run` returns output, so nothing the
 SDK can see says whether a short form emits. The manifest leaves

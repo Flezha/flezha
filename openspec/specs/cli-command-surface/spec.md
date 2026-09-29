@@ -294,7 +294,10 @@ whether the user wrote the value as an option or as a positional.
 ### Requirement: Every verb SHALL carry its options and the caller's credential as one trailing list
 
 Every request `flz` builds SHALL end with one options keyword list, whatever else the
-verb carries, and the caller's credential SHALL ride that list and nothing else. A verb
+verb carries, and the caller's credential SHALL ride that list and nothing else. The output
+format the caller asked for SHALL ride the same list as `output`, set when `--json` or
+`--output json` is written and absent otherwise, and no verb SHALL take the format as a
+positional argument. A verb
 whose optional flags were spelled as positional arguments with defaults SHALL carry
 them in that list instead, so that the credential is always the last slot and a new
 optional flag has somewhere to go. A verb whose only free argument is a JSON document
@@ -313,8 +316,14 @@ declare. The help screens of both verbs, pinned by their captures, SHALL NOT men
 #### Scenario: A verb with no options still ends with the list
 
 - **WHEN** `flz boot status` or `flz plugin list` is run
-- **THEN** the request SHALL end with an options list, empty when no token or request
-  id is given, and the controller SHALL apply the defaults it applies today
+- **THEN** the request SHALL end with an options list, empty when no token, request
+  id or output format is given, and the controller SHALL apply the defaults it applies today
+
+#### Scenario: The format rides the list
+
+- **WHEN** `flz operator list --json` or `flz namespace delete ghost --json` is run
+- **THEN** the request SHALL carry `output: "json"` in the options list and no positional
+  format argument
 
 #### Scenario: `operator start` carries its trailing flags in the list
 
@@ -418,38 +427,59 @@ except where the verb's row declares that it refuses unrecognised words.
 
 ### Requirement: A refusal or a rendered error SHALL be written to stderr
 
-Every refusal and every error a `flz` verb renders SHALL be written to the stderr of the process the user ran, whatever the verb's family, and the stream SHALL NOT be a per-call argument. A user who pipes a verb's output into a file or another program is collecting the answer, not the failure; a failure written to stdout is a failure inside the data, and a failure written to the controller's own stderr is a failure the user never sees at all.
+Every refusal and every error a `flz` verb renders SHALL be written to the stderr of the process the user ran, whatever the verb's family and whatever the output format, and the stream SHALL NOT be a per-call argument. A user who pipes a verb's output into a file or another program is collecting the answer, not the failure; a failure written to stdout is a failure inside the data, and a failure written to the controller's own stderr is a failure the user never sees at all.
 
 A verb body evaluated on the controller SHALL resolve the device it writes to from its caller, and SHALL NOT name a local stream. A named stream selects the device registered under that name on the node the body is running on, which for every controller-side verb is the controller's log rather than the user's terminal.
 
-The verb's success output stays on stdout and its exit code does not change: what changes is the stream a failure is written to, and the node that stream belongs to.
+A failure SHALL be rendered by the error model's one renderer: in text, the line `error: <message> (<code>)` and, when the code has a hint, the line `hint: <hint>`; under `--json` or `--output json`, the one-line object `{"error": {"code", "class", "message", "details", "hint"}}`. A failure SHALL be rendered once: `flz` SHALL add no line of its own after a failure the controller rendered. `flz`'s own refusals, of the command line, of a controller it cannot reach and of an `flzvm` it cannot start, SHALL be rendered in the same two forms by the same catalogue.
 
-A refused verb SHALL exit with a reason that halts the calling process non-zero without printing a language-level exit trace over the sentence the verb has just rendered. The exit code SHALL be the one this surface already uses.
+A refused verb SHALL exit with the exit code of its error's class: 1 internal, 2 invalid, 3 unreachable, 4 denied, 5 not_found, 6 conflict, 7 unavailable. It SHALL halt the calling process without printing a language-level exit trace over the rendering. The verb's success output stays on stdout, and an acting verb's success output is text whatever the format.
 
 #### Scenario: An operator failure is not in the data
 
 - **WHEN** a `flz operator` verb fails and its stdout is captured separately from its
-  stderr
-- **THEN** the error text SHALL appear on stderr and stdout SHALL carry none of it
+  stderr, with and without `--json`
+- **THEN** the error SHALL appear on stderr and stdout SHALL carry none of it
 
 #### Scenario: One device, declared nowhere per verb
 
 - **WHEN** the controller-side verb bodies are enumerated
-- **THEN** none SHALL name the stream it prints its failure to, and the exit SHALL remain
-  the one this surface already uses
+- **THEN** none SHALL name the stream it prints its failure to, and none SHALL render a
+  reason as text itself
 
 #### Scenario: A verb evaluated on the controller renders on the caller's stderr
 
 - **WHEN** a `flz` verb is evaluated on the controller node through `flzvm rpc` and
   refuses
-- **THEN** the refusal text SHALL appear on the stderr of the process that ran `flz`,
+- **THEN** the refusal SHALL appear on the stderr of the process that ran `flz`,
   and SHALL NOT appear only in the controller's own log
 
-#### Scenario: The sentence is not buried under an exit trace
+#### Scenario: The rendering is not buried under an exit trace
 
 - **WHEN** a `flz` verb refuses
-- **THEN** the caller's stderr SHALL carry the rendered sentence and no language-level
-  exit banner, and the exit code SHALL be unchanged
+- **THEN** the caller's stderr SHALL carry the rendering and no language-level exit
+  banner, and no second line from `flz`
+
+#### Scenario: The text form names the code and the next command
+
+- **WHEN** `flz namespace delete ghost` is run and `ghost` does not exist
+- **THEN** stderr SHALL carry `error: ` followed by a sentence naming `ghost` and ending
+  `(namespace.not_found)`, then `hint: flz namespace list`, and the exit code SHALL be 5
+
+#### Scenario: The JSON form is one parseable object
+
+- **WHEN** `flz namespace delete ghost --json` is run and `ghost` does not exist
+- **THEN** stderr SHALL carry exactly one line that parses as JSON, whose `error.code` is
+  `namespace.not_found`, `error.class` is `not_found`, `error.details.namespace` is `ghost`
+  and `error.hint` is `flz namespace list`, and stdout SHALL be empty
+
+#### Scenario: A refusal per class exits with its code
+
+- **WHEN** a verb is refused once for each class: a malformed command line, a token-less
+  gated verb under enforcement, an unknown namespace, a duplicate schedule name, a quota
+  reached, a controller that is not running, a verb whose controller answers not ready, and
+  an uncatalogued reason injected in a test
+- **THEN** they SHALL exit 2, 4, 5, 6, 6, 3, 7 and 1 in that order
 
 ### Requirement: `flz namespace list` SHALL answer from the namespace catalog
 
@@ -523,4 +553,26 @@ user.
 
 - **WHEN** `flz operator start echo -i my_echo` is run
 - **THEN** the request SHALL carry the id `my_echo`, identically to `--id my_echo`
+
+### Requirement: Every verb SHALL accept the output format
+
+`--json` and `--output <text|json>` SHALL be options every `flz` verb carries, declared once
+beside `--token` and `--help`, so that no verb refuses them as unknown. On a verb whose
+answer is data, they SHALL select the answer's form as today. On every verb, they SHALL
+select the form of a failure. An acting verb's success output SHALL stay text under
+`--json`, and `docs/guides/cli.md` SHALL say so. When `flz` refuses the command line itself,
+it SHALL honour a `--json` or `--output json` written anywhere in it.
+
+#### Scenario: An acting verb takes --json
+
+- **WHEN** `flz operator start echo --json` is run against a controller whose namespace
+  quota is reached
+- **THEN** the verb SHALL NOT refuse `--json` as an unknown option, and stderr SHALL carry the
+  JSON error with code `quota.exceeded`
+
+#### Scenario: A command-line refusal honours --json
+
+- **WHEN** `flz operator start echo --nope --json` is run
+- **THEN** stderr SHALL carry the JSON error with code `usage.unknown_option`, details naming
+  `--nope`, and the exit code SHALL be 2
 

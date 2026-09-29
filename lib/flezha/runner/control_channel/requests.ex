@@ -346,11 +346,9 @@ defmodule Flezha.Runner.ControlChannel.Requests do
       # the id the request carried.
       {outcome, resolved_id} =
         case judged do
-          {:refused, _reason} -> {judged, instance_id}
+          {:refused, %Flezha.Error{}} -> {judged, instance_id}
           {_outcome, _resolved_id} = answered -> answered
         end
-
-      {name, error} = spawn_reply(outcome)
 
       :telemetry.execute(
         [:flezha, :operator, :requested_spawn],
@@ -359,18 +357,29 @@ defmodule Flezha.Runner.ControlChannel.Requests do
           namespace: namespace,
           instance_id: resolved_id,
           factory_id: factory_id,
-          outcome: name
+          outcome: outcome_name(outcome)
         }
       )
 
-      {{:spawn_bounded_response,
-        %RunnerCommands.SpawnBoundedResponse{
-          outcome: Atom.to_string(name),
-          error: error,
-          instance_id: resolved_id
-        }}, "spawn-bounded response #{name}"}
+      {{:spawn_bounded_response, spawn_response(outcome, resolved_id)},
+       "spawn-bounded response #{outcome_name(outcome)}"}
     end)
   end
+
+  defp spawn_response({:refused, error}, instance_id),
+    do: %RunnerCommands.SpawnBoundedResponse{
+      error: Flezha.Error.to_wire(error),
+      instance_id: instance_id
+    }
+
+  defp spawn_response(outcome, instance_id),
+    do: %RunnerCommands.SpawnBoundedResponse{
+      outcome: Atom.to_string(outcome),
+      instance_id: instance_id
+    }
+
+  defp outcome_name({:refused, error}), do: error.code
+  defp outcome_name(outcome), do: outcome
 
   @doc """
   Application code administering the namespace this channel proved. The door
@@ -383,21 +392,22 @@ defmodule Flezha.Runner.ControlChannel.Requests do
     namespace = state.namespace
 
     answer_off_process(reference_id, fn ->
-      {result, error} =
+      response =
         case once_admitted(state, fn -> Admin.call(namespace, verb, args) end) do
-          {:ok, json} -> {json, ""}
-          {:refused, reason} -> {"", reason}
-          {:error, reason} -> {"", reason}
+          {:ok, json} ->
+            %RunnerCommands.AdminResponse{result: json}
+
+          {tag, error} when tag in [:refused, :error] ->
+            %RunnerCommands.AdminResponse{error: Flezha.Error.to_wire(error)}
         end
 
       :telemetry.execute(
         [:flezha, :runner, :admin_request],
         %{count: 1},
-        %{namespace: namespace, verb: verb, refused: error != ""}
+        %{namespace: namespace, verb: verb, refused: response.error != nil}
       )
 
-      {{:admin_response, %RunnerCommands.AdminResponse{result: result, error: error}},
-       "admin response"}
+      {{:admin_response, response}, "admin response"}
     end)
   end
 
@@ -422,18 +432,16 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   defp if_running("error"), do: :error
   defp if_running(_), do: :deliver
 
-  # `{:refused, reason}` is the only outcome carrying detail; the rest are their
-  # own name with nothing attached.
   # A runner can send a request before its handshake completes, and the roster
   # holds neither the runner nor its factories until then, so a request judged
   # against it waits for the session to be admitted.
   defp once_admitted(state, judge) do
     case FleetManager.await_admitted(state.runner_id) do
-      :ok -> judge.()
-      {:error, :not_admitted} -> {:refused, "the runner's session ended before it was admitted"}
+      :ok ->
+        judge.()
+
+      {:error, :not_admitted} ->
+        {:refused, Flezha.Error.from_reason(:not_admitted, :"wire.spawn")}
     end
   end
-
-  defp spawn_reply({:refused, reason}), do: {:refused, reason}
-  defp spawn_reply(outcome), do: {outcome, ""}
 end

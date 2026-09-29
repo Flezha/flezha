@@ -24,10 +24,12 @@ use flz_transport::utility::socket_probe;
 use prost::Message;
 use serde::Serialize;
 
-use crate::error::Error;
-use crate::pb::Ping;
+use crate::error::{Code, Error};
+use crate::pb::command_request::Command;
+use crate::pb::{self, Ping};
 use crate::runner::{ClientResponseMessage, RunnerMessage};
 use crate::util::nonce_suffix;
+use flz_transport::errors::FlezhaError;
 
 /// The QUIC address this process last connected through.
 static LAST_GOOD_QUIC: LastGood<SocketAddr> = LastGood::new();
@@ -130,12 +132,9 @@ fn open_with_retry(
             itx.clone(),
             otx.clone(),
         ) {
-            Ok(result) => {
-                if attempt > 0 {
-                    eprintln!("[flezha] Connected after {} attempts", attempt);
-                }
-                return result;
-            }
+            // A socket that connects is not yet a runner the controller
+            // admitted: the read loop reports that once the handshake is whole.
+            Ok(result) => return result,
             Err(e) => {
                 attempt += 1;
                 FAILED_SESSIONS.store(attempt, Ordering::Relaxed);
@@ -212,10 +211,7 @@ fn try_open(
             Ok((answered, stream, None))
         }
         #[cfg(not(unix))]
-        TransportType::Uds => Err(Error::Connect(
-            "UDS transport is not available on this platform; set FLEZHA_TRANSPORT=quic"
-                .to_string(),
-        )),
+        TransportType::Uds => Err(Error::Connect(Code::UdsUnavailable.with([]))),
         TransportType::Quic => try_open_quic(namespace, declared, itx, otx),
     }
 }
@@ -230,10 +226,10 @@ fn try_open_uds(
     let socket_path = socket_dir::control_socket_path()?;
 
     let stream = UnixStream::connect(socket_path.clone()).map_err(|e| {
-        Error::Connect(format!(
-            "Failed to connect to control socket {}: {}",
-            socket_path, e
-        ))
+        Error::Connect(Code::ControllerUnreachable.with([(
+            "reason",
+            format!("control socket {socket_path}: {e}").into(),
+        )]))
     })?;
 
     // The directory that answered is where this runner's data sockets are
@@ -278,10 +274,9 @@ fn try_open_quic(
         }
     }
 
-    Err(Error::Connect(format!(
-        "Failed to connect to a QUIC controller — {}",
-        failures.join("; ")
-    )))
+    Err(Error::Connect(
+        Code::ControllerUnreachable.with([("reason", failures.join("; ").into())]),
+    ))
 }
 
 /// Every address the list resolves to on THIS attempt, last-good first, plus
@@ -290,11 +285,9 @@ fn quic_candidates() -> Result<(Vec<SocketAddr>, Vec<String>), Error> {
     let entries = transport_config::quic_addresses()?;
     let (resolved, unresolved) = transport_config::resolve_entries(&entries);
     if resolved.is_empty() {
-        return Err(Error::Connect(format!(
-            "no {} entry resolved — {}",
-            transport_config::QUIC_ADDRESSES_VAR,
-            unresolved.join("; ")
-        )));
+        return Err(Error::Connect(
+            Code::QuicAddressesUnresolved.with([("reason", unresolved.join("; ").into())]),
+        ));
     }
     Ok((LAST_GOOD_QUIC.prefer(resolved), unresolved))
 }
@@ -342,18 +335,62 @@ fn sock_conn(
             return;
         }
 
-        // Send startup confirmation only on initial connection
-        if let Some(itx) = itx {
-            itx.lock()
-                .unwrap()
-                .send(ClientResponseMessage::RunnerIdConfirmation)
-                .unwrap();
-        }
+        // Only an initial connect is confirmed, and only once the controller
+        // has answered it, or has let the grace pass without a word.
+        let start = PendingStart(Arc::new(Mutex::new(itx)));
+        start.confirm_after(CONNECT_ANSWER_GRACE);
 
-        read_loop(&stream_clone, &otx, &mut live);
+        read_loop(&stream_clone, &otx, &mut live, &start);
     });
 
     (answered, stream_box)
+}
+
+/// How long a starting runner waits for the controller's first frame before
+/// it reports itself started anyway. A refusal is written the moment the
+/// controller reads the handshake, so it lands well inside this; a controller
+/// that stays silent (a test's bare socket) costs a start no more than this.
+const CONNECT_ANSWER_GRACE: Duration = Duration::from_secs(1);
+
+/// The starting caller's confirmation, owed once: by the controller's first
+/// frame, its refusal, or the grace running out, whichever comes first.
+#[derive(Clone)]
+struct PendingStart(Arc<Mutex<Option<StartConfirm>>>);
+
+type StartConfirm = Arc<Mutex<Sender<ClientResponseMessage>>>;
+
+impl PendingStart {
+    fn answer(&self, message: ClientResponseMessage) {
+        let taken = self.0.lock().unwrap_or_else(|p| p.into_inner()).take();
+        if let Some(itx) = taken {
+            let _ = itx.lock().unwrap_or_else(|p| p.into_inner()).send(message);
+        }
+    }
+
+    fn confirm_after(&self, grace: Duration) {
+        if self.0.lock().unwrap_or_else(|p| p.into_inner()).is_none() {
+            return;
+        }
+        let start = self.clone();
+        thread::spawn(move || {
+            thread::sleep(grace);
+            start.answer(ClientResponseMessage::RunnerIdConfirmation);
+        });
+    }
+}
+
+/// The controller's refusal of this connect, when `frame` is one.
+fn connect_refusal(frame: &[u8]) -> Option<FlezhaError> {
+    match pb::CommandRequest::decode(frame).ok()?.command? {
+        Command::ConnectRefused(refused) => Some(refused.error.map_or_else(
+            || {
+                Code::UnreadableReply
+                    .with([("reply", "a connect refusal without its error".into())])
+            },
+            FlezhaError::from,
+        )),
+        _ => None,
+    }
 }
 
 /// Feed control frames to the coordinator until the channel fails, then ask
@@ -362,11 +399,31 @@ fn read_loop(
     stream: &Arc<FlezhaStream>,
     otx: &Arc<Mutex<Sender<RunnerMessage>>>,
     live: &mut ControlLiveness,
+    start: &PendingStart,
 ) {
     loop {
         match payloader::extract_payload(&**stream) {
             Ok((payload_id, message, metadata)) => {
+                let admitted = live.handshake_completed();
+                // Once per refused attempt, and never forwarded: the controller
+                // closes the stream next, and that read error drives the
+                // reconnect as any failed session's does.
+                if let Some(refusal) = (!admitted).then(|| connect_refusal(&message)).flatten() {
+                    eprintln!(
+                        "[flezha] the controller refused the connect: {}",
+                        refusal.text()
+                    );
+                    start.answer(ClientResponseMessage::ConnectRefused(refusal));
+                    continue;
+                }
+                start.answer(ClientResponseMessage::RunnerIdConfirmation);
                 live.note_frame();
+                if !admitted && live.handshake_completed() {
+                    let failed = FAILED_SESSIONS.load(Ordering::Relaxed);
+                    if failed > 0 {
+                        eprintln!("[flezha] Connected after {} attempts", failed);
+                    }
+                }
                 let _ = stream.set_read_timeout(Some(live.current_deadline()));
                 otx.lock()
                     .unwrap()
@@ -654,6 +711,97 @@ mod tests {
         std::env::remove_var("FLEZHA_CONTROL_IDLE_TIMEOUT_MS");
         drop(release);
         ctrl.join().ok();
+    }
+
+    /// A controller-side connect for these tests: drain the init frame, write
+    /// `frame`, then close.
+    fn controller_answering(ctrl_end: UnixStream, frame: Vec<u8>) -> thread::JoinHandle<()> {
+        thread::spawn(move || {
+            let mut ctrl_end = ctrl_end;
+            let mut buf = [0u8; 1024];
+            let _ = ctrl_end.read(&mut buf);
+            let _ = ctrl_end.write_all(&frame);
+        })
+    }
+
+    fn start_answer(frame: Vec<u8>) -> (ClientResponseMessage, Duration, Vec<RunnerMessage>) {
+        let (stream, ctrl_end) = stream_pair();
+        let ctrl = controller_answering(ctrl_end, frame);
+        let (itx, irx) = unbounded();
+        let (otx, orx) = unbounded();
+        let started = std::time::Instant::now();
+        let _ = sock_conn(
+            "test_ns".to_string(),
+            Arc::new(RwLock::new(vec!["probe".to_string()])),
+            stream,
+            Some(Arc::new(Mutex::new(itx))),
+            Arc::new(Mutex::new(otx)),
+        );
+        let answer = irx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the start is answered");
+        let waited = started.elapsed();
+        ctrl.join().ok();
+        let forwarded = std::iter::from_fn(|| orx.recv_timeout(Duration::from_millis(500)).ok())
+            .take_while(|message| !matches!(message, RunnerMessage::Reconnect(_)))
+            .collect();
+        (answer, waited, forwarded)
+    }
+
+    #[test]
+    fn a_refused_connect_answers_the_start_with_the_controllers_error() {
+        let refusal = flz_transport::errors::FlezhaError::new(
+            "runner.namespace_not_proven",
+            Default::default(),
+        );
+        let frame = payloader::build_without_metadata(
+            "control_command",
+            &pb::CommandRequest {
+                reference_id: String::new(),
+                command: Some(Command::ConnectRefused(pb::ConnectRefused {
+                    error: Some(pb::Error::from(&refusal)),
+                })),
+            }
+            .encode_to_vec(),
+        );
+
+        let (answer, waited, forwarded) = start_answer(frame);
+
+        match answer {
+            ClientResponseMessage::ConnectRefused(error) => assert_eq!(error, refusal),
+            _ => panic!("a refused connect must not be confirmed as connected"),
+        }
+        assert!(
+            waited < CONNECT_ANSWER_GRACE,
+            "the refusal is answered at once"
+        );
+        assert!(
+            forwarded.is_empty(),
+            "the refusal is the reader's to answer, not a command to dispatch"
+        );
+    }
+
+    #[test]
+    fn an_answered_connect_confirms_the_start_before_the_grace() {
+        let assign = pb::CommandRequest {
+            reference_id: "ref-assign".to_string(),
+            command: Some(Command::AssignRunnerId(pb::AssignRunnerId {
+                runner_id: "r1".to_string(),
+            })),
+        };
+        let frame = payloader::build_without_metadata("control_command", &assign.encode_to_vec());
+
+        let (answer, waited, forwarded) = start_answer(frame);
+
+        assert!(matches!(
+            answer,
+            ClientResponseMessage::RunnerIdConfirmation
+        ));
+        assert!(
+            waited < CONNECT_ANSWER_GRACE,
+            "the first frame confirms at once"
+        );
+        assert_eq!(forwarded.len(), 1, "the frame itself is dispatched");
     }
 
     // A controller that wedges after the handshake without a clean close must

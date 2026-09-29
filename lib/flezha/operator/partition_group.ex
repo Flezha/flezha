@@ -45,8 +45,8 @@ defmodule Flezha.Operator.PartitionGroup do
 
   Everything that can refuse runs before the first member starts, because a
   half-started group is worse than a refused one. On a mid-group failure the
-  already-started members are stopped and the error names the member that
-  failed and why.
+  already-started members are stopped and the refusal is the lowest failing
+  member's own.
 
   A start over a group that already has live members CONVERGES instead of
   refusing: only the missing members are started, and only when `partitions`
@@ -112,49 +112,31 @@ defmodule Flezha.Operator.PartitionGroup do
 
     cond do
       partitions < 2 or partitions > KeyGroup.key_groups() ->
-        {:error,
-         "partitions must be between 2 and #{KeyGroup.key_groups()} " <>
-           "(one partition per key group); got #{partitions}"}
+        {:error, {:partitions_out_of_range, partitions, KeyGroup.key_groups()}}
 
       # Copied into every member, the message would park at all but one.
       Keyword.get(operator.opts, :seed_input) != nil ->
-        {:error,
-         "a partitioned start carries no first message: a message names one instance, and " <>
-           "a group's message reaches its member by key; send it through a keyed forward, " <>
-           "or to a member id (#{Partition.member_id(operator.id, 0)}) once the group " <>
-           "runs"}
+        {:error, {:partitioned_first_message, Partition.member_id(operator.id, 0)}}
 
       # The base id is never claimed by a group — only member ids are — so a
       # live claim on it means an unpartitioned operator already runs there.
       Validator.operator_unique(namespace, operator.id) != :ok ->
-        {:error,
-         "#{operator.id} is already running as an unpartitioned operator; a partitioned " <>
-           "start cannot converge it — stop it first or choose another group id"}
+        {:error, {:unpartitioned_running, operator.id}}
 
       byte_size(Partition.member_id(operator.id, partitions - 1)) > id_limit() ->
-        {:error, id_budget_refusal(operator.id, partitions)}
+        suffix = byte_size(Partition.member_suffix(partitions - 1))
+        {:error, {:group_id_too_long, operator.id, partitions, id_limit() - suffix}}
 
       known.loop_mode in [:once, :chained] ->
-        {:error, KeyGroup.one_message_refusal(operator.factory_id, known.loop_mode, partitions)}
+        {:error,
+         {:partitions_without_per_input_loop, operator.factory_id, known.loop_mode, partitions}}
 
       known.keyless ->
-        {:error,
-         "PartitionsWithoutKeyedTasklet: factory #{operator.factory_id} has no keyed " <>
-           "entry-fed tasklet, so its partitions would each fold a slice of the input " <>
-           "into a private copy of the same state — declare `key_by` on the entry edge " <>
-           "before partitioning"}
+        {:error, {:partitions_without_keyed_tasklet, operator.factory_id}}
 
       true ->
         check_group_quota(namespace, partitions - already_held)
     end
-  end
-
-  defp id_budget_refusal(base_id, partitions) do
-    suffix = byte_size(Partition.member_suffix(partitions - 1))
-
-    "operator id #{base_id} is #{byte_size(base_id)} bytes; #{partitions} partitions append " <>
-      "#{suffix} more and the limit is #{id_limit()} — " <>
-      "the base id may be at most #{id_limit() - suffix} bytes for this N"
   end
 
   # One preflight for all N units. Allocation itself stays per-member (there is
@@ -209,10 +191,7 @@ defmodule Flezha.Operator.PartitionGroup do
         :ok
 
       %{id: id, partition: p} ->
-        {:error,
-         "cannot converge group #{group_id} to #{partitions} partitions: live member #{id} " <>
-           "declares #{p.count} (range #{inspect(p.range)}); changing a group's partition " <>
-           "count moves Cell state, which a start never does — use `flz operator scale`"}
+        {:error, {:group_partition_mismatch, group_id, partitions, id, p.count}}
     end
   end
 
@@ -252,21 +231,13 @@ defmodule Flezha.Operator.PartitionGroup do
       nil ->
         {:ok, started, skipped}
 
-      {index, outcome} ->
-        rollback_group(
-          namespace,
-          started,
-          operator.id,
-          index,
-          member_failure(outcome, on_duplicate)
-        )
+      {_index, outcome} ->
+        rollback_group(namespace, started, member_failure(outcome, on_duplicate))
     end
   end
 
   defp member_failure({:error, reason}, _on_duplicate), do: reason
-
-  defp member_failure({:duplicate, member_id}, :refuse),
-    do: "#{member_id}: #{Validator.id_in_use()}"
+  defp member_failure({:duplicate, member_id}, :refuse), do: {:id_in_use, member_id}
 
   defp member_failure(_outcome, _on_duplicate), do: nil
 
@@ -284,7 +255,7 @@ defmodule Flezha.Operator.PartitionGroup do
       case OperatorManager.start_operator(namespace, member) do
         {:ok, _} -> {:ok, member_id}
         :duplicate -> {:duplicate, member_id}
-        {:error, reason} -> {:error, "#{member_id}: #{inspect(reason)}"}
+        {:error, reason} -> {:error, reason}
       end
     end
   end
@@ -297,13 +268,11 @@ defmodule Flezha.Operator.PartitionGroup do
 
   # A group is all-or-nothing at start: a member that failed leaves the others
   # running as an operator that half-serves its key space, which is the one
-  # shape partitioning must never produce silently.
-  defp rollback_group(namespace, started, group_id, index, reason) do
+  # shape partitioning must never produce silently. The refusal is the lowest
+  # failing member's own, which says what to fix.
+  defp rollback_group(namespace, started, reason) do
     Enum.each(started, &OperatorManager.stop_operator(namespace, &1))
-
-    {:error,
-     "partition #{index} of group #{group_id} failed to start (#{reason}); " <>
-       "#{length(started)} already-started member(s) were stopped"}
+    {:error, reason}
   end
 
   @doc """
@@ -338,9 +307,7 @@ defmodule Flezha.Operator.PartitionGroup do
            0
          ) do
       :aborted ->
-        {:error,
-         "a rescale of #{group_id} is already running in namespace #{namespace}; " <>
-           "wait for it to finish before starting another"}
+        {:error, {:rescale_running, namespace, group_id}}
 
       result ->
         result
@@ -374,7 +341,7 @@ defmodule Flezha.Operator.PartitionGroup do
 
   defp rescale_members(namespace, group_id) do
     case members(namespace, group_id) do
-      [] -> {:error, "no partition group named #{group_id} in namespace #{namespace}"}
+      [] -> {:error, {:group_not_found, namespace, group_id}}
       members -> {:ok, members}
     end
   end
@@ -400,7 +367,7 @@ defmodule Flezha.Operator.PartitionGroup do
         {:ok, template, restamp_plugins(member_plugins(state, builder))}
 
       {:error, reason} ->
-        {:error, "cannot read #{member_id} to rescale from: #{inspect(reason)}"}
+        {:error, {:member_unreadable, member_id, reason}}
     end
   end
 
@@ -459,9 +426,7 @@ defmodule Flezha.Operator.PartitionGroup do
         :ok
 
       parked ->
-        {:error,
-         "rescale refused: parked DLQ entries must be replayed or dropped first — " <>
-           Enum.map_join(parked, ", ", fn {id, count} -> "#{id}: #{count} entries" end)}
+        {:error, {:parked_entries, Enum.map(parked, fn {id, count} -> "#{id} (#{count})" end)}}
     end
   end
 
@@ -472,7 +437,7 @@ defmodule Flezha.Operator.PartitionGroup do
 
       laggard ->
         if System.monotonic_time(:millisecond) >= deadline do
-          {:error, quiesce_timeout_message(laggard.id, kind)}
+          {:error, {:quiesce_timeout, laggard.id, kind, input_log_progress(laggard.id)}}
         else
           Process.sleep(Durations.get(:partition_quiesce_poll_ms))
           await_consumed(members, kind, deadline)
@@ -491,26 +456,12 @@ defmodule Flezha.Operator.PartitionGroup do
     end
   end
 
-  defp quiesce_timeout_message(member_id, kind) do
-    {watermark, last} =
-      case InputLog.tail(member_id) do
-        {:ok, floor, last} -> {floor, last}
-        {:error, refusal} -> {nil, refusal}
-      end
-
-    "rescale aborted: #{member_id} has not consumed its input log " <>
-      "(watermark #{inspect(watermark)}, last offset #{inspect(last)}); nothing was stopped or moved. " <>
-      "A checkpoint-ack class only advances its watermark at a checkpoint close, so the wait " <>
-      "rides its checkpoint cadence — retry with a longer --timeout, or drive a checkpoint." <>
-      bounded_wait(kind)
+  defp input_log_progress(member_id) do
+    case InputLog.tail(member_id) do
+      {:ok, floor, last} -> %{watermark: floor, last_offset: last}
+      {:error, _refusal} -> %{}
+    end
   end
-
-  defp bounded_wait(:bounded),
-    do:
-      " A bounded member's watermark advances at each pass commit, so the wait rides " <>
-        "the pass in flight."
-
-  defp bounded_wait(_stream), do: ""
 
   # Every Cell whose key group changes owner under the new ranges, as
   # `{source_node, source_ref, dest_ref}`. Derived from what is on disk, which
@@ -603,9 +554,7 @@ defmodule Flezha.Operator.PartitionGroup do
 
       held ->
         if System.monotonic_time(:millisecond) >= deadline do
-          {:error,
-           "rescale aborted: #{held} was stopped but still holds its id after " <>
-             "#{Shutdown.stop_timeout_ms()}ms; nothing was moved — retry once it has gone"}
+          {:error, {:member_id_held, held, Shutdown.stop_timeout_ms()}}
         else
           Process.sleep(Durations.get(:partition_quiesce_poll_ms))
           await_ids_released(namespace, ids, deadline)
@@ -625,11 +574,7 @@ defmodule Flezha.Operator.PartitionGroup do
           {:cont, :ok}
 
         {:error, reason} ->
-          {:halt,
-           {:error,
-            "rescale aborted: moving #{inspect(source)} to #{inspect(destination)} failed " <>
-              "(#{inspect(reason)}); the group is stopped and no member was started — " <>
-              "re-run `flz operator scale` to complete the remaining moves"}}
+          {:halt, {:error, {:cell_move_failed, source, destination, reason}}}
       end
     end)
   end

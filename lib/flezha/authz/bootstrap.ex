@@ -290,7 +290,7 @@ defmodule Flezha.AuthZ.Bootstrap do
   defp read_token_file(path) do
     case File.read(path) do
       {:ok, contents} -> {:ok, String.trim(contents)}
-      {:error, reason} -> {:error, {:bootstrap_token_read_failed, reason}}
+      {:error, reason} -> {:error, {:bootstrap_token_read_failed, path, reason}}
     end
   end
 

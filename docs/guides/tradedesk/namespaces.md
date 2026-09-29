@@ -87,7 +87,8 @@ If the admin was never claimed, or this shell has no token, the same command is
 refused instead, and the refusal says what is missing:
 
 ```output
-authz.namespace_create: refused: authorization is enforced but the bootstrap has not been claimed — run `flz auth bootstrap <token>` with the token in app_data/auth/bootstrap.token
+error: authorization is enforced and no admin has claimed the bootstrap yet; its token is in app_data/auth/bootstrap.token on the controller (authz.bootstrap_pending)
+hint: flz auth bootstrap <token>
 ```
 
 `flz namespace list` shows every namespace the controller knows about:
@@ -275,7 +276,8 @@ $ flz namespace delete scratch
 ```
 
 ```output
-error: namespace delete: :not_found
+error: namespace 'scratch' does not exist (namespace.not_found)
+hint: flz namespace list
 ```
 
 Delete removes the catalog entry and its quota counters, and only those. A

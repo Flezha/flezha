@@ -95,7 +95,7 @@ In async mode (all unbounded classes, and bounded classes that do not opt into s
 - **THEN** throughput and ack latency are unchanged, shipping retries with backoff, and the RPO alarm (below) fires when the target is exceeded
 
 ### Requirement: Per-class synchronous mode for bounded operators
-A bounded class SHALL be able to declare synchronous durability via the class-declaration path, in which case the controller SHALL complete the remote ship of the barrier's journal suffix and of every Cell record the barrier's entry names before replying to that TaskCommit/IterCommit; the SDK-observed ack thereby implies remote durability (RPO = 0) of the stage's state and output, not of the marker alone. The gate SHALL be the commit worker's one gate, applied after the entry's local sync and before the ack, and no other path SHALL gate on the remote ship. The declaration SHALL have exactly one spelling per SDK, the class-level one; no SDK's channel builder SHALL carry a synchronous-durability call. An unbounded class declaring synchronous mode SHALL be refused at registration under the name `SyncDurabilityOnUnbounded`, whether the SDK judges the class itself or the shared core does.
+A bounded class SHALL be able to declare synchronous durability via the class-declaration path, in which case the controller SHALL complete the remote ship of the barrier's journal suffix and of every Cell record the barrier's entry names before replying to that TaskCommit/IterCommit; the SDK-observed ack thereby implies remote durability (RPO = 0) of the stage's state and output, not of the marker alone. The gate SHALL be the commit worker's one gate, applied after the entry's local sync and before the ack, and no other path SHALL gate on the remote ship. The declaration SHALL have exactly one spelling per SDK, the class-level one; no SDK's channel builder SHALL carry a synchronous-durability call. An unbounded class declaring synchronous mode SHALL be refused at registration under the name `topology.sync_durability_on_unbounded`, whether the SDK judges the class itself or the shared core does.
 
 #### Scenario: Sync bounded operator commit is remote-durable before ack
 - **WHEN** a sync-declared bounded class reaches an IterCommit and the remote ship succeeds
@@ -111,7 +111,7 @@ A bounded class SHALL be able to declare synchronous durability via the class-de
 
 #### Scenario: Unbounded class cannot opt into sync
 - **WHEN** an unbounded class declares synchronous durability, in any SDK whose spelling lets an unbounded class write it
-- **THEN** registration is refused with an error naming the class and `SyncDurabilityOnUnbounded`
+- **THEN** registration is refused with an error naming the class and `topology.sync_durability_on_unbounded`
 
 #### Scenario: One spelling per SDK
 - **WHEN** the Python, Ruby, PHP and Node channel builders are searched for a synchronous-durability call

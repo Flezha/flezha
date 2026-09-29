@@ -1,16 +1,18 @@
-//! `CellApplyState`: every request is answered with `apply_state_not_supported`.
+//! `CellApplyState`: every request is answered with `state.apply_not_supported`.
 
 use super::{CommandAction, Reply};
 use crate::pb::CellApplyState;
 use crate::runner::RunnerNode;
 
 impl CommandAction for CellApplyState {
-    fn handle(&self, runner: &mut RunnerNode, _message: &str, errors: &mut Vec<String>) -> Reply {
+    fn handle(
+        &self,
+        runner: &mut RunnerNode,
+        _message: &str,
+        errors: &mut Vec<crate::Error>,
+    ) -> Reply {
         if !runner.has_operator(&self.operator_id) {
-            errors.push(format!(
-                "UnboundedOperator instance with id {} not found",
-                self.operator_id
-            ));
+            errors.push(super::cell_state::operator_not_found(&self.operator_id));
             return Reply {
                 payload_id: "cell_apply_state",
                 bytes: Vec::new(),
@@ -18,7 +20,7 @@ impl CommandAction for CellApplyState {
         }
 
         // Section 4: invoke the dispatcher's apply entry point.
-        errors.push("apply_state_not_supported".to_string());
+        errors.push(crate::Error::State(crate::Code::ApplyNotSupported.with([])));
         Reply {
             payload_id: "cell_apply_state",
             bytes: Vec::new(),

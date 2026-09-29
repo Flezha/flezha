@@ -39,23 +39,13 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
 
   describe "build/1 refuses an unconvertible value instead of raising" do
     test "a bad integer option on a provider with required fields is a refusal" do
-      assert {:error, message} =
+      assert {:error, {:invalid_option_value, :linger_ms, "zz"}} =
                Kafka.Producer.build(%{"hosts" => "h:1", "topic" => "t", "linger_ms" => "zz"})
-
-      assert message =~ "linger_ms"
-      assert message =~ "zz"
-    end
-
-    test "the refusal names the field once, not twice" do
-      {:error, message} =
-        Kafka.Producer.build(%{"hosts" => "h:1", "topic" => "t", "linger_ms" => "zz"})
-
-      assert message == "Invalid value for linger_ms: zz"
     end
 
     test "the same holds for a boolean option" do
-      assert {:error, message} = Filter.build(%{"regex_pattern" => "x", "inverted" => "maybe"})
-      assert message =~ "inverted"
+      assert {:error, {:invalid_option_value, :inverted, "maybe"}} =
+               Filter.build(%{"regex_pattern" => "x", "inverted" => "maybe"})
     end
 
     test "the same holds for every provider that can refuse a value" do
@@ -65,20 +55,16 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
       ]
 
       for {who, result} <- refusals do
-        assert {:error, message} = result, "#{who} did not refuse"
-        assert is_binary(message), "#{who} answered a non-binary refusal"
+        assert {:error, {:invalid_option_value, _option, "zz"}} = result, "#{who} did not refuse"
       end
     end
 
-    test "a malformed JSON option is refused as a string, not as a decode struct" do
+    test "a malformed JSON option is refused naming it, not as a decode struct" do
       for field <- ["ws_opts", "payload_metadata", "subscription_headers", "post_connect"] do
-        assert {:error, message} = Websocket.build(%{"uri" => "wss://x", field => "{not json"})
+        assert {:error, {:invalid_option_value, option, "{not json"}} =
+                 Websocket.build(%{"uri" => "wss://x", field => "{not json"})
 
-        assert is_binary(message),
-               "#{field} answered a non-binary refusal: #{inspect(message)}"
-
-        assert message =~ field
-        assert message =~ "{not json"
+        assert to_string(option) == field
       end
     end
 
@@ -97,15 +83,13 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
           {Websocket, "websocket", %{"uri" => "wss://example.com"}}
         ] do
       test "#{name} refuses an unknown option through build/1" do
-        assert {:error, message} =
+        assert {:error, {:unknown_options, unquote(name), ["nope"]}} =
                  unquote(provider).build(Map.put(unquote(Macro.escape(required)), "nope", "1"))
-
-        assert message =~ "unknown option(s) for #{unquote(name)}: nope"
       end
 
       test "#{name} refuses an unknown option through validate_opts/1" do
-        assert {:error, message} = unquote(provider).validate_opts(%{nope: 1})
-        assert message =~ "unknown option(s) for #{unquote(name)}: nope"
+        assert {:error, {:unknown_options, unquote(name), ["nope"]}} =
+                 unquote(provider).validate_opts(%{nope: 1})
       end
 
       test "#{name} still builds when every option is known" do
@@ -132,7 +116,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
                Filter.build(%{"regex_pattern" => "x", "inverted" => "not-a-bool"})
 
       assert spec_refusal == cli_refusal
-      assert spec_refusal == "Invalid value for inverted: not-a-bool"
+      assert spec_refusal == {:invalid_option_value, :inverted, "not-a-bool"}
     end
 
     test "a value it accepts reaches the provider converted, with every default present" do
@@ -167,9 +151,8 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
 
   describe "the row refuses a value the provider's own clauses do not match" do
     test "an unmatched value for a typed option is refused" do
-      assert {:error, message} = DeclaredConverted.build(%{"name" => "n", "mode" => 42})
-      assert message =~ "mode"
-      assert message =~ "42"
+      assert {:error, {:invalid_option_value, :mode, 42}} =
+               DeclaredConverted.build(%{"name" => "n", "mode" => 42})
     end
 
     test "a matched value for the same option still converts by hand" do
@@ -196,17 +179,18 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
   describe "the shared conversion helpers are total" do
     test "parse_int/2 refuses a shape it cannot parse instead of raising" do
       for value <- [nil, :nope, %{}, [1]] do
-        assert {:error, message} = ProviderBehaviour.parse_int(value, :thing),
+        assert {:error, {:invalid_option_value, :thing, ^value}} =
+                 ProviderBehaviour.parse_int(value, :thing),
                "expected #{inspect(value)} to be refused"
-
-        assert message =~ "thing"
       end
     end
 
     test "parse_int/2 still accepts an integer and a string naming one" do
       assert {:ok, 5} = ProviderBehaviour.parse_int(5, :thing)
       assert {:ok, 5} = ProviderBehaviour.parse_int("5", :thing)
-      assert {:error, "Invalid value for thing: zz"} = ProviderBehaviour.parse_int("zz", :thing)
+
+      assert {:error, {:invalid_option_value, :thing, "zz"}} =
+               ProviderBehaviour.parse_int("zz", :thing)
     end
 
     test "parse_bool/2 is unchanged" do
@@ -218,15 +202,13 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
 
   describe "the strict option set is enforced on the init_provider/1 path too" do
     test "an option the provider does not offer is refused before init_provider/1" do
-      assert {:error, message} =
+      assert {:error, {:unknown_options, _provider, ["nope"]}} =
                prepare(OperatorForward, %{
                  target_operator_id: "b",
                  source_operator_id: "a",
                  source_namespace: :default,
                  nope: 1
                })
-
-      assert message =~ "nope"
     end
 
     # Not redundant with the refusal above, and deleting it re-opens a wedge:
@@ -236,7 +218,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     # not just a bad config. The refusal this asserts is the target check one
     # step later, which is only reached because the option check passed.
     test "a re-prepare's own resolved keys are accepted, or every plugin heal is refused" do
-      assert {:error, message} =
+      assert {:error, {:forward_to_self, "a"}} =
                prepare(OperatorForward, %{
                  target_operator_id: "a",
                  source_operator_id: "a",
@@ -244,8 +226,6 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
                  plugin_id: "a->a",
                  routes: []
                })
-
-      assert message =~ "is the operator itself"
     end
   end
 
@@ -280,12 +260,9 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
           source_namespace: :default
         })
 
-      assert {:error, message} = prepare(OperatorForward, opts)
-
       # The target check, one step AFTER the option check, reached only because
       # the injected keys were accepted.
-      assert message =~ "is the operator itself"
-      refute message =~ "unknown option"
+      assert {:error, {:forward_to_self, "a"}} = prepare(OperatorForward, opts)
     end
   end
 
@@ -304,21 +281,18 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     end
 
     test "a health threshold it cannot interpret is refused" do
-      assert {:error, message} = prepare(Postgres, pg_opts(%{unhealthy_after_ms: "soon"}))
-      assert is_binary(message)
-      assert message =~ "unhealthy_after_ms"
+      assert {:error, {:invalid_option_value, :unhealthy_after_ms, "soon"}} =
+               prepare(Postgres, pg_opts(%{unhealthy_after_ms: "soon"}))
     end
 
     test "a boolean it cannot interpret is refused rather than raising" do
-      assert {:error, message} = prepare(Postgres, pg_opts(%{ssl: "yes"}))
-      assert is_binary(message)
-      assert message =~ "ssl"
+      assert {:error, {:invalid_option_value, :ssl, "yes"}} =
+               prepare(Postgres, pg_opts(%{ssl: "yes"}))
     end
 
     test "an option the sink does not offer is refused" do
-      assert {:error, message} = prepare(Postgres, pg_opts(%{nope: 1}))
-      assert is_binary(message)
-      assert message =~ "nope"
+      assert {:error, {:unknown_options, _provider, ["nope"]}} =
+               prepare(Postgres, pg_opts(%{nope: 1}))
     end
 
     test "the keys the host injects are still accepted, and nothing is started" do
@@ -340,14 +314,13 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     # `BeamMsgForward` clean — its scan drove OPTIONAL fields, and `:recv_pid`
     # is `@enforce_keys`, so this case sat outside the measurement.
     test "a pid string that names no process is refused" do
-      assert {:error, message} = BeamMsgForward.build(%{"recv_pid" => "zzz"})
-      assert is_binary(message)
-      assert message =~ "recv_pid" or message =~ "zzz"
+      assert {:error, {:invalid_option_value, :recv_pid, "zzz"}} =
+               BeamMsgForward.build(%{"recv_pid" => "zzz"})
     end
 
     test "a boolean option refuses a non-string it cannot interpret" do
-      assert {:error, message} = Filter.build(%{"regex_pattern" => "x", "inverted" => %{}})
-      assert message =~ "inverted"
+      assert {:error, {:invalid_option_value, :inverted, %{}}} =
+               Filter.build(%{"regex_pattern" => "x", "inverted" => %{}})
     end
 
     test "a named process still resolves" do
@@ -363,13 +336,13 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
 
   describe "the refusals build/1 already made are untouched" do
     test "a missing required field still names the field, through the one builder" do
-      assert {:error, "kafka requires :hosts, :topic"} =
+      assert {:error, {:options_required, "kafka", [:hosts, :topic]}} =
                Kafka.Producer.build(%{"linger_ms" => "10"})
     end
 
     test "an unknown option is still refused ahead of any conversion" do
-      assert {:error, message} = HttpPoll.build(%{"url" => "u", "channel" => "c", "nope" => "1"})
-      assert message =~ "unknown option(s) for http_poll: nope"
+      assert {:error, {:unknown_options, "http_poll", ["nope"]}} =
+               HttpPoll.build(%{"url" => "u", "channel" => "c", "nope" => "1"})
     end
 
     test "a convertible map still builds" do
@@ -444,8 +417,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     end
 
     test "naming neither is refused, and the refusal names both spellings" do
-      assert {:error, message} = prepare(HttpPoll, poll_opts(%{}))
-      assert message == "http_poll requires an entry channel: write channel or channel_in"
+      assert {:error, {:entry_channel_required, "http_poll"}} = prepare(HttpPoll, poll_opts(%{}))
     end
 
     # A row can declare itself required and nothing can declare a PAIR required,
@@ -463,37 +435,33 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     end
 
     test "a spelling for a direction the provider does not work in is not a declared row" do
-      assert {:error, message} = normalised(HttpPoll, poll_opts(%{channel_out: "x"}))
-      assert message == "unknown option(s) for http_poll: channel_out"
+      assert {:error, {:unknown_options, "http_poll", ["channel_out"]}} =
+               normalised(HttpPoll, poll_opts(%{channel_out: "x"}))
 
-      assert {:error, message} = normalised(Kafka.Producer, kafka_opts(%{channel_in: "x"}))
-
-      assert message == "unknown option(s) for kafka: channel_in"
+      assert {:error, {:unknown_options, "kafka", ["channel_in"]}} =
+               normalised(Kafka.Producer, kafka_opts(%{channel_in: "x"}))
     end
 
     test "a spelling for a job the plugin was not wired for is refused" do
-      assert {:error, message} = normalised(NoFeedSource, %{channel_in: "us"})
-      assert message =~ "no_feed_source names channel_in"
-      assert message =~ "does not feed the operator"
+      assert {:error, {:channel_unused, "no_feed_source", :channel_in, :in}} =
+               normalised(NoFeedSource, %{channel_in: "us"})
     end
 
     test "`channel` on a plugin doing neither job is refused" do
-      assert {:error, message} = normalised(Kafka.Producer, kafka_opts(%{channel: "x"}))
-
-      assert message =~ "kafka names channel"
-      assert message =~ "nothing would read it"
+      assert {:error, {:channel_unused, "kafka", :channel, :either}} =
+               normalised(Kafka.Producer, kafka_opts(%{channel: "x"}))
     end
 
     test "an empty name is refused for every spelling" do
-      assert {:error, "Invalid value for channel: "} =
+      assert {:error, {:invalid_option_value, :channel, ""}} =
                normalised(HttpPoll, poll_opts(%{channel: ""}))
 
-      assert {:error, "Invalid value for channel_in: "} =
+      assert {:error, {:invalid_option_value, :channel_in, ""}} =
                normalised(HttpPoll, poll_opts(%{channel_in: ""}))
 
       # The row's type refuses it, so the struct builder answers the same
-      # sentence — which the resolution alone never reached.
-      assert {:error, "Invalid value for channel: "} =
+      # refusal — which the resolution alone never reached.
+      assert {:error, {:invalid_option_value, :channel, ""}} =
                HttpPoll.build(%{"url" => "https://example.invalid/c", "channel" => ""})
     end
 
@@ -549,13 +517,13 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
 
     test "an empty member is refused rather than dropped, naming the option" do
       for value <- ["alerts,,audit", "alerts,", ",", "", " ", ["alerts", ""]] do
-        assert {:error, "Invalid value for channel_out: " <> _} = names_row(value)
+        assert {:error, {:invalid_option_value, :channel_out, ^value}} = names_row(value)
       end
     end
 
     test "a value that is no name at all is refused" do
-      assert {:error, "Invalid value for channel_out: 7"} = names_row(7)
-      assert {:error, "Invalid value for channel_out: [\"a\", 7]"} = names_row(["a", 7])
+      assert {:error, {:invalid_option_value, :channel_out, 7}} = names_row(7)
+      assert {:error, {:invalid_option_value, :channel_out, ["a", 7]}} = names_row(["a", 7])
     end
 
     test "the filter matches any of its names, and no filter matches everything" do
@@ -578,9 +546,10 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
 
     test "the entry side takes one name, whichever spelling names it" do
       for opts <- [%{channel: "alerts,audit"}, %{channel_in: "alerts,audit"}] do
-        assert {:error, message} = normalised(HttpPoll, poll_opts(opts))
-        assert message =~ "http_poll names several channels in channel"
-        assert message =~ "a payload is injected on exactly one channel"
+        assert {:error, {:entry_channel_set, "http_poll", key}} =
+                 normalised(HttpPoll, poll_opts(opts))
+
+        assert Map.has_key?(opts, key)
       end
     end
 
@@ -589,8 +558,8 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     test "a feeding plugin's `channel` is refused a set, and its `channel_out` is not" do
       ws = %{uri: "wss://example.invalid/s", subscribed_extensions: [:on_output]}
 
-      assert {:error, message} = normalised(Websocket, Map.put(ws, :channel, "alerts,audit"))
-      assert message =~ "websocket names several channels in channel"
+      assert {:error, {:entry_channel_set, "websocket", :channel}} =
+               normalised(Websocket, Map.put(ws, :channel, "alerts,audit"))
 
       assert {:ok, %{entry_channel: nil, filter_channel: ["alerts", "audit"]}} =
                normalised(Websocket, Map.put(ws, :channel_out, "alerts,audit"))

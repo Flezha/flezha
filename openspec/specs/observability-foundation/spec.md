@@ -231,7 +231,7 @@ The foundation SHALL provide a service-API module `Flezha.Service.Observability`
 
 #### Scenario: Viewer cannot disable a source
 - **WHEN** `:authn_authz, :enabled` is `true` AND a caller with role `viewer` invokes `disable_source/2`
-- **THEN** the call SHALL return `{:error, {:forbidden, :role_insufficient}}` AND no source SHALL be disabled
+- **THEN** the call SHALL return `{:error, %Flezha.Error{code: "authz.role_insufficient"}}` AND no source SHALL be disabled
 
 #### Scenario: Cross-namespace query is filtered
 - **WHEN** `:authn_authz, :enabled` is `true` AND a caller bound to namespace `team-orders` invokes `query/2` against a source carrying signals from both `team-orders` and `team-payments`
@@ -239,7 +239,7 @@ The foundation SHALL provide a service-API module `Flezha.Service.Observability`
 
 ### Requirement: Authorization seam
 
-The service API SHALL accept a `caller_context` argument on every public function and the context SHALL include at minimum a `source` field whose value is one of `:cli`, `:ui`, `:sdk`, or `:internal`. When `:authn_authz, :enabled` is `true`, the `caller_context` from a `:cli`, `:ui`, or `:sdk` source SHALL also include a verified `:principal` bound by the authentication layer at the connection boundary; service implementations SHALL call `Flezha.AuthZ.authorize/3` at the top of every public function before any side effect. Service callers MUST NOT forge a `:principal`; calls whose presented `:principal` was not bound to the caller's connection by the authentication layer SHALL be rejected with `{:error, {:forbidden, :principal_not_bound}}`. `:internal` callers SHALL pass `source: :internal` and SHALL NOT carry a `:principal`. When `:authn_authz, :enabled` is `false` (the upgrade-compatibility mode), the prior behaviour SHALL be preserved: no `:principal` is required and `Flezha.AuthZ.authorize/3` returns `:ok` unconditionally.
+The service API SHALL accept a `caller_context` argument on every public function and the context SHALL include at minimum a `source` field whose value is one of `:cli`, `:ui`, `:sdk`, or `:internal`. When `:authn_authz, :enabled` is `true`, the `caller_context` from a `:cli`, `:ui`, or `:sdk` source SHALL also include a verified `:principal` bound by the authentication layer at the connection boundary; service implementations SHALL call `Flezha.AuthZ.authorize/3` at the top of every public function before any side effect. Service callers MUST NOT forge a `:principal`; calls whose presented `:principal` was not bound to the caller's connection by the authentication layer SHALL be rejected with `{:error, %Flezha.Error{code: "authz.principal_not_bound"}}` (the policy point itself answers `{:forbidden, :principal_not_bound}`). `:internal` callers SHALL pass `source: :internal` and SHALL NOT carry a `:principal`. When `:authn_authz, :enabled` is `false` (the upgrade-compatibility mode), the prior behaviour SHALL be preserved: no `:principal` is required and `Flezha.AuthZ.authorize/3` returns `:ok` unconditionally.
 
 #### Scenario: Caller context with verified principal succeeds
 - **WHEN** `:authn_authz, :enabled` is `true` AND a `:cli` caller invokes `query/2` with `caller_context: %{source: :cli, principal: "alice@example.com", namespace: "_system", role: :viewer}` AND the principal was bound by the CLI handshake
@@ -247,7 +247,7 @@ The service API SHALL accept a `caller_context` argument on every public functio
 
 #### Scenario: Forged principal is rejected
 - **WHEN** `:authn_authz, :enabled` is `true` AND a caller invokes `query/2` with a `:principal` that the authentication layer did not bind to this caller's connection
-- **THEN** the call SHALL return `{:error, {:forbidden, :principal_not_bound}}`
+- **THEN** the call SHALL return `{:error, %Flezha.Error{code: "authz.principal_not_bound"}}`
 
 #### Scenario: Missing required field is rejected
 - **WHEN** a caller invokes `query/2` with `caller_context: %{}` (missing `source`)
@@ -291,7 +291,7 @@ The foundation SHALL expose a runtime configuration key `:observability` with su
 
 #### Scenario: Master-disable suppresses the subsystem
 - **WHEN** the application boots with `:observability` configuration including `enabled: false`
-- **THEN** no sinks SHALL be started, the telemetry bridge SHALL NOT be attached, the logger handler SHALL NOT be installed, and service-API calls SHALL return `{:error, :observability_disabled}`
+- **THEN** no sinks SHALL be started, the telemetry bridge SHALL NOT be attached, the logger handler SHALL NOT be installed, and service-API calls SHALL return `{:error, %Flezha.Error{code: "observability.disabled"}}`
 
 ### Requirement: Hot-path safety of producer emit
 

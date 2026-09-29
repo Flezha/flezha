@@ -82,7 +82,7 @@ defmodule Flezha.AuthZ.VerbsTest do
         boundary = System.monotonic_time(:microsecond)
         result = drive(row, @unbound)
 
-        assert match?({:error, {:forbidden, _}}, result),
+        assert match?({:error, %Flezha.Error{class: :denied}}, result),
                "#{row.verb} served an unbound caller: #{inspect(result)}"
 
         refute_received {:acted, ^row}, "#{row.verb} ran its effect for an unbound caller"
@@ -97,7 +97,7 @@ defmodule Flezha.AuthZ.VerbsTest do
       for row <- gated(),
           match?({:row, _}, row.scope),
           not Policy.grants?(:viewer, row.action) do
-        assert {:error, {:forbidden, :role_insufficient}} = drive(row, @viewer)
+        assert {:error, %Flezha.Error{code: "authz.role_insufficient"}} = drive(row, @viewer)
         refute_received {:fetched, ^row}, "#{row.verb} read its row for a viewer"
         refute_received {:acted, ^row}
       end

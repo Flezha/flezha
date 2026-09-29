@@ -29,7 +29,8 @@ pub(crate) use activation::settle_bounded_undo;
 pub use activation::{abandon_activation, apply_result, to_schema};
 pub use cell::{cell_ref_of, BytesBuffer, HostPayload, HostTaskletFacts};
 pub use commands::{
-    apply_state_locked, restore_fold_exclusive, snapshot_frame_crossing, state_json_locked,
+    apply_state_locked, restore_failed, restore_fold_exclusive, snapshot_frame_crossing,
+    state_json_locked,
 };
 pub use decl::{
     HostAckGranularity, HostBeyondWindow, HostBoundedDecl, HostCellModeDecl, HostChannelDecl,

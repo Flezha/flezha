@@ -52,18 +52,18 @@ The command SHALL be idempotent: a missing root directory is success, not error.
 
 - **GIVEN** a malformed configuration sets `--app-data-root` to a path whose canonicalisation would target a single cleared root identical to the configured root
 - **WHEN** the user runs `flz reset --yes`
-- **THEN** the command exits with code 1 and an explicit "refusing to delete configured `app_data` root itself" error before any unlink runs
+- **THEN** the command exits with code 2 and the error `reset.path_refused`, naming the configured `app_data` root, before any unlink runs
 
 #### Scenario: Refuse to clear a root that overlaps a kept one
 
 - **GIVEN** the Controller is not running and `app_data/dlq` is a symlink to `app_data/audit` or to a directory inside it
 - **WHEN** the user runs `flz reset --yes --include-dlq`
-- **THEN** the command exits with code 1 and a "refusing to clear a path that overlaps a kept root" error before any unlink runs, and `app_data/audit/` is unchanged
+- **THEN** the command exits with code 2 and the error `reset.path_refused`, naming the path and the kept root it overlaps, before any unlink runs, and `app_data/audit/` is unchanged
 - **AND** the same refusal holds when a kept root such as `app_data/audit` resolves into a root the run clears, such as `app_data/state`
 
 ### Requirement: `flz reset` refuses to run while the Controller is up
 
-`flz reset` SHALL detect a running Controller and refuse to act, exiting with a dedicated non-zero exit code and a message directing the user to `flz controller stop`.
+`flz reset` SHALL detect a running Controller and refuse to act, exiting with the error `reset.controller_running` (class `conflict`, exit 6) whose hint is `flz controller stop`.
 
 Detection SHALL use `flzvm rpc` against `Flezha.Service.CliManager.boot_status/1` (the same transport used by `flz controller stop`/`status`). The probe is bounded by `--probe-timeout-ms` (default `1000`).
 
@@ -79,8 +79,8 @@ A `--dry-run` changes nothing, so it SHALL NOT run the probe and previews whethe
 
 - **GIVEN** the Controller is running and addressable via `flzvm rpc`
 - **WHEN** the user runs `flz reset --yes`
-- **THEN** the command exits with code 4 (refused)
-- **AND** stderr contains `flz reset refuses to run while the controller is up. Stop it first with: flz controller stop`
+- **THEN** the command exits with code 6 (conflict)
+- **AND** stderr carries an `error:` line ending `(reset.controller_running)` and the line `hint: flz controller stop`
 - **AND** no file under `app_data/` is touched
 
 #### Scenario: Proceed when Controller is down
@@ -107,15 +107,15 @@ A `--dry-run` changes nothing, so it SHALL NOT run the probe and previews whethe
 
 `flz reset` SHALL NOT modify the filesystem unless the user passes `--yes`. The command SHALL NOT prompt interactively under any circumstance.
 
-Without `--yes` and without `--dry-run`, the command SHALL print the would-be plan with the verb `would clear` and exit with code 1, signalling that the caller forgot the flag.
+Without `--yes` and without `--dry-run`, the command SHALL print the would-be plan with the verb `would clear` and exit with the error `reset.confirmation_required` (class `invalid`, exit 2), signalling that the caller forgot the flag.
 
-With `--dry-run`, the command SHALL print the would-be plan with the verb `would clear` and exit 0 regardless of `--yes`. `--dry-run` and `--yes` are mutually exclusive — passing both SHALL exit 1 with a usage error.
+With `--dry-run`, the command SHALL print the would-be plan with the verb `would clear` and exit 0 regardless of `--yes`. `--dry-run` and `--yes` are mutually exclusive — passing both SHALL exit 2 with a `usage.*` error.
 
 #### Scenario: Bare `flz reset` is a non-zero preview
 
 - **GIVEN** the Controller is not running
 - **WHEN** the user runs `flz reset` with no flags
-- **THEN** stdout shows `would clear app_data/state/ ...` lines, no file is touched, and the exit code is 1
+- **THEN** stdout shows `would clear app_data/state/ ...` lines, no file is touched, and the exit code is 2
 
 #### Scenario: `--dry-run` is a zero-exit preview
 
@@ -126,7 +126,7 @@ With `--dry-run`, the command SHALL print the would-be plan with the verb `would
 #### Scenario: `--yes` and `--dry-run` together is a usage error
 
 - **WHEN** the user runs `flz reset --yes --dry-run`
-- **THEN** stderr explains the flags conflict and the exit code is 1, with no filesystem changes
+- **THEN** stderr explains the flags conflict and the exit code is 2, with no filesystem changes
 
 ### Requirement: `flz reset` prints an audit-trail summary of cleared paths and byte counts
 
@@ -189,27 +189,26 @@ This resolution SHALL live in one shared helper — `cli/src/args.rs`, `app_data
 
 ### Requirement: `flz reset` exit codes are stable and documented
 
-`flz reset` SHALL use the following exit codes:
+`flz reset` SHALL use the shared exit classes of the error catalogue:
 
 - `0` — success: all requested roots cleared (or `--dry-run` preview).
-- `1` — invalid usage: missing `--yes` (and no `--dry-run`), conflicting flags, malformed `--app-data-root`, refusal to delete the root itself.
-- `2` — partial success: some roots cleared, then a filesystem error stopped the walk; the affected paths are reported.
-- `3` — I/O error before any action (e.g. `app_data/` exists but is unreadable).
-- `4` — refused: Controller is up.
+- `2` (invalid) — missing `--yes` (and no `--dry-run`), conflicting flags, malformed `--app-data-root`, refusal to delete the root itself or an overlapping path.
+- `1` (internal) — a filesystem error, before any action (e.g. `app_data/` exists but is unreadable, `reset.path_unreadable`) or during the walk after some roots were cleared (`reset.partial`, the cleared roots and the offending path in details).
+- `6` (conflict) — the Controller is up (`reset.controller_running`).
 
-The codes SHALL be documented in `flz reset --help` output.
+The codes SHALL be documented in `flz reset --help` output, pointing at `docs/errors.md`.
 
 #### Scenario: Partial failure during walk
 
 - **GIVEN** `app_data/state/` is writable but `app_data/process_hub/` contains a file the user cannot remove (e.g. permission denied)
 - **WHEN** the user runs `flz reset --yes`
-- **THEN** `app_data/state/` is cleared, the walk stops on the permission-denied entry, the offending path is printed to stderr, and the exit code is 2
+- **THEN** `app_data/state/` is cleared, the walk stops on the permission-denied entry, the offending path is printed to stderr in the `reset.partial` error, and the exit code is 1
 
 #### Scenario: Refused exit code is dedicated
 
 - **GIVEN** the Controller is running
 - **WHEN** the user runs `flz reset --yes`
-- **THEN** the exit code is exactly 4 (not 1, not 3) so scripts can distinguish "controller still up" from "bad usage"
+- **THEN** the exit code is exactly 6 (not 1, not 2) so scripts can distinguish "controller still up" from "bad usage"
 
 ### Requirement: `flz reset` resolves the socket directory from the same source as the Controller and its runners
 

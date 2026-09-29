@@ -184,7 +184,7 @@ pub(super) fn apply_prepare_outcome(
     }
     let Some(channel_desc) = instance.topology.channel(channel) else {
         return Err(crate::error::Error::Answer(
-            "prepare crossing names an unknown channel".to_string(),
+            crate::Code::PrepareUnknownChannel.with([]),
         ));
     };
     let mut replay_resolved = 0usize;

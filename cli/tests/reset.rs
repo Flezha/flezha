@@ -325,12 +325,13 @@ fn dry_run_does_not_modify_filesystem_and_exits_zero() {
 }
 
 #[test]
-fn bare_invocation_is_plan_only_exit_one() {
+fn bare_invocation_is_plan_only_exit_two() {
     let f = Fixture::populated();
     let out = f.cmd().output().unwrap();
-    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(out.status.code(), Some(2));
     let stdout = stdout_of(&out);
     assert!(stdout.contains("would clear"));
+    assert!(stderr_of(&out).contains("(reset.confirmation_required)"));
     // No modifications.
     assert!(f.root.join("state/a.bin").exists());
 }
@@ -339,9 +340,13 @@ fn bare_invocation_is_plan_only_exit_one() {
 fn yes_and_dry_run_together_is_usage_error() {
     let f = Fixture::populated();
     let out = f.cmd().arg("--yes").arg("--dry-run").output().unwrap();
-    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(out.status.code(), Some(2));
     let stderr = stderr_of(&out);
-    assert!(stderr.contains("mutually exclusive"));
+    assert!(
+        stderr.contains("(usage.options_conflict)"),
+        "stderr: {}",
+        stderr
+    );
     // No modifications.
     assert!(f.root.join("state/a.bin").exists());
 }
@@ -352,9 +357,13 @@ fn path_equality_guard_rejects_symlink_loop() {
     // Create a symlink loop: app_data_root/state -> app_data_root itself.
     std::os::unix::fs::symlink(&f.root, f.root.join("state")).unwrap();
     let out = f.cmd().arg("--yes").output().unwrap();
-    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(out.status.code(), Some(2));
     let stderr = stderr_of(&out);
-    assert!(stderr.contains("refusing"));
+    assert!(
+        stderr.contains("(reset.path_refused)"),
+        "stderr: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -368,7 +377,7 @@ fn bind_mount_root_inode_unchanged_after_reset() {
 }
 
 #[test]
-fn probe_up_refuses_with_exit_4() {
+fn probe_up_refuses_with_exit_6() {
     let f = Fixture::populated();
     let mut cmd = Command::new(FLZ_BIN);
     cmd.arg("reset")
@@ -377,10 +386,11 @@ fn probe_up_refuses_with_exit_4() {
         .arg("--yes")
         .env("FLEZHA_RESET_PROBE_OVERRIDE", "up");
     let out = cmd.output().unwrap();
-    assert_eq!(out.status.code(), Some(4));
+    assert_eq!(out.status.code(), Some(6));
     let stderr = stderr_of(&out);
     assert!(
-        stderr.contains("refuses to run while the controller is up"),
+        stderr.contains("(reset.controller_running)")
+            && stderr.contains("hint: flz controller stop"),
         "stderr: {}",
         stderr
     );

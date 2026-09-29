@@ -158,7 +158,7 @@ defmodule Flezha.Plugin.Installer.DependencyResolver do
   # For an upgrade of `plugin_id` to the manifest's version, refuse if any
   # installed dependent has a constraint the new version fails.
   defp blocking_dep(dep_id, constraint, new_version) do
-    if Version.match?(new_version, constraint), do: [], else: [{dep_id, constraint}]
+    if Version.match?(new_version, constraint), do: [], else: ["#{dep_id} #{constraint}"]
   end
 
   defp check_dependents_satisfied(new_manifest, plugin_id, catalog) do
@@ -178,6 +178,6 @@ defmodule Flezha.Plugin.Installer.DependencyResolver do
 
     if blocking == [], do: :ok, else: {:error, {:dependents_block, blocking}}
   rescue
-    _ -> {:error, {:dependents_block, :version_raise}}
+    e -> {:error, {:dependency_constraint, :version_raise, Exception.message(e)}}
   end
 end

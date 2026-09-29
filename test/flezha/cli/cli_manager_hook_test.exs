@@ -68,7 +68,7 @@ defmodule FlezhaTest.Service.CliManagerHookTest do
   # instead of being refused as a value.
   test "a hook entry of no known shape is refused" do
     assert CliPlugin.read_settings(%{"hooks" => [7]}) ==
-             {:error, {:invalid_hook, {:unrecognised_shape, 7}}}
+             {:error, {:invalid_hook, :unrecognised_shape, 7}}
   end
 
   # Fails when: an enable that names no hook reaches the provider bound in a
@@ -142,14 +142,14 @@ defmodule FlezhaTest.Service.CliManagerHookTest do
     test "an ill-typed sub-option is refused naming the option, never raised" do
       subs = cli_hooks([hook("on_interval", %{"interval_ms" => "soon"})])
 
-      assert {:error, {_id, {:invalid_hook_opts, {:interval_ms, "soon"}}}} =
+      assert {:error, {_id, {:invalid_hook_opts, :interval_ms, "soon"}}} =
                subscribe(subs)
     end
 
     # Fails when: an interval hook is given a period nobody wrote. The CLI has no
     # default for it, so the refusal is the table's.
     test "an interval hook with no interval is refused naming interval_ms" do
-      assert {:error, {"cli", {:invalid_hook_opts, {:interval_ms, nil}}}} =
+      assert {:error, {"cli", {:invalid_hook_opts, :interval_ms, nil}}} =
                subscribe(cli_hooks([hook("on_interval", %{})]))
     end
 
@@ -231,7 +231,7 @@ defmodule FlezhaTest.Service.CliManagerHookTest do
 
       assert {:ok, [plugin]} = SpecDecoder.decode(spec, "default", "spec_op")
 
-      assert {:error, {:invalid_hook_opts, {:position, "first"}}} =
+      assert {:error, {:invalid_hook_opts, :position, "first"}} =
                Table.canonicalise(Overwatch.__extensions_catalog__(), plugin)
     end
   end

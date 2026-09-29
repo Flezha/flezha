@@ -1,10 +1,10 @@
-use std::process::exit;
-
 use flz_transport::transport::config::{get_transport_type, TransportType};
 use flz_transport::utility::socket_dir::Role;
 use flz_transport::utility::socket_probe::diagnose;
 
-use crate::args::{Reading, JSON_SWITCH, NAMESPACE, OUTPUT};
+use flz_transport::errors::FlezhaError;
+
+use crate::args::{Reading, NAMESPACE};
 use crate::dispatch::{self, Command, Missing, Verb};
 use crate::{help, rpc};
 
@@ -12,7 +12,7 @@ pub(crate) const TABLE: Command = Command {
     path: "flz runner",
     help: help::RUNNER,
     verbs: &[
-        Verb::new("list", handle_list).reading(&[NAMESPACE, OUTPUT, JSON_SWITCH]),
+        Verb::new("list", handle_list).reading(&[NAMESPACE]),
         Verb::new("check", handle_check),
     ],
     help_verbs: dispatch::HELP_VERBS,
@@ -38,12 +38,16 @@ fn handle_check(_read: &Reading) {
             println!("{:#}", diagnosis);
 
             if !diagnosis.reach.reachable() {
-                exit(1);
+                check_failed(diagnosis.reach.to_string());
             }
         }
-        Err(refusal) => {
-            println!("{}", refusal);
-            exit(1);
-        }
+        Err(refusal) => check_failed(refusal.to_string()),
     }
+}
+
+fn check_failed(reason: String) -> ! {
+    rpc::fail(FlezhaError::with(
+        "cli.runner_check_failed",
+        [("reason", reason.into())],
+    ))
 }

@@ -201,37 +201,36 @@ defmodule Flezha.Service.CliManagerRewindTest do
 
   test "an uncommitted target is refused, naming the committed range" do
     inst = instance_id()
-    stub_overwatch(inst, {:error, {:uncommitted_iteration, [0, 1, 2]}})
+    stub_overwatch(inst, {:error, {:uncommitted_iteration, 7, [0, 1, 2]}})
 
     out = rewind(inst, 7)
 
     assert out =~ "iteration 7 has not committed"
-    assert out =~ "Committed iterations: 0..2"
+    assert out =~ "(operator.iteration_not_committed)"
   end
 
   test "a loop with nothing committed says so rather than printing an empty range" do
     inst = instance_id()
-    stub_overwatch(inst, {:error, {:uncommitted_iteration, []}})
+    stub_overwatch(inst, {:error, {:uncommitted_iteration, 0, []}})
 
-    assert rewind(inst, 0) =~ "no committed iterations"
+    assert rewind(inst, 0) =~ "iteration 0 has not committed"
   end
 
   test "an uncompensable emit is refused, naming the channels" do
     inst = instance_id()
-    stub_overwatch(inst, {:error, {:uncovered, ["replies", "audit"]}})
+    stub_overwatch(inst, {:error, {:uncovered, 1, ["replies", "audit"]}})
 
     out = rewind(inst, 1)
 
-    assert out =~ "refusing to rewind"
-    assert out =~ "replies, audit"
-    assert out =~ "no `compensate` hook"
+    assert out =~ "would unwind output on replies, audit"
+    assert out =~ "no compensate hook, so it is refused (operator.rewind_uncovered)"
   end
 
   test "an unknown operator is reported, not crashed on" do
     inst = instance_id()
     stub(Flezha.Service.OperatorManager, :get_operator_pid, fn _ns, ^inst -> {:error, :nf} end)
 
-    assert rewind(inst, 1) =~ "not found"
+    assert rewind(inst, 1) =~ "(operator.not_running)"
   end
 end
 
@@ -385,13 +384,13 @@ defmodule Flezha.Service.CliManager.ClusterTest do
         2_000
       )
 
-      text = capture_io(fn -> CliManager.list_operators("trading", "text") end)
+      text = capture_io(fn -> CliManager.list_operators("trading") end)
       assert text =~ ~r/prices\s+recovering\s+3\/3/
       assert text =~ ~r/quotes\s+recovering\s/
       refute text =~ "failed"
 
       %{"operators" => rows} =
-        Jason.decode!(capture_io(fn -> CliManager.list_operators("trading", "json") end))
+        Jason.decode!(capture_io(fn -> CliManager.list_operators("trading", output: "json") end))
 
       assert Enum.map(rows, &{&1["id"], &1["health"]}) ==
                [{"prices", "recovering"}, {"quotes", "recovering"}]
@@ -400,7 +399,7 @@ defmodule Flezha.Service.CliManager.ClusterTest do
     test "a group still failed past the grace reads failed" do
       ConvergenceFixtures.stub_registry_rows("trading", partition_group(:failed), 500_000)
 
-      assert capture_io(fn -> CliManager.list_operators("trading", "text") end) =~
+      assert capture_io(fn -> CliManager.list_operators("trading") end) =~
                ~r/prices\s+failed\s+3\/3/
     end
 
@@ -414,7 +413,7 @@ defmodule Flezha.Service.CliManager.ClusterTest do
         500_000
       )
 
-      out = capture_io(fn -> CliManager.list_operators("shop", "json") end)
+      out = capture_io(fn -> CliManager.list_operators("shop", output: "json") end)
 
       assert {:ok, decoded} = Jason.decode(out)
       assert decoded["namespace"] == "shop"
@@ -432,7 +431,7 @@ defmodule Flezha.Service.CliManager.ClusterTest do
         500_000
       )
 
-      out = capture_io(fn -> CliManager.list_operators("shop", "text") end)
+      out = capture_io(fn -> CliManager.list_operators("shop") end)
 
       assert out =~ "HEALTH"
       assert out =~ "r2"
@@ -442,7 +441,7 @@ defmodule Flezha.Service.CliManager.ClusterTest do
 
     test "empty registry renders a friendly message, not a crash" do
       stub(HubManager, :operator_rows, fn _ns -> [] end)
-      out = capture_io(fn -> CliManager.list_operators("shop", "text") end)
+      out = capture_io(fn -> CliManager.list_operators("shop") end)
       assert out =~ "No operators found"
     end
   end
@@ -461,7 +460,7 @@ defmodule Flezha.Service.CliManager.ClusterTest do
 
       stub(HubManager, :recovery_state, fn _hub_id -> {:ok, :normal} end)
 
-      out = capture_io(fn -> CliManager.cluster_status("shop", "json") end)
+      out = capture_io(fn -> CliManager.cluster_status("shop", output: "json") end)
 
       assert {:ok, d} = Jason.decode(out)
       assert d["leader"] == to_string(node())
@@ -479,7 +478,7 @@ defmodule Flezha.Service.CliManager.ClusterTest do
 
       stub(HubManager, :recovery_state, fn _hub_id -> {:ok, :normal} end)
 
-      out = capture_io(fn -> CliManager.cluster_status("shop", "text") end)
+      out = capture_io(fn -> CliManager.cluster_status("shop") end)
 
       assert out =~ "Cluster status for namespace 'shop'"
       assert out =~ "Leader:"
@@ -521,7 +520,7 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
     # never an Elixir term or the file a claimed controller does not write.
     reclaim_err =
       capture_io(:stderr, fn ->
-        assert catch_exit(CliManager.authz_render_bootstrap(raw_bootstrap)) == {:shutdown, 1}
+        assert catch_exit(CliManager.authz_render_bootstrap(raw_bootstrap)) == {:shutdown, 6}
       end)
 
     assert reclaim_err =~ "already claimed"
@@ -595,7 +594,7 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
       capture_io(fn -> CliManager.authz_render_token_revoke(token_id, token: admin_token) end)
 
     assert revoke_out =~ "revoked token"
-    assert {:error, :token_revoked} = TokenStore.verify(carol_token)
+    assert {:error, %Flezha.Error{code: "authz.token_revoked"}} = TokenStore.verify(carol_token)
 
     # `flz role unbind` + `flz namespace delete` close the loop.
     capture_io(fn -> CliManager.authz_render_role_unbind("carol", "", token: admin_token) end)
@@ -616,7 +615,7 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
       capture_io(:stderr, fn ->
         assert catch_exit(
                  CliManager.authz_render_role_bind("dave", "superuser", "render-ns", token: admin)
-               ) == {:shutdown, 1}
+               ) == {:shutdown, 2}
       end)
 
     assert out =~ "unknown_role"
@@ -653,7 +652,7 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
                    CliManager.authz_render_role_bind("runner@render-ns", "viewer", "_system",
                      token: admin
                    )
-                 ) == {:shutdown, 1}
+                 ) == {:shutdown, 6}
         end)
 
       assert out =~ "render-ns"
@@ -742,7 +741,7 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
         capture_io(:stderr, fn ->
           assert catch_exit(
                    CliManager.authz_render_role_unbind("carol", "superuser", token: admin)
-                 ) == {:shutdown, 1}
+                 ) == {:shutdown, 2}
         end)
 
       assert out =~ "unknown_role"
@@ -797,7 +796,7 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
                      ttl: 3_600,
                      token: admin
                    )
-                 ) == {:shutdown, 1}
+                 ) == {:shutdown, 2}
         end)
 
       assert out =~ "unknown_role"
@@ -838,8 +837,8 @@ defmodule Flezha.Service.CliManagerReplayTest do
       end)
 
     assert stderr =~ "is a Cell of a bounded operator"
-    assert stderr =~ "committed iteration in its journal"
-    assert stderr =~ "flz operator rewind"
+    assert stderr =~ "a committed iteration across every Cell"
+    assert stderr =~ "hint: flz operator rewind"
     assert WalWriter.outbox_epoch(writer) == 0, "no epoch was bumped"
   end
 end

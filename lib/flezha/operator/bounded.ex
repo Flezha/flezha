@@ -123,8 +123,8 @@ defmodule Flezha.Service.Bounded do
   @doc """
   Rewind `operator_class` in `namespace` to the committed iteration `to_iter`.
 
-  Answers `{:error, :operator_not_running}` rather than resolving a pid for the
-  caller to carry, and `{:error, {:uncommitted_iteration, committed}}` when
+  Answers `{:error, {:operator_not_running, operator_class}}` rather than resolving a pid for the
+  caller to carry, and `{:error, {:uncommitted_iteration, to_iter, committed}}` when
   `to_iter` is not one of the iterations the instance has committed.
   """
   @spec rewind(String.t(), String.t(), non_neg_integer(), caller_context()) ::
@@ -139,7 +139,7 @@ defmodule Flezha.Service.Bounded do
   def rewind_instance(namespace, operator_class, to_iter) do
     case OperatorManager.get_operator_pid(namespace, operator_class) do
       {:ok, pid} -> Migration.rewind(pid, to_iter)
-      _other -> {:error, :operator_not_running}
+      _other -> {:error, {:operator_not_running, operator_class}}
     end
   end
 

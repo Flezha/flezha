@@ -19,6 +19,7 @@ defmodule Flezha.Plugin.Provider.File.Storage.S3 do
 
   alias Flezha.Config
   alias Flezha.Http.S3, as: Client
+  alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
   alias Flezha.State.DurabilityTier.Backend
 
   @scheme "s3://"
@@ -53,8 +54,8 @@ defmodule Flezha.Plugin.Provider.File.Storage.S3 do
          true <- length(key) > length(prefix) and List.starts_with?(key, prefix) do
       {:ok, url(bucket, key)}
     else
-      {:error, _message} = refusal -> refusal
-      _elsewhere -> {:error, "file plugin path #{path} resolves outside the root #{root}"}
+      {:error, _reason} = refusal -> refusal
+      _elsewhere -> {:error, {:file_path_outside_root, path, root}}
     end
   end
 
@@ -68,24 +69,16 @@ defmodule Flezha.Plugin.Provider.File.Storage.S3 do
       when bytes <= @max_part_bytes,
       do: {:ok, opts}
 
-  def prepare_sink(%{commit: "rename"} = opts) do
-    {:error,
-     "file plugin path #{opts.path}: roll_bytes #{opts.roll_bytes} is above " <>
-       "#{@max_part_bytes}, the most one S3 upload carries"}
-  end
+  def prepare_sink(%{commit: "rename"} = opts),
+    do: ProviderOptions.refuse_above(:roll_bytes, opts.roll_bytes, @max_part_bytes)
 
-  def prepare_sink(opts) do
-    {:error,
-     "file plugin path #{opts.path}: commit: #{opts.commit} grows one file in place, " <>
-       "and an S3 object is never appended to; set commit: rename"}
-  end
+  def prepare_sink(opts), do: {:error, {:file_commit_unsupported, opts.path, opts.commit}}
 
   @impl true
   def shown(root), do: root
 
   defp parse_root(root) do
-    with :error <- parse(root),
-         do: {:error, "the file plugin root #{root} names no bucket, or climbs out of it"}
+    with :error <- parse(root), do: {:error, {:file_root_invalid, root}}
   end
 
   defp object_url("/" <> _absolute, _root), do: nil
@@ -101,9 +94,7 @@ defmodule Flezha.Plugin.Provider.File.Storage.S3 do
         :ok
 
       key ->
-        {:error,
-         "the file plugin root #{root} needs #{Config.env_name({:file_plugin_s3, key})}, " <>
-           "which is not set"}
+        {:error, {:file_root_setting_missing, root, Config.env_name({:file_plugin_s3, key})}}
     end
   end
 
@@ -116,9 +107,8 @@ defmodule Flezha.Plugin.Provider.File.Storage.S3 do
          tier_prefix = String.split(tier[:prefix] || "", "/", trim: true),
          true <- List.starts_with?(prefix, tier_prefix) or List.starts_with?(tier_prefix, prefix) do
       {:error,
-       "the file plugin root #{root} overlaps the durability tier's objects in bucket " <>
-         "#{bucket}: the prefixes #{shown_prefix(tier_prefix)} and #{shown_prefix(prefix)} " <>
-         "contain one another"}
+       {:file_root_overlaps_durability, root, bucket, shown_prefix(tier_prefix),
+        shown_prefix(prefix)}}
     else
       _apart -> :ok
     end

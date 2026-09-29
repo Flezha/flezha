@@ -20,9 +20,7 @@ pub(crate) const TABLE: Command = Command {
             Positional::required("<principal>"),
             Positional::optional(ROLE),
         ]),
-        Verb::new("list", |read| {
-            rpc::token_only(read, "authz_render_role_list")
-        }),
+        Verb::new("list", |read| rpc::bare(read, "authz_render_role_list")),
     ],
     help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Screen,
@@ -38,8 +36,7 @@ fn handle_bind(read: &Reading) {
             text(read.pos("<namespace>")),
         ],
         &[],
-        read.token(),
-        rpc::PROPAGATE,
+        read,
     );
 }
 
@@ -50,7 +47,6 @@ fn handle_unbind(read: &Reading) {
         "authz_render_role_unbind",
         &[text(read.pos("<principal>")), text(read.pos(ROLE))],
         &[],
-        read.token(),
-        rpc::PROPAGATE,
+        read,
     );
 }

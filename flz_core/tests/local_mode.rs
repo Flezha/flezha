@@ -21,6 +21,7 @@ use flz_core::schema::{
     Activation, ActivationKind, ActivationOutcome, ItemEffect, Output, OutputTarget, PrepareAnswer,
     TimerKind, TimerOp, Verdict, WorkError, WorkItem,
 };
+use flz_core::ErrorModel;
 use flz_transport::transport::FlezhaStream;
 
 /// One run at a time: the poll core, the class registry and the global state
@@ -381,20 +382,27 @@ fn a_channel_the_declaration_does_not_carry_is_refused_by_name() {
     let run = LocalRun::start("local_two_step", "refusals-1").expect("the run starts");
 
     let unknown = run.feed("nope", b"x".to_vec()).expect_err("refused");
-    assert!(
-        unknown.to_string().contains("nope") && unknown.to_string().contains("refusals-1"),
-        "the refusal names the channel and the operator: {unknown}"
+    assert_eq!(unknown.code(), "runtime.channel_undeclared");
+    let details = unknown.to_error().details;
+    assert_eq!(
+        (&details["channel"], &details["operator"]),
+        (&"nope".into(), &"refusals-1".into()),
+        "the refusal names the channel and the operator"
     );
 
     let not_entry = run.feed("mid", b"x".to_vec()).expect_err("refused");
-    assert!(
-        not_entry.to_string().contains("mid") && not_entry.to_string().contains("Entry"),
-        "an inter-tasklet channel is not an entry: {not_entry}"
+    assert_eq!(not_entry.code(), "runtime.channel_wrong_kind");
+    let details = not_entry.to_error().details;
+    assert_eq!(
+        (&details["channel"], &details["kind"]),
+        (&"mid".into(), &"entry".into()),
+        "an inter-tasklet channel is not an entry"
     );
 
     let not_sink = run.on_sink("lines", Arc::new(|_| {})).expect_err("refused");
-    assert!(
-        not_sink.to_string().contains("lines"),
+    assert_eq!(
+        not_sink.to_error().details["channel"],
+        "lines",
         "a sink callback on a non-sink channel is refused: {not_sink}"
     );
 }
@@ -413,18 +421,21 @@ fn a_controller_only_declaration_is_refused_at_startup() {
     let refusal = LocalRun::start("local_tier", "tier-1")
         .err()
         .expect("refused at startup");
-    assert!(
-        refusal.to_string().contains("effectively_once")
-            && refusal.to_string().contains("requires a controller"),
-        "the refusal names the capability and what it needs: {refusal}"
+    assert_eq!(refusal.code(), "runtime.local_needs_controller");
+    assert_eq!(
+        refusal.to_error().details["capability"],
+        "effectively_once",
+        "the refusal names the capability"
     );
 
     let missing = LocalRun::start("local_never_declared", "x")
         .err()
         .expect("an unregistered class is refused");
-    assert!(
-        missing.to_string().contains("local_never_declared"),
-        "an unregistered class is named: {missing}"
+    assert_eq!(missing.code(), "runtime.class_not_registered");
+    assert_eq!(
+        missing.to_error().details["factory"],
+        "local_never_declared",
+        "an unregistered class is named"
     );
 }
 

@@ -13,7 +13,12 @@ use crate::pb::CellMailboxStatus;
 use crate::runner::RunnerNode;
 
 impl CommandAction for CellMailboxStatus {
-    fn handle(&self, _runner: &mut RunnerNode, _message: &str, _errors: &mut Vec<String>) -> Reply {
+    fn handle(
+        &self,
+        _runner: &mut RunnerNode,
+        _message: &str,
+        _errors: &mut Vec<crate::Error>,
+    ) -> Reply {
         tracing::debug!(
             target: "flezha::backpressure",
             "legacy cell mailbox status from a pre-credit controller: {}",

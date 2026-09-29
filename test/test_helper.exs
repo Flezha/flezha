@@ -25,6 +25,37 @@ end
 
 ExUnit.start(exclude: FlezhaTest.Tiers.excluded())
 
+# A reason that reaches a caller with no catalogue entry is a defect the run
+# must name, wherever it happened: a handler records it in the emitting process,
+# and the suite fails once it has finished. A test that provokes one on purpose
+# says so in its own process first (`Process.put(:flezha_uncatalogued_expected, true)`).
+:ets.new(:flezha_uncatalogued, [:named_table, :public, :bag])
+
+:telemetry.attach(
+  "flezha-test-uncatalogued",
+  [:flezha, :error, :uncatalogued],
+  fn _event, _measurements, metadata, _config ->
+    unless Process.get(:flezha_uncatalogued_expected),
+      do: :ets.insert(:flezha_uncatalogued, {metadata.site, metadata.reason})
+  end,
+  nil
+)
+
+ExUnit.after_suite(fn _result ->
+  case :ets.tab2list(:flezha_uncatalogued) do
+    [] ->
+      :ok
+
+    missed ->
+      IO.puts(:stderr, "\nuncatalogued errors reached a caller (flz_transport/errors.json):")
+
+      for {site, reason} <- Enum.uniq(missed),
+          do: IO.puts(:stderr, "  #{site}: #{inspect(reason)}")
+
+      System.at_exit(fn _status -> exit({:shutdown, 1}) end)
+  end
+end)
+
 # The run's own state root and socket directory are derived from its token and
 # nothing else removes them. Only a path this run derived and still uses goes: a
 # path a variable named is not the suite's, nor is anything under `app_data/`.

@@ -5,7 +5,7 @@ TBD - created by archiving change bounded-operator-functionality. Update Purpose
 ## Requirements
 ### Requirement: A bounded operator is spawned on demand and terminates on an exit trigger
 
-A bounded operator SHALL be spawned on demand with `init_values` as initial state per tasklet and SHALL take its input as messages on its entry channels, each spawn independent and representing **one job/session** (cells are internal parallelism, never multiple sessions). It SHALL terminate on the first of these exit triggers: (a) **all tasklets done**: its chain of tasklets has run to the final tasklet's completion with no loop active; (b) a tasklet calling `ctx.complete(result)`, which ends the instance once the iteration it ran in has committed; (c) a loop running out of work (a chained loop releasing an empty batch); (d) a declared maximum wall-clock duration elapsing; (e) an external `flz operator stop`. Waiting for a message SHALL NOT be an exit trigger. An unbounded operator SHALL never reach a terminal trigger, and a tasklet of an unbounded operator calling `ctx.complete` SHALL fail that input with an error naming `CompleteOutsideBounded`.
+A bounded operator SHALL be spawned on demand with `init_values` as initial state per tasklet and SHALL take its input as messages on its entry channels, each spawn independent and representing **one job/session** (cells are internal parallelism, never multiple sessions). It SHALL terminate on the first of these exit triggers: (a) **all tasklets done**: its chain of tasklets has run to the final tasklet's completion with no loop active; (b) a tasklet calling `ctx.complete(result)`, which ends the instance once the iteration it ran in has committed; (c) a loop running out of work (a chained loop releasing an empty batch); (d) a declared maximum wall-clock duration elapsing; (e) an external `flz operator stop`. Waiting for a message SHALL NOT be an exit trigger. An unbounded operator SHALL never reach a terminal trigger, and a tasklet of an unbounded operator calling `ctx.complete` SHALL fail that input with an error naming `runtime.complete_outside_bounded`.
 
 #### Scenario: The chain running to its end terminates the operator
 
@@ -20,7 +20,7 @@ A bounded operator SHALL be spawned on demand with `init_values` as initial stat
 #### Scenario: A tasklet of an unbounded operator cannot complete it
 
 - **WHEN** a tasklet of an unbounded operator calls `ctx.complete(result)`
-- **THEN** that input SHALL fail with an error naming `CompleteOutsideBounded`, handled as any tasklet error, and the unbounded operator SHALL keep running
+- **THEN** that input SHALL fail with an error naming `runtime.complete_outside_bounded`, handled as any tasklet error, and the unbounded operator SHALL keep running
 
 #### Scenario: Duration elapse terminates the operator
 

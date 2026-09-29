@@ -151,10 +151,10 @@ chain SHALL be contained so the operator still terminates observably.
 ### Requirement: Transform and key declarations SHALL be validated at definition time
 
 Every SDK SHALL refuse the following at topology build time with the same error
-names: `KeyByOnUnkeyableTarget` — a `key_by` whose consumer declares a non-empty
-`cell_keys()`; `DuplicateKeyBy` — more than one `key_by` on one consumer edge;
-`TransformAfterTerminal` — a transform declared on a handle already closed by a
-plugin sink; `EdgeAlreadyWired` — an existing consumer edge re-declared where
+names: `topology.key_by_on_unkeyable_target` — a `key_by` whose consumer declares a non-empty
+`cell_keys()`; `topology.duplicate_key_by` — more than one `key_by` on one consumer edge;
+`topology.transform_after_terminal` — a transform declared on a handle already closed by a
+plugin sink; `topology.edge_already_wired` — an existing consumer edge re-declared where
 either the existing or the new declaration carries a transform or a key, named
 by the channel and the tasklet it already feeds. A re-declaration carrying
 neither SHALL remain the legal fan-in no-op.
@@ -162,12 +162,12 @@ neither SHALL remain the legal fan-in no-op.
 #### Scenario: Keying a static-mode consumer is refused
 
 - **WHEN** a `key_by` edge wires a Tasklet declaring `cell_keys() = ["1m","1h"]`
-- **THEN** the build SHALL fail with `KeyByOnUnkeyableTarget` naming the Tasklet
+- **THEN** the build SHALL fail with `topology.key_by_on_unkeyable_target` naming the Tasklet
 
 #### Scenario: Two key functions on one edge are refused
 
 - **WHEN** an edge declares `.keyBy(f).keyBy(g)` before `.into(P)`
-- **THEN** the build SHALL fail with `DuplicateKeyBy` naming the edge
+- **THEN** the build SHALL fail with `topology.duplicate_key_by` naming the edge
 
 #### Scenario: Silent re-declaration is refused
 
@@ -177,7 +177,7 @@ neither SHALL remain the legal fan-in no-op.
 #### Scenario: A closure on the second declaration is refused too
 
 - **WHEN** a channel already feeds a Tasklet on a bare edge and the same Tasklet is wired from that channel a second time, this time behind a transform or a key
-- **THEN** the build SHALL fail with `EdgeAlreadyWired` naming the channel and the Tasklet, and SHALL NOT append a second consumer edge
+- **THEN** the build SHALL fail with `topology.edge_already_wired` naming the channel and the Tasklet, and SHALL NOT append a second consumer edge
 
 #### Scenario: Transform-free re-declaration stays legal
 
@@ -206,9 +206,9 @@ four, because `Tasklet<Input = T>` is checked at compile time.
 ### Requirement: The definition-time refusals are rows of the reference fixture
 
 The refusals this capability names SHALL be judged by the reference check over the
-ordered links of each chain, never by a builder of its own — `KeyByOnUnkeyableTarget`,
-`DuplicateKeyBy`, `TransformAfterTerminal`, `TransformAfterKeyBy`,
-`DanglingTransformChain`, `EdgeAlreadyWired` — and each SHALL be one row of
+ordered links of each chain, never by a builder of its own — `topology.key_by_on_unkeyable_target`,
+`topology.duplicate_key_by`, `topology.transform_after_terminal`, `topology.transform_after_key_by`,
+`topology.dangling_transform_chain`, `topology.edge_already_wired` — and each SHALL be one row of
 `test/fixtures/reference_topologies.txt` together with the `ok` row that pins the legal
 transform-free fan-in as one consumer edge. An SDK SHALL prove the set by its conformance
 run over those rows, with no refusal test of its own per name.
@@ -216,7 +216,7 @@ run over those rows, with no refusal test of its own per name.
 #### Scenario: The link order is what the check reads
 
 - **WHEN** a chain records a `key` link followed by a `transform` link before `into`
-- **THEN** the check refuses `TransformAfterKeyBy` naming the channel, in every SDK,
+- **THEN** the check refuses `topology.transform_after_key_by` naming the channel, in every SDK,
   because the record carries the order the builder was called in
 
 #### Scenario: The fan-in no-op derives one edge in every SDK

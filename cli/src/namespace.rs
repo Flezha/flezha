@@ -1,4 +1,4 @@
-use crate::args::{Positional, Reading, JSON_SWITCH, OUTPUT};
+use crate::args::{Positional, Reading};
 use crate::dispatch::{self, Command, Missing, Verb};
 use crate::help;
 use crate::rpc::{self, text};
@@ -10,28 +10,18 @@ pub(crate) const TABLE: Command = Command {
     path: "flz namespace",
     help: help::NAMESPACE,
     verbs: &[
-        Verb::new("list", handle_list).reading(&[OUTPUT, JSON_SWITCH]),
+        Verb::new("list", handle_list),
         Verb::new("create", |read| {
             quota_verb(read, "authz_render_namespace_create")
         })
         .taking(NAME)
         .open(),
         Verb::new("delete", |read| {
-            rpc::one_arg(
-                read,
-                NAME[0].name,
-                "authz_render_namespace_delete",
-                rpc::PROPAGATE,
-            )
+            rpc::one_arg(read, NAME[0].name, "authz_render_namespace_delete")
         })
         .taking(NAME),
         Verb::new("show", |read| {
-            rpc::one_arg(
-                read,
-                NAME[0].name,
-                "authz_render_namespace_show",
-                rpc::PROPAGATE,
-            )
+            rpc::one_arg(read, NAME[0].name, "authz_render_namespace_show")
         })
         .taking(NAME),
         Verb::new("set-quota", |read| {
@@ -48,19 +38,11 @@ pub(crate) const TABLE: Command = Command {
 /// The only list verb whose RPC takes no namespace: the namespaces ARE the
 /// scope, so `rpc::scoped_read`'s shape does not fit it.
 fn handle_list(read: &Reading) {
-    let output_format = read.output_format();
-
-    if output_format == "text" {
+    if read.output_format() == "text" {
         println!("Fetching namespaces...");
     }
 
-    rpc::run(
-        "list_namespaces",
-        &[text(output_format)],
-        &[],
-        read.token(),
-        rpc::REFUSED,
-    );
+    rpc::run("list_namespaces", &[], &[], read);
 }
 
 /// The two verbs that carry quota overrides. They ride the repeatable
@@ -74,7 +56,6 @@ fn quota_verb(read: &Reading, rpc_fun: &str) {
             text(&serialize_flags(&extract_x_flags(read.rest()))),
         ],
         &[],
-        read.token(),
-        rpc::PROPAGATE,
+        read,
     );
 }

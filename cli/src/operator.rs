@@ -1,6 +1,6 @@
-use crate::args::{
-    self, OptSpec, Positional, Reading, DURATION_MS, INIT_VALUES, JSON_SWITCH, NAMESPACE, OUTPUT,
-};
+use flz_transport::errors::FlezhaError;
+
+use crate::args::{self, OptSpec, Positional, Reading, DURATION_MS, INIT_VALUES, NAMESPACE};
 use crate::dispatch::{self, Command, Missing, Verb};
 use crate::help;
 use crate::rpc::{self, text, Opt};
@@ -38,8 +38,6 @@ pub(crate) const TABLE: Command = Command {
                 PLUGINS,
                 PARTITIONS,
                 SNAPSHOT_INTERVAL,
-                OUTPUT,
-                JSON_SWITCH,
             ])
             .strict()
             .screen(help::OPERATOR_START),
@@ -58,14 +56,14 @@ pub(crate) const TABLE: Command = Command {
         Verb::new("list", |read| {
             rpc::scoped_read(read, "list_operators", Some("operators"))
         })
-        .reading(&[NAMESPACE, OUTPUT, JSON_SWITCH]),
+        .reading(&[NAMESPACE]),
         Verb::new("info", |read| {
             rpc::scoped_read(read, "operator_info", Some("operator information"))
         })
-        .reading(&[NAMESPACE, OUTPUT, JSON_SWITCH]),
+        .reading(&[NAMESPACE]),
         Verb::new("listen", handle_listen)
             .taking(OPERATOR_ID)
-            .reading(&[INPUT, DURATION_MS, OUTPUT, JSON_SWITCH, NAMESPACE])
+            .reading(&[INPUT, DURATION_MS, NAMESPACE])
             .strict()
             .screen(help::OPERATOR_LISTEN),
         Verb::new("send", handle_send)
@@ -124,12 +122,10 @@ fn handle_start(read: &Reading) {
             text(read.namespace()),
             text(read.pos("<factory_id>")),
             text(read.json(INIT_VALUES.long)),
-            text(read.output_format()),
             text(&start_opts(read)),
         ],
         &opts,
-        read.token(),
-        rpc::REFUSED,
+        read,
     );
 }
 
@@ -142,9 +138,11 @@ pub(crate) fn first_message_opts<'a>(read: &'a Reading) -> Vec<Opt<'a>> {
         opts.push(("text", text(payload)));
     }
     if let Some(channel) = read.opt(CHANNEL.long) {
-        args::or_refuse(payload.ok_or_else(|| {
-            "Error: --channel names the entry channel of --text; give --text too".to_string()
-        }));
+        args::or_refuse(
+            payload.ok_or_else(|| {
+                FlezhaError::new("operator.channel_without_text", Default::default())
+            }),
+        );
         opts.push(("channel", text(channel)));
     }
     opts
@@ -173,8 +171,7 @@ fn handle_scale(read: &Reading) {
             text(&serialize_flags(&opts)),
         ],
         &[],
-        read.token(),
-        rpc::REFUSED,
+        read,
     );
 }
 
@@ -186,8 +183,7 @@ fn handle_stop(read: &Reading) {
         "operator_stop",
         &[text(read.namespace()), text(read.pos(OPERATOR_ID[0].name))],
         &[],
-        read.token(),
-        rpc::UNKNOWN_STATUS.diagnosing("Failed to stop operator"),
+        read,
     );
 
     println!("Operator stopped successfully.");
@@ -215,8 +211,7 @@ fn handle_send(read: &Reading) {
             text(read.opt(CHANNEL.long).unwrap_or_default()),
         ],
         &opts,
-        read.token(),
-        rpc::QUIET.diagnosing("Failed to send input to operator"),
+        read,
     );
 }
 
@@ -234,8 +229,7 @@ fn handle_rewind(read: &Reading) {
             read.opt(TO_ITERATION.long).unwrap_or_default().to_string(),
         ],
         &[],
-        read.token(),
-        rpc::UNKNOWN_STATUS.diagnosing("Failed to rewind operator"),
+        read,
     );
 }
 
@@ -256,8 +250,7 @@ fn handle_replay(read: &Reading) {
             text(read.opt(FROM.long).unwrap_or_default()),
         ],
         &[],
-        read.token(),
-        rpc::UNKNOWN_STATUS.diagnosing("Failed to replay cell"),
+        read,
     );
 }
 
@@ -267,8 +260,7 @@ fn handle_state(read: &Reading) {
         "cell_state",
         &[text(read.namespace()), text(read.pos(OPERATOR_ID[0].name))],
         &[],
-        read.token(),
-        rpc::UNKNOWN_STATUS.diagnosing("Failed to get operator state"),
+        read,
     );
 }
 
@@ -288,11 +280,9 @@ fn handle_listen(read: &Reading) {
             text(read.namespace()),
             text(read.pos(OPERATOR_ID[0].name)),
             text(direction),
-            text(read.output_format()),
         ],
         &[rpc::window(read)],
-        read.token(),
-        rpc::REFUSED,
+        read,
     );
 }
 
@@ -353,8 +343,9 @@ pub(crate) fn parse_plugins_json(raw: &str) -> Result<String, String> {
 /// or the one refusal every verb that takes `--plugins` prints.
 pub(crate) fn plugins_json_or_refuse(raw: &str) -> String {
     args::or_refuse(
-        parse_plugins_json(raw)
-            .map_err(|reason| format!("Error: invalid --plugins JSON: {}", reason)),
+        parse_plugins_json(raw).map_err(|reason| {
+            FlezhaError::with("usage.invalid_plugins", [("reason", reason.into())])
+        }),
     )
 }
 

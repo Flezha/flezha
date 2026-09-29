@@ -5,6 +5,7 @@ defmodule Flezha.SDK.UnitTest do
   alias Flezha.SDK.{Channels, Codec, Ctx, Declarations, KeyGroup, PersistentId, Tasklet, Topology}
   alias Flezha.SDK.Proto.RunnerCommands
   alias Flezha.SDK.Transport
+  alias FlezhaTest.Helper.SdkOperatorHarness
   alias FlezhaTest.Helper.SdkTierFixtures.{CheckpointBatchedOp, TierStoreOp}
 
   # A ctx built without a tasklet has no name to refuse with; the tests
@@ -148,8 +149,8 @@ defmodule Flezha.SDK.UnitTest do
   #
   # Only the shapes no row of `test/fixtures/reference_topologies.txt` states
   # are asserted here: the names the reference vocabulary does not carry, and
-  # the ways this SDK's own surface composes. Every `{:invalid_topology,
-  # [Name]}` case whose shape is a fixture row is retired — the conformance run
+  # the ways this SDK's own surface composes. Every refusal case whose shape is
+  # a fixture row is retired — the conformance run
   # drives those rows through this builder.
 
   test "UnservableClock, TwoClocks — a clock the runtime cannot serve" do
@@ -179,9 +180,12 @@ defmodule Flezha.SDK.UnitTest do
       end
     end
 
-    assert {:error, {:invalid_topology, issues}} = Topology.build(ClockOp)
-    assert {:UnservableClock, inspect(LogicalNoChange)} in issues
-    assert {:TwoClocks, inspect(TwoClocksByHand)} in issues
+    issues = SdkOperatorHarness.refusal_issues(Topology.build(ClockOp))
+
+    assert {"topology.unservable_clock",
+            %{"tasklet" => inspect(LogicalNoChange), "clock_type" => "logical"}} in issues
+
+    assert {"topology.two_clocks", %{"tasklet" => inspect(TwoClocksByHand)}} in issues
     assert length(issues) == 2
 
     # What each writes is the clock `now/1` serves.
@@ -196,7 +200,8 @@ defmodule Flezha.SDK.UnitTest do
       def channels(c), do: c |> Channels.input("in") |> Channels.keyed() |> Channels.sink()
     end
 
-    assert {:error, {:invalid_topology, [{:KeyedOnEntry, "in"}]}} = Topology.build(KeyedEntry)
+    assert [{"topology.keyed_on_entry", %{"channel" => "in"}}] =
+             SdkOperatorHarness.refusal_issues(Topology.build(KeyedEntry))
   end
 
   # The two names this SDK gains from the reference vocabulary here. Both are
@@ -224,8 +229,10 @@ defmodule Flezha.SDK.UnitTest do
         do: c |> Channels.input("in") |> Channels.into(EchoTask) |> Channels.sink()
     end
 
-    assert {:KeyedChannelWithoutPluginWire, "echo"} = one_issue(KeyedNoWire)
-    assert {:SyncDurabilityOnUnbounded, _} = one_issue(SyncUnbounded)
+    assert {"topology.keyed_channel_without_plugin_wire", %{"channel" => "echo"}} =
+             one_issue(KeyedNoWire)
+
+    assert {"topology.sync_durability_on_unbounded", _} = one_issue(SyncUnbounded)
   end
 
   test "the ctx refuses a keyless emit where a key is required, and a key where none is allowed" do
@@ -237,13 +244,23 @@ defmodule Flezha.SDK.UnitTest do
         timer_policy: @timer_policy
       )
 
-    assert {:error, {:key_required_on_keyed_channel, "c"}} = Ctx.emit(single, :a)
-    assert {:error, {:key_required_on_keyed_channel, "c"}} = Ctx.emit_with_meta(single, :a, %{})
+    assert {:error,
+            %{code: "runtime.key_required_on_keyed_channel", details: %{"channel" => "c"}}} =
+             Ctx.emit(single, :a)
+
+    assert {:error,
+            %{code: "runtime.key_required_on_keyed_channel", details: %{"channel" => "c"}}} =
+             Ctx.emit_with_meta(single, :a, %{})
+
     assert :ok = Ctx.emit_keyed(single, "k", :a)
     assert Ctx.take_emits(single) == [{:a, %{}, "k"}]
 
     plain = Ctx.new(nil, "k", 0, channel: "p", timer_policy: @timer_policy)
-    assert {:error, {:key_not_allowed_on_non_keyed_channel, "p"}} = Ctx.emit_keyed(plain, "k", :a)
+
+    assert {:error,
+            %{code: "runtime.key_not_allowed_on_non_keyed_channel", details: %{"channel" => "p"}}} =
+             Ctx.emit_keyed(plain, "k", :a)
+
     assert :ok = Ctx.emit(plain, :a)
     assert Ctx.take_emits(plain) == [{:a, %{}, nil}]
   end
@@ -296,7 +313,7 @@ defmodule Flezha.SDK.UnitTest do
         do: c |> Channels.input("in") |> Channels.branch([]) |> Channels.into(EchoTask)
     end
 
-    assert {:BranchTooFewArms, 0} = one_issue(NoArms)
+    assert {"topology.branch_too_few_arms", %{"arms" => 0}} = one_issue(NoArms)
   end
 
   # Every route off the `in` entry: what it reaches and what it makes of "a".
@@ -318,8 +335,10 @@ defmodule Flezha.SDK.UnitTest do
       def channels(c), do: Channels.window(c)
     end
 
-    assert {:error, {:invalid_topology, [{:DeferredBuilderSurface, Deferred, _}]}} =
-             Topology.build(Deferred)
+    assert [{"topology.deferred_builder_surface", %{"module" => module}}] =
+             SdkOperatorHarness.refusal_issues(Topology.build(Deferred))
+
+    assert module == inspect(Deferred)
   end
 
   # --- Ctx ---
@@ -331,7 +350,7 @@ defmodule Flezha.SDK.UnitTest do
     assert :ok = Ctx.emit(ctx, :a)
     assert :ok = Ctx.emit_with_meta(ctx, :b, %{"m" => "1"})
 
-    assert {:error, {:reserved_metadata_key, "flz.seq"}} =
+    assert {:error, %{code: "runtime.reserved_metadata_key", details: %{"key" => "flz.seq"}}} =
              Ctx.emit_with_meta(ctx, :c, %{"flz.seq" => "1"})
 
     assert Ctx.take_emits(ctx) == [{:a, %{}, nil}, {:b, %{"m" => "1"}, nil}]
@@ -404,7 +423,7 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.sink()
     end
 
-    assert {:CheckpointMaxDelayZero, _} = one_issue(DelayZero)
+    assert {"topology.checkpoint_max_delay_zero", _} = one_issue(DelayZero)
   end
 
   # How the two correction options compose is this SDK's own rule, not a row:
@@ -425,7 +444,7 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.sink()
     end
 
-    assert {:CorrectionWindowZero, _} = one_issue(PolicyWithoutWindow)
+    assert {"topology.correction_window_zero", _} = one_issue(PolicyWithoutWindow)
   end
 
   # `register.rs` refuses a shedding channel under a declared window with its own
@@ -448,8 +467,8 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.sink()
     end
 
-    assert {:DroppingPolicyUnderEffectivelyOnce, "in", :drop_oldest} =
-             one_issue(SheddingUnderWindow)
+    assert {"topology.dropping_policy_under_effectively_once",
+            %{"channel" => "in", "policy" => "drop_oldest"}} = one_issue(SheddingUnderWindow)
   end
 
   test "the two correction options compose in either order and neither clears the other" do
@@ -522,9 +541,8 @@ defmodule Flezha.SDK.UnitTest do
   end
 
   defp one_issue(module) do
-    assert {:error, {:invalid_topology, issues}} = Topology.build(module)
-    assert length(issues) == 1
-    hd(issues)
+    assert [issue] = SdkOperatorHarness.refusal_issues(Topology.build(module))
+    issue
   end
 
   defp golden(id),

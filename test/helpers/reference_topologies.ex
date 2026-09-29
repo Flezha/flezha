@@ -18,14 +18,19 @@ defmodule FlezhaTest.Helper.ReferenceTopologies do
 
   @doc """
   The refusal table: `%{refusal, topology, steps, needs}` per row. `refusal` is
-  a `TopologyIssue` variant name or `"ok"`; `needs` is `"-"` or the authoring
-  surface the row cannot be written without.
+  a refusal code or `"ok"`; `needs` is `"-"` or the authoring surface the row
+  cannot be written without.
   """
   def refusal_rows do
     for cols <- rows(), length(cols) == 4 do
       [refusal, topology, steps, needs] = cols
       %{refusal: refusal, topology: topology, steps: steps, needs: needs}
     end
+  end
+
+  @doc "The codes the fixture exempts from needing a row: its `unrowed` lines."
+  def unrowed do
+    for ["unrowed", code] <- rows(), do: code
   end
 
   @doc """

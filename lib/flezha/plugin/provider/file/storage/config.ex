@@ -16,7 +16,7 @@ defmodule Flezha.Plugin.Provider.File.Storage.Config do
   def of(path), do: if(S3.url?(path), do: S3, else: Local)
 
   @doc "A plugin's `path` resolved inside `FLEZHA_FILE_PLUGIN_ROOT` by the storage the root names."
-  @spec resolve_path(binary()) :: {:ok, binary()} | {:error, binary()}
+  @spec resolve_path(binary()) :: {:ok, binary()} | {:error, term()}
   def resolve_path(path) do
     root = Config.get(:file_plugin_root)
     of(root).resolve(path, root)

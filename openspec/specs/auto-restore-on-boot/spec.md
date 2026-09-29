@@ -581,7 +581,7 @@ each later request only what is left of it. A controller that answered SHALL be 
 once: its verdict, ready or not, is the answer. A controller lost in the middle of the
 call answers nothing and fails the same way as one never reached, so it SHALL be asked
 again inside what is left of the timeout. When the timeout runs out with the controller
-still unreachable, the CLI SHALL exit 1 with a line naming the causes a failed connect
+still unreachable, the CLI SHALL exit 3 with the error `controller.unreachable`, naming the causes a failed connect
 cannot tell apart: a controller that is not up yet or stopped after it was reached, a
 cookie that is not the controller's, and a node name that is not the controller's. A
 timeout of zero SHALL ask exactly once.
@@ -596,17 +596,17 @@ timeout of zero SHALL ask exactly once.
 #### Scenario: A controller that never answers is given up on at the timeout
 
 - **WHEN** `flz boot await --timeout 1` cannot reach a controller
-- **THEN** the CLI asks more than once, then exits 1 with a line naming a controller not up yet or stopped after it was reached, the cookie and the node name
+- **THEN** the CLI asks more than once, then exits 3 with a line naming a controller not up yet or stopped after it was reached, the cookie and the node name
 
 #### Scenario: A controller that answers not ready is asked once
 
 - **WHEN** the controller answers a verdict below `:ready`
-- **THEN** the CLI exits non-zero with that verdict on stderr and does not ask again
+- **THEN** the CLI exits 7 with the error `boot.not_ready`, the verdict and the unmet preconditions in its details, on stderr, and does not ask again
 
 #### Scenario: A zero timeout asks once even when the controller is unreachable
 
 - **WHEN** `flz boot await --timeout 0` cannot reach a controller
-- **THEN** the CLI asks exactly once and exits 1
+- **THEN** the CLI asks exactly once and exits 3 with `controller.unreachable`
 
 ### Requirement: A last-runner loss withdraws this controller's groups and the hub moves the operators
 

@@ -1,46 +1,33 @@
-use crate::args::{OptSpec, Positional, Reading, DURATION_MS, JSON_SWITCH, OUTPUT};
+use crate::args::{Positional, Reading, DURATION_MS};
 use crate::dispatch::{self, Command, Missing, Verb};
 use crate::help;
 use crate::rpc::{self, text};
 
 const SOURCE: &[Positional] = &[Positional::required("<source>")];
-const FORMAT: &[OptSpec] = &[OUTPUT, JSON_SWITCH];
 
 pub(crate) const TABLE: Command = Command {
     path: "flz observe",
     help: help::OBSERVE,
     verbs: &[
         Verb::new("sources", |read| {
-            rpc::rendered(read, "observability_render_sources", rpc::DIAGNOSED)
+            rpc::bare(read, "observability_render_sources")
         })
-        .reading(FORMAT)
         .screen(help::OBSERVE_SOURCES),
         Verb::new("sinks", |read| {
-            rpc::rendered(read, "observability_render_sinks", rpc::DIAGNOSED)
+            rpc::bare(read, "observability_render_sinks")
         })
-        .reading(FORMAT)
         .screen(help::OBSERVE_SINKS),
         Verb::new("tail", handle_tail)
             .taking(SOURCE)
-            .reading(&[DURATION_MS, OUTPUT, JSON_SWITCH])
+            .reading(&[DURATION_MS])
             .screen(help::OBSERVE_TAIL),
         Verb::new("enable", |read| {
-            rpc::one_arg(
-                read,
-                SOURCE[0].name,
-                "observability_render_enable",
-                rpc::DIAGNOSED,
-            )
+            rpc::one_arg(read, SOURCE[0].name, "observability_render_enable")
         })
         .taking(SOURCE)
         .screen(help::OBSERVE_ENABLE),
         Verb::new("disable", |read| {
-            rpc::one_arg(
-                read,
-                SOURCE[0].name,
-                "observability_render_disable",
-                rpc::DIAGNOSED,
-            )
+            rpc::one_arg(read, SOURCE[0].name, "observability_render_disable")
         })
         .taking(SOURCE)
         .screen(help::OBSERVE_DISABLE),
@@ -53,9 +40,8 @@ pub(crate) const TABLE: Command = Command {
 fn handle_tail(read: &Reading) {
     rpc::run(
         "observability_render_tail",
-        &[text(read.pos(SOURCE[0].name)), text(read.output_format())],
+        &[text(read.pos(SOURCE[0].name))],
         &[rpc::window(read)],
-        read.token(),
-        rpc::DIAGNOSED,
+        read,
     );
 }

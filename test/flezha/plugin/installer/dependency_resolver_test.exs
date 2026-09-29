@@ -61,7 +61,7 @@ defmodule Flezha.Plugin.Installer.DependencyResolverTest do
 
     new_manifest = %{id: "common", version: "2.0.0", dependencies: []}
 
-    assert {:error, {:dependents_block, [{"x", "~> 1.2"}]}} =
+    assert {:error, {:dependents_block, ["x ~> 1.2"]}} =
              DependencyResolver.validate_upgrade(new_manifest, "common", catalog)
   end
 

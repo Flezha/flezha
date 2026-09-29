@@ -18,7 +18,8 @@ defmodule Flezha.Service.Cli.Info do
   alias Flezha.State.PersistenceResolver
 
   @doc "Shows detailed information about operators and their enabled plugins."
-  def operator_info(namespace, output_format, _call) do
+  def operator_info(namespace, %{opts: opts}) do
+    output_format = Context.format(opts)
     namespace_display = Namespace.or_default(namespace)
 
     live =
@@ -70,7 +71,7 @@ defmodule Flezha.Service.Cli.Info do
             }
 
           {:error, reason} ->
-            %{id: operator_id, error: Context.format_reason(reason)}
+            %{id: operator_id, error: unreadable(reason)}
         end
       end)
 
@@ -98,13 +99,17 @@ defmodule Flezha.Service.Cli.Info do
 
         {:error, reason} ->
           IO.puts("Operator: #{operator_id}")
-          IO.puts("  Error getting overwatch state: #{Context.format_reason(reason)}")
+          IO.puts("  Error getting overwatch state: #{unreadable(reason).message}")
           IO.puts("")
       end
     end)
 
     Enum.each(finished, fn {id, rec} -> display_finished_operator(id, rec) end)
   end
+
+  # One operator the listing could not read, as the error it answers: the row
+  # carries it, and the listing is still an answer.
+  defp unreadable(reason), do: Flezha.Error.from_reason(reason, :"operator.list")
 
   defp group_report_json(report) do
     %{

@@ -30,7 +30,7 @@ use flz_transport::service::payloader;
 use flz_transport::transport::FlezhaStream;
 
 use crate::channel::ChannelKind;
-use crate::error::Error;
+use crate::error::{Code, Error};
 use crate::operator::instance::OperatorInstance;
 use crate::operator::registry::OperatorRegistry;
 use crate::operator::topology::ChannelLookup;
@@ -193,10 +193,10 @@ impl LocalRun {
             }
             std::thread::sleep(Duration::from_millis(1));
         }
-        Err(Error::Routing(format!(
-            "operator `{}` was still working after {budget:?}",
-            self.instance.instance_id
-        )))
+        Err(Error::Routing(Code::LocalRunBusy.with([
+            ("operator", self.instance.instance_id.as_ref().into()),
+            ("budget_ms", (budget.as_millis() as u64).into()),
+        ])))
     }
 
     /// The live instance, for a caller that wants to read its Cells.
@@ -232,15 +232,20 @@ impl LocalRun {
         let topology = &self.instance.topology;
         match topology.channel_of_kind(channel, kind) {
             ChannelLookup::Found(..) => Ok(()),
-            ChannelLookup::WrongKind(declared) => Err(Error::Routing(format!(
-                "operator `{}` channel `{channel}` is {declared:?}, not {kind:?}",
-                self.instance.instance_id
-            ))),
-            ChannelLookup::Undeclared => Err(Error::Routing(format!(
-                "operator `{}` has no channel `{channel}`; it declares {kind:?} {:?}",
-                self.instance.instance_id,
-                topology.declared_names(kind)
-            ))),
+            ChannelLookup::WrongKind(declared) => {
+                Err(Error::Routing(Code::ChannelWrongKind.with([
+                    ("operator", self.instance.instance_id.as_ref().into()),
+                    ("channel", channel.into()),
+                    ("declared", declared.as_str().into()),
+                    ("kind", kind.as_str().into()),
+                ])))
+            }
+            ChannelLookup::Undeclared => Err(Error::Routing(Code::ChannelUndeclared.with([
+                ("operator", self.instance.instance_id.as_ref().into()),
+                ("channel", channel.into()),
+                ("kind", kind.as_str().into()),
+                ("channels", topology.declared_names(kind).into()),
+            ]))),
         }
     }
 }
@@ -262,25 +267,20 @@ fn refuse_controller_only(factory_id: &str) -> Result<(), Error> {
         .as_ref()
         .is_some_and(|topology| topology.bounded.is_some());
     let tier = class.is_some_and(|topology| topology.effectively_once);
-    let (capability, why) = if bounded {
-        (
-            "a bounded operator",
-            "a bounded operator's messages come from the controller's input log, and its \
-          commit barriers are durable",
-        )
+    // A bounded operator's messages come from the controller's input log and
+    // its commit barriers are durable; under the tier an output is released
+    // once its effect record is durable. Local mode has neither.
+    let capability = if bounded {
+        "a bounded operator"
     } else if tier {
-        (
-            "effectively_once",
-            "under the tier an output rides its effect record, and the \
-          controller releases it once that record is durable — local mode has no durable \
-         store to release from",
-        )
+        "effectively_once"
     } else {
         // The registry does not have it, or it asks for nothing a controller owns;
         // `of_class` reports an unregistered class by name.
         return Ok(());
     };
-    Err(Error::Declaration(format!(
-        "class `{factory_id}` declares {capability}, which requires a controller: {why}"
-    )))
+    Err(Error::Declaration(Code::LocalNeedsController.with([
+        ("factory", factory_id.into()),
+        ("capability", capability.into()),
+    ])))
 }

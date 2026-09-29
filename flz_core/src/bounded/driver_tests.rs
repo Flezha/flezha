@@ -19,6 +19,7 @@ use crate::host::{apply_result, HostPayload};
 use crate::poll_core::{EnginePayload, Polled};
 use crate::runner::{RunnerMessage, RunnerNode};
 use crate::test_support::{capture_parks, host_class, spin_until, stream_pair};
+use crate::ErrorModel;
 use crate::{schema, state_sink};
 
 /// Answers every activation the poll core hands out while it lives: an
@@ -302,7 +303,11 @@ fn a_host_bounded_takes_init_values_as_state_before_its_first_message() {
     assert_eq!(done.0, "ok");
 
     let refused = start(&mut node, &id, "host-init-2", "not json", 0);
-    assert!(refused[0].contains("init_values"), "{refused:?}");
+    assert_eq!(
+        refused[0].code(),
+        "state.init_values_invalid_json",
+        "{refused:?}"
+    );
     assert!(!node.has_operator("host-init-2"));
 }
 

@@ -226,11 +226,10 @@ impl TaskletDispatcher for HostDispatcher {
         _flush_buffer: &mut Box<dyn FlushableBuffer>,
         _timers: &PendingTimers,
     ) -> Result<(Vec<u8>, u64, usize), crate::Error> {
+        // Compaction reaches the host through its SnapshotRequest activation
+        // (`snapshot_frame_crossing`), never this in-process seam.
         Err(crate::Error::HostCrossing(
-            "host-held state: compaction reaches the host through its \
-             SnapshotRequest activation (`snapshot_frame_crossing`), never \
-             this in-process seam"
-                .to_string(),
+            crate::Code::HostStateInProcess.with([]),
         ))
     }
 }

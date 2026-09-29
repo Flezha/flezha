@@ -54,11 +54,10 @@ defmodule Flezha.Plugin.Installer.CompilerTest do
 
     expected = [mod_atom, SomeOther]
 
-    assert {:error, {:manifest_invalid, {:module_mismatch, info}}} =
+    assert {:error, {:module_mismatch, expected_sorted, [_produced]}} =
              Compiler.compile(Path.join(tmp, "src"), expected)
 
-    assert Keyword.has_key?(info, :expected)
-    assert Keyword.has_key?(info, :produced)
+    assert expected_sorted == Enum.sort(expected)
   end
 
   test "extra module (produced > expected) reported", %{tmp: tmp} do
@@ -71,7 +70,7 @@ defmodule Flezha.Plugin.Installer.CompilerTest do
 
     expected = [:"Elixir.FlzCompilerTest.A#{unique}"]
 
-    assert {:error, {:manifest_invalid, {:module_mismatch, _info}}} =
+    assert {:error, {:module_mismatch, _expected, _produced}} =
              Compiler.compile(Path.join(tmp, "src"), expected)
   end
 

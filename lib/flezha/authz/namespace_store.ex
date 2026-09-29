@@ -94,7 +94,7 @@ defmodule Flezha.AuthZ.NamespaceStore do
 
     case DetsStore.put_new(@table, @cache, name, entry) do
       :ok -> {:reply, {:ok, entry}, state}
-      {:error, :already_exists} = err -> {:reply, err, state}
+      {:error, :already_exists} -> {:reply, {:error, {:namespace_exists, name}}, state}
     end
   end
 
@@ -108,14 +108,14 @@ defmodule Flezha.AuthZ.NamespaceStore do
         {:reply, :ok, state}
 
       :error ->
-        {:reply, {:error, :not_found}, state}
+        {:reply, {:error, {:not_found, name}}, state}
     end
   end
 
   def handle_call({:set_quotas, name, quotas}, _from, state) do
     case DetsStore.update(@table, @cache, name, &%{&1 | quotas: quotas}) do
       {:ok, updated} -> {:reply, {:ok, updated}, state}
-      {:error, :not_found} = err -> {:reply, err, state}
+      {:error, :not_found} -> {:reply, {:error, {:not_found, name}}, state}
     end
   end
 

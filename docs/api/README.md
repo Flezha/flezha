@@ -9,7 +9,8 @@ Every function on it obeys three rules:
 1. It takes a `Flezha.Service.CallerContext` — `%{source: …, principal: …}` — as
    its **last** argument.
 2. It authorizes through that context before it does anything.
-3. It answers **data**, not text formatted for a terminal.
+3. It answers **data**, not text formatted for a terminal. A failure is
+   `{:error, %Flezha.Error{}}`, whose `code` is one of [the error codes](../errors.md).
 
 The exceptions are two, and only two. A consumer verifies a token and reads the
 enforcement posture *before* it holds a context, because their answers are what a

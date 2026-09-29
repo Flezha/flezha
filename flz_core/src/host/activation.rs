@@ -16,7 +16,7 @@ use super::cell::{cell_ref_of, BytesBuffer, HostPayload, HostTaskletFacts};
 use super::decl::HostClock;
 use super::prepare::{apply_prepare_outcome, PrepareCrossing};
 use crate::cell::{CellItem, CellSlot};
-use crate::error::Error;
+use crate::error::{Code, Error};
 use crate::flusher::{DlqEntryBody, InvocationEffects, OutputRecord, SettlePolicy};
 use crate::poll_core::{EngineActivation, EnginePayload, ItemAttempt, PollCore};
 use crate::schema::{self, TimerOp};
@@ -177,7 +177,7 @@ pub fn apply_result(
         _ => {
             core.abandon(token, items);
             Err(Error::Answer(
-                "work activation answered with a non-work outcome".to_string(),
+                Code::HostWrongOutcome.with([("command", "work".into())]),
             ))
         }
     }
@@ -228,9 +228,7 @@ fn settle_items(
         }
         let Some(work) = queue.pop_front() else {
             core.abandon(token, Vec::new());
-            return Err(Error::Answer(
-                "completion carries more effects than items".to_string(),
-            ));
+            return Err(Error::Answer(Code::CompletionTooManyEffects.with([])));
         };
         // A bounded operator's unreadable message rides its ladder before it parks;
         // an unbounded operator's parks at once.
@@ -279,7 +277,7 @@ pub(super) fn refuse_completion(effect: &mut schema::ItemEffect) {
     if effect.complete.is_some() && effect.verdict == schema::Verdict::Ok {
         *effect = schema::ItemEffect {
             verdict: schema::Verdict::NonRetryableError {
-                message: crate::bounded::COMPLETE_OUTSIDE_BOUNDED.to_string(),
+                message: crate::bounded::complete_outside_bounded().text(),
             },
             consumed_offset: effect.consumed_offset,
             event_time: effect.event_time,
@@ -308,9 +306,9 @@ pub fn abandon_activation(core: &PollCore, act: EngineActivation) -> Result<(), 
     match payload {
         EnginePayload::Work { items, .. } => match core.abandon(token, items) {
             crate::poll_core::Answered::Released => Ok(()),
-            crate::poll_core::Answered::UnknownToken => Err(Error::Answer(format!(
-                "unknown or already-answered activation token {token}"
-            ))),
+            crate::poll_core::Answered::UnknownToken => Err(Error::Answer(
+                Code::UnknownActivationToken.with([("token", token.into())]),
+            )),
         },
         other => apply_result(
             core,

@@ -147,7 +147,7 @@ defmodule Flezha.Plugin.Installer.PackageTest do
 
     :ok = Package.extract(fpz, staging, @opts)
 
-    assert {:error, {:invalid_layout, {:unexpected_entry, "README.md"}}} =
+    assert {:error, {:invalid_layout, :unexpected_entry, "README.md"}} =
              Package.validate_layout(staging)
   end
 
@@ -164,7 +164,7 @@ defmodule Flezha.Plugin.Installer.PackageTest do
 
     :ok = Package.extract(fpz, staging, @opts)
 
-    assert {:error, {:invalid_layout, {:unexpected_source, _}}} =
+    assert {:error, {:invalid_layout, :unexpected_source, _}} =
              Package.validate_layout(staging)
   end
 

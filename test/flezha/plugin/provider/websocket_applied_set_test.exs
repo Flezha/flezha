@@ -273,7 +273,7 @@ defmodule Flezha.Plugin.Provider.WebsocketAppliedSetTest do
     end
 
     test "declaring both sources is refused at init" do
-      assert {:error, message} =
+      assert {:error, {:options_exclusive, :subscription_url, :subscription_items}} =
                prepare(Websocket, %{
                  uri: "wss://test.local",
                  subscription_url: "https://cfg.internal/subs",
@@ -281,20 +281,16 @@ defmodule Flezha.Plugin.Provider.WebsocketAppliedSetTest do
                  subscribe_template: @sub_template,
                  unsubscribe_template: @unsub_template
                })
-
-      assert message =~ "mutually exclusive"
     end
 
     test "a non-string item list is refused" do
-      assert {:error, message} =
+      assert {:error, {:invalid_option_value, :subscription_items, [1, 2]}} =
                prepare(Websocket, %{
                  uri: "wss://test.local",
                  subscription_items: [1, 2],
                  subscribe_template: @sub_template,
                  unsubscribe_template: @unsub_template
                })
-
-      assert message =~ "non-empty strings"
     end
   end
 

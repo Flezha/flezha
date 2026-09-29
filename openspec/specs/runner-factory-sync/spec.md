@@ -161,5 +161,5 @@ Every start path SHALL resolve the operator's kind from this record before admis
 #### Scenario: A spawn naming an unbounded factory is refused by name
 
 - **WHEN** a tasklet requests a spawn of factory `prices`, which its runner announced as an unbounded operator
-- **THEN** the controller SHALL answer `factory_not_bounded` without placing anything, and SHALL NOT answer `factory_unknown` or `refused`
+- **THEN** the controller SHALL answer the code `operator.factory_not_bounded` without placing anything, and SHALL NOT answer `operator.factory_unknown`
 

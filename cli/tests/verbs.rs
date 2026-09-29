@@ -43,7 +43,7 @@ const CASES: &[(&[&str], &str)] = &[
     ),
     (
         &["state", "get", "--output", "json", "a/b/c"],
-        r#"Flezha.Service.CliManager.state_get("a/b/c", "json", [])"#,
+        r#"Flezha.Service.CliManager.state_get("a/b/c", [output: "json"])"#,
     ),
     (
         &["plugin", "install", "--token", "t", "/tmp/p.fpz"],
@@ -56,11 +56,11 @@ const CASES: &[(&[&str], &str)] = &[
     // A switch and the credential read the same on either side of the operator.
     (
         &["operator", "listen", "--input", "--token", "t", "op1"],
-        r#"Flezha.Service.CliManager.operator_listen("", "op1", "input", "text", [duration_ms: 30000, token: "t"])"#,
+        r#"Flezha.Service.CliManager.operator_listen("", "op1", "input", [duration_ms: 30000, token: "t"])"#,
     ),
     (
         &["operator", "listen", "op1", "--token", "t", "--input"],
-        r#"Flezha.Service.CliManager.operator_listen("", "op1", "input", "text", [duration_ms: 30000, token: "t"])"#,
+        r#"Flezha.Service.CliManager.operator_listen("", "op1", "input", [duration_ms: 30000, token: "t"])"#,
     ),
     // A value carrying a quote, a backslash and a non-ASCII letter survives
     // whichever side of the positionals it was written on.
@@ -90,7 +90,7 @@ const CASES: &[(&[&str], &str)] = &[
     ),
     (
         &["audit", "read", "--source", "x\"y", "f.log"],
-        r#"Flezha.Service.CliManager.audit_log_render_read("f.log", "text", [source: "x\"y"])"#,
+        r#"Flezha.Service.CliManager.audit_log_render_read("f.log", [source: "x\"y"])"#,
     ),
 ];
 

@@ -13,12 +13,10 @@
 use std::ffi::c_void;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicPtr, Ordering};
-use std::sync::OnceLock;
 
 use magnus::prelude::*;
-use magnus::value::Opaque;
 use magnus::{
-    function, Error, ExceptionClass, IntoValue, RArray, RHash, RString, Ruby, TryConvert, Value,
+    function, Error, Exception, IntoValue, RArray, RClass, RHash, RString, Ruby, TryConvert, Value,
 };
 
 use crate::veneer::{self, shape, CtxPtr, Polled, Refusal};
@@ -26,12 +24,6 @@ use crate::FlzContext;
 
 /// The one context this process holds. Null until `context_new`.
 static CONTEXT: AtomicPtr<FlzContext> = AtomicPtr::new(std::ptr::null_mut());
-
-/// `Flezha::Native::Error`, minted at init and reachable from the module, so
-/// the handle can never dangle.
-static ERROR_CLASS: OnceLock<Opaque<ExceptionClass>> = OnceLock::new();
-/// `Flezha::Native::SchemaMismatch`.
-static SCHEMA_ERROR_CLASS: OnceLock<Opaque<ExceptionClass>> = OnceLock::new();
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -50,31 +42,20 @@ fn ruby() -> Ruby {
     unsafe { Ruby::get_unchecked() }
 }
 
-fn error_class(ruby: &Ruby) -> ExceptionClass {
-    ERROR_CLASS
-        .get()
-        .map(|c| ruby.get_inner(*c))
-        .unwrap_or_else(|| ruby.exception_standard_error())
-}
-
-fn schema_error_class(ruby: &Ruby) -> ExceptionClass {
-    SCHEMA_ERROR_CLASS
-        .get()
-        .map(|c| ruby.get_inner(*c))
-        .unwrap_or_else(|| error_class(ruby))
-}
-
-/// A native failure as the Ruby exception it raises.
+/// A native failure as the gem's one error type, `Flezha::Error`, built from
+/// the JSON error document. A failure this module words itself (a value it
+/// could not map) is `internal.uncatalogued`.
 fn native_error(ruby: &Ruby, message: impl Into<String>) -> Error {
-    Error::new(error_class(ruby), message.into())
+    let document = veneer::document(message.into());
+    ruby.define_module("Flezha")
+        .and_then(|flezha| flezha.const_get::<_, RClass>("Error"))
+        .and_then(|class| class.funcall::<_, _, Exception>("from_document", (document,)))
+        .map_or_else(|failure| failure, Error::from)
 }
 
-/// The one mapping of a refusal onto the gem's exception classes.
+/// The one mapping of a refusal onto the gem's error type.
 fn raise(ruby: &Ruby, refusal: Refusal) -> Error {
-    match refusal {
-        Refusal::Core(message) | Refusal::Shape(message) => native_error(ruby, message),
-        Refusal::Schema(message) => Error::new(schema_error_class(ruby), message),
-    }
+    native_error(ruby, refusal.into_message())
 }
 
 /// The live context, or an error naming what the caller skipped.
@@ -312,8 +293,8 @@ fn schema_version() -> u32 {
 }
 
 /// Create the process context, negotiating the schema version. Raises
-/// `SchemaMismatch` naming both versions, before any controller connection is
-/// attempted.
+/// `runtime.schema_mismatch` naming both versions, before any controller
+/// connection is attempted.
 fn context_new(shim_schema_version: u32) -> Result<(), Error> {
     let ruby = ruby();
     if !CONTEXT.load(Ordering::Acquire).is_null() {
@@ -344,31 +325,17 @@ fn declare_class(json: RString) -> Result<(), Error> {
 }
 
 /// Judge one host class declaration without registering it: the derived
-/// declaration as JSON, or the core's rendered verdict raised. The gem's
-/// `Graph.validate` is this call and nothing else.
+/// declaration as JSON, or the core's error document raised, whose
+/// `details.issues` lists every issue. The gem's `Graph.validate` is this call
+/// and nothing else.
 fn check_class(json: RString) -> Result<String, Error> {
     let ruby = ruby();
     let ctx = context(&ruby)?;
     let json = unsafe { json.as_slice() }.to_vec();
     match veneer::check_class(ctx, &json) {
         Ok(derived) => Ok(String::from_utf8_lossy(&derived).into_owned()),
-        Err((refusal, verdict)) => Err(refused(&ruby, refusal, &verdict)),
+        Err(refusal) => Err(raise(&ruby, refusal)),
     }
-}
-
-/// A refused declaration as the gem's exception: the core's rendered verdict
-/// is the message, as it is for every other failing call, and the verdict
-/// JSON rides on `#verdict` — so a reader takes the refusal NAMES as data
-/// rather than out of the prose.
-fn refused(ruby: &Ruby, refusal: veneer::Refusal, verdict: &[u8]) -> Error {
-    error_class(ruby)
-        .new_instance((refusal.to_string(),))
-        .and_then(|exception| {
-            let body = String::from_utf8_lossy(verdict).into_owned();
-            exception.funcall::<_, _, Value>("instance_variable_set", ("@verdict", body))?;
-            Ok(Error::from(exception))
-        })
-        .unwrap_or_else(|error| error)
 }
 
 /// Connect to the controller and start the runner loop. Blocking: the ABI call
@@ -569,6 +536,13 @@ fn last_error() -> Option<String> {
     veneer::last_error(CtxPtr::of(ptr))
 }
 
+/// The JSON error document the catalogue renders for `code` and `details`, a
+/// JSON object: the document `last_error` carries for a refusal the core
+/// makes, for one the gem makes itself.
+fn error_document(code: String, details: String) -> Result<String, Error> {
+    crate::render_error_document(&code, &details).map_err(|e| native_error(&ruby(), e))
+}
+
 /// Every function this extension exports, with the C ABI entry point behind
 /// it: `[name, abi_entry_point, blocking]`.
 ///
@@ -620,24 +594,16 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("monotonic_nanos", "flz_core_monotonic_nanos"),
     ("last_error", "flz_core_last_error"),
     ("native_surface", "flz_core_schema_version"),
+    ("error_document", "flz_core_error_document"),
 ];
 
-/// Define `Flezha::Native` and its exception classes. Named `Init_flz_core_ffi`
-/// so `require "flz_core_ffi"` finds it.
+/// Define `Flezha::Native`. Named `Init_flz_core_ffi` so `require
+/// "flz_core_ffi"` finds it. Its failures raise `Flezha::Error`, which the gem
+/// defines before it loads this extension.
 #[magnus::init]
 pub fn init(ruby: &Ruby) -> Result<(), Error> {
     let flezha = ruby.define_module("Flezha")?;
     let native = flezha.define_module("Native")?;
-
-    let error = native.define_error("Error", ruby.exception_standard_error())?;
-    // The verdict a refused declaration carries, as data beside the rendered
-    // message; `nil` on every other native failure. An `attr_reader` because
-    // the ivar is what [`refused`] writes and a reader is what a Ruby caller
-    // expects on an exception.
-    error.funcall::<_, _, Value>("attr_reader", (ruby.sym_new("verdict"),))?;
-    let _ = ERROR_CLASS.set(Opaque::from(error));
-    let schema_mismatch = native.define_error("SchemaMismatch", error)?;
-    let _ = SCHEMA_ERROR_CLASS.set(Opaque::from(schema_mismatch));
 
     native.define_module_function("schema_version", function!(schema_version, 0))?;
     native.define_module_function("context_new", function!(context_new, 1))?;
@@ -663,5 +629,6 @@ pub fn init(ruby: &Ruby) -> Result<(), Error> {
     native.define_module_function("monotonic_nanos", function!(monotonic_nanos, 0))?;
     native.define_module_function("last_error", function!(last_error, 0))?;
     native.define_module_function("native_surface", function!(native_surface, 0))?;
+    native.define_module_function("error_document", function!(error_document, 2))?;
     Ok(())
 }

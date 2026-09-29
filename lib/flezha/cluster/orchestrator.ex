@@ -259,12 +259,15 @@ defmodule Flezha.Cluster.Orchestrator do
            }}
 
         handler ->
-          {:error, "Unknown cluster discovery handler: #{inspect(handler)}"}
+          {:error, {:unknown_discovery_handler, handler}}
       end
 
     case result do
-      {:ok, handler} -> handler
-      {:error, reason} -> raise reason
+      {:ok, handler} ->
+        handler
+
+      {:error, reason} ->
+        raise ArgumentError, "cluster discovery refused its settings: #{inspect(reason)}"
     end
   end
 end

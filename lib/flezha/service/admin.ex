@@ -26,8 +26,9 @@ defmodule Flezha.Service.Admin do
   becomes a keyword list whose keys are atoms this node already knows; what is
   nested inside one is data and stays as `Jason` decodes it.
 
-  The answer is the published function's own, rendered as JSON:
-  `{:ok, value}` answers `value`, an error answers its reason as text.
+  The answer is the published function's own: `{:ok, value}` answers `value`
+  rendered as JSON, and a failure answers its `%Flezha.Error{}`. A request the
+  door cannot place is refused with an `admin.*` code.
   """
 
   alias Flezha.AuthZ.Verb
@@ -39,9 +40,9 @@ defmodule Flezha.Service.Admin do
 
   @doc """
   Run `verb` for the namespace this connection proved, answering
-  `{:ok, json}` or `{:error, text}`.
+  `{:ok, json}` or `{:error, %Flezha.Error{}}`.
   """
-  @spec call(binary(), binary(), binary()) :: {:ok, binary()} | {:error, binary()}
+  @spec call(binary(), binary(), binary()) :: {:ok, binary()} | {:error, Flezha.Error.t()}
   def call(namespace, verb, args_json)
       when is_binary(namespace) and is_binary(verb) and is_binary(args_json) do
     with {:ok, binding} <- resolve(verb),
@@ -60,11 +61,12 @@ defmodule Flezha.Service.Admin do
   defp run(binding, args) do
     answer(apply(binding.module, binding.function, args))
   catch
-    kind, reason -> {:error, refusal_text(kind, reason)}
+    kind, reason ->
+      {:error, Flezha.Error.new("internal.uncatalogued", reason: raised(kind, reason))}
   end
 
-  defp refusal_text(:error, %{__struct__: _} = exception), do: Exception.message(exception)
-  defp refusal_text(kind, reason), do: "#{kind}: #{inspect(reason)}"
+  defp raised(:error, %{__struct__: _} = exception), do: Exception.message(exception)
+  defp raised(kind, reason), do: "#{kind}: #{inspect(reason)}"
 
   # ---------- resolving a name to a declared binding ----------
 
@@ -77,7 +79,7 @@ defmodule Flezha.Service.Admin do
          {:ok, row_name, arities} <- bound(module, function) do
       {:ok, %{module: module, function: function, row: Verbs.fetch!(row_name), arities: arities}}
     else
-      :error -> {:error, "no published function is named `#{verb}`"}
+      :error -> refused("admin.unknown_function", function: verb)
     end
   end
 
@@ -125,7 +127,7 @@ defmodule Flezha.Service.Admin do
   defp accepts?(binding, arity, verb) do
     if MapSet.member?(binding.arities, arity),
       do: :ok,
-      else: {:error, "`#{verb}` takes no argument list of this length"}
+      else: refused("admin.wrong_arity", function: verb)
   end
 
   defp existing_atom(text) do
@@ -161,8 +163,8 @@ defmodule Flezha.Service.Admin do
   defp decode_args(args_json) do
     case Jason.decode(args_json) do
       {:ok, args} when is_list(args) -> parameters(args, [])
-      {:ok, _other} -> {:error, "arguments must be a JSON array"}
-      {:error, reason} -> {:error, "invalid argument JSON: " <> Exception.message(reason)}
+      {:ok, _other} -> refused("admin.args_not_array", [])
+      {:error, reason} -> refused("admin.invalid_args_json", reason: Exception.message(reason))
     end
   end
 
@@ -182,22 +184,17 @@ defmodule Flezha.Service.Admin do
   defp named([{key, value} | rest], done) do
     case existing_atom(key) do
       {:ok, atom} -> named(rest, [{atom, value} | done])
-      :error -> {:error, "unknown parameter `#{key}`"}
+      :error -> refused("admin.unknown_parameter", parameter: key)
     end
   end
 
   # ---------- the answer ----------
 
-  defp answer({:error, {:forbidden, reason}}),
-    do: {:error, "forbidden: #{reason}"}
-
-  defp answer({:error, reason}), do: {:error, text(reason)}
+  defp answer({:error, %Flezha.Error{}} = refused), do: refused
   defp answer({:ok, value}), do: {:ok, json(value)}
   defp answer(other), do: {:ok, json(other)}
 
   defp json(value), do: value |> Signal.metadata_json() |> Jason.encode!()
 
-  defp text(reason) when is_binary(reason), do: reason
-  defp text(reason) when is_atom(reason), do: Atom.to_string(reason)
-  defp text(reason), do: inspect(reason)
+  defp refused(code, details), do: {:error, Flezha.Error.new(code, details)}
 end

@@ -190,7 +190,7 @@ pub(crate) mod host_class {
         id: &str,
         init: &str,
         owed: u32,
-    ) -> Vec<String> {
+    ) -> Vec<crate::Error> {
         use crate::command::CommandAction;
         let mut errors = Vec::new();
         crate::pb::AddOperator {

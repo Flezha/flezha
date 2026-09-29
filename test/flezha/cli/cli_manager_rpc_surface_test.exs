@@ -20,11 +20,10 @@ defmodule Flezha.Service.CliManagerRpcSurfaceTest do
   # parameter. Each one fixes the arity by construction; the second element is
   # the index of the name argument, the third a prefix the helper adds.
   @generic %{
-    "scoped_read" => {3, 1, ""},
+    "scoped_read" => {2, 1, ""},
     "one_arg" => {2, 2, ""},
-    "token_only" => {1, 1, ""},
-    "rendered" => {2, 1, ""},
-    "scoped_verb" => {3, 1, ""},
+    "bare" => {1, 1, ""},
+    "scoped_verb" => {2, 1, ""},
     "quota_verb" => {3, 1, ""}
   }
 

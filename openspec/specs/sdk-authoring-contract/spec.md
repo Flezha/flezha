@@ -195,12 +195,12 @@ An operator declaration carrying both a tasklet body and a topology body SHALL b
 #### Scenario: A tasklet body beside a topology body is refused
 
 - **WHEN** an operator declaration carries a tasklet body and also a `channels` body
-- **THEN** the SDK SHALL refuse naming `ShortFormWithTopology`, at compile time where the language has one and at declaration or registration otherwise
+- **THEN** the SDK SHALL refuse naming `topology.short_form_with_topology`, at compile time where the language has one and at declaration or registration otherwise
 
 #### Scenario: A sink on a body with no output is refused
 
 - **WHEN** a short form declares a `sink` and its body is one the SDK can see declares no output
-- **THEN** the SDK SHALL refuse naming `SinkWithoutOutput`
+- **THEN** the SDK SHALL refuse naming `topology.sink_without_output`
 
 #### Scenario: Multi-tasklet topology stays explicit
 
@@ -210,7 +210,7 @@ An operator declaration carrying both a tasklet body and a topology body SHALL b
 #### Scenario: Duplicate factory id fails fast across kinds
 
 - **WHEN** a runner is handed an unbounded and a bounded operator, short or full, under one factory id
-- **THEN** the second definition fails with an error naming `DuplicateFactoryId` and the colliding id
+- **THEN** the second definition fails with an error naming `topology.duplicate_factory_id` and the colliding id
 
 #### Scenario: The same declaration in every SDK
 
@@ -561,7 +561,7 @@ runner cannot SHALL reject a post-start call with an error that says so, never i
 Elixir), not free functions, static methods, or methods on a builder type, and SHALL be
 generic over the shared base where the host language expresses such a bound. An operator
 whose kind cannot be read, because it declares both kinds or neither, SHALL be refused at
-registration with an error beginning `AmbiguousOperatorKind` or `UnknownOperatorKind`; in
+registration with an error beginning `topology.ambiguous_operator_kind` or `topology.unknown_operator_kind`; in
 Rust, where such a type cannot be passed to `register_factory` at all, it is a compile error, and in Java a class implementing both kind interfaces does not compile against the base's single `channels`. A short form's kind is its entry point's name, so no short form can reach either refusal. The
 base SHALL NOT require unifying the sealed operator *instance* enum, which stays
 asymmetric. Adding a future operator kind SHALL require implementing the base and teaching
@@ -590,7 +590,7 @@ that the grouping states the taxonomy the vocabulary already uses.
 #### Scenario: An operator of both kinds is refused
 
 - **WHEN** an Elixir module declaring both `@behaviour Flezha.SDK.UnboundedOperator` and `@behaviour Flezha.SDK.BoundedOperator` is handed to `register_factory/2`, or a Java class implementing both `UnboundedOperator` and `BoundedOperator` is compiled
-- **THEN** the Elixir registration SHALL fail with an error beginning `AmbiguousOperatorKind` naming the module and nothing SHALL be declared, and the Java class SHALL fail to compile
+- **THEN** the Elixir registration SHALL fail with an error beginning `topology.ambiguous_operator_kind` naming the module and nothing SHALL be declared, and the Java class SHALL fail to compile
 
 #### Scenario: Both kinds declare their graph in channels
 
@@ -621,19 +621,19 @@ that the grouping states the taxonomy the vocabulary already uses.
   grouping, and neither kind SHALL be the only one placed outside it
 
 ### Requirement: Short-form refusals carry one name per refusal in every SDK
-The three short-form refusals SHALL be named `ShortFormWithTopology`, `SinkWithoutOutput` and `DuplicateFactoryId` in every SDK, and the name SHALL appear verbatim in the error the author reads: the compile error text in Rust, Java and an Elixir `use` declaration, the declaration error's refusal list and message in Python, Node, Ruby and PHP, and the printed form of the registration error in Elixir. The names SHALL be listed in `docs/sdk/authoring_contract.md` §5, which the conformance check reads as the source of the row names.
+The three short-form refusals SHALL be named `topology.short_form_with_topology`, `topology.sink_without_output` and `topology.duplicate_factory_id` in every SDK, and the name SHALL be the code the author reads: in the compile error text in Rust, Java and an Elixir `use` declaration, and as the `code` of the SDK's one error type in Python, Node, Ruby, PHP and an Elixir registration. The names SHALL be listed in `docs/sdk/authoring_contract.md` §5, which the conformance check reads as the source of the row names.
 
 `SinkWithoutId`, `SinkWithoutKind` and `ShorthandKeyWithoutSink` SHALL NOT exist. A short form's identity is an operator's factory id, which every operator has always been required to carry, so the first is the full form's own rule; the kind is the entry point's name, so the second is unrepresentable; and `input` and `codec` are meaningful with no `sink`, so the third refuses nothing.
 
 #### Scenario: A refusal is recognisable across languages
 
 - **WHEN** an author writes a tasklet body beside a topology body in any of the seven SDKs
-- **THEN** the error they see contains `ShortFormWithTopology`, whatever else that SDK's error carries
+- **THEN** the error they see contains `topology.short_form_with_topology`, whatever else that SDK's error carries
 
 #### Scenario: The duplicate-id error is named, not only described
 
 - **WHEN** a runner is asked to define a second operator with a factory id it already holds
-- **THEN** the error contains `DuplicateFactoryId` and the id, in every SDK
+- **THEN** the error contains `topology.duplicate_factory_id` and the id, in every SDK
 
 #### Scenario: A retired refusal name is gone from every SDK
 
@@ -642,7 +642,7 @@ The three short-form refusals SHALL be named `ShortFormWithTopology`, `SinkWitho
 
 ### Requirement: A setting that belongs to one kind is refused by name on the other
 
-Every SDK SHALL let what an author writes on a class reach the judgement of that class's kind, and SHALL never drop a setting because the kind does not carry it. An unbounded-only setting on a bounded class SHALL be refused at registration under the reference's name: the effectively-once tier as `EffectivelyOnceOnBounded`, any checkpoint setting (`checkpoint_ack`, `checkpoint_every`, `outputs_at_checkpoint`, its maximum delay) as `CheckpointOnBounded`, the correction window as `CorrectionWindowOnBounded`. A bounded-only setting on an unbounded class SHALL be refused the same way: synchronous durability as `SyncDurabilityOnUnbounded`, and in PHP the `#[Bounded operator]` attribute on a class extending `Flezha\UnboundedOperator`, naming the attribute. The name SHALL appear verbatim in the error the author reads, in every SDK, whether the SDK judges the class itself (Rust, Elixir) or the shared core judges it (Java, Node, Python, Ruby, PHP); a host SDK raises it where it declares the class to the core, which in Node, Python, Ruby and PHP is the runner's start for a class registered before it. No SDK SHALL keep a per-kind gate that removes such a setting from the declaration before it is judged, and no SDK SHALL honour such a setting in its own runtime while withholding it from the declaration.
+Every SDK SHALL let what an author writes on a class reach the judgement of that class's kind, and SHALL never drop a setting because the kind does not carry it. An unbounded-only setting on a bounded class SHALL be refused at registration under the reference's name: the effectively-once tier as `topology.effectively_once_on_bounded`, any checkpoint setting (`checkpoint_ack`, `checkpoint_every`, `outputs_at_checkpoint`, its maximum delay) as `topology.checkpoint_on_bounded`, the correction window as `topology.correction_window_on_bounded`. A bounded-only setting on an unbounded class SHALL be refused the same way: synchronous durability as `topology.sync_durability_on_unbounded`, and in PHP the `#[Bounded operator]` attribute on a class extending `Flezha\UnboundedOperator`, naming the attribute. The name SHALL appear verbatim in the error the author reads, in every SDK, whether the SDK judges the class itself (Rust, Elixir) or the shared core judges it (Java, Node, Python, Ruby, PHP); a host SDK raises it where it declares the class to the core, which in Node, Python, Ruby and PHP is the runner's start for a class registered before it. No SDK SHALL keep a per-kind gate that removes such a setting from the declaration before it is judged, and no SDK SHALL honour such a setting in its own runtime while withholding it from the declaration.
 
 Synchronous durability SHALL have one spelling per SDK, the class-level one (`SYNC_DURABILITY` in Rust, `syncDurability()` in Java, the `syncDurability` definition field in Node, the `sync_durability` decorator keyword in Python, the `sync_durability` class-body flag in Ruby, `#[Bounded(syncDurability: true)]` in PHP, the `sync_durability` `use` option in Elixir). No channel builder SHALL carry a `sync_durability` call.
 
@@ -651,17 +651,17 @@ Synchronous durability SHALL have one spelling per SDK, the class-level one (`SY
 #### Scenario: The tier on a bounded operator is refused, not dropped
 
 - **WHEN** a bounded class in any of the seven SDKs declares the effectively-once tier on its builder
-- **THEN** registration SHALL fail with an error containing `EffectivelyOnceOnBounded`, nothing SHALL be declared, and no SDK SHALL run the tier for that class
+- **THEN** registration SHALL fail with an error containing `topology.effectively_once_on_bounded`, nothing SHALL be declared, and no SDK SHALL run the tier for that class
 
 #### Scenario: A checkpoint setting on a bounded operator is refused by its own name
 
 - **WHEN** a bounded class declares `checkpoint_every(500)` and nothing else unbounded-only
-- **THEN** registration SHALL fail with an error containing `CheckpointOnBounded`, and SHALL NOT report `CheckpointAckWithoutTier`
+- **THEN** registration SHALL fail with an error containing `topology.checkpoint_on_bounded`, and SHALL NOT report `topology.checkpoint_ack_without_tier`
 
 #### Scenario: A bounded attribute on a PHP unbounded class is refused
 
 - **WHEN** a class extending `Flezha\UnboundedOperator` carries `#[Bounded(loopMode: LoopMode::PerInput)]`
-- **THEN** `registerFactory` SHALL throw `DeclarationException` naming `#[Bounded operator]` and the class, and nothing SHALL be declared
+- **THEN** `registerFactory` SHALL throw `FlezhaException` naming `#[Bounded operator]` and the class, and nothing SHALL be declared
 
 #### Scenario: The builder spelling of synchronous durability is gone
 
@@ -702,7 +702,7 @@ declaration so the controller reads the same value:
   Python decorators, the `sleep_when_idle` class-body flag in Ruby, `#[Operator(sleepWhenIdle:)]`
   in PHP, and the `sleep_when_idle` `use` option and optional callback on both Elixir
   behaviours. The declaration SHALL carry the resolved boolean. A class that declares sleeping
-  with its persistence switch off SHALL be refused at registration as `SleepWithoutPersistence`,
+  with its persistence switch off SHALL be refused at registration as `topology.sleep_without_persistence`,
   the name verbatim in the error, whether the SDK judges the class itself (Rust, Elixir) or the
   shared core does (Java, Node, Python, Ruby, PHP).
 
@@ -727,7 +727,7 @@ SHALL be unable to set either, as it can set no class-level setting.
 #### Scenario: Sleeping without persistence is refused by name
 
 - **WHEN** a class of either kind, in any SDK, declares `sleep_when_idle` on and its persistence switch off
-- **THEN** registration SHALL fail with an error containing `SleepWithoutPersistence` and nothing SHALL be declared
+- **THEN** registration SHALL fail with an error containing `topology.sleep_without_persistence` and nothing SHALL be declared
 
 ### Requirement: The timer contract holds in both kinds and no class-level wake exists
 

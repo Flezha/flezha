@@ -19,7 +19,12 @@ use crate::runner::RunnerNode;
 use crate::state_sink;
 
 impl CommandAction for ConnectSocket {
-    fn handle(&self, runner: &mut RunnerNode, _message: &str, errors: &mut Vec<String>) -> Reply {
+    fn handle(
+        &self,
+        runner: &mut RunnerNode,
+        _message: &str,
+        errors: &mut Vec<crate::Error>,
+    ) -> Reply {
         let connected = match get_transport_type() {
             #[cfg(unix)]
             TransportType::Uds => connect_uds(self, runner),
@@ -35,10 +40,16 @@ impl CommandAction for ConnectSocket {
 /// command's error and ends the handshake at the controller; a pair set that
 /// came up is noted first, so the control reader takes the controller's next
 /// frame as the session carrying on.
-fn answer(runner: &RunnerNode, connected: Result<(), String>, errors: &mut Vec<String>) -> Reply {
+fn answer(
+    runner: &RunnerNode,
+    connected: Result<(), String>,
+    errors: &mut Vec<crate::Error>,
+) -> Reply {
     match connected {
         Ok(()) => runner.note_connect_answered(),
-        Err(refusal) => errors.push(refusal),
+        Err(reason) => errors.push(crate::Error::Connect(
+            crate::Code::DataStreamsFailed.with([("reason", reason.into())]),
+        )),
     }
     Reply {
         payload_id: "connect_sockets",
@@ -285,6 +296,7 @@ mod tests {
     use super::*;
     use crate::pb::command_request::Command;
     use crate::pb::{CommandRequest, CommandResponse};
+    use crate::ErrorModel;
 
     /// A runner dialled at `peer`, ready to be handed a `ConnectSocket`.
     fn runner_on(peer: &SocketPeer) -> (RunnerNode, Arc<QuicClient>) {
@@ -400,12 +412,14 @@ mod tests {
         let mut runner = RunnerNode::new("connect_test".to_string());
         let mut live = ControlLiveness::new();
         runner.set_connect_answered(live.connect_answered());
-        let mut errors: Vec<String> = Vec::new();
+        let mut errors: Vec<crate::Error> = Vec::new();
 
         let reply = answer(&runner, Err("refused".to_string()), &mut errors);
         live.note_frame();
         assert_eq!(reply.payload_id, "connect_sockets");
-        assert_eq!(errors, ["refused"]);
+        let codes: Vec<String> = errors.iter().map(ErrorModel::code).collect();
+        assert_eq!(codes, ["runner.data_streams_failed"]);
+        assert_eq!(errors[0].to_error().details["reason"], "refused");
         assert!(
             !live.handshake_completed(),
             "a refused connect admits nothing"
@@ -460,8 +474,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
 
         assert_eq!(response.status, "error");
+        assert_eq!(response.errors[0].code, "runner.data_streams_failed");
         assert!(
-            response.errors[0].contains("primary_stream_unbound"),
+            response.errors[0]
+                .details_json
+                .contains("primary_stream_unbound"),
             "the refusal names the socket it could not dial: {:?}",
             response.errors
         );
@@ -478,7 +495,9 @@ mod tests {
 
         assert_eq!(response.status, "error");
         assert!(
-            response.errors[0].contains(&*dir.to_string_lossy()),
+            response.errors[0]
+                .details_json
+                .contains(&*dir.to_string_lossy()),
             "the refusal names the directory: {:?}",
             response.errors
         );

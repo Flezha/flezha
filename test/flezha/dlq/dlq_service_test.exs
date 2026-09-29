@@ -84,7 +84,8 @@ defmodule Flezha.Service.DlqTest do
     end
 
     test "answers :not_found for an entry that is not there" do
-      assert {:error, :not_found} = DlqSvc.drop("nope/task/1", context())
+      assert {:error, %Flezha.Error{code: "dlq.not_found"}} =
+               DlqSvc.drop("nope/task/1", context())
     end
   end
 
@@ -144,7 +145,9 @@ defmodule Flezha.Service.DlqTest do
 
     test "refuses an entry whose payload cannot be replayed", %{entry: entry} do
       {:ok, ref} = Store.append(%{entry | payload: nil})
-      assert {:error, :payload_not_replayable} = DlqSvc.replay(ref, context())
+
+      assert {:error, %Flezha.Error{code: "dlq.payload_not_replayable"}} =
+               DlqSvc.replay(ref, context())
     end
   end
 

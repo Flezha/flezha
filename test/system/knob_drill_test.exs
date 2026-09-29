@@ -100,7 +100,7 @@ defmodule FlezhaTest.System.KnobDrillTest do
 
     printed =
       ExUnit.CaptureIO.capture_io(fn ->
-        :ok = ControllerCli.controller_status("text", %{})
+        :ok = ControllerCli.controller_status(%{opts: []})
       end)
 
     Paths.state_root() == resolved and
@@ -116,7 +116,7 @@ defmodule FlezhaTest.System.KnobDrillTest do
 
     printed =
       ExUnit.CaptureIO.capture_io(fn ->
-        :ok = ControllerCli.controller_status("text", %{})
+        :ok = ControllerCli.controller_status(%{opts: []})
       end)
 
     {:ok, %{path: path}} = FilePlugin.prepare(%{path: "x.ndjson", plugin_id: "knob_drill"})

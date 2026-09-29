@@ -101,7 +101,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
       straight to `init_provider/1` without ever constructing the struct, so the
       check has to live on both paths.
       """
-      @spec validate_opts(map()) :: :ok | {:error, binary()}
+      @spec validate_opts(map()) :: :ok | {:error, term()}
       def validate_opts(opts) do
         unquote(contract).reject_unknown(
           Map.keys(opts),
@@ -252,7 +252,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
         do: unquote(Options).convert_row(field, value, @__provider_options__)
 
       @doc false
-      @spec __convert__(atom(), term()) :: {:ok, term()} | {:error, binary()}
+      @spec __convert__(atom(), term()) :: {:ok, term()} | {:error, term()}
       def __convert__(field, value), do: convert_value(field, value)
     end
   end

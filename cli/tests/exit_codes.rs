@@ -5,7 +5,8 @@
 //! answers 0 after that spawn failed is reporting a success it did not earn,
 //! and a script cannot tell it from a success (KI-79). A release that was
 //! never built is an ordinary caller condition and takes an ordinary
-//! refusal naming the path, not a Rust panic (KB-277).
+//! refusal naming the path, not a Rust panic (KB-277). Every other failure's
+//! code is the class of the error the controller rendered.
 
 mod common;
 
@@ -14,7 +15,7 @@ use common::Shim;
 const FLZ_BIN: &str = env!("CARGO_BIN_EXE_flz");
 
 /// A `flz` whose `flzvm` always refuses. Exit 7 is chosen because no `flz`
-/// dialect produces it from anything but a propagated child code.
+/// rule produces it from anything but a propagated child code.
 struct Refusing {
     shim: Shim,
 }
@@ -36,87 +37,107 @@ impl Refusing {
             .code()
             .expect("flz exits rather than being signalled")
     }
-
-    /// Every mismatching case, so one run names all of them.
-    fn wrong(&self, cases: &[(&[&str], i32)]) -> Vec<String> {
-        cases
-            .iter()
-            .filter_map(|(args, want)| {
-                let got = self.code(args);
-                (got != *want)
-                    .then(|| format!("flz {}: exit {} (want {})", args.join(" "), got, want))
-            })
-            .collect()
-    }
 }
 
-/// The five verbs of KI-79. Their `match status` had no `exit()` in either
-/// failure arm, so `main` returned normally and the process exited 0 — while
-/// `operator send`, six lines away, exited 1 from the identical match.
-fn no_refusal_is_reported_as_success(cli: &Refusing) -> Vec<String> {
-    cli.wrong(&[
-        (&["operator", "stop", "op1"], 1),
-        (&["operator", "rewind", "op1", "--to-iteration", "3"], 1),
-        (&["operator", "replay", "a/b/c", "--from", "5"], 1),
-        (&["operator", "state", "op1"], 1),
-        (&["controller", "start"], 1),
-    ])
+/// One rule for every verb: the controller rendered the failure and exited
+/// with its class's code, so `flz` passes that code through and says nothing.
+/// The first five are the verbs of KI-79, which once exited 0 after a refusal.
+fn every_verb_passes_the_childs_code_through(cli: &Refusing) -> Vec<String> {
+    let verbs: &[&[&str]] = &[
+        &["operator", "stop", "op1"],
+        &["operator", "rewind", "op1", "--to-iteration", "3"],
+        &["operator", "replay", "a/b/c", "--from", "5"],
+        &["operator", "state", "op1"],
+        &["controller", "start"],
+        &["operator", "send", "op1", "--text", "hi"],
+        &["operator", "list"],
+        &["boot", "status"],
+        &["controller", "status"],
+        &["audit", "list"],
+        &["dlq", "list"],
+    ];
+
+    verbs
+        .iter()
+        .filter_map(|args| {
+            let got = cli.code(args);
+            (got != 7).then(|| format!("flz {}: exit {} (want 7)", args.join(" "), got))
+        })
+        .collect()
 }
 
-/// One verb per surviving exit-code dialect, so a later refactor of the 34
-/// spawn sites cannot quietly move a caller-visible code.
-fn every_dialect_keeps_its_code(cli: &Refusing) -> Vec<String> {
-    cli.wrong(&[
-        // The reference arm KI-79's fix was copied from.
-        (&["operator", "send", "op1", "--text", "hi"], 1),
-        // 17 sites: diagnose, then exit 1.
-        (&["operator", "list"], 1),
-        // 5 sites: propagate the child's code.
-        (&["boot", "status"], 7),
-        // 2 sites: exit 3, silently.
-        (&["controller", "status"], 3),
-        // 3 sites: diagnose the spawn, else propagate the child's code.
-        (&["audit", "list"], 7),
-    ])
-}
-
-/// One verb per dialect again, with nothing to spawn: each names the path it
-/// looked for, says nothing about a backtrace, and exits with the code its
-/// policy falls back to. `audit list` and `operator stop` already diagnosed
-/// their own spawn, so they are the control arm that the shared sentence did
-/// not move a code.
+/// With nothing to spawn, every verb refuses in the one shape: the code
+/// `cli.flzvm_not_runnable`, the path it looked for, exit 1 for its class, and
+/// no backtrace (KB-277).
 fn a_missing_flzvm_is_refused_rather_than_panicked() -> Vec<String> {
     let cli = Shim::without_flzvm(FLZ_BIN);
     let looked_for = cli.flzvm_path().display().to_string();
 
-    let cases: &[(&[&str], i32)] = &[
-        (&["dlq", "list", "--token", "t"], 1),
-        (&["controller", "status"], 3),
-        (&["operator", "list"], 1),
-        (&["audit", "list"], 3),
-        (&["operator", "stop", "op1"], 1),
+    let cases: &[&[&str]] = &[
+        &["dlq", "list", "--token", "t"],
+        &["controller", "status"],
+        &["operator", "list"],
+        &["audit", "list"],
+        &["operator", "stop", "op1"],
     ];
 
     cases
         .iter()
-        .filter_map(|(args, want)| {
+        .filter_map(|args| {
             let out = cli.run(args);
             let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-            let wrong = out.status.code() != Some(*want)
+            let wrong = out.status.code() != Some(1)
                 || stderr.contains("panicked")
-                || !stderr.contains(&looked_for);
+                || !stderr.contains(&looked_for)
+                || !stderr.contains("(cli.flzvm_not_runnable)");
 
             wrong.then(|| {
                 format!(
-                    "flz {}: exit {:?} (want {}), stderr {:?}",
+                    "flz {}: exit {:?} (want 1), stderr {:?}",
                     args.join(" "),
                     out.status.code(),
-                    want,
                     stderr.trim()
                 )
             })
         })
         .collect()
+}
+
+/// `elixir --rpc-eval` says a node it could not reach in one line and exits 1,
+/// the code an internal failure has. `flz` holds that line back and answers
+/// `controller.unreachable`, exit 3, in the form the caller asked for.
+fn an_unreachable_controller_is_its_own_class() -> Vec<String> {
+    let cli = Shim::new(
+        FLZ_BIN,
+        "#!/bin/sh\necho '--rpc-eval : RPC failed with reason :noconnection' >&2\nexit 1\n",
+    );
+    let mut wrong = Vec::new();
+
+    let text = cli.run(&["namespace", "list"]);
+    let stderr = String::from_utf8_lossy(&text.stderr).to_string();
+    if text.status.code() != Some(3)
+        || stderr.contains(":noconnection")
+        || !stderr.contains("(controller.unreachable)")
+    {
+        wrong.push(format!(
+            "namespace list, unreachable: exit {:?}, stderr {:?}",
+            text.status.code(),
+            stderr
+        ));
+    }
+
+    let json = cli.run(&["namespace", "list", "--json"]);
+    let line = String::from_utf8_lossy(&json.stderr).trim().to_string();
+    let parsed: serde_json::Value = serde_json::from_str(&line).unwrap_or_default();
+    if json.status.code() != Some(3) || parsed["error"]["code"] != "controller.unreachable" {
+        wrong.push(format!(
+            "namespace list --json, unreachable: exit {:?}, stderr {:?}",
+            json.status.code(),
+            line
+        ));
+    }
+
+    wrong
 }
 
 /// An attached start returns when the controller has STOPPED: `flzvm start`
@@ -159,9 +180,9 @@ fn only_a_daemon_start_announces_a_start() -> Vec<String> {
 fn every_verb_answers_a_refused_flzvm_with_the_code_it_promises() {
     let cli = Refusing::new();
 
-    let mut wrong = no_refusal_is_reported_as_success(&cli);
-    wrong.extend(every_dialect_keeps_its_code(&cli));
+    let mut wrong = every_verb_passes_the_childs_code_through(&cli);
     wrong.extend(a_missing_flzvm_is_refused_rather_than_panicked());
+    wrong.extend(an_unreachable_controller_is_its_own_class());
     wrong.extend(only_a_daemon_start_announces_a_start());
 
     assert!(

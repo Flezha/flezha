@@ -70,7 +70,7 @@ existing string conversions SHALL remain retryable by default. The policy knobs 
 edge's, `retry_max` and `retry_backoff_ms` on the channel builder of every SDK, exactly as a
 stream tunes them; the `BoundedOperator` trait SHALL expose no per-class knob for attempt
 count or backoff base, and `retry_max(1)` SHALL be fail-fast, `retry_max(0)` being refused as
-`RetryMaxZero` for both kinds. Retry SHALL apply to
+`topology.retry_max_zero` for both kinds. Retry SHALL apply to
 every bounded operator's tasklet cells, since every bounded operator runs tasklets, and
 SHALL only ever occur before the tasklet's commit (a committed tasklet is
 never retried).
@@ -83,7 +83,7 @@ never retried).
 #### Scenario: retry_max(1) is fail-fast
 
 - **WHEN** a bounded operator's entry edge declares `retry_max(1)` and a cell errors
-- **THEN** the tasklet SHALL fail on the first error, and the same declaration with `retry_max(0)` SHALL be refused at registration naming `RetryMaxZero`
+- **THEN** the tasklet SHALL fail on the first error, and the same declaration with `retry_max(0)` SHALL be refused at registration naming `topology.retry_max_zero`
 
 #### Scenario: The class-level knobs are gone from every SDK
 

@@ -72,7 +72,10 @@ defmodule Flezha.AuthZ.RebootstrapTest do
     # revoked, claimed flag reset.
     refute RoleStore.admin_system_exists?()
     assert :error = RoleStore.lookup(principal)
-    assert {:error, :token_revoked} = TokenStore.verify(minted_admin_token)
+
+    assert {:error, %Flezha.Error{code: "authz.token_revoked"}} =
+             TokenStore.verify(minted_admin_token)
+
     refute AuthState.enabled?()
     refute File.exists?(Bootstrap.recovery_marker_path())
 
@@ -153,7 +156,7 @@ defmodule Flezha.AuthZ.RebootstrapTest do
 
       # The previous admin authorizes nothing, and exactly one admin survives.
       assert :error = RoleStore.lookup(lost_principal)
-      assert {:error, :token_revoked} = TokenStore.verify(lost_token)
+      assert {:error, %Flezha.Error{code: "authz.token_revoked"}} = TokenStore.verify(lost_token)
       assert {:ok, %{namespace: "_system", roles: [:admin]}} = RoleStore.lookup("recovered-admin")
       assert AuthState.enabled?()
 

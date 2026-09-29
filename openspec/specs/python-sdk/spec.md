@@ -31,7 +31,7 @@ The runner SHALL report, in its startup line, the wheel build tier, the active e
 
 The Python SDK SHALL expose its authoring surface as decorators: `@flezha.state`, `@flezha.tasklet`, `@flezha.unbounded_operator` and `@flezha.bounded_operator`. Decorators SHALL register the decorated object into a module-level registry at import time and SHALL NOT connect, spawn threads, or perform I/O.
 
-`@flezha.tasklet` SHALL decorate a class and nothing else. A tasklet class's body SHALL be its `run` method, the name every SDK gives a tasklet's body; a decorated class defining `process` and no `run` SHALL raise `DeclarationError` naming `run`. A function passed to `flezha.tasklet`, as a decorator or as its first argument, SHALL raise `DeclarationError` naming the function, stating that a tasklet is a class whose `run` takes the value and the context, and directing the author to `@flezha.unbounded_operator` / `@flezha.bounded_operator` for a whole one-tasklet operator. `name` SHALL be required: a tasklet declared with no `name`, or an empty one, SHALL raise `DeclarationError` naming the class, and the SDK SHALL NOT derive a tasklet's name from `__name__`. The hooks SHALL be the class's methods of their names (`init_state`, `apply_change`, `cells_for`, `event_time`, `on_timer`, `compensate`, `migrate_state`, `migrate_change`), so writing a hook is what declares it.
+`@flezha.tasklet` SHALL decorate a class and nothing else. A tasklet class's body SHALL be its `run` method, the name every SDK gives a tasklet's body; a decorated class defining `process` and no `run` SHALL raise `FlezhaError` naming `run`. A function passed to `flezha.tasklet`, as a decorator or as its first argument, SHALL raise `FlezhaError` naming the function, stating that a tasklet is a class whose `run` takes the value and the context, and directing the author to `@flezha.unbounded_operator` / `@flezha.bounded_operator` for a whole one-tasklet operator. `name` SHALL be required: a tasklet declared with no `name`, or an empty one, SHALL raise `FlezhaError` naming the class, and the SDK SHALL NOT derive a tasklet's name from `__name__`. The hooks SHALL be the class's methods of their names (`init_state`, `apply_change`, `cells_for`, `event_time`, `on_timer`, `compensate`, `migrate_state`, `migrate_change`), so writing a hook is what declares it.
 
 A tasklet SHALL be testable with no controller and no runner, through `flezha.testing.TaskletTestHarness`. A function short form's body SHALL remain an ordinary callable, reachable as the operator's generated tasklet (`op.tasklet(value)`), which forwards to the function.
 
@@ -39,7 +39,7 @@ Declaration SHALL be a pure expansion onto the shared authoring contract's surfa
 
 #### Scenario: A function tasklet is refused
 - **WHEN** a module declares `@flezha.tasklet(name="price") def price(tick: Tick) -> Quote: ...`
-- **THEN** importing it SHALL raise `DeclarationError` naming `price`, stating that a tasklet is a class whose `run` takes the value and the context, and naming `@flezha.unbounded_operator` and `@flezha.bounded_operator`
+- **THEN** importing it SHALL raise `FlezhaError` naming `price`, stating that a tasklet is a class whose `run` takes the value and the context, and naming `@flezha.unbounded_operator` and `@flezha.bounded_operator`
 
 #### Scenario: Decorating performs no I/O
 - **WHEN** a module containing `@flezha.tasklet` and `@flezha.unbounded_operator` declarations is imported with no controller running
@@ -51,11 +51,11 @@ Declaration SHALL be a pure expansion onto the shared authoring contract's surfa
 
 #### Scenario: The old body method is refused
 - **WHEN** a class decorated `@flezha.tasklet` defines `process` and no `run`
-- **THEN** decorating it SHALL raise `DeclarationError` naming `run`
+- **THEN** decorating it SHALL raise `FlezhaError` naming `run`
 
 #### Scenario: A tasklet without a name is refused
 - **WHEN** a module declares `@flezha.tasklet` or `flezha.tasklet(Upcase)` over a class with no `name`
-- **THEN** importing it SHALL raise `DeclarationError` naming `Upcase` and the required `name`
+- **THEN** importing it SHALL raise `FlezhaError` naming `Upcase` and the required `name`
 
 #### Scenario: A renamed class keeps its state
 - **WHEN** a tasklet class declared `@flezha.tasklet(name="tally")` is renamed from `Tally` to `WordTally` and its operator is restarted over saved state
@@ -69,7 +69,7 @@ Declaration SHALL be a pure expansion onto the shared authoring contract's surfa
 
 The Python SDK SHALL derive a tasklet's input type from the annotation on `run`'s value parameter, and its output type from the output argument of the `Ctx[State, Output]` annotation on `run`'s context parameter (for a function short form, from the function's return annotation), and SHALL use them to wire the operator graph. The package SHALL ship `py.typed` and a fully annotated public surface, such that a wrong edge type is reported by a standard type checker before the program runs. The decorator SHALL be typed so that `@flezha.tasklet(name=...)` over a class answers `Tasklet[I, O]` with `I` and `O` read from that class's `run`, so a named tasklet is checked at the edge like any other.
 
-A handler whose value parameter annotation is missing SHALL raise `DeclarationError` where the decorator runs, and one whose annotated types cannot be connected into a valid graph SHALL raise at the `register_factory` call site, both before any input is served, with an error naming the offending handler and the specific defect. Registration-time refusals SHALL cover the defect classes Rust catches at compile time: wrong input type on a wired edge, missing entry channel, multiple entry channels, graph cycle, unreachable tasklet, node identity collision, two clocks declared on one tasklet, unservable clock, keyed channel without a plugin wire, tier channel not keyed, checkpoint ack without the effectively-once tier, correction window without its preconditions, branch with too few arms, and duplicate plugin sink.
+A handler whose value parameter annotation is missing SHALL raise `FlezhaError` where the decorator runs, and one whose annotated types cannot be connected into a valid graph SHALL raise at the `register_factory` call site, both before any input is served, with an error naming the offending handler and the specific defect. Registration-time refusals SHALL cover the defect classes Rust catches at compile time: wrong input type on a wired edge, missing entry channel, multiple entry channels, graph cycle, unreachable tasklet, node identity collision, two clocks declared on one tasklet, unservable clock, keyed channel without a plugin wire, tier channel not keyed, checkpoint ack without the effectively-once tier, correction window without its preconditions, branch with too few arms, and duplicate plugin sink.
 
 #### Scenario: A wrong edge type is a type error before it is a runtime error
 - **WHEN** a user wires a tasklet whose context is `Ctx[None, Invoice]` into a tasklet whose `run` accepts `Shipment`, and runs a standard type checker
@@ -81,7 +81,7 @@ A handler whose value parameter annotation is missing SHALL raise `DeclarationEr
 
 #### Scenario: Missing annotation is refused at declaration
 - **WHEN** a user declares `@flezha.tasklet(name="handle")` over a class whose `run(self, order, ctx)` has no annotation on `order`
-- **THEN** declaring it SHALL raise `DeclarationError` naming the handler and the unannotated parameter
+- **THEN** declaring it SHALL raise `FlezhaError` naming the handler and the unannotated parameter
 
 #### Scenario: Refusal happens before any input is served
 - **WHEN** an operator graph contains a cycle
@@ -275,7 +275,7 @@ The SDK SHALL prove the set by one conformance run over every row of
 #### Scenario: A merge row runs through the SDK's own merge handle
 
 - **WHEN** the Python interpreter reaches `merge_one_source` or `merge_same_twice`
-- **THEN** it authors the row with `c.merge().from_(...)…into(...)` rather than skipping it, registration refuses with `MergeTooFewSources` or `DuplicateMergeSource`, and the manifest's `topology_surfaces` lists `merge`
+- **THEN** it authors the row with `c.merge().from_(...)…into(...)` rather than skipping it, registration refuses with `topology.merge_too_few_sources` or `topology.duplicate_merge_source`, and the manifest's `topology_surfaces` lists `merge`
 
 ### Requirement: The Channels builder carries merge, the latest-document router and flat_map
 
@@ -287,7 +287,7 @@ The SDK SHALL prove the set by one conformance run over every row of
 
 #### Scenario: A duplicated source is refused by the reference name
 - **WHEN** a merge declares the same edge twice
-- **THEN** registration SHALL refuse with `DuplicateMergeSource` naming the channel, and a merge with one source SHALL refuse with `MergeTooFewSources`
+- **THEN** registration SHALL refuse with `topology.duplicate_merge_source` naming the channel, and a merge with one source SHALL refuse with `topology.merge_too_few_sources`
 
 #### Scenario: One input becomes three deliveries
 - **WHEN** an edge declares `.flat_map(lambda line: [part for part in line.split(",") if part])` into a tasklet and the dispatcher is handed `a,b,c`
@@ -298,16 +298,11 @@ The SDK SHALL prove the set by one conformance run over every row of
 - **THEN** exactly one `("A", document)` and one `("B", document)` SHALL be emitted, and the repeated document SHALL be inert
 
 ### Requirement: The single-tasklet short form is four decorator keywords
-The short form SHALL be declared with `@flezha.unbounded_operator` or `@flezha.bounded_operator`, the same decorators that declare a full-form operator, and SHALL NOT be declared with `flezha.tasklet`, which SHALL accept none of `kind`, `sink`, `input` or `codec` and SHALL raise `DeclarationError` naming the keyword and the operator decorator when one is passed. Each decorator SHALL accept `id`, `sink`, `input` and `codec`, and the keywords `flezha.tasklet` takes but `name`, which it hands to the generated tasklet; the kind is the decorator's own name and SHALL NOT be a keyword.
+The short form SHALL be declared with `@flezha.unbounded_operator` or `@flezha.bounded_operator`, the same decorators that declare a full-form operator, and SHALL NOT be declared with `flezha.tasklet`, which SHALL accept none of `kind`, `sink`, `input` or `codec` and SHALL raise `FlezhaError` naming the keyword and the operator decorator when one is passed. Each decorator SHALL accept `id`, `sink`, `input` and `codec`, and the keywords `flezha.tasklet` takes but `name`, which it hands to the generated tasklet; the kind is the decorator's own name and SHALL NOT be a keyword.
 
-A decorated object SHALL be a short form when it is a tasklet body rather than a `Channels` body, a `Channels` body being a function whose one parameter is annotated `flezha.Channels` or not annotated at all, the shape the SDK already reads as a builder body. A short form SHALL take one of two bodies:
+A decorated object SHALL be a short form when it is a tasklet body rather than a `Channels` body: a class, which is never a channels body, or any function but a channels body, which is a function whose one parameter is annotated `flezha.Channels` or not annotated at all, the shape the SDK already reads as a builder body. `sink` SHALL be optional. With `sink`, the decorator SHALL build an operator of its kind whose factory id is `id`, wiring an entry channel named `input` (or the `input` keyword's value) into a generated tasklet named `id` and that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A bounded short form SHALL accept `loop_mode=` and be a `once` bounded operator when it is absent, with every other bounded setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state; any other class-level keyword written on a short form SHALL raise `FlezhaError` naming it. `loop_mode` SHALL accept only `"once"`, `"per_input"` and `"chained"` and `rollback_mode` only `"all_or_nothing"` and `"keep_progress"`, on the short form and the full form alike, any other value raising `FlezhaError` naming the keyword and the value at decoration. `codec` SHALL take the vocabulary of `Channels.input(name, codec=)` and SHALL be lowered to that call, whether or not a `sink` is written. Declaring SHALL still perform no I/O.
 
-- **A function** whose one positional parameter is the input. Its return value SHALL be emitted, and a `None` return SHALL emit nothing. A function with a second positional parameter SHALL raise `DeclarationError` naming that parameter and directing the author to the class body, since a function short form takes no context.
-- **A class** that follows the everyday tasklet form: `run(self, value, ctx) -> None`, output only through `ctx`, and hooks, state, clock and settings exactly as a `flezha.tasklet` class declares them.
-
-`sink` SHALL be optional. With `sink`, the decorator SHALL build an operator of its kind whose factory id is `id`, wiring an entry channel named `input` (or the `input` keyword's value) into a generated tasklet named `id` and that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A bounded short form SHALL accept `loop_mode=` and be a `once` bounded operator when it is absent, with every other bounded setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state; any other class-level keyword written on a short form SHALL raise `DeclarationError` naming it. `loop_mode` SHALL accept only `"once"`, `"per_input"` and `"chained"` and `rollback_mode` only `"all_or_nothing"` and `"keep_progress"`, on the short form and the full form alike, any other value raising `DeclarationError` naming the keyword and the value at decoration. `codec` SHALL take the vocabulary of `Channels.input(name, codec=)` and SHALL be lowered to that call, whether or not a `sink` is written. Declaring SHALL still perform no I/O.
-
-At decoration the SDK SHALL raise `DeclarationError` with the refusal's name in its `refusals` and at the start of its message: `SinkWithoutOutput` for a `sink` on a function body whose return annotation is absent or `None`, or on a class body whose `run` context hint names no output type or `None`, and `ShortFormWithTopology` for a decorated object carrying both a tasklet body and a `Channels` body. An absent `id` SHALL be refused naming the required keyword, and the SDK SHALL NOT derive a factory id from `__name__`. `Runner.register_factory` SHALL accept a short form and register its operator, and `Runner.register_modules` SHALL register the operators a named module carries, short or full. A duplicate factory id SHALL raise with a message beginning `DuplicateFactoryId`.
+At decoration the SDK SHALL raise `FlezhaError` whose code is the refusal's code: `topology.sink_without_output` for a `sink` on a body whose return annotation is absent or `None`, and `topology.short_form_with_topology` for a decorated object carrying both a tasklet body and a `Channels` body. An absent `id` SHALL be refused naming the required keyword, and the SDK SHALL NOT derive a factory id from `__name__`. `Runner.register_factory` SHALL accept a short form and register its operator, and `Runner.register_modules` SHALL register the operators a named module carries, short or full. A duplicate factory id SHALL raise `FlezhaError` with the code `topology.duplicate_factory_id`.
 
 #### Scenario: A decorated function is a whole unbounded operator
 
@@ -327,7 +322,7 @@ At decoration the SDK SHALL raise `DeclarationError` with the refusal's name in 
 #### Scenario: An unknown loop mode is refused at decoration
 
 - **WHEN** a module declares `@flezha.bounded_operator(id="w", loop_mode="forever")` over any body, or `rollback_mode="best_effort"`
-- **THEN** importing it raises `DeclarationError` naming the keyword and the value, and nothing is declared
+- **THEN** importing it raises `FlezhaError` naming the keyword and the value, and nothing is declared
 
 #### Scenario: A short form with no sink is declared
 
@@ -352,22 +347,22 @@ At decoration the SDK SHALL raise `DeclarationError` with the refusal's name in 
 #### Scenario: A tasklet body beside a channels body is refused
 
 - **WHEN** a decorated class declares both a `run` body and a `channels` body
-- **THEN** importing it raises `DeclarationError` naming `ShortFormWithTopology`
+- **THEN** importing it raises `FlezhaError` whose code is `topology.short_form_with_topology`
 
 #### Scenario: An operator keyword on a tasklet is refused
 
 - **WHEN** a module declares `@flezha.tasklet(name="upcase", sink="out")`
-- **THEN** importing it raises `DeclarationError` naming `sink` and `flezha.unbounded_operator`
+- **THEN** importing it raises `FlezhaError` naming `sink` and `flezha.unbounded_operator`
 
 #### Scenario: A derived id is refused
 
 - **WHEN** a module declares `@flezha.unbounded_operator(sink="out") def upcase(s: str) -> str`
-- **THEN** importing it raises `DeclarationError` naming the required `id`, and no socket is opened
+- **THEN** importing it raises `FlezhaError` naming the required `id`, and no socket is opened
 
 #### Scenario: A sink on a body with no output is refused
 
-- **WHEN** a module declares `@flezha.unbounded_operator(id="drain", sink="out") def drain(s: str) -> None`, or the same decorator over a class whose `run` context is `Ctx[Seen, None]`
-- **THEN** importing it raises `DeclarationError` naming `SinkWithoutOutput`
+- **WHEN** a module declares `@flezha.unbounded_operator(id="drain", sink="out") def drain(s: str) -> None`
+- **THEN** importing it raises `FlezhaError` whose code is `topology.sink_without_output`
 
 #### Scenario: The generated tasklet composes in another topology
 
@@ -382,7 +377,7 @@ At decoration the SDK SHALL raise `DeclarationError` with the refusal's name in 
 #### Scenario: A function short form taking a context is refused
 
 - **WHEN** a module declares `@flezha.unbounded_operator(id="stamp", sink="out") def stamp(value: str, ctx: flezha.Ctx[None, str]) -> str`
-- **THEN** importing it raises `DeclarationError` naming the parameter `ctx` and directing the author to a class body
+- **THEN** importing it raises `FlezhaError` naming the parameter `ctx` and directing the author to a class body
 
 #### Scenario: A class short form emits through its context
 
@@ -391,12 +386,12 @@ At decoration the SDK SHALL raise `DeclarationError` with the refusal's name in 
 
 ### Requirement: A Python bounded class carries what its builder recorded
 
-A bounded operator's `ClassSpec` SHALL be built from every flag the `Channels` builder recorded, by the builder an unbounded operator's spec is built by, and `to_host_class_decl` SHALL put every recorded key on the wire for either kind, so an unbounded-only builder call on a bounded operator reaches the core and is refused under its name (`EffectivelyOnceOnBounded`, `CheckpointOnBounded`, `CorrectionWindowOnBounded`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `DeclarationError` naming it. `bounded_operator` SHALL take no `retry_attempts`, `retry_backoff_ms`, `barrier_retry_attempts` or `wake_after_ms`, and the declaration SHALL carry no `wake_after_ms`; `Channels` SHALL carry no `sync_durability()` call, the decorator keyword being the one spelling. A `Ctx` inside a bounded operator SHALL offer `timer_after`, `timer_at_event_time` and `cancel_timer` exactly as inside a stream, and a tasklet's `on_timer` SHALL run on its firing in both kinds; only a `compensate` hook's `Ctx` SHALL raise an error naming `TimersUnavailable` from them.
+A bounded operator's `ClassSpec` SHALL be built from every flag the `Channels` builder recorded, by the builder an unbounded operator's spec is built by, and `to_host_class_decl` SHALL put every recorded key on the wire for either kind, so an unbounded-only builder call on a bounded operator reaches the core and is refused under its name (`topology.effectively_once_on_bounded`, `topology.checkpoint_on_bounded`, `topology.correction_window_on_bounded`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `FlezhaError` naming it. `bounded_operator` SHALL take no `retry_attempts`, `retry_backoff_ms`, `barrier_retry_attempts` or `wake_after_ms`, and the declaration SHALL carry no `wake_after_ms`; `Channels` SHALL carry no `sync_durability()` call, the decorator keyword being the one spelling. A `Ctx` inside a bounded operator SHALL offer `timer_after`, `timer_at_event_time` and `cancel_timer` exactly as inside a stream, and a tasklet's `on_timer` SHALL run on its firing in both kinds; only a `compensate` hook's `Ctx` SHALL raise an error naming `runtime.timers_unavailable` from them.
 
 #### Scenario: A tier call on a bounded operator reaches the core
 
 - **WHEN** a `@flezha.bounded_operator(id="w")` channels body calls `c.effectively_once()`, the runner registers it and starts
-- **THEN** declaring it to the core raises naming `EffectivelyOnceOnBounded`, and the operator is not declared
+- **THEN** declaring it to the core raises naming `topology.effectively_once_on_bounded`, and the operator is not declared
 
 #### Scenario: A retired keyword is refused
 
@@ -410,13 +405,13 @@ A bounded operator's `ClassSpec` SHALL be built from every flag the `Channels` b
 
 ### Requirement: A Python tasklet's value leaves only through its context
 
-A tasklet class's `run`, `on_timer` and `compensate` SHALL each take the context as their last positional parameter (`run(self, value, ctx)`, `on_timer(self, timer, ctx)`, `compensate(self, outputs, ctx)`), plain or `async def`; a hook written with fewer positional parameters SHALL raise `DeclarationError` naming the hook and the context parameter. A value SHALL leave a tasklet only through `ctx.emit`, keyed or not, any number of times per invocation. A non-`None` return from any of the three hooks SHALL be refused: at declaration, when the hook's return annotation names a type other than `None`, with a `DeclarationError` naming the hook and `ctx.emit`; and at run time, when the hook returns a value anyway, by failing that invocation as non-retryable with a message naming the tasklet, the hook and `ctx.emit`. The dispatcher and `TaskletTestHarness` SHALL apply the one rule through one shared call.
+A tasklet class's `run`, `on_timer` and `compensate` SHALL each take the context as their last positional parameter (`run(self, value, ctx)`, `on_timer(self, timer, ctx)`, `compensate(self, outputs, ctx)`), plain or `async def`; a hook written with fewer positional parameters SHALL raise `FlezhaError` naming the hook and the context parameter. A value SHALL leave a tasklet only through `ctx.emit`, keyed or not, any number of times per invocation. A non-`None` return from any of the three hooks SHALL be refused: at declaration, when the hook's return annotation names a type other than `None`, with a `FlezhaError` naming the hook and `ctx.emit`; and at run time, when the hook returns a value anyway, by failing that invocation as non-retryable with a message naming the tasklet, the hook and `ctx.emit`. The dispatcher and `TaskletTestHarness` SHALL apply the one rule through one shared call.
 
 `flezha.Ctx` SHALL be generic in the state and the output, `Ctx[State, Output]`, with `None` in either position meaning no state or no output, and `ctx.emit` SHALL take a value of the `Output` type, so a type checker reports an emit of the wrong type.
 
 #### Scenario: An annotated return is refused at declaration
 - **WHEN** a tasklet class's `run` is annotated `-> str`
-- **THEN** declaring it SHALL raise `DeclarationError` naming `run` and `ctx.emit`
+- **THEN** declaring it SHALL raise `FlezhaError` naming `run` and `ctx.emit`
 
 #### Scenario: A value returned at run time fails the input
 - **WHEN** an unannotated `run` returns `"x"` for an input
@@ -428,7 +423,7 @@ A tasklet class's `run`, `on_timer` and `compensate` SHALL each take the context
 
 #### Scenario: A hook without a context is refused
 - **WHEN** a tasklet class writes `run(self, value: str)` or `on_timer(self, timer)`
-- **THEN** declaring it SHALL raise `DeclarationError` naming the hook and the context parameter
+- **THEN** declaring it SHALL raise `FlezhaError` naming the hook and the context parameter
 
 #### Scenario: A tasklet that emits nothing
 - **WHEN** a tasklet's `run` returns without calling `ctx.emit` for an input
@@ -440,7 +435,7 @@ A tasklet class's `run`, `on_timer` and `compensate` SHALL each take the context
 
 ### Requirement: A Python tasklet's clock follows from what it writes
 
-A tasklet's clock SHALL be event time when its class writes `event_time`, logical when it is declared with `logical_clock=True`, and the wall clock otherwise, and the SDK SHALL write that clock into the tasklet's declaration record as `event_time`, `logical` or `wall`. There SHALL be no `clock` setting. A tasklet that writes `event_time` and is declared `logical_clock=True` SHALL raise `DeclarationError` naming both. A logical clock on a tasklet that records no changes SHALL keep the core's `UnservableClock` refusal.
+A tasklet's clock SHALL be event time when its class writes `event_time`, logical when it is declared with `logical_clock=True`, and the wall clock otherwise, and the SDK SHALL write that clock into the tasklet's declaration record as `event_time`, `logical` or `wall`. There SHALL be no `clock` setting. A tasklet that writes `event_time` and is declared `logical_clock=True` SHALL raise `FlezhaError` naming both. A logical clock on a tasklet that records no changes SHALL keep the core's `topology.unservable_clock` refusal.
 
 #### Scenario: The default clock is the wall clock
 - **WHEN** a tasklet writes no `event_time` and is not declared `logical_clock=True`
@@ -456,11 +451,11 @@ A tasklet's clock SHALL be event time when its class writes `event_time`, logica
 
 #### Scenario: Two clocks are refused
 - **WHEN** a tasklet declared `logical_clock=True` also writes `event_time`
-- **THEN** declaring it SHALL raise `DeclarationError` naming `logical_clock` and `event_time`
+- **THEN** declaring it SHALL raise `FlezhaError` naming `logical_clock` and `event_time`
 
 #### Scenario: A logical clock with no changes is still unservable
 - **WHEN** a tasklet with no `apply_change` is declared `logical_clock=True` and its operator is registered
-- **THEN** registration SHALL raise naming `UnservableClock`
+- **THEN** registration SHALL raise naming `topology.unservable_clock`
 
 #### Scenario: The clock setting is gone
 - **WHEN** a module declares `@flezha.tasklet(name="t", clock="event_time")`
@@ -468,7 +463,7 @@ A tasklet's clock SHALL be event time when its class writes `event_time`, logica
 
 ### Requirement: A Python tasklet's cell mode is read from the wiring
 
-A tasklet's cell mode SHALL be derived per node of each operator, from the chains its builder recorded: static when the tasklet declares `cell_keys`, dynamic when some channel's chain has a `key` link before the `into` or `merge` link that names the node, and single otherwise. The SDK SHALL write that mode into the declaration record. There SHALL be no `dynamic_cells` setting. A tasklet that declares `cell_keys` and is fed through `key_by` SHALL be refused by the core as `KeyByOnUnkeyableTarget`, raised as a `DeclarationError` carrying that name. An empty `cell_keys` SHALL still be refused at declaration.
+A tasklet's cell mode SHALL be derived per node of each operator, from the chains its builder recorded: static when the tasklet declares `cell_keys`, dynamic when some channel's chain has a `key` link before the `into` or `merge` link that names the node, and single otherwise. The SDK SHALL write that mode into the declaration record. There SHALL be no `dynamic_cells` setting. A tasklet that declares `cell_keys` and is fed through `key_by` SHALL be refused by the core as `topology.key_by_on_unkeyable_target`, raised as a `FlezhaError` carrying that name. An empty `cell_keys` SHALL still be refused at declaration.
 
 #### Scenario: key_by alone makes the consumer dynamic
 - **WHEN** an operator declares `c.input("in", codec="text").key_by(prefix).into(tally)` and `tally` declares no cell setting
@@ -484,7 +479,7 @@ A tasklet's cell mode SHALL be derived per node of each operator, from the chain
 
 #### Scenario: A static key set fed by key_by is refused
 - **WHEN** a tasklet declared with `cell_keys=["a", "b"]` is fed through `key_by`
-- **THEN** registration SHALL raise `DeclarationError` naming `KeyByOnUnkeyableTarget`
+- **THEN** registration SHALL raise `FlezhaError` naming `topology.key_by_on_unkeyable_target`
 
 #### Scenario: The dynamic_cells setting is gone
 - **WHEN** a module declares `@flezha.tasklet(name="t", dynamic_cells=True)`
@@ -492,7 +487,7 @@ A tasklet's cell mode SHALL be derived per node of each operator, from the chain
 
 ### Requirement: A Python tasklet's state starts from `init_state` or its state class
 
-A tasklet's state class SHALL be resolved once at declaration: the `state=` setting, else the state argument of the `Ctx[State, Output]` annotation on `run`'s context parameter, else the return annotation of `init_state`, with `None`, `Any` and an absent annotation meaning no state. A tasklet SHALL be stateful when it writes `init_state(self, cell_key)` or a state class is resolved. For every new cell the runtime SHALL call `init_state` with the cell key (`None` in single-cell mode) when it is written, and otherwise SHALL call the state class with no arguments, taking the origin of a parameterised builtin such as `dict[str, Any]`; the restore fold SHALL start from the same state. A state class that cannot be called with no arguments, on a tasklet that writes no `init_state`, SHALL raise `DeclarationError` at declaration naming the class and `init_state`. A tasklet that writes `apply_change` and is not stateful SHALL raise `DeclarationError` naming `init_state` and the state declaration. There SHALL be no `initial_state` hook.
+A tasklet's state class SHALL be resolved once at declaration: the `state=` setting, else the state argument of the `Ctx[State, Output]` annotation on `run`'s context parameter, else the return annotation of `init_state`, with `None`, `Any` and an absent annotation meaning no state. A tasklet SHALL be stateful when it writes `init_state(self, cell_key)` or a state class is resolved. For every new cell the runtime SHALL call `init_state` with the cell key (`None` in single-cell mode) when it is written, and otherwise SHALL call the state class with no arguments, taking the origin of a parameterised builtin such as `dict[str, Any]`; the restore fold SHALL start from the same state. A state class that cannot be called with no arguments, on a tasklet that writes no `init_state`, SHALL raise `FlezhaError` at declaration naming the class and `init_state`. A tasklet that writes `apply_change` and is not stateful SHALL raise `FlezhaError` naming `init_state` and the state declaration. There SHALL be no `initial_state` hook.
 
 #### Scenario: A new cell's state is the state class
 - **WHEN** a tasklet whose `run` context is `Ctx[Seen, str]` writes no `init_state` and a cell is created
@@ -508,7 +503,7 @@ A tasklet's state class SHALL be resolved once at declaration: the `state=` sett
 
 #### Scenario: An unbuildable state class is refused
 - **WHEN** a tasklet's state class requires a constructor argument and the tasklet writes no `init_state`
-- **THEN** declaring it SHALL raise `DeclarationError` naming the class and `init_state`
+- **THEN** declaring it SHALL raise `FlezhaError` naming the class and `init_state`
 
 #### Scenario: A restore starts from the same state
 - **WHEN** a cell of a tasklet with no `init_state` is restored from a change log of three changes
@@ -516,7 +511,7 @@ A tasklet's state class SHALL be resolved once at declaration: the `state=` sett
 
 ### Requirement: A Python tasklet's idle TTL is whole seconds
 
-A tasklet's idle TTL SHALL be declared as `idle_ttl_seconds`, a positive `int`, on `flezha.tasklet` and on a short form. A `bool`, a float, zero or a negative number SHALL raise `DeclarationError` naming `idle_ttl_seconds`. Unset SHALL mean no idle eviction. The SDK SHALL write the declared seconds times 1 000 into the declaration record's `idle_ttl_ms`. There SHALL be no `idle_ttl_ms` setting.
+A tasklet's idle TTL SHALL be declared as `idle_ttl_seconds`, a positive `int`, on `flezha.tasklet` and on a short form. A `bool`, a float, zero or a negative number SHALL raise `FlezhaError` naming `idle_ttl_seconds`. Unset SHALL mean no idle eviction. The SDK SHALL write the declared seconds times 1 000 into the declaration record's `idle_ttl_ms`. There SHALL be no `idle_ttl_ms` setting.
 
 #### Scenario: Seconds reach the record in milliseconds
 - **WHEN** a tasklet fed through `key_by` is declared `idle_ttl_seconds=60`
@@ -524,7 +519,7 @@ A tasklet's idle TTL SHALL be declared as `idle_ttl_seconds`, a positive `int`, 
 
 #### Scenario: A fractional TTL is refused
 - **WHEN** a tasklet is declared `idle_ttl_seconds=0.2` or `idle_ttl_seconds=0`
-- **THEN** declaring it SHALL raise `DeclarationError` naming `idle_ttl_seconds`
+- **THEN** declaring it SHALL raise `FlezhaError` naming `idle_ttl_seconds`
 
 #### Scenario: The millisecond setting is gone
 - **WHEN** a module declares `@flezha.tasklet(name="t", idle_ttl_ms=60_000)`

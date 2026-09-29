@@ -388,8 +388,9 @@ defmodule Flezha.SDK.PersistenceTest do
     end
 
     test "two nodes of one changeful module would share a WAL, so the class is refused" do
-      assert {:error, {:invalid_topology, issues}} = Topology.build(TwoCountersOp)
-      assert {:DuplicatePersistentTasklet, "counter"} in issues
+      assert {"topology.duplicate_persistent_tasklet", %{"tasklet" => "counter"}} in refusal_issues(
+               Topology.build(TwoCountersOp)
+             )
     end
   end
 

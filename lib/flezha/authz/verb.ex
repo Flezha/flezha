@@ -16,13 +16,18 @@ defmodule Flezha.AuthZ.Verb do
   naming the module that carries each body and taking its identity from the
   trailing options list every wire verb ends with:
 
-      use Flezha.AuthZ.Verb, identity: &Context.cli_context/1, refuse: &Context.refuse!/2, sealed: true
+      use Flezha.AuthZ.Verb, identity: &Context.cli_context/1, render: &Context.render!/2, sealed: true
 
       verb dlq_drop(entry_ref, opts \\\\ []), to: Cli.Dlq, row: &Cli.Dlq.locate/1
 
   which defines `dlq_drop/1,2` calling `Cli.Dlq.dlq_drop(entry_ref, call)` with
-  the bound `t:Call.t/0`, and renders a refusal through `refuse`. A `sealed`
+  the bound `t:Call.t/0`, and hands a failure to `render`. A `sealed`
   surface refuses to compile a public function that binds no row.
+
+  Every failure leaves `run/5` as `{:error, %Flezha.Error{}}`: a refusal, a
+  fetch's reason, a body's `{:error, reason}` and a reason a body left with
+  through `Flezha.Error.throw!/1` are all converted at the verb's action, once,
+  before the audit record is written.
 
   The two forms differ in one declared way that outlives compilation: a wire
   contract binds `identity:`, because it mints a caller context from what its
@@ -76,18 +81,23 @@ defmodule Flezha.AuthZ.Verb do
   that raised), `:wire_opts`
   (the wire's trailing options, handed to the body on the call).
 
-  Answers `{:error, {:forbidden, reason}}` on a refusal and never exits; a
-  `{:row, _}` fetch's own `{:error, reason}` is answered as is.
+  Answers every failure as `{:error, %Flezha.Error{}}`, converted at the row's
+  action, and never exits.
   """
   @spec run(atom(), CallerContext.t(), [term()], effect(), keyword()) :: term()
   def run(verb, caller_context, args, effect, opts \\ []) when is_function(effect, 1) do
-    apply_row(Verbs.fetch!(verb), caller_context, args, effect, opts)
+    row = Verbs.fetch!(verb)
+
+    row
+    |> apply_row(caller_context, args, converting(effect, row.action), opts)
+    |> converted(row.action)
   end
 
   @doc """
   The wire surface's `run/5`: bind the identity from the trailing options,
-  apply the row, and render a refusal. `binding` carries `:identity`,
-  `:refuse` and optionally `:row`, `:target`.
+  apply the row, and hand a failure to the surface's renderer with the
+  options it was asked in. `binding` carries `:identity`, `:render` and
+  optionally `:row`, `:target`.
   """
   @spec invoke(atom(), [term()], keyword(), effect(), keyword()) :: term()
   def invoke(verb, args, wire_opts, effect, binding) do
@@ -96,13 +106,28 @@ defmodule Flezha.AuthZ.Verb do
     run_opts = [row: binding[:row], target: target, wire_opts: wire_opts]
 
     case run(verb, caller_context, args, effect, run_opts) do
-      {:error, {:forbidden, reason}} ->
-        Keyword.fetch!(binding, :refuse).(Verbs.fetch!(verb).action, reason)
-
-      other ->
-        other
+      {:error, %Flezha.Error{} = error} -> Keyword.fetch!(binding, :render).(error, wire_opts)
+      other -> other
     end
   end
+
+  # The body's failure, returned or thrown, as the error it means here, so the
+  # audit record written around it carries the code.
+  defp converting(effect, action) do
+    fn call ->
+      result =
+        try do
+          effect.(call)
+        catch
+          :throw, {Flezha.Error, reason} -> {:error, reason}
+        end
+
+      converted(result, action)
+    end
+  end
+
+  defp converted({:error, reason}, action), do: {:error, Flezha.Error.from_reason(reason, action)}
+  defp converted(result, _action), do: result
 
   defp wire_target(target, options) when is_function(target, 2),
     do: fn args, answer -> target.(args ++ [options], answer) end
@@ -192,7 +217,7 @@ defmodule Flezha.AuthZ.Verb do
   # record, and an exit or raise is re-raised once it is written.
   defp audited(%{audit: {:after, source}} = row, call, args, opts, effect) do
     {outcome, result} = observe(effect, call)
-    emit(row, source, call, target(row, args, opts, answer(result)), %{outcome: outcome})
+    emit(row, source, call, target(row, args, opts, answer(result)), outcome)
     settle(result)
   end
 
@@ -200,12 +225,12 @@ defmodule Flezha.AuthZ.Verb do
     result = effect.(call)
     {outcome_of(result), {:value, result}}
   catch
-    kind, reason -> {:error, {:caught, kind, reason, __STACKTRACE__}}
+    kind, reason -> {%{outcome: :error}, {:caught, kind, reason, __STACKTRACE__}}
   end
 
-  defp outcome_of({:error, _reason}), do: :error
-  defp outcome_of(:error), do: :error
-  defp outcome_of(_result), do: :ok
+  defp outcome_of({:error, %Flezha.Error{code: code}}), do: %{outcome: :error, error_code: code}
+  defp outcome_of(:error), do: %{outcome: :error}
+  defp outcome_of(_result), do: %{outcome: :ok}
 
   defp answer({:value, result}), do: result
   defp answer({:caught, _kind, _reason, _stacktrace}), do: nil
@@ -362,20 +387,26 @@ defmodule Flezha.AuthZ.Verb do
 
   # A wire verb: the last parameter is its options list, whatever else it
   # takes, and the body lives in the `to:` module under the same name with the
-  # bound call appended. A `:none` row is a plain delegation.
-  defp wire_body(_caller, name, _verb_name, %{action: :none}, positional, _args, target, _opts) do
-    quote do: unquote(target).unquote(name)(unquote_splicing(positional))
+  # bound call appended. A `:none` row with no options list is a plain
+  # delegation: an internal name `flz` never calls with a caller's options.
+  defp wire_body(caller, name, verb_name, row, positional, args, target, opts) do
+    cond do
+      options_list?(List.last(args)) ->
+        invoked_body(name, verb_name, positional, target, opts)
+
+      row.action == :none ->
+        quote do: unquote(target).unquote(name)(unquote_splicing(positional))
+
+      true ->
+        raise CompileError,
+          file: caller.file,
+          line: caller.line,
+          description:
+            "wire verb #{name}/#{length(args)} must end with its options list (`opts \\\\ []`)"
+    end
   end
 
-  defp wire_body(caller, name, verb_name, _row, positional, args, target, opts) do
-    unless List.last(args) |> then(&match?({:\\, _, [_, []]}, &1)) do
-      raise CompileError,
-        file: caller.file,
-        line: caller.line,
-        description:
-          "wire verb #{name}/#{length(args)} must end with its options list (`opts \\\\ []`)"
-    end
-
+  defp invoked_body(name, verb_name, positional, target, opts) do
     {wire_opts, verb_args} = List.pop_at(positional, -1)
     binding = Keyword.take(opts, [:row, :target])
 
@@ -389,6 +420,8 @@ defmodule Flezha.AuthZ.Verb do
       )
     end
   end
+
+  defp options_list?(arg), do: match?({:\\, _, [_, []]}, arg)
 
   # A published function: the last parameter is the caller context, the
   # `do` block is the effect.

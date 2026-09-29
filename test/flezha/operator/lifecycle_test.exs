@@ -113,7 +113,7 @@ defmodule FlezhaTest.Operator.OverwatchRetryTest do
 
     operator = %Builder{id: "one_attempt_operator", factory_id: @factory, opts: []}
 
-    assert {:error, %{reason: {:ping_failed, :timeout}}} =
+    assert {:error, {:start_failed, _id, {:ping_failed, :timeout}}} =
              OperatorManager.start_operator(@namespace, operator)
 
     # One start attempt after the readiness gate, and no second one of its own.
@@ -230,7 +230,7 @@ defmodule FlezhaTest.Operator.OverwatchRetryTest do
 
     baseline = :erlang.memory(:processes)
 
-    assert {:error, %{reason: {:ping_failed, :timeout}}} =
+    assert {:error, {:start_failed, _id, {:ping_failed, :timeout}}} =
              OperatorManager.start_operator(@namespace, operator)
 
     # Plugins never activate, so the upstream connection (TLS handshake,
@@ -340,7 +340,7 @@ defmodule FlezhaTest.Operator.OverwatchRetryTest do
 
       id = "refused-unbound-#{System.unique_integer([:positive])}"
 
-      assert {:error, %{reason: {:runner_not_ready, :timeout}}} =
+      assert {:error, {:start_failed, ^id, {:runner_not_ready, :timeout}}} =
                OperatorManager.start_operator(@namespace, %Builder{
                  id: id,
                  factory_id: @factory

@@ -1,8 +1,8 @@
 //! Judging a host class: the record every SDK submits, the check that reads
 //! it, and the registration that follows. `check` holds every named refusal
 //! and every derivation rule once, so a builder records what its author
-//! declared and decides nothing. Every refusal text is a contract the veneer
-//! suites assert substrings of.
+//! declared and decides nothing. Every refusal is a [`TopologyIssue`] and
+//! answers its `topology.*` code.
 //!
 //! What a validated record BECOMES — the descriptors, the facts, the DAG — is
 //! [`super::build`].
@@ -25,6 +25,7 @@ use crate::bounded::spec::{graph_order, GraphSeed, TaskDag};
 use crate::bounded::LoopMode;
 use crate::error::Error;
 use crate::operator::topology::OperatorTopology;
+use crate::ErrorModel;
 
 /// Hard upper bound on a per-Cell mailbox: ~1M items is past sanity for any
 /// expected workload, and a capacity above it is a typo, not a posture.
@@ -76,24 +77,18 @@ pub struct DerivedEdge {
 
 /// The body of `flz_core_declare_class`.
 pub fn register_host_class_json(bytes: &[u8]) -> Result<(), Error> {
-    register_host_class(parse_decl(bytes)?)
+    register_host_class(parse_decl(bytes).map_err(|issue| Error::Declaration(issue.to_error()))?)
 }
 
 /// The body of `flz_core_check_class`: the verdict and the derived
 /// declaration, with nothing registered.
 pub fn check_class_json(bytes: &[u8]) -> Result<Derived, Vec<TopologyIssue>> {
-    match parse_decl(bytes) {
-        Ok(decl) => check(decl),
-        Err(Error::Declaration(text)) => Err(vec![TopologyIssue::Declaration(text)]),
-        Err(other) => Err(vec![TopologyIssue::Declaration(other.to_string())]),
-    }
+    check(parse_decl(bytes).map_err(|issue| vec![issue])?)
 }
 
-fn parse_decl(bytes: &[u8]) -> Result<HostClassDecl, Error> {
-    serde_json::from_slice(bytes).map_err(|e| {
-        Error::Declaration(format!(
-            "class declaration is not valid JSON for the schema: {e}"
-        ))
+fn parse_decl(bytes: &[u8]) -> Result<HostClassDecl, TopologyIssue> {
+    serde_json::from_slice(bytes).map_err(|e| TopologyIssue::DeclarationUnreadable {
+        reason: e.to_string(),
     })
 }
 
@@ -194,27 +189,18 @@ fn refuse_names(
 /// The class-level refusals.
 fn refuse_class_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) {
     if !crate::header::sdk_lang_allocated(decl.sdk_lang) {
-        issues.push(TopologyIssue::Declaration(format!(
-            "sdk_lang: {} is not an allocated SDK language; every class declares \
-             the byte its SDK holds in the allocation table (flz_core::header), \
-             because the controller places an operator only on a runner of its \
-             factory's language",
-            decl.sdk_lang
-        )));
+        issues.push(TopologyIssue::UnknownSdkLang {
+            sdk_lang: decl.sdk_lang,
+        });
     }
     if crate::header::pack_version(&decl.sdk_version) == 0 {
-        issues.push(TopologyIssue::Declaration(format!(
-            "sdk_version: class `{}` declares no usable SDK version ({:?}); every class \
-             declares the released version of the SDK that writes its records, because \
-             the durable header names the writer and a veneer releases apart from the \
-             core it links against",
-            decl.factory_id, decl.sdk_version
-        )));
+        issues.push(TopologyIssue::UnusableSdkVersion {
+            factory_id: decl.factory_id.clone(),
+            sdk_version: decl.sdk_version.clone(),
+        });
     }
     if decl.tasklets.is_empty() {
-        issues.push(TopologyIssue::Declaration(
-            "a host class declares at least one tasklet".to_string(),
-        ));
+        issues.push(TopologyIssue::NoTasklets);
     }
     if decl.sleep_when_idle && !decl.persistent {
         issues.push(TopologyIssue::SleepWithoutPersistence {
@@ -247,11 +233,7 @@ fn refuse_bounded_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) {
         issues.push(TopologyIssue::CheckpointOnBounded);
     }
     if decl.sync_durability && !decl.persistent {
-        issues.push(TopologyIssue::Declaration(
-            "sync_durability requires persistent: there is no commit barrier to ship \
-             for a class that journals nothing"
-                .to_string(),
-        ));
+        issues.push(TopologyIssue::SyncDurabilityWithoutPersistence);
     }
 }
 
@@ -259,9 +241,7 @@ fn refuse_bounded_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) {
 /// what they rest on declared with them.
 fn refuse_tier_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) {
     if decl.effectively_once && !decl.persistent {
-        issues.push(TopologyIssue::Declaration(
-            "effectively_once requires persistent: the tier IS durable state".to_string(),
-        ));
+        issues.push(TopologyIssue::EffectivelyOnceWithoutPersistence);
     }
     if derive_ack_granularity(decl) == HostAckGranularity::Checkpoint && !decl.effectively_once {
         issues.push(TopologyIssue::CheckpointAckWithoutTier);
@@ -275,9 +255,7 @@ fn refuse_tier_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) {
         issues.push(TopologyIssue::CheckpointEveryZero);
     }
     if decl.checkpoint_max_delay_ms == Some(0) {
-        issues.push(TopologyIssue::Declaration(
-            "checkpoint_max_delay_ms must be greater than zero".to_string(),
-        ));
+        issues.push(TopologyIssue::CheckpointMaxDelayZero);
     }
     if decl.correction_window_ms.is_some() && !decl.effectively_once {
         issues.push(TopologyIssue::CorrectionWithoutTier);
@@ -339,12 +317,11 @@ fn refuse_channel(decl: &HostClassDecl, channel: &DerivedChannel, issues: &mut V
     // the producer is a channel fact of its own.
     if let Some(producer) = channel_decl.producer {
         if producer as usize >= decl.tasklets.len() {
-            issues.push(TopologyIssue::Declaration(format!(
-                "channel `{}` names producer {} but the class declares {} tasklet(s)",
-                channel.name,
+            issues.push(TopologyIssue::ProducerOutOfRange {
+                channel: channel.name.clone(),
                 producer,
-                decl.tasklets.len()
-            )));
+                tasklets: decl.tasklets.len(),
+            });
         }
     }
     refuse_channel_ends(channel, issues);
@@ -356,22 +333,30 @@ fn refuse_channel(decl: &HostClassDecl, channel: &DerivedChannel, issues: &mut V
 /// archive leaf's undo reverses, what a handoff-chained loop feeds back — and
 /// the bounded run, not another tasklet, is what reads it.
 fn refuse_channel_ends(channel: &DerivedChannel, issues: &mut Vec<TopologyIssue>) {
-    let text = match channel.kind {
+    let channel_name = channel.name.clone();
+    issues.push(match channel.kind {
         HostChannelKind::Entry if channel.producer.is_some() => {
-            format!("entry channel `{}` cannot name a producer", channel.name)
+            TopologyIssue::EntryChannelWithProducer {
+                channel: channel_name,
+            }
         }
         HostChannelKind::Entry if channel.consumers.is_empty() => {
-            format!("entry channel `{}` names no consumer", channel.name)
+            TopologyIssue::EntryChannelWithoutConsumer {
+                channel: channel_name,
+            }
         }
         HostChannelKind::InterTask if channel.producer.is_none() => {
-            format!("inter_task channel `{}` names no producer", channel.name)
+            TopologyIssue::InterTaskChannelWithoutProducer {
+                channel: channel_name,
+            }
         }
         HostChannelKind::Plugin if !channel.consumers.is_empty() => {
-            format!("plugin channel `{}` cannot name consumers", channel.name)
+            TopologyIssue::PluginChannelWithConsumers {
+                channel: channel_name,
+            }
         }
         _ => return,
-    };
-    issues.push(TopologyIssue::Declaration(text));
+    });
 }
 
 /// What one tasklet's declaration may claim about its Cells, its clock
@@ -379,22 +364,19 @@ fn refuse_channel_ends(channel: &DerivedChannel, issues: &mut Vec<TopologyIssue>
 fn refuse_tasklet(task_decl: &HostTaskletDecl, issues: &mut Vec<TopologyIssue>) {
     match task_decl.cell_mode {
         HostCellModeDecl::Static if task_decl.cell_keys.is_empty() => {
-            issues.push(TopologyIssue::Declaration(format!(
-                "static tasklet `{}` declares no cell_keys",
-                task_decl.name
-            )));
+            issues.push(TopologyIssue::StaticTaskletWithoutCellKeys {
+                tasklet: task_decl.name.clone(),
+            });
         }
         HostCellModeDecl::Single | HostCellModeDecl::Dynamic if !task_decl.cell_keys.is_empty() => {
-            issues.push(TopologyIssue::Declaration(format!(
-                "tasklet `{}` declares cell_keys without static mode",
-                task_decl.name
-            )));
+            issues.push(TopologyIssue::CellKeysWithoutStaticMode {
+                tasklet: task_decl.name.clone(),
+            });
         }
         HostCellModeDecl::Dynamic if task_decl.max_cells == Some(0) => {
-            issues.push(TopologyIssue::Declaration(format!(
-                "dynamic tasklet `{}` declares max_cells 0",
-                task_decl.name
-            )));
+            issues.push(TopologyIssue::MaxCellsZero {
+                tasklet: task_decl.name.clone(),
+            });
         }
         _ => {}
     }
@@ -549,14 +531,12 @@ fn refuse_loop_terminal_without_handoff(
         return Ok(());
     }
     match dag.terminal_without_handoff(topology) {
-        Some(terminal) => Err(Error::Declaration(format!(
-            "a durable handoff-chained loop's terminal tasklet `{}` releases no inter-tasklet \
-             handoff; iteration N+1 is seeded from iteration N's terminal batch, and a tasklet that \
-             owns no output channel, or whose only output is plugin-bound, has nothing the journal \
-             carries. Take the sink off the terminal's own channel, or declare the loop `per_input`; \
-             wiring another tasklet behind the sink only moves the rule onto that one",
-            terminal.name
-        ))),
+        Some(terminal) => Err(Error::Declaration(
+            TopologyIssue::ChainedLoopTerminalWithoutHandoff {
+                tasklet: terminal.name.to_string(),
+            }
+            .to_error(),
+        )),
         None => Ok(()),
     }
 }
@@ -571,15 +551,16 @@ fn structured_bounded(
     let dag = build_host_dag(topology)?;
     if bounded.loop_mode == HostLoopMode::Chained {
         if let Some((channel_id, branching)) = dag.branching_chain() {
-            return Err(Error::Declaration(format!(
-                "a handoff-chained loop needs exactly one terminal tasklet per chain; the \
-                 chain of entry channel `{}` has {}",
-                topology
-                    .channel(channel_id)
-                    .map(|c| c.name.to_string())
-                    .unwrap_or_default(),
-                branching.leaves(&dag).count()
-            )));
+            return Err(Error::Declaration(
+                TopologyIssue::BranchingChainedLoop {
+                    channel: topology
+                        .channel(channel_id)
+                        .map(|c| c.name.to_string())
+                        .unwrap_or_default(),
+                    leaves: branching.leaves(&dag).count(),
+                }
+                .to_error(),
+            ));
         }
     }
     refuse_loop_terminal_without_handoff(decl, bounded, topology, &dag)?;

@@ -128,8 +128,8 @@ defmodule Flezha.Plugin.Provider.OperatorForward do
       {:ok, %{id: member_id}} ->
         ForwardWorker.absorb(worker(opts.plugin_id, member_id), {message, metadata})
 
-      {:error, reason} ->
-        park_unroutable(opts, message, metadata, reason)
+      {:unroutable, why} ->
+        park_unroutable(opts, message, metadata, why)
     end
   end
 
@@ -157,8 +157,8 @@ defmodule Flezha.Plugin.Provider.OperatorForward do
         Outbox.hold(metadata)
         :ok = ForwardWorker.enqueue(worker(opts.plugin_id, member_id), message, metadata)
 
-      {:error, reason} ->
-        park_unroutable(opts, message, metadata, reason)
+      {:unroutable, why} ->
+        park_unroutable(opts, message, metadata, why)
     end
 
     {:ok, ctx}
@@ -169,22 +169,22 @@ defmodule Flezha.Plugin.Provider.OperatorForward do
 
   # A partitioned target: the key decides, and only the key. Round-robin or a
   # payload hash would scatter one key across partitions and detonate
-  # downstream, where the cause is invisible.
+  # downstream, where the cause is invisible. An unroutable payload is parked,
+  # never answered, so its reason is the text its DLQ entry carries.
   defp route(routes, metadata) do
     case Map.get(metadata || %{}, "flz.key") do
       key when is_binary(key) and key != "" ->
         case Partition.owner_of(routes, key) do
           nil ->
-            {:error,
-             "key #{inspect(key)} hashes to group #{KeyGroup.group_of(key)}, " <>
-               "owned by no member"}
+            {:unroutable,
+             "key #{inspect(key)} hashes to group #{KeyGroup.group_of(key)}, owned by no member"}
 
           route ->
             {:ok, route}
         end
 
       _ ->
-        {:error, "partitioned target requires keyed emit"}
+        {:unroutable, "partitioned target requires keyed emit"}
     end
   end
 
@@ -301,7 +301,7 @@ defmodule Flezha.Plugin.Provider.OperatorForward do
   # ---------- enable-time refusals ----------
 
   defp validate_target(target, _ns, source) when target == source,
-    do: {:error, "operator_forward target_operator_id #{target} is the operator itself"}
+    do: {:error, {:forward_to_self, target}}
 
   # A target absent from this namespace is NOT refused — it may simply not be
   # started yet, and the worker retries. It is refused only when it is found
@@ -317,11 +317,8 @@ defmodule Flezha.Plugin.Provider.OperatorForward do
 
   defp refuse_if_foreign(_target, nil), do: :ok
 
-  defp refuse_if_foreign(target, foreign) do
-    {:error,
-     "operator_forward target_operator_id #{target} resolves in namespace " <>
-       "#{foreign}, across the namespace boundary"}
-  end
+  defp refuse_if_foreign(target, foreign),
+    do: {:error, {:forward_across_namespaces, target, foreign}}
 
   defp resolves_in?(nil, _target), do: false
 

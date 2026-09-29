@@ -132,6 +132,8 @@ pub enum RunnerStatus {
 
 pub enum ClientResponseMessage {
     RunnerIdConfirmation,
+    /// The controller refused the starting runner's connect.
+    ConnectRefused(flz_transport::errors::FlezhaError),
     ReturnOperators(HashMap<String, Arc<OperatorInstance>>),
     /// `Err(n)`: `n` live instances exist and the class stays defined.
     RemoveFactoryResult(Result<(), usize>),

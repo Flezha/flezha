@@ -14,36 +14,13 @@ defmodule Flezha.State.TimeTravel do
   `Flezha.State.Commands.dispatch_restore_init_state/2` and is invoked by the CLI
   command `flz state at <operator/tasklet/cell> <seq | timestamp>`.
 
-  Out-of-retention errors are returned as `%TimeTravelError{}`.
+  A target older than the retention window is refused naming the earliest
+  point that is kept.
   """
 
   alias Flezha.SDK.RecordFrame, as: Frame
   alias Flezha.SDK.Wire
   alias Flezha.State.{Paths, RecordFrame, Snapshot}
-
-  defmodule TimeTravelError do
-    @moduledoc "Reasons a `TimeTravel.query/2` cannot be served."
-
-    defexception [:kind, :message, :earliest_available]
-
-    @type t :: %__MODULE__{
-            kind: :outside_retention | :no_data | :decode,
-            message: binary(),
-            earliest_available: term()
-          }
-
-    @impl true
-    def exception(opts) do
-      kind = Keyword.fetch!(opts, :kind)
-      msg = Keyword.get(opts, :message, Atom.to_string(kind))
-
-      %__MODULE__{
-        kind: kind,
-        message: msg,
-        earliest_available: Keyword.get(opts, :earliest_available)
-      }
-    end
-  end
 
   @type target :: {:seq, non_neg_integer()} | {:timestamp, integer()}
 
@@ -53,24 +30,25 @@ defmodule Flezha.State.TimeTravel do
           terminal_seq: non_neg_integer()
         }
 
+  @doc """
+  The Cell's state at `target`, or why it cannot be served: no persisted state
+  at all, or a target older than the retention window, naming the earliest
+  point that is kept.
+  """
   @spec query(Paths.cell_id(), target()) ::
-          {:ok, result()} | {:error, TimeTravelError.t()}
-  def query(cell_id, target) do
+          {:ok, result()}
+          | {:error, {:no_persisted_state, String.t()}}
+          | {:error, {:outside_retention, String.t(), non_neg_integer(), non_neg_integer()}}
+  def query({rc, sh, pk} = cell_id, target) do
     snaps = Paths.snapshot_paths(cell_id)
     target_seq = resolve_target_seq(cell_id, target)
 
     case earliest_available_seq(snaps, cell_id) do
       :no_data ->
-        {:error,
-         TimeTravelError.exception(kind: :no_data, message: "no persisted state for cell")}
+        {:error, {:no_persisted_state, "#{rc}/#{sh}/#{pk}"}}
 
       earliest when target_seq < earliest ->
-        {:error,
-         TimeTravelError.exception(
-           kind: :outside_retention,
-           message: "target seq #{target_seq} predates retention window (earliest=#{earliest})",
-           earliest_available: earliest
-         )}
+        {:error, {:outside_retention, "#{rc}/#{sh}/#{pk}", target_seq, earliest}}
 
       _earliest ->
         snapshot = pick_snapshot(snaps, target_seq)

@@ -1,6 +1,6 @@
-use std::process::exit;
+use flz_transport::errors::FlezhaError;
 
-use crate::args::{OptSpec, Positional, Reading, JSON_SWITCH, OUTPUT};
+use crate::args::{OptSpec, Positional, Reading};
 use crate::dispatch::{Command, Missing, Verb};
 use crate::help;
 use crate::rpc::{self, text};
@@ -25,9 +25,9 @@ pub(crate) const TABLE: Command = Command {
         // `help` is a verb here, not a spelling of the screen: with a provider
         // id it asks the controller for that provider's own help.
         Verb::new("help", handle_help).taking(&[Positional::optional("<provider_id>")]),
-        Verb::new("list", handle_list).reading(&[INSTALLED, OUTPUT, JSON_SWITCH]),
+        Verb::new("list", handle_list).reading(&[INSTALLED]),
         Verb::new("install", |read| {
-            rpc::one_arg(read, "<path-to-.fpz>", "install_plugin", rpc::REFUSED)
+            rpc::one_arg(read, "<path-to-.fpz>", "install_plugin")
         })
         .taking(&[Positional::required("<path-to-.fpz>")]),
         Verb::new("upgrade", handle_upgrade).taking(&[
@@ -35,16 +35,11 @@ pub(crate) const TABLE: Command = Command {
             Positional::required("<path-to-.fpz>"),
         ]),
         Verb::new("uninstall", |read| {
-            rpc::one_arg(read, PLUGIN_ID[0].name, "uninstall_plugin", rpc::REFUSED)
+            rpc::one_arg(read, PLUGIN_ID[0].name, "uninstall_plugin")
         })
         .taking(PLUGIN_ID),
         Verb::new("info", |read| {
-            rpc::one_arg(
-                read,
-                PLUGIN_ID[0].name,
-                "installed_plugin_info",
-                rpc::REFUSED,
-            )
+            rpc::one_arg(read, PLUGIN_ID[0].name, "installed_plugin_info")
         })
         .taking(PLUGIN_ID),
     ],
@@ -61,23 +56,19 @@ fn handle_upgrade(read: &Reading) {
             text(read.pos("<path-to-.fpz>")),
         ],
         &[],
-        read.token(),
-        rpc::REFUSED,
+        read,
     );
 }
 
 // Check whether an id is tracked by the installer. The probe carries the
 // caller's token like every other request, because the read is a gated one,
-// and its status is `rpc::verdict`'s: a refused probe is a refused verb, not
-// an answer of "not installed".
-fn is_installed_plugin(plugin_id: &str, token: Option<&str>) -> bool {
-    let printed = rpc::captured(
-        format!(
-            "{} |> IO.puts()",
-            rpc::expression("installed_plugin?", &[text(plugin_id)], &[], token)
-        ),
-        rpc::REFUSED,
-    );
+// and its status is settled like every call's: a refused probe is a refused
+// verb, not an answer of "not installed".
+fn is_installed_plugin(plugin_id: &str, read: &Reading) -> bool {
+    let printed = rpc::captured(&format!(
+        "{} |> IO.puts()",
+        rpc::expression("installed_plugin?", &[text(plugin_id)], &[], read)
+    ));
 
     printed.trim().ends_with("true")
 }
@@ -86,14 +77,8 @@ fn handle_enable(read: &Reading) {
     let plugin_id = read.pos(PLUGIN_ID[0].name);
 
     // Dispatch installed plugins through the Installer service.
-    if is_installed_plugin(plugin_id, read.token()) {
-        rpc::run(
-            "installer_enable_plugin",
-            &[text(plugin_id)],
-            &[],
-            read.token(),
-            rpc::REFUSED,
-        );
+    if is_installed_plugin(plugin_id, read) {
+        rpc::run("installer_enable_plugin", &[text(plugin_id)], &[], read);
 
         return;
     }
@@ -113,8 +98,7 @@ fn handle_enable(read: &Reading) {
             text(&opts_json(read.rest())),
         ],
         &[],
-        read.token(),
-        rpc::REFUSED,
+        read,
     );
 }
 
@@ -143,7 +127,7 @@ fn handle_disable(read: &Reading) {
 
     // Dispatch installed plugins through the Installer service; legacy
     // plugins keep their existing code path.
-    let installed = is_installed_plugin(plugin_id, read.token());
+    let installed = is_installed_plugin(plugin_id, read);
 
     println!("Disabling plugin...");
 
@@ -151,14 +135,9 @@ fn handle_disable(read: &Reading) {
     // reaches is what `cli_manager_rpc_surface_test.exs` resolves against the
     // controller's exports, and it can only read a literal.
     if installed {
-        rpc::one_arg(
-            read,
-            PLUGIN_ID[0].name,
-            "installer_disable_plugin",
-            rpc::REFUSED,
-        );
+        rpc::one_arg(read, PLUGIN_ID[0].name, "installer_disable_plugin");
     } else {
-        rpc::one_arg(read, PLUGIN_ID[0].name, "disable_plugin", rpc::REFUSED);
+        rpc::one_arg(read, PLUGIN_ID[0].name, "disable_plugin");
     }
 }
 
@@ -170,13 +149,7 @@ fn handle_help(read: &Reading) {
 
     println!("Getting help for plugin '{}'...", provider_id);
 
-    rpc::run(
-        "plugin_help",
-        &[text(provider_id)],
-        &[],
-        read.token(),
-        rpc::REFUSED,
-    );
+    rpc::run("plugin_help", &[text(provider_id)], &[], read);
 }
 
 /// Two collections, and two flags that must not do each other's job:
@@ -184,24 +157,22 @@ fn handle_help(read: &Reading) {
 /// rendered. The provider registry has one rendering, so asking it for JSON is
 /// refused rather than silently answered with the other collection.
 fn handle_list(read: &Reading) {
-    let format = read.output_format();
     let installed = read.switch(INSTALLED.long);
 
-    if !installed && format == "json" {
-        eprintln!("Error: the provider registry is rendered as text only. Add --installed to list the installed plugins as JSON.");
-        exit(1);
+    if !installed && read.output_format() == "json" {
+        rpc::fail(FlezhaError::with(
+            "usage.text_only",
+            [
+                ("what", "the provider registry".into()),
+                ("alternative", "flz plugin list --installed --json".into()),
+            ],
+        ));
     }
 
     if installed {
-        rpc::run(
-            "list_installed_plugins",
-            &[text(format)],
-            &[],
-            read.token(),
-            rpc::REFUSED,
-        );
+        rpc::run("list_installed_plugins", &[], &[], read);
     } else {
-        rpc::run("list_plugins", &[], &[], read.token(), rpc::REFUSED);
+        rpc::run("list_plugins", &[], &[], read);
     }
 }
 

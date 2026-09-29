@@ -165,10 +165,10 @@ defmodule Flezha.Plugin.Provider.Kafka do
 
     @impl true
     def init_provider(opts) do
-      hosts = parse_hosts(opts.hosts)
       plugin_id = opts.plugin_id || "default-#{System.unique_integer([:positive])}"
 
-      with :ok <- validate_window(opts) do
+      with {:ok, hosts} <- parse_hosts(opts.hosts),
+           :ok <- validate_window(opts) do
         {:ok,
          opts
          |> Map.merge(%{
@@ -261,9 +261,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
     # trade the plugin's unconditional FIFO guarantee for throughput.
     defp validate_window(%{max_in_flight: window, idempotent: idempotent})
          when is_integer(window) and window > 1 and not idempotent do
-      {:error,
-       "kafka max_in_flight #{window} requires idempotent: only the broker's per-partition " <>
-         "sequence check keeps a retry inside the window ordered"}
+      {:error, {:window_needs_idempotence, window}}
     end
 
     defp validate_window(_opts), do: :ok
@@ -461,14 +459,20 @@ defmodule Flezha.Plugin.Provider.Kafka do
     defp parse_hosts(hosts) when is_binary(hosts) do
       hosts
       |> String.split(",")
-      |> Enum.map(fn host ->
-        case String.split(host, ":") do
-          [h, port] -> {h, String.to_integer(port)}
-          _ -> throw("Invalid host format: #{host}")
+      |> Enum.reduce_while({:ok, []}, fn host, {:ok, acc} ->
+        with [h, port] <- String.split(host, ":"),
+             {port, ""} <- Integer.parse(port) do
+          {:cont, {:ok, [{h, port} | acc]}}
+        else
+          _ -> {:halt, refuse_value(:hosts, hosts)}
         end
       end)
+      |> case do
+        {:ok, parsed} -> {:ok, Enum.reverse(parsed)}
+        refusal -> refusal
+      end
     end
 
-    defp parse_hosts(hosts), do: hosts
+    defp parse_hosts(hosts), do: {:ok, hosts}
   end
 end

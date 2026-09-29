@@ -193,7 +193,7 @@ defmodule Flezha.Transport.ServerTest do
 
       send(server, :release)
 
-      assert {:admin_response, %{error: ""}} =
+      assert {:admin_response, %{error: nil}} =
                ControlFrameTestHelper.await_answering_handshake(runner, "admin-during-connect")
 
       Client.close(runner)

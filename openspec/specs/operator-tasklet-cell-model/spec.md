@@ -190,7 +190,7 @@ The Rust SDK's `Tasklet` trait SHALL declare `fn compact_after_bytes() -> usize 
 - **THEN** the operator-start metadata SHALL carry `compact_after_bytes = 16777216` for this Tasklet
 
 ### Requirement: Operator declares PERSISTENCE_ENABLED const, frozen at instance start (Rust SDK)
-The Rust SDK's `UnboundedOperator` and `BoundedOperator` traits SHALL each declare `const PERSISTENCE_ENABLED: bool = true` and `const SLEEP_WHEN_IDLE: bool` (`false` on `UnboundedOperator`, `Self::PERSISTENCE_ENABLED` on `BoundedOperator`). The runtime SHALL resolve a per-instance `persistence_enabled: bool` when the instance is started from the class's `PERSISTENCE_ENABLED`, for either kind, and SHALL declare both consts to the controller in the class's `AddOperator` response (`persistent = "false"` when off, `sleep_when_idle = "true"` when on). A class declaring `SLEEP_WHEN_IDLE = true` with `PERSISTENCE_ENABLED = false` SHALL be refused at registration as `SleepWithoutPersistence`.
+The Rust SDK's `UnboundedOperator` and `BoundedOperator` traits SHALL each declare `const PERSISTENCE_ENABLED: bool = true` and `const SLEEP_WHEN_IDLE: bool` (`false` on `UnboundedOperator`, `Self::PERSISTENCE_ENABLED` on `BoundedOperator`). The runtime SHALL resolve a per-instance `persistence_enabled: bool` when the instance is started from the class's `PERSISTENCE_ENABLED`, for either kind, and SHALL declare both consts to the controller in the class's `AddOperator` response (`persistent = "false"` when off, `sleep_when_idle = "true"` when on). A class declaring `SLEEP_WHEN_IDLE = true` with `PERSISTENCE_ENABLED = false` SHALL be refused at registration as `topology.sleep_without_persistence`.
 
 The resolved value SHALL be bound to the `OperatorInstance` and SHALL be propagated to every `CellSlot` constructed for that instance. A change to the const (via SDK redeploy) SHALL NOT affect already-running instances; the new value takes effect on the next `stop_operator` + `start_operator` cycle for that instance.
 
@@ -212,7 +212,7 @@ The resolved value SHALL be bound to the `OperatorInstance` and SHALL be propaga
 #### Scenario: Sleeping without persistence is refused
 
 - **WHEN** a class of either kind declares `SLEEP_WHEN_IDLE = true` and `PERSISTENCE_ENABLED = false`
-- **THEN** `register_factory` SHALL fail with an error containing `SleepWithoutPersistence`
+- **THEN** `register_factory` SHALL fail with an error containing `topology.sleep_without_persistence`
 
 #### Scenario: Resolved value frozen at instance start
 
@@ -486,7 +486,7 @@ lists every accumulated `TopologyIssue`, and SHALL NOT register the topology.
 
 #### Scenario: The same shape is refused on an erased host
 - **WHEN** a Node, Python, Ruby, PHP or Java builder records two `sink` links on one channel
-- **THEN** the core's check refuses `DuplicatePluginSink` naming the channel and the class is not registered
+- **THEN** the core's check refuses `topology.duplicate_plugin_sink` naming the channel and the class is not registered
 
 ### Requirement: New TaskletError variant — `PluginSerializerPanic`
 `TaskletError` (in `sdk/rust/src/tasklet/error.rs`) SHALL gain a `PluginSerializerPanic { channel: String, message: String }` variant. The variant SHALL be returned from `ctx.emit(...)` (and `ctx.emit_with_meta(...)`) on a hybrid channel when the user-supplied serializer panics. `channel` SHALL be the channel name as declared in `ChannelBuilder`; `message` SHALL be the panic payload formatted via the existing panic-message helper (a string description, not the raw `Box<dyn Any>` payload).
@@ -927,18 +927,17 @@ A `DropOldest` eviction that admits its item SHALL increment `pushes_total`, bec
 
 ### Requirement: A second plugin sink is refused by the reference check, in every SDK
 A channel's record SHALL carry one `sink` link per `sink(...)` call, and
-`flz_core::host::register::check` SHALL answer `DuplicatePluginSink` naming the
+`flz_core::host::register::check` SHALL answer `topology.duplicate_plugin_sink` naming the
 channel when a channel's chains carry more than one. No SDK SHALL carry a rule
 or a sentence of its own for the shape:
-`UnboundedOperatorConfigurationException` SHALL keep its class name and one
-constructor taking the core's rendered verdict, so existing `catch` sites do not
-move, and the aggregate refusal SHALL list every accumulated issue under the
-`topology rejected [<names>]` prefix — which is what the veneer suites assert
-substrings of. Registration SHALL be refused and the topology discarded.
+each SDK SHALL raise its one error type (Java `FlezhaException`), built from the core's
+error document: its code SHALL be the first issue's `topology.*` code and its
+`details.issues` SHALL list every accumulated issue by code, which is what the veneer
+suites assert, never a substring of the message. Registration SHALL be refused and the topology discarded.
 
 #### Scenario: Second sink call is rejected at registration (Java)
 - **WHEN** an Operator's `channels(c)` method calls `c.channel(T.class, "foo").from(S.class).sink("p1", f1).sink("p2", f2)`
-- **THEN** `FlezhaRunner.registerFactory(R.class)` SHALL throw `UnboundedOperatorConfigurationException` whose message names `DuplicatePluginSink` and the channel `"foo"`
+- **THEN** `FlezhaRunner.registerFactory(R.class)` SHALL throw `FlezhaException` whose code is `topology.duplicate_plugin_sink` and whose details name the channel `"foo"`
 - **AND** the registered topology SHALL be discarded
 
 ### Requirement: A Rust change applies itself through the context
@@ -984,7 +983,7 @@ The Rust SDK's `Tasklet` trait SHALL declare `const CLOCK: ClockKind`, with `Clo
 - **EventTime**: `event_time` applied to the input being dispatched.
 - **Logical**: the durable change seq, re-armed to `terminal + 1` on restore.
 
-`#[tasklet]` SHALL set `CLOCK` to `EventTime` when the block writes `event_time`, to `Logical` with the `logical_clock` key, and to `Wall` otherwise, and SHALL fail to compile when both are declared. A `Logical` clock with `Change = NoChange` SHALL fail registration with `UnservableClock`.
+`#[tasklet]` SHALL set `CLOCK` to `EventTime` when the block writes `event_time`, to `Logical` with the `logical_clock` key, and to `Wall` otherwise, and SHALL fail to compile when both are declared. A `Logical` clock with `Change = NoChange` SHALL fail registration with `topology.unservable_clock`.
 
 #### Scenario: The default clock is the wall clock
 

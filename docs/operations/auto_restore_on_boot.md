@@ -94,7 +94,7 @@ placed anything yet.
 
 ```bash
 flz boot status                # readiness verdict + preconditions, then per-namespace detail
-flz boot await --timeout 60    # block until the verdict is :ready (exit 1 otherwise)
+flz boot await --timeout 60    # block until the verdict is :ready (exit 7, boot.not_ready, otherwise)
 flz boot await --timeout 0     # evaluate once — what the image HEALTHCHECK runs
 flz cluster status             # recovery_state per node
 ```

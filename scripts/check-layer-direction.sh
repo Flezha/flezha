@@ -110,6 +110,7 @@ LAYERS = {
     "config": 0,  # the key table, durations, constants
     "layout": 0,  # the subtree table: where a file lands, and who clears it
     "process": 0,  # the shared process primitives: bounded call, concurrency, names
+    "error": 0,  # the error model every surface answers a failure in, from transport up
     # 1 — the machine underneath: framing, sockets, certificates, and the
     # cluster's own membership. Read by everything, reaching for nothing.
     "transport": 1,

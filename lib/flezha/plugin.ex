@@ -42,18 +42,45 @@ defmodule Flezha.Plugin do
   ]
 
   @doc """
-  Construct a new `%Flezha.Plugin{}` from a keyword list.
-
-  Raises `ArgumentError` if `:id` or `:provider` is missing.
+  Construct a new `%Flezha.Plugin{}` from a keyword list, for code that builds
+  one directly. Raises `ArgumentError` on what `from_fields/1` refuses.
   """
   @spec new(keyword()) :: t()
   def new(fields) when is_list(fields) do
-    unless Keyword.has_key?(fields, :id) and Keyword.has_key?(fields, :provider) do
-      raise ArgumentError,
-            "Flezha.Plugin.new/1 requires :id and :provider — got #{inspect(fields)}"
-    end
+    case from_fields(fields) do
+      {:ok, plugin} ->
+        plugin
 
-    struct!(__MODULE__, fields |> named_provider() |> read_hooks() |> read_opts())
+      {:error, reason} ->
+        raise ArgumentError,
+              "Flezha.Plugin.new/1: " <>
+                Flezha.Error.from_reason(reason, :"plugin.enable").message
+    end
+  end
+
+  @doc """
+  The `%Flezha.Plugin{}` a caller's `fields` describe, or the reason they
+  describe none: `:id` or `:provider` missing, a provider no one named, or a
+  hook list that cannot be read.
+  """
+  @spec from_fields(keyword()) :: {:ok, t()} | {:error, term()}
+  def from_fields(fields) when is_list(fields) do
+    with :ok <- required_fields(fields),
+         {:ok, fields} <- named_provider(fields),
+         {:ok, fields} <- read_hooks(fields) do
+      {:ok, struct!(__MODULE__, read_opts(fields))}
+    end
+  end
+
+  @fields [:id, :provider, :opts, :hooks, :namespace, :operator_id]
+
+  defp required_fields(fields) do
+    case {Enum.reject([:id, :provider], &Keyword.has_key?(fields, &1)),
+          Enum.reject(Keyword.keys(fields), &(&1 in @fields))} do
+      {[], []} -> :ok
+      {[], unknown} -> {:error, {:plugin_fields_unknown, unknown}}
+      {missing, _unknown} -> {:error, {:plugin_fields_missing, missing}}
+    end
   end
 
   # A caller that reached the controller over a wire names its provider as text,
@@ -65,15 +92,12 @@ defmodule Flezha.Plugin do
     case Keyword.fetch!(fields, :provider) do
       provider when is_binary(provider) ->
         case Flezha.Plugin.Providers.fetch(provider) do
-          {:ok, module} ->
-            Keyword.put(fields, :provider, module)
-
-          :error ->
-            raise ArgumentError, "Flezha.Plugin.new/1 knows no provider named #{provider}"
+          {:ok, module} -> {:ok, Keyword.put(fields, :provider, module)}
+          :error -> {:error, {:unknown_provider, provider}}
         end
 
       _module ->
-        fields
+        {:ok, fields}
     end
   end
 
@@ -93,13 +117,10 @@ defmodule Flezha.Plugin do
   defp read_hooks(fields) do
     case Keyword.fetch(fields, :hooks) do
       :error ->
-        fields
+        {:ok, fields}
 
       {:ok, written} ->
-        case hooks(written) do
-          {:ok, read} -> Keyword.put(fields, :hooks, read)
-          {:error, reason} -> raise ArgumentError, "Flezha.Plugin.new/1: #{inspect(reason)}"
-        end
+        with {:ok, read} <- hooks(written), do: {:ok, Keyword.put(fields, :hooks, read)}
     end
   end
 
@@ -145,12 +166,11 @@ defmodule Flezha.Plugin do
     if is_map(opts) do
       {:ok, {name, opts}}
     else
-      {:error, {:invalid_hook, {:opts_not_a_map, name}}}
+      {:error, {:invalid_hook, :opts_not_a_map, name}}
     end
   end
 
-  defp hook(other),
-    do: {:error, {:invalid_hook, {:unrecognised_shape, other}}}
+  defp hook(other), do: {:error, {:invalid_hook, :unrecognised_shape, other}}
 
   @doc """
   Point this plugin at one member of a partition group.

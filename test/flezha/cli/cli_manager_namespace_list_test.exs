@@ -42,7 +42,7 @@ defmodule Flezha.Service.CliManagerNamespaceListTest do
     test "a namespace created a moment ago is listed" do
       {:ok, _} = NamespaceStore.create("billing")
 
-      output = capture_io(fn -> Listing.list_namespaces("text", unbound_call()) end)
+      output = capture_io(fn -> Listing.list_namespaces(unbound_call()) end)
 
       assert output =~ "billing"
       assert output =~ "_system"
@@ -55,7 +55,7 @@ defmodule Flezha.Service.CliManagerNamespaceListTest do
       on_exit(fn -> HubManager.stop_hub("with-hub") end)
 
       %{"namespaces" => rows} =
-        capture_io(fn -> Listing.list_namespaces("json", unbound_call()) end)
+        capture_io(fn -> Listing.list_namespaces(%{unbound_call() | opts: [output: "json"]}) end)
         |> Jason.decode!()
 
       by_name = Map.new(rows, &{&1["namespace"], &1["running"]})
@@ -65,7 +65,7 @@ defmodule Flezha.Service.CliManagerNamespaceListTest do
     end
 
     test "an empty answer says so rather than rendering a headerless table" do
-      output = capture_io(fn -> Listing.list_namespaces("text", bound_call("nothing-here")) end)
+      output = capture_io(fn -> Listing.list_namespaces(bound_call("nothing-here")) end)
 
       assert output =~ "No namespaces found."
     end
@@ -79,7 +79,7 @@ defmodule Flezha.Service.CliManagerNamespaceListTest do
     end
 
     test "a namespace-scoped caller sees its own namespace and no other" do
-      output = capture_io(fn -> Listing.list_namespaces("text", bound_call("team-orders")) end)
+      output = capture_io(fn -> Listing.list_namespaces(bound_call("team-orders")) end)
 
       assert output =~ "team-orders"
       refute output =~ "team-billing"
@@ -88,7 +88,7 @@ defmodule Flezha.Service.CliManagerNamespaceListTest do
 
     test "an admin in the system namespace sees them all" do
       call = %Call{context: %{role: :admin, namespace: "_system", principal: "root"}}
-      output = capture_io(fn -> Listing.list_namespaces("text", call) end)
+      output = capture_io(fn -> Listing.list_namespaces(call) end)
 
       assert output =~ "team-orders"
       assert output =~ "team-billing"
@@ -164,7 +164,7 @@ defmodule Flezha.Service.CliManagerNamespaceListTest do
     test "a tenant-bound principal carried only by the role store is refused, not narrowed" do
       :ok = RoleStore.bind("tenant-alice", "team-orders", :viewer, bound_by: "root")
 
-      assert {:error, {:forbidden, :namespace_mismatch}} =
+      assert {:error, %Flezha.Error{code: "authz.namespace_mismatch"}} =
                Operator.list_namespaces(%{source: :ui, principal: "tenant-alice"})
     end
 

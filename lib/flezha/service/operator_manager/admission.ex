@@ -13,67 +13,44 @@ defmodule Flezha.Service.OperatorManager.Admission do
   alias Flezha.Shutdown
   alias Flezha.State.Paths
 
-  def cluster_wide_refusal(namespace, factory_id) when is_binary(factory_id) do
-    factory_refusal(
-      namespace,
-      factory_id,
-      "no runners for factory #{factory_id} in namespace #{namespace} on any cluster node"
-    )
-  end
+  @doc """
+  Why no runner on any node can place a start of `factory_id`, as the reason
+  the start is refused with.
+  """
+  def cluster_wide_refusal(namespace, factory_id) when is_binary(factory_id),
+    do:
+      placement_reason(
+        FleetManager.placement_refusal(namespace, factory_id),
+        namespace,
+        factory_id
+      )
 
-  def cluster_wide_refusal(namespace, _factory_id),
-    do: "no runners in namespace #{namespace} on any cluster node"
+  def cluster_wide_refusal(namespace, _factory_id), do: {:no_runners, namespace}
 
   # A factory that exists in another language or as the other kind is not a
   # factory nobody has: reporting it as missing sends the user looking for a
   # runner that is already connected. Both refusal sites read this, so the two
   # cannot drift.
-  defp factory_refusal(namespace, factory_id, absent),
-    do:
-      refusal_text(
-        FleetManager.placement_refusal(namespace, factory_id),
-        namespace,
-        factory_id,
-        absent
-      )
+  defp placement_reason({:language, established}, namespace, factory_id),
+    do: {:factory_language_unserved, namespace, factory_id, established}
 
-  defp refusal_text(refusal, namespace, factory_id, absent) do
-    case refusal do
-      {:language, established} ->
-        "factory #{factory_id} in namespace #{namespace} is established at sdk_lang " <>
-          "#{inspect(established)}; every runner advertising it is of another SDK and " <>
-          "cannot read its state — start a runner of that language, or clear the " <>
-          "factory's durable state so it re-establishes"
+  defp placement_reason(:no_language_declared, namespace, factory_id),
+    do: {:factory_language_undeclared, namespace, factory_id}
 
-      :no_language_declared ->
-        "factory #{factory_id} in namespace #{namespace} is advertised without an sdk_lang " <>
-          "declaration; a runner that does not declare its language is never a placement " <>
-          "candidate, because durable state is per-SDK — declare sdk_lang in the runner's " <>
-          "factory advertisement"
+  defp placement_reason(:ambiguous_language, namespace, factory_id),
+    do: {:factory_language_ambiguous, namespace, factory_id}
 
-      :ambiguous_language ->
-        "factory #{factory_id} in namespace #{namespace} is advertised at more than one " <>
-          "sdk_lang with none established; the controller cannot tell which language owns " <>
-          "its state — run one language's runners, or clear the factory's durable state"
+  defp placement_reason({:kind, established}, namespace, factory_id),
+    do: {:factory_kind_unserved, namespace, factory_id, established}
 
-      {:kind, established} ->
-        "factory #{factory_id} in namespace #{namespace} is established as " <>
-          "#{established}, and every runner advertising it announces the other kind; run " <>
-          "runners whose class of that id is #{established}"
+  defp placement_reason(:no_kind_declared, namespace, factory_id),
+    do: {:factory_kind_undeclared, namespace, factory_id}
 
-      :no_kind_declared ->
-        "factory #{factory_id} in namespace #{namespace} is advertised without a kind " <>
-          "declaration; a runner that does not announce its class's kind is never a " <>
-          "placement candidate, since the class declares it and its runner announces it"
+  defp placement_reason(:ambiguous_kind, namespace, factory_id),
+    do: {:factory_kind_ambiguous, namespace, factory_id}
 
-      :ambiguous_kind ->
-        "factory #{factory_id} in namespace #{namespace} is announced as both unbounded and " <>
-          "bounded with neither established; run runners of one kind for it"
-
-      _ ->
-        absent
-    end
-  end
+  defp placement_reason(_absent, namespace, factory_id),
+    do: {:factory_unknown, namespace, factory_id}
 
   @doc """
   Admit the start's factory and take its kind: a runner here must be able to
@@ -81,7 +58,7 @@ defmodule Flezha.Service.OperatorManager.Admission do
   names. A kind a caller asserts (a spawn or a schedule fire, both
   bounded-only) is judged against it rather than taken.
   """
-  @spec resolve_factory(String.t(), map()) :: {:ok, map()} | {:error, String.t()}
+  @spec resolve_factory(String.t(), map()) :: {:ok, map()} | {:error, tuple()}
   def resolve_factory(namespace, %{factory_id: factory_id, kind: asserted} = operator)
       when is_binary(factory_id) do
     case FleetManager.factory_kind(namespace, factory_id) do
@@ -89,13 +66,10 @@ defmodule Flezha.Service.OperatorManager.Admission do
         {:ok, %{operator | kind: kind}}
 
       {:ok, kind} ->
-        {:error,
-         "factory #{factory_id} in namespace #{namespace} is #{kind}, and only " <>
-           "#{asserted} is started here"}
+        {:error, {:factory_kind_mismatch, asserted, namespace, factory_id, kind}}
 
       {:error, refusal} ->
-        absent = "Factory with id #{factory_id} does not exist"
-        {:error, refusal_text(refusal, namespace, factory_id, absent)}
+        {:error, placement_reason(refusal, namespace, factory_id)}
     end
   end
 
@@ -133,10 +107,7 @@ defmodule Flezha.Service.OperatorManager.Admission do
         :ok
 
       members ->
-        {:error,
-         "#{operator_id} names a partition group of #{length(members)} live member(s); " <>
-           "re-run with --partitions #{hd(members).partition.count} to converge it, or stop " <>
-           "the group first"}
+        {:error, {:group_base_claim, operator_id, length(members), hd(members).partition.count}}
     end
   end
 
@@ -178,22 +149,15 @@ defmodule Flezha.Service.OperatorManager.Admission do
 
   def validate_operator(namespace, operator) do
     with :ok <- operator_id_within_limit(operator.id),
-         :ok <- Validator.valid_namespace(namespace),
-         :ok <- Validator.operator_unique(namespace, operator.id) do
-      :ok
-    else
-      {:error, reason} -> {:error, reason}
+         :ok <- Validator.valid_namespace(namespace) do
+      Validator.operator_unique(namespace, operator.id)
     end
   end
 
-  # The rule is the `:operator` row; the wording is this surface's, unchanged.
   defp operator_id_within_limit(id) do
     case Identificator.validate(:operator, id) do
-      :ok ->
-        :ok
-
-      {:error, _refusal} ->
-        {:error, "operator id exceeds #{Identificator.limit(:operator)} bytes"}
+      :ok -> :ok
+      {:error, _refusal} -> {:error, {:id_too_long, id, Identificator.limit(:operator)}}
     end
   end
 

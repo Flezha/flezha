@@ -1,30 +1,14 @@
 defmodule Flezha.Service.Cli.Context do
   @moduledoc """
-  The identity a `flz` verb's trailing options carry, the rendering of a refusal
-  and an error, the one device they are written to, and the window a streaming
-  verb receives for. Every other `Cli.*`
-  module calls this one; it calls none of them. The authorization itself is
-  `Flezha.AuthZ.Verb`'s, bound in `Flezha.Service.CliManager`.
+  The identity a `flz` verb's trailing options carry, the one device a failure
+  is written to, and the window a streaming verb receives for. Every other
+  `Cli.*` module calls this one; it calls none of them. The authorization itself
+  is `Flezha.AuthZ.Verb`'s, bound in `Flezha.Service.CliManager`, and every
+  failure reaches the caller through `render!/2`, in `Flezha.Error`'s words.
   """
 
-  alias Flezha.AuthZ.Config
   alias Flezha.AuthZ.TokenStore
   alias Flezha.Config.Durations
-
-  # `Kernel.CLI.exec_fun/2` halts `{:shutdown, int}` with that int and prints
-  # nothing, and prints an `** (exit)` banner with erl_eval frames for every
-  # other reason before halting 1. Both halt 1, so this moves no `flz` exit
-  # code and leaves the caller reading the sentence alone.
-  @cli_exit {:shutdown, 1}
-
-  @doc """
-  A reason as text: the one `inspect/1` on this surface. A binary reason is
-  already a sentence and stays one — quoting it is an artefact of inspecting,
-  not something the caller asked to see.
-  """
-  @spec format_reason(term()) :: String.t()
-  def format_reason(reason) when is_binary(reason), do: reason
-  def format_reason(reason), do: inspect(reason)
 
   def atom_converter(orig_map) do
     string_to_atom = %{
@@ -92,48 +76,41 @@ defmodule Flezha.Service.Cli.Context do
   end
 
   @doc """
-  Halt the verb `action` with the refusal `reason`. The one spelling of an
-  authorization refusal, so a gated verb never invents its own wording.
+  Leave the verb with `reason`. `Flezha.AuthZ.Verb.run/5` converts it at the
+  verb's action and `render!/2` prints it, so a family says what failed and
+  never how it is printed.
   """
-  @spec refuse!(atom() | String.t(), term()) :: no_return()
-  def refuse!(action, reason) do
-    cli_error!("#{action}: #{render_forbidden(reason)}")
-  end
-
-  def render_forbidden(:bootstrap_pending) do
-    "refused: authorization is enforced but the bootstrap has not been claimed — " <>
-      "run `flz auth bootstrap <token>` with the token in " <>
-      Config.bootstrap_token_path()
-  end
-
-  def render_forbidden(:principal_not_bound) do
-    "refused: no verifiable identity — supply `--token <token>` or set FLEZHA_TOKEN"
-  end
-
-  def render_forbidden(:no_role_binding) do
-    "refused: the presented identity has no role binding — ask an admin for `flz role bind`"
-  end
-
-  def render_forbidden(reason), do: "refused: #{reason}"
+  @spec fail!(term()) :: no_return()
+  def fail!(reason), do: Flezha.Error.throw!(reason)
 
   @doc """
-  Halt the verb with `reason`, rendered in `vocabulary`'s words when it names
-  that reason and by the one fallback here when it does not. The single prefix
-  and the single `inspect/1` for the whole surface: a family contributes its
-  vocabulary and never its printing.
+  The one printer: `error` rendered in the format the call's options asked for,
+  on the caller's stderr, then the verb exits with the code of the error's
+  class.
+
+  Only the rpc process exits: `{:shutdown, n}` fails the surrounding `flzvm rpc`
+  evaluation with exit code `n` and prints no banner. Never `System.halt`
+  here, because every `CliManager` call runs on the controller node and would
+  stop it.
   """
-  @spec fail!(term(), (term() -> String.t() | nil)) :: no_return()
-  def fail!(reason, vocabulary \\ fn _ -> nil end) do
-    cli_error!("error: " <> (vocabulary.(reason) || format_reason(reason)))
+  @spec render!(Flezha.Error.t(), keyword()) :: no_return()
+  def render!(%Flezha.Error{} = error, opts) do
+    puts(caller_stderr(), Flezha.Error.render(error, format(opts)))
+    exit({:shutdown, Flezha.Error.exit_code(error)})
   end
 
   @doc """
-  Halt the verb with `message` exactly as written. `fail!/2` is what a family
-  reaches for; this is the one whose whole text is a verdict a caller's
-  script reads, so it carries no `error: ` prefix and still exits the same way.
+  The output format the caller asked for, `"text"` or `"json"`: the `output`
+  its options carry, which `flz` sets for `--json` and `--output json` on
+  every verb.
   """
-  @spec halt!(String.t()) :: no_return()
-  def halt!(message), do: cli_error!(message)
+  @spec format(keyword()) :: String.t()
+  def format(opts) do
+    case Keyword.get(opts, :output) do
+      "json" -> "json"
+      _text -> "text"
+    end
+  end
 
   @doc """
   A way to tell the caller one line, bound now and called later from any
@@ -189,22 +166,6 @@ defmodule Flezha.Service.Cli.Context do
     _, _ -> :ok
   end
 
-  # The one printer. Private, and so are the device and the exit it uses, so a
-  # `Cli.*` module contributes what it says and never how it is said: every
-  # failure reaches the caller through `fail!/2` or `halt!/1`.
-  #
-  # Fail the surrounding `flzvm rpc` evaluation, then exit only this rpc
-  # process. Never System.halt here: every CliManager call runs ON the
-  # controller node, so halting would stop the controller itself.
-  #
-  # One stream, for every family: a caller who pipes a verb's output is
-  # collecting the answer, not the failure, so a failure never joins the data.
-  @spec cli_error!(String.t()) :: no_return()
-  defp cli_error!(message) do
-    puts(caller_stderr(), message)
-    exit(@cli_exit)
-  end
-
   @doc """
   How long a streaming verb runs: the `duration_ms` its options carry, or the
   window `flz` uses when the caller names none.
@@ -258,9 +219,16 @@ defmodule Flezha.Service.Cli.Context do
 
   defp decode_json!(text, what) do
     case Jason.decode(text) do
-      {:ok, decoded} when is_map(decoded) -> decoded
-      {:ok, _other} -> cli_error!("error: #{what} must be a JSON object")
-      {:error, reason} -> cli_error!("error: invalid #{what} JSON: #{Exception.message(reason)}")
+      {:ok, decoded} when is_map(decoded) ->
+        decoded
+
+      {:ok, _other} ->
+        fail!(Flezha.Error.new("usage.json_not_object", option: what))
+
+      {:error, reason} ->
+        fail!(
+          Flezha.Error.new("usage.invalid_json", option: what, reason: Exception.message(reason))
+        )
     end
   end
 
@@ -271,24 +239,11 @@ defmodule Flezha.Service.Cli.Context do
   @spec integer!(term(), String.t()) :: integer()
   def integer!(written, what) do
     case Integer.parse(to_string(written)) do
-      {value, ""} -> value
-      _ -> cli_error!("error: invalid #{what} value '#{written}'")
-    end
-  end
+      {value, ""} ->
+        value
 
-  # The value `written` names in `rows`, `{spelling, value}` in the order the
-  # accepted set is printed in, or a refusal naming the word and that set.
-  @spec one_of(String.t(), [{String.t(), term()}], String.t()) ::
-          {:ok, term()} | {:error, String.t()}
-  defp one_of(written, rows, what) do
-    case List.keyfind(rows, written, 0) do
-      {_written, value} ->
-        {:ok, value}
-
-      nil ->
-        {:error,
-         "unknown #{what} '#{written}'. Use " <>
-           Enum.map_join(rows, " or ", &"'#{elem(&1, 0)}'") <> "."}
+      _ ->
+        fail!(Flezha.Error.new("usage.invalid_number", option: what, value: to_string(written)))
     end
   end
 
@@ -299,9 +254,14 @@ defmodule Flezha.Service.Cli.Context do
   """
   @spec atom!(String.t(), [atom()], String.t()) :: atom()
   def atom!(written, allowed, what) do
-    case one_of(written, Enum.map(allowed, &{Atom.to_string(&1), &1}), what) do
-      {:ok, known} -> known
-      {:error, message} -> cli_error!("error: " <> message)
+    case Enum.find(allowed, &(Atom.to_string(&1) == written)) do
+      nil ->
+        fail!(
+          Flezha.Error.new("usage.unknown_word", noun: what, value: written, allowed: allowed)
+        )
+
+      known ->
+        known
     end
   end
 end

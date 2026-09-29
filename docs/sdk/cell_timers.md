@@ -77,7 +77,7 @@ both kinds exist: the processing-time timer is the answer to "nothing has
 arrived" — a session timeout, an idle flush, a join expiry — and the
 event-time timer is for a deadline the data itself reaches, such as a window
 boundary. `timer_at_event_time` is refused
-(`EventTimeTimerWithoutEventTimeClock`) unless the Tasklet declares
+(`runtime.event_time_timer_without_event_time_clock`) unless the Tasklet declares
 writes `event_time(input)` (Rust) or `eventTime(input)` (Java), or defines
 `event_time/1` (Elixir).
 
@@ -178,7 +178,7 @@ runs one pass at a time and commits it stage by stage:
 ## Bounds and observability
 
 `max_timers_per_cell()` / `maxTimersPerCell()` (default 10 000) bounds
-the pending set per Cell; registering past it returns `TimerCapExceeded`
+the pending set per Cell; registering past it returns `runtime.timer_cap_exceeded`
 naming the Tasklet and the bound rather than allocating. Per-Tasklet
 `TimerCounters` track `pending`, `registered_total`, `fired_total`,
 `cancelled_total` and `refused_total`, and every `data_heartbeat` frame
@@ -197,7 +197,7 @@ wedged, not an idle Operator.
   restore rebuilds them.
 - **A `compensate` hook has no timers.** A rollback is not a place to arm a
   deadline: every SDK's ctx there answers a timer call with
-  `TimersUnavailable`.
+  `runtime.timers_unavailable`.
 - **A host bounded tasklet fed by another tasklet has no event time.** The
   host SDKs release a bounded tasklet's output unstamped, so such a tasklet
   reads wall time under an event-time clock and its event-time timers never

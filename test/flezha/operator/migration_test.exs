@@ -663,7 +663,7 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
     inst = instance_id()
     commit_turns(inst, 3, [])
 
-    assert {:reply, {:error, {:uncommitted_iteration, [0, 1, 2]}}, _} =
+    assert {:reply, {:error, {:uncommitted_iteration, 7, [0, 1, 2]}}, _} =
              Overwatch.handle_call({:rewind, 7}, self(), state(inst))
 
     assert TaskJournal.current_epoch(inst) == 0
@@ -678,7 +678,7 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
     # No `compensate` hook declared on task 0 — its output cannot be undone.
     :ok = ClassRegistry.put_compensable_ops(inst, [])
 
-    assert {:reply, {:error, {:uncovered, ["replies"]}}, _} =
+    assert {:reply, {:error, {:uncovered, 1, ["replies"]}}, _} =
              Overwatch.handle_call({:rewind, 1}, self(), state(inst))
 
     assert TaskJournal.current_epoch(inst) == 0, "refused before anything durable changed"

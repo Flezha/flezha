@@ -329,7 +329,7 @@ mod tests {
         let p = Arc::new(waiters);
         let order = Arc::new(Mutex::new(Vec::<u8>::new()));
         let mut threads = Vec::new();
-        for (parked, tag) in [b'A', b'B', b'C'].into_iter().enumerate() {
+        for (parked, tag) in (*b"ABC").into_iter().enumerate() {
             let waiters = Arc::clone(&p);
             let m = Arc::clone(&mbox);
             let order = Arc::clone(&order);

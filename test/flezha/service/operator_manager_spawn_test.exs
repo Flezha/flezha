@@ -20,7 +20,6 @@ defmodule FlezhaTest.Service.OperatorManagerSpawnTest do
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperatorManager
   alias Flezha.Service.OperatorManager.Placement
-  alias Flezha.Service.Validator
   alias Flezha.State.Paths
   alias FlezhaTest.Helper.FakeStartRegistry
   alias FlezhaTest.Helper.FakeStartRegistry.Instance
@@ -68,7 +67,7 @@ defmodule FlezhaTest.Service.OperatorManagerSpawnTest do
     assert {:spawned, "w1"} =
              spawn_or_deliver(@factory, "p1", :deliver)
 
-    assert {:already_running, "w1"} =
+    assert {{:refused, %Flezha.Error{code: "operator.already_running"}}, "w1"} =
              spawn_or_deliver(@factory, "p2", :error)
 
     assert Instance.ingested(instance_pid(registry, "w1")) == []
@@ -115,14 +114,16 @@ defmodule FlezhaTest.Service.OperatorManagerSpawnTest do
   test "a factory no connected runner registers is reported, not spawned" do
     stub(FleetManager, :runners_for_factory, fn _ns, _factory -> [] end)
 
-    assert {:factory_unknown, "w1"} =
+    assert {{:refused, %Flezha.Error{code: "operator.factory_unknown"}}, "w1"} =
              spawn_or_deliver("nobody", "p1", :deliver)
   end
 
   test "a factory its runners announced as a stream is named, not spawned" do
     stub(FleetManager, :factory_kind, fn _ns, _factory -> {:ok, :unbounded} end)
 
-    assert {:factory_not_bounded, "w1"} = spawn_or_deliver("prices", "p1", :deliver)
+    assert {{:refused, %Flezha.Error{code: "operator.factory_not_bounded"}}, "w1"} =
+             spawn_or_deliver("prices", "p1", :deliver)
+
     assert FakeStartRegistry.started() == []
   end
 
@@ -134,7 +135,9 @@ defmodule FlezhaTest.Service.OperatorManagerSpawnTest do
     stub(Directory, :factory_nodes, fn _ns, _factory -> [:"stale-peer@127.0.0.1"] end)
     stub(Placement, :pick_runner, fn _nodes, _id -> node() end)
 
-    assert {:factory_unknown, "w1"} = spawn_or_deliver(@factory, "p1", :deliver)
+    assert {{:refused, %Flezha.Error{code: "operator.factory_unknown"}}, "w1"} =
+             spawn_or_deliver(@factory, "p1", :deliver)
+
     assert FakeStartRegistry.started() == []
   end
 
@@ -146,7 +149,7 @@ defmodule FlezhaTest.Service.OperatorManagerSpawnTest do
     assert {{:refused, reason}, "w1"} =
              spawn_or_deliver(@factory, "p1", :deliver)
 
-    assert reason =~ "quota_exceeded"
+    assert %Flezha.Error{code: "quota.exceeded", details: %{"limit" => 1}} = reason
   end
 
   describe "a tasklet's request with an identity" do
@@ -258,7 +261,7 @@ defmodule FlezhaTest.Service.OperatorManagerSpawnTest do
     test "a factory nobody registers answers the empty id it carried" do
       stub(FleetManager, :runners_for_factory, fn _ns, _factory -> [] end)
 
-      assert {:factory_unknown, ""} =
+      assert {{:refused, %Flezha.Error{code: "operator.factory_unknown"}}, ""} =
                OperatorManager.spawn_or_deliver(
                  @namespace,
                  "",
@@ -281,10 +284,9 @@ defmodule FlezhaTest.Service.OperatorManagerSpawnTest do
     end
 
     test "a kind the caller asserts is judged against the factory's, never taken" do
-      assert {:error, %{reason: reason}} =
+      assert {:error, {:factory_kind_mismatch, :unbounded, @namespace, _factory, :bounded}} =
                OperatorManager.start_operator(@namespace, %{builder("k2") | kind: :unbounded})
 
-      assert reason =~ "is bounded, and only unbounded is started here"
       assert FakeStartRegistry.started() == []
     end
 
@@ -325,12 +327,12 @@ defmodule FlezhaTest.Service.OperatorManagerSpawnTest do
       # A registry row whose process is gone: conceding would silently accept a
       # start that produced nothing.
       stub(ProcessHub, :child_lookup, fn _hub, id -> {id, [{node(), self()}]} end)
-      stub(HubManager, :get_pid, fn _ns, _id -> {:error, "no pid found"} end)
+      stub(HubManager, :get_pid, fn ns, id -> {:error, {:operator_not_found, ns, id}} end)
 
-      assert {:error, %{reason: reason}} =
+      assert {:error, reason} =
                OperatorManager.start_operator(@namespace, builder("ghost"))
 
-      assert reason == Validator.id_in_use()
+      assert reason == {:id_in_use, "ghost"}
     end
 
     test "a concurrent burst of plain starts yields exactly one instance" do
@@ -425,7 +427,7 @@ defmodule FlezhaTest.Service.OperatorManagerSpawnTest do
                  mint: minting(["worker-live", "worker-live", "worker-live"])
                )
 
-      assert reason == "no free operator id was found for factory worker in 3 draws"
+      assert reason == {:no_free_id, "worker", 3}
     end
 
     test "a refusal that is not about the id is answered, not redrawn" do

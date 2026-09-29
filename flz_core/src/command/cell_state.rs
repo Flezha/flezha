@@ -13,7 +13,7 @@ use serde_json::{Map, Value};
 use super::{CommandAction, Reply};
 use crate::cell::CellSlot;
 use crate::dynamic::DynamicCellRegistry;
-use crate::error::Error;
+use crate::error::{Code, Error};
 use crate::operator::instance::OperatorInstance;
 use crate::operator::topology::TaskletDescriptor;
 use crate::pb::CellState;
@@ -22,13 +22,6 @@ use crate::util::LockRecover;
 
 /// The `change_seq` a single selected Cell was serialized at.
 pub const CHANGE_SEQ_META_KEY: &str = "flz.change_seq";
-
-/// Refusal tokens the controller matches as prefixes.
-pub const CELL_KEY_WITHOUT_TASKLET: &str = "cell_key_without_tasklet";
-pub const TASKLET_NOT_FOUND: &str = "tasklet_not_found";
-pub const CELL_NOT_FOUND: &str = "cell_not_found";
-pub const CELL_EVICTED: &str = "cell_evicted";
-pub const CELL_BUSY: &str = "cell_busy";
 
 /// A serialize's wait for the Cell gate, and a graceful ship's for a host's
 /// answer: inside the 10 s serializer ceiling and the container's grace period.
@@ -42,7 +35,7 @@ pub struct StateSelector<'a> {
 }
 
 impl CommandAction for CellState {
-    fn handle(&self, runner: &mut RunnerNode, message: &str, errors: &mut Vec<String>) -> Reply {
+    fn handle(&self, runner: &mut RunnerNode, message: &str, errors: &mut Vec<Error>) -> Reply {
         self.reply(runner, message, errors).0
     }
 
@@ -50,7 +43,7 @@ impl CommandAction for CellState {
         &self,
         runner: &mut RunnerNode,
         _message: &str,
-        errors: &mut Vec<String>,
+        errors: &mut Vec<Error>,
     ) -> (Reply, HashMap<String, String>) {
         let reply = |bytes| Reply {
             payload_id: "cell_state",
@@ -60,10 +53,7 @@ impl CommandAction for CellState {
         let instance = match runner.get_operator(&self.operator_id) {
             Some(i) => i,
             None => {
-                errors.push(format!(
-                    "UnboundedOperator instance with id {} not found",
-                    self.operator_id
-                ));
+                errors.push(operator_not_found(&self.operator_id));
                 return (reply(Vec::new()), HashMap::new());
             }
         };
@@ -75,11 +65,16 @@ impl CommandAction for CellState {
             ),
             Ok((payload, None)) => (reply(payload), HashMap::new()),
             Err(refusal) => {
-                errors.push(refusal.to_string());
+                errors.push(refusal);
                 (reply(Vec::new()), HashMap::new())
             }
         }
     }
+}
+
+/// A command naming an operator this runner holds no instance of.
+pub(crate) fn operator_not_found(operator_id: &str) -> Error {
+    Error::State(Code::OperatorNotFound.with([("operator", operator_id.into())]))
 }
 
 /// The command's selector; proto3 leaves an unset string empty.
@@ -123,11 +118,7 @@ pub fn serialize_selected_state(
     purpose: StatePurpose,
 ) -> Result<(Vec<u8>, Option<u64>), Error> {
     if selector.cell_key.is_some() && selector.tasklet.is_none() {
-        return Err(Error::State(format!(
-            "{}: a Cell key is unique only within its Tasklet — name the \
-             Tasklet as well",
-            CELL_KEY_WITHOUT_TASKLET
-        )));
+        return Err(Error::State(Code::CellKeyWithoutTasklet.with([])));
     }
 
     let mut top: Map<String, Value> = Map::new();
@@ -147,10 +138,10 @@ pub fn serialize_selected_state(
 
     if let Some(tasklet) = selector.tasklet {
         if !matched_tasklet {
-            return Err(Error::State(format!(
-                "{}: operator `{}` has no Tasklet named `{}`",
-                TASKLET_NOT_FOUND, instance.instance_id, tasklet
-            )));
+            return Err(Error::State(Code::TaskletNotFound.with([
+                ("operator", instance.instance_id.as_ref().into()),
+                ("tasklet", tasklet.into()),
+            ])));
         }
     }
 
@@ -315,33 +306,31 @@ fn serialize_slot(
                 return crate::host::state_json_locked(slot, migration, host_wait);
             }
             let state_guard = slot.state.lock_recover();
-            let value = (tasklet_desc.serialize_state)(&state_guard).map_err(Error::State)?;
+            let value = (tasklet_desc.serialize_state)(&state_guard).map_err(|reason| {
+                Error::State(Code::SerializeFailed.with([
+                    ("tasklet", tasklet_desc.name.as_ref().into()),
+                    ("reason", reason.into()),
+                ]))
+            })?;
             let seq = slot.change_seq.load(Ordering::Relaxed);
             Ok((value, seq))
         })
         .unwrap_or_else(|| {
-            Err(Error::State(format!(
-                "{CELL_BUSY}: Cell `{}` is inside an activation older than {}s",
-                slot.dispatcher.cell_label(),
-                SERIALIZE_GATE_WAIT.as_secs()
-            )))
+            Err(Error::State(Code::CellBusy.with([
+                ("cell", slot.dispatcher.cell_label().into()),
+                ("seconds", SERIALIZE_GATE_WAIT.as_secs().into()),
+            ])))
         })
 }
 
 /// Evicted and never-existed serve the same absence; the diagnosis differs.
 fn missing_cell_refusal(evicted: bool, tasklet_name: &str, key: &str) -> Error {
-    Error::State(if evicted {
-        format!(
-            "{}: Cell `{}` of tasklet `{}` was idle-evicted; eviction is \
-             destructive, so there is no durable value to serve",
-            CELL_EVICTED, key, tasklet_name
-        )
+    let code = if evicted {
+        Code::CellEvicted
     } else {
-        format!(
-            "{}: tasklet `{}` holds no Cell keyed `{}`",
-            CELL_NOT_FOUND, tasklet_name, key
-        )
-    })
+        Code::CellNotFound
+    };
+    Error::State(code.with([("tasklet", tasklet_name.into()), ("cell_key", key.into())]))
 }
 
 /// Apply an `init_values` JSON blob onto a fresh instance;
@@ -350,15 +339,15 @@ pub fn apply_init_values(instance: &OperatorInstance, init_values: &str) -> Resu
     if init_values.is_empty() {
         return Ok(());
     }
-    let parsed: Value = serde_json::from_str(init_values)
-        .map_err(|e| Error::State(format!("Failed to parse init_values as JSON: {}", e)))?;
+    let parsed: Value = serde_json::from_str(init_values).map_err(|e| {
+        Error::State(Code::InitValuesInvalidJson.with([("reason", e.to_string().into())]))
+    })?;
     let top = match parsed {
         Value::Object(map) => map,
         other => {
-            return Err(Error::State(format!(
-                "init_values must be a JSON object, got {}",
-                value_kind(&other)
-            )));
+            return Err(Error::State(
+                Code::InitValuesNotObject.with([("kind", value_kind(&other).into())]),
+            ));
         }
     };
 
@@ -515,6 +504,7 @@ mod tests {
 
     use super::*;
     use crate::test_support::host_class;
+    use crate::ErrorModel;
 
     #[test]
     fn a_wedged_cell_is_omitted_from_the_ship_within_the_bound() {
@@ -572,8 +562,9 @@ mod tests {
             .recv_timeout(SERIALIZE_GATE_WAIT + Duration::from_secs(2))
             .expect("the read must return within the gate bound");
         let refusal = answer.expect_err("a read that names a busy Cell is refused");
-        assert!(
-            refusal.to_string().starts_with(CELL_BUSY),
+        assert_eq!(
+            refusal.code(),
+            "state.cell_busy",
             "the refusal names the Cell as busy: {refusal}"
         );
     }

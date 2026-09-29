@@ -1,219 +1,227 @@
 //! The one place `flz` starts the sibling `flzvm`, the one place a request is
-//! built, and the one place a refused RPC becomes an exit code.
+//! built, and the one place a failure becomes an exit code.
 //!
-//! Every verb is the same shape — a `CliManager` wire name, its positional
-//! arguments, the options it carries, run as `flzvm rpc <expr>`, exit non-zero
-//! if it did — so the shape lives here and each verb contributes only its
-//! arguments and its failure policy. Every request ends with one options list,
-//! and the caller's token joins that list here and nowhere else: no verb can be
-//! gated on the controller and token-less on the wire.
+//! Every verb is the same shape: a `CliManager` wire name, its positional
+//! arguments and the options it carries, run as `flzvm rpc <expr>`. The verb's
+//! body on the controller renders its own failure on this process's stderr and
+//! exits with its class's code, so `flz` passes that code through and adds
+//! nothing. `flz` renders only what it decides itself: its command line, a
+//! controller it cannot reach, and an `flzvm` it cannot start. Every request
+//! ends with one options list, and the caller's token and output format join
+//! that list here and nowhere else: no verb can be gated on the controller and
+//! token-less on the wire.
 
-use std::io::Write;
-use std::process::{exit, Command, ExitStatus, Stdio};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::process::{exit, ChildStderr, Command, ExitStatus, Stdio};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
-use std::{env, io};
+use std::{env, io, thread};
+
+use flz_transport::errors::FlezhaError;
+use flz_transport::utility::socket_dir;
+use serde_json::Value;
 
 use crate::args::{Reading, DEFAULT_WINDOW_MS, DURATION_MS};
-
-/// What a verb exits with when `flzvm` refuses.
-#[derive(Clone, Copy)]
-pub(crate) enum Exit {
-    /// This code, whatever the child answered.
-    Fixed(i32),
-    /// The child's own code. The `i32` is what a child that was signalled —
-    /// and therefore carries no code — becomes.
-    Propagate(i32),
-}
-
-impl Exit {
-    /// The code to use when the child never ran, or answered nothing.
-    fn fallback(self) -> i32 {
-        match self {
-            Exit::Fixed(n) | Exit::Propagate(n) => n,
-        }
-    }
-}
-
-/// A verb's failure policy: what it says, and what it exits with. The two
-/// halves are independent across this tree — a verb that panics on a failed
-/// spawn may still be silent on a refusal — so the policy carries both rather
-/// than collapsing them and moving a caller-visible code.
-#[derive(Clone, Copy)]
-pub(crate) struct Failure {
-    /// Said on stderr when the child ran and refused. A single `{}` takes the
-    /// child's exit status.
-    refused: Option<&'static str>,
-    exit: Exit,
-    /// What a verb calls a child it could not start at all; `None` takes the
-    /// shared sentence. Either way the line names the path and the reason.
-    unspawnable: Option<&'static str>,
-}
-
-impl Failure {
-    pub(crate) const fn new(exit: Exit) -> Self {
-        Failure {
-            refused: None,
-            exit,
-            unspawnable: None,
-        }
-    }
-
-    pub(crate) const fn saying(mut self, refused: &'static str) -> Self {
-        self.refused = Some(refused);
-        self
-    }
-
-    pub(crate) const fn diagnosing(mut self, what: &'static str) -> Self {
-        self.unspawnable = Some(what);
-        self
-    }
-}
-
-/// The seventeen verbs that name the failure and exit 1.
-pub(crate) const REFUSED: Failure =
-    Failure::new(Exit::Fixed(1)).saying("Error: Command execution failed.");
-
-/// The verbs that answer with the child's own code and say nothing.
-pub(crate) const PROPAGATE: Failure = Failure::new(Exit::Propagate(1));
-
-/// `flz controller status` and `mem-top`: 3 means the controller socket is
-/// unreachable, whatever the child answered.
-pub(crate) const UNREACHABLE: Failure = Failure::new(Exit::Fixed(3));
-
-/// `flz audit` and `flz observe`: the child's own code, and a failed spawn
-/// diagnosed rather than panicked.
-pub(crate) const DIAGNOSED: Failure =
-    Failure::new(Exit::Propagate(3)).diagnosing("error: failed to spawn rpc");
-
-/// The verbs whose refusal is reported without being explained — the RPC has
-/// already said why on its own stderr.
-pub(crate) const UNKNOWN_STATUS: Failure =
-    Failure::new(Exit::Fixed(1)).saying("Unknown status returned.");
-
-/// Exit 1 adding nothing to what the RPC printed.
-pub(crate) const QUIET: Failure = Failure::new(Exit::Fixed(1));
-
-/// Said when a verb that named nothing of its own could not start `flzvm`. An
-/// unbuilt release and the wrong working directory are the same caller
-/// condition, and only the path says which: `flz` looks for its sibling next
-/// to itself and nowhere else.
-const UNSPAWNABLE: &str = "Error: could not run";
 
 /// One option a request carries: its key and its value already rendered as an
 /// Elixir literal — `text` for a string, `to_string` for a number, `"true"`.
 pub(crate) type Opt<'a> = (&'a str, String);
 
+static JSON: OnceLock<bool> = OnceLock::new();
+
+/// Record the output format the command line asked for, before anything can
+/// refuse it: a refusal of the command line itself honours `--json` too.
+pub(crate) fn set_json(json: bool) {
+    let _ = JSON.set(json);
+}
+
+/// End the run with `error`, rendered in the format the caller asked for on
+/// stderr, with the exit code of its class.
+pub(crate) fn fail(error: FlezhaError) -> ! {
+    let format = if JSON.get().copied().unwrap_or(false) {
+        "json"
+    } else {
+        "text"
+    };
+    eprintln!("{}", error.render(format));
+    exit(error.exit_code());
+}
+
 /// Run one `CliManager` call on the controller: `fun` with `positional` (each
-/// an Elixir literal) and `opts`, the caller's token appended. Returns only
-/// when the child succeeded, so the caller's next line is its success path.
-pub(crate) fn run(
-    fun: &str,
-    positional: &[String],
-    opts: &[Opt],
-    token: Option<&str>,
-    failure: Failure,
-) {
-    verdict(
-        flzvm()
-            .arg("rpc")
-            .arg(expression(fun, positional, opts, token))
-            .status(),
-        failure,
-    );
+/// an Elixir literal) and `opts`, the caller's token and format appended.
+/// Returns only when the child succeeded, so the caller's next line is its
+/// success path.
+pub(crate) fn run(fun: &str, positional: &[String], opts: &[Opt], read: &Reading) {
+    settle(call(&expression(fun, positional, opts, read), Out::Inherit));
 }
 
 /// The request `run` sends, for the calls that do not go through `run`.
-pub(crate) fn expression(
+pub(crate) fn expression(fun: &str, positional: &[String], opts: &[Opt], read: &Reading) -> String {
+    build(
+        fun,
+        positional,
+        opts,
+        read.token(),
+        read.output_format() == "json",
+    )
+}
+
+fn build(
     fun: &str,
     positional: &[String],
     opts: &[Opt],
     token: Option<&str>,
+    json: bool,
 ) -> String {
     let mut parts: Vec<String> = positional.to_vec();
-    parts.push(keyword_opts_fragment(opts, token));
+    parts.push(keyword_opts_fragment(opts, token, json));
     format!("Flezha.Service.CliManager.{}({})", fun, parts.join(", "))
 }
 
 /// The request whose answer is what the controller printed rather than the
-/// code it exited with. The status is still `verdict`'s to judge, so a verb
-/// that reads stdout does not also decide for itself whether the call worked.
-pub(crate) fn captured(expression: String, failure: Failure) -> String {
-    match flzvm()
-        .arg("rpc")
-        .arg(expression)
-        .stderr(Stdio::inherit())
-        .output()
-    {
-        Ok(output) => {
-            verdict(Ok(output.status), failure);
-            String::from_utf8_lossy(&output.stdout).into_owned()
-        }
-        Err(e) => {
-            verdict(Err(e), failure);
-            String::new()
-        }
-    }
+/// code it exited with. A failure is still settled here, so a verb that reads
+/// stdout does not also decide for itself whether the call worked.
+pub(crate) fn captured(expression: &str) -> String {
+    settle(call(expression, Out::Capture))
 }
 
 /// What `elixir --rpc-eval` says, with exit 1, whenever it could not reach the
 /// node: one that is not up yet, one whose cookie is not this shell's, a name
 /// nobody holds, and a node lost mid-call all read the same. Its exit code is
-/// the one a reached node's refusal has, so this line is the only difference.
+/// the one an internal failure has, so this line is the only difference.
 const NOCONNECTION: &str = "--rpc-eval : RPC failed with reason :noconnection";
 
 /// `run`, for a verb whose job is to wait for the node: when the node could
-/// not be reached at all, the child's status comes back and nothing is printed
-/// or exited, so the verb can ask again. The child's stderr is held until it
-/// exits, which is why the verbs that stream a failure use `run`.
-pub(crate) fn run_if_reachable(expression: String, failure: Failure) -> Result<(), ExitStatus> {
-    let output = flzvm()
-        .arg("rpc")
-        .arg(expression)
-        .stdout(Stdio::inherit())
-        .output();
-
-    if let Ok(output) = &output {
-        if !output.status.success()
-            && String::from_utf8_lossy(&output.stderr)
-                .lines()
-                .any(|line| line == NOCONNECTION)
-        {
-            return Err(output.status);
+/// not be reached at all, nothing is printed or exited, so the verb can ask
+/// again.
+pub(crate) fn run_if_reachable(expression: &str) -> Result<(), ()> {
+    match call(expression, Out::Inherit) {
+        Ok(answer) if answer.unreachable => Err(()),
+        answer => {
+            settle(answer);
+            Ok(())
         }
-        let _ = io::stderr().write_all(&output.stderr);
     }
-
-    verdict(output.map(|output| output.status), failure);
-    Ok(())
 }
 
-/// Apply a failure policy to a child that has already been waited on.
-pub(crate) fn verdict(status: io::Result<ExitStatus>, failure: Failure) {
-    let status = match status {
-        Ok(status) => status,
-        Err(e) => {
-            eprintln!(
-                "{}: {} ({})",
-                failure.unspawnable.unwrap_or(UNSPAWNABLE),
-                flzvm_path(),
-                e
-            );
-            exit(failure.exit.fallback());
+/// End the run for a controller that could not be reached.
+pub(crate) fn unreachable() -> ! {
+    let socket = socket_dir::control_socket_path().unwrap_or_default();
+    fail(FlezhaError::with(
+        "controller.unreachable",
+        [("socket", Value::String(socket))],
+    ))
+}
+
+/// What one `flzvm rpc` answered: its status, whether it said the node could
+/// not be reached, and its stdout when that was asked for.
+pub(crate) struct Answer {
+    status: ExitStatus,
+    unreachable: bool,
+    stdout: String,
+}
+
+/// Where a call's stdout goes: through, into the answer, or line by line
+/// through a filter that says which lines to pass on.
+pub(crate) enum Out<'a> {
+    Inherit,
+    Capture,
+    Filter(&'a mut dyn FnMut(&str) -> bool),
+}
+
+pub(crate) fn call(expression: &str, out: Out) -> io::Result<Answer> {
+    let mut child = flzvm()
+        .arg("rpc")
+        .arg(expression)
+        .stdout(match out {
+            Out::Inherit => Stdio::inherit(),
+            Out::Capture | Out::Filter(_) => Stdio::piped(),
+        })
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let stderr = child.stderr.take().expect("stderr is piped");
+    let relay = thread::spawn(move || relay_stderr(stderr));
+
+    let mut stdout = String::new();
+    if let Some(mut piped) = child.stdout.take() {
+        match out {
+            Out::Filter(keep) => {
+                for line in BufReader::new(piped).lines().map_while(Result::ok) {
+                    if keep(&line) {
+                        println!("{}", line);
+                    }
+                }
+            }
+            _ => {
+                let _ = piped.read_to_string(&mut stdout);
+            }
         }
-    };
-
-    if status.success() {
-        return;
     }
 
-    if let Some(line) = failure.refused {
-        eprintln!("{}", line.replace("{}", &status.to_string()));
+    let status = child.wait()?;
+    let unreachable = relay.join().unwrap_or(false);
+
+    Ok(Answer {
+        status,
+        unreachable,
+        stdout,
+    })
+}
+
+// The child's stderr, passed through line by line as it arrives so a streaming
+// verb's failure is not held back, except the one line that says the node
+// could not be reached: `flz` answers that one itself.
+fn relay_stderr(stderr: ChildStderr) -> bool {
+    let mut unreachable = false;
+    let mut out = io::stderr();
+
+    for line in BufReader::new(stderr).split(b'\n').map_while(Result::ok) {
+        if line == NOCONNECTION.as_bytes() {
+            unreachable = true;
+        } else {
+            let _ = out.write_all(&line);
+            let _ = out.write_all(b"\n");
+        }
     }
 
-    exit(match failure.exit {
-        Exit::Fixed(n) => n,
-        Exit::Propagate(n) => status.code().unwrap_or(n),
-    });
+    unreachable
+}
+
+/// The one rule every verb's call ends with: success returns what the child
+/// printed, a child that could not reach the controller is
+/// `controller.unreachable`, and any other failure exits with the child's own
+/// code, whose rendering it has already written.
+pub(crate) fn settle(answer: io::Result<Answer>) -> String {
+    match answer {
+        Err(e) => not_runnable(e),
+        Ok(answer) if answer.status.success() => answer.stdout,
+        Ok(answer) if answer.unreachable => unreachable(),
+        Ok(answer) => exit(answer.status.code().unwrap_or(1)),
+    }
+}
+
+/// The status of a child `flz` started for something other than an rpc, judged
+/// by the same rule: a non-zero code is the child's.
+pub(crate) fn verdict(status: io::Result<ExitStatus>) {
+    match status {
+        Err(e) => not_runnable(e),
+        Ok(status) if status.success() => {}
+        Ok(status) => exit(status.code().unwrap_or(1)),
+    }
+}
+
+/// An unbuilt release and the wrong working directory are the same caller
+/// condition, and only the path says which: `flz` looks for its sibling next to
+/// itself and nowhere else.
+pub(crate) fn not_runnable(e: io::Error) -> ! {
+    fail(FlezhaError::with(
+        "cli.flzvm_not_runnable",
+        [
+            ("path", Value::String(flzvm_path())),
+            ("reason", Value::String(e.to_string())),
+        ],
+    ))
 }
 
 /// The read verbs — a namespace, an output format, a progress line only text
@@ -234,26 +242,7 @@ pub(crate) fn scoped_read(read: &Reading, rpc_fun: &str, progress: Option<&str>)
         }
     }
 
-    run(
-        rpc_fun,
-        &[text(namespace), text(output_format)],
-        &[],
-        read.token(),
-        REFUSED,
-    );
-}
-
-/// The verbs whose whole request is a rendering choice: `flz audit stats`,
-/// `flz observe sinks`, `flz controller status`. They differ in what they ask
-/// for and in what a refusal costs, and in nothing else.
-pub(crate) fn rendered(read: &Reading, rpc_fun: &str, failure: Failure) {
-    run(
-        rpc_fun,
-        &[text(read.output_format())],
-        &[],
-        read.token(),
-        failure,
-    );
+    run(rpc_fun, &[text(namespace)], &[], read);
 }
 
 /// The window a bounded stream runs for, as the option its request carries.
@@ -268,16 +257,15 @@ pub(crate) fn window(read: &Reading) -> Opt<'static> {
 
 /// The verbs that name one thing and do one thing to it: a dead-letter entry,
 /// a Cell path, a schedule, a plugin, a namespace, an observability source.
-/// They differ in the slot's name and in what a refusal costs, and in nothing
-/// else.
-pub(crate) fn one_arg(read: &Reading, slot: &str, rpc_fun: &str, failure: Failure) {
-    run(rpc_fun, &[text(read.pos(slot))], &[], read.token(), failure);
+/// They differ in the slot's name and in nothing else.
+pub(crate) fn one_arg(read: &Reading, slot: &str, rpc_fun: &str) {
+    run(rpc_fun, &[text(read.pos(slot))], &[], read);
 }
 
-/// The authz verbs that take nothing but the caller's token: the three list
-/// and identity reads.
-pub(crate) fn token_only(read: &Reading, rpc_fun: &str) {
-    run(rpc_fun, &[], &[], read.token(), PROPAGATE);
+/// The verbs that take nothing but the options every call carries: the authz
+/// list and identity reads, `flz audit stats`, `flz controller status`.
+pub(crate) fn bare(read: &Reading, rpc_fun: &str) {
+    run(rpc_fun, &[], &[], read);
 }
 
 /// A `Command` for the sibling `flzvm`, for the three verbs that read its
@@ -315,15 +303,19 @@ pub(crate) fn text(value: &str) -> String {
 }
 
 /// The options list every request ends with: `opts` in the order given, then
-/// the caller's identity token when there is one — `[]` when it carries
-/// neither. The token is the walk's answer: the `--token` flag wherever it was
-/// written, else the environment variable its declaration names.
-fn keyword_opts_fragment(opts: &[Opt], token: Option<&str>) -> String {
+/// `output: "json"` when the caller asked for JSON, then the caller's identity
+/// token when there is one — `[]` when it carries none of them. The token is
+/// the walk's answer: the `--token` flag wherever it was written, else the
+/// environment variable its declaration names.
+fn keyword_opts_fragment(opts: &[Opt], token: Option<&str>, json: bool) -> String {
     let mut entries: Vec<String> = opts
         .iter()
         .map(|(key, value)| format!("{}: {}", key, value))
         .collect();
 
+    if json {
+        entries.push(format!("output: {}", text("json")));
+    }
     if let Some(token) = token {
         entries.push(format!("token: {}", text(token)));
     }
@@ -352,7 +344,7 @@ pub(crate) fn controller_is_up(probe_timeout_ms: u64) -> bool {
 
     let mut child = match flzvm()
         .arg("rpc")
-        .arg(expression("boot_status", &[], &[], None))
+        .arg(build("boot_status", &[], &[], None, false))
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -398,11 +390,11 @@ mod tests {
     #[test]
     fn the_token_closes_the_options_list_and_is_escaped() {
         assert_eq!(
-            expression("x", &[], &[], Some("abc\"def")),
+            build("x", &[], &[], Some("abc\"def"), false),
             "Flezha.Service.CliManager.x([token: \"abc\\\"def\"])"
         );
         assert_eq!(
-            expression("x", &[], &[], None),
+            build("x", &[], &[], None, false),
             "Flezha.Service.CliManager.x([])"
         );
     }
@@ -416,7 +408,7 @@ mod tests {
             ("init_values", text("{\"a\":\"x\\\"y\"}")),
         ];
         assert_eq!(
-            expression("schedule_add", &[text("d")], &opts, Some("t")),
+            build("schedule_add", &[text("d")], &opts, Some("t"), false),
             "Flezha.Service.CliManager.schedule_add(\"d\", [cron: \"0 8 * * *\", init_values: \"{\\\"a\\\":\\\"x\\\\\\\"y\\\"}\", token: \"t\"])"
         );
     }

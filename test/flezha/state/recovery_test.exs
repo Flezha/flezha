@@ -119,8 +119,8 @@ defmodule Flezha.State.RecoveryTest do
         {:ok, %{"eth" => entry(operator, "exec_1")}}
       end)
 
-      assert {:error, msg} = Recovery.resolve_runner({"market", "0", "p1"})
-      assert msg =~ "no active runner owns operator_class=market"
+      assert {:error, {:no_owning_runner, "market"}} =
+               Recovery.resolve_runner({"market", "0", "p1"})
     end
 
     test "tolerates a {cspec, node_pids} 2-tuple row with no metadata (no crash)" do

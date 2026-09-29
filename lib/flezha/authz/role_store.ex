@@ -60,7 +60,7 @@ defmodule Flezha.AuthZ.RoleStore do
 
   @doc """
   Add `role` to `principal`'s roles in `namespace`. Idempotent: a role already
-  held writes nothing. Refuses `{:error, {:bound_elsewhere, held}}` when the
+  held writes nothing. Refuses `{:error, {:bound_elsewhere, principal, held}}` when the
   principal holds roles in another namespace, naming that one. Synchronous:
   `:dets.sync/1` completes before return.
   """
@@ -84,7 +84,7 @@ defmodule Flezha.AuthZ.RoleStore do
   Remove one role, deleting the binding when it was the last. Idempotent, and a
   role the principal does not hold changes nothing.
   """
-  @spec unbind(binary(), Role.t()) :: :ok | {:error, :unknown_role}
+  @spec unbind(binary(), Role.t()) :: :ok | {:error, {:unknown_role, atom()}}
   def unbind(principal, role) when is_binary(principal) and is_atom(role) do
     with :ok <- Role.validate(role) do
       GenServer.call(__MODULE__, {:unbind, principal, role})
@@ -172,7 +172,7 @@ defmodule Flezha.AuthZ.RoleStore do
   defp do_bind(principal, namespace, role, bound_by) do
     case stored(principal) do
       {:ok, %{namespace: held_ns}} when held_ns != namespace ->
-        {:error, {:bound_elsewhere, held_ns}}
+        {:error, {:bound_elsewhere, principal, held_ns}}
 
       {:ok, held} ->
         if role in held.roles do

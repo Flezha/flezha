@@ -101,12 +101,13 @@ defmodule Flezha.AuthZ.TokenStore do
 
   @doc """
   Verify a presented raw token. On success returns
-  `{:ok, %{principal, namespace, role, expires_at, token_hash}}`.
+  `{:ok, %{principal, namespace, role, expires_at, token_hash}}`; a refusal is
+  one of the `authz.token_*` codes, or `authz.registry_unavailable`.
 
-  A registry that is not open answers `{:error, :registry_unavailable}` rather
-  than raising: both readers — the CLI's identity binding and the runner
-  connect's namespace proof — are on paths where an exception would cost more
-  than a refusal, and neither should carry its own guard.
+  A registry that is not open is refused rather than raising: both readers —
+  the CLI's identity binding and the runner connect's namespace proof — are on
+  paths where an exception would cost more than a refusal, and neither should
+  carry its own guard.
   """
   @spec verify(binary()) ::
           {:ok,
@@ -117,47 +118,48 @@ defmodule Flezha.AuthZ.TokenStore do
              expires_at: integer() | :never,
              token_hash: binary()
            }}
-          | {:error,
-             :malformed | :unknown | :token_revoked | :token_expired | :registry_unavailable}
+          | {:error, Flezha.Error.t()}
   def verify(token) when is_binary(token) do
     if String.starts_with?(token, @prefix) do
       case lookup_by_hash(hash_token(token)) do
         {:ok, %{revoked_at: revoked}} when is_integer(revoked) ->
-          {:error, :token_revoked}
+          refused("authz.token_revoked")
 
         {:ok, %{expires_at: :never} = e} ->
           {:ok, project(e)}
 
         {:ok, %{expires_at: exp} = e} ->
           if exp <= System.system_time(:second) do
-            {:error, :token_expired}
+            refused("authz.token_expired")
           else
             {:ok, project(e)}
           end
 
         :error ->
-          {:error, :unknown}
+          refused("authz.token_unknown")
 
         :unavailable ->
-          {:error, :registry_unavailable}
+          refused("authz.registry_unavailable")
       end
     else
-      {:error, :malformed}
+      refused("authz.token_malformed")
     end
   end
 
-  def verify(_), do: {:error, :malformed}
+  def verify(_), do: refused("authz.token_malformed")
+
+  defp refused(code), do: {:error, Flezha.Error.new(code)}
 
   @doc """
   Revoke the token whose `token_hash` matches `id` (a SHA-256 hex
   digest prefix — at least 8 chars). Returns `{:ok, entry}` or
-  `{:error, :not_found | :ambiguous}`.
+  `{:error, {:token_not_found | :token_ambiguous, id}}`.
   """
   @spec revoke(binary(), keyword()) :: {:ok, entry()} | {:error, term()}
   def revoke(id, opts \\ []) when is_binary(id) do
     case Identificator.validate(:token, id) do
       :ok -> close_authenticated_sessions(GenServer.call(__MODULE__, {:revoke, id, opts}))
-      {:error, _refusal} -> {:error, :not_found}
+      {:error, _refusal} -> {:error, {:token_not_found, id}}
     end
   end
 
@@ -240,13 +242,13 @@ defmodule Flezha.AuthZ.TokenStore do
     reply =
       case matches do
         [] ->
-          {:error, :not_found}
+          {:error, {:token_not_found, id}}
 
         [{hash, entry}] ->
           revoke_entry(hash, entry, Keyword.get(opts, :revoked_by_principal))
 
         _ ->
-          {:error, :ambiguous}
+          {:error, {:token_ambiguous, id}}
       end
 
     {:reply, reply, state}
@@ -256,7 +258,7 @@ defmodule Flezha.AuthZ.TokenStore do
     reply =
       case DetsStore.fetch(@table, hash) do
         {:ok, entry} -> revoke_entry(hash, entry, nil)
-        :error -> {:error, :not_found}
+        :error -> {:error, {:token_not_found, hash}}
       end
 
     {:reply, reply, state}
@@ -269,7 +271,7 @@ defmodule Flezha.AuthZ.TokenStore do
   # is a clause here and not a nil check at the call.
   defp expiry_at(:never, _now), do: {:ok, :never}
   defp expiry_at(seconds, now) when is_integer(seconds) and seconds > 0, do: {:ok, now + seconds}
-  defp expiry_at(_invalid, _now), do: {:error, :invalid_ttl}
+  defp expiry_at(invalid, _now), do: {:error, {:invalid_ttl, invalid}}
 
   # The two rules a runner credential carries, refused here rather than at the
   # connect path: an expiring one is the trap this change exists to close, and a

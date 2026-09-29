@@ -17,9 +17,13 @@ defmodule Flezha.Service.Cli.Controller do
   `flz controller stop` RPC. Drains through
   `Flezha.Shutdown.Coordinator.shutdown_and_stop/3`, prints structured progress
   lines and the outcome, then stops the node. The final line is a
-  machine-readable marker the Rust CLI scans to derive its exit code:
+  machine-readable marker the Rust CLI reads, because the node may be gone
+  before the call's own exit reaches it:
 
-      flz-controller-stop-result: clean | partial | forced | already_in_progress
+      flz-controller-stop-result: clean | partial | forced
+
+  A partial drain is also answered as `shutdown.partial_drain`, and a
+  coordinator that exited as `shutdown.coordinator_exited`.
 
   The call's options (keys may be atoms or binaries):
     * `:timeout_ms` — overrides the configured timeout
@@ -100,28 +104,22 @@ defmodule Flezha.Service.Cli.Controller do
     )
 
     IO.puts("flz-controller-stop-result: partial")
+    {:error, {:partial_drain, still_local}}
+  end
+
+  # The coordinator is gone because the node is already stopping: the stop
+  # that began it is the outcome, and there is nothing left to drain.
+  defp render_stop_outcome({:exit, {:noproc, _}}, _force, _start_ms) do
+    IO.puts("[shutdown] coordinator not running; the controller is already stopping")
+    IO.puts("flz-controller-stop-result: clean")
     :ok
   end
 
-  defp render_stop_outcome({:exit, reason}, _force, _start_ms), do: render_stop_exit(reason)
+  defp render_stop_outcome({:exit, reason}, _force, _start_ms),
+    do: {:error, {:coordinator_exited, reason}}
 
-  defp render_stop_outcome(other, _force, _start_ms) do
-    IO.puts("[shutdown] unexpected coordinator return: #{inspect(other)}")
-    IO.puts("flz-controller-stop-result: partial")
-    :ok
-  end
-
-  defp render_stop_exit({:noproc, _}) do
-    IO.puts("[shutdown] coordinator not running")
-    IO.puts("flz-controller-stop-result: already_in_progress")
-    :ok
-  end
-
-  defp render_stop_exit(reason) do
-    IO.puts("[shutdown] coordinator exit: #{Context.format_reason(reason)}")
-    IO.puts("flz-controller-stop-result: already_in_progress")
-    :ok
-  end
+  defp render_stop_outcome(other, _force, _start_ms),
+    do: {:error, {:coordinator_exited, other}}
 
   @doc false
   def controller_stop_progress_handler(event, measurements, metadata, config) do
@@ -173,14 +171,14 @@ defmodule Flezha.Service.Cli.Controller do
   someone having watched the boot that announced it. The folder file plugins
   may read and write is reported for the same reason.
   """
-  def controller_status(output_format, _call) do
+  def controller_status(%{opts: opts}) do
     status =
       safe_shutdown_status()
       |> Map.merge(durability_status())
       |> Map.put(:state_root, Paths.state_root())
       |> Map.put(:file_plugin_root, Storage.Config.shown_root())
 
-    case output_format do
+    case Context.format(opts) do
       "json" ->
         json =
           status

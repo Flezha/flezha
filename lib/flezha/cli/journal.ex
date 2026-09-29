@@ -4,6 +4,7 @@ defmodule Flezha.Service.Cli.Journal do
   the durable input log of an instance of either kind.
   """
 
+  alias Flezha.Service.Cli.Context
   alias Flezha.Operator.ClassRegistry
   alias Flezha.SDK.Wire
   alias Flezha.Service.OperatorManager
@@ -21,7 +22,8 @@ defmodule Flezha.Service.Cli.Journal do
   task index, iteration, the cells that ran with the effect records each wrote
   and the channels they wrote on, and the handoff batch size.
   """
-  def state_journal(instance_id, output_format, _call) do
+  def state_journal(instance_id, %{opts: opts}) do
+    output_format = Context.format(opts)
     {:ok, entries} = TaskJournal.read(instance_id)
 
     rows = Enum.map(entries, &journal_row/1)
@@ -224,7 +226,7 @@ defmodule Flezha.Service.Cli.Journal do
   at or below the instance's floor (consumed) or above it (pending), its size
   and channel.
   """
-  def state_inbox(instance_id, output_format, _call) do
+  def state_inbox(instance_id, %{opts: opts}) do
     case retained_input(instance_id) do
       {:ok, floor, records} ->
         rows =
@@ -237,10 +239,10 @@ defmodule Flezha.Service.Cli.Journal do
             }
           end)
 
-        render_inbox(instance_id, floor, rows, output_format)
+        render_inbox(instance_id, floor, rows, Context.format(opts))
 
       {:error, refusal} ->
-        IO.puts("the input log for #{instance_id} refused to serve: #{inspect(refusal)}")
+        {:error, {:inbox_unreadable, instance_id, refusal}}
     end
   end
 

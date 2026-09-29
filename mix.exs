@@ -215,6 +215,7 @@ defmodule Flezha.MixProject do
         "docs/troubleshooting/controller_will_not_start.md",
         "docs/troubleshooting/runner_cannot_connect.md",
         "docs/configuration.md",
+        "docs/errors.md",
         "docs/operations/authn_authz.md"
       ],
       before_closing_head_tag: &guide_styles/1,
@@ -252,7 +253,7 @@ defmodule Flezha.MixProject do
         SDK: ~r"docs/sdk/",
         Plugins: ~r"docs/plugins/",
         Troubleshooting: ~r"docs/troubleshooting/",
-        Reference: ~r"docs/(quickstart|configuration|operations|guides/cli)"
+        Reference: ~r"docs/(quickstart|configuration|errors|operations|guides/cli)"
       ]
     ]
   end

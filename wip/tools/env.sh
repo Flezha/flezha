@@ -112,8 +112,8 @@ EOF
 # The controller, started from $RUN/ctl, where its app_data lives.
 controller() {
   (cd "$RUN/ctl" && nohup flzvm start </dev/null >>"$RUN/logs/controller.out" 2>&1 &)
-  # Up once it answers, if only to refuse a caller with no token.
-  wait_for 90 "the controller" bash -c 'flz controller status 2>&1 | grep -q "^node:\|refused"'
+  # Up once it answers, if only to refuse a caller with no token (exit 4, denied).
+  wait_for 90 "the controller" bash -c 'flz controller status >/dev/null 2>&1; s=$?; [ $s -eq 0 ] || [ $s -eq 4 ]'
   pgrep -f "beam.smp.* $FLEZHA_NODE_NAME@" >"$RUN/controller.pid" ||
     fail "the controller answered, but no beam.smp named $FLEZHA_NODE_NAME@ is running"
 }

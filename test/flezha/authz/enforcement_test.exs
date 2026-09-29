@@ -27,7 +27,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
     test "config-enabled but unclaimed is :bootstrap_pending and refuses gated verbs" do
       assert AuthZ.enforcement_posture() == :bootstrap_pending
 
-      assert {:error, {:forbidden, :bootstrap_pending}} =
+      assert {:error, {:forbidden, :bootstrap_pending, _token_path}} =
                AuthZ.authorize(%{source: :cli}, :"state.delete", Scope.build("_system"))
     end
 
@@ -36,13 +36,14 @@ defmodule Flezha.AuthZ.EnforcementTest do
 
       output =
         capture_io(:stderr, fn ->
-          assert catch_exit(CliManager.state_delete("op/task/key", [])) == {:shutdown, 1}
+          assert catch_exit(CliManager.state_delete("op/task/key", [])) == {:shutdown, 4}
         end)
 
       # The path is logged only on the boot that WRITES the file; on every later
       # boot with an unclaimed token the writer short-circuits and logs nothing,
       # so the refusal carries the path rather than promising a log line.
-      assert output =~ "the bootstrap has not been claimed"
+      assert output =~ "no admin has claimed the bootstrap yet"
+      assert output =~ "(authz.bootstrap_pending)"
       assert output =~ Config.bootstrap_token_path()
       refute output =~ "logged at controller boot"
     end
@@ -97,8 +98,8 @@ defmodule Flezha.AuthZ.EnforcementTest do
             fn -> CliManager.authz_render_whoami(forged) end,
             fn -> CliManager.authz_render_namespace_create("forged-ns", "{}", forged) end
           ] do
-        output = capture_io(:stderr, fn -> assert catch_exit(verb.()) == {:shutdown, 1} end)
-        assert output =~ "refused: no verifiable identity"
+        output = capture_io(:stderr, fn -> assert catch_exit(verb.()) == {:shutdown, 4} end)
+        assert output =~ "no verifiable identity (authz.principal_not_bound)"
       end
     end
 
@@ -108,10 +109,10 @@ defmodule Flezha.AuthZ.EnforcementTest do
       output =
         capture_io(:stderr, fn ->
           assert catch_exit(CliManager.authz_render_whoami(token: "flzt_not_a_real_token")) ==
-                   {:shutdown, 1}
+                   {:shutdown, 4}
         end)
 
-      assert output =~ "authz.whoami: refused"
+      assert output =~ "(authz.principal_not_bound)"
     end
 
     test "the runner principal is bound to its connection's namespace" do
@@ -137,7 +138,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
 
       output =
         capture_io(:stderr, fn ->
-          assert catch_exit(CliManager.state_delete("op/task/key", [])) == {:shutdown, 1}
+          assert catch_exit(CliManager.state_delete("op/task/key", [])) == {:shutdown, 4}
         end)
 
       assert output =~ "flz auth bootstrap"
@@ -150,10 +151,10 @@ defmodule Flezha.AuthZ.EnforcementTest do
       output =
         capture_io(:stderr, fn ->
           assert catch_exit(CliManager.installer_enable_plugin("some_plugin", token: raw)) ==
-                   {:shutdown, 1}
+                   {:shutdown, 4}
         end)
 
-      assert output =~ "refused"
+      assert output =~ "(authz.role_insufficient)"
     end
 
     test "an authorized destructive verb proceeds and audits the actor" do
@@ -196,7 +197,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
                  boundary
                )
 
-      assert signal.metadata.reason == :principal_not_bound
+      assert signal.metadata.reason == "authz.principal_not_bound"
       assert signal.metadata.caller_roles == nil
     end
 
@@ -215,7 +216,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
       assert [signal | _] =
                AuthTestHelper.await_platform_authz_events(:authorization_denied, boundary)
 
-      assert signal.metadata.reason == :role_insufficient
+      assert signal.metadata.reason == "authz.role_insufficient"
       assert signal.metadata.caller_roles == [:viewer]
     end
   end

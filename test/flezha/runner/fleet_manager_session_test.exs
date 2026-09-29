@@ -221,7 +221,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
 
       answer_frame(sdk, connect_socket, &accept/1)
 
-      assert {:admin_response, %{error: ""}} =
+      assert {:admin_response, %{error: nil}} =
                ControlFrameTestHelper.await_answering_handshake(sdk, "admin-during-handshake")
 
       assert session in FleetManager.active_runners(ns)
@@ -533,7 +533,9 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
 
   defp accept(_kind), do: {"success", []}
 
-  defp refuse_the_connect(:connect_socket), do: {"error", ["no data socket"]}
+  defp refuse_the_connect(:connect_socket),
+    do: {"error", [Flezha.SDK.Error.new("runner.data_streams_failed", reason: "no data socket")]}
+
   defp refuse_the_connect(_kind), do: {"success", []}
 
   defp tree_running?(session) do

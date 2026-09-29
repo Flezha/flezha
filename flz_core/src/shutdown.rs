@@ -160,7 +160,7 @@ fn ship_notification(
 
 /// A controller reply to an SDK-initiated request: what it reports beyond
 /// "it worked" (empty for a bare ack), or the failure it names.
-pub type AckResult = Result<String, String>;
+pub type AckResult = Result<String, flz_transport::errors::FlezhaError>;
 
 /// What a reply to one request does, run once on the thread that brings it.
 pub type OnReply = Box<dyn FnOnce(AckResult) + Send>;

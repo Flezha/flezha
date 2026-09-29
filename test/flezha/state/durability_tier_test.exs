@@ -101,7 +101,7 @@ defmodule Flezha.State.DurabilityTierTest do
       assert DurabilityTier.posture() == :local_only
 
       printed =
-        ExUnit.CaptureIO.capture_io(fn -> :ok = ControllerCli.controller_status("text", %{}) end)
+        ExUnit.CaptureIO.capture_io(fn -> :ok = ControllerCli.controller_status(%{opts: []}) end)
 
       assert printed =~ "durability_posture:            local_only"
     end

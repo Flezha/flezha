@@ -35,8 +35,10 @@ create_exception!(
     "The native library and this build speak different activation schema versions."
 );
 
+/// Every exception this module raises carries the JSON error document as its
+/// message, so the package builds its one error type from data.
 fn native_error(message: impl Into<String>) -> PyErr {
-    NativeError::new_err(message.into())
+    NativeError::new_err(veneer::document(message.into()))
 }
 
 /// The one mapping of a refusal onto the module's exception classes.
@@ -44,7 +46,7 @@ impl From<Refusal> for PyErr {
     fn from(refusal: Refusal) -> PyErr {
         match refusal {
             Refusal::Core(message) | Refusal::Shape(message) => native_error(message),
-            Refusal::Schema(message) => SchemaMismatch::new_err(message),
+            Refusal::Schema(message) => SchemaMismatch::new_err(veneer::document(message)),
         }
     }
 }
@@ -412,23 +414,13 @@ impl Core {
     }
 
     /// Judge one host class declaration without registering it. Answers the
-    /// derived declaration as JSON; raises the core's verdict on a refusal.
-    ///
-    /// The raised exception carries that verdict as the core's own JSON —
-    /// `{"issues":[{"name","text"}]}` — on its `verdict` attribute, so the SDK
-    /// reads which refusals fired off data rather than out of the rendered
-    /// message, which is unchanged.
+    /// derived declaration as JSON; raises the core's error document on a
+    /// refusal, whose `details.issues` lists every issue.
     fn check_class<'py>(&self, py: Python<'py>, json: &[u8]) -> PyResult<Bound<'py, PyBytes>> {
         let ctx = self.ptr()?;
         match veneer::check_class(ctx, json) {
             Ok(derived) => Ok(PyBytes::new(py, &derived)),
-            Err((refusal, verdict)) => {
-                let refused = PyErr::from(refusal);
-                refused
-                    .value(py)
-                    .setattr("verdict", PyBytes::new(py, &verdict))?;
-                Err(refused)
-            }
+            Err(refusal) => Err(refusal.into()),
         }
     }
 
@@ -624,6 +616,14 @@ fn monotonic_nanos() -> u64 {
     crate::flz_core_monotonic_nanos()
 }
 
+/// The JSON error document the catalogue renders for `code` and `details`, a
+/// JSON object: the document `last_error` carries for a refusal the core
+/// makes, for one the package makes itself.
+#[pyfunction]
+fn error_document(code: &str, details: &str) -> PyResult<String> {
+    crate::render_error_document(code, details).map_err(native_error)
+}
+
 /// Whether this extension was built for a free-threaded interpreter.
 ///
 /// Reported in the runner's startup line, so a benchmark can never be
@@ -682,6 +682,7 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("monotonic_nanos", "flz_core_monotonic_nanos"),
     ("Core.last_error", "flz_core_last_error"),
     ("free_threaded", "flz_core_schema_version"),
+    ("error_document", "flz_core_error_document"),
     ("native_surface", "flz_core_schema_version"),
 ];
 
@@ -696,6 +697,7 @@ pub fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(schema_version, m)?)?;
     m.add_function(wrap_pyfunction!(monotonic_nanos, m)?)?;
     m.add_function(wrap_pyfunction!(free_threaded, m)?)?;
+    m.add_function(wrap_pyfunction!(error_document, m)?)?;
     m.add_function(wrap_pyfunction!(native_surface, m)?)?;
     Ok(())
 }

@@ -271,7 +271,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
     assert %RunnerCommands.TaskJournalState{iter: 2, consumed_offset: nil} =
              Commands.task_journal_state(inst)
 
-    rendered = ExUnit.CaptureIO.capture_io(fn -> Journal.state_journal(inst, "text", nil) end)
+    rendered = ExUnit.CaptureIO.capture_io(fn -> Journal.state_journal(inst, %{opts: []}) end)
     assert rendered =~ "consumed input-log offset: 0"
     assert rendered =~ "consumed no journaled input"
   end
@@ -314,7 +314,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
     assert %RunnerCommands.TaskJournalState{released_offset: 0, consumed_offset: nil} =
              Commands.task_journal_state(inst)
 
-    rendered = ExUnit.CaptureIO.capture_io(fn -> Journal.state_journal(inst, "text", nil) end)
+    rendered = ExUnit.CaptureIO.capture_io(fn -> Journal.state_journal(inst, %{opts: []}) end)
     assert rendered =~ "input_released"
     assert rendered =~ "released unread input-log offset: 0"
   end
@@ -370,10 +370,14 @@ defmodule FlezhaTest.State.TaskJournalTest do
     :ok = TaskJournal.append_task_committed(inst, 0, 0, [], [], "done")
     :ok = TaskJournal.append_iter_committed(inst, 0, 1, [], "done")
 
-    text = ExUnit.CaptureIO.capture_io(fn -> Journal.state_journal(inst, "text", nil) end)
+    text = ExUnit.CaptureIO.capture_io(fn -> Journal.state_journal(inst, %{opts: []}) end)
     assert length(String.split(text, "completes the instance: result 4 byte(s)")) == 3
 
-    json = ExUnit.CaptureIO.capture_io(fn -> Journal.state_journal(inst, "json", nil) end)
+    json =
+      ExUnit.CaptureIO.capture_io(fn ->
+        Journal.state_journal(inst, %{opts: [output: "json"]})
+      end)
+
     assert %{"entries" => [task, iter]} = Jason.decode!(json)
     assert {task["completes_bytes"], iter["completes_bytes"]} == {4, 4}
   end
@@ -412,13 +416,17 @@ defmodule FlezhaTest.State.TaskJournalTest do
     assert entry.payload.cells_ran == [ran(seg_a, {3, 4}, ["out"]), ran(seg_b)]
     refute Map.has_key?(entry.payload, :outbox)
 
-    text = ExUnit.CaptureIO.capture_io(fn -> Journal.state_journal(inst, "text", nil) end)
+    text = ExUnit.CaptureIO.capture_io(fn -> Journal.state_journal(inst, %{opts: []}) end)
     assert text =~ "ran: #{inst}/TaskA/s0 records=3..4 channels=out"
     assert text =~ "ran: #{inst}/TaskB/\n"
     refute text =~ "outbox"
     refute text =~ "flushes"
 
-    json = ExUnit.CaptureIO.capture_io(fn -> Journal.state_journal(inst, "json", nil) end)
+    json =
+      ExUnit.CaptureIO.capture_io(fn ->
+        Journal.state_journal(inst, %{opts: [output: "json"]})
+      end)
+
     assert %{"entries" => [%{"cells_ran" => [a, b]}]} = Jason.decode!(json)
 
     assert a == %{

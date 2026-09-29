@@ -100,23 +100,17 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketChannelTest do
     end
 
     test "the bag and an option together are refused, naming both" do
-      assert {:error, message} =
+      assert {:error, {:channel_written_twice, "eu", "us"}} =
                prepared(%{channel: "us", payload_metadata: %{"channel" => "eu"}}, [])
-
-      assert message =~ "payload_metadata names channel \"eu\""
-      assert message =~ "names \"us\""
     end
 
     # The filter half is a set, and a user reads back what they typed.
     test "a filter of several names is named in the user's own spelling" do
-      assert {:error, message} =
+      assert {:error, {:channel_written_twice, "eu", "alerts,audit"}} =
                prepared(
                  %{channel_out: "alerts,audit", payload_metadata: %{"channel" => "eu"}},
                  [:on_output]
                )
-
-      assert message =~ "names \"alerts,audit\""
-      refute message =~ "["
     end
   end
 
@@ -207,14 +201,13 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketChannelTest do
 
   describe "a key naming a job the plugin does not do is refused" do
     test "`channel_out` on a plugin with no chain hook" do
-      assert {:error, message} = prepared(%{channel_out: "prices"}, [])
-      assert message =~ "websocket names channel_out"
-      assert message =~ "no on_input or on_output hook"
+      assert {:error, {:channel_unused, "websocket", :channel_out, :out}} =
+               prepared(%{channel_out: "prices"}, [])
     end
 
     test "`channel` together with an explicit key" do
-      assert {:error, message} = prepared(%{channel: "a", channel_out: "b"}, [:on_output])
-      assert message =~ "names channel together with channel_out"
+      assert {:error, {:channel_spelled_twice, "websocket", [:channel_out]}} =
+               prepared(%{channel: "a", channel_out: "b"}, [:on_output])
     end
   end
 end

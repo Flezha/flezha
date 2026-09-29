@@ -48,13 +48,33 @@ message CommandRequest {
         AdminRequest admin_request = 36;
         AdminResponse admin_response = 37;
         OperatorExited operator_exited = 38;
+        ConnectRefused connect_refused = 39;
     }
+}
+
+// A failure in the error model's one shape (docs/errors.md): a stable `code`
+// spelled family.snake, its `class`, a plain `message`, the `details` that
+// message names as a JSON object (the encoding `AdminRequest.args` uses), and
+// a `hint` naming the next command, empty when there is none.
+message Error {
+    string code = 1;
+    string class = 2;
+    string message = 3;
+    string details_json = 4;
+    string hint = 5;
+}
+
+// Controller -> SDK, the one frame a refused runner connect is answered with,
+// written before the controller closes the stream, so the runner can report
+// why rather than retrying a connection that will never be admitted.
+message ConnectRefused {
+    Error error = 1;
 }
 
 message CommandResponse {
     string reference_id = 1;
     string status = 2;
-    repeated string errors = 3;
+    repeated Error errors = 3;
     bytes raw_data = 4;
 }
 
@@ -166,15 +186,15 @@ message OperatorMessage {
 
 message OperatorMessageResponse {
     bytes payload = 1;
-    string error = 2;
+    Error error = 2;
 }
 
 // Inverse of CellState. Sent by the Controller to a Runner SDK to
 // prime a freshly-spawned Operator's GenServer/struct state from a
 // previously-captured `state_binary`. Round-trips with the same opaque
 // SDK-internal serialization used by CellState. SDKs that do not
-// implement Apply respond with status="error" and error[] containing the
-// canonical token "apply_state_not_supported".
+// implement Apply respond with status="error" and an error coded
+// `state.apply_not_supported`.
 message CellApplyState {
     string operator_id = 1;
     string factory_id = 2;
@@ -275,13 +295,13 @@ message TimerTrigger {
 
 // Controller -> SDK reply to TaskCommit, emitted only AFTER the journal
 // entry is durable (fsync). Carries the originating request's
-// reference_id so the SDK wakes the blocked driver. A non-empty `error`
+// reference_id so the SDK wakes the blocked driver. A present `error`
 // (journal write/fsync failure, oversized handoff) terminates the run
 // abnormally through the existing terminal-error path.
 message TaskCommitResponse {
     string operator_id = 1;
     uint32 task_idx = 2;
-    string error = 3;
+    Error error = 3;
 }
 
 // SDK -> Controller, at each iteration boundary of a looping durable
@@ -317,7 +337,7 @@ message IterCommit {
 message IterCommitResponse {
     string operator_id = 1;
     uint32 iter = 2;
-    string error = 3;
+    Error error = 3;
 }
 
 // SDK -> Controller. An instance of either kind whose class sleeps has been idle
@@ -644,15 +664,17 @@ message SpawnBoundedRequest {
 
 // Controller -> SDK reply to SpawnBoundedRequest, carrying the originating
 // request's reference_id so the SDK wakes the requester's result handle.
-// `outcome` is one of `spawned | delivered | already_running |
-// factory_unknown | factory_not_bounded | refused`; `error` details a
-// `refused` (quota, shutdown, start failure) and is empty otherwise. `instance_id` is the id the request
+// `outcome` is `spawned` or `delivered` when the request reached an
+// instance, and empty when it was refused; `error` is the refusal, carrying the
+// controller's own code (`operator.already_running`, `operator.factory_unknown`,
+// `operator.factory_not_bounded`, `quota.exceeded`, `authz.*`, ...), and is
+// absent otherwise. `instance_id` is the id the request
 // resolved to: the requester's own, or the generated one for a request that
 // carried none (empty when nothing was started). The reply never faults the
 // requesting tasklet — it only resolves its handle.
 message SpawnBoundedResponse {
     string outcome = 1;
-    string error = 2;
+    Error error = 2;
     string instance_id = 3;
 }
 
@@ -680,11 +702,11 @@ message AdminRequest {
 
 // Controller -> SDK reply to AdminRequest, carrying the originating request's
 // reference_id so the SDK wakes the blocked caller. `result` is the published
-// function's own answer as JSON; `error` details a refusal (policy, quota, a
-// name that resolves to nothing) and is empty otherwise.
+// function's own answer as JSON; `error` is a refusal (policy, quota, a name
+// that resolves to nothing) and is absent otherwise.
 message AdminResponse {
     string result = 1;
-    string error = 2;
+    Error error = 2;
 }
 
 // SDK -> Controller, one-way, over the "control_command" payload_id: the

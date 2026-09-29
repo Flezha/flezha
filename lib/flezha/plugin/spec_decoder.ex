@@ -8,8 +8,9 @@ defmodule Flezha.Plugin.SpecDecoder do
   the decoded form is RUNTIME state: a durable schedule stores the JSON and
   decodes it again at every firing.
 
-  Refusals: `{:invalid_plugins_json, reason}`, `{:unknown_provider, id}`,
-  `{:invalid_hook, details}`, `{:invalid_opts, details}`.
+  Refusals: `{:invalid_plugins_json, reason}`, `{:unknown_provider, id}`, the
+  hook refusals of `Flezha.Plugin.hooks/1`, `:plugin_spec_not_object`,
+  `{:plugin_spec_field_missing, field}` and `{:plugin_spec_field_not_object, field}`.
   """
 
   alias Flezha.Plugin
@@ -46,8 +47,8 @@ defmodule Flezha.Plugin.SpecDecoder do
           err -> err
         end
 
-      {:error, reason} ->
-        {:error, {:invalid_plugins_json, reason}}
+      {:error, _reason} = err ->
+        err
     end
   end
 
@@ -76,9 +77,14 @@ defmodule Flezha.Plugin.SpecDecoder do
 
   defp decode_json(json) when is_binary(json) do
     case Jason.decode(json) do
-      {:ok, list} when is_list(list) -> {:ok, list}
-      {:ok, _} -> {:error, :not_a_json_array}
-      {:error, %Jason.DecodeError{} = err} -> {:error, Exception.message(err)}
+      {:ok, list} when is_list(list) ->
+        {:ok, list}
+
+      {:ok, _} ->
+        {:error, {:invalid_plugins_json, :not_a_json_array}}
+
+      {:error, %Jason.DecodeError{} = err} ->
+        {:error, {:invalid_plugins_json, Exception.message(err)}}
     end
   end
 
@@ -103,7 +109,7 @@ defmodule Flezha.Plugin.SpecDecoder do
     end
   end
 
-  defp build_plugin(_, _, _, _, _), do: {:error, {:invalid_opts, :plugin_spec_not_a_map}}
+  defp build_plugin(_, _, _, _, _), do: {:error, :plugin_spec_not_object}
 
   defp bind_to_partition(plugin, _operator_id, []), do: plugin
 
@@ -113,14 +119,14 @@ defmodule Flezha.Plugin.SpecDecoder do
   defp fetch_string(spec, key) do
     case Map.get(spec, key) do
       s when is_binary(s) and byte_size(s) > 0 -> {:ok, s}
-      _ -> {:error, {:invalid_opts, {:missing_field, key}}}
+      _ -> {:error, {:plugin_spec_field_missing, key}}
     end
   end
 
   defp fetch_map(spec, key) do
     case Map.get(spec, key, %{}) do
       m when is_map(m) -> {:ok, m}
-      _ -> {:error, {:invalid_opts, {:not_a_map, key}}}
+      _ -> {:error, {:plugin_spec_field_not_object, key}}
     end
   end
 

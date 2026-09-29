@@ -155,8 +155,9 @@ defmodule Flezha.Service.PluginManagerTest do
       assert {:ok, _} = PluginManager.enable_plugin("dup_x", plugin)
 
       other = %{build_plugin("dup_x", topic: "a") | operator_id: "someone_else"}
-      assert {:error, message} = PluginManager.enable_plugin("dup_x", other)
-      assert message =~ "already registered for #{@namespace}/#{@operator_id}"
+
+      assert {:error, {:plugin_id_taken, "dup_x", @namespace, @operator_id}} =
+               PluginManager.enable_plugin("dup_x", other)
     end
   end
 
@@ -170,7 +171,7 @@ defmodule Flezha.Service.PluginManagerTest do
         | hooks: [{"on_interval", %{"interval_ms" => "soon"}}]
       }
 
-      assert {:error, {:invalid_hook_opts, {:interval_ms, "soon"}}} =
+      assert {:error, {:invalid_hook_opts, :interval_ms, "soon"}} =
                PluginManager.enable_plugin("typo_interval", plugin)
 
       assert [] = read_plugins(store)
@@ -213,7 +214,7 @@ defmodule Flezha.Service.PluginManagerTest do
       for key <- ["trigger", "position"] do
         err =
           ExUnit.CaptureIO.capture_io(:stderr, fn ->
-            assert {:shutdown, 1} = catch_exit(cli_enable("unread_#{key}", %{key => "on_output"}))
+            assert {:shutdown, 2} = catch_exit(cli_enable("unread_#{key}", %{key => "on_output"}))
           end)
 
         assert err =~ "--#{key}"
@@ -269,7 +270,8 @@ defmodule Flezha.Service.PluginManagerTest do
     end
 
     test "is a no-op (returns error) when the plugin_id is not in the cspec" do
-      assert {:error, "plugin not found"} = PluginManager.disable_plugin("never_enabled")
+      assert {:error, {:plugin_not_found, "never_enabled"}} =
+               PluginManager.disable_plugin("never_enabled")
     end
   end
 
@@ -417,13 +419,12 @@ defmodule Flezha.Service.PluginManagerTest do
       PluginManager.unregister_plugin("ohlc_ws" <> Flezha.Partition.member_suffix(1))
 
       OperatorManager
-      |> Mimic.stub(:get_operator_pid, fn _ns, id ->
-        if id == failing, do: {:error, "operator not found"}, else: {:ok, overwatch}
+      |> Mimic.stub(:get_operator_pid, fn ns, id ->
+        if id == failing, do: {:error, {:operator_not_found, ns, id}}, else: {:ok, overwatch}
       end)
 
-      assert {:error, message} = PluginManager.enable_plugin("ohlc_ws", plugin)
-      assert message =~ "enabled on 2 of 3 partitions"
-      assert message =~ failing
+      assert {:error, {:group_enable_partial, 2, 3, [^failing]}} =
+               PluginManager.enable_plugin("ohlc_ws", plugin)
     end
 
     test "a partial enable names who succeeded and who did not", %{
@@ -433,15 +434,14 @@ defmodule Flezha.Service.PluginManagerTest do
       failing = Enum.at(members, 1).id
 
       OperatorManager
-      |> Mimic.stub(:get_operator_pid, fn _ns, id ->
-        if id == failing, do: {:error, "operator not found"}, else: {:ok, overwatch}
+      |> Mimic.stub(:get_operator_pid, fn ns, id ->
+        if id == failing, do: {:error, {:operator_not_found, ns, id}}, else: {:ok, overwatch}
       end)
 
       plugin = %{build_plugin("ohlc_ws", url: "wss://x") | operator_id: @group}
 
-      assert {:error, message} = PluginManager.enable_plugin("ohlc_ws", plugin)
-      assert message =~ "of 3 partitions"
-      assert message =~ failing
+      assert {:error, {:group_enable_partial, 2, 3, [^failing]}} =
+               PluginManager.enable_plugin("ohlc_ws", plugin)
     end
 
     defp member_cspec(member_id) do

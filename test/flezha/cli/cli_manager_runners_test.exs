@@ -26,7 +26,7 @@ defmodule Flezha.Service.CliManagerRunnersTest do
   end
 
   test "the JSON form keeps the runner list and adds the known process ids beside it" do
-    output = capture_io(fn -> CliManager.list_runners("trading", "json") end)
+    output = capture_io(fn -> CliManager.list_runners("trading", output: "json") end)
 
     assert Jason.decode!(output) == %{
              "namespace" => "trading",

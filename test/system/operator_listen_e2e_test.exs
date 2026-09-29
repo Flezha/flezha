@@ -221,7 +221,7 @@ defmodule FlezhaTest.System.OperatorListenE2ETest do
           ns,
           id,
           Keyword.get(opts, :direction, "output"),
-          Keyword.get(opts, :format, "text"),
+          output: Keyword.get(opts, :format, "text"),
           duration_ms: Keyword.get(opts, :window, 60_000)
         )
       end)
@@ -248,7 +248,7 @@ defmodule FlezhaTest.System.OperatorListenE2ETest do
   # The listener plugins `flz operator info --json` shows on `id`.
   defp listeners(ns, id) do
     %{"operators" => operators} =
-      Jason.decode!(capture_io(fn -> CliManager.operator_info(ns, "json", []) end))
+      Jason.decode!(capture_io(fn -> CliManager.operator_info(ns, output: "json") end))
 
     for %{"id" => ^id, "plugins" => plugins} <- operators,
         %{"id" => "io_listener_" <> _ = plugin} <- plugins,

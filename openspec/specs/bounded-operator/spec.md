@@ -178,6 +178,6 @@ would reach one member while the others waited for nothing.
 #### Scenario: A once bounded operator is refused partitions
 
 - **WHEN** `flz operator start <factory> --partitions 2` names a `once` bounded operator
-- **THEN** the start is refused with `PartitionsWithoutPerInputLoop`, naming that one message
+- **THEN** the start is refused with `topology.partitions_without_per_input_loop`, naming that one message
   reaches one member, and no instance runs
 

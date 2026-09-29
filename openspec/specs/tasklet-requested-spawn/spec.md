@@ -24,7 +24,7 @@ core, and Elixir in its own core. The call shapes SHALL be:
 With an `id` and `if_running: deliver` (the default when an `id` is given), the controller SHALL
 spawn a bounded instance of `factory_id` under that id if absent, or deliver `payload` to the
 existing instance as one more message if present. With an `id` and `if_running: error`, an existing instance
-SHALL yield an `already_running` result to the requester. Without an `id`, the controller SHALL
+SHALL fail the requester's read with the code `operator.already_running`. Without an `id`, the controller SHALL
 generate one as the `generated-operator-ids` capability defines and SHALL always spawn a new
 instance: there is no running instance to deliver to, so `if_running` has no meaning. Rust and
 Java SHALL construct `SpawnOptions` only from an id, so `if_running` without an `id` cannot be
@@ -43,7 +43,7 @@ or `skipped_on_replay`.
 
 The request SHALL NOT carry a namespace: the controller resolves it against the control channel the request arrived on, so a request cannot reach another namespace.
 
-Factory resolution SHALL be cluster-wide: the controller SHALL route the spawn to a runner registering `factory_id` connected to ANY controller node in the cluster, not only runners connected to the node that received the request. `factory_unknown` SHALL be yielded only when no connected runner on any cluster node registers the factory, resolved against the fleet state current at request time. A factory that is registered but whose established kind is `unbounded` SHALL yield `factory_not_bounded`, decided from the fleet's factory record before anything is placed, so the requester reads the reason rather than a `refused` carrying a runner's late error; the name SHALL be the same in every SDK's outcome vocabulary (`FactoryNotBounded` where the SDK spells outcomes as a type, `factory_not_bounded` where it spells them as strings).
+Factory resolution SHALL be cluster-wide: the controller SHALL route the spawn to a runner registering `factory_id` connected to ANY controller node in the cluster, not only runners connected to the node that received the request. `operator.factory_unknown` SHALL be yielded only when no connected runner on any cluster node registers the factory, resolved against the fleet state current at request time. A factory that is registered but whose established kind is `unbounded` SHALL yield `operator.factory_not_bounded`, decided from the fleet's factory record before anything is placed, so the requester reads the reason rather than a runner's late error; the code SHALL be the same string in every SDK, read from the SDK's one error type. A failed read SHALL carry the controller's own code for every other refusal (for example `authz.role_insufficient` or `quota.exceeded`), and `spawn.timeout` or `spawn.unavailable` when no answer came. The success outcomes `spawned`, `delivered` and `skipped_on_replay` are not errors and keep their words.
 
 #### Scenario: First request spawns, second delivers
 
@@ -53,7 +53,7 @@ Factory resolution SHALL be cluster-wide: the controller SHALL route the spawn t
 #### Scenario: error policy reports instead of delivering
 
 - **WHEN** a spawn of factory `worker` with id `w1` and `error` is issued while `w1` runs
-- **THEN** no delivery SHALL occur and the requester's async result SHALL be `already_running`
+- **THEN** no delivery SHALL occur and the requester's read SHALL fail with `operator.already_running`
 
 #### Scenario: A spawn without an id starts a new instance every time
 
@@ -78,17 +78,17 @@ Factory resolution SHALL be cluster-wide: the controller SHALL route the spawn t
 #### Scenario: Factory on a different runner than the requester
 
 - **WHEN** a tasklet on the streaming runner requests spawn of a factory registered only by a separate analyzer runner (each runner holds its own sealed operator registry)
-- **THEN** the controller SHALL route the spawn to a runner that has registered `factory_id`, and SHALL yield a `factory_unknown` async result if no connected runner registers it
+- **THEN** the controller SHALL route the spawn to a runner that has registered `factory_id`, and SHALL fail the read with `operator.factory_unknown` if no connected runner registers it
 
 #### Scenario: Factory on a runner connected to a different controller node
 
 - **WHEN** a tasklet whose runner is connected to controller node A requests spawn of a factory whose only runner is connected to controller node B
-- **THEN** the controller SHALL start the instance on node B and the requester's async result SHALL be `spawned` (or `delivered` if the id already exists), not `factory_unknown`
+- **THEN** the controller SHALL start the instance on node B and the requester's async result SHALL be `spawned` (or `delivered` if the id already exists), not `operator.factory_unknown`
 
 #### Scenario: An unbounded factory is named by the answer
 
 - **WHEN** a tasklet issues `ctx.spawn_bounded("prices", p)` and `prices` is a factory its runner announced as an unbounded operator
-- **THEN** the requester's async result SHALL be `factory_not_bounded`, no instance SHALL be placed or started, and the result SHALL NOT be `factory_unknown` or `refused`
+- **THEN** the requester's read SHALL fail with `operator.factory_not_bounded`, no instance SHALL be placed or started, and the code SHALL NOT be `operator.factory_unknown`
 
 #### Scenario: Every SDK exposes the call with one meaning
 
@@ -173,15 +173,15 @@ The judgment SHALL be made on the controller node that received the request, and
 - **WHEN** authorization is enforced and a tasklet on a runner whose
   `runner@<namespace>` principal has no role binding requests
   a spawn of factory `worker` with id `w1` and `deliver` while `w1` is free
-- **THEN** no instance SHALL start, the requester's result SHALL be `refused`
-  naming the refusal, and the denial SHALL be audited
+- **THEN** no instance SHALL start, the requester's read SHALL fail with the policy's
+  own code, `authz.no_role_binding`, and the denial SHALL be audited
 
 #### Scenario: A delivery by an identity that may not send is refused
 
 - **WHEN** authorization is enforced and the same unbound runner's request names
   `w1` while it runs
-- **THEN** the payload SHALL NOT be delivered, the requester's result SHALL be
-  `refused`, and the denial SHALL be audited
+- **THEN** the payload SHALL NOT be delivered, the requester's read SHALL fail with
+  `authz.no_role_binding`, and the denial SHALL be audited
 
 #### Scenario: A permitted spawn is recorded like a user's start
 
@@ -274,7 +274,7 @@ an empty id when the request carried none.
 #### Scenario: if_running is ignored without an id
 
 - **WHEN** a runner sends `SpawnBoundedRequest{instance_id: "", factory_id: "worker", if_running: "error"}`
-- **THEN** the controller SHALL start a new instance and SHALL NOT answer `already_running`
+- **THEN** the controller SHALL start a new instance and SHALL NOT answer `operator.already_running`
 
 ### Requirement: The dangers of a spawn without an id SHALL be documented
 

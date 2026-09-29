@@ -42,7 +42,7 @@ defmodule Flezha.Service.HubManager.Placement do
   end
 
   def operator_set_runner(namespace, operator_id, runner_id) do
-    Rows.with_live_hub(namespace, {:error, "hub not alive"}, fn hub_id ->
+    Rows.with_live_hub(namespace, {:error, {:hub_down, namespace}}, fn hub_id ->
       # propagate: true — `runner_operators/2` is a local-table tag query, so a
       # peer handling this runner's disconnect misses the operator otherwise.
       # Returned, not discarded: a "No child found" is the whole signal that a

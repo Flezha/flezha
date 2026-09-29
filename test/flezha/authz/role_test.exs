@@ -13,8 +13,8 @@ defmodule Flezha.AuthZ.RoleTest do
         do: assert(Role.known?(r))
   end
 
-  test "validate/1 returns :ok / {:error, :unknown_role}" do
+  test "validate/1 returns :ok / {:error, {:unknown_role, role}}" do
     assert :ok = Role.validate(:ops)
-    assert {:error, :unknown_role} = Role.validate(:superuser)
+    assert {:error, {:unknown_role, :superuser}} = Role.validate(:superuser)
   end
 end

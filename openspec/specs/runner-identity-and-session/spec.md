@@ -292,3 +292,17 @@ bound session's channels by it; no other mechanism SHALL seed a route.
   the refusal SHALL be counted and reported with B, A and `X`, and B SHALL be sent
   `RemOperator` for `X` once
 
+### Requirement: A refused runner connect SHALL be answered with its error
+
+When the controller refuses a runner's connect, whatever the cause (an unproven namespace, an unknown credential, a hub failure, an identity held by a live session), it SHALL first send the runner a `ConnectRefused` frame carrying the error, and only then close the stream. The error carries the catalogue code, class, message, details and hint. The runner SHALL surface that error to the author as its SDK's one error type, and SHALL log its code and message once per refused attempt. A runner SHALL NOT report a refused connect as connected.
+
+#### Scenario: An unproven namespace is named
+
+- **WHEN** a runner without a valid credential connects to a namespace that requires one
+- **THEN** the runner SHALL receive `ConnectRefused` whose code is `runner.namespace_not_proven`, and its SDK SHALL surface that code and not report "Connected"
+
+#### Scenario: The stream closes after the answer
+
+- **WHEN** a connect is refused
+- **THEN** the controller SHALL write the `ConnectRefused` frame before it closes the stream, and a runner that reads the stream to its end SHALL find the frame
+

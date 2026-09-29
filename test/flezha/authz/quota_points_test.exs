@@ -40,7 +40,11 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
       {:ok, secret, _} =
         TokenStore.issue("runner@team-tight", "team-tight", :runner, :never)
 
-      assert {:error, {:quota_exceeded, :max_runners, %{current: 1, limit: 1}}} =
+      assert {:error,
+              %Flezha.Error{
+                code: "quota.exceeded",
+                details: %{"kind" => "max_runners", "current" => 1, "limit" => 1}
+              }} =
                FleetManager.connect_handler(
                  make_ref(),
                  "team-tight",

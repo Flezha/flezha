@@ -42,7 +42,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **Sleeping**: an instance whose class declares `sleep_when_idle` (on by default for a durable
   bounded operator, off for an unbounded operator) and has been idle for `FLEZHA_PARK_IDLE_MS` ships `IterPark`, is
   evicted from its runner (`suspended`) and wakes on its next message with its Cells restored.
-  Refused as `SleepWithoutPersistence` on a class whose persistence is off.
+  Refused as `topology.sleep_without_persistence` on a class whose persistence is off.
 - **Bounded / unbounded** — the two kinds, which describe the run, not the input. Bounded: every
   run reaches a terminal state; unbounded: no run does, and the operator stops only from outside.
   A `per_input` bounded operator reads an unbounded input in bounded runs.
@@ -195,7 +195,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   artifacts is written last, so a torn upload is invisible. See [`resilience/data_durability.md`](resilience/data_durability.md).
 - **Synchronous durability** — a bounded class declaring `SYNC_DURABILITY` / `syncDurability()`
   (its one class-level spelling in each SDK) has each commit barrier's ack gated on the remote
-  ship (RPO 0). Unbounded classes are refused it (`SyncDurabilityOnUnbounded`).
+  ship (RPO 0). Unbounded classes are refused it (`topology.sync_durability_on_unbounded`).
 - **RPO breach** — local progress unshipped past `rpo_target_ms` (default 120 s): alarm-grade
   `[:flezha, :state, :rpo_exceeded]`, shown by `flz controller status` and `/healthz`. A
   **supersession** (`[:flezha, :state, :claim_superseded]`) is routine on every migration, not a breach.

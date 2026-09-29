@@ -56,8 +56,9 @@ env the Rust client reads (`FLEZHA_SOCKET_FILES_PATH`, `FLEZHA_QUIC_ADDRESSES`,
 
 ## Registration
 
-Runner-as-handle; errors are tuples returned at the call site (never a raise) and propagate
-through a pipe.
+Runner-as-handle; errors are `{:error, %Flezha.SDK.Error{}}` returned at the call site (never
+a raise) and propagate through a pipe. The error's `code` is one of
+[the error codes](../errors.md); this page names each refusal by its code.
 
 ```elixir
 Flezha.SDK.create_runner("my_namespace", transport: :native)
@@ -72,14 +73,14 @@ children = [{Flezha.SDK, namespace: "my_namespace", operators: [MyOperator], tra
 - `register_factory/2` reads the kind from the module's `@behaviour`, which the `use` macros
   set: `Flezha.SDK.UnboundedOperator` is an unbounded operator, `Flezha.SDK.BoundedOperator` a bounded operator, and
   both kinds write their graph in `channels/1`. A module declaring both answers
-  `{:error, {:AmbiguousOperatorKind, module}}`, one declaring neither
-  `{:error, {:UnknownOperatorKind, module}}`. The runner announces each factory's kind with its
+  `{:error, %Flezha.SDK.Error{code: "topology.ambiguous_operator_kind"}}`, one declaring neither
+  `topology.unknown_operator_kind`. The runner announces each factory's kind with its
   id, in the handshake and in every `UpdateFactories`, so a start names the factory and nothing
   else.
 - `register_factory/2` / `unregister_factory/2` work before and after `start/1`; a post-start change
   ships `UpdateFactories`; removing a type with live instances refuses
-  `{:error, {:operator_type_in_use, factory_id, count}}`.
-- `start/1` claims the process-wide runner slot (loser: `{:error, {:already_running, ns}}`)
+  `runtime.operator_type_in_use`, naming the factory id and the live count.
+- `start/1` claims the process-wide runner slot (loser: `runtime.runner_already_running`)
   and connects; `run/1` = `start/1` + `await_termination/1`; `close/1` disconnects.
 
 ## Authoring
@@ -212,7 +213,7 @@ Elixir names no entry codec — binaries pass through and `input_with/3` takes a
 parser — so the short form takes no `codec` option.
 
 The refusals are `CompileError`s. `run/3` beside `channels/1` begins
-`ShortFormWithTopology`, and writing neither names both. A class setting
+`topology.short_form_with_topology`, and writing neither names both. A class setting
 (`persistence_enabled:`, `max_duration_ms:`, ...) on a short form and a
 short-form option on a full form each name the option, a `loop_mode:` other
 than `:once`, `:per_input` or `:chained` (or a `rollback_mode:` other than
@@ -222,7 +223,7 @@ operator macros. `event_time/1` beside `logical_clock: true` names both and the
 module the author wrote. A hand-written `loop_mode/0` or `rollback_mode/0` outside
 those values is refused at `register_factory/2` as
 `{:InvalidMode, factory_id, knob, value}`. This SDK cannot see a tasklet's
-output type, so it owes no `SinkWithoutOutput` and its manifest does not list
+output type, so it owes no `topology.sink_without_output` and its manifest does not list
 `shorthand_typed_output`.
 
 ### The behaviours beneath
@@ -271,9 +272,9 @@ end
 
 `Ctx` and `Channels` are aliases of `Flezha.SDK.Ctx` and `Flezha.SDK.Channels`.
 No macro sees this form, so what the `use` form refuses at compile time is
-refused at registration instead: both clocks as `{:TwoClocks, name}`, and a
+refused at registration instead: both clocks as `topology.two_clocks`, and a
 retired `clock/0`, `event_time_of/1` or `cell_idle_ttl_ms/0` as
-`{:RetiredCallback, name, callback, replacement}`.
+`topology.retired_callback`, naming the callback and its replacement.
 
 `run/3` returns `{:ok, new_state} | {:error, reason} | {:error, {:non_retryable, reason}}`;
 emits flush only on `{:ok, _}`. Optional `Tasklet` callbacks: `cell_keys/0` (static
@@ -292,14 +293,14 @@ timer four — `logical_clock/0` (`false`), `event_time/1`, `on_timer/4`, `max_t
 `sleep_when_idle/0` defaulting to its `persistence_enabled/0`. Both are `use` options too.
 An instance whose class sleeps is evicted after `FLEZHA_PARK_IDLE_MS` of idleness and wakes on
 its next message with its Cells restored; declaring it with persistence off is refused by
-`register_factory/2` as `SleepWithoutPersistence`.
+`register_factory/2` as `topology.sleep_without_persistence`.
 `BoundedOperator` writes the same `channels/1`; it has no retry setting of its own, because
 a stage's ladder is the edge's `retry_max` / `retry_backoff_ms`, as an unbounded operator's is.
 `Flezha.SDK.Ctx`: `emit/2`, `emit_with_meta/3` (a reserved `flz.` key answers
-`{:error, {:reserved_metadata_key, k}}`), `emit_keyed/3` and `emit_keyed_with_meta/4` (the
+`runtime.reserved_metadata_key`), `emit_keyed/3` and `emit_keyed_with_meta/4` (the
 output's natural key on a sink declared `keyed/1`; on a node with no keyed sink they answer
-`{:error, {:key_not_allowed_on_non_keyed_channel, channel}}`, and a keyless emit from a
-Single Cell on a keyed sink answers `{:error, {:key_required_on_keyed_channel, channel}}`),
+`runtime.key_not_allowed_on_non_keyed_channel`, and a keyless emit from a
+Single Cell on a keyed sink answers `runtime.key_required_on_keyed_channel`),
 `apply/3` (fold a change and record it; a `defchange` recorder calls it),
 `complete/2` (end a bounded instance with a result, encoded as `spawn_bounded` encodes its
 payload), `now/1` (the declared clock's value, once per invocation; the scheduled timestamp
@@ -307,9 +308,9 @@ inside `on_timer/4`), `cell_key/1`, and the timer four
 — `timer_after/2` (milliseconds after `now/1`), `timer_at_event_time/2`,
 `cancel_processing_time_timer/2`, `cancel_event_time_timer/2` — the registrations answering
 `{:ok, at}`, the absolute timestamp a cancel takes, or
-`{:error, {:event_time_timer_without_event_time_clock, tasklet, clock}}` /
-`{:error, {:timer_cap_exceeded, tasklet, max}}`; inside a bounded operator's tasklet all four answer
-`{:error, :timers_unavailable}` (see [Timers and clocks](#timers-and-clocks)).
+`runtime.event_time_timer_without_event_time_clock` /
+`runtime.timer_cap_exceeded`; inside a bounded operator's tasklet all four answer
+`runtime.timers_unavailable` (see [Timers and clocks](#timers-and-clocks)).
 `spawn_bounded(ctx, factory_id, payload, opts)` requests spawn-or-deliver of a bounded operator
 instance, `id:` and `if_running:` optional, with `payload` sent as a sink with no codec sends a
 value (bytes as they are, anything else as JSON; a term with no JSON form raises), and answers
@@ -331,10 +332,11 @@ target's `input` entry, and `sink/1` leaves the name derived — `named/2`'s nam
 tasklet's `name/0`. Naming one channel twice is refused. The user's metadata rides the
 frame. Cell mode is derived: non-empty `cell_keys/0` → static; a keyed edge into a
 keyless tasklet → dynamic; else single. Refusals accumulate into one
-`{:error, {:invalid_topology, issues}}` — e.g. `TransformAfterKeyBy`, `RetryMaxZero`,
-`ChannelNamedTwice` (`named/2` beside a `sink` that names),
-`KeyedChannelWithoutPluginWire` (`keyed/1` on a channel with no sink),
-`DeferredBuilderSurface` (names the operator module).
+`{:error, %Flezha.SDK.Error{}}` carrying the first issue's code and every issue in
+`details.issues` — e.g. `topology.transform_after_key_by`, `topology.retry_max_zero`,
+`topology.channel_named_twice` (`named/2` beside a `sink` that names),
+`topology.keyed_channel_without_plugin_wire` (`keyed/1` on a channel with no sink),
+`topology.deferred_builder_surface` (names the operator module).
 
 The names are the reference vocabulary every SDK answers with
 (`flz_core/src/host/issue.rs`), and this SDK is the one that re-expresses rather
@@ -348,11 +350,11 @@ order: `effectively_once/1`, `checkpoint_ack/1` / `checkpoint_every/2` /
 `outputs_at_checkpoint/2`, each of which turns the checkpoint granularity on by itself, and
 `correction_window/2` / `beyond_window_policy/2`, which amend one correction policy so that
 declaring a policy alone leaves a zero window — refused, because a fate for a window nobody
-declared is an authoring error. Their refusals are `CheckpointAckWithoutTier`,
-`CheckpointEveryZero`, `AtCheckpointWithoutMaxDelay`, `UnkeyedChannelUnderEffectivelyOnce`
-(naming the sink's channel), `DroppingPolicyUnderEffectivelyOnce` (naming the node's inbound
-channel and the policy), `CorrectionWithoutTier`, `CorrectionWithoutEventTime` (naming a
-Tasklet and the clock it declares) and `CorrectionWindowZero`.
+declared is an authoring error. Their refusals are `topology.checkpoint_ack_without_tier`,
+`topology.checkpoint_every_zero`, `topology.at_checkpoint_without_max_delay`, `topology.unkeyed_channel_under_effectively_once`
+(naming the sink's channel), `topology.dropping_policy_under_effectively_once` (naming the node's inbound
+channel and the policy), `topology.correction_without_tier`, `topology.correction_without_event_time` (naming a
+Tasklet and the clock it declares) and `topology.correction_window_zero`.
 
 ## Keyed channels
 
@@ -394,7 +396,7 @@ a stall (`data_heartbeat` every ~10 s per data stream, `control_ping` every 15 s
 controller).
 
 A shedding policy on a node fed under `effectively_once/1` is refused at registration
-(`DroppingPolicyUnderEffectivelyOnce`, naming the channel and the policy): a durable-input-log
+(`topology.dropping_policy_under_effectively_once`, naming the channel and the policy): a durable-input-log
 class that shed at its mailbox would hold the min-watermark on the shed offset for ever while
 the log behind it kept growing.
 
@@ -439,7 +441,7 @@ operator's lifetime.
 The clock `Ctx.now/1` serves, read once per invocation, follows from what the tasklet
 writes: event time when it defines `event_time/1` (what that answers for the input), the
 logical clock when it declares `logical_clock: true` (the Cell's durable change seq —
-`terminal + 1` after a restore — refused as `UnservableClock` on a tasklet with no
+`terminal + 1` after a restore — refused as `topology.unservable_clock` on a tasklet with no
 `defchange`), and otherwise the wall clock, the epoch millisecond at dispatch entry. Both
 at once is a `CompileError` naming `event_time/1` and `logical_clock`. Inside
 `on_timer/4`, `now/1` is the
@@ -449,7 +451,7 @@ that woke it and a replay registers the same instant.
 Timers work in a bounded operator's tasklets as in an unbounded operator's, and a firing runs as a pass of its own
 ([`cell_timers.md`](cell_timers.md#timers-in-a-bounded-operator)). Only a `compensate` hook runs with
 timers unavailable: there each of the four ctx timer calls answers
-`{:error, :timers_unavailable}` and arms nothing.
+`runtime.timers_unavailable` and arms nothing.
 
 A Tasklet registers a deadline from `run/3` or from a firing and handles it in
 `on_timer(fired_at, kind, state, ctx)`, which answers what `run/3` answers. Pending timers
@@ -664,8 +666,8 @@ checkpoint options is declared), which is what makes the controller stamp `flz.o
 every forwarded input, re-forward from `watermark + 1` on every bind, and derive the output
 identity at flush. The tier is an unbounded operator's: a bounded operator commits stage by stage, so a bounded operator
 class declaring it, a checkpoint option or a correction window is refused at registration as
-`EffectivelyOnceOnBounded`, `CheckpointOnBounded` or `CorrectionWindowOnBounded`, and an
-unbounded class declaring `sync_durability/0` true is refused `SyncDurabilityOnUnbounded`.
+`topology.effectively_once_on_bounded`, `topology.checkpoint_on_bounded` or `topology.correction_window_on_bounded`, and an
+unbounded class declaring `sync_durability/0` true is refused `topology.sync_durability_on_unbounded`.
 
 **One record per effectful invocation.** In place of the change records and the trailing
 timer-ops record, the Cell ships one `cell_effect_record` (`format_id = 2`, the postcard

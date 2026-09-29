@@ -58,10 +58,11 @@ defmodule Flezha.Service.CliManagerScheduleTest do
 
     err =
       capture_io(:stderr, fn ->
-        assert catch_exit(add_digest(factory: "prices")) == {:shutdown, 1}
+        assert catch_exit(add_digest(factory: "prices")) == {:shutdown, 2}
       end)
 
-    assert err =~ "only a bounded factory is schedulable; factory prices is unbounded"
+    assert err =~ "factory 'prices' is an unbounded operator"
+    assert err =~ "(operator.factory_not_bounded)"
     assert ScheduleStore.get("digest") == :error
   end
 

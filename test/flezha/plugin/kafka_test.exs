@@ -223,7 +223,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
   test "a window wider than one without idempotence is refused at preparation" do
     plugin_id = "no-idem-#{System.unique_integer([:positive])}"
 
-    assert {:error, "kafka max_in_flight 3 requires idempotent" <> _} =
+    assert {:error, {:window_needs_idempotence, 3}} =
              prepare(build_opts(plugin_id, 0, %{idempotent: false, max_in_flight: 3}))
 
     assert Registry.lookup(
@@ -237,7 +237,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
       for value <- [:drop_odlest, "drop_odlest", "DROP_OLDEST", 5] do
         plugin_id = "overflow-bad-#{System.unique_integer([:positive])}"
 
-        assert {:error, "Invalid value for queue_overflow: " <> _} =
+        assert {:error, {:invalid_option_value, :queue_overflow, ^value}} =
                  prepare(build_opts(plugin_id, 0, %{queue_overflow: value})),
                "expected #{inspect(value)} to be refused"
 
@@ -251,7 +251,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
     test "the retired policy spelling is refused on the enable path too" do
       plugin_id = "overflow-retired-#{System.unique_integer([:positive])}"
 
-      assert {:error, "Invalid value for queue_overflow: block"} =
+      assert {:error, {:invalid_option_value, :queue_overflow, "block"}} =
                prepare(
                  build_opts(plugin_id, 0, %{
                    # overflow-naming-record:begin
@@ -295,16 +295,13 @@ defmodule FlezhaTest.Plugin.KafkaTest do
       for value <- ["plian", :plian, "PLAIN", 5] do
         plugin_id = "auth-mech-#{System.unique_integer([:positive])}"
 
-        assert {:error, message} =
+        assert {:error, {:invalid_option_value, "auth mechanism", ^value}} =
                  prepare(
                    build_opts(plugin_id, 0, %{
                      auth: %{"mechanism" => value, "username" => "u", "password" => "p"}
                    })
                  ),
                "expected mechanism #{inspect(value)} to be refused"
-
-        assert is_binary(message)
-        assert message =~ "mechanism"
 
         assert Registry.lookup(
                  WorkerSup.registry_name(WorkerSup.family(Kafka.Producer)),
@@ -317,16 +314,13 @@ defmodule FlezhaTest.Plugin.KafkaTest do
       for key <- ["user", "usernmae", "timeout"] do
         plugin_id = "auth-key-#{System.unique_integer([:positive])}"
 
-        assert {:error, message} =
+        assert {:error, {:invalid_option_value, "auth key", ^key}} =
                  prepare(
                    build_opts(plugin_id, 0, %{
                      auth: %{"username" => "u", "password" => "p", key => "x"}
                    })
                  ),
                "expected auth key #{key} to be refused"
-
-        assert is_binary(message)
-        assert message =~ key
 
         assert Registry.lookup(
                  WorkerSup.registry_name(WorkerSup.family(Kafka.Producer)),
@@ -428,7 +422,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
                  "queue_overflow" => "drop_nothing"
                })
 
-      assert {:error, "Invalid value for queue_overflow: block"} =
+      assert {:error, {:invalid_option_value, :queue_overflow, "block"}} =
                Kafka.Producer.build(%{
                  "hosts" => "kafka:9092",
                  "topic" => "x",

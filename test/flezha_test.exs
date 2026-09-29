@@ -99,17 +99,10 @@ defmodule FlezhaTest do
       factory_id: "non_existing_factory"
     }
 
-    {status, %{operator_id: pid, node: node, reason: reason}} =
-      OperatorManager.start_operator(@default_namespace, operator)
-
-    assert status === :error
-    assert pid === operator_id
-    assert node === @node_name
     # An unknown factory is refused cluster-wide now: no local runner
     # advertises it and the cluster directory names no capable peer either.
-    assert reason ===
-             "no runners for factory non_existing_factory in namespace " <>
-               "#{@default_namespace} on any cluster node"
+    assert {:error, {:factory_unknown, @default_namespace, "non_existing_factory"}} =
+             OperatorManager.start_operator(@default_namespace, operator)
   end
 
   @tag :websocket_plugin

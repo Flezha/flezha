@@ -113,15 +113,20 @@ defmodule Flezha.Api.ServiceSurfaceTest do
   describe "every published function" do
     test "refuses a caller whose context is not one" do
       for {module, functions} <- @published, {fun, args} <- functions do
-        assert apply(module, fun, args ++ [%{}]) == {:error, :invalid_caller_context},
+        assert match?(
+                 {:error, %Flezha.Error{code: "authz.invalid_caller_context"}},
+                 apply(module, fun, args ++ [%{}])
+               ),
                "#{inspect(module)}.#{fun}/#{length(args) + 1} did not refuse an invalid context"
       end
     end
 
     test "refuses an invalid context on the identity-adjacent shapes too" do
       for {module, functions} <- @published, {fun, args} <- functions do
-        assert apply(module, fun, args ++ [%{source: :not_a_source}]) ==
-                 {:error, :invalid_caller_context},
+        assert match?(
+                 {:error, %Flezha.Error{code: "authz.invalid_caller_context"}},
+                 apply(module, fun, args ++ [%{source: :not_a_source}])
+               ),
                "#{inspect(module)}.#{fun}/#{length(args) + 1} accepted an unknown :source"
       end
     end
@@ -179,7 +184,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
 
       for {module, fun, args} <- gated do
         assert match?(
-                 {:error, {:forbidden, _reason}},
+                 {:error, %Flezha.Error{class: :denied}},
                  apply(module, fun, args ++ [%{source: :ui}])
                ),
                "#{inspect(module)}.#{fun}/#{length(args) + 1} served an unbound caller under enforcement"

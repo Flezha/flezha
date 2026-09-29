@@ -33,8 +33,6 @@ defmodule Flezha.Service.Cli.Plugin do
          plugin_flags: plugin_flags,
          opts: opts
        }}
-    else
-      {:error, reason} -> Context.fail!("enabling plugin: #{Context.format_reason(reason)}")
     end
   end
 
@@ -47,8 +45,6 @@ defmodule Flezha.Service.Cli.Plugin do
     with {:ok, plugin} <- plugin(plugin_id, row),
          {:ok, outcome} <- PluginManager.enable_plugin(plugin_id, plugin) do
       IO.puts(enabled_message(plugin_id, outcome))
-    else
-      {:error, reason} -> Context.fail!("enabling plugin: #{Context.format_reason(reason)}")
     end
   end
 
@@ -103,17 +99,12 @@ defmodule Flezha.Service.Cli.Plugin do
         :ok
 
       unread ->
-        {:error,
-         "flz plugin enable does not read " <>
-           Enum.map_join(unread, ", ", &"--#{&1}") <>
-           ". Provider settings are written --X<key>=<value>, hooks --hook=<name>."}
+        {:error, {:unread_plugin_options, Enum.map(unread, &"--#{&1}")}}
     end
   end
 
   defp get_plugin_provider_mod(provider_id) do
-    with :error <- Providers.fetch(provider_id) do
-      {:error, "plugin provider not found, make sure the plugin is enabled."}
-    end
+    with :error <- Providers.fetch(provider_id), do: {:error, {:unknown_provider, provider_id}}
   end
 
   @doc """
@@ -121,64 +112,49 @@ defmodule Flezha.Service.Cli.Plugin do
   every `#pK` instance of it.
   """
   def disable_plugin(plugin_id, _call) do
-    case PluginManager.disable_plugin_group(plugin_id) do
-      {:ok, msg} -> IO.puts("Plugin #{plugin_id} disabled successfully (#{msg}).")
-      {:error, reason} -> Context.fail!("disabling plugin: #{Context.format_reason(reason)}")
-    end
+    with {:ok, msg} <- PluginManager.disable_plugin_group(plugin_id),
+         do: IO.puts("Plugin #{plugin_id} disabled successfully (#{msg}).")
   end
 
   @doc "Install a plugin from a `.fpz` archive."
   def install_plugin(path, _call) do
-    case Installer.install(path) do
-      {:ok, installed} ->
-        IO.puts(
-          "Installed plugin #{installed.id}@#{installed.version} (status: #{installed.status})"
-        )
-
-      {:error, reason} ->
-        Context.fail!("installing plugin: #{Context.format_reason(reason)}")
+    with {:ok, installed} <- Installer.install(path) do
+      IO.puts(
+        "Installed plugin #{installed.id}@#{installed.version} (status: #{installed.status})"
+      )
     end
   end
 
   @doc "Upgrade an installed plugin to a new version in `path`."
   def upgrade_plugin(plugin_id, path, _call) do
-    case Installer.upgrade(plugin_id, path) do
-      {:ok, installed} -> IO.puts("Upgraded plugin #{installed.id} to #{installed.version}")
-      {:error, reason} -> Context.fail!("upgrading plugin: #{Context.format_reason(reason)}")
-    end
+    with {:ok, installed} <- Installer.upgrade(plugin_id, path),
+         do: IO.puts("Upgraded plugin #{installed.id} to #{installed.version}")
   end
 
   @doc "Uninstall an installed plugin by id."
   def uninstall_plugin(plugin_id, _call) do
-    case Installer.uninstall(plugin_id) do
-      :ok -> IO.puts("Uninstalled plugin #{plugin_id}.")
-      {:error, reason} -> Context.fail!("uninstalling plugin: #{Context.format_reason(reason)}")
-    end
+    with :ok <- Installer.uninstall(plugin_id), do: IO.puts("Uninstalled plugin #{plugin_id}.")
   end
 
   @doc "Enable an installed plugin (routes through the Installer)."
   def installer_enable_plugin(plugin_id, _call) do
-    case Installer.enable(plugin_id) do
-      :ok -> IO.puts(enabled_message(plugin_id, :ok))
-      {:error, reason} -> Context.fail!("enabling plugin: #{Context.format_reason(reason)}")
-    end
+    with :ok <- Installer.enable(plugin_id), do: IO.puts(enabled_message(plugin_id, :ok))
   end
 
   @doc "Disable an installed plugin (routes through the Installer)."
   def installer_disable_plugin(plugin_id, _call) do
-    case Installer.disable(plugin_id) do
-      :ok -> IO.puts("Plugin #{plugin_id} disabled successfully.")
-      {:error, reason} -> Context.fail!("disabling plugin: #{Context.format_reason(reason)}")
-    end
+    with :ok <- Installer.disable(plugin_id),
+         do: IO.puts("Plugin #{plugin_id} disabled successfully.")
   end
 
   @doc """
-  List every installed plugin. `format` is `"text" | "json"`.
+  List every installed plugin, as text or as the JSON the caller's `output`
+  asks for.
   """
-  def list_installed_plugins(format, _call) do
+  def list_installed_plugins(%{opts: opts}) do
     plugins = Installer.list()
 
-    case format do
+    case Context.format(opts) do
       "json" ->
         plugins
         |> Enum.map(&installed_plugin_to_json/1)
@@ -214,7 +190,7 @@ defmodule Flezha.Service.Cli.Plugin do
         end)
 
       {:error, :not_found} ->
-        IO.puts("Plugin '#{plugin_id}' not installed.")
+        {:error, {:plugin_not_installed, plugin_id}}
     end
   end
 
@@ -265,11 +241,11 @@ defmodule Flezha.Service.Cli.Plugin do
             )
 
           e ->
-            Context.fail!("getting help for plugin '#{provider_id}': #{Exception.message(e)}")
+            {:error, {:plugin_help_failed, provider_id, Exception.message(e)}}
         end
 
-      {:error, reason} ->
-        Context.fail!("#{reason}")
+      {:error, _reason} = refused ->
+        refused
     end
   end
 

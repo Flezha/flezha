@@ -54,10 +54,10 @@ defmodule Flezha.Plugin.Installer.Manifest do
 
   @doc """
   Validates a parsed manifest term against the spec's schema. Returns
-  `:ok` or `{:error, {:manifest_invalid, reason}}` where `reason` names
-  the first violation.
+  `:ok` or `{:error, {:manifest_invalid, problem, value}}` where `problem`
+  names the first violation and `value` what was written.
   """
-  @spec validate(term()) :: :ok | {:error, {:manifest_invalid, term()}}
+  @spec validate(term()) :: :ok | {:error, {:manifest_invalid, atom(), term()}}
   def validate(term) when is_map(term) do
     with :ok <- validate_required_keys(term),
          :ok <- validate_id(term[:id]),
@@ -68,7 +68,7 @@ defmodule Flezha.Plugin.Installer.Manifest do
     end
   end
 
-  def validate(_), do: {:error, {:manifest_invalid, :not_a_map}}
+  def validate(other), do: {:error, {:manifest_invalid, :not_a_map, other}}
 
   ## Private — AST walking
 
@@ -114,35 +114,35 @@ defmodule Flezha.Plugin.Installer.Manifest do
 
     case Enum.find(required, fn k -> not Map.has_key?(map, k) end) do
       nil -> :ok
-      missing -> {:error, {:manifest_invalid, {:missing_field, missing}}}
+      missing -> {:error, {:manifest_invalid, :missing_field, missing}}
     end
   end
 
   defp validate_id(id) do
     case Identificator.validate(:plugin, id) do
       :ok -> :ok
-      {:error, _refusal} -> {:error, {:manifest_invalid, {:invalid_id, id}}}
+      {:error, _refusal} -> {:error, {:manifest_invalid, :invalid_id, id}}
     end
   end
 
   defp validate_version(v) when is_binary(v) do
     case Version.parse(v) do
       {:ok, _} -> :ok
-      :error -> {:error, {:manifest_invalid, {:invalid_version, v}}}
+      :error -> {:error, {:manifest_invalid, :invalid_version, v}}
     end
   end
 
-  defp validate_version(v), do: {:error, {:manifest_invalid, {:invalid_version, v}}}
+  defp validate_version(v), do: {:error, {:manifest_invalid, :invalid_version, v}}
 
   defp validate_modules(mods) when is_list(mods) and mods != [] do
     if Enum.all?(mods, &is_atom/1) do
       :ok
     else
-      {:error, {:manifest_invalid, {:invalid_modules, mods}}}
+      {:error, {:manifest_invalid, :invalid_modules, mods}}
     end
   end
 
-  defp validate_modules(mods), do: {:error, {:manifest_invalid, {:invalid_modules, mods}}}
+  defp validate_modules(mods), do: {:error, {:manifest_invalid, :invalid_modules, mods}}
 
   defp validate_provides(provides, modules) when is_list(provides) and provides != [] do
     mod_set = MapSet.new(modules)
@@ -158,12 +158,12 @@ defmodule Flezha.Plugin.Installer.Manifest do
     if duplicate == [] do
       Enum.reduce_while(provides, :ok, fn p, _ -> validate_provision(p, mod_set) end)
     else
-      {:error, {:manifest_invalid, {:duplicate_provision_id, List.first(duplicate)}}}
+      {:error, {:manifest_invalid, :duplicate_provision_id, List.first(duplicate)}}
     end
   end
 
   defp validate_provides(provides, _),
-    do: {:error, {:manifest_invalid, {:invalid_provides, provides}}}
+    do: {:error, {:manifest_invalid, :invalid_provides, provides}}
 
   defp validate_provision(p, mod_set) when is_map(p) do
     with :ok <- require_keys(p, [:id, :provider, :hooks, :scope]),
@@ -183,25 +183,25 @@ defmodule Flezha.Plugin.Installer.Manifest do
   end
 
   defp validate_provision(p, _),
-    do: {:halt, {:error, {:manifest_invalid, {:invalid_provision, p}}}}
+    do: {:halt, {:error, {:manifest_invalid, :invalid_provision, p}}}
 
   defp require_keys(map, keys) do
     case Enum.find(keys, fn k -> not Map.has_key?(map, k) end) do
       nil -> :ok
-      missing -> {:error, {:manifest_invalid, {:missing_field, missing}}}
+      missing -> {:error, {:manifest_invalid, :missing_field, missing}}
     end
   end
 
   defp require_binary(v, _) when is_binary(v), do: :ok
-  defp require_binary(v, tag), do: {:error, {:manifest_invalid, {tag, v}}}
+  defp require_binary(v, tag), do: {:error, {:manifest_invalid, tag, v}}
 
   defp require_module(mod, mod_set) do
     cond do
       not is_atom(mod) ->
-        {:error, {:manifest_invalid, {:provider_not_atom, mod}}}
+        {:error, {:manifest_invalid, :provider_not_atom, mod}}
 
       not MapSet.member?(mod_set, mod) ->
-        {:error, {:manifest_invalid, {:provider_not_declared, mod}}}
+        {:error, {:manifest_invalid, :provider_not_declared, mod}}
 
       true ->
         :ok
@@ -213,23 +213,23 @@ defmodule Flezha.Plugin.Installer.Manifest do
       {name, opts}, _ when is_atom(name) and is_list(opts) ->
         if Keyword.keyword?(opts),
           do: {:cont, :ok},
-          else: {:halt, {:error, {:manifest_invalid, {:invalid_hook_opts, opts}}}}
+          else: {:halt, {:error, {:manifest_invalid, :invalid_hook_opts, opts}}}
 
       other, _ ->
-        {:halt, {:error, {:manifest_invalid, {:invalid_hook, other}}}}
+        {:halt, {:error, {:manifest_invalid, :invalid_hook, other}}}
     end)
   end
 
   defp require_subscriptions(subs),
-    do: {:error, {:manifest_invalid, {:invalid_hooks, subs}}}
+    do: {:error, {:manifest_invalid, :invalid_hooks, subs}}
 
   defp require_scope(:operator), do: :ok
-  defp require_scope(scope), do: {:error, {:manifest_invalid, {:unsupported_scope, scope}}}
+  defp require_scope(scope), do: {:error, {:manifest_invalid, :unsupported_scope, scope}}
 
   defp require_default_opts(opts) when is_map(opts), do: :ok
 
   defp require_default_opts(opts),
-    do: {:error, {:manifest_invalid, {:invalid_default_opts, opts}}}
+    do: {:error, {:manifest_invalid, :invalid_default_opts, opts}}
 
   defp validate_dependencies([]), do: :ok
 
@@ -238,14 +238,14 @@ defmodule Flezha.Plugin.Installer.Manifest do
       {id, constraint}, _ when is_binary(id) and is_binary(constraint) ->
         case Version.parse_requirement(constraint) do
           {:ok, _} -> {:cont, :ok}
-          :error -> {:halt, {:error, {:manifest_invalid, {:invalid_constraint, id, constraint}}}}
+          :error -> {:halt, {:error, {:manifest_invalid, :invalid_constraint, id, constraint}}}
         end
 
       other, _ ->
-        {:halt, {:error, {:manifest_invalid, {:invalid_dependency, other}}}}
+        {:halt, {:error, {:manifest_invalid, :invalid_dependency, other}}}
     end)
   end
 
   defp validate_dependencies(deps),
-    do: {:error, {:manifest_invalid, {:invalid_dependencies, deps}}}
+    do: {:error, {:manifest_invalid, :invalid_dependencies, deps}}
 end

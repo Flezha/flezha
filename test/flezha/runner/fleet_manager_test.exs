@@ -184,7 +184,7 @@ defmodule Flezha.Runner.FleetManagerHubLifecycleTest do
 
   test "get_pid returns a clean error (never raises) when the hub is gone" do
     ns = fresh_ns("nohub")
-    assert HubManager.get_pid(ns, "whoever") == {:error, "hub not alive"}
+    assert HubManager.get_pid(ns, "whoever") == {:error, {:hub_down, ns}}
   end
 
   # --- helpers -----------------------------------------------------------

@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Changed (BREAKING): every failure carries a code
+
+A failure now reaches a caller in one shape on every surface: a stable `code` spelled
+`family.snake` (`namespace.not_found`), a `class`, a plain `message`, `details` naming what the
+message is about, and a `hint` naming the next command when there is one. The codes are defined
+once, in `flz_transport/errors.json`, and listed in the generated `docs/errors.md`.
+
+- `flz` writes a failure on stderr as `error: <message> (<code>)` and a `hint:` line, and under
+  `--json` or `--output json` as one `{"error": {...}}` line. `--json` is accepted on every verb.
+  The trailing `Error: Command execution failed.` line is gone.
+- `flz` exit codes follow the class: 1 internal, 2 invalid, 3 unreachable, 4 denied, 5 not_found,
+  6 conflict, 7 unavailable. A script testing `$? -eq 1` for every failure must test `!= 0`, or
+  the class it cares about. `flz controller stop` refused for want of a token now exits 4 rather
+  than reporting the controller as unreachable, a partial drain exits 7, and `flz reset` exits 2
+  when it only printed its plan and 6 while the controller is up.
+- Every published `Flezha.Service.*` function answers a failure as `{:error, %Flezha.Error{}}`
+  rather than a raw reason term, and `Flezha.AuthZ.TokenStore.verify/1` answers `authz.token_*`
+  codes. The audit record of a failed act carries `error_code`, and an `authorization_denied`
+  record's `reason` is the `authz.*` code.
+- The wire carries one `Error` message in `AdminResponse`, `SpawnBoundedResponse`,
+  `TaskCommitResponse`, `IterCommitResponse`, `OperatorMessageResponse` and `CommandResponse`,
+  and a refused runner connect is answered with `ConnectRefused` before the stream closes. A
+  refused spawn carries the controller's own code, and `SpawnBoundedResponse.outcome` keeps only
+  `spawned` and `delivered`.
+- The C ABI's `flz_core_last_error` returns the JSON error document for every failure; the
+  separate failure bodies of `flz_core_check_class` and `flz_core_spawn_result` are gone. The new
+  `flz_core_error_document(code, details_json)` renders a host's own refusal from the catalogue.
+- Each SDK exposes one error type carrying the five fields, raised for every refusal, and a
+  refusal's name is its code: `SleepWithoutPersistence` is `topology.sleep_without_persistence`.
+
 ### Added: the Elixir builder has `branch`
 
 `branch/2` fans a stream out to a list of arms, each a function called with that same stream,

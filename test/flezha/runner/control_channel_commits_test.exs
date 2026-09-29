@@ -55,7 +55,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     response = decode_reply(reply)
     assert response.reference_id == "ref-opc-1"
 
-    assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: "", task_idx: 1}} =
+    assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: nil, task_idx: 1}} =
              response.command
 
     # The ack was emitted only after the entry landed in the journal.
@@ -100,7 +100,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: error}} =
              response.command
 
-    assert error =~ "oversized_handoff"
+    assert error.code == "commit.oversized_handoff"
     assert {:ok, []} = TaskJournal.read(inst)
   end
 
@@ -134,10 +134,10 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
 
     assert Enum.sort(replies) ==
              [
-               {"ref-iter-resend", ""},
-               {"ref-iter-resend", ""},
-               {"ref-opc-resend", ""},
-               {"ref-opc-resend", ""}
+               {"ref-iter-resend", nil},
+               {"ref-iter-resend", nil},
+               {"ref-opc-resend", nil},
+               {"ref-opc-resend", nil}
              ]
 
     assert {:ok, [%{type: :task_committed, task_idx: 1}, %{type: :iter_committed, iter: 0}]} =
@@ -168,7 +168,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     # The hundred acks follow the sync.
     for _ <- 1..100 do
       assert_receive {:test_writer_called, ^stream_ref, reply}, 2_000
-      assert {:task_commit_response, %{error: ""}} = decode_reply(reply).command
+      assert {:task_commit_response, %{error: nil}} = decode_reply(reply).command
     end
   end
 
@@ -237,7 +237,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     # The ack comes first: it IS the durable point past which output may be seen.
     assert_receive {:test_writer_called, ^stream_ref, reply}, 2_000
 
-    assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: ""}} =
+    assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: nil}} =
              decode_reply(reply).command
 
     assert {:ok, [entry]} = TaskJournal.read(inst)
@@ -268,7 +268,8 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: error}} =
              decode_reply(reply).command
 
-    assert error == "record_not_durable: #{inst}/TaskA/s0 seq=5"
+    assert error.code == "commit.record_not_durable"
+    assert Jason.decode!(error.details_json) == %{"cell" => "#{inst}/TaskA/s0", "seq" => 5}
     assert {:ok, []} = TaskJournal.read(inst)
   end
 
@@ -314,7 +315,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
 
       assert_receive {:test_writer_called, ^stream_ref, reply}, 2_000
 
-      assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: ""}} =
+      assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: nil}} =
                decode_reply(reply).command
 
       # The ack means remote-durable: the journal's manifest is in the store.
@@ -337,7 +338,8 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
       assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: error}} =
                decode_reply(reply).command
 
-      assert error =~ "backend_down"
+      assert error.code == "durability.sync_ship_failed"
+      assert Jason.decode!(error.details_json)["reason"] =~ "backend_down"
 
       # The local append DID land — that is the crash window the mode is about.
       # The SDK never saw a successful ack, so it re-runs the tasklet on
@@ -361,7 +363,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
 
       assert_receive {:test_writer_called, ^stream_ref, reply}, 1_000
 
-      assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: ""}} =
+      assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: nil}} =
                decode_reply(reply).command
     end
   end
@@ -384,7 +386,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
 
     assert_receive {:test_writer_called, ^stream_ref, reply}, 1_000
 
-    assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: ""}} =
+    assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: nil}} =
              decode_reply(reply).command
 
     assert {"undo", meta, _} = next_output(1_000)
@@ -421,7 +423,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: error}} =
              decode_reply(reply).command
 
-    assert error =~ "oversized_handoff"
+    assert error.code == "commit.oversized_handoff"
     # Nothing journaled ⇒ nothing released.
     refute_dispatched(300)
     assert {:ok, []} = TaskJournal.read(inst)
@@ -444,7 +446,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     response = decode_reply(reply)
     assert response.reference_id == "ref-iter-0"
 
-    assert {:iter_commit_response, %RunnerCommands.IterCommitResponse{error: "", iter: 0}} =
+    assert {:iter_commit_response, %RunnerCommands.IterCommitResponse{error: nil, iter: 0}} =
              response.command
 
     # The ack was emitted only after the boundary record landed.

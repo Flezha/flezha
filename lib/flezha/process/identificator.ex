@@ -253,13 +253,13 @@ defmodule Flezha.Identificator do
     pname = String.to_existing_atom(pname)
 
     case Process.whereis(pname) do
-      nil -> {:error, "Process #{pname} not found"}
+      nil -> {:error, {:process_not_found, pname}}
       pid -> {:ok, pid}
     end
   catch
     # `String.to_existing_atom/1` RAISES for a name no atom matches, so a
     # one-argument `catch` (throws only) let the documented refusal be skipped.
-    _kind, _reason -> {:error, "Invalid PID format"}
+    _kind, _reason -> {:error, :invalid_pid_format}
   end
 
   defp gen_via(prefix, suffix) do

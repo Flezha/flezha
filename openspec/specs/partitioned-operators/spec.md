@@ -54,7 +54,7 @@ base as the started id. A generated base is never refused on the id budget.
 #### Scenario: A once or chained bounded operator is refused partitions
 
 - **WHEN** `--partitions 2` names a bounded factory whose loop mode is `once` or `chained`
-- **THEN** the start is refused with `PartitionsWithoutPerInputLoop`, naming that its one
+- **THEN** the start is refused with `topology.partitions_without_per_input_loop`, naming that its one
   message would reach one member while the others waited for nothing, at the controller when the
   class's loop mode is already recorded and at the first member's bind otherwise, and no member
   is left running
@@ -127,11 +127,11 @@ When `partition_count ≥ 2`, the SDK dispatch SHALL check that each computed ce
 - **THEN** the message is parked under the entry channel with the named contract error, no Cell is minted for its key, no pass opens, no iteration commits, and the member's next in-range message runs its pass as the next iteration
 
 ### Requirement: Partitioning SHALL be refused for a keyless topology
-A class with no keyed tasklet (neither `key_by` nor declared cell keys on any entry-fed tasklet) SHALL NOT run partitioned: splitting a single unkeyed cell across N members would fold each member's input slice into a private copy of "the one" state — N divergent partial truths, silently. Because the topology is SDK-owned (key closures are compiled code, never on the wire), the authoritative refusal SHALL live in the SDK at the AddOperator boundary: when `partition_count ≥ 2` and the topology has no keyed tasklet, the SDK SHALL refuse the AddOperator with an error naming `key_by` (`PartitionsWithoutKeyedTasklet`). The controller SHALL treat that refusal as a member start failure (group rollback, error surfaced to the caller). Additionally, the class SHALL declare its keyedness via the existing `AddOperatorResponse.metadata` → `ClassRegistry` declaration seam, so a later partitioned start of a known-keyless class is refused at the controller before any member starts. A statically keyed topology (declared cell keys, no `key_by`) SHALL be accepted; members' out-of-range static cells simply receive no input.
+A class with no keyed tasklet (neither `key_by` nor declared cell keys on any entry-fed tasklet) SHALL NOT run partitioned: splitting a single unkeyed cell across N members would fold each member's input slice into a private copy of "the one" state — N divergent partial truths, silently. Because the topology is SDK-owned (key closures are compiled code, never on the wire), the authoritative refusal SHALL live in the SDK at the AddOperator boundary: when `partition_count ≥ 2` and the topology has no keyed tasklet, the SDK SHALL refuse the AddOperator with an error naming `key_by` (`topology.partitions_without_keyed_tasklet`). The controller SHALL treat that refusal as a member start failure (group rollback, error surfaced to the caller). Additionally, the class SHALL declare its keyedness via the existing `AddOperatorResponse.metadata` → `ClassRegistry` declaration seam, so a later partitioned start of a known-keyless class is refused at the controller before any member starts. A statically keyed topology (declared cell keys, no `key_by`) SHALL be accepted; members' out-of-range static cells simply receive no input.
 
 #### Scenario: First partitioned start of a keyless class fails at bind, loudly
 - **WHEN** `--partitions 3` is used with a class whose tasklets declare no keys and no `key_by`
-- **THEN** the first member's AddOperator is refused with `PartitionsWithoutKeyedTasklet`, any already-started members are stopped, and the CLI receives the SDK's error naming `key_by`
+- **THEN** the first member's AddOperator is refused with `topology.partitions_without_keyed_tasklet`, any already-started members are stopped, and the CLI receives the SDK's error naming `key_by`
 
 #### Scenario: Repeat start of a known-keyless class fails immediately
 - **WHEN** the same class has bound before (its keyedness declaration is in the ClassRegistry) and a partitioned start is attempted
@@ -272,7 +272,7 @@ Only a `per_input` bounded operator, one pass per message, is a group. Because t
 declaration the topology carries and the controller never sees at start, the authoritative
 refusal SHALL live in the SDK at the `AddOperator` boundary: when `partition_count >= 2` names a
 bounded class whose loop mode is not `per_input`, the SDK SHALL refuse the `AddOperator` with an
-error named `PartitionsWithoutPerInputLoop` that names the class, its loop mode and `loop_mode
+error named `topology.partitions_without_per_input_loop` that names the class, its loop mode and `loop_mode
 per_input` as the remedy, and the controller SHALL treat that refusal as a member start failure
 (group rollback, error surfaced to the caller). Additionally, a bounded class SHALL declare its
 loop mode as `loop_mode` (`once` | `per_input` | `chained`) in the `AddOperatorResponse.metadata`
@@ -280,13 +280,13 @@ declaration seam beside `keyed`, recorded against the factory as the keyless fac
 partitioned start of a known `once` or `chained` class is refused at the controller before any
 member starts, with the same sentence. The keyless refusal applies to a bounded operator unchanged: a
 `per_input` bounded operator whose entry-fed tasklet declares neither `key_by` nor cell keys SHALL be
-refused with `PartitionsWithoutKeyedTasklet`.
+refused with `topology.partitions_without_keyed_tasklet`.
 
 #### Scenario: First partitioned start of a once bounded operator fails at bind, loudly
 
 - **WHEN** `--partitions 3` is used with a bounded class whose loop mode is `once` and that has
   never bound
-- **THEN** the first member's `AddOperator` is refused with `PartitionsWithoutPerInputLoop`, any
+- **THEN** the first member's `AddOperator` is refused with `topology.partitions_without_per_input_loop`, any
   already-started members are stopped, and the CLI receives the SDK's error naming the class,
   `once` and `loop_mode per_input`
 
@@ -307,5 +307,5 @@ refused with `PartitionsWithoutKeyedTasklet`.
 
 - **WHEN** a `per_input` bounded operator whose entry-fed tasklet declares no `key_by` and no cell keys is
   started with `--partitions 2`
-- **THEN** the start is refused with `PartitionsWithoutKeyedTasklet`, as an unbounded operator's would be
+- **THEN** the start is refused with `topology.partitions_without_keyed_tasklet`, as an unbounded operator's would be
 

@@ -373,7 +373,11 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   end
 
   defp info_health(ctx, id) do
-    out = ExUnit.CaptureIO.capture_io(fn -> CliManager.operator_info(ctx.namespace, "json") end)
+    out =
+      ExUnit.CaptureIO.capture_io(fn ->
+        CliManager.operator_info(ctx.namespace, output: "json")
+      end)
+
     %{"operators" => rows} = Jason.decode!(out)
 
     case Enum.find(rows, &(&1["id"] == id)) do
@@ -383,7 +387,11 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   end
 
   defp list_health(ctx, id) do
-    out = ExUnit.CaptureIO.capture_io(fn -> CliManager.list_operators(ctx.namespace, "json") end)
+    out =
+      ExUnit.CaptureIO.capture_io(fn ->
+        CliManager.list_operators(ctx.namespace, output: "json")
+      end)
+
     %{"operators" => rows} = Jason.decode!(out)
 
     case Enum.find(rows, &(&1["id"] == id)) do

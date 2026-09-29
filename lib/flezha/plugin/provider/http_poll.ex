@@ -198,9 +198,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
         {:ok, rendered}
 
       unresolved ->
-        {:error,
-         "http_poll url carries #{unresolved} but this plugin has no partition identity — " <>
-           "the placeholder is filled by a partitioned start's plugin fan-out"}
+        {:error, {:partition_placeholder_unfilled, :url, unresolved}}
     end
   end
 
@@ -221,10 +219,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   # cadence silently becomes the timeout — and a black-holing endpoint would
   # keep a request outstanding essentially always.
   defp validate_budget(%{timeout_ms: timeout, interval_ms: interval}) when timeout >= interval,
-    do:
-      {:error,
-       "http_poll timeout_ms #{timeout} must be below interval_ms #{interval} so a poll " <>
-         "cannot outlast its own interval"}
+    do: {:error, {:timeout_not_below_interval, timeout, interval}}
 
   defp validate_budget(_), do: :ok
 end

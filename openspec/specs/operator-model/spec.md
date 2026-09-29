@@ -201,10 +201,10 @@ Reporting a park SHALL NOT change when one happens: an unloadable provider modul
 A request for an operator's live per-Cell state SHALL succeed for an instance of either kind
 whose class's persistence switch is on and which is resident on a runner. When the class has
 opted out of persistence, the request SHALL fail with the structured error
-`{:error, :persistence_off}` rather than querying a computation whose state is held in memory
+`{:error, %Flezha.Error{code: "state.persistence_off"}}` on the published surface rather than querying a computation whose state is held in memory
 alone, for an unbounded operator and a bounded operator alike; the CLI SHALL render it as a clear, non-zero outcome
 naming the class's declaration. A suspended or unbound instance SHALL be refused as
-`{:not_resident, :suspended}` or `{:not_resident, :unbound}` as today. Point-in-time
+the code `state.not_resident`, its details naming `suspended` or `unbound`. Point-in-time
 `flz state at` queries SHALL serve a Cell of either kind from its retained snapshots and WAL
 records, under the same retention rule; no kind SHALL be refused time travel.
 
@@ -216,7 +216,7 @@ records, under the same retention rule; no kind SHALL be refused time travel.
 #### Scenario: Cell-state query is rejected for a stateless operator
 
 - **WHEN** the live per-Cell state of an instance whose class declares persistence off is requested, for an unbounded or a bounded operator
-- **THEN** the request SHALL return `{:error, :persistence_off}` and SHALL NOT contact the computation
+- **THEN** the request SHALL return `{:error, %Flezha.Error{code: "state.persistence_off"}}` and SHALL NOT contact the computation
 
 #### Scenario: Time travel serves a bounded operator Cell
 

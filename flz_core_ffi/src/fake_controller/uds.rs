@@ -199,19 +199,20 @@ impl Controller {
 
     /// Answer a spawn request the way the controller does: `spawned` under the
     /// request's own id, or under a generated `<factory>-<suffix>` when it
-    /// carried none, or refused with `refusal`. Answers the id it named.
+    /// carried none, or refused with `refusal` and no outcome. Answers the id
+    /// it named.
     pub fn try_answer_spawn(
         &self,
         reference_id: &str,
         request: &pb::SpawnBoundedRequest,
-        refusal: Option<&str>,
+        refusal: Option<&flz_core::FlezhaError>,
     ) -> std::io::Result<String> {
         let (outcome, error, id) = match refusal {
-            Some(reason) => ("refused", reason.to_string(), request.instance_id.clone()),
+            Some(refusal) => ("", Some(refusal.into()), request.instance_id.clone()),
             None if request.instance_id.is_empty() => {
-                ("spawned", String::new(), generated_id(&request.factory_id))
+                ("spawned", None, generated_id(&request.factory_id))
             }
-            None => ("spawned", String::new(), request.instance_id.clone()),
+            None => ("spawned", None, request.instance_id.clone()),
         };
         self.try_send(
             reference_id,

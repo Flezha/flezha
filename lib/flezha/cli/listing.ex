@@ -22,7 +22,9 @@ defmodule Flezha.Service.Cli.Listing do
   namespace created a moment earlier invisible until something connected to
   it, and reported one that had been torn down as gone from the catalog.
   """
-  def list_namespaces(output_format, call) do
+  def list_namespaces(%{opts: opts} = call) do
+    output_format = Context.format(opts)
+
     running = MapSet.new(HubManager.get_running_namespaces())
 
     # `unbound: :all`: the verb is `:caller`-scoped, and a caller with no
@@ -78,7 +80,9 @@ defmodule Flezha.Service.Cli.Listing do
   process a runner is. Bulleted rather than tabular: the id is the row, and the
   process id follows it when there is one.
   """
-  def list_runners(namespace, output_format, _call) do
+  def list_runners(namespace, %{opts: opts}) do
+    output_format = Context.format(opts)
+
     namespace_display = Namespace.or_default(namespace)
     {:ok, rows} = FleetManager.global_runner_pids(namespace_display)
 
@@ -106,7 +110,9 @@ defmodule Flezha.Service.Cli.Listing do
   operators (whose only placement is a dead node) and is multi-node-safe — it no
   longer crashes on an operator registered across nodes.
   """
-  def list_operators(namespace, output_format, _call) do
+  def list_operators(namespace, %{opts: opts}) do
+    output_format = Context.format(opts)
+
     namespace_display = Namespace.or_default(namespace)
 
     namespace_display
@@ -186,7 +192,9 @@ defmodule Flezha.Service.Cli.Listing do
   `Leader` so a split view (one node sees operators, its peer sees none) is
   visible at a glance.
   """
-  def cluster_status(namespace, output_format, _call) do
+  def cluster_status(namespace, %{opts: opts}) do
+    output_format = Context.format(opts)
+
     namespace_display = Namespace.or_default(namespace)
     nodes = HubManager.get_hub_nodes(namespace_display, true)
     rows = HubManager.operator_rows(namespace_display)

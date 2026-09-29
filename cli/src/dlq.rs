@@ -11,15 +11,15 @@ pub(crate) const TABLE: Command = Command {
     verbs: &[
         Verb::new("list", handle_list).taking(&[Positional::optional("<operator_class>")]),
         Verb::new("show", |read| {
-            rpc::one_arg(read, ENTRY_REF[0].name, "dlq_show", rpc::PROPAGATE)
+            rpc::one_arg(read, ENTRY_REF[0].name, "dlq_show")
         })
         .taking(ENTRY_REF),
         Verb::new("replay", |read| {
-            rpc::one_arg(read, ENTRY_REF[0].name, "dlq_replay", rpc::PROPAGATE)
+            rpc::one_arg(read, ENTRY_REF[0].name, "dlq_replay")
         })
         .taking(ENTRY_REF),
         Verb::new("drop", |read| {
-            rpc::one_arg(read, ENTRY_REF[0].name, "dlq_drop", rpc::PROPAGATE)
+            rpc::one_arg(read, ENTRY_REF[0].name, "dlq_drop")
         })
         .taking(ENTRY_REF),
     ],
@@ -29,11 +29,5 @@ pub(crate) const TABLE: Command = Command {
 };
 
 fn handle_list(read: &Reading) {
-    rpc::run(
-        "dlq_list",
-        &[text(read.pos("<operator_class>"))],
-        &[],
-        read.token(),
-        rpc::PROPAGATE,
-    );
+    rpc::run("dlq_list", &[text(read.pos("<operator_class>"))], &[], read);
 }

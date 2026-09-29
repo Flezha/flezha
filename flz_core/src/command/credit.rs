@@ -16,7 +16,12 @@ use crate::pb::{CreditGrant, CreditWindowAck, CreditWindowInit};
 use crate::runner::RunnerNode;
 
 impl CommandAction for CreditWindowInit {
-    fn handle(&self, _runner: &mut RunnerNode, _message: &str, _errors: &mut Vec<String>) -> Reply {
+    fn handle(
+        &self,
+        _runner: &mut RunnerNode,
+        _message: &str,
+        _errors: &mut Vec<crate::Error>,
+    ) -> Reply {
         credit::global().arm(self.stream_id.clone(), self.window_bytes);
 
         let ack = CreditWindowAck {
@@ -31,7 +36,12 @@ impl CommandAction for CreditWindowInit {
 }
 
 impl CommandAction for CreditGrant {
-    fn handle(&self, _runner: &mut RunnerNode, _message: &str, _errors: &mut Vec<String>) -> Reply {
+    fn handle(
+        &self,
+        _runner: &mut RunnerNode,
+        _message: &str,
+        _errors: &mut Vec<crate::Error>,
+    ) -> Reply {
         credit::global().grant(&self.stream_id, self.bytes);
 
         Reply {

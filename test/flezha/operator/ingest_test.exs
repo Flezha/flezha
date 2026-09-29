@@ -199,9 +199,11 @@ defmodule FlezhaTest.Operator.IngestTest do
   end
 
   test "an unresolvable target is not-found" do
-    stub(Flezha.Service.HubManager, :get_pid, fn _ns, _id -> {:error, "no pid found"} end)
+    stub(Flezha.Service.HubManager, :get_pid, fn ns, id ->
+      {:error, {:operator_not_found, ns, id}}
+    end)
 
-    assert {:error, :not_found} =
+    assert {:error, {:operator_not_found, "default", "ghost"}} =
              OperatorManager.send_io_confirming(
                "ghost",
                "default",

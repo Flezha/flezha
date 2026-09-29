@@ -16,6 +16,8 @@ defmodule Flezha.Plugin.Provider.HttpFetch do
   spawns it rather than calling it inline.
   """
 
+  alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
+
   @typedoc """
   One request. `:etag` is the validator from the previous successful fetch, or
   `nil` to fetch unconditionally.
@@ -177,7 +179,7 @@ defmodule Flezha.Plugin.Provider.HttpFetch do
   `field` and `headers_field` name the caller's own option so the refusal reads
   as its own configuration rather than this module's.
   """
-  @spec validate_url(term(), binary(), atom(), atom()) :: {:ok, binary()} | {:error, binary()}
+  @spec validate_url(term(), binary(), atom(), atom()) :: {:ok, binary()} | {:error, term()}
   def validate_url(url, provider, field \\ :url, headers_field \\ :headers)
 
   def validate_url(url, provider, field, headers_field) when is_binary(url) and url != "" do
@@ -185,30 +187,29 @@ defmodule Flezha.Plugin.Provider.HttpFetch do
       # Credentials in the URL would be replayed on every request and echoed
       # into any error naming it; headers are the place for a secret.
       %URI{userinfo: userinfo} when is_binary(userinfo) ->
-        {:error,
-         "#{provider} #{field} must not embed credentials — use #{inspect(headers_field)}"}
+        {:error, {:url_has_credentials, provider, field, headers_field}}
 
       %URI{scheme: scheme, host: host}
       when scheme in ["http", "https"] and is_binary(host) and host != "" ->
         {:ok, url}
 
       %URI{scheme: scheme} when scheme in ["http", "https"] ->
-        {:error, "#{provider} #{field} #{redact(url)} has no host"}
+        {:error, {:url_without_host, provider, field, redact(url)}}
 
       _ ->
-        {:error, "#{provider} #{field} #{redact(url)} must use the http or https scheme"}
+        {:error, {:url_scheme_unsupported, provider, field, redact(url)}}
     end
   end
 
   def validate_url(_url, provider, field, _headers_field),
-    do: {:error, "#{provider} requires #{inspect(field)}"}
+    do: ProviderOptions.refuse_required(provider, [field])
 
   @doc """
   Accept a header map, or the JSON object a CLI flag delivers it as, and
   normalise both names and values to strings.
   """
   @spec validate_headers(term(), binary(), atom()) ::
-          {:ok, %{binary() => binary()}} | {:error, binary()}
+          {:ok, %{binary() => binary()}} | {:error, term()}
   def validate_headers(headers, provider, field \\ :headers)
 
   def validate_headers(nil, _provider, _field), do: {:ok, %{}}
@@ -216,7 +217,7 @@ defmodule Flezha.Plugin.Provider.HttpFetch do
   def validate_headers(headers, provider, field) when is_binary(headers) do
     case Jason.decode(headers) do
       {:ok, decoded} when is_map(decoded) -> validate_headers(decoded, provider, field)
-      _ -> {:error, "#{provider} #{field} must be a JSON object"}
+      _ -> {:error, {:headers_invalid, provider, field}}
     end
   end
 
@@ -224,10 +225,10 @@ defmodule Flezha.Plugin.Provider.HttpFetch do
     if Enum.all?(headers, fn {_k, v} -> is_binary(v) or is_number(v) end) do
       {:ok, Map.new(headers, fn {k, v} -> {to_string(k), to_string(v)} end)}
     else
-      {:error, "#{provider} #{field} must map names to scalar values"}
+      {:error, {:headers_invalid, provider, field}}
     end
   end
 
   def validate_headers(_headers, provider, field),
-    do: {:error, "#{provider} #{field} must be a map"}
+    do: {:error, {:headers_invalid, provider, field}}
 end

@@ -256,7 +256,7 @@ Java `byte[]` before being freed through the core-provided free function.
 
 ### Requirement: Operator declares persistenceEnabled default-method, frozen at instance start
 
-The Java SDK's `UnboundedOperator` and `BoundedOperator` interfaces SHALL each declare `default boolean persistenceEnabled() { return true; }` and `default boolean sleepWhenIdle()` (`false` on `UnboundedOperator`, `persistenceEnabled()` on `BoundedOperator`). The runtime SHALL read `persistenceEnabled()` from the class for either kind when it builds the class declaration, SHALL write it as the declaration's `persistent` and SHALL NOT derive `persistent` from whether any Tasklet keeps state; it SHALL write `sleepWhenIdle()` as `sleep_when_idle`. The core resolves the per-instance value from the declaration when `AddOperator` is processed and announces both to the controller.
+The Java SDK's `UnboundedOperator` and `BoundedOperator` interfaces SHALL each declare `default boolean persistenceEnabled() { return true; }` and `default boolean sleepWhenIdle()` (`false` on `UnboundedOperator`, `persistenceEnabled()` on `BoundedOperator`). The runtime SHALL read `persistenceEnabled()` from the class for either kind when it builds the class declaration, SHALL write it as the declaration's `persistent` and SHALL NOT derive `persistent` from whether any Tasklet declares a Change other than `NoChange`; it SHALL write `sleepWhenIdle()` as `sleep_when_idle`. The core resolves the per-instance value from the declaration when `AddOperator` is processed and announces both to the controller.
 
 The resolved value SHALL be bound to the instance and SHALL be propagated to every `CellSlot` constructed for that instance. A change to the class's method (via SDK redeploy) SHALL NOT affect already-running instances.
 
@@ -278,7 +278,7 @@ The resolved value SHALL be bound to the instance and SHALL be propagated to eve
 #### Scenario: Sleeping without persistence is refused
 
 - **WHEN** a class of either kind returns `true` from `sleepWhenIdle()` and `false` from `persistenceEnabled()`
-- **THEN** `registerFactory` SHALL throw a configuration exception whose message contains `SleepWithoutPersistence`
+- **THEN** `registerFactory` SHALL throw a configuration exception whose message contains `topology.sleep_without_persistence`
 
 #### Scenario: Resolved value frozen at instance start
 
@@ -410,11 +410,11 @@ Declaring `.keyed()` SHALL be required on every plugin-bound channel of a tier-e
 #### Scenario: A tier class with a non-keyed plugin channel fails registration
 
 - **WHEN** a class declares `c.effectivelyOnce()` and a plugin-bound channel without `.keyed()`
-- **THEN** registration SHALL throw `UnboundedOperatorConfigurationException` naming the channel
+- **THEN** registration SHALL throw `FlezhaException` naming the channel
 
 ### Requirement: Java SDK implements checkpoint ack granularity
 
-The Java SDK SHALL implement the `effectively-once-checkpoint-granularity` capability. A channel declaration SHALL support `c.checkpointAck()`, valid only together with `c.effectivelyOnce()` — declaring it alone SHALL fail registration with `CheckpointAckWithoutTier`. `Ctx.checkpoint()` SHALL mark the invocation as closing the current interval.
+The Java SDK SHALL implement the `effectively-once-checkpoint-granularity` capability. A channel declaration SHALL support `c.checkpointAck()`, valid only together with `c.effectivelyOnce()` — declaring it alone SHALL fail registration with `topology.checkpoint_ack_without_tier`. `TaskletCtx.checkpoint()` SHALL mark the invocation as closing the current interval.
 
 The per-Cell flush buffer SHALL carry a third `staged` list holding the open interval's changes. `drainToFrames` and `isEmpty` SHALL deliberately **ignore** `staged` — an open interval is not flushable, and draining it alone would put state ahead of its offset. An invocation SHALL emit an effect record carrying `{staged, consumedOffset}` when it checkpointed or parked to the DLQ; otherwise it SHALL emit `{[], outputs, null}` only if it produced outputs. A dead-letter park SHALL close the interval. A restore SHALL discard the open interval.
 
@@ -431,7 +431,7 @@ The per-Cell flush buffer SHALL carry a third `staged` list holding the open int
 #### Scenario: checkpointAck without the tier is refused
 
 - **WHEN** a class declares `c.checkpointAck()` without `c.effectivelyOnce()`
-- **THEN** registration SHALL throw `UnboundedOperatorConfigurationException` carrying the error name `CheckpointAckWithoutTier`
+- **THEN** registration SHALL throw `FlezhaException` whose code is `topology.checkpoint_ack_without_tier`
 
 #### Scenario: A park closes the open interval
 
@@ -469,7 +469,7 @@ A replay SHALL NOT lower the event-time high-water mark.
 #### Scenario: A correction window without the tier is refused
 
 - **WHEN** a class declares `c.correctionWindow(60_000)` without `c.effectivelyOnce()`
-- **THEN** registration SHALL throw `UnboundedOperatorConfigurationException` naming the missing tier declaration
+- **THEN** registration SHALL throw `FlezhaException` naming the missing tier declaration
 
 #### Scenario: Beyond-window default is process-as-arrival
 
@@ -541,7 +541,7 @@ When the loop is idle past the park hysteresis, the SDK SHALL ship `IterPark` (t
 
 The Java SDK SHALL implement the `bounded-cell-retry` capability. The ladder's budget SHALL be the consuming edge's `retryMax()` / `retryBackoffMs()` (default 3 total attempts, 50 ms base), the same builder calls and the same `RetryPolicy` an unbounded operator's edge declares; `BoundedOperator` SHALL declare no `retryAttempts()` or `retryBackoff()`. Only the failing cell SHALL re-run its batch; siblings SHALL stay buffered at the barrier, and each attempt SHALL use a fresh sink so a failed attempt's staged output is dropped rather than double-emitted.
 
-Backoff SHALL reuse the dead-letter ladder's helper (`base × 2^(n-1)` with ±50% jitter, capped at 5 s) and the wait SHALL be cancellation-aware, so a stop or `maxDuration` ends it at once. Retry is strictly pre-commit: a journaled task SHALL never be retried. `retryMax(1)` SHALL be a single attempt and `retryMax(0)` SHALL be refused at registration with `RetryMaxZero`, as on an unbounded operator. A `BoundedException` SHALL carry a `nonRetryable` flag; a thrown `RuntimeException` SHALL stay retryable.
+Backoff SHALL reuse the dead-letter ladder's helper (`base × 2^(n-1)` with ±50% jitter, capped at 5 s) and the wait SHALL be cancellation-aware, so a stop or `maxDuration` ends it at once. Retry is strictly pre-commit: a journaled task SHALL never be retried. `retryMax(1)` SHALL be a single attempt and `retryMax(0)` SHALL be refused at registration with `topology.retry_max_zero`, as on an unbounded operator. A `BoundedException` SHALL carry a `nonRetryable` flag; a thrown `RuntimeException` SHALL stay retryable.
 
 #### Scenario: A transient cell failure recovers on retry
 
@@ -561,7 +561,7 @@ Backoff SHALL reuse the dead-letter ladder's helper (`base × 2^(n-1)` with ±50
 #### Scenario: The edge's budget bounds the ladder
 
 - **WHEN** a bounded operator wires `c.input(String.class, "in").retryMax(2).into(Flaky.class)` and `Flaky` throws on every attempt
-- **THEN** the cell SHALL run exactly twice before the operator aborts, and `retryMax(0)` on that edge SHALL be refused at `registerFactory` naming `RetryMaxZero`
+- **THEN** the cell SHALL run exactly twice before the operator aborts, and `retryMax(0)` on that edge SHALL be refused at `registerFactory` naming `topology.retry_max_zero`
 
 ### Requirement: Java SDK implements bounded loop rewind
 
@@ -623,11 +623,11 @@ The Java SDK's `data_heartbeat` frame SHALL carry the same metrics the Rust SDK 
 
 ### Requirement: Operator Type Declaration
 
-The Java SDK SHALL provide `FlezhaRunner.registerFactory(Class<? extends Operator>)` and its inverse `FlezhaRunner.unregisterFactory(Class<? extends Operator>)` as chainable builder methods, `registerFactory` reading the kind from the kind interface the class implements and refusing a class that implements both `UnboundedOperator` and `BoundedOperator` with an `IllegalArgumentException` whose message begins `AmbiguousOperatorKind`, or neither with one beginning `UnknownOperatorKind`, callable **before and after** `.start()`/`.run()`. For each declared UnboundedOperator class the SDK SHALL: (a) instantiate the class via its public no-arg constructor; (b) call its `factoryId()` method to obtain the controller-facing factory id; (c) call its `channels(ChannelBuilder)` method exactly once — the builder being the producer-first graph builder of `sdk-graph-authoring` — and freeze the resulting `OperatorTopology`; (d) verify wiring constraints (entry-channel deserializability, type-equality between an unbounded operator's payload type and its consumer Tasklets' input types, node reachability from the entry, at most one output channel per node, acyclicity, node-identity and channel-name uniqueness, static-mode and dynamic-mode default-impl detection); (e) record `(factoryId → topology)` in the class registry. The registry SHALL stay mutable after `.start()` for as long as the runner is open: `registerFactory` and its `unregisterFactory` inverse are legal on a started runner, and every post-start change SHALL re-sync the runner's full current factory set rather than a delta — the set the next connect/reconnect init frame carries to the controller. A started runner that has been closed SHALL refuse every `registerFactory`/`unregisterFactory` call with an `IllegalStateException` naming the closed runner, and the refused call SHALL NOT reach the class registries or the core — `.close()` destroys the core context, so a declaration made afterwards would otherwise carry a freed handle back across the JNI boundary. A never-started runner has no context to free, so `.close()` on one leaves it mutable, as the runner-lifecycle requirement already states. `unregisterFactory` SHALL throw `IllegalArgumentException` naming the factory id when that id is not defined on this runner, and `OperatorTypeInUseException` — an `IllegalStateException` subclass — naming the factory id when the runner is started and live operator instances of it exist, leaving the type defined. There SHALL be no `OperatorHandler`-style factory registration in the public surface.
+The Java SDK SHALL provide `FlezhaRunner.registerFactory(Class<? extends Operator>)` and its inverse `FlezhaRunner.unregisterFactory(Class<? extends Operator>)` as chainable builder methods, `registerFactory` reading the kind from the kind interface the class implements and refusing a class that implements both `UnboundedOperator` and `BoundedOperator` with a `FlezhaException` whose code is `topology.ambiguous_operator_kind`, or neither with one whose code is `topology.unknown_operator_kind`, callable **before and after** `.start()`/`.run()`. For each declared UnboundedOperator class the SDK SHALL: (a) instantiate the class via its public no-arg constructor; (b) call its `factoryId()` method to obtain the controller-facing factory id; (c) call its `channels(ChannelBuilder)` method exactly once — the builder being the producer-first graph builder of `sdk-graph-authoring` — and freeze the resulting `OperatorTopology`; (d) verify wiring constraints (entry-channel deserializability, type-equality between an unbounded operator's payload type and its consumer Tasklets' input types, node reachability from the entry, at most one output channel per node, acyclicity, node-identity and channel-name uniqueness, static-mode and dynamic-mode default-impl detection); (e) record `(factoryId → topology)` in the class registry. The registry SHALL stay mutable after `.start()` for as long as the runner is open: `registerFactory` and its `unregisterFactory` inverse are legal on a started runner, and every post-start change SHALL re-sync the runner's full current factory set rather than a delta — the set the next connect/reconnect init frame carries to the controller. A started runner that has been closed SHALL refuse every `registerFactory`/`unregisterFactory` call with an `IllegalStateException` naming the closed runner, and the refused call SHALL NOT reach the class registries or the core — `.close()` destroys the core context, so a declaration made afterwards would otherwise carry a freed handle back across the JNI boundary. A never-started runner has no context to free, so `.close()` on one leaves it mutable, as the runner-lifecycle requirement already states. `unregisterFactory` SHALL throw `FlezhaException` with the code `runtime.class_not_registered` naming the factory id when that id is not defined on this runner, and with the code `runtime.operator_type_in_use` naming the factory id when the runner is started and live operator instances of it exist, leaving the type defined. There SHALL be no `OperatorHandler`-style factory registration in the public surface.
 
 Dynamic cell mode SHALL be supported: a Tasklet reached by a consumer edge declaring `keyBy`, declaring no `@Tasklet.Spec` `keys`, SHALL be declared successfully and create Cells lazily per key at dispatch time, per the `operator-state-persistence` dynamic-cell behaviour. Eviction SHALL be off by default (`@Tasklet.Spec` `idleTtlSeconds` is 0); when a TTL is declared, the per-Tasklet reaper SHALL evict idle Cells destructively by shipping `delete_cell_state`, and a recreated Cell SHALL cold-start fresh rather than restore from disk.
 
-Because Java's type erasure precludes Rust's compile-time topology refusals, every constraint Rust enforces at compile time SHALL be enforced at declaration time, throwing `UnboundedOperatorConfigurationException` whose message carries the same diagnostic content and the same error name as the corresponding Rust `TopologyIssue` variant.
+Because Java's type erasure precludes Rust's compile-time topology refusals, every constraint Rust enforces at compile time SHALL be enforced at declaration time, throwing `FlezhaException` whose code is the code of the corresponding Rust `TopologyIssue` variant and whose message carries the same diagnostic content.
 
 #### Scenario: Declaring an unbounded operator class before start() succeeds
 - **WHEN** user code calls `Flezha.createRunner("my_app").registerFactory(MarketOperator.class).start()`
@@ -639,11 +639,11 @@ Because Java's type erasure precludes Rust's compile-time topology refusals, eve
 
 #### Scenario: Duplicate factoryId across two unbounded operator classes is rejected
 - **WHEN** two distinct UnboundedOperator classes both return `"market"` from `factoryId()` and both are declared on the same builder
-- **THEN** the second `.registerFactory(...)` call SHALL throw an `IllegalArgumentException` naming the duplicate factoryId
+- **THEN** the second `.registerFactory(...)` call SHALL throw a `FlezhaException` with the code `topology.duplicate_factory_id`, naming the duplicate factoryId
 
 #### Scenario: Wiring mismatch fails declaration with a diagnosable error
 - **WHEN** an Operator wires `.into(OhlcTasklet.class)` onto `ParseTasklet`'s output stream but `ParseTasklet.outputType()` returns `Trade.class` while `OhlcTasklet.inputType()` returns `Candle.class`
-- **THEN** `.registerFactory(...)` SHALL throw `UnboundedOperatorConfigurationException` whose message names the channel, the stream's payload type (`Trade`), and the consumer-input type (`Candle`)
+- **THEN** `.registerFactory(...)` SHALL throw `FlezhaException` whose message names the channel, the stream's payload type (`Trade`), and the consumer-input type (`Candle`)
 
 #### Scenario: Typed entry channel deserializes at the edge
 - **WHEN** an Operator declares `c.input(Trade.class, "trade.raw").into(ParseTasklet.class)` and a JSON-encoded Trade arrives
@@ -651,11 +651,11 @@ Because Java's type erasure precludes Rust's compile-time topology refusals, eve
 
 #### Scenario: Unreachable node fails declaration
 - **WHEN** an Operator's `channels(c)` wires a Tasklet that is not reachable from the entry channel
-- **THEN** `.registerFactory(...)` SHALL throw `UnboundedOperatorConfigurationException` naming the unreachable Tasklet
+- **THEN** `.registerFactory(...)` SHALL throw `FlezhaException` naming the unreachable Tasklet
 
 #### Scenario: Static-mode tasklet that declares no cellsFor is rejected
 - **WHEN** a Tasklet returns a non-empty list from `cellKeys()` but neither it nor any class in its hierarchy declares `cellsFor`
-- **THEN** `.registerFactory(...)` SHALL throw `UnboundedOperatorConfigurationException` naming the Tasklet and stating that a static-mode tasklet must declare `cellsFor`
+- **THEN** `.registerFactory(...)` SHALL throw `FlezhaException` naming the Tasklet and stating that a static-mode tasklet must declare `cellsFor`
 
 #### Scenario: A declared hook needs no second declaration
 - **WHEN** a bounded operator Tasklet declares `compensate` and nothing else about it
@@ -668,16 +668,16 @@ Because Java's type erasure precludes Rust's compile-time topology refusals, eve
 #### Scenario: Declaring or removing a type on a closed runner is refused
 - **GIVEN** a `FlezhaRunner` that was started and then closed via `.close()`
 - **WHEN** code calls `.registerFactory(...)` or `.unregisterFactory(...)` on it
-- **THEN** each call SHALL throw `IllegalStateException` naming the closed runner's namespace, no class SHALL be registered or unregistered in the runtime class registries, and no factory set SHALL be shipped to the runtime — the freed core context SHALL NOT be reached
+- **THEN** each call SHALL throw `FlezhaException` with the code `runtime.runner_closed`, naming the closed runner's namespace, no class SHALL be registered or unregistered in the runtime class registries, and no factory set SHALL be shipped to the runtime — the freed core context SHALL NOT be reached
 
 #### Scenario: Removing a type that is not defined is rejected
 - **WHEN** code calls `.unregisterFactory(...)` for a class that was never defined on this runner, or that was already removed from it
-- **THEN** the call SHALL throw `IllegalArgumentException` naming the class's factory id, and the runner's declared set SHALL be unchanged
+- **THEN** the call SHALL throw `FlezhaException` with the code `runtime.class_not_registered`, naming the class's factory id, and the runner's declared set SHALL be unchanged
 
 #### Scenario: Removing a type with live instances is refused and keeps it defined
 - **GIVEN** a started runner declaring `"market"` with at least one live operator instance of that factory
 - **WHEN** code calls `.unregisterFactory(MarketOperator.class)`
-- **THEN** the call SHALL throw `OperatorTypeInUseException` naming `"market"`, the type SHALL remain defined and registered, and no factory set SHALL be shipped
+- **THEN** the call SHALL throw `FlezhaException` with the code `runtime.operator_type_in_use`, naming `"market"`, the type SHALL remain defined and registered, and no factory set SHALL be shipped
 
 ### Requirement: Runner process singleton guard
 
@@ -1037,7 +1037,7 @@ absent from.
 
 ### Requirement: Both kinds declare their graph in `channels` on the `Operator` base
 
-`channels(ChannelBuilder)` SHALL be declared once, abstract, on `com.flezha.sdk.operator.Operator`; `UnboundedOperator` and `BoundedOperator` SHALL inherit it and SHALL NOT redeclare it, and `BoundedOperator` SHALL carry no `tasklets` method. A bounded class SHALL be built through the same `UnboundedOperatorTopologyBuilder` entry a stream is, which reads the kind from the class's interface, and SHALL be registered as the same `UnboundedOperatorTopology` a stream is; the `@Tasklet` processor SHALL emit `channels` for a generated operator of either kind. `BoundedOperator` SHALL keep only the settings that are a bounded operator's own: `maxDuration()`, `selfTerminating()`, `loopMode()`, `rollbackMode()`, `persistenceEnabled()` and `syncDurability()`; `retryAttempts()`, `retryBackoff()`, `barrierRetryAttempts()` and `wakeAfter()` SHALL NOT exist, and `BoundedOperatorConfigurationException` SHALL carry no `ZeroRetryBackoff`. The javadoc of `Operator`, `UnboundedOperator`, `BoundedOperator`, `com.flezha.sdk.operator.package-info` and `com.flezha.sdk.channel.package-info` SHALL describe a bounded operator as a graph of tasklets committed stage by stage and resumed at the stage, and SHALL NOT describe it as ordered steps, a step sequence, or resuming at a step.
+`channels(ChannelBuilder)` SHALL be declared once, abstract, on `com.flezha.sdk.operator.Operator`; `UnboundedOperator` and `BoundedOperator` SHALL inherit it and SHALL NOT redeclare it, and `BoundedOperator` SHALL carry no `tasklets` method. A bounded class SHALL be built through the same `UnboundedOperatorTopologyBuilder` entry a stream is, which reads the kind from the class's interface, and SHALL be registered as the same `UnboundedOperatorTopology` a stream is; the `@Tasklet` processor SHALL emit `channels` for a generated operator of either kind. `BoundedOperator` SHALL keep only the settings that are a bounded operator's own: `maxDuration()`, `selfTerminating()`, `loopMode()`, `rollbackMode()`, `persistenceEnabled()` and `syncDurability()`; `retryAttempts()`, `retryBackoff()`, `barrierRetryAttempts()` and `wakeAfter()` SHALL NOT exist, and no `FlezhaException` SHALL carry the code `topology.zero_retry_backoff`. The javadoc of `Operator`, `UnboundedOperator`, `BoundedOperator`, `com.flezha.sdk.operator.package-info` and `com.flezha.sdk.channel.package-info` SHALL describe a bounded operator as a graph of tasklets committed stage by stage and resumed at the stage, and SHALL NOT describe it as ordered steps, a step sequence, or resuming at a step.
 
 #### Scenario: A bounded class writes channels
 
@@ -1047,7 +1047,7 @@ absent from.
 #### Scenario: A class of both kinds is refused
 
 - **WHEN** a class implements both `UnboundedOperator` and `BoundedOperator`
-- **THEN** it SHALL fail to compile unless it resolves the `persistenceEnabled()` default both kinds declare, a class that does SHALL be refused at `registerFactory` with `AmbiguousOperatorKind`, and the base's single abstract `channels` SHALL give it no second body to write
+- **THEN** it SHALL fail to compile unless it resolves the `persistenceEnabled()` default both kinds declare, a class that does SHALL be refused at `registerFactory` with `topology.ambiguous_operator_kind`, and the base's single abstract `channels` SHALL give it no second body to write
 
 #### Scenario: The retry knobs are gone from the interface
 
@@ -1061,17 +1061,17 @@ absent from.
 
 ### Requirement: A Java bounded class carries no unbounded-only setting and no wake
 
-`HostClassDeclaration.forBounded` SHALL put on the wire every key the class's builder recorded, tier and checkpoint keys included, and SHALL run the core's check on a record that carries the `bounded` key, so an unbounded-only setting on a bounded class is refused by the core under its name (`EffectivelyOnceOnBounded`, `CheckpointOnBounded`, `CorrectionWindowOnBounded`) at `registerFactory`, wrapped in `BoundedOperatorConfigurationException` with the name in its message, and never stripped, never honoured in process while withheld from the controller. `BoundedOperator` SHALL declare no `wakeAfter()`, and the declaration SHALL carry no `wake_after_ms`. Inside a bounded instance, `OperatorInstance.runItem` SHALL attach a `TimerSession` to the `EmitContext` exactly as it does for an unbounded instance, for `run` and for `onTimer`, so `timerAfter`, `timerAtEventTime`, `cancelProcessingTimeTimer` and `cancelEventTimeTimer` work in both kinds; `compensate` SHALL attach none.
+`HostClassDeclaration.forBounded` SHALL put on the wire every key the class's builder recorded, tier and checkpoint keys included, and SHALL run the core's check on a record that carries the `bounded` key, so an unbounded-only setting on a bounded class is refused by the core under its name (`topology.effectively_once_on_bounded`, `topology.checkpoint_on_bounded`, `topology.correction_window_on_bounded`) at `registerFactory`, thrown as `FlezhaException` with that code, and never stripped, never honoured in process while withheld from the controller. `BoundedOperator` SHALL declare no `wakeAfter()`, and the declaration SHALL carry no `wake_after_ms`. Inside a bounded instance, `OperatorInstance.runItem` SHALL attach a `TimerSession` to the `EmitContext` exactly as it does for an unbounded instance, for `run` and for `onTimer`, so `timerAfter`, `timerAtEventTime`, `cancelProcessingTimeTimer` and `cancelEventTimeTimer` work in both kinds; `compensate` SHALL attach none.
 
 #### Scenario: The tier on a bounded class is refused by the core's name
 
 - **WHEN** a `BoundedOperator`'s `channels` calls `c.effectivelyOnce()`
-- **THEN** `registerFactory` SHALL throw `BoundedOperatorConfigurationException` whose message contains `EffectivelyOnceOnBounded`, and the class SHALL NOT be registered
+- **THEN** `registerFactory` SHALL throw `FlezhaException` whose code is `topology.effectively_once_on_bounded`, and the class SHALL NOT be registered
 
 #### Scenario: A checkpoint setting on a bounded class is refused by its own name
 
 - **WHEN** a `BoundedOperator`'s `channels` calls `c.checkpointEvery(100)`
-- **THEN** `registerFactory` SHALL throw with a message containing `CheckpointOnBounded`
+- **THEN** `registerFactory` SHALL throw with a message containing `topology.checkpoint_on_bounded`
 
 #### Scenario: A timer inside a bounded tasklet fires
 
@@ -1124,7 +1124,7 @@ A new cell's state SHALL be built from the state class's no-arg constructor, res
 - **Event time**, when the tasklet writes `long eventTime(Input input)`: the value it returns for the current input.
 - **Logical**, when `@Tasklet.Spec(logicalClock = true)`: the raw durable change seq, re-armed to `terminal + 1` on restore.
 
-A tasklet that writes `eventTime` and declares `logicalClock = true` SHALL fail registration naming both. A logical clock on a `Void` state SHALL fail registration with `UnservableClock`, since there is no durable seq to serve.
+A tasklet that writes `eventTime` and declares `logicalClock = true` SHALL fail registration with a `FlezhaException` whose code is `topology.two_clocks`, naming the tasklet. A logical clock on a `Void` state SHALL fail registration with a `FlezhaException` whose code is `topology.unservable_clock`, since there is no durable seq to serve.
 
 #### Scenario: The default clock is the wall clock
 
@@ -1144,10 +1144,10 @@ A tasklet that writes `eventTime` and declares `logicalClock = true` SHALL fail 
 #### Scenario: Two clocks are refused
 
 - **WHEN** a tasklet writes `eventTime` and declares `logicalClock = true`
-- **THEN** registration SHALL fail naming both declarations
+- **THEN** registration SHALL fail with a `FlezhaException` whose code is `topology.two_clocks`
 
 #### Scenario: A logical clock without state is refused
 
 - **WHEN** a tasklet declares `logicalClock = true` and `Void` state
-- **THEN** registration SHALL fail with an error carrying `UnservableClock`
+- **THEN** registration SHALL fail with a `FlezhaException` whose code is `topology.unservable_clock`
 

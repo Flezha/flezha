@@ -14,10 +14,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dashmap::DashMap;
+use flz_transport::errors::{ErrorModel, FlezhaError};
 use flz_transport::transport::FlezhaStream;
 use serde::{Deserialize, Serialize};
 
 use crate::cell::CellSlot;
+use crate::error::Code;
 use crate::host::HostClock;
 pub use crate::schema::{TimerKind, TimerOp};
 use crate::util::LockRecover;
@@ -29,17 +31,24 @@ pub enum TimerRefusal {
     CapExceeded { tasklet: String, max: usize },
 }
 
+impl ErrorModel for TimerRefusal {
+    fn to_error(&self) -> FlezhaError {
+        match self {
+            TimerRefusal::EventTimeWithoutEventTimeClock { tasklet, clock } => {
+                Code::EventTimeTimerWithoutEventTimeClock.with([
+                    ("tasklet", tasklet.as_str().into()),
+                    ("clock", clock.as_str().into()),
+                ])
+            }
+            TimerRefusal::CapExceeded { tasklet, max } => Code::TimerCapExceeded
+                .with([("tasklet", tasklet.as_str().into()), ("max", (*max).into())]),
+        }
+    }
+}
+
 impl std::fmt::Display for TimerRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TimerRefusal::EventTimeWithoutEventTimeClock { tasklet, clock } => write!(
-                f,
-                "tasklet `{tasklet}` declared clock `{clock}`; an event-time timer needs an event-time clock"
-            ),
-            TimerRefusal::CapExceeded { tasklet, max } => {
-                write!(f, "tasklet `{tasklet}` reached its timer cap ({max})")
-            }
-        }
+        f.write_str(&self.to_error().message)
     }
 }
 

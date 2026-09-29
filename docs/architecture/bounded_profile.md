@@ -59,10 +59,10 @@ offending node:
 
 | Shape | Refusal |
 | --- | --- |
-| a tasklet's output can reach its own input (a cycle) | `Cycle` |
-| one tasklet produces two output channels | `MultipleOutputChannels` |
+| a tasklet's output can reach its own input (a cycle) | `topology.cycle` |
+| one tasklet produces two output channels | `topology.multiple_output_channels` |
 | a tasklet is unreachable from any entry channel | `Disconnected` |
-| a handoff-chained loop over a branching chain | `BranchingChainedLoop` |
+| a handoff-chained loop over a branching chain | `topology.branching_chained_loop` |
 
 An entry channel may feed several tasklets, and a class may declare several entry channels:
 each roots its own chain, the tasklets reachable from its consumers, and a message runs only

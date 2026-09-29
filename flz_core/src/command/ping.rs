@@ -14,7 +14,12 @@ use crate::runner::RunnerNode;
 /// `nonce` so the caller can correlate replies if multiple pings are in
 /// flight on the same channel.
 impl CommandAction for Ping {
-    fn handle(&self, _runner: &mut RunnerNode, _message: &str, _errors: &mut Vec<String>) -> Reply {
+    fn handle(
+        &self,
+        _runner: &mut RunnerNode,
+        _message: &str,
+        _errors: &mut Vec<crate::Error>,
+    ) -> Reply {
         let response = PingResponse {
             nonce: self.nonce.clone(),
         };

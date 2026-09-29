@@ -12,6 +12,9 @@
 
 use std::time::Duration;
 
+use flz_transport::errors::{ErrorModel, FlezhaError};
+
+use crate::error::Code;
 use crate::pb;
 
 /// How long an administration call waits for the controller's answer: the
@@ -20,22 +23,39 @@ pub const ADMIN_TIMEOUT: Duration = crate::shutdown::REPLY_TIMEOUT;
 
 /// Why an administration call produced no answer, as distinct from the
 /// controller's own refusal, which arrives as [`Refused`](AdminError::Refused).
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AdminError {
     /// The controller judged the call and said no: policy, quota, a name that
-    /// resolves to nothing, or the effect's own failure.
-    #[error("{0}")]
-    Refused(String),
+    /// resolves to nothing, or the effect's own failure, under its own code.
+    Refused(FlezhaError),
 
     /// No control plane to ask on: a transport-less test or bench, or a
     /// runner that has closed.
-    #[error("no control plane to administer over")]
     Unavailable,
 
     /// The request went out and nothing came back within [`ADMIN_TIMEOUT`].
-    #[error("no answer within {}s", ADMIN_TIMEOUT.as_secs())]
     Unanswered,
 }
+
+impl ErrorModel for AdminError {
+    fn to_error(&self) -> FlezhaError {
+        match self {
+            AdminError::Refused(error) => error.clone(),
+            AdminError::Unavailable => Code::AdminNoControlPlane.with([]),
+            AdminError::Unanswered => {
+                Code::AdminTimeout.with([("seconds", ADMIN_TIMEOUT.as_secs().into())])
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for AdminError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.to_error().message)
+    }
+}
+
+impl std::error::Error for AdminError {}
 
 /// Run `verb` with `args`, a JSON array of the call's arguments other than the
 /// namespace. Answers the published function's own result as JSON.

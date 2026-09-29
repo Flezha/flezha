@@ -17,11 +17,12 @@ defmodule Flezha.Service.ObservabilityTest do
 
   describe "caller_context validation" do
     test "rejects missing :source field" do
-      assert {:error, :invalid_caller_context} = Observability.list_sources(%{})
+      assert {:error, %Flezha.Error{code: "authz.invalid_caller_context"}} =
+               Observability.list_sources(%{})
     end
 
     test "rejects invalid :source value" do
-      assert {:error, :invalid_caller_context} =
+      assert {:error, %Flezha.Error{code: "authz.invalid_caller_context"}} =
                Observability.list_sources(%{source: :weird_thing})
     end
 
@@ -65,7 +66,8 @@ defmodule Flezha.Service.ObservabilityTest do
     end
 
     test "missing :source param returns error" do
-      assert {:error, :missing_source} = Observability.query(%{}, %{source: :ui})
+      assert {:error, %Flezha.Error{code: "observability.missing_source"}} =
+               Observability.query(%{}, %{source: :ui})
     end
   end
 
@@ -98,25 +100,25 @@ defmodule Flezha.Service.ObservabilityTest do
       Application.put_env(:flezha, :observability, Keyword.put(prev, :enabled, false))
 
       try do
-        assert {:error, :observability_disabled} =
+        assert {:error, %Flezha.Error{code: "observability.disabled"}} =
                  Observability.list_sources(%{source: :cli})
 
-        assert {:error, :observability_disabled} =
+        assert {:error, %Flezha.Error{code: "observability.disabled"}} =
                  Observability.list_sinks(%{source: :cli})
 
-        assert {:error, :observability_disabled} =
+        assert {:error, %Flezha.Error{code: "observability.disabled"}} =
                  Observability.query(%{source: :s}, %{source: :cli})
 
-        assert {:error, :observability_disabled} =
+        assert {:error, %Flezha.Error{code: "observability.disabled"}} =
                  Observability.subscribe(:s, %{source: :cli})
 
-        assert {:error, :observability_disabled} =
+        assert {:error, %Flezha.Error{code: "observability.disabled"}} =
                  Observability.unsubscribe(:s, %{source: :cli})
 
-        assert {:error, :observability_disabled} =
+        assert {:error, %Flezha.Error{code: "observability.disabled"}} =
                  Observability.enable_source(:s, %{source: :cli})
 
-        assert {:error, :observability_disabled} =
+        assert {:error, %Flezha.Error{code: "observability.disabled"}} =
                  Observability.disable_source(:s, %{source: :cli})
       after
         Application.put_env(:flezha, :observability, prev)
@@ -133,8 +135,11 @@ defmodule Flezha.Service.ObservabilityTest do
     end
 
     test "refuses a caller with no context, as subscribe/2 does", %{src: src} do
-      assert {:error, :invalid_caller_context} = Observability.unsubscribe(src, %{})
-      assert {:error, :invalid_caller_context} = Observability.subscribe(src, %{})
+      assert {:error, %Flezha.Error{code: "authz.invalid_caller_context"}} =
+               Observability.unsubscribe(src, %{})
+
+      assert {:error, %Flezha.Error{code: "authz.invalid_caller_context"}} =
+               Observability.subscribe(src, %{})
     end
   end
 
@@ -211,7 +216,7 @@ defmodule Flezha.Service.ObservabilityTest do
 
     out =
       ExUnit.CaptureIO.capture_io(fn ->
-        CliManager.observability_render_tail(Atom.to_string(src), "json", duration_ms: 1)
+        CliManager.observability_render_tail(Atom.to_string(src), output: "json", duration_ms: 1)
       end)
 
     out |> String.split("\n", trim: true) |> List.first() |> Jason.decode!()

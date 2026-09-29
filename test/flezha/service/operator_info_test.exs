@@ -55,7 +55,7 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
   test "json output carries kind, phase and uptime_ms" do
     stub_one(bounded_state(120))
 
-    out = capture_io(fn -> CliManager.operator_info(@namespace, "json") end)
+    out = capture_io(fn -> CliManager.operator_info(@namespace, output: "json") end)
     %{"operators" => [proc]} = Jason.decode!(out)
 
     assert proc["id"] == "op-1"
@@ -67,7 +67,7 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
   test "text output shows Kind / Phase / Uptime lines" do
     stub_one(bounded_state(0))
 
-    out = capture_io(fn -> CliManager.operator_info(@namespace, "text") end)
+    out = capture_io(fn -> CliManager.operator_info(@namespace) end)
 
     assert out =~ "Kind: bounded"
     assert out =~ "Phase: running"
@@ -77,7 +77,7 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
   test "an unbounded operator reports its kind too" do
     stub_one(%{bounded_state(0) | builder: %{kind: :unbounded}})
 
-    out = capture_io(fn -> CliManager.operator_info(@namespace, "json") end)
+    out = capture_io(fn -> CliManager.operator_info(@namespace, output: "json") end)
     %{"operators" => [proc]} = Jason.decode!(out)
     assert proc["kind"] == "unbounded"
   end
@@ -119,7 +119,7 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
   test "json output reports a parked operator as parked, not running" do
     stub_one(parked_state())
 
-    out = capture_io(fn -> CliManager.operator_info(@namespace, "json") end)
+    out = capture_io(fn -> CliManager.operator_info(@namespace, output: "json") end)
     %{"operators" => [proc]} = Jason.decode!(out)
 
     assert proc["phase"] == "parked"
@@ -128,7 +128,7 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
   test "text output reports a parked operator as parked, not running" do
     stub_one(parked_state())
 
-    out = capture_io(fn -> CliManager.operator_info(@namespace, "text") end)
+    out = capture_io(fn -> CliManager.operator_info(@namespace) end)
 
     assert out =~ "Phase: parked"
     refute out =~ "Phase: running"
@@ -137,7 +137,7 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
   test "a suspended instance still reports suspended when it also carries a park reason" do
     stub_one(Map.put(parked_state(), :suspended, true))
 
-    out = capture_io(fn -> CliManager.operator_info(@namespace, "json") end)
+    out = capture_io(fn -> CliManager.operator_info(@namespace, output: "json") end)
     %{"operators" => [proc]} = Jason.decode!(out)
 
     assert proc["phase"] == "suspended"
@@ -152,13 +152,13 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
 
     Snapshot.publish(Map.put(Snapshot.current(), :operator_health, health))
 
-    out = capture_io(fn -> CliManager.operator_info(@namespace, "json") end)
+    out = capture_io(fn -> CliManager.operator_info(@namespace, output: "json") end)
     %{"operators" => [proc]} = Jason.decode!(out)
 
     assert proc["health"] == "parked"
     assert proc["phase"] == "parked"
 
-    text = capture_io(fn -> CliManager.operator_info(@namespace, "text") end)
+    text = capture_io(fn -> CliManager.operator_info(@namespace) end)
     assert text =~ "Health: parked"
     assert text =~ "Phase: parked"
   end
@@ -191,13 +191,13 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
   test "info and the loop's verdict record agree that a held operator is unbound" do
     publish_held(Durations.get(:convergence_unmet_intent_grace_ms) + 1)
 
-    out = capture_io(fn -> CliManager.operator_info(@namespace, "json") end)
+    out = capture_io(fn -> CliManager.operator_info(@namespace, output: "json") end)
     %{"operators" => [proc]} = Jason.decode!(out)
 
     assert proc["health"] == "unbound"
     assert proc["phase"] == "unbound"
 
-    text = capture_io(fn -> CliManager.operator_info(@namespace, "text") end)
+    text = capture_io(fn -> CliManager.operator_info(@namespace) end)
     assert text =~ "Health: unbound"
     assert text =~ "Phase: unbound"
     refute text =~ "parked"
@@ -208,7 +208,7 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
   test "a held operator reads recovering while the loop's grace runs" do
     publish_held(0)
 
-    out = capture_io(fn -> CliManager.operator_info(@namespace, "json") end)
+    out = capture_io(fn -> CliManager.operator_info(@namespace, output: "json") end)
     %{"operators" => [proc]} = Jason.decode!(out)
 
     assert proc["health"] == "recovering"
@@ -217,7 +217,7 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
   test "a held operator reports unbound before the loop has judged it too" do
     stub_one(held_state())
 
-    out = capture_io(fn -> CliManager.operator_info(@namespace, "json") end)
+    out = capture_io(fn -> CliManager.operator_info(@namespace, output: "json") end)
     %{"operators" => [proc]} = Jason.decode!(out)
 
     assert proc["phase"] == "unbound"
@@ -232,7 +232,7 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
 
     Snapshot.publish(Map.put(Snapshot.current(), :operator_health, health))
 
-    out = capture_io(fn -> CliManager.operator_info(@namespace, "json") end)
+    out = capture_io(fn -> CliManager.operator_info(@namespace, output: "json") end)
     %{"operators" => [proc]} = Jason.decode!(out)
 
     assert proc["health"] == "healthy"
@@ -242,7 +242,7 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
   test "health is unknown, never invented, before the loop has observed the operator" do
     stub_one(parked_state())
 
-    out = capture_io(fn -> CliManager.operator_info(@namespace, "json") end)
+    out = capture_io(fn -> CliManager.operator_info(@namespace, output: "json") end)
     %{"operators" => [proc]} = Jason.decode!(out)
 
     assert proc["health"] == "unknown"
@@ -262,7 +262,7 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
         finished_at: System.system_time(:second)
       })
 
-    out = capture_io(fn -> CliManager.operator_info(@namespace, "json") end)
+    out = capture_io(fn -> CliManager.operator_info(@namespace, output: "json") end)
     %{"operators" => procs} = Jason.decode!(out)
     proc = Enum.find(procs, &(&1["id"] == "done-1"))
 
@@ -285,7 +285,7 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
         finished_at: System.system_time(:second) - 10
       })
 
-    out = capture_io(fn -> CliManager.operator_info(@namespace, "json") end)
+    out = capture_io(fn -> CliManager.operator_info(@namespace, output: "json") end)
     %{"operators" => procs} = Jason.decode!(out)
     assert Enum.find(procs, &(&1["id"] == "done-old")) == nil
   end

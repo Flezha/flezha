@@ -87,7 +87,7 @@ backstop for what typing cannot see.
 | SDK | Compile-time edge typing | Where the refusals are pinned |
 | --- | --- | --- |
 | Rust | yes | 29 compile-fail tests in `sdk/rust/tests/ui/` |
-| Java | yes, through the generic `Tasklet<…>` arguments | `sdk/java/.../UnboundedOperatorConfigurationException` cases |
+| Java | yes, through the generic `Tasklet<…>` arguments | `FlezhaException` cases in `sdk/java/.../ClockAndKeyedValidationTest` and `UnboundedOperatorTopologyBuilderTest` |
 | Node | yes, through the channel builder's type parameters | `@ts-expect-error` fixtures in `sdk/node/types-tests/`, compiled under `tsc --noEmit`, plus a negative control that strips the directives and requires each pinned line to still produce a diagnostic |
 | Elixir | no — the language cannot | registration-time refusals, plus the `use` macros' `CompileError`s for a declaration named wrongly, in `sdk/elixir/test/flezha/sdk/authoring_macros_test.exs` and `tasklet_clock_test.exs` |
 | Ruby | no — the language cannot | registration-time refusals only, in `sdk/ruby/test/authoring_test.rb` |
@@ -391,7 +391,7 @@ that starts a pass: it opens a pass at the tasklet that set the timer, or
 joins that tasklet's stage while it runs, or waits its turn behind the pass in
 flight, and its timer leaves the pending set when that stage commits. Only a
 `compensate` hook has no timers; there every timer call answers
-`TimersUnavailable`.
+`runtime.timers_unavailable`.
 
 ## 4. Cell mode is an explicit opt-in, never inferred
 
@@ -412,7 +412,7 @@ declared **on the tasklet**; dynamic keying is declared **on the wiring** —
 `cell_key` hook: `cell_key = …` (Rust) is a compile error naming `key_by` as
 its replacement, and a Java tasklet has no member that could spell one. The
 two modes stay mutually exclusive — a keyed edge into a tasklet declaring
-`cell_keys()` fails the build with `KeyByOnUnkeyableTarget`.
+`cell_keys()` fails the build with `topology.key_by_on_unkeyable_target`.
 
 **Per-cell state init.** By default a stateful tasklet's
 `init_state` returns `State::default()` / `new State()`. When a cell's
@@ -651,8 +651,8 @@ a started declaration. A runner that cannot **rejects** a post-start call with
 an error that says so, and never ignores it.
 
 An operator whose kind cannot be read — it declares both kinds, or neither —
-is refused at registration with an error beginning `AmbiguousOperatorKind` or
-`UnknownOperatorKind` naming the class or module. In Rust such a type cannot
+is refused at registration with the code `topology.ambiguous_operator_kind` or
+`topology.unknown_operator_kind`, naming the class or module. In Rust such a type cannot
 be passed to `register_factory` at all: the kind parameter is unresolvable, so
 it is a compile error. In Java a class implementing both kind interfaces does
 not compile unless it resolves the `persistenceEnabled()` default both declare,
@@ -678,23 +678,23 @@ specifier, so a module that fails to load or exports no operator rejects at
 the line that registers it; after `run()` it also declares the operator
 against the running core and every worker.
 
-### 5.2 The three refusal names
+### 5.2 The three refusal codes
 
-Each name appears **verbatim** in the error the author reads: the compile
-error text in Rust, Java and an Elixir `use` declaration, the declaration
-error's refusal list and message in Python, Node, Ruby and PHP, and the printed
-form of the registration error in Elixir. These are the names the conformance
-refusal table's short-form rows are checked against:
+Each code appears **verbatim** in the error the author reads: in the compile
+error text in Rust, Java and an Elixir `use` declaration, and as the `code` of
+the SDK's one error type in Python, Node, Ruby, PHP and an Elixir registration.
+These are the codes the conformance refusal table's short-form rows are checked
+against:
 
-| Name | Condition |
+| Code | Condition |
 | --- | --- |
-| `ShortFormWithTopology` | an operator declaration carries a tasklet body and also a `channels` body |
-| `SinkWithoutOutput` | a `sink` on a body the SDK can see declares no output |
-| `DuplicateFactoryId` | a second operator, of either kind, under a factory id the runner holds |
+| `topology.short_form_with_topology` | an operator declaration carries a tasklet body and also a `channels` body |
+| `topology.sink_without_output` | a `sink` on a body the SDK can see declares no output |
+| `topology.duplicate_factory_id` | a second operator, of either kind, under a factory id the runner holds |
 
 They are not `TopologyIssue` variants: the core never sees a short form. An SDK
 whose tasklet bodies declare no output type the SDK can read (Node, Ruby,
-PHP, Elixir) owes no `SinkWithoutOutput` and says so in its conformance
+PHP, Elixir) owes no `topology.sink_without_output` and says so in its conformance
 manifest. In Ruby no `run` answers output either: what it answers is ignored and
 a value leaves only through `ctx.emit`, so nothing in a class says whether it
 emits. A Node definition names its output type only in TypeScript types, erased
@@ -706,10 +706,9 @@ kind, and `input` and `codec` need no sink.
 
 **Duplicate factory id fails fast across kinds.** Declaring a second operator
 under a factory id the runner already holds fails at that call, whichever kind
-either one is, with an error naming `DuplicateFactoryId` and the colliding id
-(Rust: `FlezhaError::DuplicateFactoryId`, whose display begins with the name;
-Elixir: the tuple `{:duplicate_factory_id, id}`, whose printed form carries
-it).
+either one is, with the code `topology.duplicate_factory_id` and the colliding
+id in its details (Rust: `FlezhaError::DuplicateFactoryId`; Elixir:
+`%Flezha.SDK.Error{code: "topology.duplicate_factory_id"}`).
 
 - **A declaration that contradicts a durability contract is refused, naming
   both halves.** A channel may not declare a dropping overflow policy
@@ -720,7 +719,7 @@ it).
   timing. Both facts are frozen at registration, so the contradiction is
   decidable before any data moves, which is where an author can still see it.
   Shedding stays fully available to a class that promises neither. Refused in
-  every SDK's builder — `DroppingPolicyUnderEffectivelyOnce` names the channel
+  every SDK's builder — `topology.dropping_policy_under_effectively_once` names the channel
   and the policy in the Elixir SDK, which is its own core — and again in
   `flz_core`'s declaration validation for the six hosts on it, so a
   hand-written host declaration cannot slip past.
@@ -729,10 +728,10 @@ it).
 
 What an author writes reaches the judgement of its class's kind; no SDK drops
 a setting because the kind does not carry it. An unbounded-only setting on a
-bounded operator is refused at registration as `EffectivelyOnceOnBounded` (the
-effectively-once tier), `CheckpointOnBounded` (any checkpoint setting) or
-`CorrectionWindowOnBounded` (the correction window); a bounded-only setting
-on an unbounded operator as `SyncDurabilityOnUnbounded`, and in PHP `#[Bounded operator]` on a class
+bounded operator is refused at registration as `topology.effectively_once_on_bounded` (the
+effectively-once tier), `topology.checkpoint_on_bounded` (any checkpoint setting) or
+`topology.correction_window_on_bounded` (the correction window); a bounded-only setting
+on an unbounded operator as `topology.sync_durability_on_unbounded`, and in PHP `#[Bounded operator]` on a class
 extending `Flezha\UnboundedOperator` is refused naming the attribute. The shared
 core judges the five host SDKs' declarations; Rust and Elixir judge their own
 under the same names. Synchronous durability has one spelling per SDK, the

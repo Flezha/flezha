@@ -76,16 +76,12 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketLifecycleTest do
     end
 
     test "a frame type that is neither text nor binary is refused" do
-      assert {:error, message} =
+      assert {:error, {:invalid_option_value, "post_connect type", "Binary"}} =
                prepared(%{"payload" => %{"type" => "Binary", "message" => "hi"}})
-
-      assert message =~ "type"
-      assert message =~ "Binary"
     end
 
     test "a payload that cannot be decoded is refused, not silently emptied" do
-      assert {:error, message} = prepared("{")
-      assert is_binary(message)
+      assert {:error, {:invalid_option_value, :post_connect, "{"}} = prepared("{")
     end
 
     test "both frame types are accepted, as a map and as its JSON string" do

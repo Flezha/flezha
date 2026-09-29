@@ -19,6 +19,7 @@ flz_core_complete
 flz_core_context_free
 flz_core_context_new
 flz_core_declare_class
+flz_core_error_document
 flz_core_init_error
 flz_core_last_error
 flz_core_local_feed

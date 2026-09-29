@@ -91,7 +91,11 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
     for builder <- Keyword.get(opts, :seed, []), do: insert(registry, owner, builder)
 
     stub(HubManager, :hub_alive?, fn _ -> true end)
-    stub(HubManager, :get_pid, fn _ns, id -> pid_of(registry, id) end)
+
+    stub(HubManager, :get_pid, fn ns, id ->
+      with :error <- pid_of(registry, id), do: {:error, {:operator_not_found, ns, id}}
+    end)
+
     stub(HubManager, :operator_rows, fn _ns -> rows(registry) end)
 
     stub(HubManager, :partition_members, fn _ns, group ->
@@ -120,7 +124,7 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
         :taken ->
           %ProcessHub.StartResult{
             started: [],
-            errors: [{child_spec.id, {:error, "operator id already in use"}}]
+            errors: [{child_spec.id, {:error, {:id_in_use, child_spec.id}}}]
           }
       end
     end)
@@ -184,11 +188,11 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
   end
 
   @doc "The live pid registered under `operator_id`."
-  @spec pid_of(:ets.tid(), binary()) :: {:ok, pid()} | {:error, binary()}
+  @spec pid_of(:ets.tid(), binary()) :: {:ok, pid()} | :error
   def pid_of(registry, operator_id) do
     case :ets.lookup(registry, operator_id) do
       [{^operator_id, pid, _builder}] -> {:ok, pid}
-      [] -> {:error, "no pid found"}
+      [] -> :error
     end
   end
 

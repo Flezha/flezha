@@ -38,7 +38,7 @@ defmodule Flezha.Service.CliManagerStateGetTest do
         printed =
           capture_io(fn ->
             try do
-              CliManager.state_get(path, format)
+              CliManager.state_get(path, output: format)
             catch
               :exit, _ -> :ok
             end
@@ -88,15 +88,13 @@ defmodule Flezha.Service.CliManagerStateGetTest do
 
     stub_read(
       operator,
-      {:error,
-       "cell_evicted: Cell `BTCUSD@1m` of tasklet `candle` was idle-evicted; " <>
-         "eviction is destructive, so there is no durable value to serve"}
+      {:error, Flezha.Error.new("state.cell_evicted", tasklet: "candle", cell_key: "BTCUSD@1m")}
     )
 
     out = get("#{operator}/candle/BTCUSD@1m")
 
-    assert out =~ "cell_evicted"
-    assert out =~ "flz state at"
+    assert out =~ "(state.cell_evicted)"
+    assert out =~ "hint: flz state at <operator>/candle/BTCUSD@1m"
   end
 
   test "an unknown key is refused distinctly from an evicted one" do
@@ -104,19 +102,18 @@ defmodule Flezha.Service.CliManagerStateGetTest do
 
     stub_read(
       operator,
-      {:error, "cell_not_found: tasklet `candle` holds no Cell keyed `X`"}
+      {:error, Flezha.Error.new("state.cell_not_found", tasklet: "candle", cell_key: "X")}
     )
 
     out = get("#{operator}/candle/X")
 
-    assert out =~ "cell_not_found"
-    refute out =~ "cell_evicted"
-    assert out =~ "flz state at"
+    assert out =~ "(state.cell_not_found)"
+    assert out =~ "hint: flz state at <operator>/candle/X"
   end
 
   test "a suspended instance is refused naming suspension" do
     operator = operator_id()
-    stub_read(operator, {:error, {:not_resident, :suspended}})
+    stub_read(operator, {:error, {:not_resident, :suspended, operator}})
 
     out = get("#{operator}/candle/BTCUSD@1m")
 
@@ -126,12 +123,13 @@ defmodule Flezha.Service.CliManagerStateGetTest do
 
   test "an unbound Operator is refused rather than waited on" do
     operator = operator_id()
-    stub_read(operator, {:error, {:not_resident, :unbound}})
+    stub_read(operator, {:error, {:not_resident, :unbound, operator}})
 
     out = get("#{operator}/candle/BTCUSD@1m")
 
-    assert out =~ "not bound to a runner"
-    assert out =~ "flz state at"
+    assert out =~ "is unbound"
+    assert out =~ "(state.not_resident)"
+    assert out =~ "hint: flz state at"
   end
 
   test "an operator running in no namespace is refused before any round-trip" do
@@ -139,7 +137,7 @@ defmodule Flezha.Service.CliManagerStateGetTest do
 
     out = get("ghost/candle/BTCUSD@1m")
 
-    assert out =~ "no running operator `ghost`"
+    assert out =~ "no running operator 'ghost' in any namespace (state.no_operator)"
   end
 
   test "an oversized read is refused reporting the bytes and the narrowing selector" do
@@ -150,7 +148,7 @@ defmodule Flezha.Service.CliManagerStateGetTest do
 
     out = get("#{operator}/candle")
 
-    assert out =~ "over the :wal_high_watermark_bytes"
+    assert out =~ "(state.oversized_read)"
     assert out =~ "narrow the read"
     assert out =~ Integer.to_string(byte_size(fat))
   end
@@ -158,6 +156,6 @@ defmodule Flezha.Service.CliManagerStateGetTest do
   test "a malformed path is refused naming the shape it expects" do
     out = get("just-an-operator")
 
-    assert out =~ "expected <operator>/<tasklet>[/<cell_key>]"
+    assert out =~ "write it as <operator>/<tasklet>[/<cell_key>] (state.bad_live_path)"
   end
 end

@@ -22,6 +22,7 @@ defmodule Flezha.SDK.RecordHoldTest do
   alias Flezha.SDK.RunnerServer.State, as: ServerState
   alias Flezha.SDK.Wire
   alias Flezha.SDK.LocalStream
+  alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.SdkOperatorHarness
   alias FlezhaTest.Helper.SdkPersistenceFixtures.{CounterOp, OptedOutCounterOp, TimerOp}
 
@@ -35,12 +36,16 @@ defmodule Flezha.SDK.RecordHoldTest do
 
   defp kinds(n), do: n |> frames() |> Enum.map(&kind/1)
 
-  # Every dispatch is finished and every output already cast to the router: a
-  # read answers only behind the queued inputs, and a cast is in the router's
-  # mailbox before the dispatch that sent it returns. Without it a rebind can
-  # overtake the dispatches it is meant to follow.
-  defp settled(op, tasklet, seq),
-    do: assert({:ok, _state, ^seq} = Cell.read(cell!(op, tasklet), 1_000))
+  # Every dispatch is finished and every output already cast to the router: an
+  # input reaches the Cell through the Operator, so one read can overtake
+  # inputs still on their way, and the Cell is asked until it has written the
+  # records of all of them. A cast is in the router's mailbox before the
+  # dispatch that sent it returns. Without it a rebind can overtake the
+  # dispatches it is meant to follow.
+  defp settled(op, tasklet, seq) do
+    reached? = fn -> match?({:ok, _state, ^seq}, Cell.read(cell!(op, tasklet), 1_000)) end
+    assert NodeTestHelper.wait_until(reached?, 2_000, 10), "the Cell never reached seq #{seq}"
+  end
 
   # A secondary this process owns whose stream is already gone: what a rebind
   # onto a wire that died again hands the Cell.

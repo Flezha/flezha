@@ -221,9 +221,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
       option ->
         # The filter half is a SET of names. A user reads back the spelling
         # they wrote — `"alerts,audit"` — never the list the resolution holds.
-        {:error,
-         "websocket payload_metadata names channel #{inspect(bag)} and a channel option " <>
-           "names #{inspect(Enum.join(List.wrap(option), ","))}; write one of the two"}
+        {:error, {:channel_written_twice, bag, Enum.join(List.wrap(option), ",")}}
     end
   end
 

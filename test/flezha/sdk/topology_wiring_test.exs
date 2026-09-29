@@ -22,6 +22,8 @@ defmodule Flezha.SDK.TopologyWiringTest do
 
   alias Flezha.SDK.{Channels, Topology}
 
+  import FlezhaTest.Helper.SdkOperatorHarness, only: [refusal_issues: 1]
+
   defmodule EchoTask do
     use Flezha.SDK.Tasklet, name: "echo"
 
@@ -121,8 +123,8 @@ defmodule Flezha.SDK.TopologyWiringTest do
   end
 
   test "DuplicatePluginSink — one channel wired twice with the same stamping mode" do
-    assert {:error, {:invalid_topology, [{:DuplicatePluginSink, "same", "same"}]}} =
-             Topology.build(DuplicateSink)
+    assert [{"topology.duplicate_plugin_sink", %{"channel" => "same", "plugin" => "same"}}] =
+             refusal_issues(Topology.build(DuplicateSink))
   end
 
   test "a keyed wire beside a plain one on one channel is not the duplicate" do
@@ -143,24 +145,28 @@ defmodule Flezha.SDK.TopologyWiringTest do
   end
 
   test "ChannelNamedTwice — named/2 beside a sink that names, even when they agree" do
-    assert {:error, {:invalid_topology, issues}} = Topology.build(NamedAndSinkNamed)
-    assert {:ChannelNamedTwice, "echo", "same", "same"} in issues
+    assert {"topology.channel_named_twice",
+            %{"channel" => "echo", "named" => "same", "sink" => "same"}} in refusal_issues(
+             Topology.build(NamedAndSinkNamed)
+           )
   end
 
   test "ChannelNamedTwice — two sinks naming one channel differently" do
-    assert {:error, {:invalid_topology, issues}} = Topology.build(TwoNamedSinks)
-    assert {:ChannelNamedTwice, "echo", "a", "b"} in issues
+    assert {"topology.channel_named_twice", %{"channel" => "echo", "named" => "a", "sink" => "b"}} in refusal_issues(
+             Topology.build(TwoNamedSinks)
+           )
   end
 
   test "DuplicateSinkName — two channels naming one sink" do
-    assert {:error, {:invalid_topology, issues}} = Topology.build(TwoChannelsOneSink)
-    assert {:DuplicateSinkName, "shared"} in issues
+    assert {"topology.duplicate_sink_name", %{"channel" => "shared"}} in refusal_issues(
+             Topology.build(TwoChannelsOneSink)
+           )
   end
 
   test "a named channel colliding with a sink-named one is a bare duplicate" do
-    assert {:error, {:invalid_topology, issues}} = Topology.build(NamedAndSinkCollide)
+    issues = refusal_issues(Topology.build(NamedAndSinkCollide))
 
-    assert {:DuplicateChannel, "shared"} in issues,
+    assert {"topology.duplicate_channel", %{"channel" => "shared"}} in issues,
            "only two channels naming one SINK are the sink duplicate, read #{inspect(issues)}"
   end
 
@@ -252,25 +258,23 @@ defmodule Flezha.SDK.TopologyWiringTest do
   end
 
   test "MergeTooFewSources: a merge over one source" do
-    assert {:error, {:invalid_topology, [{:MergeTooFewSources, "m", 1}]}} =
-             Topology.build(OneSourceMerge)
+    assert [{"topology.merge_too_few_sources", %{"tasklet" => "m", "sources" => 1}}] =
+             refusal_issues(Topology.build(OneSourceMerge))
   end
 
   test "DuplicateMergeSource: one source merged twice, whose second edge is a re-declaration" do
     label = inspect(KeyedTask)
 
-    assert {:error, {:invalid_topology, issues}} = Topology.build(SameSourceTwice)
-
-    assert issues == [
-             {:EdgeAlreadyWired, "ticks", label},
-             {:DuplicateMergeSource, "ticks"},
-             {:MergeTooFewSources, label, 1}
+    assert refusal_issues(Topology.build(SameSourceTwice)) == [
+             {"topology.edge_already_wired", %{"channel" => "ticks", "tasklet" => label}},
+             {"topology.duplicate_merge_source", %{"channel" => "ticks"}},
+             {"topology.merge_too_few_sources", %{"tasklet" => label, "sources" => 1}}
            ]
   end
 
   test "EdgeAlreadyWired: a merge source already wired bare into the same node" do
-    assert {:error, {:invalid_topology, [{:EdgeAlreadyWired, "ticks", label}]}} =
-             Topology.build(MergeOverBareEdge)
+    assert [{"topology.edge_already_wired", %{"channel" => "ticks", "tasklet" => label}}] =
+             refusal_issues(Topology.build(MergeOverBareEdge))
 
     assert label == inspect(KeyedTask)
   end

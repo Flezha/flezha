@@ -186,7 +186,7 @@ defmodule Flezha.AuthZTest do
     # Configured on but unclaimed refuses gated verbs (enforced-by-default).
     assert AuthZ.enforcement_posture() == :bootstrap_pending
 
-    assert {:error, {:forbidden, :bootstrap_pending}} =
+    assert {:error, {:forbidden, :bootstrap_pending, _token_path}} =
              AuthZ.authorize(
                %{source: :cli, principal: nil},
                :"operator.start",

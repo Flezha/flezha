@@ -15,7 +15,7 @@ defmodule Flezha.Plugin.Installer.Compiler do
   @type beam :: {module(), binary()}
   @type compile_error ::
           {:compile_failed, Path.t(), term()}
-          | {:manifest_invalid, {:module_mismatch, Keyword.t()}}
+          | {:module_mismatch, [module()], [module()]}
 
   @doc """
   Walks `src_dir` for `.ex` and `.erl` files, compiles them all, and
@@ -155,8 +155,7 @@ defmodule Flezha.Plugin.Installer.Compiler do
     if produced == expected_sorted do
       :ok
     else
-      {:error,
-       {:manifest_invalid, {:module_mismatch, expected: expected_sorted, produced: produced}}}
+      {:error, {:module_mismatch, expected_sorted, produced}}
     end
   end
 end

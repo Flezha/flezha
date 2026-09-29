@@ -128,7 +128,7 @@ input SHALL be read from the log's tail and the instance's floor, not from a dec
 Sleeping when idle SHALL be a class setting of both kinds, `sleep_when_idle`, declared in every
 SDK, announced by the runner in the `AddOperator` response and recorded by the controller
 beside the class's other declarations: on by default for a bounded operator whose persistence is on,
-off by default for an unbounded operator, and refused at registration as `SleepWithoutPersistence` on a
+off by default for an unbounded operator, and refused at registration as `topology.sleep_without_persistence` on a
 class of either kind whose persistence is off. The idle threshold SHALL be
 `FLEZHA_PARK_IDLE_MS`, default 600 000 ms, one knob for both kinds; no knob SHALL carry a kind
 in its name.
@@ -190,7 +190,7 @@ its heap (the restore frames and plugin setup are garbage once it parks).
 #### Scenario: Sleeping without persistence is refused
 
 - **WHEN** a class of either kind declares `sleep_when_idle` with its persistence switch off, in any SDK
-- **THEN** registration SHALL fail with an error containing `SleepWithoutPersistence` and nothing SHALL be declared
+- **THEN** registration SHALL fail with an error containing `topology.sleep_without_persistence` and nothing SHALL be declared
 
 #### Scenario: A park records the earliest pending timer as its deadline
 

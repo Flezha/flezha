@@ -25,27 +25,34 @@ use crate::FlzContext;
 /// The one context this process holds. Null until `contextNew`.
 static CONTEXT: AtomicPtr<FlzContext> = AtomicPtr::new(std::ptr::null_mut());
 
-/// The one mapping of a refusal onto a JavaScript error: a value the binding
-/// could not map is an argument error, everything else a generic failure.
+/// The one mapping of a refusal onto a JavaScript error: its message is always
+/// the JSON error document, so the SDK builds its one error type from it. A
+/// value the binding could not map carries no code of its own, so it rides as
+/// `internal.uncatalogued` naming what went wrong.
 impl From<Refusal> for Error {
     fn from(refusal: Refusal) -> Self {
         match refusal {
-            Refusal::Core(message) | Refusal::Schema(message) => {
-                Error::new(Status::GenericFailure, message)
+            Refusal::Core(document) | Refusal::Schema(document) => {
+                Error::new(Status::GenericFailure, document)
             }
-            Refusal::Shape(message) => Error::new(Status::InvalidArg, message),
+            Refusal::Shape(text) => Error::new(Status::InvalidArg, crate::veneer::document(text)),
         }
     }
 }
 
-/// The live context, or an error naming what the caller skipped.
+/// A refusal of the binding's own lifecycle, as the same document.
+fn refused(code: &str) -> Error {
+    Error::new(
+        Status::InvalidArg,
+        flz_core::FlezhaError::with(code, []).json(),
+    )
+}
+
+/// The live context, or the refusal of a call made before `contextNew`.
 pub(crate) fn context() -> Result<CtxPtr> {
     let ptr = CONTEXT.load(Ordering::Acquire);
     if ptr.is_null() {
-        return Err(Error::new(
-            Status::InvalidArg,
-            "flz_core context not created: call contextNew first",
-        ));
+        return Err(refused("runtime.runner_not_started"));
     }
     Ok(CtxPtr::of(ptr))
 }
@@ -307,10 +314,7 @@ pub fn schema_version() -> u32 {
 #[napi]
 pub fn context_new(shim_schema_version: u32) -> Result<()> {
     if !CONTEXT.load(Ordering::Acquire).is_null() {
-        return Err(Error::new(
-            Status::InvalidArg,
-            "flz_core context already created for this process",
-        ));
+        return Err(refused("runtime.runner_already_running"));
     }
     let ctx = veneer::context_new(shim_schema_version)?;
     CONTEXT.store(ctx, Ordering::Release);
@@ -333,23 +337,14 @@ pub fn declare_class(json: Buffer) -> Result<()> {
 }
 
 /// Judge one host class declaration without registering it. Answers the
-/// derived declaration as JSON; throws the core's verdict on a refusal.
-///
-/// The thrown error's `cause` carries that verdict as the core's own JSON —
-/// `{"issues":[{"name","text"}]}` — so the SDK reads which refusals fired off
-/// data rather than out of the rendered message, which is unchanged.
+/// derived declaration as JSON; throws the core's error document on a
+/// refusal, whose `details.issues` lists every issue.
 #[napi]
 pub fn check_class(json: Buffer) -> Result<Buffer> {
     let ctx = context()?;
     match veneer::check_class(ctx, &json) {
         Ok(derived) => Ok(derived.into()),
-        Err((refusal, verdict)) => {
-            let mut refused = Error::from(refusal);
-            refused.cause = Some(Box::new(Error::from_reason(
-                String::from_utf8_lossy(&verdict).into_owned(),
-            )));
-            Err(refused)
-        }
+        Err(refusal) => Err(refusal.into()),
     }
 }
 
@@ -530,6 +525,14 @@ pub fn monotonic_nanos() -> BigInt {
     BigInt::from(crate::flz_core_monotonic_nanos())
 }
 
+/// The JSON error document of `code` with its details filled from
+/// `details_json`, rendered by the one Rust renderer so a refusal the SDK
+/// makes itself reads exactly as the core's and the controller's own.
+#[napi]
+pub fn error_document(code: String, details_json: String) -> Result<String> {
+    crate::render_error_document(&code, &details_json).map_err(|e| Refusal::Shape(e).into())
+}
+
 /// The context's last recorded error, or `null`.
 #[napi]
 pub fn last_error() -> Option<String> {
@@ -610,6 +613,7 @@ pub fn native_surface() -> Vec<JsNativeExport> {
         veneer("monotonicNanos", "flz_core_monotonic_nanos"),
         veneer("lastError", "flz_core_last_error"),
         host("setLogCallback", None, false),
+        veneer("errorDocument", "flz_core_error_document"),
         // The host's threads. `startHost` is how `flz_core_poll` is reached at
         // all: it is driven from native fetchers and never exported, because
         // an event loop inside a blocking poll is an event loop running

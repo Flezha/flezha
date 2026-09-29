@@ -126,7 +126,11 @@ defmodule Flezha.SDK.InNodeE2ETest do
       |> Flezha.SDK.register_factory(ProbeOp)
       |> Flezha.SDK.start()
 
-    assert {:error, {:already_running, ^other}} = result
+    assert {:error,
+            %Flezha.SDK.Error{
+              code: "runtime.runner_already_running",
+              details: %{"namespace" => ^other}
+            }} = result
   end
 end
 
@@ -261,8 +265,10 @@ defmodule Flezha.SDK.SocketRoundtripTest do
     assert generated in ids
     assert named in ids
 
-    assert {:error, reason} = Flezha.SDK.Admin.start_operator(handle, "no_such_factory")
-    assert is_binary(reason)
+    assert {:error, %Flezha.SDK.Error{code: "operator.factory_unknown"} = refusal} =
+             Flezha.SDK.Admin.start_operator(handle, "no_such_factory")
+
+    refute refusal.message =~ "@", "the refusal names no node"
   end
 
   test "a standalone UDS runner connects, places, and dispatches io_in to run/3", %{ns: ns} do
@@ -592,8 +598,11 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
 
     # `start_operator` returns after the SDK acknowledged `AddOperator`, so
     # the instance is live on the handle when the removal is refused.
-    assert {:error, {:operator_type_in_use, "lr_echo", n}} =
-             Flezha.SDK.unregister_factory(handle2, EchoOp)
+    assert {:error,
+            %Flezha.SDK.Error{
+              code: "runtime.operator_type_in_use",
+              details: %{"factory_id" => "lr_echo", "live_instances" => n}
+            }} = Flezha.SDK.unregister_factory(handle2, EchoOp)
 
     assert n >= 1
   end
@@ -815,7 +824,13 @@ defmodule Flezha.SDK.SpawnBoundedE2ETest do
     request.("deliver", "p2")
     assert_receive {:spawn_result, "p2", {:ok, %{id: ^instance, outcome: :delivered}}}, 20_000
     request.("error", "p3")
-    assert_receive {:spawn_result, "p3", {:error, {:already_running, ^instance}}}, 20_000
+
+    assert_receive {:spawn_result, "p3",
+                    {:error,
+                     %Flezha.SDK.Error{code: "operator.already_running", details: details}}},
+                   20_000
+
+    assert details |> Map.values() |> Enum.member?(instance)
 
     OperatorManager.send_io(requester, ns, "::p4", %{"channel" => "in", "input_type" => "2"})
     assert_receive {:spawn_result, "p4", {:ok, %{id: generated, outcome: :spawned}}}, 20_000

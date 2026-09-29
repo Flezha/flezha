@@ -66,9 +66,12 @@ pub enum RollbackMode {
     KeepProgress,
 }
 
-/// The refusal a tasklet outside a bounded operator earns by calling `complete`.
-pub const COMPLETE_OUTSIDE_BOUNDED: &str =
-    "CompleteOutsideBounded: only a tasklet running inside a bounded operator can complete it; an unbounded operator never completes";
+/// The refusal a tasklet outside a bounded operator earns by calling
+/// `complete`. It fails that input as the author's own non-retryable error
+/// would, so it travels as the error's text, which names the code.
+pub fn complete_outside_bounded() -> flz_transport::errors::FlezhaError {
+    crate::Code::CompleteOutsideBounded.with([])
+}
 
 /// A bounded operator failure, retryable by default: inside a structured tasklet
 /// it climbs the per-cell ladder first.

@@ -139,13 +139,13 @@ id:    4f8cfd4bef6b
 token (shown once, store it now): flzt_xiqktybnu4ohm5vyfkl74boaooerehchsrnitki7swtfqxkapivq
 ```
 
-**Two refusals tell you which state you are in.** One naming
-`flz auth bootstrap` and a file means the admin was never claimed, and the token
-is in that file. `no verifiable identity` means it was claimed, and this shell
-has no token:
+**Two refusals tell you which state you are in.** `authz.bootstrap_pending`
+names a file: the admin was never claimed, and the token is in that file.
+`authz.principal_not_bound` means it was claimed, and this shell has no token:
 
 ```output
-authz.whoami: refused: no verifiable identity — supply `--token <token>` or set FLEZHA_TOKEN
+error: the call carries no verifiable identity (authz.principal_not_bound)
+hint: export FLEZHA_TOKEN=<token>
 ```
 
 **If you lose the admin token,** get a new one in two steps, without stopping

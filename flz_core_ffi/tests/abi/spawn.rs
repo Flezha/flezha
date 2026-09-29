@@ -18,18 +18,35 @@ use flz_core::schema;
 use flz_core_ffi::fake_controller::spawn_request as spawn_request_frame;
 use flz_core_ffi::veneer::{self, with_buffer, CtxPtr, Refusal};
 use flz_core_ffi::*;
+use flz_transport::errors::FlezhaError;
 use flz_transport::transport::FlezhaStream;
 use serde_json::{json, Value};
 
-use crate::harness::{abi_complete, last_error, ok_effect, Controller, Demanded};
+use crate::harness::{abi_complete, last_document, last_error, ok_effect, Controller, Demanded};
 
 const CHILD: &str = "FLZ_ABI_SPAWN_CHILD";
 
 /// The two failures the scenario leaves unread: one answered before its
 /// activation completes, one answered after.
-const ANSWERED_UNREAD: &str =
-    "id `w-unread`) failed: the controller refused the spawn: denied-unread";
-const REAPED: &str = "id `w-reaped`) failed: the controller refused the spawn: denied-late";
+const ANSWERED_UNREAD: &str = "id `w-unread`) failed (authz.no_role_binding)";
+const REAPED: &str = "id `w-reaped`) failed (quota.exceeded)";
+
+/// The controller's refusal under `code`.
+fn refusal(code: &str) -> FlezhaError {
+    FlezhaError::new(code, Default::default())
+}
+
+/// The code a refusal's error document carries.
+fn code_of(refused: Result<u64, Refusal>) -> String {
+    match refused {
+        Err(Refusal::Core(document)) => {
+            FlezhaError::from_document(&document)
+                .expect("a refusal is a JSON error document")
+                .code
+        }
+        other => panic!("expected a core refusal, got {other:?}"),
+    }
+}
 
 #[test]
 fn a_spawn_resolves_through_its_handle() {
@@ -146,7 +163,7 @@ fn request(
 /// One result read through the C entry: its status, and the JSON it handed out.
 fn read(ctx: *mut FlzContext, handle: u64, timeout_ms: u64) -> (i32, Option<Value>) {
     with_buffer(
-        &[FLZ_OK, FLZ_SPAWN_FAILED],
+        &[FLZ_OK],
         |out, out_len| unsafe { flz_core_spawn_result(ctx, handle, timeout_ms, out, out_len) },
         |bytes| serde_json::from_slice(bytes).expect("the answer is JSON"),
     )
@@ -163,20 +180,13 @@ fn nth_request(controller: &Controller, n: usize) -> (String, SpawnBoundedReques
 }
 
 fn a_request_with_unreadable_arguments_is_refused(ctx: *mut FlzContext, token: u64) {
-    let refused = request(ctx, token + 1_000, "", "", false);
     assert_eq!(
-        refused,
-        Err(Refusal::Core(format!(
-            "unknown activation token {}",
-            token + 1_000
-        )))
+        code_of(request(ctx, token + 1_000, "", "", false)),
+        "runtime.unknown_activation_token"
     );
-    let refused = request(ctx, token, "w1", "later", false);
     assert_eq!(
-        refused,
-        Err(Refusal::Core(
-            "if_running must be `deliver` or `error`, not `later`".to_string()
-        ))
+        code_of(request(ctx, token, "w1", "later", false)),
+        "runtime.invalid_if_running"
     );
 }
 
@@ -240,20 +250,19 @@ fn a_refusal_stays_in_its_handle(ctx: *mut FlzContext, controller: &Controller, 
         (sent.instance_id.as_str(), sent.if_running.as_str()),
         ("w-refused", "error")
     );
+    let already_running = FlezhaError::with(
+        "operator.already_running",
+        [("operator", "w-refused".into())],
+    );
     controller
-        .try_answer_spawn(&reference_id, &sent, Some("quota"))
+        .try_answer_spawn(&reference_id, &sent, Some(&already_running))
         .expect("refuse the spawn");
 
+    assert_eq!(read(ctx, handle, 5_000), (FLZ_ERR, None));
     assert_eq!(
-        read(ctx, handle, 5_000),
-        (
-            FLZ_SPAWN_FAILED,
-            Some(json!({
-                "id": "w-refused",
-                "error": "refused",
-                "message": "the controller refused the spawn: quota",
-            }))
-        )
+        FlezhaError::from_document(&last_error(ctx)),
+        Some(already_running),
+        "the read fails with the controller's own error"
     );
 }
 
@@ -308,12 +317,21 @@ fn an_unread_failure_is_logged_when_its_activation_completes(
     let (read_ref, read_sent) = nth_request(controller, 5);
 
     controller
-        .try_answer_spawn(&unread_ref, &unread_sent, Some("denied-unread"))
+        .try_answer_spawn(
+            &unread_ref,
+            &unread_sent,
+            Some(&refusal("authz.no_role_binding")),
+        )
         .expect("refuse the spawn");
     controller
-        .try_answer_spawn(&read_ref, &read_sent, Some("denied-read"))
+        .try_answer_spawn(
+            &read_ref,
+            &read_sent,
+            Some(&refusal("operator.factory_unknown")),
+        )
         .expect("refuse the spawn");
-    assert_eq!(read(ctx, read_one, 5_000).0, FLZ_SPAWN_FAILED);
+    assert_eq!(read(ctx, read_one, 5_000).0, FLZ_ERR);
+    assert_eq!(last_document(ctx).code, "operator.factory_unknown");
 
     abi_complete(
         ctx,
@@ -331,10 +349,7 @@ fn an_unread_failure_is_logged_when_its_activation_completes(
             (FLZ_ERR, None),
             "completing the activation released every handle it made"
         );
-        assert_eq!(
-            last_error(ctx),
-            format!("spawn handle {handle} was released")
-        );
+        assert_eq!(last_document(ctx).code, "runtime.spawn_handle_released");
     }
     assert!(
         request(ctx, act.token, "", "", false).is_err(),
@@ -342,6 +357,6 @@ fn an_unread_failure_is_logged_when_its_activation_completes(
     );
 
     controller
-        .try_answer_spawn(&reaped_ref, &reaped_sent, Some("denied-late"))
+        .try_answer_spawn(&reaped_ref, &reaped_sent, Some(&refusal("quota.exceeded")))
         .expect("refuse the spawn");
 }

@@ -109,14 +109,14 @@ defmodule Flezha.Schedule.Store do
   def handle_call({:add, entry}, _from, state) do
     case DetsStore.put_new(@table, @cache, entry.name, entry) do
       :ok -> {:reply, {:ok, entry}, state}
-      {:error, :already_exists} = err -> {:reply, err, state}
+      {:error, :already_exists} -> {:reply, {:error, {:schedule_exists, entry.name}}, state}
     end
   end
 
   def handle_call({:remove, name}, _from, state) do
     case DetsStore.fetch(@table, name) do
       :error ->
-        {:reply, {:error, :not_found}, state}
+        {:reply, {:error, {:schedule_not_found, name}}, state}
 
       {:ok, _} ->
         :ok = DetsStore.delete(@table, @cache, name)
@@ -135,24 +135,14 @@ defmodule Flezha.Schedule.Store do
         :ok
 
       {:error, _refusal} ->
-        {:error,
-         {:invalid_name,
-          "schedule name must match [A-Za-z0-9][A-Za-z0-9_-]* and be at most " <>
-            "#{Identificator.limit(:schedule_name)} bytes (`<name>@<slot>` must fit the " <>
-            "#{Identificator.limit(:operator)}-byte operator id limit)"}}
+        {:error, {:invalid_schedule_name, name, Identificator.limit(:schedule_name)}}
     end
   end
 
-  defp validate_name(_), do: {:error, {:invalid_name, "schedule name is required"}}
+  defp validate_name(_), do: {:error, :schedule_name_required}
 
-  defp validate_cron(expr) when is_binary(expr) do
-    case Cron.parse(expr) do
-      {:ok, _} = ok -> ok
-      {:error, msg} -> {:error, {:invalid_cron, msg}}
-    end
-  end
-
-  defp validate_cron(_), do: {:error, {:invalid_cron, "cron expression is required"}}
+  defp validate_cron(expr) when is_binary(expr), do: Cron.parse(expr)
+  defp validate_cron(_), do: {:error, :cron_required}
 
   defp validate_timezone(tz) when is_binary(tz) do
     if Cron.valid_timezone?(tz) do
@@ -162,23 +152,18 @@ defmodule Flezha.Schedule.Store do
     end
   end
 
-  defp validate_timezone(_), do: {:error, {:invalid_timezone, "timezone is required"}}
+  defp validate_timezone(_), do: {:error, :timezone_required}
 
   defp validate_factory_id(factory_id) when is_binary(factory_id) and factory_id != "", do: :ok
-  defp validate_factory_id(_), do: {:error, {:invalid_factory, "factory id is required"}}
+  defp validate_factory_id(_), do: {:error, :factory_required}
 
   defp validate_init_values(values) when is_map(values), do: :ok
-
-  defp validate_init_values(_),
-    do: {:error, {:invalid_init_values, "init_values must be a JSON object"}}
+  defp validate_init_values(_), do: {:error, :init_values_not_object}
 
   # The first message is stored as the text the user wrote, validated as
   # the seed a firing makes of it.
   defp validate_first_message(text, channel) do
-    case Builder.seed_input(text, channel) do
-      {:ok, _seed} -> :ok
-      {:error, reason} -> {:error, {:invalid_first_message, reason}}
-    end
+    with {:ok, _seed} <- Builder.seed_input(text, channel), do: :ok
   end
 
   # Structural only: provider ids are resolved at every firing against the
@@ -188,13 +173,10 @@ defmodule Flezha.Schedule.Store do
   defp validate_plugins(json) when json in [nil, ""], do: {:ok, "[]"}
 
   defp validate_plugins(json) when is_binary(json) do
-    if SpecDecoder.valid_json_array?(json) do
-      {:ok, json}
-    else
-      {:error, {:invalid_plugins, "plugins must be a JSON array of plugin specs"}}
-    end
+    if SpecDecoder.valid_json_array?(json),
+      do: {:ok, json},
+      else: {:error, :plugins_not_array}
   end
 
-  defp validate_plugins(_),
-    do: {:error, {:invalid_plugins, "plugins must be a JSON array of plugin specs"}}
+  defp validate_plugins(_), do: {:error, :plugins_not_array}
 end

@@ -98,7 +98,7 @@ defmodule Flezha.Service.AuditLog do
         records = Reader.stream(path, opts) |> Enum.take(limit)
         {:ok, filter_by_namespace(records, caller_context)}
       else
-        {:error, :file_not_found}
+        {:error, {:file_not_found, Path.basename(path)}}
       end
     end
   end

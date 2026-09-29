@@ -13,10 +13,13 @@
 
 use std::env;
 use std::path::PathBuf;
-use std::process::exit;
 use std::str::FromStr;
 
+use flz_transport::errors::FlezhaError;
+use serde_json::Value;
+
 use crate::dispatch::Verb;
+use crate::rpc;
 use crate::settings::bare_setting;
 
 /// How one word reads against one option: it carries its own value after an
@@ -49,23 +52,32 @@ pub(crate) fn resolve_spelling<'a>(arg: &'a str, long_key: &str, short_key: &str
 /// standing in a positional slot is the same request as one behind a flag, and
 /// a verb that reads only the flag answers one typo two ways; `key` is what the
 /// verb's usage line calls the argument, so the refusal names what was typed.
-pub(crate) fn read_number<T: FromStr>(key: &str, written: &str) -> Result<T, String> {
-    written
-        .parse()
-        .map_err(|_| format!("Error: invalid {} value '{}'", key, written))
+pub(crate) fn read_number<T: FromStr>(key: &str, written: &str) -> Result<T, FlezhaError> {
+    written.parse().map_err(|_| {
+        FlezhaError::with(
+            "usage.invalid_number",
+            [("option", key.into()), ("value", written.into())],
+        )
+    })
 }
 
-/// A refusal the caller sees, and the exit that follows it: the one place a
-/// reader in this crate turns a refusal into an exit code, for the handlers
+/// A refusal the caller sees, and the exit that follows it, for the handlers
 /// that answer `()` and cannot propagate one.
-pub(crate) fn or_refuse<T>(read: Result<T, String>) -> T {
-    match read {
-        Ok(value) => value,
-        Err(refusal) => {
-            eprintln!("{}", refusal);
-            exit(1);
-        }
-    }
+pub(crate) fn or_refuse<T>(read: Result<T, FlezhaError>) -> T {
+    read.unwrap_or_else(|refusal| rpc::fail(refusal))
+}
+
+/// Whether the caller asked for JSON anywhere in `argv`, read before the walk
+/// so that a refusal of the command line itself is written in the form asked
+/// for.
+pub(crate) fn asks_json(argv: &[String]) -> bool {
+    argv.iter().enumerate().any(|(i, word)| {
+        word == JSON_SWITCH.long
+            || [OUTPUT.long, OUTPUT.short].iter().any(|key| {
+                word == &format!("{key}=json")
+                    || (word == key && argv.get(i + 1).map(String::as_str) == Some("json"))
+            })
+    })
 }
 
 // --- the declaration, and the one walk that reads it -----------------------
@@ -241,12 +253,14 @@ pub(crate) enum Open {
     Settings,
 }
 
+pub(crate) const TOKEN: OptSpec =
+    OptSpec::text("--token", "--token", "<token>").answered_by("FLEZHA_TOKEN");
+pub(crate) const HELP: OptSpec = OptSpec::switch("--help", "-h");
+
 /// The options every verb carries, declared once so that no row repeats them
-/// and no verb scans the argument list for them.
-pub(crate) const UNIVERSAL: &[OptSpec] = &[
-    OptSpec::text("--token", "--token", "<token>").answered_by("FLEZHA_TOKEN"),
-    OptSpec::switch("--help", "-h"),
-];
+/// and no verb scans the argument list for them. The output format selects a
+/// data answer's form where a verb has one, and a failure's form on every verb.
+pub(crate) const UNIVERSAL: &[OptSpec] = &[TOKEN, HELP, OUTPUT, JSON_SWITCH];
 
 /// The options more than one verb shares, spelled once each.
 pub(crate) const NAMESPACE: OptSpec = OptSpec::text("--namespace", "-n", "<namespace>");
@@ -322,10 +336,7 @@ impl Reading {
     pub(crate) fn require_pos(&self, name: &str) -> &str {
         match self.maybe_pos(name) {
             Some(value) => value,
-            None => {
-                eprintln!("{}", missing_positional(&self.usage));
-                exit(1);
-            }
+            None => rpc::fail(missing_positional(&self.usage)),
         }
     }
 
@@ -382,19 +393,18 @@ impl Reading {
     /// The caller's identity, wherever it was written and whether it came from
     /// the flag or from the environment.
     pub(crate) fn token(&self) -> Option<&str> {
-        self.opt(UNIVERSAL[0].long)
-            .filter(|token| !token.is_empty())
+        self.opt(TOKEN.long).filter(|token| !token.is_empty())
     }
 
     pub(crate) fn help_asked(&self) -> bool {
-        self.switch(UNIVERSAL[1].long)
+        self.switch(HELP.long)
     }
 }
 
-/// The one refusal for a verb invoked with too few words, rendered from its
-/// row so that it names what the verb actually reads.
-fn missing_positional(usage: &str) -> String {
-    format!("Error: Invalid number of arguments.\n{}", usage)
+/// The one refusal for a verb invoked with too few words, naming the row's
+/// usage line so that it says what the verb actually reads.
+fn missing_positional(usage: &str) -> FlezhaError {
+    FlezhaError::with("usage.missing_argument", [("usage", usage.into())])
 }
 
 /// How many words an undeclared settings entry claims at `i`, or `None` when
@@ -449,17 +459,21 @@ fn optional_unless(required: bool, written: String) -> String {
 /// (`flz operator`); `argv` is what the caller wrote after the verb's own
 /// name. Options are read wherever they stand, the positionals are the words
 /// that remain, and the refusals are the row's rather than each verb's own.
-pub(crate) fn read(path: &str, verb: &'static Verb, argv: &[String]) -> Result<Reading, String> {
+pub(crate) fn read(
+    path: &str,
+    verb: &'static Verb,
+    argv: &[String],
+) -> Result<Reading, FlezhaError> {
     let declared: Vec<&OptSpec> = verb.options.iter().chain(UNIVERSAL.iter()).collect();
     let usage = usage_line(path, verb);
     let mut options: Slots = declared.iter().map(|spec| (spec.long, None)).collect();
 
-    let (plain, mut rest, asked_help) = scan(verb, &declared, argv, &mut options)?;
+    let (plain, mut rest, asked_help) = scan(verb, &declared, argv, &mut options, &usage)?;
 
     // The screen answers before the grammar does: `flz observe enable --help`
     // asks what the verb takes, and refusing it for taking nothing would be
     // the one answer that cannot help.
-    if asked_help || written(&options, UNIVERSAL[1].long).is_some() {
+    if asked_help || written(&options, HELP.long).is_some() {
         return Ok(Reading {
             usage,
             positionals: verb
@@ -467,7 +481,7 @@ pub(crate) fn read(path: &str, verb: &'static Verb, argv: &[String]) -> Result<R
                 .iter()
                 .map(|slot| (slot.name, None))
                 .collect(),
-            options: vec![(UNIVERSAL[1].long, Some("true".to_string()))],
+            options: vec![(HELP.long, Some("true".to_string()))],
             rest,
         });
     }
@@ -496,7 +510,8 @@ fn scan(
     declared: &[&OptSpec],
     argv: &[String],
     options: &mut [(&'static str, Option<String>)],
-) -> Result<(Vec<String>, Vec<String>, bool), String> {
+    usage: &str,
+) -> Result<(Vec<String>, Vec<String>, bool), FlezhaError> {
     let mut plain: Vec<String> = Vec::new();
     let mut rest: Vec<String> = Vec::new();
     let mut asked_help = false;
@@ -524,8 +539,20 @@ fn scan(
             continue;
         }
 
-        if verb.strict && (argv[i].starts_with('-') || plain.len() == verb.positionals.len()) {
-            return Err(format!("Error: unknown argument '{}'", argv[i]));
+        if verb.strict && argv[i].starts_with('-') {
+            return Err(FlezhaError::with(
+                "usage.unknown_option",
+                [("option", argv[i].as_str().into()), ("usage", usage.into())],
+            ));
+        }
+        if verb.strict && plain.len() == verb.positionals.len() {
+            return Err(FlezhaError::with(
+                "usage.unexpected_argument",
+                [
+                    ("argument", argv[i].as_str().into()),
+                    ("usage", usage.into()),
+                ],
+            ));
         }
 
         i += spare(verb, argv, i, &mut plain, &mut rest);
@@ -565,7 +592,7 @@ fn assign_positionals(
     verb: &'static Verb,
     plain: Vec<String>,
     usage: &str,
-) -> Result<(Slots, Vec<String>), String> {
+) -> Result<(Slots, Vec<String>), FlezhaError> {
     let mut words = plain.into_iter();
     let mut positionals: Slots = Vec::new();
 
@@ -596,7 +623,7 @@ fn resolve_options(
     declared: &[&OptSpec],
     options: &mut [(&'static str, Option<String>)],
     usage: &str,
-) -> Result<(), String> {
+) -> Result<(), FlezhaError> {
     for (spec, slot) in declared.iter().zip(options.iter_mut()) {
         // A knob answers the flag it shadows both when no flag was written and
         // when one was written empty: `--token ""` is not a credential.
@@ -608,10 +635,9 @@ fn resolve_options(
 
         match slot.1.as_deref() {
             None | Some("") if spec.required => {
-                return Err(format!(
-                    "Error: {} is required.\n{}",
-                    spec.spelling(),
-                    usage
+                return Err(FlezhaError::with(
+                    "usage.option_required",
+                    [("option", spec.spelling().into()), ("usage", usage.into())],
                 ))
             }
             Some(value) if !value.is_empty() => check_value(spec, value)?,
@@ -627,12 +653,12 @@ fn resolve_options(
 fn refuse_conflicts(
     verb: &'static Verb,
     options: &[(&'static str, Option<String>)],
-) -> Result<(), String> {
+) -> Result<(), FlezhaError> {
     for (one, other) in verb.conflicts {
         if written(options, one).is_some() && written(options, other).is_some() {
-            return Err(format!(
-                "error: {} and {} are mutually exclusive",
-                one, other
+            return Err(FlezhaError::with(
+                "usage.options_conflict",
+                [("option", (*one).into()), ("other", (*other).into())],
             ));
         }
     }
@@ -653,7 +679,7 @@ fn claim(
     declared: &[&OptSpec],
     argv: &[String],
     i: usize,
-) -> Result<Option<(&'static str, String, usize)>, String> {
+) -> Result<Option<(&'static str, String, usize)>, FlezhaError> {
     for spec in declared {
         let (written, width) = match resolve_spelling(&argv[i], spec.long, spec.short) {
             // A switch is written or it is not, so a value attached to one is
@@ -681,7 +707,7 @@ fn claim(
 /// Whether a written value is one this option can carry. Judged after the
 /// positionals are, so a verb whose subject will not read is refused for its
 /// subject rather than for a flag beside it.
-fn check_value(spec: &OptSpec, written: &str) -> Result<(), String> {
+fn check_value(spec: &OptSpec, written: &str) -> Result<(), FlezhaError> {
     match &spec.kind {
         Kind::Number => read_number::<u64>(spec.long, written).map(|_: u64| ()),
         Kind::NumberOr { words } if !words.contains(&written) => {
@@ -696,25 +722,29 @@ fn check_value(spec: &OptSpec, written: &str) -> Result<(), String> {
 
 /// The one refusal for a word the declaration does not recognise, wherever it
 /// was written: behind a flag or in a positional slot.
-fn unknown_word(noun: &str, written: &str, words: &[&str]) -> String {
-    format!(
-        "Error: unknown {} '{}'. Use {}.",
-        noun,
-        written,
-        words
-            .iter()
-            .map(|word| format!("'{}'", word))
-            .collect::<Vec<_>>()
-            .join(" or ")
+pub(crate) fn unknown_word(noun: &str, written: &str, words: &[&str]) -> FlezhaError {
+    FlezhaError::with(
+        "usage.unknown_word",
+        [
+            ("noun", noun.into()),
+            ("value", written.into()),
+            ("allowed", Value::from(words.to_vec())),
+        ],
     )
 }
 
-fn requires_a_value(spec: &OptSpec) -> String {
-    format!("Error: {} requires a value", spec.long)
+fn requires_a_value(spec: &OptSpec) -> FlezhaError {
+    FlezhaError::with(
+        "usage.option_requires_value",
+        [("option", spec.long.into())],
+    )
 }
 
-fn takes_no_value(spec: &OptSpec) -> String {
-    format!("Error: {} takes no value", spec.long)
+fn takes_no_value(spec: &OptSpec) -> FlezhaError {
+    FlezhaError::with(
+        "usage.option_takes_no_value",
+        [("option", spec.long.into())],
+    )
 }
 
 /// An argument list as `env::args()` would produce it. Every test module in

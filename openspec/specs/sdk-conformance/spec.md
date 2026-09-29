@@ -481,7 +481,7 @@ One `test/system/` module SHALL drive every refusal row of
 `test/fixtures/reference_topologies.txt` through every runtime that carries a manifest:
 per runtime and row it SHALL boot the runtime's test app with `FLEZHA_REFUSAL_FIXTURE=<topology id>`,
 under which the app registers only that row's topology through its own builder, and SHALL
-assert the runner refuses at boot with the row's name. A row a runtime's `needs` excludes
+assert the runner refuses at boot with the row's name as its error code, read from the SDK's one error type and never from its message. A row a runtime's `needs` excludes
 SHALL be asserted as a skip by name. Rows SHALL be read from the fixture and runtimes from
 the manifests, so a new refusal or a new SDK is covered with no test edit.
 
@@ -506,17 +506,17 @@ name. A row a runtime refuses at run time SHALL boot for real, whichever the lan
 #### Scenario: A compile-time refusal is cited, and the citation is checked
 
 - **WHEN** the Rust app is booted under `FLEZHA_REFUSAL_FIXTURE=shorthand_with_topology`
-- **THEN** it exits non-zero printing `ShortFormWithTopology` and `sdk/rust/tests/ui/operator_with_hand_written_impl.rs`, the compile-fail fixture whose own text names the refusal because rustc's conflicting-impl error cannot, and the drill fails if that file is absent or does not contain the name
+- **THEN** it exits non-zero printing `topology.short_form_with_topology` and `sdk/rust/tests/ui/operator_with_hand_written_impl.rs`, the compile-fail fixture whose own text names the refusal because rustc's conflicting-impl error cannot, and the drill fails if that file is absent or does not contain the name
 
 #### Scenario: An Elixir `use` refusal is cited the same way
 
 - **WHEN** the Elixir app is booted under `FLEZHA_REFUSAL_FIXTURE=shorthand_with_topology`
-- **THEN** it exits non-zero printing `ShortFormWithTopology` and the path of the SDK test that compiles that declaration and asserts the `CompileError`, and the drill checks the cited file contains the name
+- **THEN** it exits non-zero printing `topology.short_form_with_topology` and the path of the SDK test that compiles that declaration and asserts the `CompileError`, and the drill checks the cited file contains the name
 
 #### Scenario: A runtime refusal boots on every runtime
 
 - **WHEN** any runtime's app is booted under `FLEZHA_REFUSAL_FIXTURE=shorthand_duplicate_id`
-- **THEN** it defines the row's unbounded and bounded under one id, dies on the second, and its output contains `DuplicateFactoryId`
+- **THEN** it defines the row's unbounded and bounded under one id, dies on the second, and its output contains `topology.duplicate_factory_id`
 
 ### Requirement: Every SDK's declaration output is compared against the shared expected set in one run
 
@@ -825,12 +825,12 @@ The refusal table SHALL carry one row per short-form refusal with the step `shor
 
 #### Scenario: A short-form row's name is checked against the contract, not the core
 
-- **WHEN** the refusal table carries a row named `ShortFormWithTopology` with `needs` `shorthand`
+- **WHEN** the refusal table carries a row named `topology.short_form_with_topology` with `needs` `shorthand`
 - **THEN** `topology_check_test.exs` passes without an issue variant of that name, and fails if `docs/sdk/authoring_contract.md` §5 does not list the name
 
 ### Requirement: Kind-only settings are refusal rows every builder reaches
 
-The refusal table (`test/fixtures/reference_topologies.txt`) SHALL carry the rows `EffectivelyOnceOnBounded`, `CorrectionWindowOnBounded`, `CheckpointOnBounded` (a bounded class writing `class.checkpoint_every(500)`) and `SyncDurabilityOnUnbounded`, and every runtime SHALL drive them through its real boot as it drives every other row. The `raw_class_flags` surface SHALL leave the `needs` vocabulary and every manifest, because every builder can now write the three bounded rows, which SHALL need the `bounded` surface instead. The one remaining named skip is `SyncDurabilityOnUnbounded` on a runtime whose typed stream builder cannot spell synchronous durability (Rust, Java), recorded as a skip by name as today: the row keeps `needs: sync_durability`, which the five manifests whose unbounded class can spell the class-level setting list and the Rust and Java manifests do not. The `commit_block_chain` twin SHALL declare no tier: its steps SHALL drop `class.effectively_once`, and the `commit_block_bounded` and `saga_block_bounded` goldens under `test/fixtures/declarations/` SHALL carry no `effectively_once` key and no `retry_attempts`, `retry_backoff_ms`, `barrier_retry_attempts` or `wake_after_ms` key. `test/fixtures/host_class_decl_keys.txt` SHALL list no `bounded.retry_attempts`, `bounded.retry_backoff_ms`, `bounded.barrier_retry_attempts` or `bounded.wake_after_ms`.
+The refusal table (`test/fixtures/reference_topologies.txt`) SHALL carry the rows `topology.effectively_once_on_bounded`, `topology.correction_window_on_bounded`, `topology.checkpoint_on_bounded` (a bounded class writing `class.checkpoint_every(500)`) and `topology.sync_durability_on_unbounded`, and every runtime SHALL drive them through its real boot as it drives every other row. The `raw_class_flags` surface SHALL leave the `needs` vocabulary and every manifest, because every builder can now write the three bounded rows, which SHALL need the `bounded` surface instead. The one remaining named skip is `topology.sync_durability_on_unbounded` on a runtime whose typed stream builder cannot spell synchronous durability (Rust, Java), recorded as a skip by name as today: the row keeps `needs: sync_durability`, which the five manifests whose unbounded class can spell the class-level setting list and the Rust and Java manifests do not. The `commit_block_chain` twin SHALL declare no tier: its steps SHALL drop `class.effectively_once`, and the `commit_block_bounded` and `saga_block_bounded` goldens under `test/fixtures/declarations/` SHALL carry no `effectively_once` key and no `retry_attempts`, `retry_backoff_ms`, `barrier_retry_attempts` or `wake_after_ms` key. `test/fixtures/host_class_decl_keys.txt` SHALL list no `bounded.retry_attempts`, `bounded.retry_backoff_ms`, `bounded.barrier_retry_attempts` or `bounded.wake_after_ms`.
 
 #### Scenario: A builder that drops an unbounded-only setting fails the drill
 
@@ -840,12 +840,12 @@ The refusal table (`test/fixtures/reference_topologies.txt`) SHALL carry the row
 #### Scenario: The checkpoint row is driven on every runtime
 
 - **WHEN** any runtime's app is booted under `FLEZHA_REFUSAL_FIXTURE=checkpoint_bounded`
-- **THEN** it exits non-zero and its output contains `CheckpointOnBounded`
+- **THEN** it exits non-zero and its output contains `topology.checkpoint_on_bounded`
 
 #### Scenario: A retired surface is gone from every manifest
 
 - **WHEN** the seven manifests and the `needs` vocabulary are read
-- **THEN** none names `raw_class_flags`, the three bounded rows need `bounded`, and only the Rust and Java manifests lack `sync_durability`, skipping `SyncDurabilityOnUnbounded` by that name
+- **THEN** none names `raw_class_flags`, the three bounded rows need `bounded`, and only the Rust and Java manifests lack `sync_durability`, skipping `topology.sync_durability_on_unbounded` by that name
 
 #### Scenario: The wake key is gone from every declaration
 
@@ -958,7 +958,7 @@ the coverage report.
 #### Scenario: A once bounded operator is refused partitions on every runtime
 
 - **WHEN** `echo_bounded` is started with `--partitions 2` under any runtime
-- **THEN** the first member's bind is refused with `PartitionsWithoutPerInputLoop` and not with
+- **THEN** the first member's bind is refused with `topology.partitions_without_per_input_loop` and not with
   the keyless refusal, the group is rolled back with no member left running, and a second
   attempt is refused before any member starts
 

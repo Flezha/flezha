@@ -143,7 +143,7 @@ The PHP SDK SHALL handle every command activation kind the core hands out: `Rest
 ### Requirement: Cell modes and the prepare crossing
 The PHP SDK SHALL support single, static-keyed and dynamic cell modes, and SHALL answer the core's batched `KeyRequest` prepare crossing with routing keys and extracted event times for the payloads it is given.
 
-The cell mode SHALL be read per tasklet node from what is declared, never from a flag: static when the tasklet's `#[Task]` carries `cellKeys`, dynamic when a chain of the operator keys its values with `keyBy` before the `into` or merge that reaches the tasklet, and single otherwise. A tasklet carrying `cellKeys` and fed by `keyBy` SHALL be refused at registration with the core's `KeyByOnUnkeyableTarget`.
+The cell mode SHALL be read per tasklet node from what is declared, never from a flag: static when the tasklet's `#[Task]` carries `cellKeys`, dynamic when a chain of the operator keys its values with `keyBy` before the `into` or merge that reaches the tasklet, and single otherwise. A tasklet carrying `cellKeys` and fed by `keyBy` SHALL be refused at registration with the core's `topology.key_by_on_unkeyable_target`.
 
 Dynamic mode SHALL honour the declared idle TTL and cell cap through the core's existing eviction, without a PHP-side registry.
 
@@ -165,7 +165,7 @@ Dynamic mode SHALL honour the declared idle TTL and cell cap through the core's 
 
 #### Scenario: A static key set fed by keyBy is refused
 - **WHEN** a tasklet carrying `#[Task(name: 'routed', cellKeys: ['a', 'b'])]` is reached by an edge declaring `keyBy`
-- **THEN** registration SHALL throw `DeclarationException` carrying `KeyByOnUnkeyableTarget` and naming the tasklet
+- **THEN** registration SHALL throw `FlezhaException` carrying `topology.key_by_on_unkeyable_target` and naming the tasklet
 
 ### Requirement: Tiers, checkpoint intervals and DLQ park
 The PHP SDK SHALL carry tier semantics on activation completion: changes, outputs, timer ops and `checkpoint` ride the `ItemEffect`, the core builds effect records and owns offsets, and a park mints a DLQ entry exactly where the typed layer does.
@@ -206,7 +206,7 @@ The PHP SDK SHALL support the producer-side edge surface — map, filter, flatMa
 
 #### Scenario: Two channels merge into one tasklet
 - **WHEN** an operator declares `$c->merge()->from($ticks, fn ($t) => [...])->from($quotes, fn ($q) => [...])->keyBy(fn ($v) => $v['symbol'])->into(Detector::class)`
-- **THEN** registration SHALL succeed with one Detector node fed by two consumer edges, each applying its own mapping, a value from either entry SHALL reach `run` as the mapped value keyed by `symbol`, a duplicated source SHALL refuse with `DuplicateMergeSource` and a single source with `MergeTooFewSources`
+- **THEN** registration SHALL succeed with one Detector node fed by two consumer edges, each applying its own mapping, a value from either entry SHALL reach `run` as the mapped value keyed by `symbol`, a duplicated source SHALL refuse with `topology.duplicate_merge_source` and a single source with `topology.merge_too_few_sources`
 
 #### Scenario: The router delivers on a key's own traffic
 - **WHEN** `$c->routeLatest($config, $trades, fn ($t) => $t['symbol'])` is declared and the harness feeds a document, trades for `A` and `B`, the same document, then a trade for `A`
@@ -286,16 +286,16 @@ The SDK SHALL prove the set by one conformance run over every row of
 #### Scenario: A merge row runs through the SDK's own merge handle
 
 - **WHEN** the PHP interpreter reaches `merge_one_source` or `merge_same_twice`
-- **THEN** it authors the row with `$c->merge()->from(...)…->into(...)` rather than throwing, registration refuses with `MergeTooFewSources` or `DuplicateMergeSource`, and the manifest's `topology_surfaces` lists `merge`
+- **THEN** it authors the row with `$c->merge()->from(...)…->into(...)` rather than throwing, registration refuses with `topology.merge_too_few_sources` or `topology.duplicate_merge_source`, and the manifest's `topology_surfaces` lists `merge`
 
 ### Requirement: The single-tasklet short form is four attribute arguments
 The short form SHALL be declared with the `#[Operator]` attribute a full-form operator already carries, on a class extending `Flezha\UnboundedOperator` or `Flezha\BoundedOperator`, and SHALL NOT be declared with `#[Task]`, which SHALL accept none of `kind`, `sink`, `input` or `codec` and SHALL throw naming the argument and `#[Operator]` when one is given. `#[Operator]` SHALL accept `sink`, `input` and `codec` (a `ChannelCodec`) beside the `factoryId` it already requires; the kind is the base class the attributed class extends and SHALL NOT be an argument. `Flezha\OperatorKind` SHALL be deleted, its only readers being the removed `kind`.
 
-A class SHALL be a short form exactly when it defines the tasklet body `run(mixed $input, Ctx $ctx): void` and does not override the topology body `channels`, which is the mechanism `Definition` already uses to read which hooks a class overrides; defining `run` and overriding `channels` SHALL throw `DeclarationException` naming `ShortFormWithTopology`, and doing neither SHALL throw naming the missing body. A short-form class MAY define the tasklet hooks a `Flezha\Tasklet` subclass defines (`initState`, `applyChange`), which the generated tasklet takes. A value SHALL leave a short form's `run` only through `$ctx->emit()` or `$ctx->emitKeyed()`, as it leaves a tasklet's, and `Flezha\Operator::run` SHALL be declared `: void` so PHP holds the short form to it.
+A class SHALL be a short form exactly when it defines the tasklet body `run(mixed $input, Ctx $ctx): mixed` and does not override the topology body `channels`, which is the mechanism `Definition` already uses to read which hooks a class overrides; defining `run` and overriding `channels` SHALL throw `FlezhaException` naming `topology.short_form_with_topology`, and doing neither SHALL throw naming the missing body. A short-form class MAY define the tasklet hooks a `Flezha\Tasklet` subclass defines (`state`, `applyChange`), which the generated tasklet takes.
 
-`sink` SHALL be optional. The class SHALL carry a generated operator of its base class's kind whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` argument's value) into a generated tasklet named `factoryId` and, when a `sink` is written, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A bounded short form MAY carry `#[Bounded(loopMode: ...)]` beside `#[Operator]` and SHALL be a `once` bounded operator when it does not, with every other bounded setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state; a `#[Bounded operator]` on a short form that sets any argument other than `loopMode`, or `persistent: false` on `#[Operator]`, SHALL throw `DeclarationException` naming the setting and the full form. The entry SHALL be decoded by `codec` where one is written, whether or not a `sink` is. An absent `factoryId` SHALL throw naming the required argument, and the SDK SHALL NOT derive one from the class.
+`sink` SHALL be optional. The class SHALL carry a generated operator of its base class's kind whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` argument's value) into a generated tasklet named `factoryId` and, when a `sink` is written, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A bounded short form MAY carry `#[Bounded(loopMode: ...)]` beside `#[Operator]` and SHALL be a `once` bounded operator when it does not, with every other bounded setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state; a `#[Bounded operator]` on a short form that sets any argument other than `loopMode`, or `persistent: false` on `#[Operator]`, SHALL throw `FlezhaException` naming the setting and the full form. The entry SHALL be decoded by `codec` where one is written, whether or not a `sink` is. An absent `factoryId` SHALL throw naming the required argument, and the SDK SHALL NOT derive one from the class.
 
-`Runner::registerFactory` SHALL accept such a class string and register the generated operator, throwing `DeclarationException` at registration with the refusal's name in its refusals and at the start of its message. A duplicate factory id SHALL throw with a message beginning `DuplicateFactoryId`. The PHP SDK owes no `SinkWithoutOutput`: a PHP tasklet declares no output type, and `run` is declared `: void` for every tasklet and short form, so nothing in a class says whether it emits; the manifest SHALL NOT list `shorthand_typed_output`.
+`Runner::registerFactory` SHALL accept such a class string and register the generated operator, throwing `FlezhaException` at registration whose code is the refusal's code. A duplicate factory id SHALL throw `FlezhaException` with the code `topology.duplicate_factory_id`. The PHP SDK owes no `topology.sink_without_output`: `Flezha\Tasklet::run` is declared `: mixed` and PHP refuses an override narrowing that to `: void`, so a tasklet declaring no output cannot be written; the manifest SHALL NOT list `shorthand_typed_output`.
 
 #### Scenario: An attributed class is a whole unbounded operator
 
@@ -314,7 +314,7 @@ A class SHALL be a short form exactly when it defines the tasklet body `run(mixe
 
 #### Scenario: A short form with no sink is declared
 
-- **WHEN** a class extending `Flezha\UnboundedOperator` is attributed `#[Operator(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]` and defines `run`, `initState` and `applyChange`
+- **WHEN** a class extending `Flezha\UnboundedOperator` is attributed `#[Operator(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]` and defines `run`, `state` and `applyChange`
 - **THEN** the operator declares `ticks` into the generated tasklet and no plugin channel
 
 #### Scenario: An input and codec need no sink
@@ -325,12 +325,12 @@ A class SHALL be a short form exactly when it defines the tasklet body `run(mixe
 #### Scenario: A run body beside a channels override is refused
 
 - **WHEN** an attributed operator class defines `run` and overrides `channels`
-- **THEN** `registerFactory` throws `DeclarationException` naming `ShortFormWithTopology`
+- **THEN** `registerFactory` throws `FlezhaException` whose code is `topology.short_form_with_topology`
 
 #### Scenario: A tasklet cannot declare no output
 
-- **WHEN** a class extending `Flezha\Tasklet` or `Flezha\UnboundedOperator` declares `public function run(mixed $input, Ctx $ctx): mixed`, or returns a value from a `run` declared `: void`
-- **THEN** it SHALL fail to load, because `run` is declared `: void`; no PHP tasklet declares an output type, so the SDK owes no `SinkWithoutOutput`
+- **WHEN** a class extending `Flezha\Tasklet` declares `public function run(mixed $input, Ctx $ctx): void`
+- **THEN** it SHALL fail to load, because `Tasklet::run` is declared `: mixed`, so no PHP tasklet can declare no output and the SDK owes no `topology.sink_without_output`
 
 #### Scenario: A sink on a tasklet attribute is refused
 
@@ -344,17 +344,17 @@ A class SHALL be a short form exactly when it defines the tasklet body `run(mixe
 
 ### Requirement: A PHP class of either kind is judged on what it wrote
 
-`HostClassDecl::of` SHALL put every key the builder recorded on the wire for either kind, with no kind gate, so an unbounded-only builder call on a bounded operator reaches the core and is refused under its name (`EffectivelyOnceOnBounded`, `CheckpointOnBounded`, `CorrectionWindowOnBounded`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `DeclarationException` naming it. `#[Bounded operator]` on a class extending `Flezha\UnboundedOperator` SHALL be refused at `registerFactory` naming the attribute and the class, as the attribute's own documentation states. `#[Bounded operator]` SHALL carry no `retryAttempts`, `retryBackoffMs`, `barrierRetryAttempts` or `wakeAfterMs`, and the declaration SHALL carry no `wake_after_ms`; the builder SHALL carry no `syncDurability()` call, `#[Bounded(syncDurability: true)]` being the one spelling. A `Ctx` inside a bounded operator SHALL offer `timerAfter`, `timerAtEventTime` and `cancelTimer` exactly as inside a stream, and a tasklet's `onTimer` SHALL run on its firing in both kinds; only a `compensate` hook's `Ctx` SHALL throw an error naming `TimersUnavailable` from them.
+`HostClassDecl::of` SHALL put every key the builder recorded on the wire for either kind, with no kind gate, so an unbounded-only builder call on a bounded operator reaches the core and is refused under its name (`topology.effectively_once_on_bounded`, `topology.checkpoint_on_bounded`, `topology.correction_window_on_bounded`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `FlezhaException` naming it. `#[Bounded operator]` on a class extending `Flezha\UnboundedOperator` SHALL be refused at `registerFactory` naming the attribute and the class, as the attribute's own documentation states. `#[Bounded operator]` SHALL carry no `retryAttempts`, `retryBackoffMs`, `barrierRetryAttempts` or `wakeAfterMs`, and the declaration SHALL carry no `wake_after_ms`; the builder SHALL carry no `syncDurability()` call, `#[Bounded(syncDurability: true)]` being the one spelling. A `Ctx` inside a bounded operator SHALL offer `timerAfter`, `timerAtEventTime` and `cancelTimer` exactly as inside a stream, and a tasklet's `onTimer` SHALL run on its firing in both kinds; only a `compensate` hook's `Ctx` SHALL throw an error naming `runtime.timers_unavailable` from them.
 
 #### Scenario: A tier call on a bounded operator reaches the core
 
 - **WHEN** a class extending `Flezha\BoundedOperator` calls `$c->effectivelyOnce()` in `channels`, the runner registers it and starts
-- **THEN** declaring it to the core throws `DeclarationException` naming `EffectivelyOnceOnBounded`, and the operator is not declared
+- **THEN** declaring it to the core throws `FlezhaException` whose code is `topology.effectively_once_on_bounded`, and the operator is not declared
 
 #### Scenario: A bounded attribute on an unbounded class is refused
 
 - **WHEN** a class extending `Flezha\UnboundedOperator` carries `#[Bounded(loopMode: LoopMode::PerInput)]`
-- **THEN** `registerFactory` throws `DeclarationException` naming `#[Bounded operator]` and the class
+- **THEN** `registerFactory` throws `FlezhaException` naming `#[Bounded operator]` and the class
 
 #### Scenario: The retired wake argument is refused
 
@@ -367,11 +367,11 @@ A class SHALL be a short form exactly when it defines the tasklet body `run(mixe
 - **THEN** the call returns the scheduled timestamp, the effect carries the timer op, and `onTimer` runs on that Cell at that timestamp, opening a pass at that tasklet
 
 ### Requirement: A PHP tasklet names itself and declares its settings on one attribute
-A PHP tasklet SHALL be a class extending `Flezha\Tasklet` and carrying `#[Task(...)]`, and its `#[Task]` SHALL carry a non-empty `name`. Registration SHALL refuse a tasklet class whose declaration has no `name`, or an empty one, with a `DeclarationException` naming the class, and SHALL NOT derive a name from the class. `name` SHALL NOT be inherited from a parent class, so every concrete subclass writes its own. The short form SHALL keep naming its tasklet after its factory id and SHALL keep refusing a `name`.
+A PHP tasklet SHALL be a class extending `Flezha\Tasklet` and carrying `#[Task(...)]`, and its `#[Task]` SHALL carry a non-empty `name`. Registration SHALL refuse a tasklet class whose declaration has no `name`, or an empty one, with a `FlezhaException` naming the class, and SHALL NOT derive a name from the class. `name` SHALL NOT be inherited from a parent class, so every concrete subclass writes its own. The short form SHALL keep naming its tasklet after its factory id and SHALL keep refusing a `name`.
 
 The idle TTL SHALL be `idleTtlSeconds`, a whole number of seconds, and the declaration record SHALL carry it as `idle_ttl_ms`, that number times 1000. Unset SHALL mean no eviction.
 
-The clock SHALL follow from what the class writes: event time when it overrides `eventTime()`, logical when its `#[Task]` carries `logicalClock: true`, and the wall clock otherwise. A class that does both SHALL be refused at registration with a `DeclarationException` naming `eventTime` and `logicalClock`. A logical clock on a tasklet that does not override `initState` SHALL keep the core's `UnservableClock` refusal. The SDK SHALL NOT have a `Flezha\Clock` enum or a `clock` argument.
+The clock SHALL follow from what the class writes: event time when it overrides `eventTime()`, logical when its `#[Task]` carries `logicalClock: true`, and the wall clock otherwise. A class that does both SHALL be refused at registration with a `FlezhaException` naming `eventTime` and `logicalClock`. A logical clock on a tasklet that does not override `initState` SHALL keep the core's `topology.unservable_clock` refusal. The SDK SHALL NOT have a `Flezha\Clock` enum or a `clock` argument.
 
 A change SHALL be any value the codec carries, recorded with `$ctx->change($value)` and folded by the tasklet's `applyChange(mixed &$state, mixed $change)`, and no change class SHALL be required. The optional `stateType` and `changeType` Codable classes SHALL stay. `migrateState(int $fromVersion, string $bytes)` and `migrateChange(int $fromVersion, string $bytes)` SHALL keep receiving bytes.
 
@@ -380,7 +380,7 @@ A change SHALL be any value the codec carries, recorded with `$ctx->change($valu
 #### Scenario: A tasklet without a name is refused
 
 - **WHEN** a class extending `Flezha\Tasklet` carries `#[Task(cellKeys: ['a'])]`, or no `#[Task]` at all, and an operator wiring it is registered
-- **THEN** registration throws `DeclarationException` naming the class and the missing `name`, and nothing is registered
+- **THEN** registration throws `FlezhaException` naming the class and the missing `name`, and nothing is registered
 
 #### Scenario: A renamed class keeps its state
 
@@ -410,12 +410,12 @@ A change SHALL be any value the codec carries, recorded with `$ctx->change($valu
 #### Scenario: Event time and the logical clock together are refused
 
 - **WHEN** a tasklet overrides `eventTime()` and carries `logicalClock: true`
-- **THEN** registration throws `DeclarationException` naming `eventTime` and `logicalClock`
+- **THEN** registration throws `FlezhaException` naming `eventTime` and `logicalClock`
 
 #### Scenario: A logical clock on a stateless tasklet is refused
 
 - **WHEN** a tasklet that does not override `initState` carries `logicalClock: true`
-- **THEN** registration throws `DeclarationException` carrying the core's `UnservableClock`
+- **THEN** registration throws `FlezhaException` carrying the core's `topology.unservable_clock`
 
 #### Scenario: A change needs no class
 

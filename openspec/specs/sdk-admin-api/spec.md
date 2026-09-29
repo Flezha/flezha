@@ -52,8 +52,8 @@ An SDK-issued act SHALL be judged at the same policy point, against the same dec
 
 - **WHEN** an application asks to start an operator that would exceed the
   namespace's `max_operators`
-- **THEN** the call SHALL be refused with the same quota reason a user would
-  receive
+- **THEN** the call SHALL be refused with the code `quota.exceeded` and the same details
+  (`kind`, `current`, `limit`) a user would receive from `flz`
 
 #### Scenario: A read writes no audit record
 
@@ -134,8 +134,8 @@ result carrying two fields, the same in every SDK: `id`, the id the operator run
 the application gave it or the controller generated it, and `outcome`, one of `started` and
 `already_running`. `already_running` SHALL be answered only for an id the application gave, when a
 live instance already holds it. The answer SHALL carry nothing else; where an operator runs is read
-through `flz operator info` or the read surface. A refused start SHALL be reported as each SDK
-reports a refused call today.
+through `flz operator info` or the read surface. A refused start SHALL be reported as the SDK's one error type, carrying the `code`,
+`class`, `message`, `details` and `hint` the controller answered.
 
 #### Scenario: A start without an id answers the generated id
 
@@ -156,10 +156,11 @@ reports a refused call today.
 - **THEN** every SDK SHALL expose the same two fields, `id` and `outcome`, with the same outcome
   words, and no `node`, `runner_id` or `pid`
 
-#### Scenario: A refused start is reported as before
+#### Scenario: A refused start carries its code
 
 - **WHEN** application code asks to start an operator that would exceed the namespace's
   `max_operators`
-- **THEN** the call SHALL be refused with the quota reason, reported as that SDK reports any
-  refused administration call
+- **THEN** the call SHALL be refused with the SDK's one error type, its `code` SHALL be
+  `quota.exceeded` in every SDK, and its details SHALL name the quota kind, the current count
+  and the limit
 

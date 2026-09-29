@@ -35,20 +35,15 @@ defmodule Flezha.Service.Cli.State do
 
   @doc """
   The row a `state at | rotate | outbox` is judged by: a Cell with persisted
-  state, in its class's namespace. Each verb keeps its own prefix on the
-  not-found it prints.
+  state, in its class's namespace.
   """
-  def at_row(args), do: cell_row(args, "state at")
-  def rotate_row(args), do: cell_row(args, "state rotate")
-  def outbox_row(args), do: cell_row(args, "state outbox")
+  def at_row(args), do: cell_row(args)
+  def rotate_row(args), do: cell_row(args)
+  def outbox_row(args), do: cell_row(args)
 
-  defp cell_row([path_string | _], verb) do
-    case parse_state_path(path_string) do
-      {:ok, {operator_class, _, _} = cell_id} ->
-        {:ok, %{namespace: OperatorManager.namespace_of_class(operator_class), cell_id: cell_id}}
-
-      {:error, reason} ->
-        Context.fail!("#{verb}: #{reason}")
+  defp cell_row([path_string | _]) do
+    with {:ok, {operator_class, _, _} = cell_id} <- parse_state_path(path_string) do
+      {:ok, %{namespace: OperatorManager.namespace_of_class(operator_class), cell_id: cell_id}}
     end
   end
 
@@ -62,9 +57,7 @@ defmodule Flezha.Service.Cli.State do
         {:ok, %{namespace: OperatorManager.namespace_of_class(rc), cell_id: {rc, sh, pk}}}
 
       _ ->
-        Context.fail!(
-          "state delete: expected <operator>/<tasklet>/<cell_key>; got #{path_string}"
-        )
+        {:error, {:bad_cell_path, path_string}}
     end
   end
 
@@ -73,20 +66,13 @@ defmodule Flezha.Service.Cli.State do
     with {:ok, {operator_id, tasklet, cell_key}} <- parse_live_path(path_string),
          {:ok, namespace, targets} <- resolve_state_targets(operator_id, cell_key) do
       {:ok, %{namespace: namespace, targets: targets, tasklet: tasklet, cell_key: cell_key}}
-    else
-      {:error, reason} ->
-        Context.fail!("state get: #{render_state_get_error(reason)}")
     end
   end
 
   @doc "The row an `operator replay` is judged by: the Cell's class namespace."
   def replay_row([_namespace, path_string | _]) do
-    case parse_state_path(path_string) do
-      {:ok, {operator_class, _, _} = cell_id} ->
-        {:ok, %{namespace: OperatorManager.namespace_of_class(operator_class), cell_id: cell_id}}
-
-      {:error, reason} ->
-        Context.fail!("replay: #{Context.format_reason(reason)}")
+    with {:ok, {operator_class, _, _} = cell_id} <- parse_state_path(path_string) do
+      {:ok, %{namespace: OperatorManager.namespace_of_class(operator_class), cell_id: cell_id}}
     end
   end
 
@@ -103,15 +89,12 @@ defmodule Flezha.Service.Cli.State do
   naming why — never served from the durable store, which is what
   `flz state at` is for.
   """
-  def state_get(path_string, output_format, %{row: row}) do
+  def state_get(path_string, %{row: row, opts: opts}) do
     %{namespace: namespace, targets: targets, tasklet: tasklet, cell_key: cell_key} = row
 
     with {:ok, json, change_seq} <- read_cell_state(namespace, targets, tasklet, cell_key),
          :ok <- within_read_ceiling(json) do
-      print_state_get(path_string, json, change_seq, output_format)
-    else
-      {:error, reason} ->
-        Context.fail!("state get: #{render_state_get_error(reason)}")
+      print_state_get(path_string, json, change_seq, Context.format(opts))
     end
   end
 
@@ -197,7 +180,7 @@ defmodule Flezha.Service.Cli.State do
         {:ok, {operator, tasklet, nil}}
 
       _ ->
-        {:error, {:bad_path, "expected <operator>/<tasklet>[/<cell_key>]; got #{path_string}"}}
+        {:error, {:bad_live_path, path_string}}
     end
   end
 
@@ -208,7 +191,7 @@ defmodule Flezha.Service.Cli.State do
     limit = PersistenceResolver.wal_high_watermark_bytes()
 
     case byte_size(json) do
-      bytes when bytes > limit -> {:error, {:oversized_state, bytes}}
+      bytes when bytes > limit -> {:error, {:oversized_state, bytes, limit}}
       _ -> :ok
     end
   end
@@ -229,48 +212,11 @@ defmodule Flezha.Service.Cli.State do
     IO.puts("  state:      #{json}")
   end
 
-  defp render_state_get_error({:bad_path, message}), do: message
-
-  defp render_state_get_error({:no_operator, operator_id}),
-    do: "no running operator `#{operator_id}` in any namespace"
-
-  defp render_state_get_error({:not_resident, :suspended}),
-    do:
-      "the instance is suspended and holds no live Cell — " <>
-        "read its durable state with `flz state at`"
-
-  defp render_state_get_error({:not_resident, :unbound}),
-    do:
-      "the Operator is not bound to a runner, so nothing holds its state — " <>
-        "read its durable state with `flz state at`"
-
-  defp render_state_get_error(:persistence_off),
-    do:
-      "this class declares persistence off, so its Cells hold no durable state and " <>
-        "live reads are refused"
-
-  defp render_state_get_error({:oversized_state, bytes}),
-    do:
-      "the selected state is #{bytes} bytes, over the :wal_high_watermark_bytes " <>
-        "ceiling — narrow the read with <operator>/<tasklet>/<cell_key>"
-
-  defp render_state_get_error(reason) when is_binary(reason) do
-    # SDK refusals lead with a canonical token; the not-resident family points
-    # at the durable-read path, which the SDK cannot know about.
-    if String.starts_with?(reason, ["cell_evicted", "cell_not_found"]) do
-      reason <> " — read its durable state with `flz state at`"
-    else
-      reason
-    end
-  end
-
-  defp render_state_get_error(reason), do: Context.format_reason(reason)
-
   @doc """
   `flz state list <operator_class>` — print one row per Cell under
   `<operator_class>` with `wal_seq`, `snapshot_seq`, `wal_bytes`.
   """
-  def state_list(operator_class, output_format, _call) do
+  def state_list(operator_class, %{opts: opts}) do
     rows =
       for {{rc, sh, pk} = pid, counters} <- Metrics.snapshot_all(),
           rc == operator_class do
@@ -293,7 +239,7 @@ defmodule Flezha.Service.Cli.State do
         }
       end
 
-    case output_format do
+    case Context.format(opts) do
       "json" ->
         IO.puts(Jason.encode!(%{operator_class: operator_class, cells: rows}))
 
@@ -320,16 +266,11 @@ defmodule Flezha.Service.Cli.State do
   tasklet, cell_key)` by scanning the on-disk state tree (one match
   expected; ambiguous paths print all matches and exit non-zero).
   """
-  def state_at(_path_string, target_string, output_format, %{row: %{cell_id: cell_id}}) do
+  def state_at(_path_string, target_string, %{row: %{cell_id: cell_id}, opts: opts}) do
     target = parse_state_target(target_string)
 
-    case TimeTravel.query(cell_id, target) do
-      {:ok, result} ->
-        print_state_at(cell_id, target, result, output_format)
-
-      {:error, %{kind: kind, message: msg, earliest_available: earliest}} ->
-        Context.fail!("state at: #{kind}: #{msg} (earliest_available=#{inspect(earliest)})")
-    end
+    with {:ok, result} <- TimeTravel.query(cell_id, target),
+         do: print_state_at(cell_id, target, result, Context.format(opts))
   end
 
   defp print_state_at(_cell_id, _target, result, "json") do
@@ -356,15 +297,9 @@ defmodule Flezha.Service.Cli.State do
   dispatching a `CompactCell` to the SDK.
   """
   def state_rotate(_path_string, %{row: %{cell_id: {rc, sh, pk}}}) do
-    case Recovery.resolve_runner({rc, sh, pk}) do
-      {:ok, runner_id} ->
-        case Commands.dispatch_compact_cell(runner_id, {rc, sh, pk}) do
-          {:ok, _ref} -> IO.puts("compaction queued for #{rc}/#{sh}/#{pk}")
-          {:error, reason} -> Context.fail!("state rotate: #{Context.format_reason(reason)}")
-        end
-
-      {:error, reason} ->
-        Context.fail!("state rotate: #{reason}")
+    with {:ok, runner_id} <- Recovery.resolve_runner({rc, sh, pk}),
+         {:ok, _ref} <- Commands.dispatch_compact_cell(runner_id, {rc, sh, pk}) do
+      IO.puts("compaction queued for #{rc}/#{sh}/#{pk}")
     end
   end
 
@@ -424,7 +359,7 @@ defmodule Flezha.Service.Cli.State do
   def operator_replay(_namespace, path_string, from_string, %{row: %{cell_id: cell_id}}) do
     {operator_class, _, _} = cell_id
 
-    with :ok <- replayable(operator_class),
+    with :ok <- replayable(operator_class, path_string),
          {:ok, overwatch} <- resolve_replay_overwatch(operator_class),
          {:ok, target_seq} <- resolve_replay_seq(cell_id, from_string) do
       Replay.replay_from(overwatch, cell_id, target_seq)
@@ -433,29 +368,12 @@ defmodule Flezha.Service.Cli.State do
         "Replaying #{path_string} from seq #{target_seq}. Outputs republish under a " <>
           "bumped epoch; a keyed sink overwrites the stale rows by natural key."
       )
-    else
-      {:error, :bounded_cell} ->
-        Context.fail!(
-          "replay: #{path_string} is a Cell of a bounded operator. A bounded operator's baseline is a " <>
-            "committed iteration in its journal, and its commit records carry no consumed " <>
-            "offset at a WAL seq, so there is no baseline to rewind to. Use " <>
-            "`flz operator rewind` to take a loop back."
-        )
-
-      {:error, %{kind: :outside_retention, earliest_available: earliest}} ->
-        Context.fail!(
-          "replay: outside_retention — the earliest replayable point for " <>
-            "#{path_string} is seq #{inspect(earliest)}"
-        )
-
-      {:error, reason} ->
-        Context.fail!("replay: #{Context.format_reason(reason)}")
     end
   end
 
-  defp replayable(operator_class) do
+  defp replayable(operator_class, path_string) do
     case ClassRegistry.get(operator_class) do
-      :bounded -> {:error, :bounded_cell}
+      :bounded -> {:error, {:bounded_cell, path_string}}
       _stream -> :ok
     end
   end
@@ -463,17 +381,15 @@ defmodule Flezha.Service.Cli.State do
   defp resolve_replay_overwatch(operator_class) do
     case Lookup.overwatch(operator_class) do
       {:ok, pid} -> {:ok, pid}
-      {:error, _reason} -> {:error, {:not_running, operator_class}}
+      {:error, _reason} -> {:error, {:operator_not_running, operator_class}}
     end
   end
 
   # A `--from` is a WAL seq or a point in time; the same `TimeTravel` resolution
   # `flz state at` uses, which is now exact rather than an mtime approximation.
   defp resolve_replay_seq(cell_id, from_string) do
-    case TimeTravel.query(cell_id, parse_state_target(from_string)) do
-      {:ok, %{terminal_seq: seq}} -> {:ok, seq}
-      {:error, err} -> {:error, err}
-    end
+    with {:ok, %{terminal_seq: seq}} <- TimeTravel.query(cell_id, parse_state_target(from_string)),
+         do: {:ok, seq}
   end
 
   @doc """
@@ -492,8 +408,8 @@ defmodule Flezha.Service.Cli.State do
           "retention[#{operator_class}] = #{hours} hours (in-memory; persist via runtime.exs)"
         )
 
-      _ ->
-        Context.fail!("state retention: hours must be a non-negative integer")
+      hours ->
+        Context.fail!(Flezha.Error.new("usage.negative", option: "<hours>", value: hours))
     end
   end
 
@@ -506,11 +422,11 @@ defmodule Flezha.Service.Cli.State do
         if has_persisted_state?(rc, sh, pk) or hydrated_state?(rc, sh, pk) do
           {:ok, {rc, sh, pk}}
         else
-          {:error, "no persisted state at #{path_string}"}
+          {:error, {:no_persisted_state, path_string}}
         end
 
       _ ->
-        {:error, "expected <operator>/<tasklet>/<cell_key>; got #{path_string}"}
+        {:error, {:bad_cell_path, path_string}}
     end
   end
 

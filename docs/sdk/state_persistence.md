@@ -67,7 +67,7 @@ kind keeps no WAL or snapshot, is given no restore on a rebind, and answers a li
 |---|---|---|---|
 | Persistence switch, both kinds | `PERSISTENCE_ENABLED` const on both traits, default `true` | `persistenceEnabled()` on both kind interfaces, default `true`, read from the class whatever its Tasklets' states | `persistence_enabled/0` on both behaviours (a `use` option), default `true` |
 | Sleep setting | `SLEEP_WHEN_IDLE`: `false` on `UnboundedOperator`, `PERSISTENCE_ENABLED` on `BoundedOperator` | `sleepWhenIdle()`: `false` on `UnboundedOperator`, `persistenceEnabled()` on `BoundedOperator` | `sleep_when_idle` (a `use` option or callback): `false` for an unbounded operator, `persistence_enabled/0` for a bounded operator |
-| Sleeping with persistence off | refused as `SleepWithoutPersistence` | same | same |
+| Sleeping with persistence off | refused as `topology.sleep_without_persistence` | same | same |
 | Controller side | `:operator_persistence` (`%{class => bool}`) overrides the announced switch per class | same | same |
 
 The Node, Python, Ruby and PHP SDKs carry the same two settings under their own spellings
@@ -165,7 +165,7 @@ restore rejects any `sdk_lang` but its own before it reads the format byte:
 |---|---|---|---|---|
 | Schema version — bump on a non-additive Change-schema edit; a restore refuses a version above the running one or below the readable floor by name | `Tasklet::SCHEMA_VERSION` | `@Tasklet.Spec(schemaVersion = n)` | `schema_version/0`, with `min_readable_schema_version/0` the floor | 1 |
 | Per-Cell WAL size at which the controller solicits a snapshot; `flz_core::persistence::DEFAULT_COMPACT_AFTER_BYTES`, in lockstep with the controller's `:default_compact_after_bytes`; every SDK ships the smallest value across the class's Tasklets in `AddOperator` metadata (`compact_after_bytes`) only when it differs from the default | `Tasklet::compact_after_bytes()` | `@Tasklet.Spec(compactAfterBytes = n)` | `compact_after_bytes/0` | 8 MiB |
-| Pending-timer cap; past it registration returns / throws `TimerCapExceeded` | `Tasklet::max_timers_per_cell()` | `@Tasklet.Spec(maxTimersPerCell = n)` | `max_timers_per_cell/0` | 10 000 |
+| Pending-timer cap; past it registration returns / throws `runtime.timer_cap_exceeded` | `Tasklet::max_timers_per_cell()` | `@Tasklet.Spec(maxTimersPerCell = n)` | `max_timers_per_cell/0` | 10 000 |
 | Flusher linger between drains | `FLEZHA_FLUSH_LINGER_MS` env (read once by the core) | same | none — records ship at dispatch end | 5 ms |
 
 ## Rust SDK
@@ -302,9 +302,9 @@ reference case).
 
 `Change<S>` declares `applyTo(S)` and `Optional<CoalesceKey> coalesceKey()` (default
 empty); `CoalesceKey.fromHash(Object...)` hashes arbitrary values. What Rust rejects at
-compile time is rejected at registration here (`UnboundedOperatorConfigurationException`):
+compile time is rejected at registration here (a `FlezhaException`):
 a tasklet that writes `eventTime` and declares `logicalClock = true`, and a logical clock
-over a `Void` state (`UnservableClock`).
+over a `Void` state (`topology.unservable_clock`).
 
 ### Test harness
 

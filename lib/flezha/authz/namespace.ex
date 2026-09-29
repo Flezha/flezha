@@ -107,9 +107,9 @@ defmodule Flezha.AuthZ.Namespace do
 
   Returns `:ok` for `_system` and any string matching
   `[a-z][a-z0-9_-]{0,62}`. Other inputs return
-  `{:error, :invalid_namespace_name}`.
+  `{:error, {:invalid_namespace_name, name}}`.
   """
-  @spec validate_name(term()) :: :ok | {:error, :invalid_namespace_name}
+  @spec validate_name(term()) :: :ok | {:error, {:invalid_namespace_name, term()}}
   def validate_name(@system), do: :ok
 
   # The rule is the `:namespace` row. The leading letter is what keeps the
@@ -118,11 +118,11 @@ defmodule Flezha.AuthZ.Namespace do
   def validate_name(name) when is_binary(name) do
     case Identificator.validate(:namespace, name) do
       :ok -> :ok
-      {:error, _refusal} -> {:error, :invalid_namespace_name}
+      {:error, _refusal} -> {:error, {:invalid_namespace_name, name}}
     end
   end
 
-  def validate_name(_), do: {:error, :invalid_namespace_name}
+  def validate_name(name), do: {:error, {:invalid_namespace_name, name}}
 
   @doc """
   Merge user-supplied quota overrides over the defaults, validating

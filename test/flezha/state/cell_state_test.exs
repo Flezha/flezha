@@ -208,7 +208,7 @@ defmodule Flezha.State.TimeTravelTest do
   end
 
   test "no_data error when cell has no persisted state", %{cell_id: pid} do
-    assert {:error, %{kind: :no_data}} = TimeTravel.query(pid, {:seq, 100})
+    assert {:error, {:no_persisted_state, _cell}} = TimeTravel.query(pid, {:seq, 100})
   end
 
   test "seq query returns the right slice", %{cell_id: pid} do
@@ -234,7 +234,7 @@ defmodule Flezha.State.TimeTravelTest do
     header = TestHelpers.stub_header()
     {:ok, _} = Snapshot.write_snapshot(pid, 100, header, "snap@100")
 
-    assert {:error, %{kind: :outside_retention, earliest_available: 100}} =
+    assert {:error, {:outside_retention, _cell, 50, 100}} =
              TimeTravel.query(pid, {:seq, 50})
   end
 

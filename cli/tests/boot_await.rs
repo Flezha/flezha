@@ -135,12 +135,18 @@ fn an_unreachable_node_is_waited_for_and_its_verdict_is_the_answer(shim: &Shim) 
 }
 
 /// A node that never answers is given up on at the timeout, after retrying,
-/// with the exit code a timeout has always had and a line naming what
-/// `:noconnection` can mean, since the reason itself cannot tell them apart.
+/// as `controller.unreachable` with its class's exit code and a message naming
+/// what `:noconnection` can mean, since the reason itself cannot tell them
+/// apart.
 fn a_node_that_stays_unreachable_is_given_up_on_at_the_timeout(shim: &Shim) {
     let run = await_boot(shim, "1", UNREACHABLE_FOR_EVER, "unused", 0);
 
-    assert_eq!(run.code, Some(1), "stderr: {}", run.stderr);
+    assert_eq!(run.code, Some(3), "stderr: {}", run.stderr);
+    assert!(
+        run.stderr.contains("(controller.unreachable)"),
+        "{}",
+        run.stderr
+    );
     assert!(
         run.calls.len() >= 2,
         "retried, not refused at once: {:?}",
@@ -165,14 +171,14 @@ fn a_node_that_stays_unreachable_is_given_up_on_at_the_timeout(shim: &Shim) {
 fn a_zero_timeout_asks_once_even_when_unreachable(shim: &Shim) {
     let run = await_boot(shim, "0", UNREACHABLE_FOR_EVER, "unused", 0);
 
-    assert_eq!(run.code, Some(1), "stderr: {}", run.stderr);
+    assert_eq!(run.code, Some(3), "stderr: {}", run.stderr);
     assert_eq!(run.calls.len(), 1, "{:?}", run.calls);
     assert_eq!(budget_ms(&run.calls[0]), 0);
 }
 
 /// A node that answered `recovering` already waited out the whole budget on
 /// its own clock; asking again would wait twice as long as the caller said.
-/// Its verdict still reaches the caller's stderr.
+/// Its refusal still reaches the caller's stderr, with its own exit code.
 fn a_reached_node_that_is_not_ready_is_asked_once(shim: &Shim) {
     let verdict = "boot await: recovering; unmet: hubs_recovered";
     let run = await_boot(shim, "30", 0, verdict, 1);

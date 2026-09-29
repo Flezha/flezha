@@ -21,7 +21,8 @@ defmodule Flezha.Plugin.Installer.Package do
           | {:too_many_source_files, pos_integer(), pos_integer()}
           | {:unsafe_entry, binary(), atom()}
           | {:tar_failed, term()}
-          | {:invalid_layout, atom() | {atom(), any()}}
+          | {:invalid_layout, atom()}
+          | {:invalid_layout, atom(), term()}
 
   @doc """
   Extracts `fpz_path` into `staging_dir`, enforcing size limits and rejecting
@@ -45,7 +46,8 @@ defmodule Flezha.Plugin.Installer.Package do
   `src/` directory, `CHECKSUMS.sha256`, and optionally `signature.sig` at
   the root — nothing else.
   """
-  @spec validate_layout(Path.t()) :: :ok | {:error, {:invalid_layout, term()}}
+  @spec validate_layout(Path.t()) ::
+          :ok | {:error, {:invalid_layout, atom()} | {:invalid_layout, atom(), term()}}
   def validate_layout(staging_dir) do
     with {:ok, entries} <- list_root(staging_dir),
          :ok <- check_required(staging_dir, entries),
@@ -138,7 +140,7 @@ defmodule Flezha.Plugin.Installer.Package do
   defp list_root(staging_dir) do
     case File.ls(staging_dir) do
       {:ok, entries} -> {:ok, entries}
-      {:error, reason} -> {:error, {:invalid_layout, {:cannot_list, reason}}}
+      {:error, reason} -> {:error, {:invalid_layout, :cannot_list, reason}}
     end
   end
 
@@ -165,7 +167,7 @@ defmodule Flezha.Plugin.Installer.Package do
 
     case unexpected do
       [] -> :ok
-      [first | _] -> {:error, {:invalid_layout, {:unexpected_entry, first}}}
+      [first | _] -> {:error, {:invalid_layout, :unexpected_entry, first}}
     end
   end
 
@@ -173,7 +175,7 @@ defmodule Flezha.Plugin.Installer.Package do
     case File.ls(src_dir) do
       {:ok, [_ | _]} -> :ok
       {:ok, []} -> {:error, {:invalid_layout, :src_empty}}
-      {:error, reason} -> {:error, {:invalid_layout, {:src_unreadable, reason}}}
+      {:error, reason} -> {:error, {:invalid_layout, :src_unreadable, reason}}
     end
   end
 
@@ -183,7 +185,7 @@ defmodule Flezha.Plugin.Installer.Package do
     Enum.reduce_while(collect_files(src_dir, src_dir), :ok, fn rel, _ ->
       cond do
         String.contains?(rel, "..") ->
-          {:halt, {:error, {:invalid_layout, {:path_traversal, rel}}}}
+          {:halt, {:error, {:invalid_layout, :path_traversal, rel}}}
 
         String.ends_with?(rel, ".beam") ->
           {:halt, {:error, {:invalid_layout, :beam_forbidden}}}
@@ -192,7 +194,7 @@ defmodule Flezha.Plugin.Installer.Package do
           {:cont, :ok}
 
         true ->
-          {:halt, {:error, {:invalid_layout, {:unexpected_source, rel}}}}
+          {:halt, {:error, {:invalid_layout, :unexpected_source, rel}}}
       end
     end)
   end

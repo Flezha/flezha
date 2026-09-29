@@ -116,7 +116,7 @@ class-body declaration raises `NoMethodError` naming what replaced it.
   on an edge or a merge, has one Cell per key; one writing `cell_keys` has that
   static set; anything else has a single Cell. One class can be keyed in one
   operator and single in another. A `cell_keys` tasklet fed by `key_by` is
-  refused as `KeyByOnUnkeyableTarget`.
+  refused as `topology.key_by_on_unkeyable_target`.
 - **Eviction.** `idle_ttl_seconds`, a positive whole number of seconds, evicts
   a keyed Cell that has been idle that long; unset, none is evicted.
   `max_cells` caps a keyed tasklet's Cells.
@@ -219,9 +219,9 @@ so is a `sink`, `input`, `codec` or tasklet setting written beside `channels`.
 `factory_id` must be written: the factory id is an address a user types,
 and a class rename must not move it. A class without one is refused at
 `register_factory`, where this SDK places every refusal. So is a class defining
-both `run` and `channels`, naming `ShortFormWithTopology`, and one defining
+both `run` and `channels`, naming `topology.short_form_with_topology`, and one defining
 neither. A second operator under a factory id the runner already holds, short
-or full, fails naming `DuplicateFactoryId` when the runner declares its
+or full, fails naming `topology.duplicate_factory_id` when the runner declares its
 classes.
 
 ### Bounded settings
@@ -232,29 +232,29 @@ retries a failing tasklet on the edge that feeds it: `retry_max` and
 `retry_max(1)` is fail-fast. Its class body declares `loop_mode` (`:once`,
 `:per_input`, `:chained`), `rollback_mode` (`:all_or_nothing`,
 `:keep_progress`), `max_duration_ms` and `sync_durability`;
-a mode outside its values raises `Flezha::DeclarationError` naming the setting
+a mode outside its values raises `Flezha::Error` (`topology.invalid_mode`) naming the setting
 and the value where the class body writes it, on the full form and the short
 form alike.
 
 Every builder call reaches the core whatever the kind, and a setting of the
 other kind is refused under its own name when the runner declares its
-classes: `effectively_once` on a bounded operator as `EffectivelyOnceOnBounded`, any
-checkpoint call as `CheckpointOnBounded`, `correction_window` as
-`CorrectionWindowOnBounded`, and `sync_durability` in a
-`Flezha::UnboundedOperator` body as `SyncDurabilityOnUnbounded`. The class-body
+classes: `effectively_once` on a bounded operator as `topology.effectively_once_on_bounded`, any
+checkpoint call as `topology.checkpoint_on_bounded`, `correction_window` as
+`topology.correction_window_on_bounded`, and `sync_durability` in a
+`Flezha::UnboundedOperator` body as `topology.sync_durability_on_unbounded`. The class-body
 flag is the one spelling of synchronous durability; the builder has no such
 call.
 
 Both kinds' class bodies take `persistent` (default `true`) and the
 `sleep_when_idle` flag, which defaults to `persistent` on a bounded operator and to off
 on an unbounded operator; `sleep_when_idle` with `persistent false` is refused as
-`SleepWithoutPersistence` when the runner declares its classes.
+`topology.sleep_without_persistence` when the runner declares its classes.
 
 A bounded tasklet registers timers as an unbounded tasklet does, and a firing
 runs as a pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-bounded-operator));
 only inside a `compensate` hook do `ctx.timer_after`, `ctx.timer_at_event_time`
-and `ctx.cancel_timer` raise a `Flezha::EmitError` naming `TimersUnavailable`. A `ctx.spawn_bounded` naming an unbounded factory
-resolves its handle to `Flezha::SpawnError::FactoryNotBounded`.
+and `ctx.cancel_timer` raise a `Flezha::Error` with the code `runtime.timers_unavailable`. A `ctx.spawn_bounded`
+naming an unbounded factory resolves its handle to a `Flezha::Error` with the code `operator.factory_not_bounded`.
 
 ### Channel payloads
 

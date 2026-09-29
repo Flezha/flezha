@@ -182,3 +182,17 @@ A caller SHALL NOT be given a separate dispatch table, a separate policy point o
 - **THEN** the call SHALL be refused at the policy point, and the refusal SHALL
   NOT depend on any per-caller list of permitted functions
 
+### Requirement: A published function SHALL answer a failure as `%Flezha.Error{}`
+
+Every function on the published consumer surface SHALL answer a failure as `{:error, %Flezha.Error{}}`, carrying the catalogue code, the class, the message, the details and the hint. It SHALL never answer a raw reason term or a text reason. This includes the two context-free functions: `Flezha.AuthZ.TokenStore.verify/1` answers `authz.token_*` codes. The conversion SHALL be made once, at `Flezha.AuthZ.Verb.run/5` for every bound function. Internal modules keep their reason terms.
+
+#### Scenario: A consumer matches on the code
+
+- **WHEN** a consumer calls `Flezha.Service.Dlq.drop/2` with an entry that does not exist
+- **THEN** it SHALL receive `{:error, %Flezha.Error{code: "dlq.not_found", class: :not_found}}`
+
+#### Scenario: No raw term reaches a consumer
+
+- **WHEN** the consumer-surface test drives each published module's refusals
+- **THEN** every `{:error, _}` answer SHALL carry a `%Flezha.Error{}` whose code is in the catalogue
+

@@ -332,7 +332,7 @@ defmodule Flezha.Observability.AuditLogTest do
       tail =
         Task.async(fn ->
           ExUnit.CaptureIO.capture_io(fn ->
-            CliManager.audit_log_render_tail("json", duration_ms: 60_000)
+            CliManager.audit_log_render_tail(output: "json", duration_ms: 60_000)
           end)
         end)
 
@@ -351,7 +351,7 @@ defmodule Flezha.Observability.AuditLogTest do
       {:ok, _} = start_audit_supervisor()
 
       ExUnit.CaptureIO.capture_io(fn ->
-        CliManager.audit_log_render_tail("text", duration_ms: 10)
+        CliManager.audit_log_render_tail(duration_ms: 10)
       end)
 
       assert :sys.get_state(Writer).subscribers == %{}
@@ -644,15 +644,19 @@ defmodule Flezha.Observability.AuditLogTest do
       configure(dir)
       {:ok, _} = start_audit_supervisor()
 
-      assert {:error, :invalid_caller_context} = AuditSvc.list_files(%{})
-      assert {:error, :invalid_caller_context} = AuditSvc.stats(%{})
+      assert {:error, %Flezha.Error{code: "authz.invalid_caller_context"}} =
+               AuditSvc.list_files(%{})
+
+      assert {:error, %Flezha.Error{code: "authz.invalid_caller_context"}} = AuditSvc.stats(%{})
     end
 
     test "audit_log_disabled returned when subsystem off", %{dir: dir} do
       configure(dir, enabled: false)
 
-      assert {:error, :audit_log_disabled} = AuditSvc.list_files(%{source: :cli})
-      assert {:error, :audit_log_disabled} = AuditSvc.stats(%{source: :cli})
+      assert {:error, %Flezha.Error{code: "audit.disabled"}} =
+               AuditSvc.list_files(%{source: :cli})
+
+      assert {:error, %Flezha.Error{code: "audit.disabled"}} = AuditSvc.stats(%{source: :cli})
     end
 
     test "rotate forces immediate rotation", %{dir: dir} do

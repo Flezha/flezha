@@ -342,6 +342,7 @@ Context lifecycle: `flz_core_context_new(shim_schema_version)` →
 | Export | Role |
 | ------ | ---- |
 | `flz_core_schema_version`, `flz_core_context_new`, `flz_core_init_error`, `flz_core_last_error` | Version negotiation and error text |
+| `flz_core_error_document` | The JSON error document the catalogue renders for a code and its details: how a host renders a refusal it makes itself |
 | `flz_core_declare_class`, `flz_core_start`, `flz_core_shutdown`, `flz_core_context_free` | Context lifecycle |
 | `flz_core_poll`, `flz_core_complete`, `flz_core_abandon`, `flz_core_wait_starvation`, `flz_core_buf_free` | The loop |
 | `flz_core_spawn_request`, `flz_core_spawn_result` | Tasklet-requested spawn: a request that answers a handle at once, and a read of that handle with a timeout (0 never waits) |
@@ -426,7 +427,7 @@ At runtime the full contract crosses the boundary:
   ladder, and the end-of-slice broadcast defers behind staged slice members.
 - **Tiers ride completions.** `ItemEffect` carries changes, outputs, timer ops,
   `checkpoint` and a bounded tasklet's `complete` request (an unbounded operator's item
-  carrying one fails, non-retryable, naming `CompleteOutsideBounded`); the core builds effect records (offsets are
+  carrying one fails, non-retryable, naming `runtime.complete_outside_bounded`); the core builds effect records (offsets are
   core-authoritative), stages checkpoint intervals, holds a
   failed-but-retryable attempt's changes out of the flusher's reach, and mints
   DLQ entries where the typed layer does.

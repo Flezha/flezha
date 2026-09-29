@@ -93,8 +93,8 @@ The entry channel takes the instance's first message, from a spawn,
 tasklets' initial state, as on an unbounded operator. A class declaring no tasklet is
 refused at registration, and so is one whose `channels` set the unbounded operator's
 `effectively_once`, a checkpoint flag or `correction_window`
-(`EffectivelyOnceOnBounded`, `CheckpointOnBounded`,
-`CorrectionWindowOnBounded`). A tasklet's retry ladder is its input edge's
+(`topology.effectively_once_on_bounded`, `topology.checkpoint_on_bounded`,
+`topology.correction_window_on_bounded`). A tasklet's retry ladder is its input edge's
 `retry_max` / `retry_backoff_ms`, as on an unbounded operator, and its timers fire as passes
 of their own ([`cell_timers.md`](cell_timers.md#timers-in-a-bounded-operator)). A tasklet ends a
 looping instance with `ctx.complete(result)`. When the job ends, the SDK emits
@@ -112,7 +112,7 @@ and `SLEEP_WHEN_IDLE`, `false` on `UnboundedOperator` and `Self::PERSISTENCE_ENA
 on `BoundedOperator`. An instance whose class sleeps is evicted after
 `FLEZHA_PARK_IDLE_MS` of idleness and wakes on its next message with its Cells
 restored; declaring it with persistence off fails `register_factory` with
-`SleepWithoutPersistence`.
+`topology.sleep_without_persistence`.
 
 ## Public API
 
@@ -128,16 +128,16 @@ use flezha_runner::{
 and `run()` is `start()` + `await_termination()`. The controller spawns
 instances later with `flz operator start`. `Flezha::current_runner()` reaches
 the started runner from code that does not control startup order. Every
-fallible call returns `FlezhaError`:
+fallible call returns `FlezhaError`, whose `code()` is one of these:
 
 | Refusal | When |
 |---|---|
-| `DuplicateFactoryId` | a second `register_factory` of the same factory id on one runner — the declared set is per runner and starts empty, even though the class registry is process-global |
-| `NotDefined` | `unregister_factory` names a factory this runner never declared |
-| `OperatorTypeInUse { live_instances }` | `unregister_factory` while live instances exist; the type stays defined |
-| `AlreadyRunning` | a second `start()` in the process — at most one started runner per process |
-| `InvalidTopology` / `InvalidBounded` | reported at the declaring call site, never a panic |
-| `NotStarted` | `operators()` / `await_termination()` on a never-started runner |
+| `topology.duplicate_factory_id` | a second `register_factory` of the same factory id on one runner — the declared set is per runner and starts empty, even though the class registry is process-global |
+| `runtime.class_not_registered` | `unregister_factory` names a factory this runner never declared |
+| `runtime.operator_type_in_use` | `unregister_factory` while live instances exist; the type stays defined |
+| `runtime.runner_already_running` | a second `start()` in the process — at most one started runner per process |
+| `topology.*` | reported at the declaring call site, never a panic |
+| `runtime.runner_not_started` | `operators()` / `await_termination()` on a never-started runner |
 
 Starting with zero declared classes is legal, and `register_factory` /
 `unregister_factory` stay callable after `start()`; a post-start change ships
@@ -313,12 +313,12 @@ window. Rust names no entry codec — an entry decodes by its declared type — 
 the short form takes no `codec` key.
 
 The refusals are compile errors. A `sink` on a unit return, or on a block
-whose `Output` is `()`, fails with a message beginning `SinkWithoutOutput`; a
+whose `Output` is `()`, fails with a message beginning `topology.sink_without_output`; a
 function with a `&mut` parameter fails with one beginning
 `ShortFormStateOnFunction`; a missing `id` names the attribute. A hand-written
 `UnboundedOperator` or `BoundedOperator` impl beside a short form is rustc's
 conflicting-implementation error, which the contract calls
-`ShortFormWithTopology`. `#[flezha_runner::tasklet]` declares a tasklet only:
+`topology.short_form_with_topology`. `#[flezha_runner::tasklet]` declares a tasklet only:
 it refuses `sink`, `input`, `kind` and `on_full`, a function target, and a
 block that also carries a short-form attribute.
 
@@ -382,7 +382,7 @@ or `mailbox_capacity` its `*_OVERRIDDEN` flag. A forgotten flag silently keeps
 the hook off, which is the reason the everyday form derives them. `CLOCK` is
 `ClockKind::EventTime` for a tasklet that writes `event_time`, whose default
 panics naming the tasklet; `ClockKind::Logical` needs a real `Change`, or
-registration fails with `UnservableClock`.
+registration fails with `topology.unservable_clock`.
 
 A stateful Tasklet names its `Change`, a type implementing `Change<State>` whose
 `apply_to` performs the mutation. A change enum is encoded by variant index,
@@ -402,7 +402,7 @@ The Java SDK is the same model with one authoring form: the author's class
 implements `Tasklet<Input, State, Output>` and carries `@Tasklet.Spec` for its
 name and settings, and the three types are read off its `implements` clause,
 so bounds Rust checks at compile time become
-`UnboundedOperatorConfigurationException`s from `registerFactory(...)`;
+`FlezhaException`s from `registerFactory(...)`, each carrying its `topology.*` code;
 a written `cellsFor`, read off the class at registration, replaces the
 `CELLS_FOR_OVERRIDDEN` const;
 dynamic mode is read off the wiring on both sides, with
@@ -642,14 +642,14 @@ layer (for example `Flezha.Plugin.Provider.Kafka` with its `:channel` option)
 gates on `metadata["channel"]`.
 
 `ctx.emit_with_meta::<C>(value, meta)` appends user metadata to the plugin
-frame only; it returns `MetadataNotAllowedOnInterTaskletChannel` on an
-inter-tasklet channel without a sink, `ReservedMetadataKey` for any key
+frame only; it returns `runtime.metadata_on_inter_tasklet_channel` on an
+inter-tasklet channel without a sink, `runtime.reserved_metadata_key` for any key
 under the reserved `flz.` prefix, and silently replaces a user-supplied
 `channel` entry with the real channel name. A channel declared `.keyed()`
 (requires a sink) stamps `flz.cell` / `flz.seq` / `flz.key` on every plugin
 frame: `emit` carries the Cell's own key (a single-cell Tasklet fails
-with `KeyRequiredOnKeyedChannel`), `emit_keyed(key, value)` carries a
-replay-stable natural key (`KeyNotAllowedOnNonKeyedChannel` elsewhere).
+with `runtime.key_required_on_keyed_channel`), `emit_keyed(key, value)` carries a
+replay-stable natural key (`runtime.key_not_allowed_on_non_keyed_channel` elsewhere).
 
 ### Hybrid and terminal: one `sink` method
 

@@ -5,7 +5,8 @@ defmodule Flezha.AuthZ do
   Every caller-action function in `Flezha.Service.*` invokes
   `Flezha.AuthZ.authorize/3` at the top of its body before any side
   effect. The function returns `:ok` or
-  `{:error, {:forbidden, reason}}`.
+  `{:error, {:forbidden, reason}}`, and `{:error, {:forbidden,
+  :bootstrap_pending, token_path}}` while the bootstrap is unclaimed.
 
   Enforcement is the default posture (`enforcement_posture/0`):
   `authorize/3` returns `:ok` unconditionally only under the explicit
@@ -68,7 +69,6 @@ defmodule Flezha.AuthZ do
           | :namespace_mismatch
           | :cross_namespace_admin_denied
           | :invalid_scope
-          | :bootstrap_pending
 
   @doc """
   Authorize an action against a caller context and a scope.
@@ -79,7 +79,9 @@ defmodule Flezha.AuthZ do
   audit-log subsystem is configured to consume them.
   """
   @spec authorize(caller_context(), action(), Scope.t()) ::
-          :ok | {:error, {:forbidden, forbid_reason()}}
+          :ok
+          | {:error, {:forbidden, forbid_reason()}}
+          | {:error, {:forbidden, :bootstrap_pending, String.t()}}
   def authorize(caller_context, action, scope) do
     case enforcement_posture() do
       :open ->
@@ -128,8 +130,9 @@ defmodule Flezha.AuthZ do
         do_authorize(caller_context, action, scope)
 
       ctx ->
-        emit_denial(Map.get(ctx, :principal), :bootstrap_pending, action, scope)
-        {:error, {:forbidden, :bootstrap_pending}}
+        refusal = {:forbidden, :bootstrap_pending, Config.bootstrap_token_path()}
+        emit_denial(Map.get(ctx, :principal), refusal, action, scope)
+        {:error, refusal}
     end
   end
 
@@ -325,8 +328,12 @@ defmodule Flezha.AuthZ do
   end
 
   # `caller_roles` is the set the refusal was judged with, and `nil` for a
-  # refusal that came before any role was resolved.
+  # refusal that came before any role was resolved. `reason` (a forbid reason,
+  # or the whole refusal) is recorded as the code a caller of the refused act
+  # receives.
   defp emit_denial(principal, reason, action, scope, roles \\ nil) do
+    refusal = if is_atom(reason), do: {:forbidden, reason}, else: reason
+
     Bus.emit(
       Signal.new(%{
         kind: :event,
@@ -334,7 +341,7 @@ defmodule Flezha.AuthZ do
         name: :authorization_denied,
         metadata: %{
           principal: principal,
-          reason: reason,
+          reason: Flezha.Error.from_reason(refusal, action).code,
           action: action,
           scope: scope,
           caller_roles: roles

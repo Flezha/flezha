@@ -54,7 +54,7 @@ defmodule Flezha.Service.CliManager.ListenTest do
           })
 
           forward("again", %{"input_type" => "2"})
-          CliManager.operator_listen("ns", "op", "output", "text", duration_ms: 50)
+          CliManager.operator_listen("ns", "op", "output", duration_ms: 50)
         end)
 
       assert out ==
@@ -68,7 +68,7 @@ defmodule Flezha.Service.CliManager.ListenTest do
         in_caller(fn ->
           forward("hello", %{"channel" => "echo", "flz.key" => "k"})
           forward(<<255, 0>>, %{"flz.key" => <<255>>})
-          CliManager.operator_listen("ns", "op", "output", "json", duration_ms: 50)
+          CliManager.operator_listen("ns", "op", "output", output: "json", duration_ms: 50)
         end)
 
       assert out |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1) == [
@@ -86,7 +86,7 @@ defmodule Flezha.Service.CliManager.ListenTest do
     end
 
     test "the forwarder is attached to the chain the direction names, then detached" do
-      in_caller(fn -> CliManager.operator_listen("", "op", "input", "text", duration_ms: 10) end)
+      in_caller(fn -> CliManager.operator_listen("", "op", "input", duration_ms: 10) end)
 
       assert [{:enable, {id, plugin, listener}}, {:detach, id}] = calls()
 
@@ -102,7 +102,7 @@ defmodule Flezha.Service.CliManager.ListenTest do
     test "a heartbeat is answered while the loop runs", %{parent: test} do
       in_caller(fn ->
         send(self(), {:heartbeat_keepalive, test})
-        CliManager.operator_listen("ns", "op", "output", "text", duration_ms: 50)
+        CliManager.operator_listen("ns", "op", "output", duration_ms: 50)
       end)
 
       assert_received {:heartbeat_keepalive, :ok}
@@ -114,7 +114,7 @@ defmodule Flezha.Service.CliManager.ListenTest do
       listener =
         spawn(fn ->
           Process.group_leader(self(), leader)
-          CliManager.operator_listen("ns", "op", "output", "text", duration_ms: 60_000)
+          CliManager.operator_listen("ns", "op", "output", duration_ms: 60_000)
         end)
 
       assert_receive {:call, :enable, {id, _plugin, ^listener}}
@@ -129,7 +129,7 @@ defmodule Flezha.Service.CliManager.ListenTest do
       listener =
         spawn(fn ->
           capture_io(fn ->
-            CliManager.operator_listen("ns", "op", "output", "text", duration_ms: 60_000)
+            CliManager.operator_listen("ns", "op", "output", duration_ms: 60_000)
           end)
         end)
 
@@ -146,33 +146,28 @@ defmodule Flezha.Service.CliManager.ListenTest do
     end
 
     test "a refused enable is reported, and whatever it left is detached" do
-      for {answer, said} <- [
-            {{:error, "enabled on 1 of 2 partitions; op#p1: :not_found"},
-             "enabled on 1 of 2 partitions"},
-            {{:ok, :already_enabled}, "is already in use"}
+      for {answer, said, exit} <- [
+            {{:error, {:group_enable_partial, 1, 2, ["op#p1"]}},
+             "enabled on 1 of 2 partitions and failed on op#p1 (plugin.group_enable_partial)", 7},
+            {{:ok, :already_enabled}, "(plugin.id_taken)", 6}
           ] do
         stub(PluginManager, :enable_plugin, fn _id, _plugin -> answer end)
 
         {reason, err} =
-          refused(fn -> CliManager.operator_listen("ns", "op", "output", "text", []) end)
+          refused(fn -> CliManager.operator_listen("ns", "op", "output", []) end)
 
-        assert reason == {:shutdown, 1}
-        assert err =~ "listening to 'op': "
+        assert reason == {:shutdown, exit}
         assert err =~ said
         assert [{:detach, "io_listener_" <> _}] = calls()
       end
     end
 
-    test "a direction or format it does not know is refused before anything is attached" do
-      for {direction, format, word} <- [
-            {"sideways", "text", "direction"},
-            {"output", "xml", "format"}
-          ] do
-        {reason, err} =
-          refused(fn -> CliManager.operator_listen("ns", "op", direction, format, []) end)
+    test "a direction it does not know is refused before anything is attached" do
+      for {direction, word} <- [{"sideways", "direction"}] do
+        {reason, err} = refused(fn -> CliManager.operator_listen("ns", "op", direction, []) end)
 
-        assert reason == {:shutdown, 1}
-        assert err =~ "unknown #{word}"
+        assert reason == {:shutdown, 2}
+        assert err =~ "unknown #{word} 'sideways'"
       end
 
       assert calls() == []

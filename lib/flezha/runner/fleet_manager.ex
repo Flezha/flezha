@@ -379,7 +379,7 @@ defmodule Flezha.Runner.FleetManager do
   def handle_call({:disconnect_runner, namespace, runner_id}, _from, state) do
     case get_in(state.runner_namespaces, [namespace, runner_id]) do
       nil ->
-        {:reply, {:error, "runner not found"}, state}
+        {:reply, {:error, {:runner_not_found, runner_id}}, state}
 
       _ ->
         Logger.info("Disconnecting runner #{runner_id} from namespace #{namespace}")

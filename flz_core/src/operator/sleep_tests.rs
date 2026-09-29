@@ -14,6 +14,7 @@ use crossbeam::channel::{unbounded, Receiver};
 use crate::operator::instance::OperatorInstance;
 use crate::runner::{RunnerMessage, RunnerNode};
 use crate::test_support::host_class;
+use crate::ErrorModel;
 
 const WINDOW_MS: u64 = 150;
 
@@ -216,9 +217,7 @@ fn sleeping_without_persistence_is_refused_by_name() {
                    "persistent":false,"sleep_when_idle":true,
                    "channels":[{"name":"in","kind":"entry","chains":[[{"link":"into","tasklet":0}]]}],
                    "tasklets":[{"name":"p0"}]}"#;
-    let refusal = crate::host::register_host_class_json(json.as_bytes())
-        .expect_err("refused")
-        .to_string();
-    assert!(refusal.contains("SleepWithoutPersistence"), "{refusal}");
+    let refusal = crate::host::register_host_class_json(json.as_bytes()).expect_err("refused");
+    assert_eq!(refusal.code(), "topology.sleep_without_persistence");
     assert!(crate::operator::registry::get_class("sleep_refused").is_none());
 }

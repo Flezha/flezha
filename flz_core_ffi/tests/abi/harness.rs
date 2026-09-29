@@ -107,6 +107,13 @@ pub fn last_error(ctx: *mut FlzContext) -> String {
     last_error_of(CtxPtr::of(ctx))
 }
 
+/// The last error the context recorded, as the document it is.
+pub fn last_document(ctx: *mut FlzContext) -> flz_transport::errors::FlezhaError {
+    let document = last_error(ctx);
+    flz_transport::errors::FlezhaError::from_document(&document)
+        .unwrap_or_else(|| panic!("a failure leaves a JSON error document, read {document}"))
+}
+
 pub fn ok_effect(consumed_offset: Option<u64>, timers: Vec<schema::TimerOp>) -> schema::ItemEffect {
     schema::ItemEffect {
         verdict: schema::Verdict::Ok,

@@ -26,6 +26,8 @@ bytes.workspace = true
 ring = "0.17"
 rustls.workspace = true
 rustls-pemfile.workspace = true
+# The error catalogue, `errors.json`, read once per process.
+serde_json.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

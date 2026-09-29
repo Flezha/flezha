@@ -18,7 +18,7 @@ use flz_core::schema;
 
 use crate::{
     FlzContext, FLZ_OK, FLZ_POLL_ACTIVATION, FLZ_POLL_SHUTTING_DOWN, FLZ_POLL_TIMEOUT,
-    FLZ_SPAWN_FAILED, FLZ_SPAWN_PENDING, FLZ_STARVATION_OBSERVED,
+    FLZ_SPAWN_PENDING, FLZ_STARVATION_OBSERVED,
 };
 
 /// The entry points that can park the calling thread. A host whose unit of
@@ -42,7 +42,8 @@ pub const BLOCKING_ENTRY_POINTS: &[&str] = &[
 ];
 
 /// What a binding can raise: the context's last error, a creation-time
-/// schema mismatch, or a value the binding could not map.
+/// schema mismatch, or a value the binding could not map. The first two carry
+/// the core's JSON error document.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refusal {
     Core(String),
@@ -62,6 +63,20 @@ impl Refusal {
             Refusal::Core(m) | Refusal::Schema(m) | Refusal::Shape(m) => m,
         }
     }
+}
+
+/// `message` as a JSON error document: itself when it already is one, and
+/// otherwise `internal.uncatalogued` naming it, for a failure a binding words
+/// itself (a value it could not map).
+pub fn document(message: String) -> String {
+    if flz_core::FlezhaError::from_document(&message).is_some() {
+        return message;
+    }
+    flz_core::FlezhaError::with(
+        flz_transport::errors::UNCATALOGUED,
+        [("reason", message.into())],
+    )
+    .json()
 }
 
 impl fmt::Display for Refusal {
@@ -147,10 +162,8 @@ pub fn c_string(what: &str, value: &str) -> Result<CString, Refusal> {
 /// Run one entry point that hands out a buffer, and read what it handed out.
 ///
 /// `hands_out` is every status that means a buffer was produced —
-/// [`FLZ_POLL_ACTIVATION`] for poll and the bounded operator receive, [`FLZ_OK`] and
-/// [`FLZ_SPAWN_FAILED`] for the spawn result, both of [`FLZ_OK`] and
-/// [`FLZ_ERR`] for the topology check, whose answer is a verdict either way;
-/// every other status leaves the out pointers untouched. `read` runs over the
+/// [`FLZ_POLL_ACTIVATION`] for poll and the local output read, [`FLZ_OK`]
+/// for the rest; every other status leaves the out pointers untouched. `read` runs over the
 /// borrowed slice BEFORE `flz_core_buf_free`, so no caller copies first.
 pub fn with_buffer<T>(
     hands_out: &[i32],
@@ -239,23 +252,17 @@ pub fn declare_class(ctx: CtxPtr, json: &[u8]) -> Result<(), Refusal> {
 }
 
 /// Ask for a declaration's verdict without registering it. `Ok` carries the
-/// derived declaration as JSON, `Err` the refusal the core rendered — the
-/// veneer's `validate()` is this call and nothing else.
-pub fn check_class(ctx: CtxPtr, json: &[u8]) -> Result<Vec<u8>, (Refusal, Vec<u8>)> {
+/// derived declaration as JSON, `Err` the refusal whose `details.issues` lists
+/// every issue — the veneer's `validate()` is this call and nothing else.
+pub fn check_class(ctx: CtxPtr, json: &[u8]) -> Result<Vec<u8>, Refusal> {
     let (status, answer) = with_buffer(
-        &[crate::FLZ_OK, crate::FLZ_ERR],
+        &[FLZ_OK],
         |buf, len| unsafe {
             crate::flz_core_check_class(ctx.get(), json.as_ptr(), json.len(), buf, len)
         },
         <[u8]>::to_vec,
     );
-    let answer = answer.unwrap_or_default();
-    // The refusal carries BOTH halves: the rendered message a reader gets, and
-    // the verdict a caller reads names off. Handing back only one made every
-    // binding fetch the other itself.
-    verdict(ctx, status)
-        .map_err(|refusal| (refusal, answer.clone()))
-        .map(|()| answer)
+    verdict(ctx, status).map(|()| answer.unwrap_or_default())
 }
 
 pub fn start(ctx: CtxPtr, namespace: &CStr) -> Result<(), Refusal> {
@@ -346,18 +353,18 @@ pub fn spawn_request(
 }
 
 /// Read a spawn handle, waiting up to `timeout_ms`: `None` while pending,
-/// otherwise the answer as JSON, carrying `outcome` when it resolved and
-/// `error` when it failed. A released handle is a refusal.
+/// otherwise the resolved answer as JSON. A failed spawn, and a released
+/// handle, is a refusal.
 pub fn spawn_result(ctx: CtxPtr, handle: u64, timeout_ms: u64) -> Result<Option<String>, Refusal> {
     let (status, answer) = with_buffer(
-        &[FLZ_OK, FLZ_SPAWN_FAILED],
+        &[FLZ_OK],
         |out, out_len| unsafe {
             crate::flz_core_spawn_result(ctx.get(), handle, timeout_ms, out, out_len)
         },
         |bytes| String::from_utf8_lossy(bytes).into_owned(),
     );
     match status {
-        FLZ_OK | FLZ_SPAWN_FAILED => Ok(answer),
+        FLZ_OK => Ok(answer),
         FLZ_SPAWN_PENDING => Ok(None),
         _ => Err(core(ctx)),
     }

@@ -5,19 +5,15 @@ defmodule Flezha.Schedule.CronTest do
 
   describe "parse/1" do
     test "rejects a wrong field count" do
-      assert {:error, msg} = Cron.parse("* * * *")
-      assert msg =~ "5 fields"
+      assert {:error, {:cron_field_count, "* * * *", 4}} = Cron.parse("* * * *")
     end
 
     test "rejects out-of-range and malformed elements, naming the field" do
-      assert {:error, msg} = Cron.parse("60 * * * *")
-      assert msg =~ "minute field"
+      assert {:error, {:cron_invalid_field, _, "minute", _, _, _}} = Cron.parse("60 * * * *")
 
-      assert {:error, msg} = Cron.parse("* 24 * * *")
-      assert msg =~ "hour field"
+      assert {:error, {:cron_invalid_field, _, "hour", _, _, _}} = Cron.parse("* 24 * * *")
 
-      assert {:error, msg} = Cron.parse("* * 0 * *")
-      assert msg =~ "day-of-month field"
+      assert {:error, {:cron_invalid_field, _, "day-of-month", _, _, _}} = Cron.parse("* * 0 * *")
 
       assert {:error, _} = Cron.parse("a * * * *")
       assert {:error, _} = Cron.parse("5-1 * * * *")
@@ -25,13 +21,10 @@ defmodule Flezha.Schedule.CronTest do
     end
 
     test "rejects a step attached to a single value" do
-      assert {:error, msg} = Cron.parse("30/10 * * * *")
-      assert msg =~ "minute field"
+      assert {:error, {:cron_invalid_field, _, "minute", _, _, _}} = Cron.parse("30/10 * * * *")
       # An explicit `/1` is still a stepped single value, not a bare `30`.
-      assert {:error, msg} = Cron.parse("30/1 * * * *")
-      assert msg =~ "minute field"
-      assert {:error, msg} = Cron.parse("* 5/2 * * *")
-      assert msg =~ "hour field"
+      assert {:error, {:cron_invalid_field, _, "minute", _, _, _}} = Cron.parse("30/1 * * * *")
+      assert {:error, {:cron_invalid_field, _, "hour", _, _, _}} = Cron.parse("* 5/2 * * *")
 
       assert {:ok, cron} = Cron.parse("30-59/10 * * * *")
       assert Enum.sort(cron.minutes) == [30, 40, 50]

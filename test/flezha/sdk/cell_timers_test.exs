@@ -208,7 +208,9 @@ defmodule Flezha.SDK.CellTimersTest do
     Inbox.input(op, "in", "1", %{})
     assert [{"op-1", "{:ok, " <> _, _}] = frames(1)
     Inbox.input(op, "in", "2", %{})
-    assert [{"op-1", ~s({:error, {:timer_cap_exceeded, "capped_timers", 1}}), _}] = frames(1)
+    assert [{"op-1", refused, _}] = frames(1)
+    assert refused =~ ~s(code: "runtime.timer_cap_exceeded")
+    assert refused =~ ~s(details: %{"max" => 1, "tasklet" => "capped_timers"})
     assert_receive {:timers, %{count: 1}, %{event: :refused, tasklet: "capped_timers"}}, 1_000
     assert Counters.timers_armed(counters) == 1
     assert Timers.size(:sys.get_state(cell!(op, "capped_timers")).timers.pending) == 1

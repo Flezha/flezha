@@ -237,7 +237,7 @@ Every requirement of this capability SHALL hold for a tasklet of a bounded opera
 #### Scenario: The compensate hook still has no timers
 
 - **WHEN** a bounded tasklet's `compensate` hook calls `timer_after`
-- **THEN** the call SHALL be refused with the SDK's `TimersUnavailable` form, as before
+- **THEN** the call SHALL be refused with the SDK's `runtime.timers_unavailable` form, as before
 
 ### Requirement: A firing inside a bounded operator is a trigger of the run
 

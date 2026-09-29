@@ -232,7 +232,7 @@ guarantee.
   longer than `window / ingest rate` delays ingestion; it never wedges it.
 - **Cost-free default.** Operators without the flag keep every path byte-identical. Under the
   tier a slow or unreachable sink backs the outbox up on disk, never in memory.
-- **Bounded operators** do not declare the tier (`EffectivelyOnceOnBounded`): a durable
+- **Bounded operators** do not declare the tier (`topology.effectively_once_on_bounded`): a durable
   bounded operator's Cells write the same effect record as their ordinary durability, released at the
   stage commit below.
 
@@ -269,7 +269,7 @@ inputs into one coherent push — a window that only closes on its boundary — 
 recovery work after a crash, and the cadence at which source credit is minted. An operator
 that never checkpoints stops truncating its input log and eventually parks its own source.
 `checkpoint_ack()` without `effectively_once()` is refused at build time
-(`CheckpointAckWithoutTier` / `checkpointAckWithoutTier()`), and the controller's dataflow-stop
+(`topology.checkpoint_ack_without_tier` / `checkpointAckWithoutTier()`), and the controller's dataflow-stop
 watchdog skips a checkpoint class — silence between checkpoints is its steady state.
 
 ## Bounded operators: one record, released at the stage commit
@@ -390,7 +390,7 @@ kind. An opted-out class keeps its waiting messages in memory only. Mechanics:
 ## Sleeping instances
 
 Sleeping when idle is a class setting of both kinds, `sleep_when_idle`: on by default for a
-bounded operator whose persistence is on, off for an unbounded operator, and refused as `SleepWithoutPersistence` on a
+bounded operator whose persistence is on, off for an unbounded operator, and refused as `topology.sleep_without_persistence` on a
 class whose persistence is off. An instance whose Cells hold nothing queued, in flight, retrying,
 unflushed or timed, idle for `FLEZHA_PARK_IDLE_MS` (default ten minutes), ships `IterPark` and is
 evicted; the controller writes its park record first. A bounded operator sleeps only at a committed

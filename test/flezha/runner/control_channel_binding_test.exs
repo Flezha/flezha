@@ -87,7 +87,7 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
     HubManager
     |> stub(:get_pid, fn
       @ns, ^operator_id -> {:ok, overwatch}
-      _ns, _id -> {:error, "no pid found"}
+      ns, id -> {:error, {:operator_not_found, ns, id}}
     end)
 
     # A refusal tells the sending runner to remove its copy.
@@ -219,7 +219,7 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
     %RunnerCommands.CommandRequest{command: {:task_commit_response, response}} =
       ControlFrameTestHelper.decode_request(reply)
 
-    assert {response.error, journaled?(op)} == {"not the owner of #{op}", false}
+    assert {response.error.code, journaled?(op)} == {"commit.not_owner", false}
     assert_received {:rem_operator, ^runner_b, ^op}
   end
 

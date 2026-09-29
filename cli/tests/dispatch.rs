@@ -118,10 +118,8 @@ fn every_command_refuses_an_unknown_subcommand_by_name() {
         // The refusal names the word it refused and offers every verb the
         // table declares — it is rendered from that table, so a verb added to
         // it is offered without a sentence being edited.
-        let named = verbs
-            .iter()
-            .all(|verb| stderr.contains(&format!("'{}'", verb)));
-        if !stderr.contains("'bogus'") || !named {
+        let named = verbs.iter().all(|verb| stderr.contains(verb));
+        if !stderr.contains("'bogus'") || !stderr.contains("(usage.unknown_command)") || !named {
             wrong.push(format!("flz {} bogus said: {}", command, stderr.trim()));
         }
     }
@@ -175,6 +173,22 @@ fn plugin_refuses_the_help_flags_it_never_accepted() {
             "flz plugin {} must stay a refusal",
             spelling
         );
-        assert!(String::from_utf8_lossy(&out.stderr).contains("Invalid argument"));
+        assert!(String::from_utf8_lossy(&out.stderr).contains("(usage.unknown_command)"));
     }
+}
+
+/// A refusal of the command line honours `--json` wherever it was written: one
+/// JSON line on stderr, nothing on stdout, the class's exit code, and no
+/// controller reached.
+#[test]
+fn a_command_line_refusal_honours_json() {
+    let out = flz(&["operator", "start", "echo", "--nope", "--json"]);
+    let line = String::from_utf8_lossy(&out.stderr);
+    let doc: serde_json::Value = serde_json::from_str(line.trim()).expect("one JSON line");
+
+    assert_eq!(out.status.code(), Some(2));
+    assert!(out.stdout.is_empty());
+    assert_eq!(doc["error"]["code"], "usage.unknown_option");
+    assert_eq!(doc["error"]["class"], "invalid");
+    assert_eq!(doc["error"]["details"]["option"], "--nope");
 }

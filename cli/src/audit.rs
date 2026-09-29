@@ -1,4 +1,4 @@
-use crate::args::{OptSpec, Positional, Reading, DURATION_MS, JSON_SWITCH, OUTPUT};
+use crate::args::{OptSpec, Positional, Reading, DURATION_MS};
 use crate::dispatch::{self, Command, Missing, Verb};
 use crate::help;
 use crate::rpc::{self, text, Opt};
@@ -11,35 +11,22 @@ const SINCE: OptSpec = OptSpec::number("--since", "--since", "<microseconds>");
 const UNTIL: OptSpec = OptSpec::number("--until", "--until", "<microseconds>");
 const LIMIT: OptSpec = OptSpec::number("--limit", "--limit", "<count>");
 
-/// The three verbs whose whole grammar is a rendering choice.
-const FORMAT: &[OptSpec] = &[OUTPUT, JSON_SWITCH];
-
 pub(crate) const TABLE: Command = Command {
     path: "flz audit",
     help: help::AUDIT,
     verbs: &[
-        Verb::new("list", |read| {
-            rpc::rendered(read, "audit_log_render_list", rpc::DIAGNOSED)
-        })
-        .reading(FORMAT)
-        .screen(help::AUDIT_LIST),
+        Verb::new("list", |read| rpc::bare(read, "audit_log_render_list")).screen(help::AUDIT_LIST),
         Verb::new("read", handle_read)
             .taking(&[Positional::required("<file>")])
-            .reading(&[SOURCE, NAME, SINCE, UNTIL, LIMIT, OUTPUT, JSON_SWITCH])
+            .reading(&[SOURCE, NAME, SINCE, UNTIL, LIMIT])
             .screen(help::AUDIT_READ),
         Verb::new("tail", handle_tail)
-            .reading(&[DURATION_MS, OUTPUT, JSON_SWITCH])
+            .reading(&[DURATION_MS])
             .screen(help::AUDIT_TAIL),
-        Verb::new("stats", |read| {
-            rpc::rendered(read, "audit_log_render_stats", rpc::DIAGNOSED)
-        })
-        .reading(FORMAT)
-        .screen(help::AUDIT_STATS),
-        Verb::new("rotate", |read| {
-            rpc::rendered(read, "audit_log_render_rotate", rpc::DIAGNOSED)
-        })
-        .reading(FORMAT)
-        .screen(help::AUDIT_ROTATE),
+        Verb::new("stats", |read| rpc::bare(read, "audit_log_render_stats"))
+            .screen(help::AUDIT_STATS),
+        Verb::new("rotate", |read| rpc::bare(read, "audit_log_render_rotate"))
+            .screen(help::AUDIT_ROTATE),
     ],
     help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Screen,
@@ -67,19 +54,12 @@ fn handle_read(read: &Reading) {
 
     rpc::run(
         "audit_log_render_read",
-        &[text(read.pos("<file>")), text(read.output_format())],
+        &[text(read.pos("<file>"))],
         &opts,
-        read.token(),
-        rpc::DIAGNOSED,
+        read,
     );
 }
 
 fn handle_tail(read: &Reading) {
-    rpc::run(
-        "audit_log_render_tail",
-        &[text(read.output_format())],
-        &[rpc::window(read)],
-        read.token(),
-        rpc::DIAGNOSED,
-    );
+    rpc::run("audit_log_render_tail", &[], &[rpc::window(read)], read);
 }

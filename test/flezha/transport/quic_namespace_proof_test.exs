@@ -60,7 +60,7 @@ defmodule FlezhaTest.Transport.QuicNamespaceProofTest do
 
     stub(FleetManager, :connect_handler, fn stream_ref, _ns, _payload, transport ->
       send(test_pid, {:connect, transport, TStream.peer_certificate(stream_ref)})
-      {:error, :intercepted_by_test}
+      {:error, :not_admitted}
     end)
 
     port = dial_quic(@ns_a, [{"FLEZHA_NAMESPACE_SECRET", secret(@ns_a)}])

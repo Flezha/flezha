@@ -129,6 +129,13 @@ defmodule FlezhaTest.Helper.SdkOperatorHarness do
     pid
   end
 
+  @doc """
+  The issues a refused registration lists, as `{code, details}` in the order
+  the refusal names them.
+  """
+  def refusal_issues({:error, %Flezha.SDK.Error{details: %{"issues" => issues}}}),
+    do: Enum.map(issues, &{&1["code"], &1["details"]})
+
   @doc "The Cell of `tasklet` at `key`, which must exist."
   def cell!(op, tasklet, key \\ nil) do
     {:ok, pid} = Operator.lookup(op, tasklet, key)

@@ -12,7 +12,6 @@ defmodule Flezha.Service.Cli.Boot do
   alias Flezha.Boot.Readiness
   alias Flezha.Config.Durations
   alias Flezha.Identificator
-  alias Flezha.Service.Cli.Context
   alias Flezha.Service.HubManager
   alias ProcessHub.Service.Recovery
 
@@ -60,12 +59,7 @@ defmodule Flezha.Service.Cli.Boot do
         :ok
 
       {verdict, rows} ->
-        unmet = for %{key: key, met: false} <- rows, do: key
-
-        # `halt!/1` and not `fail!/2`: the container HEALTHCHECK and the
-        # readiness drill both read `boot await: <verdict>`, so the line carries
-        # no `error: ` prefix.
-        Context.halt!("boot await: #{verdict}; unmet: #{Enum.join(unmet, ", ")}")
+        {:error, {:not_ready, verdict, for(%{key: key, met: false} <- rows, do: key)}}
     end
   end
 

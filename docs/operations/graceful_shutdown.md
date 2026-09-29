@@ -104,12 +104,14 @@ stderr; needs the `controller.stop` permission. `--timeout-ms <N>` overrides the
 drain timeout for this invocation; `--no-wait` dispatches the shutdown and exits 0 without
 waiting; `--force` skips quiesce and drain and runs finalise only.
 
-| Exit | Meaning                                                                                 |
-| ---- | --------------------------------------------------------------------------------------- |
-| 0    | Clean shutdown (every Operator migrated to a peer, or `--force` finalised cleanly)      |
-| 1    | Partial drain: the timeout elapsed with Operators still local at finalise              |
-| 2    | Already shutting down, or the coordinator is not running; the in-flight outcome applies |
-| 3    | Controller socket unreachable (controller not running, or wrong socket path)           |
+| Exit | Meaning                                                                                                   |
+| ---- | --------------------------------------------------------------------------------------------------------- |
+| 0    | Clean shutdown (every Operator migrated to a peer, or `--force` finalised cleanly); a stop issued while one is in flight follows it and exits with its outcome |
+| 3    | `controller.unreachable`: the controller is not running, or the socket path is wrong                      |
+| 4    | `authz.*`: refused for want of a token or a role                                                          |
+| 7    | `shutdown.partial_drain`: the timeout elapsed with Operators still local at finalise                      |
+
+Every code is listed in [errors.md](../errors.md).
 
 `flz controller status` reports `shutdown_in_progress`, `shutdown_phase`
 (`:quiesce | :drain | :finalise | nil`), `signal_handler_status` (`:degraded` when the

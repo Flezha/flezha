@@ -163,7 +163,7 @@ defmodule Flezha.Service.OperatorManager do
   bytes for a suffix the caller appends; `mint:` replaces the generator.
   """
   @spec with_generated_id(String.t(), (String.t() -> verdict), keyword()) ::
-          verdict | {:error, String.t()}
+          verdict | {:error, {:no_free_id, String.t(), pos_integer()}}
         when verdict: term()
   def with_generated_id(factory_id, attempt, opts \\ []) do
     reserve = Keyword.get(opts, :reserve, 0)
@@ -173,7 +173,7 @@ defmodule Flezha.Service.OperatorManager do
   end
 
   defp draw_id(factory_id, _mint, _attempt, 0),
-    do: {:error, "no free operator id was found for factory #{factory_id} in #{@id_draws} draws"}
+    do: {:error, {:no_free_id, factory_id, @id_draws}}
 
   defp draw_id(factory_id, mint, attempt, draws) do
     verdict = attempt.(mint.(factory_id))
@@ -189,7 +189,7 @@ defmodule Flezha.Service.OperatorManager do
   defp id_taken?(:duplicate), do: true
   defp id_taken?({:error, :id_taken}), do: true
   defp id_taken?({:error, {:namespace_conflict, _class, _owner}}), do: true
-  defp id_taken?({:error, %{reason: reason}}) when is_binary(reason), do: Init.claim_loss?(reason)
+  defp id_taken?({:error, {:id_in_use, _id}}), do: true
   defp id_taken?(_verdict), do: false
 
   defp locally_startable?(namespace, factory_id) do
@@ -211,12 +211,7 @@ defmodule Flezha.Service.OperatorManager do
   defp route_start(namespace, operator, opts) do
     case capable_nodes(namespace, operator.factory_id) do
       [] ->
-        {:error,
-         %{
-           operator_id: operator.id,
-           node: node(),
-           reason: Admission.cluster_wide_refusal(namespace, operator.factory_id)
-         }}
+        {:error, Admission.cluster_wide_refusal(namespace, operator.factory_id)}
 
       nodes ->
         target = Placement.pick_runner(nodes, operator.id)
@@ -225,7 +220,7 @@ defmodule Flezha.Service.OperatorManager do
           target,
           :start_operator,
           [namespace, operator, [routed: true, generated: Keyword.get(opts, :generated, false)]],
-          &{:error, %{operator_id: operator.id, node: target, reason: &1}}
+          &{:error, &1}
         )
     end
   end
@@ -260,21 +255,10 @@ defmodule Flezha.Service.OperatorManager do
           other
       end
     else
-      {:error, :shutting_down} ->
-        {:error, :shutting_down}
-
-      {:error, {:quota_exceeded, _, _} = qerr} ->
-        {:error, qerr}
-
-      {:error, reason} when is_binary(reason) ->
-        if Init.claim_loss?(reason) do
-          Init.claim_lost(&exist?/2, namespace, operator.id)
-        else
-          {:error, %{operator_id: operator.id, node: node(), reason: reason}}
-        end
-
       {:error, reason} ->
-        {:error, reason}
+        if Init.claim_loss?(reason),
+          do: Init.claim_lost(&exist?/2, namespace, operator.id),
+          else: {:error, reason}
     end
   end
 
@@ -371,9 +355,14 @@ defmodule Flezha.Service.OperatorManager do
       }
 
       case Shutdown.run(:operator, target, Shutdown.stop_timeout_ms()) do
-        {:ok, _report} -> :ok
-        {:partial, %{errors: [{_step, reason} | _]}} -> {:error, reason}
-        {:partial, %{skipped: skipped}} -> {:error, {:timeout, skipped}}
+        {:ok, _report} ->
+          :ok
+
+        {:partial, %{errors: [{step, reason} | _]}} ->
+          {:error, {:stop_failed, operator_id, step, reason}}
+
+        {:partial, %{skipped: skipped}} ->
+          {:error, {:stop_timeout, operator_id, skipped}}
       end
     end)
   end
@@ -421,25 +410,30 @@ defmodule Flezha.Service.OperatorManager do
           :ok
           | {:ok, :absorbed}
           | {:ok, :suspended}
-          | {:error, :not_ready | :not_found | :refused}
+          | {:error, {:not_accepting_input | :input_refused, String.t()} | term()}
 
   @doc """
   Confirming counterpart to `send_io/4`: runs the target's single pre-delivery
   ingest path and answers what happened, so a forwarding sink can tell a
-  terminal outcome from one worth retrying. An unresolvable target is
-  `{:error, :not_found}` — also retryable, since the operator may not be
-  started yet.
+  terminal outcome from one worth retrying. An unresolvable target answers the
+  lookup's own reason — also retryable, since the operator may not be started
+  yet.
   """
   @spec send_io_confirming(String.t(), String.t(), binary(), map(), timeout()) :: ingest_verdict()
   def send_io_confirming(operator_id, namespace, message, metadata, timeout \\ 5_000) do
-    case get_operator_pid(namespace, operator_id) do
-      {:ok, operator_pid} ->
-        GenServer.call(operator_pid, {:ingest, message, metadata}, timeout)
-
-      _err ->
-        {:error, :not_found}
+    with {:ok, operator_pid} <- get_operator_pid(namespace, operator_id) do
+      operator_pid
+      |> GenServer.call({:ingest, message, metadata}, timeout)
+      |> named_verdict(operator_id)
     end
   end
+
+  # The ingest path answers for itself; a caller is told which operator.
+  defp named_verdict({:error, :not_ready}, operator_id),
+    do: {:error, {:not_accepting_input, operator_id}}
+
+  defp named_verdict({:error, :refused}, operator_id), do: {:error, {:input_refused, operator_id}}
+  defp named_verdict(verdict, _operator_id), do: verdict
 
   @doc """
   `send_io_confirming/5` for a source holding many inputs at once, with up to
@@ -559,17 +553,11 @@ defmodule Flezha.Service.OperatorManager do
   defp requested_id(id) when is_binary(id) or is_nil(id), do: id
 
   @typedoc """
-  How a tasklet-requested spawn resolved. `:spawned` and `:delivered` are
-  the two success shapes; the rest report why nothing was spawned. It is
-  answered beside the id the request resolved to.
+  How a tasklet-requested spawn resolved: `:spawned` or `:delivered`, or the
+  refusal that stopped it, carrying the code a `flz operator start` would get.
+  It is answered beside the id the request resolved to.
   """
-  @type spawn_outcome ::
-          :spawned
-          | :delivered
-          | :already_running
-          | :factory_unknown
-          | :factory_not_bounded
-          | {:refused, String.t()}
+  @type spawn_outcome :: :spawned | :delivered | {:refused, Flezha.Error.t()}
 
   @doc """
   Spawn-or-deliver `instance_id` in `namespace`, the controller half of a
@@ -599,9 +587,9 @@ defmodule Flezha.Service.OperatorManager do
   the `operator.send` right with no record, because a delivery happens once per
   event. A refusal of either is audited. A start no local runner can take is
   forwarded by `start_operator/3` inside that judgment, so no peer acts on a
-  request nobody judged. `:already_running`, `:factory_unknown` and
-  `:factory_not_bounded` (a factory its runners announced as an unbounded operator) perform
-  no act and are answered without one.
+  request nobody judged. `operator.already_running`, `operator.factory_unknown`
+  and `operator.factory_not_bounded` (a factory its runners announced as an
+  unbounded operator) perform no act and are answered without one.
   """
   @spec spawn_or_deliver(
           String.t(),
@@ -660,10 +648,11 @@ defmodule Flezha.Service.OperatorManager do
     else
       case factory_kind(namespace, factory_id) do
         {:error, :no_such_factory} ->
-          {:factory_unknown, instance_id}
+          {refused({:factory_unknown, namespace, factory_id}), instance_id}
 
         {:ok, :unbounded} ->
-          {:factory_not_bounded, instance_id}
+          {refused({:factory_kind_mismatch, :bounded, namespace, factory_id, :unbounded}),
+           instance_id}
 
         _bounded_or_refused ->
           spawn_fresh(namespace, instance_id, factory_id, request, caller_context)
@@ -711,30 +700,19 @@ defmodule Flezha.Service.OperatorManager do
       {:ok, %{id: id, outcome: :already_running}} ->
         resolve_running(namespace, id, request, caller_context)
 
-      {:error, reason} ->
-        {refused_start(reason, namespace, factory_id), instance_id}
+      {:error, error} ->
+        {{:refused, error}, instance_id}
     end
   end
 
-  # A start refused on a node where no runner advertises the factory, this one or
-  # a peer the directory still named, is a factory nobody registers. The map
-  # names the node the start ran on; a policy or quota refusal carries none.
-  defp refused_start(%{node: refusing, reason: text} = reason, namespace, factory_id)
-       when is_binary(text) do
-    placement =
-      route_call(refusing, FleetManager, :placement_refusal, [namespace, factory_id], & &1)
-
-    if placement == :no_such_factory, do: :factory_unknown, else: {:refused, inspect(reason)}
-  end
-
-  defp refused_start(reason, _namespace, _factory_id), do: {:refused, inspect(reason)}
+  defp refused(reason), do: {:refused, Flezha.Error.from_reason(reason, :"wire.spawn")}
 
   # `:repeat` is a generated id whose identity already started it.
   defp resolve_running(_namespace, instance_id, %{if_running: :repeat}, _caller_context),
     do: {:spawned, instance_id}
 
   defp resolve_running(_namespace, instance_id, %{if_running: :error}, _caller_context),
-    do: {:already_running, instance_id}
+    do: {refused({:id_in_use, instance_id}), instance_id}
 
   defp resolve_running(namespace, instance_id, %{if_running: :deliver} = request, caller_context) do
     deliver = fn _call ->
@@ -742,7 +720,7 @@ defmodule Flezha.Service.OperatorManager do
     end
 
     case Verb.run(:spawn_deliver, caller_context, [namespace, instance_id], deliver) do
-      {:error, reason} -> {{:refused, inspect(reason)}, instance_id}
+      {:error, error} -> {{:refused, error}, instance_id}
       _delivered_or_absorbed -> {:delivered, instance_id}
     end
   end
@@ -847,7 +825,7 @@ defmodule Flezha.Service.OperatorManager do
   `%{tasklet: name, cell_key: key}`; `%{}` covers every Tasklet). Answers
   `{:ok, json, change_seq}` — the seq the state was serialized at, which may be
   ahead of what is durable — or `{:error, reason}`, including the
-  `{:not_resident, reason}` refusals for a Cell that is not held in memory.
+  `{:not_resident, reason, operator_id}` refusals for a Cell that is not held in memory.
   """
   @spec get_cell_state(binary(), binary(), map()) ::
           {:ok, binary(), non_neg_integer() | nil} | {:error, term()}

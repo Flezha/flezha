@@ -102,9 +102,16 @@ defmodule Flezha.Service.Dlq do
   @doc false
   @spec entry_row(String.t()) :: {:ok, map()} | {:error, term()}
   def entry_row(entry_ref) do
-    with {:ok, entry, payload} <- Store.get(entry_ref) do
-      {:ok,
-       %{namespace: class_namespace(entry["operator_class"]), entry: entry, payload: payload}}
+    case Store.get(entry_ref) do
+      {:ok, entry, payload} ->
+        {:ok,
+         %{namespace: class_namespace(entry["operator_class"]), entry: entry, payload: payload}}
+
+      {:error, :not_found} ->
+        {:error, {:entry_not_found, entry_ref}}
+
+      {:error, _reason} = refused ->
+        refused
     end
   end
 
@@ -115,7 +122,7 @@ defmodule Flezha.Service.Dlq do
   @doc false
   @spec redrive(String.t(), entry(), binary() | nil) :: {:ok, replay_outcome()} | {:error, term()}
   def redrive(entry_ref, entry, payload) do
-    with :ok <- replayable(payload),
+    with :ok <- replayable(entry_ref, payload),
          {:ok, overwatch} <- resolve_overwatch(entry["operator_class"]) do
       generation_before = entry["generation"] || 1
       :ok = Store.mark_replaying(entry_ref)
@@ -132,8 +139,8 @@ defmodule Flezha.Service.Dlq do
   defp class_namespace(nil), do: Namespace.system_name()
   defp class_namespace(operator_class), do: OperatorManager.namespace_of_class(operator_class)
 
-  defp replayable(nil), do: {:error, :payload_not_replayable}
-  defp replayable(_payload), do: :ok
+  defp replayable(entry_ref, nil), do: {:error, {:payload_not_replayable, entry_ref}}
+  defp replayable(_entry_ref, _payload), do: :ok
 
   defp resolve_overwatch(operator_class) do
     case Lookup.overwatch(operator_class) do
@@ -149,7 +156,7 @@ defmodule Flezha.Service.Dlq do
          {:ok, pid} <- OperatorManager.get_operator_pid(namespace, operator_class) do
       {:ok, pid}
     else
-      _ -> {:error, :operator_not_running}
+      _ -> {:error, {:operator_not_running, operator_class}}
     end
   end
 

@@ -42,7 +42,7 @@ defmodule Flezha.Plugin.Provider.BeamMsgForward do
 
     case Process.send(recv_pid, payload, []) do
       :ok -> {:ok, ctx}
-      _ -> {:error, "send_failed"}
+      _ -> {:error, :send_failed}
     end
   end
 end

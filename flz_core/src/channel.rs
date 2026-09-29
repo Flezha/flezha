@@ -5,6 +5,10 @@
 use std::any::Any;
 use std::sync::Arc;
 
+use flz_transport::errors::FlezhaError;
+
+use crate::error::Code;
+
 pub type ChannelId = u32;
 pub type TaskletId = u32;
 
@@ -78,7 +82,7 @@ impl ConsumerEdge {
     pub fn transform_value(
         &self,
         value: &Arc<dyn Any + Send + Sync>,
-    ) -> Result<Option<EdgeYield>, String> {
+    ) -> Result<Option<EdgeYield>, FlezhaError> {
         let Some(f) = self.transform.as_ref() else {
             return Ok(None);
         };
@@ -87,7 +91,7 @@ impl ConsumerEdge {
 
     /// The key of the post-transform value, or `Ok(None)` when the edge
     /// declares none. Contained like the transform.
-    pub fn key_of(&self, value: &dyn Any) -> Result<Option<String>, String> {
+    pub fn key_of(&self, value: &dyn Any) -> Result<Option<String>, FlezhaError> {
         let Some(f) = self.key.as_ref() else {
             return Ok(None);
         };
@@ -96,9 +100,13 @@ impl ConsumerEdge {
 }
 
 /// Run one edge closure, turning an unwind into an error.
-fn contain<R>(what: &str, f: impl FnOnce() -> R) -> Result<R, String> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
-        .map_err(|panic| format!("edge {what} panicked: {}", crate::util::format_panic(panic)))
+fn contain<R>(what: &str, f: impl FnOnce() -> R) -> Result<R, FlezhaError> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(|panic| {
+        Code::EdgeClosurePanicked.with([
+            ("closure", what.into()),
+            ("reason", crate::util::format_panic(panic).into()),
+        ])
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,6 +114,16 @@ pub enum ChannelKind {
     Entry,
     InterTasklet,
     PluginBound,
+}
+
+impl ChannelKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ChannelKind::Entry => "entry",
+            ChannelKind::InterTasklet => "inter_tasklet",
+            ChannelKind::PluginBound => "plugin_bound",
+        }
+    }
 }
 
 /// What a channel discards when the consumer's mailbox is full. The default

@@ -2149,7 +2149,13 @@ impl Run<'_> {
         let weak = self.weak();
         crate::shutdown::register_pending_ack(
             reference_id.clone(),
-            Box::new(move |result| barrier_acked(&weak, id, result.map(|_| ()))),
+            Box::new(move |result| {
+                barrier_acked(
+                    &weak,
+                    id,
+                    result.map(|_| ()).map_err(|refusal| refusal.text()),
+                )
+            }),
         );
         crate::runner::emit_control_request(reference_id, command.clone());
         self.decide(|d| {

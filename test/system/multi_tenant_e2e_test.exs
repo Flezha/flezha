@@ -115,7 +115,7 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
   } do
     output =
       ExUnit.CaptureIO.capture_io(:stderr, fn ->
-        assert catch_exit(CliManager.list_operators(@ns_a, "text", token: token_b)) ==
+        assert catch_exit(CliManager.list_operators(@ns_a, token: token_b)) ==
                  {:shutdown, 1}
       end)
 

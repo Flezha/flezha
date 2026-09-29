@@ -82,10 +82,11 @@ defmodule Flezha.Service.CliManagerBootTest do
     test "exits non-zero naming the unmet row when no hub exists yet" do
       # The empty-set defect: with no namespace hub there is nothing to iterate,
       # and the verb used to report every namespace reached `:normal`.
-      assert {{:shutdown, 1}, stderr} = await(0)
+      assert {{:shutdown, 7}, stderr} = await(0)
 
-      assert stderr =~ "boot await: booting"
-      assert stderr =~ "boot_sequence_complete"
+      assert stderr =~
+               "its readiness is booting, with boot_sequence_complete unmet (boot.not_ready)"
+
       refute stderr =~ "reached :normal"
     end
 
@@ -101,16 +102,15 @@ defmodule Flezha.Service.CliManagerBootTest do
       hub_id = :"boot_await_hub_#{System.unique_integer([:positive])}"
       Snapshot.observe_recovery(hub_id, :recovery_pending)
 
-      assert {{:shutdown, 1}, stderr} = await(300)
-      assert stderr =~ "boot await: recovering"
-      assert stderr =~ "hubs_recovered"
+      assert {{:shutdown, 7}, stderr} = await(300)
+      assert stderr =~ "its readiness is recovering, with hubs_recovered unmet (boot.not_ready)"
 
       Snapshot.observe_recovery(hub_id, :normal)
       assert {:ok, _stdout} = await(0)
     end
   end
 
-  # `boot_await` exits `{:shutdown, 1}` after printing on stderr, or returns after
+  # `boot_await` exits `{:shutdown, 7}` after printing on stderr, or returns after
   # printing on stdout. `capture_io/2` runs its function in the calling process,
   # so the nested captures hand their results back through the dictionary and
   # either outcome is one assertable string.

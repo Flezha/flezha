@@ -49,6 +49,9 @@ defmodule Flezha.Service.PluginManager do
   # carry `Overwatch`'s own bound, which is the smaller of the two so the
   # manager answers before the caller waiting on it stops waiting.
 
+  # ProcessHub's own answer for a row it does not hold (yet).
+  @no_child "No child found"
+
   ## Public API
 
   # Canonicalised here, before anything reads the hooks and before any durable
@@ -119,8 +122,10 @@ defmodule Flezha.Service.PluginManager do
 
       # The same unreachable hub or absent operator that failed the enable fails
       # its removal, and there was nothing to leave behind either way.
-      {:error, reason}
-      when reason in [:registry_unavailable, :operator_not_found, :operator_not_declared] ->
+      {:error, {:operator_not_found, _namespace, _operator_id}} ->
+        :ok
+
+      {:error, reason} when reason in [:registry_unavailable, :operator_not_declared] ->
         :ok
 
       {:error, reason} ->
@@ -151,8 +156,8 @@ defmodule Flezha.Service.PluginManager do
 
       failed ->
         {:error,
-         "enabled on #{length(results) - length(failed)} of #{length(results)} partitions; " <>
-           Enum.map_join(failed, "; ", fn {id, err} -> "#{id}: #{inspect(err)}" end)}
+         {:group_enable_partial, length(results) - length(failed), length(results),
+          Enum.map(failed, &elem(&1, 0))}}
     end
   end
 
@@ -175,7 +180,7 @@ defmodule Flezha.Service.PluginManager do
 
   defp refuse_init_subscription(%Plugin{hooks: subs}) do
     if Enum.any?(subs, &match?({:on_operator_init, _}, &1)),
-      do: {:error, "init-state plugins must be attached at operator start"},
+      do: {:error, :init_plugin_after_start},
       else: :ok
   end
 
@@ -204,7 +209,7 @@ defmodule Flezha.Service.PluginManager do
             {:ok, "plugin disabled on #{length(results)} partitions"}
 
           failed ->
-            {:error, Enum.map_join(failed, "; ", fn {id, err} -> "#{id}: #{inspect(err)}" end)}
+            {:error, {:group_disable_partial, Enum.map(failed, &elem(&1, 0))}}
         end
     end
   end
@@ -302,7 +307,7 @@ defmodule Flezha.Service.PluginManager do
         {:reply, {:ok, :already_enabled}, state}
 
       {ns, rid, :pending} when ns == plugin.namespace and rid == plugin.operator_id ->
-        {:reply, {:error, "plugin #{plugin_id} is already being enabled"}, state}
+        {:reply, {:error, {:plugin_enabling, plugin_id}}, state}
 
       nil ->
         {:reply, :claimed,
@@ -310,7 +315,7 @@ defmodule Flezha.Service.PluginManager do
 
       entry ->
         {ns, rid} = target(entry)
-        {:reply, {:error, "plugin id #{plugin_id} is already registered for #{ns}/#{rid}"}, state}
+        {:reply, {:error, {:plugin_id_taken, plugin_id, ns, rid}}, state}
     end
   end
 
@@ -331,10 +336,10 @@ defmodule Flezha.Service.PluginManager do
   def handle_call({:disable_plugin, plugin_id}, _from, state) do
     case Map.get(state, plugin_id) do
       nil ->
-        {:reply, {:error, "plugin not found"}, state}
+        {:reply, {:error, {:plugin_not_found, plugin_id}}, state}
 
       {_ns, _rid, :pending} ->
-        {:reply, {:error, "plugin #{plugin_id} is still being enabled"}, state}
+        {:reply, {:error, {:plugin_enabling, plugin_id}}, state}
 
       {namespace, operator_id} ->
         case write_disable_to_cspec(namespace, operator_id, plugin_id) do
@@ -342,7 +347,7 @@ defmodule Flezha.Service.PluginManager do
             _ = unsubscribe(namespace, operator_id, plugin_id)
             {:reply, {:ok, "plugin disabled"}, Map.delete(state, plugin_id)}
 
-          {:error, :operator_not_found} ->
+          {:error, {:operator_not_found, _namespace, _operator_id}} ->
             {:reply, {:ok, "plugin disabled"}, Map.delete(state, plugin_id)}
 
           {:error, reason} ->
@@ -442,10 +447,8 @@ defmodule Flezha.Service.PluginManager do
        when is_binary(ns) and is_binary(rid),
        do: :ok
 
-  defp check_operator_target(%Plugin{namespace: ns, operator_id: rid}) do
-    {:error,
-     "plugin missing namespace or operator_id (got namespace=#{inspect(ns)}, operator_id=#{inspect(rid)})"}
-  end
+  defp check_operator_target(%Plugin{namespace: ns, operator_id: rid}),
+    do: {:error, {:plugin_target_missing, ns, rid}}
 
   defp resolve_operator(%Plugin{namespace: ns, operator_id: pid_id})
        when is_binary(ns) and is_binary(pid_id) do
@@ -560,11 +563,11 @@ defmodule Flezha.Service.PluginManager do
           # The operator row may live on a peer node whose pubsub-based
           # synchronization hasn't fanned out to us yet — retry briefly
           # before surfacing the error.
-          {:error, "No child found"} = no_child ->
+          {:error, @no_child} = no_child ->
             retry_or_give_up(namespace, operator_id, update_fn, attempt, no_child)
 
           {:error, :not_found} ->
-            {:error, :operator_not_found}
+            {:error, {:operator_not_found, namespace, operator_id}}
 
           {:error, reason} ->
             {:error, reason}
@@ -579,15 +582,17 @@ defmodule Flezha.Service.PluginManager do
   # differs.
   defp retry_or_give_up(namespace, operator_id, update_fn, attempt, result) do
     if Backoff.give_up?(:no_response, attempt) do
-      exhausted(result)
+      exhausted(result, namespace, operator_id)
     else
       Backoff.wait(:no_response, attempt + 1, operator_id)
       do_update_cspec_plugins(namespace, operator_id, update_fn, attempt + 1)
     end
   end
 
-  defp exhausted({:error, "No child found"}), do: {:error, :operator_not_found}
-  defp exhausted(error), do: error
+  defp exhausted({:error, @no_child}, namespace, operator_id),
+    do: {:error, {:operator_not_found, namespace, operator_id}}
+
+  defp exhausted(error, _namespace, _operator_id), do: error
 
   # ---------- Published surface ----------
   #
@@ -613,7 +618,7 @@ defmodule Flezha.Service.PluginManager do
   verb enable(plugin_id, fields, caller_context) when is_binary(plugin_id) and is_list(fields),
     verb: :plugin_enable,
     row: &fields_row/1 do
-    enable_plugin(plugin_id, Plugin.new(fields))
+    with {:ok, plugin} <- Plugin.from_fields(fields), do: enable_plugin(plugin_id, plugin)
   end
 
   @doc """

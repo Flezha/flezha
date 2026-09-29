@@ -8,6 +8,9 @@ use std::time::Duration;
 use super::{LoopMode, RollbackMode};
 use crate::channel::{ChannelId, ChannelKind, TaskletId};
 use crate::operator::topology::{OperatorTopology, TaskletDescriptor};
+use crate::Code;
+use flz_transport::errors::{ErrorModel, FlezhaError};
+use serde_json::{Map, Value};
 
 /// The tasklet DAG in Kahn order from the entry channels' consumers, so
 /// every producer sits at a lower index than its consumer. A node's index is
@@ -312,102 +315,129 @@ pub struct BoundedSpec {
 }
 
 /// Why a bounded class is refused at registration.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum BuildBoundedError {
-    #[error("bounded operator `{factory_id}` has an invalid topology: {detail}")]
+    /// The shared topology's own refusal, carried as the core rendered it.
     Topology {
         factory_id: &'static str,
-        detail: String,
+        error: FlezhaError,
     },
-
-    #[error(
-        "bounded operator `{factory_id}` declares tasklets but no entry channel; a structured \
-         bounded must declare an input channel (c.input::<T>(...)) its messages arrive on"
-    )]
-    NoEntryChannel { factory_id: &'static str },
-
-    #[error(
-        "bounded operator `{factory_id}` declares tasklet `{tasklet}` on a cycle; a \
-         bounded topology is a DAG — a tasklet's output may never reach its own input"
-    )]
+    NoEntryChannel {
+        factory_id: &'static str,
+    },
     Cycle {
         factory_id: &'static str,
         tasklet: String,
     },
-
-    #[error(
-        "bounded operator `{factory_id}` declares tasklet `{tasklet}` as the producer of \
-         more than one channel; a tasklet emits on exactly one output channel (its `Output` \
-         type), so a second one could never be routed. Fan out by declaring several consumers on \
-         the one channel"
-    )]
     MultipleOutputChannels {
         factory_id: &'static str,
         tasklet: String,
     },
-
-    #[error(
-        "bounded operator `{factory_id}` declares a handoff-chained loop over a branching \
-         chain ({leaves} terminal tasklets); iteration N+1 is seeded from iteration N's \
-         terminal batch, which a chain with several leaves does not define. Use \
-         `LoopMode::PerInput`, or keep every chain of the loop converging on one terminal"
-    )]
     BranchingChainedLoop {
         factory_id: &'static str,
+        channel: String,
         leaves: usize,
     },
-
-    #[error(
-        "bounded operator `{factory_id}` is not terminable: its only possible exit is an external \
-         stop. Add a terminal condition: let the chain complete, have a tasklet call \
-         ctx.complete, or declare max_duration()."
-    )]
-    ExternalStopOnly { factory_id: &'static str },
-
-    #[error(
-        "bounded operator `{factory_id}` declares tasklet `{tasklet}` that is not reachable \
-         from any entry channel; every tasklet must hang off a chain rooted at one"
-    )]
+    /// Not self-terminating and no `max_duration`: only an external stop ends it.
+    ExternalStopOnly {
+        factory_id: &'static str,
+    },
     Disconnected {
         factory_id: &'static str,
         tasklet: String,
     },
-
-    #[error(
-        "EffectivelyOnceOnBounded: bounded operator `{factory_id}` declares \
-         effectively_once(); a bounded commits at its stage boundary and carries no tier"
-    )]
-    EffectivelyOnceOnBounded { factory_id: &'static str },
-
-    #[error(
-        "CheckpointOnBounded: bounded operator `{factory_id}` declares a checkpoint \
-         (checkpoint_ack, checkpoint_every, outputs_at_checkpoint); a bounded commits at its \
-         stage boundary"
-    )]
-    CheckpointOnBounded { factory_id: &'static str },
-
-    #[error(
-        "CorrectionWindowOnBounded: bounded operator `{factory_id}` declares \
-         correction_window(); correction replays an unbounded operator's input log, which a bounded operator has not"
-    )]
-    CorrectionWindowOnBounded { factory_id: &'static str },
-
-    #[error(
-        "bounded operator `{factory_id}` declares no tasklets; a bounded operator runs a graph of \
-         tasklets from its entry channels, declared in channels() on the builder an unbounded operator uses"
-    )]
-    NoTasklets { factory_id: &'static str },
-
-    #[error(
-        "bounded operator `{factory_id}` is a durable handoff-chained loop, but its terminal \
-         tasklet `{tasklet}` releases no inter-tasklet handoff; iteration N+1 is seeded \
-         from iteration N's terminal batch, and a tasklet that owns no output channel, or whose \
-         only output is plugin-bound, has nothing the journal carries. Give the terminal \
-         tasklet an output channel that is not plugin-bound — taking the sink off its own \
-         channel is enough — or switch to `LoopMode::PerInput`"
-    )]
+    EffectivelyOnceOnBounded {
+        factory_id: &'static str,
+    },
+    CheckpointOnBounded {
+        factory_id: &'static str,
+    },
+    CorrectionWindowOnBounded {
+        factory_id: &'static str,
+    },
+    NoTasklets {
+        factory_id: &'static str,
+    },
     LoopTerminalWithoutHandoff {
         factory_id: &'static str,
         tasklet: String,
     },
 }
+
+impl ErrorModel for BuildBoundedError {
+    /// The refusal in the model's one shape, naming the factory.
+    fn to_error(&self) -> FlezhaError {
+        match self.judged() {
+            Ok((code, details)) => code.error(details),
+            Err(error) => error.clone(),
+        }
+    }
+}
+
+impl BuildBoundedError {
+    /// This refusal's code and details, or the shared topology's own error.
+    fn judged(&self) -> Result<(Code, Map<String, Value>), &FlezhaError> {
+        let tasklet = |tasklet: &String| vec![("tasklet", Value::from(tasklet.as_str()))];
+        let (factory_id, code, pairs) = match self {
+            Self::Topology { error, .. } => return Err(error),
+            Self::NoEntryChannel { factory_id } => (factory_id, Code::NoEntryChannel, vec![]),
+            Self::ExternalStopOnly { factory_id } => (factory_id, Code::ExternalStopOnly, vec![]),
+            Self::EffectivelyOnceOnBounded { factory_id } => {
+                (factory_id, Code::EffectivelyOnceOnBounded, vec![])
+            }
+            Self::CheckpointOnBounded { factory_id } => {
+                (factory_id, Code::CheckpointOnBounded, vec![])
+            }
+            Self::CorrectionWindowOnBounded { factory_id } => {
+                (factory_id, Code::CorrectionWindowOnBounded, vec![])
+            }
+            Self::NoTasklets { factory_id } => (factory_id, Code::NoTasklets, vec![]),
+            Self::Cycle {
+                factory_id,
+                tasklet: t,
+            } => (factory_id, Code::Cycle, tasklet(t)),
+            Self::MultipleOutputChannels {
+                factory_id,
+                tasklet: t,
+            } => (factory_id, Code::MultipleOutputChannels, tasklet(t)),
+            Self::Disconnected {
+                factory_id,
+                tasklet: t,
+            } => (factory_id, Code::UnreachableTasklet, tasklet(t)),
+            Self::LoopTerminalWithoutHandoff {
+                factory_id,
+                tasklet: t,
+            } => (
+                factory_id,
+                Code::ChainedLoopTerminalWithoutHandoff,
+                tasklet(t),
+            ),
+            Self::BranchingChainedLoop {
+                factory_id,
+                channel,
+                leaves,
+            } => (
+                factory_id,
+                Code::BranchingChainedLoop,
+                vec![
+                    ("channel", channel.as_str().into()),
+                    ("leaves", (*leaves).into()),
+                ],
+            ),
+        };
+        let mut details: Map<String, Value> = pairs
+            .into_iter()
+            .map(|(key, value)| (key.to_string(), value))
+            .collect();
+        details.insert("factory_id".into(), (*factory_id).into());
+        Ok((code, details))
+    }
+}
+
+impl std::fmt::Display for BuildBoundedError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.to_error().message)
+    }
+}
+
+impl std::error::Error for BuildBoundedError {}

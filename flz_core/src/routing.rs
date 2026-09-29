@@ -17,7 +17,7 @@ use flz_transport::transport::FlezhaStream;
 use crate::admission::{admit_from_cell, admit_from_reader, nonparking_enabled};
 use crate::cell::{make_cell_payload, CellItem, CellSlot};
 use crate::channel::{ChannelDescriptor, ChannelId, ChannelKind, ConsumerEdge};
-use crate::error::Error;
+use crate::error::{Code, Error};
 use crate::operator::instance::OperatorInstance;
 use crate::operator::registry::OperatorRegistry;
 use crate::operator::topology::{CellMode, ChannelLookup, OperatorTopology, TaskletDescriptor};
@@ -172,19 +172,18 @@ pub(crate) fn deliver_host_output(
     consumed_offset: Option<u64>,
     producer: &Arc<CellSlot>,
 ) -> Result<bool, Error> {
-    let channel = instance
-        .topology
-        .channel(channel_id)
-        .ok_or_else(|| Error::Routing(format!("edge output names unknown channel {channel_id}")))?;
+    let channel = instance.topology.channel(channel_id).ok_or_else(|| {
+        Error::Routing(Code::UnknownChannelId.with([("channel_id", channel_id.into())]))
+    })?;
     let edge = channel
         .consumers
         .iter()
         .find(|e| e.tasklet == consumer)
         .ok_or_else(|| {
-            Error::Routing(format!(
-                "edge output names tasklet {consumer}, not a consumer of channel `{}`",
-                channel.name
-            ))
+            Error::Routing(Code::NotAConsumer.with([
+                ("tasklet", consumer.into()),
+                ("channel", channel.name.as_ref().into()),
+            ]))
         })?;
     // An inter-tasklet value is never a replay member: the downstream
     // Tasklet receives corrected outputs already in order.

@@ -16,7 +16,12 @@ use crate::runner::RunnerNode;
 use crate::util::LockRecover;
 
 impl CommandAction for RestoreInitState {
-    fn handle(&self, runner: &mut RunnerNode, _message: &str, errors: &mut Vec<String>) -> Reply {
+    fn handle(
+        &self,
+        runner: &mut RunnerNode,
+        _message: &str,
+        errors: &mut Vec<crate::Error>,
+    ) -> Reply {
         let instance = runner.instance_of_cell(&self.cell_id);
         let slot = instance
             .as_ref()
@@ -60,13 +65,13 @@ impl CommandAction for RestoreInitState {
 
 impl RestoreInitState {
     /// No live slot: validate the log and ack its terminal seq.
-    fn ack_without_slot(&self, errors: &mut Vec<String>) -> Option<RestoreOutcome> {
+    fn ack_without_slot(&self, errors: &mut Vec<crate::Error>) -> Option<RestoreOutcome> {
         let mut terminal = 0u64;
         for record in iter_change_log_records(&self.change_log_bytes) {
             match record {
                 Ok(r) => terminal = terminal.max(r.seq),
                 Err(e) => {
-                    errors.push(format!("change_log decode error: {e}"));
+                    errors.push(crate::host::restore_failed(e));
                     return None;
                 }
             }
@@ -83,7 +88,7 @@ impl RestoreInitState {
 fn restore_into_slot(
     slot: &Arc<CellSlot>,
     cmd: &RestoreInitState,
-    errors: &mut Vec<String>,
+    errors: &mut Vec<crate::Error>,
 ) -> RestoreOutcome {
     // The fold runs under the cell's handout exclusivity: no input
     // activation is handed out before it completes.
@@ -118,7 +123,7 @@ fn restore_into_slot(
 fn restore_typed_exclusive(
     slot: &Arc<CellSlot>,
     cmd: &RestoreInitState,
-    errors: &mut Vec<String>,
+    errors: &mut Vec<crate::Error>,
 ) -> Option<RestoreOutcome> {
     let mut guard = match slot.state.lock() {
         Ok(g) => g,
@@ -135,7 +140,7 @@ fn restore_typed_exclusive(
     ) {
         Ok(outcome) => Some(outcome),
         Err(e) => {
-            errors.push(format!("restore_init_state: apply failed: {e}"));
+            errors.push(crate::host::restore_failed(e));
             None
         }
     }

@@ -59,5 +59,6 @@ const FLZ: Command = Command {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+    rpc::set_json(args::asks_json(&args[1..]));
     dispatch::run(&FLZ, &args[1..]);
 }

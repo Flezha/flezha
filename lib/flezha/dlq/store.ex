@@ -445,7 +445,7 @@ defmodule Flezha.Dlq.Store do
   defp parse_ref(entry_ref) do
     case String.split(entry_ref, "/") do
       [rc, sh, id] when rc != "" and sh != "" and id != "" -> {:ok, rc, sh, id}
-      _ -> {:error, :bad_entry_ref}
+      _ -> {:error, {:bad_entry_ref, entry_ref}}
     end
   end
 

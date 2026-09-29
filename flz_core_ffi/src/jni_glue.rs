@@ -3,48 +3,48 @@
 //! Java decodes postcard itself, so activations and payloads cross as fresh
 //! `byte[]` copies read out of the core's buffer before it is freed, and
 //! Java-owned arrays are copied in before the call returns. A refusal maps
-//! once, in [`throw`], onto `FlezhaNativeException` (`RuntimeException` off
-//! the SDK classpath); [`throw_with_body`] is the same exception carrying the
-//! answer an entry point handed out alongside its refusal.
+//! once, in [`throw`], onto the SDK's `FlezhaException`, built from the JSON
+//! error document.
 
 use std::ffi::CString;
 
-use jni::objects::{JByteArray, JClass, JObject, JString, JThrowable, JValue};
+use jni::objects::{JByteArray, JClass, JString, JThrowable, JValue};
 use jni::sys::{jboolean, jbyteArray, jint, jlong, jstring};
 use jni::JNIEnv;
 
 use crate::veneer::{self, with_buffer, CtxPtr, Refusal};
 use crate::{FlzContext, FLZ_POLL_ACTIVATION, FLZ_POLL_SHUTTING_DOWN, FLZ_POLL_TIMEOUT};
 
-const NATIVE_EXCEPTION: &str = "com/flezha/sdk/native_/FlezhaNativeException";
+const EXCEPTION: &str = "com/flezha/sdk/FlezhaException";
+const FROM_DOCUMENT: &str = "(Ljava/lang/String;)Lcom/flezha/sdk/FlezhaException;";
 
+/// Throw `FlezhaException.fromDocument(document)`. A value the binding could
+/// not map carries no document of its own, so it is `internal.uncatalogued`
+/// naming it; `RuntimeException` is the fallback off the SDK classpath.
 fn throw(env: &mut JNIEnv, refusal: &Refusal) {
-    let message = refusal.message();
-    let thrown = env
-        .find_class(NATIVE_EXCEPTION)
-        .and_then(|class| env.throw_new(class, message));
-    if thrown.is_err() {
-        let _ = env.throw_new("java/lang/RuntimeException", message);
-    }
-}
-
-/// Throw the same exception with the answer the core handed out beside the
-/// refusal — the topology check's verdict JSON. The message is unchanged; the
-/// body is what lets the SDK read the refusal names as data instead of out of
-/// the rendered sentence.
-fn throw_with_body(env: &mut JNIEnv, refusal: &Refusal, body: &[u8]) {
-    let carried = (|| -> jni::errors::Result<()> {
-        let message: JObject = env.new_string(refusal.message())?.into();
-        let body: JObject = env.byte_array_from_slice(body)?.into();
-        let exception = env.new_object(
-            NATIVE_EXCEPTION,
-            "(Ljava/lang/String;[B)V",
-            &[JValue::Object(&message), JValue::Object(&body)],
-        )?;
+    let document = match refusal {
+        Refusal::Shape(text) => flz_core::FlezhaError::with(
+            flz_transport::errors::UNCATALOGUED,
+            [("reason", text.as_str().into())],
+        )
+        .json(),
+        Refusal::Core(document) | Refusal::Schema(document) => document.clone(),
+    };
+    let thrown = (|| -> jni::errors::Result<()> {
+        let text = env.new_string(&document)?;
+        let exception = env
+            .call_static_method(
+                EXCEPTION,
+                "fromDocument",
+                FROM_DOCUMENT,
+                &[JValue::Object(&text)],
+            )?
+            .l()?;
         env.throw(JThrowable::from(exception))
     })();
-    if carried.is_err() {
-        throw(env, refusal);
+    if thrown.is_err() {
+        let _ = env.exception_clear();
+        let _ = env.throw_new("java/lang/RuntimeException", document);
     }
 }
 
@@ -213,8 +213,8 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_declareClass(
 }
 
 /// Judge a host class declaration without registering it: the derived
-/// declaration's JSON bytes, or a throw carrying the core's rendered verdict
-/// AND the verdict's own JSON, which names every refusal.
+/// declaration's JSON bytes, or a throw whose `details.issues` names every
+/// refusal.
 #[no_mangle]
 pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_checkClass(
     mut env: JNIEnv,
@@ -241,8 +241,8 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_checkClass(
                 std::ptr::null_mut()
             }
         },
-        Err((refusal, verdict)) => {
-            throw_with_body(&mut env, &refusal, &verdict);
+        Err(refusal) => {
+            throw(&mut env, &refusal);
             std::ptr::null_mut()
         }
     }

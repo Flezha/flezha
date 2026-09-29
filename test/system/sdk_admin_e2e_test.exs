@@ -196,7 +196,7 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
         )
 
       assert [{"Operator.start", "err", reason}] = answers(port, 1)
-      assert reason =~ "role_insufficient"
+      assert reason =~ "authz.role_insufficient: "
       assert {:ok, ids} = OperatorManager.get_operator_ids(@unbound_ns)
       assert "unbound_start" not in ids
     end
@@ -215,7 +215,7 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
         )
 
       assert [{"Operator.start", "err", reason}] = answers(port, 1)
-      assert reason =~ "quota_exceeded"
+      assert reason =~ "quota.exceeded: "
       assert reason =~ "max_operators"
     end
 
@@ -237,7 +237,7 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
       on_exit(fn -> :ok = RoleStore.bind("runner@" <> @ns, @ns, :app) end)
 
       assert [_first, {"Operator.list_operators", "err", reason}] = answers(port, 2)
-      assert reason =~ "role_insufficient"
+      assert reason =~ "authz.role_insufficient: "
     end
   end
 

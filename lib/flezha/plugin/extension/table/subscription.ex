@@ -104,7 +104,7 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
   end
 
   defp canonicalise_subscription(_catalog, other),
-    do: {:error, {:invalid_hook, other}}
+    do: {:error, {:invalid_hook, :unrecognised_shape, other}}
 
   defp resolve_extension(catalog, name) when is_atom(name) and not is_nil(name) do
     case Map.fetch(catalog, name) do
@@ -201,7 +201,7 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
 
   defp coerce_sub_opt(_type, name, value), do: invalid_sub_opt(name, value)
 
-  defp invalid_sub_opt(name, value), do: {:error, {:invalid_hook_opts, {name, value}}}
+  defp invalid_sub_opt(name, value), do: {:error, {:invalid_hook_opts, name, value}}
 
   ## Private — validation
 

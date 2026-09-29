@@ -12,6 +12,8 @@ defmodule Flezha.Service.AdminTest do
     fixtures: [{:auth_stores, prefix: "flz_sdk_admin", claim: true, register_source: true}],
     async: false
 
+  use Mimic
+
   alias Flezha.AuthZ
   alias Flezha.AuthZ.Policy
   alias Flezha.AuthZ.RoleStore
@@ -56,9 +58,9 @@ defmodule Flezha.Service.AdminTest do
       end
     end
 
-    test "the door refuses a start and the reason names the missing grant" do
-      assert {:error, reason} = Admin.call(@ns, "Operator.start", ~s([{"id":"o1"}]))
-      assert reason == "forbidden: role_insufficient"
+    test "the door refuses a start and the error names the missing grant" do
+      assert {:error, %Flezha.Error{code: "authz.role_insufficient", class: :denied}} =
+               Admin.call(@ns, "Operator.start", ~s([{"id":"o1"}]))
     end
   end
 
@@ -82,7 +84,7 @@ defmodule Flezha.Service.AdminTest do
 
       assert Session.runner_caller_context(@ns).roles == [:runner]
 
-      assert {:error, "forbidden: role_insufficient"} =
+      assert {:error, %Flezha.Error{code: "authz.role_insufficient"}} =
                Admin.call(@ns, "Operator.stop", ~s(["o1"]))
     end
 
@@ -106,20 +108,17 @@ defmodule Flezha.Service.AdminTest do
       assert Session.runner_caller_context(@ns).roles == [:spawner, :stopper]
 
       for verb <- ["Operator.start", "Operator.send", "Operator.stop"] do
-        refute Admin.call(@ns, verb, args_for(verb)) == {:error, "forbidden: role_insufficient"},
-               verb
+        refute denied?(Admin.call(@ns, verb, args_for(verb))), verb
       end
 
-      assert Admin.call(@ns, "PluginManager.enable", args_for("PluginManager.enable")) ==
-               {:error, "forbidden: role_insufficient"}
+      assert denied?(Admin.call(@ns, "PluginManager.enable", args_for("PluginManager.enable")))
     end
 
     test "a stopper alone stops, and nothing else" do
       :ok = RoleStore.bind(@principal, @ns, :stopper)
       assert Session.runner_caller_context(@ns).roles == [:stopper]
 
-      refute Admin.call(@ns, "Operator.stop", args_for("Operator.stop")) ==
-               {:error, "forbidden: role_insufficient"}
+      refute denied?(Admin.call(@ns, "Operator.stop", args_for("Operator.stop")))
 
       for verb <- [
             "Operator.start",
@@ -127,9 +126,7 @@ defmodule Flezha.Service.AdminTest do
             "PluginManager.enable",
             "PluginManager.disable"
           ] do
-        assert Admin.call(@ns, verb, args_for(verb)) ==
-                 {:error, "forbidden: role_insufficient"},
-               verb
+        assert denied?(Admin.call(@ns, verb, args_for(verb))), verb
       end
     end
 
@@ -171,8 +168,7 @@ defmodule Flezha.Service.AdminTest do
 
       assert Session.runner_caller_context(@ns).roles == [:spawner]
 
-      assert Admin.call(@ns, "Namespace.delete", "[]") ==
-               {:error, "forbidden: role_insufficient"}
+      assert denied?(Admin.call(@ns, "Namespace.delete", "[]"))
 
       # `Namespace.set_quotas` takes an object the door hands on as a keyword
       # list, which its own guard refuses before any policy runs, so the rule
@@ -197,10 +193,8 @@ defmodule Flezha.Service.AdminTest do
       # arguments after the namespace, so naming one is an argument too many.
       assert {:ok, _json} = Admin.call(@ns, "Operator.list_operators", "[]")
 
-      assert {:error, reason} =
+      assert {:error, %Flezha.Error{code: "admin.wrong_arity"}} =
                Admin.call(@ns, "Operator.list_operators", ~s(["#{@other}"]))
-
-      assert reason =~ "takes no argument list of this length"
     end
 
     test "a row-scoped verb's namespace field is stamped, not read from the caller" do
@@ -227,7 +221,7 @@ defmodule Flezha.Service.AdminTest do
     # Fails when: fields that still name their hooks `subscriptions` leave the
     # requester waiting on a body that raised, or enable a plugin with no hooks.
     test "an enable whose fields carry subscriptions is answered with an error" do
-      assert {:error, reason} =
+      assert {:error, %Flezha.Error{code: "plugin.fields_unknown", details: details}} =
                Admin.call(
                  @ns,
                  "PluginManager.enable",
@@ -235,7 +229,7 @@ defmodule Flezha.Service.AdminTest do
                                "operator_id": "o1", "subscriptions": ["on_output"]}])
                )
 
-      assert reason =~ "subscriptions"
+      assert details["fields"] == ["subscriptions"]
       refute Map.has_key?(Flezha.Service.PluginManager.get_plugins(), "p_old")
     end
 
@@ -263,12 +257,12 @@ defmodule Flezha.Service.AdminTest do
     end
 
     test "a user-only verb is refused at the policy point" do
-      assert {:error, "forbidden: role_insufficient"} =
+      assert {:error, %Flezha.Error{code: "authz.role_insufficient"}} =
                Admin.call(@ns, "AuditLog.rotate", "[]")
     end
 
     test "an auth-state verb is refused by grant" do
-      assert {:error, "forbidden: role_insufficient"} =
+      assert {:error, %Flezha.Error{code: "authz.role_insufficient"}} =
                Admin.call(@ns, "Namespace.create", ~s([{}]))
     end
 
@@ -290,10 +284,8 @@ defmodule Flezha.Service.AdminTest do
     end
 
     test "the terminal's own wire contract is not a door, though it lives under the prefix" do
-      assert {:error, reason} =
+      assert {:error, %Flezha.Error{code: "admin.unknown_function"}} =
                Admin.call(@ns, "CliManager.operator_stop", ~s(["o1"]))
-
-      assert reason =~ "no published function is named"
     end
 
     test "a name nothing declares is refused without minting an atom" do
@@ -328,6 +320,33 @@ defmodule Flezha.Service.AdminTest do
       assert record.metadata.namespace == @ns
       assert record.metadata.caller_source == :sdk
       assert record.metadata.operator == "o1"
+      assert record.metadata.outcome == :error
+      assert record.metadata.error_code == "operator.factory_unknown"
+    end
+
+    test "a denial is recorded with the code the caller receives" do
+      :ok = RoleStore.unbind(@principal)
+      boundary = System.monotonic_time(:microsecond)
+
+      assert {:error, %Flezha.Error{code: "authz.role_insufficient"}} =
+               Admin.call(@ns, "Operator.stop", ~s(["o1"]))
+
+      TestSinks.settle(RingBufferSink)
+
+      assert [denial] = RingBufferSink.query(:platform_authz, boundary)
+      assert denial.name == :authorization_denied
+      assert denial.metadata.reason == "authz.role_insufficient"
+    end
+
+    test "a start over quota is refused with the quota's code and its details" do
+      Mimic.stub(Flezha.Service.OperatorManager, :start_operator, fn _ns, _operator ->
+        {:error, {:quota_exceeded, :max_operators, %{current: 3, limit: 3}}}
+      end)
+
+      assert {:error, %Flezha.Error{code: "quota.exceeded", class: :conflict} = error} =
+               Admin.call(@ns, "Operator.start", ~s([{"id":"o1","factory_id":"f1"}]))
+
+      assert error.details == %{"kind" => "max_operators", "current" => 3, "limit" => 3}
     end
 
     test "a read writes no audit record, matching its row's declaration" do
@@ -339,4 +358,7 @@ defmodule Flezha.Service.AdminTest do
       assert RingBufferSink.query(:operator_service, boundary) == []
     end
   end
+
+  defp denied?(answer),
+    do: match?({:error, %Flezha.Error{code: "authz.role_insufficient"}}, answer)
 end

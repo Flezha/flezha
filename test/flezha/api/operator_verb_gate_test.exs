@@ -56,7 +56,7 @@ defmodule Flezha.Api.AdministrationVerbGateTest do
     %{entry_ref: entry_ref, schedule: entry}
   end
 
-  defp refused?(result), do: match?({:error, {:forbidden, _reason}}, result)
+  defp refused?(result), do: match?({:error, %Flezha.Error{class: :denied}}, result)
 
   describe "a caller with no identity, under enforcement" do
     test "is handed no payload bytes by the entry read", ctx do

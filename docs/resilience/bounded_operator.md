@@ -68,7 +68,7 @@ before the loop's next carry-fed pass.
 ## Durable loop and suspension
 
 Loop modes are declared with `loop_mode()` / `loopMode()`. Registration refuses a class that
-declares no tasklet (`NoTasklets`) and a durable `Chained` loop whose terminal tasklet
+declares no tasklet (`topology.no_tasklets`) and a durable `Chained` loop whose terminal tasklet
 releases no inter-tasklet channel (`LoopTerminalWithoutHandoff`). Two shapes fail that: a
 terminal nothing consumes and that names no sink owns no output channel at all, and one whose only
 wiring is a plugin sink gets no journal codec, because the runtime attaches one to inter-tasklet
@@ -104,7 +104,7 @@ so a consumed message is never re-delivered. The appends debit the source credit
 
 **Suspension.** Sleeping when idle is a class setting of both kinds, `sleep_when_idle`, on by
 default for a bounded operator whose persistence is on; a class that declares it with persistence off is
-refused at registration as `SleepWithoutPersistence`. An instance of any loop mode whose class
+refused at registration as `topology.sleep_without_persistence`. An instance of any loop mode whose class
 sleeps and whose inbox stays empty past `FLEZHA_PARK_IDLE_MS` (default 600 000; read in the
 shared core, so every host SDK agrees, and by the Elixir SDK's own driver) at a committed
 boundary, with every Cell drained, asks to sleep without a completion and ships `IterPark`,
@@ -176,7 +176,7 @@ an unbounded operator; a bounded class declares none of its own.
 
 | Knob | On the edge | Default |
 | --- | --- | --- |
-| total attempts, first run included | `retry_max(n)` / `retryMax(n)` | 3; `1` is fail-fast, `0` is refused (`RetryMaxZero`) |
+| total attempts, first run included | `retry_max(n)` / `retryMax(n)` | 3; `1` is fail-fast, `0` is refused (`topology.retry_max_zero`) |
 | backoff base | `retry_backoff_ms(ms)` / `retryBackoffMs(ms)` | 50 ms; attempt `n` waits `base × 2^(n-1)` ±50 % jitter, capped at 5 s (`RETRY_BACKOFF_MAX_MS`) |
 
 - `TaskletError::non_retryable(..)` skips the ladder; every other error — a panic included,

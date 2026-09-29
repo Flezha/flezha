@@ -4,6 +4,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use flz_transport::errors::FlezhaError;
 use flz_transport::utility::socket_dir::{self, Role};
 use flz_transport::utility::socket_probe::{diagnose, Diagnosis, Reach};
 
@@ -249,7 +250,7 @@ fn plan_socket_root() -> Root {
     }
 }
 
-pub(super) fn preflight_guard(plan: &[Root], app_data_root: &Path) -> Result<(), String> {
+pub(super) fn preflight_guard(plan: &[Root], app_data_root: &Path) -> Result<(), FlezhaError> {
     let root_c = canonicalize_or_self(app_data_root);
     let kept: Vec<(&Root, PathBuf)> = plan
         .iter()
@@ -264,29 +265,30 @@ pub(super) fn preflight_guard(plan: &[Root], app_data_root: &Path) -> Result<(),
         let Some(path) = &p.path else { continue };
         let candidate_c = canonicalize_or_self(path);
         if candidate_c == root_c {
-            return Err(format!(
-                "error: refusing to delete configured app_data root itself ({}); --app-data-root may be malformed",
-                path.display()
-            ));
+            return Err(path_refused(path, "the app_data root itself"));
         }
         if cleared_paths.iter().any(|prev| prev == &candidate_c) {
-            return Err(format!(
-                "error: refusing to clear the same path twice ({}); --app-data-root may be malformed",
-                path.display()
-            ));
+            return Err(path_refused(path, "another root this run clears"));
         }
         if let Some((kept_root, _)) = kept.iter().find(|(k, kept_c)| {
             holds(k.source, kept_c, &candidate_c) || holds(p.source, &candidate_c, kept_c)
         }) {
-            return Err(format!(
-                "error: refusing to clear a path that overlaps a kept root ({} and {}); a symlink or --app-data-root may alias the two",
-                path.display(),
-                kept_root.name()
-            ));
+            return Err(path_refused(path, kept_root.name()));
         }
         cleared_paths.push(candidate_c);
     }
     Ok(())
+}
+
+/// The refusal to clear `path`, naming what it would have reached as well.
+fn path_refused(path: &Path, collides_with: impl Into<String>) -> FlezhaError {
+    FlezhaError::with(
+        "reset.path_refused",
+        [
+            ("path", path.display().to_string().into()),
+            ("collides_with", collides_with.into().into()),
+        ],
+    )
 }
 
 /// Whether clearing or keeping `outer` reaches `inner`: the same directory, or
@@ -347,7 +349,7 @@ mod tests {
                 Action::Clear,
             )];
             let err = preflight_guard(&plan, &base).unwrap_err();
-            assert!(err.contains("refusing"));
+            assert_eq!(err.code, "reset.path_refused");
             let _ = fs::remove_dir_all(&base);
         }
     }
@@ -382,7 +384,8 @@ mod tests {
             let verdict = preflight_guard(&build_plan(&flags), &base);
             let _ = fs::remove_dir_all(&base);
             let err = verdict.expect_err(&format!("{} -> {} emptied a kept root", link, target));
-            assert!(err.contains("overlaps a kept root"), "{}", err);
+            assert_eq!(err.code, "reset.path_refused", "{}", err);
+            assert_ne!(err.details["collides_with"], "the app_data root itself");
         }
     }
 

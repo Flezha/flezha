@@ -108,8 +108,10 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
     end
 
     test "a template that cannot carry the payload is refused at enable time" do
-      assert {:error, message} = prepared(%{sink_template: ~s({"d":"constant"})})
-      assert message =~ Sink.payload_placeholder()
+      assert {:error, {:template_missing_placeholder, :sink_template, placeholder}} =
+               prepared(%{sink_template: ~s({"d":"constant"})})
+
+      assert placeholder == Sink.payload_placeholder()
     end
   end
 
@@ -246,13 +248,11 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
     end
 
     test "\"required\" needs a template that can carry the correlation id" do
-      assert {:error, message} = prepared(%{sink_ack_mode: "required"})
-      assert message =~ "{{req_id}}"
+      assert {:error, {:ack_needs_correlation, "{{req_id}}"}} =
+               prepared(%{sink_ack_mode: "required"})
 
-      assert {:error, message} =
+      assert {:error, {:ack_needs_correlation, "{{req_id}}"}} =
                prepared(%{sink_ack_mode: "required", sink_template: ~s({"d":"{{payload}}"})})
-
-      assert message =~ "{{req_id}}"
     end
 
     test "\"required\" answers the hold only on the echoed id", %{cell_id: cell_id} do

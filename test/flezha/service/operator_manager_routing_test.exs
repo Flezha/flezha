@@ -37,18 +37,14 @@ defmodule Flezha.Service.OperatorManagerRoutingTest do
   test "a start with no capable node anywhere refuses cluster-wide, naming the factory" do
     ns = unique_ns()
 
-    assert {:error, %{node: origin, reason: reason}} =
+    assert {:error, {:factory_unknown, ^ns, "facx"}} =
              OperatorManager.start_operator(ns, builder("op1", "facx"))
-
-    assert origin == node()
-    assert reason == "no runners for factory facx in namespace #{ns} on any cluster node"
   end
 
   test "a factory-less start refuses with the namespace wording" do
     ns = unique_ns()
 
-    assert {:error, %{reason: reason}} = OperatorManager.start_operator(ns, builder("op2", nil))
-    assert reason == "no runners in namespace #{ns} on any cluster node"
+    assert {:error, {:no_runners, ^ns}} = OperatorManager.start_operator(ns, builder("op2", nil))
   end
 
   test "a routed start never re-forwards: it answers the local verdict" do
@@ -57,11 +53,8 @@ defmodule Flezha.Service.OperatorManagerRoutingTest do
     # local path — the refusal is the node-local one, not the cluster-wide one.
     join(Directory.factory_group(ns, "facx"))
 
-    assert {:error, %{node: origin, reason: reason}} =
+    assert {:error, {:no_runners, ^ns}} =
              OperatorManager.start_operator(ns, builder("op3", "facx"), routed: true)
-
-    assert origin == node()
-    assert reason == "no runners in namespace #{ns}"
   end
 
   test "capability advertised only by this node cannot satisfy a local miss" do
@@ -70,7 +63,7 @@ defmodule Flezha.Service.OperatorManagerRoutingTest do
     # onto itself; it refuses cluster-wide instead.
     join(Directory.factory_group(ns, "selfy"))
 
-    assert {:error, %{reason: "no runners for factory selfy" <> _}} =
+    assert {:error, {:factory_unknown, ^ns, "selfy"}} =
              OperatorManager.start_operator(ns, builder("op4", "selfy"))
   end
 
@@ -88,11 +81,9 @@ defmodule Flezha.Service.OperatorManagerRoutingTest do
       factory <> "-origin"
     end
 
-    assert {:error, %{operator_id: "facx-origin", node: executing, reason: reason}} =
+    assert {:error, {:no_runners, ^ns}} =
              OperatorManager.start_operator(ns, builder(nil, "facx"), mint: mint)
 
-    assert executing == node()
-    assert reason == "no runners in namespace #{ns}"
     assert_received :drew
     refute_received :drew
   end
@@ -100,7 +91,7 @@ defmodule Flezha.Service.OperatorManagerRoutingTest do
   test "spawn_or_deliver with no capable node anywhere answers factory_unknown" do
     ns = unique_ns()
 
-    assert {:factory_unknown, "i1"} =
+    assert {{:refused, %Flezha.Error{code: "operator.factory_unknown"}}, "i1"} =
              OperatorManager.spawn_or_deliver(ns, "i1", "facx", "p", :deliver, caller(ns))
   end
 
@@ -110,20 +101,19 @@ defmodule Flezha.Service.OperatorManagerRoutingTest do
     # must not forward onto its own node.
     join(Directory.factory_group(ns, "facy"))
 
-    assert {:factory_unknown, "i2"} =
+    assert {{:refused, %Flezha.Error{code: "operator.factory_unknown"}}, "i2"} =
              OperatorManager.spawn_or_deliver(ns, "i2", "facy", "p", :deliver, caller(ns))
   end
 
   test "a routed pid lookup takes the local path and reports the dead hub" do
     ns = unique_ns()
 
-    assert {:error, "hub not alive"} =
-             OperatorManager.get_operator_pid(ns, "op5", routed: true)
+    assert {:error, {:hub_down, ^ns}} = OperatorManager.get_operator_pid(ns, "op5", routed: true)
   end
 
   test "a stop with no hub anywhere keeps today's local refusal" do
     ns = unique_ns()
 
-    assert {:error, "hub not alive"} = OperatorManager.stop_operator(ns, "op6")
+    assert {:error, {:hub_down, ^ns}} = OperatorManager.stop_operator(ns, "op6")
   end
 end

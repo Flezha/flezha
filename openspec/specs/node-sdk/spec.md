@@ -30,7 +30,7 @@ SHALL drive graph wiring: the input type is `run`'s first parameter, and the out
 the definition declares through its type arguments or its context parameter, never one inferred from
 a body. A tasklet's body SHALL be the definition's `run` field, the name every SDK gives a tasklet's
 body, and it SHALL emit through its context; a definition carrying a `handle` field SHALL throw
-`DeclarationError` naming `run`.
+`FlezhaError` naming `run`.
 
 Decorators SHALL NOT be required, and the surface SHALL be usable from plain JavaScript with no
 build step.
@@ -50,7 +50,7 @@ build step.
 
 #### Scenario: The old body field is refused
 - **WHEN** a module calls `defineTasklet({ name: 'upcase', handle: (s) => s })`
-- **THEN** loading it SHALL throw `DeclarationError` naming `run`
+- **THEN** loading it SHALL throw `FlezhaError` naming `run`
 
 ### Requirement: A Mismatched Edge Is a Compile Error, and the Refusal Is Pinned
 
@@ -75,7 +75,7 @@ identity collision, an unservable clock, a keyed channel without a plugin wire, 
 that is not keyed, checkpoint acknowledgement without the tier, a correction window without its
 preconditions, branch arity violations, and a duplicate plugin sink. The verdict SHALL be the
 reference check's, reached through `flz_core_check_class` over the record the builder writes; the
-builder SHALL carry no rule of its own, and SHALL refuse every name of the reference vocabulary,
+builder SHALL carry no rule of its own, and SHALL refuse every code of the reference vocabulary,
 not a subset. The clock SHALL be read from the fields the tasklet writes, so no clock can be
 declared without the function it needs.
 
@@ -87,7 +87,7 @@ Every refusal SHALL name the offending handler and the specific defect.
 
 #### Scenario: A reference refusal the builder never carried is refused
 - **WHEN** a tasklet declares `mailboxCapacity(0)`
-- **THEN** registration SHALL fail with `MailboxCapacityZero` naming the tasklet, where the
+- **THEN** registration SHALL fail with `topology.mailbox_capacity_zero` naming the tasklet, where the
   core accepted the declaration before the check read the record
 
 ### Requirement: A Tasklet Context at Parity With the Other SDKs
@@ -164,7 +164,7 @@ the defaults the other SDKs ship, and SHALL NOT require an observability depende
 
 ### Requirement: The channel builder carries merge, the latest-document router and flatMap
 
-The Node channel builder SHALL offer `merge()`, returning a merge handle with `from(source, map)`, `keyBy(key)`, `into(tasklet)` and `into(tasklet, nodeName)`, with the `multi-input-tasklets` semantics: a source is an entry stream or an inter-tasklet stream declared on the same builder, each source's mapping composes after that source's own transforms, the key is declared once on the merge and applied to the mapped value on every source's edge, and `into` returns the merged tasklet's own output stream. The builder SHALL record each source as a chain closed by the core's `merge` link (`{"link": "merge", "tasklet", "group"}`) under one group per merge and SHALL take the merge refusals (`MergeTooFewSources`, `DuplicateMergeSource`, `EdgeAlreadyWired`) from the reference check, carrying no rule of its own. The builder SHALL offer `routeLatest(documents, traffic, keyFn)` and `routeLatestNamed(documents, traffic, keyFn, nodeName)` as the `sdk-graph-authoring` router, packaged in the SDK as a single-cell tasklet with journaled `{document, version, delivered}` state. Stream handles SHALL offer `flatMap(fn)` beside `map` and `filter`: the closure answers an iterable, each element reaches the consumer on its own, an empty iterable is a drop, and the transform chain is applied as a list so `filter` and `flatMap` are one mechanism; the record carries the same `transform` link as `map`.
+The Node channel builder SHALL offer `merge()`, returning a merge handle with `from(source, map)`, `keyBy(key)`, `into(tasklet)` and `into(tasklet, nodeName)`, with the `multi-input-tasklets` semantics: a source is an entry stream or an inter-tasklet stream declared on the same builder, each source's mapping composes after that source's own transforms, the key is declared once on the merge and applied to the mapped value on every source's edge, and `into` returns the merged tasklet's own output stream. The builder SHALL record each source as a chain closed by the core's `merge` link (`{"link": "merge", "tasklet", "group"}`) under one group per merge and SHALL take the merge refusals (`topology.merge_too_few_sources`, `topology.duplicate_merge_source`, `topology.edge_already_wired`) from the reference check, carrying no rule of its own. The builder SHALL offer `routeLatest(documents, traffic, keyFn)` and `routeLatestNamed(documents, traffic, keyFn, nodeName)` as the `sdk-graph-authoring` router, packaged in the SDK as a single-cell tasklet with journaled `{document, version, delivered}` state. Stream handles SHALL offer `flatMap(fn)` beside `map` and `filter`: the closure answers an iterable, each element reaches the consumer on its own, an empty iterable is a drop, and the transform chain is applied as a list so `filter` and `flatMap` are one mechanism; the record carries the same `transform` link as `map`.
 
 #### Scenario: Two channels merge into one tasklet
 - **WHEN** an operator declares `c.merge().from(ticks, (t) => ({kind: 'tick', ...t})).from(quotes, (q) => ({kind: 'quote', ...q})).keyBy((v) => v.symbol).into(Detector)`
@@ -172,7 +172,7 @@ The Node channel builder SHALL offer `merge()`, returning a merge handle with `f
 
 #### Scenario: A duplicated source is refused by the reference name
 - **WHEN** a merge declares the same stream twice
-- **THEN** registration SHALL refuse with `DuplicateMergeSource` naming the channel, and a merge with one source SHALL refuse with `MergeTooFewSources`
+- **THEN** registration SHALL refuse with `topology.duplicate_merge_source` naming the channel, and a merge with one source SHALL refuse with `topology.merge_too_few_sources`
 
 #### Scenario: One input becomes three deliveries
 - **WHEN** an edge declares `.flatMap((line) => line.split(',').filter(Boolean))` into a tasklet and the dispatcher is handed `a,b,c`
@@ -183,13 +183,11 @@ The Node channel builder SHALL offer `merge()`, returning a merge handle with `f
 - **THEN** exactly one `{key: 'A', document}` and one `{key: 'B', document}` SHALL be emitted, and the repeated document SHALL be inert
 
 ### Requirement: The single-tasklet short form is four definition fields
-The short form SHALL be declared with `defineUnbounded` or `defineBounded`, the same functions that declare a full-form operator, and SHALL NOT be declared with `defineTasklet`, which SHALL accept none of `kind`, `sink`, `input` or `codec` and SHALL throw `DeclarationError` naming the field and the operator function when one is given. Each SHALL accept `factoryId`, `sink`, `input`, `codec` and `run` beside the tasklet fields it already reads; the kind is the function's own name and SHALL NOT be a field. `defineOperator` SHALL NOT exist under that name, with no alias kept.
+The short form SHALL be declared with `defineUnbounded` or `defineBounded`, the same functions that declare a full-form operator, and SHALL NOT be declared with `defineTasklet`, which SHALL accept none of `kind`, `sink`, `input` or `codec` and SHALL throw `FlezhaError` naming the field and the operator function when one is given. Each SHALL accept `factoryId`, `sink`, `input`, `codec` and `run` beside the tasklet fields it already reads; the kind is the function's own name and SHALL NOT be a field. `defineOperator` SHALL NOT exist under that name, with no alias kept.
 
-A definition SHALL be a short form exactly when it carries `run` and not `channels`; carrying both SHALL throw `DeclarationError` naming `ShortFormWithTopology`, and carrying neither SHALL throw naming the missing body. `sink` SHALL be optional. With `sink`, the definition SHALL return a `ClassSpec` of its kind whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` field's value) into a generated tasklet named `factoryId` and that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A bounded short form SHALL accept `loopMode` and be a `once` bounded operator when it is absent, with every other bounded setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state; any other class-level setting on a short form SHALL throw `DeclarationError` naming it. `codec` SHALL take the vocabulary of `c.input(name, { codec })` and SHALL be lowered to that call, whether or not a `sink` is written. The spec SHALL be built at definition time so a refusal is raised while the module loads, as a `dup_node` graph already is.
+A definition SHALL be a short form exactly when it carries `run` and not `channels`; carrying both SHALL throw `FlezhaError` whose code is `topology.short_form_with_topology`, and carrying neither SHALL throw naming the missing body. `sink` SHALL be optional. With `sink`, the definition SHALL return a `ClassSpec` of its kind whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` field's value) into a generated tasklet named `factoryId` and that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A bounded short form SHALL accept `loopMode` and be a `once` bounded operator when it is absent, with every other bounded setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state; any other class-level setting on a short form SHALL throw `FlezhaError` naming it. `codec` SHALL take the vocabulary of `c.input(name, { codec })` and SHALL be lowered to that call, whether or not a `sink` is written. The spec SHALL be built at definition time so a refusal is raised while the module loads, as a `dup_node` graph already is.
 
-The short form's `run` SHALL be a tasklet's `run`: typed to return `void | Promise<void>`, emitting only through `ctx.emit` or `ctx.emitTo`, its returned value ignored in plain JavaScript. Its tasklet fields SHALL be handed to `defineTasklet` unchanged, so that moving them into a `defineTasklet` call grows the short form into its full form.
-
-An absent or empty `factoryId` SHALL throw naming the required field. The runner's `registerFactory(specifier)` SHALL register the `ClassSpec` of every short form the module exports, as it registers every exported spec. A duplicate factory id SHALL throw with a message beginning `DuplicateFactoryId`. The Node SDK owes no `SinkWithoutOutput`: a plain JavaScript definition declares no output type the SDK can read, a TypeScript one declares it only in types erased before the SDK runs, and no `run` returns output, so nothing the SDK can see says whether a short form emits; the manifest's `topology_surfaces` SHALL NOT list `shorthand_typed_output`.
+An absent or empty `factoryId` SHALL throw naming the required field. The runner's `registerFactory(specifier)` SHALL register the `ClassSpec` of every short form the module exports, as it registers every exported spec. A duplicate factory id SHALL throw with a message beginning `topology.duplicate_factory_id`. Whether `topology.sink_without_output` can be raised at TypeScript's type level without a build step SHALL be decided at implementation and reflected in the manifest's `topology_surfaces`, as it is today.
 
 #### Scenario: A module exporting one definition is a whole unbounded operator
 
@@ -219,22 +217,22 @@ An absent or empty `factoryId` SHALL throw naming the required field. The runner
 #### Scenario: A run body beside a channels body is refused
 
 - **WHEN** a module calls `defineUnbounded({ factoryId: 'x', run, channels })`
-- **THEN** loading it throws `DeclarationError` whose refusals contain `ShortFormWithTopology`
+- **THEN** loading it throws `FlezhaError` whose code is `topology.short_form_with_topology`
 
 #### Scenario: A definition with neither body is refused
 
 - **WHEN** a module calls `defineUnbounded({ factoryId: 'x' })`
-- **THEN** loading it throws `DeclarationError` naming the missing `run` or `channels`
+- **THEN** loading it throws `FlezhaError` naming the missing `run` or `channels`
 
 #### Scenario: An operator field on a tasklet is refused
 
 - **WHEN** a module calls `defineTasklet({ name: 'upcase', sink: 'out', run })`
-- **THEN** loading it throws `DeclarationError` naming `sink` and `defineUnbounded`
+- **THEN** loading it throws `FlezhaError` naming `sink` and `defineUnbounded`
 
 #### Scenario: A definition with no factory id is refused
 
 - **WHEN** a module calls `defineUnbounded({ sink: 'out', run })`
-- **THEN** loading it throws `DeclarationError` naming the required `factoryId`
+- **THEN** loading it throws `FlezhaError` naming the required `factoryId`
 
 #### Scenario: The old unbounded function is gone
 
@@ -281,12 +279,12 @@ The runner SHALL provide `async registerFactory(specifier)` and `async unregiste
 
 ### Requirement: A Node bounded operator definition carries what its builder recorded
 
-`defineBounded` SHALL build its `ClassSpec` from every field the channel builder recorded, exactly as `defineUnbounded` does, and `toHostClassDecl` SHALL put every recorded key on the wire for either kind, so an unbounded-only builder call on a bounded operator reaches the core and is refused under its name (`EffectivelyOnceOnBounded`, `CheckpointOnBounded`, `CorrectionWindowOnBounded`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `DeclarationError` naming it. `BoundedDefinition` SHALL carry no `retryAttempts`, `retryBackoffMs`, `barrierRetryAttempts` or `wakeAfterMs`, and the declaration SHALL carry no `wake_after_ms`; the channel builder SHALL carry no `syncDurability()` call, the definition field being the one spelling. A tasklet context inside a bounded operator SHALL offer `timerAfter`, `timerAtEventTime` and `cancelTimer` exactly as inside a stream, and a tasklet's `onTimer` SHALL run on its firing in both kinds; only a `compensate` hook's context SHALL throw an error naming `TimersUnavailable` from them.
+`defineBounded` SHALL build its `ClassSpec` from every field the channel builder recorded, exactly as `defineUnbounded` does, and `toHostClassDecl` SHALL put every recorded key on the wire for either kind, so an unbounded-only builder call on a bounded operator reaches the core and is refused under its name (`topology.effectively_once_on_bounded`, `topology.checkpoint_on_bounded`, `topology.correction_window_on_bounded`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `FlezhaError` naming it. `BoundedDefinition` SHALL carry no `retryAttempts`, `retryBackoffMs`, `barrierRetryAttempts` or `wakeAfterMs`, and the declaration SHALL carry no `wake_after_ms`; the channel builder SHALL carry no `syncDurability()` call, the definition field being the one spelling. A tasklet context inside a bounded operator SHALL offer `timerAfter`, `timerAtEventTime` and `cancelTimer` exactly as inside a stream, and a tasklet's `onTimer` SHALL run on its firing in both kinds; only a `compensate` hook's context SHALL throw an error naming `runtime.timers_unavailable` from them.
 
 #### Scenario: A tier call on a bounded operator reaches the core
 
 - **WHEN** a module exports `defineBounded({ factoryId: 'w', channels: (c) => { c.effectivelyOnce(); c.input('in').into(P).sink('out'); } })`, the runner registers it and runs
-- **THEN** declaring it to the core throws an error naming `EffectivelyOnceOnBounded`, and the operator is not declared
+- **THEN** declaring it to the core throws an error naming `topology.effectively_once_on_bounded`, and the operator is not declared
 
 #### Scenario: Synchronous durability has one spelling
 
@@ -338,13 +336,13 @@ The output type SHALL NOT be inferred from a body. A tasklet that emits SHALL na
 ### Requirement: A Node tasklet declares its settings as fields of its definition
 A Node tasklet's settings SHALL be fields of the object handed to `defineTasklet`, or of a short form's definition.
 
-The idle TTL SHALL be `idleTtlSeconds`, a positive whole number of seconds, and the declaration record SHALL carry it as `idle_ttl_ms`, that number times 1000. Unset SHALL mean no eviction. Any other value SHALL be refused with a `DeclarationError` naming `idleTtlSeconds` and the tasklet. `maxCells` SHALL be a top-level field with its existing meaning.
+The idle TTL SHALL be `idleTtlSeconds`, a positive whole number of seconds, and the declaration record SHALL carry it as `idle_ttl_ms`, that number times 1000. Unset SHALL mean no eviction. Any other value SHALL be refused with a `FlezhaError` naming `idleTtlSeconds` and the tasklet. `maxCells` SHALL be a top-level field with its existing meaning.
 
-The clock SHALL follow from what the definition writes: event time when it writes `eventTime`, logical when it writes `logicalClock: true`, and the wall clock otherwise. A definition writing both SHALL be refused with a `DeclarationError` naming `eventTime` and `logicalClock`. A logical clock on a tasklet with no `applyChange` SHALL keep the core's `UnservableClock` refusal. The SDK SHALL NOT have a `clock` field or export a `ClockKind` type.
+The clock SHALL follow from what the definition writes: event time when it writes `eventTime`, logical when it writes `logicalClock: true`, and the wall clock otherwise. A definition writing both SHALL be refused with a `FlezhaError` naming `eventTime` and `logicalClock`. A logical clock on a tasklet with no `applyChange` SHALL keep the core's `topology.unservable_clock` refusal. The SDK SHALL NOT have a `clock` field or export a `ClockKind` type.
 
-The initial state SHALL come from `initState(cellKey)`, and its absence SHALL declare a stateless tasklet. A definition writing `applyChange` without `initState` SHALL be refused with a `DeclarationError` naming both. A change SHALL be any value the codec carries, recorded with `ctx.change(value)` and folded by the definition's `applyChange(state, change)`, and no change class SHALL be required; `stateCodec` and `changeCodec` SHALL stay. `migrateState(fromVersion, bytes)` and `migrateChange(fromVersion, bytes)` SHALL keep receiving bytes.
+The initial state SHALL come from `initState(cellKey)`, and its absence SHALL declare a stateless tasklet. A definition writing `applyChange` without `initState` SHALL be refused with a `FlezhaError` naming both. A change SHALL be any value the codec carries, recorded with `ctx.change(value)` and folded by the definition's `applyChange(state, change)`, and no change class SHALL be required; `stateCodec` and `changeCodec` SHALL stay. `migrateState(fromVersion, bytes)` and `migrateChange(fromVersion, bytes)` SHALL keep receiving bytes.
 
-`defineTasklet` SHALL refuse a field it does not read with a `DeclarationError` naming the field and the tasklet, as an operator definition refuses its own unknown fields, whether the definition carries it as its own or inherits it. It SHALL NOT map a retired field (`dynamicCells`, `clock`, `initialState`) to its successor; the refusal SHALL name what replaced it.
+`defineTasklet` SHALL refuse a field it does not read with a `FlezhaError` naming the field and the tasklet, as an operator definition refuses its own unknown fields, whether the definition carries it as its own or inherits it. It SHALL NOT map a retired field (`dynamicCells`, `clock`, `initialState`) to its successor; the refusal SHALL name what replaced it.
 
 #### Scenario: The idle TTL is whole seconds
 
@@ -354,7 +352,7 @@ The initial state SHALL come from `initState(cellKey)`, and its absence SHALL de
 #### Scenario: An idle TTL that is not a positive whole number is refused
 
 - **WHEN** a tasklet is defined with `idleTtlSeconds` `0.2`, `0` or `'60'`
-- **THEN** `defineTasklet` SHALL throw `DeclarationError` naming `idleTtlSeconds` and the tasklet, while the module loads
+- **THEN** `defineTasklet` SHALL throw `FlezhaError` naming `idleTtlSeconds` and the tasklet, while the module loads
 
 #### Scenario: Writing eventTime makes the clock event time
 
@@ -374,12 +372,12 @@ The initial state SHALL come from `initState(cellKey)`, and its absence SHALL de
 #### Scenario: Event time and the logical clock together are refused
 
 - **WHEN** a tasklet writes `eventTime` and `logicalClock: true`
-- **THEN** `defineTasklet` SHALL throw `DeclarationError` naming `eventTime` and `logicalClock`
+- **THEN** `defineTasklet` SHALL throw `FlezhaError` naming `eventTime` and `logicalClock`
 
 #### Scenario: A logical clock on a tasklet with no fold is refused
 
 - **WHEN** a tasklet with no `applyChange` writes `logicalClock: true` and its operator is declared
-- **THEN** the declaration SHALL be refused with `UnservableClock` naming the tasklet
+- **THEN** the declaration SHALL be refused with `topology.unservable_clock` naming the tasklet
 
 #### Scenario: The initial state comes from initState
 
@@ -389,7 +387,7 @@ The initial state SHALL come from `initState(cellKey)`, and its absence SHALL de
 #### Scenario: A fold with no initial state is refused
 
 - **WHEN** a tasklet writes `applyChange` and no `initState`
-- **THEN** `defineTasklet` SHALL throw `DeclarationError` naming `applyChange` and `initState`
+- **THEN** `defineTasklet` SHALL throw `FlezhaError` naming `applyChange` and `initState`
 
 #### Scenario: A change needs no class
 
@@ -399,10 +397,10 @@ The initial state SHALL come from `initState(cellKey)`, and its absence SHALL de
 #### Scenario: A retired or unknown tasklet field is refused
 
 - **WHEN** a `.mjs` module calls `defineTasklet` with `dynamicCells: {}`, `clock: 'logical'`, `initialState` or a misspelt field beside `name` and `run`
-- **THEN** loading it SHALL throw `DeclarationError` naming that field and the tasklet, and the same object literal in TypeScript SHALL fail to type-check
+- **THEN** loading it SHALL throw `FlezhaError` naming that field and the tasklet, and the same object literal in TypeScript SHALL fail to type-check
 
 ### Requirement: A Node tasklet's cell mode is read from the wiring
-The cell mode SHALL be read per tasklet node from what is declared, never from a flag: static when the tasklet's definition writes `cells`, dynamic when a chain of the operator records a `key` link (from `keyBy` on a stream or on a merge) before the `into` or `merge` link that names the node, and single otherwise. The SDK SHALL NOT have a `dynamicCells` field or export a `DynamicCells` type. A tasklet writing `cells` and reached by a `keyBy` edge SHALL be refused with the core's `KeyByOnUnkeyableTarget`, as a `DeclarationError` carrying that name. A dynamic node SHALL honour its `idleTtlSeconds` and `maxCells` through the core's existing eviction.
+The cell mode SHALL be read per tasklet node from what is declared, never from a flag: static when the tasklet's definition writes `cells`, dynamic when a chain of the operator records a `key` link (from `keyBy` on a stream or on a merge) before the `into` or `merge` link that names the node, and single otherwise. The SDK SHALL NOT have a `dynamicCells` field or export a `DynamicCells` type. A tasklet writing `cells` and reached by a `keyBy` edge SHALL be refused with the core's `topology.key_by_on_unkeyable_target`, as a `FlezhaError` carrying that name. A dynamic node SHALL honour its `idleTtlSeconds` and `maxCells` through the core's existing eviction.
 
 #### Scenario: keyBy alone makes a tasklet dynamic
 
@@ -422,7 +420,7 @@ The cell mode SHALL be read per tasklet node from what is declared, never from a
 #### Scenario: A static key set fed by keyBy is refused
 
 - **WHEN** a tasklet writing `cells: { keys: ['a', 'b'], cellsFor }` is reached by an edge declaring `keyBy`
-- **THEN** declaring the operator SHALL throw `DeclarationError` whose refusals contain `KeyByOnUnkeyableTarget`, naming the tasklet
+- **THEN** declaring the operator SHALL throw `FlezhaError` whose refusals contain `topology.key_by_on_unkeyable_target`, naming the tasklet
 
 ### Requirement: A Node cell belongs to one operator
 The Node runner SHALL keep a Cell's live state by its operator, its tasklet and its cell key, so that two operators of one factory served by the same runner, such as two instances of a bounded operator or two partitions of an unbounded one, never read or write each other's state. Every activation that reads or writes a Cell (work, restore fold, snapshot, live state read, migration serialize, apply state and compensate) SHALL address it this way.

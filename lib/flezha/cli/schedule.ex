@@ -21,11 +21,11 @@ defmodule Flezha.Service.Cli.Schedule do
   # log/telemetry.
   @schedule_result_width 48
 
-  @doc "The stored schedule a `schedule run` fires, or the family's not-found."
+  @doc "The stored schedule a `schedule run` fires, or the refusal naming it."
   def locate([name | _]) do
     case Store.get(name) do
       {:ok, entry} -> {:ok, %{namespace: entry.namespace, entry: entry}}
-      :error -> render_schedule_error({:not_found, name})
+      :error -> {:error, {:schedule_not_found, name}}
     end
   end
 
@@ -64,8 +64,6 @@ defmodule Flezha.Service.Cli.Schedule do
       IO.puts(
         "Schedule #{name} added (#{cron_expr} #{timezone}); next fire #{schedule_next_fire(entry)}"
       )
-    else
-      {:error, reason} -> render_schedule_error(reason)
     end
   end
 
@@ -127,16 +125,9 @@ defmodule Flezha.Service.Cli.Schedule do
   # Store first: retracting first would let the periodic re-assert sweep
   # resurrect the job before the row is gone.
   def schedule_remove(name, _call) do
-    case Store.remove(name) do
-      :ok ->
-        _ = Hub.retract(name)
-        IO.puts("Schedule #{name} removed")
-
-      {:error, :not_found} ->
-        render_schedule_error({:not_found, name})
-
-      {:error, reason} ->
-        render_schedule_error(reason)
+    with :ok <- Store.remove(name) do
+      _ = Hub.retract(name)
+      IO.puts("Schedule #{name} removed")
     end
   end
 
@@ -148,7 +139,7 @@ defmodule Flezha.Service.Cli.Schedule do
     case Job.spawn_instance(entry, instance_id) do
       {:ok, %{operator_id: id}} -> IO.puts("Spawned #{id}")
       :duplicate -> IO.puts("instance already running; no-op")
-      {:error, reason} -> render_schedule_error(reason)
+      {:error, _reason} = refused -> refused
     end
   end
 
@@ -204,37 +195,4 @@ defmodule Flezha.Service.Cli.Schedule do
     |> Enum.join()
     |> Kernel.<>(last)
   end
-
-  defp render_schedule_error(reason), do: Context.fail!(reason, &schedule_error_message/1)
-
-  defp schedule_error_message({:not_found, name}), do: "schedule #{name} not found"
-  defp schedule_error_message({:invalid_cron, msg}), do: "invalid --cron: #{msg}"
-
-  defp schedule_error_message({:invalid_timezone, tz}),
-    do: "invalid --tz: #{inspect(tz)} is not an IANA time zone"
-
-  defp schedule_error_message({:invalid_name, msg}), do: "invalid schedule name: #{msg}"
-
-  defp schedule_error_message({:unschedulable_kind, factory_id}),
-    do: "only a bounded factory is schedulable; factory #{factory_id} is unbounded"
-
-  defp schedule_error_message({:invalid_plugins, msg}), do: "invalid --plugins: #{msg}"
-
-  defp schedule_error_message({:invalid_first_message, msg}),
-    do: "invalid --text/--channel: #{msg}"
-
-  defp schedule_error_message({:invalid_plugins_json, reason}),
-    do: "invalid --plugins JSON: #{Context.format_reason(reason)}"
-
-  defp schedule_error_message({:unknown_provider, id}),
-    do: "invalid --plugins: unknown provider #{id}"
-
-  defp schedule_error_message({:invalid_hook, detail}),
-    do: "invalid --plugins hook: #{inspect(detail)}"
-
-  defp schedule_error_message({:invalid_opts, detail}),
-    do: "invalid --plugins opts: #{inspect(detail)}"
-
-  defp schedule_error_message(:already_exists), do: "a schedule with that name already exists"
-  defp schedule_error_message(_reason), do: nil
 end

@@ -52,12 +52,12 @@ commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 # refusals — one row per reference refusal. Columns, `|`-separated:
 #   refusal | topology | steps | needs
 #
-# `refusal` is a `TopologyIssue` variant of `flz_core/src/host/issue.rs`, or
-# `ok` for a well-formed shape whose derived lines follow it in the seven-column
-# table above. `test/sdk_conformance/topology_check_test.exs` pairs the two
-# files: a variant with no row fails naming the variant, a row naming no variant
-# fails naming the row. The one exempt variant is `Declaration`, the residue of
-# the text refusals the vocabulary has not named.
+# `refusal` is the code of a `TopologyIssue` variant of
+# `flz_core/src/host/issue.rs` (`topology.<snake_case>`), or `ok` for a
+# well-formed shape whose derived lines follow it in the seven-column table
+# above. `test/sdk_conformance/topology_check_test.exs` pairs the two files: a
+# variant with no row fails naming the variant, a row naming no variant fails
+# naming the row. The only exempt variants are the `unrowed` lines at the end.
 #
 # `steps` are `;`-separated, in a language-neutral spelling every interpreter
 # maps to its own builder:
@@ -129,50 +129,50 @@ commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 # metadata region's one-byte length prefix, which is the whole of what the row
 # is testing. It is the one row whose steps column carries a literal that long.
 
-DuplicateChannel                   | dup_channel      | entry(in); in.into(plain); plain.named(in); plain.sink                                | -
-NodeIdentityCollision              | dup_node         | entry(in); in.into(plain); in.into(twin)                                              | -
-ChannelNameTooLong                 | long_channel_name| entry(in); in.into(plain); plain.named(nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn) | -
-BranchTooFewArms                   | branch_one_arm   | entry(in); in.into(plain); branch(plain, 1)                                           | branch
-Cycle                              | cycle            | entry(in); in.into(plain); plain.into(second); second.into(plain)                     | -
-UnreachableTasklet               | detached_node    | entry(in); in.into(plain); second.into(plain)                                         | detached
-CellsForMissing                 | keys_no_router   | entry(in); in.into(static)                                                            | -
-KeyByOnUnkeyableTarget             | key_on_static    | entry(in); in.key.into(routed)                                                        | -
-DuplicateKeyBy                     | dup_key_by       | entry(in); in.key.key.into(plain)                                                     | -
-TransformAfterTerminal             | map_after_sink   | entry(in); in.into(plain); plain.sink(out); plain.map.into(second)                    | -
-TransformAfterKeyBy                | map_after_key    | entry(in); in.key.map.into(plain)                                                     | -
-DanglingTransformChain             | dangling_chain   | entry(in); in.into(plain); in.map                                                     | -
-UnkeyedEdgeIntoDynamicTasklet    | unkeyed_dynamic  | entry(in); entry(other); in.key.into(dynamic); other.into(dynamic)                    | -
-MailboxCapacityZero                | mailbox_zero     | entry(in); in.into(plain); plain.mailbox(0)                                           | -
-MailboxCapacityTooLarge            | mailbox_huge     | entry(in); in.into(plain); plain.mailbox(2000000)                                     | -
-DuplicatePluginSink                | dup_sink         | entry(in); in.into(plain); plain.sink(out); plain.sink(out)                           | -
-KeyedChannelWithoutPluginWire      | keyed_no_wire    | entry(in); in.into(plain); plain.keyed; plain.into(second)                            | -
-ChannelNamedTwice                  | named_twice      | entry(in); in.into(plain); plain.named(a); plain.sink(b)                              | -
-DuplicateSinkName                  | two_channels_one_sink | entry(in); in.into(plain); in.into(second); plain.sink(out); second.sink(out)    | -
-UnservableClock                    | logical_nochange | entry(in); in.into(nochange)                                                          | -
-UnkeyedChannelUnderEffectivelyOnce | eo_unkeyed_sink  | class.persistent; class.effectively_once; entry(in); in.into(plain); plain.sink(out)  | -
-RetryMaxZero                       | retry_zero       | entry(in); in.retry_max(0); in.into(plain)                                            | -
-DroppingPolicyUnderEffectivelyOnce | eo_sheds         | class.persistent; class.effectively_once; entry(in); in.on_full(drop_newest); in.into(plain) | -
-CorrectionWithoutTier              | correction_bare  | class.correction_window(60000); entry(in); in.into(eventtime)                         | -
-CorrectionWithoutEventTime         | correction_wall  | class.persistent; class.effectively_once; class.correction_window(60000); entry(in); in.into(plain) | -
-CorrectionWindowZero               | correction_zero  | class.persistent; class.effectively_once; class.correction_window(0); entry(in); in.into(eventtime) | -
-CheckpointEveryZero                | checkpoint_zero  | class.persistent; class.effectively_once; class.checkpoint_every(0); entry(in); in.into(plain) | -
-CheckpointAckWithoutTier           | ack_no_tier      | class.checkpoint_ack; entry(in); in.into(plain)                                       | -
-MergeTooFewSources                 | merge_one_source | entry(in); merge(plain, in)                                                           | merge
-DuplicateMergeSource               | merge_same_twice | entry(in); entry(other); merge(plain, in, in)                                         | merge
-EdgeAlreadyWired                   | edge_rewired     | entry(in); in.map.into(plain); in.into(plain)                                         | -
-EffectivelyOnceOnBounded          | eo_bounded      | class.bounded; class.persistent; class.effectively_once; entry(in); in.into(plain)   | bounded
-CorrectionWindowOnBounded         | correction_bounded    | class.bounded; class.persistent; class.correction_window(60000); entry(in); in.into(plain) | bounded
-CheckpointOnBounded               | checkpoint_bounded | class.bounded; class.persistent; class.checkpoint_every(500); entry(in); in.into(plain) | bounded
-SyncDurabilityOnUnbounded             | sync_unbounded      | class.persistent; class.sync_durability; entry(in); in.into(plain)                    | sync_durability
-SleepWithoutPersistence            | sleep_no_persist | class.sleep_when_idle; entry(in); in.into(plain)                                      | -
-AtCheckpointWithoutMaxDelay        | hold_no_delay    | class.persistent; class.effectively_once; class.outputs_at_checkpoint; entry(in); in.into(plain) | raw_flags
+topology.duplicate_channel         | dup_channel      | entry(in); in.into(plain); plain.named(in); plain.sink                                | -
+topology.node_identity_collision   | dup_node         | entry(in); in.into(plain); in.into(twin)                                              | -
+topology.channel_name_too_long     | long_channel_name| entry(in); in.into(plain); plain.named(nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn) | -
+topology.branch_too_few_arms       | branch_one_arm   | entry(in); in.into(plain); branch(plain, 1)                                           | branch
+topology.cycle                     | cycle            | entry(in); in.into(plain); plain.into(second); second.into(plain)                     | -
+topology.unreachable_tasklet     | detached_node    | entry(in); in.into(plain); second.into(plain)                                         | detached
+topology.cells_for_missing      | keys_no_router   | entry(in); in.into(static)                                                            | -
+topology.key_by_on_unkeyable_target | key_on_static    | entry(in); in.key.into(routed)                                                        | -
+topology.duplicate_key_by          | dup_key_by       | entry(in); in.key.key.into(plain)                                                     | -
+topology.transform_after_terminal  | map_after_sink   | entry(in); in.into(plain); plain.sink(out); plain.map.into(second)                    | -
+topology.transform_after_key_by    | map_after_key    | entry(in); in.key.map.into(plain)                                                     | -
+topology.dangling_transform_chain  | dangling_chain   | entry(in); in.into(plain); in.map                                                     | -
+topology.unkeyed_edge_into_dynamic_tasklet | unkeyed_dynamic  | entry(in); entry(other); in.key.into(dynamic); other.into(dynamic)                    | -
+topology.mailbox_capacity_zero     | mailbox_zero     | entry(in); in.into(plain); plain.mailbox(0)                                           | -
+topology.mailbox_capacity_too_large | mailbox_huge     | entry(in); in.into(plain); plain.mailbox(2000000)                                     | -
+topology.duplicate_plugin_sink     | dup_sink         | entry(in); in.into(plain); plain.sink(out); plain.sink(out)                           | -
+topology.keyed_channel_without_plugin_wire | keyed_no_wire    | entry(in); in.into(plain); plain.keyed; plain.into(second)                            | -
+topology.channel_named_twice       | named_twice      | entry(in); in.into(plain); plain.named(a); plain.sink(b)                              | -
+topology.duplicate_sink_name       | two_channels_one_sink | entry(in); in.into(plain); in.into(second); plain.sink(out); second.sink(out)    | -
+topology.unservable_clock          | logical_nochange | entry(in); in.into(nochange)                                                          | -
+topology.unkeyed_channel_under_effectively_once | eo_unkeyed_sink  | class.persistent; class.effectively_once; entry(in); in.into(plain); plain.sink(out)  | -
+topology.retry_max_zero            | retry_zero       | entry(in); in.retry_max(0); in.into(plain)                                            | -
+topology.dropping_policy_under_effectively_once | eo_sheds         | class.persistent; class.effectively_once; entry(in); in.on_full(drop_newest); in.into(plain) | -
+topology.correction_without_tier   | correction_bare  | class.correction_window(60000); entry(in); in.into(eventtime)                         | -
+topology.correction_without_event_time | correction_wall  | class.persistent; class.effectively_once; class.correction_window(60000); entry(in); in.into(plain) | -
+topology.correction_window_zero    | correction_zero  | class.persistent; class.effectively_once; class.correction_window(0); entry(in); in.into(eventtime) | -
+topology.checkpoint_every_zero     | checkpoint_zero  | class.persistent; class.effectively_once; class.checkpoint_every(0); entry(in); in.into(plain) | -
+topology.checkpoint_ack_without_tier | ack_no_tier      | class.checkpoint_ack; entry(in); in.into(plain)                                       | -
+topology.merge_too_few_sources     | merge_one_source | entry(in); merge(plain, in)                                                           | merge
+topology.duplicate_merge_source    | merge_same_twice | entry(in); entry(other); merge(plain, in, in)                                         | merge
+topology.edge_already_wired        | edge_rewired     | entry(in); in.map.into(plain); in.into(plain)                                         | -
+topology.effectively_once_on_bounded | eo_bounded      | class.bounded; class.persistent; class.effectively_once; entry(in); in.into(plain)   | bounded
+topology.correction_window_on_bounded | correction_bounded    | class.bounded; class.persistent; class.correction_window(60000); entry(in); in.into(plain) | bounded
+topology.checkpoint_on_bounded    | checkpoint_bounded | class.bounded; class.persistent; class.checkpoint_every(500); entry(in); in.into(plain) | bounded
+topology.sync_durability_on_unbounded | sync_unbounded      | class.persistent; class.sync_durability; entry(in); in.into(plain)                    | sync_durability
+topology.sleep_without_persistence | sleep_no_persist | class.sleep_when_idle; entry(in); in.into(plain)                                      | -
+topology.at_checkpoint_without_max_delay | hold_no_delay    | class.persistent; class.effectively_once; class.outputs_at_checkpoint; entry(in); in.into(plain) | raw_flags
 
-# The §5 short-form refusals. Their names are the authoring contract's, not
+# The §5 short-form refusals. Their codes are the authoring contract's, not
 # `flz_core`'s: the core never sees a short form, so these rows are exempt from
 # the issue-variant pairing and checked against §5's list instead.
-ShortFormWithTopology              | shorthand_with_topology       | shorthand(plain, out, -).topology                                         | shorthand
-SinkWithoutOutput                  | shorthand_sink_without_output | shorthand(plain, out, -).noout                                            | shorthand_typed_output
-DuplicateFactoryId                 | shorthand_duplicate_id        | shorthand(plain, out, -); shorthand(plain, twin_sink, -)                  | shorthand
+topology.short_form_with_topology  | shorthand_with_topology       | shorthand(plain, out, -).topology                                         | shorthand
+topology.sink_without_output       | shorthand_sink_without_output | shorthand(plain, out, -).noout                                            | shorthand_typed_output
+topology.duplicate_factory_id      | shorthand_duplicate_id        | shorthand(plain, out, -); shorthand(plain, twin_sink, -)                  | shorthand
 
 # The well-formed rows. `hybrid_channel` and `commit_block_chain` are the two
 # twins of the seven-column table above — cited, not re-spelled. Every other
@@ -200,3 +200,26 @@ sink_names_channel | 1 | items_output | plugin | 0 | - | items_output
 checkpoint_ack | 0 | in | entry | - | 0 | -
 checkpoint_every | 0 | in | entry | - | 0 | -
 hold_outputs | 0 | in | entry | - | 0 | -
+
+# The variants `check` raises from a record's raw shape, or registration raises
+# after it, which no builder writes and so no row states: `unrowed | <code>`.
+unrowed | topology.unknown_sdk_lang
+unrowed | topology.unusable_sdk_version
+unrowed | topology.no_tasklets
+unrowed | topology.sync_durability_without_persistence
+unrowed | topology.effectively_once_without_persistence
+unrowed | topology.checkpoint_max_delay_zero
+unrowed | topology.producer_out_of_range
+unrowed | topology.consumer_out_of_range
+unrowed | topology.entry_channel_with_producer
+unrowed | topology.entry_channel_without_consumer
+unrowed | topology.inter_task_channel_without_producer
+unrowed | topology.plugin_channel_with_consumers
+unrowed | topology.static_tasklet_without_cell_keys
+unrowed | topology.cell_keys_without_static_mode
+unrowed | topology.max_cells_zero
+unrowed | topology.declaration_unreadable
+unrowed | topology.no_entry_channel
+unrowed | topology.multiple_output_channels
+unrowed | topology.branching_chained_loop
+unrowed | topology.chained_loop_terminal_without_handoff

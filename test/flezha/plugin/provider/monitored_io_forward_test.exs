@@ -30,9 +30,9 @@ defmodule FlezhaTest.Plugin.Provider.MonitoredIOForwardTest do
   test "a heartbeat interval it cannot interpret is refused, and nothing is linked" do
     Process.flag(:trap_exit, true)
 
-    assert {:error, message} = prepare(%{heartbeat_interval: "abc"})
-    assert is_binary(message)
-    assert message =~ "heartbeat_interval"
+    assert {:error, {:invalid_option_value, :heartbeat_interval, "abc"}} =
+             prepare(%{heartbeat_interval: "abc"})
+
     refute_received {:EXIT, _pid, _reason}
   end
 

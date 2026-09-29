@@ -67,19 +67,22 @@ always a named, catchable error, surfaced at the exact call that caused it,
 never a bare panic or an unchecked runtime crash, and never deferred to a later
 call (no "poisoned builder"):
 
-| Failure                         | Java                                      | Rust (`Err(FlezhaError::…)`)                 |
-| ------------------------------- | ----------------------------------------- | -------------------------------------------- |
-| invalid topology                | `UnboundedOperatorConfigurationException`, `BoundedOperatorConfigurationException` | `InvalidTopology(TopologyBuildError)` |
-| duplicate `factory_id`          | `IllegalArgumentException` at the second `registerFactory` | `DuplicateFactoryId { factory_id }` |
-| runner lifecycle misuse         | `IllegalStateException`                   | `AlreadyRunning { namespace }`, `InvalidNamespace` |
-| connection failure at `start()` | a named exception (the native binding raises `FlezhaNativeException`) | `ConnectFailed(String)` |
-| removing a type with live instances | `OperatorTypeInUseException`         | `OperatorTypeInUse`                         |
+Every SDK raises its one error type for these (Java `FlezhaException`, Rust
+`FlezhaError`, and the same one type in the other SDKs), and the failure is
+told apart by the error's `code`, the same string in every SDK:
 
-The two SDKs report the identical failure class with the same error name: what
-Java throws at `registerFactory(...)`, Rust returns as `Err` from
-`register_factory(R)`. The three short-form refusals
-(`docs/sdk/authoring_contract.md` §5.2) are named the same way in all seven
-SDKs, and the name appears verbatim in the error an author reads.
+| Failure                             | Code                                         | Rust (`Err(FlezhaError::…)`)                 |
+| ----------------------------------- | -------------------------------------------- | -------------------------------------------- |
+| invalid topology                    | the first issue's `topology.*` code, every issue in `details.issues` | `InvalidTopology(TopologyBuildError)` |
+| duplicate `factory_id`              | `topology.duplicate_factory_id`              | `DuplicateFactoryId { factory_id }`          |
+| runner lifecycle misuse             | `runtime.runner_already_running`, `namespace.invalid_name` | `AlreadyRunning { namespace }`, `InvalidNamespace` |
+| connection failure at `start()`     | `runner.controller_unreachable`, or the controller's own refusal code | `ConnectFailed(String)`, `Refused(..)` |
+| removing a type with live instances | `runtime.operator_type_in_use`               | `OperatorTypeInUse { factory_id, live_instances }` |
+
+What Java throws at `registerFactory(...)`, Rust returns as `Err` from
+`register_factory(R)`, with the same code. The three short-form refusals
+(`docs/sdk/authoring_contract.md` §5.2) carry the same code in all seven SDKs,
+and the code appears verbatim in the error an author reads.
 
 ### 7. `create*` constructs an object the caller mutates; `new*` is not used
 

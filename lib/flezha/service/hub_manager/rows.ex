@@ -51,7 +51,7 @@ defmodule Flezha.Service.HubManager.Rows do
   end
 
   def get_registry(namespace) do
-    with_live_hub(namespace, {:error, "hub not alive"}, fn hub_id ->
+    with_live_hub(namespace, {:error, {:hub_down, namespace}}, fn hub_id ->
       {:ok, live_registry_dump(hub_id)}
     end)
   end
@@ -76,14 +76,14 @@ defmodule Flezha.Service.HubManager.Rows do
     with_live_hub(namespace, [], fn hub_id -> ProcessHub.nodes(hub_id, opts) end)
   end
 
-  # The one place either published string is written. `Lookup` answers in the
-  # three atoms every resolver shares; this is the boundary where a hub read
-  # becomes the user-facing wording, and there is no second remap behind it.
+  # `Lookup` answers in the three atoms every resolver shares; this is the
+  # boundary where a hub read becomes the reason a caller is answered with,
+  # naming what was looked for.
   def get_pid(namespace, operator_id) do
     case Lookup.operator(namespace, operator_id) do
       {:ok, pid} -> {:ok, pid}
-      {:error, :hub_down} -> {:error, "hub not alive"}
-      {:error, _reason} -> {:error, "operator not found"}
+      {:error, :hub_down} -> {:error, {:hub_down, namespace}}
+      {:error, _reason} -> {:error, {:operator_not_found, namespace, operator_id}}
     end
   end
 
@@ -229,15 +229,15 @@ defmodule Flezha.Service.HubManager.Rows do
   @spec operator_plugins(String.t(), String.t()) ::
           {:ok, [{binary(), Plugin.t()}]} | {:error, term()}
   def operator_plugins(namespace, operator_id) do
-    with_live_hub(namespace, {:error, "hub not alive"}, fn hub_id ->
+    with_live_hub(namespace, {:error, {:hub_down, namespace}}, fn hub_id ->
       case ProcessRegistry.lookup(hub_id, operator_id) do
         nil ->
-          {:error, "operator not found"}
+          {:error, {:operator_not_found, namespace, operator_id}}
 
         entry ->
           case Cspec.start_arg(elem(entry, 0)) do
             {:ok, arg} -> {:ok, normalize_plugins(extract_plugins(arg))}
-            :error -> {:error, "operator not found"}
+            :error -> {:error, {:operator_not_found, namespace, operator_id}}
           end
       end
     end)

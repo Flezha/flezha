@@ -152,10 +152,10 @@ defmodule Flezha.Operator.Migration do
 
     cond do
       to_iter not in committed ->
-        {:error, {:uncommitted_iteration, committed}}
+        {:error, {:uncommitted_iteration, to_iter, committed}}
 
       (uncovered = uncovered_channels(state, to_iter)) != [] ->
-        {:error, {:uncovered, uncovered}}
+        {:error, {:uncovered, to_iter, uncovered}}
 
       true ->
         :ok

@@ -5,6 +5,7 @@ defmodule Flezha.Service.Cli.MemTop do
   """
 
   alias Flezha.Layout.Table, as: Layout
+  alias Flezha.Service.Cli.Context
 
   @top_task_count 20
 
@@ -14,12 +15,12 @@ defmodule Flezha.Service.Cli.MemTop do
   tables by `:memory`, DETS files under the configured ProcessHub registry root, and
   the `:recon_alloc.memory(:allocated_types)` allocator breakdown.
 
-  `output_format` is `"text"` or `"json"`.
+  The format is the caller's `output` option, `"text"` or `"json"`.
   """
-  def controller_mem_top(output_format, _call) do
+  def controller_mem_top(%{opts: opts}) do
     snapshot = build_mem_top_snapshot()
 
-    case output_format do
+    case Context.format(opts) do
       "json" -> IO.puts(Jason.encode!(snapshot))
       _ -> print_mem_top_text(snapshot)
     end

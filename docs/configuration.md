@@ -735,7 +735,7 @@ Declared on the stream handle returned by `input(...)` or a node's output.
 | Declaration | Default | What it does |
 |---|---|---|
 | `.on_full(OverflowPolicy)` (`onFull`) | `DropNothing` | What a full Cell mailbox discards: `DropNothing`, `DropNewest`, `DropOldest`. Nothing drops by default; `DropNothing` slows the producer to the consumer's rate instead. |
-| `.retry_max(n)` (`retryMax`) | `3` attempts | Attempts before a failing payload is parked to the dead-letter queue, or, into a bounded tasklet, before the tasklet fails and the run compensates. `0` is refused (`RetryMaxZero`). |
+| `.retry_max(n)` (`retryMax`) | `3` attempts | Attempts before a failing payload is parked to the dead-letter queue, or, into a bounded tasklet, before the tasklet fails and the run compensates. `0` is refused (`topology.retry_max_zero`). |
 | `.retry_backoff_ms(ms)` (`retryBackoffMs`) | `50` | Base of the exponential backoff between attempts, for both kinds; the wait holds no thread. |
 | `.keyed()` (`keyed`) | off | Every plugin emit must carry a natural key; the runtime stamps `flz.cell` / `flz.seq` / `flz.key`. Requires a `sink`; required on every plugin channel under `effectively_once()`. |
 | `.key_by(f)` (`keyBy`) | absent — one Cell | Route by a key function, making the consumer dynamic-cell. |

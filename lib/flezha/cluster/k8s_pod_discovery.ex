@@ -129,7 +129,7 @@ defmodule Flezha.Cluster.K8sPodDiscovery do
       if ip_lookup_mode in [:endpoints, :pods] do
         :ok
       else
-        {:error, "Invalid Pod IP lookup mode: #{inspect(ip_lookup_mode)}"}
+        {:error, {:invalid_pod_ip_lookup, ip_lookup_mode}}
       end
     end
 
@@ -139,7 +139,7 @@ defmodule Flezha.Cluster.K8sPodDiscovery do
       if File.dir?(service_account_path) do
         :ok
       else
-        {:error, "Service account path does not exist: #{service_account_path}"}
+        {:error, {:service_account_path_missing, service_account_path}}
       end
     end
 
@@ -149,7 +149,7 @@ defmodule Flezha.Cluster.K8sPodDiscovery do
       if String.valid?(cluster_domain) && String.length(cluster_domain) > 0 do
         :ok
       else
-        {:error, "Invalid or empty cluster domain: #{cluster_domain}"}
+        {:error, {:invalid_cluster_domain, cluster_domain}}
       end
     end
 

@@ -207,7 +207,9 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
             {"on_operator_init", %{"on_error" => "shrug"}, {:on_error, "shrug"}},
             {"on_message", %{"key" => 7}, {:key, 7}}
           ] do
-        assert {:error, {:invalid_hook_opts, ^expected}} =
+        {option, value} = expected
+
+        assert {:error, {:invalid_hook_opts, ^option, ^value}} =
                  Table.canonicalise(@catalog, %Plugin{
                    id: "c",
                    provider: MsgEcho,
@@ -259,14 +261,14 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
       assert [%{position: 0}] = Map.fetch!(table.subs, :on_input)
 
       for {provider, name} <- [{FoldA, "on_operator_init"}, {TransformUpcase, "on_input"}] do
-        assert {:error, {_id, {:invalid_hook_opts, {:position, "first"}}}} =
+        assert {:error, {_id, {:invalid_hook_opts, :position, "first"}}} =
                  subscribe(table, "bad", %Plugin{
                    id: "bad",
                    provider: provider,
                    hooks: [{name, %{"position" => "first"}}]
                  })
 
-        assert {:error, {_id, {:invalid_hook_opts, {:position, -1}}}} =
+        assert {:error, {_id, {:invalid_hook_opts, :position, -1}}} =
                  subscribe(table, "bad", %Plugin{
                    id: "bad",
                    provider: provider,
@@ -353,7 +355,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
     test "invalid timeout rejected on :fold" do
       table = Table.new(@catalog)
 
-      assert {:error, {_id, {:invalid_hook_opts, {:timeout_ms, :bad}}}} =
+      assert {:error, {_id, {:invalid_hook_opts, :timeout_ms, :bad}}} =
                subscribe(table, "x", %Plugin{
                  id: "x",
                  provider: FoldA,
@@ -364,7 +366,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
     test "invalid on_error rejected on :fold" do
       table = Table.new(@catalog)
 
-      assert {:error, {_id, {:invalid_hook_opts, {:on_error, :weird}}}} =
+      assert {:error, {_id, {:invalid_hook_opts, :on_error, :weird}}} =
                subscribe(table, "x", %Plugin{
                  id: "x",
                  provider: FoldA,

@@ -5,7 +5,7 @@ pub struct CommandRequest {
     pub reference_id: ::prost::alloc::string::String,
     #[prost(
         oneof = "command_request::Command",
-        tags = "2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38"
+        tags = "2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39"
     )]
     pub command: ::core::option::Option<command_request::Command>,
 }
@@ -87,7 +87,34 @@ pub mod command_request {
         AdminResponse(super::AdminResponse),
         #[prost(message, tag = "38")]
         OperatorExited(super::OperatorExited),
+        #[prost(message, tag = "39")]
+        ConnectRefused(super::ConnectRefused),
     }
+}
+/// A failure in the error model's one shape (docs/errors.md): a stable `code`
+/// spelled family.snake, its `class`, a plain `message`, the `details` that
+/// message names as a JSON object (the encoding `AdminRequest.args` uses), and
+/// a `hint` naming the next command, empty when there is none.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Error {
+    #[prost(string, tag = "1")]
+    pub code: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub class: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub message: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub details_json: ::prost::alloc::string::String,
+    #[prost(string, tag = "5")]
+    pub hint: ::prost::alloc::string::String,
+}
+/// Controller -> SDK, the one frame a refused runner connect is answered with,
+/// written before the controller closes the stream, so the runner can report
+/// why rather than retrying a connection that will never be admitted.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ConnectRefused {
+    #[prost(message, optional, tag = "1")]
+    pub error: ::core::option::Option<Error>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CommandResponse {
@@ -95,8 +122,8 @@ pub struct CommandResponse {
     pub reference_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub status: ::prost::alloc::string::String,
-    #[prost(string, repeated, tag = "3")]
-    pub errors: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(message, repeated, tag = "3")]
+    pub errors: ::prost::alloc::vec::Vec<Error>,
     #[prost(bytes = "vec", tag = "4")]
     pub raw_data: ::prost::alloc::vec::Vec<u8>,
 }
@@ -237,15 +264,15 @@ pub struct OperatorMessage {
 pub struct OperatorMessageResponse {
     #[prost(bytes = "vec", tag = "1")]
     pub payload: ::prost::alloc::vec::Vec<u8>,
-    #[prost(string, tag = "2")]
-    pub error: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub error: ::core::option::Option<Error>,
 }
 /// Inverse of CellState. Sent by the Controller to a Runner SDK to
 /// prime a freshly-spawned Operator's GenServer/struct state from a
 /// previously-captured `state_binary`. Round-trips with the same opaque
 /// SDK-internal serialization used by CellState. SDKs that do not
-/// implement Apply respond with status="error" and error\[\] containing the
-/// canonical token "apply_state_not_supported".
+/// implement Apply respond with status="error" and an error coded
+/// `state.apply_not_supported`.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CellApplyState {
     #[prost(string, tag = "1")]
@@ -369,7 +396,7 @@ pub struct TimerTrigger {
 }
 /// Controller -> SDK reply to TaskCommit, emitted only AFTER the journal
 /// entry is durable (fsync). Carries the originating request's
-/// reference_id so the SDK wakes the blocked driver. A non-empty `error`
+/// reference_id so the SDK wakes the blocked driver. A present `error`
 /// (journal write/fsync failure, oversized handoff) terminates the run
 /// abnormally through the existing terminal-error path.
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -378,8 +405,8 @@ pub struct TaskCommitResponse {
     pub operator_id: ::prost::alloc::string::String,
     #[prost(uint32, tag = "2")]
     pub task_idx: u32,
-    #[prost(string, tag = "3")]
-    pub error: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "3")]
+    pub error: ::core::option::Option<Error>,
 }
 /// SDK -> Controller, at each iteration boundary of a looping durable
 /// structured bounded operator (bounded-durable-loop): iteration `iter`
@@ -424,8 +451,8 @@ pub struct IterCommitResponse {
     pub operator_id: ::prost::alloc::string::String,
     #[prost(uint32, tag = "2")]
     pub iter: u32,
-    #[prost(string, tag = "3")]
-    pub error: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "3")]
+    pub error: ::core::option::Option<Error>,
 }
 /// SDK -> Controller. An instance of either kind whose class sleeps has been idle
 /// past the threshold (a bounded operator at the committed boundary of iteration `iter`,
@@ -812,9 +839,11 @@ pub struct SpawnBoundedRequest {
 }
 /// Controller -> SDK reply to SpawnBoundedRequest, carrying the originating
 /// request's reference_id so the SDK wakes the requester's result handle.
-/// `outcome` is one of `spawned | delivered | already_running |
-/// factory_unknown | factory_not_bounded | refused`; `error` details a
-/// `refused` (quota, shutdown, start failure) and is empty otherwise. `instance_id` is the id the request
+/// `outcome` is `spawned` or `delivered` when the request reached an
+/// instance, and empty when it was refused; `error` is the refusal, carrying the
+/// controller's own code (`operator.already_running`, `operator.factory_unknown`,
+/// `operator.factory_not_bounded`, `quota.exceeded`, `authz.*`, ...), and is
+/// absent otherwise. `instance_id` is the id the request
 /// resolved to: the requester's own, or the generated one for a request that
 /// carried none (empty when nothing was started). The reply never faults the
 /// requesting tasklet — it only resolves its handle.
@@ -822,8 +851,8 @@ pub struct SpawnBoundedRequest {
 pub struct SpawnBoundedResponse {
     #[prost(string, tag = "1")]
     pub outcome: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
-    pub error: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub error: ::core::option::Option<Error>,
     #[prost(string, tag = "3")]
     pub instance_id: ::prost::alloc::string::String,
 }
@@ -853,14 +882,14 @@ pub struct AdminRequest {
 }
 /// Controller -> SDK reply to AdminRequest, carrying the originating request's
 /// reference_id so the SDK wakes the blocked caller. `result` is the published
-/// function's own answer as JSON; `error` details a refusal (policy, quota, a
-/// name that resolves to nothing) and is empty otherwise.
+/// function's own answer as JSON; `error` is a refusal (policy, quota, a name
+/// that resolves to nothing) and is absent otherwise.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AdminResponse {
     #[prost(string, tag = "1")]
     pub result: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
-    pub error: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub error: ::core::option::Option<Error>,
 }
 /// SDK -> Controller, one-way, over the "control_command" payload_id: the
 /// process of operator instance `operator_id` exited abnormally, so the runner

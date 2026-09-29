@@ -536,9 +536,10 @@ defmodule Flezha.State.TaskJournal do
   end
 
   @doc "Why a barrier naming the record at `seq` of `cell_id` fails."
-  @spec record_not_durable(binary(), non_neg_integer()) :: String.t()
+  @spec record_not_durable(binary(), non_neg_integer()) ::
+          {:record_not_durable, String.t(), non_neg_integer()}
   def record_not_durable(cell_id, seq),
-    do: "record_not_durable: #{Outbox.cell_label(cell_id)} seq=#{seq}"
+    do: {:record_not_durable, Outbox.cell_label(cell_id), seq}
 
   @doc """
   The entry naming `records` (`record_ranges/1`) is durable: each Cell's

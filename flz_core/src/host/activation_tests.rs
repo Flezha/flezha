@@ -247,7 +247,7 @@ fn an_unbounded_effect_carrying_a_completion_fails_non_retryable() {
         asked,
         schema::ItemEffect {
             verdict: schema::Verdict::NonRetryableError {
-                message: crate::bounded::COMPLETE_OUTSIDE_BOUNDED.to_string()
+                message: crate::bounded::complete_outside_bounded().text()
             },
             consumed_offset: Some(7),
             event_time: 42,

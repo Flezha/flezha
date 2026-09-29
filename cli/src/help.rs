@@ -81,10 +81,11 @@ COMMANDS:
 
 `await` also waits, inside the same timeout, for a controller it cannot reach
 yet, such as one started as a daemon a moment ago. Once reached, the
-controller's verdict is the answer. Still unreachable at the timeout, it exits 1
-naming what that can mean: not up yet, stopped after it was reached, or a cookie
-or node name that is not the controller's. A controller that refuses the cookie
-logs two errors per attempt meanwhile, about four a second."#;
+controller's verdict is the answer. Still unreachable at the timeout, it exits 3
+(controller.unreachable) naming what that can mean: not up yet, stopped after it
+was reached, or a cookie or node name that is not the controller's. A controller
+that refuses the cookie logs two errors per attempt meanwhile, about four a
+second."#;
 
 pub(crate) const CLUSTER: Help = r#"flz cluster - Controller cluster status
 
@@ -176,10 +177,13 @@ OPTIONS:
     --force           Skip drain — finalise (flush WAL + close transports) only
 
 EXIT CODES:
-    0   Clean shutdown (or `--force` finalised cleanly)
-    1   Partial drain (timeout elapsed; some Operators still local)
-    2   Already shutting down (the in-flight outcome is reported)
-    3   Controller not reachable on the CLI socket"#;
+    0   Clean shutdown (or `--force` finalised cleanly); a stop issued while one
+        is in flight follows it and exits with its outcome
+    3   Controller not reachable (controller.unreachable)
+    4   Refused for want of a token or a role (authz.*)
+    7   Partial drain: the timeout elapsed with Operators still local
+        (shutdown.partial_drain)
+    Every code is listed in docs/errors.md."#;
 
 pub(crate) const CONTROLLER: Help = r#"flz controller - Controller management commands
 
@@ -230,8 +234,16 @@ COMMANDS:
     help           Show this help message
 
 OUTPUT FORMAT:
-    Every verb that renders takes --json, or the same request spelled
-    --output json / -o json. Any other format is refused, not rendered as text.
+    Every verb takes --json, or the same request spelled --output json / -o json.
+    A verb that answers data answers it as JSON; an acting verb's answer stays
+    text. Any other format is refused.
+
+ERRORS:
+    A failure is written on stderr as `error: <message> (<code>)`, with a
+    `hint:` line when there is a next command, or under --json as one
+    {"error": {"code", "class", "message", "details", "hint"}} line. The exit
+    code follows the class: 1 internal, 2 invalid, 3 unreachable, 4 denied,
+    5 not_found, 6 conflict, 7 unavailable. Every code is in docs/errors.md.
 
 Use 'flz <COMMAND> help' for more information on a specific command.
 
@@ -524,14 +536,16 @@ OPTIONS:
 
 EXIT CODES:
     0   Success (apply succeeded, or --dry-run preview)
-    1   Invalid usage (missing --yes without --dry-run, conflicting flags,
-        malformed --app-data-root, refusal to delete the root itself)
-    2   Partial success (some roots cleared, then a filesystem error)
-    3   I/O error before any action
-    4   Refused: Controller is up
+    1   A filesystem error: before any action (reset.path_unreadable), or after
+        some roots were cleared (reset.partial)
+    2   Invalid usage: missing --yes without --dry-run
+        (reset.confirmation_required), conflicting flags, or a path it refuses
+        to clear, such as the app_data root itself (reset.path_refused)
+    6   Refused: the Controller is up (reset.controller_running)
+    Every code is listed in docs/errors.md.
 
 EXAMPLES:
-    flz reset                          # plan only, exit 1
+    flz reset                          # plan only, exit 2
     flz reset --dry-run                # plan only, exit 0
     flz reset --yes                    # default scope (state, process_hub)
     flz reset --yes --all              # every opt-in clear too, auth included

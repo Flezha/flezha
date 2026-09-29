@@ -121,7 +121,7 @@ flz reset [OPTIONS]
 
 | Flag                     | Meaning                                                                        |
 | ------------------------ | ------------------------------------------------------------------------------ |
-| `--yes`                  | Required to apply. Without it the command prints the plan and exits 1.        |
+| `--yes`                  | Required to apply. Without it the command prints the plan and exits 2.        |
 | `--dry-run`              | Print the plan without touching the filesystem; exits 0.                      |
 | `--include-certs`        | Also clear `app_data/certs/*`.                                                 |
 | `--include-dlq`          | Also clear `app_data/dlq/*`: every parked dead-letter record.                 |
@@ -138,7 +138,7 @@ flz reset [OPTIONS]
 `--yes` together with `--dry-run` is a usage error; so is any unknown argument —
 `--output` with a value other than `text` or `json` included. So is a switch
 written with a value: `--all=no` and `--yes=false` are refused as
-`Error: --all takes no value`, because a flag that is either written or not
+`error: --all takes no value (usage.option_takes_no_value)`, because a flag that is either written or not
 written cannot carry one, and reading it as written would clear what the
 user asked to keep.
 
@@ -146,7 +146,8 @@ user asked to keep.
 
 The command probes the configured node with
 `flzvm rpc 'Flezha.Service.CliManager.boot_status([])'`. Exit 0 with
-non-empty output means "up" — the reset is refused with exit 4. Any other
+non-empty output means "up" — the reset is refused as
+`reset.controller_running` (exit 6). Any other
 outcome (no node, timeout, distribution failure) means "not up" and the reset
 proceeds. There is no override flag: stop a wedged Controller with
 `flz controller stop --force` first. `flz auth rebootstrap` runs behind the
@@ -166,7 +167,8 @@ directory, and that is guarded where it is touched.
   removed.
 - A path-equality guard (after symlink canonicalisation) refuses to clear the
   configured root itself or the same path twice — a malformed or aliased
-  `--app-data-root` exits 1 before anything is touched.
+  `--app-data-root` is refused as `reset.path_refused` (exit 2) before anything
+  is touched.
 - A missing root is success: `flz reset --yes` on a checkout with no
   `app_data/` exits 0.
 - The file/byte counts are computed over the same entry list in dry-run and
@@ -174,16 +176,23 @@ directory, and that is guarded where it is touched.
 
 ## Exit codes
 
-| Code | Meaning                                                                          |
-| ---- | -------------------------------------------------------------------------------- |
-| `0`  | Applied, or `--dry-run` preview.                                                 |
-| `1`  | Usage: no `--yes` and no `--dry-run`, conflicting flags, unknown argument, root guard refusal. |
-| `2`  | Partial: at least one root was cleared, then a filesystem error stopped the walk. |
-| `3`  | I/O error before anything was removed.                                           |
-| `4`  | Refused: the Controller is up.                                                   |
+The exit code follows the error's class, as for every `flz` verb
+([error codes](../errors.md)):
+
+| Code | Meaning                                                                                                   |
+| ---- | --------------------------------------------------------------------------------------------------------- |
+| `0`  | Applied, or `--dry-run` preview.                                                                          |
+| `1`  | `reset.partial` (a root was cleared, then a filesystem error stopped the walk) or `reset.path_unreadable` (nothing was removed). |
+| `2`  | `reset.confirmation_required` (no `--yes`, no `--dry-run`), `reset.path_refused`, or a `usage.*` refusal. |
+| `6`  | `reset.controller_running`: the Controller is up.                                                         |
 
 On error the remaining roots are reported as `kept (not reached: earlier error)`
-and the failing path is printed to stderr.
+and the error, naming the failing path, is printed to stderr:
+
+```text
+error: flz reset printed its plan and cleared nothing: pass --yes to apply it, or --dry-run to preview without an error (reset.confirmation_required)
+hint: flz reset --yes
+```
 
 ## Output
 

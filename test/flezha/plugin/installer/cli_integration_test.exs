@@ -37,11 +37,11 @@ defmodule Flezha.Plugin.Installer.CliIntegrationTest do
     assert install_output =~ "status: disabled"
 
     # Text list includes our plugin.
-    text_list = capture_io(fn -> CliManager.list_installed_plugins("text") end)
+    text_list = capture_io(fn -> CliManager.list_installed_plugins() end)
     assert text_list =~ "cli_one_#{unique}@1.0.0"
 
     # JSON list parses and includes our plugin.
-    json_list = capture_io(fn -> CliManager.list_installed_plugins("json") end)
+    json_list = capture_io(fn -> CliManager.list_installed_plugins(output: "json") end)
     decoded = Jason.decode!(String.trim(json_list))
     assert Enum.any?(decoded, fn p -> p["id"] == "cli_one_#{unique}" end)
 
@@ -146,8 +146,7 @@ defmodule Flezha.Plugin.Installer.CliIntegrationTest do
         catch_exit(CliManager.uninstall_plugin("cli_refuse_#{unique}"))
       end)
 
-    assert output =~ "error: uninstalling plugin"
-    assert output =~ "plugin_enabled"
+    assert output =~ "is enabled; disable it before uninstalling it (plugin.uninstall_enabled)"
   end
 
   test "install surfaces the structured error from a bad package", %{tmp: tmp} do
@@ -155,6 +154,6 @@ defmodule Flezha.Plugin.Installer.CliIntegrationTest do
     File.write!(bad, "not a tarball")
 
     output = capture_io(:stderr, fn -> catch_exit(CliManager.install_plugin(bad)) end)
-    assert output =~ "error: installing plugin"
+    assert output =~ "(plugin.package_unreadable)"
   end
 end

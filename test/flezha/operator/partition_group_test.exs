@@ -87,12 +87,9 @@ defmodule FlezhaTest.Operator.PartitionGroupTest do
       for mode <- [:once, :chained] do
         ClassRegistry.put_partitioning(@factory, %{keyless: false, loop_mode: mode})
 
-        assert {:error, message} =
+        assert {:error, {:partitions_without_per_input_loop, @factory, ^mode, 2}} =
                  PartitionGroup.start(@namespace, builder("chat", :bounded), 2)
 
-        assert message =~ "PartitionsWithoutPerInputLoop: class #{@factory}"
-        assert message =~ "(loop_mode #{mode})"
-        assert message =~ "declare loop_mode per_input"
         assert started_members() == []
       end
     end
@@ -100,31 +97,32 @@ defmodule FlezhaTest.Operator.PartitionGroupTest do
     test "a first message is refused: it names one instance, and a group's reaches a member by key" do
       operator = %{builder() | opts: [seed_input: {"AAPL:1", %{}}]}
 
-      assert {:error, message} = PartitionGroup.start(@namespace, operator, 2)
-      assert message =~ "carries no first message"
-      assert message =~ "keyed forward"
-      assert message =~ "ohlc#p0"
+      assert {:error, {:partitioned_first_message, "ohlc#p0"}} =
+               PartitionGroup.start(@namespace, operator, 2)
+
       assert started_members() == []
     end
 
     test "fewer than two partitions is not a group" do
-      assert {:error, message} = PartitionGroup.start(@namespace, builder(), 1)
-      assert message =~ "between 2 and 256"
+      assert {:error, {:partitions_out_of_range, 1, 256}} =
+               PartitionGroup.start(@namespace, builder(), 1)
+
       assert started_members() == []
     end
 
     test "more partitions than key groups is refused" do
-      assert {:error, message} = PartitionGroup.start(@namespace, builder(), 257)
-      assert message =~ "between 2 and 256"
+      assert {:error, {:partitions_out_of_range, 257, 256}} =
+               PartitionGroup.start(@namespace, builder(), 257)
+
       assert started_members() == []
     end
 
     test "the id budget is checked against the widest suffix" do
       base = String.duplicate("a", 30)
 
-      assert {:error, message} = PartitionGroup.start(@namespace, builder(base), 3)
-      assert message =~ "32"
-      assert message =~ "at most 29 bytes"
+      assert {:error, {:group_id_too_long, ^base, 3, 29}} =
+               PartitionGroup.start(@namespace, builder(base), 3)
+
       assert started_members() == []
     end
 
@@ -142,23 +140,21 @@ defmodule FlezhaTest.Operator.PartitionGroupTest do
     test "a class already known to be keyless is refused without touching a runner" do
       ClassRegistry.put_partitioning(@factory, %{keyless: true, loop_mode: nil})
 
-      assert {:error, message} = PartitionGroup.start(@namespace, builder(), 3)
-      assert message =~ "PartitionsWithoutKeyedTasklet"
-      assert message =~ "key_by"
+      assert {:error, {:partitions_without_keyed_tasklet, @factory}} =
+               PartitionGroup.start(@namespace, builder(), 3)
+
       assert started_members() == []
     end
   end
 
   describe "a mid-group failure" do
-    test "stops the members that did start and names the one that did not", %{registry: registry} do
+    test "stops the members that did start and answers the one that did not", %{
+      registry: registry
+    } do
       # Member 1 loses the id claim to a squatter already in the registry.
       FakeStartRegistry.insert(registry, self(), builder("ohlc#p1"))
 
-      assert {:error, message} = PartitionGroup.start(@namespace, builder(), 3)
-
-      assert message =~ "partition 1 of group ohlc failed to start"
-      assert message =~ "ohlc#p1"
-      assert message =~ "2 already-started member(s) were stopped"
+      assert {:error, {:id_in_use, "ohlc#p1"}} = PartitionGroup.start(@namespace, builder(), 3)
 
       # Members start together: p0 and p2 came up beside the failing p1 and
       # were both rolled back.
@@ -207,10 +203,9 @@ defmodule FlezhaTest.Operator.PartitionGroupTest do
       _ = started_members()
       :ets.delete(registry, "ohlc#p2")
 
-      assert {:error, message} = PartitionGroup.start(@namespace, builder(), 4)
-      assert message =~ "cannot converge group ohlc to 4"
-      assert message =~ "declares 3"
-      assert message =~ "flz operator scale"
+      assert {:error, {:group_partition_mismatch, "ohlc", 4, _member, 3}} =
+               PartitionGroup.start(@namespace, builder(), 4)
+
       assert started_members() == []
     end
 
@@ -252,15 +247,14 @@ defmodule FlezhaTest.Operator.PartitionGroupTest do
             else: {:error, {:quota_exceeded, :max_operators, 1}}
       end)
 
-      assert {:error, message} = PartitionGroup.start(@namespace, builder(), 3)
-      assert message =~ "1 already-started member(s) were stopped"
+      assert {:error, {:quota_exceeded, :max_operators, 1}} =
+               PartitionGroup.start(@namespace, builder(), 3)
 
       # One of this run's two members failed and the other was rolled back;
       # the survivor from the first run is untouched either way.
       assert [rolled_back] = Enum.map(started_members(), & &1.id)
       assert rolled_back in ["ohlc#p1", "ohlc#p2"]
-      assert message =~ if(rolled_back == "ohlc#p1", do: "ohlc#p2", else: "ohlc#p1")
-      assert {:error, _} = FakeStartRegistry.pid_of(registry, rolled_back)
+      assert :error = FakeStartRegistry.pid_of(registry, rolled_back)
       assert {:ok, ^p0_pid} = FakeStartRegistry.pid_of(registry, "ohlc#p0")
     end
 
@@ -286,11 +280,9 @@ defmodule FlezhaTest.Operator.PartitionGroupTest do
       assert {:ok, _} = PartitionGroup.start(@namespace, builder(), 3)
       _ = started_members()
 
-      assert {:error, %{reason: reason}} =
+      assert {:error, {:group_base_claim, "ohlc", 3, 3}} =
                OperatorManager.start_operator(@namespace, builder("ohlc"))
 
-      assert reason =~ "partition group of 3 live member(s)"
-      assert reason =~ "--partitions 3"
       assert started_members() == []
     end
 
@@ -315,7 +307,7 @@ defmodule FlezhaTest.Operator.PartitionGroupTest do
                  caller
                )
 
-      assert reason =~ "partition group of 2 live member(s)"
+      assert %Flezha.Error{code: "operator.group_base_taken", details: %{"members" => 2}} = reason
       assert started_members() == []
     end
 
@@ -323,8 +315,9 @@ defmodule FlezhaTest.Operator.PartitionGroupTest do
       assert {:ok, _} = OperatorManager.start_operator(@namespace, builder("solo"))
       _ = started_members()
 
-      assert {:error, message} = PartitionGroup.start(@namespace, builder("solo"), 2)
-      assert message =~ "already running as an unpartitioned operator"
+      assert {:error, {:unpartitioned_running, "solo"}} =
+               PartitionGroup.start(@namespace, builder("solo"), 2)
+
       assert started_members() == []
     end
   end
@@ -488,14 +481,10 @@ defmodule FlezhaTest.Operator.PartitionGroupRescaleTest do
         if class == "ohlc#p1", do: {:ok, 7, 42}, else: {:ok, -1, -1}
       end)
 
-      assert {:error, message} =
+      assert {:error, {:quiesce_timeout, "ohlc#p1", :unbounded, progress}} =
                PartitionGroup.rescale(@namespace, @group, 2, quiesce_timeout_ms: 0)
 
-      assert message =~ "ohlc#p1 has not consumed its input log"
-      assert message =~ "watermark 7"
-      assert message =~ "last offset 42"
-      assert message =~ "nothing was stopped or moved"
-      assert message =~ "checkpoint"
+      assert progress == %{last_offset: 42, watermark: 7}
 
       assert FakeStartRegistry.started() == []
       assert length(:ets.tab2list(registry)) == 3
@@ -506,10 +495,9 @@ defmodule FlezhaTest.Operator.PartitionGroupRescaleTest do
         if class == "ohlc#p2", do: [%{id: "a"}, %{id: "b"}], else: []
       end)
 
-      assert {:error, message} = PartitionGroup.rescale(@namespace, @group, 2)
+      assert {:error, {:parked_entries, ["ohlc#p2 (2)"]}} =
+               PartitionGroup.rescale(@namespace, @group, 2)
 
-      assert message =~ "parked DLQ entries"
-      assert message =~ "ohlc#p2: 2 entries"
       assert length(:ets.tab2list(registry)) == 3
     end
   end
@@ -526,8 +514,8 @@ defmodule FlezhaTest.Operator.PartitionGroupRescaleTest do
     end
 
     test "an unknown group is refused by name" do
-      assert {:error, message} = PartitionGroup.rescale(@namespace, "nope", 2)
-      assert message =~ "no partition group named nope"
+      assert {:error, {:group_not_found, @namespace, "nope"}} =
+               PartitionGroup.rescale(@namespace, "nope", 2)
     end
   end
 
@@ -636,8 +624,8 @@ defmodule FlezhaTest.Operator.PartitionGroupRescaleTest do
 
       assert_receive :locked, 1_000
 
-      assert {:error, message} = PartitionGroup.rescale(@namespace, @group, 2)
-      assert message =~ "a rescale of #{@group} is already running"
+      assert {:error, {:rescale_running, @namespace, @group}} =
+               PartitionGroup.rescale(@namespace, @group, 2)
 
       # Nothing was touched: no source disabled, no member stopped or started.
       assert drain(:sources_off) == []

@@ -62,25 +62,21 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
     }
   end
 
-  test "every gated wire verb refuses a caller with no token, on its declared device" do
-    for {name, args, row, device} <- gated_wire_verbs() do
+  test "every gated wire verb refuses a caller with no token, on stderr only" do
+    for {name, args, _row} <- gated_wire_verbs() do
       {out, err} = refusal(fn -> apply(CliManager, name, args ++ [[]]) end)
-      refused = "#{row.action}: refused: no verifiable identity"
-      printed = if device == :stdio, do: out, else: err
-      silent = if device == :stdio, do: err, else: out
 
-      assert printed =~ refused, "#{name} did not refuse on #{device}: #{inspect({out, err})}"
-      refute silent =~ "refused", "#{name} printed its refusal on both streams"
+      assert err =~ "(authz.principal_not_bound)", "#{name}: #{inspect({out, err})}"
+      assert out == "", "#{name} printed on stdout: #{inspect(out)}"
     end
   end
 
   test "every namespace-scoped wire verb refuses a token bound elsewhere", ctx do
-    for {name, args, row, _device} <- gated_wire_verbs(),
+    for {name, args, row} <- gated_wire_verbs(),
         row.scope == :system or match?({:argument, _}, row.scope) do
       {out, err} = refusal(fn -> apply(CliManager, name, args ++ [[token: ctx.stranger]]) end)
 
-      assert out <> err =~
-               ~r/#{row.action}: refused: (namespace_mismatch|cross_namespace_admin_denied)/,
+      assert err =~ ~r/\(authz\.(namespace_mismatch|cross_namespace_admin_denied)\)/,
              "#{name}: #{inspect({out, err})}"
     end
   end
@@ -135,7 +131,7 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
            end) =~
              "retention[WalkClass] = 2 hours"
 
-    assert capture_io(fn -> CliManager.audit_log_render_stats("text", token: ctx.viewer_sys) end) =~
+    assert capture_io(fn -> CliManager.audit_log_render_stats(token: ctx.viewer_sys) end) =~
              "record_count"
 
     assert capture_io(fn ->
@@ -186,14 +182,14 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
 
     for token_opts <- [[], [token: ctx.viewer_sys]] do
       {_out, err} = refusal(fn -> CliManager.dlq_drop("nope/task/1", token_opts) end)
-      assert err =~ "dlq.drop: refused"
-      refute err =~ "not found", "the row was read before the refusal: #{err}"
+      assert err =~ ~r/\(authz\.(principal_not_bound|role_insufficient)\)/
+      refute err =~ "dlq.not_found", "the row was read before the refusal: #{err}"
     end
 
     # A bound admin elsewhere passes the role check, reads the row, and is
     # refused in the row's namespace.
     {_out, err} = refusal(fn -> CliManager.dlq_drop(ref, token: ctx.stranger) end)
-    assert err =~ "dlq.drop: refused: namespace_mismatch"
+    assert err =~ "(authz.namespace_mismatch)"
     assert {:ok, _entry, _payload} = DlqStore.get(ref)
 
     # Firing a schedule is judged where the instance starts, not in `_system`.
@@ -206,7 +202,7 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
     end)
 
     {_out, err} = refusal(fn -> CliManager.schedule_run("walk-run", token: ctx.op_sys) end)
-    assert err =~ "operator.start: refused: namespace_mismatch"
+    assert err =~ "(authz.namespace_mismatch)"
     refute_received {:spawned, _}
 
     assert capture_io(fn -> CliManager.schedule_run("walk-run", token: ctx.op_default) end) =~
@@ -217,7 +213,7 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
 
   test "whoami is a gated read: refused unbound, answered for a bound viewer", ctx do
     {_out, err} = refusal(fn -> CliManager.authz_render_whoami([]) end)
-    assert err =~ "authz.whoami: refused"
+    assert err =~ "(authz.principal_not_bound)"
 
     assert capture_io(fn -> CliManager.authz_render_whoami(token: ctx.viewer_sys) end) =~
              "principal: walk-viewer"
@@ -235,19 +231,20 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
     |> Enum.group_by(&elem(&1, 0))
     |> Enum.map(fn {_name, bindings} -> Enum.max_by(bindings, &elem(&1, 1)) end)
     |> Enum.reject(fn {_name, _arity, verb, _opts} -> rows[verb].action in [:public, :none] end)
-    |> Enum.map(fn {name, arity, verb, opts} ->
-      {name, List.duplicate("x", arity - 1), rows[verb], Keyword.get(opts, :device, :stderr)}
+    |> Enum.map(fn {name, arity, verb, _opts} ->
+      {name, List.duplicate("x", arity - 1), rows[verb]}
     end)
     |> Enum.sort()
   end
 
-  # Both streams of a verb that refuses, the exit swallowed.
+  # Both streams of a verb that refuses, the exit swallowed: any class's code.
   defp refusal(fun) do
-    {{{:shutdown, 1}, out}, err} =
+    {{{:shutdown, code}, out}, err} =
       with_io(:stderr, fn ->
         with_io(fn -> catch_exit(fun.()) end)
       end)
 
+    assert code in 1..7
     {out, err}
   end
 

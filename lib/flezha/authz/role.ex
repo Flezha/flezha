@@ -36,10 +36,10 @@ defmodule Flezha.AuthZ.Role do
   def known?(role) when is_atom(role), do: role in @roles
 
   @doc """
-  Validates a role atom, returning `:ok` or `{:error, :unknown_role}`.
+  Validates a role atom, returning `:ok` or `{:error, {:unknown_role, role}}`.
   """
-  @spec validate(atom()) :: :ok | {:error, :unknown_role}
+  @spec validate(atom()) :: :ok | {:error, {:unknown_role, atom()}}
   def validate(role) do
-    if known?(role), do: :ok, else: {:error, :unknown_role}
+    if known?(role), do: :ok, else: {:error, {:unknown_role, role}}
   end
 end

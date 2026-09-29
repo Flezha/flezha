@@ -10,7 +10,12 @@ use crate::pb::ParkPayloadAck;
 use crate::runner::RunnerNode;
 
 impl CommandAction for ParkPayloadAck {
-    fn handle(&self, _runner: &mut RunnerNode, _message: &str, _errors: &mut Vec<String>) -> Reply {
+    fn handle(
+        &self,
+        _runner: &mut RunnerNode,
+        _message: &str,
+        _errors: &mut Vec<crate::Error>,
+    ) -> Reply {
         park::complete_ack(&self.park_id);
         Reply {
             payload_id: "park_payload_ack",

@@ -309,7 +309,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnBoundedTest do
     assert_receive {:resolved, @namespace, "w1", "worker", "p1", :deliver, caller}
     # The identity is the connection's, never anything the frame said.
     assert %{source: :sdk, namespace: @namespace, principal: "runner@" <> @namespace} = caller
-    assert {"ref-spawn", %{outcome: "spawned", error: "", instance_id: "w1"}} = await_response()
+    assert {"ref-spawn", %{outcome: "spawned", error: nil, instance_id: "w1"}} = await_response()
   end
 
   test "a request without an id answers the id the controller generated", %{channel: channel} do
@@ -342,7 +342,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnBoundedTest do
 
     send_request(channel, instance_id: "w1", factory_id: "worker", if_running: "error")
 
-    assert {"ref-spawn", %{outcome: "already_running", error: "", instance_id: "w1"}} =
+    assert {"ref-spawn", %{outcome: "already_running", error: nil, instance_id: "w1"}} =
              await_response()
   end
 
@@ -360,7 +360,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnBoundedTest do
 
     send_request(channel, instance_id: "w1", factory_id: "worker")
 
-    assert {"ref-spawn", %{outcome: "delivered", error: ""}} = await_response()
+    assert {"ref-spawn", %{outcome: "delivered", error: nil}} = await_response()
   end
 
   test "a refusal ships its reason so the requester can log something useful", %{channel: channel} do
@@ -371,12 +371,16 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnBoundedTest do
                                                   _policy,
                                                   _,
                                                   _identity ->
-      {{:refused, "quota_exceeded"}, id}
+      {{:refused,
+        Flezha.Error.new("quota.exceeded", kind: "max_operators", current: 1, limit: 1)}, id}
     end)
 
     send_request(channel, instance_id: "w1", factory_id: "worker")
 
-    assert {"ref-spawn", %{outcome: "refused", error: "quota_exceeded"}} = await_response()
+    assert {"ref-spawn", %{outcome: "", error: %{code: "quota.exceeded", details_json: details}}} =
+             await_response()
+
+    assert Jason.decode!(details) == %{"kind" => "max_operators", "current" => 1, "limit" => 1}
   end
 
   test "resolution never blocks the channel", %{channel: channel} do
@@ -492,7 +496,9 @@ defmodule FlezhaTest.Runner.ControlChannelShutdownNotificationTest do
 
   test "missing Overwatch: logs warning, no cast delivered, ack still emitted" do
     HubManager
-    |> stub(:get_pid, fn @namespace, "p_missing" -> {:error, "no pid found"} end)
+    |> stub(:get_pid, fn @namespace, "p_missing" ->
+      {:error, {:operator_not_found, @namespace, "p_missing"}}
+    end)
 
     {control_channel, stream_ref} = start_control_channel("ce_missing")
 

@@ -61,8 +61,8 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   Build `module`'s struct from a CLI string map, coercing each field through
   the provider's own `convert`. Answers the first value `convert` refuses.
   """
-  @spec build_struct(module(), map(), (atom(), term() -> {:ok, term()} | {:error, binary()})) ::
-          {:ok, struct()} | {:error, binary()}
+  @spec build_struct(module(), map(), (atom(), term() -> {:ok, term()} | {:error, term()})) ::
+          {:ok, struct()} | {:error, term()}
   def build_struct(module, string_map, convert) do
     {required, all} = fields(module)
 
@@ -107,10 +107,10 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   provider and its worker read declared fields and never re-derive a default of
   their own. An option the declaration does not name is refused here rather than
   ignored; an option it names and the user did not write takes its row's
-  default; a value the row's type or bounds refuse answers the sentence the one
-  builder renders.
+  default; a value the row's type or bounds refuse answers the one refusal the
+  builder gives.
   """
-  @spec normalise_opts(module(), map()) :: {:ok, map()} | {:error, binary()}
+  @spec normalise_opts(module(), map()) :: {:ok, map()} | {:error, term()}
   def normalise_opts(provider, opts) when is_map(opts) do
     %Decl{name: name, options: rows} = decl = provider.__provider__()
 
@@ -207,9 +207,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
         :ok
 
       key ->
-        {:error,
-         "#{name} names several channels in #{key}; a payload is injected on exactly one " <>
-           "channel, so the entry side takes one name"}
+        {:error, {:entry_channel_set, name, key}}
     end
   end
 
@@ -218,9 +216,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   defp refuse_two_spellings(name, converted) do
     with [_ | _] <- named(converted, &(&1 == :either)),
          [_ | _] = keys <- named(converted, &(&1 != :either)) do
-      {:error,
-       "#{name} names channel together with #{Enum.join(keys, " and ")}; channel already " <>
-         "names both directions, so write it alone or write the pair instead"}
+      {:error, {:channel_spelled_twice, name, keys}}
     else
       _ -> :ok
     end
@@ -232,7 +228,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   defp refuse_unreadable_channel(name, converted, jobs) do
     case named(converted, &(jobs_named(&1, jobs) == [])) do
       [] -> :ok
-      [key | _] -> {:error, "#{name} names #{key}, but #{undone(@channel_rows[key])}"}
+      [key | _] -> {:error, {:channel_unused, name, key, @channel_rows[key]}}
     end
   end
 
@@ -249,19 +245,6 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   defp jobs_named(:either, jobs), do: jobs
   defp jobs_named(job, jobs), do: if(job in jobs, do: [job], else: [])
 
-  defp undone(:in),
-    do: "the provider does not feed the operator, so nothing would ever be injected"
-
-  defp undone(:out),
-    do:
-      "the plugin has no on_input or on_output hook, so no record " <>
-        "would ever reach it"
-
-  defp undone(:either),
-    do:
-      "the plugin neither feeds the operator nor has an on_input or on_output " <>
-        "hook, so nothing would read it"
-
   defp put_converted(params, field, {:ok, converted}),
     do: {:cont, Map.put(params, field, converted)}
 
@@ -270,7 +253,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   defp new_struct(module, params) do
     {:ok, struct!(module, params)}
   rescue
-    e -> {:error, "Failed to create struct: #{Exception.message(e)}"}
+    e -> {:error, {:struct_build_failed, module, Exception.message(e)}}
   end
 
   @doc """
@@ -396,7 +379,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   does not interpret — passes through: only a value a user supplied for a
   declared option can be wrong.
   """
-  @spec convert_row(atom(), term(), [{atom(), keyword()}]) :: {:ok, term()} | {:error, binary()}
+  @spec convert_row(atom(), term(), [{atom(), keyword()}]) :: {:ok, term()} | {:error, term()}
   def convert_row(field, value, rows) do
     case Keyword.fetch(rows, field) do
       :error ->
@@ -472,25 +455,21 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   defp bound(value, _field, _row), do: {:ok, value}
 
   @doc "The refusal for a value under its row's minimum."
-  @spec refuse_below(atom() | binary(), term(), term()) :: {:error, binary()}
+  @spec refuse_below(atom() | binary(), term(), term()) :: {:error, tuple()}
   def refuse_below(field, value, minimum),
-    do: {:error, "#{field} #{inspect(value)} is below the minimum #{inspect(minimum)}"}
+    do: {:error, {:option_below_minimum, field, value, minimum}}
 
   @doc "The refusal for a value over its row's maximum."
-  @spec refuse_above(atom() | binary(), term(), term()) :: {:error, binary()}
+  @spec refuse_above(atom() | binary(), term(), term()) :: {:error, tuple()}
   def refuse_above(field, value, maximum),
-    do: {:error, "#{field} #{inspect(value)} is above the maximum #{inspect(maximum)}"}
+    do: {:error, {:option_above_maximum, field, value, maximum}}
 
   @doc """
   The refusal for a required option that was not supplied. Named separately from
   `refuse_value/2` because nothing was given to echo back.
   """
-  @spec refuse_required(binary(), [atom()]) :: {:error, binary()}
-  def refuse_required(provider, [field]),
-    do: {:error, "#{provider} requires #{inspect(field)}"}
-
-  def refuse_required(provider, fields),
-    do: {:error, "#{provider} requires #{Enum.map_join(fields, ", ", &inspect/1)}"}
+  @spec refuse_required(binary(), [atom()]) :: {:error, {:options_required, binary(), [atom()]}}
+  def refuse_required(provider, fields), do: {:error, {:options_required, provider, fields}}
 
   @doc """
   The name a provider answers refusals under: the last segment of its module,

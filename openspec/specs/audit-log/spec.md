@@ -10,7 +10,7 @@ The system SHALL provide a Sink `Flezha.Observability.AuditLog.Sink` that implem
 
 #### Scenario: Sink off by default
 - **WHEN** the application boots with default configuration
-- **THEN** `Flezha.Observability.Registry.list_sinks/0` SHALL NOT include a sink named `:audit_log`, no `app_data/audit/` directory SHALL be created, and `Flezha.Service.AuditLog.stats/1` SHALL return `{:error, :audit_log_disabled}`
+- **THEN** `Flezha.Observability.Registry.list_sinks/0` SHALL NOT include a sink named `:audit_log`, no `app_data/audit/` directory SHALL be created, and `Flezha.Service.AuditLog.stats/1` SHALL return `{:error, %Flezha.Error{code: "audit.disabled"}}`
 
 #### Scenario: Sink registers when enabled
 - **WHEN** the application boots with `:audit_log, :enabled: true`
@@ -18,7 +18,7 @@ The system SHALL provide a Sink `Flezha.Observability.AuditLog.Sink` that implem
 
 #### Scenario: Master observability flag transitively disables audit
 - **WHEN** the application boots with `:observability, :enabled: false` AND `:audit_log, :enabled: true`
-- **THEN** the audit-log subsystem SHALL NOT start, no sink SHALL register, no disk I/O SHALL occur, and `Flezha.Service.AuditLog.*` calls SHALL return `{:error, :observability_disabled}` (master flag wins)
+- **THEN** the audit-log subsystem SHALL NOT start, no sink SHALL register, no disk I/O SHALL occur, and `Flezha.Service.AuditLog.*` calls SHALL return `{:error, %Flezha.Error{code: "observability.disabled"}}` (master flag wins)
 
 ### Requirement: Configurable subscription allow-list
 
@@ -158,7 +158,7 @@ The system SHALL provide a service module `Flezha.Service.AuditLog` callable fro
 
 #### Scenario: Viewer cannot rotate
 - **WHEN** `:authn_authz, :enabled` is `true` AND a viewer invokes `rotate/1`
-- **THEN** the call SHALL return `{:error, {:forbidden, :role_insufficient}}` AND no rotation SHALL occur
+- **THEN** the call SHALL return `{:error, %Flezha.Error{code: "authz.role_insufficient", class: :denied}}` AND no rotation SHALL occur
 
 #### Scenario: tail streams live records
 - **WHEN** the caller invokes `tail(%{source: nil}, ctx)` and a record is subsequently written
@@ -174,15 +174,15 @@ The system SHALL provide a service module `Flezha.Service.AuditLog` callable fro
 
 #### Scenario: Missing caller_context source is rejected
 - **WHEN** any public function is invoked with `caller_context: %{}`
-- **THEN** the call SHALL return `{:error, :invalid_caller_context}`
+- **THEN** the call SHALL return `{:error, %Flezha.Error{code: "authz.invalid_caller_context"}}`
 
 #### Scenario: Master flag disabled returns disabled error
 - **WHEN** any public function is invoked while the master observability flag is `false`
-- **THEN** the call SHALL return `{:error, :observability_disabled}`
+- **THEN** the call SHALL return `{:error, %Flezha.Error{code: "observability.disabled"}}`
 
 #### Scenario: Audit subsystem disabled returns disabled error
 - **WHEN** any public function is invoked while the master flag is `true` but `:audit_log, :enabled: false`
-- **THEN** the call SHALL return `{:error, :audit_log_disabled}`
+- **THEN** the call SHALL return `{:error, %Flezha.Error{code: "audit.disabled"}}`
 
 ### Requirement: `flz audit` CLI verb family
 
@@ -280,4 +280,18 @@ on it. The audit log SHALL NOT be able to fail on a record it produced itself.
 
 - **WHEN** the same metadata is rendered for the text sink and for the audit log
 - **THEN** neither SHALL accept a value the other refuses
+
+### Requirement: A failed act SHALL record its error code
+
+The audit record of an authorized act that failed SHALL carry `metadata.error_code`, the catalogue code of the failure, beside `outcome: "error"`. This holds whether the act returned the failure or a `flz` verb refused through the CLI. The `authorization_denied` record's `reason` SHALL be the `authz.*` code of the denial.
+
+#### Scenario: A failed delete names why
+
+- **WHEN** an authorized caller deletes a namespace `ghost` that does not exist
+- **THEN** the audit record SHALL carry `outcome: "error"` and `error_code: "namespace.not_found"`
+
+#### Scenario: A denial names its code
+
+- **WHEN** a caller whose role does not grant an action is refused
+- **THEN** the `authorization_denied` record's `reason` SHALL be `authz.role_insufficient`
 

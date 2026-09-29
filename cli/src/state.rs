@@ -1,4 +1,4 @@
-use crate::args::{Positional, Reading, JSON_SWITCH, OUTPUT};
+use crate::args::{Positional, Reading};
 use crate::dispatch::{self, Command, Missing, Verb};
 use crate::help;
 use crate::rpc::{self, text};
@@ -11,19 +11,15 @@ pub(crate) const TABLE: Command = Command {
     help: help::STATE,
     verbs: &[
         Verb::new("get", |read| scoped_verb(read, "state_get"))
-            .taking(&[Positional::required("<operator/tasklet[/cell_key]>")])
-            .reading(&[OUTPUT, JSON_SWITCH]),
+            .taking(&[Positional::required("<operator/tasklet[/cell_key]>")]),
         Verb::new("list", |read| scoped_verb(read, "state_list"))
-            .taking(&[Positional::required("<operator_class>")])
-            .reading(&[OUTPUT, JSON_SWITCH]),
-        Verb::new("at", handle_at)
-            .taking(&[
-                Positional::required("<operator/tasklet/cell_key>"),
-                Positional::required("<seq | iso8601-timestamp>"),
-            ])
-            .reading(&[OUTPUT, JSON_SWITCH]),
+            .taking(&[Positional::required("<operator_class>")]),
+        Verb::new("at", handle_at).taking(&[
+            Positional::required("<operator/tasklet/cell_key>"),
+            Positional::required("<seq | iso8601-timestamp>"),
+        ]),
         Verb::new("rotate", |read| {
-            rpc::one_arg(read, CELL[0].name, "state_rotate", rpc::PROPAGATE)
+            rpc::one_arg(read, CELL[0].name, "state_rotate")
         })
         .taking(CELL),
         Verb::new("retention", handle_retention).taking(&[
@@ -31,19 +27,17 @@ pub(crate) const TABLE: Command = Command {
             Positional::number("<hours>"),
         ]),
         Verb::new("delete", |read| {
-            rpc::one_arg(read, CELL[0].name, "state_delete", rpc::PROPAGATE)
+            rpc::one_arg(read, CELL[0].name, "state_delete")
         })
         .taking(CELL),
         Verb::new("outbox", |read| {
-            rpc::one_arg(read, CELL[0].name, "state_outbox", rpc::PROPAGATE)
+            rpc::one_arg(read, CELL[0].name, "state_outbox")
         })
         .taking(CELL),
         Verb::new("journal", |read| scoped_verb(read, "state_journal"))
-            .taking(&[Positional::required("<operator/instance>")])
-            .reading(&[OUTPUT, JSON_SWITCH]),
+            .taking(&[Positional::required("<operator/instance>")]),
         Verb::new("inbox", |read| scoped_verb(read, "state_inbox"))
-            .taking(&[Positional::required("<operator/instance>")])
-            .reading(&[OUTPUT, JSON_SWITCH]),
+            .taking(&[Positional::required("<operator/instance>")]),
     ],
     help_verbs: dispatch::HELP_VERBS,
     missing: Missing::Refuse,
@@ -56,11 +50,9 @@ fn handle_at(read: &Reading) {
         &[
             text(read.pos(CELL[0].name)),
             text(read.pos("<seq | iso8601-timestamp>")),
-            text(read.output_format()),
         ],
         &[],
-        read.token(),
-        rpc::PROPAGATE,
+        read,
     );
 }
 
@@ -72,22 +64,15 @@ fn handle_retention(read: &Reading) {
             text(read.pos("<hours>")),
         ],
         &[],
-        read.token(),
-        rpc::PROPAGATE,
+        read,
     );
 }
 
-/// The read verbs — `get`, `list`, `journal`, `inbox` — take one scope argument
-/// plus a rendering choice; they differ only in that argument's name and the
-/// CliManager function they call.
+/// The read verbs — `get`, `list`, `journal`, `inbox` — take one scope argument;
+/// they differ only in that argument's name and the CliManager function they
+/// call.
 fn scoped_verb(read: &Reading, rpc_fun: &str) {
     let scope = read.positional_at(0);
 
-    rpc::run(
-        rpc_fun,
-        &[text(scope), text(read.output_format())],
-        &[],
-        read.token(),
-        rpc::PROPAGATE,
-    );
+    rpc::run(rpc_fun, &[text(scope)], &[], read);
 }

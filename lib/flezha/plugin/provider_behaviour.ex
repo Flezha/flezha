@@ -95,7 +95,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   alias Flezha.Config.Durations
 
   @callback plugin_type() :: :io_binding
-  @callback build(map()) :: {:ok, struct()} | {:error, String.t()}
+  @callback build(map()) :: {:ok, struct()} | {:error, term()}
   @callback help(provider_id :: String.t()) :: String.t()
   @callback provider_info() :: map()
 
@@ -259,7 +259,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   it as. Anything else is refused: a value that is neither is nothing a provider
   can resolve to a destination.
   """
-  @spec parse_pid(term(), atom() | binary()) :: {:ok, pid()} | {:error, binary()}
+  @spec parse_pid(term(), atom() | binary()) :: {:ok, pid()} | {:error, term()}
   def parse_pid(value, _field) when is_pid(value), do: {:ok, value}
 
   def parse_pid(value, field) when is_binary(value) do
@@ -275,7 +275,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   raises for one typo and answers a wrong-but-existing atom for the next.
   """
   @spec parse_enum(term(), atom() | binary(), [atom() | binary()]) ::
-          {:ok, atom() | binary()} | {:error, binary()}
+          {:ok, atom() | binary()} | {:error, term()}
   def parse_enum(value, field, allowed) do
     case Enum.find(allowed, &member?(&1, value)) do
       nil -> refuse_value(field, value)
@@ -298,14 +298,11 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   it was given. Argument order mirrors `convert_value/2`, whose injected last
   clause delegates here, rather than the `parse_*` helpers' own `(value, field)`.
 
-  A string is echoed as written and anything else is inspected: a user
-  reads back what they typed, and every other shape needs its type to be legible.
+  The value rides as given, so a caller reads back what was written.
   """
-  @spec refuse_value(atom() | binary(), term()) :: {:error, binary()}
-  def refuse_value(field, value) when is_binary(value),
-    do: {:error, "Invalid value for #{field}: #{value}"}
-
-  def refuse_value(field, value), do: {:error, "Invalid value for #{field}: #{inspect(value)}"}
+  @spec refuse_value(atom() | binary(), term()) ::
+          {:error, {:invalid_option_value, term(), term()}}
+  def refuse_value(field, value), do: {:error, {:invalid_option_value, field, value}}
 
   @doc """
   Does this plugin have a hook on a direction that carries a payload — `on_input`
@@ -342,13 +339,12 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   channel, whose options named none. Either spelling names it, so the requirement
   is on the resolved `:entry_channel`, which a row's `required:` cannot say.
   """
-  @spec require_entry_channel(map(), module()) :: :ok | {:error, binary()}
+  @spec require_entry_channel(map(), module()) ::
+          :ok | {:error, {:entry_channel_required, term()}}
   def require_entry_channel(opts, provider) do
     if opts[:entry_channel],
       do: :ok,
-      else:
-        {:error,
-         "#{provider.__provider__().name} requires an entry channel: write channel or channel_in"}
+      else: {:error, {:entry_channel_required, provider.__provider__().name}}
   end
 
   # A polling source's derived idle window, in polling intervals. Three, because
@@ -654,15 +650,12 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   would let a config ask for a capability the provider deliberately does not
   offer and read as accepted.
   """
-  @spec reject_unknown(Enumerable.t(), [atom() | binary()], binary()) :: :ok | {:error, binary()}
+  @spec reject_unknown(Enumerable.t(), [atom() | binary()], binary()) ::
+          :ok | {:error, {:unknown_options, binary(), [binary()]}}
   def reject_unknown(keys, allowed, provider) do
     case Enum.reject(keys, &(&1 in allowed)) do
-      [] ->
-        :ok
-
-      unknown ->
-        {:error,
-         "unknown option(s) for #{provider}: #{Enum.map_join(unknown, ", ", &to_string/1)}"}
+      [] -> :ok
+      unknown -> {:error, {:unknown_options, provider, Enum.map(unknown, &to_string/1)}}
     end
   end
 

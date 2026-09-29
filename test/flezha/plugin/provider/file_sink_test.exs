@@ -122,8 +122,8 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
     end
 
     test "a layout the option does not declare is refused naming the option" do
-      assert {:error, message} = prepare_sink(%{commit: "truncate"})
-      assert message =~ "commit"
+      assert {:error, {:invalid_option_value, :commit, "truncate"}} =
+               prepare_sink(%{commit: "truncate"})
     end
   end
 
@@ -140,8 +140,8 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
     test "a path that is a regular file is refused naming the layout", %{out: file} do
       File.write!(file, "")
 
-      assert {:error, message} = prepare_sink(rename(%{path: "out.ndjson"}))
-      assert message =~ "commit: rename"
+      assert {:error, {:file_path_not_directory, _dir}} =
+               prepare_sink(rename(%{path: "out.ndjson"}))
     end
 
     test "a roll becomes one immutable part", %{root: root} do
@@ -313,14 +313,14 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
 
     test "append, given or taken as the default, is refused naming commit" do
       for extra <- [%{path: "out"}, %{path: "out", commit: "append"}] do
-        assert {:error, message} = prepare_sink(extra)
-        assert message =~ "commit: append"
+        assert {:error, {:file_commit_unsupported, "s3://events/flezha/out", "append"}} =
+                 prepare_sink(extra)
       end
     end
 
     test "a roll above 5 GiB is refused naming roll_bytes" do
-      assert {:error, message} = prepare_sink(rename(%{roll_bytes: 6 * 1024 ** 3}))
-      assert message =~ "roll_bytes"
+      assert {:error, {:option_above_maximum, :roll_bytes, 6_442_450_944, _max}} =
+               prepare_sink(rename(%{roll_bytes: 6 * 1024 ** 3}))
 
       assert {:ok, %{path: "s3://events/flezha/out"}} =
                prepare_sink(rename(%{roll_bytes: 5 * 1024 ** 3}))
@@ -413,8 +413,10 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
   describe "attach-time refusals" do
     test "the entry-side keys are refused as options this provider does not offer" do
       for key <- [:channel, :channel_in] do
-        assert {:error, message} = prepare_sink(%{key => "events"})
-        assert message =~ "unknown option(s) for file_sink: #{key}"
+        name = Atom.to_string(key)
+
+        assert {:error, {:unknown_options, "file_sink", [^name]}} =
+                 prepare_sink(%{key => "events"})
       end
     end
   end

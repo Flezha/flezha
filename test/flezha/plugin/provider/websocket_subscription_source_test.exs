@@ -62,83 +62,60 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
     end
 
     test "a subscribe_template with no {{items}} placeholder is refused" do
-      assert {:error, message} =
+      assert {:error, {:template_missing_placeholder, :subscribe_template, "{{items}}"}} =
                prepare(Websocket, %{@valid_opts | subscribe_template: ~s({"req_id":1})})
-
-      assert message =~ "subscribe_template"
-      assert message =~ "{{items}}"
     end
 
     test "an unsubscribe_template with no {{items}} placeholder is refused" do
-      assert {:error, message} =
+      assert {:error, {:template_missing_placeholder, :unsubscribe_template, "{{items}}"}} =
                prepare(Websocket, %{@valid_opts | unsubscribe_template: ~s({"req_id":1})})
-
-      assert message =~ "unsubscribe_template"
-      assert message =~ "{{items}}"
     end
 
     test "a subscription_url missing either template is refused" do
-      assert {:error, message} =
+      assert {:error, {:option_requires, :subscription_url, :subscribe_template}} =
                prepare(Websocket, Map.delete(@valid_opts, :subscribe_template))
 
-      assert message =~ "subscribe_template"
-
-      assert {:error, message} =
+      assert {:error, {:option_requires, :subscription_url, :unsubscribe_template}} =
                prepare(Websocket, Map.delete(@valid_opts, :unsubscribe_template))
-
-      assert message =~ "unsubscribe_template"
     end
 
     test "an interval below the 1000 ms floor is refused" do
-      assert {:error, message} =
+      assert {:error, {:option_below_minimum, :subscription_interval_ms, 100, 1000}} =
                prepare(Websocket, Map.put(@valid_opts, :subscription_interval_ms, 100))
-
-      assert message =~ "is below the minimum 1000"
     end
 
     test "a non-http scheme, a hostless url and embedded credentials are each refused" do
-      assert {:error, m1} =
+      assert {:error, {:url_scheme_unsupported, "websocket", :subscription_url, _}} =
                prepare(Websocket, %{@valid_opts | subscription_url: "ftp://cfg/subs"})
 
-      assert m1 =~ "http or https"
+      assert {:error, {:url_without_host, "websocket", :subscription_url, _}} =
+               prepare(Websocket, %{@valid_opts | subscription_url: "https://"})
 
-      assert {:error, m2} = prepare(Websocket, %{@valid_opts | subscription_url: "https://"})
-      assert m2 =~ "no host"
-
-      assert {:error, m3} =
+      assert {:error, {:url_has_credentials, "websocket", :subscription_url, _} = reason} =
                prepare(Websocket, %{@valid_opts | subscription_url: "https://u:p@cfg/subs"})
 
-      assert m3 =~ "must not embed credentials"
-      refute m3 =~ "p@"
+      refute inspect(reason) =~ "p@"
     end
 
     test "malformed subscription headers are refused" do
-      assert {:error, message} =
+      assert {:error, {:invalid_option_value, :subscription_headers, "not-json"}} =
                prepare(Websocket, Map.put(@valid_opts, :subscription_headers, "not-json"))
 
-      assert message =~ "Invalid value for subscription_headers"
-
-      assert {:error, message} =
+      assert {:error, {:headers_invalid, "websocket", :subscription_headers}} =
                prepare(
                  Websocket,
                  Map.put(@valid_opts, :subscription_headers, %{"a" => %{"nested" => 1}})
                )
-
-      assert message =~ "scalar"
     end
 
     test "an unrecognised ack mode is refused" do
-      assert {:error, message} =
+      assert {:error, {:invalid_option_value, :subscription_ack_mode, "maybe"}} =
                prepare(Websocket, Map.put(@valid_opts, :subscription_ack_mode, "maybe"))
-
-      assert message =~ "subscription_ack_mode"
     end
 
     test "an unknown option is refused rather than silently ignored" do
-      assert {:error, message} =
+      assert {:error, {:unknown_options, "websocket", ["reconnect_policy"]}} =
                prepare(Websocket, Map.put(@valid_opts, :reconnect_policy, "aggressive"))
-
-      assert message =~ "unknown option(s) for websocket: reconnect_policy"
     end
 
     test "every host-injected option is accepted" do

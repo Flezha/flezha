@@ -3,7 +3,12 @@ use crate::pb::RunnerDisconnect;
 use crate::runner::{RunnerNode, RunnerStatus};
 
 impl CommandAction for RunnerDisconnect {
-    fn handle(&self, runner: &mut RunnerNode, _message: &str, _errors: &mut Vec<String>) -> Reply {
+    fn handle(
+        &self,
+        runner: &mut RunnerNode,
+        _message: &str,
+        _errors: &mut Vec<crate::Error>,
+    ) -> Reply {
         runner.set_status(RunnerStatus::Stopped);
         if self.terminal {
             // Acted on by the disconnect arm of `command::handle_command`,

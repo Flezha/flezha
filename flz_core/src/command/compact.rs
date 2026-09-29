@@ -30,14 +30,14 @@ use crate::util::LockRecover;
 /// ride the ordered reliable sink, so the controller sees every record the
 /// snapshot folds before the snapshot that truncates them. `(seq, size)`, or
 /// `None` with the failure recorded.
-fn compact_slot(slot: &Arc<CellSlot>, errors: &mut Vec<String>) -> Option<(u64, u64)> {
+fn compact_slot(slot: &Arc<CellSlot>, errors: &mut Vec<crate::Error>) -> Option<(u64, u64)> {
     crate::poll_core::global().with_cell_exclusive(slot, || match snapshot_slot(slot) {
         Ok((frame, seq, size)) => {
             send(CELL_STATE_SNAPSHOT_PAYLOAD_ID, frame);
             Some((seq, size as u64))
         }
         Err(e) => {
-            errors.push(format!("compact_cell: {e}"));
+            errors.push(e);
             None
         }
     })
@@ -61,8 +61,17 @@ fn snapshot_slot(slot: &Arc<CellSlot>) -> Result<(Vec<u8>, u64, usize), crate::E
         .snapshot_frame(&mut state_guard, &mut buffer_guard, &timers)
 }
 
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 impl CommandAction for CompactCell {
-    fn handle(&self, runner: &mut RunnerNode, _message: &str, errors: &mut Vec<String>) -> Reply {
+    fn handle(
+        &self,
+        runner: &mut RunnerNode,
+        _message: &str,
+        errors: &mut Vec<crate::Error>,
+    ) -> Reply {
         let mut snapshot_seq = 0u64;
         let mut snapshot_bytes_size = 0u64;
 
@@ -76,9 +85,9 @@ impl CommandAction for CompactCell {
                     snapshot_bytes_size = size;
                 }
             }
-            None => {
-                errors.push("compact_cell: no live cell matches the addressed cell_id".to_string())
-            }
+            None => errors.push(crate::Error::State(
+                crate::Code::CellNotLive.with([("cell_id", hex(&self.cell_id).into())]),
+            )),
         }
 
         let response = CompactCellResponse {

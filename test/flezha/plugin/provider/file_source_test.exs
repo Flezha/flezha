@@ -384,7 +384,7 @@ defmodule Flezha.Plugin.Provider.FileSourceTest do
           settle(reader)
         end)
 
-      status = capture_io(fn -> Controller.controller_status("text", nil) end)
+      status = capture_io(fn -> Controller.controller_status(%{opts: []}) end)
 
       assert log =~ "reason={:stat, {:http, 403}}"
       assert status =~ ~r/file_plugin_root: +#{Regex.escape(root)}\n/
@@ -398,19 +398,17 @@ defmodule Flezha.Plugin.Provider.FileSourceTest do
 
   describe "attach-time refusals" do
     test "the chain-side key is refused as an option this provider does not offer" do
-      assert {:error, message} =
+      assert {:error, {:unknown_options, "file_source", ["channel_out"]}} =
                ProviderPrepare.prepare(Source, %{
                  path: "events.ndjson",
                  channel_in: @channel,
                  channel_out: "alerts"
                })
-
-      assert message =~ "unknown option(s) for file_source: channel_out"
     end
 
     test "naming neither channel spelling is refused naming both" do
-      assert {:error, message} = ProviderPrepare.prepare(Source, %{path: "events.ndjson"})
-      assert message =~ "write channel or channel_in"
+      assert {:error, {:entry_channel_required, "file_source"}} =
+               ProviderPrepare.prepare(Source, %{path: "events.ndjson"})
     end
   end
 

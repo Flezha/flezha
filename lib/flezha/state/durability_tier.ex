@@ -430,7 +430,7 @@ defmodule Flezha.State.DurabilityTier do
     Enum.reduce_while(refs_of_operator(operator_id), :ok, fn ref, :ok ->
       case Shipper.ship_now(ref) do
         :ok -> {:cont, :ok}
-        {:error, _} = err -> {:halt, err}
+        {:error, reason} -> {:halt, {:error, {:sync_ship_failed, operator_id, reason}}}
       end
     end)
   end

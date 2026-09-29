@@ -71,27 +71,27 @@ defmodule Flezha.Plugin.Installer.ManifestTest do
       dependencies: []
     }
 
-    assert {:error, {:manifest_invalid, {:missing_field, :version}}} =
+    assert {:error, {:manifest_invalid, :missing_field, :version}} =
              Manifest.validate(term)
   end
 
   test "invalid id rejected" do
     term = base_term() |> Map.put(:id, "My-Plugin")
 
-    assert {:error, {:manifest_invalid, {:invalid_id, "My-Plugin"}}} =
+    assert {:error, {:manifest_invalid, :invalid_id, "My-Plugin"}} =
              Manifest.validate(term)
   end
 
   test "id too long rejected" do
     long = String.duplicate("a", 65)
     term = base_term() |> Map.put(:id, long)
-    assert {:error, {:manifest_invalid, {:invalid_id, ^long}}} = Manifest.validate(term)
+    assert {:error, {:manifest_invalid, :invalid_id, ^long}} = Manifest.validate(term)
   end
 
   test "non-semver version rejected" do
     term = base_term() |> Map.put(:version, "beta-2")
 
-    assert {:error, {:manifest_invalid, {:invalid_version, "beta-2"}}} =
+    assert {:error, {:manifest_invalid, :invalid_version, "beta-2"}} =
              Manifest.validate(term)
   end
 
@@ -108,7 +108,7 @@ defmodule Flezha.Plugin.Installer.ManifestTest do
         }
       ])
 
-    assert {:error, {:manifest_invalid, {:provider_not_declared, Other.NotInList}}} =
+    assert {:error, {:manifest_invalid, :provider_not_declared, Other.NotInList}} =
              Manifest.validate(term)
   end
 
@@ -119,7 +119,7 @@ defmodule Flezha.Plugin.Installer.ManifestTest do
         base_term().provides |> hd() |> Map.put(:scope, :host_global)
       ])
 
-    assert {:error, {:manifest_invalid, {:unsupported_scope, :host_global}}} =
+    assert {:error, {:manifest_invalid, :unsupported_scope, :host_global}} =
              Manifest.validate(term)
   end
 
@@ -132,7 +132,7 @@ defmodule Flezha.Plugin.Installer.ManifestTest do
       |> Map.delete(:hooks)
       |> Map.put(:subscriptions, [{:on_input, []}])
 
-    assert {:error, {:manifest_invalid, {:missing_field, :hooks}}} =
+    assert {:error, {:manifest_invalid, :missing_field, :hooks}} =
              base_term() |> Map.put(:provides, [provision]) |> Manifest.validate()
   end
 
@@ -141,14 +141,14 @@ defmodule Flezha.Plugin.Installer.ManifestTest do
 
     term = base_term() |> Map.put(:provides, [p, p])
 
-    assert {:error, {:manifest_invalid, {:duplicate_provision_id, _}}} =
+    assert {:error, {:manifest_invalid, :duplicate_provision_id, _}} =
              Manifest.validate(term)
   end
 
   test "invalid dependency constraint rejected" do
     term = base_term() |> Map.put(:dependencies, [{"common", "gibberish"}])
 
-    assert {:error, {:manifest_invalid, {:invalid_constraint, "common", "gibberish"}}} =
+    assert {:error, {:manifest_invalid, :invalid_constraint, "common", "gibberish"}} =
              Manifest.validate(term)
   end
 

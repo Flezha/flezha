@@ -74,7 +74,7 @@ calls; one verb resolves the race in the controller's operator registry:
 |---|---|---|
 | not given | `Spawned` under a generated id | (no policy without an id) |
 | free | `Spawned` (payload = first input) | `Spawned` |
-| taken | `Delivered` (payload = one more input) | `AlreadyRunning` |
+| taken | `Delivered` (payload = one more input) | `operator.already_running` |
 
 A generated id is the factory id, trimmed to fit the 32-byte limit, a `-` and 16 characters
 of time and randomness, such as `triage-k7m2qzxw4pd3fn2a`. A resolved handle answers the id the
@@ -95,21 +95,24 @@ is a restart, not a spawn, and is not re-seeded.
 
 ## Failures resolve the handle, never `run`
 
-| Outcome | Meaning |
+Every failure is the SDK's one error type carrying a code
+([error codes](../errors.md)):
+
+| Code | Meaning |
 |---|---|
-| `AlreadyRunning` | the id is taken and the request said `Error` |
-| `FactoryUnknown` | no connected runner **on any cluster node** registers that factory |
-| `FactoryNotBounded` | the factory's runners announced it as an unbounded operator; decided from the fleet's record before anything is placed (`factory_not_bounded` where an SDK spells outcomes as strings) |
-| `Refused(reason)` | authorization is on and `runner@<namespace>` holds no role that grants the spawn: bind it with `flz role bind runner@<namespace> spawner <namespace>`, which also lets that connection call `Operator.start` and `Operator.send` on the [administration surface](admin.md) and nothing else ([`authn_authz.md`](../operations/authn_authz.md)); quota exhausted; controller shutting down; start failed |
-| `Timeout` | no answer within 30 s |
-| `Unavailable` | no control plane to request on |
+| `operator.already_running` | the id is taken and the request said `Error` |
+| `operator.factory_unknown` | no connected runner **on any cluster node** registers that factory |
+| `operator.factory_not_bounded` | the factory's runners announced it as an unbounded operator; decided from the fleet's record before anything is placed |
+| `authz.*`, `quota.exceeded`, and the controller's other codes | the controller refused the start: authorization is on and `runner@<namespace>` holds no role that grants the spawn (`authz.role_insufficient`: bind it with `flz role bind runner@<namespace> spawner <namespace>`, which also lets that connection call `Operator.start` and `Operator.send` on the [administration surface](admin.md) and nothing else, [`authn_authz.md`](../operations/authn_authz.md)); quota exhausted; controller shutting down; start failed |
+| `spawn.timeout` | no answer within 30 s |
+| `spawn.unavailable` | no control plane to request on |
 
 A start is judged the way `flz operator start` is and recorded the same way; a delivery
 is judged as `operator.send` and recorded only when refused, because it happens once per
 event.
 
 Factory resolution is cluster-wide: a controller node with no runner for the factory routes
-the call to a node that has one, so `FactoryUnknown` is an honest cluster-wide verdict.
+the call to a node that has one, so `operator.factory_unknown` is an honest cluster-wide verdict.
 
 Reading the handle is optional. Each SDK has a read that waits and one that never waits:
 

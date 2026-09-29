@@ -78,7 +78,7 @@ count or duration fails naming the member. The clock follows from what the class
 declares: the wall clock by default, event time when it writes `eventTime(input)`,
 the logical clock with `logicalClock = true`. Writing `eventTime` together with
 `logicalClock = true` is refused, and a logical clock over `Void` state is refused
-as `UnservableClock`.
+as `topology.unservable_clock`.
 
 ### Encoded types
 
@@ -255,11 +255,11 @@ entry decodes by its declared type, so the short form takes no `codec` element.
 class rename must not move it. The written `id` also names the tasklet, so a
 Java tasklet's state is saved under the same name its Rust twin uses. The
 refusals are raised when the class is registered, each naming the class: an
-absent `id`; `ShortFormWithTopology` (an annotated class that also implements
-`UnboundedOperator` or `BoundedOperator`); `SinkWithoutOutput` (a `sink` on a
+absent `id`; `topology.short_form_with_topology` (an annotated class that also implements
+`UnboundedOperator` or `BoundedOperator`); `topology.sink_without_output` (a `sink` on a
 class whose `Output` is `Void`); and `ShortFormNameMismatch`. A second operator
 of either kind under a factory id the runner holds fails `registerFactory` with
-`DuplicateFactoryId`.
+`topology.duplicate_factory_id`.
 
 Nothing registers itself. There is no aggregator class: every operator a
 runner declares is one the application handed to `registerFactory`.
@@ -270,13 +270,13 @@ A `BoundedOperator` declares its graph in `channels`, on the builder an unbounde
 uses, and its kind is the interface it implements: `flz operator start` names
 the factory and nothing else. Retry is the edge's, as on an unbounded operator:
 `.retryMax(n)` / `.retryBackoffMs(ms)` on the channel that feeds a tasklet
-(default 3 attempts, 50 ms), and `retryMax(0)` is refused as `RetryMaxZero`.
+(default 3 attempts, 50 ms), and `retryMax(0)` is refused as `topology.retry_max_zero`.
 
 A bounded operator carries none of an unbounded operator's delivery settings. The builder's
 `effectivelyOnce()`, checkpoint calls and `correctionWindow(ms)` reach the core
-as written, and `registerFactory` throws `BoundedOperatorConfigurationException`
-naming `EffectivelyOnceOnBounded`, `CheckpointOnBounded` or
-`CorrectionWindowOnBounded`. `syncDurability()` is the bounded operator's own.
+as written, and `registerFactory` throws a `FlezhaException` with the code
+`topology.effectively_once_on_bounded`, `topology.checkpoint_on_bounded` or
+`topology.correction_window_on_bounded`. `syncDurability()` is the bounded operator's own.
 
 Both kind interfaces carry the two class settings: `persistenceEnabled()` (default
 `true`, read from the class whatever its tasklets' states) and
@@ -284,14 +284,14 @@ Both kind interfaces carry the two class settings: `persistenceEnabled()` (defau
 `BoundedOperator`. An instance whose class sleeps is evicted after
 `FLEZHA_PARK_IDLE_MS` of idleness and wakes on its next message with its cells
 restored; declaring it with persistence off makes `registerFactory` throw naming
-`SleepWithoutPersistence`.
+`topology.sleep_without_persistence`.
 
 A bounded operator
 tasklet registers timers as an unbounded tasklet does, and a firing runs as a pass
 of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-bounded-operator)); only a
 `compensate` hook's context carries no timer session, and there every timer
-call throws `TaskletException.TimersUnavailable`. A `spawnBounded` naming an unbounded factory reads
-`SpawnException.FactoryNotBounded`.
+call throws a `FlezhaException` with the code `runtime.timers_unavailable`. A `spawnBounded` naming
+an unbounded factory reads `operator.factory_not_bounded`.
 
 ## Scope
 

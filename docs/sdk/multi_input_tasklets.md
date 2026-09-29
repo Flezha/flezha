@@ -45,7 +45,7 @@ Full examples: `sdk/rust/examples/merged_input.rs`, Java `MergedInputTest` in `f
   Tasklet's own state's job.
 - **`cells_for` and the key see the MAPPED value.** Keying is declared
   **once, on the merge** (`Merge::key_by` / `Merge.keyBy`); a key on a source
-  handle is refused as `TransformAfterKeyBy`, since that source's value has
+  handle is refused as `topology.transform_after_key_by`, since that source's value has
   already become the sum type by the time keying runs.
 - **A source handle may carry its own transforms**, which run before the
   mapping on the source's payload type; transforms on the merge run after, on
@@ -87,12 +87,12 @@ Definition-time, alongside every other topology issue:
 
 | Refusal | Rust | Java |
 | --- | --- | --- |
-| fewer than two sources | `TopologyIssue::MergeTooFewSources` | `MergeTooFewSources` in the accumulated `UnboundedOperatorConfigurationException` |
-| same Channel subscribed twice | `TopologyIssue::DuplicateMergeSource` (names the Channel) | `DuplicateMergeSource` (names the Channel) |
-| source re-wiring an edge `.into` or another merge already declared | `TopologyIssue::EdgeAlreadyWired` (names Channel + Tasklet) | `EdgeAlreadyWired` (names both) |
+| fewer than two sources | `TopologyIssue::MergeTooFewSources` | `topology.merge_too_few_sources` in the accumulated `FlezhaException` |
+| same Channel subscribed twice | `TopologyIssue::DuplicateMergeSource` (names the Channel) | `topology.duplicate_merge_source` (names the Channel) |
+| source re-wiring an edge `.into` or another merge already declared | `TopologyIssue::EdgeAlreadyWired` (names Channel + Tasklet) | `topology.edge_already_wired` (names both) |
 | mapped type ≠ the Tasklet's `Input` | compile error at `.into::<Task>()` (`Tasklet<Input = I>` bound) | registration error naming both types (`wireConsumer` compares the declared merge type) |
 
-A duplicated source reports only `DuplicateMergeSource`: the arity check
+A duplicated source reports only `topology.duplicate_merge_source`: the arity check
 counts every `.from` written, not surviving sources.
 
 ## Bounded operators

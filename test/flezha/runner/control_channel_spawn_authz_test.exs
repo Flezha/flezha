@@ -81,8 +81,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
 
     request_spawn(ctx)
 
-    assert {"ref-spawn", %{outcome: "refused", error: error}} = await_response()
-    assert error =~ "forbidden"
+    assert {"ref-spawn", %{outcome: "", error: %{class: "denied"}}} = await_response()
 
     # The reply is written after the resolution, so nothing can start behind it.
     assert FakeStartRegistry.started() == []
@@ -91,7 +90,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
     assert [denial] = AuthTestHelper.await_platform_authz_events(:authorization_denied, since)
     assert denial.metadata.principal == @principal
     assert denial.metadata.action == :"operator.start"
-    assert denial.metadata.reason == :role_insufficient
+    assert denial.metadata.reason == "authz.role_insufficient"
   end
 
   test "a spawner's spawn starts and writes its start record, naming the requester", ctx do
@@ -100,7 +99,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
 
     request_spawn(ctx)
 
-    assert {"ref-spawn", %{outcome: "spawned", error: "", instance_id: answered}} =
+    assert {"ref-spawn", %{outcome: "spawned", error: nil, instance_id: answered}} =
              await_response()
 
     assert [%{id: id}] = FakeStartRegistry.started()
@@ -116,7 +115,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
 
     request_spawn(%{ctx | instance_id: ""})
 
-    assert {"ref-spawn", %{outcome: "spawned", error: "", instance_id: generated}} =
+    assert {"ref-spawn", %{outcome: "spawned", error: nil, instance_id: generated}} =
              await_response()
 
     assert generated =~ ~r/\Aworker-[a-z2-7]{16}\z/
@@ -135,7 +134,8 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
 
     request_spawn(%{ctx | instance_id: ""})
 
-    assert {"ref-spawn", %{outcome: "refused", instance_id: ""}} = await_response()
+    assert {"ref-spawn", %{outcome: "", error: %{code: "quota.exceeded"}, instance_id: ""}} =
+             await_response()
 
     record = NodeTestHelper.wait_until(fn -> audit_record(:start, boundary) end, 2_000, 25)
     assert record.metadata.outcome == :error
@@ -148,14 +148,13 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
 
     request_spawn(ctx)
 
-    assert {"ref-spawn", %{outcome: "refused", error: error}} = await_response()
-    assert error =~ "forbidden"
+    assert {"ref-spawn", %{outcome: "", error: %{class: "denied"}}} = await_response()
     assert Instance.ingested(instance) == []
 
     assert [denial] = AuthTestHelper.await_platform_authz_events(:authorization_denied, since)
     assert denial.metadata.principal == @principal
     assert denial.metadata.action == :"operator.send"
-    assert denial.metadata.reason == :role_insufficient
+    assert denial.metadata.reason == "authz.role_insufficient"
   end
 
   test "a spawner's delivery is made and leaves no send record", ctx do
@@ -165,7 +164,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
 
     request_spawn(ctx)
 
-    assert {"ref-spawn", %{outcome: "delivered", error: ""}} = await_response()
+    assert {"ref-spawn", %{outcome: "delivered", error: nil}} = await_response()
     assert Instance.ingested(instance) == ["p1"]
 
     # The reply is written after the resolution emitted whatever it emits, so the
@@ -183,7 +182,9 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
           {"PluginManager.enable", ~s(["p1", {"id": "p1"}])},
           {"PluginManager.disable", ~s(["p1"])}
         ] do
-      assert Admin.call(@ns, verb, args) == {:error, "forbidden: role_insufficient"}, verb
+      assert {:error, %Flezha.Error{code: "authz.role_insufficient"}} =
+               Admin.call(@ns, verb, args),
+             verb
     end
   end
 
@@ -193,7 +194,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
 
     # The role check passes and the namespace check refuses: a grant the role
     # did not hold would answer `role_insufficient` instead.
-    assert {:error, {:forbidden, :namespace_mismatch}} =
+    assert {:error, %Flezha.Error{code: "authz.namespace_mismatch"}} =
              Verb.run(
                :operator_start,
                Session.runner_caller_context(@ns),
@@ -207,8 +208,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
 
     request_spawn(ctx)
 
-    assert {"ref-spawn", %{outcome: "refused", error: error}} = await_response()
-    assert error =~ "forbidden"
+    assert {"ref-spawn", %{outcome: "", error: %{class: "denied"}}} = await_response()
     assert FakeStartRegistry.started() == []
   end
 
@@ -220,7 +220,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
 
     request_spawn(ctx)
 
-    assert {"ref-spawn", %{outcome: "spawned", error: ""}} = await_response()
+    assert {"ref-spawn", %{outcome: "spawned", error: nil}} = await_response()
     assert_start_recorded(boundary, ctx.instance_id)
   end
 
@@ -232,9 +232,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
 
     request_spawn(ctx)
 
-    assert {"ref-spawn", %{outcome: "refused", error: error}} = await_response()
-    assert error =~ "forbidden"
-    refute error =~ "routed_call_failed"
+    assert {"ref-spawn", %{outcome: "", error: %{class: "denied"}}} = await_response()
   end
 
   defp run_instance(%{registry: registry, instance_id: instance_id}) do

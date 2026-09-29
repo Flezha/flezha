@@ -332,7 +332,7 @@ The `TaskletTestHarness` SHALL support driving the tasklet's clock from the test
 
 ### Requirement: TaskletTestHarness asserts keyed emits and identity stamps
 
-The harness's `EmitRecord` SHALL expose the emit's key (empty for an emit carrying none) and its user metadata, so tests can assert keyed-emit behaviour without invoking the wire path. The harness SHALL support declaring a channel keyed (`withKeyedChannel()`) and standing in for the Cell a key routed to (`withCellKey(key)`), so that the keyed-channel contract — the Cell-key default and the refusals (`KeyRequiredOnKeyedChannel`, `KeyNotAllowedOnNonKeyedChannel`) — is exercisable in a unit test. The `flz.*` identity stamps themselves are minted by the runtime's frame writer and are NOT reproduced by the harness; assert them against the dispatcher.
+The harness's `EmitRecord` SHALL expose the emit's key (empty for an emit carrying none) and its user metadata, so tests can assert keyed-emit behaviour without invoking the wire path. The harness SHALL support declaring a channel keyed (`withKeyedChannel()`) and standing in for the Cell a key routed to (`withCellKey(key)`), so that the keyed-channel contract — the Cell-key default and the refusals (`runtime.key_required_on_keyed_channel`, `runtime.key_not_allowed_on_non_keyed_channel`) — is exercisable in a unit test. The `flz.*` identity stamps themselves are minted by the runtime's frame writer and are NOT reproduced by the harness; assert them against the dispatcher.
 
 #### Scenario: A keyed emit records its key
 
@@ -347,12 +347,12 @@ The harness's `EmitRecord` SHALL expose the emit's key (empty for an emit carryi
 #### Scenario: A key-less emit on a keyed channel is refused without a Cell key
 
 - **WHEN** a harness declared keyed with no Cell key drives a Tasklet that calls `ctx.emit(candle)`
-- **THEN** the harness ctx SHALL throw `TaskletException.KeyRequiredOnKeyedChannel` and SHALL record nothing
+- **THEN** the harness ctx SHALL throw `FlezhaException` with the code `runtime.key_required_on_keyed_channel` and SHALL record nothing
 
 #### Scenario: A reserved metadata key is rejected in the harness too
 
 - **WHEN** a Tasklet calls `ctx.emitWithMeta(value, Map.of("flz.seq", "1.0"))` under the harness
-- **THEN** the harness ctx SHALL throw `TaskletException.ReservedMetadataKey`, matching the runtime's behaviour
+- **THEN** the harness ctx SHALL throw `FlezhaException` with the code `runtime.reserved_metadata_key`, matching the runtime's behaviour
 
 ### Requirement: The reference Java runner carries the round-trip bench fixtures
 The reference Java test app SHALL register the round-trip bench fixtures `bench_echo`, `bench_keyed_nopersist`, `bench_keyed`, `tier_store` and `bench_checkpoint` as twins of the `test/apps/rust_runner` fixtures of the same ids — same sink channel names, same output bytes, same key function, same overflow declaration — and SHALL read the same `FLEZHA_BENCH_CHECKPOINT_EVERY`, `FLEZHA_BENCH_CHECKPOINT_OUTPUTS` and `FLEZHA_BENCH_CHECKPOINT_DELAY_MS` environment as the Rust fixtures, so `mix bench.roundtrip --runtime java` selects a factory by id with no per-runtime branch. `bench_checkpoint` SHALL declare `checkpointAck()` and `checkpointEvery(n)`, and `outputsAtCheckpoint(maxDelayMs)` only when `FLEZHA_BENCH_CHECKPOINT_OUTPUTS=at_checkpoint`.

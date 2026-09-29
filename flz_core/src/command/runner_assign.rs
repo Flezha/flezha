@@ -3,7 +3,12 @@ use crate::pb::AssignRunnerId;
 use crate::runner::{RunnerNode, RunnerStatus};
 
 impl CommandAction for AssignRunnerId {
-    fn handle(&self, runner: &mut RunnerNode, _message: &str, _errors: &mut Vec<String>) -> Reply {
+    fn handle(
+        &self,
+        runner: &mut RunnerNode,
+        _message: &str,
+        _errors: &mut Vec<crate::Error>,
+    ) -> Reply {
         // The controller-minted value is this connection's **session token**: it
         // keys the per-connection data-stream sockets and the controller-side
         // Registry/StreamChannel names. It is NOT persisted — the durable

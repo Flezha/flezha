@@ -9,8 +9,8 @@ quotas, role bindings, runtime knobs, on-disk layout, recovery and rollback.
 `Flezha.AuthZ.enforcement_posture/0` answers one of three states.
 `Flezha.AuthZ.authorize/3` is the single policy point every `Flezha.Service.*`
 caller action calls before any side effect; it returns `:ok` or
-`{:error, {:forbidden, reason}}` and emits `:authorization_denied` on every
-refusal.
+`{:error, {:forbidden, reason}}` (the unclaimed-bootstrap refusal also carries the
+token path) and emits `:authorization_denied` on every refusal.
 
 | Posture | When | Effect |
 | --- | --- | --- |
@@ -132,9 +132,8 @@ state names the path itself:
 
 ```
 $ flz controller status
-controller.status: refused: authorization is enforced but the bootstrap has not
-been claimed — run `flz auth bootstrap <token>` with the token in
-/var/lib/flezha/app_data/auth/bootstrap.token
+error: authorization is enforced and no admin has claimed the bootstrap yet; its token is in /var/lib/flezha/app_data/auth/bootstrap.token on the controller (authz.bootstrap_pending)
+hint: flz auth bootstrap <token>
 ```
 
 ```sh
@@ -236,7 +235,7 @@ Hand it to the runner as `FLEZHA_NAMESPACE_SECRET`. Three rules the registry
 enforces on it:
 
 - **It cannot expire.** A `runner` entry is issued with `--ttl never`; any other TTL, the
-  default included, is refused `:runner_token_cannot_expire`. The holder is an
+  default included, is refused `authz.runner_token_expiry`. The holder is an
   unattended process, and a credential that lapses fails it at a restart — a
   deploy or a recovery, which is exactly when nobody wants a new failure.
 - **It cannot be `_system`.** Refused at issue as well as at connect.
@@ -273,8 +272,9 @@ flz namespace list                 # the catalog, with a hub-running column
 ```
 
 `create` and `delete` both answer whether they changed anything: a name the
-catalog already holds is refused `:already_exists`, and a name it does not hold
-is refused `:not_found`. Both refusals go to standard error and exit 1, so a
+catalog already holds is refused `namespace.already_exists` (exit 6), and a name
+it does not hold is refused `namespace.not_found` (exit 5). Both refusals go to
+standard error, so a
 teardown script cannot read a typo as a successful delete.
 
 A namespace listing shows the caller its own namespace and no other, and
@@ -288,12 +288,13 @@ deployment's caller, and narrowing it to `_system` would hide the namespaces
 it just created — but it is not only that caller. Under enforcement a principal
 bound in the role store rather than on its context is judged in `_system`, so
 one bound there passes and gets the open answer too; one bound to a tenant is
-refused `namespace_mismatch` before the listing runs, which is why the open
+refused `authz.namespace_mismatch` before the listing runs, which is why the open
 answer crosses no tenant boundary. `flz token list` takes the closed answer for
 the same caller and shows `_system` only.
 
 Quota overrides ride the repeatable `--X<field>=<value>` flag; an unknown field
-or a negative value is refused.
+or a negative value is refused (`namespace.unknown_quota_field`,
+`namespace.invalid_quota_value`).
 
 | Quota | Default | Enforced at |
 | --- | --- | --- |
@@ -304,7 +305,7 @@ or a negative value is refused.
 | `max_state_bytes` | `107_374_182_400` (100 GiB) | `start_operator` refuses new allocation while over; `State.Watchdog` raises a latched `[:flezha, :state, :disk_quota_breach]` alarm for a running namespace — writes are never interrupted |
 | `max_runners` | `32` | `FleetManager.connect_handler/4`; a refusal emits `[:flezha, :runner, :quota_refused]` |
 
-A refusal surfaces as `{:error, {:quota_exceeded, kind, %{current, limit}}}`.
+A refusal surfaces as `quota.exceeded`, with `kind`, `current` and `limit` in its details.
 The disk footprint is walked from `app_data/state/<namespace>/` behind a 30 s
 cache and rebuilt from disk at boot; the runner count is derived from the live
 session map. While the posture is not `:enforced`, every quota check passes.
@@ -569,7 +570,8 @@ mutations, `dlq_service`, `schedule_service`, `operator_service`,
 `plugin_service`, `state_service`, `controller_service`, `bounded_service`,
 `observability_service` and `audit_log` — in one record shape: the record's
 `name` is the verb, `metadata.action` the action it was judged as,
-`metadata.outcome` (`ok` or `error`) for a mutation, `namespace` where it was
+`metadata.outcome` (`ok` or `error`) for a mutation and `metadata.error_code` for a
+failed one, `namespace` where it was
 judged, `metadata.caller_roles` the roles the caller was judged with (a token's
 one role, a runner connection's resolved set, or the set the store holds), and
 `caller` who asked and from which surface. An `:authorization_denied` record

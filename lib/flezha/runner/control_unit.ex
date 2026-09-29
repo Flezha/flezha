@@ -173,13 +173,18 @@ defmodule Flezha.Runner.ControlUnit do
     )
   end
 
+  # The runner renders its refusal from the same catalogue; a reply that says
+  # "error" and names none is still an error.
+  defp runner_error([first | _rest]), do: Flezha.Error.from_wire(first)
+  defp runner_error([]), do: Flezha.Error.new("runner.command_failed")
+
   defp decode_message_response(raw_data) do
     case RunnerCommands.OperatorMessageResponse.decode(raw_data) do
-      {:ok, %RunnerCommands.OperatorMessageResponse{error: "", payload: payload}} ->
+      {:ok, %RunnerCommands.OperatorMessageResponse{error: nil, payload: payload}} ->
         {:ok, payload}
 
       {:ok, %RunnerCommands.OperatorMessageResponse{error: err}} ->
-        {:error, err}
+        {:error, Flezha.Error.from_wire(err)}
 
       {:error, reason} ->
         {:error, {:decode_error, reason}}
@@ -389,13 +394,13 @@ defmodule Flezha.Runner.ControlUnit do
           {:ok, response.raw_data}
 
         "error" ->
-          reason = Enum.join(response.errors, " | ")
+          error = runner_error(response.errors)
 
           if state[:env] !== :test do
-            Logger.error(reason)
+            Logger.error("runner refused a command: #{error.message} (#{error.code})")
           end
 
-          {:error, reason}
+          {:error, error}
       end
 
     new_refs = handle_refs(state[:response_refs], ref, reply, metadata)

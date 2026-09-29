@@ -45,8 +45,7 @@ defmodule Flezha.Plugin.Provider.FileRootTest do
           {FilePlugin.Source, %{path: "events.ndjson", channel_in: "events"}},
           {FilePlugin.Sink, %{path: "events.ndjson"}}
         ] do
-      assert {:error, message} = ProviderPrepare.prepare(provider, opts)
-      assert message =~ missing
+      assert {:error, {:file_root_missing, ^missing}} = ProviderPrepare.prepare(provider, opts)
     end
 
     refute File.exists?(missing)
@@ -55,8 +54,7 @@ defmodule Flezha.Plugin.Provider.FileRootTest do
   test "a root that does not exist is refused naming it", %{outside: outside} do
     missing = Path.join(outside, "absent")
 
-    assert {:error, message} = Local.resolve("events.ndjson", missing)
-    assert message =~ missing
+    assert {:error, {:file_root_missing, ^missing}} = Local.resolve("events.ndjson", missing)
   end
 
   test "a relative path lands under the root", %{root: root} do
@@ -67,13 +65,13 @@ defmodule Flezha.Plugin.Provider.FileRootTest do
   test "a path that climbs out is refused naming the root", %{root: root, outside: outside} do
     File.write!(Path.join(outside, "controller.key"), "")
 
-    assert {:error, message} = Local.resolve("../controller.key", root)
-    assert message =~ "outside the root folder #{root}"
+    assert {:error, {:file_path_outside_root, "../controller.key", ^root}} =
+             Local.resolve("../controller.key", root)
   end
 
   test "an absolute path outside the root is refused naming the root", %{root: root} do
-    assert {:error, message} = Local.resolve("/etc/passwd", root)
-    assert message =~ "outside the root folder #{root}"
+    assert {:error, {:file_path_outside_root, "/etc/passwd", ^root}} =
+             Local.resolve("/etc/passwd", root)
   end
 
   test "a symlink pointing out of the root is refused, because the path lands outside it",
@@ -86,8 +84,7 @@ defmodule Flezha.Plugin.Provider.FileRootTest do
     # Through a linked directory, through a linked file, and through a link to a
     # file that does not exist yet.
     for path <- ["out/hosts", "hosts", "out/not-yet"] do
-      assert {:error, message} = Local.resolve(path, root)
-      assert message =~ "outside the root folder #{root}"
+      assert {:error, {:file_path_outside_root, ^path, ^root}} = Local.resolve(path, root)
     end
   end
 
@@ -100,22 +97,23 @@ defmodule Flezha.Plugin.Provider.FileRootTest do
   end
 
   test "a missing parent is refused naming the missing directory", %{root: root} do
-    assert {:error, message} = Local.resolve("nope/events.ndjson", root)
-    assert message =~ "the directory #{Path.join(root, "nope")} does not exist"
+    missing = Path.join(root, "nope")
+
+    assert {:error, {:file_directory_missing, "nope/events.ndjson", ^missing}} =
+             Local.resolve("nope/events.ndjson", root)
   end
 
   test "a missing directory outside the root is not named", %{root: root} do
-    assert {:error, message} = Local.resolve("../nope/events.ndjson", root)
-    assert message =~ "outside the root folder #{root}"
-    refute message =~ "does not exist"
+    assert {:error, {:file_path_outside_root, "../nope/events.ndjson", ^root}} =
+             Local.resolve("../nope/events.ndjson", root)
   end
 
   test "a link loop is refused rather than walked for ever", %{root: root} do
     File.ln_s!("b", Path.join(root, "a"))
     File.ln_s!("a", Path.join(root, "b"))
 
-    assert {:error, message} = Local.resolve("a/events.ndjson", root)
-    assert message =~ "more than 40 symbolic links"
+    assert {:error, {:file_path_too_many_links, "a/events.ndjson", 40}} =
+             Local.resolve("a/events.ndjson", root)
   end
 
   # Nothing here reaches a network: a root is resolved without a request.
@@ -142,8 +140,9 @@ defmodule Flezha.Plugin.Provider.FileRootTest do
             "s3://events/flezhax/echo",
             "/etc/passwd"
           ] do
-        assert {:error, message} = prepare_in_bucket(%{path: path})
-        assert message =~ "outside the root s3://events/flezha", inspect(path)
+        assert {:error, {:file_path_outside_root, ^path, "s3://events/flezha"}} =
+                 prepare_in_bucket(%{path: path}),
+               inspect(path)
       end
     end
 
@@ -172,8 +171,8 @@ defmodule Flezha.Plugin.Provider.FileRootTest do
           ] do
         Application.put_env(:flezha, :file_plugin_s3, Keyword.delete(settings, key))
 
-        assert {:error, message} = ProviderPrepare.prepare(provider, opts)
-        assert message =~ variable
+        assert {:error, {:file_root_setting_missing, "s3://events/flezha", ^variable}} =
+                 ProviderPrepare.prepare(provider, opts)
       end
     end
 
@@ -183,8 +182,9 @@ defmodule Flezha.Plugin.Provider.FileRootTest do
       tier = [endpoint: endpoint, bucket: "events", prefix: "flezha"]
       Application.put_env(:flezha, :durability_tier, backend: :s3, backend_opts: tier)
 
-      assert {:error, message} = prepare_in_bucket(%{path: "echo"})
-      assert message =~ "the prefixes flezha and flezha/files"
+      assert {:error,
+              {:file_root_overlaps_durability, "s3://events/flezha/files", "events", "flezha",
+               "flezha/files"}} = prepare_in_bucket(%{path: "echo"})
 
       for apart <- [[prefix: "archive"], [bucket: "audit"], [endpoint: "http://elsewhere:9000"]] do
         backend_opts = Keyword.merge(tier, apart)

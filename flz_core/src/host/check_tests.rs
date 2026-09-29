@@ -15,10 +15,11 @@ use std::collections::HashMap;
 use super::decl::{HostAckGranularity, HostChannelKind, HostClassDecl};
 use super::issue::TopologyIssue;
 use super::register::{check, Derived};
+use crate::ErrorModel;
 
 const FIXTURE: &str = "../test/fixtures/reference_topologies.txt";
 
-/// A row of the four-column refusal table.
+/// A row of the four-column refusal table; `refusal` is `ok` or a code.
 struct Row {
     refusal: String,
     topology: String,
@@ -49,6 +50,29 @@ fn rows() -> Vec<Row> {
             })
         })
         .filter(|row| !row.needs.starts_with("shorthand"))
+        .collect()
+}
+
+/// A variant's code, as the fixture spells its refusal.
+fn code_of(variant: &str) -> String {
+    let mut code = String::from("topology.");
+    for (i, c) in variant.chars().enumerate() {
+        if c.is_uppercase() && i > 0 {
+            code.push('_');
+        }
+        code.push(c.to_ascii_lowercase());
+    }
+    code
+}
+
+/// The codes the fixture lists as `unrowed`: raised from a record's raw shape,
+/// or by registration after it, which no builder writes and no row states.
+fn unrowed() -> Vec<String> {
+    std::fs::read_to_string(FIXTURE)
+        .expect("the fixture")
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("unrowed |"))
+        .map(|code| code.trim().to_string())
         .collect()
 }
 
@@ -340,7 +364,7 @@ fn every_fixture_row_answers_what_it_names() {
         driven += 1;
         let names: Vec<String> = match check(record_of(row)) {
             Ok(_) => Vec::new(),
-            Err(issues) => issues.iter().map(|i| i.name().to_string()).collect(),
+            Err(issues) => issues.iter().map(|i| i.code().to_string()).collect(),
         };
 
         if row.refusal == "ok" {
@@ -372,19 +396,19 @@ fn every_fixture_row_answers_what_it_names() {
 #[test]
 fn a_stream_setting_on_a_bounded_is_refused_by_the_bounded_name() {
     let row = Row {
-        refusal: "CheckpointOnBounded".into(),
+        refusal: "topology.checkpoint_on_bounded".into(),
         topology: "checkpoint_bounded".into(),
         steps: "class.bounded; class.persistent; class.checkpoint_ack; entry(in); in.into(plain)"
             .into(),
         needs: "bounded".into(),
     };
     let issues = check(record_of(&row)).expect_err("a checkpoint on a bounded operator is refused");
-    let names: Vec<&str> = issues.iter().map(TopologyIssue::name).collect();
-    assert_eq!(names, ["CheckpointOnBounded"]);
+    let codes: Vec<String> = issues.iter().map(ErrorModel::code).collect();
+    assert_eq!(codes, ["topology.checkpoint_on_bounded"]);
 }
 
-/// Every named variant is produced by some row. `Declaration` is the residue
-/// the vocabulary has not named and is exempt by name here and in the seam test.
+/// Every variant a builder can reach is produced by some row; the `unrowed` codes are
+/// the ones only a raw record or registration reaches.
 #[test]
 fn the_table_reaches_every_variant_the_vocabulary_carries() {
     let vocabulary = std::fs::read_to_string("src/host/issue.rs").expect("the vocabulary");
@@ -402,12 +426,13 @@ fn the_table_reaches_every_variant_the_vocabulary_carries() {
     assert!(declared.len() > 30, "read only {} variants", declared.len());
 
     let named: Vec<String> = rows().into_iter().map(|r| r.refusal).collect();
+    let unrowed = unrowed();
     for variant in declared {
-        if variant == "Declaration" {
+        if unrowed.contains(&code_of(&variant)) {
             continue;
         }
         assert!(
-            named.contains(&variant),
+            named.contains(&code_of(&variant)),
             "`{variant}` can be raised and no fixture row drives it"
         );
     }
@@ -551,22 +576,35 @@ mod derivation {
     #[test]
     fn a_verdict_lists_every_refusal_it_found() {
         let row = Row {
-            refusal: "DuplicateKeyBy".into(),
+            refusal: "topology.duplicate_key_by".into(),
             topology: "accumulates".into(),
             steps: "entry(in); in.key.key.map.into(static)".into(),
             needs: "-".into(),
         };
         let issues = check(record_of(&row)).expect_err("three rules are broken at once");
-        let names: Vec<&str> = issues.iter().map(TopologyIssue::name).collect();
+        let codes: Vec<String> = issues.iter().map(ErrorModel::code).collect();
 
-        assert!(names.contains(&"DuplicateKeyBy"), "{names:?}");
-        assert!(names.contains(&"TransformAfterKeyBy"), "{names:?}");
-        assert!(names.contains(&"CellsForMissing"), "{names:?}");
+        assert!(
+            codes.iter().any(|c| c == "topology.duplicate_key_by"),
+            "{codes:?}"
+        );
+        assert!(
+            codes.iter().any(|c| c == "topology.transform_after_key_by"),
+            "{codes:?}"
+        );
+        assert!(
+            codes.iter().any(|c| c == "topology.cells_for_missing"),
+            "{codes:?}"
+        );
 
         let rendered = super::super::issue::render_issues(&issues);
-        assert!(
-            rendered.starts_with("topology rejected ["),
-            "every surface that prints reads the names off the bracketed list: {rendered}"
-        );
+        assert_eq!(rendered.code, codes[0], "the first issue names the refusal");
+        let listed: Vec<&str> = rendered.details["issues"]
+            .as_array()
+            .expect("every issue is listed")
+            .iter()
+            .map(|issue| issue["code"].as_str().expect("each issue has its code"))
+            .collect();
+        assert_eq!(listed, codes, "every issue rides details.issues");
     }
 }

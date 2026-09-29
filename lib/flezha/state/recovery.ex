@@ -69,7 +69,7 @@ defmodule Flezha.State.Recovery do
           end)
 
         case match do
-          nil -> {:error, "no active runner owns operator_class=#{rc}"}
+          nil -> {:error, {:no_owning_runner, rc}}
           eid -> {:ok, eid}
         end
 

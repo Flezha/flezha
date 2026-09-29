@@ -85,16 +85,14 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
 
   Every refusal here fails the enable and opens no connection.
   """
-  @spec from_opts(map()) :: {:ok, t() | nil} | {:error, binary()}
+  @spec from_opts(map()) :: {:ok, t() | nil} | {:error, term()}
   def from_opts(opts) do
     url = blank_to_nil(Map.get(opts, :subscription_url))
     items = Map.get(opts, :subscription_items)
 
     cond do
       url != nil and items != nil ->
-        {:error,
-         "websocket subscription_url and subscription_items are mutually exclusive — " <>
-           "a source is either polled or literal"}
+        {:error, {:options_exclusive, :subscription_url, :subscription_items}}
 
       url == nil and items == nil ->
         {:ok, nil}
@@ -144,12 +142,11 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
     if Enum.all?(items, &(is_binary(&1) and &1 != "")) do
       {:ok, Enum.uniq(items)}
     else
-      {:error, "websocket subscription_items must be a list of non-empty strings"}
+      ProviderBehaviour.refuse_value(:subscription_items, items)
     end
   end
 
-  defp validate_items(_items),
-    do: {:error, "websocket subscription_items must be a list of non-empty strings"}
+  defp validate_items(items), do: ProviderBehaviour.refuse_value(:subscription_items, items)
 
   # The member's owned key-group range, injected into the plugin's opts by the
   # group fan-out. A partitioned member asks upstream only for its own share,
@@ -183,11 +180,11 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
         if String.contains?(value, @items_placeholder) do
           {:ok, value}
         else
-          {:error, "websocket #{field} must contain the #{@items_placeholder} placeholder"}
+          {:error, {:template_missing_placeholder, field, @items_placeholder}}
         end
 
       _ ->
-        {:error, "websocket subscription_url requires #{field}"}
+        {:error, {:option_requires, :subscription_url, field}}
     end
   end
 

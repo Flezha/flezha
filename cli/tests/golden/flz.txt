@@ -23,8 +23,16 @@ COMMANDS:
     help           Show this help message
 
 OUTPUT FORMAT:
-    Every verb that renders takes --json, or the same request spelled
-    --output json / -o json. Any other format is refused, not rendered as text.
+    Every verb takes --json, or the same request spelled --output json / -o json.
+    A verb that answers data answers it as JSON; an acting verb's answer stays
+    text. Any other format is refused.
+
+ERRORS:
+    A failure is written on stderr as `error: <message> (<code>)`, with a
+    `hint:` line when there is a next command, or under --json as one
+    {"error": {"code", "class", "message", "details", "hint"}} line. The exit
+    code follows the class: 1 internal, 2 invalid, 3 unreachable, 4 denied,
+    5 not_found, 6 conflict, 7 unavailable. Every code is in docs/errors.md.
 
 Use 'flz <COMMAND> help' for more information on a specific command.
 
