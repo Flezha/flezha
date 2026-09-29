@@ -334,6 +334,27 @@ strings, routed into the tasklet, whose output channel is named `out` and
 terminated on the plugin layer. `sink(name)` does both jobs, so naming the
 channel again with `named(...)` is refused at registration rather than resolved.
 
+**The same operator, written short.** The echo is one tasklet between one
+input and one sink, and an operator of that shape can be declared in one
+piece, with the tasklet's body in place of `channels`. These guides write
+the two apart, because that is the form that grows: a second tasklet or a
+transform on the way needs it. This is the whole echo too:
+
+```java
+@UnboundedOperator(id = "echo", input = "in", sink = "out")
+public final class EchoOperator implements Tasklet<String, Void, String> {
+
+    @Override
+    public void run(String input, Ctx<Void, String> ctx) throws TaskletException {
+        ctx.emit("echo: " + input);
+    }
+}
+```
+
+It takes the place of both files above under the operator's name, so the
+runner does not change. [The short form](https://github.com/flezha/flezha/blob/main/docs/sdk/java_sdk.md#the-short-form) has its
+rules.
+
 ```java
 // Main.java: the runner. Connects, registers the echo factory, and serves.
 public static void main(String[] args) throws Exception {
@@ -415,6 +436,24 @@ JSON. `sink_named("out")` names the channel it terminates on the plugin layer,
 and `sink()` would leave it the tasklet's name. A graph whose types do not
 line up is refused when the runner declares it.
 
+**The same operator, written short.** The echo is one tasklet between one
+input and one sink, and an operator of that shape can be declared in one
+piece, with the tasklet's body in place of `channels`. These guides write
+the two apart, because that is the form that grows: a second tasklet or a
+transform on the way needs it. This is the whole echo too:
+
+```rust
+#[flezha_runner::unbounded_operator(id = "echo", input = "in", sink = "out")]
+fn echo_operator(input: String) -> String {
+    format!("echo: {input}")
+}
+```
+
+The function's return value is what it sends out, and `fn echo_operator`
+becomes the type `EchoOperator`. It takes the place of both files above under the operator's name, so the
+runner does not change. [The short form](https://github.com/flezha/flezha/blob/main/docs/sdk/rust_operator_architecture.md#the-short-form) has its
+rules.
+
 ```rust
 // src/main.rs: the runner. Connects, registers the echo factory, and serves.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -488,6 +527,29 @@ names no codec, so the tasklet's string leaves as its UTF-8 bytes, and any
 value other than a string or bytes would leave as JSON. The module exports what
 `defineUnbounded` returned, and that export is what the runner finds.
 
+**The same operator, written short.** The echo is one tasklet between one
+input and one sink, and an operator of that shape can be declared in one
+piece, with the tasklet's body in place of `channels`. These guides write
+the two apart, because that is the form that grows: a second tasklet or a
+transform on the way needs it. This is the whole echo too:
+
+```javascript
+// echo_operator.mjs
+import { defineUnbounded } from '@flezha/sdk';
+
+export default defineUnbounded({
+  factoryId: 'echo',
+  input: 'in',
+  sink: 'out',
+  codec: 'text',
+  run: (input, ctx) => ctx.emit(`echo: ${input}`),
+});
+```
+
+It takes the place of both files above under the operator's name, so the
+runner does not change. [The short form](https://github.com/flezha/flezha/blob/main/docs/sdk/node_sdk.md#the-short-form) has its
+rules.
+
 ```javascript
 // runner.mjs: the runner. Connects, registers the echo factory, and serves.
 import { createRunner } from '@flezha/sdk';
@@ -553,6 +615,22 @@ as a string; an entry that names no codec reads JSON instead. The sink names no
 codec, so the tasklet's string goes back out as its UTF-8 bytes, and any value
 other than a string or bytes would go out as JSON.
 
+**The same operator, written short.** The echo is one tasklet between one
+input and one sink, and an operator of that shape can be declared in one
+piece, with the tasklet's body in place of `channels`. These guides write
+the two apart, because that is the form that grows: a second tasklet or a
+transform on the way needs it. This is the whole echo too:
+
+```python
+@flezha.unbounded_operator(id="echo", input="in", sink="out", codec="text")
+def echo_operator(value: str) -> str:
+    return f"echo: {value}"
+```
+
+The function's return value is what it sends out. It takes the place of both files above under the operator's name, so the
+runner does not change. [The short form](https://github.com/flezha/flezha/blob/main/docs/sdk/python_sdk.md#the-short-form) has its
+rules.
+
 ```python
 # runner.py: the runner. Connects, registers the echo factory, and serves.
 def main() -> None:
@@ -617,6 +695,26 @@ end
 as a String; an entry that names no codec reads JSON instead. The sink names no
 codec, so the tasklet's String goes back out as its bytes, and any other value
 would go out as JSON.
+
+**The same operator, written short.** The echo is one tasklet between one
+input and one sink, and an operator of that shape can be declared in one
+piece, with the tasklet's body in place of `channels`. These guides write
+the two apart, because that is the form that grows: a second tasklet or a
+transform on the way needs it. This is the whole echo too:
+
+```ruby
+class EchoOperator < Flezha::UnboundedOperator
+  factory_id "echo"
+  input "in"
+  sink "out"
+  codec :text
+  def run(input, ctx) = ctx.emit("echo: #{input}")
+end
+```
+
+It takes the place of both files above under the operator's name, so the
+runner does not change. [The short form](https://github.com/flezha/flezha/blob/main/docs/sdk/ruby_sdk.md#the-short-form) has its
+rules.
 
 ```ruby
 # runner.rb: the runner. Connects, registers the echo factory, and serves.
@@ -690,6 +788,27 @@ sink names no codec, so the tasklet's string goes out as it is, and any other
 value would go out as JSON. The attribute carries the declaration and the method
 carries the graph.
 
+**The same operator, written short.** The echo is one tasklet between one
+input and one sink, and an operator of that shape can be declared in one
+piece, with the tasklet's body in place of `channels`. These guides write
+the two apart, because that is the form that grows: a second tasklet or a
+transform on the way needs it. This is the whole echo too:
+
+```php
+#[Operator(factoryId: 'echo', input: 'in', sink: 'out', codec: ChannelCodec::Text)]
+final class EchoOperator extends UnboundedOperator
+{
+    public function run(mixed $input, Ctx $ctx): void
+    {
+        $ctx->emit('echo: ' . $input);
+    }
+}
+```
+
+It takes the place of both files above under the operator's name, so the
+runner does not change. [The short form](https://github.com/flezha/flezha/blob/main/docs/sdk/php_sdk.md#the-short-form) has its
+rules.
+
 ```php
 // runner.php: the runner. Connects, registers the echo factory, and serves.
 require __DIR__ . '/vendor/autoload.php';
@@ -761,6 +880,27 @@ end
 
 The graph is a pipe, and `use` imports the builder it is written with. A binary crosses a channel as it is, so plain text needs no
 decoder or encoder here.
+
+**The same operator, written short.** The echo is one tasklet between one
+input and one sink, and an operator of that shape can be declared in one
+piece, with the tasklet's body in place of `channels`. These guides write
+the two apart, because that is the form that grows: a second tasklet or a
+transform on the way needs it. This is the whole echo too:
+
+```elixir
+defmodule Echo.Operator do
+  use Flezha.SDK.UnboundedOperator, factory_id: "echo", input: "in", sink: "out"
+
+  def run(input, state, ctx) do
+    emit(ctx, "echo: " <> input)
+    {:ok, state}
+  end
+end
+```
+
+It takes the place of both files above under the operator's name, so the
+runner does not change. [The short form](https://github.com/flezha/flezha/blob/main/docs/sdk/elixir_sdk.md#the-short-form) has its
+rules.
 
 ```elixir
 # lib/echo/application.ex: the runner. Connects, registers the echo factory, and serves.

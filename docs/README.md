@@ -31,13 +31,16 @@ answer "what are the options"; a guide answers "what do I type".
 
 | Doc | Covers |
 | --- | --- |
-| [`what_is_flezha.md`](guides/what_is_flezha.md) | **Start here.** What Flezha is, and one echo running in Docker |
-| [`guides.md`](guides/guides.md) | The three guides, the topics each one covers, and the order to read them in |
+| [`what_is_flezha.md`](guides/what_is_flezha.md) | **Start here.** What Flezha is, its pieces, and what it is for |
+| [`try_it.md`](guides/try_it.md) | One echo running in Docker, and running an operator without a controller |
+| [`guides.md`](guides/guides.md) | How to follow a guide, and what each of the three parts builds |
+| [`first_steps.md`](guides/first_steps.md) | Part 1. What it builds, what you need, and its pages |
 | [`controller_deployment.md`](guides/controller_deployment.md) | Part 1. Running one controller: the Docker image, the release binaries, or your own Elixir application |
 | [`runner_deployment.md`](guides/runner_deployment.md) | Part 1. Reaching the controller, and your own runner registering an operator factory |
 | [`running_operators.md`](guides/running_operators.md) | Part 1. Starting an operator, watching it, stopping it, and what survives a restart |
 | [`sources_and_sinks.md`](guides/sources_and_sinks.md) | Part 1. Attaching a real input and a real output with the file plugin, and how a plugin is enabled and disabled |
 | [`cli.md`](guides/cli.md) | Reference. `flz` itself: reaching a controller, output formats, identity for a gated verb |
+| [`going_further.md`](guides/tradedesk/going_further.md) | Part 2. The tradedesk it builds, what you need, and its pages |
 | [`authorization.md`](guides/tradedesk/authorization.md) | Part 2. Claiming the admin, tokens, the runner's key and roles |
 | [`namespaces.md`](guides/tradedesk/namespaces.md) | Part 2. A namespace of your own, joining it from a runner, and quotas |
 | [`building_an_etl_stream.md`](guides/tradedesk/building_an_etl_stream.md) | Part 2. An ETL stream, built as an unbounded operator: chained tasklets, transforms and state |
@@ -45,6 +48,7 @@ answer "what are the options"; a guide answers "what do I type".
 | [`partitioning.md`](guides/tradedesk/partitioning.md) | Part 2. Partitions, keys and scaling |
 | [`plugins.md`](guides/tradedesk/plugins.md) | Part 2. The plugin system and the plugins that ship |
 | [`durability.md`](guides/tradedesk/durability.md) | Part 2. What survives a crash |
+| [`advanced_topics.md`](guides/advanced/advanced_topics.md) | Part 3. What it covers, what you need, and its pages |
 | [`clustering.md`](guides/advanced/clustering.md) | Part 3. Setting up the example in Docker, and more than one machine |
 | [`custom_plugins.md`](guides/advanced/custom_plugins.md) | Part 3. Writing and installing your own plugin |
 | [`full_form_tasklets.md`](guides/advanced/full_form_tasklets.md) | Part 3. A tasklet without the annotations |

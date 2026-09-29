@@ -448,4 +448,4 @@ After a crash, a value the desk sent just before it can reach a sink twice, so
 arrive exactly once.
 
 That is the end of Part 2.
-[Part 3](../guides.md#part-3-advanced-topics) goes deeper.
+[Part 3](../advanced/advanced_topics.md) goes deeper.

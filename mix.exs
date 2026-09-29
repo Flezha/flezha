@@ -182,13 +182,16 @@ defmodule Flezha.MixProject do
       main: "what_is_flezha",
       extras: [
         "docs/guides/what_is_flezha.md",
+        "docs/guides/try_it.md",
         "docs/guides/guides.md",
+        "docs/guides/first_steps.md",
         "docs/guides/controller_deployment.md",
         "docs/guides/runner_deployment.md",
         "docs/guides/running_operators.md",
         "docs/guides/sources_and_sinks.md",
         "docs/guides/stop_everything.md",
         "docs/guides/cli.md",
+        "docs/guides/tradedesk/going_further.md",
         "docs/guides/tradedesk/authorization.md",
         "docs/guides/tradedesk/namespaces.md",
         "docs/guides/tradedesk/building_an_etl_stream.md",
@@ -196,6 +199,7 @@ defmodule Flezha.MixProject do
         "docs/guides/tradedesk/partitioning.md",
         "docs/guides/tradedesk/plugins.md",
         "docs/guides/tradedesk/durability.md",
+        "docs/guides/advanced/advanced_topics.md",
         "docs/guides/advanced/clustering.md",
         "docs/guides/advanced/custom_plugins.md",
         "docs/guides/advanced/full_form_tasklets.md",
@@ -223,9 +227,11 @@ defmodule Flezha.MixProject do
       groups_for_extras: [
         "Guide Part 0: Start here": [
           "docs/guides/what_is_flezha.md",
+          "docs/guides/try_it.md",
           "docs/guides/guides.md"
         ],
         "Guide Part 1: First steps": [
+          "docs/guides/first_steps.md",
           "docs/guides/controller_deployment.md",
           "docs/guides/runner_deployment.md",
           "docs/guides/running_operators.md",
@@ -233,6 +239,7 @@ defmodule Flezha.MixProject do
           "docs/guides/stop_everything.md"
         ],
         "Guide Part 2: Going further": [
+          "docs/guides/tradedesk/going_further.md",
           "docs/guides/tradedesk/authorization.md",
           "docs/guides/tradedesk/namespaces.md",
           "docs/guides/tradedesk/building_an_etl_stream.md",
@@ -242,6 +249,7 @@ defmodule Flezha.MixProject do
           "docs/guides/tradedesk/durability.md"
         ],
         "Guide Part 3: Advanced topics": [
+          "docs/guides/advanced/advanced_topics.md",
           "docs/guides/advanced/clustering.md",
           "docs/guides/advanced/custom_plugins.md",
           "docs/guides/advanced/full_form_tasklets.md",

@@ -1,5 +1,11 @@
 # Sources and sinks
 
+So far you have been the input and the output. `flz operator send` put a
+message in and `flz operator listen` read what came out, and both of them are
+you, at a keyboard, for as long as you keep typing. A deployment needs something
+that does that on its own. That something is a **plugin**, and attaching one is
+all this page is about.
+
 > Check that the controller, your runner and `my_echo` from
 > [`running_operators.md`](running_operators.md) are all still running:
 > `my_echo` should be listed with your runner under `RUNNER`. If it is not, go
@@ -12,12 +18,6 @@ $ flz operator list
 
 TODO: a draft. The commands are taken from
 [`../plugins/file.md`](../plugins/file.md) but have not been run end to end yet.
-
-So far you have been the input and the output. `flz operator send` put a
-message in and `flz operator listen` read what came out, and both of them are
-you, at a keyboard, for as long as you keep typing. A deployment needs something
-that does that on its own. That something is a **plugin**, and attaching one is
-all this page is about.
 
 ## You have been using one all along
 

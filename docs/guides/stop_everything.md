@@ -1,13 +1,9 @@
 # Stop everything
 
-> #### Before you start {: .info}
->
-> This is the last page of Part 1, and it stops what the four before it
-> started. Do it before Part 2, which starts a controller of its own with
-> authorization on.
-
-Stop things in the reverse order you started them: the plugin, the operator,
-the runner, then the controller.
+This is the last page of Part 1, and it stops what the four before it started,
+in the reverse order: the plugins, the operator, the runner, then the
+controller. Do it before Part 2, which starts a controller of its own with
+authorization on.
 
 ## The plugin and the operator
 
@@ -99,5 +95,4 @@ you did not stop comes back on its own.
 
 ## Next
 
-That is Part 1. [`guides.md`](guides.md) lists what Part 2 covers,
-starting at [`namespaces.md`](tradedesk/namespaces.md).
+That is Part 1. [Going further](tradedesk/going_further.md) is Part 2.

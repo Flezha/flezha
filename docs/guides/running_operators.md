@@ -114,17 +114,16 @@ second operator, and a second stream runs until it is stopped. Pass `--id` when
 a start may be retried: a start of an id that is already running changes nothing
 and prints `my_echo is already running, left untouched`.
 
-**`echo` is the factory id.** Every operator class declares exactly one, and
-`factoryId()` returns it in your code. A runner registers its classes with the
-controller by their factory ids, and `flz operator start` uses the one you give
-it to find a runner that can run the class. It is recorded in the controller's
-registry and in durable state, so changing it later declares a new class rather
-than renaming the old one.
+**`echo` is the factory id.** Every factory declares exactly one, and
+`factoryId()` returns it in your code. A runner registers its factories with the
+controller by their ids, and `flz operator start` uses the one you give it to
+find a runner that can run it. It is recorded in the controller's registry and
+in durable state, so changing it later declares a new factory rather than
+renaming the old one.
 
-One factory id can back many operators: `flz operator start echo --id eu_echo` and
-`flz operator start echo --id us_echo` would be two independent operators of the
-same class, each with its own state. Everything after this uses the operator
-id.
+`flz operator start echo --id eu_echo` and `flz operator start echo --id us_echo`
+would be two independent instances of the same factory, each with its own state.
+Everything after this uses the operator id.
 
 ## Confirm it is bound
 
