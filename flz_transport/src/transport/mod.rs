@@ -84,12 +84,50 @@ impl FlezhaStream {
         }
     }
 
+    /// Write one whole frame only if the stream takes it without waiting for
+    /// the peer; `WouldBlock` otherwise, with nothing written. A frame the
+    /// socket took part of is finished with a blocking write, since a partial
+    /// frame would corrupt every frame behind it.
+    pub fn try_write_frame(&self, frame: &[u8]) -> io::Result<()> {
+        match self {
+            #[cfg(unix)]
+            FlezhaStream::Unix(stream) => try_send_unix(stream, frame),
+            FlezhaStream::Quic(stream) => stream.try_write_frame(frame).map(|_| ()),
+            FlezhaStream::Local(sink) => sink(frame),
+        }
+    }
+
     #[cfg(unix)]
     pub fn as_raw_fd(&self) -> Option<i32> {
         match self {
             FlezhaStream::Unix(stream) => Some(stream.as_raw_fd()),
             FlezhaStream::Quic(_) | FlezhaStream::Local(_) => None,
         }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const SEND_NOWAIT: libc::c_int = libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL;
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+const SEND_NOWAIT: libc::c_int = libc::MSG_DONTWAIT;
+
+#[cfg(unix)]
+fn try_send_unix(stream: &UnixStream, frame: &[u8]) -> io::Result<()> {
+    // SAFETY: the fd is the stream's own, open for as long as `stream` is
+    // borrowed, and `frame` is readable for its whole length.
+    let sent = unsafe {
+        libc::send(
+            stream.as_raw_fd(),
+            frame.as_ptr().cast(),
+            frame.len(),
+            SEND_NOWAIT,
+        )
+    };
+    match usize::try_from(sent) {
+        Ok(n) if n == frame.len() => Ok(()),
+        Ok(n) if n > 0 => (&*stream).write_all(&frame[n..]),
+        Ok(_) => Err(io::ErrorKind::WouldBlock.into()),
+        Err(_) => Err(io::Error::last_os_error()),
     }
 }
 

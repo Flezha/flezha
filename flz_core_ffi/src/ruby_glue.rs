@@ -496,6 +496,17 @@ fn spawn_request(
         .map_err(refused)
 }
 
+/// Send a part of the live activation `token`'s work item `item`. Never
+/// waits, so it holds the GVL.
+fn part(token: u64, item: u32, payload: RString) -> Result<(), Error> {
+    let ruby = ruby();
+    let ctx = context(&ruby)?;
+    // SAFETY: the GVL is held for the whole call, so nothing can move or free
+    // the string's bytes while the core copies them.
+    let payload = unsafe { payload.as_slice() };
+    veneer::part(ctx, token, item, payload).map_err(|r| raise(&ruby, r))
+}
+
 /// Read a spawn handle: `nil` while pending, otherwise its answer as JSON. A
 /// nonzero timeout waits with the GVL released.
 fn spawn_result(handle: u64, timeout_ms: u64) -> Result<Option<String>, Error> {
@@ -590,6 +601,7 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("watch_stdin_eof", "flz_core_watch_stdin_eof"),
     ("spawn_request", "flz_core_spawn_request"),
     ("spawn_result", "flz_core_spawn_result"),
+    ("part", "flz_core_part"),
     ("admin_call", "flz_core_admin_call"),
     ("monotonic_nanos", "flz_core_monotonic_nanos"),
     ("last_error", "flz_core_last_error"),
@@ -625,6 +637,7 @@ pub fn init(ruby: &Ruby) -> Result<(), Error> {
     native.define_module_function("watch_stdin_eof", function!(watch_stdin_eof, 1))?;
     native.define_module_function("spawn_request", function!(spawn_request, 7))?;
     native.define_module_function("spawn_result", function!(spawn_result, 2))?;
+    native.define_module_function("part", function!(part, 3))?;
     native.define_module_function("admin_call", function!(admin_call, 2))?;
     native.define_module_function("monotonic_nanos", function!(monotonic_nanos, 0))?;
     native.define_module_function("last_error", function!(last_error, 0))?;

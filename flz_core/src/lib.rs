@@ -45,6 +45,7 @@ pub mod mailbox;
 pub mod operator;
 #[doc(hidden)]
 pub mod park;
+pub mod part;
 #[doc(hidden)]
 pub mod persistent_id;
 pub mod poll_core;

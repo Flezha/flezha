@@ -33,6 +33,8 @@ enum DriverCommand {
         stream_id: StreamId,
         data: Vec<u8>,
         reply: channel::Sender<io::Result<usize>>,
+        /// Take the frame now or refuse it, never wait for the buffer to drain.
+        nowait: bool,
     },
     Shutdown,
 }
@@ -292,12 +294,23 @@ impl QuicBidiStream {
     /// The two `Write` impls are one call here, so a writer holding an
     /// `Arc<FlezhaStream>` and one holding the handle cannot drift.
     fn write_frame(&self, buf: &[u8]) -> io::Result<usize> {
+        self.command_write(buf, false)
+    }
+
+    /// One frame the stream takes at once or refuses with `WouldBlock`: the
+    /// caller waits for the driver's turn, never for the peer.
+    pub fn try_write_frame(&self, buf: &[u8]) -> io::Result<usize> {
+        self.command_write(buf, true)
+    }
+
+    fn command_write(&self, buf: &[u8], nowait: bool) -> io::Result<usize> {
         let (reply_tx, reply_rx) = channel::bounded(1);
         self.cmd_tx
             .send(DriverCommand::Write {
                 stream_id: self.stream_id,
                 data: buf.to_vec(),
                 reply: reply_tx,
+                nowait,
             })
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "QUIC write channel closed"))?;
         self.waker.wake().map_err(io::Error::other)?;
@@ -512,7 +525,9 @@ fn handle_command(
             stream_id,
             data,
             reply,
+            nowait,
         } => match streams.get_mut(&stream_id) {
+            Some(slot) if nowait => write_or_refuse(connection, stream_id, slot, data, reply),
             Some(slot) => write_or_buffer(connection, stream_id, slot, data, reply),
             None => {
                 let _ = reply.send(Err(io::Error::new(
@@ -585,6 +600,35 @@ fn write_or_buffer(
             )));
         }
     }
+}
+
+/// [`write_or_buffer`] for a writer that must not wait: refused with
+/// `WouldBlock` when bytes are already queued or the window is shut. A frame
+/// the window took part of is queued whole and answered at once, because half
+/// a frame cannot be taken back off the stream.
+fn write_or_refuse(
+    connection: &mut quinn_proto::Connection,
+    stream_id: StreamId,
+    slot: &mut StreamSlot,
+    data: Vec<u8>,
+    reply: channel::Sender<io::Result<usize>>,
+) {
+    let answer = if !slot.write_buf.is_empty() {
+        Err(io::ErrorKind::WouldBlock.into())
+    } else {
+        match connection.send_stream(stream_id).write(&data) {
+            Ok(written) => {
+                slot.write_buf.extend_from_slice(&data[written..]);
+                Ok(data.len())
+            }
+            Err(quinn_proto::WriteError::Blocked) => Err(io::ErrorKind::WouldBlock.into()),
+            Err(e) => Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                format!("QUIC write error: {}", e),
+            )),
+        }
+    };
+    let _ = reply.send(answer);
 }
 
 /// The one answer a refused frame gets. `WouldBlock` and not `BrokenPipe`:

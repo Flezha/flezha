@@ -546,6 +546,7 @@ impl Core {
     /// Request a spawn from the live activation `token`; answers the handle
     /// number at once. An empty `id` asks the controller to generate one.
     /// Never waits, so it holds the GIL.
+    #[allow(clippy::too_many_arguments)]
     fn spawn_request(
         &self,
         token: u64,
@@ -563,6 +564,12 @@ impl Core {
         Ok(veneer::spawn_request(
             ctx, token, &factory, &id, payload, &mode, replay, offset,
         )?)
+    }
+
+    /// Send a part of the invocation of the live activation `token`'s work
+    /// item `item`. Never waits, so it holds the GIL.
+    fn part(&self, token: u64, item: u32, payload: &[u8]) -> PyResult<()> {
+        Ok(veneer::part(self.ptr()?, token, item, payload)?)
     }
 
     /// Read a spawn handle: `None` while pending, otherwise its answer as JSON.
@@ -678,6 +685,7 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("Core.watch_stdin_eof", "flz_core_watch_stdin_eof"),
     ("Core.spawn_request", "flz_core_spawn_request"),
     ("Core.spawn_result", "flz_core_spawn_result"),
+    ("Core.part", "flz_core_part"),
     ("Core.admin_call", "flz_core_admin_call"),
     ("monotonic_nanos", "flz_core_monotonic_nanos"),
     ("Core.last_error", "flz_core_last_error"),

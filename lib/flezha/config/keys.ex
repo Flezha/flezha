@@ -295,6 +295,13 @@ defmodule Flezha.Config.Keys do
     # a call past it is refused `call.busy` before anything is ingested. Its
     # own outbound calls never count against it.
     {:call_pending_max, :positive_int, 10_000, key: true, env: "FLEZHA_CALL_PENDING_MAX"},
+    # What one listener holds that its handler has not taken: parts are dropped
+    # oldest first to stay inside both, and an output or a notice that still
+    # does not fit ends the listener `listener.overrun`.
+    {:listener_pending_bytes, :positive_int, 4_194_304,
+     key: true, env: "FLEZHA_LISTENER_PENDING_BYTES"},
+    {:listener_pending_frames, :positive_int, 4_096,
+     key: true, env: "FLEZHA_LISTENER_PENDING_FRAMES"},
     {:record_log_cut_after_bytes, :int, 65_536, key: true},
     # Per-operator-class user overrides: a map from class to value, read
     # ahead of the SDK's own declaration and of the global default below it.
@@ -529,7 +536,8 @@ defmodule Flezha.Config.Keys do
     {:token, :string, nil, runtimes: [:cli], env: "FLEZHA_TOKEN"},
     {:reconnect_ring_capacity, :positive_int, 1_024,
      runtimes: [:elixir_sdk, :rust], env: "FLEZHA_RECONNECT_RING_CAPACITY"},
-    {:max_frame_bytes, :int, 67_108_864, runtimes: [:rust], env: "FLEZHA_MAX_FRAME_BYTES"},
+    {:max_frame_bytes, :int, 67_108_864,
+     runtimes: [:elixir_sdk, :rust], env: "FLEZHA_MAX_FRAME_BYTES"},
     {:max_write_buffer_bytes, :int, 8_388_608,
      runtimes: [:rust], env: "FLEZHA_MAX_WRITE_BUFFER_BYTES"},
     {:send_gate_high_water, :int, nil, runtimes: [:rust], env: "FLEZHA_SEND_GATE_HIGH_WATER"},

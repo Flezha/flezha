@@ -504,6 +504,9 @@ fn heartbeat_metadata() -> HashMap<String, String> {
         ("timers_fired", crate::timer::timers_fired_total()),
     ]
     .into_iter()
+    // Parts sent and dropped by reason: a lossy preview is a design choice,
+    // and these are what make its loss visible.
+    .chain(crate::part::counters())
     .map(|(key, value)| (key.to_string(), value.to_string()))
     .collect()
 }

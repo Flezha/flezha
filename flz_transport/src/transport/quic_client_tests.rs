@@ -221,3 +221,36 @@ fn a_reading_peer_answers_every_writer_and_refuses_nothing() {
         );
     }
 }
+
+/// A writer that must not wait is answered at once: taken while the window is
+/// open, refused with `WouldBlock` behind a buffered frame, and never queued
+/// among the writers owed an answer.
+#[test]
+fn a_nowait_write_is_answered_at_once_and_refused_behind_a_blocked_stream() {
+    let mut c = Client::connected();
+    let nowait = |c: &mut Client, data: Vec<u8>| {
+        let (reply_tx, reply_rx) = channel::bounded(1);
+        let slot = c.streams.get_mut(&c.stream_id).unwrap();
+        write_or_refuse(&mut c.pair.client, c.stream_id, slot, data, reply_tx);
+        reply_rx
+            .try_recv()
+            .expect("a nowait write is answered at once")
+    };
+
+    assert_eq!(nowait(&mut c, b"part".to_vec()).unwrap(), 4);
+
+    let _blocked = c.block();
+    let buffered = c.slot().write_buf.len();
+    let refused = nowait(&mut c, b"part".to_vec()).expect_err("the stream is behind");
+    assert_eq!(refused.kind(), io::ErrorKind::WouldBlock);
+    assert_eq!(
+        c.slot().write_buf.len(),
+        buffered,
+        "a refused part queues nothing"
+    );
+    assert_eq!(
+        c.slot().pending_write_replies.len(),
+        1,
+        "only the blocked writer waits"
+    );
+}

@@ -1022,3 +1022,33 @@ driven through every runtime's real boot like every other reference refusal.
 - **WHEN** a manifest lists `call_response` under `deferred`
 - **THEN** the gate SHALL fail naming the manifest and the required capability
 
+### Requirement: Parts are a required capability every manifest carries
+
+`parts` SHALL be in the capability vocabulary and in the required set. Every manifest SHALL
+list it under `fixtures` with exactly the reference's ids, `part_echo` and
+`part_echo_bounded`. `part_echo` SHALL be an unbounded operator whose one tasklet, for an
+input `n`, sends the parts `1` to `n` as text and then emits `done:<n>` on its sink `answer`.
+`part_echo_bounded` SHALL be a `per_input` bounded operator doing the same per message.
+For the input `retry:<n>` both SHALL send the same parts and fail their first attempt
+retryably, then send them again and succeed on the second attempt.
+`test/system/part_stream_e2e_test.exs` SHALL be tagged `capability: :parts` and SHALL drive both fixtures on the selected runtime through
+`flz operator listen` in text and JSON modes, through `Flezha.Service.Listener.listen/4`,
+and with a file sink attached beside the listener.
+
+#### Scenario: A manifest without the fixtures fails the gate
+
+- **WHEN** a manifest lists `parts` without `part_echo_bounded`
+- **THEN** the static gate SHALL fail naming the manifest, the capability and the id
+
+#### Scenario: The same parts on every runtime
+
+- **WHEN** `part_stream_e2e_test.exs` runs under each of the seven runtimes with input `3`
+- **THEN** each run SHALL see the parts `1`, `2`, `3` with `flz.part` `0`, `1`, `2`, then
+  `done:3`, and the file sink SHALL hold `done:3` alone
+
+#### Scenario: A retried attempt's parts start again
+
+- **WHEN** the input is `retry:2`
+- **THEN** each runtime SHALL deliver the first attempt's parts with attempt `1`, the second
+  attempt's from `flz.part` `0` with attempt `2`, and then the output
+

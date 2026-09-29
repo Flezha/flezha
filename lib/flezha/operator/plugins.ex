@@ -75,11 +75,57 @@ defmodule Flezha.Operator.Plugins do
   end
 
   @doc """
+  Hand a part, or a dead-letter notice, to the `:on_preview` listeners. With no
+  listener nothing is built and no plugin is called. No sink implements the
+  hook, so nothing here reaches one.
+  """
+  @spec preview(Overwatch.t(), binary(), map()) :: :ok
+  def preview(%Overwatch{} = state, message, metadata) do
+    if Extension.active?(state.extensions, :on_preview),
+      do: run_chain(state, :on_preview, %{message: message, metadata: metadata})
+
+    :ok
+  end
+
+  @doc """
+  The `input.dead_lettered` notice of `Flezha.Dlq.Store.announce/2`, previewed:
+  the error document as the payload, the channel and the input's offset, when
+  known, as the metadata.
+  """
+  @spec preview_dead_letter(Overwatch.t(), map()) :: :ok
+  def preview_dead_letter(%Overwatch{} = state, notice) do
+    if Extension.active?(state.extensions, :on_preview) do
+      error =
+        Flezha.Error.new("input.dead_lettered",
+          operator: state.id,
+          channel: notice.channel,
+          entry: notice.entry,
+          tasklet: notice.tasklet,
+          attempts: notice.attempts,
+          error: notice.error
+        )
+
+      metadata = %{"channel" => notice.channel}
+
+      metadata =
+        if is_integer(notice.offset),
+          do: Map.put(metadata, "flz.offset", Integer.to_string(notice.offset)),
+          else: metadata
+
+      preview(state, Flezha.Error.render(error, :json), metadata)
+    end
+
+    :ok
+  end
+
+  @doc """
   Phase 1: register each plugin's GenServer + struct (`init_provider/1` runs),
   but do NOT activate upstream resources.
 
-  Idempotent on repeat — `Table.bulk_subscribe/2` rejects duplicate plugin_ids,
-  so a retry-driven re-entry skips without re-init.
+  Every declared plugin the table does not hold is subscribed, and every one it
+  holds is left as it is, whatever its phase: an ordinary rebind subscribes
+  nothing, and a sleeper found at boot that got a runtime plugin (a listener)
+  before it woke still brings up its declared set.
 
   A failure answers `{:error, {:plugin_prepare_failed, plugin_id, reason}}`:
   the operator parks on that reason, so it has to name the plugin.
@@ -92,28 +138,26 @@ defmodule Flezha.Operator.Plugins do
     # by `Flezha.Service.PluginManager` through `ProcessRegistry.update/3`
     # after a successful `flz plugin enable`). Both normalise into the
     # tuple form `Table.bulk_subscribe/2` expects.
-    if state.extensions.plugins != %{} do
-      {:ok, state}
-    else
-      entries =
-        Enum.map(plugins, fn
-          {id, %Plugin{} = plugin} -> {id, plugin}
-          %Plugin{id: id} = plugin -> {id, plugin}
-        end)
+    entries =
+      plugins
+      |> Enum.map(&normalise/1)
+      |> Enum.filter(fn {id, _plugin} -> Table.phase(state.extensions, id) == :unknown end)
 
-      case Table.bulk_subscribe(state.extensions, entries) do
-        {:ok, table} ->
-          {:ok, %{state | extensions: table}}
+    case Table.bulk_subscribe(state.extensions, entries) do
+      {:ok, table} ->
+        {:ok, %{state | extensions: table}}
 
-        # The id is the only thing naming WHICH plugin parked the operator. It
-        # rides `init_error` out through `:registry_runner_set` to whoever asked
-        # for the start, so discarding it here left the caller with a bare
-        # `{:module_not_loaded, Provider}` and no row to blame.
-        {:error, {plugin_id, reason}} ->
-          {:error, {:plugin_prepare_failed, plugin_id, reason}}
-      end
+      # The id is the only thing naming WHICH plugin parked the operator. It
+      # rides `init_error` out through `:registry_runner_set` to whoever asked
+      # for the start, so discarding it here left the caller with a bare
+      # `{:module_not_loaded, Provider}` and no row to blame.
+      {:error, {plugin_id, reason}} ->
+        {:error, {:plugin_prepare_failed, plugin_id, reason}}
     end
   end
+
+  defp normalise({id, %Plugin{} = plugin}), do: {id, plugin}
+  defp normalise(%Plugin{id: id} = plugin), do: {id, plugin}
 
   @doc """
   Phase 2: bring every subscribed plugin up. The ONE bring-up: it starts each

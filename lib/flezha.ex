@@ -32,7 +32,7 @@ defmodule Flezha do
 
   defdelegate enable_plugin(plugin_id, plugin), to: PluginManager
 
-  defdelegate disable_plugin(plugin_id), to: PluginManager
+  defdelegate disable_plugin(plugin_id), to: PluginManager, as: :disable_plugin_group
 
   defdelegate cell_state(namespace, operator),
     to: OperatorManager,

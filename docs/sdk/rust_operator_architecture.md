@@ -651,6 +651,34 @@ frame: `emit` carries the Cell's own key (a single-cell Tasklet fails
 with `runtime.key_required_on_keyed_channel`), `emit_keyed(key, value)` carries a
 replay-stable natural key (`runtime.key_not_allowed_on_non_keyed_channel` elsewhere).
 
+### Parts
+
+`ctx.part(value)` sends a preview of the output the invocation is producing
+while it runs, from `run` or `on_timer`, in an unbounded operator and in a
+bounded one's stage alike. It takes no channel: it previews the tasklet's own
+output channel, and the value is serialized as an emit of it on that channel
+would be. The context calls `flz_core::part::send`, which frames the part under
+the payload id `output_part` with `channel`, `flz.part` (from 0, per attempt),
+`flz.part_attempt`, `flz.cell`, `flz.operator` and, for a keyed Cell,
+`flz.key`, and writes it without waiting. The operator's listeners receive it;
+a sink never does, and it is never durable, replayed or counted as an output.
+
+```rust
+fn run(&mut self, input: String, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
+    for partial in ["he", "hel", "hell"] {
+        ctx.part(partial.to_string())?;
+    }
+    ctx.emit("hello".to_string())
+}
+```
+
+A part that cannot leave at once (no stream, a local run, a stream that would
+block, a frame over the limit) is dropped and counted, and a replayed input
+sends none. A channel that does not end in a sink (it only feeds another
+tasklet, or ends in `response()`) answers `TaskletError::Part` with the code
+`part.no_sink`. A `compensate` hook previews no work item and answers
+`part.outside_invocation`; the testing harness sends nothing.
+
 ### Hybrid and terminal: one `sink` method
 
 `sink` / `sink_named` / `sink_with` / `sink_named_with` on a producer's output

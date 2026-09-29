@@ -68,9 +68,8 @@ use dashmap::DashMap;
 pub use error::Error;
 use flz_core::poll_core::{EngineActivation, Polled, Starvation};
 use flz_core::runner::{ClientResponseMessage, RunnerMessage};
-use flz_core::schema;
 use flz_core::spawn::{IfRunning, SpawnHandle, SpawnOptions};
-use flz_core::ErrorModel;
+use flz_core::{schema, ErrorModel};
 /// The local-mode entry points, exported from the crate root like every other
 /// C symbol: the module is a source-file split, not an ABI boundary.
 pub use local::*;
@@ -98,6 +97,9 @@ struct Outstanding {
     /// Spawns asked for so far per input-log offset: a spawn's position in
     /// the invocation that took that offset.
     spawn_positions: HashMap<i64, u32>,
+    /// The next part number per work item: counted per invocation attempt,
+    /// and a retry is handed out in an activation of its own.
+    part_sequences: HashMap<u32, u32>,
 }
 
 /// Opaque context handle.
@@ -443,6 +445,7 @@ pub unsafe extern "C" fn flz_core_poll(
                 activation: act,
                 spawns: Vec::new(),
                 spawn_positions: HashMap::new(),
+                part_sequences: HashMap::new(),
             };
             ctx.outstanding
                 .insert(outstanding.activation.token, outstanding);
@@ -663,6 +666,49 @@ pub unsafe extern "C" fn flz_core_spawn_request(
     outstanding.spawns.push(handle);
     *handle_out = handle;
     FLZ_OK
+}
+
+/// Send a part of the invocation of `item`, the index of a work item of the
+/// live activation `token`, with the payload the host encoded as that
+/// tasklet's emit. Never waits. [`FLZ_OK`] for a part that left and for one
+/// the drop rules dropped; [`FLZ_ERR`] with `part.no_sink`, or with
+/// `part.outside_invocation` for a token that is not outstanding or an item
+/// its activation does not hold.
+///
+/// # Safety
+/// `ctx` must be live; `payload`/`payload_len` readable.
+#[no_mangle]
+pub unsafe extern "C" fn flz_core_part(
+    ctx: *mut FlzContext,
+    token: u64,
+    item: u32,
+    payload: *const u8,
+    payload_len: usize,
+) -> i32 {
+    let Some(ctx) = ctx.as_ref() else {
+        return FLZ_ERR;
+    };
+    let Some(mut outstanding) = ctx.outstanding.get_mut(&token) else {
+        return ctx.fail(flz_core::part::outside_invocation(None).into());
+    };
+    let Outstanding {
+        activation,
+        part_sequences,
+        ..
+    } = &mut *outstanding;
+    let Some((slot, work)) = activation.host_item(item as usize) else {
+        return ctx.fail(flz_core::part::outside_invocation(None).into());
+    };
+    let payload = if payload_len == 0 {
+        &[][..]
+    } else {
+        std::slice::from_raw_parts(payload, payload_len)
+    };
+    let sequence = part_sequences.entry(item).or_insert(0);
+    match flz_core::part::send(slot, work, sequence, payload) {
+        Ok(_) => FLZ_OK,
+        Err(refusal) => ctx.fail(refusal.into()),
+    }
 }
 
 /// Read a spawn handle, waiting up to `timeout_ms` for the controller's answer;

@@ -464,3 +464,41 @@ fixture.
 - **WHEN** a host passes `[]` as the details
 - **THEN** the entry SHALL answer NULL
 
+### Requirement: A part is one entry point that never waits
+
+The C ABI SHALL expose a tasklet's part as one entry point,
+`flz_core_part(ctx, token, item, payload, payload_len)`, where `token` is the live
+activation's token and `item` is the index, within that activation, of the work item whose
+invocation sends the part. The entry SHALL number the part, stamp it, apply the drop rules
+of `output-parts` and write its frame, and SHALL return without waiting for the controller.
+It SHALL answer `FLZ_OK` for a part that left and for a part it dropped, and `FLZ_ERR` with
+the error document in `flz_core_last_error` for a refusal (`part.no_sink`,
+`part.outside_invocation`, an item index the activation does not hold). The per-item
+sequence counters SHALL live with the outstanding activation and SHALL be released with it,
+so a token that is no longer outstanding is `part.outside_invocation`.
+
+The entry SHALL be listed in `test/fixtures/abi_surface.txt`, and every host binding
+(the JNI, napi, Python and Ruby glue and the PHP declaration) SHALL declare and export it
+through its surface table, asserted by that binding's surface test. The Rust SDK SHALL reach
+the same function through the crate API. The fake controller SHALL record every `output_part`
+frame it receives, so each veneer's tests can assert what a part carried.
+
+#### Scenario: A part returns before the controller answers anything
+
+- **WHEN** a host calls `flz_core_part` for the second item of an outstanding activation
+  whose tasklet has a sink
+- **THEN** the call SHALL answer `FLZ_OK`, and the fake controller SHALL record one
+  `output_part` frame carrying `flz.part` `0`, that item's attempt and its Cell's label
+
+#### Scenario: A completed activation's token is refused
+
+- **WHEN** a host calls `flz_core_part` with a token whose activation it has completed
+- **THEN** the call SHALL answer `FLZ_ERR` and `flz_core_last_error` SHALL hold the document
+  with code `part.outside_invocation`
+
+#### Scenario: Every binding exports the entry
+
+- **WHEN** the surface tests of the JNI, napi, Python, Ruby and PHP bindings run
+- **THEN** each SHALL find `flz_core_part` in its declaration and in its exports, and the
+  crate's own test SHALL find it in `test/fixtures/abi_surface.txt`
+

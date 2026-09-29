@@ -183,6 +183,18 @@ defmodule FlezhaTest.Operator.CallsTest do
     defp state(inst, overrides \\ []),
       do: Host.state(inst, Keyword.merge([channel: :fake_channel], overrides))
 
+    defp notice(token, entry) do
+      %{
+        token: token,
+        entry: entry,
+        error: "boom",
+        channel: "in",
+        offset: 1,
+        tasklet: "t",
+        attempts: 3
+      }
+    end
+
     defp call(host, message, metadata \\ %{}, deadline_ms \\ 5_000) do
       Task.async(fn -> Calls.call(host, message, metadata, deadline_ms, "callee") end)
     end
@@ -255,13 +267,46 @@ defmodule FlezhaTest.Operator.CallsTest do
       caller = call(host, "poison")
       token = called_token(inst)
 
-      GenServer.cast(host, {:dead_lettered, "w:other", "#{inst}/t/2", "boom"})
-      GenServer.cast(host, {:dead_lettered, token, "#{inst}/t/1", "boom"})
+      GenServer.cast(host, {:dead_lettered, notice("w:other", "#{inst}/t/2")})
+      GenServer.cast(host, {:dead_lettered, notice(token, "#{inst}/t/1")})
 
       assert {:error, %Error{code: "call.failed", details: details}} = Task.await(caller)
       assert details["dlq_ref"] == "#{inst}/t/1"
       assert details["error"] == "boom"
       assert :sys.get_state(host).calls.rows == %{}
+    end
+
+    # The `output-parts` scenario "An outside caller sees the answer alone".
+    test "a caller waiting beside a listener receives the answer alone", %{inst: inst} do
+      listener =
+        Flezha.Plugin.new(
+          id: "listener",
+          provider: Flezha.Plugin.Provider.MonitoredIOForward,
+          opts: %{
+            recv_pid: self(),
+            plugin_id: "listener",
+            operator_id: inst,
+            namespace: "default"
+          },
+          namespace: "default",
+          operator_id: inst,
+          hooks: [{:on_output, []}, {:on_preview, []}]
+        )
+
+      {:ok, table} = Table.bulk_subscribe(state(inst).extensions, [{"listener", listener}])
+      {:ok, host} = start_supervised({Host, state(inst, extensions: table)})
+      caller = call(host, "turn")
+      token = called_token(inst)
+
+      GenServer.cast(host, {:io_part, "hel", %{"channel" => "events", "flz.part" => "0"}})
+      GenServer.cast(host, {:io_out, "hello", %{"channel" => "events"}})
+      GenServer.cast(host, {:io_out, "used:5", %{"flz.reply_to" => token, "channel" => "answer"}})
+
+      assert Task.await(caller) == {:ok, "used:5", %{"channel" => "answer"}}
+      assert_receive {:preview_forward, {"hel", %{"channel" => "events"}}}
+      assert_receive {:message_forward, {"hello", %{"channel" => "events"}}}
+      refute_received {:message_forward, {"used:5", _}}
+      refute_received {:preview_forward, _}
     end
 
     test "a call with no answer by its deadline is told call.timeout; the input stays accepted",

@@ -77,12 +77,7 @@ fn prepare_target(crossing: &PrepareCrossing) -> schema::CellRef {
 
 fn work_items_to_schema(slot: &CellSlot, items: &[ItemAttempt]) -> Vec<schema::WorkItem> {
     let now_fallback = host_clock_now(slot);
-    items
-        .iter()
-        // A close is consumed by the batch assembler; it never becomes
-        // host work, and filtering keeps the effect-to-item zip aligned
-        // if that invariant ever loosened.
-        .filter(|work| !matches!(work.item, CellItem::CloseInterval))
+    crate::poll_core::host_items(items)
         .map(|work| match &work.item {
             CellItem::Input(payload) => {
                 let (channel, bytes, metadata) =

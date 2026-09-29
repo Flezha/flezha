@@ -422,6 +422,23 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_spawnRequest<'l>(
     }
 }
 
+/// Send a part of the invocation of the live activation `token`'s work item
+/// `item`; never waits. Throws for `part.no_sink` and
+/// `part.outside_invocation`.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_part<'l>(
+    mut env: JNIEnv<'l>,
+    _class: JClass,
+    ctx: jlong,
+    token: jlong,
+    item: jint,
+    payload: JByteArray,
+) {
+    let outcome = bytes_of(&mut env, "part payload", &payload)
+        .and_then(|bytes| veneer::part(ctx_of(ctx), token as u64, item as u32, &bytes));
+    report(&mut env, outcome);
+}
+
 /// Read a spawn handle, waiting up to `timeoutMs`: `null` while pending,
 /// otherwise its answer as JSON. Throws for a released handle.
 #[no_mangle]

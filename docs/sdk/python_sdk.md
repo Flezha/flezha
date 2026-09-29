@@ -115,6 +115,15 @@ def word_count(c: Channels) -> None:
 - **The context names the state and the output**, `Ctx[State, Output]`, with
   `None` in either position for none. `ctx.emit` takes an `Output`, so a type
   checker reports an emit of the wrong type.
+- **`ctx.part(value)` sends a preview of the output while `run` is still
+  working.** It previews the tasklet's own output channel, is encoded as
+  `ctx.emit(value)` would encode it there, and never waits: a part that cannot
+  leave at once is dropped. A listener receives it, numbered from 0 within each
+  attempt; a sink never does, and nothing about it is durable. It works in
+  `run` and `on_timer`, for an unbounded tasklet and a bounded stage alike. It
+  raises `FlezhaError` coded `part.no_sink` when the output channel does not
+  end in a sink (a `response()` end is not one), and `part.outside_invocation`
+  through a context kept past its invocation.
 - **State starts from the state class.** It is `state=`, else the state
   argument of `run`'s context hint, else what `init_state` returns. A new
   cell's state is `init_state(cell_key)` when the class writes one, and

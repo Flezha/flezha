@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Added: a tasklet can send a part while it runs
+
+`ctx.part(value)` (`part(ctx, value)` in Elixir, `$ctx->part($value)` in PHP) sends a preview
+of the output an invocation is producing at once, from anywhere in `run`, in every SDK and for
+an unbounded operator and a bounded one alike. A part previews the tasklet's own output channel,
+which must end in a sink (`part.no_sink` otherwise, a `response()` end included), carries a
+number from `0` within its attempt, the attempt and the Cell, and goes to the operator's
+listeners and nothing else: it is never durable, never reaches a sink or a waiting caller, and
+is dropped rather than waited on when the wire cannot take it. The runner counts what it sent
+and dropped in its heartbeat (`parts_sent`, `parts_dropped_*`). The wire gains the data frame
+`output_part` and the C ABI the entry `flz_core_part`, so the five hosts on the core are
+rebuilt together; a controller without this change drops a part.
+
+`flz operator listen` prints a part with a third field beginning `part=<n> attempt=<a>`, and a
+dead-lettered input as a notice `error=input.dead_lettered entry=<entry>`; its JSON lines carry
+`kind`. It ends with exit 0 when the operator ends, and a listener that falls behind on outputs
+is ended `listener.overrun` (`FLEZHA_LISTENER_PENDING_BYTES`, `FLEZHA_LISTENER_PENDING_FRAMES`).
+
+A plugin reads the same stream through `Flezha.Service.Listener.listen/4`, with an idle event
+for a server-sent events heartbeat. A listener now survives its operator sleeping, being
+rebound, its Overwatch restarting, moving to another controller and a rescale, and leaves no
+plugin row behind on any of them. `flz plugin disable` finds a plugin by the operator whose
+row holds it rather than by the node that enabled it, so a plugin on a moved operator, or on a
+member a rescale added, is disabled from any controller. A bind brings up every declared
+plugin its table does not hold, so an operator found asleep at boot that gained a runtime
+plugin before it woke keeps its sinks.
+
 ### Changed (BREAKING): every failure carries a code
 
 A failure now reaches a caller in one shape on every surface: a stable `code` spelled

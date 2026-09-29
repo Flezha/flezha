@@ -318,7 +318,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
 
   defp turn_dead_lettered(%{operator_id: operator_id} = metadata, turn, entry_ref) do
     stall(:dead_lettered, operator_id)
-    TaskJournal.answer_turn_call(operator_id, turn, entry_ref)
+    TaskJournal.announce_turn(operator_id, turn, entry_ref)
     iteration_committed(operator_id, metadata.consumed_offset)
 
     Logger.warning(

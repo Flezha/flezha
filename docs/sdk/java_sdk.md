@@ -48,6 +48,15 @@ The operator names that class: `.into(TrackPrices.class)`.
   typed by `Output`, `ctx.emit(channel, value)` for a named channel,
   `ctx.emitKeyed(key, value)`, and the rest of the context (`now()`, `stableId()`,
   `cellKey()`, `checkpoint()`, the timer calls, `spawnBounded`, `complete`).
+- **`ctx.part(value)`** sends a part: a preview of the output the invocation is
+  producing, which leaves now instead of when `run` returns. It previews the
+  tasklet's own output channel, is encoded as `ctx.emit(value)` would be, and
+  never waits: a part that cannot leave at once is dropped. A listener receives
+  it, numbered from 0 within each attempt; a sink never does, and nothing about
+  it is durable. It works in `run` and in `onTimer`, for an unbounded tasklet
+  and a bounded stage alike. It throws `part.no_sink` when the output channel
+  does not end in a sink (a `response()` end is not one), and
+  `part.outside_invocation` through a context kept past its invocation.
 - **State** is read with `ctx.state()` and changed only with `ctx.change(change)`.
   A change is a record implementing `Change<State>`; its `applyTo(state)` is the
   only place a state field is written, and it runs again for every recorded

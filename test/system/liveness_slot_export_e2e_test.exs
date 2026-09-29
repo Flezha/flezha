@@ -69,6 +69,11 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
     hb_restore_discarded_inputs: "test/flezha/sdk/effectively_once_test.exs",
     hb_timers_armed: "test/system/cell_timers_e2e_test.exs",
     hb_timers_fired: "test/system/cell_timers_e2e_test.exs",
+    hb_parts_sent: "test/system/part_stream_e2e_test.exs",
+    # The runner's own counters, which these mirror, are moved by its unit suite.
+    hb_parts_dropped_no_stream: "flz_core/src/part_tests.rs",
+    hb_parts_dropped_refused: "flz_core/src/part_tests.rs",
+    hb_parts_dropped_too_large: "flz_core/src/part_tests.rs",
     stale_writer_refused: "test/flezha/state/runner_restart_realign_test.exs",
     send_gate_held: "test/flezha/runner/stream_channel_gate_test.exs",
     foreign_frame_refused: "test/system/runner_ownership_e2e_test.exs"
@@ -227,7 +232,7 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
 
     # And the wire contract itself: the mirror's key list and the runner's are
     # the same list, because there is only one.
-    assert length(LivenessCounters.heartbeat_keys()) == 12
+    assert length(LivenessCounters.heartbeat_keys()) == 16
   end
 
   # ---------- helpers ----------

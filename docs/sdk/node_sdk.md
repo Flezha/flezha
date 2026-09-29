@@ -102,6 +102,16 @@ TypeScript refuses one that returns a value. Plain JavaScript runs no type
 checker, and the SDK ignores what a hook returns: a `.mjs` tasklet whose last
 expression was its output emits nothing.
 
+**`ctx.part(value)` sends a preview of the output while `run` is still
+working.** It previews the tasklet's own output channel, is encoded as
+`ctx.emit(value)` would encode it there, and never waits: a part that cannot
+leave at once is dropped. A listener receives it, numbered from 0 within each
+attempt; a sink never does, and nothing about it is durable. It works in `run`
+and `onTimer`, for an unbounded tasklet and a bounded stage alike. It throws a
+`FlezhaError` with code `part.no_sink` when the output channel does not end in
+a sink (a `response()` end is not one), and `part.outside_invocation` through a
+context kept past its invocation.
+
 **The output type is declared, never read off the body.** Name it with the
 type arguments, `defineTasklet<Trade, Candle>({ ... })`, or with the
 annotation on the context, as `Ohlc` does. TypeScript infers no type argument

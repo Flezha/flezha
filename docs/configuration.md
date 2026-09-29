@@ -190,6 +190,8 @@ the value and the type.
 | `FLEZHA_BOOT_REPLAY_TIMEOUT_MS` | `60000` | `:boot_replay_timeout_ms` (not in test) |
 | `FLEZHA_AUTO_RESTORE_ENABLED` | `true` | `:auto_restore_enabled` (not in test); true only for `true`/`1` |
 | `FLEZHA_CALL_PENDING_MAX` | `10000` | `:call_pending_max`; the answers one callee operator owes to the outside callers waiting on it. A call past it is refused `call.busy` before anything is ingested; the operator's own outbound calls never count against it |
+| `FLEZHA_LISTENER_PENDING_BYTES` | `4194304` | `:listener_pending_bytes`; the payload bytes one listener (`flz operator listen`, or a plugin through `Flezha.Service.Listener.listen/4`) holds that its handler has not taken. Parts are dropped oldest first to stay inside it; an output or a dead-letter notice that still does not fit ends the listener `listener.overrun` |
+| `FLEZHA_LISTENER_PENDING_FRAMES` | `4096` | `:listener_pending_frames`; the frames one listener holds that its handler has not taken, with the same drops and the same end as `FLEZHA_LISTENER_PENDING_BYTES` |
 
 ### Resilience and convergence
 
@@ -614,6 +616,7 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:overwatch_call_timeout_ms` | `5_000` | `lib/flezha/service/operator_manager.ex` |
 | `:call_pending_max` | `10_000` | `lib/flezha/operator/calls.ex`; the answers one operator owes the outside callers waiting on it |
 | `:call_grace_ms` | `1_000` | `lib/flezha/operator/calls.ex`; how long an outside caller waits past its call's deadline, so the operator's own `call.timeout` reaches it first |
+| `:listener_release_check_ms` | `5_000` | `lib/flezha/service/listener/relay.ex`; how long a listener waits after its plugin was released before it asks the registry whether the operator moved, ended or had the listener disabled, and between asks |
 | `:overwatch_ping_enabled` | `true` | `lib/flezha/operator/lifecycle.ex` |
 | `:overwatch_ping_timeout_ms` | `2_000` | `lib/flezha/runner/control_unit.ex` |
 | `:overwatch_task_warn_ms` | `2_000` | `lib/flezha/operator/overwatch.ex` |

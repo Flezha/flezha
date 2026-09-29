@@ -28,6 +28,7 @@ defmodule Flezha.Service.PluginManager do
   use Flezha.AuthZ.Verb
 
   alias Flezha.AuthZ.Namespace
+  alias Flezha.Cluster.Directory
   alias Flezha.Config.Durations
   alias Flezha.Config.Backoff
   alias Flezha.Identificator
@@ -39,6 +40,7 @@ defmodule Flezha.Service.PluginManager do
   alias Flezha.Process.Hub
   alias Flezha.SDK.SafeCall
   alias Flezha.Service.CallerContext
+  alias Flezha.Service.HubManager
   alias Flezha.Service.OperatorManager
   alias Flezha.Service.RegistryUpdate
   alias ProcessHub.Service.ProcessRegistry
@@ -93,10 +95,9 @@ defmodule Flezha.Service.PluginManager do
 
   # Past the durable write, so a failure here removes it as well as the claim.
   # Leaving it is worse than either outcome alone: the manager's table is what
-  # `flz plugin list` and `disable_plugin/1` read, so the plugin goes invisible
-  # while the durable records still carry it, and the next start subscribes it
-  # and parks
-  # the operator on `:plugin_prepare_failed` if it still cannot come up. A
+  # `flz plugin list` reads, so the plugin goes invisible while the durable
+  # records still carry it, and the next start subscribes it and parks the
+  # operator on `:plugin_prepare_failed` if it still cannot come up. A
   # controller that DIES here runs no rollback, which is the crash case
   # `auto-restore-on-boot` requires to self-heal on the next start.
   defp subscribe_claimed(plugin_id, %Plugin{} = plugin) do
@@ -184,35 +185,218 @@ defmodule Flezha.Service.PluginManager do
       else: :ok
   end
 
-  def disable_plugin(plugin_id) do
-    case GenServer.call(__MODULE__, {:disable_plugin, plugin_id}) do
-      {:ok, msg} -> {:ok, msg}
-      {:error, reason} -> {:error, reason}
+  @doc """
+  Disable `plugin_id` wherever it is declared: the operator whose plugin list
+  holds it, or, for an id a group enable fanned out as `<plugin_id>#p0` …, every
+  current member of that group (`detach/3`). The target is read from the
+  namespaces' registry rows, never from this node's table, so a plugin on an
+  operator that moved to another controller, or on a member a rescale added, is
+  disabled from any node. Only an enable still in flight on this node is
+  refused.
+  """
+  @spec disable_plugin_group(binary()) :: {:ok, binary()} | {:error, term()}
+  def disable_plugin_group(plugin_id) do
+    cond do
+      MapSet.member?(pending_ids(), plugin_id) -> {:error, {:plugin_enabling, plugin_id}}
+      target = locate(plugin_id) -> detach_located(target)
+      true -> {:error, {:plugin_not_found, plugin_id}}
+    end
+  end
+
+  defp detach_located({namespace, operator_id, plugin_id}) do
+    case {detach(namespace, operator_id, plugin_id), targets(namespace, operator_id, plugin_id)} do
+      {:ok, [_one]} -> {:ok, "plugin disabled"}
+      {:ok, members} -> {:ok, "plugin disabled on #{length(members)} partitions"}
+      {{:error, _reason} = error, _} -> error
     end
   end
 
   @doc """
-  Disable every plugin instance a group enable fanned out — `<plugin_id>#p0`
-  … — or the plain `plugin_id` when it names an ordinary plugin.
+  Where `plugin_id` on `operator_id` lives, as `{operator_id, plugin_id}`
+  pairs: the operator itself, or every current member of the partition group
+  it names, each under its `#pK` id, members a rescale added included.
   """
-  @spec disable_plugin_group(binary()) :: {:ok, binary()} | {:error, term()}
-  def disable_plugin_group(plugin_id) do
-    case GenServer.call(__MODULE__, {:fanned_out_ids, plugin_id}) do
+  @spec targets(binary(), binary(), binary()) :: [{binary(), binary()}]
+  def targets(namespace, operator_id, plugin_id) do
+    case PartitionGroup.members(namespace, operator_id) do
       [] ->
-        disable_plugin(plugin_id)
+        [{operator_id, plugin_id}]
 
-      ids ->
-        results = Enum.map(ids, &{&1, disable_plugin(&1)})
-
-        case Enum.reject(results, &match?({_id, {:ok, _}}, &1)) do
-          [] ->
-            {:ok, "plugin disabled on #{length(results)} partitions"}
-
-          failed ->
-            {:error, {:group_disable_partial, Enum.map(failed, &elem(&1, 0))}}
-        end
+      members ->
+        for %{id: member_id, partition: partition} <- members,
+            do: {member_id, plugin_id <> Flezha.Partition.member_suffix(partition.index)}
     end
   end
+
+  @doc """
+  Whether `plugin_id` is still on `operator_id`, read from the rows on a node
+  that hosts the namespace's hub, which a move keeps and a disable rewrites:
+  `:attached` while any target's row carries it, `:detached` when the targets
+  are registered without it, `:operator_ended` when none is registered or
+  declared, and `:unknown` when the rows cannot be read or a declared target has
+  no row yet.
+  """
+  @spec attachment(binary(), binary(), binary()) ::
+          :attached | :detached | :operator_ended | :unknown
+  def attachment(namespace, operator_id, plugin_id) do
+    on_hub_node(
+      namespace,
+      :unknown,
+      fn ->
+        declared = declared_ids(namespace)
+
+        namespace
+        |> targets(operator_id, plugin_id)
+        |> Enum.map(fn {rid, id} -> row_attachment(namespace, rid, id, declared) end)
+        |> Enum.reduce(&stronger_attachment/2)
+      end,
+      {__MODULE__, :attachment, [namespace, operator_id, plugin_id]}
+    )
+  end
+
+  # A declared operator with no row is between two homes, a move or a rescale
+  # away from one, and not ended: only an operator the declared set no longer
+  # names, nor any member of the group it names, has ended.
+  defp row_attachment(namespace, operator_id, plugin_id, declared) do
+    case HubManager.operator_plugins(namespace, operator_id) do
+      {:ok, plugins} ->
+        if Enum.any?(plugins, &match?({^plugin_id, _}, &1)), do: :attached, else: :detached
+
+      {:error, {:operator_not_found, _, _}} ->
+        if declared?(declared, operator_id), do: :unknown, else: :operator_ended
+
+      {:error, _hub_down} ->
+        :unknown
+    end
+  end
+
+  defp declared_ids(namespace),
+    do: namespace |> HubManager.declared_operators() |> MapSet.new(& &1.id)
+
+  defp declared?(declared, operator_id) do
+    MapSet.member?(declared, operator_id) or
+      Enum.any?(declared, &match?({^operator_id, _}, Flezha.Partition.split_member_suffix(&1)))
+  end
+
+  # One member still carrying the row is enough to go on.
+  defp stronger_attachment(a, b),
+    do: Enum.find([:attached, :unknown, :detached, :operator_ended], &(&1 in [a, b]))
+
+  @doc """
+  Remove `plugin_id` from `operator_id`, or from every current member of the
+  partition group `operator_id` names (each under its `#pK` id): the durable
+  row and declared set first, then the running Overwatch; any entry the
+  caller's node and the hub node hold for those ids goes with it. Addressed by target, so it holds whichever
+  node ran the enable and wherever the operator runs now; a listener and the
+  heartbeat of a listener's plugin detach this way.
+  """
+  @spec detach(binary(), binary(), binary()) :: :ok | {:error, term()}
+  def detach(namespace, operator_id, plugin_id) do
+    targets = targets(namespace, operator_id, plugin_id)
+    GenServer.cast(__MODULE__, {:unregister_plugins, Enum.map(targets, &elem(&1, 1))})
+
+    on_hub_node(
+      namespace,
+      {:error, :registry_unavailable},
+      fn -> detach_here(namespace, operator_id, plugin_id) end,
+      {__MODULE__, :detach, [namespace, operator_id, plugin_id]}
+    )
+  end
+
+  defp detach_here(namespace, operator_id, plugin_id) do
+    targets = targets(namespace, operator_id, plugin_id)
+    results = Parallel.map(targets, fn {rid, id} -> {id, detach_one(namespace, rid, id)} end)
+
+    case {targets, Enum.reject(results, &match?({_id, :ok}, &1))} do
+      {_, []} -> :ok
+      {[_one], [{_id, error}]} -> error
+      {_, failed} -> {:error, {:group_disable_partial, Enum.map(failed, &elem(&1, 0))}}
+    end
+  end
+
+  defp detach_one(namespace, operator_id, plugin_id) do
+    case write_disable_to_cspec(namespace, operator_id, plugin_id) do
+      :ok ->
+        _ = unsubscribe(namespace, operator_id, plugin_id)
+        :ok
+
+      {:error, {:operator_not_found, _namespace, _operator_id}} ->
+        :ok
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  # `{namespace, operator_id, plugin_id}` for the operator whose plugin list
+  # holds `plugin_id`, or `{namespace, group_id, plugin_id}` when only a group's
+  # fanned-out `<plugin_id>#pK` ids are found; `nil` when no namespace holds it.
+  defp locate(plugin_id) do
+    Enum.find_value(Directory.namespaces(), fn namespace ->
+      rows = declared_plugins(namespace)
+
+      Enum.find_value(rows, fn {operator_id, ids} ->
+        if plugin_id in ids, do: {namespace, operator_id, plugin_id}
+      end) ||
+        Enum.find_value(rows, fn {operator_id, ids} ->
+          if Enum.any?(ids, &fanned_out_from?(&1, plugin_id)),
+            do: {namespace, group_of(operator_id), plugin_id}
+        end)
+    end)
+  end
+
+  defp group_of(member_id) do
+    case Flezha.Partition.split_member_suffix(member_id) do
+      {group_id, _index} -> group_id
+      :error -> member_id
+    end
+  end
+
+  # Every operator's plugin ids in `namespace`, read on a node that hosts its
+  # hub: this one when it does, otherwise one that does, under a bound.
+  defp declared_plugins(namespace) do
+    on_hub_node(
+      namespace,
+      [],
+      fn -> plugin_ids(namespace) end,
+      {__MODULE__, :plugin_ids, [namespace]}
+    )
+  end
+
+  @doc false
+  # Run on a node hosting the namespace's hub: the registry rows, and the
+  # declared set that holds a moving operator's plugins while its row is between
+  # its two homes.
+  @spec plugin_ids(binary()) :: [{binary(), [binary()]}]
+  def plugin_ids(namespace) do
+    for {operator_id, plugins} <-
+          HubManager.operator_plugins(namespace) ++ HubManager.declared_plugins(namespace),
+        do: {operator_id, Enum.map(plugins, &plugin_id/1)}
+  end
+
+  # A namespace's rows are written and read on a node that hosts its hub: this
+  # one when it does, otherwise one that does, under a bound; `none` when no
+  # node hosts it or the one asked does not answer.
+  defp on_hub_node(namespace, none, here, {module, function, args}) do
+    case Directory.hub_nodes(namespace) do
+      [] ->
+        none
+
+      hub_nodes ->
+        if node() in hub_nodes,
+          do: here.(),
+          else: remote(hd(hub_nodes), module, function, args, none)
+    end
+  end
+
+  defp remote(hub_node, module, function, args, none) do
+    :erpc.call(hub_node, module, function, args, Durations.get(:route_call_timeout_ms))
+  catch
+    _kind, _reason -> none
+  end
+
+  defp plugin_id({id, %Plugin{}}), do: id
+  defp plugin_id(%Plugin{id: id}), do: id
 
   def disable_operator_plugins(namespace, operator_id)
       when is_binary(namespace) and is_binary(operator_id) do
@@ -319,43 +503,6 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
-  def handle_call({:fanned_out_ids, plugin_id}, _from, state) do
-    ids =
-      if Map.has_key?(state, plugin_id) do
-        []
-      else
-        state
-        |> Map.keys()
-        |> Enum.filter(&fanned_out_from?(&1, plugin_id))
-        |> Enum.sort()
-      end
-
-    {:reply, ids, state}
-  end
-
-  def handle_call({:disable_plugin, plugin_id}, _from, state) do
-    case Map.get(state, plugin_id) do
-      nil ->
-        {:reply, {:error, {:plugin_not_found, plugin_id}}, state}
-
-      {_ns, _rid, :pending} ->
-        {:reply, {:error, {:plugin_enabling, plugin_id}}, state}
-
-      {namespace, operator_id} ->
-        case write_disable_to_cspec(namespace, operator_id, plugin_id) do
-          :ok ->
-            _ = unsubscribe(namespace, operator_id, plugin_id)
-            {:reply, {:ok, "plugin disabled"}, Map.delete(state, plugin_id)}
-
-          {:error, {:operator_not_found, _namespace, _operator_id}} ->
-            {:reply, {:ok, "plugin disabled"}, Map.delete(state, plugin_id)}
-
-          {:error, reason} ->
-            {:reply, {:error, reason}, state}
-        end
-    end
-  end
-
   # The namespace is going away wholesale, so there is nothing to unsubscribe
   # from and no cspec left to write: the entries are simply dropped.
   def handle_call({:disable_namespace_plugins, namespace}, _from, state) do
@@ -421,6 +568,10 @@ defmodule Flezha.Service.PluginManager do
   @impl true
   def handle_cast({:unregister_plugin, plugin_id}, state) do
     {:noreply, Map.delete(state, plugin_id)}
+  end
+
+  def handle_cast({:unregister_plugins, plugin_ids}, state) do
+    {:noreply, Map.drop(state, plugin_ids)}
   end
 
   ## Private
@@ -633,16 +784,16 @@ defmodule Flezha.Service.PluginManager do
   end
 
   @doc """
-  The namespace a plugin is enabled in, or `"_system"` when it is not enabled.
+  The namespace a plugin is declared in, or `"_system"` when none declares it.
 
   The scope a plugin verb is judged in; shared with `Flezha.Service.Cli.Plugin`
   so the two callers cannot disagree about it.
   """
   @spec target_namespace(String.t()) :: String.t()
   def target_namespace(plugin_id) when is_binary(plugin_id) do
-    case Map.get(get_plugins(), plugin_id) do
-      {namespace, _operator_id} when is_binary(namespace) -> namespace
-      _other -> Namespace.system_name()
+    case locate(plugin_id) do
+      {namespace, _operator_id, _plugin_id} -> namespace
+      nil -> Namespace.system_name()
     end
   end
 

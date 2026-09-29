@@ -149,6 +149,18 @@ implementation therefore cannot disagree.
 - **`run` returns `void`.** A value leaves a tasklet only through
   `$ctx->emit()` or `$ctx->emitKeyed()`, and an input that should produce
   nothing simply emits nothing. PHP itself refuses a `run` that returns a value.
+- **`$ctx->part($value)` previews the output while `run` is still working.**
+  It sends `$value` on the tasklet's own output channel, encoded as
+  `$ctx->emit($value)` would encode it, and returns without waiting. It works
+  in `run` and `onTimer`, in an unbounded operator and in a bounded operator's
+  stage. The operator's listeners receive the parts before the output; a sink
+  never does, and a part is never durable or replayed. Parts are numbered from
+  0 within each attempt, so a retry starts its preview again. A part that
+  cannot leave at once, such as in a local run, is dropped. A channel that
+  does not end in a sink (it only feeds another tasklet, or ends in
+  `response()`) throws a `FlezhaException` coded `part.no_sink`, and a context
+  kept after its invocation returned throws `part.outside_invocation`. The
+  testing harness sends nothing.
 - **`initState(?string $cellKey)`** is a cell's state before anything has
   happened to it; `$cellKey` is null for a single-cell tasklet.
 - **A change is plain data.** `$ctx->change(['kind' => 'event', ...])` records

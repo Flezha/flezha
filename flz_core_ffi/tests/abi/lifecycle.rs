@@ -176,7 +176,9 @@ pub(crate) fn routes_two_entry_payloads(
         // The channel's own entry wrapper — the same one the wire path runs.
         let wrap = entry.wrap_input.as_ref().expect("entry wrapper");
         let value = wrap(payload).expect("bytes passthrough cannot fail");
-        flz_core::routing::route_to_consumers(&instance, entry, &value, stream, None, false, None);
+        flz_core::routing::route_to_consumers(
+            &instance, entry, &value, stream, None, None, false, None,
+        );
     }
 
     let (status, act) = abi_poll(ctx, 2_000);
@@ -467,7 +469,16 @@ fn the_restored_floor_skips_applied_inputs(ctx: *mut FlzContext, stream: &Arc<Fl
     let wrap = entry.wrap_input.as_ref().expect("entry wrapper");
 
     let below = wrap(b"dup".to_vec()).unwrap();
-    flz_core::routing::route_to_consumers(&instance, entry, &below, stream, Some(7), false, None);
+    flz_core::routing::route_to_consumers(
+        &instance,
+        entry,
+        &below,
+        stream,
+        Some(7),
+        None,
+        false,
+        None,
+    );
     let (status, _) = abi_poll(ctx, 300);
     assert_eq!(
         status, FLZ_POLL_TIMEOUT,
@@ -475,7 +486,16 @@ fn the_restored_floor_skips_applied_inputs(ctx: *mut FlzContext, stream: &Arc<Fl
     );
 
     let above = wrap(b"new".to_vec()).unwrap();
-    flz_core::routing::route_to_consumers(&instance, entry, &above, stream, Some(8), false, None);
+    flz_core::routing::route_to_consumers(
+        &instance,
+        entry,
+        &above,
+        stream,
+        Some(8),
+        None,
+        false,
+        None,
+    );
     let (status, act) = abi_poll(ctx, 2_000);
     assert_eq!(status, FLZ_POLL_ACTIVATION, "offset 8 dispatches");
     let act = act.unwrap();
@@ -551,6 +571,7 @@ fn a_keyed_dynamic_route_crosses_for_its_key(
         vec![flz_core::host::StagedEntry {
             bytes: b"k1:v".to_vec(),
             consumed_offset: None,
+            call: None,
             replay: false,
             stream: Arc::clone(stream),
             stage: None,

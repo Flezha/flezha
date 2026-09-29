@@ -153,6 +153,9 @@ codes! {
     QuicAddressesInvalid => "runner.quic_addresses_invalid",
     DataStreamsFailed => "runner.data_streams_failed",
 
+    PartNoSink => "part.no_sink",
+    PartOutsideInvocation => "part.outside_invocation",
+
     SpawnTimeout => "spawn.timeout",
     SpawnUnavailable => "spawn.unavailable",
     AdminNoControlPlane => "admin.no_control_plane",
@@ -185,6 +188,8 @@ pub enum Error {
     Partition(FlezhaError),
     /// A state read or apply the operator cannot serve.
     State(FlezhaError),
+    /// A part the invocation may not send.
+    Part(FlezhaError),
     /// A control connection that could not be opened, or the controller's own
     /// refusal of it.
     Connect(FlezhaError),
@@ -204,6 +209,7 @@ impl ErrorModel for Error {
             | Error::Routing(e)
             | Error::Partition(e)
             | Error::State(e)
+            | Error::Part(e)
             | Error::Connect(e) => e.clone(),
             Error::Transport(refusal) => {
                 transport_code(refusal).with([("reason", refusal.to_string().into())])

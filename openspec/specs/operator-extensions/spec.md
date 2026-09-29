@@ -624,10 +624,10 @@ them and not only on the arm that happens to consult it.
 ### Requirement: A provider SHALL declare its whole lifecycle, and the extension table SHALL drive from the declaration
 
 `Flezha.Plugin.ProviderBehaviour` SHALL declare every callback the host can
-invoke on a provider — `init_provider/1`, `activate/1`, `health/1`,
+invoke on a provider (`init_provider/1`, `activate/1`, `health/1`,
 `inspect_state/1`, `terminate_provider/1` and the extension callbacks
 `on_operator_init/2`, `on_input/2`, `on_output/2`, `on_interval/2`,
-`on_message/2`, `on_snapshot/2`, `on_terminate/2` — as optional callbacks whose
+`on_message/2`, `on_snapshot/2`, `on_terminate/2`, `on_preview/2`) as optional callbacks whose
 lifecycle members carry a default body a provider may override, and SHALL
 derive at compile time one declaration record per provider naming its option
 rows, the extension callbacks it implements, the lifecycle callbacks it
@@ -635,8 +635,8 @@ overrides and its worker, if it has one. `Flezha.Plugin.Extension.Table` SHALL
 invoke every callback through the declaration and SHALL NOT discover a
 provider's shape by probing exports at run time.
 
-The table SHALL keep one lifecycle record per plugin — its phase, its worker
-and monitor, when the worker started, its retry count and its timers — and the
+The table SHALL keep one lifecycle record per plugin (its phase, its worker
+and monitor, when the worker started, its retry count and its timers), and the
 provider-owned process SHALL be a field of that record, injected into
 `health/1`, `inspect_state/1` and `terminate_provider/1` from one site. The
 phase SHALL be one declared type, `:prepared | :running`, read outside the table
@@ -653,8 +653,8 @@ process.
 Every provider SHALL be a row of one provider table, from which the enabled
 providers are read and to which an installed package adds rows; the
 configuration file SHALL NOT restate the list. One conformance test SHALL run
-the same drill over every row — prepare, activate with one failure, activate,
-probe, report, disable, tear down — and SHALL fail when a provider implements
+the same drill over every row (prepare, activate with one failure, activate,
+probe, report, disable, tear down) and SHALL fail when a provider implements
 an extension callback its declaration does not name, when a probe is written
 in the plugin directory, when a phase literal is read outside the table, when
 a provider starts a process outside the table, or when a documented option is
@@ -664,9 +664,9 @@ not a declared row.
 
 - **WHEN** a provider that overrides neither `activate/1` nor `health/1` is
   activated and probed
-- **THEN** the table SHALL call the default bodies — activation completes
+- **THEN** the table SHALL call the default bodies (activation completes
   without upstream work and the verdict is the declared worker alive or
-  absent — and no export SHALL be probed to decide so
+  absent), and no export SHALL be probed to decide so
 
 #### Scenario: A declared worker is started at activation and holds nothing before it
 
@@ -1128,4 +1128,71 @@ and hooks `--hook`, so neither is affected.
 #### Scenario: Operator info JSON uses the spec shape
 - **WHEN** `flz operator info` answers in JSON for the same operator
 - **THEN** the plugin SHALL carry `hooks` as a list of `{"name": ..., "opts": {...}}` objects, the shape a `--plugins` spec accepts
+
+### Requirement: The Overwatch SHALL publish an `on_preview` hook that carries no output
+
+`Flezha.Operator.Overwatch` SHALL declare the catalogue entry
+`{:on_preview, :fanout, Flezha.Plugin.Extension.Ctx.IO}`. The hook SHALL carry frames meant
+for listeners only: an operator's parts and its dead-letter notices. No output, input or
+durable record SHALL ever be dispatched on it, and a frame dispatched on it SHALL NOT be
+dispatched on `on_output` or `on_input`. Because it is a `:fanout` hook, a subscriber SHALL
+see every frame, no subscriber's answer SHALL change what another sees, and a raising
+subscriber SHALL be logged and SHALL NOT stop the others. `MonitoredIOForward` SHALL be the
+one first-party provider implementing `on_preview/2`, and a listener attached for outputs
+SHALL subscribe it to both `on_output` and `on_preview`. No first-party sink provider SHALL
+implement `on_preview/2`.
+
+#### Scenario: A sink cannot subscribe to previews
+
+- **WHEN** `flz plugin enable` is asked to attach the Kafka producer with the hook
+  `on_preview`
+- **THEN** the enable SHALL be refused naming the missing `on_preview` callback, as any
+  hook a provider does not implement is refused, and no plugin row SHALL remain
+
+#### Scenario: A preview reaches every listener and nothing else
+
+- **GIVEN** an operator with a file sink and two listeners
+- **WHEN** it produces one part
+- **THEN** both listeners SHALL receive it and the file sink's callbacks SHALL NOT be
+  called
+
+### Requirement: A bind SHALL bring up every declared plugin its table does not hold
+
+Every bind of an instance SHALL subscribe each plugin of the instance's declared set whose
+id its extension table does not hold (a first bind, a wake, an un-park, a rebind to another
+runner alike), and SHALL leave every plugin the table already holds as it is, whatever
+phase it is in. A table that is not empty SHALL NOT make the bind skip the declared set.
+
+#### Scenario: A runtime plugin on a sleeper found at boot
+
+- **GIVEN** an operator with a file sink plugin that was asleep when the controller
+  restarted, so its table is empty, and a listener then attached to it
+- **WHEN** an input wakes it
+- **THEN** its table SHALL hold both the file sink and the listener, running, before its
+  first output is dispatched, and the file SHALL hold that output
+
+#### Scenario: A rebind re-initialises nothing
+
+- **WHEN** a running operator whose table holds all its declared plugins is rebound to
+  another runner
+- **THEN** no plugin SHALL be subscribed again and no provider's `init_provider/1` SHALL be
+  called
+
+### Requirement: A plugin disable SHALL be addressed by its target
+
+`flz plugin disable <plugin_id>` and every other disable of a plugin by id SHALL find the
+operator, or the partition group for an id fanned out over its members, whose declared plugin
+set holds the id, from the declared sets of the cluster's namespaces, and SHALL remove the row
+and unsubscribe the plugin there, on every current member of a group. It SHALL NOT depend on
+which controller node ran the enable or on any node-local table: a plugin on an operator that
+moved to another controller node, or on a member a rescale added, SHALL be disabled from any
+node, and the verb SHALL be authorized in the namespace the resolution finds.
+
+#### Scenario: Disabling a plugin on a moved operator
+
+- **GIVEN** a file sink plugin enabled through controller node A on an operator that A hosted
+- **WHEN** the operator migrates to node B and `flz plugin disable <plugin_id>` is then run
+  through A (and, in a second run of the same setup, through a third node C that never held it)
+- **THEN** the disable SHALL succeed, the operator's declared plugin set and B's extension
+  table SHALL hold no row for the plugin, and the convergence loop SHALL NOT start it again
 

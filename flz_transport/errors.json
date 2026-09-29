@@ -487,10 +487,27 @@
         {"tag": "sync_ship_failed", "args": ["operator", "reason"]}
       ]
     },
+    "input.dead_lettered": {
+      "class": "unavailable",
+      "message": "an input of operator '{operator}' on channel '{channel}' was dead-lettered as '{entry}' after {attempts} attempt(s): {error}",
+      "hint": "flz dlq show {entry}",
+      "details": ["operator", "channel", "entry", "tasklet", "attempts", "error"]
+    },
     "internal.uncatalogued": {
       "class": "internal",
       "message": "an unexpected failure: {reason}",
       "details": ["reason"]
+    },
+    "listener.detached": {
+      "class": "conflict",
+      "message": "the listener on operator '{operator}' was disabled by another caller",
+      "details": ["operator"]
+    },
+    "listener.overrun": {
+      "class": "unavailable",
+      "message": "the listener on operator '{operator}' fell more than {bytes} bytes or {frames} frames behind and was ended",
+      "hint": "flz operator listen {operator} again, or raise FLEZHA_LISTENER_PENDING_BYTES",
+      "details": ["operator", "bytes", "frames"]
     },
     "namespace.already_exists": {
       "class": "conflict",
@@ -972,6 +989,17 @@
       "reasons": [
         {"tag": "overwatch_unavailable", "args": ["reason"]}
       ]
+    },
+    "part.no_sink": {
+      "class": "invalid",
+      "message": "tasklet '{tasklet}' of operator '{operator}' sent a part, but its output channel '{channel}' has no sink",
+      "hint": "declare a sink on the tasklet's channel",
+      "details": ["tasklet", "operator", "channel"]
+    },
+    "part.outside_invocation": {
+      "class": "invalid",
+      "message": "a part was sent through a context whose invocation has already returned",
+      "details": ["tasklet"]
     },
     "plugin.ack_needs_correlation": {
       "class": "invalid",

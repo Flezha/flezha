@@ -28,6 +28,7 @@ test/fixtures/channel_codecs.txt|One payload rule per channel codec. Every SDK w
 test/fixtures/error_rendering.json|The error model's rendering cases: a code and its details, the text and the JSON they render to. The controller, the Rust renderer and the Elixir SDK render each byte for byte.
 test/fixtures/durable_frame.txt|The on-disk record frame, byte for byte. The controller's writer and the core's reader are held to it.
 test/fixtures/host_class_decl_keys.txt|Every key of the `HostClassDecl` JSON. Six builders assert they spell exactly these.
+test/fixtures/part_frames.json|The frames a tasklet's parts leave as: payload and metadata of three parts and of a retried attempt. `flz_core`'s part tests and the Elixir SDK's part test produce these byte for byte.
 test/fixtures/knob_parse_cases.txt|How a configuration knob parses. Every SDK's `Env` asserts the same verdicts.
 test/fixtures/layout_rows.txt|Where the product puts its files and what `flz reset` does with each subtree.
 test/fixtures/local_mode_word_count.txt|The local-mode example's declared graph and its expected output, run by every SDK's local-mode test.

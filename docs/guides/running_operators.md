@@ -210,7 +210,7 @@ Two options help when something looks wrong:
   output instead of you.
 
 Listening leaves nothing behind. It stops by itself when the time is up, when
-you press Ctrl-C, or when your terminal closes.
+you press Ctrl-C, when your terminal closes, or when the operator ends.
 
 ## Stopping it, later
 

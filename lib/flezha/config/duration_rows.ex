@@ -156,6 +156,10 @@ defmodule Flezha.Config.DurationRows do
     # whether they hold the provider.
     {:plugin_peer_check_ms, :ms, 2_000, []},
     {:plugin_service_call_ms, :ms, 5_000, []},
+    # How long a listener's relay waits after its plugin was released before
+    # it asks the registry what the release was, and between asks: a move or a
+    # restart brings the plugin's worker back well inside it.
+    {:listener_release_check_ms, :ms, 5_000, key: true},
     {:provider_probe_timeout_ms, :ms, 500, []},
     {:ws_idle_timeout_ms, :ms, 30_000, []},
     {:ws_min_tick_interval_ms, :ms, 1_000, []},

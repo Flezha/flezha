@@ -301,6 +301,13 @@ a stage's ladder is the edge's `retry_max` / `retry_backoff_ms`, as an unbounded
 output's natural key on a sink declared `keyed/1`; on a node with no keyed sink they answer
 `runtime.key_not_allowed_on_non_keyed_channel`, and a keyless emit from a
 Single Cell on a keyed sink answers `runtime.key_required_on_keyed_channel`),
+`part/2` (a preview of the invocation's output, sent at once rather than when `run/3`
+returns: encoded as an emit of the value would be, numbered `flz.part` from `0` within the
+attempt and stamped with `flz.part_attempt`, `flz.cell` and `flz.key`; it goes to the
+operator's listeners and to nothing else, never waits, is dropped and counted when the wire
+cannot take it at once, and is sent by no replayed input; it answers `part.no_sink` when the
+node's channel ends in no sink, a `response/1` end included, and `part.outside_invocation`
+through a ctx whose invocation returned),
 `apply/3` (fold a change and record it; a `defchange` recorder calls it),
 `complete/2` (end a bounded instance with a result, encoded as `spawn_bounded` encodes its
 payload), `now/1` (the declared clock's value, once per invocation; the scheduled timestamp

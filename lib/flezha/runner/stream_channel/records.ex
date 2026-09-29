@@ -343,7 +343,15 @@ defmodule Flezha.Runner.StreamChannel.Records do
             {:park_payload_ack, %RunnerCommands.ParkPayloadAck{park_id: park.park_id}}
           )
 
-          DlqStore.answer_call(rc, park.reply_to, entry_ref, park.error)
+          DlqStore.announce(rc, %{
+            token: park.reply_to,
+            entry: entry_ref,
+            error: park.error,
+            channel: park.channel,
+            offset: park.origin_offset,
+            tasklet: sh,
+            attempts: park.attempts
+          })
         end
       )
     else

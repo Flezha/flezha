@@ -227,9 +227,18 @@ defmodule Flezha.State.WalWriter.Settlement do
           )
 
         # A caller waiting on the parked input rides its input-log record.
-        if is_integer(entry.consumed_offset),
-          do:
-            DlqStore.answer_call(rc, InputLog.reply_to(rc, entry.consumed_offset), ref, dlq.error)
+        token =
+          if is_integer(entry.consumed_offset), do: InputLog.reply_to(rc, entry.consumed_offset)
+
+        DlqStore.announce(rc, %{
+          token: token,
+          entry: ref,
+          error: dlq.error,
+          channel: dlq.channel,
+          offset: entry.consumed_offset,
+          tasklet: sh,
+          attempts: dlq.attempts
+        })
     end
 
     # An integer offset on a checkpoint-ack class means an interval just closed:

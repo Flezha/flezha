@@ -13,12 +13,17 @@ OPTIONS:
 OUTPUT:
     One line per frame: the channel, a tab and the payload. A frame from a
     keyed sink adds a third field, cell=... seq=... key=..., and a frame
-    with no channel prints - in its place. With --json each frame is one
-    object carrying channel, payload (payload_base64 for bytes that are not
-    text) and the frame's whole metadata map.
+    with no channel prints - in its place. A part, a preview a tasklet sent
+    while it ran, begins its third field part=<n> attempt=<a>; a dead-lettered
+    input prints the channel, the error's message and error=<code>
+    entry=<entry>. With --json each frame is one object carrying kind
+    (output, input, part or dead_lettered), channel, payload (payload_base64
+    for bytes that are not text, error for a dead-lettered input) and the
+    frame's whole metadata map.
 
-    The listener is detached when the window closes, on Ctrl-C, and when the
-    caller goes away. A partition group is listened to by its group id.
+    The listener is detached when the window closes, on Ctrl-C, when the
+    caller goes away and when the operator ends. A partition group is
+    listened to by its group id.
 
 EXAMPLES:
     flz operator listen my_echo --duration-ms 10000

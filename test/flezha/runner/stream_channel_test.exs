@@ -474,6 +474,28 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       assert :sys.get_state(pid).operator_mapping[class] == [self()]
     end
 
+    test "a part takes the route its instance's output takes, as a preview",
+         %{pid: pid, class: class} do
+      :ok = ClassRegistry.put_overwatch(class, self(), "ce_test")
+      metadata = %{"flz.operator" => class, "flz.part" => "0"}
+
+      send(pid, {:flz_data, :ref, "output_part", "he", metadata})
+
+      assert_receive {:"$gen_cast", {:io_part, "he", ^metadata}}, 1_000
+      refute_received {:"$gen_cast", {:io_out, _, _}}
+    end
+
+    test "a part from a session that no longer owns its instance is dropped",
+         %{pid: pid, class: class} do
+      :ok = ClassRegistry.put_overwatch(class, self(), "runner_a")
+
+      send(pid, {:flz_data, :ref, "output_part", "he", %{"flz.operator" => class}})
+      _ = GenServer.call(pid, :stream_ref_status)
+
+      refute_received {:"$gen_cast", {:io_part, _, _}}
+      assert_received {:rem_operator, "ce_test", ^class}
+    end
+
     test "another runner's output is refused, counted every time and reported once",
          %{pid: pid, class: class} do
       :ok = ClassRegistry.put_overwatch(class, self(), "runner_a")
@@ -531,8 +553,9 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
   end
 
   # fails when: an off-tier park stops telling the Overwatch, once its entry is
-  # durable, that the called input it parked is dead-lettered.
-  test "a park frame carrying a call's token answers the caller once its entry is durable" do
+  # durable, that the input it parked is dead-lettered, with the call waiting on
+  # it if there is one.
+  test "a park frame is announced once its entry is durable" do
     FlezhaTest.Helper.DlqFixtures.isolated_dir()
     set_mimic_global_until_exit()
     stub(Flezha.Runner.ControlChannel, :send_control_async, fn _runner, _command -> :ok end)
@@ -558,13 +581,20 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
     end
 
     park.(3, "w:caller")
-    assert_receive {:"$gen_cast", {:dead_lettered, "w:caller", ref, "kaboom"}}, 2_000
+
+    assert_receive {:"$gen_cast",
+                    {:dead_lettered,
+                     %{token: "w:caller", entry: ref, error: "kaboom", channel: "in", offset: 3}}},
+                   2_000
+
     assert [%{"id" => id}] = Flezha.Dlq.Store.list(rc)
     assert ref == "#{rc}/task/#{id}"
 
     park.(4, nil)
-    assert NodeTestHelper.wait_until(fn -> length(Flezha.Dlq.Store.list(rc)) == 2 end, 2_000)
-    refute_received {:"$gen_cast", {:dead_lettered, _, _, _}}
+
+    assert_receive {:"$gen_cast",
+                    {:dead_lettered, %{token: nil, offset: 4, tasklet: "task", attempts: 3}}},
+                   2_000
   end
 
   # The stream's last frame was `ms` ago: the liveness window lapses without

@@ -165,6 +165,7 @@ the logical id.
 | `delete_cell_state` | runner → controller | Dynamic-Cell hard delete (§11) |
 | `park_payload` | runner → controller | Dead-letter park (§11) |
 | `correction_request` | runner → controller | Late-input correction (§11) |
+| `output_part` | runner → controller | A part: a preview of an invocation's output, for listeners only (§11) |
 | `processed_prefix` | runner → controller | An instance's processed input prefix (§11) |
 
 ### Frame limits
@@ -225,6 +226,7 @@ than at emit.
 | `flz.msg_id` | sender → controller | Sender-supplied message id: an append whose id the instance's input log still retains is absorbed (§11). |
 | `flz.replay`, `flz.replay_end` | controller → runner | Replayed-slice markers for late-input correction (§11). |
 | `flz.change_seq` | runner → controller | On the `CellState` reply frame: the seq a single selected Cell was serialized at (§6). |
+| `flz.part`, `flz.part_attempt`, `flz.operator` | runner → controller | On an `output_part` frame: the part's number within its attempt, from `0`; the attempt, from `1`; and the instance it belongs to (§11). |
 
 The `flz.` prefix is a protected namespace: a user-supplied metadata key
 beginning with `flz.` is rejected at emit time with a typed error
@@ -1309,6 +1311,40 @@ recompute the same wrong answer. The end marker is a broadcast because an
 input routes to exactly one Cell by key; a flag on the last input would
 strand every other Cell holding slice members. A `RestoreInitState` clears
 any half-filled replay buffer, and every replay is preceded by a restore.
+
+### Data-stream payload-id `output_part`
+
+Runner → controller, a **part**: a preview of the output an invocation is
+producing, sent from inside the invocation (`ctx.part(value)`) rather than
+when it returns. The frame body is an output frame's (`build_from_binary`):
+the payload is the value encoded as an emit of it on the tasklet's output
+channel would be, and the metadata is:
+
+| Key | Value |
+|-----|-------|
+| `channel` | the tasklet's output channel, which must end in a sink |
+| `flz.part` | the part's number within the attempt, from `0` |
+| `flz.part_attempt` | the invocation's attempt, from `1` |
+| `flz.cell` | the Cell's label, `<instance>/<tasklet>/<key>` |
+| `flz.key` | the Cell's key, when it has one |
+| `flz.operator` | the instance the part belongs to |
+
+The payload id is reserved rather than the instance id, so a controller that
+does not know parts routes the frame to an instance named `output_part`, finds
+no route and drops it; it never reaches that controller's sinks. The
+controller routes a part by `flz.operator` through the session's own route, so
+a part from a session that no longer owns the instance is dropped, and hands it
+to the Overwatch's `on_preview` hook, which only a listener implements.
+
+A part is never durable and never waited on. The runner writes it only if the
+stream takes it at once (a non-blocking write on UDS, a write the QUIC driver
+answers without buffering) and drops it otherwise: when no stream is bound, in
+a local run, when the write is refused or would wait, and when the frame would
+pass `FLEZHA_MAX_FRAME_BYTES`. An invocation of a replayed input
+(`flz.replay`) sends none. Every part sent or dropped is counted by reason in
+the heartbeat's `parts_sent`, `parts_dropped_no_stream`,
+`parts_dropped_refused` and `parts_dropped_too_large`. A retried attempt numbers
+its parts from `0` again.
 
 ### Control command `RestoreInitState` (controller → runner)
 

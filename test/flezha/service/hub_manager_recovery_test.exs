@@ -267,7 +267,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     assert {:ok, [{^plugin_id, %Plugin{}}]} =
              HubManager.operator_plugins(@namespace, operator_id)
 
-    assert {:ok, _} = PluginManager.disable_plugin(plugin_id)
+    assert {:ok, _} = PluginManager.disable_plugin_group(plugin_id)
     assert {:ok, []} = HubManager.operator_plugins(@namespace, operator_id)
 
     restart_hub(hub_id)

@@ -55,6 +55,7 @@ defmodule Flezha.Operator.Overwatch do
       {:on_operator_init, :fold, Flezha.Plugin.Extension.Ctx.Init},
       {:on_input, :transform, Flezha.Plugin.Extension.Ctx.IO},
       {:on_output, :transform, Flezha.Plugin.Extension.Ctx.IO},
+      {:on_preview, :fanout, Flezha.Plugin.Extension.Ctx.IO},
       {:on_interval, :timer, Flezha.Plugin.Extension.Ctx.Tick},
       {:on_message, :request, Flezha.Plugin.Extension.Ctx.Msg},
       {:on_snapshot, :fanout, Flezha.Plugin.Extension.Ctx.Snapshot},
@@ -583,7 +584,14 @@ defmodule Flezha.Operator.Overwatch do
   # sleeper rediscovered at boot has none running). An instance moved while it
   # was running still has its table up, and its output is not held: a run that
   # completes before the bind reports would be torn down holding it.
+  # A part goes to the listeners there are now and is never held: a preview
+  # waits for nothing, and nothing but `:on_preview` sees it.
   @impl true
+  def handle_cast({:io_part, message, metadata}, state) do
+    Plugins.preview(state, message, metadata)
+    {:noreply, state}
+  end
+
   def handle_cast(frame, %__MODULE__{migrate_task: %{}} = state)
       when is_tuple(frame) and elem(frame, 0) in [:io_out, :io_out_batch] and
              (state.suspended or state.init_error != nil) do
@@ -599,13 +607,14 @@ defmodule Flezha.Operator.Overwatch do
     {:noreply, state}
   end
 
-  # A dead-letter entry for an input a caller may be waiting on is durable.
+  # A dead-letter entry for an input is durable: its caller, if one waits, is
+  # answered, and its listeners are told (`Flezha.Dlq.Store.announce/2`).
   @impl true
-  def handle_cast({:dead_lettered, token, entry_ref, error}, %__MODULE__{} = state) do
-    details = %{dlq_ref: entry_ref, error: error}
-
-    {:noreply,
-     %{state | calls: Calls.refuse(state.calls, callee(state), token, "call.failed", details)}}
+  def handle_cast({:dead_lettered, notice}, %__MODULE__{} = state) do
+    Plugins.preview_dead_letter(state, notice)
+    details = %{dlq_ref: notice.entry, error: notice.error}
+    calls = Calls.refuse(state.calls, callee(state), notice.token, "call.failed", details)
+    {:noreply, %{state | calls: calls}}
   end
 
   @impl true

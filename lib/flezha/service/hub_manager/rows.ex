@@ -354,6 +354,23 @@ defmodule Flezha.Service.HubManager.Rows do
     end)
   end
 
+  @doc """
+  Every declared operator's plugins, as `{operator_id, [plugin]}`, read from the
+  hub's declared set: the intent a move, a restart and a rescale all keep,
+  while the registry row of a moving operator may be between its two homes.
+  """
+  @spec declared_plugins(binary() | atom()) :: [{binary(), list()}]
+  def declared_plugins(namespace) do
+    with_live_hub(namespace, [], fn hub_id ->
+      %{children: children} = DeclaredChildren.declared_children(hub_id)
+
+      for child_spec <- children,
+          plugins = Keyword.get(cspec_opts(child_spec), :plugins, []),
+          plugins != [],
+          do: {child_spec.id, plugins}
+    end)
+  end
+
   def durable_operator_keys(hub_id) do
     with_live_hub_id(hub_id, [], fn id ->
       live_registry_dump(id) |> Map.keys() |> Enum.filter(&is_binary/1)

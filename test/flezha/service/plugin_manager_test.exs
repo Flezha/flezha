@@ -20,8 +20,11 @@ defmodule Flezha.Service.PluginManagerTest do
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
+  alias Flezha.Cluster.Directory
   alias Flezha.Operator.PartitionGroup
   alias Flezha.Plugin
+  alias Flezha.Plugin.Extension.Table
+  alias Flezha.Service.HubManager
   alias Flezha.Service.OperatorManager
   alias Flezha.Service.PluginManager
   alias FlezhaTest.Helper.NodeTestHelper
@@ -63,6 +66,17 @@ defmodule Flezha.Service.PluginManagerTest do
       end
     end)
 
+    # A disable finds its target in the namespaces' registry rows, never in
+    # this node's table.
+    Mimic.stub(Directory, :namespaces, fn -> [@namespace] end)
+    Mimic.stub(Directory, :hub_nodes, fn _ns -> [node()] end)
+
+    Mimic.stub(HubManager, :operator_plugins, fn @namespace ->
+      [{@operator_id, read_plugins(store)}]
+    end)
+
+    Mimic.stub(HubManager, :declared_plugins, fn @namespace -> [] end)
+
     on_exit(fn ->
       Map.keys(PluginManager.get_plugins())
       |> Enum.each(&PluginManager.unregister_plugin/1)
@@ -85,8 +99,8 @@ defmodule Flezha.Service.PluginManagerTest do
 
     # Fails when: a failed enable releases its in-memory claim and leaves the
     # durable entry it wrote one line earlier. The plugin is then invisible to
-    # `flz plugin list` and to `disable_plugin/1`, which both read the manager's
-    # table, while the row still carries it — so the next restart subscribes it
+    # `flz plugin list`, which reads the manager's table, while the row still
+    # carries it — so the next restart subscribes it
     # and parks the operator if it still cannot start, naming nothing.
     #
     # This is not the crash case `auto-restore-on-boot` requires to self-heal: a
@@ -248,7 +262,7 @@ defmodule Flezha.Service.PluginManagerTest do
       assert {:ok, _} = PluginManager.enable_plugin("dis_a", plugin)
       assert [_] = read_plugins(store)
 
-      assert {:ok, "plugin disabled"} = PluginManager.disable_plugin("dis_a")
+      assert {:ok, "plugin disabled"} = PluginManager.disable_plugin_group("dis_a")
       assert [] = read_plugins(store)
     end
 
@@ -263,7 +277,7 @@ defmodule Flezha.Service.PluginManagerTest do
       send(overwatch, :record_unsubscribes)
 
       assert {:error, :registry_unavailable} =
-               PluginManager.disable_plugin("dis_persist_fail")
+               PluginManager.disable_plugin_group("dis_persist_fail")
 
       send(overwatch, {:dump_unsubscribes, self()})
       assert_receive {:unsubscribes, []}, 500
@@ -271,7 +285,126 @@ defmodule Flezha.Service.PluginManagerTest do
 
     test "is a no-op (returns error) when the plugin_id is not in the cspec" do
       assert {:error, {:plugin_not_found, "never_enabled"}} =
-               PluginManager.disable_plugin("never_enabled")
+               PluginManager.disable_plugin_group("never_enabled")
+    end
+  end
+
+  describe "a sink cannot subscribe to previews" do
+    test "the Kafka producer on on_preview is refused naming the callback and leaves no row",
+         %{store: store, overwatch: overwatch} do
+      plugin = %{
+        build_plugin("kafka_preview", brokers: "localhost:9092", topic: "t")
+        | provider: Flezha.Plugin.Provider.Kafka.Producer,
+          hooks: [{:on_preview, []}]
+      }
+
+      # The Overwatch's table gives the verdict its subscribe answers.
+      catalog = Flezha.Operator.Overwatch.__extensions_catalog__()
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:error, {"k", refusal}} =
+                   Table.bulk_subscribe(Table.new(catalog), [{"k", plugin}])
+
+          send(self(), {:refusal, refusal})
+        end)
+
+      assert_received {:refusal, refusal}
+      assert refusal == {:missing_callback, :on_preview}
+      assert log =~ "prepare failed for plugin_id=k"
+
+      send(overwatch, {:reject_next, {:error, refusal}})
+
+      assert {:error, {:missing_callback, :on_preview}} =
+               PluginManager.enable_plugin("kafka_preview", plugin)
+
+      assert read_plugins(store) == []
+      refute Map.has_key?(PluginManager.get_plugins(), "kafka_preview")
+    end
+  end
+
+  describe "a disable addressed by its target" do
+    # The row carries the plugin, as it does on a node that never ran the
+    # enable: the operator moved here, or the enable ran elsewhere.
+    setup %{store: store, overwatch: overwatch} do
+      plugin = build_plugin("elsewhere", topic: "e")
+      Agent.update(store, fn _ -> base_cspec([{"elsewhere", plugin}]) end)
+      send(overwatch, :record_unsubscribes)
+      refute Map.has_key?(PluginManager.get_plugins(), "elsewhere")
+      :ok
+    end
+
+    test "detach/3 removes the row and unsubscribes the live operator",
+         %{store: store, overwatch: overwatch} do
+      assert :ok = PluginManager.detach(@namespace, @operator_id, "elsewhere")
+      assert read_plugins(store) == []
+      send(overwatch, {:dump_unsubscribes, self()})
+      assert_receive {:unsubscribes, ["elsewhere"]}, 500
+    end
+
+    test "disable_plugin_group/1 finds it in the rows and disables it",
+         %{store: store, overwatch: overwatch} do
+      assert {:ok, "plugin disabled"} = PluginManager.disable_plugin_group("elsewhere")
+      assert read_plugins(store) == []
+      send(overwatch, {:dump_unsubscribes, self()})
+      assert_receive {:unsubscribes, ["elsewhere"]}, 500
+    end
+
+    test "an operator whose row is between two homes is found in the declared set",
+         %{store: store} do
+      plugin = build_plugin("elsewhere", topic: "e")
+      Mimic.stub(HubManager, :operator_plugins, fn @namespace -> [] end)
+      Mimic.stub(HubManager, :declared_plugins, fn @namespace -> [{@operator_id, [plugin]}] end)
+
+      assert {:ok, "plugin disabled"} = PluginManager.disable_plugin_group("elsewhere")
+      assert read_plugins(store) == []
+    end
+
+    test "the verb is judged in the namespace the rows name" do
+      assert PluginManager.target_namespace("elsewhere") == @namespace
+      assert PluginManager.target_namespace("nowhere") == "_system"
+    end
+
+    test "a detach run on a hub node elsewhere still drops this node's entry" do
+      plugin = build_plugin("gateway_listener", [])
+      assert :claimed = GenServer.call(PluginManager, {:claim, "gateway_listener", plugin})
+      GenServer.cast(PluginManager, {:confirm, "gateway_listener"})
+      assert Map.has_key?(PluginManager.get_plugins(), "gateway_listener")
+
+      Mimic.stub(Directory, :hub_nodes, fn _ns -> [:"nohub@127.0.0.1"] end)
+
+      assert {:error, :registry_unavailable} =
+               PluginManager.detach(@namespace, @operator_id, "gateway_listener")
+
+      refute Map.has_key?(PluginManager.get_plugins(), "gateway_listener")
+    end
+
+    test "a released plugin reads as ended only once its operator is declared no more" do
+      Mimic.stub(HubManager, :operator_plugins, fn @namespace, _id ->
+        {:error, {:operator_not_found, @namespace, @operator_id}}
+      end)
+
+      Mimic.stub(HubManager, :declared_operators, fn @namespace -> [] end)
+      assert PluginManager.attachment(@namespace, @operator_id, "l") == :operator_ended
+
+      # Between two homes: declared, with no row yet, for an operator or a
+      # group whose members a rescale is restarting.
+      Mimic.stub(HubManager, :declared_operators, fn @namespace ->
+        [%{id: @operator_id, factory_id: nil}, %{id: "grp#p0", factory_id: nil}]
+      end)
+
+      assert PluginManager.attachment(@namespace, @operator_id, "l") == :unknown
+      assert PluginManager.attachment(@namespace, "grp", "l") == :unknown
+    end
+
+    test "an enable still in flight on this node is refused" do
+      assert :claimed =
+               GenServer.call(PluginManager, {:claim, "in_flight", build_plugin("in_flight", [])})
+
+      assert {:error, {:plugin_enabling, "in_flight"}} =
+               PluginManager.disable_plugin_group("in_flight")
+
+      PluginManager.unregister_plugin("in_flight")
     end
   end
 
@@ -352,6 +485,10 @@ defmodule Flezha.Service.PluginManagerTest do
         end
       end)
 
+      Mimic.stub(HubManager, :operator_plugins, fn @namespace ->
+        for {id, cspec} <- Agent.get(cspecs, & &1), do: {id, plugins_of(cspec)}
+      end)
+
       %{members: members, cspecs: cspecs}
     end
 
@@ -389,6 +526,32 @@ defmodule Flezha.Service.PluginManagerTest do
       store = Agent.get(cspecs, & &1)
       assert Enum.all?(Map.values(store), &(plugins_of(&1) == []))
       assert Map.keys(PluginManager.get_plugins()) == []
+    end
+
+    test "a group whose member rows carry the plugin is detached from this node's empty table",
+         %{cspecs: cspecs, overwatch: overwatch} do
+      plugin = %{build_plugin("ohlc_ws", url: "wss://x") | operator_id: @group}
+      assert {:ok, _} = PluginManager.enable_plugin("ohlc_ws", plugin)
+      Enum.each(Map.keys(PluginManager.get_plugins()), &PluginManager.unregister_plugin/1)
+      assert PluginManager.get_plugins() == %{}
+      send(overwatch, :record_unsubscribes)
+
+      assert {:ok, message} = PluginManager.disable_plugin_group("ohlc_ws")
+      assert message =~ "3 partitions"
+      assert Enum.all?(Map.values(Agent.get(cspecs, & &1)), &(plugins_of(&1) == []))
+
+      send(overwatch, {:dump_unsubscribes, self()})
+      assert_receive {:unsubscribes, unsubscribed}, 500
+      assert Enum.sort(unsubscribed) == ["ohlc_ws#p0", "ohlc_ws#p1", "ohlc_ws#p2"]
+    end
+
+    test "detach/3 of a group reaches every current member", %{cspecs: cspecs} do
+      plugin = %{build_plugin("ohlc_ws", url: "wss://x") | operator_id: @group}
+      assert {:ok, _} = PluginManager.enable_plugin("ohlc_ws", plugin)
+      Enum.each(Map.keys(PluginManager.get_plugins()), &PluginManager.unregister_plugin/1)
+
+      assert :ok = PluginManager.detach(@namespace, @group, "ohlc_ws")
+      assert Enum.all?(Map.values(Agent.get(cspecs, & &1)), &(plugins_of(&1) == []))
     end
 
     test "a fully-already-enabled group re-run is a no-op" do

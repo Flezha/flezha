@@ -614,28 +614,34 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
       assert {:ok, [%{type: :dead_lettered}]} = TaskJournal.read(inst)
     end
 
-    # fails when: the caller waiting on a failed turn is answered before the
-    # turn's `dead_lettered` record is durable, or not at all.
-    test "a called turn's caller is answered once its record is durable", ctx do
+    # fails when: a failed turn is announced (its caller answered, its
+    # listeners told) before the turn's `dead_lettered` record is durable, or
+    # not at all.
+    test "a failed turn is announced once its record is durable", ctx do
       %{inst: inst} = ctx
       test_pid = self()
       {:ok, 0} = InputLog.append(inst, "boom", %{"flz.reply_to" => "w:caller"})
       set_mimic_global_until_exit()
 
-      Mimic.stub(TaskJournal, :answer_turn_call, fn id, turn, entry_ref ->
-        send(test_pid, {:journal_when_answered, TaskJournal.read(id)})
-        Mimic.call_original(TaskJournal, :answer_turn_call, [id, turn, entry_ref])
+      Mimic.stub(TaskJournal, :announce_turn, fn id, turn, entry_ref ->
+        send(test_pid, {:journal_when_announced, TaskJournal.read(id)})
+        Mimic.call_original(TaskJournal, :announce_turn, [id, turn, entry_ref])
       end)
 
       ExUnit.CaptureLog.capture_log(fn ->
         assert %{error: nil} = send_dead_letter(ctx, inst, 0, "ref-dl-called")
       end)
 
-      assert_receive {:journal_when_answered, {:ok, [%{type: :dead_lettered}]}}, 2_000
-      assert_receive {:"$gen_cast", {:dead_lettered, "w:caller", ref, error}}, 2_000
+      assert_receive {:journal_when_announced, {:ok, [%{type: :dead_lettered}]}}, 2_000
+
+      assert_receive {:"$gen_cast",
+                      {:dead_lettered, %{token: "w:caller", entry: ref, error: error} = notice}},
+                     2_000
+
       assert [%{"id" => id}] = Flezha.Dlq.Store.list(inst)
       assert ref == "#{inst}/_turn/#{id}"
       assert error == "tasklet `answer` failed after 3 attempt(s): model unavailable"
+      assert %{offset: 0, tasklet: "answer", attempts: 3} = notice
     end
 
     test "a park the store refuses journals nothing and answers an error", ctx do

@@ -97,7 +97,7 @@ Flezha.State.ProcJournal.read/1                                        # 1 site,
 Flezha.State.Registry.operative_classes/0                              # 1 site, lib/flezha_ui/service/node_manager.ex:910
 Flezha.State.TimeTravel.query/2                                        # 1 site, lib/flezha_ui/service/node_manager.ex:1646
 Flezha.Transport.LivenessCounters.snapshot_all/0                       # 1 site, lib/flezha_ui/service/node_manager.ex:1495
-Flezha.disable_plugin/1                                                # 1 site, lib/flezha_ui/service/node_manager.ex:1318
+Flezha.disable_plugin/1                                                # 1 site, lib/flezha_ui/service/node_manager.ex:1318; now disable_plugin_group/1: a group id disables every member's instance
 Flezha.list_factories/1                                                # 1 site, lib/flezha_ui/service/node_manager.ex:712
 Flezha.list_namespaces/0                                               # 1 site, lib/flezha_ui/service/node_manager.ex:433
 Flezha.list_operatives/1                                               # 1 site, lib/flezha_ui/service/node_manager.ex:437

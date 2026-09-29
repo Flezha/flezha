@@ -301,6 +301,20 @@ fn describe(frames: &[CapturedFrame]) -> String {
     format!("{ids:?}")
 }
 
+/// One `output_part` frame as the run reports it, which is how a veneer's
+/// test reads what a part carried.
+pub fn part_line(message: &[u8], metadata: &payloader::PayloadMetadata) -> String {
+    let stamp = |key: &str| metadata.get(key).map_or("-", String::as_str);
+    format!(
+        "part {} attempt {} channel {} cell {} payload {}",
+        stamp("flz.part"),
+        stamp("flz.part_attempt"),
+        stamp("channel"),
+        stamp("flz.cell"),
+        String::from_utf8_lossy(message)
+    )
+}
+
 fn capture(stream: FlezhaStream, frames: Frames, closed: Arc<AtomicUsize>) {
     let (captured, arrived) = &*frames;
     while let Ok((payload_id, message, _metadata)) = payloader::extract_payload(&stream) {
@@ -419,8 +433,9 @@ impl Scenario {
     }
 
     /// Count output frames on the secondary stream. An output is a frame
-    /// under the operator id; the heartbeat and the record frames beside it
-    /// carry their own payload ids and are drained.
+    /// under the operator id; a part is reported as its line; the heartbeat
+    /// and the record frames beside them carry their own payload ids and are
+    /// drained.
     fn count_outputs(&self, secondary: UnixStream, report: Progress<'_>) -> Result<usize, String> {
         if self.expect_outputs == 0 {
             return Ok(0);
@@ -442,6 +457,11 @@ impl Scenario {
             }
             match payloader::extract_payload(&stream) {
                 Ok((payload_id, _, _)) if payload_id == self.operator_id => seen += 1,
+                Ok((payload_id, message, metadata))
+                    if payload_id == flz_core::part::PART_PAYLOAD_ID =>
+                {
+                    report(&part_line(&message, &metadata));
+                }
                 Ok((payload_id, _, _)) => other.push(payload_id),
                 Err(e) => {
                     return Err(format!(

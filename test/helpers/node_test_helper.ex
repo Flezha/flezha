@@ -305,7 +305,8 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     :partitioned,
     :schema_evolution,
     :shorthand,
-    :call_response
+    :call_response,
+    :parts
   ]
 
   # The surface every SDK carries; a manifest cannot defer these, and every
@@ -336,7 +337,8 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     :correction_window,
     :bounded,
     :shorthand,
-    :call_response
+    :call_response,
+    :parts
   ]
 
   def capabilities, do: @capabilities

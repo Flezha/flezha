@@ -40,6 +40,7 @@ defmodule Flezha.Service.HubManager do
   defdelegate live_pid(arg1), to: Rows
   defdelegate migration_strategy(), to: Lifecycle
   defdelegate operator_plugins(arg1), to: Rows
+  defdelegate declared_plugins(arg1), to: Rows
   defdelegate operator_plugins(arg1, arg2), to: Rows
   defdelegate operator_rows(arg1), to: Rows
   defdelegate operator_runner_tag(arg1, arg2), to: Placement

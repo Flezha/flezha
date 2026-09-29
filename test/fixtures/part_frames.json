@@ -1,0 +1,75 @@
+{
+  "comment": "The part frames of tasklet p0 of operator part_fixture on its sink answer: the input 3, then retry:2, whose first attempt fails after its parts. flz_core's part tests and the Elixir SDK's part test produce these, in this order.",
+  "frames": [
+    {
+      "payload": "1",
+      "metadata": {
+        "channel": "answer",
+        "flz.part": "0",
+        "flz.part_attempt": "1",
+        "flz.cell": "part_fixture/p0/",
+        "flz.operator": "part_fixture"
+      }
+    },
+    {
+      "payload": "2",
+      "metadata": {
+        "channel": "answer",
+        "flz.part": "1",
+        "flz.part_attempt": "1",
+        "flz.cell": "part_fixture/p0/",
+        "flz.operator": "part_fixture"
+      }
+    },
+    {
+      "payload": "3",
+      "metadata": {
+        "channel": "answer",
+        "flz.part": "2",
+        "flz.part_attempt": "1",
+        "flz.cell": "part_fixture/p0/",
+        "flz.operator": "part_fixture"
+      }
+    },
+    {
+      "payload": "1",
+      "metadata": {
+        "channel": "answer",
+        "flz.part": "0",
+        "flz.part_attempt": "1",
+        "flz.cell": "part_fixture/p0/",
+        "flz.operator": "part_fixture"
+      }
+    },
+    {
+      "payload": "2",
+      "metadata": {
+        "channel": "answer",
+        "flz.part": "1",
+        "flz.part_attempt": "1",
+        "flz.cell": "part_fixture/p0/",
+        "flz.operator": "part_fixture"
+      }
+    },
+    {
+      "payload": "1",
+      "metadata": {
+        "channel": "answer",
+        "flz.part": "0",
+        "flz.part_attempt": "2",
+        "flz.cell": "part_fixture/p0/",
+        "flz.operator": "part_fixture"
+      }
+    },
+    {
+      "payload": "2",
+      "metadata": {
+        "channel": "answer",
+        "flz.part": "1",
+        "flz.part_attempt": "2",
+        "flz.cell": "part_fixture/p0/",
+        "flz.operator": "part_fixture"
+      }
+    }
+  ]
+}

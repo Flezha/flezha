@@ -1,8 +1,10 @@
 defmodule Flezha.Service.CliManager.ListenTest do
   @moduledoc """
   `flz operator listen` and `flz operator send --await` on the controller,
-  with the plugin manager and the delivery stubbed: what a frame prints as,
-  what ends the loop, and that the listener is detached on every route out.
+  with the plugin manager and the delivery stubbed: what a frame, a part and a
+  dead-letter notice print as, what ends the loop, and that the listener is
+  detached on every route out. The listener itself is
+  `test/flezha/service/listener_test.exs`.
 
   The live operator, the real forwarder and a partition group are
   `test/system/operator_listen_e2e_test.exs`.
@@ -22,14 +24,17 @@ defmodule Flezha.Service.CliManager.ListenTest do
   setup do
     test = self()
 
+    # The forwarder sends to its `recv_pid`, the listener's relay: the frames
+    # the verb's process staged are sent there once it is attached.
     stub(PluginManager, :enable_plugin, fn id, plugin ->
       send(test, {:call, :enable, {id, plugin, self()}})
+      for frame <- Process.get(:frames, []), do: send(plugin.opts.recv_pid, frame)
       {:ok, "plugin enabled"}
     end)
 
-    stub(PluginManager, :disable_plugin_group, fn id ->
+    stub(PluginManager, :detach, fn _ns, _op, id ->
       send(test, {:call, :detach, id})
-      {:ok, "plugin disabled"}
+      :ok
     end)
 
     stub(OperatorManager, :send_io_confirming, fn _op, _ns, _message, _metadata ->
@@ -63,6 +68,43 @@ defmodule Flezha.Service.CliManager.ListenTest do
                  "-\tagain\n"
     end
 
+    test "text tells a part and a dead-letter notice from an output" do
+      out =
+        in_caller(fn ->
+          preview("hel", %{"channel" => "answer", "flz.part" => "0", "flz.part_attempt" => "1"})
+          forward("hello", %{"channel" => "answer"})
+          notice("in")
+          CliManager.operator_listen("ns", "op", "output", duration_ms: 50)
+        end)
+
+      assert [part, output, notice] = String.split(out, "\n", trim: true)
+      assert part == "answer\thel\tpart=0 attempt=1"
+      assert output == "answer\thello"
+      assert [channel, message, fields] = String.split(notice, "\t")
+      assert channel == "in"
+      assert message =~ "was dead-lettered as 'op/t/e1'"
+      assert fields == "error=input.dead_lettered entry=op/t/e1"
+    end
+
+    test "json names the kind of every line, and a notice carries its error" do
+      out =
+        in_caller(fn ->
+          preview("hel", %{"channel" => "answer", "flz.part" => "0", "flz.part_attempt" => "1"})
+          forward("hello", %{"channel" => "answer"})
+          notice("in")
+          CliManager.operator_listen("ns", "op", "output", output: "json", duration_ms: 50)
+        end)
+
+      assert [part, output, notice] =
+               out |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1)
+
+      assert %{"kind" => "part", "payload" => "hel"} = part
+      assert %{"kind" => "output", "payload" => "hello"} = output
+      assert %{"kind" => "dead_lettered", "channel" => "in", "error" => error} = notice
+      assert %{"code" => "input.dead_lettered", "details" => %{"entry" => "op/t/e1"}} = error
+      refute Map.has_key?(notice, "payload")
+    end
+
     test "json carries the whole map, and bytes that are not text in a readable form" do
       out =
         in_caller(fn ->
@@ -73,11 +115,13 @@ defmodule Flezha.Service.CliManager.ListenTest do
 
       assert out |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1) == [
                %{
+                 "kind" => "output",
                  "channel" => "echo",
                  "payload" => "hello",
                  "metadata" => %{"channel" => "echo", "flz.key" => "k"}
                },
                %{
+                 "kind" => "output",
                  "channel" => nil,
                  "payload_base64" => "/wA=",
                  "metadata" => %{"flz.key" => "<<255>>"}
@@ -95,17 +139,16 @@ defmodule Flezha.Service.CliManager.ListenTest do
                namespace: "default",
                operator_id: "op",
                hooks: [{:on_input, []}],
-               opts: %{recv_pid: ^listener, plugin_id: ^id}
+               opts: %{recv_pid: relay, plugin_id: ^id}
              } = plugin
+
+      assert is_pid(relay) and relay != listener
     end
 
-    test "a heartbeat is answered while the loop runs", %{parent: test} do
-      in_caller(fn ->
-        send(self(), {:heartbeat_keepalive, test})
-        CliManager.operator_listen("ns", "op", "output", duration_ms: 50)
-      end)
-
-      assert_received {:heartbeat_keepalive, :ok}
+    test "an output listener takes the output chain and the previews" do
+      in_caller(fn -> CliManager.operator_listen("ns", "op", "output", duration_ms: 10) end)
+      assert [{:enable, {_id, plugin, _}}, {:detach, _}] = calls()
+      assert plugin.hooks == [{:on_output, []}, {:on_preview, []}]
     end
 
     test "the caller's group leader going away ends the loop and detaches" do
@@ -123,26 +166,6 @@ defmodule Flezha.Service.CliManager.ListenTest do
 
       assert_receive {:call, :detach, ^id}
       assert_receive {:DOWN, ^ref, :process, ^listener, :normal}
-    end
-
-    test "an exit signal ends the loop and detaches, and a normal one does not", %{parent: test} do
-      listener =
-        spawn(fn ->
-          capture_io(fn ->
-            CliManager.operator_listen("ns", "op", "output", duration_ms: 60_000)
-          end)
-        end)
-
-      assert_receive {:call, :enable, {id, _plugin, ^listener}}
-
-      # The heartbeat is answered only once the loop has read past the normal exit.
-      Process.exit(listener, :normal)
-      send(listener, {:heartbeat_keepalive, test})
-      assert_receive {:heartbeat_keepalive, :ok}
-      refute_received {:call, :detach, _}
-
-      Process.exit(listener, :shutdown)
-      assert_receive {:call, :detach, ^id}
     end
 
     test "a refused enable is reported, and whatever it left is detached" do
@@ -184,8 +207,14 @@ defmodule Flezha.Service.CliManager.ListenTest do
     test "attaches before it delivers, prints the verdict, then what came back", %{parent: test} do
       stub(OperatorManager, :send_io_confirming, fn "op", "ns", "hello", %{} ->
         send(test, {:call, :deliver, nil})
-        forward("hello", %{"channel" => "echo"})
+        send(Process.get(:relay), {:message_forward, {"hello", %{"channel" => "echo"}}})
         :ok
+      end)
+
+      stub(PluginManager, :enable_plugin, fn id, plugin ->
+        send(test, {:call, :enable, {id, plugin, self()}})
+        Process.put(:relay, plugin.opts.recv_pid)
+        {:ok, "plugin enabled"}
       end)
 
       out = in_caller(fn -> CliManager.operator_send("ns", "op", "hello", "", await_ms: 50) end)
@@ -224,8 +253,24 @@ defmodule Flezha.Service.CliManager.ListenTest do
     )
   end
 
-  # The forwarder sends to its `recv_pid`, which is the verb's own process.
-  defp forward(payload, metadata), do: send(self(), {:message_forward, {payload, metadata}})
+  # Staged in the verb's process; the enable stub hands them to the relay.
+  defp forward(payload, metadata), do: stage({:message_forward, {payload, metadata}})
+  defp preview(payload, metadata), do: stage({:preview_forward, {payload, metadata}})
+
+  defp notice(channel) do
+    error =
+      Flezha.Error.new("input.dead_lettered",
+        operator: "op",
+        channel: channel,
+        entry: "op/t/e1",
+        attempts: 3,
+        error: "boom"
+      )
+
+    preview(Flezha.Error.render(error, :json), %{"channel" => channel})
+  end
+
+  defp stage(frame), do: Process.put(:frames, Process.get(:frames, []) ++ [frame])
 
   defp calls() do
     receive do

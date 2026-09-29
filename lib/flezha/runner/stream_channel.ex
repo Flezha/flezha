@@ -380,15 +380,15 @@ defmodule Flezha.Runner.StreamChannel do
     {:noreply, mark_seen(state)}
   end
 
+  # A part (runner → controller): a preview for the operator's listeners. It
+  # names its instance in `flz.operator` and takes the route an output takes,
+  # so a superseded session's part is dropped exactly as its output would be.
+  def handle_info({:flz_data, _stream_id, "output_part", message, metadata}, state) do
+    {:noreply, cast_routed(state, metadata["flz.operator"], {:io_part, message, metadata})}
+  end
+
   def handle_info({:flz_data, _stream_id, operator_id, message, metadata}, state) do
-    {route, state} = Records.route(state, operator_id)
-
-    case route do
-      {:ok, pid} -> GenServer.cast(pid, {:io_out, message, metadata})
-      :drop -> :ok
-    end
-
-    {:noreply, mark_seen(state)}
+    {:noreply, cast_routed(state, operator_id, {:io_out, message, metadata})}
   end
 
   # Periodic liveness check: a bound SECONDARY stream whose last frame
@@ -518,6 +518,17 @@ defmodule Flezha.Runner.StreamChannel do
     Logger.warning("Unexpected message at io channel: #{inspect(msg)}")
 
     {:noreply, state}
+  end
+
+  defp cast_routed(state, operator_id, request) do
+    {route, state} = Records.route(state, operator_id || "")
+
+    case route do
+      {:ok, pid} -> GenServer.cast(pid, request)
+      :drop -> :ok
+    end
+
+    mark_seen(state)
   end
 
   # Durable-drain report of a credit session: `bytes` of credit already

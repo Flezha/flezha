@@ -149,7 +149,7 @@ defmodule Flezha.Load.CreditSoakTest do
 
     on_exit(fn ->
       try do
-        PluginManager.disable_plugin(@ws_plugin_id)
+        PluginManager.disable_plugin_group(@ws_plugin_id)
       catch
         _, _ -> :ok
       end
@@ -172,7 +172,7 @@ defmodule Flezha.Load.CreditSoakTest do
 
     # Stop the feed, then let in-flight input drain fully — proves the
     # parked backlog resumes to completion instead of wedging.
-    _ = PluginManager.disable_plugin(@ws_plugin_id)
+    _ = PluginManager.disable_plugin_group(@ws_plugin_id)
     assert wait_until(fn -> quiesced?(writer) end, 60_000), "WAL never quiesced after the run"
 
     first = List.first(samples)

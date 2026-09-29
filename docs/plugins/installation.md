@@ -89,6 +89,61 @@ docker run --rm -v "$PWD/my_plugin:/src" flezha/plugin-builder:0.1.0 \
   sh -c 'mix deps.get && mix flezha.plugin.package'
 ```
 
+## Listening to an operator from a plugin
+
+A plugin that streams an operator's output to a client of its own (an HTTP plugin's
+server-sent events, for one) reads it through `Flezha.Service.Listener.listen/4`, the
+listener `flz operator listen` uses. It runs in the calling process, hands the handler one
+event at a time, and detaches on every way out, a raise in the handler included. It does not
+authorize: a plugin decides for itself who may read.
+
+```elixir
+Flezha.Service.Listener.listen(namespace, operator_id, opts, handler)
+```
+
+`handler` receives an event and answers `:continue` or `:done`:
+
+| Event | What it is |
+|---|---|
+| `{:output, payload, metadata}` | an output on the operator's output chain |
+| `{:part, payload, metadata}` | a part: a preview a tasklet sent while it ran, `flz.part` its number within its attempt, `flz.part_attempt` the attempt |
+| `{:dead_lettered, %Flezha.Error{}, metadata}` | an input the operator dead-lettered, with the code `input.dead_lettered`, once its entry is durable |
+| `{:input, payload, metadata}` | with `direction: :input`, an input the operator ingests |
+| `:idle` | with `idle_ms`, no event for that long |
+
+| Option | Default | Meaning |
+|---|---|---|
+| `direction` | `:output` | `:output` (outputs, parts and notices) or `:input` |
+| `window_ms` | `:infinity` | a positive integer: how long to listen |
+| `idle_ms` | `:infinity` | a positive integer: call the handler with `:idle` after that long with no event |
+| `before` | none | a function run once after the attach, before the first event |
+| `watch` | none | a process whose exit ends the listener |
+
+It answers `{:ok, :window_closed | :done | :caller_down | :operator_ended}`, or
+`{:error, %Flezha.Error{}}`: the enable's own refusal (`operator.not_found`, for one),
+`listener.overrun` when the handler falls behind by more than `listener_pending_bytes` or
+`listener_pending_frames` of outputs (held parts are dropped first, oldest first, and a
+reader sees the gap as a jump in `flz.part`), or `listener.detached` when someone else
+disabled its plugin. The listener goes on across the operator sleeping and waking, being
+rebound, its Overwatch restarting, moving to another controller and a group rescale, and
+ends with `:operator_ended` when the operator ends.
+
+A server-sent events stream, with a comment every 15 seconds so a proxy keeps the
+connection and a client that left is noticed:
+
+```elixir
+Flezha.Service.Listener.listen(namespace, session_id, [idle_ms: 15_000], fn
+  {:part, payload, _metadata} -> write_event("part", payload)
+  {:output, payload, _metadata} -> write_event("output", payload)
+  {:dead_lettered, error, _metadata} -> write_event("dead_lettered", Flezha.Error.render(error, :json))
+  :idle -> write_comment()
+end)
+```
+
+`write_event/2` and `write_comment/0` write through the request's connection, which the
+plugin keeps in its own process, and answer `:continue`, or `:done` once the client has
+gone.
+
 ## Installing, uninstalling and syncing
 
 ```bash

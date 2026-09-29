@@ -85,7 +85,7 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
     enable("to_be_disabled")
     assert ["to_be_disabled"] = declared_plugin_ids(hub_id)
 
-    assert {:ok, _} = PluginManager.disable_plugin("to_be_disabled")
+    assert {:ok, _} = PluginManager.disable_plugin_group("to_be_disabled")
     assert [] = declared_plugin_ids(hub_id)
   end
 

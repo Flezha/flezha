@@ -5,17 +5,13 @@ defmodule Flezha.Service.Cli.Operator do
   """
 
   alias Flezha.AuthZ.Namespace
-  alias Flezha.Identificator
   alias Flezha.Observability.Signal
   alias Flezha.Operator.Builder
   alias Flezha.Operator.PartitionGroup
-  alias Flezha.Plugin
-  alias Flezha.Plugin.Provider.MonitoredIOForward
   alias Flezha.Plugin.SpecDecoder
-  alias Flezha.Process.Watch
   alias Flezha.Service.Cli.Context
   alias Flezha.Service.OperatorManager
-  alias Flezha.Service.PluginManager
+  alias Flezha.Service.Listener
   alias Flezha.Service.Bounded
 
   @doc """
@@ -283,13 +279,9 @@ defmodule Flezha.Service.Cli.Operator do
           deliver.()
 
         {:ok, window} ->
-          listen(
-            namespace,
-            operator_id,
-            :on_output,
-            :text,
-            Context.integer!(window, "--await"),
-            deliver
+          listen(namespace, operator_id, :text,
+            window_ms: Context.integer!(window, "--await"),
+            before: deliver
           )
       end
     end
@@ -366,16 +358,20 @@ defmodule Flezha.Service.Cli.Operator do
     end
   end
 
-  @chains [output: :on_output, input: :on_input]
+  @directions [:output, :input]
 
   @doc """
-  Print every frame the operator emits, or ingests when `direction` is
-  `input`, until the window closes, the caller goes away or this process is
-  told to exit.
+  Print every frame the operator emits (with its parts and dead-letter
+  notices), or ingests when `direction` is `input`, until the window closes,
+  the caller goes away or the operator ends.
   """
   def operator_listen(namespace, operator_id, direction, %{opts: opts}) do
-    chain = @chains[Context.atom!(direction, Keyword.keys(@chains), "direction")]
-    listen(namespace, operator_id, chain, frame_format(opts), Context.window(opts), fn -> :ok end)
+    direction = Context.atom!(direction, @directions, "direction")
+
+    listen(namespace, operator_id, frame_format(opts),
+      direction: direction,
+      window_ms: Context.window(opts)
+    )
   end
 
   defp frame_format(opts), do: if(Context.format(opts) == "json", do: :json, else: :text)
@@ -388,92 +384,72 @@ defmodule Flezha.Service.Cli.Operator do
     end
   end
 
-  # `before` runs after the attach, so a frame it causes cannot pass the
-  # operator ahead of the subscription. The detach resolves a group's `#pK`
-  # members as well as a plain id, and every route out of the loop reaches it.
-  #
-  # The caller's group leader lives on the `flz` node: its `DOWN` is the only
-  # signal this process gets when that node goes.
-  defp listen(namespace, operator_id, chain, format, window_ms, before) do
-    plugin_id = Identificator.mint(:plugin, "io_listener")
-    leader = Process.group_leader()
-    caller = Watch.watch(Watch.new(), leader, :caller)
-    trapping = Process.flag(:trap_exit, true)
+  # The listener is `Flezha.Service.Listener`'s; the verb only prints. The
+  # caller's group leader lives on the `flz` node, so its exit is the one
+  # signal that the node went away.
+  defp listen(namespace, operator_id, format, opts) do
+    opts = Keyword.put(opts, :watch, Process.group_leader())
 
-    try do
-      attach(plugin_id, Namespace.or_default(namespace), operator_id, chain)
-      before.()
-      Context.receive_for(window_ms, &listen_message(&1, caller, format))
-      :ok
-    after
-      PluginManager.disable_plugin_group(plugin_id)
-      Watch.forget(caller, leader)
-      Process.flag(:trap_exit, trapping)
+    case Listener.listen(Namespace.or_default(namespace), operator_id, opts, &print(&1, format)) do
+      {:ok, _outcome} -> :ok
+      {:error, _error} = ended -> ended
     end
   end
 
-  defp attach(plugin_id, namespace, operator_id, chain) do
-    plugin = %Plugin{
-      id: plugin_id,
-      provider: MonitoredIOForward,
-      namespace: namespace,
-      operator_id: operator_id,
-      opts: %{
-        recv_pid: self(),
-        plugin_id: plugin_id,
-        operator_id: operator_id,
-        namespace: namespace
-      },
-      hooks: [{chain, []}]
-    }
-
-    case PluginManager.enable_plugin(plugin_id, plugin) do
-      {:ok, summary} when is_binary(summary) ->
-        :ok
-
-      {:ok, :already_enabled} ->
-        Context.fail!({:plugin_id_taken, plugin_id, namespace, operator_id})
-
-      {:error, reason} ->
-        Context.fail!(reason)
-    end
-  end
-
-  defp listen_message({:message_forward, {payload, metadata}}, _caller, format) do
-    print_frame(payload, metadata, format)
+  defp print({:dead_lettered, error, metadata}, format) do
+    print_notice(error, metadata, format)
     :continue
   end
 
-  defp listen_message({:heartbeat_keepalive, from}, _caller, _format) do
-    send(from, {:heartbeat_keepalive, :ok})
+  defp print({kind, payload, metadata}, format) do
+    print_frame(kind, payload, metadata, format)
     :continue
   end
-
-  defp listen_message({:DOWN, _ref, :process, pid, _reason}, caller, _format),
-    do: if(Watch.watching?(caller, pid), do: :done, else: :continue)
-
-  defp listen_message({:EXIT, _pid, reason}, _caller, _format) when reason != :normal, do: :done
-  defp listen_message(_message, _caller, _format), do: :continue
 
   @stamps [{"flz.cell", "cell"}, {"flz.seq", "seq"}, {"flz.key", "key"}]
 
-  defp print_frame(payload, metadata, :text) do
+  defp print_frame(kind, payload, metadata, :text) do
     stamps =
       for {key, label} <- @stamps, Map.has_key?(metadata, key), do: "#{label}=#{metadata[key]}"
+
+    stamps =
+      if kind == :part,
+        do: ["part=#{metadata["flz.part"]} attempt=#{metadata["flz.part_attempt"]}" | stamps],
+        else: stamps
 
     stamped = if stamps == [], do: [], else: [Enum.join(stamps, " ")]
 
     IO.puts(Enum.intersperse([metadata["channel"] || "-", payload | stamped], "\t"))
   end
 
-  defp print_frame(payload, metadata, :json) do
+  defp print_frame(kind, payload, metadata, :json) do
     body =
       if String.valid?(payload),
         do: %{payload: payload},
         else: %{payload_base64: Base.encode64(payload)}
 
     body
-    |> Map.merge(%{channel: metadata["channel"], metadata: Signal.metadata_json(metadata)})
+    |> Map.merge(%{
+      kind: kind,
+      channel: metadata["channel"],
+      metadata: Signal.metadata_json(metadata)
+    })
+    |> Jason.encode!()
+    |> IO.puts()
+  end
+
+  defp print_notice(error, metadata, :text) do
+    fields = "error=#{error.code} entry=#{error.details["entry"]}"
+    IO.puts(Enum.join([metadata["channel"] || "-", error.message, fields], "\t"))
+  end
+
+  defp print_notice(error, metadata, :json) do
+    %{
+      kind: :dead_lettered,
+      channel: metadata["channel"],
+      error: error,
+      metadata: Signal.metadata_json(metadata)
+    }
     |> Jason.encode!()
     |> IO.puts()
   end

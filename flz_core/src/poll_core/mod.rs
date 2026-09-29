@@ -39,6 +39,15 @@ pub struct ItemAttempt {
     pub is_final: bool,
 }
 
+/// The items of a batch a host is handed, in its order. A close is consumed
+/// by the batch assembler and never becomes host work, so it is skipped here,
+/// which keeps a host's item index and the effect it answers aligned.
+pub fn host_items(items: &[ItemAttempt]) -> impl Iterator<Item = &ItemAttempt> {
+    items
+        .iter()
+        .filter(|work| !matches!(work.item, crate::cell::CellItem::CloseInterval))
+}
+
 /// One handed-out unit of work; for a [`EnginePayload::Work`] batch, holding
 /// it IS the cell's exclusivity until the token is answered.
 pub struct EngineActivation {
@@ -92,6 +101,16 @@ impl EngineActivation {
         match &self.payload {
             EnginePayload::Work { items, .. } => items,
             _ => &[],
+        }
+    }
+
+    /// The work item a host numbers `index`, and its Cell.
+    pub fn host_item(&self, index: usize) -> Option<(&Arc<CellSlot>, &ItemAttempt)> {
+        match &self.payload {
+            EnginePayload::Work { slot, items } => {
+                host_items(items).nth(index).map(|work| (slot, work))
+            }
+            _ => None,
         }
     }
 

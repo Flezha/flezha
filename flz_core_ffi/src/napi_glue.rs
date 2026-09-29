@@ -488,6 +488,15 @@ pub fn spawn_request(
     Ok(BigInt::from(handle))
 }
 
+/// Send a part of the invocation of the live activation `token`'s work item
+/// `item`. Synchronous: a part never waits.
+#[napi]
+pub fn part(token: BigInt, item: u32, payload: Buffer) -> Result<()> {
+    let ctx = context()?;
+    let token = from_big("token", &token)?;
+    Ok(veneer::part(ctx, token, item, &payload)?)
+}
+
 /// A spawn handle's answer as JSON if it has arrived, or `null`. Synchronous:
 /// the read it makes has a timeout of zero, which never waits.
 #[napi]
@@ -606,6 +615,7 @@ pub fn native_surface() -> Vec<JsNativeExport> {
         veneer("abandon", "flz_core_abandon"),
         veneer("shutdown", "flz_core_shutdown"),
         veneer("spawnRequest", "flz_core_spawn_request"),
+        veneer("part", "flz_core_part"),
         // A read that always passes a timeout of zero never waits.
         host("spawnTryResult", Some("flz_core_spawn_result"), false),
         veneer("spawnWait", "flz_core_spawn_result"),

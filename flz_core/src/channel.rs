@@ -186,6 +186,9 @@ pub struct ChannelDescriptor {
     /// carries `flz.reply_to` and answers its caller instead of reaching a
     /// plugin. A typed channel still serializes through `plugin_sink`.
     pub response: bool,
+    /// The channel's plugin end is a sink: the one end a part previews, since
+    /// a `response()` end's outputs are taken aside before any listener.
+    pub sink: bool,
     /// `.keyed()`: plugin emits require a key and carry `flz.*` stamps.
     pub keyed: bool,
     pub overflow_policy: OverflowPolicy,

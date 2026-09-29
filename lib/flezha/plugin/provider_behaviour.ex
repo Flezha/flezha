@@ -183,6 +183,8 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   @callback on_message(ctx :: struct(), opts :: map()) :: term()
   @callback on_snapshot(ctx :: struct(), opts :: map()) :: term()
   @callback on_terminate(ctx :: struct(), opts :: map()) :: term()
+  @doc "A part or a dead-letter notice, for listeners only: no sink implements it."
+  @callback on_preview(ctx :: struct(), opts :: map()) :: term()
 
   @lifecycle_callbacks [
     init_provider: 1,
@@ -200,7 +202,8 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     :on_interval,
     :on_message,
     :on_snapshot,
-    :on_terminate
+    :on_terminate,
+    :on_preview
   ]
 
   @optional_callbacks [
@@ -216,7 +219,8 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     on_interval: 2,
     on_message: 2,
     on_snapshot: 2,
-    on_terminate: 2
+    on_terminate: 2,
+    on_preview: 2
   ]
 
   @doc "The lifecycle callbacks a provider may override, as `{name, arity}`."

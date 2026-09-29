@@ -88,6 +88,27 @@ answers its last expression, so a `run` whose last line computes a value is
 ordinary Ruby, and the SDK neither emits nor refuses it; `Split` above could
 drop its `nil`.
 
+**A part previews the output while `run` is still working**: `ctx.part(value)`
+sends `value` on the tasklet's own output channel, encoded as `ctx.emit(value)`
+would encode it, and returns without waiting. It works in `run` and in
+`on_timer`, in an unbounded operator and in a bounded operator's stage. The
+operator's listeners receive the parts before the output; a sink never does,
+and a part is never durable or replayed. Parts are numbered from 0 within each
+attempt, so a retry starts its preview again.
+
+```ruby
+def run(prompt, ctx)
+  %w[he hel hell].each { |partial| ctx.part(partial) }
+  ctx.emit("hello")
+end
+```
+
+A part that cannot leave at once, such as in a local run, is dropped. A
+channel that does not end in a sink (it only feeds another tasklet, or ends in
+`response`) raises a `Flezha::Error` coded `part.no_sink`, and a context kept
+after its invocation returned raises `part.outside_invocation`. The testing
+harness sends nothing.
+
 **Every tasklet writes `tasklet_name`**, and a class wired without one is
 refused when its operator is declared, naming the class. The name is the
 tasklet's identity: its Cells' state is saved under it, so a class can be

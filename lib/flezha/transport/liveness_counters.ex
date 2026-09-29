@@ -72,7 +72,9 @@ defmodule Flezha.Transport.LivenessCounters do
   # climbing value is the user's one handle on the size of that loss.
   # `hb_timers_armed`/`hb_timers_fired` are the wake list's occupancy and its
   # firings: armed climbing while fired stays flat is promotion wedged rather
-  # than an idle Operator.
+  # than an idle Operator. `hb_parts_sent` and the three `hb_parts_dropped_*`
+  # slots mirror the parts a runner sent and the ones it dropped by reason: a
+  # part is a lossy preview, and these are where its loss shows.
   #
   # `credit_overrun_total` counts frames a credit-speaking sender pushed past
   # an exhausted ledger — protocol violations, so any non-zero value is an
@@ -230,6 +232,42 @@ defmodule Flezha.Transport.LivenessCounters do
         measurement: :count,
         heartbeat: "timers_fired",
         surface: [{:metric, :timers_fired}]
+      ],
+      [
+        name: :hb_parts_sent,
+        kind: :set,
+        scope: :runner,
+        aggregate: :sum,
+        measurement: :count,
+        heartbeat: "parts_sent",
+        surface: [{:metric, :parts_sent}]
+      ],
+      [
+        name: :hb_parts_dropped_no_stream,
+        kind: :set,
+        scope: :runner,
+        aggregate: :sum,
+        measurement: :count,
+        heartbeat: "parts_dropped_no_stream",
+        surface: [{:metric, :parts_dropped_no_stream}]
+      ],
+      [
+        name: :hb_parts_dropped_refused,
+        kind: :set,
+        scope: :runner,
+        aggregate: :sum,
+        measurement: :count,
+        heartbeat: "parts_dropped_refused",
+        surface: [{:metric, :parts_dropped_refused}]
+      ],
+      [
+        name: :hb_parts_dropped_too_large,
+        kind: :set,
+        scope: :runner,
+        aggregate: :sum,
+        measurement: :count,
+        heartbeat: "parts_dropped_too_large",
+        surface: [{:metric, :parts_dropped_too_large}]
       ],
       [
         name: :credit_active,

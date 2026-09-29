@@ -45,7 +45,6 @@ lib/flezha/operator/overwatch.ex -> Flezha.Service.HubManager
 lib/flezha/operator/overwatch.ex -> Flezha.State.Outbox
 lib/flezha/operator/overwatch.ex -> Flezha.State.Paths
 lib/flezha/operator/overwatch.ex -> Flezha.State.PersistenceResolver
-lib/flezha/operator/overwatch.ex -> Flezha.State.TaskJournal
 lib/flezha/operator/partition_group.ex -> Flezha.AuthZ.Quotas
 lib/flezha/operator/partition_group.ex -> Flezha.Dlq
 lib/flezha/operator/partition_group.ex -> Flezha.Plugin.Extension.Table

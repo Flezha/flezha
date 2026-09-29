@@ -352,6 +352,14 @@ pub fn spawn_request(
     verdict(ctx, status).map(|()| handle)
 }
 
+/// Send a part of the invocation of the live activation `token`'s work item
+/// `item`; never waits. A part the core dropped is `Ok` as well.
+pub fn part(ctx: CtxPtr, token: u64, item: u32, payload: &[u8]) -> Result<(), Refusal> {
+    verdict(ctx, unsafe {
+        crate::flz_core_part(ctx.get(), token, item, payload.as_ptr(), payload.len())
+    })
+}
+
 /// Read a spawn handle, waiting up to `timeout_ms`: `None` while pending,
 /// otherwise the resolved answer as JSON. A failed spawn, and a released
 /// handle, is a refusal.

@@ -152,6 +152,7 @@ fn build_channel(
         // of its plugin egress.
         plugin_sink: None,
         response: derived.response,
+        sink: derived.sink.is_some(),
         keyed: channel_decl.keyed,
         overflow_policy: match channel_decl.overflow {
             HostOverflow::DropNothing => OverflowPolicy::DropNothing,

@@ -52,17 +52,19 @@ defmodule Flezha.Dlq.Store do
   def append(server \\ __MODULE__, entry), do: GenServer.call(server, {:append, entry}, 30_000)
 
   @doc """
-  Tell the operator serving `operator_class` that the input an outside caller
-  waits on under `token` is dead-lettered as `entry_ref`, so the caller is
-  answered `call.failed` with `error`. Every park route calls this once its
-  park is durable; a park whose input carried no call owes nobody.
-  """
-  @spec answer_call(binary(), binary() | nil, String.t(), String.t()) :: :ok
-  def answer_call(_operator_class, nil, _entry_ref, _error), do: :ok
+  Tell the operator serving `operator_class` that one of its inputs is durably
+  dead-lettered: a caller waiting on it under `notice.token` is answered
+  `call.failed`, and its listeners are handed the `input.dead_lettered` notice.
+  Every input park route calls this once its park is durable; a payload parked
+  by a sink or a forward is an output, and none of them calls it.
 
-  def answer_call(operator_class, token, entry_ref, error) do
+  `notice` carries `token` (or `nil`), `entry`, `error` (the entry's error
+  text), `channel`, `offset` (or `nil`), `tasklet` and `attempts`.
+  """
+  @spec announce(binary(), map()) :: :ok
+  def announce(operator_class, notice) do
     with {:ok, overwatch} <- Lookup.overwatch(operator_class),
-         do: GenServer.cast(overwatch, {:dead_lettered, token, entry_ref, error})
+         do: GenServer.cast(overwatch, {:dead_lettered, notice})
 
     :ok
   end

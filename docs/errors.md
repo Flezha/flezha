@@ -166,11 +166,24 @@ SDK raises or returns its one error type carrying them.
 |---|---|---|---|---|
 | `durability.sync_ship_failed` | unavailable | 7 | operator '{operator}' declares synchronous durability, and shipping its state to the durability backend failed: {reason} |  |
 
+### input
+
+| Code | Class | Exit | Message | Hint |
+|---|---|---|---|---|
+| `input.dead_lettered` | unavailable | 7 | an input of operator '{operator}' on channel '{channel}' was dead-lettered as '{entry}' after {attempts} attempt(s): {error} | `flz dlq show {entry}` |
+
 ### internal
 
 | Code | Class | Exit | Message | Hint |
 |---|---|---|---|---|
 | `internal.uncatalogued` | internal | 1 | an unexpected failure: {reason} |  |
+
+### listener
+
+| Code | Class | Exit | Message | Hint |
+|---|---|---|---|---|
+| `listener.detached` | conflict | 6 | the listener on operator '{operator}' was disabled by another caller |  |
+| `listener.overrun` | unavailable | 7 | the listener on operator '{operator}' fell more than {bytes} bytes or {frames} frames behind and was ended | `flz operator listen {operator} again, or raise FLEZHA_LISTENER_PENDING_BYTES` |
 
 ### namespace
 
@@ -244,6 +257,13 @@ SDK raises or returns its one error type carrying them.
 | `operator.unknown_opts` | invalid | 2 | the operator options {opts} are not ones Flezha reads |  |
 | `operator.unpartitioned_running` | conflict | 6 | '{operator}' is already running as an unpartitioned operator, which a partitioned start cannot converge; stop it first or choose another group id | `flz operator stop {operator}` |
 | `operator.unresponsive` | unavailable | 7 | the operator did not answer; try again |  |
+
+### part
+
+| Code | Class | Exit | Message | Hint |
+|---|---|---|---|---|
+| `part.no_sink` | invalid | 2 | tasklet '{tasklet}' of operator '{operator}' sent a part, but its output channel '{channel}' has no sink | `declare a sink on the tasklet's channel` |
+| `part.outside_invocation` | invalid | 2 | a part was sent through a context whose invocation has already returned |  |
 
 ### plugin
 

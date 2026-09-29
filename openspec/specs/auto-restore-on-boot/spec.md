@@ -535,7 +535,7 @@ Holding SHALL be bounded by nothing but the arrival of a runner: a namespace who
 
 ### Requirement: Declared-set-write-first ordering for plugin mutations
 
-`Flezha.Service.PluginManager.enable_plugin/2`, `disable_plugin/1` and `persist_plugin_opt/5` SHALL commit the plugin mutation to the hub's declared-children set BEFORE issuing the runtime `:plugin_subscribe`/`:plugin_unsubscribe` to the Overwatch. The declared set is named here deliberately: the hub keeps two records of a child, and an auto-recovery hub never replays its process registry from disk, so the declared set is the only one a restart reads. A mutation held only in the registry row is lost by the restart it was written to survive.
+`Flezha.Service.PluginManager.enable_plugin/2`, `disable_plugin_group/1` (through `detach/3`) and `persist_plugin_opt/5` SHALL commit the plugin mutation to the hub's declared-children set BEFORE issuing the runtime `:plugin_subscribe`/`:plugin_unsubscribe` to the Overwatch. The declared set is named here deliberately: the hub keeps two records of a child, and an auto-recovery hub never replays its process registry from disk, so the declared set is the only one a restart reads. A mutation held only in the registry row is lost by the restart it was written to survive.
 
 The declared-set mutation SHALL be issued through the single start authority (`Flezha.Service.OperatorManager`), per `durable-operator-intent`, and never by the plugin manager reaching into the hub's declared-set API directly. An operator with no declared entry SHALL be refused rather than have one invented for it, so a plugin mutation can never resurrect an operator a stop removed for good.
 

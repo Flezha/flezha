@@ -268,8 +268,9 @@ defmodule Flezha.State.WalWriterOutboxTest do
   end
 
   # fails when: a tier park stops telling the Overwatch, once its entry is
-  # durable, that the called input it parked is dead-lettered.
-  test "tier-on park of a called input answers its caller once the entry is durable", %{
+  # durable, that the input it parked is dead-lettered, with the call waiting
+  # on it if there is one.
+  test "tier-on park of an input is announced once the entry is durable", %{
     rc: rc,
     cell_id: cell_id,
     base: base
@@ -281,18 +282,25 @@ defmodule Flezha.State.WalWriterOutboxTest do
     dlq = %{channel: "in", error: "kaboom", attempts: 3, payload: "poison"}
 
     :ok = WalWriter.append(pid, 0, effect_header(), effect_body([], 0, dlq))
-    refute_received {:"$gen_cast", {:dead_lettered, _, _, _}}
+    refute_received {:"$gen_cast", {:dead_lettered, _}}
 
     :ok = WalWriter.fsync(pid)
-    assert_receive {:"$gen_cast", {:dead_lettered, "w:caller", ref, "kaboom"}}, 2_000
+
+    assert_receive {:"$gen_cast",
+                    {:dead_lettered,
+                     %{token: "w:caller", entry: ref, error: "kaboom", channel: "in", offset: 0}}},
+                   2_000
+
     assert [entry] = DlqStore.list(rc)
     assert ref == "#{rc}/task/#{entry["id"]}"
 
-    # A parked input no caller waits on owes nobody.
+    # A parked input no caller waits on is announced to the listeners alone.
     :ok = WalWriter.append(pid, 1, effect_header(), effect_body([], 1, dlq))
     :ok = WalWriter.fsync(pid)
-    assert wait_until(fn -> length(DlqStore.list(rc)) == 2 end, 2_000)
-    refute_received {:"$gen_cast", {:dead_lettered, _, _, _}}
+
+    assert_receive {:"$gen_cast",
+                    {:dead_lettered, %{token: nil, offset: 1, tasklet: "task", attempts: 3}}},
+                   2_000
   end
 
   # KI-1: the outer window's own furthest offset must not overwrite the higher

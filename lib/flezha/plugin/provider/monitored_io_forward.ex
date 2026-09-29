@@ -22,7 +22,7 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
       plugin_id: [
         type: :string,
         required: true,
-        doc: "The plugin id the heartbeat disables, with every member a group fanned it out to"
+        doc: "The plugin id the heartbeat detaches, with every member a group fanned it out to"
       ],
       operator_id: [type: :string, required: true, doc: "The operator this binding belongs to"],
       namespace: [type: :any, required: true, doc: "The namespace this binding belongs to"],
@@ -39,6 +39,22 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
   def on_input(%Ctx.IO{} = ctx, opts), do: forward(ctx, opts)
   @impl true
   def on_output(%Ctx.IO{} = ctx, opts), do: forward(ctx, opts)
+
+  # A part or a notice never suspends the Overwatch on a busy distribution
+  # link: it is dropped instead, which a preview allows and an output does not.
+  @impl true
+  def on_preview(%Ctx.IO{message: msg, metadata: md} = ctx, %{recv_pid: recv_pid}) do
+    _ = Process.send(recv_pid, {:preview_forward, {msg, md}}, [:nosuspend])
+    {:ok, ctx}
+  end
+
+  # The table calls this on an unsubscribe, a teardown and a restart alike; the
+  # receiver asks the registry which it was.
+  @impl true
+  def terminate_provider(%{recv_pid: recv_pid, plugin_id: plugin_id}) do
+    send(recv_pid, {:listener_released, plugin_id})
+    :ok
+  end
 
   # A group fans one plugin out to every member under one `plugin_id`. Keyed by
   # that alone the members would share one heartbeat, and the first member's
@@ -70,6 +86,8 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
      arm_heartbeat(%{
        recv_pid: Map.fetch!(opts, :recv_pid),
        plugin_id: Map.fetch!(opts, :plugin_id),
+       operator_id: Map.fetch!(opts, :operator_id),
+       namespace: Map.fetch!(opts, :namespace),
        heartbeat_interval: interval
      })}
   end
@@ -90,7 +108,10 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
         {:noreply, state}
     after
       state.heartbeat_interval ->
-        Task.start(fn -> PluginManager.disable_plugin_group(state.plugin_id) end)
+        Task.start(fn ->
+          PluginManager.detach(state.namespace, state.operator_id, state.plugin_id)
+        end)
+
         {:stop, :normal, state}
     end
   end

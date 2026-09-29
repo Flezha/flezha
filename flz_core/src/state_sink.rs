@@ -278,6 +278,9 @@ pub enum Class {
     /// A heartbeat: owed no delivery at all, because it reports a moment that
     /// has passed. Its verdict is evidence for the caller's flood ladder.
     Probe,
+    /// A part: a [`Probe`](Self::Probe) that is also never waited on, so a
+    /// stream that cannot take it at once refuses it.
+    Preview,
 }
 
 impl Class {
@@ -288,6 +291,7 @@ impl Class {
             Class::Durable => "durable",
             Class::Output => "output",
             Class::Probe => "probe",
+            Class::Preview => "preview",
         }
     }
 }
@@ -318,6 +322,7 @@ impl Verdict {
 /// answers a refused write.
 pub fn write(class: Class, stream: Option<&FlezhaStream>, frame: Vec<u8>) -> Verdict {
     let refusal = match stream {
+        Some(stream) if class == Class::Preview => stream.try_write_frame(&frame).err(),
         Some(stream) => {
             let mut w: &FlezhaStream = stream;
             w.write_all(&frame).err()
@@ -330,7 +335,7 @@ pub fn write(class: Class, stream: Option<&FlezhaStream>, frame: Vec<u8>) -> Ver
 
     match (class, refusal) {
         (_, None) => Verdict::Written,
-        (Class::Control | Class::Probe, Some(e)) => Verdict::Refused(e),
+        (Class::Control | Class::Probe | Class::Preview, Some(e)) => Verdict::Refused(e),
         (Class::Durable | Class::Output, Some(e)) => {
             hold_failed_frame(class.kind(), frame, &e);
             Verdict::Held
@@ -586,7 +591,7 @@ mod tests {
         let _g = super::test_guard();
         reset_state();
 
-        for class in [Class::Control, Class::Probe] {
+        for class in [Class::Control, Class::Probe, Class::Preview] {
             let stream = dead_stream();
             let verdict = write(class, Some(&stream), b"c".to_vec());
             assert!(

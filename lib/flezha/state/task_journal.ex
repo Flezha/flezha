@@ -626,17 +626,23 @@ defmodule Flezha.State.TaskJournal do
   end
 
   @doc """
-  Answer the outside caller waiting on a failed turn's input, if one is:
-  called once the turn's `dead_lettered` record is durable and before its
-  input is released, since the token rides the input-log record the turn
-  consumed.
+  Announce a failed turn's dead letter (`Flezha.Dlq.Store.announce/2`): called
+  once the turn's `dead_lettered` record is durable and before its input is
+  released, since a caller's token rides the input-log record the turn consumed.
   """
-  @spec answer_turn_call(binary(), map(), String.t()) :: :ok
-  def answer_turn_call(_instance_id, %{consumed_offset: nil}, _entry_ref), do: :ok
+  @spec announce_turn(binary(), map(), String.t()) :: :ok
+  def announce_turn(instance_id, turn, entry_ref) do
+    offset = turn.consumed_offset
 
-  def answer_turn_call(instance_id, turn, entry_ref) do
-    token = InputLog.reply_to(instance_id, turn.consumed_offset)
-    Store.answer_call(instance_id, token, entry_ref, turn_error(turn))
+    Store.announce(instance_id, %{
+      token: offset && InputLog.reply_to(instance_id, offset),
+      entry: entry_ref,
+      error: turn_error(turn),
+      channel: turn.entry_channel,
+      offset: offset,
+      tasklet: turn.tasklet,
+      attempts: turn.attempts
+    })
   end
 
   defp turn_error(turn),

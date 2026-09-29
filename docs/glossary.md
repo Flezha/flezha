@@ -72,6 +72,16 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **Response end**: `response()`, a plugin end that turns each output of its channel into the
   answer to the outside call whose input caused it; no plugin, listener or sink sees that output.
   A channel carries one plugin end, a sink or a response. See [`sdk/calls.md`](sdk/calls.md).
+- **Part**: a preview of the output an invocation is producing, sent from inside `run` with
+  `ctx.part(value)` (`part(ctx, value)` in Elixir) and delivered at once to the operator's
+  listeners, and to nothing else. It carries its channel, a number from `0` within its attempt
+  and the attempt; it is never durable, may be dropped, and never reaches a sink or a waiting
+  caller. The output is the answer. See [`sdk/protocol_spec.md`](sdk/protocol_spec.md#data-stream-payload-id-output_part).
+- **Listener**: a reader of an operator's frames, `flz operator listen` or a plugin through
+  `Flezha.Service.Listener.listen/4`: its outputs, its parts and its dead-letter notices (or,
+  with `--input`, its inputs). Bounded by `listener_pending_bytes` and
+  `listener_pending_frames`, it survives the operator sleeping, being rebound, restarted,
+  moved or rescaled, ends when the operator ends, and leaves no plugin row behind.
 - **Call**: one input an outside caller (`flz operator call`, `Flezha.Service.Operator.call/6`
   or a feeding plugin) sends to an operator, waiting up to a deadline for the first answer a
   response end produces from it. See [`sdk/calls.md`](sdk/calls.md).
@@ -191,7 +201,9 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   (`Flezha.Dlq.Store`, `app_data/dlq/<operator_class>/<tasklet_id>/`): retry, park durably,
   advance. Entries are idempotent on their origin, retention is 30 days and 4 GiB, the surface is
   `flz dlq list|show|replay|drop`; a bounded operator parks only an unreadable message and a
-  failed turn of a `per_input` keep-progress loop, and otherwise aborts and compensates. See [`resilience/data_durability.md`](resilience/data_durability.md).
+  failed turn of a `per_input` keep-progress loop, and otherwise aborts and compensates. Once an
+  input's entry is durable, the operator's listeners see a notice carrying `input.dead_lettered`.
+  See [`resilience/data_durability.md`](resilience/data_durability.md).
 - **Late-input correction** — a declared `correction_window()` lets an event behind the event-time
   high-water mark rewind the cell to a baseline, replay the retained slice in event-time order
   and republish under a bumped epoch. Requires the tier, an event-time clock and keyed plugin

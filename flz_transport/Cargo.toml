@@ -34,8 +34,8 @@ tracing.workspace = true
 tempfile.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-# Already in the graph via mio; the direct dependency is one call, `getuid`,
-# for the access-denied diagnosis.
+# Already in the graph via mio; the direct dependency is `getuid`, for the
+# access-denied diagnosis, and `send`, for a write that must not wait.
 libc.workspace = true
 
 [lints]

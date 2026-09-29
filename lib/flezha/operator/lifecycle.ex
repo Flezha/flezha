@@ -163,9 +163,8 @@ defmodule Flezha.Operator.Lifecycle do
         placement \\ :resolve
       ) do
     state = bind_to_runner(state, operator.id, runner_id, owner)
-    plugins = Keyword.get(operator.opts, :plugins, [])
 
-    with {:ok, state} <- Plugins.prepare(state, plugins),
+    with {:ok, state} <- Plugins.prepare(state, declared_plugins(state, operator)),
          {:ok, state, operator} <- Plugins.resolve_init_state(state, operator),
          # Before the resume state is read: a bounded operator resumes from the
          # journal, restore count and log tail it finds here.
@@ -218,6 +217,16 @@ defmodule Flezha.Operator.Lifecycle do
     else
       {:error, reason, %Overwatch{} = parked} -> {:error, reason, parked}
       {:error, reason} -> {:error, reason, state}
+    end
+  end
+
+  # The operator's registry row, which every enable and disable rewrites, so a
+  # restart of this process after a runtime enable (a listener) brings that
+  # plugin up too; the start arguments when the row cannot be read yet.
+  defp declared_plugins(%Overwatch{namespace: namespace, id: id}, operator) do
+    case HubManager.operator_plugins(namespace, id) do
+      {:ok, plugins} -> plugins
+      {:error, _unreadable} -> Keyword.get(operator.opts, :plugins, [])
     end
   end
 
