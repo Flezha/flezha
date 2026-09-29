@@ -150,8 +150,15 @@ defmodule Flezha.AuthZ.EnforcementTest do
 
       output =
         capture_io(:stderr, fn ->
-          assert catch_exit(CliManager.installer_enable_plugin("some_plugin", token: raw)) ==
-                   {:shutdown, 4}
+          assert catch_exit(
+                   CliManager.enable_plugin(
+                     "some_plugin",
+                     "operator_stdout",
+                     "{}",
+                     ~s({"namespace": "_system", "operator_id": "some_op"}),
+                     token: raw
+                   )
+                 ) == {:shutdown, 4}
         end)
 
       assert output =~ "(authz.role_insufficient)"

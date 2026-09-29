@@ -1,9 +1,13 @@
 defmodule Flezha.Service.Cli.Plugin do
   @moduledoc """
-  `flz plugin` — enable, disable and help, plus the installer bridges
-  (install, upgrade, uninstall, list, info).
+  `flz plugin`: enable, disable, help and the provider list, the installed
+  package list, and the entry the verbs that place packages run in a VM of their
+  own.
   """
 
+  alias Flezha.Cluster.Directory
+  alias Flezha.Config.Durations
+  alias Flezha.Error
   alias Flezha.Plugin
   alias Flezha.Plugin.Installer
   alias Flezha.Plugin.Providers
@@ -41,11 +45,44 @@ defmodule Flezha.Service.Cli.Plugin do
     do: {:ok, %{namespace: PluginManager.target_namespace(plugin_id)}}
 
   @doc "Enables plugin."
-  def enable_plugin(plugin_id, _provider_id, _plugin_flags_json, _opts_json, %{row: row}) do
+  def enable_plugin(plugin_id, provider_id, _plugin_flags_json, _opts_json, %{row: row}) do
     with {:ok, plugin} <- plugin(plugin_id, row),
          {:ok, outcome} <- PluginManager.enable_plugin(plugin_id, plugin) do
       IO.puts(enabled_message(plugin_id, outcome))
+      warn_lacking(row.namespace, provider_id)
     end
+  end
+
+  # A provider comes from a package installed per controller, so another
+  # controller holding the namespace's hub may lack it. The enable proceeds; an
+  # operator placed there parks naming the provider.
+  defp warn_lacking(namespace, provider_id) do
+    case lacking(Directory.hub_nodes(namespace) -- [node()], provider_id) do
+      [] ->
+        :ok
+
+      lacking ->
+        IO.puts(
+          "warning: #{Enum.map_join(lacking, ", ", &to_string/1)} hold namespace " <>
+            "'#{namespace}' and lack provider '#{provider_id}' or did not answer; an " <>
+            "operator placed there parks"
+        )
+    end
+  end
+
+  @doc "The controllers of `peers` whose provider table has no `provider_id`, or that did not answer."
+  @spec lacking([node()], binary()) :: [node()]
+  def lacking(peers, provider_id) do
+    answers =
+      :erpc.multicall(
+        peers,
+        Providers,
+        :fetch,
+        [provider_id],
+        Durations.get(:plugin_peer_check_ms)
+      )
+
+    for {peer, answer} <- Enum.zip(peers, answers), not match?({:ok, {:ok, _}}, answer), do: peer
   end
 
   defp plugin(plugin_id, row) do
@@ -103,8 +140,12 @@ defmodule Flezha.Service.Cli.Plugin do
     end
   end
 
+  # A provider id a package declares that this controller did not load names
+  # the package and why, rather than being unknown.
   defp get_plugin_provider_mod(provider_id) do
-    with :error <- Providers.fetch(provider_id), do: {:error, {:unknown_provider, provider_id}}
+    with :error <- Providers.fetch(provider_id) do
+      {:error, Installer.unavailable(provider_id) || {:unknown_provider, provider_id}}
+    end
   end
 
   @doc """
@@ -116,114 +157,93 @@ defmodule Flezha.Service.Cli.Plugin do
          do: IO.puts("Plugin #{plugin_id} disabled successfully (#{msg}).")
   end
 
-  @doc "Install a plugin from a `.fpz` archive."
-  def install_plugin(path, _call) do
-    with {:ok, installed} <- Installer.install(path) do
-      IO.puts(
-        "Installed plugin #{installed.id}@#{installed.version} (status: #{installed.status})"
-      )
+  @doc """
+  The entry `flz plugin install`, `uninstall` and `sync` run in a VM of their
+  own (`flzvm eval`), never inside a running controller: they act on the plugin
+  root alone. Prints the answer and the absolute plugin root, and halts with the
+  exit code of the answer's class.
+  """
+  @spec eval(binary(), [binary()], keyword()) :: no_return()
+  def eval(verb, args, opts) do
+    Logger.configure(level: :warning)
+    {:ok, _} = Application.ensure_all_started([:crypto, :public_key, :ssl])
+    format = Context.format(opts)
+
+    answer =
+      case {verb, args} do
+        {"install", [source]} -> Installer.install(source)
+        {"uninstall", [id]} -> Installer.uninstall(id)
+        {"sync", []} -> Installer.sync()
+      end
+
+    case answer do
+      {:ok, done} ->
+        IO.puts(placed(verb, done, format))
+        System.halt(0)
+
+      {:error, reason} ->
+        reason |> Error.from_reason(nil) |> Context.render!(opts)
     end
   end
 
-  @doc "Upgrade an installed plugin to a new version in `path`."
-  def upgrade_plugin(plugin_id, path, _call) do
-    with {:ok, installed} <- Installer.upgrade(plugin_id, path),
-         do: IO.puts("Upgraded plugin #{installed.id} to #{installed.version}")
+  defp placed(_verb, done, "json"), do: Jason.encode!(done)
+
+  defp placed("install", done, _text) do
+    signed = if done.signed, do: "signed", else: "unsigned"
+
+    "Installed #{done.id} #{done.version} (#{signed}) into #{done.root}.\n" <>
+      "Restart the controller to load it."
   end
 
-  @doc "Uninstall an installed plugin by id."
-  def uninstall_plugin(plugin_id, _call) do
-    with :ok <- Installer.uninstall(plugin_id), do: IO.puts("Uninstalled plugin #{plugin_id}.")
+  defp placed("uninstall", done, _text),
+    do: "Uninstalled #{done.id} from #{done.root}.\nRestart the controller to unload it."
+
+  defp placed("sync", done, _text) do
+    placed = Enum.map(done.placed, &"#{&1.id} #{&1.version}")
+    removed = Enum.map(done.removed, &Path.basename/1)
+
+    "Synced #{done.root}: placed #{names(placed)}, kept #{names(done.kept)}, " <>
+      "removed #{names(removed)}.\nThe controller loads them at its next start."
   end
 
-  @doc "Enable an installed plugin (routes through the Installer)."
-  def installer_enable_plugin(plugin_id, _call) do
-    with :ok <- Installer.enable(plugin_id), do: IO.puts(enabled_message(plugin_id, :ok))
-  end
-
-  @doc "Disable an installed plugin (routes through the Installer)."
-  def installer_disable_plugin(plugin_id, _call) do
-    with :ok <- Installer.disable(plugin_id),
-         do: IO.puts("Plugin #{plugin_id} disabled successfully.")
-  end
+  defp names([]), do: "none"
+  defp names(names), do: Enum.join(names, ", ")
 
   @doc """
-  List every installed plugin, as text or as the JSON the caller's `output`
-  asks for.
+  Every package this controller loaded or refused at boot, and what its plugin
+  root holds since, as text or as the JSON the caller's `output` asks for.
   """
   def list_installed_plugins(%{opts: opts}) do
-    plugins = Installer.list()
+    rows = Installer.list()
 
     case Context.format(opts) do
       "json" ->
-        plugins
-        |> Enum.map(&installed_plugin_to_json/1)
-        |> Jason.encode!()
-        |> IO.puts()
+        rows |> Enum.map(&Map.from_struct/1) |> Jason.encode!() |> IO.puts()
+
+      _ when rows == [] ->
+        IO.puts("No plugin packages installed.")
 
       _ ->
-        if plugins == [] do
-          IO.puts("No plugins installed.")
-        else
-          IO.puts("Installed plugins:")
-
-          Enum.each(plugins, fn p ->
-            IO.puts("  #{p.id}@#{p.version} (#{p.status}) — #{p.description || ""}")
-          end)
-        end
+        Enum.each(rows, &IO.puts(installed_line(&1)))
     end
   end
 
-  @doc "Return detailed information about an installed plugin."
-  def installed_plugin_info(plugin_id, _call) do
-    case Installer.info(plugin_id) do
-      {:ok, p} ->
-        IO.puts("#{p.id}@#{p.version}")
-        IO.puts("  Status: #{p.status}")
-        IO.puts("  Description: #{p.description || "(none)"}")
-        IO.puts("  Author: #{p.author || "(none)"}")
-        IO.puts("  Modules: #{inspect(p.modules)}")
-        IO.puts("  Provides:")
+  defp installed_line(%{status: :loaded} = row),
+    do: "#{row.id} #{row.version}  loaded  providers: #{Enum.join(row.providers, ", ")}"
 
-        Enum.each(p.provides, fn prov ->
-          IO.puts("    - #{Map.get(prov, :id)} -> #{inspect(Map.get(prov, :provider))}")
-        end)
-
-      {:error, :not_found} ->
-        {:error, {:plugin_not_installed, plugin_id}}
-    end
+  defp installed_line(%{status: :refused, error: error} = row) do
+    hint = if error.hint, do: "\n    hint: #{error.hint}", else: ""
+    "#{row.id} #{row.version}  refused  #{error.message} (#{error.code})" <> hint
   end
 
-  @doc """
-  Returns `true` when `plugin_id` is tracked by `Flezha.Plugin.Installer`,
-  so the CLI's `enable`/`disable` commands know which code path to use.
-  """
-  def installed_plugin?(plugin_id, _call) do
-    case Installer.info(plugin_id) do
-      {:ok, _} -> true
-      _ -> false
-    end
-  end
+  defp installed_line(%{status: :pending, loaded_version: nil} = row),
+    do: "#{row.id} #{row.version}  pending  loads at next restart"
 
-  defp installed_plugin_to_json(%Flezha.Plugin.Installer.InstalledPlugin{} = p) do
-    %{
-      id: p.id,
-      version: p.version,
-      status: p.status,
-      description: p.description,
-      author: p.author,
-      modules: Enum.map(p.modules, &inspect/1),
-      provides:
-        Enum.map(p.provides, fn prov ->
-          %{
-            id: Map.get(prov, :id),
-            provider: inspect(Map.get(prov, :provider)),
-            scope: Map.get(prov, :scope)
-          }
-        end),
-      installed_at: p.installed_at
-    }
-  end
+  defp installed_line(%{status: :pending} = row),
+    do: "#{row.id} #{row.version}  pending  loads at next restart (running #{row.loaded_version})"
+
+  defp installed_line(%{status: :removed} = row),
+    do: "#{row.id} #{row.version}  removed  unloads at next restart"
 
   @doc "Show help for a specific plugin provider."
   def plugin_help(provider_id, _call) do
@@ -276,5 +296,10 @@ defmodule Flezha.Service.Cli.Plugin do
     end)
 
     IO.puts("Use 'flz plugin help <provider_id>' for detailed help on a specific plugin.")
+
+    case Enum.count(Installer.list(), &(&1.status == :refused)) do
+      0 -> :ok
+      n -> IO.puts("#{n} plugin package(s) were refused at boot: flz plugin list --installed")
+    end
   end
 end

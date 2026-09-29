@@ -118,11 +118,14 @@ SHALL refuse to start distribution rather than proceed without one, and SHALL sa
 The `flz` CLI SHALL accept a token (`--token` flag or `FLEZHA_TOKEN` environment
 variable) and pass it through to the controller in one place: the trailing options
 list every verb's request ends with, appended once by the one function that issues
-every RPC. No verb SHALL carry the credential another way, and no verb SHALL omit it,
-so that a verb cannot be gated on the controller and token-less on the wire. The
-controller SHALL resolve it via the token registry into the `caller_context` principal
-at one place. While authorization is enforced, a gated verb invoked without a
-resolvable principal SHALL be refused with a message naming the token requirement;
+every RPC. No verb SHALL carry the credential another way, and no verb that issues a
+request SHALL omit it, so that a verb cannot be gated on the controller and token-less on
+the wire. The verbs that run in a VM of their own and reach no controller
+(`flz plugin install`, `flz plugin uninstall`, `flz plugin sync`) issue no request and
+carry no token; write access to the plugin root is their gate. The controller SHALL
+resolve the token via the token registry into the `caller_context` principal at one
+place. While authorization is enforced, a gated verb invoked without a resolvable
+principal SHALL be refused with a message naming the token requirement;
 `flz auth bootstrap` SHALL remain callable without a prior token.
 
 #### Scenario: Token resolves to the CLI principal
@@ -141,17 +144,23 @@ resolvable principal SHALL be refused with a message naming the token requiremen
 
 #### Scenario: Every verb's request carries the token it was given
 
-- **WHEN** each verb `flz` builds is invoked with `--token <t>` against a shim that
-  echoes the request
+- **WHEN** each verb `flz` builds a request for is invoked with `--token <t>` against a
+  shim that echoes the request
 - **THEN** every echoed request SHALL end with an options list carrying `token: "<t>"`,
   and a verb whose request does not SHALL fail the CLI's own test
 
 #### Scenario: A verb that carries a JSON document still carries the token beside it
 
-- **WHEN** `flz plugin install`, `plugin upgrade` or `operator scale` is invoked with a
-  token
+- **WHEN** `flz plugin enable` or `operator scale` is invoked with a token
 - **THEN** the JSON document SHALL travel unchanged and the token SHALL ride the
   trailing options list, never inside the document
+
+#### Scenario: A verb that reaches no controller starts no RPC
+
+- **WHEN** `flz plugin install ./p.fpz --token <t>` is invoked against a shim that echoes
+  every `flzvm` invocation
+- **THEN** the shim SHALL see one `eval` and no `rpc`, and the token SHALL appear in
+  neither
 
 ### Requirement: Secure default posture
 

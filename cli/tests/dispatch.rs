@@ -35,12 +35,11 @@ const COMMANDS: &[(&str, &[&str])] = &[
         "plugin",
         &[
             "install",
-            "upgrade",
             "uninstall",
+            "sync",
             "enable",
             "disable",
             "list",
-            "info",
             "help",
         ],
     ),

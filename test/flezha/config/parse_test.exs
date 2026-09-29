@@ -79,6 +79,13 @@ defmodule Flezha.Config.ParseTest do
     assert config[:transport] == Config.default(:transport)
   end
 
+  test "a row declaring blank: :value keeps a variable set to nothing apart from unset" do
+    # A declared plugin list may be empty: set and empty is a list of no
+    # packages, which `flz plugin sync` converges the plugin root to.
+    assert Environment.runtime_config(%{"FLEZHA_PLUGINS" => ""}, :prod)[:plugins][:list] == ""
+    refute Keyword.has_key?(Environment.runtime_config(%{}, :prod)[:plugins], :list)
+  end
+
   test "a value pasted with a stray space still means what it looks like" do
     config = Environment.runtime_config(%{"FLEZHA_HEALTHZ_PORT" => " 9571 "}, :prod)
     assert config[:healthz_port] == 9571

@@ -960,13 +960,12 @@
         {"tag": "already_enabled", "args": ["plugin"]}
       ]
     },
-    "plugin.already_installed": {
-      "class": "conflict",
-      "message": "plugin '{plugin}' is already installed",
-      "hint": "flz plugin upgrade {plugin} <path>",
-      "details": ["plugin"],
+    "plugin.app_callback": {
+      "class": "invalid",
+      "message": "application {application} depends on flezha and declares an application callback; a plugin's processes are its providers' declared workers",
+      "details": ["application"],
       "reasons": [
-        {"tag": "already_installed", "args": ["plugin"]}
+        {"tag": "app_callback", "args": ["application"]}
       ]
     },
     "plugin.channel_spelled_twice": {
@@ -993,93 +992,21 @@
         {"tag": "channel_written_twice", "args": ["metadata_channel", "channel"]}
       ]
     },
-    "plugin.checksum_file_missing": {
+    "plugin.digest_mismatch": {
       "class": "invalid",
-      "message": "CHECKSUMS.sha256 lists '{path}', which the package does not contain",
-      "details": ["path"],
+      "message": "the archive from {source} has SHA-256 {actual}, not the pinned {expected}",
+      "details": ["source", "expected", "actual"],
       "reasons": [
-        {"tag": "checksum_file_missing", "args": ["path"]}
+        {"tag": "digest_mismatch", "args": ["source", "expected", "actual"]}
       ]
     },
-    "plugin.checksum_line_missing": {
-      "class": "invalid",
-      "message": "package file '{path}' has no line in CHECKSUMS.sha256",
-      "details": ["path"],
-      "reasons": [
-        {"tag": "checksum_line_missing", "args": ["path"]}
-      ]
-    },
-    "plugin.checksum_mismatch": {
-      "class": "invalid",
-      "message": "package file '{path}' does not match its line in CHECKSUMS.sha256",
-      "details": ["path"],
-      "reasons": [
-        {"tag": "checksum_mismatch", "args": ["path"]}
-      ]
-    },
-    "plugin.checksum_unreadable": {
-      "class": "internal",
-      "message": "package file '{path}' could not be read to check it",
-      "details": ["path", "reason"],
-      "reasons": [
-        {"tag": "checksum_io_error", "args": ["path", "reason"]}
-      ]
-    },
-    "plugin.checksums_malformed": {
-      "class": "invalid",
-      "message": "line {line_number} of CHECKSUMS.sha256 is not a SHA-256 digest followed by a path",
-      "details": ["line_number", "line"],
-      "reasons": [
-        {"tag": "malformed_line", "args": ["line_number", "line"], "at": ["plugin.install", "plugin.upgrade"]}
-      ]
-    },
-    "plugin.compile_failed": {
-      "class": "invalid",
-      "message": "package source '{file}' does not compile",
-      "details": ["file", "reason"],
-      "reasons": [
-        {"tag": "compile_failed", "args": ["file", "reason"]}
-      ]
-    },
-    "plugin.dependency_cycle": {
-      "class": "invalid",
-      "message": "installing the plugin would make a dependency cycle: {cycle}",
-      "details": ["cycle"],
-      "reasons": [
-        {"tag": "dependency_cycle", "args": ["cycle"]}
-      ]
-    },
-    "plugin.dependency_missing": {
-      "class": "not_found",
-      "message": "the plugin needs '{dependency}' {constraint}, which is not installed",
-      "hint": "flz plugin list --installed",
-      "details": ["dependency", "constraint"],
-      "reasons": [
-        {"tag": "dependency_missing", "args": ["dependency", "constraint"]}
-      ]
-    },
-    "plugin.dependency_unsatisfied": {
+    "plugin.duplicate_id": {
       "class": "conflict",
-      "message": "installed '{dependency}' is version {version}, which does not satisfy {constraint}",
-      "details": ["dependency", "constraint", "version"],
+      "message": "the archives {files} in the plugin root all declare package '{plugin}', so none of them is loaded",
+      "hint": "flz plugin uninstall {plugin}",
+      "details": ["plugin", "files"],
       "reasons": [
-        {"tag": "dependency_constraint", "args": ["dependency", "constraint", "version"]}
-      ]
-    },
-    "plugin.dependency_version_invalid": {
-      "class": "invalid",
-      "message": "a dependency version or constraint is malformed",
-      "details": ["reason"],
-      "reasons": [
-        {"tag": ["dependency_constraint", "version_raise"], "args": ["reason"]}
-      ]
-    },
-    "plugin.dependents_block": {
-      "class": "conflict",
-      "message": "installed plugins depend on this one and would break: {dependents}",
-      "details": ["dependents"],
-      "reasons": [
-        {"tag": "dependents_block", "args": ["dependents"]}
+        {"tag": "duplicate_id", "args": ["plugin", "files"]}
       ]
     },
     "plugin.enabling": {
@@ -1104,6 +1031,14 @@
       "details": ["provider", "option"],
       "reasons": [
         {"tag": "entry_channel_set", "args": ["provider", "option"]}
+      ]
+    },
+    "plugin.fetch_failed": {
+      "class": "unavailable",
+      "message": "the package could not be fetched from {source}: {reason}",
+      "details": ["source", "reason"],
+      "reasons": [
+        {"tag": "fetch_failed", "args": ["source", "reason"]}
       ]
     },
     "plugin.fields_missing": {
@@ -1326,14 +1261,6 @@
         {"tag": ["invalid_hook", "not_a_list"]}
       ]
     },
-    "plugin.id_mismatch": {
-      "class": "invalid",
-      "message": "the package is plugin '{package_plugin}', not '{plugin}'",
-      "details": ["package_plugin", "plugin"],
-      "reasons": [
-        {"tag": "id_mismatch", "args": ["package_plugin", "plugin"]}
-      ]
-    },
     "plugin.id_taken": {
       "class": "conflict",
       "message": "plugin id '{plugin}' is already registered for operator '{operator}' in namespace '{namespace}'",
@@ -1360,71 +1287,53 @@
         {"tag": "invalid_regex", "args": ["reason"]}
       ]
     },
-    "plugin.load_failed": {
-      "class": "unavailable",
-      "message": "plugin '{plugin}' failed to load when the controller started, so it cannot be enabled; upgrade or reinstall it",
-      "hint": "flz plugin info {plugin}",
-      "details": ["plugin"],
-      "reasons": [
-        {"tag": "load_failed", "args": ["plugin"]}
-      ]
-    },
-    "plugin.manifest_invalid": {
-      "class": "invalid",
-      "message": "the package's manifest.exs is refused: {problem} ({value})",
-      "details": ["problem", "value", "dependency"],
-      "reasons": [
-        {"tag": "manifest_invalid", "args": ["problem", "value"]},
-        {"tag": "manifest_invalid", "args": ["problem", "dependency", "value"]}
-      ]
-    },
-    "plugin.manifest_not_literal": {
-      "class": "invalid",
-      "message": "the package's manifest.exs must be a literal map, with nothing to evaluate",
-      "details": [],
-      "reasons": [
-        {"tag": "non_literal_ast"}
-      ]
-    },
-    "plugin.manifest_unparsable": {
-      "class": "invalid",
-      "message": "the package's manifest.exs is not valid Elixir",
-      "details": ["reason"],
-      "reasons": [
-        {"tag": "syntax", "args": ["reason"], "at": ["plugin.install", "plugin.upgrade"]},
-        {"tag": "eval_failed", "args": ["reason"]}
-      ]
-    },
-    "plugin.module_collision": {
+    "plugin.library_conflict": {
       "class": "conflict",
-      "message": "the package defines module {module}, which the controller or another plugin already has",
-      "details": ["module"],
+      "message": "the package bundles {application} {version}, and {holder} already holds {application} {loaded_version}; a controller holds one version of each library",
+      "hint": "pin {application} to {loaded_version} in the plugin project and package it again",
+      "details": ["application", "version", "loaded_version", "holder"],
       "reasons": [
-        {"tag": "module_collision", "args": ["module"]}
+        {"tag": "library_conflict", "args": ["application", "version", "loaded_version", "holder"]}
       ]
     },
-    "plugin.module_load_failed": {
-      "class": "internal",
-      "message": "module {module} of the package could not be loaded",
-      "details": ["module", "reason"],
+    "plugin.list_declared": {
+      "class": "conflict",
+      "message": "this node declares its plugins in {variable}, so install and uninstall are refused; change the list and restart the controller",
+      "details": ["variable"],
       "reasons": [
-        {"tag": "load_failed", "args": ["module", "reason"]}
+        {"tag": "list_declared", "args": ["variable"]}
       ]
     },
-    "plugin.module_mismatch": {
+    "plugin.list_not_declared": {
       "class": "invalid",
-      "message": "the package's sources define {produced}, and its manifest.exs declares {expected}",
-      "details": ["expected", "produced"],
+      "message": "{variable} is not set, so there is no plugin list to sync",
+      "details": ["variable"],
       "reasons": [
-        {"tag": "module_mismatch", "args": ["expected", "produced"]}
+        {"tag": "list_not_declared", "args": ["variable"]}
       ]
     },
-    "plugin.no_trusted_keys": {
-      "class": "denied",
-      "message": "the package is signed, but the controller trusts no key to verify it with",
-      "details": [],
+    "plugin.load_failed": {
+      "class": "internal",
+      "message": "the package could not be loaded: {what} failed ({reason})",
+      "details": ["what", "reason"],
       "reasons": [
-        {"tag": "no_trusted_keys"}
+        {"tag": "load_failed", "args": ["what", "reason"]}
+      ]
+    },
+    "plugin.module_conflict": {
+      "class": "conflict",
+      "message": "the package's module {module} is already held by {holder}",
+      "details": ["module", "holder"],
+      "reasons": [
+        {"tag": "module_conflict", "args": ["module", "holder"]}
+      ]
+    },
+    "plugin.native_code": {
+      "class": "invalid",
+      "message": "the package carries native code ({entry}); a plugin package holds only BEAM code",
+      "details": ["entry"],
+      "reasons": [
+        {"tag": "native_code", "args": ["entry"]}
       ]
     },
     "plugin.not_found": {
@@ -1505,45 +1414,13 @@
         {"tag": "options_required", "args": ["provider", "options"]}
       ]
     },
-    "plugin.package_layout_invalid": {
+    "plugin.package_invalid": {
       "class": "invalid",
-      "message": "the package layout is refused ({problem}): a package holds manifest.exs, CHECKSUMS.sha256, a src folder of .ex and .erl files, and optionally signature.sig",
-      "details": ["problem", "entry"],
+      "message": "the plugin package is refused: {problem}",
+      "hint": "package it again with mix flezha.plugin.package",
+      "details": ["problem"],
       "reasons": [
-        {"tag": "invalid_layout", "args": ["problem"]},
-        {"tag": "invalid_layout", "args": ["problem", "entry"]}
-      ]
-    },
-    "plugin.package_too_large": {
-      "class": "invalid",
-      "message": "the package unpacks to {bytes} bytes, above the limit of {max}",
-      "details": ["bytes", "max"],
-      "reasons": [
-        {"tag": "package_too_large", "args": ["bytes", "max"]}
-      ]
-    },
-    "plugin.package_too_many_files": {
-      "class": "invalid",
-      "message": "the package has {count} source files, above the limit of {max}",
-      "details": ["count", "max"],
-      "reasons": [
-        {"tag": "too_many_source_files", "args": ["count", "max"]}
-      ]
-    },
-    "plugin.package_unreadable": {
-      "class": "invalid",
-      "message": "the package is not a readable gzip tar archive",
-      "details": ["reason"],
-      "reasons": [
-        {"tag": "tar_failed", "args": ["reason"]}
-      ]
-    },
-    "plugin.package_unsafe_entry": {
-      "class": "invalid",
-      "message": "package entry '{entry}' is refused ({problem})",
-      "details": ["entry", "problem"],
-      "reasons": [
-        {"tag": "unsafe_entry", "args": ["entry", "problem"]}
+        {"tag": "package_invalid", "args": ["problem", "found"]}
       ]
     },
     "plugin.partition_placeholder_unfilled": {
@@ -1562,6 +1439,14 @@
         {"tag": "plugin_prepare_failed", "args": ["plugin", "reason"]}
       ]
     },
+    "plugin.protocol_consolidation_failed": {
+      "class": "internal",
+      "message": "protocol {protocol} could not be consolidated again with the package's implementations",
+      "details": ["protocol", "reason"],
+      "reasons": [
+        {"tag": "protocol_consolidation_failed", "args": ["protocol", "reason"]}
+      ]
+    },
     "plugin.provider_bad_answer": {
       "class": "internal",
       "message": "the plugin's provider answered with a value it may not return",
@@ -1569,6 +1454,14 @@
       "reasons": [
         {"tag": "invalid_init_provider_return", "args": ["answer"]},
         {"tag": "invalid_activate_return", "args": ["answer"]}
+      ]
+    },
+    "plugin.provider_conflict": {
+      "class": "conflict",
+      "message": "provider id '{provider}' is already taken by {holder}",
+      "details": ["provider", "holder"],
+      "reasons": [
+        {"tag": "provider_id_taken", "args": ["provider", "holder"]}
       ]
     },
     "plugin.provider_crashed": {
@@ -1579,13 +1472,38 @@
         {"tag": "init_provider_crashed", "args": ["provider", "kind", "reason"]}
       ]
     },
+    "plugin.provider_failed": {
+      "class": "internal",
+      "message": "provider '{provider}' of package '{plugin}' failed to start its worker: {reason}",
+      "details": ["plugin", "provider", "reason"],
+      "reasons": [
+        {"tag": "provider_failed", "args": ["plugin", "provider", "reason"]}
+      ]
+    },
     "plugin.provider_not_loaded": {
       "class": "not_found",
-      "message": "provider module {provider} is not loaded; its package may not be installed",
+      "message": "provider module {provider} is not loaded, and no plugin package installed on this controller provides it",
       "hint": "flz plugin list --installed",
       "details": ["provider"],
       "reasons": [
         {"tag": "module_not_loaded", "args": ["provider"]}
+      ]
+    },
+    "plugin.provider_refused": {
+      "class": "invalid",
+      "message": "provider '{provider}' of package '{plugin}' refused its options: {reason}",
+      "details": ["plugin", "provider", "reason"],
+      "reasons": [
+        {"tag": "provider_refused", "args": ["plugin", "provider", "reason"]}
+      ]
+    },
+    "plugin.provider_unavailable": {
+      "class": "unavailable",
+      "message": "provider {provider} belongs to package '{plugin}', which is {status} on this controller",
+      "hint": "flz plugin list --installed",
+      "details": ["provider", "plugin", "status", "code"],
+      "reasons": [
+        {"tag": "provider_unavailable", "args": ["provider", "plugin", "status", "code"]}
       ]
     },
     "plugin.registry_unavailable": {
@@ -1596,6 +1514,15 @@
         {"tag": "registry_unavailable", "at": ["plugin.enable", "plugin.disable"]},
         {"tag": "hub_unavailable", "at": ["plugin.enable", "plugin.disable"]},
         {"tag": "no_response", "at": ["plugin.enable", "plugin.disable"]}
+      ]
+    },
+    "plugin.runtime_mismatch": {
+      "class": "conflict",
+      "message": "the package was built on OTP {package_otp}, Elixir {package_elixir} and Flezha {package_flezha}; this controller runs OTP {otp}, Elixir {elixir} and Flezha {flezha}",
+      "hint": "package it again in flezha/plugin-builder:{flezha}",
+      "details": ["package_otp", "package_elixir", "package_flezha", "otp", "elixir", "flezha"],
+      "reasons": [
+        {"tag": "runtime_mismatch", "args": ["runtimes"]}
       ]
     },
     "plugin.service_failed": {
@@ -1615,19 +1542,28 @@
       ]
     },
     "plugin.signature_invalid": {
-      "class": "invalid",
+      "class": "denied",
       "message": "the package signature does not verify against any trusted key",
       "details": [],
       "reasons": [
         {"tag": "signature_invalid"}
       ]
     },
-    "plugin.signature_unreadable": {
-      "class": "internal",
-      "message": "the package's signature.sig could not be read",
-      "details": ["reason"],
+    "plugin.signature_required": {
+      "class": "denied",
+      "message": "the controller requires signed plugin packages, and this one carries no signature.sig",
+      "hint": "package it with mix flezha.plugin.package --sign <key.pem>",
+      "details": [],
       "reasons": [
-        {"tag": "signature_io", "args": ["reason"]}
+        {"tag": "signature_required"}
+      ]
+    },
+    "plugin.source_unsupported": {
+      "class": "invalid",
+      "message": "'{source}' is neither a local path nor an https:// URL",
+      "details": ["source"],
+      "reasons": [
+        {"tag": "source_unsupported", "args": ["source"]}
       ]
     },
     "plugin.spec_field_missing": {
@@ -1686,13 +1622,13 @@
         {"tag": "timeout_not_below_interval", "args": ["timeout_ms", "interval_ms"]}
       ]
     },
-    "plugin.uninstall_enabled": {
-      "class": "conflict",
-      "message": "plugin '{plugin}' is enabled; disable it before uninstalling it",
-      "hint": "flz plugin disable {plugin}",
-      "details": ["plugin"],
+    "plugin.trust_store_empty": {
+      "class": "invalid",
+      "message": "signed packages are required and no trusted key is configured, so no package can be verified",
+      "hint": "set FLEZHA_PLUGIN_TRUSTED_KEYS to the public keys packages are signed with",
+      "details": [],
       "reasons": [
-        {"tag": "plugin_enabled", "args": ["plugin"]}
+        {"tag": "trust_store_empty"}
       ]
     },
     "plugin.unknown_hook": {
@@ -1737,23 +1673,6 @@
       "details": ["options"],
       "reasons": [
         {"tag": "unread_plugin_options", "args": ["options"]}
-      ]
-    },
-    "plugin.unsigned_refused": {
-      "class": "denied",
-      "message": "the controller accepts only signed plugin packages, and this one carries no signature.sig",
-      "details": [],
-      "reasons": [
-        {"tag": "signature_required"},
-        {"tag": "unsigned_not_allowed"}
-      ]
-    },
-    "plugin.upgrade_failed": {
-      "class": "internal",
-      "message": "the upgrade failed while swapping the plugin's modules, and the previous version was restored",
-      "details": ["kind", "reason"],
-      "reasons": [
-        {"tag": "upgrade_crash", "args": ["kind", "reason"]}
       ]
     },
     "plugin.url_has_credentials": {
@@ -3143,7 +3062,7 @@
     }
   },
   "internal": [
-    "already_exist", "already_exists", "already_present", "already_started", "awake", "bad_header_size",
+    "already_exist", "already_exists", "already_loaded", "already_present", "already_started", "awake", "bad_header_size",
     "bad_marker_body", "bad_payload", "chmod", "claim_held", "client_not_running", "corrupt_index",
     "crc_mismatch", "delivery_crashed", "delivery_failed", "dispatch_timeout", "dlq_entry_missing",
     "durability_tier_disabled", "durability_tier_not_running", "einval", "enoent", "exception",
@@ -3156,7 +3075,7 @@
     "missing_items", "namespace_unknown", "no_ca_store", "no_channel", "no_connection",
     "no_endpoint_configured", "no_entry", "no_group_members", "no_partition_in_response",
     "no_pending_swap", "no_producer", "no_runner_id", "no_stream", "no_such_factory", "no_target_nodes",
-    "no_topic_in_response", "not_a_regular_file", "not_an_object", "not_grouped_hashing",
+    "no_topic_in_response", "not_a_regular_file", "not_an_ed25519_private_key", "not_an_object", "not_grouped_hashing",
     "not_in_manifest", "not_pem", "not_reusable", "not_running", "not_seq_addressed", "not_snapshotted",
     "not_whole_payload", "nothing_to_correct", "part_ahead_of_progress", "partial", "pem_decode_failed",
     "permanent", "ping_failed", "precondition_failed", "process_not_found", "progress_ahead",

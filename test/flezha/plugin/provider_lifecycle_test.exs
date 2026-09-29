@@ -22,6 +22,7 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
   alias Flezha.Plugin.Providers
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
+  alias Flezha.TestHelpers.PluginPackage
 
   alias __MODULE__.ConformanceWorker
 
@@ -235,6 +236,21 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
       for {id, provider} <- Providers.all() do
         drill(id, provider)
       end
+    end
+  end
+
+  describe "the same drill over a package's row" do
+    setup %{tmp: tmp} do
+      Application.put_env(:flezha, :file_plugin_root, tmp)
+      root = Path.join(tmp, "plugins")
+      on_exit(fn -> PluginPackage.unload!(root) end)
+      [%{status: :loaded}] = PluginPackage.load!(root, [PluginPackage.example!()])
+      :ok
+    end
+
+    test "the example package's provider honours the contract a first-party one does" do
+      assert {:ok, provider} = Providers.fetch("example_stamp")
+      drill("example_stamp", provider)
     end
   end
 
@@ -533,36 +549,45 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
     def init(opts), do: {:ok, opts}
   end
 
-  # Generated at compile time, one per row: the real option rows and the real
-  # `init_provider/1`, with the fake worker in place of the declared one.
-  for {_id, provider} <- Flezha.Plugin.Providers.all() do
+  # One per row, defined on first use: the real option rows and the real
+  # `init_provider/1`, with the fake worker in place of the declared one. On
+  # first use rather than at compile time, because a package's row exists only
+  # once the package is loaded.
+  defp wrapper_for(provider) do
     wrapper = Module.concat(__MODULE__, "Wrap#{:erlang.phash2(provider)}")
-
-    defmodule wrapper do
-      @moduledoc false
-      @real provider
-
-      use Flezha.Plugin.ProviderBehaviour,
-        options:
-          Flezha.Plugin.Providers.all()
-          |> Map.values()
-          |> Enum.find(&(&1 == provider))
-          |> then(& &1.__provider__().options),
-        feeds: @real.__provider__().feeds,
-        worker: [
-          module: Flezha.Plugin.ProviderLifecycleTest.ConformanceWorker,
-          restart: :temporary
-        ]
-
-      @impl true
-      def init_provider(opts), do: @real.init_provider(opts)
-
-      for callback <- provider.__provider__().extensions do
-        @impl true
-        def unquote(callback)(ctx, opts), do: @real.unquote(callback)(ctx, opts)
-      end
-    end
+    unless Code.ensure_loaded?(wrapper), do: define_wrapper(wrapper, provider)
+    wrapper
   end
 
-  defp wrapper_for(provider), do: Module.concat(__MODULE__, "Wrap#{:erlang.phash2(provider)}")
+  defp define_wrapper(wrapper, provider) do
+    decl = provider.__provider__()
+
+    callbacks =
+      for callback <- decl.extensions do
+        quote do
+          @impl true
+          def unquote(callback)(ctx, opts), do: unquote(provider).unquote(callback)(ctx, opts)
+        end
+      end
+
+    body =
+      quote do
+        @moduledoc false
+
+        use Flezha.Plugin.ProviderBehaviour,
+          options: unquote(Macro.escape(decl.options)),
+          feeds: unquote(decl.feeds),
+          worker: [
+            module: Flezha.Plugin.ProviderLifecycleTest.ConformanceWorker,
+            restart: :temporary
+          ]
+
+        @impl true
+        def init_provider(opts), do: unquote(provider).init_provider(opts)
+
+        unquote_splicing(callbacks)
+      end
+
+    {:module, ^wrapper, _, _} = Module.create(wrapper, body, Macro.Env.location(__ENV__))
+  end
 end

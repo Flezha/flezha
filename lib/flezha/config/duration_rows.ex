@@ -140,7 +140,6 @@ defmodule Flezha.Config.DurationRows do
     {:health_probe_budget_ms, :ms, nil, derived: {:factor, :provider_probe_timeout_ms, 3}},
     {:http_listener_idle_ms, :ms, 5_000, []},
     {:http_poll_min_interval_ms, :ms, 1_000, []},
-    {:installer_auto_save_ms, :ms, 5_000, []},
     {:kafka_linger_ms, :ms, 5_000, []},
     {:kafka_worker_call_ms, :ms, 5_000, []},
     {:plugin_call_timeout_ms, :ms, 2_000, []},
@@ -148,6 +147,11 @@ defmodule Flezha.Config.DurationRows do
     # `plugin_call_timeout_ms`: an inner bound equal to the outer one is no
     # bound at all — both give up at the same instant.
     {:plugin_disable_fanout_ms, :ms, 3_000, []},
+    # One plugin package download, whatever its redirects.
+    {:plugin_fetch_ms, :ms, 60_000, []},
+    # How long an enable waits for the namespace's other controllers to say
+    # whether they hold the provider.
+    {:plugin_peer_check_ms, :ms, 2_000, []},
     {:plugin_service_call_ms, :ms, 5_000, []},
     {:provider_probe_timeout_ms, :ms, 500, []},
     {:ws_idle_timeout_ms, :ms, 30_000, []},

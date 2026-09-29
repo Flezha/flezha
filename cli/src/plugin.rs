@@ -9,7 +9,11 @@ use crate::settings::{
 };
 
 const PLUGIN_ID: &[Positional] = &[Positional::required("<plugin_id>")];
+const SOURCE: &[Positional] = &[Positional::required("<path-or-https-url>")];
 const INSTALLED: OptSpec = OptSpec::switch("--installed", "--installed");
+
+/// Where the verbs that place packages run, in a VM of their own.
+const LOCAL: &str = "Flezha.Service.Cli.Plugin";
 
 pub(crate) const TABLE: Command = Command {
     path: "flz plugin",
@@ -18,7 +22,7 @@ pub(crate) const TABLE: Command = Command {
         Verb::new("enable", handle_enable)
             .taking(&[
                 Positional::required("<plugin_id>"),
-                Positional::optional("<provider_id>"),
+                Positional::required("<provider_id>"),
             ])
             .open(),
         Verb::new("disable", handle_disable).taking(PLUGIN_ID),
@@ -27,73 +31,40 @@ pub(crate) const TABLE: Command = Command {
         Verb::new("help", handle_help).taking(&[Positional::optional("<provider_id>")]),
         Verb::new("list", handle_list).reading(&[INSTALLED]),
         Verb::new("install", |read| {
-            rpc::one_arg(read, "<path-to-.fpz>", "install_plugin")
+            local(read, "install", &[read.pos(SOURCE[0].name)])
         })
-        .taking(&[Positional::required("<path-to-.fpz>")]),
-        Verb::new("upgrade", handle_upgrade).taking(&[
-            Positional::required("<plugin_id>"),
-            Positional::required("<path-to-.fpz>"),
-        ]),
+        .taking(SOURCE),
         Verb::new("uninstall", |read| {
-            rpc::one_arg(read, PLUGIN_ID[0].name, "uninstall_plugin")
+            local(read, "uninstall", &[read.pos(PLUGIN_ID[0].name)])
         })
         .taking(PLUGIN_ID),
-        Verb::new("info", |read| {
-            rpc::one_arg(read, PLUGIN_ID[0].name, "installed_plugin_info")
-        })
-        .taking(PLUGIN_ID),
+        Verb::new("sync", |read| local(read, "sync", &[])),
     ],
     help_verbs: &[],
     missing: Missing::Refuse,
     unknown_prints_help: false,
 };
 
-fn handle_upgrade(read: &Reading) {
-    rpc::run(
-        "upgrade_plugin",
-        &[
-            text(read.pos(PLUGIN_ID[0].name)),
-            text(read.pos("<path-to-.fpz>")),
-        ],
-        &[],
+/// `flz plugin install`, `uninstall` and `sync` act on the plugin root, never on
+/// a running controller, so they run where no controller runs yet.
+fn local(read: &Reading, verb: &str, args: &[&str]) {
+    let args: Vec<String> = args.iter().map(|arg| text(arg)).collect();
+    rpc::eval(
+        LOCAL,
+        "eval",
+        &[text(verb), format!("[{}]", args.join(", "))],
         read,
     );
 }
 
-// Check whether an id is tracked by the installer. The probe carries the
-// caller's token like every other request, because the read is a gated one,
-// and its status is settled like every call's: a refused probe is a refused
-// verb, not an answer of "not installed".
-fn is_installed_plugin(plugin_id: &str, read: &Reading) -> bool {
-    let printed = rpc::captured(&format!(
-        "{} |> IO.puts()",
-        rpc::expression("installed_plugin?", &[text(plugin_id)], &[], read)
-    ));
-
-    printed.trim().ends_with("true")
-}
-
 fn handle_enable(read: &Reading) {
-    let plugin_id = read.pos(PLUGIN_ID[0].name);
-
-    // Dispatch installed plugins through the Installer service.
-    if is_installed_plugin(plugin_id, read) {
-        rpc::run("installer_enable_plugin", &[text(plugin_id)], &[], read);
-
-        return;
-    }
-
-    // A legacy plugin needs its provider; an installed one does not, and only
-    // the controller's answer above says which this is.
-    let provider_id = read.require_pos("<provider_id>");
-
     println!("Enabling plugin...");
 
     rpc::run(
         "enable_plugin",
         &[
-            text(plugin_id),
-            text(provider_id),
+            text(read.pos(PLUGIN_ID[0].name)),
+            text(read.pos("<provider_id>")),
             text(&plugin_flags_json(read.rest())),
             text(&opts_json(read.rest())),
         ],
@@ -123,22 +94,9 @@ fn opts_json(args: &[String]) -> String {
 }
 
 fn handle_disable(read: &Reading) {
-    let plugin_id = read.pos(PLUGIN_ID[0].name);
-
-    // Dispatch installed plugins through the Installer service; legacy
-    // plugins keep their existing code path.
-    let installed = is_installed_plugin(plugin_id, read);
-
     println!("Disabling plugin...");
 
-    // Two calls rather than one with a chosen name: the wire name a verb
-    // reaches is what `cli_manager_rpc_surface_test.exs` resolves against the
-    // controller's exports, and it can only read a literal.
-    if installed {
-        rpc::one_arg(read, PLUGIN_ID[0].name, "installer_disable_plugin");
-    } else {
-        rpc::one_arg(read, PLUGIN_ID[0].name, "disable_plugin");
-    }
+    rpc::one_arg(read, PLUGIN_ID[0].name, "disable_plugin");
 }
 
 fn handle_help(read: &Reading) {

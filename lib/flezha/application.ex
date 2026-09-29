@@ -7,6 +7,7 @@ defmodule Flezha.Application do
   alias Flezha.Boot.StateRootLock
   alias Flezha.Config
   alias Flezha.Diagnostics.MemoryReporter
+  alias Flezha.Plugin.Installer.Loader, as: PackageLoader
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
   alias Flezha.Shutdown.Coordinator
@@ -51,6 +52,10 @@ defmodule Flezha.Application do
 
     _ = StatePathMigrator.migrate()
 
+    # Before the children are computed: a package's providers are rows of the
+    # provider table, whose worker families the tree supervises.
+    _ = PackageLoader.load_all()
+
     children = controller_children()
 
     opts = [strategy: :one_for_one, name: Flezha.Supervisor]
@@ -60,6 +65,7 @@ defmodule Flezha.Application do
     # a tree that came up is asked whether it reached ready; asking a
     # supervisor that never started replaces that reason with `:noproc`.
     with {:ok, _pid} = result <- Supervisor.start_link(children, opts) do
+      :ok = PackageLoader.announce()
       # Here and nowhere earlier: `start_link/2` has returned, so every child
       # started, and this call blocks on the Loader until its boot continuation
       # finished. Publishing from the continuation itself would claim a
@@ -119,7 +125,6 @@ defmodule Flezha.Application do
         service_children() ++
         authz_children() ++
         hub_starter_children() ++
-        installer_children() ++
         transport_children() ++
         plugin_children() ++
         Flezha.State.Supervisor.application_children() ++
@@ -203,14 +208,6 @@ defmodule Flezha.Application do
       [{Flezha.Testnet, []} | children]
     else
       children
-    end
-  end
-
-  defp installer_children do
-    if Config.get(:plugin_installer_enabled) do
-      [Flezha.Plugin.Installer.Supervisor]
-    else
-      []
     end
   end
 

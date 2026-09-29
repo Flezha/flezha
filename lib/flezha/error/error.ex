@@ -77,6 +77,15 @@ defmodule Flezha.Error do
     end
   end
 
+  @doc "Whether the catalogue maps `reason` at `site`, as `from_reason/2` would convert it."
+  @spec catalogued?(term(), atom() | String.t() | nil) :: boolean()
+  def catalogued?(%__MODULE__{}, _site), do: true
+
+  def catalogued?(reason, site) do
+    site = if is_atom(site) and not is_nil(site), do: Atom.to_string(site), else: site
+    lookup(reason, site) != nil
+  end
+
   @doc """
   The error `code` names, its templates filled from `details`. A code the
   catalogue does not know is `internal.uncatalogued`, naming it.

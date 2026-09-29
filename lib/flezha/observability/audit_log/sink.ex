@@ -35,7 +35,7 @@ defmodule Flezha.Observability.AuditLog.Sink do
   # at boot, so a declared audit is durable by construction.
   @system_allow_list [
     {:flezha_shutdown, :any},
-    {:flezha_plugin_installer, :any},
+    {:flezha_plugin_packages, :any},
     # Auth-state mutations and authorization denials emit on
     # `:platform_authz`; the audit log subscribes by default so every
     # token issue/revoke, bootstrap completion, and forbidden decision is

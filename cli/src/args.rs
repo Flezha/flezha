@@ -330,16 +330,6 @@ impl Reading {
             .as_deref()
     }
 
-    /// A positional the row declared optional, for the verb whose arity only
-    /// the controller's answer settles. The refusal is the walk's own, so the
-    /// wording stays in one place.
-    pub(crate) fn require_pos(&self, name: &str) -> &str {
-        match self.maybe_pos(name) {
-            Some(value) => value,
-            None => rpc::fail(missing_positional(&self.usage)),
-        }
-    }
-
     pub(crate) fn opt(&self, long: &str) -> Option<&str> {
         self.options
             .iter()

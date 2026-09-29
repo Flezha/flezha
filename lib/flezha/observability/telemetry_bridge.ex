@@ -45,12 +45,8 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :shutdown, :drain_progress] => {:flezha_shutdown, :drain_progress, :event},
     [:flezha, :shutdown, :timeout] => {:flezha_shutdown, :timeout, :event},
     [:flezha, :shutdown, :complete] => {:flezha_shutdown, :complete, :event},
-    [:flezha, :plugin_installer, :load_failed] =>
-      {:flezha_plugin_installer, :load_failed, :event},
-    [:flezha, :plugin_installer, :store_opened] =>
-      {:flezha_plugin_installer, :store_opened, :event},
-    [:flezha, :plugin_installer, :unsigned_install] =>
-      {:flezha_plugin_installer, :unsigned_install, :event},
+    [:flezha, :plugin_package, :loaded] => {:flezha_plugin_packages, :loaded, :event},
+    [:flezha, :plugin_package, :refused] => {:flezha_plugin_packages, :refused, :event},
     [:flezha, :plugin, :websocket, :idle_reconnect] => {:flezha_ws, :idle_reconnect, :event},
     [:flezha, :plugin, :websocket, :resubscribe] => {:flezha_ws, :resubscribe, :event},
     [:flezha, :plugin, :websocket, :reconcile] => {:flezha_ws, :reconcile, :event},

@@ -443,6 +443,8 @@ defmodule Flezha.Operator.Lifecycle do
   # both the plugin and its provider module.
   @spec park(Overwatch.t(), term()) :: Overwatch.t()
   def park(%Overwatch{} = state, reason) do
+    log_missing_provider(state, reason)
+
     Facts.declare(
       {:operator_parked, {state.namespace, state.id},
        %{reason: reason, transport: transport_verdict(reason)}}
@@ -460,6 +462,28 @@ defmodule Flezha.Operator.Lifecycle do
     )
 
     Map.put(state, :init_error, reason)
+  end
+
+  # A provider this controller did not load is the park a user repairs on this
+  # node, by installing or fixing a package, so its reason is logged; once, not
+  # on every retry that parks again for the same reason.
+  defp log_missing_provider(state, {:plugin_prepare_failed, plugin_id, {tag, _} = why} = reason)
+       when tag == :module_not_loaded,
+       do: log_park_once(state, reason, plugin_id, why)
+
+  defp log_missing_provider(state, {:plugin_prepare_failed, plugin_id, why} = reason)
+       when elem(why, 0) == :provider_unavailable,
+       do: log_park_once(state, reason, plugin_id, why)
+
+  defp log_missing_provider(_state, _reason), do: :ok
+
+  defp log_park_once(state, reason, plugin_id, why) do
+    if Map.get(state, :init_error) != reason do
+      Logger.error(
+        "operator #{state.id} parked: plugin #{plugin_id}: " <>
+          Flezha.Error.from_reason(why, nil).message
+      )
+    end
   end
 
   # No runner has connected yet, which is not a fault: hold the operator alive

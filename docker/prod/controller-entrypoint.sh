@@ -6,9 +6,12 @@
 #
 # Responsibilities:
 #   1. Optionally launch the testnet WS server.
-#   2. Start the controller (bin/flzvm start) in the background, wait for it
+#   2. When FLEZHA_PLUGINS is set, even empty, make the plugin root hold exactly
+#      the packages it declares (`flz plugin sync`); a failed sync exits
+#      non-zero and starts nothing.
+#   3. Start the controller (bin/flzvm start) in the background, wait for it
 #      to bind its control socket, then wait for it to report ready.
-#   3. Trap SIGTERM/SIGINT and delegate to `flz controller stop`, which
+#   4. Trap SIGTERM/SIGINT and delegate to `flz controller stop`, which
 #      drives the BEAM's shutdown coordinator.
 #
 # The controller recovers its own operators and plugins on boot from
@@ -45,7 +48,16 @@ if [ -e "$CONTROL_SOCKET" ]; then
   rm -f "$CONTROL_SOCKET"
 fi
 
-# 2) Start the controller.
+# 2) The declared plugin list, before the controller that loads it starts.
+if [ -n "${FLEZHA_PLUGINS+x}" ]; then
+  log "syncing the plugin root to FLEZHA_PLUGINS"
+  if ! "$FLZ" plugin sync; then
+    log "ERROR flz plugin sync failed; the controller is not started"
+    exit 1
+  fi
+fi
+
+# 3) Start the controller.
 /flezha/bin/flzvm start &
 AGENT_PID=$!
 
@@ -84,7 +96,7 @@ if ! "$FLZ" boot await --timeout "$remaining"; then
 fi
 log "controller ready"
 
-# 3) SIGTERM/SIGINT trap.
+# 4) SIGTERM/SIGINT trap.
 #
 # Default branch (FLEZHA_GRACEFUL_SHUTDOWN_ENABLED unset/truthy):
 #   delegate to `flz controller stop`, which drives Flezha.Shutdown.Coordinator

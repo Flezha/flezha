@@ -11,7 +11,7 @@
 //! that list here and nowhere else: no verb can be gated on the controller and
 //! token-less on the wire.
 
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::process::{exit, ChildStderr, Command, ExitStatus, Stdio};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -47,6 +47,9 @@ pub(crate) fn fail(error: FlezhaError) -> ! {
     exit(error.exit_code());
 }
 
+/// The module every request to a running controller calls.
+const CLI_MANAGER: &str = "Flezha.Service.CliManager";
+
 /// Run one `CliManager` call on the controller: `fun` with `positional` (each
 /// an Elixir literal) and `opts`, the caller's token and format appended.
 /// Returns only when the child succeeded, so the caller's next line is its
@@ -58,6 +61,7 @@ pub(crate) fn run(fun: &str, positional: &[String], opts: &[Opt], read: &Reading
 /// The request `run` sends, for the calls that do not go through `run`.
 pub(crate) fn expression(fun: &str, positional: &[String], opts: &[Opt], read: &Reading) -> String {
     build(
+        CLI_MANAGER,
         fun,
         positional,
         opts,
@@ -66,7 +70,25 @@ pub(crate) fn expression(fun: &str, positional: &[String], opts: &[Opt], read: &
     )
 }
 
+/// Run `module.fun` in a VM of its own (`flzvm eval`), for a verb that reaches
+/// no controller: it works where none runs, and no controller authorizes it, so
+/// it carries no token. The child prints its own answer and exits with its
+/// class's code, which `flz` passes through.
+pub(crate) fn eval(module: &str, fun: &str, positional: &[String], read: &Reading) {
+    let expression = build(
+        module,
+        fun,
+        positional,
+        &[],
+        None,
+        read.output_format() == "json",
+    );
+
+    verdict(flzvm().arg("eval").arg(expression).status());
+}
+
 fn build(
+    module: &str,
     fun: &str,
     positional: &[String],
     opts: &[Opt],
@@ -75,14 +97,7 @@ fn build(
 ) -> String {
     let mut parts: Vec<String> = positional.to_vec();
     parts.push(keyword_opts_fragment(opts, token, json));
-    format!("Flezha.Service.CliManager.{}({})", fun, parts.join(", "))
-}
-
-/// The request whose answer is what the controller printed rather than the
-/// code it exited with. A failure is still settled here, so a verb that reads
-/// stdout does not also decide for itself whether the call worked.
-pub(crate) fn captured(expression: &str) -> String {
-    settle(call(expression, Out::Capture))
+    format!("{}.{}({})", module, fun, parts.join(", "))
 }
 
 /// What `elixir --rpc-eval` says, with exit 1, whenever it could not reach the
@@ -113,19 +128,17 @@ pub(crate) fn unreachable() -> ! {
     ))
 }
 
-/// What one `flzvm rpc` answered: its status, whether it said the node could
-/// not be reached, and its stdout when that was asked for.
+/// What one `flzvm rpc` answered: its status, and whether it said the node
+/// could not be reached.
 pub(crate) struct Answer {
     status: ExitStatus,
     unreachable: bool,
-    stdout: String,
 }
 
-/// Where a call's stdout goes: through, into the answer, or line by line
-/// through a filter that says which lines to pass on.
+/// Where a call's stdout goes: through, or line by line through a filter that
+/// says which lines to pass on.
 pub(crate) enum Out<'a> {
     Inherit,
-    Capture,
     Filter(&'a mut dyn FnMut(&str) -> bool),
 }
 
@@ -135,7 +148,7 @@ pub(crate) fn call(expression: &str, out: Out) -> io::Result<Answer> {
         .arg(expression)
         .stdout(match out {
             Out::Inherit => Stdio::inherit(),
-            Out::Capture | Out::Filter(_) => Stdio::piped(),
+            Out::Filter(_) => Stdio::piped(),
         })
         .stderr(Stdio::piped())
         .spawn()?;
@@ -143,18 +156,10 @@ pub(crate) fn call(expression: &str, out: Out) -> io::Result<Answer> {
     let stderr = child.stderr.take().expect("stderr is piped");
     let relay = thread::spawn(move || relay_stderr(stderr));
 
-    let mut stdout = String::new();
-    if let Some(mut piped) = child.stdout.take() {
-        match out {
-            Out::Filter(keep) => {
-                for line in BufReader::new(piped).lines().map_while(Result::ok) {
-                    if keep(&line) {
-                        println!("{}", line);
-                    }
-                }
-            }
-            _ => {
-                let _ = piped.read_to_string(&mut stdout);
+    if let (Some(piped), Out::Filter(keep)) = (child.stdout.take(), out) {
+        for line in BufReader::new(piped).lines().map_while(Result::ok) {
+            if keep(&line) {
+                println!("{}", line);
             }
         }
     }
@@ -165,7 +170,6 @@ pub(crate) fn call(expression: &str, out: Out) -> io::Result<Answer> {
     Ok(Answer {
         status,
         unreachable,
-        stdout,
     })
 }
 
@@ -188,14 +192,14 @@ fn relay_stderr(stderr: ChildStderr) -> bool {
     unreachable
 }
 
-/// The one rule every verb's call ends with: success returns what the child
-/// printed, a child that could not reach the controller is
-/// `controller.unreachable`, and any other failure exits with the child's own
-/// code, whose rendering it has already written.
-pub(crate) fn settle(answer: io::Result<Answer>) -> String {
+/// The one rule every verb's call ends with: success returns, a child that
+/// could not reach the controller is `controller.unreachable`, and any other
+/// failure exits with the child's own code, whose rendering it has already
+/// written.
+pub(crate) fn settle(answer: io::Result<Answer>) {
     match answer {
         Err(e) => not_runnable(e),
-        Ok(answer) if answer.status.success() => answer.stdout,
+        Ok(answer) if answer.status.success() => {}
         Ok(answer) if answer.unreachable => unreachable(),
         Ok(answer) => exit(answer.status.code().unwrap_or(1)),
     }
@@ -344,7 +348,7 @@ pub(crate) fn controller_is_up(probe_timeout_ms: u64) -> bool {
 
     let mut child = match flzvm()
         .arg("rpc")
-        .arg(build("boot_status", &[], &[], None, false))
+        .arg(build(CLI_MANAGER, "boot_status", &[], &[], None, false))
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -390,11 +394,11 @@ mod tests {
     #[test]
     fn the_token_closes_the_options_list_and_is_escaped() {
         assert_eq!(
-            build("x", &[], &[], Some("abc\"def"), false),
+            build(CLI_MANAGER, "x", &[], &[], Some("abc\"def"), false),
             "Flezha.Service.CliManager.x([token: \"abc\\\"def\"])"
         );
         assert_eq!(
-            build("x", &[], &[], None, false),
+            build(CLI_MANAGER, "x", &[], &[], None, false),
             "Flezha.Service.CliManager.x([])"
         );
     }
@@ -408,7 +412,7 @@ mod tests {
             ("init_values", text("{\"a\":\"x\\\"y\"}")),
         ];
         assert_eq!(
-            build("schedule_add", &[text("d")], &opts, Some("t"), false),
+            build(CLI_MANAGER, "schedule_add", &[text("d")], &opts, Some("t"), false),
             "Flezha.Service.CliManager.schedule_add(\"d\", [cron: \"0 8 * * *\", init_values: \"{\\\"a\\\":\\\"x\\\\\\\"y\\\"}\", token: \"t\"])"
         );
     }

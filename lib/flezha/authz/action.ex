@@ -18,11 +18,8 @@ defmodule Flezha.AuthZ.Action do
     :"operator.replay",
     :"operator.listen",
     # Plugin lifecycle and read.
-    :"plugin.install",
     :"plugin.enable",
     :"plugin.disable",
-    :"plugin.uninstall",
-    :"plugin.upgrade",
     :"plugin.list",
     :"plugin.info",
     # Audit log read / mutate.

@@ -110,7 +110,7 @@ defmodule Flezha.Config.Environment do
   # declared default and no key is written.
   defp chosen(row, env_map, config_env, derived) do
     cond do
-      raw = supplied(env_map, row.env) -> {:ok, from_env!(row, raw)}
+      raw = supplied(env_map, row.env, row.blank) -> {:ok, from_env!(row, raw)}
       Map.has_key?(derived, row.name) -> {:ok, Map.fetch!(derived, row.name)}
       Keyword.has_key?(row.env_default, config_env) -> env_default(row, config_env)
       true -> fallback_variable(row, env_map)
@@ -130,9 +130,13 @@ defmodule Flezha.Config.Environment do
 
   # A variable set to nothing is a variable nobody set: an empty value cannot
   # be a path, a port or a flag, and every runtime's reader reads it as unset.
-  defp supplied(_env_map, nil), do: nil
+  # A row declaring `blank: :value` is the exception: set and empty is a value
+  # of its own.
+  defp supplied(env_map, var, blank \\ nil)
+  defp supplied(_env_map, nil, _blank), do: nil
+  defp supplied(env_map, var, :value), do: env_map[var]
 
-  defp supplied(env_map, var) do
+  defp supplied(env_map, var, nil) do
     case env_map[var] do
       nil -> nil
       value -> if String.trim(value) == "", do: nil, else: value

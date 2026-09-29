@@ -1,0 +1,202 @@
+defmodule Mix.Tasks.Flezha.Plugin.Package do
+  @shortdoc "Build a plugin package (.fpz) from this project"
+
+  @moduledoc """
+  Builds the plugin package a Flezha controller loads at boot, from the plugin
+  project this task runs in:
+
+      MIX_ENV=prod mix flezha.plugin.package [--output DIR] [--sign KEY.pem]
+
+  The archive holds the compiled plugin application and every application of its
+  runtime closure that the controller release does not ship, laid out like a
+  release's `lib/`, with a manifest recording the Flezha, OTP and Elixir versions
+  it was built on. A controller accepts it only on that same runtime line, so
+  build it with the controller's toolchain (the `plugin-builder` stage of the
+  controller's Dockerfile).
+
+  The plugin application names its providers in its environment:
+
+      def application do
+        [env: [flezha_providers: %{"my_provider" => MyPlugin.Provider}]]
+      end
+
+  The task refuses, writing nothing, a library the release ships resolved at
+  another version than Flezha's own `mix.lock`, native code, an application
+  depending on Flezha that declares an application callback, and a provider
+  entry that does not name a provider module of the plugin application.
+
+  ## Options
+
+    * `--output` - the directory the archive is written to (default `_build/`)
+    * `--sign` - an Ed25519 private key in PEM form; writes `signature.sig`
+  """
+
+  use Mix.Task
+
+  alias Flezha.Plugin.Installer.Checksums
+  alias Flezha.Plugin.Installer.Manifest
+  alias Flezha.Plugin.Installer.Package
+  alias Flezha.Plugin.Installer.Signature
+  alias Flezha.Plugin.Providers
+
+  # The applications `mix release` adds to every release beside its own closure.
+  @release_extras [:sasl, :iex]
+
+  @impl Mix.Task
+  def run(args) do
+    {opts, _rest} = OptionParser.parse!(args, strict: [output: :string, sign: :string])
+    config = Mix.Project.config()
+    plugin = config[:app]
+
+    Mix.Task.run("compile", [])
+    check_locks!()
+
+    release = MapSet.new(closure([:flezha | @release_extras]))
+    bundled = Enum.reject(closure([plugin]), &MapSet.member?(release, &1))
+    providers = providers!(plugin)
+
+    manifest = %{
+      id: Atom.to_string(plugin),
+      version: config[:version],
+      built_with: Manifest.runtime(),
+      apps: Enum.map(bundled, &{&1, to_string(Application.spec(&1, :vsn))}),
+      providers: providers
+    }
+
+    stage = Path.join(Mix.Project.build_path(), "flezha_plugin_package")
+    File.rm_rf!(stage)
+
+    try do
+      Enum.each(bundled, &copy_app(&1, stage))
+      File.write!(Path.join(stage, "manifest.exs"), Manifest.render(manifest))
+      ok!(Package.check_contents(stage, manifest))
+      checksums = Checksums.write(stage)
+      if key = opts[:sign], do: sign!(stage, checksums, key)
+
+      output = opts[:output] || Path.dirname(Mix.Project.build_path())
+      File.mkdir_p!(output)
+      archive = Path.join(output, "#{manifest.id}-#{manifest.version}.fpz")
+      :ok = Package.create(stage, archive)
+      Mix.shell().info("Wrote #{archive}")
+    after
+      File.rm_rf!(stage)
+    end
+  end
+
+  # A library the release ships at one version cannot be loaded at another: the
+  # boot would refuse the package, so the build refuses it first.
+  defp check_locks!() do
+    flezha_lock = Mix.Dep.Lock.read(Path.join(Mix.Project.deps_paths()[:flezha], "mix.lock"))
+
+    offenders =
+      for dep <- Mix.Dep.cached(),
+          locked = flezha_lock[dep.app],
+          resolved(dep) != pinned(locked),
+          do:
+            "  #{dep.app}: this project resolves #{resolved(dep)}, " <>
+              "Flezha's mix.lock has #{pinned(locked)}; " <> pin_hint(dep.app, locked)
+
+    if offenders != [] do
+      Mix.raise("""
+      the plugin resolves libraries the controller release ships at other versions:
+      #{Enum.join(offenders, "\n")}
+      """)
+    end
+  end
+
+  # A path dependency is what was built from it, whatever lock entry shares its
+  # name; any other is its lock entry.
+  defp resolved(%{scm: Mix.SCM.Path, app: app}) do
+    _ = Application.load(app)
+    to_string(Application.spec(app, :vsn))
+  end
+
+  defp resolved(%{opts: opts}), do: pinned(opts[:lock])
+
+  defp pinned({:hex, _name, vsn, _hash, _managers, _deps, _repo, _outer}), do: vsn
+  defp pinned({:git, _url, ref, _opts}), do: ref
+  defp pinned(other), do: inspect(other)
+
+  defp pin_hint(app, {:hex, _, vsn, _, _, _, _, _}),
+    do: "pin it with {#{inspect(app)}, \"#{vsn}\", override: true}"
+
+  defp pin_hint(app, {:git, url, ref, _}),
+    do: "pin it with {#{inspect(app)}, git: \"#{url}\", ref: \"#{ref}\", override: true}"
+
+  defp pin_hint(_app, _locked), do: "use the version Flezha's mix.lock names"
+
+  # Every application `roots` need at run time, each after the one naming it.
+  defp closure(roots) do
+    {order, _seen} = Enum.reduce(roots, {[], MapSet.new()}, &visit/2)
+    Enum.reverse(order)
+  end
+
+  defp visit(app, {order, seen}) do
+    if MapSet.member?(seen, app) or not loadable?(app) do
+      {order, seen}
+    else
+      spec = Application.spec(app)
+
+      Enum.reduce(
+        Keyword.get(spec, :applications, []) ++ Keyword.get(spec, :included_applications, []),
+        {[app | order], MapSet.put(seen, app)},
+        &visit/2
+      )
+    end
+  end
+
+  defp loadable?(app), do: Application.load(app) in [:ok, {:error, {:already_loaded, app}}]
+
+  # Membership in the plugin application is the manifest's check, which the
+  # staged package goes through; this one says what the entry must be.
+  defp providers!(plugin) do
+    case Application.get_env(plugin, :flezha_providers) do
+      %{} = providers when map_size(providers) > 0 ->
+        for {id, module} <- providers, not is_binary(id) or not Providers.provider?(module) do
+          Mix.raise(
+            "the provider #{inspect(id)} => #{inspect(module)} of :flezha_providers is not a " <>
+              "provider module of #{inspect(plugin)}: it must be one of its modules and " <>
+              "`use Flezha.Plugin.ProviderBehaviour`"
+          )
+        end
+
+        providers
+
+      other ->
+        Mix.raise(
+          "#{inspect(plugin)} names no providers: its application environment must set " <>
+            ":flezha_providers to a map of provider id to module, got #{inspect(other)}"
+        )
+    end
+  end
+
+  # `lib/<app>-<vsn>/ebin` and `priv/` as Mix built them, `priv/` followed
+  # through the link Mix makes to the project's own.
+  defp copy_app(app, stage) do
+    source = to_string(:code.lib_dir(app))
+    target = Path.join([stage, "lib", "#{app}-#{Application.spec(app, :vsn)}"])
+    ebin = Path.join(target, "ebin")
+    File.mkdir_p!(ebin)
+
+    for file <- File.ls!(Path.join(source, "ebin")),
+        Path.extname(file) in [".beam", ".app"],
+        do: File.cp!(Path.join([source, "ebin", file]), Path.join(ebin, file))
+
+    priv = Path.join(source, "priv")
+
+    if File.dir?(priv),
+      do: File.cp_r!(priv, Path.join(target, "priv"), dereference_symlinks: true)
+  end
+
+  defp sign!(stage, checksums, key) do
+    case Signature.sign(checksums, File.read!(key)) do
+      {:ok, signature} -> File.write!(Path.join(stage, "signature.sig"), signature)
+      {:error, _} -> Mix.raise("#{key} is not an Ed25519 private key in PEM form")
+    end
+  end
+
+  defp ok!({:ok, value}), do: value
+
+  defp ok!({:error, reason}),
+    do: Mix.raise(Flezha.Error.render(Flezha.Error.from_reason(reason, nil), :text))
+end

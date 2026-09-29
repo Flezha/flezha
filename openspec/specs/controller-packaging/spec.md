@@ -544,3 +544,72 @@ The default `mix test` suite SHALL check this for every release `mix.exs` define
 - **WHEN** the computed closure does not contain `:process_hub`
 - **THEN** the test SHALL fail on the `{:process_hub, :elector}` edge it requires, not pass with nothing compared
 
+### Requirement: The prod image entrypoint SHALL sync a declared plugin list before starting the controller
+
+`docker/prod/controller-entrypoint.sh` SHALL run `/flezha/bin/flz plugin sync` before it
+starts `bin/flzvm` whenever `FLEZHA_PLUGINS` is set in the container's environment, even to
+an empty value, and SHALL exit non-zero, naming the failure and without starting the
+controller, when the sync fails. When the variable is unset, the entrypoint SHALL start the
+controller without syncing, and the plugin root SHALL be whatever the volume or the image
+holds. The image itself SHALL NOT change with the plugin set.
+
+#### Scenario: A declared list is fetched before start
+
+- **GIVEN** the prod image run with `FLEZHA_PLUGINS` naming the example package and a named
+  volume on `/flezha/app_data/plugins`
+- **WHEN** the container starts
+- **THEN** the entrypoint SHALL log the sync, the archive SHALL be in the volume before
+  `bin/flzvm start` runs, and `flz plugin list --installed` SHALL show the package loaded
+
+#### Scenario: A failed sync keeps the controller down
+
+- **GIVEN** `FLEZHA_PLUGINS` naming an unreachable URL
+- **WHEN** the container starts
+- **THEN** the entrypoint SHALL exit non-zero naming `plugin.fetch_failed` and SHALL NOT
+  start the controller
+
+#### Scenario: A derived image needs no sync
+
+- **GIVEN** an image built `FROM` the prod image that copies the example archive into
+  `/flezha/app_data/plugins/`, run with no volume on that path and no `FLEZHA_PLUGINS`
+- **WHEN** the container starts
+- **THEN** the controller SHALL load the package
+
+### Requirement: The release SHALL ship its consolidated protocols with their debug info
+
+The release step SHALL copy the build's consolidated protocol beams
+(`Mix.Project.consolidation_path/0`) over `<release>/releases/<vsn>/consolidated/` after
+`:assemble`, so that every consolidated protocol in the release keeps its `Dbgi` chunk,
+which boot-time re-consolidation reads (`plugin-installation`). Every other beam of the
+release SHALL stay stripped.
+
+#### Scenario: The released protocols carry debug info
+
+- **WHEN** `mix release` has run
+- **THEN** every beam under `releases/<vsn>/consolidated/` SHALL carry a `Dbgi` chunk, and
+  `lib/flezha-<vsn>/ebin/Elixir.Flezha.Application.beam` SHALL NOT
+
+### Requirement: A plugin-builder stage SHALL share the controller build's toolchain
+
+`docker/prod/Dockerfile.controller` SHALL define a `plugin-builder` stage whose base image
+is the same `hexpm/elixir` tag as the stage that builds the release, written once in an
+`ARG` both stages read. The stage SHALL hold Hex, rebar and every tool compiling `flezha`
+as a dependency needs (`git`, `cmake`, `build-essential`, `protobuf-compiler`), SHALL set
+`RUSTLER_SKIP_COMPILATION=true` and `MIX_ENV=prod`, and SHALL NOT be part of the runtime
+image. Its OTP release and Elixir version SHALL therefore equal the runtime image's, so a
+package it builds loads in that image.
+
+#### Scenario: A package built in the builder loads in the image
+
+- **WHEN** the example plugin is packaged with `mix flezha.plugin.package` inside an image
+  built with `docker build --target plugin-builder`, and the archive is installed into a
+  container of the runtime image built from the same Dockerfile
+- **THEN** the controller SHALL load the package, and its `built_with.otp` SHALL equal the
+  runtime's OTP release
+
+#### Scenario: One tag, two stages
+
+- **WHEN** the `hexpm/elixir` tag is changed in the Dockerfile
+- **THEN** it SHALL be changed in one `ARG` line, and both the release stage and the
+  `plugin-builder` stage SHALL build from the new tag
+

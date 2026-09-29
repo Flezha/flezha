@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The audit-log capability provides a durable, append-only observability sink on top of the foundation bus. It is a Sink subscribed to a configurable allow-list of `(source, name)` pairs — by default capturing every `:event` signal on the foundation's `:observability_service` audit seam (subscribe / enable / disable calls), every `:event` on `:flezha_shutdown` (graceful shutdown phase boundaries), and every `:event` on `:flezha_plugin_installer` (security-relevant plugin lifecycle). The sink writes one structured JSON Lines record per accepted signal to disk under `app_data/audit/`, with a stable top-level field order so downstream readers do not need to know the metadata convention to identify the actor. The subsystem ships size + age file rotation, size + age retention sweep, a small binary `INDEX` catalog (rebuildable from on-disk files), per-record or batched `fsync` modes, and a `Flezha.Service.AuditLog` service-API module callable from both the CLI (`flz audit list | read | tail | stats | rotate`) and the planned Phoenix UI directly. The sink uses the foundation's `:block` overflow policy so the audit chain is never silently broken under load. Authentication / authorization of audit readers, remote shipping, and tamper-evident inter-file hash chains are explicitly out of scope and deferred to follow-up capabilities.
+The audit-log capability provides a durable, append-only observability sink on top of the foundation bus. It is a Sink subscribed to a configurable allow-list of `(source, name)` pairs — by default capturing every `:event` signal on the foundation's `:observability_service` audit seam (subscribe / enable / disable calls), every `:event` on `:flezha_shutdown` (graceful shutdown phase boundaries), and every `:event` on `:flezha_plugin_packages` (which plugin packages each boot loaded and refused). The sink writes one structured JSON Lines record per accepted signal to disk under `app_data/audit/`, with a stable top-level field order so downstream readers do not need to know the metadata convention to identify the actor. The subsystem ships size + age file rotation, size + age retention sweep, a small binary `INDEX` catalog (rebuildable from on-disk files), per-record or batched `fsync` modes, and a `Flezha.Service.AuditLog` service-API module callable from both the CLI (`flz audit list | read | tail | stats | rotate`) and the planned Phoenix UI directly. The sink uses the foundation's `:block` overflow policy so the audit chain is never silently broken under load. Authentication / authorization of audit readers, remote shipping, and tamper-evident inter-file hash chains are explicitly out of scope and deferred to follow-up capabilities.
 ## Requirements
 ### Requirement: Durable append-only audit sink
 
@@ -22,7 +22,7 @@ The system SHALL provide a Sink `Flezha.Observability.AuditLog.Sink` that implem
 
 ### Requirement: Configurable subscription allow-list
 
-The sink SHALL apply a configured `(source, name | :any)` allow-list inside its handler. Signals not matching the allow-list SHALL be discarded without being written. The default allow-list SHALL be derived, not written by hand: it SHALL include `{:flezha_shutdown, :any}`, `{:flezha_plugin_installer, :any}`, `{:platform_authz, :any}`, and `{source, :any}` for every audit source the user-verb declaration table names — at minimum `:observability_service` and `:audit_log` — so that a verb declared with an audit reaches the durable log by construction and no verb's audit can be volatile. Users SHALL be able to extend it via `:audit_log, :extra_subscriptions` runtime config.
+The sink SHALL apply a configured `(source, name | :any)` allow-list inside its handler. Signals not matching the allow-list SHALL be discarded without being written. The default allow-list SHALL be derived, not written by hand: it SHALL include `{:flezha_shutdown, :any}`, `{:flezha_plugin_packages, :any}`, `{:platform_authz, :any}`, and `{source, :any}` for every audit source the user-verb declaration table names (at minimum `:observability_service` and `:audit_log`), so that a verb declared with an audit reaches the durable log by construction and no verb's audit can be volatile. Users SHALL be able to extend it via `:audit_log, :extra_subscriptions` runtime config.
 
 #### Scenario: Default allow-list captures observability-service audit events
 - **WHEN** the audit subsystem is enabled and a caller invokes `Flezha.Service.Observability.disable_source/2`
@@ -31,6 +31,10 @@ The sink SHALL apply a configured `(source, name | :any)` allow-list inside its 
 #### Scenario: Default allow-list captures shutdown phase events
 - **WHEN** the graceful shutdown coordinator emits a `:phase_completed` `:event` on `:flezha_shutdown`
 - **THEN** a record SHALL appear in `audit-current.jsonl` with `source: "flezha_shutdown"` and `name: "phase_completed"`
+
+#### Scenario: Default allow-list captures the packages a boot loaded and refused
+- **WHEN** the controller boots with the audit subsystem enabled and one package it loads and one it refuses
+- **THEN** `audit-current.jsonl` SHALL hold a record with `source: "flezha_plugin_packages"` and `name: "loaded"` for the first, and one with `name: "refused"` carrying the refusal code for the second
 
 #### Scenario: Default allow-list captures auth-state mutations
 - **WHEN** the platform-authz subsystem emits any `:event` on `:platform_authz` (token issue, role bind, namespace create, bootstrap completion, authorization denial)
@@ -45,7 +49,7 @@ The sink SHALL apply a configured `(source, name | :any)` allow-list inside its 
 - **THEN** a record for that signal SHALL appear in `audit-current.jsonl`
 
 #### Scenario: A declared audit source is durable by construction
-- **WHEN** an administration verb declared with an audit on a source — a `schedule add` on `:schedule_service`, a `dlq drop` on `:dlq_service` — succeeds with the audit subsystem enabled and no `:extra_subscriptions` configured
+- **WHEN** an administration verb declared with an audit on a source (a `schedule add` on `:schedule_service`, a `dlq drop` on `:dlq_service`) succeeds with the audit subsystem enabled and no `:extra_subscriptions` configured
 - **THEN** within one second exactly one record for it SHALL appear in `audit-current.jsonl`, carrying `metadata.action`, `metadata.outcome`, the verified `caller.principal` and the resolved `namespace`
 
 #### Scenario: One record shape for a user's act

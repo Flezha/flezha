@@ -240,24 +240,16 @@ SDK raises or returns its one error type carrying them.
 | `plugin.activation_failed` | unavailable | 7 | the plugin was prepared but could not start; the controller's log names the cause |  |
 | `plugin.already_attached` | conflict | 6 | plugin '{plugin}' is already attached to this operator | `flz plugin list` |
 | `plugin.already_enabled` | conflict | 6 | plugin '{plugin}' is already enabled |  |
-| `plugin.already_installed` | conflict | 6 | plugin '{plugin}' is already installed | `flz plugin upgrade {plugin} <path>` |
+| `plugin.app_callback` | invalid | 2 | application {application} depends on flezha and declares an application callback; a plugin's processes are its providers' declared workers |  |
 | `plugin.channel_spelled_twice` | invalid | 2 | a {provider} plugin was given channel together with {options}; channel already names both directions, so write it alone or write the pair instead |  |
 | `plugin.channel_unused` | invalid | 2 | option '{option}' names a channel this {provider} plugin never uses: it neither feeds the operator on it nor reads it through an on_input or on_output hook |  |
 | `plugin.channel_written_twice` | invalid | 2 | payload_metadata names channel '{metadata_channel}' and a channel option names '{channel}'; write one of the two |  |
-| `plugin.checksum_file_missing` | invalid | 2 | CHECKSUMS.sha256 lists '{path}', which the package does not contain |  |
-| `plugin.checksum_line_missing` | invalid | 2 | package file '{path}' has no line in CHECKSUMS.sha256 |  |
-| `plugin.checksum_mismatch` | invalid | 2 | package file '{path}' does not match its line in CHECKSUMS.sha256 |  |
-| `plugin.checksum_unreadable` | internal | 1 | package file '{path}' could not be read to check it |  |
-| `plugin.checksums_malformed` | invalid | 2 | line {line_number} of CHECKSUMS.sha256 is not a SHA-256 digest followed by a path |  |
-| `plugin.compile_failed` | invalid | 2 | package source '{file}' does not compile |  |
-| `plugin.dependency_cycle` | invalid | 2 | installing the plugin would make a dependency cycle: {cycle} |  |
-| `plugin.dependency_missing` | not_found | 5 | the plugin needs '{dependency}' {constraint}, which is not installed | `flz plugin list --installed` |
-| `plugin.dependency_unsatisfied` | conflict | 6 | installed '{dependency}' is version {version}, which does not satisfy {constraint} |  |
-| `plugin.dependency_version_invalid` | invalid | 2 | a dependency version or constraint is malformed |  |
-| `plugin.dependents_block` | conflict | 6 | installed plugins depend on this one and would break: {dependents} |  |
+| `plugin.digest_mismatch` | invalid | 2 | the archive from {source} has SHA-256 {actual}, not the pinned {expected} |  |
+| `plugin.duplicate_id` | conflict | 6 | the archives {files} in the plugin root all declare package '{plugin}', so none of them is loaded | `flz plugin uninstall {plugin}` |
 | `plugin.enabling` | conflict | 6 | plugin '{plugin}' is still being enabled; try again once it is |  |
 | `plugin.entry_channel_required` | invalid | 2 | a {provider} plugin needs an entry channel: write channel or channel_in |  |
 | `plugin.entry_channel_set` | invalid | 2 | a {provider} plugin injects on exactly one channel, and option '{option}' names several |  |
+| `plugin.fetch_failed` | unavailable | 7 | the package could not be fetched from {source}: {reason} |  |
 | `plugin.fields_missing` | invalid | 2 | a plugin needs {fields} |  |
 | `plugin.fields_unknown` | invalid | 2 | a plugin does not read {fields} |  |
 | `plugin.file_commit_unsupported` | invalid | 2 | file plugin path '{path}' is an S3 object, which is never appended to, so commit {commit} cannot grow it; set commit rename |  |
@@ -285,18 +277,15 @@ SDK raises or returns its one error type carrying them.
 | `plugin.hook_options_not_object` | invalid | 2 | a hook's options must be an object of names and values |  |
 | `plugin.hook_position_refused` | invalid | 2 | this hook does not take a position; only a transform or fold hook does |  |
 | `plugin.hooks_missing` | invalid | 2 | a plugin needs a list of at least one hook | `flz plugin help <provider_id>` |
-| `plugin.id_mismatch` | invalid | 2 | the package is plugin '{package_plugin}', not '{plugin}' |  |
 | `plugin.id_taken` | conflict | 6 | plugin id '{plugin}' is already registered for operator '{operator}' in namespace '{namespace}' | `flz plugin list` |
 | `plugin.init_after_start` | invalid | 2 | an on_operator_init plugin can only be attached when its operator starts | `flz operator start <factory> --plugins '<json-array>'` |
 | `plugin.invalid_regex` | invalid | 2 | option 'regex_pattern' is not a valid regular expression |  |
-| `plugin.load_failed` | unavailable | 7 | plugin '{plugin}' failed to load when the controller started, so it cannot be enabled; upgrade or reinstall it | `flz plugin info {plugin}` |
-| `plugin.manifest_invalid` | invalid | 2 | the package's manifest.exs is refused: {problem} ({value}) |  |
-| `plugin.manifest_not_literal` | invalid | 2 | the package's manifest.exs must be a literal map, with nothing to evaluate |  |
-| `plugin.manifest_unparsable` | invalid | 2 | the package's manifest.exs is not valid Elixir |  |
-| `plugin.module_collision` | conflict | 6 | the package defines module {module}, which the controller or another plugin already has |  |
-| `plugin.module_load_failed` | internal | 1 | module {module} of the package could not be loaded |  |
-| `plugin.module_mismatch` | invalid | 2 | the package's sources define {produced}, and its manifest.exs declares {expected} |  |
-| `plugin.no_trusted_keys` | denied | 4 | the package is signed, but the controller trusts no key to verify it with |  |
+| `plugin.library_conflict` | conflict | 6 | the package bundles {application} {version}, and {holder} already holds {application} {loaded_version}; a controller holds one version of each library | `pin {application} to {loaded_version} in the plugin project and package it again` |
+| `plugin.list_declared` | conflict | 6 | this node declares its plugins in {variable}, so install and uninstall are refused; change the list and restart the controller |  |
+| `plugin.list_not_declared` | invalid | 2 | {variable} is not set, so there is no plugin list to sync |  |
+| `plugin.load_failed` | internal | 1 | the package could not be loaded: {what} failed ({reason}) |  |
+| `plugin.module_conflict` | conflict | 6 | the package's module {module} is already held by {holder} |  |
+| `plugin.native_code` | invalid | 2 | the package carries native code ({entry}); a plugin package holds only BEAM code |  |
 | `plugin.not_found` | not_found | 5 | plugin '{plugin}' is not enabled | `flz plugin list` |
 | `plugin.not_installed` | not_found | 5 | plugin '{plugin}' is not installed | `flz plugin list --installed` |
 | `plugin.operator_not_declared` | not_found | 5 | the plugin's operator is not declared in its namespace, so nothing records the plugin |  |
@@ -306,21 +295,24 @@ SDK raises or returns its one error type carrying them.
 | `plugin.option_requires` | invalid | 2 | option '{option}' needs option '{required}' as well |  |
 | `plugin.options_exclusive` | invalid | 2 | options '{option}' and '{other}' cannot be set together |  |
 | `plugin.options_required` | invalid | 2 | a {provider} plugin needs the option {options} | `flz plugin help <provider_id>` |
-| `plugin.package_layout_invalid` | invalid | 2 | the package layout is refused ({problem}): a package holds manifest.exs, CHECKSUMS.sha256, a src folder of .ex and .erl files, and optionally signature.sig |  |
-| `plugin.package_too_large` | invalid | 2 | the package unpacks to {bytes} bytes, above the limit of {max} |  |
-| `plugin.package_too_many_files` | invalid | 2 | the package has {count} source files, above the limit of {max} |  |
-| `plugin.package_unreadable` | invalid | 2 | the package is not a readable gzip tar archive |  |
-| `plugin.package_unsafe_entry` | invalid | 2 | package entry '{entry}' is refused ({problem}) |  |
+| `plugin.package_invalid` | invalid | 2 | the plugin package is refused: {problem} | `package it again with mix flezha.plugin.package` |
 | `plugin.partition_placeholder_unfilled` | invalid | 2 | option '{option}' carries {placeholder}, but this plugin has no partition identity; the placeholder is filled only on a partitioned start |  |
 | `plugin.prepare_failed` | invalid | 2 | plugin '{plugin}' was refused while its operator started, so the operator did not start |  |
+| `plugin.protocol_consolidation_failed` | internal | 1 | protocol {protocol} could not be consolidated again with the package's implementations |  |
 | `plugin.provider_bad_answer` | internal | 1 | the plugin's provider answered with a value it may not return |  |
+| `plugin.provider_conflict` | conflict | 6 | provider id '{provider}' is already taken by {holder} |  |
 | `plugin.provider_crashed` | internal | 1 | provider {provider} crashed while preparing the plugin; the controller's log names the cause |  |
-| `plugin.provider_not_loaded` | not_found | 5 | provider module {provider} is not loaded; its package may not be installed | `flz plugin list --installed` |
+| `plugin.provider_failed` | internal | 1 | provider '{provider}' of package '{plugin}' failed to start its worker: {reason} |  |
+| `plugin.provider_not_loaded` | not_found | 5 | provider module {provider} is not loaded, and no plugin package installed on this controller provides it | `flz plugin list --installed` |
+| `plugin.provider_refused` | invalid | 2 | provider '{provider}' of package '{plugin}' refused its options: {reason} |  |
+| `plugin.provider_unavailable` | unavailable | 7 | provider {provider} belongs to package '{plugin}', which is {status} on this controller | `flz plugin list --installed` |
 | `plugin.registry_unavailable` | unavailable | 7 | the operator registry of the plugin's namespace did not answer; try again |  |
+| `plugin.runtime_mismatch` | conflict | 6 | the package was built on OTP {package_otp}, Elixir {package_elixir} and Flezha {package_flezha}; this controller runs OTP {otp}, Elixir {elixir} and Flezha {flezha} | `package it again in flezha/plugin-builder:{flezha}` |
 | `plugin.service_failed` | internal | 1 | the plugin service failed; the controller's log names the cause |  |
 | `plugin.service_unavailable` | unavailable | 7 | the plugin service did not answer; try again |  |
-| `plugin.signature_invalid` | invalid | 2 | the package signature does not verify against any trusted key |  |
-| `plugin.signature_unreadable` | internal | 1 | the package's signature.sig could not be read |  |
+| `plugin.signature_invalid` | denied | 4 | the package signature does not verify against any trusted key |  |
+| `plugin.signature_required` | denied | 4 | the controller requires signed plugin packages, and this one carries no signature.sig | `package it with mix flezha.plugin.package --sign <key.pem>` |
+| `plugin.source_unsupported` | invalid | 2 | '{source}' is neither a local path nor an https:// URL |  |
 | `plugin.spec_field_missing` | invalid | 2 | a plugin spec needs a non-empty '{field}' string |  |
 | `plugin.spec_field_not_object` | invalid | 2 | a plugin spec's '{field}' must be a JSON object |  |
 | `plugin.spec_invalid_json` | invalid | 2 | the plugins spec is not a JSON array of plugin objects |  |
@@ -328,14 +320,12 @@ SDK raises or returns its one error type carrying them.
 | `plugin.target_missing` | invalid | 2 | a plugin needs the namespace and the operator it attaches to |  |
 | `plugin.template_missing_placeholder` | invalid | 2 | option '{option}' must contain the {placeholder} placeholder |  |
 | `plugin.timeout_not_below_interval` | invalid | 2 | timeout_ms {timeout_ms} must be below interval_ms {interval_ms}, so that a poll cannot outlast its own interval |  |
-| `plugin.uninstall_enabled` | conflict | 6 | plugin '{plugin}' is enabled; disable it before uninstalling it | `flz plugin disable {plugin}` |
+| `plugin.trust_store_empty` | invalid | 2 | signed packages are required and no trusted key is configured, so no package can be verified | `set FLEZHA_PLUGIN_TRUSTED_KEYS to the public keys packages are signed with` |
 | `plugin.unknown_hook` | not_found | 5 | no hook is named '{hook}' | `flz plugin help <provider_id>` |
 | `plugin.unknown_hook_option` | invalid | 2 | a {kind} hook has no option '{option}' |  |
 | `plugin.unknown_options` | invalid | 2 | a {provider} plugin has no option {options} | `flz plugin help <provider_id>` |
 | `plugin.unknown_provider` | not_found | 5 | no plugin provider is named '{provider}' | `flz plugin list --installed` |
 | `plugin.unread_options` | invalid | 2 | flz plugin enable does not read {options}; provider settings are written --X&lt;key&gt;=&lt;value&gt;, and hooks --hook=&lt;name&gt; | `flz plugin help <provider>` |
-| `plugin.unsigned_refused` | denied | 4 | the controller accepts only signed plugin packages, and this one carries no signature.sig |  |
-| `plugin.upgrade_failed` | internal | 1 | the upgrade failed while swapping the plugin's modules, and the previous version was restored |  |
 | `plugin.url_has_credentials` | invalid | 2 | option '{option}' must not embed credentials; put a secret in '{headers_option}' |  |
 | `plugin.url_scheme_unsupported` | invalid | 2 | option '{option}' must be an http or https URL, got {url} |  |
 | `plugin.url_without_host` | invalid | 2 | option '{option}' names {url}, which has no host |  |

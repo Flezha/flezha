@@ -1,86 +1,73 @@
 defmodule Flezha.Plugin.Installer.Signature do
   @moduledoc """
-  Ed25519 signature verification for plugin packages.
+  Ed25519 signatures of plugin packages: a raw 64-byte signature over the bytes
+  of `CHECKSUMS.sha256`.
 
-  A signature is a raw 64-byte Ed25519 signature over the UTF-8 bytes of
-  `CHECKSUMS.sha256`. Trusted public keys may be supplied in either form:
-
-    * a raw 32-byte binary (the OpenSSL raw public key output), or
-    * a PEM-encoded string (e.g. `-----BEGIN PUBLIC KEY-----`), which is
-      decoded via `:public_key` and converted to its 32-byte curve point.
-
-  `verify/3` returns `:ok` if any trusted key verifies; `gate/3` applies
-  the spec's enforcement decision tree (`require_signature`,
-  `allow_unsigned`) and emits telemetry for accepted unsigned installs.
+  Trusted public keys may be a raw 32-byte binary or a PEM string
+  (`-----BEGIN PUBLIC KEY-----`). `check/3` is the one signature policy, applied
+  at install and at every boot; `sign/2` is what `mix flezha.plugin.package
+  --sign` writes with.
   """
 
   @type key :: binary() | String.t()
 
-  @doc """
-  Verify `signature` (64 bytes) against `msg` using each key in
-  `trusted_keys` until one validates. Returns `:ok` or
-  `{:error, :signature_invalid}`.
-  """
-  @spec verify(binary(), binary(), [key()]) ::
-          :ok | {:error, :signature_invalid | :no_trusted_keys}
-  def verify(msg, signature, trusted_keys)
-      when is_binary(msg) and is_binary(signature) and is_list(trusted_keys) do
-    cond do
-      byte_size(signature) != 64 ->
-        {:error, :signature_invalid}
-
-      trusted_keys == [] ->
-        {:error, :no_trusted_keys}
-
-      true ->
-        trusted_keys
-        |> Enum.map(&normalize_key/1)
-        |> Enum.filter(&match?({:ok, _}, &1))
-        |> Enum.any?(fn {:ok, raw} -> verify_one(msg, signature, raw) end)
-        |> case do
-          true -> :ok
-          false -> {:error, :signature_invalid}
-        end
-    end
-  end
+  @ed25519 {1, 3, 101, 112}
 
   @doc """
-  Apply the spec's signature-enforcement decision tree and return
-  `:ok | {:error, reason}`. Emits `[:flezha, :plugin_installer, :unsigned_install]`
-  when an unsigned package is accepted under permissive config.
-
-  `opts` carries:
-    * `:signature_present?` — boolean
-    * `:require_signature` — boolean (from config)
-    * `:allow_unsigned` — boolean (from config)
-    * `:plugin_id` — binary (for telemetry)
+  The signature policy for the package extracted in `dir`: `{:ok, true}` for a
+  signature a trusted key verifies, `{:ok, false}` for an accepted unsigned
+  package. A present signature no trusted key verifies is refused whatever the
+  setting, and with signatures required and no trusted key nothing verifies.
   """
-  @spec gate(keyword()) :: :ok | {:error, :signature_required | :unsigned_not_allowed}
-  def gate(opts) do
-    signature_present? = Keyword.fetch!(opts, :signature_present?)
-    require_signature = Keyword.fetch!(opts, :require_signature)
-    allow_unsigned = Keyword.fetch!(opts, :allow_unsigned)
-    plugin_id = Keyword.get(opts, :plugin_id, nil)
+  @spec check(Path.t(), boolean(), [key()]) :: {:ok, boolean()} | {:error, atom()}
+  def check(dir, require_signature, trusted_keys) do
+    signature = Path.join(dir, "signature.sig")
 
     cond do
-      signature_present? ->
-        :ok
+      require_signature and trusted_keys == [] ->
+        {:error, :trust_store_empty}
+
+      File.regular?(signature) ->
+        msg = File.read!(Path.join(dir, "CHECKSUMS.sha256"))
+
+        with :ok <- verify(msg, File.read!(signature), trusted_keys), do: {:ok, true}
 
       require_signature ->
         {:error, :signature_required}
 
-      not allow_unsigned ->
-        {:error, :unsigned_not_allowed}
-
       true ->
-        :telemetry.execute(
-          [:flezha, :plugin_installer, :unsigned_install],
-          %{count: 1},
-          %{plugin_id: plugin_id}
-        )
-
-        :ok
+        {:ok, false}
     end
+  end
+
+  @doc "Verify `signature` over `msg` against each key until one validates."
+  @spec verify(binary(), binary(), [key()]) :: :ok | {:error, :signature_invalid}
+  def verify(msg, signature, trusted_keys)
+      when is_binary(msg) and is_binary(signature) and is_list(trusted_keys) do
+    verified? =
+      byte_size(signature) == 64 and
+        Enum.any?(trusted_keys, fn key ->
+          case normalize_key(key) do
+            {:ok, raw} -> verify_one(msg, signature, raw)
+            {:error, _} -> false
+          end
+        end)
+
+    if verified?, do: :ok, else: {:error, :signature_invalid}
+  end
+
+  @doc "Sign `msg` with the Ed25519 private key in `pem` (PKCS#8)."
+  @spec sign(binary(), binary()) :: {:ok, binary()} | {:error, :not_an_ed25519_private_key}
+  def sign(msg, pem) when is_binary(msg) and is_binary(pem) do
+    with [entry] <- :public_key.pem_decode(pem),
+         {:ECPrivateKey, _, private, {:namedCurve, @ed25519}, _, _} <-
+           :public_key.pem_entry_decode(entry) do
+      {:ok, :crypto.sign(:eddsa, :none, msg, [private, :ed25519])}
+    else
+      _ -> {:error, :not_an_ed25519_private_key}
+    end
+  rescue
+    _ -> {:error, :not_an_ed25519_private_key}
   end
 
   ## Private

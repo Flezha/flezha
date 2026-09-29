@@ -103,7 +103,7 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
       end)
 
     served = out <> err
-    assert served =~ "boot await"
+    assert served =~ ~r/boot await: ready|\(boot\.not_ready\)/
     refute served =~ "refused"
   end
 

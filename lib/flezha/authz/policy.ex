@@ -86,9 +86,6 @@ defmodule Flezha.AuthZ.Policy do
   # Admin adds everything that touches auth state, plus shutdown, the
   # controller-wide settings and irreversible state destruction.
   @admin_extra [
-    :"plugin.install",
-    :"plugin.uninstall",
-    :"plugin.upgrade",
     :"controller.stop",
     :"state.retention",
     :"state.delete",

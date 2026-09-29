@@ -46,6 +46,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperatorManager
   alias Flezha.Service.PluginManager
+  alias Flezha.TestHelpers.PluginPackage
 
   @moduletag timeout: 300_000
 
@@ -75,7 +76,10 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
       Provider.Kafka.Producer =>
         {:scripted_broker, %{hosts: [{"127.0.0.1", 9092}], topic: "drill", idempotent: false}},
       Provider.Postgres =>
-        {:database, %{database: "flezha_test", username: "postgres", auto_create: true}}
+        {:database, %{database: "flezha_test", username: "postgres", auto_create: true}},
+      # The example plugin package, loaded in setup: a package's row is driven
+      # like a first-party one.
+      FlezhaExamplePlugin.Stamp => {:none, %{path: ctx.stamp_path}}
     }
   end
 
@@ -125,14 +129,36 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
       File.rm_rf!(file_root)
     end)
 
+    load_example_package()
+
     %{
       namespace: namespace,
       sink_name: sink_name,
       operator_id: operator_id,
       target_id: target_id,
       origin_url: "http://127.0.0.1:1/drill",
-      ws_uri: "ws://127.0.0.1:1/drill"
+      ws_uri: "ws://127.0.0.1:1/drill",
+      stamp_path: Path.join(file_root, "stamped.txt")
     }
+  end
+
+  # What a boot with the example package in its plugin root does: the loader
+  # registers its row, and the tree supervises its worker family, which this
+  # controller booted without.
+  defp load_example_package() do
+    root = claim_tmp_dir("provider_drill_plugins")
+    previous = Application.get_env(:flezha, :plugins, [])
+    [%{status: :loaded}] = PluginPackage.load!(root, [PluginPackage.example!()])
+    family = WorkerSup.family(FlezhaExamplePlugin.Stamp)
+    {:ok, _} = Supervisor.start_child(Flezha.Supervisor, {WorkerSup, name: family})
+
+    on_exit(fn ->
+      _ = Supervisor.terminate_child(Flezha.Supervisor, family)
+      _ = Supervisor.delete_child(Flezha.Supervisor, family)
+      PluginPackage.unload!(root)
+      Application.put_env(:flezha, :plugins, previous)
+      File.rm_rf!(root)
+    end)
   end
 
   test "every provider row names a fixture", ctx do
@@ -299,6 +325,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     assert_info_block(ctx, plugin_id)
 
     assert_declared_restart(id, provider, plugin_id, table)
+    assert_stamped(provider, plugin_id, opts)
 
     seen = phase_events(events, plugin_id)
     assert :prepared in seen, "provider `#{id}` emitted no :prepared event"
@@ -342,6 +369,21 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
                  "not bring the worker back"
     end
   end
+
+  # The package's worker writes through the library it bundles, reading the
+  # stamp from that library's priv/ and rendering it through a protocol the
+  # boot consolidated again. The package is loaded at run time, hence `apply/3`.
+  defp assert_stamped(FlezhaExamplePlugin.Stamp = provider, plugin_id, %{path: path}) do
+    apply(FlezhaExamplePlugin.Stamp.Writer, :append, [
+      WorkerSup.worker(provider, plugin_id),
+      "drill"
+    ])
+
+    assert wait_until(fn -> File.read(path) == {:ok, "[stamped] drill\n"} end, 5_000),
+           "the example package's worker wrote no stamped line to #{path}"
+  end
+
+  defp assert_stamped(_provider, _plugin_id, _opts), do: :ok
 
   defp kill_worker(table, plugin_id) do
     pid = Table.owned_pid(table, plugin_id)

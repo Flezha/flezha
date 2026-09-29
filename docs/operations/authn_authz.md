@@ -339,7 +339,7 @@ a role the principal does not hold changes nothing.
 | `viewer` | the reads: operators, plugins, cell state, audit, observability, the schedule registry |
 | `app` | viewer plus the lifecycle an application runs on its own work: start, stop and send to an operator, including the start and the delivery a tasklet's `ctx.spawn_bounded` asks for, listen to what an operator ingests and emits, and enable and disable a plugin. It destroys no record and moves no work it did not create, which is why it is not `ops`: no DLQ drop or replay, no state rotation or deletion, no rewind, no replay and no rescale |
 | `ops` | app plus the rest of the operator and plugin lifecycle, audit rotation, observability mutation, the schedule family, the dead-letter queue and the records in flight |
-| `admin` | ops plus auth state, namespace and quota mutation, plugin install/upgrade/uninstall, controller shutdown and the controller-wide settings. Only `admin@_system` may target another namespace |
+| `admin` | ops plus auth state, namespace and quota mutation, controller shutdown and the controller-wide settings. Only `admin@_system` may target another namespace |
 | `runner` | `runner.connect` and nothing else. It is outside the hierarchy: it is what a runner connection resolves to before a caller grants it more |
 | `spawner` | runner plus the two rights a tasklet's `ctx.spawn_bounded` needs in its own namespace, `operator.start` and `operator.send`, and nothing else. Those rights also open `Operator.start` and `Operator.send` on the SDK administration surface; no stop, plugin or schedule verb. It is outside the hierarchy like `runner`, and `app` holds everything it grants |
 | `stopper` | runner plus `operator.stop` on the bound namespace and nothing else, so it combines with `spawner` into an application that starts, sends and stops its own work and still enables no plugin. It is outside the hierarchy like `runner`, and `app` holds everything it grants |
@@ -483,14 +483,9 @@ told nothing about whether the name exists.
 | `runner_connect` | published surface only | `runner.connect` | runner | argument 1 (the namespace named) | - |
 | `plugin_list` | `list_plugins` | `plugin.list` | viewer | the caller's own namespace | - |
 | `list_installed_plugins` | `list_installed_plugins` | `plugin.list` | viewer | the caller's own namespace | - |
-| `plugin_info` | `installed_plugin?`, `installed_plugin_info`, `plugin_help` | `plugin.info` | viewer | the caller's own namespace | - |
+| `plugin_info` | `plugin_help` | `plugin.info` | viewer | the caller's own namespace | - |
 | `plugin_enable` | `enable_plugin` | `plugin.enable` | app | the stored row's `namespace` | after on `plugin_service` |
 | `plugin_disable` | `disable_plugin` | `plugin.disable` | app | the stored row's `namespace` | after on `plugin_service` |
-| `install_plugin` | `install_plugin` | `plugin.install` | admin | `_system` | after on `plugin_service` |
-| `upgrade_plugin` | `upgrade_plugin` | `plugin.upgrade` | admin | `_system` | after on `plugin_service` |
-| `uninstall_plugin` | `uninstall_plugin` | `plugin.uninstall` | admin | `_system` | after on `plugin_service` |
-| `installer_enable_plugin` | `installer_enable_plugin` | `plugin.enable` | app | `_system` | after on `plugin_service` |
-| `installer_disable_plugin` | `installer_disable_plugin` | `plugin.disable` | app | `_system` | after on `plugin_service` |
 | `observability_sources` | `observability_render_sources` | `observability.query` | viewer | the caller's own namespace | - |
 | `observability_sinks` | `observability_render_sinks` | `observability.query` | viewer | the caller's own namespace | - |
 | `observability_query` | published surface only | `observability.query` | viewer | the caller's own namespace | - |

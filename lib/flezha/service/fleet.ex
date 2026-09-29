@@ -68,7 +68,8 @@ defmodule Flezha.Service.Fleet do
   end
 
   @doc "Every plugin package installed on this controller."
-  @spec installed_plugins(caller_context()) :: {:ok, [term()]} | {:error, term()}
+  @spec installed_plugins(caller_context()) ::
+          {:ok, [Flezha.Plugin.Installer.InstalledPlugin.t()]} | {:error, term()}
   verb installed_plugins(caller_context), verb: :list_installed_plugins do
     {:ok, Installer.list()}
   end

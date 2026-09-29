@@ -24,8 +24,7 @@ defmodule FlezhaTest.State.StoreTest do
           Flezha.AuthZ.NamespaceStore,
           Flezha.AuthZ.QuotaCounters,
           Flezha.AuthZ.AuthState,
-          Flezha.Schedule.Store,
-          Flezha.Plugin.Installer.Store
+          Flezha.Schedule.Store
         ] do
       assert MapSet.member?(declared, expected),
              "#{inspect(expected)} keeps a DETS file and declares no store contract"
@@ -125,7 +124,7 @@ defmodule FlezhaTest.State.StoreTest do
              ~w(namespaces.dets quota_counters.dets roles.dets state.dets tokens.dets)
 
     assert Store.filenames_in(:schedules) == ~w(schedules.dets)
-    assert Store.filenames_in(:plugins) == ~w(installed_plugins.dets)
+    assert Store.filenames_in(:plugins) == []
     assert Store.filenames_in(:dlq) == []
   end
 
@@ -140,7 +139,7 @@ defmodule FlezhaTest.State.StoreTest do
   # than a green run over nothing.
   defp implementers() do
     found = Store.implementers()
-    assert length(found) >= 7, "the behaviour found #{length(found)} implementers"
+    assert length(found) >= 6, "the behaviour found #{length(found)} implementers"
     found
   end
 

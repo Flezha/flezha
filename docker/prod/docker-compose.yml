@@ -34,6 +34,10 @@ services:
       FLEZHA_LOG_LEVEL: ${FLEZHA_LOG_LEVEL:-info}
       FLEZHA_GRACEFUL_SHUTDOWN_ENABLED: ${FLEZHA_GRACEFUL_SHUTDOWN_ENABLED:-true}
       FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS: ${FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS:-60000}
+      # Declares the plugin packages this node runs; the entrypoint syncs the
+      # flezha_plugins volume to it before starting the controller. While it is
+      # set, `flz plugin install` and `uninstall` are refused.
+      # FLEZHA_PLUGINS: "https://example.com/flezha_example_plugin-0.1.0.fpz#sha256=<hex>"
     depends_on:
       - kafka
     ulimits:

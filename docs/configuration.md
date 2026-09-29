@@ -249,13 +249,11 @@ the value and the type.
 | `FLEZHA_DLQ_RETENTION_DAYS` | `30` | `:dlq[:retention_seconds]` (× 86 400) |
 | `FLEZHA_SCHEDULE_DIR` | `app_data/schedules` | `:schedules[:dir]` |
 | `FLEZHA_SCHEDULE_MISFIRE_GRACE_MS` | `120000` | `:schedules[:misfire_grace_ms]` |
-| `FLEZHA_PLUGIN_INSTALLER_ENABLED` | `false` | `:plugin_installer_enabled`; true only for `true`/`1`/`yes` |
-| `FLEZHA_PLUGIN_ROOT` | `app_data/plugins` | `:plugin_installer[:plugin_root]` |
-| `FLEZHA_PLUGIN_REQUIRE_SIGNATURE` | `false` | `:plugin_installer[:require_signature]` |
-| `FLEZHA_PLUGIN_ALLOW_UNSIGNED` | `true` | `:plugin_installer[:allow_unsigned]` |
-| `FLEZHA_PLUGIN_TRUSTED_KEYS` | `""` | `:plugin_installer[:trusted_keys]`, comma-separated PEM file paths read at boot |
-| `FLEZHA_PLUGIN_MAX_PACKAGE_BYTES` | `50000000` | `:plugin_installer[:max_package_bytes]` |
-| `FLEZHA_PLUGIN_MAX_SOURCE_FILES` | `200` | `:plugin_installer[:max_source_files]` |
+| `FLEZHA_PLUGIN_ROOT` | `app_data/plugins` | `:plugins[:plugin_root]`, the folder of installed `*.fpz` packages, loaded at every boot. An archive there is the opt-in: no setting gates loading. The boot writes `.loaded/` inside it, so it must be writable |
+| `FLEZHA_PLUGIN_REQUIRE_SIGNATURE` | `false` | `:plugins[:require_signature]`; with it set and no trusted key, every package is refused and the controller still boots |
+| `FLEZHA_PLUGIN_TRUSTED_KEYS` | `""` | `:plugins[:trusted_keys]`, comma-separated PEM file paths read at boot |
+| `FLEZHA_PLUGIN_MAX_PACKAGE_BYTES` | `50000000` | `:plugins[:max_package_bytes]`, a package's unpacked size and a download alike |
+| `FLEZHA_PLUGINS` | unset | `:plugins[:list]`, the packages this node declares: paths or `https://` URLs separated by whitespace or commas, each optionally pinned with `#sha256=<hex>`. `flz plugin sync`, which the image entrypoint runs before start, makes the plugin root hold exactly these; while it is set, even empty, `flz plugin install` and `uninstall` are refused |
 | `FLEZHA_FILE_PLUGIN_ROOT` | `app_data/files` | `:file_plugin_root`, the one folder, or the one `s3://<bucket>/<prefix>`, every file plugin path must resolve inside. A folder is resolved with symbolic links followed; the first file plugin enable creates the default folder, and a folder set here must already exist, or every enable is refused naming it. An `s3://` root is never created and takes the four settings below |
 | `FLEZHA_FILE_PLUGIN_S3_ENDPOINT` | unset | `:file_plugin_s3[:endpoint]`, the S3-compatible endpoint an `s3://` root is on; required under one |
 | `FLEZHA_FILE_PLUGIN_S3_REGION` | `us-east-1` | `:file_plugin_s3[:region]` |
@@ -682,11 +680,9 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | Key | Default | Read in |
 |---|---|---|
 | `:enabled_plugins` | the provider map in `config/config.exs` | `lib/flezha/config.ex` |
-| `:plugin_installer_enabled` | `false` | `lib/flezha/application.ex` |
-| `:plugin_installer[:plugin_root]` | `"app_data/plugins"` | `lib/flezha/plugin/installer/store.ex`, `lib/flezha/plugin/installer.ex` |
-| `:plugin_installer[:trusted_keys]` / `[:require_signature]` / `[:allow_unsigned]` | `[]` / `false` / `true` | `lib/flezha/plugin/installer.ex`, `lib/flezha/plugin/installer/loader.ex` |
-| `:plugin_installer[:max_package_bytes]` / `[:max_source_files]` | `50_000_000` / `200` | `lib/flezha/plugin/installer.ex` |
-| `:plugin_installer_data_dir` | unset | `lib/flezha/plugin/installer/store.ex` — overrides `plugin_root` when set |
+| `:plugins[:plugin_root]` | `"app_data/plugins"` | `lib/flezha/plugin/installer/loader.ex`, `lib/flezha/plugin/installer.ex` |
+| `:plugins[:trusted_keys]` / `[:require_signature]` / `[:max_package_bytes]` | `[]` / `false` / `50_000_000` | `lib/flezha/plugin/installer/package.ex` |
+| `:plugins[:list]` | unset | `lib/flezha/plugin/installer.ex` |
 | `:file_plugin_root` | `"app_data/files"` | `lib/flezha/plugin/provider/file.ex`, which resolves every file plugin path inside it and creates only the default folder |
 | `:dlq[:dir]` | `"app_data/dlq"` | `lib/flezha/dlq/store.ex` |
 | `:dlq[:retention_seconds]` / `[:max_total_bytes]` / `[:retention_check_interval_ms]` | `30 * 86_400` / `4_294_967_296` / `3_600_000` | `lib/flezha/dlq/store.ex` |

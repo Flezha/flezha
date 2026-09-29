@@ -5,15 +5,23 @@ USAGE:
     flz plugin enable <plugin_id> <provider_id> [--hook=<name>]... [OPTIONS]
 
 COMMANDS:
-    install    Install a plugin from a .fpz package
-    upgrade    Upgrade an installed plugin to a new version
-    uninstall  Remove an installed plugin
-    enable     Enable a plugin (installed package or legacy provider)
+    install    Place a plugin package (.fpz) from a path or an https:// URL
+    uninstall  Remove an installed plugin package
+    sync       Make the plugin root hold exactly the packages FLEZHA_PLUGINS
+               declares
+    enable     Enable a plugin on an operator
     disable    Disable a plugin
-    list       List plugins: `--installed` (catalog, text or json) or
+    list       List plugins: `--installed` (packages, text or json) or
                providers (default, text only)
-    info       Show details for an installed plugin
     help       Show help for a specific plugin provider
+
+PACKAGES:
+    install, uninstall and sync change the plugin root, never a running
+    controller, and work with no controller running. A change takes effect
+    when the controller restarts; `flz plugin list --installed` shows each
+    package as loaded, refused, pending or removed. An upgrade is an install
+    of a newer package of the same id. While FLEZHA_PLUGINS is set, install
+    and uninstall are refused: the declared list is the node's only truth.
 
 HOOKS:
     A hook is a point at which the operator calls its plugin, named by the
@@ -33,14 +41,14 @@ HOOKS:
     provider settings, and refuses any other option.
 
 EXAMPLES:
-    flz plugin install /path/to/kafka_ingest-1.0.0.fpz
+    flz plugin install ./flezha_example_plugin-0.1.0.fpz
+    flz plugin install https://example.com/flezha_example_plugin-0.1.0.fpz
     flz plugin list --installed
     flz plugin list --installed --json
-    flz plugin info kafka_ingest
-    flz plugin enable kafka_ingest
-    flz plugin upgrade kafka_ingest /path/to/kafka_ingest-1.1.0.fpz
-    flz plugin uninstall kafka_ingest
-    # Legacy provider enable (compile-time providers):
+    flz plugin uninstall flezha_example_plugin
+    flz plugin sync
+    flz plugin enable stamp example_stamp --operator_id my_op \
+        --Xpath=/tmp/stamped.txt --hook=on_output
     flz plugin enable ws_out operator_websocket --operator_id my_op \
         --Xuri=ws://localhost:4500 --hook=on_output --on_output.position=0
     # Source only: it injects what arrives and sends nothing back.

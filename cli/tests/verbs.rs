@@ -45,9 +45,10 @@ const CASES: &[(&[&str], &str)] = &[
         &["state", "get", "--output", "json", "a/b/c"],
         r#"Flezha.Service.CliManager.state_get("a/b/c", [output: "json"])"#,
     ),
+    // A verb that reaches no controller carries no token, wherever it is written.
     (
         &["plugin", "install", "--token", "t", "/tmp/p.fpz"],
-        r#"Flezha.Service.CliManager.install_plugin("/tmp/p.fpz", [token: "t"])"#,
+        r#"Flezha.Service.Cli.Plugin.eval("install", ["/tmp/p.fpz"], [])"#,
     ),
     (
         &["token", "issue", "--ttl", "60", "p", "ns", "viewer"],

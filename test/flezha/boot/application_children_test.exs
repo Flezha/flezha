@@ -14,7 +14,6 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
 
   @pinned [
     transports: [:uds],
-    plugin_installer_enabled: false,
     authn_authz: [application_managed: true],
     convergence_health_enabled: true,
     schedules: [application_managed: true],

@@ -428,6 +428,13 @@ defmodule Flezha.MixProject do
 
     File.cp_r!("LICENSES", Path.join(release.path, "LICENSES"))
 
+    # The assembled protocols are stripped; boot-time re-consolidation of a
+    # plugin package's implementations needs their debug info.
+    File.cp_r!(
+      Mix.Project.consolidation_path(),
+      Path.join(release.version_path, "consolidated")
+    )
+
     announce_binaries(release)
   end
 

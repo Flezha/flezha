@@ -266,21 +266,14 @@ defmodule Flezha.Service.AdminTest do
                Admin.call(@ns, "Namespace.create", ~s([{}]))
     end
 
-    test "nothing binds plugin.install, plugin.upgrade, plugin.uninstall or controller.stop on the surface" do
-      # The node-wide verbs are out of reach because no published function
-      # carries them at all, and each is `scope: :system` besides.
-      for action <- [
-            :"plugin.install",
-            :"plugin.upgrade",
-            :"plugin.uninstall",
-            :"controller.stop"
-          ] do
-        refute Policy.grants?(:app, action)
+    test "nothing binds controller.stop on the surface" do
+      # The node-wide verb is out of reach because no published function
+      # carries it at all, and it is `scope: :system` besides.
+      refute Policy.grants?(:app, :"controller.stop")
 
-        rows = Enum.filter(Verbs.all(), &(&1.action == action))
-        assert rows != []
-        assert Enum.all?(rows, &(&1.scope == :system))
-      end
+      rows = Enum.filter(Verbs.all(), &(&1.action == :"controller.stop"))
+      assert rows != []
+      assert Enum.all?(rows, &(&1.scope == :system))
     end
 
     test "the terminal's own wire contract is not a door, though it lives under the prefix" do

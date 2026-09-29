@@ -392,7 +392,8 @@ defmodule Flezha.Convergence.RemedySeamTest do
   #
   # Scoped to the controller tree: `lib/mix/` is the bench harness, which
   # clears its own namespace directory BEFORE the application boots — offline,
-  # like `flz reset`, and never a teardown of a running operator.
+  # like `flz reset`, and never a teardown of a running operator. The plugin
+  # installer and loader delete only their own expansions of package archives.
   @teardown_allowed %{
     {Flezha.Plugin.Extension.Table, :teardown_all} => [
       "lib/flezha/operator/migration.ex",
@@ -404,7 +405,10 @@ defmodule Flezha.Convergence.RemedySeamTest do
       "lib/flezha/plugin/installer.ex",
       "lib/flezha/transport/socket/support.ex"
     ],
-    {File, :rm_rf!} => ["lib/flezha/plugin/installer.ex"]
+    {File, :rm_rf!} => [
+      "lib/flezha/plugin/installer.ex",
+      "lib/flezha/plugin/installer/loader.ex"
+    ]
   }
 
   test "clause 5: a teardown outside the steps fails naming the module, function and arity" do

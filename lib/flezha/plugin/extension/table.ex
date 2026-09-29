@@ -31,6 +31,8 @@ defmodule Flezha.Plugin.Extension.Table do
   alias Flezha.Plugin.Extension.Table.Entry
   alias Flezha.Plugin.Extension.Table.Subscription
   alias Flezha.Plugin.Extension.Table.Workers
+  alias Flezha.Plugin.Installer
+  alias Flezha.Plugin.Installer.Loader
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
 
@@ -115,11 +117,20 @@ defmodule Flezha.Plugin.Extension.Table do
           {:cont, {:ok, new_table}}
 
         {:error, reason} ->
+          reason = missing_provider(reason)
           log_halt(plugin_id, plugin, reason, Enum.drop(plugins, index + 1))
           {:halt, {:error, {plugin_id, reason}}}
       end
     end)
   end
+
+  # A provider module this VM does not hold is, when a package on this node
+  # declares it, that package's refusal or pending install, which is what the
+  # user repairs.
+  defp missing_provider({:module_not_loaded, provider} = reason),
+    do: Installer.unavailable(provider) || reason
+
+  defp missing_provider(reason), do: reason
 
   defp subscribe_one(%__MODULE__{} = table, plugin_id, %Plugin{} = plugin)
        when is_binary(plugin_id) do
@@ -200,8 +211,11 @@ defmodule Flezha.Plugin.Extension.Table do
       opts = Map.merge(opts || %{}, table.activation_env)
 
       case Workers.start(table, plugin_id, provider, opts, invoker(plugin_id, provider)) do
-        {table, :ok} -> invoke_activate(table, plugin_id, provider, opts)
-        {table, {:error, _reason} = err} -> {table, err}
+        {table, :ok} ->
+          invoke_activate(table, plugin_id, provider, opts)
+
+        {table, {:error, reason}} ->
+          {table, {:error, Loader.refusal(:provider_failed, provider, reason)}}
       end
     else
       Logger.warning(
@@ -682,7 +696,8 @@ defmodule Flezha.Plugin.Extension.Table do
   defp settle_init(%Plugin{} = plugin, {:ok, new_opts}) when is_map(new_opts),
     do: {:ok, %Plugin{plugin | opts: new_opts}}
 
-  defp settle_init(_plugin, {:error, _} = err), do: err
+  defp settle_init(%Plugin{provider: provider}, {:error, reason}),
+    do: {:error, Loader.refusal(:provider_refused, provider, reason)}
 
   defp settle_init(%Plugin{provider: provider}, {:crashed, kind, payload}),
     do: {:error, {:init_provider_crashed, provider, kind, payload}}

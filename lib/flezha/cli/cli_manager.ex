@@ -87,11 +87,6 @@ defmodule Flezha.Service.CliManager do
 
   verb cell_state(namespace, operator_id, opts \\ []), to: Cli.Operator
   verb group_partition_rows(rows), to: Cli.Listing
-  verb install_plugin(path, opts \\ []), to: Cli.Plugin
-  verb installed_plugin?(plugin_id, opts \\ []), to: Cli.Plugin, verb: :plugin_info
-  verb installed_plugin_info(plugin_id, opts \\ []), to: Cli.Plugin, verb: :plugin_info
-  verb installer_disable_plugin(plugin_id, opts \\ []), to: Cli.Plugin
-  verb installer_enable_plugin(plugin_id, opts \\ []), to: Cli.Plugin
   verb list_installed_plugins(opts \\ []), to: Cli.Plugin
   verb list_namespaces(opts \\ []), to: Cli.Listing
   verb list_operators(namespace, opts \\ []), to: Cli.Listing
@@ -169,6 +164,4 @@ defmodule Flezha.Service.CliManager do
   verb state_outbox(path, opts \\ []), to: Cli.State, row: &Cli.State.outbox_row/1
   verb state_retention(operator_class, hours, opts \\ []), to: Cli.State
   verb state_rotate(path, opts \\ []), to: Cli.State, row: &Cli.State.rotate_row/1
-  verb uninstall_plugin(plugin_id, opts \\ []), to: Cli.Plugin
-  verb upgrade_plugin(plugin_id, path, opts \\ []), to: Cli.Plugin
 end

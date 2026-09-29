@@ -1,286 +1,358 @@
-defmodule Flezha.Plugin.Installer.InstallerTest do
+defmodule Flezha.Plugin.InstallerTest do
   @moduledoc """
-  End-to-end tests for `Flezha.Plugin.Installer`. Builds real `.fpz`
-  fixtures in-test via `:erl_tar` so each test owns its archive.
-
-  These tests exercise install → enable/disable → uninstall / upgrade
-  paths against Store+Loader+PluginManager-free stubs. A dedicated
-  `Flezha.Service.PluginManager` is required at the module level — tests
-  start one in a supervisor within each test.
+  Install, uninstall and sync place archives in the plugin root and touch
+  nothing else, from any VM; `list/0` merges what the boot decided with what the
+  root holds since. The fetches run against a local HTTPS origin.
   """
 
-  # async: false: writes Application env; a shared on-disk root; registered singletons.
+  use FlezhaTest.Case, fixtures: [:tmp_dir, :env], async: false
 
-  use FlezhaTest.InstallerCase, async: false
-
-  alias Flezha.Plugin.Installer
-  alias Flezha.TestHelpers.Plugins
-
-  setup %{tmp: tmp} do
-    start_installer_tree(tmp)
-  end
-
-  test "install / list / info / uninstall round-trip", %{tmp: tmp} do
-    unique = System.unique_integer([:positive])
-    mod_name = "FlzInstallTest.Valid#{unique}"
-    fpz = Plugins.build_fixture!(tmp, "valid", "1.0.0", [mod_name])
-
-    assert {:ok, installed} = Installer.install(fpz)
-    assert installed.id == "valid"
-    assert installed.version == "1.0.0"
-    assert installed.status == :disabled
-
-    assert Enum.any?(Installer.list(), fn p -> p.id == "valid" end)
-    assert {:ok, _} = Installer.info("valid")
-
-    # Uninstall requires disabled state (which is our default after install).
-    assert :ok = Installer.uninstall("valid")
-    assert {:error, :not_found} = Installer.info("valid")
-  end
-
-  test "install fails when manifest missing", %{tmp: tmp} do
-    fpz = Path.join(tmp, "bad.fpz")
-
-    write_fpz!(fpz, [
-      {"src/x.ex", "defmodule X do end"},
-      {"CHECKSUMS.sha256", ""}
-    ])
-
-    assert {:error, {:invalid_layout, :manifest_missing}} = Installer.install(fpz)
-  end
-
-  test "install rejects already-installed id", %{tmp: tmp} do
-    unique = System.unique_integer([:positive])
-    mod_name = "FlzInstallTest.Again#{unique}"
-    fpz = Plugins.build_fixture!(tmp, "again", "1.0.0", [mod_name])
-
-    assert {:ok, _} = Installer.install(fpz)
-    assert {:error, {:already_installed, "again"}} = Installer.install(fpz)
-
-    :ok = Installer.uninstall("again")
-  end
-
-  test "install rejects missing dependency", %{tmp: tmp} do
-    unique = System.unique_integer([:positive])
-    mod_name = "FlzInstallTest.WithDep#{unique}"
-
-    fpz =
-      Plugins.build_fixture!(tmp, "dep_user", "1.0.0", [mod_name], deps: [{"common", ">= 1.0.0"}])
-
-    assert {:error, {:dependency_missing, "common", ">= 1.0.0"}} =
-             Installer.install(fpz)
-  end
-
-  ## Helpers
-
-  defp write_fpz!(fpz_path, entries) do
-    :ok = File.mkdir_p!(Path.dirname(fpz_path))
-
-    tar_entries =
-      Enum.map(entries, fn {name, content} ->
-        {String.to_charlist(name), content}
-      end)
-
-    :ok =
-      :erl_tar.create(
-        String.to_charlist(fpz_path),
-        tar_entries,
-        [:compressed]
-      )
-  end
-end
-
-defmodule Flezha.Plugin.Installer.ExampleHelloWorldTest do
-  @moduledoc """
-  Verifies that `examples/plugins/hello_world/` is a genuinely installable
-  package — not just a set of files that look correct. Builds a real
-  `.fpz` from the example tree and runs it through
-  `Flezha.Plugin.Installer.install/2`.
-
-  This guards against the example drifting out of sync with the installer:
-  a change that breaks the manifest schema, the checksum format, or the
-  source layout would silently leave the docs-facing example broken
-  without this test.
-  """
-
-  # async: false: writes Application env; a shared on-disk root; registered singletons.
-
-  use FlezhaTest.InstallerCase, async: false
+  @moduletag :capture_log
 
   alias Flezha.Plugin.Installer
-
-  @example_dir Path.expand("../../../../examples/plugins/hello_world", __DIR__)
-
-  setup %{tmp: tmp} do
-    start_installer_tree(tmp)
-  end
-
-  test "examples/plugins/hello_world tars into a working .fpz", %{tmp: tmp} do
-    assert File.exists?(Path.join(@example_dir, "manifest.exs")),
-           "examples/plugins/hello_world/manifest.exs missing"
-
-    assert File.exists?(Path.join(@example_dir, "src/hello_world.ex")),
-           "examples/plugins/hello_world/src/hello_world.ex missing"
-
-    # Build the checksums string fresh from the source bytes so the test
-    # tracks the example tree instead of asserting a frozen committed
-    # value. The on-disk `CHECKSUMS.sha256` is the docs workflow's
-    # snapshot; the test's job is to validate that the installer accepts
-    # a freshly-tarred package, not that the committed hash file is
-    # current.
-    manifest_hash =
-      :crypto.hash(:sha256, File.read!(Path.join(@example_dir, "manifest.exs")))
-      |> Base.encode16(case: :lower)
-
-    src_hash =
-      :crypto.hash(:sha256, File.read!(Path.join(@example_dir, "src/hello_world.ex")))
-      |> Base.encode16(case: :lower)
-
-    checksums =
-      "#{manifest_hash}  manifest.exs\n" <>
-        "#{src_hash}  src/hello_world.ex\n"
-
-    # Tar the example into a real .fpz and install.
-    fpz = Path.join(tmp, "hello_world-1.0.0.fpz")
-
-    :ok =
-      :erl_tar.create(
-        String.to_charlist(fpz),
-        [
-          {~c"manifest.exs", File.read!(Path.join(@example_dir, "manifest.exs"))},
-          {~c"src/hello_world.ex", File.read!(Path.join(@example_dir, "src/hello_world.ex"))},
-          {~c"CHECKSUMS.sha256", checksums}
-        ],
-        [:compressed]
-      )
-
-    assert {:ok, installed} = Installer.install(fpz)
-    assert installed.id == "hello_world"
-    assert installed.version == "1.0.0"
-    assert installed.status == :disabled
-    assert Flezha.Examples.HelloWorld in installed.modules
-  end
-end
-
-defmodule Flezha.Plugin.Installer.PublicServiceAPITest do
-  @moduledoc """
-  Tests that mutating tasklets serialize through the `Installer` GenServer
-  so two concurrent installs cannot race on the code server or DETS.
-  """
-
-  # async: false: writes Application env; a shared on-disk root; registered singletons.
-
-  use FlezhaTest.InstallerCase, async: false
-
-  alias Flezha.Plugin.Installer
-  alias Flezha.Plugin.Installer.Store
+  alias Flezha.Plugin.Installer.Package
+  alias Flezha.Transport.CertGenerator
+  alias Flezha.TestHelpers.PluginPackage
 
   setup %{tmp: tmp} do
-    start_installer_tree(tmp)
+    root = Path.join(tmp, "plugins")
+    configure(plugin_root: root)
+    on_exit(fn -> PluginPackage.unload!(root) end)
+    {:ok, root: root, example: PluginPackage.example!()}
   end
 
-  test "info/1 for unknown plugin returns :not_found" do
-    assert {:error, :not_found} = Installer.info("nobody_home")
+  defp configure(settings) do
+    Application.put_env(
+      :flezha,
+      :plugins,
+      Keyword.merge(Application.get_env(:flezha, :plugins, []), settings)
+    )
   end
 
-  test "list/0 returns [] on empty catalog" do
-    assert Installer.list() == []
+  defp root_files(root), do: root |> File.ls!() |> Enum.sort()
+  defp staging_empty?(root), do: Package.files(Path.join(root, ".staging")) == []
+
+  defp sibling(tmp, id, edits \\ []),
+    do: PluginPackage.sibling(Path.join(tmp, "#{id}.fpz"), id, edits)
+
+  describe "install/2" do
+    test "places a local archive as <id>.fpz in an empty root, with no controller tree",
+         %{root: root, example: example} do
+      assert {:ok, placed} = Installer.install(example)
+      assert placed == %{id: "flezha_example_plugin", version: "0.1.0", signed: false, root: root}
+      assert File.read!(Path.join(root, "flezha_example_plugin.fpz")) == File.read!(example)
+      assert staging_empty?(root)
+    end
+
+    test "replaces every archive declaring the same id", %{root: root, example: example, tmp: tmp} do
+      File.mkdir_p!(root)
+      File.cp!(example, Path.join(root, "flezha_example_plugin-0.1.0.fpz"))
+
+      newer =
+        PluginPackage.rewrite(example, Path.join(tmp, "newer.fpz"), [
+          {:manifest, &Map.put(&1, :description, "newer")}
+        ])
+
+      assert {:ok, %{id: "flezha_example_plugin"}} = Installer.install(newer)
+      assert root_files(root) == [".staging", "flezha_example_plugin.fpz"]
+      assert File.read!(Path.join(root, "flezha_example_plugin.fpz")) == File.read!(newer)
+    end
+
+    test "a refused install leaves the root as it was", %{root: root, example: example, tmp: tmp} do
+      {:ok, _} = Installer.install(example)
+      before = root_files(root)
+
+      native =
+        PluginPackage.rewrite(example, Path.join(tmp, "native.fpz"), [
+          {:put, "lib/stamp_lib-0.1.0/priv/nif.so", "ELF"}
+        ])
+
+      assert {:error, {:native_code, _}} = Installer.install(native)
+      assert root_files(root) == before
+      assert staging_empty?(root)
+    end
+
+    test "library and provider conflicts are refused against the release and installed manifests",
+         %{example: example, tmp: tmp} do
+      {:ok, _} = Installer.install(example)
+
+      other_lib = sibling(tmp, "flz_lib", [{:app_version, :stamp_lib, "0.2.0"}])
+
+      assert {:error,
+              {:library_conflict, :stamp_lib, "0.2.0", "0.1.0", "package 'flezha_example_plugin'"}} =
+               Installer.install(other_lib)
+
+      taken =
+        sibling(tmp, "flz_taken", [
+          {:manifest, &%{&1 | providers: %{"example_stamp" => FlzTaken.Provider}}}
+        ])
+
+      assert {:error, {:provider_id_taken, "example_stamp", "package 'flezha_example_plugin'"}} =
+               Installer.install(taken)
+
+      release =
+        sibling(tmp, "flz_stdout", [
+          {:manifest, &%{&1 | providers: %{"operator_stdout" => FlzStdout.Provider}}}
+        ])
+
+      assert {:error, {:provider_id_taken, "operator_stdout", "the release"}} =
+               Installer.install(release)
+
+      spec = {:application, :jason, [vsn: ~c"0.0.1", modules: []]}
+
+      jason =
+        sibling(tmp, "flz_jason", [
+          {:put, "lib/jason-0.0.1/ebin/jason.app", :io_lib.format(~c"~p.~n", [spec])},
+          {:manifest, &%{&1 | apps: &1.apps ++ [{:jason, "0.0.1"}]}}
+        ])
+
+      assert {:error, {:library_conflict, :jason, "0.0.1", _, "the release"}} =
+               Installer.install(jason)
+    end
+
+    test "a source that is neither a path nor an https:// URL is refused, fetching nothing",
+         %{root: root} do
+      assert {:error, {:source_unsupported, "http://host/p.fpz"}} =
+               Installer.install("http://host/p.fpz")
+
+      assert {:error, {:source_unsupported, "ftp://host/p.fpz"}} =
+               Installer.install("ftp://host/p.fpz")
+
+      assert staging_empty?(root)
+    end
   end
 
-  test "concurrent installs serialize — one waits for the other", %{tmp: tmp} do
-    unique = System.unique_integer([:positive])
-    fpz_a = build_fpz!(tmp, "ser_a_#{unique}", "SerA.M#{unique}")
-    fpz_b = build_fpz!(tmp, "ser_b_#{unique}", "SerB.M#{unique}")
+  describe "uninstall/2" do
+    test "removes every archive declaring the id", %{root: root, example: example} do
+      {:ok, _} = Installer.install(example)
+      File.cp!(example, Path.join(root, "copy.fpz"))
 
-    parent = self()
+      assert {:ok, %{id: "flezha_example_plugin", root: ^root}} =
+               Installer.uninstall("flezha_example_plugin")
 
-    t0 = System.monotonic_time(:millisecond)
+      assert root |> Path.join("*.fpz") |> Path.wildcard() == []
+    end
 
-    pid_a =
-      spawn(fn ->
-        r = Installer.install(fpz_a)
-        send(parent, {:a_done, System.monotonic_time(:millisecond), r})
-      end)
-
-    pid_b =
-      spawn(fn ->
-        r = Installer.install(fpz_b)
-        send(parent, {:b_done, System.monotonic_time(:millisecond), r})
-      end)
-
-    assert_receive {:a_done, _, {:ok, _}}, 60_000
-    assert_receive {:b_done, _, {:ok, _}}, 60_000
-
-    # Both succeed; the GenServer serialized them, no concurrent writes to
-    # the code server / DETS.
-    refute Process.alive?(pid_a)
-    refute Process.alive?(pid_b)
-    assert System.monotonic_time(:millisecond) >= t0
+    test "an id with no archive is not installed" do
+      assert {:error, {:plugin_not_installed, "ghost"}} = Installer.uninstall("ghost")
+    end
   end
 
-  # Fails when: a package an earlier build installed, whose stored provision names
-  # its hooks under `subscriptions`, is enabled with no hooks and nothing said.
-  test "a stored provision without hooks is refused when enabled", %{tmp: tmp} do
-    unique = System.unique_integer([:positive])
-    id = "earlier_#{unique}"
-    {:ok, _} = Installer.install(build_fpz!(tmp, id, "Earlier.M#{unique}"))
+  describe "a declared list" do
+    test "refuses install and uninstall while it is set, even empty", %{
+      root: root,
+      example: example
+    } do
+      configure(list: "")
 
-    row = Store.get(id)
+      assert {:error, {:list_declared, "FLEZHA_PLUGINS"}} = Installer.install(example)
+      assert {:error, {:list_declared, "FLEZHA_PLUGINS"}} = Installer.uninstall("x")
+      refute File.exists?(Path.join(root, "flezha_example_plugin.fpz"))
+    end
 
-    earlier =
-      Enum.map(row.provides, fn provision ->
-        provision |> Map.delete(:hooks) |> Map.put(:subscriptions, [{:on_input, []}])
-      end)
+    test "sync converges the root: a pinned present archive kept unfetched, a new one placed, the rest removed",
+         %{root: root, example: example, tmp: tmp} do
+      {:ok, _} = Installer.install(example)
+      {:ok, _} = Installer.install(sibling(tmp, "flz_b"))
+      b = Path.join(root, "flz_b.fpz")
+      c = sibling(tmp, "flz_c")
 
-    :ok = Store.put(id, %{row | provides: earlier})
+      configure(list: "#{tmp}/nowhere/b.fpz#sha256=#{Package.digest(b)}, #{c}")
 
-    assert {:error, {:invalid_hook, :not_a_list}} =
-             Installer.enable(id, namespace: "default", operator_id: "op")
+      assert {:ok, %{placed: [%{id: "flz_c"}], kept: ["flz_b"], removed: [removed]}} =
+               Installer.sync()
+
+      assert removed == Path.join(root, "flezha_example_plugin.fpz")
+      assert root_files(root) == [".staging", "flz_b.fpz", "flz_c.fpz"]
+      assert staging_empty?(root)
+    end
+
+    test "a failed entry fails the sync and changes nothing", %{root: root, example: example} do
+      {:ok, _} = Installer.install(example)
+      present = Path.join(root, "flezha_example_plugin.fpz")
+      before = root_files(root)
+
+      configure(list: "#{present}#sha256=#{Package.digest(present)} https://127.0.0.1:1/p.fpz")
+
+      assert {:error, {:fetch_failed, "https://127.0.0.1:1/p.fpz", _}} = Installer.sync()
+      assert root_files(root) == before
+    end
+
+    test "a pinned entry fetched with another digest is refused", %{root: root, example: example} do
+      configure(list: "#{example}#sha256=#{String.duplicate("0", 64)}")
+
+      assert {:error, {:digest_mismatch, ^example, _pin, actual}} = Installer.sync()
+      assert actual == Package.digest(example)
+      refute File.exists?(Path.join(root, "flezha_example_plugin.fpz"))
+    end
+
+    test "sync with no list declared is refused, naming the variable" do
+      assert {:error, {:list_not_declared, "FLEZHA_PLUGINS"}} = Installer.sync()
+    end
   end
 
-  defp build_fpz!(tmp, id, mod) do
-    fpz = Path.join(tmp, "#{id}.fpz")
-    src_filename = Macro.underscore(mod) <> ".ex"
+  describe "fetching over HTTPS" do
+    # The transport's own generator: a CA and a `localhost` certificate it signs.
+    setup %{example: example, tmp: tmp} do
+      dir = Path.join(tmp, "certs")
 
-    manifest = """
-    %{
-      id: "#{id}",
-      version: "1.0.0",
-      description: "test",
-      author: "tester",
-      modules: [#{mod}],
-      provides: [
-        %{
-          id: "main",
-          provider: #{mod},
-          hooks: [{:on_input, []}],
-          default_opts: %{},
-          scope: :operator
-        }
-      ],
-      dependencies: []
-    }
-    """
+      for {key, file} <- [
+            ca_cert_path: "ca.pem",
+            server_cert_path: "server.pem",
+            server_key_path: "server.key",
+            client_cert_path: "client.pem",
+            client_key_path: "client.key"
+          ],
+          do: Application.put_env(:flezha, key, Path.join(dir, file))
 
-    src = "defmodule #{mod} do\n  def hi, do: :ok\nend"
+      :ok = CertGenerator.ensure_certs()
+      [{:Certificate, ca, _}] = :public_key.pem_decode(File.read!(Path.join(dir, "ca.pem")))
 
-    entries = [
-      {"manifest.exs", manifest},
-      {"src/#{src_filename}", src},
-      {"CHECKSUMS.sha256", "#{sha(manifest)}  manifest.exs\n#{sha(src)}  src/#{src_filename}\n"}
-    ]
+      {port, stop} =
+        serve_https(
+          Path.join(dir, "server.pem"),
+          Path.join(dir, "server.key"),
+          File.read!(example)
+        )
 
-    :ok = File.mkdir_p!(Path.dirname(fpz))
+      on_exit(stop)
+      {:ok, base: "https://localhost:#{port}", cacerts: [ca]}
+    end
 
-    :ok =
-      :erl_tar.create(
-        String.to_charlist(fpz),
-        Enum.map(entries, fn {n, b} -> {String.to_charlist(n), b} end),
-        [:compressed]
+    test "follows an HTTPS redirect and places the archive", %{
+      base: base,
+      cacerts: cacerts,
+      root: root
+    } do
+      assert {:ok, %{id: "flezha_example_plugin"}} =
+               Installer.install("#{base}/redirect", cacerts: cacerts)
+
+      assert File.exists?(Path.join(root, "flezha_example_plugin.fpz"))
+    end
+
+    test "refuses a peer the CA store does not trust", %{base: base} do
+      assert {:error, {:fetch_failed, _, reason}} =
+               Installer.install("#{base}/pkg.fpz", cacerts: [])
+
+      assert reason =~ ~r/unknown ca|certificate/i
+    end
+
+    test "abandons a body past the size limit, leaving nothing in staging",
+         %{base: base, cacerts: cacerts, root: root} do
+      configure(max_package_bytes: 1_000_000)
+
+      assert {:error, {:package_invalid, :too_large, %{limit: 1_000_000}}} =
+               Installer.install("#{base}/big", cacerts: cacerts)
+
+      assert staging_empty?(root)
+    end
+  end
+
+  describe "list/0" do
+    test "answers loaded, refused, pending and removed rows",
+         %{root: root, example: example, tmp: tmp} do
+      refused = sibling(tmp, "flz_refused", [{:manifest, &put_in(&1.built_with.otp, "0")}])
+      PluginPackage.load!(root, [example, sibling(tmp, "flz_b"), refused])
+
+      {:ok, _} = Installer.uninstall("flz_b")
+      {:ok, _} = Installer.install(sibling(tmp, "flz_new"))
+
+      newer =
+        PluginPackage.rewrite(example, Path.join(tmp, "newer.fpz"), [
+          {:app_version, :flezha_example_plugin, "0.2.0"}
+        ])
+
+      {:ok, _} = Installer.install(newer)
+
+      rows = Map.new(Installer.list(), &{&1.id, &1})
+
+      assert %{status: :pending, version: "0.2.0", loaded_version: "0.1.0"} =
+               rows["flezha_example_plugin"]
+
+      assert %{status: :removed, version: "0.1.0"} = rows["flz_b"]
+      assert %{status: :pending, version: "0.1.0", loaded_version: nil} = rows["flz_new"]
+      assert %{status: :refused, error: %{code: "plugin.runtime_mismatch"}} = rows["flz_refused"]
+      assert rows["flz_new"].providers == ["flz_new_stamp"]
+    end
+
+    test "names why a provider a package declares is no row", %{root: root, tmp: tmp} do
+      refused = sibling(tmp, "flz_refused", [{:manifest, &put_in(&1.built_with.otp, "0")}])
+      PluginPackage.load!(root, [refused])
+      {:ok, _} = Installer.install(sibling(tmp, "flz_later"))
+
+      assert {:provider_unavailable, "flz_refused_stamp", "flz_refused", "refused",
+              "plugin.runtime_mismatch"} = Installer.unavailable("flz_refused_stamp")
+
+      assert {:provider_unavailable, "FlzLater.Provider", "flz_later", "pending", nil} =
+               Installer.unavailable(FlzLater.Provider)
+
+      assert Installer.unavailable("nobody_declares_this") == nil
+    end
+  end
+
+  # One HTTPS origin: `/pkg.fpz` serves the archive, `/redirect` sends there,
+  # `/big` serves two megabytes.
+  defp serve_https(certfile, keyfile, archive) do
+    {:ok, listen} =
+      :ssl.listen(0,
+        certs_keys: [%{certfile: certfile, keyfile: keyfile}],
+        active: false,
+        mode: :binary,
+        reuseaddr: true
       )
 
-    fpz
+    {:ok, {_, port}} = :ssl.sockname(listen)
+    acceptor = spawn(fn -> accept_loop(listen, archive) end)
+
+    {port,
+     fn ->
+       Process.exit(acceptor, :kill)
+       :ssl.close(listen)
+     end}
   end
 
-  defp sha(bin), do: :crypto.hash(:sha256, bin) |> Base.encode16(case: :lower)
+  defp accept_loop(listen, archive) do
+    with {:ok, socket} <- :ssl.transport_accept(listen) do
+      server = spawn(fn -> receive(do: ({:serve, socket} -> serve(socket, archive))) end)
+      :ok = :ssl.controlling_process(socket, server)
+      send(server, {:serve, socket})
+      accept_loop(listen, archive)
+    end
+  end
+
+  defp serve(socket, archive) do
+    with {:ok, socket} <- :ssl.handshake(socket),
+         {:ok, request} <- read_request(socket, "") do
+      [_method, path | _] = String.split(request, " ", parts: 3)
+
+      response =
+        case path do
+          "/pkg.fpz" -> reply("200 OK", [], archive)
+          "/redirect" -> reply("302 Found", [{"location", "/pkg.fpz"}], "")
+          "/big" -> reply("200 OK", [], :binary.copy("x", 2_000_000))
+          _ -> reply("404 Not Found", [], "")
+        end
+
+      :ssl.send(socket, response)
+      :ssl.close(socket)
+    end
+  end
+
+  defp read_request(socket, acc) do
+    if String.contains?(acc, "\r\n\r\n") do
+      {:ok, acc}
+    else
+      with {:ok, data} <- :ssl.recv(socket, 0, 5_000), do: read_request(socket, acc <> data)
+    end
+  end
+
+  defp reply(status, headers, body) do
+    head =
+      Enum.map_join(
+        [{"content-length", byte_size(body)}, {"connection", "close"} | headers],
+        fn {k, v} -> "#{k}: #{v}\r\n" end
+      )
+
+    ["HTTP/1.1 ", status, "\r\n", head, "\r\n", body]
+  end
 end

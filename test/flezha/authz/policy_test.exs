@@ -27,7 +27,7 @@ defmodule Flezha.AuthZ.PolicyTest do
 
     test "admin inherits ops plus auth-state mutation and the controller-wide settings" do
       assert Policy.grants?(:admin, :"operator.start")
-      assert Policy.grants?(:admin, :"plugin.install")
+      assert Policy.grants?(:admin, :"controller.stop")
       assert Policy.grants?(:admin, :"authz.token_issue")
       assert Policy.grants?(:admin, :"authz.namespace_create")
       assert Policy.grants?(:admin, :"state.retention")

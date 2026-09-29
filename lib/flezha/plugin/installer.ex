@@ -1,717 +1,411 @@
 defmodule Flezha.Plugin.Installer do
   @moduledoc """
-  Public service API for installable plugins. Backed by a GenServer that
-  serializes every mutating tasklet (install, upgrade, uninstall,
-  enable, disable) so the code server and DETS catalog stay consistent.
+  Places plugin packages in the plugin root and says what the controller holds
+  of them. Plain functions owning no process: `install/2`, `uninstall/2` and
+  `sync/1` act on the plugin root alone, so they have the same effect from the
+  CLI's own VM (`flz plugin install`, through `flzvm eval`), from the controller,
+  or from a user interface running beside it. What they place is loaded by
+  `Flezha.Plugin.Installer.Loader` at the next boot; nothing here touches the
+  running VM or `.loaded/`.
 
-  Read-only tasklets (`list/0`, `info/1`, `installed_ids/0`) bypass the
-  GenServer — they only read the Loader's in-memory registry or the Store
-  DETS, both of which are safe for concurrent readers.
+  An install fetches or copies the archive under `<plugin_root>/.staging/`,
+  verifies it with every check the boot applies that does not need the package
+  loaded, and renames it to `<plugin_root>/<id>.fpz`. A refused install leaves
+  the plugin root as it was.
   """
 
-  use GenServer
-
-  require Logger
-
   alias Flezha.Config
+  alias Flezha.Config.Durations
+  alias Flezha.Http.Client
   alias Flezha.Layout.Table, as: Layout
-  alias Flezha.Plugin
-  alias Flezha.Plugin.Installer.Checksums
-  alias Flezha.Plugin.Installer.Compiler
-  alias Flezha.Plugin.Installer.DependencyResolver
   alias Flezha.Plugin.Installer.InstalledPlugin
   alias Flezha.Plugin.Installer.Loader
-  alias Flezha.Plugin.Installer.Manifest
   alias Flezha.Plugin.Installer.Package
-  alias Flezha.Plugin.Installer.Signature
-  alias Flezha.Plugin.Installer.Store
-  alias Flezha.Service.PluginManager
+  alias Flezha.Plugin.Providers
 
-  @type install_result ::
-          {:ok, InstalledPlugin.t()} | {:error, term()}
+  @list_variable "FLEZHA_PLUGINS"
+  @max_redirects 5
 
-  ## Public API
+  @type placed :: %{id: binary(), version: binary(), signed: boolean(), root: Path.t()}
 
-  def start_link(opts \\ []) do
-    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  @doc """
+  Place the package at `source`, a local path or an `https://` URL, as
+  `<plugin_root>/<id>.fpz`, replacing every archive declaring the same id.
+  Refused while the node declares its list. `opts` may carry `:cacerts` for the
+  fetch.
+  """
+  @spec install(binary(), keyword()) :: {:ok, placed()} | {:error, term()}
+  def install(source, opts \\ []) do
+    with :ok <- no_list_declared() do
+      in_staging(fn staging ->
+        with {:ok, candidates} <- stage(staging, [{source, nil}], opts, present(), :replace),
+             do: {:ok, candidates |> commit(MapSet.new()) |> hd()}
+      end)
+    end
   end
 
-  @doc "Install a plugin from a `.fpz` archive."
-  @spec install(Path.t(), keyword()) :: install_result()
-  def install(path, opts \\ []) do
-    GenServer.call(__MODULE__, {:install, path, opts}, 120_000)
+  @doc "Remove every archive declaring `id`. Refused while the node declares its list."
+  @spec uninstall(binary(), keyword()) ::
+          {:ok, %{id: binary(), root: Path.t()}} | {:error, term()}
+  def uninstall(id, _opts \\ []) do
+    with :ok <- no_list_declared() do
+      case for(%{id: ^id, path: path} <- present(), do: path) do
+        [] ->
+          {:error, {:plugin_not_installed, id}}
+
+        found ->
+          Enum.each(found, &File.rm!/1)
+          {:ok, %{id: id, root: root()}}
+      end
+    end
   end
 
-  @doc "Upgrade an installed plugin to a new version in a `.fpz`."
-  @spec upgrade(binary(), Path.t(), keyword()) :: install_result()
-  def upgrade(plugin_id, new_path, opts \\ []) do
-    GenServer.call(__MODULE__, {:upgrade, plugin_id, new_path, opts}, 120_000)
+  @doc """
+  Make the plugin root hold exactly the packages `FLEZHA_PLUGINS` declares: a
+  pinned entry whose archive is present is kept unfetched, every other entry is
+  fetched, verified and placed, and every archive the list did not produce is
+  removed. A failed entry fails the sync and changes nothing.
+  """
+  @spec sync(keyword()) ::
+          {:ok, %{placed: [placed()], kept: [binary()], removed: [binary()], root: Path.t()}}
+          | {:error, term()}
+  def sync(opts \\ []) do
+    with {:ok, entries} <- declared_list() do
+      by_digest = Map.new(present(), &{Package.digest(&1.path), &1})
+
+      {kept, to_fetch} =
+        Enum.split_with(entries, fn {_source, pin} -> Map.has_key?(by_digest, pin) end)
+
+      kept = Enum.map(kept, fn {_source, pin} -> by_digest[pin] end)
+
+      in_staging(fn staging ->
+        with {:ok, candidates} <-
+               stage(staging, to_fetch, opts, kept, :keep),
+             :ok <- distinct_ids(Enum.map(kept ++ Enum.map(candidates, & &1.manifest), & &1.id)) do
+          kept_paths = Enum.map(kept, & &1.path)
+          placed = commit(candidates, MapSet.new(kept_paths))
+          keep = MapSet.new(kept_paths ++ Enum.map(placed, &target(&1.id)))
+
+          removed =
+            for %{path: path} <- present(),
+                not MapSet.member?(keep, path),
+                do: tap(path, &File.rm!/1)
+
+          {:ok, %{placed: placed, kept: Enum.map(kept, & &1.id), removed: removed, root: root()}}
+        end
+      end)
+    end
   end
 
-  @doc "Uninstall a plugin. Refuses when enabled or when dependents exist."
-  @spec uninstall(binary(), keyword()) :: :ok | {:error, term()}
-  def uninstall(plugin_id, opts \\ []) do
-    GenServer.call(__MODULE__, {:uninstall, plugin_id, opts}, 60_000)
-  end
-
-  @doc "Enable a disabled installed plugin. Subscribes every provision."
-  @spec enable(binary(), keyword()) :: :ok | {:error, term()}
-  def enable(plugin_id, opts \\ []) do
-    GenServer.call(__MODULE__, {:enable, plugin_id, opts}, 30_000)
-  end
-
-  @doc "Disable an enabled installed plugin. Unsubscribes; keeps modules loaded."
-  @spec disable(binary(), keyword()) :: :ok | {:error, term()}
-  def disable(plugin_id, opts \\ []) do
-    GenServer.call(__MODULE__, {:disable, plugin_id, opts}, 30_000)
-  end
-
-  @doc "All installed plugins projected to `%InstalledPlugin{}`."
+  @doc """
+  One row per package id: what this controller loaded or refused at boot,
+  merged with what its plugin root holds now.
+  """
   @spec list() :: [InstalledPlugin.t()]
-  def list do
-    Store.all() |> Enum.map(&InstalledPlugin.from_row/1)
+  def list() do
+    booted = Enum.uniq_by(Loader.outcomes(), & &1.id)
+    present = Enum.group_by(present(), & &1.id)
+
+    at_boot = for outcome <- booted, do: row(outcome, Map.get(present, outcome.id, []))
+
+    since =
+      for {id, [declared | _]} <- present,
+          not Enum.any?(booted, &(&1.id == id)),
+          do: pending(declared, nil)
+
+    at_boot |> Enum.reject(&is_nil/1) |> Enum.concat(since) |> Enum.sort_by(& &1.id)
   end
 
-  @doc "Single installed plugin or `{:error, :not_found}`."
-  @spec info(binary()) :: {:ok, InstalledPlugin.t()} | {:error, :not_found}
-  def info(plugin_id) when is_binary(plugin_id) do
-    case Store.get(plugin_id) do
-      nil -> {:error, :not_found}
-      row -> {:ok, InstalledPlugin.from_row({plugin_id, row})}
+  @doc """
+  Why `provider`, a provider id or module, is no row here although a package
+  declares it: the reason naming the package and whether it was refused at boot
+  or placed since. `nil` when no package here declares it.
+  """
+  @spec unavailable(binary() | module()) :: tuple() | nil
+  def unavailable(provider) do
+    label = if is_binary(provider), do: provider, else: inspect(provider)
+    declaring? = &(Map.has_key?(&1.providers, provider) or provider in Map.values(&1.providers))
+
+    cond do
+      refused = Enum.find(Loader.outcomes(), &(&1.status == :refused and declaring?.(&1))) ->
+        {:provider_unavailable, label, refused.id, "refused", refused.error.code}
+
+      placed = Enum.find(present(), declaring?) ->
+        {:provider_unavailable, label, placed.id, "pending", nil}
+
+      true ->
+        nil
     end
   end
 
-  @doc "Set of ids the installer owns in the VM. Returns empty set if not started."
-  @spec installed_ids() :: MapSet.t(binary())
-  def installed_ids do
-    case Process.whereis(Loader) do
-      nil ->
-        MapSet.new()
+  @doc "The absolute plugin root the functions act on."
+  @spec root() :: Path.t()
+  def root(), do: Path.expand(Layout.dir(:plugins))
 
-      _ ->
-        Loader.installed_ids()
-        |> Enum.into(MapSet.new())
-    end
+  ## Rows
+
+  defp row(%{status: :loaded} = outcome, []), do: from(outcome, :removed)
+  defp row(_refused, []), do: nil
+
+  defp row(outcome, [declared | _] = present) do
+    if Enum.map(present, &Package.digest(&1.path)) == [outcome.digest],
+      do: from(outcome, outcome.status),
+      else: pending(declared, if(outcome.status == :loaded, do: outcome.version))
   end
 
-  ## GenServer
-
-  @impl true
-  def init(_opts), do: {:ok, %{}}
-
-  @impl true
-  def handle_call({:install, path, opts}, _from, state) do
-    {:reply, do_install(path, opts), state}
+  defp from(outcome, status) do
+    %InstalledPlugin{
+      id: outcome.id,
+      version: outcome.version,
+      status: status,
+      providers: outcome.providers |> Map.keys() |> Enum.sort(),
+      error: if(status == :refused, do: outcome.error)
+    }
   end
 
-  def handle_call({:upgrade, id, path, opts}, _from, state) do
-    {:reply, do_upgrade(id, path, opts), state}
+  defp pending(declared, loaded_version) do
+    %InstalledPlugin{
+      id: declared.id,
+      version: declared.version,
+      status: :pending,
+      loaded_version: loaded_version,
+      providers: declared.providers |> Map.keys() |> Enum.sort()
+    }
   end
 
-  def handle_call({:uninstall, id, opts}, _from, state) do
-    {:reply, do_uninstall(id, opts), state}
-  end
+  # Every archive in the plugin root, with what it declares.
+  defp present(), do: for(path <- archives(), do: Map.put(Package.declared(path), :path, path))
 
-  def handle_call({:enable, id, opts}, _from, state) do
-    {:reply, do_enable(id, opts), state}
-  end
+  defp archives(), do: root() |> Path.join("*.fpz") |> Path.wildcard() |> Enum.sort()
 
-  def handle_call({:disable, id, opts}, _from, state) do
-    {:reply, do_disable(id, opts), state}
-  end
+  ## Staging
 
-  ## Install pipeline
+  # One staging directory per call, removed however the call ends.
+  defp in_staging(fun) do
+    staging = Path.join([root(), ".staging", Base.url_encode64(:crypto.strong_rand_bytes(9))])
+    File.mkdir_p!(staging)
 
-  # Each install stores rollback actions in the process dictionary under a
-  # unique key so the `else` branch of the `with` block — which can't see
-  # `with`-block bindings in Elixir — can still recover the full list.
-  @rollback_key :flz_installer_rollback
-
-  defp do_install(path, opts) do
-    authorise = &authorise_install(&1, opts)
-
-    with_staging(fn staging ->
-      with {:ok, staged} <- stage_and_vet(path, staging, &noop_vet/1, authorise),
-           {:ok, plugin} <- finish_install(staged) do
-        {:ok, plugin}
-      else
-        {:error, reason} ->
-          run_rollback()
-          {:error, reason}
-      end
-    end)
-  end
-
-  defp authorise_install(manifest, opts) do
-    with :ok <- refuse_if_already_installed(manifest.id, opts) do
-      others = Enum.reject(DependencyResolver.live_catalog(), fn {id, _} -> id == manifest.id end)
-      DependencyResolver.validate_install(manifest, others)
-    end
-  end
-
-  defp finish_install(staged) do
-    %{manifest: manifest, manifest_src: manifest_src, beams: beams} = staged
-    plugin_id = manifest.id
-    ebin_dir = Path.join(staged.install_dir, "ebin")
-
-    with :ok <- Loader.load_beams(plugin_id, manifest.version, ebin_dir, beams),
-         :ok <- push_rollback({:purge, plugin_id}),
-         row = build_row(manifest, staged.install_dir, beams, manifest_src, staged.staging),
-         :ok <- Store.put(plugin_id, row),
-         :ok <- push_rollback({:delete_store_row, plugin_id}) do
-      {:ok, InstalledPlugin.from_row({plugin_id, row})}
-    end
-  end
-
-  defp noop_vet(_manifest), do: :ok
-
-  # The staging bracket both pipelines run inside: one rollback stack per
-  # attempt, and the staging tree removed however the attempt ends.
-  defp with_staging(fun) do
-    staging = stage_path()
-    Process.put(@rollback_key, [])
-    push_rollback({:rm_dir, staging})
-
-    result = fun.(staging)
-
-    File.rm_rf(staging)
-    Process.delete(@rollback_key)
-    result
-  end
-
-  # Extract, read, validate, verify, resolve, compile and write — the fifteen
-  # steps install and upgrade share. `vet` runs against the parsed manifest,
-  # `authorise` after the signature is accepted; the two pipelines differ only
-  # in what they put there. Both run at the position they occupied before, so
-  # a package that fails two checks still reports the same one.
-  defp stage_and_vet(path, staging, vet, authorise) do
-    with :ok <- Package.extract(path, staging, package_opts()),
-         :ok <- Package.validate_layout(staging),
-         {:ok, manifest_src} <- File.read(Path.join(staging, "manifest.exs")),
-         {:ok, manifest} <- Manifest.parse(manifest_src),
-         :ok <- Manifest.validate(manifest),
-         :ok <- vet.(manifest),
-         :ok <- verify_checksums(staging),
-         {:ok, signature_bytes, signature_present?} <- load_signature(staging),
-         :ok <-
-           Signature.gate(
-             signature_present?: signature_present?,
-             require_signature: Config.get(:plugin_require_signature),
-             allow_unsigned: Config.get(:plugin_allow_unsigned),
-             plugin_id: manifest.id
-           ),
-         :ok <- maybe_verify_signature(staging, signature_bytes),
-         :ok <- authorise.(manifest),
-         :ok <- check_module_collisions(manifest.modules, manifest.id),
-         {:ok, beams} <- Compiler.compile(Path.join(staging, "src"), manifest.modules),
-         install_dir = install_dir_for(manifest.id, manifest.version),
-         :ok <- push_rollback({:rm_dir, install_dir}),
-         :ok <- write_install_dir(staging, install_dir) do
-      {:ok,
-       %{
-         manifest: manifest,
-         manifest_src: manifest_src,
-         beams: beams,
-         install_dir: install_dir,
-         staging: staging
-       }}
-    end
-  end
-
-  defp refuse_if_already_installed(plugin_id, opts) do
-    if Keyword.get(opts, :allow_reinstall, false) do
-      :ok
-    else
-      case Store.get(plugin_id) do
-        nil -> :ok
-        _ -> {:error, {:already_installed, plugin_id}}
-      end
-    end
-  end
-
-  ## Upgrade
-
-  defp do_upgrade(plugin_id, new_path, opts) do
-    case Store.get(plugin_id) do
-      nil ->
-        {:error, {:plugin_not_installed, plugin_id}}
-
-      old_row ->
-        old_modules = Loader.modules_of(plugin_id)
-        old_status = old_row[:status]
-
-        with_staging(fn staging ->
-          stage_upgrade(new_path, staging, plugin_id, old_row, old_status, old_modules, opts)
-        end)
-    end
-  end
-
-  defp stage_upgrade(new_path, staging, plugin_id, old_row, old_status, old_modules, opts) do
-    vet = &ensure_ids_match(&1.id, plugin_id)
-
-    authorise =
-      &DependencyResolver.validate_upgrade(&1, plugin_id, DependencyResolver.live_catalog())
-
-    case stage_and_vet(new_path, staging, vet, authorise) do
-      {:ok, staged} ->
-        upgraded(staged, plugin_id, old_row, old_status, old_modules, opts)
-
-      {:error, reason} ->
-        restore_old_version(plugin_id, old_row, old_status, old_modules)
-        {:error, reason}
-    end
-  end
-
-  defp upgraded(staged, plugin_id, old_row, old_status, old_modules, opts) do
-    case finish_upgrade(staged, plugin_id, old_row, old_status, old_modules, opts) do
-      {:ok, plugin} ->
-        {:ok, plugin}
-
-      {:error, reason} ->
-        restore_old_version(plugin_id, old_row, old_status, old_modules)
-        {:error, reason}
-    end
-  end
-
-  defp restore_old_version(plugin_id, old_row, old_status, old_modules) do
-    run_rollback()
-    _ = Store.put(plugin_id, old_row)
-
-    if old_status == :enabled and old_modules != [] do
-      reload_old_modules(plugin_id, old_row, old_modules)
-      _ = maybe_reenable(plugin_id, old_row)
-    end
-
-    :ok
-  end
-
-  defp finish_upgrade(staged, plugin_id, old_row, old_status, old_modules, opts) do
-    %{manifest: manifest, manifest_src: manifest_src, beams: beams} = staged
-    new_dir = staged.install_dir
-
-    pending_row =
-      manifest
-      |> build_row(new_dir, beams, manifest_src, staged.staging)
-      |> Map.put(:status, :pending_upgrade)
-
-    with :ok <- Store.put(plugin_id, pending_row),
-         :ok <- hot_swap_modules(plugin_id, old_status, old_modules, beams, new_dir, opts) do
-      # Upgrade succeeded. Collapse pending_upgrade to the real status.
-      final_status = if old_status == :enabled, do: :enabled, else: :disabled
-      :ok = Store.update_status(plugin_id, final_status)
-
-      # Delete old version directory.
-      old_dir = old_row[:path]
-      if old_dir && old_dir != new_dir, do: File.rm_rf(old_dir)
-
-      {:ok, InstalledPlugin.from_row({plugin_id, Store.get(plugin_id)})}
-    end
-  end
-
-  defp ensure_ids_match(new_id, existing_id) when new_id == existing_id, do: :ok
-
-  defp ensure_ids_match(new_id, existing_id),
-    do: {:error, {:id_mismatch, new_id, existing_id}}
-
-  # Hot-swap sequence: disable the live plugins, quiesce in-flight tasks,
-  # purge old modules, load new modules, re-subscribe with new manifest.
-  defp hot_swap_modules(plugin_id, old_status, _old_modules, new_beams, new_dir, _opts) do
-    if old_status == :enabled do
-      _ = disable_subscriptions(plugin_id)
-      quiesce()
-    end
-
-    _ = Loader.purge_modules(plugin_id)
-
-    ebin_dir = Path.join(new_dir, "ebin")
-
-    case Loader.load_beams(plugin_id, Store.get(plugin_id)[:version], ebin_dir, new_beams) do
-      :ok ->
-        if old_status == :enabled do
-          # Re-subscribe according to the NEW manifest's provides.
-          new_row = Store.get(plugin_id)
-          enable_provisions(plugin_id, new_row)
-        else
-          :ok
-        end
-
-      err ->
-        err
-    end
-  catch
-    kind, reason -> {:error, {:upgrade_crash, kind, reason}}
-  end
-
-  defp reload_old_modules(plugin_id, old_row, old_modules) do
-    ebin_dir = Path.join(old_row[:path] || "", "ebin")
-
-    Enum.each(old_modules, fn module ->
-      beam_path = Path.join(ebin_dir, "#{module}.beam")
-
-      case File.read(beam_path) do
-        {:ok, bin} ->
-          _ = :code.load_binary(module, String.to_charlist(beam_path), bin)
-
-        _ ->
-          Logger.warning(
-            "[plugin_installer] could not reload old beam for #{plugin_id}/#{module} during rollback"
-          )
-      end
-    end)
-
-    # Record the restored set in the Loader registry.
-    Loader.load_beams(plugin_id, old_row[:version], ebin_dir, [])
-  end
-
-  # Wait up to 5s for in-flight :request tasks to finish. Snapshot the
-  # current children of Flezha.Operator.MessageHandlerTaskSup, monitor
-  # each, then drain `:DOWN` messages — no polling. New tasks spawned
-  # after the snapshot are not waited on (callers serialize plugin
-  # mutations upstream, so this window is small in practice).
-  defp quiesce do
-    case Process.whereis(Flezha.Operator.MessageHandlerTaskSup) do
-      nil ->
-        :ok
-
-      _pid ->
-        try do
-          Flezha.Operator.MessageHandlerTaskSup
-          |> Task.Supervisor.children()
-          |> Enum.map(&Process.monitor/1)
-          |> drain_downs(System.monotonic_time(:millisecond) + 5_000)
-        catch
-          _, _ -> :ok
-        end
-    end
-  end
-
-  defp drain_downs([], _deadline), do: :ok
-
-  defp drain_downs(refs, deadline) do
-    remaining = max(deadline - System.monotonic_time(:millisecond), 0)
-
-    receive do
-      {:DOWN, ref, :process, _pid, _reason} ->
-        drain_downs(List.delete(refs, ref), deadline)
+    try do
+      fun.(staging)
     after
-      remaining ->
-        Enum.each(refs, &Process.demonitor(&1, [:flush]))
-        :ok
+      File.rm_rf!(staging)
     end
   end
 
-  ## Uninstall
+  # Obtain and verify every `{source, pin}`, each checked against the release,
+  # the packages staged before it and `others`, less the one it replaces when an
+  # install replaces its id.
+  defp stage(staging, entries, opts, others, mode) do
+    entries
+    |> Enum.with_index()
+    |> Enum.reduce_while({:ok, []}, fn {{source, pin}, n}, {:ok, staged} ->
+      archive = Path.join(staging, "#{n}.fpz")
 
-  defp do_uninstall(plugin_id, _opts) do
-    case Store.get(plugin_id) do
-      nil ->
-        {:error, {:plugin_not_installed, plugin_id}}
-
-      %{status: :enabled} ->
-        {:error, {:plugin_enabled, plugin_id}}
-
-      row ->
-        dependents = DependencyResolver.find_dependents(plugin_id, Store.all())
-
-        if dependents != [] do
-          {:error, {:dependents_block, dependents}}
-        else
-          _ = Loader.purge_modules(plugin_id)
-          _ = row[:path] && File.rm_rf(plugin_root_for(plugin_id))
-          :ok = Store.delete(plugin_id)
-          :ok
-        end
-    end
-  end
-
-  ## Enable / disable
-
-  defp do_enable(plugin_id, opts) do
-    case Store.get(plugin_id) do
-      nil ->
-        {:error, {:plugin_not_installed, plugin_id}}
-
-      %{status: :enabled} ->
-        {:error, {:already_enabled, plugin_id}}
-
-      %{status: :load_failed} ->
-        {:error, {:load_failed, plugin_id}}
-
-      row ->
-        case enable_provisions(plugin_id, row, opts) do
-          :ok ->
-            :ok = Store.update_status(plugin_id, :enabled)
-            :ok
-
-          err ->
-            err
-        end
-    end
-  end
-
-  defp do_disable(plugin_id, _opts) do
-    case Store.get(plugin_id) do
-      nil ->
-        {:error, {:plugin_not_installed, plugin_id}}
-
-      %{status: :disabled} ->
-        :ok
-
-      %{status: :load_failed} ->
-        :ok
-
-      _row ->
-        _ = disable_subscriptions(plugin_id)
-        :ok = Store.update_status(plugin_id, :disabled)
-        :ok
-    end
-  end
-
-  defp enable_provisions(plugin_id, row, opts \\ []) do
-    overrides = Keyword.get(opts, :overrides, %{})
-    provisions = Map.get(row, :provides, [])
-
-    provisions
-    |> Enum.reduce_while({:ok, []}, fn provision, {:ok, subscribed} ->
-      plugin_struct = build_plugin_struct(plugin_id, provision, overrides, opts)
-      live_id = provision_live_id(plugin_id, provision)
-
-      case safe_enable_plugin(live_id, plugin_struct) do
-        {:ok, _msg} ->
-          {:cont, {:ok, [live_id | subscribed]}}
-
-        err ->
-          Enum.each(subscribed, &safe_disable_plugin/1)
-          {:halt, err}
+      with :ok <- obtain(source, archive, opts),
+           :ok <- pinned(source, archive, pin),
+           {:ok, verified} <- Package.verify(archive, Path.join(staging, "#{n}")),
+           id = verified.manifest.id,
+           held = if(mode == :replace, do: Enum.reject(others, &(&1.id == id)), else: others),
+           :ok <- fits(verified.manifest, held ++ Enum.map(staged, & &1.manifest)) do
+        {:cont, {:ok, staged ++ [Map.put(verified, :archive, archive)]}}
+      else
+        error -> {:halt, error}
       end
     end)
-    |> case do
-      {:ok, _} -> :ok
-      other -> other
+  end
+
+  # Renaming is the one step a reader can see: an archive is whole or absent.
+  defp commit(candidates, keep) do
+    placed =
+      for candidate <- candidates do
+        id = candidate.manifest.id
+        File.rename!(candidate.archive, target(id))
+
+        for %{id: ^id, path: path} <- present(),
+            path != target(id),
+            not MapSet.member?(keep, path),
+            do: File.rm!(path)
+
+        %{id: id, version: candidate.manifest.version, signed: candidate.signed, root: root()}
+      end
+
+    placed
+  end
+
+  defp target(id), do: Path.join(root(), id <> ".fpz")
+
+  ## Install-time checks
+
+  # The checks of the boot that need no loading: one version of each library
+  # against the release and the other packages, and provider ids no row or other
+  # package holds.
+  defp fits(manifest, others) do
+    with :ok <- libraries_fit(manifest, others) do
+      providers_fit(manifest, others)
     end
   end
 
-  # PluginManager.enable_plugin/2 may crash when downstream services
-  # (OperatorManager, ProcessHub) aren't running — that's a configuration
-  # bug, not an install bug, but we owe callers a structured error.
-  defp safe_enable_plugin(live_id, plugin_struct) do
-    PluginManager.enable_plugin(live_id, plugin_struct)
-  catch
-    :exit, reason -> {:error, {:plugin_manager_unavailable, reason}}
-    kind, reason -> {:error, {:plugin_manager_crash, kind, reason}}
+  defp libraries_fit(manifest, others) do
+    from_packages =
+      for other <- others,
+          {app, vsn} <- other.apps,
+          into: %{},
+          do: {app, {vsn, Package.holder(other.id)}}
+
+    from_release =
+      for {app, _vsn} <- manifest.apps,
+          vsn = release_version(app),
+          vsn != nil,
+          into: %{},
+          do: {app, {vsn, Package.holder(nil)}}
+
+    with {:ok, _to_load} <-
+           Package.libraries_to_load(manifest.apps, Map.merge(from_packages, from_release)),
+         do: :ok
   end
 
-  defp safe_disable_plugin(live_id) do
-    PluginManager.disable_plugin(live_id)
-  catch
-    _kind, _reason -> :ok
+  defp providers_fit(manifest, others) do
+    from_packages =
+      for other <- others,
+          {id, _module} <- other.providers,
+          into: %{},
+          do: {id, Package.holder(other.id)}
+
+    from_release = Map.new(Providers.first_party(), fn {id, _} -> {id, Package.holder(nil)} end)
+    Package.providers_free(Map.keys(manifest.providers), Map.merge(from_packages, from_release))
   end
 
-  defp disable_subscriptions(plugin_id) do
-    provisions =
-      case Store.get(plugin_id) do
-        %{} = row -> Map.get(row, :provides, [])
-        _ -> []
-      end
+  # The version of `app` the release ships, or nil. A running controller has
+  # packages' applications on its code path too, under `.loaded/`: those are
+  # packages, not the release.
+  defp release_version(app) do
+    loaded_root = String.to_charlist(Path.join(root(), ".loaded"))
 
-    Enum.each(provisions, fn provision ->
-      safe_disable_plugin(provision_live_id(plugin_id, provision))
-    end)
-
-    :ok
-  end
-
-  defp maybe_reenable(plugin_id, old_row) do
-    enable_provisions(plugin_id, old_row)
-  end
-
-  # Stable identifier for a provision subscription in PluginManager. We use
-  # `<plugin_id>:<provision_id>` so multiple provisions coexist per package.
-  defp provision_live_id(plugin_id, %{id: provision_id}) when is_binary(provision_id),
-    do: "#{plugin_id}:#{provision_id}"
-
-  defp provision_live_id(plugin_id, _), do: plugin_id
-
-  defp build_plugin_struct(plugin_id, provision, overrides, opts) do
-    default_opts = Map.get(provision, :default_opts, %{})
-    merged_opts = Map.merge(default_opts, Map.get(overrides, provision[:id], %{}))
-
-    %Plugin{
-      id: provision_live_id(plugin_id, provision),
-      provider: provision[:provider],
-      namespace: Keyword.get(opts, :namespace) || Map.get(merged_opts, :namespace),
-      operator_id: Keyword.get(opts, :operator_id) || Map.get(merged_opts, :operator_id),
-      opts: merged_opts,
-      hooks: provision[:hooks]
-    }
-  end
-
-  ## Row construction
-
-  defp build_row(manifest, install_dir, beams, manifest_src, staging_dir) do
-    modules = Enum.map(beams, fn {m, _} -> m end)
-
-    %{
-      version: manifest.version,
-      status: :disabled,
-      path: install_dir,
-      manifest_digest: :crypto.hash(:sha256, manifest_src) |> Base.encode16(case: :lower),
-      modules: modules,
-      installed_at: System.monotonic_time(),
-      source_checksums: read_checksums_map(staging_dir),
-      description: Map.get(manifest, :description),
-      author: Map.get(manifest, :author),
-      provides: Map.get(manifest, :provides, []),
-      dependencies: Map.get(manifest, :dependencies, [])
-    }
-  end
-
-  defp read_checksums_map(staging_dir) do
-    path = Path.join(staging_dir, "CHECKSUMS.sha256")
-
-    with {:ok, body} <- File.read(path),
-         {:ok, entries} <- Checksums.parse(body) do
-      Map.new(entries, fn %{path: p, digest: d} -> {p, d} end)
+    with dir when is_list(dir) <- :code.lib_dir(app),
+         false <- List.starts_with?(dir, loaded_root),
+         result when result in [:ok, {:error, {:already_loaded, app}}] <- :application.load(app) do
+      to_string(Application.spec(app, :vsn))
     else
-      _ -> %{}
+      _ -> nil
     end
   end
 
-  ## Filesystem
+  ## The declared list
 
-  defp write_install_dir(staging, install_dir) do
-    if File.exists?(install_dir) do
-      File.rm_rf!(install_dir)
-    end
-
-    File.mkdir_p!(install_dir)
-
-    for entry <- ["manifest.exs", "CHECKSUMS.sha256", "signature.sig"] do
-      from = Path.join(staging, entry)
-
-      if File.regular?(from) do
-        File.cp!(from, Path.join(install_dir, entry))
-      end
-    end
-
-    src_from = Path.join(staging, "src")
-
-    if File.dir?(src_from) do
-      File.cp_r!(src_from, Path.join(install_dir, "src"))
-    end
-
-    File.write!(
-      Path.join(install_dir, "installed_at"),
-      Integer.to_string(System.monotonic_time())
-    )
-
-    :ok
+  defp no_list_declared() do
+    if Config.get(:plugin_list) == nil, do: :ok, else: {:error, {:list_declared, @list_variable}}
   end
 
-  defp plugin_root_for(plugin_id) do
-    Layout.file(:plugins, ["installed", plugin_id])
-  end
-
-  defp install_dir_for(plugin_id, version) do
-    Layout.file(:plugins, ["installed", plugin_id, version])
-  end
-
-  defp stage_path() do
-    Layout.file(:plugins, [
-      "staging",
-      Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
-    ])
-  end
-
-  defp package_opts() do
-    [
-      max_package_bytes: Config.get(:plugin_max_package_bytes),
-      max_source_files: Config.get(:plugin_max_source_files)
-    ]
-  end
-
-  defp verify_checksums(staging_dir) do
-    with {:ok, body} <- File.read(Path.join(staging_dir, "CHECKSUMS.sha256")),
-         {:ok, entries} <- Checksums.parse(body) do
-      Checksums.verify(entries, staging_dir)
-    end
-  end
-
-  defp load_signature(staging_dir) do
-    path = Path.join(staging_dir, "signature.sig")
-
-    case File.read(path) do
-      {:ok, bin} when byte_size(bin) == 64 -> {:ok, bin, true}
-      {:ok, _bad} -> {:error, :signature_invalid}
-      {:error, :enoent} -> {:ok, nil, false}
-      {:error, reason} -> {:error, {:signature_io, reason}}
-    end
-  end
-
-  defp maybe_verify_signature(_staging, nil), do: :ok
-
-  defp maybe_verify_signature(staging_dir, sig) do
-    checksums_path = Path.join(staging_dir, "CHECKSUMS.sha256")
-
-    with {:ok, msg} <- File.read(checksums_path) do
-      Signature.verify(msg, sig, Config.get(:plugin_trusted_keys))
-    end
-  end
-
-  ## Module-collision check — runs BEFORE compile
-  #
-  # `Code.compile_file/1` loads its output into the code server. If a plugin
-  # tries to shadow a module already present (stdlib like `Enum`, or another
-  # plugin's module, or a release module), the compile would silently
-  # replace the live module — and our post-compile purge would then unload
-  # the wrong one. Catch every shadow attempt up front.
-
-  defp check_module_collisions(modules, plugin_id) do
-    Enum.reduce_while(modules, :ok, fn module, _ ->
-      cond do
-        owned_by_other_plugin?(module, plugin_id) ->
-          {:halt, {:error, {:module_collision, module}}}
-
-        Loader.module_from_release?(module) ->
-          {:halt, {:error, {:module_collision, module}}}
-
-        true ->
-          {:cont, :ok}
-      end
-    end)
-  end
-
-  defp owned_by_other_plugin?(module, plugin_id) do
-    case Process.whereis(Loader) do
+  defp declared_list() do
+    case Config.get(:plugin_list) do
       nil ->
-        false
+        {:error, {:list_not_declared, @list_variable}}
 
-      _ ->
-        Loader.all()
-        |> Enum.any?(fn
-          {^plugin_id, _} -> false
-          {_other, {_ver, mods}} -> module in mods
-        end)
+      list ->
+        {:ok,
+         for entry <- String.split(list, ~r/[\s,]+/, trim: true) do
+           case String.split(entry, "#sha256=", parts: 2) do
+             [source, pin] -> {source, String.downcase(pin)}
+             [source] -> {source, nil}
+           end
+         end}
     end
   end
 
-  ## Rollback
-
-  defp push_rollback(action) do
-    Process.put(@rollback_key, [action | Process.get(@rollback_key, [])])
-    :ok
+  defp distinct_ids(ids) do
+    case ids -- Enum.uniq(ids) do
+      [] -> :ok
+      [id | _] -> {:error, {:duplicate_id, id, [@list_variable]}}
+    end
   end
 
-  defp run_rollback do
-    Process.get(@rollback_key, [])
-    |> Enum.each(fn
-      {:rm_dir, dir} -> File.rm_rf(dir)
-      {:purge, plugin_id} -> Loader.purge_modules(plugin_id)
-      {:delete_store_row, plugin_id} -> Store.delete(plugin_id)
-      _ -> :ok
-    end)
+  defp pinned(_source, _archive, nil), do: :ok
 
-    Process.put(@rollback_key, [])
-    :ok
+  defp pinned(source, archive, pin) do
+    case Package.digest(archive) do
+      ^pin -> :ok
+      actual -> {:error, {:digest_mismatch, source, pin, actual}}
+    end
   end
+
+  ## Sources
+
+  defp obtain("https://" <> _ = url, archive, opts) do
+    request = %{
+      source: url,
+      archive: archive,
+      max: Config.get(:plugin_max_package_bytes),
+      cacerts: Keyword.get_lazy(opts, :cacerts, &:public_key.cacerts_get/0)
+    }
+
+    fetch(URI.parse(url), request, @max_redirects)
+  end
+
+  defp obtain(source, archive, _opts) do
+    cond do
+      String.contains?(source, "://") -> {:error, {:source_unsupported, source}}
+      File.regular?(source) -> File.cp!(source, archive)
+      true -> {:error, {:fetch_failed, source, "no such file"}}
+    end
+  end
+
+  defp fetch(%URI{scheme: "https", host: host} = uri, request, redirects) when is_binary(host) do
+    transport = [
+      verify: :verify_peer,
+      cacerts: request.cacerts,
+      customize_hostname_check: [match_fun: :public_key.pkix_verify_hostname_match_fun(:https)]
+    ]
+
+    path = (uri.path || "/") <> if(uri.query, do: "?" <> uri.query, else: "")
+
+    case Client.connect(:https, host, uri.port, transport) do
+      {:ok, conn} ->
+        answer =
+          Client.request(conn, "GET", path, [], "", Durations.get(:plugin_fetch_ms),
+            max_body_bytes: request.max
+          )
+
+        :ok = Client.close(answer_conn(answer))
+        fetched(answer, uri, request, redirects)
+
+      {:error, reason} ->
+        {:error, {:fetch_failed, request.source, describe(reason)}}
+    end
+  end
+
+  # A redirect may lead only to another https:// URL.
+  defp fetch(uri, _request, _redirects), do: {:error, {:source_unsupported, URI.to_string(uri)}}
+
+  defp answer_conn({:ok, conn, _status, _headers, _body}), do: conn
+  defp answer_conn({:error, _reason, conn}), do: conn
+
+  defp fetched({:ok, _conn, status, _headers, body}, _uri, request, _left)
+       when status in 200..299,
+       do: File.write!(request.archive, body)
+
+  defp fetched({:ok, _conn, status, headers, _body}, uri, request, left)
+       when status in [301, 302, 303, 307, 308] do
+    case Client.header(headers, "location") do
+      nil ->
+        {:error, {:fetch_failed, request.source, "HTTP #{status} without a location"}}
+
+      _location when left == 0 ->
+        {:error, {:fetch_failed, request.source, "more than #{@max_redirects} redirects"}}
+
+      location ->
+        fetch(URI.merge(uri, location), request, left - 1)
+    end
+  end
+
+  defp fetched({:ok, _conn, status, _headers, _body}, _uri, request, _left),
+    do: {:error, {:fetch_failed, request.source, "HTTP #{status}"}}
+
+  defp fetched({:error, {:body_too_large, bytes}, _conn}, _uri, request, _left),
+    do: {:error, {:package_invalid, :too_large, %{bytes: bytes, limit: request.max}}}
+
+  defp fetched({:error, reason, _conn}, _uri, request, _left),
+    do: {:error, {:fetch_failed, request.source, describe(reason)}}
+
+  defp describe(%{__exception__: true} = exception), do: Exception.message(exception)
+  defp describe(reason), do: inspect(reason)
 end

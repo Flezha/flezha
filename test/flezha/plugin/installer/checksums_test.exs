@@ -1,86 +1,54 @@
 defmodule Flezha.Plugin.Installer.ChecksumsTest do
-  @moduledoc """
-  Spec-driven tests for `Flezha.Plugin.Installer.Checksums`.
-  """
+  @moduledoc "\"SHA-256 checksum verification\" over the example package's `lib/`."
 
   use FlezhaTest.Case, fixtures: [:tmp_dir], async: true
 
   alias Flezha.Plugin.Installer.Checksums
+  alias Flezha.Plugin.Installer.Package
+  alias Flezha.TestHelpers.PluginPackage
+
+  @opts [max_package_bytes: 50_000_000, require_signature: false, trusted_keys: []]
+  @beam "lib/stamp_lib-0.1.0/ebin/Elixir.StampLib.beam"
 
   setup %{tmp: tmp} do
-    File.mkdir_p!(Path.join(tmp, "src"))
-    :ok
+    {:ok, example: PluginPackage.example!(), dir: Path.join(tmp, "x")}
   end
 
-  test "parse tolerates blank lines and comments" do
-    body = """
-
-    # a comment
-    #{String.duplicate("a", 64)}  manifest.exs
-
-    #{String.duplicate("b", 64)}  src/x.ex
-    """
-
-    assert {:ok, entries} = Checksums.parse(body)
-    assert length(entries) == 2
-    assert Enum.at(entries, 0).path == "manifest.exs"
-    assert Enum.at(entries, 1).path == "src/x.ex"
+  defp verify_edited(%{example: example, tmp: tmp, dir: dir}, edits) do
+    example
+    |> PluginPackage.rewrite(Path.join(tmp, "edited.fpz"), [:keep_checksums | edits])
+    |> Package.verify(dir, @opts)
   end
 
-  test "parse rejects malformed line" do
-    body = "no_hex_here  manifest.exs\n"
-    assert {:error, {:malformed_line, 1, _}} = Checksums.parse(body)
+  test "every file matching its line proceeds", %{example: example, dir: dir} do
+    assert {:ok, _} = Package.verify(example, dir, @opts)
+    assert :ok = Checksums.check(dir)
   end
 
-  test "verify passes when every digest matches", %{tmp: tmp} do
-    File.write!(Path.join(tmp, "manifest.exs"), "m")
-    File.write!(Path.join(tmp, "src/x.ex"), "x")
-
-    entries = [
-      %{digest: sha256("m"), path: "manifest.exs"},
-      %{digest: sha256("x"), path: "src/x.ex"}
-    ]
-
-    assert :ok = Checksums.verify(entries, tmp)
+  test "a beam changed after the checksums were written is refused, naming it", ctx do
+    assert {:error, {:package_invalid, :checksum_mismatch, %{path: @beam}}} =
+             verify_edited(ctx, [{:put, @beam, "tampered"}])
   end
 
-  test "tampered source detected", %{tmp: tmp} do
-    File.write!(Path.join(tmp, "manifest.exs"), "m")
-    File.write!(Path.join(tmp, "src/x.ex"), "tampered")
-
-    entries = [
-      %{digest: sha256("m"), path: "manifest.exs"},
-      %{digest: sha256("original"), path: "src/x.ex"}
-    ]
-
-    assert {:error, {:checksum_mismatch, "src/x.ex"}} = Checksums.verify(entries, tmp)
+  test "a line naming a file the archive lacks is refused, naming it", ctx do
+    assert {:error, {:package_invalid, :checksum_file_missing, %{path: @beam}}} =
+             verify_edited(ctx, [{:delete, @beam}])
   end
 
-  test "missing referenced file reported", %{tmp: tmp} do
-    File.write!(Path.join(tmp, "manifest.exs"), "m")
+  test "a file under lib/ with no line is refused, naming it", ctx do
+    extra = "lib/stamp_lib-0.1.0/priv/extra.txt"
 
-    entries = [
-      %{digest: sha256("m"), path: "manifest.exs"},
-      %{digest: sha256("x"), path: "src/ghost.ex"}
-    ]
-
-    assert {:error, {:checksum_file_missing, "src/ghost.ex"}} =
-             Checksums.verify(entries, tmp)
+    assert {:error, {:package_invalid, :checksum_line_missing, %{path: ^extra}}} =
+             verify_edited(ctx, [{:put, extra, "x"}])
   end
 
-  test "extra source file not covered by checksums rejected", %{tmp: tmp} do
-    File.write!(Path.join(tmp, "manifest.exs"), "m")
-    File.write!(Path.join(tmp, "src/x.ex"), "x")
-    File.write!(Path.join(tmp, "src/extra.ex"), "e")
-
-    entries = [
-      %{digest: sha256("m"), path: "manifest.exs"},
-      %{digest: sha256("x"), path: "src/x.ex"}
-    ]
-
-    assert {:error, {:checksum_line_missing, "src/extra.ex"}} =
-             Checksums.verify(entries, tmp)
+  test "a line naming a path outside the package is refused" do
+    assert {:error, {:package_invalid, :unsafe_entry, _}} =
+             Checksums.verify([%{digest: String.duplicate("0", 64), path: "../x"}], "/tmp")
   end
 
-  defp sha256(binary), do: :crypto.hash(:sha256, binary) |> Base.encode16(case: :lower)
+  test "a malformed line is refused with its number" do
+    assert {:error, {:package_invalid, :checksums_malformed, %{line: 2}}} =
+             Checksums.parse("# comment\nnot-a-digest  manifest.exs\n")
+  end
 end

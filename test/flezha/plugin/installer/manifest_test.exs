@@ -1,174 +1,80 @@
 defmodule Flezha.Plugin.Installer.ManifestTest do
   @moduledoc """
-  Spec-driven tests for `Flezha.Plugin.Installer.Manifest`.
+  "Manifest schema" and "A package SHALL load only on the runtime line it was
+  built with", on the manifest the task writes for the example plugin.
   """
 
-  use ExUnit.Case, async: true
+  use FlezhaTest.Case, fixtures: [:tmp_dir], async: true
 
   alias Flezha.Plugin.Installer.Manifest
+  alias Flezha.Plugin.Installer.Package
+  alias Flezha.TestHelpers.PluginPackage
 
-  test "valid manifest parses to a term" do
-    src = """
-    %{
-      id: "kafka_ingest",
-      version: "1.2.0",
-      description: "Kafka ingest",
-      author: "ops",
-      modules: [MyOrg.KafkaIngest],
-      provides: [
-        %{
-          id: "ki",
-          provider: MyOrg.KafkaIngest,
-          hooks: [{:on_input, [position: 0]}],
-          default_opts: %{},
-          scope: :operator
-        }
-      ],
-      dependencies: []
-    }
-    """
+  @opts [max_package_bytes: 50_000_000, require_signature: false, trusted_keys: []]
 
-    assert {:ok, term} = Manifest.parse(src)
-    assert term.id == "kafka_ingest"
-    assert term.modules == [MyOrg.KafkaIngest]
-    assert :ok = Manifest.validate(term)
+  setup %{tmp: tmp} do
+    dir = Path.join(tmp, "x")
+    {:ok, verified} = Package.verify(PluginPackage.example!(), dir, @opts)
+    {:ok, manifest: verified.manifest, apps: verified.apps}
   end
 
-  test "manifest containing a call expression is rejected" do
-    src = """
-    %{id: System.get_env("FOO")}
-    """
-
-    assert {:error, :non_literal_ast} = Manifest.parse(src)
+  test "the manifest the task writes parses back and validates", %{manifest: m, apps: apps} do
+    assert {:ok, ^m} = Manifest.parse(Manifest.render(m))
+    assert :ok = Manifest.validate(m, apps)
+    assert m.providers == %{"example_stamp" => FlezhaExamplePlugin.Stamp}
+    assert m.built_with == Manifest.runtime()
   end
 
-  test "manifest with nested call in provides rejected" do
-    src = """
-    %{
-      id: "x",
-      provides: [%{default_opts: Code.eval_string("1")}]
-    }
-    """
-
-    assert {:error, :non_literal_ast} = Manifest.parse(src)
+  test "a missing required field is refused, naming it", %{manifest: m, apps: apps} do
+    assert {:error, {:package_invalid, :missing_field, %{field: :built_with}}} =
+             Manifest.validate(Map.delete(m, :built_with), apps)
   end
 
-  test "valid manifest accepts module aliases" do
-    src = "%{id: \"x\", modules: [Foo.Bar, Baz]}"
-    assert {:ok, term} = Manifest.parse(src)
-    assert term.modules == [Foo.Bar, Baz]
+  test "an invalid id or a non-semver version is refused, naming it", %{manifest: m, apps: apps} do
+    assert {:error, {:package_invalid, :invalid_field, %{field: :id, value: "My-Plugin"}}} =
+             Manifest.validate(%{m | id: "My-Plugin"}, apps)
+
+    assert {:error, {:package_invalid, :invalid_field, %{field: :version, value: "beta-2"}}} =
+             Manifest.validate(%{m | version: "beta-2"}, apps)
   end
 
-  test "syntax error surfaces as :syntax" do
-    assert {:error, {:syntax, _}} = Manifest.parse("%{id: }")
+  test "a provider whose module the plugin application does not list is refused",
+       %{manifest: m, apps: apps} do
+    m = %{m | providers: %{"example_stamp" => Some.Other}}
+
+    assert {:error,
+            {:package_invalid, :provider_not_in_app,
+             %{provider: "example_stamp", module: Some.Other}}} =
+             Manifest.validate(m, apps)
   end
 
-  test "missing version reported" do
-    term = %{
-      id: "x",
-      modules: [X],
-      provides: [valid_provision(X)],
-      dependencies: []
-    }
-
-    assert {:error, {:manifest_invalid, :missing_field, :version}} =
-             Manifest.validate(term)
+  test "apps and lib/ must be the same set", %{manifest: m, apps: apps} do
+    assert {:error, {:package_invalid, :apps_mismatch, %{application: :ghost}}} =
+             Manifest.validate(%{m | apps: m.apps ++ [{:ghost, "1.0.0"}]}, apps)
   end
 
-  test "invalid id rejected" do
-    term = base_term() |> Map.put(:id, "My-Plugin")
+  test "a manifest containing code is refused without evaluating it" do
+    assert {:error, {:package_invalid, :manifest_not_literal, _}} =
+             Manifest.parse(~s|%{id: send(self(), :evaluated), version: System.get_env("FOO")}|)
 
-    assert {:error, {:manifest_invalid, :invalid_id, "My-Plugin"}} =
-             Manifest.validate(term)
+    refute_received :evaluated
   end
 
-  test "id too long rejected" do
-    long = String.duplicate("a", 65)
-    term = base_term() |> Map.put(:id, long)
-    assert {:error, {:manifest_invalid, :invalid_id, ^long}} = Manifest.validate(term)
+  test "a package built on another OTP is refused, naming both runtimes", %{manifest: m} do
+    runtime = %{otp: "28", elixir: m.built_with.elixir, flezha: m.built_with.flezha}
+    m = put_in(m.built_with.otp, "29")
+
+    assert {:error, {:runtime_mismatch, %{package_otp: "29", otp: "28"}} = reason} =
+             Manifest.check_runtime(m, runtime)
+
+    error = Flezha.Error.from_reason(reason, nil)
+    assert error.code == "plugin.runtime_mismatch"
+    assert error.hint =~ "flezha/plugin-builder:"
   end
 
-  test "non-semver version rejected" do
-    term = base_term() |> Map.put(:version, "beta-2")
-
-    assert {:error, {:manifest_invalid, :invalid_version, "beta-2"}} =
-             Manifest.validate(term)
-  end
-
-  test "provider not in modules list rejected" do
-    term =
-      base_term()
-      |> Map.put(:provides, [
-        %{
-          id: "p",
-          provider: Other.NotInList,
-          hooks: [{:on_input, []}],
-          default_opts: %{},
-          scope: :operator
-        }
-      ])
-
-    assert {:error, {:manifest_invalid, :provider_not_declared, Other.NotInList}} =
-             Manifest.validate(term)
-  end
-
-  test "unsupported scope rejected" do
-    term =
-      base_term()
-      |> Map.put(:provides, [
-        base_term().provides |> hd() |> Map.put(:scope, :host_global)
-      ])
-
-    assert {:error, {:manifest_invalid, :unsupported_scope, :host_global}} =
-             Manifest.validate(term)
-  end
-
-  # Fails when: a provision still naming its hooks `subscriptions` installs and
-  # enables a plugin with no hooks.
-  test "a provision without a hooks key is missing a required field" do
-    provision =
-      base_term().provides
-      |> hd()
-      |> Map.delete(:hooks)
-      |> Map.put(:subscriptions, [{:on_input, []}])
-
-    assert {:error, {:manifest_invalid, :missing_field, :hooks}} =
-             base_term() |> Map.put(:provides, [provision]) |> Manifest.validate()
-  end
-
-  test "duplicate provision ids rejected" do
-    p = base_term().provides |> hd()
-
-    term = base_term() |> Map.put(:provides, [p, p])
-
-    assert {:error, {:manifest_invalid, :duplicate_provision_id, _}} =
-             Manifest.validate(term)
-  end
-
-  test "invalid dependency constraint rejected" do
-    term = base_term() |> Map.put(:dependencies, [{"common", "gibberish"}])
-
-    assert {:error, {:manifest_invalid, :invalid_constraint, "common", "gibberish"}} =
-             Manifest.validate(term)
-  end
-
-  defp base_term do
-    %{
-      id: "x",
-      version: "1.0.0",
-      modules: [X],
-      provides: [valid_provision(X)],
-      dependencies: []
-    }
-  end
-
-  defp valid_provision(mod) do
-    %{
-      id: "p",
-      provider: mod,
-      hooks: [{:on_input, []}],
-      default_opts: %{},
-      scope: :operator
-    }
+  test "a package built for an older patch of the same Flezha line loads", %{manifest: m} do
+    runtime = %{otp: m.built_with.otp, elixir: m.built_with.elixir, flezha: "0.1.3"}
+    assert :ok = Manifest.check_runtime(put_in(m.built_with.flezha, "0.1.0"), runtime)
+    assert {:error, _} = Manifest.check_runtime(put_in(m.built_with.flezha, "0.2.0"), runtime)
   end
 end

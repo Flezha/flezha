@@ -44,6 +44,17 @@ data:
   # merely ephemeral: state written there was silently lost on every restart.
   FLEZHA_STATE_DIR: "/var/lib/flezha/state"
   FLEZHA_DLQ_DIR: "/var/lib/flezha/dlq"
+  FLEZHA_AUTHZ_DIR: "/var/lib/flezha/auth"
+  FLEZHA_SCHEDULE_DIR: "/var/lib/flezha/schedules"
+  FLEZHA_AUDIT_DIR: "/var/lib/flezha/audit"
+  # Plugin packages live on the volume too: every boot expands them under
+  # this root, which the read-only root filesystem cannot hold.
+  FLEZHA_PLUGIN_ROOT: "/var/lib/flezha/plugins"
+  # The node's plugin packages, synced into FLEZHA_PLUGIN_ROOT by the image
+  # entrypoint before the controller starts. A change takes effect with
+  # `kubectl rollout restart daemonset/flezha-daemonset`. While it is set,
+  # `flz plugin install` and `uninstall` are refused on the node.
+  # FLEZHA_PLUGINS: "https://example.com/flezha_example_plugin-0.1.0.fpz#sha256=<64 hex>"
   # Health endpoint backing the DaemonSet's startup/liveness/readiness probes.
   # Must bind 0.0.0.0: the kubelet probes the pod IP, not loopback.
   FLEZHA_HEALTHZ_ENABLED: "true"

@@ -17,7 +17,7 @@ defmodule FlezhaTest.System.BootReadinessDrillTest do
   The third column is the point of reading the Dockerfile rather than copying
   its string: a `HEALTHCHECK` edited to key on something other than the verdict
   fails here. The same command run through the real `flz` binary over a control
-  socket is `Flezha.Plugin.Installer.ReleaseCliSystemTest`, which uses it as its
+  socket is `FlezhaTest.System.PluginPackageReleaseTest`, which uses it as its
   own readiness probe.
 
   Every sample asserts not-ready *and* names the precondition holding it, so a

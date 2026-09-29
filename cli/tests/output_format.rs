@@ -595,10 +595,6 @@ const CASES: &[(&[&str], Want)] = &[
         Refused("unknown option '-iv'"),
     ),
     (
-        &["plugin", "upgrade", "p", "/x.fpz", "--token", "t"],
-        Rpc(r#"Flezha.Service.CliManager.upgrade_plugin("p", "/x.fpz", [token: "t"])"#),
-    ),
-    (
         &["operator", "scale", "g", "2", "--token", "t"],
         Rpc(r#"Flezha.Service.CliManager.operator_scale("", "g", "2", "{}", [token: "t"])"#),
     ),
@@ -697,10 +693,6 @@ const TOKEN_BEARERS: &[&[&str]] = &[
     &["operator", "send", "op", "--text", "hi"],
     &["operator", "rewind", "op", "--to-iteration", "1"],
     &["operator", "replay", "a/b/c", "--from", "1"],
-    &["plugin", "install", "/x.fpz"],
-    &["plugin", "upgrade", "p", "/x.fpz"],
-    &["plugin", "uninstall", "p"],
-    &["plugin", "info", "p"],
     &["plugin", "enable", "p", "prov"],
     &["plugin", "disable", "p"],
     &["plugin", "help", "prov"],

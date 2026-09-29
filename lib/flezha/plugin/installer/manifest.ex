@@ -1,251 +1,193 @@
 defmodule Flezha.Plugin.Installer.Manifest do
   @moduledoc """
-  Parses `manifest.exs` into a plain term and validates its shape.
+  A plugin package's `manifest.exs`: a literal term, parsed without evaluating
+  code, naming the package, the runtime it was built on, the applications its
+  `lib/` holds and the providers it declares.
 
-  The manifest is declarative Elixir — we want nested maps/lists with
-  native syntax — but we refuse to execute *code*. The parser walks the
-  AST returned by `Code.string_to_quoted/2` and rejects anything that
-  isn't a literal: function calls, variables, sigils, special forms. Only
-  maps, lists, tuples, atoms, binaries, numbers, and module aliases are
-  allowed. This keeps the manifest shape flexible without letting a
-  malicious package execute `System.get_env/1` at install time.
+      %{
+        id: "flezha_example_plugin",
+        version: "0.1.0",
+        built_with: %{flezha: "0.1.0", otp: "28", elixir: "1.20.2"},
+        apps: [{:flezha_example_plugin, "0.1.0"}, {:stamp_lib, "0.1.0"}],
+        providers: %{"example_stamp" => FlezhaExamplePlugin.Stamp}
+      }
 
-  Validation enforces the schema the installer promises: id regex, semver
-  version, non-empty modules, provides shape (including provider ∈ modules
-  and scope == :operator), dependency constraint strings parseable by
-  `Version`.
+  The first application of `apps` is the plugin application: `id` is its name
+  and `version` its `vsn`.
   """
 
   alias Flezha.Identificator
 
-  @type manifest :: %{
+  @type t :: %{
           required(:id) => binary(),
           required(:version) => binary(),
-          required(:modules) => [atom()],
-          required(:provides) => [map()],
-          required(:dependencies) => [{binary(), binary()}],
-          optional(:description) => binary(),
-          optional(:author) => binary()
+          required(:built_with) => %{flezha: binary(), otp: binary(), elixir: binary()},
+          required(:apps) => [{atom(), binary()}],
+          required(:providers) => %{binary() => module()},
+          optional(:description) => binary()
         }
 
+  @required [:id, :version, :built_with, :apps, :providers]
+
+  @doc "Read and parse the `manifest.exs` of the package extracted in `dir`."
+  @spec read(Path.t()) :: {:ok, term()} | {:error, term()}
+  def read(dir), do: dir |> Path.join("manifest.exs") |> File.read!() |> parse()
+
   @doc """
-  Parses manifest source bytes into an Elixir term. Returns
-  `{:ok, term}` or `{:error, :non_literal_ast | {:syntax, reason}}`.
+  Parse manifest source into a term. The syntax tree must hold only literals
+  (maps, lists, tuples, atoms, binaries, numbers, module aliases), so a
+  manifest carrying a call or a variable is refused without being evaluated.
   """
-  @spec parse(binary()) :: {:ok, term()} | {:error, :non_literal_ast | {:syntax, term()}}
+  @spec parse(binary()) :: {:ok, term()} | {:error, term()}
   def parse(source) when is_binary(source) do
     case Code.string_to_quoted(source) do
       {:ok, ast} ->
-        if literal_ast?(ast) do
-          try do
-            {term, _bindings} = Code.eval_quoted(ast, [])
-            {:ok, term}
-          rescue
-            e -> {:error, {:eval_failed, Exception.message(e)}}
-          end
-        else
-          {:error, :non_literal_ast}
-        end
+        if literal_ast?(ast),
+          do: {:ok, ast |> Code.eval_quoted([]) |> elem(0)},
+          else: invalid(:manifest_not_literal, %{})
 
-      {:error, reason} ->
-        {:error, {:syntax, reason}}
+      {:error, _reason} ->
+        invalid(:manifest_unparsable, %{})
     end
   end
+
+  @doc "The manifest as the literal source `parse/1` reads back."
+  @spec render(t()) :: binary()
+  def render(manifest), do: inspect(manifest, pretty: true, limit: :infinity) <> "\n"
 
   @doc """
-  Validates a parsed manifest term against the spec's schema. Returns
-  `:ok` or `{:error, {:manifest_invalid, problem, value}}` where `problem`
-  names the first violation and `value` what was written.
+  Check `manifest` against the schema and against the applications the
+  package's `lib/` holds (as `Package.read_lib/1` read them).
   """
-  @spec validate(term()) :: :ok | {:error, {:manifest_invalid, atom(), term()}}
-  def validate(term) when is_map(term) do
-    with :ok <- validate_required_keys(term),
-         :ok <- validate_id(term[:id]),
-         :ok <- validate_version(term[:version]),
-         :ok <- validate_modules(term[:modules]),
-         :ok <- validate_provides(term[:provides], term[:modules]) do
-      validate_dependencies(Map.get(term, :dependencies, []))
+  @spec validate(term(), [map()]) :: :ok | {:error, term()}
+  def validate(manifest, apps) when is_map(manifest) do
+    with :ok <- required(manifest),
+         :ok <- field(:apps, manifest.apps, &apps_shape?/1),
+         {plugin_app, plugin_vsn} = hd(manifest.apps),
+         :ok <- field(:id, manifest.id, &(Identificator.validate(:plugin, &1) == :ok)),
+         :ok <- field(:id, manifest.id, &(&1 == Atom.to_string(plugin_app))),
+         :ok <- field(:version, manifest.version, &(Version.parse(&1) != :error)),
+         :ok <- field(:version, manifest.version, &(&1 == plugin_vsn)),
+         :ok <- field(:built_with, manifest.built_with, &built_with?/1),
+         :ok <- field(:description, Map.get(manifest, :description, ""), &is_binary/1),
+         :ok <- same_apps(manifest.apps, apps) do
+      providers(manifest.providers, Enum.find(apps, &(&1.name == plugin_app)))
     end
   end
 
-  def validate(other), do: {:error, {:manifest_invalid, :not_a_map, other}}
+  def validate(_manifest, _apps), do: invalid(:manifest_not_a_map, %{})
 
-  ## Private — AST walking
-
-  # Leaves.
-  defp literal_ast?(node) when is_atom(node), do: true
-  defp literal_ast?(node) when is_binary(node), do: true
-  defp literal_ast?(node) when is_number(node), do: true
-
-  # Tuple literal.
-  defp literal_ast?({a, b}), do: literal_ast?(a) and literal_ast?(b)
-
-  # Lists.
-  defp literal_ast?(list) when is_list(list), do: Enum.all?(list, &literal_ast?/1)
-
-  # Two-element tuple for AST calls comes in 3-tuple form `{name, meta, args}`.
-  # We only allow a handful of these:
-  #   1. Module aliases: {:__aliases__, meta, [:Foo, :Bar]}
-  #   2. Map literal:    {:%{}, meta, [{k, v}, ...]}
-  #   3. Tuple sugar for n>2 tuples: {:{}, meta, [elems...]}
-  defp literal_ast?({:__aliases__, _meta, segs}) when is_list(segs),
-    do: Enum.all?(segs, &is_atom/1)
-
-  defp literal_ast?({:%{}, _meta, pairs}) when is_list(pairs) do
-    Enum.all?(pairs, fn
-      {k, v} -> literal_ast?(k) and literal_ast?(v)
-      _ -> false
-    end)
-  end
-
-  defp literal_ast?({:{}, _meta, elems}) when is_list(elems),
-    do: Enum.all?(elems, &literal_ast?/1)
-
-  # Negative number sugar: `-n` becomes `{:-, meta, [n]}` — allow it.
-  defp literal_ast?({:-, _meta, [n]}) when is_number(n), do: true
-
-  # Anything else — function call, variable, sigil, etc. — is forbidden.
-  defp literal_ast?(_), do: false
-
-  ## Private — schema validation
-
-  defp validate_required_keys(map) do
-    required = [:id, :version, :modules, :provides]
-
-    case Enum.find(required, fn k -> not Map.has_key?(map, k) end) do
-      nil -> :ok
-      missing -> {:error, {:manifest_invalid, :missing_field, missing}}
-    end
-  end
-
-  defp validate_id(id) do
-    case Identificator.validate(:plugin, id) do
-      :ok -> :ok
-      {:error, _refusal} -> {:error, {:manifest_invalid, :invalid_id, id}}
-    end
-  end
-
-  defp validate_version(v) when is_binary(v) do
-    case Version.parse(v) do
-      {:ok, _} -> :ok
-      :error -> {:error, {:manifest_invalid, :invalid_version, v}}
-    end
-  end
-
-  defp validate_version(v), do: {:error, {:manifest_invalid, :invalid_version, v}}
-
-  defp validate_modules(mods) when is_list(mods) and mods != [] do
-    if Enum.all?(mods, &is_atom/1) do
+  @doc """
+  The package's `built_with` against `runtime`: the same OTP release, the same
+  Elixir `major.minor`, and a Flezha version satisfying `~> built_with.flezha`.
+  """
+  @spec check_runtime(t(), map()) :: :ok | {:error, term()}
+  def check_runtime(%{built_with: built}, runtime) do
+    if built.otp == runtime.otp and minor(built.elixir) == minor(runtime.elixir) and
+         Version.match?(runtime.flezha, "~> " <> built.flezha) do
       :ok
     else
-      {:error, {:manifest_invalid, :invalid_modules, mods}}
+      {:error,
+       {:runtime_mismatch,
+        %{
+          package_otp: built.otp,
+          package_elixir: built.elixir,
+          package_flezha: built.flezha,
+          otp: runtime.otp,
+          elixir: runtime.elixir,
+          flezha: runtime.flezha
+        }}}
     end
   end
 
-  defp validate_modules(mods), do: {:error, {:manifest_invalid, :invalid_modules, mods}}
+  @doc "The runtime this VM runs: its OTP release, Elixir version and Flezha version."
+  @spec runtime() :: %{otp: binary(), elixir: binary(), flezha: binary()}
+  def runtime() do
+    _ = Application.load(:flezha)
 
-  defp validate_provides(provides, modules) when is_list(provides) and provides != [] do
-    mod_set = MapSet.new(modules)
-
-    ids =
-      Enum.map(provides, fn
-        %{id: id} -> id
-        _ -> nil
-      end)
-
-    duplicate = ids -- Enum.uniq(ids)
-
-    if duplicate == [] do
-      Enum.reduce_while(provides, :ok, fn p, _ -> validate_provision(p, mod_set) end)
-    else
-      {:error, {:manifest_invalid, :duplicate_provision_id, List.first(duplicate)}}
-    end
+    %{
+      otp: System.otp_release(),
+      elixir: System.version(),
+      flezha: to_string(Application.spec(:flezha, :vsn))
+    }
   end
 
-  defp validate_provides(provides, _),
-    do: {:error, {:manifest_invalid, :invalid_provides, provides}}
+  ## Schema
 
-  defp validate_provision(p, mod_set) when is_map(p) do
-    with :ok <- require_keys(p, [:id, :provider, :hooks, :scope]),
-         id = Map.fetch!(p, :id),
-         provider = Map.fetch!(p, :provider),
-         subs = Map.fetch!(p, :hooks),
-         scope = Map.fetch!(p, :scope),
-         :ok <- require_binary(id, :invalid_provision_id),
-         :ok <- require_module(provider, mod_set),
-         :ok <- require_subscriptions(subs),
-         :ok <- require_scope(scope),
-         :ok <- require_default_opts(Map.get(p, :default_opts, %{})) do
-      {:cont, :ok}
-    else
-      {:error, reason} -> {:halt, {:error, reason}}
-    end
-  end
-
-  defp validate_provision(p, _),
-    do: {:halt, {:error, {:manifest_invalid, :invalid_provision, p}}}
-
-  defp require_keys(map, keys) do
-    case Enum.find(keys, fn k -> not Map.has_key?(map, k) end) do
+  defp required(manifest) do
+    case Enum.find(@required, &(not Map.has_key?(manifest, &1))) do
       nil -> :ok
-      missing -> {:error, {:manifest_invalid, :missing_field, missing}}
+      missing -> invalid(:missing_field, %{field: missing})
     end
   end
 
-  defp require_binary(v, _) when is_binary(v), do: :ok
-  defp require_binary(v, tag), do: {:error, {:manifest_invalid, tag, v}}
+  defp field(name, value, valid?) do
+    if valid?.(value), do: :ok, else: invalid(:invalid_field, %{field: name, value: value})
+  end
 
-  defp require_module(mod, mod_set) do
-    cond do
-      not is_atom(mod) ->
-        {:error, {:manifest_invalid, :provider_not_atom, mod}}
+  defp apps_shape?([_ | _] = apps),
+    do: Enum.all?(apps, &match?({name, vsn} when is_atom(name) and is_binary(vsn), &1))
 
-      not MapSet.member?(mod_set, mod) ->
-        {:error, {:manifest_invalid, :provider_not_declared, mod}}
+  defp apps_shape?(_), do: false
 
-      true ->
-        :ok
+  defp built_with?(%{flezha: flezha, otp: otp, elixir: elixir})
+       when is_binary(flezha) and is_binary(otp) and is_binary(elixir) do
+    Version.parse(flezha) != :error and Version.parse(elixir) != :error and
+      Regex.match?(~r/^\d+$/, otp)
+  end
+
+  defp built_with?(_), do: false
+
+  # Every `{app, vsn}` is exactly one `lib/<app>-<vsn>`, and `lib/` holds no other.
+  defp same_apps(declared, apps) do
+    found = MapSet.new(apps, &{&1.name, &1.vsn})
+
+    case Enum.sort(MapSet.symmetric_difference(MapSet.new(declared), found)) do
+      [] -> :ok
+      [{name, vsn} | _] -> invalid(:apps_mismatch, %{application: name, vsn: vsn})
     end
   end
 
-  defp require_subscriptions(subs) when is_list(subs) and subs != [] do
-    Enum.reduce_while(subs, :ok, fn
-      {name, opts}, _ when is_atom(name) and is_list(opts) ->
-        if Keyword.keyword?(opts),
-          do: {:cont, :ok},
-          else: {:halt, {:error, {:manifest_invalid, :invalid_hook_opts, opts}}}
+  defp providers(providers, plugin_app) when is_map(providers) and map_size(providers) > 0 do
+    Enum.find_value(Enum.sort(providers), :ok, fn {id, module} ->
+      cond do
+        Identificator.validate(:plugin, id) != :ok ->
+          invalid(:invalid_field, %{field: :providers, value: id})
 
-      other, _ ->
-        {:halt, {:error, {:manifest_invalid, :invalid_hook, other}}}
+        module not in plugin_app.modules ->
+          invalid(:provider_not_in_app, %{provider: id, module: module})
+
+        true ->
+          nil
+      end
     end)
   end
 
-  defp require_subscriptions(subs),
-    do: {:error, {:manifest_invalid, :invalid_hooks, subs}}
+  defp providers(providers, _plugin_app),
+    do: invalid(:invalid_field, %{field: :providers, value: providers})
 
-  defp require_scope(:operator), do: :ok
-  defp require_scope(scope), do: {:error, {:manifest_invalid, :unsupported_scope, scope}}
-
-  defp require_default_opts(opts) when is_map(opts), do: :ok
-
-  defp require_default_opts(opts),
-    do: {:error, {:manifest_invalid, :invalid_default_opts, opts}}
-
-  defp validate_dependencies([]), do: :ok
-
-  defp validate_dependencies(deps) when is_list(deps) do
-    Enum.reduce_while(deps, :ok, fn
-      {id, constraint}, _ when is_binary(id) and is_binary(constraint) ->
-        case Version.parse_requirement(constraint) do
-          {:ok, _} -> {:cont, :ok}
-          :error -> {:halt, {:error, {:manifest_invalid, :invalid_constraint, id, constraint}}}
-        end
-
-      other, _ ->
-        {:halt, {:error, {:manifest_invalid, :invalid_dependency, other}}}
-    end)
+  defp minor(version) do
+    {:ok, %Version{major: major, minor: minor}} = Version.parse(version)
+    {major, minor}
   end
 
-  defp validate_dependencies(deps),
-    do: {:error, {:manifest_invalid, :invalid_dependencies, deps}}
+  ## Literal AST
+
+  defp literal_ast?(node) when is_atom(node) or is_binary(node) or is_number(node), do: true
+  defp literal_ast?({a, b}), do: literal_ast?(a) and literal_ast?(b)
+  defp literal_ast?(list) when is_list(list), do: Enum.all?(list, &literal_ast?/1)
+
+  defp literal_ast?({:__aliases__, _meta, segments}) when is_list(segments),
+    do: Enum.all?(segments, &is_atom/1)
+
+  defp literal_ast?({:%{}, _meta, pairs}) when is_list(pairs),
+    do: Enum.all?(pairs, &match?({_, _}, &1)) and Enum.all?(pairs, &literal_ast?/1)
+
+  defp literal_ast?({:{}, _meta, elements}) when is_list(elements),
+    do: Enum.all?(elements, &literal_ast?/1)
+
+  defp literal_ast?({:-, _meta, [n]}) when is_number(n), do: true
+  defp literal_ast?(_), do: false
+
+  defp invalid(problem, found), do: {:error, {:package_invalid, problem, found}}
 end

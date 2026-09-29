@@ -96,3 +96,38 @@ The reference manifests SHALL be free of YAML/scheduling defects and SHALL NOT e
 - **WHEN** any reference manifest is reviewed
 - **THEN** it contains no node hostnames, no hardcoded cluster IPs, and no architecture-specific node selectors (architecture is resolved by the multi-arch image)
 
+### Requirement: The reference manifests SHALL declare the controller's plugins
+
+`kubernetes/flezha-configmap.yaml` SHALL set `FLEZHA_PLUGIN_ROOT` to a directory on the
+persistent recovery volume (`/var/lib/flezha/plugins`), because the controller container's
+root filesystem is read-only and the loader expands packages under the plugin root at every
+boot. It SHALL carry `FLEZHA_PLUGINS` as a commented example of a declared list, with a
+pinned `#sha256=` entry. The DaemonSet SHALL add no init container for plugins: the image
+entrypoint syncs the declared list before it starts the controller (`controller-packaging`).
+`kubernetes/README.md` SHALL state that a change to the list takes effect with
+`kubectl rollout restart daemonset/flezha-daemonset`, that the declared list is the only
+truth on such a node (install and uninstall are refused there), and how to supply a
+package from a URL the cluster can reach.
+
+#### Scenario: A declared plugin loads in the reference deployment
+
+- **GIVEN** a throwaway single-node cluster running the reference manifests with the locally
+  built image and `FLEZHA_PLUGINS` naming the example package
+- **WHEN** the pod becomes ready
+- **THEN** `kubectl exec` of `flz plugin list --installed` SHALL show the package loaded, and
+  its archive SHALL be under `/var/lib/flezha/plugins`
+
+#### Scenario: Changing the list is a rollout
+
+- **GIVEN** that deployment
+- **WHEN** `FLEZHA_PLUGINS` is emptied in the ConfigMap and the DaemonSet is restarted with
+  `kubectl rollout restart`
+- **THEN** the new pod SHALL list no package, and the archive SHALL be gone from the plugin
+  root
+
+#### Scenario: Install is refused on a node whose list is declared
+
+- **GIVEN** that deployment with `FLEZHA_PLUGINS` set
+- **WHEN** `kubectl exec` runs `flz plugin install` of any archive
+- **THEN** it SHALL be refused with `plugin.list_declared`
+

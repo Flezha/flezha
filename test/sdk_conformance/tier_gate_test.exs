@@ -238,16 +238,15 @@ defmodule FlezhaTest.SdkConformance.TierGateTest do
         do: {path, lineno, tag}
   end
 
+  # `use FlezhaTest.SystemCase` is how a module carries `:system`.
   defp all_tags do
-    tag = ~r/@(?:module)?tag\s+(?::([a-z_0-9]+)\s*$|([a-z_0-9]+): true)/m
+    tag =
+      ~r/@(?:module)?tag\s+(?::([a-z_0-9]+)\s*$|([a-z_0-9]+): true)|use FlezhaTest\.SystemCase/m
 
     for path <- SourceWalk.files(["test"], [".exs"]),
-        [_, name] <-
-          tag
-          |> Regex.scan(SourceWalk.read(path))
-          |> Enum.map(fn parts -> [hd(parts), Enum.find(tl(parts), &(&1 != ""))] end),
+        parts <- Regex.scan(tag, SourceWalk.read(path)),
         uniq: true,
-        do: name
+        do: Enum.find(tl(parts), "system", &(&1 != ""))
   end
 
   defp tier_readable_files, do: List.delete(SourceWalk.tree(@tier_selector_roots), @tier_self)

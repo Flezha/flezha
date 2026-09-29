@@ -10,6 +10,7 @@ Run the following commands from the **flezha project root** directory.
 | `flezha/flezha:latest`           | `docker/prod/Dockerfile.controller` | Same build, mutable convenience tag. Never pin a cluster to it. |
 | `flezha/flezha:latest-dev`       | `docker/dev/Dockerfile.runtime`     | `FROM :latest` + Node.js + pre-built testnet WS server. |
 | `flezha/flezha:latest-toolchain` | `docker/dev/Dockerfile.toolchain`   | Dev toolchain (Elixir + Rust + Node + protoc, source-mounted). |
+| `flezha/plugin-builder:<version>` | `docker/prod/Dockerfile.controller`, `--target plugin-builder` | The release's toolchain, for building plugin packages this image loads. Built locally, not published before go-live. |
 
 **On every controller release**: bump `version:` in `mix.exs`, run
 `scripts/publish-image.sh` on each architecture, then bump the pinned tag in
@@ -20,14 +21,21 @@ running whatever they happened to cache.
 
 ## Image layout
 
-`docker/prod/Dockerfile.controller` is a three-stage build:
+`docker/prod/Dockerfile.controller` is a three-stage build, plus a
+`plugin-builder` target the runtime image never includes. The Elixir/OTP image
+tag is written once, in the `ELIXIR_IMAGE` argument, and read by both the
+release stage and the builder:
 
 - **Stage 1** — `rust:1.87.0-slim-bookworm`: builds `flz_nif.so` and the
   `flz` CLI binary with `--release`. `protoc` lives here because
   `prost-build` needs it.
-- **Stage 2** — `hexpm/elixir:1.17.3-erlang-27.2-debian-bookworm-...-slim`:
-  assembles the Mix release with `include_erts: true`, consuming the
-  Stage 1 artefacts via `RUSTLER_SKIP_COMPILATION=true`.
+- **Stage 2**, `${ELIXIR_IMAGE}`: assembles the Mix release with
+  `include_erts: true`, consuming the Stage 1 artefacts via
+  `RUSTLER_SKIP_COMPILATION=true`.
+- **`plugin-builder`**: `${ELIXIR_IMAGE}` with Hex, rebar and the tools
+  compiling `flezha` as a dependency needs, `MIX_ENV=prod`, workdir `/src`.
+  A package built here carries the image's OTP and Elixir versions, which is
+  what the controller checks before loading it.
 - **Stage 3** — `debian:bookworm-slim`: runtime. Apt-installs `libssl3`,
   `libstdc++6`, `libtinfo6`, `locales`, `ca-certificates`, `tini`. The
   release bundles its own ERTS — there is no system Elixir or Erlang in
@@ -149,3 +157,29 @@ docker save -o flezha-0.1.0.tar flezha/flezha:0.1.0
 docker compose -f docker/prod/docker-compose.yml up -d
 ```
 
+## Plugins
+
+A plugin package (`.fpz`) is data beside the immutable image: the controller
+loads every archive in `/flezha/app_data/plugins` when it starts, and a change
+takes effect at the next start. Build a package for this image in the builder:
+
+```bash
+docker build --target plugin-builder -t flezha/plugin-builder:0.1.0 \
+  -f docker/prod/Dockerfile.controller .
+docker run --rm -v "$PWD/my_plugin:/src" flezha/plugin-builder:0.1.0 \
+  sh -c 'mix deps.get && mix flezha.plugin.package'
+```
+
+Three ways to give a container its packages:
+
+- **Install into the volume**: `docker exec <c> /flezha/bin/flz plugin install
+  <path-or-https-url>`, then `docker restart <c>`. The compose file's
+  `flezha_plugins` volume keeps the archives.
+- **Declare the list**: set `FLEZHA_PLUGINS` (paths or `https://` URLs, each
+  optionally `#sha256=<hex>`). The entrypoint runs `flz plugin sync` before it
+  starts the controller and exits non-zero, starting nothing, when the sync
+  fails. Install and uninstall are refused while the list is set.
+- **Bake a derived image**: `FROM flezha/flezha:<version>` and `COPY *.fpz
+  /flezha/app_data/plugins/`, run with no volume over that directory.
+
+`docs/plugins/installation.md` covers statuses, errors and signing.

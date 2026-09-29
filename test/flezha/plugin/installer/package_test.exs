@@ -1,194 +1,128 @@
 defmodule Flezha.Plugin.Installer.PackageTest do
   @moduledoc """
-  Spec-driven tests for `Flezha.Plugin.Installer.Package`. Each scenario in
-  the spec's `Requirement: Plugin package format` maps to a test here.
-  Fixtures are built in-test via `:erl_tar` so every test owns its archive.
+  "Plugin package format": the archive's entries, its `lib/` layout and the
+  native code it may not carry, each refusal one edit of the example package.
   """
 
-  use ExUnit.Case, async: true
+  use FlezhaTest.Case, fixtures: [:tmp_dir], async: true
 
   alias Flezha.Plugin.Installer.Package
+  alias Flezha.TestHelpers.PluginPackage
 
-  @opts [max_package_bytes: 50_000_000, max_source_files: 200]
+  @opts [max_package_bytes: 50_000_000, require_signature: false, trusted_keys: []]
 
-  setup do
-    tmp = tmp!("flz_pkg_test_")
-    on_exit(fn -> File.rm_rf!(tmp) end)
-    {:ok, tmp: tmp}
+  setup %{tmp: tmp} do
+    {:ok, example: PluginPackage.example!(), dir: Path.join(tmp, "x")}
   end
 
-  test "well-formed package extracts and validates", %{tmp: tmp} do
-    fpz = Path.join(tmp, "valid.fpz")
-    staging = Path.join(tmp, "staging")
+  defp verify(archive, dir, opts \\ @opts), do: Package.verify(archive, dir, opts)
 
-    write_fpz!(fpz, [
-      {"manifest.exs", "%{id: \"x\"}"},
-      {"src/x.ex", "defmodule X do end"},
-      {"CHECKSUMS.sha256", "deadbeef  src/x.ex\n"}
-    ])
+  defp rewrite(%{example: example, tmp: tmp}, edits),
+    do: PluginPackage.rewrite(example, Path.join(tmp, "edited.fpz"), edits)
 
-    assert :ok = Package.extract(fpz, staging, @opts)
-    assert :ok = Package.validate_layout(staging)
-    assert File.exists?(Path.join(staging, "manifest.exs"))
-    assert File.exists?(Path.join(staging, "src/x.ex"))
+  test "a well-formed package passes the format checks", %{example: example, dir: dir} do
+    assert {:ok, verified} = verify(example, dir)
+    assert verified.manifest.id == "flezha_example_plugin"
+    assert Enum.map(verified.apps, & &1.name) == [:flezha_example_plugin, :stamp_lib]
+    assert verified.signed == false
+    assert verified.digest == Package.digest(example)
   end
 
-  test "missing manifest rejected", %{tmp: tmp} do
-    fpz = Path.join(tmp, "no_manifest.fpz")
-    staging = Path.join(tmp, "staging")
+  test "a source file is refused, naming it", %{dir: dir} = ctx do
+    archive = rewrite(ctx, [{:put, "src/plugin.ex", "defmodule X do end"}])
 
-    write_fpz!(fpz, [
-      {"src/x.ex", "defmodule X do end"},
-      {"CHECKSUMS.sha256", "deadbeef  src/x.ex\n"}
-    ])
+    assert {:error, {:package_invalid, :source_file, %{entry: "src/plugin.ex"}}} =
+             verify(archive, dir)
 
-    :ok = Package.extract(fpz, staging, @opts)
-    assert {:error, {:invalid_layout, :manifest_missing}} = Package.validate_layout(staging)
+    archive = rewrite(ctx, [{:put, "lib/stamp_lib-0.1.0/priv/x.ex", ""}])
+    assert {:error, {:package_invalid, :source_file, _}} = verify(archive, Path.join(dir, "2"))
   end
 
-  test "missing checksums rejected", %{tmp: tmp} do
-    fpz = Path.join(tmp, "no_checksums.fpz")
-    staging = Path.join(tmp, "staging")
+  test "a missing manifest or checksum file is refused", %{dir: dir} = ctx do
+    archive = rewrite(ctx, [{:delete, "manifest.exs"}, :keep_checksums])
+    assert {:error, {:package_invalid, :manifest_missing, _}} = verify(archive, dir)
 
-    write_fpz!(fpz, [
-      {"manifest.exs", "%{id: \"x\"}"},
-      {"src/x.ex", "defmodule X do end"}
-    ])
+    archive = rewrite(ctx, [{:delete, "CHECKSUMS.sha256"}, :keep_checksums])
 
-    :ok = Package.extract(fpz, staging, @opts)
-    assert {:error, {:invalid_layout, :checksums_missing}} = Package.validate_layout(staging)
+    assert {:error, {:package_invalid, :checksums_missing, _}} =
+             verify(archive, Path.join(dir, "2"))
   end
 
-  test "missing src directory rejected", %{tmp: tmp} do
-    fpz = Path.join(tmp, "no_src.fpz")
-    staging = Path.join(tmp, "staging")
+  test "an unknown top-level entry is refused, naming it", %{dir: dir} = ctx do
+    archive = rewrite(ctx, [{:put, "README", "hi"}])
 
-    write_fpz!(fpz, [
-      {"manifest.exs", "%{id: \"x\"}"},
-      {"CHECKSUMS.sha256", ""}
-    ])
-
-    :ok = Package.extract(fpz, staging, @opts)
-    assert {:error, {:invalid_layout, :src_missing}} = Package.validate_layout(staging)
+    assert {:error, {:package_invalid, :unexpected_entry, %{entry: "README"}}} =
+             verify(archive, dir)
   end
 
-  test "rogue .beam file rejected at extract time", %{tmp: tmp} do
-    fpz = Path.join(tmp, "beam.fpz")
-    staging = Path.join(tmp, "staging")
+  test "a symbolic link is refused", %{tmp: tmp, dir: dir} do
+    src = Path.join(tmp, "link_src")
+    File.mkdir_p!(src)
+    File.ln_s!("/etc/passwd", Path.join(src, "manifest.exs"))
+    archive = Path.join(tmp, "link.fpz")
+    :ok = Package.create(src, archive)
 
-    write_fpz!(fpz, [
-      {"manifest.exs", "%{}"},
-      {"src/x.ex", "defmodule X do end"},
-      {"src/evil.beam", "precompiled"},
-      {"CHECKSUMS.sha256", ""}
-    ])
-
-    assert {:error, {:invalid_layout, :beam_forbidden}} = Package.extract(fpz, staging, @opts)
+    assert {:error, {:package_invalid, :unsafe_entry, %{type: :symlink}}} = verify(archive, dir)
   end
 
-  test "path traversal rejected", %{tmp: tmp} do
-    fpz = Path.join(tmp, "traversal.fpz")
-    staging = Path.join(tmp, "staging")
+  test "native code is refused: a shared library under priv or a module with on_load",
+       %{dir: dir} = ctx do
+    archive = rewrite(ctx, [{:put, "lib/stamp_lib-0.1.0/priv/nif.so", "ELF"}])
 
-    write_fpz!(fpz, [
-      {"manifest.exs", "%{}"},
-      {"../escape.ex", "oops"},
-      {"CHECKSUMS.sha256", ""}
-    ])
+    assert {:error, {:native_code, "lib/stamp_lib-0.1.0/priv/nif.so"}} = verify(archive, dir)
 
-    assert {:error, {:unsafe_entry, _, :path_traversal}} = Package.extract(fpz, staging, @opts)
+    archive =
+      rewrite(ctx, [
+        {:beam, :stamp_lib, :flz_native, PluginPackage.beam(:flz_native, on_load: true)}
+      ])
+
+    assert {:error, {:native_code, "flz_native"}} = verify(archive, Path.join(dir, "2"))
   end
 
-  test "oversize package rejected", %{tmp: tmp} do
-    fpz = Path.join(tmp, "big.fpz")
-    staging = Path.join(tmp, "staging")
+  test "beams and the modules list must agree", %{dir: dir} = ctx do
+    archive =
+      rewrite(ctx, [
+        {:put, "lib/stamp_lib-0.1.0/ebin/flz_stray.beam", PluginPackage.beam(:flz_stray)}
+      ])
 
-    big = :binary.copy("a", 2_000_000)
+    assert {:error, {:package_invalid, :beam_not_listed, %{module: "flz_stray"}}} =
+             verify(archive, dir)
 
-    write_fpz!(fpz, [
-      {"manifest.exs", "%{}"},
-      {"src/big.ex", big},
-      {"CHECKSUMS.sha256", ""}
-    ])
+    archive =
+      rewrite(ctx, [
+        {:app, :stamp_lib, &Keyword.update!(&1, :modules, fn m -> [:flz_gone | m] end)}
+      ])
 
-    tiny_opts = [max_package_bytes: 1_000_000, max_source_files: 200]
-
-    assert {:error, {:package_too_large, _size, 1_000_000}} =
-             Package.extract(fpz, staging, tiny_opts)
+    assert {:error, {:package_invalid, :module_without_beam, %{module: "flz_gone"}}} =
+             verify(archive, Path.join(dir, "2"))
   end
 
-  test "too many source files rejected", %{tmp: tmp} do
-    fpz = Path.join(tmp, "many.fpz")
-    staging = Path.join(tmp, "staging")
-
-    files =
-      for i <- 1..10 do
-        {"src/f#{i}.ex", "defmodule F#{i} do end"}
-      end
-
-    write_fpz!(fpz, [{"manifest.exs", "%{}"} | files] ++ [{"CHECKSUMS.sha256", ""}])
-
-    tiny_opts = [max_package_bytes: 50_000_000, max_source_files: 5]
-
-    assert {:error, {:too_many_source_files, 10, 5}} =
-             Package.extract(fpz, staging, tiny_opts)
+  test "an app directory whose .app names another version is refused", %{dir: dir} = ctx do
+    archive = rewrite(ctx, [{:app, :stamp_lib, &Keyword.put(&1, :vsn, ~c"9.9.9")}])
+    assert {:error, {:package_invalid, :app_mismatch, _}} = verify(archive, dir)
   end
 
-  test "unexpected top-level entry rejected by validate_layout", %{tmp: tmp} do
-    fpz = Path.join(tmp, "extra.fpz")
-    staging = Path.join(tmp, "staging")
+  test "an application that depends on flezha may declare no callback", %{dir: dir} = ctx do
+    archive =
+      rewrite(ctx, [{:app, :flezha_example_plugin, &Keyword.put(&1, :mod, {:flz_cb, []})}])
 
-    write_fpz!(fpz, [
-      {"manifest.exs", "%{}"},
-      {"src/x.ex", "defmodule X do end"},
-      {"CHECKSUMS.sha256", ""},
-      {"README.md", "hi"}
-    ])
-
-    :ok = Package.extract(fpz, staging, @opts)
-
-    assert {:error, {:invalid_layout, :unexpected_entry, "README.md"}} =
-             Package.validate_layout(staging)
+    assert {:error, {:app_callback, :flezha_example_plugin}} = verify(archive, dir)
   end
 
-  test "non-source file under src rejected", %{tmp: tmp} do
-    fpz = Path.join(tmp, "nonsource.fpz")
-    staging = Path.join(tmp, "staging")
+  test "an oversized package is refused before anything is extracted", %{
+    example: example,
+    dir: dir
+  } do
+    assert {:error, {:package_invalid, :too_large, %{bytes: bytes, limit: 1_000}}} =
+             verify(example, dir, Keyword.put(@opts, :max_package_bytes, 1_000))
 
-    write_fpz!(fpz, [
-      {"manifest.exs", "%{}"},
-      {"src/x.ex", "defmodule X do end"},
-      {"src/README", "hi"},
-      {"CHECKSUMS.sha256", ""}
-    ])
-
-    :ok = Package.extract(fpz, staging, @opts)
-
-    assert {:error, {:invalid_layout, :unexpected_source, _}} =
-             Package.validate_layout(staging)
+    assert bytes > 1_000
+    refute File.exists?(dir)
   end
 
-  ## Helpers
-
-  defp write_fpz!(fpz_path, entries) do
-    :ok = File.mkdir_p!(Path.dirname(fpz_path))
-
-    tar_entries =
-      Enum.map(entries, fn {name, content} ->
-        {String.to_charlist(name), content}
-      end)
-
-    :ok =
-      :erl_tar.create(
-        String.to_charlist(fpz_path),
-        tar_entries,
-        [:compressed]
-      )
-  end
-
-  defp tmp!(prefix) do
-    path = Path.join(System.tmp_dir!(), "#{prefix}#{System.unique_integer([:positive])}")
-    File.mkdir_p!(path)
-    path
+  test "an archive that is not a gzip tar is refused", %{tmp: tmp, dir: dir} do
+    archive = Path.join(tmp, "junk.fpz")
+    File.write!(archive, "not a tar")
+    assert {:error, {:package_invalid, :unreadable, _}} = verify(archive, dir)
   end
 end

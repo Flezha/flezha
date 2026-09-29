@@ -85,7 +85,7 @@ answer "what are the options"; a guide answers "what do I type".
 
 | Doc | Covers |
 | --- | --- |
-| [`installation.md`](plugins/installation.md) | `.fpz` packages, manifests, signing, `flz plugin` lifecycle |
+| [`installation.md`](plugins/installation.md) | Plugin packages: building, installing, loading at boot, statuses, errors, signing |
 | [`lifecycle.md`](plugins/lifecycle.md) | `init_provider/1` vs `activate/1`, host identity, teardown |
 | [`kafka_producer.md`](plugins/kafka_producer.md) | The Kafka producer sink: idempotence, batching, the in-flight window |
 | [`http_poll.md`](plugins/http_poll.md) | An HTTP resource as an operator input |

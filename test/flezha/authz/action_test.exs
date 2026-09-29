@@ -14,7 +14,7 @@ defmodule Flezha.AuthZ.ActionTest do
     for action <- [
           :"operator.start",
           :"operator.listen",
-          :"plugin.install",
+          :"plugin.enable",
           :"audit.read",
           :"runner.connect"
         ] do

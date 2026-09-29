@@ -1,23 +1,41 @@
 defmodule Flezha.Plugin.Installer.Checksums do
   @moduledoc """
-  SHA-256 checksum parsing and verification against an extracted package
-  tree.
-
-  The `CHECKSUMS.sha256` format matches GNU `sha256sum`: one
-  `<hex>  <relative_path>` entry per line. Blank lines and `#` comments are
-  tolerated. The installer requires coverage to be exact: every file under
-  `src/` plus `manifest.exs` must be listed, and every listed file must
-  exist and hash-match.
+  `CHECKSUMS.sha256` of a plugin package, in GNU `sha256sum` format: one
+  `<hex>  <relative_path>` line per file. Coverage is exact: `manifest.exs` and
+  every file under `lib/` has a line, and every line names a file whose digest
+  matches.
   """
+
+  alias Flezha.Plugin.Installer.Package
+
+  @file_name "CHECKSUMS.sha256"
 
   @type entry :: %{digest: binary(), path: binary()}
 
+  @doc "Check the `CHECKSUMS.sha256` of the package extracted in `dir`."
+  @spec check(Path.t()) :: :ok | {:error, term()}
+  def check(dir) do
+    with {:ok, entries} <- parse(File.read!(Path.join(dir, @file_name))) do
+      verify(entries, dir)
+    end
+  end
+
   @doc """
-  Parses the text body of a `CHECKSUMS.sha256` file. Returns a list of
-  `%{digest: hex, path: rel}` on success, or `{:error, {:malformed_line, n, line}}`
-  on the first bad line.
+  Write the `CHECKSUMS.sha256` covering `manifest.exs` and `lib/` under `dir`,
+  and answer its bytes, which a signature signs.
   """
-  @spec parse(binary()) :: {:ok, [entry()]} | {:error, {:malformed_line, pos_integer(), binary()}}
+  @spec write(Path.t()) :: binary()
+  def write(dir) do
+    body = for rel <- covered(dir), into: "", do: "#{file_digest(Path.join(dir, rel))}  #{rel}\n"
+    File.write!(Path.join(dir, @file_name), body)
+    body
+  end
+
+  @doc """
+  Parse the text of a `CHECKSUMS.sha256` file. Blank lines and `#` comments are
+  skipped.
+  """
+  @spec parse(binary()) :: {:ok, [entry()]} | {:error, term()}
   def parse(body) when is_binary(body) do
     body
     |> String.split("\n")
@@ -38,115 +56,49 @@ defmodule Flezha.Plugin.Installer.Checksums do
   end
 
   @doc """
-  Verifies every entry in `entries` against the filesystem rooted at
-  `staging_dir`. Returns `:ok` when every declared file exists and its
-  recomputed SHA-256 matches. Returns the first error encountered.
-
-  Also verifies coverage: any file present under `src/` or at
-  `manifest.exs` that is NOT listed in `entries` is reported as
-  `{:error, {:checksum_line_missing, path}}`.
+  Every entry's file exists under `dir` and hashes to its digest, and every
+  covered file has an entry.
   """
-  @spec verify([entry()], Path.t()) ::
-          :ok
-          | {:error,
-             {:checksum_mismatch, binary()}
-             | {:checksum_file_missing, binary()}
-             | {:checksum_line_missing, binary()}}
-  def verify(entries, staging_dir) do
+  @spec verify([entry()], Path.t()) :: :ok | {:error, term()}
+  def verify(entries, dir) do
     declared = MapSet.new(entries, & &1.path)
 
-    with :ok <- verify_entries(entries, staging_dir) do
-      verify_coverage(declared, staging_dir)
+    with :ok <- Enum.find_value(entries, :ok, &entry_problem(&1, dir)) do
+      case Enum.find(covered(dir), &(not MapSet.member?(declared, &1))) do
+        nil -> :ok
+        path -> invalid(:checksum_line_missing, path)
+      end
     end
   end
-
-  ## Private
 
   defp parse_line(line, n, acc) do
-    case String.split(line, ~r/\s+/, parts: 2) do
-      [hex, path] when byte_size(hex) == 64 ->
-        if valid_hex?(hex) do
-          {:cont, {:ok, [%{digest: String.downcase(hex), path: path} | acc]}}
-        else
-          {:halt, {:error, {:malformed_line, n, line}}}
-        end
-
-      _ ->
-        {:halt, {:error, {:malformed_line, n, line}}}
+    with [hex, path] <- String.split(line, ~r/\s+/, parts: 2),
+         {:ok, _} <- Base.decode16(hex, case: :mixed),
+         64 <- byte_size(hex) do
+      {:cont, {:ok, [%{digest: String.downcase(hex), path: path} | acc]}}
+    else
+      _ -> {:halt, {:error, {:package_invalid, :checksums_malformed, %{line: n}}}}
     end
   end
 
-  defp valid_hex?(<<>>), do: true
-  defp valid_hex?(<<c, rest::binary>>) when c in ?0..?9, do: valid_hex?(rest)
-  defp valid_hex?(<<c, rest::binary>>) when c in ?a..?f, do: valid_hex?(rest)
-  defp valid_hex?(<<c, rest::binary>>) when c in ?A..?F, do: valid_hex?(rest)
-  defp valid_hex?(_), do: false
+  defp entry_problem(%{digest: expected, path: rel}, dir) do
+    full = Path.join(dir, rel)
 
-  defp verify_entries(entries, staging_dir) do
-    Enum.reduce_while(entries, :ok, fn entry, _acc -> verify_entry(entry, staging_dir) end)
-  end
-
-  defp verify_entry(%{digest: expected, path: rel}, staging_dir) do
-    full = Path.join(staging_dir, rel)
-
-    if File.regular?(full),
-      do: compare_digest(full, rel, expected),
-      else: {:halt, {:error, {:checksum_file_missing, rel}}}
-  end
-
-  # One read: the digest is computed once and matched against what the
-  # manifest declared.
-  defp compare_digest(full, rel, expected) do
-    case file_digest(full) do
-      {:ok, actual} when actual == expected -> {:cont, :ok}
-      {:ok, _actual} -> {:halt, {:error, {:checksum_mismatch, rel}}}
-      {:error, reason} -> {:halt, {:error, {:checksum_io_error, rel, reason}}}
+    cond do
+      Path.type(rel) != :relative or ".." in Path.split(rel) -> invalid(:unsafe_entry, rel)
+      not File.regular?(full) -> invalid(:checksum_file_missing, rel)
+      file_digest(full) != expected -> invalid(:checksum_mismatch, rel)
+      true -> nil
     end
   end
 
-  defp verify_coverage(declared, staging_dir) do
-    actual = collect_covered_paths(staging_dir)
-
-    case Enum.find(actual, fn rel -> not MapSet.member?(declared, rel) end) do
-      nil -> :ok
-      missing -> {:error, {:checksum_line_missing, missing}}
-    end
+  defp covered(dir) do
+    lib = dir |> Path.join("lib") |> Package.files() |> Enum.map(&Path.relative_to(&1, dir))
+    ["manifest.exs" | Enum.sort(lib)]
   end
 
-  defp collect_covered_paths(staging_dir) do
-    manifest =
-      if File.regular?(Path.join(staging_dir, "manifest.exs")), do: ["manifest.exs"], else: []
+  defp file_digest(path),
+    do: :crypto.hash(:sha256, File.read!(path)) |> Base.encode16(case: :lower)
 
-    src_root = Path.join(staging_dir, "src")
-
-    src =
-      if File.dir?(src_root) do
-        walk_regular(src_root)
-        |> Enum.map(&Path.relative_to(&1, staging_dir))
-      else
-        []
-      end
-
-    manifest ++ src
-  end
-
-  defp walk_regular(dir) do
-    File.ls!(dir)
-    |> Enum.flat_map(fn entry ->
-      full = Path.join(dir, entry)
-
-      cond do
-        File.dir?(full) -> walk_regular(full)
-        File.regular?(full) -> [full]
-        true -> []
-      end
-    end)
-  end
-
-  defp file_digest(path) do
-    case File.read(path) do
-      {:ok, data} -> {:ok, :crypto.hash(:sha256, data) |> Base.encode16(case: :lower)}
-      {:error, reason} -> {:error, reason}
-    end
-  end
+  defp invalid(problem, path), do: {:error, {:package_invalid, problem, %{path: path}}}
 end

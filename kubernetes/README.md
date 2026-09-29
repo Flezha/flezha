@@ -188,6 +188,7 @@ It carries **everything the controller must not lose**:
   DETS files, i.e. operator child specs and recoverable plugin bindings.
 - Per-Cell WAL + snapshot files (`FLEZHA_STATE_DIR`) — operator state.
 - The dead-letter queue store (`FLEZHA_DLQ_DIR`).
+- Installed plugin packages (`FLEZHA_PLUGIN_ROOT`), see "Plugins" below.
 
 Losing this volume reverts a controller to an empty recovery on restart. See the
 top-level [README.md](../README.md#failure-recovery) for the per-provider
@@ -224,6 +225,39 @@ files it wrote before going down.
 
 Swap the `flezha-recovery` volume in `flezha-daemonset.yaml`; the commented
 `persistentVolumeClaim` block there shows the shape.
+
+## Plugins
+
+A plugin package (`.fpz`) is data beside the pinned image, never baked into it: the
+controller loads every archive in `FLEZHA_PLUGIN_ROOT` (`/var/lib/flezha/plugins`, on
+the recovery volume) when it starts. Declare a node's packages in the ConfigMap:
+
+```yaml
+FLEZHA_PLUGINS: "https://example.com/flezha_example_plugin-0.1.0.fpz#sha256=<64 hex>"
+```
+
+The image entrypoint runs `flz plugin sync` before it starts the controller: the plugin
+root then holds exactly the declared packages, fetched when missing, and a pinned
+package already present is not fetched again. A sync that fails keeps the controller
+down, so a pod never runs a plugin set other than the declared one. A change to the
+list takes effect with a rollout:
+
+```bash
+kubectl -n flezha edit configmap flezha-config
+kubectl -n flezha rollout restart daemonset/flezha-daemonset
+kubectl -n flezha exec <pod> -- /flezha/bin/flz plugin list --installed
+```
+
+The declared list is the only truth on such a node: `flz plugin install` and
+`uninstall` are refused there with `plugin.list_declared`, because the next start's
+sync would undo them.
+
+Every entry is a path inside the container or an `https://` URL the pods can reach,
+verified against the operating system's CA store. Nothing is published before
+go-live, so serve the archive from a host of your own, or mount it: a ConfigMap
+holding the archive under `binaryData`, mounted read-only at `/pkgs`, is named as
+`/pkgs/<file>.fpz#sha256=<hex>`. `docs/plugins/installation.md` covers building a
+package with the `plugin-builder` image, statuses, errors and signing.
 
 ## Logs
 

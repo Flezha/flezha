@@ -2,454 +2,437 @@
 
 ## Purpose
 
-The plugin-installation capability gives runners a Jenkins-style runtime plugin lifecycle for Flezha: install from a signed/checksummed archive, compile and hot-load on the running agent, enable, disable, upgrade, and uninstall — all without rebuilding the release. A plugin package (`*.fpz`) ships `manifest.exs`, `src/*.ex` or `src/*.erl`, a `CHECKSUMS.sha256` file, and an optional detached Ed25519 signature; the agent compiles and loads modules exactly once at install time, persists the installed catalog in DETS (`installed_plugins.dets` in the layout's plugin subtree, `app_data/plugins/` by default), and re-hydrates every `:enabled`/`:disabled` package's modules into the VM before `Flezha.Service.PluginManager` starts, so no operator bind can replay a persisted subscription against a module that is not loaded. The capability defines the package format, manifest schema, checksum and signature verification rules, install/upgrade/uninstall/enable/disable semantics, dependency resolution, module-collision guards, on-disk layout, catalog persistence, boot-time hydration ordering, the `Flezha.Plugin.Installer` public service API shared by CLI and the planned Phoenix UI, recovery interaction, supervision tree ordering, and the configuration surface (`:flezha, :plugin_installer`).
+The plugin-installation capability gives Flezha plugins the lifecycle of Jenkins plugins: the release is immutable, a plugin is a prebuilt package kept as data beside it, and a change to the plugin set takes effect when the controller restarts. A plugin is an ordinary Mix project depending on `flezha`; `mix flezha.plugin.package` builds its package (`*.fpz`): the compiled `.beam` and `.app` files of the plugin and of every library the release does not ship, laid out like a release's `lib/`, with `manifest.exs` recording the Flezha, OTP and Elixir versions it was built with and the providers it declares, a `CHECKSUMS.sha256` file and an optional detached Ed25519 signature. `flz plugin install`, `uninstall` and `sync` run in a VM of their own and only place or remove verified archives in the plugin root (`app_data/plugins/` by default); `FLEZHA_PLUGINS` declares a node's list, which is synced before the controller starts. Once, at boot, before the supervision tree is built, `Flezha.Plugin.Installer.Loader` verifies every archive, checks its libraries and modules against the VM, loads its code all or nothing, consolidates again the protocols it implements, starts its library applications and registers its providers as rows of the provider table; a refused package is recorded with its error code and never stops the controller. The capability defines the package format, manifest schema, checksum and signature verification, the install, uninstall and sync verbs, the boot-time loading order and its refusals, the list of what each boot loaded, recovery interaction, and the configuration surface (the `:plugins` rows).
 ## Requirements
 ### Requirement: Plugin package format
 
-A plugin package SHALL be a gzip-compressed tar archive with the conventional extension `.fpz`. The archive MUST contain, at its root:
+A plugin package SHALL be a gzip-compressed tar archive with the conventional extension
+`.fpz`. The archive MUST contain, at its root:
 
-- `manifest.exs` — an Elixir term (map) describing the plugin (see "Manifest schema")
-- `src/` — a directory containing one or more `.ex` and/or `.erl` source files, in any sub-directory layout the author chooses
-- `CHECKSUMS.sha256` — a plain-text file with one `<64-hex-char>  <relative-path>` line per file under `src/` AND a line for `manifest.exs`, matching the GNU `sha256sum` output format
+- `manifest.exs`: an Elixir term describing the package (see "Manifest schema")
+- `CHECKSUMS.sha256`: one `<64-hex-char>  <relative-path>` line per file under `lib/` and a
+  line for `manifest.exs`, in the GNU `sha256sum` output format
+- `lib/`: one directory `<app>-<vsn>` per bundled application, each holding `ebin/` with the
+  application's `<app>.app` and one `.beam` per module its `modules` list names, and
+  optionally `priv/`
 
-The archive MAY contain, at its root:
+The archive MAY contain, at its root, `signature.sig`: a raw 64-byte Ed25519 signature over
+the bytes of `CHECKSUMS.sha256`.
 
-- `signature.sig` — a raw 64-byte Ed25519 signature over the UTF-8 bytes of `CHECKSUMS.sha256`
-
-The archive MUST NOT contain any other top-level files or directories. The archive MUST NOT contain pre-compiled `.beam` files, symbolic links, device files, or files with non-portable permissions (executable bits other than `0o644` for files and `0o755` for directories).
+The archive MUST NOT contain any other top-level entry, any `.ex` or `.erl` source, a
+symbolic link, a device file, an absolute path or a path containing `..`. It MUST NOT carry
+native code: a file under any `priv/` ending in `.so`, `.dll` or `.dylib`, or a module whose
+beam declares an `on_load` function. An `<app>-<vsn>` directory whose `.app` names another
+application or version, or whose `ebin/` holds a `.beam` its `modules` list does not name or
+lacks one it names, MUST be refused. An archive whose uncompressed size exceeds
+`plugin_max_package_bytes` (default 50_000_000) MUST be refused before anything is written
+outside `<plugin_root>/.staging/`. These checks SHALL run at install and each time a
+controller boots with the archive.
 
 #### Scenario: Well-formed package is accepted
-- **WHEN** `Flezha.Plugin.Installer.install/2` is called with a `.fpz` path whose archive contains `manifest.exs`, a non-empty `src/` tree of `.ex` files, and a valid `CHECKSUMS.sha256`
-- **THEN** the installer MUST proceed past layout validation
+
+- **WHEN** an archive holding `manifest.exs`, `CHECKSUMS.sha256` and a `lib/` tree of
+  `<app>-<vsn>/ebin` directories whose beams match their `.app` files is installed
+- **THEN** it SHALL pass the format checks
+
+#### Scenario: A source package is refused
+
+- **WHEN** the archive holds a `src/` directory or any `.ex` file
+- **THEN** it SHALL be refused with `plugin.package_invalid` naming the entry, and nothing
+  SHALL be placed in the plugin root
 
 #### Scenario: Missing manifest rejected
+
 - **WHEN** the archive lacks `manifest.exs` at its root
-- **THEN** the installer MUST return `{:error, {:invalid_layout, :manifest_missing}}` and MUST NOT write to `app_data/plugins/installed/`
+- **THEN** it SHALL be refused with `plugin.package_invalid` naming the missing manifest,
+  and nothing SHALL be placed in the plugin root
 
 #### Scenario: Missing checksums file rejected
-- **WHEN** the archive lacks `CHECKSUMS.sha256` at its root
-- **THEN** the installer MUST return `{:error, {:invalid_layout, :checksums_missing}}`
 
-#### Scenario: Pre-compiled beams rejected
-- **WHEN** the archive contains a file whose name ends in `.beam`
-- **THEN** the installer MUST return `{:error, {:invalid_layout, :beam_forbidden}}`
+- **WHEN** the archive lacks `CHECKSUMS.sha256` at its root
+- **THEN** it SHALL be refused with `plugin.package_invalid` naming the missing checksum file
 
 #### Scenario: Unknown top-level entries rejected
-- **WHEN** the archive contains a top-level file or directory other than `manifest.exs`, `src/`, `CHECKSUMS.sha256`, or `signature.sig`
-- **THEN** the installer MUST return `{:error, {:invalid_layout, {:unexpected_entry, path}}}`
+
+- **WHEN** the archive holds a top-level entry other than `manifest.exs`, `CHECKSUMS.sha256`,
+  `signature.sig` or `lib/`
+- **THEN** it SHALL be refused with `plugin.package_invalid` naming the entry
+
+#### Scenario: Native code is refused
+
+- **WHEN** the archive holds `lib/foo-1.0.0/priv/foo.so`, or a module with an `on_load`
+  function
+- **THEN** it SHALL be refused with `plugin.native_code` naming the file or module
+
+#### Scenario: Beams and modules list disagree
+
+- **WHEN** an `ebin/` holds a `.beam` its `.app` does not list, or its `.app` lists a module
+  with no `.beam`
+- **THEN** it SHALL be refused with `plugin.package_invalid` naming the application and the
+  module
 
 #### Scenario: Oversized package rejected
-- **WHEN** the archive's uncompressed size exceeds `:flezha, :plugin_installer, max_package_bytes` (default 50_000_000)
-- **THEN** the installer MUST abort extraction, remove any partially-extracted files from staging, and return `{:error, {:package_too_large, size, limit}}`
+
+- **WHEN** the archive's uncompressed size exceeds `plugin_max_package_bytes`
+- **THEN** extraction SHALL stop, `.staging/` SHALL hold nothing of it, and it SHALL be
+  refused with `plugin.package_invalid` carrying the size and the limit
 
 ### Requirement: Manifest schema
 
-`manifest.exs` SHALL be an Elixir term of shape `%{id: binary, version: binary, description: binary, author: binary, modules: [module], provides: [map], dependencies: [{binary, binary}]}` and MAY include `:description` and `:author`. Every field carries these constraints:
+`manifest.exs` SHALL be an Elixir term of shape `%{id: binary, version: binary, built_with:
+%{flezha: binary, otp: binary, elixir: binary}, apps: [{atom, binary}], providers: %{binary
+=> module}}` and MAY include `:description`. Every field carries these constraints:
 
-- `id`: binary matching `~r/^[a-z0-9][a-z0-9_]*$/` and no longer than 64 characters
-- `version`: binary parseable by `Version.parse/1` (SemVer)
-- `modules`: non-empty list of atoms — every module the package defines
-- `provides`: list of maps, each with `id` (binary, unique within the manifest), `provider` (atom, present in `modules`), `hooks` (list of `{atom, keyword}`), `default_opts` (map), and `scope` (atom, `:operator` only in this release)
-- `dependencies`: list of `{plugin_id, constraint}` where `constraint` is a Version-compatible requirement string (e.g. `">= 1.0.0"`, `"~> 2.3"`); MAY be `[]`
+- `id`: valid as a plugin id (`~r/^[a-z0-9][a-z0-9_]*$/`, at most 64 characters) and equal
+  to the name of the first application in `apps`, the plugin application
+- `version`: parseable by `Version.parse/1` and equal to the plugin application's `vsn`
+- `built_with`: `flezha` and `elixir` parseable by `Version.parse/1`, `otp` a string of
+  digits
+- `apps`: non-empty; each `{app, vsn}` has exactly one `lib/<app>-<vsn>` directory, and no
+  other directory exists under `lib/`
+- `providers`: a non-empty map; each key valid as a plugin id, each value a module the
+  plugin application's `.app` lists
 
-The manifest MUST be evaluated inside a restricted binding that disables `import`, `require`, and `use`, and its abstract syntax tree MUST contain only literal nodes (maps, lists, tuples, atoms, binaries, integers, module aliases). The installer MUST reject any manifest whose AST contains function calls or variable references.
+The manifest MUST be parsed without evaluating code: its abstract syntax tree MUST contain
+only literal nodes (maps, lists, tuples, atoms, binaries, numbers, module aliases), and a
+manifest whose tree contains a function call or a variable MUST be refused without being
+evaluated.
 
 #### Scenario: Valid manifest parses
-- **WHEN** `manifest.exs` evaluates to a map with a valid `:id`, a `:version` of `"1.2.0"`, non-empty `:modules`, at least one well-formed entry in `:provides`, and empty `:dependencies`
-- **THEN** the installer MUST accept the manifest
+
+- **WHEN** `manifest.exs` is the map the package task writes for the example plugin
+- **THEN** it SHALL be accepted
 
 #### Scenario: Missing required field rejected
-- **WHEN** `manifest.exs` is missing the `:version` key
-- **THEN** the installer MUST return `{:error, {:manifest_invalid, {:missing_field, :version}}}`
+
+- **WHEN** `manifest.exs` lacks `:built_with`
+- **THEN** the package SHALL be refused with `plugin.package_invalid` whose details name the
+  missing field
 
 #### Scenario: Invalid id rejected
-- **WHEN** `manifest.exs` declares `id: "My-Plugin"` (uppercase + hyphen)
-- **THEN** the installer MUST return `{:error, {:manifest_invalid, {:invalid_id, "My-Plugin"}}}`
+
+- **WHEN** `manifest.exs` declares `id: "My-Plugin"` (uppercase and a hyphen)
+- **THEN** the package SHALL be refused with `plugin.package_invalid` naming the id
 
 #### Scenario: Non-semver version rejected
-- **WHEN** `manifest.exs` declares `version: "beta-2"` which `Version.parse/1` cannot parse
-- **THEN** the installer MUST return `{:error, {:manifest_invalid, {:invalid_version, "beta-2"}}}`
+
+- **WHEN** `manifest.exs` declares `version: "beta-2"`, which `Version.parse/1` cannot parse
+- **THEN** the package SHALL be refused with `plugin.package_invalid` naming the version
 
 #### Scenario: Provider not in modules list rejected
-- **WHEN** a `provides` entry names `provider: Something.NotInModules` and that atom is absent from `manifest.modules`
-- **THEN** the installer MUST return `{:error, {:manifest_invalid, {:provider_not_declared, Something.NotInModules}}}`
+
+- **WHEN** a `providers` value names a module the plugin application's `.app` does not list
+- **THEN** the package SHALL be refused with `plugin.package_invalid` naming the provider id
+  and the module
 
 #### Scenario: Manifest containing code rejected
+
 - **WHEN** `manifest.exs` contains a call expression such as `System.get_env("FOO")`
-- **THEN** the installer MUST return `{:error, {:manifest_invalid, :non_literal_ast}}` WITHOUT evaluating the call
+- **THEN** the package SHALL be refused with `plugin.package_invalid` WITHOUT evaluating the
+  call
 
 ### Requirement: SHA-256 checksum verification
 
-The installer SHALL recompute the SHA-256 digest of `manifest.exs` and of every file under `src/` and compare each digest byte-for-byte against the value declared in `CHECKSUMS.sha256`. Any mismatch, any missing line, and any line that refers to a path not present in the archive MUST cause the install to abort.
+The SHA-256 digest of `manifest.exs` and of every file under `lib/` SHALL be recomputed and
+compared byte-for-byte with the value `CHECKSUMS.sha256` declares, at install and each time a
+controller boots with the archive. A mismatch, a missing line, and a line naming a path the
+archive lacks MUST each refuse the package.
 
 #### Scenario: All checksums match
-- **WHEN** every file's recomputed SHA-256 matches its declared value in `CHECKSUMS.sha256`
-- **THEN** the installer MUST proceed to the next step
 
-#### Scenario: Tampered source rejected
-- **WHEN** `src/my_plugin.ex` has been modified after `CHECKSUMS.sha256` was written and its recomputed digest no longer matches
-- **THEN** the installer MUST return `{:error, {:checksum_mismatch, "src/my_plugin.ex"}}` and MUST NOT compile or load any module from the package
+- **WHEN** every file's recomputed SHA-256 matches its declared value
+- **THEN** verification SHALL proceed to the next step
+
+#### Scenario: Tampered beam rejected
+
+- **WHEN** `lib/stamp_lib-0.1.0/ebin/Elixir.StampLib.beam` was changed after
+  `CHECKSUMS.sha256` was written
+- **THEN** the package SHALL be refused with `plugin.package_invalid` whose details name the
+  checksum mismatch and the path, and no module of it SHALL be loaded
 
 #### Scenario: Checksum line for missing file rejected
-- **WHEN** `CHECKSUMS.sha256` lists a file path that does not exist in the archive
-- **THEN** the installer MUST return `{:error, {:checksum_file_missing, path}}`
 
-#### Scenario: Source file not covered by checksums rejected
-- **WHEN** `src/extra.ex` is present in the archive but has no corresponding line in `CHECKSUMS.sha256`
-- **THEN** the installer MUST return `{:error, {:checksum_line_missing, "src/extra.ex"}}`
+- **WHEN** `CHECKSUMS.sha256` lists a path the archive does not hold
+- **THEN** the package SHALL be refused with `plugin.package_invalid` naming that path
+
+#### Scenario: An archive changed on disk after install is refused at boot
+
+- **GIVEN** an installed archive whose bytes are altered in the plugin root
+- **WHEN** the controller boots
+- **THEN** the package SHALL be refused, and the controller SHALL finish booting
+
+#### Scenario: File not covered by checksums rejected
+
+- **WHEN** a file under `lib/` has no line in `CHECKSUMS.sha256`
+- **THEN** the package SHALL be refused naming that path
 
 ### Requirement: Ed25519 signature verification
 
-When `signature.sig` is present in the archive OR when `:flezha, :plugin_installer, require_signature` is `true`, the installer SHALL verify a signature over the UTF-8 bytes of `CHECKSUMS.sha256` using Erlang's `:crypto.verify/5` with `{:eddsa, :ed25519}`. A signature MUST be considered valid if and only if at least one public key in `:flezha, :plugin_installer, trusted_keys` verifies it. Missing signatures MUST be rejected when `require_signature: true` or `allow_unsigned: false`.
+When `signature.sig` is present, or `plugin_require_signature` is `true`, the signature SHALL
+be verified over the bytes of `CHECKSUMS.sha256` with `:crypto.verify/5` and
+`{:eddsa, :ed25519}`, and it SHALL be valid if and only if at least one key in
+`plugin_trusted_keys` verifies it. A present signature that no trusted key verifies MUST be
+refused whatever the setting. A missing signature MUST be refused when
+`plugin_require_signature` is `true`, and SHALL otherwise be accepted with a warning log and
+`signed: false` in the package's load outcome. With `plugin_require_signature` `true` and no
+trusted key, every package MUST be refused with `plugin.trust_store_empty`, and the
+controller SHALL still boot. Verification SHALL run at install and at every boot, so a key
+removed from the trust store refuses the packages it signed at the next boot.
 
 #### Scenario: Valid signature accepted
-- **WHEN** the archive contains a `signature.sig` that verifies against one of the trusted keys
-- **THEN** the installer MUST proceed past signature verification
+
+- **WHEN** the archive's `signature.sig` verifies against one of the trusted keys
+- **THEN** verification SHALL proceed
 
 #### Scenario: Invalid signature rejected
-- **WHEN** the archive contains a `signature.sig` that does not verify against any trusted key
-- **THEN** the installer MUST return `{:error, :signature_invalid}` and MUST NOT continue
+
+- **WHEN** the archive's `signature.sig` verifies against no trusted key
+- **THEN** the package SHALL be refused with `plugin.signature_invalid`
 
 #### Scenario: Unsigned package accepted in permissive mode
-- **WHEN** the archive has no `signature.sig`, `require_signature: false`, and `allow_unsigned: true`
-- **THEN** the installer MUST proceed past signature verification without raising an error, but MUST emit a `[:flezha, :plugin_installer, :unsigned_install]` telemetry event with the plugin id
+
+- **WHEN** the archive has no `signature.sig` and `plugin_require_signature` is `false`
+- **THEN** the package SHALL be accepted, a warning SHALL be logged, and its load outcome
+  SHALL carry `signed: false`
 
 #### Scenario: Unsigned package rejected in required mode
-- **WHEN** the archive has no `signature.sig` and `require_signature: true`
-- **THEN** the installer MUST return `{:error, :signature_required}`
 
-#### Scenario: Unsigned package rejected when unsigned disallowed
-- **WHEN** the archive has no `signature.sig` and `allow_unsigned: false`
-- **THEN** the installer MUST return `{:error, :unsigned_not_allowed}`
+- **WHEN** the archive has no `signature.sig` and `plugin_require_signature` is `true`
+- **THEN** the package SHALL be refused with `plugin.signature_required`
 
-#### Scenario: Trusted keys empty with require_signature rejects boot
-- **WHEN** the agent starts with `require_signature: true` and `trusted_keys: []`
-- **THEN** `Flezha.Plugin.Installer` MUST refuse to start, emitting a `:config_invalid` error and preventing the supervisor from completing `init/1`
+#### Scenario: Required signatures with an empty trust store
 
-### Requirement: Source compilation at install time
-
-The installer SHALL compile every `.ex` file under `src/` via `Code.compile_file/2` and every `.erl` file via `:compile.file/2`, collecting the resulting `.beam` binaries in memory. Compilation MUST treat warnings as errors (`--warnings-as-errors`). The set of modules produced by compilation MUST exactly match the `manifest.modules` list; any mismatch aborts the install.
-
-#### Scenario: Clean compile produces declared modules
-- **WHEN** the source compiles cleanly and the produced module list equals `manifest.modules`
-- **THEN** the installer MUST proceed to module loading
-
-#### Scenario: Compilation error aborts install
-- **WHEN** any source file fails to compile
-- **THEN** the installer MUST return `{:error, {:compile_failed, file, reason}}`, MUST NOT load any module from the package, and MUST NOT write any `.beam` to `app_data/plugins/installed/`
-
-#### Scenario: Warning treated as error
-- **WHEN** a source file compiles but emits a warning (e.g. unused variable)
-- **THEN** the installer MUST return `{:error, {:compile_failed, file, {:warning, message}}}`
-
-#### Scenario: Module list mismatch rejected
-- **WHEN** compilation produces modules `[A, B]` but `manifest.modules` declares `[A, B, C]`
-- **THEN** the installer MUST return `{:error, {:manifest_invalid, {:module_mismatch, expected: [A, B, C], produced: [A, B]}}}`
-
-#### Scenario: Extra module produced rejected
-- **WHEN** compilation produces modules `[A, B, C]` but `manifest.modules` declares `[A, B]`
-- **THEN** the installer MUST return `{:error, {:manifest_invalid, {:module_mismatch, expected: [A, B], produced: [A, B, C]}}}`
+- **WHEN** the controller boots with `plugin_require_signature: true` and
+  `plugin_trusted_keys: []`
+- **THEN** every package SHALL be refused with `plugin.trust_store_empty` and the
+  controller SHALL finish booting
 
 ### Requirement: Module collision with compiled-in code
 
-The installer SHALL refuse to install a plugin whose `manifest.modules` contains a module atom already loaded in the VM and not owned by any installed plugin in the catalog. This prevents an installed plugin from shadowing a built-in provider or Flezha core module.
+The loader SHALL refuse a package any of whose modules to load is already loaded in the VM or
+found on its code path (`:code.which/1` is not `:non_existing`), whether the module belongs
+to the release, to OTP or Elixir, or to a package loaded before it at this boot. The modules
+of an application skipped because the VM already holds it at the same version are not
+modules to load. A package SHALL never replace a module of the release.
 
 #### Scenario: Installed module shadows built-in rejected
-- **WHEN** a manifest declares `modules: [Flezha.Plugin.Provider.Kafka]` and that module is already loaded from the compiled release
-- **THEN** the installer MUST return `{:error, {:module_collision, Flezha.Plugin.Provider.Kafka}}`
+
+- **WHEN** a package's plugin application lists `Flezha.Plugin.Provider.Kafka`
+- **THEN** the package SHALL be refused with `plugin.module_conflict` naming the module and
+  the release as its holder, and the release's module SHALL be the one loaded
 
 #### Scenario: Installed module shadows another plugin's module rejected
-- **WHEN** a manifest declares `modules: [MyOrg.Shared]` and another installed plugin's catalog row lists `MyOrg.Shared` among its modules
-- **THEN** the installer MUST return `{:error, {:module_collision, MyOrg.Shared}}`
 
-### Requirement: Dependency resolution at install and upgrade
-
-The installer SHALL evaluate `manifest.dependencies` against the live catalog before writing to disk. Every dependency tuple `{dep_id, constraint}` MUST map to a catalog row whose `:version` satisfies `constraint` (via `Version.match?/2`). Dependencies MUST NOT form a cycle considering the new manifest together with the existing catalog. Upgrades MUST additionally ensure that after the upgrade, every installed plugin's dependencies on the upgraded plugin remain satisfied.
-
-#### Scenario: All dependencies satisfied
-- **WHEN** `manifest.dependencies` is `[{"common", ">= 1.0.0"}]` and the catalog contains `common` at version `1.2.3`
-- **THEN** the installer MUST proceed
-
-#### Scenario: Missing dependency rejected
-- **WHEN** `manifest.dependencies` names `common` but the catalog has no row keyed `"common"`
-- **THEN** the installer MUST return `{:error, {:dependency_missing, "common", ">= 1.0.0"}}`
-
-#### Scenario: Version constraint failure rejected
-- **WHEN** `manifest.dependencies` names `{"common", ">= 2.0.0"}` and the catalog has `common` at `1.2.3`
-- **THEN** the installer MUST return `{:error, {:dependency_constraint, "common", ">= 2.0.0", "1.2.3"}}`
-
-#### Scenario: Dependency cycle rejected
-- **WHEN** installing plugin `a` whose manifest lists dep `b`, and the existing `b` in the catalog lists dep `a`
-- **THEN** the installer MUST return `{:error, {:dependency_cycle, ["a", "b", "a"]}}` and MUST NOT install
-
-#### Scenario: Upgrade preserves dependents' constraints
-- **WHEN** upgrading `common` from `1.2.3` to `2.0.0` and an installed plugin `x` declares `dependencies: [{"common", "~> 1.2"}]`
-- **THEN** the upgrade MUST be rejected with `{:error, {:dependents_block, [{"x", "~> 1.2"}]}}` and the catalog MUST remain unchanged
-
-### Requirement: Install transactionality
-
-Installing a plugin SHALL be all-or-nothing with respect to on-disk state, in-VM module state, and the catalog. On any failure during the install pipeline, the installer MUST leave the system in its pre-install state: no `app_data/plugins/installed/<id>/<version>/` directory, no modules loaded into the VM, no row in the installed-plugins catalog, and no content in staging.
-
-#### Scenario: Failure after module load rolls back
-- **WHEN** the installer has loaded two modules into the VM and the third fails to load
-- **THEN** the installer MUST call `:code.purge/1` and `:code.delete/1` for the first two modules, MUST remove the target `installed/<id>/<version>/` directory if it was written, MUST NOT write a catalog row, and MUST return an error with the root cause
-
-#### Scenario: Failure during DETS write rolls back modules
-- **WHEN** modules have loaded successfully but the catalog DETS write fails
-- **THEN** the installer MUST unload every newly-loaded module and remove the `installed/<id>/<version>/` directory before returning the error
-
-#### Scenario: Successful install leaves clean staging
-- **WHEN** an install completes successfully
-- **THEN** `app_data/plugins/staging/` MUST NOT contain any files related to that install
+- **WHEN** packages `a` and `b` both list module `MyOrg.Shared` in applications of different
+  names
+- **THEN** `a` SHALL load and `b` SHALL be refused with `plugin.module_conflict` naming
+  `MyOrg.Shared` and `a`
 
 ### Requirement: On-disk installed-plugin layout
 
-The installer SHALL write installed plugin files to `app_data/plugins/installed/<plugin_id>/<version>/` with this exact structure: `manifest.exs`, `src/<same-tree-as-package>`, `ebin/*.beam` (one `.beam` per module produced by compilation), `CHECKSUMS.sha256`, `signature.sig` (only if the package carried one), and `installed_at` containing the integer monotonic time of the install. Staging work SHALL be performed under `app_data/plugins/staging/<uuid>/` and removed after the install concludes (success or failure).
+The plugin root (`plugin_root`, `app_data/plugins` by default) SHALL hold the installed
+packages as archives: every `*.fpz` file in it is one, whatever its name, and install and
+sync SHALL name the archives they place `<id>.fpz`, where `<id>` is the manifest's `id`. An
+install SHALL write under `<plugin_root>/.staging/` and rename into place, and SHALL remove
+what it wrote there however it ends. At each boot the loader SHALL remove
+`<plugin_root>/.loaded/` and expand every archive it accepts into
+`<plugin_root>/.loaded/<id>/lib/`, and the VM SHALL read package code and `priv` files only
+from there. Install, uninstall and sync SHALL NOT write under `.loaded/`. Entries of the
+plugin root other than `*.fpz` files, `.loaded/` and `.staging/` SHALL be ignored.
 
 #### Scenario: Canonical layout after install
-- **WHEN** a plugin `kafka_ingest` version `1.2.0` is installed successfully
-- **THEN** `app_data/plugins/installed/kafka_ingest/1.2.0/` MUST contain `manifest.exs`, `src/`, `ebin/` with every module's `.beam` file, `CHECKSUMS.sha256`, and `installed_at`
 
-#### Scenario: Signature file preserved when present
-- **WHEN** the source package carried `signature.sig`
-- **THEN** that file MUST be copied to `app_data/plugins/installed/<id>/<version>/signature.sig` with identical bytes
+- **WHEN** the example package is installed
+- **THEN** `<plugin_root>/flezha_example_plugin.fpz` SHALL exist and `.staging/` SHALL hold
+  nothing of the install
 
 #### Scenario: Staging removed on failure
-- **WHEN** any step of the install fails
-- **THEN** `app_data/plugins/staging/<uuid>/` MUST be removed before the installer returns the error
 
-### Requirement: Installed-plugin catalog persistence
+- **WHEN** any step of an install fails
+- **THEN** `<plugin_root>/.staging/` SHALL hold nothing of that install when the command
+  returns, and the plugin root SHALL be as it was
 
-The system SHALL maintain a DETS-backed catalog named `installed_plugins.dets` in the layout's plugin subtree, reached through `Flezha.Plugin.Installer.Store`. Rows MUST be keyed by `plugin_id` (binary) and MUST contain at least: `version` (binary), `status` (`:enabled | :disabled | :load_failed`), `path` (binary — the `installed/<id>/<version>` absolute path), `manifest_digest` (SHA-256 of `manifest.exs` bytes), `modules` (list of atoms), `installed_at` (integer monotonic), `source_checksums` (map of relative-path → hex digest). Writes MUST fsync to disk at the end of each install, upgrade, enable, disable, and uninstall tasklet before the tasklet returns.
+#### Scenario: An install on a running node leaves the running code's files alone
 
-The catalog SHALL be one declared durable store: the store names its layout subtree and its filename, and the opening, the corrupt-file rotation, the per-mutation sync and the close on shutdown SHALL be performed by the shared store implementation. `Flezha.Plugin.Installer.Store` SHALL NOT open, rotate, sync or close a DETS table itself, and SHALL NOT create its directory itself.
+- **GIVEN** a running controller that loaded a package from `.loaded/`
+- **WHEN** a new version of it is installed
+- **THEN** no file under `.loaded/` SHALL change until the next boot
 
-#### Scenario: Install writes a :disabled row
-- **WHEN** an install completes successfully
-- **THEN** the catalog MUST contain a row for the plugin's id with `status: :disabled`, the correct `version`, `path`, `manifest_digest`, and `modules`
+#### Scenario: Leftovers of the old installer are ignored
 
-#### Scenario: Enable flips status to :enabled
-- **WHEN** `Flezha.Plugin.Installer.enable/2` succeeds for a `:disabled` plugin
-- **THEN** the catalog row for that plugin id MUST now have `status: :enabled`, and the change MUST be persisted to disk before the call returns
-
-#### Scenario: Uninstall deletes the row
-- **WHEN** `Flezha.Plugin.Installer.uninstall/2` succeeds
-- **THEN** no row keyed by that `plugin_id` MUST exist in the catalog after the call returns
-
-#### Scenario: Catalog survives agent restart
-- **WHEN** the agent is stopped after an install and then restarted
-- **THEN** `Flezha.Plugin.Installer.Store` MUST open the existing DETS file and expose every previously-written row
-
-#### Scenario: Corrupt catalog rotates and starts fresh
-- **WHEN** the DETS file fails to open because it is corrupt
-- **THEN** the Store MUST rename it to `installed_plugins.dets.corrupt-<timestamp>`, open a fresh empty DETS file at the original path, log an error with both paths, and continue starting
-
-#### Scenario: The catalog follows the configured plugin root
-- **WHEN** the plugin root is configured to a directory other than the default
-- **THEN** the catalog file MUST be created under that directory, and no component MUST spell a plugin root of its own
+- **GIVEN** a plugin root holding an `installed/` tree and `installed_plugins.dets`
+- **WHEN** the controller boots
+- **THEN** it SHALL read neither and SHALL load only the `*.fpz` archives beside them
 
 ### Requirement: Boot-time module loading
 
-On agent startup `Flezha.Plugin.Installer.Loader.init/1` SHALL iterate every row in
-`Flezha.Plugin.Installer.Store` and load every `.beam` file in each row's `ebin/`
-directory via `:code.load_binary/3`. Hydration runs synchronously inside `init/1`, so
-it MUST complete before `Flezha.Plugin.Installer` starts and therefore before
-`Flezha.Service.PluginManager` — the first process through which a persisted
-subscription can be replayed — is started by `Flezha.Application.controller_children/0`.
-A plugin whose `ebin/` is missing or whose `.beam` fails to load MUST have its catalog
-row's `status` updated to `:load_failed` but MUST NOT prevent other plugins from loading.
+The controller SHALL load packages once per boot, inside `Flezha.Application`'s controller
+start, after the state root is claimed and before the supervision tree's children are
+computed, as plain function calls owning no process. It SHALL take the archives in id order
+and put each through, in this order: verification (format, checksums, signature, manifest,
+runtime line, and an id no other archive in the root declares); expansion into `.loaded/`;
+the library and module checks; appending its `ebin` directories to the code path with
+`:code.add_pathsz/1`; `:application.load/1` of each application to load; `:code.atomic_load/1`
+of all their modules; protocol consolidation; the provider check (every provider module
+answers a valid `__provider__/0` and its id is no row yet); starting its library
+applications; registering its providers.
 
-#### Scenario: Enabled plugin's modules loaded before any subscription replay
-- **WHEN** the agent starts with one `:enabled` plugin in the catalog and a persisted subscription for it in the owning operator's ProcessHub child spec
-- **THEN** the plugin's modules MUST be present in the VM before `Flezha.Operator.Plugins.prepare/2` re-subscribes that entry at the operator's bind
+A package that fails a step SHALL be refused: its code path entries SHALL be removed, its
+application specifications unloaded, the applications it started stopped, and no provider
+row of it registered. Its modules loaded before the failing step SHALL stay loaded and
+unreferenced until the next restart; nothing SHALL purge or replace a loaded module. One
+package's refusal SHALL NOT affect another's, and the controller SHALL finish booting. A
+runner-only boot (`controller_enabled: false`) SHALL load no package.
 
-#### Scenario: Disabled plugin's modules loaded at boot
-- **WHEN** the agent starts with one `:disabled` plugin in the catalog
-- **THEN** the plugin's modules MUST still be loaded into the VM at boot, so that a subsequent `flz plugin enable` performs no disk I/O
+#### Scenario: A package's modules are loaded before any subscription replay
 
-#### Scenario: Corrupt ebin marks load_failed
-- **WHEN** a plugin's `ebin/<module>.beam` cannot be loaded via `:code.load_binary/3`
-- **THEN** the catalog row MUST be updated to `status: :load_failed`, an `[:flezha, :plugin_installer, :load_failed]` telemetry event MUST be emitted, and the Loader MUST continue with the next plugin
+- **GIVEN** an operator whose persisted child spec enables the example package's provider
+- **WHEN** the controller restarts
+- **THEN** the provider module SHALL be loaded and its row registered before
+  `Flezha.Service.PluginManager` starts, and the operator's bind SHALL subscribe the plugin
 
-#### Scenario: load_failed plugin cannot be enabled
-- **WHEN** `Flezha.Plugin.Installer.enable/2` is called for a plugin whose catalog row has `status: :load_failed`
-- **THEN** the installer MUST return `{:error, :load_failed}` and MUST NOT attempt to subscribe
+#### Scenario: Loading is all or nothing
 
-### Requirement: Enable lifecycle
+- **WHEN** `:code.atomic_load/1` refuses any module of a package
+- **THEN** no module of that package SHALL be loaded, its code path entries SHALL be gone,
+  it SHALL be refused with `plugin.load_failed`, and the other packages SHALL load
 
-`Flezha.Plugin.Installer.enable(plugin_id, opts)` SHALL, for each entry in the plugin's manifest `provides` list, construct a `%Flezha.Plugin{}` with that entry's `provider`, `hooks`, and `default_opts` merged with caller-supplied overrides, and invoke `Flezha.Service.PluginManager.enable_plugin/2`. Enable MUST fail if ANY of the `provides` entries fails to subscribe, MUST roll back any subscriptions that succeeded earlier in the call, and MUST NOT mutate the catalog row's status on failure.
+#### Scenario: Two archives declaring one id
 
-#### Scenario: Enable subscribes every provision
-- **WHEN** a plugin's manifest declares two entries in `provides` and `enable/2` is called
-- **THEN** `PluginManager.enable_plugin/2` MUST be invoked twice with the corresponding `%Flezha.Plugin{}` structs, and the catalog row MUST flip to `:enabled` only after both subscriptions succeed
-
-#### Scenario: Partial enable rolls back
-- **WHEN** the first `provides` entry enables successfully but the second fails with `{:error, reason}`
-- **THEN** `Flezha.Plugin.Installer.enable/2` MUST invoke `PluginManager.disable_plugin/1` for the first subscription, MUST leave the catalog row as `:disabled`, and MUST return `{:error, reason}`
-
-#### Scenario: Double enable rejected
-- **WHEN** `enable/2` is called for a plugin whose catalog row is already `:enabled`
-- **THEN** the installer MUST return `{:error, :already_enabled}` and MUST NOT re-subscribe
-
-### Requirement: Disable lifecycle
-
-`Flezha.Plugin.Installer.disable(plugin_id, opts)` SHALL invoke `Flezha.Service.PluginManager.disable_plugin/1` for every `%Flezha.Plugin{}` id the package currently has subscribed, flip the catalog row's `status` to `:disabled`, and return `:ok`. The Loader MUST NOT purge or delete the plugin's modules from the VM on disable.
-
-#### Scenario: Disable unsubscribes without purging modules
-- **WHEN** `disable/2` is called for an `:enabled` plugin with two active subscriptions
-- **THEN** both subscriptions MUST be unsubscribed via `PluginManager.disable_plugin/1`, the catalog row MUST flip to `:disabled`, and the plugin's modules MUST remain loaded in the VM (verifiable via `:code.is_loaded/1`)
-
-#### Scenario: Disable on already-disabled is idempotent
-- **WHEN** `disable/2` is called for a plugin whose catalog row is already `:disabled`
-- **THEN** the installer MUST return `:ok` without calling `PluginManager.disable_plugin/1`
-
-#### Scenario: Disable then enable is fast
-- **WHEN** a plugin is disabled then re-enabled in the same session
-- **THEN** the re-enable MUST NOT re-read any `.beam` file from disk and MUST NOT re-compile any source
-
-### Requirement: Upgrade lifecycle
-
-`Flezha.Plugin.Installer.upgrade(plugin_id, new_path, opts)` SHALL install the new package to `installed/<id>/<new_version>/` alongside the existing `installed/<id>/<old_version>/` directory, then — if the catalog row was `:enabled` — atomically stop every live subscription for the id, purge and delete every old module via `:code.purge/1` + `:code.delete/1`, load every module from the new package via `:code.load_binary/3`, and re-subscribe every entry in the new manifest's `provides` list under the same plugin ids as before. On any failure after the old modules are purged, the installer MUST re-load the old modules from the preserved `installed/<id>/<old_version>/ebin/` and re-subscribe the previous provisions, then remove the new directory and return an error; the plugin MUST end in its pre-upgrade state.
-
-#### Scenario: Enabled upgrade hot-swaps modules
-- **WHEN** `upgrade/3` is called for an `:enabled` plugin from version `1.0.0` to `1.1.0`
-- **THEN** the new `.beam` files MUST be loaded into the VM replacing the old ones, the subscriptions MUST be re-established, the catalog row MUST reflect `version: "1.1.0"` and `status: :enabled`, and `installed/<id>/1.0.0/` MUST be deleted after success
-
-#### Scenario: Disabled upgrade does not subscribe
-- **WHEN** `upgrade/3` is called for a `:disabled` plugin
-- **THEN** the new modules MUST be loaded, the catalog row MUST reflect the new version with `status: :disabled`, and `PluginManager.enable_plugin/2` MUST NOT be called
-
-#### Scenario: Failed upgrade rolls back to old version
-- **WHEN** during upgrade the new module fails to load after the old modules have been purged
-- **THEN** the installer MUST reload the old modules from `installed/<id>/<old_version>/ebin/`, re-subscribe the previous provisions via `PluginManager.enable_plugin/2`, delete `installed/<id>/<new_version>/`, leave the catalog row at the old version with `status: :enabled`, and return the upgrade error
-
-#### Scenario: In-flight request quiesce window
-- **WHEN** an upgrade begins while a `:request`-kind callback is still executing in a Task
-- **THEN** the installer MUST wait up to 5000ms after unsubscribe for in-flight Tasks to terminate before calling `:code.purge/1`; after the window elapses the installer MUST purge anyway and MUST log a warning with the plugin id
+- **WHEN** the plugin root holds two archives whose manifests declare the same `id`
+- **THEN** both SHALL be refused with `plugin.duplicate_id` naming the two files
 
 ### Requirement: Uninstall lifecycle
 
-`Flezha.Plugin.Installer.uninstall(plugin_id, opts)` SHALL refuse when the plugin's catalog row is `:enabled`, returning `{:error, :plugin_enabled}` and making no state changes. When the row is `:disabled` or `:load_failed`, the installer SHALL purge and delete every module listed in the catalog row, remove the `installed/<plugin_id>/` directory in its entirety, and delete the catalog row. Uninstall MUST additionally refuse if any other installed plugin declares this plugin as a dependency.
+`flz plugin uninstall <id>` SHALL remove every archive in the plugin root whose manifest
+declares `<id>` and print that the package unloads at the next restart of the controller. It
+SHALL NOT touch `.loaded/` or the running VM. An id with no archive SHALL be refused with `plugin.not_installed`, and a node whose
+list is declared SHALL refuse it with `plugin.list_declared`. After the next restart,
+operators whose persisted plugins name the package's providers park (see "Recovery
+interaction with installed plugins").
 
-#### Scenario: Uninstall refuses while enabled
-- **WHEN** `uninstall/2` is called for an `:enabled` plugin
-- **THEN** the installer MUST return `{:error, :plugin_enabled}`, the catalog row MUST remain `:enabled`, and the modules MUST remain loaded
+#### Scenario: Uninstall removes the archive, the running controller keeps the package
 
-#### Scenario: Uninstall purges modules and clears directory
-- **WHEN** `uninstall/2` is called for a `:disabled` plugin whose modules are loaded
-- **THEN** after the call, `:code.is_loaded/1` MUST return `false` for every module listed in the catalog row, `app_data/plugins/installed/<plugin_id>/` MUST NOT exist, and the catalog MUST NOT contain a row keyed by that plugin id
+- **GIVEN** a running controller with the example package loaded
+- **WHEN** `flz plugin uninstall flezha_example_plugin` runs
+- **THEN** the archive SHALL be gone, `flz plugin list --installed` SHALL list the package
+  `removed`, its provider SHALL still be enable-able until the restart, and after the
+  restart no row of it SHALL exist
 
-#### Scenario: Uninstall refuses while a dependent is installed
-- **WHEN** plugin `b` declares `dependencies: [{"a", ">= 1.0.0"}]` and `uninstall/2` is called on `a`
-- **THEN** the installer MUST return `{:error, {:dependents_block, ["b"]}}` and MUST NOT purge any module or delete any directory
+#### Scenario: Uninstall of an unknown id
 
-#### Scenario: Uninstall of :load_failed succeeds
-- **WHEN** a plugin is marked `:load_failed` at boot (its ebin was corrupt) and `uninstall/2` is called
-- **THEN** the installer MUST remove the catalog row and the `installed/<plugin_id>/` directory without requiring the modules to be loaded in the VM
+- **WHEN** `flz plugin uninstall ghost` runs and no `ghost.fpz` exists
+- **THEN** it SHALL be refused with `plugin.not_installed`
 
 ### Requirement: Public service API
 
-`Flezha.Plugin.Installer` SHALL expose exactly these public functions, each reachable from in-node callers (CLI via `Flezha.Service.CliManager`, future Phoenix UI, and test code): `install/2`, `upgrade/3`, `uninstall/2`, `enable/2`, `disable/2`, `list/0`, and `info/1`. All calls MUST be serialized through a single GenServer; concurrent invocations of mutating tasklets (`install`, `upgrade`, `uninstall`, `enable`, `disable`) MUST queue rather than race. Read-only tasklets (`list`, `info`) MAY be served without queuing but MUST observe the most recent successful write.
+`Flezha.Plugin.Installer` SHALL expose `install/2`, `uninstall/2`, `sync/2` and `list/0` as
+plain functions owning no process. `install/2`, `uninstall/2` and `sync/2` act on the plugin
+root alone and SHALL have the same effect from any VM running the release: the CLI's own VM,
+the controller, or a later user interface running in the controller. `list/0` SHALL answer
+the rows of "A refused package SHALL NOT stop the controller, and SHALL say why" from the
+running controller's load outcomes and its plugin root. `Flezha.Service.Fleet.installed_plugins/1`
+SHALL answer the same rows.
 
-#### Scenario: Mutating tasklets are serialized
-- **WHEN** two callers invoke `install/2` concurrently
-- **THEN** exactly one install MUST be in flight at a time and the second MUST wait for the first to complete before starting
+#### Scenario: The same install from two VMs
 
-#### Scenario: list returns every catalog row
+- **WHEN** the example archive is installed once through `flz plugin install` and once by
+  calling `Flezha.Plugin.Installer.install/2` inside a running controller
+- **THEN** both SHALL leave the same `<plugin_root>/flezha_example_plugin.fpz` and the same
+  answer
+
+#### Scenario: list answers loaded and pending rows
+
+- **GIVEN** a controller that loaded package `a`, and package `b` installed after it booted
 - **WHEN** `list/0` is called
-- **THEN** the installer MUST return one element per catalog row with at least `id`, `version`, `status`, `description`, and `provides`
-
-#### Scenario: info for unknown plugin
-- **WHEN** `info/1` is called with a plugin id not in the catalog
-- **THEN** the installer MUST return `{:error, :not_found}`
+- **THEN** it SHALL answer `a` as `loaded` and `b` as `pending`
 
 ### Requirement: CLI integration
 
-The `flz plugin` CLI SHALL expose the subcommands `install`, `upgrade`, `uninstall`, `list`, `info`, `enable`, and `disable`. `install`, `upgrade`, `uninstall`, `list`, and `info` SHALL invoke `Flezha.Service.CliManager` methods that wrap the corresponding `Flezha.Plugin.Installer` functions. `enable` and `disable` SHALL dispatch to the installer when the given plugin id matches an installed package and otherwise SHALL fall through to the pre-existing legacy code path. `flz plugin list` SHALL support a `--json` flag that prints the list as a JSON array.
+The `flz plugin` CLI SHALL expose the subcommands `install <path-or-https-url>`,
+`uninstall <id>`, `sync`, `list [--installed] [--json]`, `enable`, `disable` and `help`.
+`install`, `uninstall` and `sync` SHALL run `flzvm eval` on the release and SHALL NOT reach a
+running controller; they SHALL carry no token, print the absolute plugin root they acted on,
+and exit with the exit code of their answer's class. `list`, `enable`, `disable` and `help`
+SHALL remain requests to the running controller. `enable` and `disable` SHALL go to the
+plugin manager directly, with no installed-package probe. There SHALL be no `upgrade` and no
+`info` subcommand: an upgrade is an install of a newer archive of the same id.
 
-#### Scenario: flz plugin install delegates to installer
-- **WHEN** `flz plugin install /path/to/foo.fpz` is executed
-- **THEN** the CLI MUST invoke `Flezha.Service.CliManager.install_plugin("/path/to/foo.fpz", _)` which calls `Flezha.Plugin.Installer.install/2` and returns the result to stdout
+#### Scenario: flz plugin install runs without a controller
 
-#### Scenario: flz plugin enable dispatches to installer for installed ids
-- **WHEN** `flz plugin enable kafka_ingest` is executed and `kafka_ingest` is an installed plugin
-- **THEN** the CLI MUST invoke `Flezha.Plugin.Installer.enable/2` rather than the legacy enable path
-
-#### Scenario: flz plugin enable falls through for legacy ids
-- **WHEN** `flz plugin enable some_legacy_id some_provider` is executed and `some_legacy_id` is NOT in the installed catalog
-- **THEN** the CLI MUST invoke the pre-existing `Flezha.Service.CliManager.enable_plugin/4` behaviour
+- **WHEN** `flz plugin install /path/to/p.fpz` runs and no controller is running
+- **THEN** the archive SHALL be verified and placed and the command SHALL exit 0
 
 #### Scenario: flz plugin list --json produces machine-readable output
-- **WHEN** `flz plugin list --json` is executed
-- **THEN** stdout MUST contain a JSON array, each element a JSON object with at least `id`, `version`, `status`, and `description`
+
+- **WHEN** `flz plugin list --installed --json` is executed
+- **THEN** stdout SHALL contain a JSON array, each element an object with at least `id`,
+  `version`, `status`, `providers` and `error`
+
+#### Scenario: The removed subcommands are unknown
+
+- **WHEN** `flz plugin upgrade p ./p.fpz` or `flz plugin info p` is executed
+- **THEN** the CLI SHALL refuse it as an unknown subcommand and SHALL start no `flzvm`
 
 ### Requirement: Configuration surface
 
-The system SHALL expose a single config key `:flezha, :plugin_installer` as a keyword list with at least these entries and defaults: `plugin_root: "app_data/plugins"`, `trusted_keys: []`, `require_signature: false`, `allow_unsigned: true`, `max_package_bytes: 50_000_000`, `max_source_files: 200`. The installer SHALL validate this configuration at startup and SHALL refuse to start when validation fails.
+The system SHALL read the plugin settings from the `:flezha, :plugins` keyword list and from
+the environment: `plugin_root` (`FLEZHA_PLUGIN_ROOT`, default `"app_data/plugins"`),
+`plugin_trusted_keys` (`FLEZHA_PLUGIN_TRUSTED_KEYS`, comma-separated PEM file paths, default
+`[]`), `plugin_require_signature` (`FLEZHA_PLUGIN_REQUIRE_SIGNATURE`, default `false`),
+`plugin_max_package_bytes` (`FLEZHA_PLUGIN_MAX_PACKAGE_BYTES`, default `50_000_000`) and
+`plugin_list` (`FLEZHA_PLUGINS`, unset by default). No setting SHALL gate loading: an archive
+in the plugin root is the opt-in. There SHALL be no `plugin_installer_enabled`,
+`plugin_allow_unsigned`, `plugin_max_source_files` or `plugin_installer_data_dir` setting and
+no `installer_auto_save_ms` duration.
 
 #### Scenario: Default configuration starts successfully
-- **WHEN** the agent starts with no `:plugin_installer` config overrides
-- **THEN** `Flezha.Plugin.Installer` MUST start with the default values and MUST accept unsigned packages
 
-#### Scenario: Inconsistent signature config rejected at startup
-- **WHEN** config declares `require_signature: true` and `trusted_keys: []`
-- **THEN** the Installer supervisor MUST fail to start with `{:error, {:config_invalid, :trusted_keys_empty}}` and the node MUST NOT complete startup
+- **WHEN** a controller starts with no plugin setting and one valid unsigned archive in
+  `app_data/plugins`
+- **THEN** the package SHALL load and a warning SHALL name it unsigned
 
 #### Scenario: Configurable package size limit enforced
-- **WHEN** config declares `max_package_bytes: 1_000_000` and a 2 MB package is installed
-- **THEN** the installer MUST abort extraction and return `{:error, {:package_too_large, _size, 1_000_000}}`
 
-### Requirement: Supervision tree ordering
-
-The Installer subsystem SHALL be started as a single supervisor subtree
-(`Flezha.Plugin.Installer.Supervisor`) under `Flezha.Supervisor`, placed ahead of
-`Flezha.Service.PluginManager` in `Flezha.Application.controller_children/0`. The
-subtree SHALL start three children in strict `:rest_for_one` order:
-`Flezha.Plugin.Installer.Store` (DETS opener), `Flezha.Plugin.Installer.Loader` (in-VM
-registry, depends on Store), and `Flezha.Plugin.Installer` (service GenServer, depends
-on Loader). The subtree is gated by `:flezha, :plugin_installer_enabled`, which
-defaults to `false`; with the flag off no installer child is started and only
-compiled-in plugins exist.
-
-#### Scenario: Installer ready before any subscription replay
-- **WHEN** the agent is starting with `plugin_installer_enabled: true`
-- **THEN** every `:enabled` and `:disabled` plugin's modules MUST be loaded into the VM (or marked `:load_failed`) BEFORE `Flezha.Service.PluginManager` starts, so no operator bind can replay a subscription against a module that has not been loaded yet
-
-#### Scenario: Loader init failure prevents Installer start
-- **WHEN** `Loader.init/1` fails (e.g. because the Store is in a bad state)
-- **THEN** `Flezha.Plugin.Installer` MUST NOT start and the supervisor MUST restart the subtree according to its strategy
+- **WHEN** `plugin_max_package_bytes` is `1_000_000` and a 2 MB package is installed
+- **THEN** it SHALL be refused with `plugin.package_invalid` carrying the size and the limit
 
 ### Requirement: Recovery interaction with installed plugins
 
-The Installer SHALL publish the set of known installed plugin ids via a queryable
-function (`Flezha.Plugin.Installer.installed_ids/0`). A plugin enable is persisted by
-`Flezha.Service.PluginManager.enable_plugin/2` into the owning operator's ProcessHub
-child spec (`opts[:plugins]`) and replayed when that operator binds:
-`Flezha.Operator.Overwatch.init/1` → `handle_continue({:bind_runner, …})` →
+A package provider's persisted plugin SHALL reach the same replay path as a first-party
+one's. A plugin enable is persisted by `Flezha.Service.PluginManager.enable_plugin/2` into
+the owning operator's ProcessHub child spec (`opts[:plugins]`) and replayed when that
+operator binds: `Flezha.Operator.Overwatch.init/1` → `handle_continue({:bind_runner, …})` →
 `Flezha.Operator.Lifecycle.complete_init/4` → `Flezha.Operator.Plugins.prepare/2` →
-`Flezha.Plugin.Extension.Table.bulk_subscribe/2`. `Flezha.Plugin.Installer.enable/2`
-drives its own enables through `enable_provisions/3`, one `%Flezha.Plugin{}` per
-manifest `provides` entry, so an installed package's subscriptions reach that same
-persistence path as a compiled-in plugin's.
+`Flezha.Plugin.Extension.Table.bulk_subscribe/2`.
 
-A persisted subscription whose provider module is not in the VM — the package was
-uninstalled while the controller was down, or its beams are `:load_failed` — MUST NOT
-be subscribed. `Flezha.Plugin.Extension.Table.run_init_provider/1` answers
-`{:error, {:module_not_loaded, provider}}`; `bulk_subscribe/2` halts at that entry, so
-entries after it in the same operator's list are not attempted; `Plugins.prepare/2`
-fails the bind, and `Flezha.Operator.Lifecycle.park/2` records the reason in the
-Overwatch's `init_error`, which `Flezha.Convergence.Probe` publishes as `parked?: true`.
-The operator stays alive and parked, holding no upstream resources, until the
-divergence is repaired. What the user sees is that boolean: neither the plugin id
-nor the provider module reaches a log line or a telemetry event.
+A persisted plugin whose provider module is not loaded (its package was refused at this
+boot, was uninstalled, or was never installed on this node) MUST NOT be subscribed.
+`Table.run_init_provider/1` answers `{:module_not_loaded, provider}`, `bulk_subscribe/2`
+halts at that entry, `Plugins.prepare/2` fails the bind, and `Flezha.Operator.Lifecycle.park/2`
+records the reason in the Overwatch's `init_error`, which `Flezha.Convergence.Probe`
+publishes as `parked?: true`. The recorded reason SHALL name the plugin id, the provider
+module and, when an archive in this node's plugin root declares that module, the package id
+and its status (refused with its code, or pending); otherwise it SHALL state that no package
+installed on this node provides the module. The park SHALL be logged once with that reason.
+The operator stays parked, holding no upstream resources, until a later boot loads the
+package, when its bind subscribes the plugin as for a first-party provider.
 
 #### Scenario: Orphaned persisted subscription parks the operator
-- **WHEN** an operator's persisted child spec carries a subscription for plugin id `x` whose `%Flezha.Plugin{}.provider` is `MyOrg.X`, and `MyOrg.X` is not loaded (`Installer.installed_ids/0` does not contain `x`)
-- **THEN** `Table.bulk_subscribe/2` MUST answer `{:error, {"x", {:module_not_loaded, MyOrg.X}}}`, the entry MUST NOT be subscribed, entries after it MUST NOT be attempted, and the Overwatch MUST park with that reason in `init_error` (`Convergence.Probe` reports `parked?: true`)
+
+- **GIVEN** an operator whose persisted child spec carries plugin `s` whose provider is
+  `FlezhaExamplePlugin.Stamp`, and the example package was uninstalled before the restart
+- **WHEN** the controller restarts
+- **THEN** `s` SHALL NOT be subscribed, the Overwatch SHALL park with a reason naming `s`,
+  `FlezhaExamplePlugin.Stamp` and that no installed package provides it, the reason SHALL be
+  logged once, and `Convergence.Probe` SHALL report `parked?: true`
 
 #### Scenario: Installed plugin's persisted subscription re-subscribes at bind
-- **WHEN** an operator's persisted child spec carries a subscription for plugin id `k` whose provider is loaded (the package is `:enabled` in the installer catalog)
-- **THEN** `Flezha.Operator.Plugins.prepare/2` MUST subscribe that entry at bind exactly as it does a compiled-in plugin's, and `Plugins.activate/1` MUST then transition it to `:running`
+
+- **GIVEN** the same operator and the example package loaded at this boot
+- **WHEN** the operator binds
+- **THEN** `Flezha.Operator.Plugins.prepare/2` SHALL subscribe `s` exactly as a first-party
+  plugin, and `Plugins.activate/1` SHALL then transition it to `:running`
 
 ### Requirement: Settings payload schema uses canonical names
 
@@ -511,39 +494,388 @@ seeds a route naming the caller SHALL run in the calling process.
 
 ### Requirement: An installed package's provisions SHALL be rows of the provider table
 
-An installed package's `provides` entries SHALL be registered as rows of the
-one provider table the enabled providers are read from, through the table's
-own registration function, and SHALL be resolved by `flz plugin enable`,
-`--plugins` decoding and `flz plugin list` exactly as a first-party provider is.
-The installer SHALL NOT write the provider list into application configuration
+A loaded package's providers SHALL be registered as rows of the one provider table, through
+`Flezha.Plugin.Providers.add/2`, only at boot and before the supervision tree is built, and
+SHALL be resolved by `flz plugin enable`, `--plugins` decoding, `flz plugin list` and
+`flz plugin help` exactly as a first-party provider is. `add/2` SHALL refuse an id that is
+already a row, which refuses the package with `plugin.provider_conflict`. The table's worker
+families SHALL be derived from every row, so a package provider that declares a worker is
+supervised through its own `Flezha.Plugin.Provider.WorkerSup` family as a first-party
+provider is. The installer SHALL NOT write the provider list into application configuration
 or hold a second list of its own.
 
 #### Scenario: An installed provider resolves like a first-party one
 
-- **WHEN** a package whose manifest provides `acme_source` is installed and
-  enabled, and `flz plugin enable my_acme acme_source …` is issued
-- **THEN** the provider SHALL be resolved from the provider table, and the same
-  row SHALL answer `flz plugin list` and a `--plugins` spec naming it
+- **WHEN** the example package is loaded and `flz plugin enable s example_stamp --operator_id
+  op` is issued
+- **THEN** the provider SHALL be resolved from the provider table, and the same row SHALL
+  answer `flz plugin list`, `flz plugin help example_stamp` and a `--plugins` spec naming it
 
-#### Scenario: Disable does not remove the row
+#### Scenario: A package provider id that is already a row is refused
 
-- **WHEN** an installed package is disabled
-- **THEN** its provider rows SHALL remain in the table and its modules loaded,
-  and only its subscriptions SHALL be dropped
+- **WHEN** a package declares provider id `operator_stdout`
+- **THEN** the package SHALL be refused with `plugin.provider_conflict`, and
+  `operator_stdout` SHALL still resolve to the first-party module
+
+#### Scenario: A package provider's worker is supervised
+
+- **WHEN** the example package is loaded and its provider is enabled on an operator
+- **THEN** its worker SHALL run under the provider's `WorkerSup` family in the controller's
+  supervision tree, and a killed worker SHALL be handled by its declared restart value
 
 ### Requirement: Hook names use canonical Operator vocabulary
 
-Plugin installation SHALL accept hook specs that reference hooks by their canonical names. The init-state hook is `:on_operator_init` (formerly `:on_processor_init`); other hook names that previously contained "processor" SHALL likewise use "operator". A manifest provision SHALL declare its hooks under the `hooks` key. Settings serialization SHALL persist the new names; reading a settings file that contains `:on_processor_init` SHALL produce an explicit error suggesting the user re-author the settings (no silent translation).
+A plugin enable SHALL accept hook specs that reference hooks by their canonical names. The
+init-state hook is `:on_operator_init` (formerly `:on_processor_init`); other hook names that
+previously contained "processor" SHALL likewise use "operator". Settings serialization SHALL
+persist the new names; reading a settings file that contains `:on_processor_init` SHALL
+produce an explicit error suggesting the user re-author the settings (no silent translation).
 
 #### Scenario: Plugin hooks on_operator_init
-- **WHEN** a plugin provision is installed with `hooks: [{:on_operator_init, [position: 0]}]`
-- **THEN** the installation MUST succeed and the persisted settings file SHALL serialize the hook name as `on_operator_init`
 
-#### Scenario: A provision without a hooks key is refused
-- **WHEN** a manifest provision declares its hooks under any key other than `hooks`, or declares none
-- **THEN** installation MUST be refused as a manifest missing a required key, and nothing SHALL be enabled
+- **WHEN** a plugin is enabled with the hook `on_operator_init`
+- **THEN** the enable MUST succeed and the persisted settings SHALL serialize the hook name as
+  `on_operator_init`
 
 #### Scenario: Settings file with legacy hook name fails loud
+
 - **WHEN** the settings file contains a hook on `:on_processor_init`
-- **THEN** plugin loading MUST return `{:error, {:unknown_hook, :on_processor_init}}` and SHALL NOT fall back to `:on_operator_init` silently
+- **THEN** plugin loading MUST return `{:error, {:unknown_hook, :on_processor_init}}` and
+  SHALL NOT fall back to `:on_operator_init` silently
+
+### Requirement: A plugin package SHALL be built by `mix flezha.plugin.package`
+
+Flezha SHALL provide the Mix task `mix flezha.plugin.package`, available to every project
+that depends on `flezha`. Run in a plugin project, it SHALL compile the project and write
+`<id>-<version>.fpz` (into `--output`, `_build/` by default) holding the plugin
+application and every application of its runtime closure that the target release does not
+ship, where the target release's set is the runtime closure of `:flezha` plus `sasl` and
+`iex`. It SHALL record in the manifest the Flezha version the project compiled against,
+`System.otp_release()` and `System.version()`.
+
+The task SHALL refuse, naming each offender and writing no archive:
+
+- an application the release ships that the project resolved at a version other than the one
+  in Flezha's own `mix.lock`;
+- native code in any bundled application (see "Plugin package format");
+- a bundled application that depends on `:flezha`, directly or transitively, and declares an
+  application callback (`mod`);
+- a plugin application whose `:flezha_providers` environment entry is missing, is not a map
+  of provider id to module, names a module the plugin application does not list, or names a
+  module whose `__provider__/0` does not answer a valid provider declaration.
+
+With `--sign <path>` naming an Ed25519 private key in PEM form, the task SHALL write
+`signature.sig` over `CHECKSUMS.sha256`. The controller SHALL NOT compile any plugin code.
+
+#### Scenario: The example plugin is packaged
+
+- **WHEN** `mix flezha.plugin.package` runs in `examples/elixir/plugin/` with `MIX_ENV=prod`
+- **THEN** an archive SHALL be written whose `lib/` holds `flezha_example_plugin-<vsn>` and
+  `stamp_lib-<vsn>` and no application of Flezha's runtime closure, and whose manifest
+  records the task's own Flezha, OTP and Elixir versions and the plugin's providers
+
+#### Scenario: A library pinned away from Flezha's lock is refused at package time
+
+- **GIVEN** a plugin project whose lock resolves `jason` to a version other than Flezha's
+  `mix.lock`
+- **WHEN** the task runs
+- **THEN** it SHALL exit non-zero naming `jason`, both versions and how to pin it, and SHALL
+  write no archive
+
+#### Scenario: A Flezha-dependent application with a callback is refused
+
+- **GIVEN** a plugin application that declares `mod: {MyPlugin.Application, []}`
+- **WHEN** the task runs
+- **THEN** it SHALL exit non-zero naming the application and stating that a plugin's
+  processes are its providers' declared workers
+
+#### Scenario: A signed package
+
+- **WHEN** the task runs with `--sign key.pem`
+- **THEN** the archive SHALL hold a 64-byte `signature.sig` that the matching public key
+  verifies over the archive's `CHECKSUMS.sha256`
+
+### Requirement: A package SHALL load only on the runtime line it was built with
+
+A package SHALL be accepted, at install and at boot, only when the running release's OTP
+release equals the manifest's `built_with.otp`, its Elixir `major.minor` equals
+`built_with.elixir`'s, and its Flezha version satisfies `~> <built_with.flezha>`. The
+comparison SHALL be made against the running release, never against a constant. The
+operating system and the processor architecture SHALL NOT be recorded or compared.
+
+#### Scenario: A package built on another OTP is refused
+
+- **GIVEN** a package whose `built_with.otp` is `"29"` and a controller running on OTP 28
+- **WHEN** it is installed, or the controller boots with it in the plugin root
+- **THEN** it SHALL be refused with `plugin.runtime_mismatch`, the details naming both
+  runtimes, and the hint naming the builder that matches the controller
+
+#### Scenario: A package built for an older patch of the same Flezha line loads
+
+- **GIVEN** a package built with Flezha `0.1.0` and a controller running Flezha `0.1.3` on
+  the same OTP release and Elixir minor
+- **WHEN** the controller boots
+- **THEN** the package SHALL load
+
+### Requirement: A VM SHALL hold one version of each library
+
+For each application a package bundles, the loader SHALL compare it with any application of
+the same name already loaded in the VM, by the release or by a package loaded before it at
+this boot. The same `vsn` SHALL mean the package's copy is skipped and the loaded one used;
+a different `vsn` SHALL refuse the package with `plugin.library_conflict`, naming the
+application, both versions and whether the release or which package holds the loaded one.
+Install SHALL apply the same comparison against the release and against the manifests of
+the archives already installed.
+
+#### Scenario: A package bundling another version of a release library is refused
+
+- **GIVEN** a package that bundles `hpax` at a version other than the release's
+- **WHEN** the controller boots
+- **THEN** the package SHALL be refused with `plugin.library_conflict` naming `hpax`, both
+  versions and the release as the holder, and no module of the package SHALL be loaded
+
+#### Scenario: Two packages sharing a library at one version both load
+
+- **GIVEN** two packages that each bundle `stamp_lib` at the same version
+- **WHEN** the controller boots
+- **THEN** both SHALL load, `stamp_lib`'s modules SHALL be loaded once, from the package
+  first in id order, and the second package's copy SHALL be skipped
+
+### Requirement: A package's library applications SHALL start at boot, and an application that depends on Flezha SHALL NOT
+
+The loader SHALL start every loaded application of a package that does not depend on
+`:flezha` with `Application.ensure_all_started/2` and restart type `:temporary`, in
+dependency order, before the package's providers are registered and before the supervision
+tree is built. An application that depends on `:flezha`, the plugin application included,
+SHALL be loaded and SHALL NOT be started; a package in which such an application declares
+`mod` SHALL be refused with `plugin.app_callback`. A package whose library application fails
+to start SHALL be refused, and the applications it started SHALL be stopped.
+
+#### Scenario: A library application is running before operators bind
+
+- **WHEN** the controller boots with the example package
+- **THEN** `stamp_lib` SHALL be in `Application.started_applications/0` before
+  `Flezha.Service.PluginManager` starts, and `flezha_example_plugin` SHALL be loaded and
+  not started
+
+#### Scenario: A library that fails to start refuses its package
+
+- **GIVEN** a package whose library application's `start/2` returns an error
+- **WHEN** the controller boots
+- **THEN** the package SHALL be refused with `plugin.load_failed` naming the application and
+  its reason, no provider row of it SHALL exist, and the controller SHALL finish booting
+
+### Requirement: Protocols the release consolidated SHALL dispatch a package's implementations
+
+When a package implements a protocol it does not define, the loader SHALL consolidate that
+protocol again after the package's modules are loaded: the types SHALL be the protocol's
+current consolidated types plus the package's, the result SHALL be loaded in place of the
+protocol module, and every implementation the protocol dispatched before SHALL still
+dispatch. The implementations a package brings SHALL be read from its beams' `__impl__`
+attributes. Protocols a package defines itself SHALL stay unconsolidated. The release SHALL
+ship its consolidated protocol beams with their debug info so that this consolidation can
+read them (see `controller-packaging`). A consolidation that fails SHALL refuse the package
+with `plugin.protocol_consolidation_failed`.
+
+#### Scenario: A release protocol dispatches a package's struct
+
+- **GIVEN** the released controller booted with the example package, whose `stamp_lib`
+  implements `String.Chars` for its struct
+- **WHEN** `to_string/1` is called on that struct inside the controller
+- **THEN** the package's implementation SHALL answer, and `to_string/1` of an atom and of an
+  integer SHALL answer as before
+
+#### Scenario: Two packages implement the same release protocol
+
+- **GIVEN** two packages that each implement `String.Chars` for a struct of their own
+- **WHEN** the controller boots
+- **THEN** both structs SHALL dispatch to their own implementation
+
+### Requirement: A refused package SHALL NOT stop the controller, and SHALL say why
+
+The controller SHALL finish booting whatever the packages in its plugin root do. Every
+refusal SHALL carry an error with a `code`, a `class`, a plain-language `message`,
+structured `details` and, where one exists, a `hint` naming the next step. The codes SHALL
+be `plugin.package_invalid`, `plugin.native_code`, `plugin.app_callback`,
+`plugin.signature_invalid`, `plugin.signature_required`, `plugin.trust_store_empty`,
+`plugin.runtime_mismatch`, `plugin.library_conflict`, `plugin.module_conflict`,
+`plugin.provider_conflict`, `plugin.duplicate_id`, `plugin.load_failed` and
+`plugin.protocol_consolidation_failed`.
+
+`flz plugin list --installed` SHALL show one row per package id with a status:
+
+- `loaded`: loaded at this boot, with its version and providers;
+- `refused`: present at this boot and not loaded, with its version, code, message and hint;
+- `pending`: an archive placed or replaced since this boot, with "loads at next restart"
+  and the loaded version when one is loaded;
+- `removed`: loaded at this boot and its archive since removed, with "unloads at next
+  restart".
+
+`--json` SHALL print the rows as a JSON array whose elements carry `id`, `version`,
+`status`, `providers` and `error` (`null`, or the object `{code, class, message, details,
+hint}`). `flz plugin list` without `--installed` SHALL list only providers that can be
+enabled and, when any package was refused, SHALL end with one line naming how many and
+pointing at `flz plugin list --installed`. `flz plugin enable` naming a provider id that a
+refused package declares SHALL answer `plugin.provider_unavailable`, naming the package and
+its refusal code, and SHALL NOT answer that the provider is unknown.
+
+A loaded package's provider refusal whose reason the error catalogue maps by its tag SHALL
+keep the code the catalogue gives it, on the enable path and when the refusal is nested in an
+operator's park reason. A refusal whose reason the catalogue does not map SHALL be wrapped: a
+provider that refuses its options in `init_provider/1` SHALL answer `plugin.provider_refused`
+(invalid), and one whose declared worker fails to start SHALL answer
+`plugin.provider_failed` (internal), each with the package id, the provider id and the
+package's own text in `details`, including when the refusal is nested in an operator's park
+reason. A package SHALL NOT add codes to the error catalogue at boot.
+
+#### Scenario: A refused package is listed with its reason
+
+- **GIVEN** a controller that booted with one loadable package and one bundling a
+  conflicting library
+- **WHEN** `flz plugin list --installed --json` runs
+- **THEN** the array SHALL hold the first with `status: "loaded"` and `error: null`, and the
+  second with `status: "refused"` and `error.code: "plugin.library_conflict"`, and the
+  controller SHALL report ready
+
+#### Scenario: Enabling a refused package's provider names the package
+
+- **GIVEN** package `acme` declaring provider `acme_source` was refused at boot
+- **WHEN** `flz plugin enable src acme_source --operator_id op` runs
+- **THEN** it SHALL fail with `plugin.provider_unavailable`, naming `acme` and its refusal
+  code
+
+#### Scenario: A package provider's own refusal carries a core code
+
+- **GIVEN** the example package loaded, whose provider refuses an empty `path` option
+- **WHEN** its provider is enabled on an operator with `--Xpath=` (empty)
+- **THEN** it SHALL fail with `plugin.provider_refused`, and `details` SHALL name the package,
+  the provider and the provider's own message
+
+#### Scenario: A package provider's catalogued refusal keeps its code
+
+- **GIVEN** a loaded package whose provider's `init_provider/1` refuses with a tagged reason
+  that the error catalogue maps by its tag, as the HTTP plugin's
+  `{:http_partitioned_host, %{operator: member}}` maps to `http.partitioned_host`
+- **WHEN** its provider is enabled on an operator, and separately declared by an operator
+  that is then started
+- **THEN** the enable SHALL fail with the catalogue's code for that tag, not
+  `plugin.provider_refused`, and the started operator's park reason SHALL carry the same code
+
+#### Scenario: A package installed after boot is pending
+
+- **GIVEN** a running controller
+- **WHEN** a package is installed and `flz plugin list --installed` runs before a restart
+- **THEN** the package SHALL be listed `pending` with "loads at next restart", and its
+  providers SHALL NOT be enable-able until the controller restarts
+
+### Requirement: Install SHALL place a verified archive and take effect at the next restart
+
+`flz plugin install <source>` SHALL accept a local path or an `https://` URL and SHALL
+refuse any other scheme. A URL SHALL be fetched with peer verification against the
+operating system's CA store, following at most five redirects, each to `https://`, and
+SHALL be abandoned once it exceeds `plugin_max_package_bytes`. The archive SHALL be written
+under `<plugin_root>/.staging/`, verified with every check the boot applies that does not
+need the package loaded (format, checksums, signature, manifest, runtime line, library
+versions against the release and the installed manifests, provider ids against the
+release's and the installed manifests'), and renamed to `<plugin_root>/<id>.fpz`, after
+which every other archive whose manifest declares the same id SHALL be removed. It SHALL NOT change the running VM, and SHALL print the id, the
+version, the absolute plugin root and that a restart of the controller loads it. A refused
+install SHALL leave the plugin root as it was.
+
+#### Scenario: Install with no controller running
+
+- **GIVEN** a release that has never been started
+- **WHEN** `flz plugin install ./flezha_example_plugin-0.1.0.fpz` runs
+- **THEN** `<plugin_root>/flezha_example_plugin.fpz` SHALL exist, the command SHALL exit 0
+  printing the absolute plugin root, and the next start SHALL load the package
+
+#### Scenario: Upgrade is an install of the same id
+
+- **GIVEN** `flezha_example_plugin` 0.1.0 is installed and loaded
+- **WHEN** its 0.2.0 archive is installed
+- **THEN** `<plugin_root>/flezha_example_plugin.fpz` SHALL be the 0.2.0 archive, the running
+  controller SHALL still run 0.1.0 and list the package `pending` with the loaded version
+  0.1.0, and after a restart 0.2.0 SHALL be loaded
+
+#### Scenario: A plain HTTP source is refused
+
+- **WHEN** `flz plugin install http://host/p.fpz` runs
+- **THEN** it SHALL be refused naming the scheme, and nothing SHALL be fetched or written
+
+#### Scenario: A download larger than the limit is abandoned
+
+- **GIVEN** `FLEZHA_PLUGIN_MAX_PACKAGE_BYTES=1000000` and an HTTPS origin serving 2 MB
+- **WHEN** the URL is installed
+- **THEN** the fetch SHALL stop past the limit, `.staging/` SHALL hold nothing of it, and
+  the install SHALL be refused with `plugin.package_invalid`
+
+### Requirement: A declared plugin list SHALL be synced before the controller starts
+
+When `FLEZHA_PLUGINS` is set, it SHALL declare the node's packages: entries separated by
+whitespace or commas, each a local path or an `https://` URL, optionally ending with
+`#sha256=<64 hex>`, the digest of the archive. `flz plugin sync` SHALL make the plugin root
+hold exactly the declared packages: an entry whose pinned archive is already present SHALL
+be kept without a fetch, every other entry SHALL be fetched, verified as an install is and
+placed, a pinned entry whose fetched archive has another digest SHALL be refused, and every
+archive no entry produced SHALL be removed. A sync that fails for any entry SHALL exit
+non-zero and SHALL leave the plugin root as it was. While `FLEZHA_PLUGINS` is set, even to
+an empty value, `flz plugin install` and `flz plugin uninstall` SHALL be refused with
+`plugin.list_declared` naming the variable. `flz plugin sync` with the variable unset SHALL
+be refused naming it.
+
+#### Scenario: Sync converges the plugin root
+
+- **GIVEN** a plugin root holding archives `a` and `b`, and `FLEZHA_PLUGINS` naming `b`
+  (pinned, present) and `c`
+- **WHEN** `flz plugin sync` runs
+- **THEN** the plugin root SHALL hold `b` (not fetched again) and `c`, and not `a`
+
+#### Scenario: A failed entry changes nothing
+
+- **GIVEN** `FLEZHA_PLUGINS` naming a present archive and an unreachable URL
+- **WHEN** `flz plugin sync` runs
+- **THEN** it SHALL exit non-zero with `plugin.fetch_failed` naming the URL, and the plugin
+  root SHALL be unchanged
+
+#### Scenario: Install is refused on a node whose list is declared
+
+- **GIVEN** `FLEZHA_PLUGINS` is set
+- **WHEN** `flz plugin install ./p.fpz` runs
+- **THEN** it SHALL be refused with `plugin.list_declared`, and the plugin root SHALL be
+  unchanged
+
+### Requirement: Every boot SHALL record what it loaded
+
+After the supervision tree has started, the controller SHALL execute
+`[:flezha, :plugin_package, :loaded]` for every package it loaded, with metadata `id`,
+`version`, `digest` (the archive's SHA-256), `signed` and `providers`, and
+`[:flezha, :plugin_package, :refused]` for every package it refused, with `id`, `version`
+when known, `digest` and the error's `code` and `message`. Both SHALL be bridged to the
+observability bus under the source `:flezha_plugin_packages` and SHALL reach the audit log.
+Each package SHALL also be logged when it is decided, at `info` when loaded and at `error`
+when refused.
+
+#### Scenario: A boot's packages reach the audit log
+
+- **GIVEN** the audit log enabled and a plugin root with one loadable and one refused
+  package
+- **WHEN** the controller boots
+- **THEN** `audit-current.jsonl` SHALL hold one `flezha_plugin_packages` record named
+  `loaded` and one named `refused` carrying the refusal code
+
+### Requirement: An enable SHALL name the controllers that lack the provider
+
+When `flz plugin enable` resolves a provider, it SHALL ask every other controller that holds
+a hub for the target namespace whether its provider table has that id, bounded in time, and
+SHALL print a warning naming each controller that does not, or that did not answer, and
+stating that an operator placed there parks. The enable SHALL proceed. No placement
+constraint SHALL be derived from it.
+
+#### Scenario: One controller of the namespace lacks the package
+
+- **GIVEN** two controllers holding hubs for namespace `n`, only the first with the example
+  package loaded
+- **WHEN** `flz plugin enable s example_stamp --namespace n --operator_id op` runs against
+  the first
+- **THEN** the enable SHALL succeed and SHALL print a warning naming the second controller
 

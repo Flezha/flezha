@@ -186,8 +186,8 @@ defmodule Flezha.AuthZ.Verbs do
       target: [:schedule]
     ],
     runner_connect: [action: :"runner.connect", scope: {:argument, 1}],
-    # Plugins: the installed catalog is controller-wide, an enabled plugin lives
-    # in its operator's namespace.
+    # Plugins: the installed packages are controller-wide, an enabled plugin
+    # lives in its operator's namespace.
     plugin_list: [action: :"plugin.list", scope: :caller],
     list_installed_plugins: [action: :"plugin.list", scope: :caller],
     plugin_info: [action: :"plugin.info", scope: :caller],
@@ -200,36 +200,6 @@ defmodule Flezha.AuthZ.Verbs do
     plugin_disable: [
       action: :"plugin.disable",
       scope: {:row, :namespace},
-      audit: {:after, :plugin_service},
-      target: [:plugin_id]
-    ],
-    install_plugin: [
-      action: :"plugin.install",
-      scope: :system,
-      audit: {:after, :plugin_service},
-      target: [:path]
-    ],
-    upgrade_plugin: [
-      action: :"plugin.upgrade",
-      scope: :system,
-      audit: {:after, :plugin_service},
-      target: [:plugin_id]
-    ],
-    uninstall_plugin: [
-      action: :"plugin.uninstall",
-      scope: :system,
-      audit: {:after, :plugin_service},
-      target: [:plugin_id]
-    ],
-    installer_enable_plugin: [
-      action: :"plugin.enable",
-      scope: :system,
-      audit: {:after, :plugin_service},
-      target: [:plugin_id]
-    ],
-    installer_disable_plugin: [
-      action: :"plugin.disable",
-      scope: :system,
       audit: {:after, :plugin_service},
       target: [:plugin_id]
     ],

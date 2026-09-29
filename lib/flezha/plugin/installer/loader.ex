@@ -1,292 +1,378 @@
 defmodule Flezha.Plugin.Installer.Loader do
   @moduledoc """
-  In-VM module registry for installed plugins: it writes freshly-compiled beams
-  under `installed/<id>/<version>/ebin/`, loads them, and remembers which
-  modules belong to which plugin id so uninstall and upgrade target a precise
-  set.
+  Loads the plugin packages of the plugin root, once, at boot: plain function
+  calls made inside the controller's start, after the state root is claimed and
+  before the supervision tree's children are computed, so a package's providers
+  are rows of the provider table before anything reads it.
 
-  On boot it hydrates from the `Store` best-effort: a row whose beams fail to
-  load is flipped to `:load_failed` and the Loader continues, because one
-  broken plugin may not stop the rest from loading.
+  Per archive, in id order: verify, expand into `.loaded/<id>/`, check its
+  libraries and modules against what the VM holds, append its code paths, load
+  its applications and then all its modules at once, consolidate again the
+  protocols it implements, check its providers, start its library applications
+  and register its providers. A package failing any step is refused, what is
+  cheap to undo is undone, and the next package is tried; the controller boots
+  whatever the packages do. Nothing is ever purged or replaced: a module loaded
+  before a later step failed stays loaded, unreferenced, until the next restart.
   """
-
-  use GenServer
 
   require Logger
 
+  alias Flezha.Error
   alias Flezha.Layout.Table, as: Layout
-  alias Flezha.Plugin.Installer.Store
+  alias Flezha.Plugin.Installer.Package
   alias Flezha.Plugin.Providers
 
-  @type plugin_id :: binary()
-  @type state :: %{registry: %{plugin_id() => {binary(), [module()]}}}
+  @outcomes_key {__MODULE__, :outcomes}
 
-  ## Public API
+  @type outcome :: %{
+          id: binary(),
+          file: binary(),
+          version: binary() | nil,
+          digest: binary(),
+          signed: boolean(),
+          providers: %{binary() => module()},
+          status: :loaded | :refused,
+          error: Error.t() | nil
+        }
 
-  def start_link(opts \\ []) do
-    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  @doc "Load every package of the plugin root and record the outcomes."
+  @spec load_all() :: [outcome()]
+  def load_all() do
+    root = Layout.dir(:plugins)
+    loaded = Path.join(root, ".loaded")
+    File.rm_rf!(loaded)
+    reset()
+
+    outcomes =
+      root
+      |> Path.join("*.fpz")
+      |> Path.wildcard()
+      |> Enum.sort()
+      |> Enum.with_index()
+      |> Enum.map(fn {archive, n} -> verify(archive, Path.join(loaded, ".#{n}")) end)
+      |> refuse_duplicates()
+      |> Enum.sort_by(& &1.id)
+      |> Enum.map_reduce(%{apps: %{}, modules: %{}, providers: %{}}, &load(&1, &2, loaded))
+      |> elem(0)
+
+    :persistent_term.put(@outcomes_key, outcomes)
+    outcomes
+  end
+
+  @doc "What the last `load_all/0` of this VM decided; none before it ran."
+  @spec outcomes() :: [outcome()]
+  def outcomes(), do: :persistent_term.get(@outcomes_key, [])
+
+  @doc """
+  Execute the package events for the recorded outcomes. Called once the
+  supervision tree is up, because the bridge and the audit sink attach inside it.
+  """
+  @spec announce() :: :ok
+  def announce() do
+    for outcome <- outcomes() do
+      case outcome.status do
+        :loaded ->
+          :telemetry.execute([:flezha, :plugin_package, :loaded], %{count: 1}, %{
+            id: outcome.id,
+            version: outcome.version,
+            digest: outcome.digest,
+            signed: outcome.signed,
+            providers: Map.keys(outcome.providers)
+          })
+
+        :refused ->
+          :telemetry.execute([:flezha, :plugin_package, :refused], %{count: 1}, %{
+            id: outcome.id,
+            version: outcome.version,
+            digest: outcome.digest,
+            code: outcome.error.code,
+            message: outcome.error.message
+          })
+      end
+    end
+
+    :ok
   end
 
   @doc """
-  Write every `{module, beam}` in `beams` to `ebin_dir`, load into the VM,
-  and record ownership under `plugin_id`/`version`. Rolls back loaded
-  modules on partial failure.
+  A refusal of `module`'s as a caller sees it. A reason the error catalogue maps
+  keeps its code. Any other reason of a loaded package's provider is wrapped as
+  `kind`, `:provider_refused` for its options or `:provider_failed` for its
+  worker, naming the package and the provider, since a package adds no codes of
+  its own. A first-party provider's reason is returned as it is.
   """
-  @spec load_beams(plugin_id(), binary(), Path.t(), [{module(), binary()}]) ::
-          :ok | {:error, term()}
-  def load_beams(plugin_id, version, ebin_dir, beams)
-      when is_binary(plugin_id) and is_binary(version) and is_list(beams) do
-    GenServer.call(__MODULE__, {:load_beams, plugin_id, version, ebin_dir, beams}, 30_000)
-  end
-
-  @doc "Purge every module owned by `plugin_id`. Idempotent."
-  @spec purge_modules(plugin_id()) :: :ok
-  def purge_modules(plugin_id) when is_binary(plugin_id) do
-    GenServer.call(__MODULE__, {:purge_modules, plugin_id}, 30_000)
-  end
-
-  @doc "Ids currently loaded in the VM (known to the Loader)."
-  @spec installed_ids() :: MapSet.t(plugin_id())
-  def installed_ids do
-    case Process.whereis(__MODULE__) do
-      nil -> MapSet.new()
-      _ -> GenServer.call(__MODULE__, :installed_ids)
-    end
-  end
-
-  @doc "All registrations as `%{plugin_id => {version, modules}}`."
-  @spec all() :: %{plugin_id() => {binary(), [module()]}}
-  def all, do: GenServer.call(__MODULE__, :all)
-
-  @doc "Modules owned by `plugin_id`, or `[]` if none."
-  @spec modules_of(plugin_id()) :: [module()]
-  def modules_of(plugin_id) when is_binary(plugin_id) do
-    case GenServer.call(__MODULE__, {:lookup, plugin_id}) do
-      {:ok, {_version, mods}} -> mods
-      :error -> []
-    end
-  end
-
-  @doc """
-  Re-run boot-time hydration. Intended for tests — in production hydration
-  runs once at init/1.
-  """
-  @spec hydrate_from_store() :: :ok
-  def hydrate_from_store do
-    GenServer.call(__MODULE__, :hydrate_from_store, 60_000)
-  end
-
-  ## GenServer
-
-  @impl true
-  def init(_opts) do
-    state = %{registry: %{}}
-    state = do_hydrate(state)
-    {:ok, state}
-  end
-
-  @impl true
-  def handle_call(:installed_ids, _from, state) do
-    {:reply, MapSet.new(Map.keys(state.registry)), state}
-  end
-
-  def handle_call(:all, _from, state), do: {:reply, state.registry, state}
-
-  def handle_call({:lookup, plugin_id}, _from, state) do
-    {:reply, Map.fetch(state.registry, plugin_id), state}
-  end
-
-  def handle_call({:load_beams, plugin_id, version, ebin_dir, beams}, _from, state) do
-    with :ok <- reject_collisions(beams, plugin_id, state.registry),
-         :ok <- File.mkdir_p!(ebin_dir),
-         {:ok, loaded} <- write_and_load(ebin_dir, beams) do
-      registry =
-        Map.put(state.registry, plugin_id, {version, Enum.map(loaded, fn {m, _} -> m end)})
-
-      {:reply, :ok, %{state | registry: registry}}
+  @spec refusal(:provider_refused | :provider_failed, module(), term()) :: term()
+  def refusal(kind, module, reason) do
+    with false <- Error.catalogued?(reason, nil),
+         %{} = package <-
+           Enum.find(outcomes(), &(&1.status == :loaded and module in Map.values(&1.providers))) do
+      provider = Enum.find_value(package.providers, fn {id, m} -> if m == module, do: id end)
+      {kind, package.id, provider, if(is_binary(reason), do: reason, else: inspect(reason))}
     else
-      {:error, {:partial, already_loaded, reason}} ->
-        Enum.each(already_loaded, &unload_module/1)
-        {:reply, {:error, reason}, state}
+      _ -> reason
+    end
+  end
+
+  @doc "Forget the recorded outcomes. For tests that load packages in one VM."
+  @spec reset() :: :ok
+  def reset(), do: :persistent_term.put(@outcomes_key, [])
+
+  ## Verification
+
+  # A refused archive still names its version and providers when its manifest
+  # reads, so an enable of one of them can say which package was refused.
+  defp verify(archive, dir) do
+    declared = Package.declared(archive)
+
+    base = %{
+      id: declared.id,
+      file: Path.basename(archive),
+      version: declared.version,
+      digest: Package.digest(archive),
+      signed: false,
+      providers: declared.providers,
+      status: :refused,
+      error: nil,
+      dir: dir,
+      apps: []
+    }
+
+    case Package.verify(archive, dir) do
+      {:ok, verified} ->
+        %{
+          base
+          | id: verified.manifest.id,
+            version: verified.manifest.version,
+            signed: verified.signed,
+            providers: verified.manifest.providers,
+            apps: verified.apps,
+            status: :verified
+        }
 
       {:error, reason} ->
-        {:reply, {:error, reason}, state}
+        %{base | error: reason}
     end
   end
 
-  def handle_call({:purge_modules, plugin_id}, _from, state) do
-    case Map.get(state.registry, plugin_id) do
-      nil ->
-        {:reply, :ok, state}
+  defp refuse_duplicates(packages) do
+    files =
+      packages
+      |> Enum.group_by(& &1.id, & &1.file)
+      |> Map.filter(fn {_id, files} -> length(files) > 1 end)
 
-      {_version, modules} ->
-        Enum.each(modules, &unload_module/1)
-        {:reply, :ok, %{state | registry: Map.delete(state.registry, plugin_id)}}
-    end
-  end
+    Enum.map(packages, fn package ->
+      case files[package.id] do
+        nil ->
+          package
 
-  def handle_call(:hydrate_from_store, _from, state) do
-    {:reply, :ok, do_hydrate(%{state | registry: %{}})}
-  end
-
-  ## Hydration
-
-  defp do_hydrate(state) do
-    rows = safe_store_all()
-
-    Enum.reduce(rows, state, fn {plugin_id, row}, acc ->
-      case row[:status] do
-        :load_failed ->
-          acc
-
-        _ ->
-          hydrate_row(plugin_id, row, acc)
-      end
-    end)
-  catch
-    kind, reason ->
-      Logger.warning("[plugin_installer] Loader hydration failed: #{inspect({kind, reason})}")
-      state
-  end
-
-  defp hydrate_row(plugin_id, row, state) do
-    ebin_dir = Path.join(row[:path] || "", "ebin")
-
-    case load_from_ebin(ebin_dir, row[:modules] || []) do
-      {:ok, loaded_mods} ->
-        register_provisions(row)
-
-        registry =
-          Map.put(state.registry, plugin_id, {row[:version], loaded_mods})
-
-        %{state | registry: registry}
-
-      {:error, {module, reason}} ->
-        Logger.warning(
-          "[plugin_installer] load failed for plugin=#{plugin_id} module=#{inspect(module)}: #{inspect(reason)}"
-        )
-
-        :telemetry.execute(
-          [:flezha, :plugin_installer, :load_failed],
-          %{count: 1},
-          %{plugin_id: plugin_id, module: module, reason: reason}
-        )
-
-        _ = Store.update_status(plugin_id, :load_failed)
-        state
-    end
-  end
-
-  # An installed package's provisions become rows of the one provider table, so
-  # `flz plugin enable`, a `--plugins` spec and `flz plugin list` resolve them
-  # exactly as they resolve a first-party provider. Registration follows the
-  # modules being loaded, because a row naming a module the VM does not hold
-  # would resolve to nothing.
-  defp register_provisions(row) do
-    for %{id: provision_id, provider: provider} <- Map.get(row, :provides, []),
-        is_binary(provision_id) and is_atom(provider) and not is_nil(provider) do
-      Providers.add(provision_id, provider)
-    end
-
-    :ok
-  end
-
-  defp load_from_ebin(ebin_dir, expected_modules) do
-    Enum.reduce_while(expected_modules, {:ok, []}, fn module, {:ok, acc} ->
-      beam_path = Path.join(ebin_dir, "#{module}.beam")
-
-      with {:ok, bin} <- File.read(beam_path),
-           {:module, ^module} <- :code.load_binary(module, String.to_charlist(beam_path), bin) do
-        {:cont, {:ok, [module | acc]}}
-      else
-        {:error, reason} -> {:halt, {:error, {module, reason}}}
-        other -> {:halt, {:error, {module, other}}}
-      end
-    end)
-    |> case do
-      {:ok, acc} -> {:ok, Enum.reverse(acc)}
-      other -> other
-    end
-  end
-
-  # Access Store without blocking if it is still starting or has crashed.
-  defp safe_store_all do
-    case Process.whereis(Store) do
-      nil -> []
-      _ -> Store.all()
-    end
-  end
-
-  ## Collision + load/unload helpers
-
-  defp reject_collisions(beams, plugin_id, registry) do
-    # Build the set of modules owned by OTHER installed plugins.
-    other_owned =
-      registry
-      |> Enum.flat_map(fn
-        {^plugin_id, _} -> []
-        {_id, {_ver, mods}} -> mods
-      end)
-      |> MapSet.new()
-
-    Enum.reduce_while(beams, :ok, fn {module, _}, _ ->
-      cond do
-        MapSet.member?(other_owned, module) ->
-          {:halt, {:error, {:module_collision, module}}}
-
-        module_from_release?(module) ->
-          {:halt, {:error, {:module_collision, module}}}
-
-        true ->
-          {:cont, :ok}
+        dupes ->
+          %{package | status: :refused, error: {:duplicate_id, package.id, Enum.sort(dupes)}}
       end
     end)
   end
 
-  @doc """
-  Classify a module as "already compiled into the release and not owned by
-  any installed plugin" — those are collisions. A module not yet loaded, or
-  loaded by an installed plugin, is not from the release.
-  """
-  @spec module_from_release?(module()) :: boolean()
-  def module_from_release?(module) do
-    case :code.which(module) do
-      :non_existing -> false
-      :preloaded -> true
-      :cover_compiled -> false
-      path when is_list(path) -> not under_plugin_root?(List.to_string(path))
+  ## Loading
+
+  defp load(%{status: :verified} = package, held, loaded) do
+    dir = Path.join(loaded, package.id)
+    File.rename!(package.dir, dir)
+
+    apps =
+      for app <- package.apps, do: %{app | dir: Path.join([dir, "lib", Path.basename(app.dir)])}
+
+    case load_apps(%{package | dir: dir, apps: apps}, held) do
+      {:ok, to_load} ->
+        log_loaded(package)
+        {finish(package, :loaded, nil), hold(held, package, to_load)}
+
+      {:error, reason} ->
+        File.rm_rf!(dir)
+        {refused(package, reason), held}
     end
   end
 
-  defp under_plugin_root?(path) do
-    installed_root = Path.expand(Layout.file(:plugins, "installed"))
-    String.starts_with?(Path.expand(path), installed_root)
+  defp load(package, held, _loaded) do
+    File.rm_rf!(package.dir)
+    {refused(package, package.error), held}
   end
 
-  defp write_and_load(ebin_dir, beams) do
-    Enum.reduce_while(beams, {:ok, []}, fn {module, bin} = pair, {:ok, acc} ->
-      beam_path = Path.join(ebin_dir, "#{module}.beam")
+  # A refusal takes back what is cheap to take back: the applications this
+  # package started (none of `to_load` ran before), their specifications and the
+  # code paths. Loaded modules stay, unreferenced, until the next restart.
+  defp load_apps(package, held) do
+    with {:ok, to_load} <- libraries(package.apps, held),
+         :ok <- modules_free(to_load, held) do
+      ebins = Enum.map(to_load, &String.to_charlist(Path.join(&1.dir, "ebin")))
+      :ok = :code.add_pathsz(ebins)
 
-      with :ok <- File.write(beam_path, bin),
-           {:module, ^module} <-
-             :code.load_binary(module, String.to_charlist(beam_path), bin) do
-        {:cont, {:ok, [pair | acc]}}
-      else
+      case load_code(package, to_load, held) do
+        :ok ->
+          {:ok, to_load}
+
         {:error, reason} ->
-          {:halt,
-           {:error, {:partial, Enum.map(acc, &elem(&1, 0)), {:load_failed, module, reason}}}}
+          Enum.each(Enum.reverse(to_load), &Application.stop(&1.name))
+          Enum.each(to_load, &:application.unload(&1.name))
+          Enum.each(ebins, &:code.del_path/1)
+          {:error, reason}
+      end
+    end
+  end
 
-        other ->
-          {:halt,
-           {:error, {:partial, Enum.map(acc, &elem(&1, 0)), {:load_failed, module, other}}}}
+  defp load_code(package, to_load, held) do
+    with :ok <- load_specs(to_load),
+         :ok <- load_modules(to_load),
+         :ok <- consolidate(to_load),
+         :ok <- providers_free(package.providers, held),
+         :ok <- start_libraries(package.apps, to_load) do
+      register(package.providers)
+    end
+  end
+
+  # What the VM already holds, the release's and the earlier packages', decides
+  # which of the package's applications load.
+  defp libraries(apps, held) do
+    in_vm =
+      for {name, _description, vsn} <- Application.loaded_applications(),
+          into: %{},
+          do: {name, {to_string(vsn), Package.holder(held.apps[name])}}
+
+    with {:ok, names} <- Package.libraries_to_load(Enum.map(apps, &{&1.name, &1.vsn}), in_vm),
+         do: {:ok, Enum.filter(apps, &(&1.name in names))}
+  end
+
+  defp modules_free(to_load, held) do
+    Enum.find_value(to_load, :ok, fn app ->
+      Enum.find_value(app.modules, fn module ->
+        if :code.which(module) != :non_existing or :code.is_loaded(module) != false do
+          {:error, {:module_conflict, module, Package.holder(held.modules[module])}}
+        end
+      end)
+    end)
+  end
+
+  defp load_specs(to_load) do
+    Enum.find_value(to_load, :ok, fn app ->
+      case :application.load(app.name) do
+        :ok -> nil
+        {:error, reason} -> {:error, {:load_failed, "application #{app.name}", reason}}
       end
     end)
   end
 
-  defp unload_module(module) do
-    _ = :code.purge(module)
-    _ = :code.delete(module)
-    _ = :code.purge(module)
-    :ok
+  # Embedded mode loads nothing on demand, so every module is loaded here, all
+  # of them or none.
+  defp load_modules(to_load) do
+    case :code.atomic_load(Enum.flat_map(to_load, & &1.modules)) do
+      :ok ->
+        :ok
+
+      {:error, [{module, reason} | _]} ->
+        {:error, {:load_failed, "module #{inspect(module)}", reason}}
+    end
+  end
+
+  # A protocol the release consolidated dispatches only the types it was
+  # consolidated with, so it is consolidated again with the package's added.
+  # A protocol the package defines itself stays unconsolidated.
+  defp consolidate(to_load) do
+    own = MapSet.new(Enum.flat_map(to_load, & &1.modules))
+
+    to_load
+    |> Enum.flat_map(& &1.modules)
+    |> Enum.flat_map(&impls/1)
+    |> Enum.reject(fn {protocol, _type} -> MapSet.member?(own, protocol) end)
+    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+    |> Enum.find_value(:ok, fn {protocol, types} -> reconsolidate(protocol, types) end)
+  end
+
+  defp impls(module) do
+    for {:__impl__, impl} <- module.module_info(:attributes), do: {impl[:protocol], impl[:for]}
+  end
+
+  defp reconsolidate(protocol, types) do
+    with {:consolidated, current} <- protocol.__protocol__(:impls),
+         {:ok, binary} <- Protocol.consolidate(protocol, Enum.uniq(current ++ types)),
+         {:module, ^protocol} <- :code.load_binary(protocol, :code.which(protocol), binary) do
+      nil
+    else
+      :not_consolidated -> nil
+      error -> {:error, {:protocol_consolidation_failed, protocol, error}}
+    end
+  rescue
+    exception ->
+      {:error, {:protocol_consolidation_failed, protocol, Exception.message(exception)}}
+  end
+
+  defp providers_free(providers, held) do
+    declaration =
+      Enum.find_value(Enum.sort(providers), :ok, fn {id, module} ->
+        unless Providers.provider?(module),
+          do: {:error, {:package_invalid, :provider_declaration, %{provider: id, module: module}}}
+      end)
+
+    rows = Map.new(Providers.all(), fn {id, _} -> {id, Package.holder(held.providers[id])} end)
+    with :ok <- declaration, do: Package.providers_free(Map.keys(providers), rows)
+  end
+
+  # Library applications start now, before any operator binds. An application
+  # depending on Flezha is loaded and never started: Flezha is starting.
+  defp start_libraries(apps, to_load) do
+    to_load
+    |> Enum.reject(&Package.depends_on_flezha?(&1, apps))
+    |> Enum.find_value(:ok, fn app ->
+      case Application.ensure_all_started(app.name, :temporary) do
+        {:ok, _started} -> nil
+        {:error, {name, reason}} -> {:error, {:load_failed, "application #{name}", reason}}
+      end
+    end)
+  end
+
+  defp register(providers) do
+    Enum.find_value(Enum.sort(providers), :ok, fn {id, module} ->
+      case Providers.add(id, module) do
+        :ok -> nil
+        {:error, _} = error -> error
+      end
+    end)
+  end
+
+  ## Outcomes
+
+  defp hold(held, package, to_load) do
+    owner = package.id
+    modules = Enum.flat_map(to_load, & &1.modules)
+
+    %{
+      apps: Map.merge(held.apps, Map.new(to_load, &{&1.name, owner})),
+      modules: Map.merge(held.modules, Map.new(modules, &{&1, owner})),
+      providers:
+        Map.merge(held.providers, Map.new(package.providers, fn {id, _} -> {id, owner} end))
+    }
+  end
+
+  defp finish(package, status, error) do
+    package
+    |> Map.take([:id, :file, :version, :digest, :signed, :providers])
+    |> Map.merge(%{status: status, error: error})
+  end
+
+  defp refused(package, reason) do
+    error = Error.from_reason(reason, nil)
+
+    Logger.error(
+      "plugin package #{package.id} (#{package.file}) refused: #{error.message} (#{error.code})"
+    )
+
+    finish(package, :refused, error)
+  end
+
+  defp log_loaded(package) do
+    unless package.signed,
+      do: Logger.warning("plugin package #{package.id} #{package.version} is unsigned")
+
+    Logger.info(
+      "plugin package #{package.id} #{package.version} loaded, providers: " <>
+        Enum.join(Enum.sort(Map.keys(package.providers)), ", ")
+    )
   end
 end

@@ -65,7 +65,8 @@ defmodule Flezha.Config.Keys do
           runtimes: [atom()],
           surface: term() | nil,
           owner: atom() | nil,
-          on_bad_value: atom() | nil
+          on_bad_value: atom() | nil,
+          blank: :value | nil
         }
 
   # {name, type, default, opts}.
@@ -422,23 +423,24 @@ defmodule Flezha.Config.Keys do
     {:schedule_application_managed, :bool, true,
      key: {:schedules, :application_managed}, env_default: [test: false]},
 
-    # ---- installable plugin subsystem ---------------------------------------
-    {:plugin_installer_enabled, :bool, false, key: true, env: "FLEZHA_PLUGIN_INSTALLER_ENABLED"},
+    # ---- plugin packages -------------------------------------------------------
+    # The folder of installed `*.fpz` archives, loaded at boot. An archive there
+    # is the opt-in: no setting gates loading.
     {:plugin_root, :path, "app_data/plugins",
-     key: {:plugin_installer, :plugin_root}, env: "FLEZHA_PLUGIN_ROOT"},
+     key: {:plugins, :plugin_root}, env: "FLEZHA_PLUGIN_ROOT"},
     # Ed25519 public keys verifying `signature.sig` over `CHECKSUMS.sha256`; the
     # variable names PEM files on disk, comma separated.
     {:plugin_trusted_keys, {:custom, :pem_files}, [],
-     key: {:plugin_installer, :trusted_keys}, env: "FLEZHA_PLUGIN_TRUSTED_KEYS"},
+     key: {:plugins, :trusted_keys}, env: "FLEZHA_PLUGIN_TRUSTED_KEYS"},
     {:plugin_require_signature, :bool, false,
-     key: {:plugin_installer, :require_signature}, env: "FLEZHA_PLUGIN_REQUIRE_SIGNATURE"},
-    {:plugin_allow_unsigned, :bool, true,
-     key: {:plugin_installer, :allow_unsigned}, env: "FLEZHA_PLUGIN_ALLOW_UNSIGNED"},
+     key: {:plugins, :require_signature}, env: "FLEZHA_PLUGIN_REQUIRE_SIGNATURE"},
+    # Bounds an archive's unpacked size and a download alike.
     {:plugin_max_package_bytes, :int, 50_000_000,
-     key: {:plugin_installer, :max_package_bytes}, env: "FLEZHA_PLUGIN_MAX_PACKAGE_BYTES"},
-    {:plugin_max_source_files, :positive_int, 200,
-     key: {:plugin_installer, :max_source_files}, env: "FLEZHA_PLUGIN_MAX_SOURCE_FILES"},
-    {:plugin_installer_data_dir, :path, nil, key: true},
+     key: {:plugins, :max_package_bytes}, env: "FLEZHA_PLUGIN_MAX_PACKAGE_BYTES"},
+    # The declared package list `flz plugin sync` makes the plugin root hold;
+    # while it is set, install and uninstall are refused. Set and empty is a
+    # list of no packages, which `blank: :value` keeps apart from unset.
+    {:plugin_list, :term, nil, key: {:plugins, :list}, env: "FLEZHA_PLUGINS", blank: :value},
 
     # ---- file plugins ---------------------------------------------------------
     # The one folder or bucket prefix a file plugin may read from or write to.
@@ -657,7 +659,8 @@ defmodule Flezha.Config.Keys do
              runtimes: opts[:runtimes] || [:controller],
              surface: opts[:surface],
              owner: opts[:owner],
-             on_bad_value: opts[:on_bad_value]
+             on_bad_value: opts[:on_bad_value],
+             blank: opts[:blank]
            }}
         end)
 

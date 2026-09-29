@@ -98,9 +98,11 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   state, so a crash-resume owes exactly the timers it owed. In a bounded operator a firing opens a pass
   at the tasklet that set it. See [`sdk/cell_timers.md`](sdk/cell_timers.md).
 - **Plugin** — a `%Flezha.Plugin{}` binding a **provider** module to one or more **hooks** on a
-  host such as the Overwatch (`:on_input`, `:on_output`, `:on_message`, ...); installed from a
-  `.fpz` (`flz plugin install`), attached per operator (`flz plugin enable|disable`).
-  See [`plugins/lifecycle.md`](plugins/lifecycle.md).
+  host such as the Overwatch (`:on_input`, `:on_output`, `:on_message`, ...); its provider is
+  first-party or comes from a **plugin package** (`.fpz`, placed by `flz plugin install` and
+  loaded when the controller starts), and it is attached per operator
+  (`flz plugin enable|disable`). See [`plugins/lifecycle.md`](plugins/lifecycle.md) and
+  [`plugins/installation.md`](plugins/installation.md).
 - **Hook**: a named point at which the platform calls a plugin, named by the provider callback it
   runs: `on_input`, `on_output`, `on_interval`, `on_message`, `on_snapshot`, `on_terminate`, and
   `on_operator_init` at operator start only. Chosen with `--hook=<name>` on `flz plugin enable`,

@@ -1,47 +1,27 @@
 defmodule Flezha.Plugin.Installer.InstalledPlugin do
   @moduledoc """
-  Return shape of `Flezha.Plugin.Installer.list/0` and `info/1`. Projects
-  the DETS catalog row plus the subset of manifest fields runners want
-  to see on the CLI / UI.
+  One row of `flz plugin list --installed`: a package id and what this
+  controller holds of it.
+
+    * `:loaded` - loaded at this boot
+    * `:refused` - present at this boot and not loaded; `error` says why
+    * `:pending` - an archive placed or replaced since this boot, loaded at the
+      next restart; `loaded_version` is the version running now, if any
+    * `:removed` - loaded at this boot, its archive since removed; unloaded at the
+      next restart
   """
 
-  @type status :: :enabled | :disabled | :load_failed | :pending_upgrade
+  @type status :: :loaded | :refused | :pending | :removed
 
   @type t :: %__MODULE__{
           id: binary(),
-          version: binary(),
+          version: binary() | nil,
           status: status(),
-          description: binary() | nil,
-          author: binary() | nil,
-          provides: [map()],
-          modules: [atom()],
-          installed_at: integer() | nil
+          loaded_version: binary() | nil,
+          providers: [binary()],
+          error: Flezha.Error.t() | nil
         }
 
-  @enforce_keys [:id, :version, :status]
-  defstruct [
-    :id,
-    :version,
-    :status,
-    :description,
-    :author,
-    :installed_at,
-    provides: [],
-    modules: []
-  ]
-
-  @doc "Projects a `{plugin_id, row}` tuple from the Store to a struct."
-  @spec from_row({binary(), map()}) :: t()
-  def from_row({id, row}) do
-    %__MODULE__{
-      id: id,
-      version: row[:version],
-      status: row[:status],
-      description: row[:description],
-      author: row[:author],
-      installed_at: row[:installed_at],
-      provides: Map.get(row, :provides, []),
-      modules: Map.get(row, :modules, [])
-    }
-  end
+  @enforce_keys [:id, :status]
+  defstruct [:id, :version, :status, :loaded_version, :error, providers: []]
 end

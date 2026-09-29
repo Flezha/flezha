@@ -24,11 +24,13 @@ defmodule Flezha.Http.Client do
 
   @doc """
   Open a connection. A thin pass-through, here so a caller needs only this
-  module rather than `:mint` directly.
+  module rather than `:mint` directly. `transport_opts` reach the socket, as a
+  caller's own CA store and peer verification do.
   """
-  @spec connect(:http | :https, binary(), :inet.port_number()) ::
+  @spec connect(:http | :https, binary(), :inet.port_number(), keyword()) ::
           {:ok, conn()} | {:error, term()}
-  def connect(scheme, host, port), do: Mint.HTTP.connect(scheme, host, port)
+  def connect(scheme, host, port, transport_opts \\ []),
+    do: Mint.HTTP.connect(scheme, host, port, transport_opts: transport_opts)
 
   @spec close(conn()) :: :ok
   def close(conn) do
@@ -46,45 +48,52 @@ defmodule Flezha.Http.Client do
   The connection is returned in both the success and the failure shape so the
   caller can decide whether to keep or discard it — a failed exchange usually
   means the connection is unusable, which only the caller knows how to handle.
+
+  With `max_body_bytes: n` the exchange is abandoned, `{:error, {:body_too_large,
+  bytes}, conn}`, as soon as the response body passes `n` bytes.
   """
-  @spec request(conn(), binary(), binary(), [header()], iodata(), timeout()) ::
+  @spec request(conn(), binary(), binary(), [header()], iodata(), timeout(), keyword()) ::
           {:ok, conn(), non_neg_integer(), [header()], binary()}
           | {:error, term(), conn()}
-  def request(conn, method, path, headers, body, timeout) do
+  def request(conn, method, path, headers, body, timeout, opts \\ []) do
     case Mint.HTTP.request(conn, method, path, headers, body) do
       {:ok, conn, ref} ->
-        recv(conn, ref, System.monotonic_time(:millisecond) + timeout, nil, [], [])
+        deadline = System.monotonic_time(:millisecond) + timeout
+        recv(conn, {ref, deadline, opts[:max_body_bytes]}, nil, [], "")
 
       {:error, conn, reason} ->
         {:error, reason, conn}
     end
   end
 
-  defp recv(conn, ref, deadline, status, headers, body) do
+  defp recv(conn, {_ref, deadline, _max} = exchange, status, headers, body) do
     timeout = max(deadline - System.monotonic_time(:millisecond), 0)
     socket = Mint.HTTP.get_socket(conn)
 
     receive do
       {tag, ^socket, _data_or_reason} = message
       when tag in [:tcp, :ssl, :tcp_error, :ssl_error] ->
-        stream(conn, message, ref, deadline, status, headers, body)
+        stream(conn, message, exchange, status, headers, body)
 
       {tag, ^socket} = message when tag in [:tcp_closed, :ssl_closed] ->
-        stream(conn, message, ref, deadline, status, headers, body)
+        stream(conn, message, exchange, status, headers, body)
     after
       timeout -> {:error, :timeout, conn}
     end
   end
 
-  defp stream(conn, message, ref, deadline, status, headers, body) do
+  defp stream(conn, message, {ref, _deadline, max} = exchange, status, headers, body) do
     case Mint.HTTP.stream(conn, message) do
       {:ok, conn, responses} ->
         case fold(responses, ref, status, headers, body) do
+          {_, _status, _headers, body} when max != nil and byte_size(body) > max ->
+            {:error, {:body_too_large, byte_size(body)}, conn}
+
           {:done, status, headers, body} ->
-            {:ok, conn, status, headers, IO.iodata_to_binary(body)}
+            {:ok, conn, status, headers, body}
 
           {:cont, status, headers, body} ->
-            recv(conn, ref, deadline, status, headers, body)
+            recv(conn, exchange, status, headers, body)
         end
 
       {:error, conn, reason, _responses} ->
@@ -101,7 +110,7 @@ defmodule Flezha.Http.Client do
     do: fold(rest, ref, status, headers ++ h, body)
 
   defp fold([{:data, ref, chunk} | rest], ref, status, headers, body),
-    do: fold(rest, ref, status, headers, body ++ [chunk])
+    do: fold(rest, ref, status, headers, body <> chunk)
 
   defp fold([{:done, ref} | _rest], ref, status, headers, body),
     do: {:done, status || 0, headers, body}

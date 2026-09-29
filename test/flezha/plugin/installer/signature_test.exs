@@ -1,111 +1,67 @@
 defmodule Flezha.Plugin.Installer.SignatureTest do
-  @moduledoc """
-  Tests for Ed25519 signature verification and enforcement gating.
-  """
+  @moduledoc "\"Ed25519 signature verification\": the one policy, at install and at boot."
 
-  use ExUnit.Case, async: true
+  use FlezhaTest.Case, fixtures: [:tmp_dir], async: true
 
   alias Flezha.Plugin.Installer.Signature
 
-  setup do
-    # Generate a test keypair and produce a signature over a sample CHECKSUMS blob.
-    {pub, priv} = :crypto.generate_key(:eddsa, :ed25519)
-    msg = "abc  manifest.exs\n"
-    sig = :crypto.sign(:eddsa, :none, msg, [priv, :ed25519])
-    {:ok, pub: pub, priv: priv, msg: msg, sig: sig}
+  setup %{tmp: tmp} do
+    File.write!(Path.join(tmp, "CHECKSUMS.sha256"), "abc  manifest.exs\n")
+    {private_pem, public_pem} = keypair()
+    {:ok, dir: tmp, private: private_pem, public: public_pem}
   end
 
-  test "valid signature accepted with raw key", %{pub: pub, msg: msg, sig: sig} do
-    assert :ok = Signature.verify(msg, sig, [pub])
+  defp keypair() do
+    {:ECPrivateKey, _, _, curve, public, _} =
+      key = :public_key.generate_key({:namedCurve, :ed25519})
+
+    {:public_key.pem_encode([:public_key.pem_entry_encode(:PrivateKeyInfo, key)]),
+     :public_key.pem_encode([
+       :public_key.pem_entry_encode(:SubjectPublicKeyInfo, {{:ECPoint, public}, curve})
+     ])}
   end
 
-  test "invalid signature rejected", %{pub: pub, msg: msg} do
-    bad_sig = :crypto.strong_rand_bytes(64)
-    assert {:error, :signature_invalid} = Signature.verify(msg, bad_sig, [pub])
+  defp sign!(dir, pem) do
+    {:ok, signature} = Signature.sign(File.read!(Path.join(dir, "CHECKSUMS.sha256")), pem)
+    assert byte_size(signature) == 64
+    File.write!(Path.join(dir, "signature.sig"), signature)
   end
 
-  test "wrong key rejected", %{msg: msg, sig: sig} do
-    {other_pub, _} = :crypto.generate_key(:eddsa, :ed25519)
-    assert {:error, :signature_invalid} = Signature.verify(msg, sig, [other_pub])
+  test "a signature a trusted key verifies is accepted", %{
+    dir: dir,
+    private: private,
+    public: public
+  } do
+    sign!(dir, private)
+    assert {:ok, true} = Signature.check(dir, false, [public])
+    assert {:ok, true} = Signature.check(dir, true, [public])
   end
 
-  test "short signature rejected", %{msg: msg, pub: pub} do
-    assert {:error, :signature_invalid} = Signature.verify(msg, "short", [pub])
+  test "a present signature no trusted key verifies is refused whatever the setting",
+       %{dir: dir, public: public} do
+    {other, _} = keypair()
+    sign!(dir, other)
+    assert {:error, :signature_invalid} = Signature.check(dir, false, [public])
+    assert {:error, :signature_invalid} = Signature.check(dir, false, [])
   end
 
-  test "empty trusted keys returns no_trusted_keys", %{msg: msg, sig: sig} do
-    assert {:error, :no_trusted_keys} = Signature.verify(msg, sig, [])
+  test "an unsigned package is accepted in permissive mode and refused in required mode",
+       %{dir: dir, public: public} do
+    assert {:ok, false} = Signature.check(dir, false, [])
+    assert {:error, :signature_required} = Signature.check(dir, true, [public])
   end
 
-  test "multiple keys — any match accepts", %{pub: pub, msg: msg, sig: sig} do
-    {other_pub, _} = :crypto.generate_key(:eddsa, :ed25519)
-    assert :ok = Signature.verify(msg, sig, [other_pub, pub])
+  test "required signatures with an empty trust store refuse every package", %{
+    dir: dir,
+    private: private
+  } do
+    assert {:error, :trust_store_empty} = Signature.check(dir, true, [])
+    sign!(dir, private)
+    assert {:error, :trust_store_empty} = Signature.check(dir, true, [])
   end
 
-  test "gate permissive path emits telemetry" do
-    handler = "unsigned-#{System.unique_integer([:positive])}"
-    me = self()
-
-    :telemetry.attach(
-      handler,
-      [:flezha, :plugin_installer, :unsigned_install],
-      fn _n, _m, meta, _ -> send(me, {:telemetry_meta, meta}) end,
-      nil
-    )
-
-    on_exit(fn -> :telemetry.detach(handler) end)
-
-    assert :ok =
-             Signature.gate(
-               signature_present?: false,
-               require_signature: false,
-               allow_unsigned: true,
-               plugin_id: "x"
-             )
-
-    assert_receive {:telemetry_meta, %{plugin_id: "x"}}, 500
-  end
-
-  test "gate rejects missing signature when require_signature true" do
-    assert {:error, :signature_required} =
-             Signature.gate(
-               signature_present?: false,
-               require_signature: true,
-               allow_unsigned: true
-             )
-  end
-
-  test "gate rejects missing signature when allow_unsigned false" do
-    assert {:error, :unsigned_not_allowed} =
-             Signature.gate(
-               signature_present?: false,
-               require_signature: false,
-               allow_unsigned: false
-             )
-  end
-
-  test "gate accepts present signature regardless of policy" do
-    assert :ok =
-             Signature.gate(
-               signature_present?: true,
-               require_signature: true,
-               allow_unsigned: false
-             )
-  end
-
-  test "PEM-encoded key accepted", %{pub: pub, msg: msg, sig: sig} do
-    # Build an Ed25519 SubjectPublicKeyInfo DER by hand:
-    #   SEQUENCE {
-    #     SEQUENCE { OID 1.3.101.112 }
-    #     BIT STRING (0 unused bits, then the 32-byte public point)
-    #   }
-    oid_der = <<0x06, 0x03, 0x2B, 0x65, 0x70>>
-    alg_seq = <<0x30, byte_size(oid_der)>> <> oid_der
-    bit_string = <<0x03, byte_size(pub) + 1, 0x00>> <> pub
-    inner = alg_seq <> bit_string
-    spki_der = <<0x30, byte_size(inner)>> <> inner
-
-    pem = :public_key.pem_encode([{:SubjectPublicKeyInfo, spki_der, :not_encrypted}])
-    assert :ok = Signature.verify(msg, sig, [pem])
+  test "sign/2 refuses a key that is not an Ed25519 private key", %{public: public} do
+    assert {:error, :not_an_ed25519_private_key} = Signature.sign("msg", public)
+    assert {:error, :not_an_ed25519_private_key} = Signature.sign("msg", "junk")
   end
 end

@@ -1,231 +1,444 @@
 defmodule Flezha.Plugin.Installer.Package do
   @moduledoc """
-  Archive extraction + layout validation for `.fpz` plugin packages.
-
-  The archive is a gzipped tar with this canonical root:
+  A `.fpz` plugin package: a gzipped tar holding compiled code, laid out like a
+  release's `lib/`.
 
       manifest.exs
-      src/<any tree of .ex/.erl>
       CHECKSUMS.sha256
-      signature.sig?            # optional
+      signature.sig                 # optional
+      lib/<app>-<vsn>/ebin/<app>.app, *.beam
+      lib/<app>-<vsn>/priv/...      # optional
 
-  Nothing else is allowed at the root — no `.beam`, no symbolic links, no
-  `..` traversal, no device or setuid files. We reject at extraction time
-  so staging never ends up with a file we're about to refuse later.
+  `verify/3` is the one pipeline of checks, run by an install and again by
+  every boot: nothing is written outside the target directory before the
+  archive's entries are vetted, and every refusal is a tagged reason the error
+  catalogue maps.
   """
 
-  @allowed_roots ~w(manifest.exs src CHECKSUMS.sha256 signature.sig)
+  alias Flezha.Config
+  alias Flezha.Plugin.Installer.Checksums
+  alias Flezha.Plugin.Installer.Manifest
+  alias Flezha.Plugin.Installer.Signature
 
-  @type extract_error ::
-          {:package_too_large, pos_integer(), pos_integer()}
-          | {:too_many_source_files, pos_integer(), pos_integer()}
-          | {:unsafe_entry, binary(), atom()}
-          | {:tar_failed, term()}
-          | {:invalid_layout, atom()}
-          | {:invalid_layout, atom(), term()}
+  @allowed_roots ~w(manifest.exs CHECKSUMS.sha256 signature.sig lib)
+  @native_suffixes ~w(.so .dll .dylib)
+
+  @typedoc "One bundled application as its `lib/<app>-<vsn>` directory declares it."
+  @type app :: %{
+          name: atom(),
+          vsn: binary(),
+          dir: Path.t(),
+          modules: [module()],
+          applications: [atom()],
+          mod: term()
+        }
+
+  @type verified :: %{
+          manifest: Manifest.t(),
+          apps: [app()],
+          signed: boolean(),
+          digest: binary()
+        }
 
   @doc """
-  Extracts `fpz_path` into `staging_dir`, enforcing size limits and rejecting
-  unsafe entries up front. Returns `:ok` on success; on failure returns
-  `{:error, reason}` and leaves `staging_dir` empty (caller-owned cleanup).
+  Extract `archive` into `dir` and check it whole: entries, layout, checksums,
+  signature policy, manifest and the runtime line it was built on. `opts`
+  carries `:max_package_bytes`, `:require_signature` and `:trusted_keys`, the
+  configuration's by default.
   """
-  @spec extract(Path.t(), Path.t(), keyword()) :: :ok | {:error, extract_error()}
-  def extract(fpz_path, staging_dir, opts \\ []) do
-    max_bytes = Keyword.fetch!(opts, :max_package_bytes)
-    max_files = Keyword.fetch!(opts, :max_source_files)
-
-    with {:ok, entries} <- list_entries(fpz_path),
-         :ok <- enforce_size_limits(entries, max_bytes, max_files),
-         :ok <- reject_unsafe_entries(entries) do
-      do_extract(fpz_path, staging_dir)
+  @spec verify(Path.t(), Path.t(), keyword()) :: {:ok, verified()} | {:error, term()}
+  def verify(archive, dir, opts \\ config_opts()) do
+    with :ok <- extract(archive, dir, Keyword.fetch!(opts, :max_package_bytes)),
+         :ok <- check_root(dir),
+         :ok <- Checksums.check(dir),
+         {:ok, signed} <-
+           Signature.check(
+             dir,
+             Keyword.fetch!(opts, :require_signature),
+             Keyword.fetch!(opts, :trusted_keys)
+           ),
+         {:ok, manifest} <- Manifest.read(dir),
+         {:ok, apps} <- check_contents(dir, manifest),
+         :ok <- Manifest.check_runtime(manifest, Manifest.runtime()) do
+      {:ok, %{manifest: manifest, apps: apps, signed: signed, digest: digest(archive)}}
     end
   end
 
   @doc """
-  Enforce that `staging_dir` contains exactly `manifest.exs`, a non-empty
-  `src/` directory, `CHECKSUMS.sha256`, and optionally `signature.sig` at
-  the root — nothing else.
+  The applications under `dir`'s `lib/`, checked against `manifest` and against
+  the rule that an application depending on Flezha declares no callback, in the
+  order they load: the plugin application first, then `apps` order.
   """
-  @spec validate_layout(Path.t()) ::
-          :ok | {:error, {:invalid_layout, atom()} | {:invalid_layout, atom(), term()}}
-  def validate_layout(staging_dir) do
-    with {:ok, entries} <- list_root(staging_dir),
-         :ok <- check_required(staging_dir, entries),
-         :ok <- check_no_unknown(entries),
-         :ok <- check_src_nonempty(Path.join(staging_dir, "src")) do
-      check_src_files(Path.join(staging_dir, "src"))
+  @spec check_contents(Path.t(), term()) :: {:ok, [app()]} | {:error, term()}
+  def check_contents(dir, manifest) do
+    with {:ok, apps} <- read_lib(dir),
+         :ok <- Manifest.validate(manifest, apps),
+         :ok <- check_callbacks(apps) do
+      by_name = Map.new(apps, &{&1.name, &1})
+      {:ok, for({name, _vsn} <- manifest.apps, do: Map.fetch!(by_name, name))}
     end
   end
 
   @doc """
-  Enforces `max_package_bytes` (sum of uncompressed sizes) and
-  `max_source_files` (count of `src/**`) over a list of tar entries as
-  returned by `:erl_tar.table/2`.
+  What `archive` declares, read from its manifest alone and tolerating one that
+  does not read: its id (the file name when the manifest gives none), version,
+  applications and providers.
   """
-  @spec enforce_size_limits([tuple()], pos_integer(), pos_integer()) ::
-          :ok | {:error, extract_error()}
-  def enforce_size_limits(entries, max_bytes, max_files) do
-    total_bytes =
-      Enum.reduce(entries, 0, fn entry, acc -> acc + entry_size(entry) end)
+  @spec declared(Path.t()) :: %{
+          id: binary(),
+          version: binary() | nil,
+          apps: list(),
+          providers: map()
+        }
+  def declared(archive) do
+    case peek_manifest(archive) do
+      {:ok, manifest} ->
+        %{
+          id: manifest.id,
+          version: if(is_binary(manifest[:version]), do: manifest.version),
+          apps: if(is_list(manifest[:apps]), do: manifest.apps, else: []),
+          providers: if(is_map(manifest[:providers]), do: manifest.providers, else: %{})
+        }
 
-    src_file_count =
-      Enum.count(entries, fn entry ->
-        name = entry_name(entry)
-        String.starts_with?(name, "src/") and entry_kind(entry) == :regular
-      end)
+      :error ->
+        %{id: Path.basename(archive, ".fpz"), version: nil, apps: [], providers: %{}}
+    end
+  end
+
+  defp peek_manifest(archive) do
+    with {:ok, [{_name, source}]} <-
+           :erl_tar.extract(String.to_charlist(archive), [
+             :compressed,
+             :memory,
+             {:files, [~c"manifest.exs"]}
+           ]),
+         {:ok, %{id: id} = manifest} when is_binary(id) <- Manifest.parse(source) do
+      {:ok, manifest}
+    else
+      _ -> :error
+    end
+  end
+
+  @doc """
+  The applications of `apps`, `{name, vsn}` pairs, that `held` does not hold yet.
+  One version of a library per VM: `held` maps an application to `{vsn, holder}`,
+  and one held at the same version is used as it is, at another refuses.
+  """
+  @spec libraries_to_load([{atom(), binary()}], %{atom() => {binary(), binary()}}) ::
+          {:ok, [atom()]} | {:error, term()}
+  def libraries_to_load(apps, held) do
+    Enum.reduce_while(apps, {:ok, []}, fn {name, vsn}, {:ok, acc} ->
+      case held[name] do
+        nil -> {:cont, {:ok, [name | acc]}}
+        {^vsn, _holder} -> {:cont, {:ok, acc}}
+        {other, holder} -> {:halt, {:error, {:library_conflict, name, vsn, other, holder}}}
+      end
+    end)
+    |> then(fn
+      {:ok, names} -> {:ok, Enum.reverse(names)}
+      error -> error
+    end)
+  end
+
+  @doc "`:ok` when no provider id of `ids` is one `held` maps to its holder."
+  @spec providers_free([binary()], %{binary() => binary()}) :: :ok | {:error, term()}
+  def providers_free(ids, held) do
+    case Enum.find(Enum.sort(ids), &Map.has_key?(held, &1)) do
+      nil -> :ok
+      id -> {:error, {:provider_id_taken, id, held[id]}}
+    end
+  end
+
+  @doc "Who holds a library, a module or a provider id, as a refusal names it."
+  @spec holder(binary() | nil) :: binary()
+  def holder(nil), do: "the release"
+  def holder(package_id), do: "package '#{package_id}'"
+
+  @doc "The verification options the configuration sets."
+  @spec config_opts() :: keyword()
+  def config_opts() do
+    [
+      max_package_bytes: Config.get(:plugin_max_package_bytes),
+      require_signature: Config.get(:plugin_require_signature),
+      trusted_keys: Config.get(:plugin_trusted_keys)
+    ]
+  end
+
+  @doc "The archive's SHA-256, lowercase hex."
+  @spec digest(Path.t()) :: binary()
+  def digest(archive) do
+    archive
+    |> File.stream!(65_536)
+    |> Enum.reduce(:crypto.hash_init(:sha256), &:crypto.hash_update(&2, &1))
+    |> :crypto.hash_final()
+    |> Base.encode16(case: :lower)
+  end
+
+  @doc "Write the gzipped tar of everything in `dir` to `archive`."
+  @spec create(Path.t(), Path.t()) :: :ok | {:error, term()}
+  def create(dir, archive) do
+    entries =
+      for name <- Enum.sort(File.ls!(dir)),
+          do: {String.to_charlist(name), String.to_charlist(Path.join(dir, name))}
+
+    :erl_tar.create(String.to_charlist(archive), entries, [:compressed])
+  end
+
+  @doc """
+  Every application under `dir`'s `lib/`, read from its `.app`, with its beams
+  matched against the `modules` list and its native code refused.
+  """
+  @spec read_lib(Path.t()) :: {:ok, [app()]} | {:error, term()}
+  def read_lib(dir) do
+    case File.ls(Path.join(dir, "lib")) do
+      {:ok, []} ->
+        invalid(:lib_empty, %{})
+
+      {:ok, entries} ->
+        entries
+        |> Enum.sort()
+        |> Enum.reduce_while({:ok, []}, fn entry, {:ok, acc} ->
+          case read_app(dir, entry) do
+            {:ok, app} -> {:cont, {:ok, [app | acc]}}
+            error -> {:halt, error}
+          end
+        end)
+        |> then(fn
+          {:ok, apps} -> {:ok, Enum.reverse(apps)}
+          error -> error
+        end)
+
+      {:error, _} ->
+        invalid(:lib_missing, %{})
+    end
+  end
+
+  @doc "Every file under `dir`, at any depth; none when `dir` does not exist."
+  @spec files(Path.t()) :: [Path.t()]
+  def files(dir) do
+    case File.ls(dir) do
+      {:ok, entries} ->
+        Enum.flat_map(entries, fn entry ->
+          path = Path.join(dir, entry)
+          if File.dir?(path), do: files(path), else: [path]
+        end)
+
+      {:error, _} ->
+        []
+    end
+  end
+
+  ## Extraction
+
+  defp extract(archive, dir, max_bytes) do
+    with {:ok, entries} <- table(archive),
+         :ok <- check_entries(entries),
+         :ok <- check_size(entries, max_bytes) do
+      File.mkdir_p!(dir)
+
+      case :erl_tar.extract(String.to_charlist(archive), [
+             :compressed,
+             {:cwd, String.to_charlist(dir)}
+           ]) do
+        :ok -> :ok
+        {:error, reason} -> invalid(:unreadable, %{reason: reason})
+      end
+    end
+  end
+
+  # `:verbose` rows are `{name, type, size, mtime, mode, uid, gid}`.
+  defp table(archive) do
+    case :erl_tar.table(String.to_charlist(archive), [:compressed, :verbose]) do
+      {:ok, entries} ->
+        {:ok, for({name, type, size, _, _, _, _} <- entries, do: {to_string(name), type, size})}
+
+      {:error, reason} ->
+        invalid(:unreadable, %{reason: reason})
+    end
+  end
+
+  defp check_entries(entries) do
+    Enum.find_value(entries, :ok, fn {name, type, _size} -> entry_problem(name, type) end)
+  end
+
+  defp entry_problem(name, type) do
+    segments = Path.split(name)
 
     cond do
-      total_bytes > max_bytes ->
-        {:error, {:package_too_large, total_bytes, max_bytes}}
+      type not in [:regular, :directory] -> invalid(:unsafe_entry, %{entry: name, type: type})
+      Path.type(name) != :relative -> invalid(:unsafe_entry, %{entry: name, type: :absolute})
+      ".." in segments -> invalid(:unsafe_entry, %{entry: name, type: :traversal})
+      Path.extname(name) in [".ex", ".erl"] -> invalid(:source_file, %{entry: name})
+      hd(segments) not in @allowed_roots -> invalid(:unexpected_entry, %{entry: name})
+      true -> nil
+    end
+  end
 
-      src_file_count > max_files ->
-        {:error, {:too_many_source_files, src_file_count, max_files}}
+  defp check_size(entries, max_bytes) do
+    bytes = Enum.reduce(entries, 0, fn {_name, _type, size}, acc -> acc + size end)
+
+    if bytes > max_bytes,
+      do: invalid(:too_large, %{bytes: bytes, limit: max_bytes}),
+      else: :ok
+  end
+
+  defp check_root(dir) do
+    cond do
+      not File.regular?(Path.join(dir, "manifest.exs")) -> invalid(:manifest_missing, %{})
+      not File.regular?(Path.join(dir, "CHECKSUMS.sha256")) -> invalid(:checksums_missing, %{})
+      not File.dir?(Path.join(dir, "lib")) -> invalid(:lib_missing, %{})
+      true -> :ok
+    end
+  end
+
+  ## The lib/ walk
+
+  defp read_app(root, entry) do
+    dir = Path.join([root, "lib", entry])
+
+    with {:ok, name, vsn} <- split_app_dir(entry),
+         :ok <- only_ebin_and_priv(root, dir),
+         {:ok, spec} <- consult_app(root, dir, name),
+         :ok <- same_version(entry, spec, vsn),
+         :ok <- beams_match(root, dir, name, spec),
+         :ok <- no_native_priv(root, dir) do
+      {:ok,
+       %{
+         name: String.to_atom(name),
+         vsn: vsn,
+         dir: dir,
+         modules: Keyword.get(spec, :modules, []),
+         applications:
+           Keyword.get(spec, :applications, []) ++ Keyword.get(spec, :included_applications, []),
+         mod: Keyword.get(spec, :mod)
+       }}
+    end
+  end
+
+  # An application name holds no `-`, so the first one ends it.
+  defp split_app_dir(entry) do
+    with [name, vsn] when vsn != "" <- String.split(entry, "-", parts: 2),
+         true <- Regex.match?(~r/^[a-z][a-z0-9_]*$/, name) do
+      {:ok, name, vsn}
+    else
+      _ -> invalid(:unexpected_entry, %{entry: "lib/" <> entry})
+    end
+  end
+
+  defp only_ebin_and_priv(root, dir) do
+    entries = File.ls!(dir)
+
+    cond do
+      not File.dir?(Path.join(dir, "ebin")) ->
+        invalid(:ebin_missing, %{entry: rel(root, dir)})
+
+      extra = Enum.find(entries, &(&1 not in ["ebin", "priv"])) ->
+        invalid(:unexpected_entry, %{entry: rel(root, Path.join(dir, extra))})
 
       true ->
         :ok
     end
   end
 
-  ## Private
+  defp consult_app(root, dir, name) do
+    path = Path.join([dir, "ebin", name <> ".app"])
 
-  defp list_entries(fpz_path) do
-    case :erl_tar.table(String.to_charlist(fpz_path), [:compressed, :verbose]) do
-      {:ok, entries} -> {:ok, entries}
-      {:error, reason} -> {:error, {:tar_failed, reason}}
+    case :file.consult(String.to_charlist(path)) do
+      {:ok, [{:application, app, spec}]} when is_list(spec) ->
+        if Atom.to_string(app) == name,
+          do: {:ok, spec},
+          else: invalid(:app_mismatch, %{entry: rel(root, path), application: app})
+
+      _ ->
+        invalid(:app_unreadable, %{entry: rel(root, dir)})
     end
   end
 
-  defp reject_unsafe_entries(entries) do
-    Enum.reduce_while(entries, :ok, fn entry, _ ->
-      name = entry_name(entry)
-      kind = entry_kind(entry)
-
-      cond do
-        String.contains?(name, "..") ->
-          {:halt, {:error, {:unsafe_entry, name, :path_traversal}}}
-
-        String.starts_with?(name, "/") ->
-          {:halt, {:error, {:unsafe_entry, name, :absolute_path}}}
-
-        kind == :symlink ->
-          {:halt, {:error, {:unsafe_entry, name, :symlink}}}
-
-        kind == :device ->
-          {:halt, {:error, {:unsafe_entry, name, :device}}}
-
-        kind == :other ->
-          {:halt, {:error, {:unsafe_entry, name, :unsupported_type}}}
-
-        String.ends_with?(name, ".beam") ->
-          {:halt, {:error, {:invalid_layout, :beam_forbidden}}}
-
-        true ->
-          {:cont, :ok}
-      end
-    end)
-  end
-
-  defp do_extract(fpz_path, staging_dir) do
-    :ok = File.mkdir_p!(staging_dir)
-
-    case :erl_tar.extract(String.to_charlist(fpz_path), [
-           :compressed,
-           {:cwd, String.to_charlist(staging_dir)}
-         ]) do
-      :ok -> :ok
-      {:error, reason} -> {:error, {:tar_failed, reason}}
+  defp same_version(entry, spec, vsn) do
+    case to_string(Keyword.get(spec, :vsn, "")) do
+      ^vsn -> :ok
+      other -> invalid(:app_mismatch, %{entry: "lib/" <> entry, vsn: other})
     end
   end
 
-  defp list_root(staging_dir) do
-    case File.ls(staging_dir) do
-      {:ok, entries} -> {:ok, entries}
-      {:error, reason} -> {:error, {:invalid_layout, :cannot_list, reason}}
-    end
-  end
+  # The beams in `ebin/` are exactly the `modules` list, each declaring the
+  # module its file names.
+  defp beams_match(root, dir, name, spec) do
+    ebin = Path.join(dir, "ebin")
+    files = File.ls!(ebin) -- [name <> ".app"]
+    listed = MapSet.new(Keyword.get(spec, :modules, []), &Atom.to_string/1)
 
-  defp check_required(staging_dir, entries) do
+    beams =
+      for file <- files,
+          Path.extname(file) == ".beam",
+          into: MapSet.new(),
+          do: Path.rootname(file)
+
+    application = rel(root, dir)
+
     cond do
-      "manifest.exs" not in entries or
-          not File.regular?(Path.join(staging_dir, "manifest.exs")) ->
-        {:error, {:invalid_layout, :manifest_missing}}
+      other = Enum.find(files, &(Path.extname(&1) != ".beam")) ->
+        invalid(:unexpected_entry, %{entry: rel(root, Path.join(ebin, other))})
 
-      "CHECKSUMS.sha256" not in entries or
-          not File.regular?(Path.join(staging_dir, "CHECKSUMS.sha256")) ->
-        {:error, {:invalid_layout, :checksums_missing}}
+      missing = first(MapSet.difference(listed, beams)) ->
+        invalid(:module_without_beam, %{application: application, module: missing})
 
-      "src" not in entries or not File.dir?(Path.join(staging_dir, "src")) ->
-        {:error, {:invalid_layout, :src_missing}}
+      extra = first(MapSet.difference(beams, listed)) ->
+        invalid(:beam_not_listed, %{application: application, module: extra})
 
       true ->
-        :ok
+        Enum.find_value(Enum.sort(beams), :ok, &beam_problem(root, ebin, &1))
     end
   end
 
-  defp check_no_unknown(entries) do
-    unexpected = Enum.reject(entries, &(&1 in @allowed_roots))
+  # Prepared, never loaded: preparing validates the code and says whether it
+  # declares an `on_load`, which is how a NIF is loaded.
+  defp beam_problem(root, ebin, module) do
+    path = Path.join(ebin, module <> ".beam")
 
-    case unexpected do
-      [] -> :ok
-      [first | _] -> {:error, {:invalid_layout, :unexpected_entry, first}}
+    with {:ok, {name, _}} <- :beam_lib.chunks(String.to_charlist(path), []),
+         true <- Atom.to_string(name) == module,
+         prepared when not is_tuple(prepared) <- :erlang.prepare_loading(name, File.read!(path)) do
+      if :erlang.has_prepared_code_on_load(prepared), do: {:error, {:native_code, module}}
+    else
+      _ -> invalid(:beam_unreadable, %{entry: rel(root, path)})
     end
   end
 
-  defp check_src_nonempty(src_dir) do
-    case File.ls(src_dir) do
-      {:ok, [_ | _]} -> :ok
-      {:ok, []} -> {:error, {:invalid_layout, :src_empty}}
-      {:error, reason} -> {:error, {:invalid_layout, :src_unreadable, reason}}
-    end
-  end
-
-  # Walk every regular file under src/ and refuse anything that isn't .ex or
-  # .erl (no `.beam`, no binaries, no stray build artifacts).
-  defp check_src_files(src_dir) do
-    Enum.reduce_while(collect_files(src_dir, src_dir), :ok, fn rel, _ ->
-      cond do
-        String.contains?(rel, "..") ->
-          {:halt, {:error, {:invalid_layout, :path_traversal, rel}}}
-
-        String.ends_with?(rel, ".beam") ->
-          {:halt, {:error, {:invalid_layout, :beam_forbidden}}}
-
-        String.ends_with?(rel, ".ex") or String.ends_with?(rel, ".erl") ->
-          {:cont, :ok}
-
-        true ->
-          {:halt, {:error, {:invalid_layout, :unexpected_source, rel}}}
-      end
+  defp no_native_priv(root, dir) do
+    dir
+    |> Path.join("priv")
+    |> files()
+    |> Enum.find_value(:ok, fn path ->
+      if Path.extname(path) in @native_suffixes, do: {:error, {:native_code, rel(root, path)}}
     end)
   end
 
-  defp collect_files(root, dir) do
-    File.ls!(dir)
-    |> Enum.flat_map(fn entry ->
-      full = Path.join(dir, entry)
+  defp first(set), do: set |> Enum.sort() |> List.first()
 
-      cond do
-        File.dir?(full) -> collect_files(root, full)
-        File.regular?(full) -> [Path.relative_to(full, root)]
-        true -> [Path.relative_to(full, root)]
-      end
+  # An application that depends on Flezha is loaded inside Flezha's own start
+  # and can never be started, so a callback of its own would never run.
+  defp check_callbacks(apps) do
+    case Enum.find(apps, &(&1.mod != nil and depends_on_flezha?(&1, apps))) do
+      nil -> :ok
+      app -> {:error, {:app_callback, app.name}}
+    end
+  end
+
+  @doc "Whether `app` depends on Flezha, directly or through another of `apps`."
+  @spec depends_on_flezha?(app(), [app()]) :: boolean()
+  def depends_on_flezha?(app, apps),
+    do: reaches_flezha?(app, Map.new(apps, &{&1.name, &1}), MapSet.new())
+
+  defp reaches_flezha?(app, by_name, seen) do
+    Enum.any?(app.applications, fn dep ->
+      dep == :flezha or
+        (Map.has_key?(by_name, dep) and not MapSet.member?(seen, dep) and
+           reaches_flezha?(by_name[dep], by_name, MapSet.put(seen, dep)))
     end)
   end
 
-  # :erl_tar.table/2 with :verbose returns {name, type, size, mtime, mode, uid, gid}.
-  # Without :verbose it returns just the name. We always pass :verbose so
-  # matching is deterministic.
-  defp entry_name({name, _type, _size, _mtime, _mode, _uid, _gid}) when is_list(name),
-    do: List.to_string(name)
+  defp rel(root, path), do: Path.relative_to(path, root)
 
-  defp entry_name(name) when is_list(name), do: List.to_string(name)
-  defp entry_name(name) when is_binary(name), do: name
-
-  defp entry_kind({_name, type, _size, _mtime, _mode, _uid, _gid}), do: type
-  defp entry_kind(_), do: :regular
-
-  defp entry_size({_name, _type, size, _mtime, _mode, _uid, _gid}) when is_integer(size),
-    do: size
-
-  defp entry_size(_), do: 0
+  defp invalid(problem, found), do: {:error, {:package_invalid, problem, found}}
 end
