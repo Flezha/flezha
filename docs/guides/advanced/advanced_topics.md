@@ -28,6 +28,7 @@ flowchart LR
 > |---|---|
 > | Java | Java 21 and Maven |
 > | Rust | Rust with Cargo |
+> | PHP | PHP 8.4 or later with `ext-ffi`, and Composer |
 >
 > - **A Kubernetes cluster, such as k3s, and `kubectl`**, for
 >   [`kubernetes_deployment.md`](kubernetes_deployment.md).
@@ -36,7 +37,7 @@ flowchart LR
 | # | Page | What you do |
 |---|---|---|
 | 1 | [`agent_session.md`](agent_session.md) | Run agentdesk in Docker Compose, start one session per conversation as a bounded operator, and send it a turn with the CLI |
-| 2 | [`streamed_answers.md`](streamed_answers.md) | Send the answer token by token while the turn runs, with `ctx.part`, and watch it with `flz operator listen` |
+| 2 | [`streamed_answers.md`](streamed_answers.md) | Send the answer token by token while the turn runs, as parts, and watch it with `flz operator listen` |
 | 3 | [`sleeping_sessions.md`](sleeping_sessions.md) | Let an idle session sleep with nothing held on the runner, and wake it with the next turn |
 | 4 | [`rewinding_a_turn.md`](rewinding_a_turn.md) | Take turns back, and see a failed turn set aside while the session goes on |
 | 5 | [`custom_plugins.md`](custom_plugins.md) | Install the HTTP plugin by rebuilding the controller's image, and write a plugin of your own |

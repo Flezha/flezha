@@ -8,7 +8,7 @@ server-sent events, token by token, from the same parts and output that
 ## A stream answer
 
 `watch`, from [`http_gateway.md`](http_gateway.md#the-gateway), answers
-`GET /sessions/<user>/events` with `Http.stream(user)`, which the plugin receives as
+`GET /sessions/<user>/events` with the user's session to stream, which the plugin receives as
 `{"stream":"<user>"}`. That names an operator of the gateway's namespace, the user's
 session. The plugin then attaches a listener to the session and keeps the response open:
 every part and every output on the session's sink `answer` is written as one event, as

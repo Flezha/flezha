@@ -49,9 +49,18 @@ build_desk() {
   case "$SDK" in
     java) echo "mvn -q package" ;;
     rust) echo "cargo build --release --offline" ;; # --offline: the checkout's .cargo/config.toml, per the README
+    php) echo "composer install --no-interaction --quiet" ;; # the checkout's SDK, through the COMPOSER_HOME below
     *) echo "walk: no build command for $SDK yet; add it here" >&2; exit 1 ;;
   esac
 }
+
+# The PHP SDK is not on Packagist: the README's path repository, in a
+# COMPOSER_HOME of the walk's own so the user's global configuration is untouched.
+if [ "$SDK" = php ]; then
+  export COMPOSER_HOME=$ROOT/wip/tools/.cache/composer-php
+  composer config --global repositories.flezha-sdk \
+    "{\"type\": \"path\", \"url\": \"$ROOT/sdk/php\", \"options\": {\"symlink\": false, \"versions\": {\"flezha/sdk\": \"0.1.0\"}}}"
+fi
 
 phase() { # operator id, phase, seconds: waits until `flz operator info` shows it in that phase
   until_ok "$3" "flz operator info $1 --namespace agents | awk '/^Operator: $1\$/{f=1} f && /Phase:/{print \$2; exit}' | grep -qx $2"
@@ -142,6 +151,7 @@ plugins() {
   step up "docker compose up -d --build --wait controller"
   step plugin-list "flz plugin list --installed"
   runner_up
+  phase anna suspended 90 # the new controller restarts the sessions only once the runner has joined (W-022)
   step call "flz operator call anna --namespace agents --text 'Did you notice anything?'"
   logs runner
 }

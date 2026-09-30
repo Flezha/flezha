@@ -13,7 +13,7 @@ the guarantee needs, then kill the runner in the middle of a message and count.
 message to its input log on the controller's disk before the turn runs, and writes the
 end of each turn to its journal. A turn runs to its end once. A crash before the end runs
 it again from the log, and the answer leaves only once the turn's end is written.
-Nothing in `AgentOperator` declares this.
+Nothing in the session's operator declares this.
 
 > Look at Anna's input log and journal.
 > {: .step}
@@ -90,6 +90,14 @@ flight can be lost. The gateway asks, with the first line of its graph in
 ```rust
     fn channels(c: &ChannelBuilder) {
         c.effectively_once(); // each request and answer on disk before it runs
+```
+
+### PHP
+
+```php
+    public static function channels(Builder $c): void
+    {
+        $c->effectivelyOnce();                       // each request and answer on disk before it runs
 ```
 
 <!-- tabs-close -->
@@ -190,7 +198,7 @@ $ flz state inbox gateway --namespace agents
 ## What it requires
 
 - **An input log on each end** of whatever crosses between operators: a bounded operator
-  that keeps its state has one, an unbounded operator declares `effectivelyOnce()`.
+  that keeps its state has one, an unbounded operator declares the guarantee.
   [`calls.md`](../../sdk/calls.md#guarantees) has the table for calls.
 - **Tasklets that give the same result for the same input.** A message replayed after a
   crash runs its tasklet again, so a tasklet reads the time from `ctx.now()`, which a

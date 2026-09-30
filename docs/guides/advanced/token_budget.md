@@ -189,6 +189,63 @@ error for its `result` and is counted as using no tokens. The day is counted in 
 since 1970, as the standard library has no calendar, so `flz state get` prints it as a
 number.
 
+### PHP
+
+```php
+// src/Budget.php: each user's tokens for the day, and whether a message is admitted.
+#[Task(name: 'budget')]
+final class Budget extends Tasklet
+{
+    public const DAILY_TOKENS = 40;
+
+    public static function admitted(array $verdict): bool
+    {
+        return $verdict['spent'] < self::DAILY_TOKENS;
+    }
+
+    public static function used(Response $response): array    // a failed turn used none
+    {
+        return [
+            'user' => $response->request['user'],
+            'tokens' => $response->ok() ? $response->value['tokens'] : 0,
+        ];
+    }
+
+    public function initState(?string $cellKey): mixed
+    {
+        return ['day' => '', 'tokens' => 0];         // what each user's cell remembers
+    }
+
+    public function applyChange(mixed &$state, mixed $change): void
+    {
+        $state = ['day' => $change['day'], 'tokens' => self::on($state, $change['day']) + $change['tokens']];
+    }
+
+    public function run(mixed $input, Ctx $ctx): void
+    {
+        $today = gmdate('Y-m-d', intdiv($ctx->now(), 1000));
+        if (isset($input['tokens'])) {               // the tokens an answer used
+            $ctx->change(['day' => $today, 'tokens' => $input['tokens']]);
+        } else {                                     // a message to admit
+            $ctx->emit(['message' => $input, 'spent' => self::on($ctx->state, $today)]);
+        }
+    }
+
+    private static function on(array $spent, string $today): int
+    {
+        return $spent['day'] === $today ? $spent['tokens'] : 0;
+    }
+}
+```
+
+A tasklet takes one type of input, and `budget` reads two things: the messages, and the
+tokens their answers used. Both are arrays, told apart by whether they carry `tokens`,
+and the gateway's graph keys both by user, so a user's messages and answers reach the
+same cell. `used` makes the tokens out of the call's `Response`, which carries the
+request it answers, where the user comes from; a turn that failed, or took too long,
+has an `error` and is counted as using no tokens. `admitted` is the check the graph's
+filter and `admit` share.
+
 <!-- tabs-close -->
 
 The state is the day, in UTC, and the tokens used on it; the first answer of a new day

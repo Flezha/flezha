@@ -103,6 +103,39 @@ impl BoundedOperator for AgentOperator {
 `RollbackMode::KeepProgress` is what a failing turn needs, and
 [`rewinding_a_turn.md`](rewinding_a_turn.md#a-turn-that-fails) shows it.
 
+### PHP
+
+The whole example:
+[`sdk/php/examples/agentdesk`](https://github.com/flezha/flezha_php_sdk/tree/main/examples/agentdesk).
+
+```php
+// src/AgentOperator.php: one conversation, one turn per message.
+#[Operator(factoryId: 'agent')]
+#[Bounded(
+    loopMode: LoopMode::PerInput,                    // one turn per message
+    rollbackMode: RollbackMode::KeepProgress,        // a failed turn fails alone
+)]
+final class AgentOperator extends BoundedOperator
+{
+    public static function channels(Builder $c): void
+    {
+        $c->input('turn', codec: ChannelCodec::Text)
+            ->into(Reply::class)
+            ->sink('answer')                         // to whoever listens
+            ->into(Deliver::class)
+            ->response();                            // to whoever called
+        $c->input('message')                         // from the gateway
+            ->map(fn (array $message) => $message['text'])
+            ->into(Reply::class);
+    }
+}
+```
+
+`LoopMode::PerInput` runs the chain once per message instead of once in all.
+`RollbackMode::KeepProgress` is what a failing turn needs, and
+[`rewinding_a_turn.md`](rewinding_a_turn.md#a-turn-that-fails) shows it. `turn` reads its
+message as text; `message` names no codec, so its JSON arrives as an array.
+
 <!-- tabs-close -->
 
 A message arrives on the entry channel `turn`, and `reply` answers it. The answer
@@ -120,8 +153,7 @@ the list of messages so far, and every turn adds one. The model sees the convers
 so the answer can say which message of the conversation this is.
 
 > Write the tasklet that answers, and the one that passes the answer on. Copy the demo
-> model, `DemoModel`, from the example: [`streamed_answers.md`](streamed_answers.md)
-> goes through it.
+> model from the example: [`streamed_answers.md`](streamed_answers.md) goes through it.
 > {: .step}
 
 <!-- tabs-open -->
@@ -288,6 +320,65 @@ impl Tasklet for Deliver {
 }
 ```
 
+### PHP
+
+```php
+// src/Reply.php: answers a message with the demo model, and keeps the conversation.
+#[Task(name: 'reply')]
+final class Reply extends Tasklet
+{
+    public function initState(?string $cellKey): mixed
+    {
+        return ['messages' => []];                   // what the session remembers
+    }
+
+    public function applyChange(mixed &$state, mixed $change): void
+    {
+        match ($change['kind']) {
+            'said' => $state['messages'][] = $change['message'],
+            'unsaid' => array_pop($state['messages']),
+        };
+    }
+
+    public function run(mixed $input, Ctx $ctx): void
+    {
+        $ctx->emit(DemoModel::answer($ctx->state['messages'], $input, $ctx->part(...)));
+        $ctx->change(['kind' => 'said', 'message' => $input]);
+    }
+
+    // The undo, when a turn is taken back: the conversation forgets its message.
+    public function compensate(array $outputs, Ctx $ctx): void
+    {
+        echo '[undo] forgot "' . end($ctx->state['messages']) . "\"\n";
+        $ctx->change(['kind' => 'unsaid']);
+    }
+}
+```
+
+An answer is an array of its text and the number of tokens the model used for it. A
+change is plain data, a message said or the last one taken back, and `applyChange` folds
+it into the conversation. `$ctx->part(...)` hands the model a way to send the answer
+while it is still being written, which [`streamed_answers.md`](streamed_answers.md)
+explains, and `compensate` is the undo that [`rewinding_a_turn.md`](rewinding_a_turn.md)
+uses.
+
+```php
+// src/Deliver.php: hands the finished answer to the caller.
+#[Task(name: 'deliver')]
+final class Deliver extends Tasklet
+{
+    public function run(mixed $input, Ctx $ctx): void
+    {
+        $ctx->emit($input);
+    }
+
+    // The undo, when a turn is taken back: an answer already given has nothing to take back.
+    public function compensate(array $outputs, Ctx $ctx): void
+    {
+    }
+}
+```
+
 <!-- tabs-close -->
 
 ## The runner
@@ -368,6 +459,42 @@ The image copies the binary built on your machine, so one built against a C libr
 newer than Debian 12's may not start in it. The project's `.dockerignore` sends Docker
 that binary alone, not the rest of `target/`.
 
+### PHP
+
+```php
+// runner.php: the runner.
+require __DIR__ . '/vendor/autoload.php';
+
+$runner = Flezha::createRunner('agents')
+    ->registerFactory(AgentOperator::class)
+    ->registerFactory(GatewayOperator::class)
+    ->start();
+
+$runner->awaitTermination();
+```
+
+The runner's image is the project, with its `vendor/`, on a PHP image with FFI:
+
+```dockerfile
+# The runner's image: the project and the packages `composer install` put in vendor/, on PHP 8.4
+# with FFI, which the SDK loads its native library through.
+FROM php:8.4-cli
+RUN apt-get update && apt-get install -y --no-install-recommends libffi-dev \
+    && rm -rf /var/lib/apt/lists/* && docker-php-ext-install ffi
+COPY . /agentdesk
+WORKDIR /agentdesk
+# The runner stops when its standard input closes, and a container's is closed: it reads a pipe
+# that stays open instead.
+RUN mkfifo -m 600 stdin && chown 1000 stdin
+USER 1000
+ENTRYPOINT ["sh", "-c", "exec php runner.php <> stdin"]
+```
+
+The image copies `vendor/` as `composer install` left it on your machine, and the
+project's `.dockerignore` sends Docker only `runner.php`, `src/` and `vendor/`. A PHP
+runner stops when its standard input closes, and a container starts with it closed, so
+the image gives the runner a pipe that stays open.
+
 <!-- tabs-close -->
 
 ## The containers
@@ -446,6 +573,12 @@ $ mvn -q package
 
 ```sh
 $ cargo build --release
+```
+
+### PHP
+
+```sh
+$ composer install
 ```
 
 <!-- tabs-close -->

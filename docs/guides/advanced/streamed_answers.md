@@ -45,6 +45,7 @@ final class DemoModel {
 still running, and the whole answer is returned at the end. A real model's client would
 be called here instead, handing each token it streams to `part` the same way. The
 message limit is for [`rewinding_a_turn.md`](rewinding_a_turn.md#a-turn-that-fails).
+[`java_sdk.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/java_sdk.md#tasklets) has the details of parts.
 
 ### Rust
 
@@ -87,6 +88,44 @@ pub fn answer(
 `run` is still running, and the whole answer is returned at the end. A real model's
 client would be called here instead, handing each token it streams to `part` the same
 way. The message limit is for [`rewinding_a_turn.md`](rewinding_a_turn.md#a-turn-that-fails).
+The Rust SDK's [README](https://github.com/flezha/flezha_rust_sdk/blob/main/README.md#writing-a-tasklet)
+has the details of parts.
+
+### PHP
+
+```php
+// src/DemoModel.php: a canned answer, one token at a time.
+final class DemoModel
+{
+    private const MAX_MESSAGE = 200;
+    private const PER_TOKEN_US = 50_000;
+
+    public static function answer(array $earlier, string $message, callable $part): array
+    {
+        $length = mb_strlen($message);
+        if ($length > self::MAX_MESSAGE) {
+            throw new NonRetryableException(
+                'the demo model reads at most ' . self::MAX_MESSAGE . " characters, and this message has $length",
+            );
+        }
+        $text = 'Message ' . (count($earlier) + 1) . ": you said \"$message\". I am a demo model.";
+        $tokens = preg_split('/(?<= )/', $text);
+        foreach ($tokens as $i => $token) {
+            $part(['text' => $token, 'tokens' => $i + 1]);
+            usleep(self::PER_TOKEN_US);
+        }
+
+        return ['text' => $text, 'tokens' => count($tokens)];
+    }
+}
+```
+
+`reply` passes `$ctx->part(...)` as `$part`, so every token leaves as a part while `run`
+is still running, and the whole answer is returned at the end. A real model's client
+would be called here instead, handing each token it streams to `$part` the same way. The
+pause holds the runner, which serves every session on one thread, for the length of the
+answer. The message limit is for [`rewinding_a_turn.md`](rewinding_a_turn.md#a-turn-that-fails).
+[`php_sdk.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/php_sdk.md#authoring) has the details of parts.
 
 <!-- tabs-close -->
 
@@ -99,7 +138,8 @@ numbered from 0 in each attempt, so a turn that is tried again starts its previe
 
 A tasklet can send parts only when its output channel ends in a sink, which is why
 `reply`'s channel is `answer`. The finished answer then leaves on that sink as usual.
-The Java SDK's reference, `docs/sdk/java_sdk.md`, has the details.
+Your SDK's reference page, linked at the end of your language's tab above, has the
+details.
 
 ## Watch a turn stream
 

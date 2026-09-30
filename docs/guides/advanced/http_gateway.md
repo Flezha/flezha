@@ -67,6 +67,9 @@ public final class GatewayOperator implements UnboundedOperator {
 }
 ```
 
+`effectivelyOnce()` declares the delivery guarantee, and the call names its target with
+`CallTarget.factory("agent").channel("message")` and its deadline with `DEADLINE_MS`.
+
 ### Rust
 
 ```rust
@@ -104,6 +107,49 @@ impl UnboundedOperator for GatewayOperator {
 }
 ```
 
+`effectively_once()` declares the delivery guarantee, and the call names its target with
+`CallTarget::factory("agent").channel("message")` and its deadline with `DEADLINE_MS`.
+
+### PHP
+
+```php
+// src/GatewayOperator.php: answers every request, and calls the session a message is for.
+#[Operator(factoryId: 'gateway')]
+final class GatewayOperator extends UnboundedOperator
+{
+    private const DEADLINE_MS = 60_000;
+
+    public static function channels(Builder $c): void
+    {
+        $c->effectivelyOnce();                       // each request and answer on disk before it runs
+        $user = fn (array $value) => $value['user'];
+        $http = $c->input('http', Request::decode(...));
+        $http->filter(fn (Request $request) => !$request->sends())
+            ->into(Watch::class)
+            ->response();                            // a stream, or 404
+        $verdicts = $http->filter(fn (Request $request) => $request->sends())
+            ->map(fn (Request $request) => $request->message())
+            ->keyBy($user)                           // one cell per user
+            ->into(Budget::class);
+        $verdicts->into(Admit::class)
+            ->response();                            // 202, or 429 over the budget
+        $verdicts->filter(Budget::admitted(...))
+            ->map(fn (array $verdict) => $verdict['message'])
+            ->keyBy($user)                           // the user's session
+            ->call(factory: 'agent', channel: 'message', deadlineMs: self::DEADLINE_MS)
+            ->map(Budget::used(...))
+            ->keyBy($user)
+            ->into(Budget::class);                   // the tokens the answer used
+    }
+}
+```
+
+`effectivelyOnce()` declares the delivery guarantee, and the call names its target with
+`factory: 'agent'` and `channel: 'message'`, and its deadline with `DEADLINE_MS`. The call
+sends its request and reads its answer as JSON, the codec it takes when none is named.
+`Request::decode(...)` is the entry channel's decoder: it makes each request a `Request`,
+which `watch` takes as it is and the chain into `budget` turns into the message's array.
+
 <!-- tabs-close -->
 
 A request that is not a message goes to `watch`, whose answer is a `response()` end. A
@@ -112,16 +158,16 @@ message goes to `budget`, one cell per user, which keeps each user's tokens for 
 tokens it admits every message. Its verdict goes two ways. `admit` answers the request,
 through a second `response()` end: a graph may have several, and whichever answers
 first answers the request. And an admitted message is a call to the user's session.
-`effectivelyOnce()` is the delivery guarantee, which
+The graph's first line declares the delivery guarantee, which
 [`effectively_once.md`](effectively_once.md) comes back to.
 
 `call` ends a chain in a call to another operator, as
-[`calls.md`](../../sdk/calls.md#operator-calls-call) describes. `CallTarget.factory("agent")`
-after `keyBy` reaches the instance of `agent` whose id is the key, the user, and starts
-one with the message as its first input when there is none, so a new user needs no
+[`calls.md`](../../sdk/calls.md#operator-calls-call) describes. A call to the factory
+`agent`, after `keyBy`, reaches the instance of `agent` whose id is the key, the user, and
+starts one with the message as its first input when there is none, so a new user needs no
 `flz operator start`. The call waits for nothing: its outcome comes back later as a
-`Response` on the gateway's own Response channel, within `DEADLINE_MS` at the latest,
-and `budget` reads the tokens from it.
+`Response` on the gateway's own Response channel, within the call's deadline of a minute
+at the latest, and `budget` reads the tokens from it.
 
 > Write the request, the answer, and the two tasklets that answer.
 > {: .step}
@@ -341,6 +387,101 @@ impl Tasklet for Admit {
 `src/budget.rs`, with the `Event` and `Verdict` types the graph names, is on
 [`token_budget.md`](token_budget.md#count-the-tokens); copy it from the example.
 
+### PHP
+
+```php
+// src/Request.php: one HTTP request, as the plugin hands it to the gateway.
+final readonly class Request
+{
+    private const ROUTE = '#^/sessions/([a-z][a-z0-9_-]{0,63})/(messages|events)$#';
+
+    private function __construct(private string $method, private string $path, private ?string $body)
+    {
+    }
+
+    // The envelope carries more than the gateway reads.
+    public static function decode(string $json): self
+    {
+        $envelope = json_decode($json, true, flags: JSON_THROW_ON_ERROR);
+
+        return new self($envelope['method'], $envelope['path'], $envelope['body'] ?? null);
+    }
+
+    public function sends(): bool
+    {
+        return $this->is('POST', 'messages');
+    }
+
+    public function listens(): bool
+    {
+        return $this->is('GET', 'events');
+    }
+
+    public function user(): string
+    {
+        return $this->route(1);
+    }
+
+    public function message(): array
+    {
+        return ['user' => $this->user(), 'text' => $this->body ?? ''];
+    }
+
+    private function is(string $verb, string $what): bool
+    {
+        return $this->method === $verb && $this->route(2) === $what;
+    }
+
+    private function route(int $part): string        // "" when the path is not a route
+    {
+        return preg_match(self::ROUTE, $this->path, $route) === 1 ? $route[$part] : '';
+    }
+}
+```
+
+The pattern accepts only a short lower-case name as the user, because the user is the id
+of the session the gateway calls. The body is the plugin's text of the request body,
+absent when it is not valid UTF-8. `decode` reads the three fields the gateway needs from
+an envelope that carries more.
+
+```php
+// src/Watch.php: a session's events, or 404.
+#[Task(name: 'watch')]
+final class Watch extends Tasklet
+{
+    public function run(mixed $input, Ctx $ctx): void
+    {
+        $ctx->emit($input->listens()
+            ? ['stream' => $input->user()]
+            : ['status' => 404, 'body' => 'no such route']);
+    }
+}
+```
+
+```php
+// src/Admit.php: 202 when the message goes on, 429 over the budget.
+#[Task(name: 'admit')]
+final class Admit extends Tasklet
+{
+    public function run(mixed $input, Ctx $ctx): void
+    {
+        $user = $input['message']['user'];
+        $ctx->emit(Budget::admitted($input)
+            ? ['status' => 202, 'body' => "sent to $user"]
+            : [
+                'status' => 429,
+                'body' => "$user has used {$input['spent']} of today's " . Budget::DAILY_TOKENS . ' tokens',
+            ]);
+    }
+}
+```
+
+An answer is the array the plugin expects, sent as JSON: a status and a body, sent as
+text, or the session to stream.
+
+`src/Budget.php`, with the `admitted` and `used` the graph names, is on
+[`token_budget.md`](token_budget.md#count-the-tokens); copy it from the example.
+
 <!-- tabs-close -->
 
 ## A second way into a session
@@ -404,6 +545,24 @@ the modules:
         .register_factory(gateway::GatewayOperator)?
 ```
 
+### PHP
+
+The message is the array `Request::message()` builds, the user and the text, so there
+is no class to add. In `AgentOperator::channels`, after the `turn` chain:
+
+```php
+        $c->input('message')                         // from the gateway
+            ->map(fn (array $message) => $message['text'])
+            ->into(Reply::class);
+```
+
+`into(Reply::class)` names the tasklet the `turn` chain already feeds, so both channels
+reach the same `reply`, with the same conversation. In `runner.php`:
+
+```php
+    ->registerFactory(GatewayOperator::class)
+```
+
 <!-- tabs-close -->
 
 ## Start the gateway
@@ -429,6 +588,10 @@ $ mvn -q package
 ```sh
 $ cargo build --release
 ```
+
+### PHP
+
+There is nothing to compile: the image copies the new classes as they are.
 
 <!-- tabs-close -->
 

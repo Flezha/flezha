@@ -71,6 +71,22 @@ last message of the conversation:
 
 `deliver`'s is empty: an answer already given has nothing to take back.
 
+### PHP
+
+`reply`'s undo, from [`agent_session.md`](agent_session.md#answer-a-message), forgets the
+last message of the conversation:
+
+```php
+    // The undo, when a turn is taken back: the conversation forgets its message.
+    public function compensate(array $outputs, Ctx $ctx): void
+    {
+        echo '[undo] forgot "' . end($ctx->state['messages']) . "\"\n";
+        $ctx->change(['kind' => 'unsaid']);
+    }
+```
+
+`deliver`'s is empty: an answer already given has nothing to take back.
+
 <!-- tabs-close -->
 
 A rewind asks every tasklet whose output left the session, through a sink or a
@@ -122,7 +138,7 @@ $ flz operator call anna --namespace agents --text 'Where were we?'
 
 ## A turn that fails
 
-`agent` declares `RollbackMode.KEEP_PROGRESS`
+`agent` declares the rollback mode that keeps progress
 ([`agent_session.md`](agent_session.md#a-session-is-a-bounded-operator)). With it, a turn
 whose tasklet fails, once its retries are spent or at once for an error that is not worth
 retrying, fails alone: its message goes to the dead-letter queue, the turn's tasklets are
