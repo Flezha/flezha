@@ -408,6 +408,65 @@ request it answers, where the user comes from; a turn that failed, or took too l
 has an `error` and is counted as using no tokens. `admitted` is the check the graph's
 filter and `admit` share.
 
+### Elixir
+
+```elixir
+# lib/agentdesk/budget.ex: each user's tokens for the day, and whether a message is admitted.
+defmodule Agentdesk.Budget do
+  use Flezha.SDK.Tasklet, name: "budget"
+
+  @daily_tokens 40
+
+  def daily_tokens, do: @daily_tokens
+
+  def admitted?(verdict), do: verdict.spent < @daily_tokens
+
+  # The tokens an answer used; a failed turn used none.
+  def used(%Response{request: request, result: result}) do
+    %{user: Jason.decode!(request)["user"], tokens: tokens(result)}
+  end
+
+  defp tokens({:ok, answer}), do: answer["tokens"]
+  defp tokens({:error, _error}), do: 0
+
+  # What each user's cell remembers.
+  state do
+    field(:day, :string, default: "")
+    field(:tokens, :integer, default: 0)
+  end
+
+  defchange counted(spent, day, tokens) do
+    %{spent | day: day, tokens: on(spent, day) + tokens}
+  end
+
+  # The tokens an answer used.
+  @impl true
+  def run(%{tokens: tokens}, spent, ctx), do: {:ok, counted(spent, ctx, today(ctx), tokens)}
+
+  # A message to admit.
+  def run(message, spent, ctx) do
+    emit(ctx, %{message: message, spent: on(spent, today(ctx))})
+    {:ok, spent}
+  end
+
+  defp today(ctx), do: ctx |> now() |> DateTime.from_unix!(:millisecond) |> Date.to_iso8601()
+
+  defp on(%{day: day, tokens: tokens}, day), do: tokens
+  defp on(_spent, _today), do: 0
+end
+```
+
+A tasklet takes one kind of input, and `budget` reads two things: the messages, and the
+tokens their answers used. Both are maps, told apart by whether they carry `:tokens`,
+one clause of `run/3` each, and the gateway's graph keys both by user, so a user's
+messages and answers reach the same cell. `used/1` makes the tokens out of the call's
+`Flezha.SDK.Response`, which carries the request it answers as the bytes the call sent,
+where the user comes from; a turn that failed, or took too long, has an error as its
+`result` and is counted as using no tokens. `admitted?/1` is the check the graph's filter
+and `admit` share. `now/1` is in milliseconds, which `DateTime.from_unix!/2` reads. The
+state is a map, so `flz state get` prints its fields in the map's order, `tokens` before
+`day`.
+
 <!-- tabs-close -->
 
 The state is the day, in UTC, and the tokens used on it; the first answer of a new day

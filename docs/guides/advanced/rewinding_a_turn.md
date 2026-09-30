@@ -131,6 +131,22 @@ last message of the conversation:
 
 `deliver`'s is empty: an answer already given has nothing to take back.
 
+### Elixir
+
+`reply`'s undo, from [`agent_session.md`](agent_session.md#answer-a-message), forgets the
+last message of the conversation:
+
+```elixir
+  # The undo, when a turn is taken back: the conversation forgets its message.
+  @impl true
+  def compensate(_answers, conversation, ctx) do
+    IO.puts(~s([undo] forgot "#{List.last(conversation.messages)}"))
+    {:ok, unsaid(conversation, ctx)}
+  end
+```
+
+`deliver`'s answers the state as it is: an answer already given has nothing to take back.
+
 <!-- tabs-close -->
 
 A rewind asks every tasklet whose output left the session, through a sink or a

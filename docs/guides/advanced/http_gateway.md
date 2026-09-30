@@ -270,6 +270,67 @@ sends its request and reads its answer as JSON, the codec it takes when none is 
 `Request::decode(...)` is the entry channel's decoder: it makes each request a `Request`,
 which `watch` takes as it is and the chain into `budget` turns into the message's array.
 
+### Elixir
+
+```elixir
+# lib/agentdesk/gateway_operator.ex: answers every request, and calls the session a message is for.
+defmodule Agentdesk.GatewayOperator do
+  use Flezha.SDK.UnboundedOperator, factory_id: "gateway"
+
+  @deadline_ms 60_000
+
+  @impl true
+  def channels(c) do
+    # each request and answer on disk before it runs
+    effectively_once(c)
+    http = input_with(c, "http", &Request.decode/1)
+
+    http
+    |> filter(&(not Request.sends?(&1)))
+    |> into(Watch)
+    # a stream, or 404
+    |> response()
+
+    verdicts =
+      http
+      |> filter(&Request.sends?/1)
+      |> map(&Request.message/1)
+      # one cell per user
+      |> key_by(& &1.user)
+      |> into(Budget)
+
+    verdicts
+    |> into(Admit)
+    # 202, or 429 over the budget
+    |> response()
+
+    verdicts
+    |> filter(&Budget.admitted?/1)
+    |> map(& &1.message)
+    # the user's session
+    |> key_by(& &1.user)
+    |> call(
+      factory: "agent",
+      channel: "message",
+      deadline_ms: @deadline_ms,
+      decode: &Jason.decode/1
+    )
+    |> map(&Budget.used/1)
+    |> key_by(& &1.user)
+    # the tokens the answer used
+    |> into(Budget)
+  end
+end
+```
+
+`effectively_once/1` declares the delivery guarantee, and the call names its target with
+`factory: "agent"` and `channel: "message"`, and its deadline with `@deadline_ms`. The
+call sends its request as a sink sends a map, as JSON, and `decode: &Jason.decode/1` reads
+the answer into a map with string keys. `Request.decode/1` is the entry channel's parser:
+it makes each request a `Request`, which `watch` takes as it is and the chain into
+`budget` turns into the message's map. `key_by/2` reads the key from the map each chain
+carries.
+
 <!-- tabs-close -->
 
 A request that is not a message goes to `watch`, whose answer is a `response()` end. A
@@ -843,6 +904,106 @@ text, or the session to stream.
 `src/Budget.php`, with the `admitted` and `used` the graph names, is on
 [`token_budget.md`](token_budget.md#count-the-tokens); copy it from the example.
 
+### Elixir
+
+```elixir
+# lib/agentdesk/request.ex: one HTTP request, as the plugin hands it to the gateway.
+defmodule Agentdesk.Request do
+  defstruct [:method, :path, :body]
+
+  @route ~r"^/sessions/([a-z][a-z0-9_-]{0,63})/(messages|events)$"
+
+  # The envelope carries more than the gateway reads.
+  def decode(json) do
+    case Jason.decode(json) do
+      {:ok, %{"method" => method, "path" => path} = envelope} ->
+        {:ok, %__MODULE__{method: method, path: path, body: envelope["body"]}}
+
+      _other ->
+        {:error, "not a request envelope"}
+    end
+  end
+
+  def sends?(request), do: is?(request, "POST", "messages")
+
+  def listens?(request), do: is?(request, "GET", "events")
+
+  def user(request), do: route(request, 1)
+
+  # The session is named after the user.
+  def message(request), do: %{user: user(request), text: request.body || ""}
+
+  defp is?(request, verb, what), do: request.method == verb and route(request, 2) == what
+
+  # "" when the path is not a route.
+  defp route(request, part) do
+    case Regex.run(@route, request.path) do
+      nil -> ""
+      groups -> Enum.at(groups, part)
+    end
+  end
+end
+```
+
+The pattern accepts only a short lower-case name as the user, because the user is the id
+of the session the gateway calls. The body is the plugin's text of the request body,
+absent when it is not valid UTF-8. `decode/1` is handed the envelope's bytes, and reads
+the three fields the gateway needs from an envelope that carries more.
+
+```elixir
+# lib/agentdesk/watch.ex: a session's events, or 404.
+defmodule Agentdesk.Watch do
+  use Flezha.SDK.Tasklet, name: "watch"
+
+  @impl true
+  def run(request, state, ctx) do
+    emit(
+      ctx,
+      if Request.listens?(request) do
+        %{stream: Request.user(request)}
+      else
+        %{status: 404, body: "no such route"}
+      end
+    )
+
+    {:ok, state}
+  end
+end
+```
+
+```elixir
+# lib/agentdesk/admit.ex: 202 when the message goes on, 429 over the budget.
+defmodule Agentdesk.Admit do
+  use Flezha.SDK.Tasklet, name: "admit"
+
+  @impl true
+  def run(verdict, state, ctx) do
+    user = verdict.message.user
+
+    emit(
+      ctx,
+      if Budget.admitted?(verdict) do
+        %{status: 202, body: "sent to #{user}"}
+      else
+        %{
+          status: 429,
+          body: "#{user} has used #{verdict.spent} of today's #{Budget.daily_tokens()} tokens"
+        }
+      end
+    )
+
+    {:ok, state}
+  end
+end
+```
+
+An answer is the map the plugin expects, sent as JSON: a status and a body, sent as
+text, or the session to stream.
+
+`budget.ex`, with the `admitted?/1`, `used/1` and `daily_tokens/0` the graph and `admit`
+name, is on [`token_budget.md`](token_budget.md#count-the-tokens); copy it from the
+example.
+
 <!-- tabs-close -->
 
 ## A second way into a session
@@ -988,6 +1149,26 @@ reach the same `reply`, with the same conversation. In `runner.php`:
     ->registerFactory(GatewayOperator::class)
 ```
 
+### Elixir
+
+The message is the map `Request.message/1` builds, the user and the text, so there is no
+struct to add. In `Agentdesk.AgentOperator`'s `channels/1`, after the `turn` chain:
+
+```elixir
+    # from the gateway
+    c
+    |> input_with("message", &Jason.decode/1)
+    |> map(& &1["text"])
+    |> into(Reply)
+```
+
+`into(Reply)` names the tasklet the `turn` chain already feeds, so both channels reach
+the same `reply`, with the same conversation. In `Agentdesk.Application`:
+
+```elixir
+       operators: [Agentdesk.AgentOperator, Agentdesk.GatewayOperator],
+```
+
 <!-- tabs-close -->
 
 ## Start the gateway
@@ -1029,6 +1210,14 @@ There is nothing to install again: the image copies the new files as they are.
 ### PHP
 
 There is nothing to compile: the image copies the new classes as they are.
+
+### Elixir
+
+```sh
+$ MIX_ENV=prod mix release
+```
+
+`mix.exs` lets a new release replace the last one without asking.
 
 <!-- tabs-close -->
 

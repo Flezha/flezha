@@ -121,6 +121,14 @@ def gateway(c: flezha.Channels) -> None:
         $c->effectivelyOnce();                       // each request and answer on disk before it runs
 ```
 
+### Elixir
+
+```elixir
+  def channels(c) do
+    # each request and answer on disk before it runs
+    effectively_once(c)
+```
+
 <!-- tabs-close -->
 
 The gateway now writes each HTTP request to its input log before it runs, and each answer

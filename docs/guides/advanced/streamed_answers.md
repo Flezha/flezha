@@ -224,6 +224,51 @@ pause holds the runner, which serves every session on one thread, for the length
 answer. The message limit is for [`rewinding_a_turn.md`](rewinding_a_turn.md#a-turn-that-fails).
 [`php_sdk.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/php_sdk.md#authoring) has the details of parts.
 
+### Elixir
+
+```elixir
+# lib/agentdesk/demo_model.ex: a canned answer, one token at a time.
+defmodule Agentdesk.DemoModel do
+  defmodule Answer do
+    # Written as JSON with its text first.
+    @derive {Jason.Encoder, only: [:text, :tokens]}
+    defstruct [:text, :tokens]
+  end
+
+  @max_message 200
+  @per_token_ms 50
+
+  def answer(earlier, message, part) do
+    characters = String.length(message)
+
+    if characters > @max_message do
+      {:error,
+       {:non_retryable,
+        "the demo model reads at most #{@max_message} characters, and this message has #{characters}"}}
+    else
+      text = ~s(Message #{length(earlier) + 1}: you said "#{message}". I am a demo model.)
+      tokens = Regex.split(~r/(?<= )/, text)
+
+      for {token, i} <- Enum.with_index(tokens, 1) do
+        part.(%Answer{text: token, tokens: i})
+        Process.sleep(@per_token_ms)
+      end
+
+      {:ok, %Answer{text: text, tokens: length(tokens)}}
+    end
+  end
+end
+```
+
+`reply` passes `&part(ctx, &1)` as `part`, so every token leaves as a part while `run/3`
+is still running, and the whole answer is returned at the end. A real model's client
+would be called here instead, handing each token it streams to `part` the same way. Each
+session runs in a process of its own, so the pause holds only this one. The message
+limit is for [`rewinding_a_turn.md`](rewinding_a_turn.md#a-turn-that-fails), and its
+refusal is `{:error, {:non_retryable, reason}}`, so it is not tried again. `Answer`
+derives its JSON encoder with its fields in order, so the text comes first.
+[`elixir_sdk.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/elixir_sdk.md#the-behaviours-beneath) has the details of parts.
+
 <!-- tabs-close -->
 
 ## What a part is

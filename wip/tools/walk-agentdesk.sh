@@ -53,6 +53,7 @@ build_desk() {
     python) echo "python3 -m pip install --quiet --upgrade --target vendor ../../dist/flezha-0.1.0-*.whl" ;; # the checkout's wheel, per the README
     ruby) echo "mkdir -p vendor/cache && cp ../../pkg/flezha-0.1.0-*.gem vendor/cache/ && bundle cache --quiet" ;; # the checkout's gem, per the README
     node) echo "npm install --no-save --install-links --silent ../.. && mkdir -p node_modules/@flezha/sdk/native && cp ../../native/flz_core_ffi.node node_modules/@flezha/sdk/native/" ;; # the checkout's package and addon, per the README
+    elixir) echo "mix deps.get && MIX_ENV=prod mix release --quiet" ;; # the checkout's package by path, per the README
     *) echo "walk: no build command for $SDK yet; add it here" >&2; exit 1 ;;
   esac
 }
@@ -254,6 +255,7 @@ k3s_up() {
   port=$(docker port "$K3S" 6443/tcp | sed -n 's/^127\.0\.0\.1://p' | head -1)
   (umask 077 && docker exec "$K3S" cat /etc/rancher/k3s/k3s.yaml |
     sed "s#https://127.0.0.1:6443#https://127.0.0.1:$port#" >"$KUBECONFIG")
+  until_ok 60 "kubectl get nodes" # the API answers 503 for a moment after the kubeconfig appears
   kubectl get nodes >/dev/null || exit 1
   until_ok 180 "kubectl wait --for=condition=Ready node --all --timeout=5s"
 }

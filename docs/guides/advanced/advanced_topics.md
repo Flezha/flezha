@@ -32,6 +32,7 @@ flowchart LR
 > | Python | Python 3.11 or later with pip |
 > | Ruby | Ruby 3.3 or later with Bundler |
 > | PHP | PHP 8.4 or later with `ext-ffi`, and Composer |
+> | Elixir | Elixir 1.17 or later with Erlang/OTP |
 >
 > - **A Kubernetes cluster, such as k3s, and `kubectl`**, for
 >   [`kubernetes_deployment.md`](kubernetes_deployment.md).

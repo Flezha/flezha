@@ -227,6 +227,48 @@ final class AgentOperator extends BoundedOperator
 [`rewinding_a_turn.md`](rewinding_a_turn.md#a-turn-that-fails) shows it. `turn` reads its
 message as text; `message` names no codec, so its JSON arrives as an array.
 
+### Elixir
+
+The whole example:
+[`sdk/elixir/examples/agentdesk`](https://github.com/flezha/flezha_elixir_sdk/tree/main/examples/agentdesk).
+
+```elixir
+# lib/agentdesk/agent_operator.ex: one conversation, one turn per message.
+defmodule Agentdesk.AgentOperator do
+  use Flezha.SDK.BoundedOperator,
+    factory_id: "agent",
+    # one turn per message
+    loop_mode: :per_input,
+    # a failed turn fails alone
+    rollback_mode: :keep_progress
+
+  @impl true
+  def channels(c) do
+    c
+    |> input("turn")
+    |> into(Reply)
+    # to whoever listens
+    |> sink("answer")
+    |> into(Deliver)
+    # to whoever called
+    |> response()
+
+    # from the gateway
+    c
+    |> input_with("message", &Jason.decode/1)
+    |> map(& &1["text"])
+    |> into(Reply)
+  end
+end
+```
+
+`loop_mode: :per_input` runs the chain once per message instead of once in all.
+`rollback_mode: :keep_progress` is what a failing turn needs, and
+[`rewinding_a_turn.md`](rewinding_a_turn.md#a-turn-that-fails) shows it. An entry channel
+passes bytes, so `turn`'s message arrives as text, and `message` decodes its JSON with
+`Jason.decode/1` into a map with string keys. `sink/2` answers the handle it was given, so
+the chain goes on after it into `Deliver`.
+
 <!-- tabs-close -->
 
 A message arrives on the entry channel `turn`, and `reply` answers it. The answer
@@ -616,6 +658,67 @@ final class Deliver extends Tasklet
 }
 ```
 
+### Elixir
+
+```elixir
+# lib/agentdesk/reply.ex: answers a message with the demo model, and keeps the conversation.
+defmodule Agentdesk.Reply do
+  use Flezha.SDK.Tasklet, name: "reply"
+
+  # What the session remembers.
+  state do
+    field(:messages, :list, default: [])
+  end
+
+  defchange said(conversation, message) do
+    %{conversation | messages: conversation.messages ++ [message]}
+  end
+
+  defchange unsaid(conversation) do
+    %{conversation | messages: Enum.drop(conversation.messages, -1)}
+  end
+
+  @impl true
+  def run(message, conversation, ctx) do
+    with {:ok, answer} <- DemoModel.answer(conversation.messages, message, &part(ctx, &1)) do
+      emit(ctx, answer)
+      {:ok, said(conversation, ctx, message)}
+    end
+  end
+
+  # The undo, when a turn is taken back: the conversation forgets its message.
+  @impl true
+  def compensate(_answers, conversation, ctx) do
+    IO.puts(~s([undo] forgot "#{List.last(conversation.messages)}"))
+    {:ok, unsaid(conversation, ctx)}
+  end
+end
+```
+
+The `state` block is what the session remembers, and each `defchange` is one change to
+it, a message said or the last one taken back. An answer is the demo model's `Answer`,
+its text and the number of tokens the model used for it. `run/3` hands the model a
+function that sends the answer through `part/2` while it is still being written, which
+[`streamed_answers.md`](streamed_answers.md) explains, and `compensate/3` is the undo that
+[`rewinding_a_turn.md`](rewinding_a_turn.md) uses.
+
+```elixir
+# lib/agentdesk/deliver.ex: hands the finished answer to the caller.
+defmodule Agentdesk.Deliver do
+  use Flezha.SDK.Tasklet, name: "deliver"
+
+  @impl true
+  def run(answer, state, ctx) do
+    emit(ctx, answer)
+    {:ok, state}
+  end
+
+  # The undo, when a turn is taken back: an answer already given has nothing to take back.
+  @impl true
+  def compensate(_answers, state, _ctx), do: {:ok, state}
+end
+```
+
 <!-- tabs-close -->
 
 ## The runner
@@ -846,6 +949,47 @@ project's `.dockerignore` sends Docker only `runner.php`, `src/` and `vendor/`. 
 runner stops when its standard input closes, and a container starts with it closed, so
 the image gives the runner a pipe that stays open.
 
+### Elixir
+
+```elixir
+# lib/agentdesk/application.ex: the runner.
+defmodule Agentdesk.Application do
+  use Application
+
+  @impl true
+  def start(_type, _args) do
+    children = [
+      # `:uds` because this node is not the controller's.
+      {Flezha.SDK,
+       namespace: "agents",
+       operators: [Agentdesk.AgentOperator, Agentdesk.GatewayOperator],
+       transport: :uds}
+    ]
+
+    Supervisor.start_link(children, strategy: :one_for_one)
+  end
+end
+```
+
+The runner is the project's application: `mix.exs` names `Agentdesk.Application` as the
+module that starts it, and `Flezha.SDK` under its supervisor connects to the controller.
+
+The runner's image is the release Mix builds, on a Debian runtime:
+
+```dockerfile
+# The runner's image: the release `MIX_ENV=prod mix release` builds, on a Debian 13 runtime.
+FROM debian:trixie-slim
+COPY _build/prod/rel/agentdesk /agentdesk
+# The runner is not an Erlang cluster node, and writes its temporary files where it may.
+ENV LANG=C.UTF-8 RELEASE_DISTRIBUTION=none RELEASE_TMP=/tmp
+USER 1000
+ENTRYPOINT ["/agentdesk/bin/agentdesk", "start"]
+```
+
+The image copies the release built on your machine, with the Erlang runtime it carries,
+so one built against a C library newer than Debian 13's may not start in it. The
+project's `.dockerignore` sends Docker the release alone, not the rest of `_build/`.
+
 <!-- tabs-close -->
 
 ## The containers
@@ -948,6 +1092,13 @@ $ bundle cache
 
 ```sh
 $ composer install
+```
+
+### Elixir
+
+```sh
+$ mix deps.get
+$ MIX_ENV=prod mix release
 ```
 
 <!-- tabs-close -->
