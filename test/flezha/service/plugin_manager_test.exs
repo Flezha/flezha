@@ -590,6 +590,18 @@ defmodule Flezha.Service.PluginManagerTest do
                PluginManager.enable_plugin("ohlc_ws", plugin)
     end
 
+    test "an enable every member refuses answers a member's own reason" do
+      OperatorManager
+      |> Mimic.stub(:get_operator_pid, fn ns, id -> {:error, {:operator_not_found, ns, id}} end)
+
+      plugin = %{build_plugin("ohlc_ws", url: "wss://x") | operator_id: @group}
+
+      assert {:error, {:operator_not_found, @namespace, member}} =
+               PluginManager.enable_plugin("ohlc_ws", plugin)
+
+      assert String.starts_with?(member, @group <> "#p")
+    end
+
     test "a partial enable names who succeeded and who did not", %{
       members: members,
       overwatch: overwatch

@@ -150,6 +150,12 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   ([`plugins/http_poll.md`](plugins/http_poll.md)); `Websocket` re-subscribes a live socket
   without reconnecting by diffing a polled item set, committing each delta only on an ack carrying
   its `req_id` ([`plugins/websocket_subscription.md`](plugins/websocket_subscription.md)).
+- **HTTP server plugin** — the `flezha_http` package's provider `http_server`, built outside this
+  repository: every HTTP request becomes one call of the operator it is enabled on, carrying a
+  **request envelope** (method, path, query, the allowed headers, the body), and the operator's
+  `response()` answers with an **answer envelope**, a status, headers and a body, or a **stream
+  answer** naming an operator whose parts and outputs the plugin writes as server-sent events
+  through a listener ([`plugins/http_server.md`](plugins/http_server.md)).
 
 ## Durability vocabulary
 

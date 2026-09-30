@@ -95,22 +95,37 @@ defmodule Flezha.Plugin.Installer.Loader do
   end
 
   @doc """
-  A refusal of `module`'s as a caller sees it. A reason the error catalogue maps
-  keeps its code. Any other reason of a loaded package's provider is wrapped as
-  `kind`, `:provider_refused` for its options or `:provider_failed` for its
-  worker, naming the package and the provider, since a package adds no codes of
-  its own. A first-party provider's reason is returned as it is.
+  A refusal of `module`'s as a caller sees it. A tagged reason the error
+  catalogue maps keeps its code (a bare atom is wrapped), and so does a detailed reason (`Flezha.Error.detailed?/1`) a
+  package's worker stopped with at start. Any other reason of a loaded package's provider is wrapped as `kind`,
+  `:provider_refused` for its options or `:provider_failed` for its worker,
+  naming the package and the provider. A first-party provider's reason is
+  returned as it is.
   """
   @spec refusal(:provider_refused | :provider_failed, module(), term()) :: term()
   def refusal(kind, module, reason) do
-    with false <- Error.catalogued?(reason, nil),
+    with false <- own_code?(reason),
          %{} = package <-
            Enum.find(outcomes(), &(&1.status == :loaded and module in Map.values(&1.providers))) do
-      provider = Enum.find_value(package.providers, fn {id, m} -> if m == module, do: id end)
-      {kind, package.id, provider, if(is_binary(reason), do: reason, else: inspect(reason))}
+      own_or_wrapped(kind, package, module, reason)
     else
       _ -> reason
     end
+  end
+
+  # A provider's own code is a catalogued reason with a shape of its own: a bare
+  # atom (`:closed`, `:timeout`) only shares a tag with the controller's words.
+  defp own_code?(reason), do: is_tuple(reason) and Error.catalogued?(reason, nil)
+
+  defp own_or_wrapped(kind, package, module, {:worker_start_failed, _key, own} = reason) do
+    if Error.detailed?(own), do: own, else: wrap(kind, package, module, reason)
+  end
+
+  defp own_or_wrapped(kind, package, module, reason), do: wrap(kind, package, module, reason)
+
+  defp wrap(kind, package, module, reason) do
+    provider = Enum.find_value(package.providers, fn {id, m} -> if m == module, do: id end)
+    {kind, package.id, provider, if(is_binary(reason), do: reason, else: inspect(reason))}
   end
 
   @doc "Forget the recorded outcomes. For tests that load packages in one VM."

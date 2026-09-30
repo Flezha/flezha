@@ -226,11 +226,19 @@ defmodule Flezha.Operator.Plugins do
   defp activated(%Overwatch{} = state, plugin_id) do
     {state, failed} = bring_up(state)
 
-    # A package provider's own failure already names its package and provider.
+    # A package provider's failure already names its package and provider, and
+    # a detailed reason (`Flezha.Error.detailed?/1`) is its provider's own code.
     case List.keyfind(failed, plugin_id, 0) do
-      nil -> {:ok, state}
-      {^plugin_id, {:provider_failed, _, _, _} = reason} -> {:error, reason, state}
-      {^plugin_id, reason} -> {:error, {:activation_failed, reason}, state}
+      nil ->
+        {:ok, state}
+
+      {^plugin_id, {:provider_failed, _, _, _} = reason} ->
+        {:error, reason, state}
+
+      {^plugin_id, reason} ->
+        if Flezha.Error.detailed?(reason),
+          do: {:error, reason, state},
+          else: {:error, {:activation_failed, reason}, state}
     end
   end
 

@@ -155,6 +155,11 @@ defmodule Flezha.Service.PluginManager do
       [] ->
         {:ok, group_enable_summary(results)}
 
+      # Nothing was enabled, so nothing is partial: the members' own refusal
+      # says why.
+      [{_member, refused} | _] = failed when length(failed) == length(results) ->
+        refused
+
       failed ->
         {:error,
          {:group_enable_partial, length(results) - length(failed), length(results),

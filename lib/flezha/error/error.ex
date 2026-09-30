@@ -87,6 +87,18 @@ defmodule Flezha.Error do
   end
 
   @doc """
+  Whether `reason` is one tag and a map of its details that the catalogue maps:
+  the shape a provider gives a failure it means a caller to see by its own code
+  (`{:http_listen_failed, %{...}}`), as against a bare term that happens to share
+  a catalogued tag.
+  """
+  @spec detailed?(term()) :: boolean()
+  def detailed?({tag, %{} = details} = reason) when is_atom(tag) and not is_struct(details),
+    do: catalogued?(reason, nil)
+
+  def detailed?(_reason), do: false
+
+  @doc """
   The error `code` names, its templates filled from `details`. A code the
   catalogue does not know is `internal.uncatalogued`, naming it.
   """

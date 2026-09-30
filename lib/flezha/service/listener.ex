@@ -60,10 +60,28 @@ defmodule Flezha.Service.Listener do
     Keyword.has_key?(@hooks, direction) ||
       raise ArgumentError, "direction must be :output or :input"
 
-    window_ms = span!(opts, :window_ms)
-    idle_ms = span!(opts, :idle_ms)
-    plugin_id = Identificator.mint(:plugin, "io_listener")
+    target = %{
+      namespace: namespace,
+      operator_id: operator_id,
+      plugin_id: Identificator.mint(:plugin, "io_listener"),
+      direction: direction,
+      window_ms: span!(opts, :window_ms),
+      idle_ms: span!(opts, :idle_ms)
+    }
 
+    # A target neither registered nor declared is refused on one read, with
+    # nothing to detach: the enable and the detach would each wait out a hub
+    # that has not settled before saying so.
+    if PluginManager.attachment(namespace, operator_id, target.plugin_id) == :operator_ended,
+      do: refused({:operator_not_found, namespace, operator_id}),
+      else: attached(target, opts, handler)
+  end
+
+  defp attached(
+         %{namespace: namespace, operator_id: operator_id, plugin_id: plugin_id} = t,
+         opts,
+         handler
+       ) do
     {:ok, relay} =
       Relay.start_link(%{
         caller: self(),
@@ -71,19 +89,19 @@ defmodule Flezha.Service.Listener do
         namespace: namespace,
         operator_id: operator_id,
         plugin_id: plugin_id,
-        direction: direction
+        direction: t.direction
       })
 
     try do
-      with :ok <- attach(namespace, operator_id, plugin_id, direction, relay) do
+      with :ok <- attach(namespace, operator_id, plugin_id, t.direction, relay) do
         Keyword.get(opts, :before, fn -> :ok end).()
 
         loop(%{
           relay: relay,
           handler: handler,
           asked: false,
-          deadline: deadline(window_ms),
-          idle_ms: idle_ms
+          deadline: deadline(t.window_ms),
+          idle_ms: t.idle_ms
         })
       end
     after

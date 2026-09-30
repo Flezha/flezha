@@ -500,9 +500,11 @@ defmodule FlezhaTest.Operator.OverwatchPluginSubscribeTest do
 
     @impl true
     def activate(_opts) do
-      if :persistent_term.get({__MODULE__, :down}, true),
-        do: {:error, :upstream_down},
-        else: :ok
+      case :persistent_term.get({__MODULE__, :down}, true) do
+        true -> {:error, :upstream_down}
+        false -> :ok
+        reason -> {:error, reason}
+      end
     end
 
     @impl true
@@ -651,6 +653,34 @@ defmodule FlezhaTest.Operator.OverwatchPluginSubscribeTest do
       # loop diffs as missing and heals under backoff.
       assert Table.running_ids(new_state.extensions) == []
       assert Table.subscribed_ids(new_state.extensions) == ["src"]
+    end
+
+    test "an activation failure the catalogue maps keeps its own code", ctx do
+      reason = {:http_listen_failed, %{operator: "heal_operator", port: 1, reason: :eaddrinuse}}
+      :persistent_term.put({FlappyProvider, :down}, reason)
+
+      {:reply, reply, new_state} =
+        Overwatch.handle_call(
+          {:plugin_subscribe, "src", ctx.plugin},
+          {self(), make_ref()},
+          ctx.state
+        )
+
+      assert {:error, ^reason} = reply
+      assert Table.phase(new_state.extensions, "src") == :prepared
+    end
+
+    test "a bare reason that shares a catalogued tag is still an activation failure", ctx do
+      :persistent_term.put({FlappyProvider, :down}, :closed)
+
+      {:reply, reply, _state} =
+        Overwatch.handle_call(
+          {:plugin_subscribe, "src", ctx.plugin},
+          {self(), make_ref()},
+          ctx.state
+        )
+
+      assert {:error, {:activation_failed, :closed}} = reply
     end
 
     test "plugin_restart whose activation fails answers an error, not :ok", ctx do

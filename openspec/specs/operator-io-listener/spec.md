@@ -76,6 +76,18 @@ payload. An input listener (`--input`) SHALL print neither parts nor notices.
   is `error=input.dead_lettered entry=<the entry>`, and in JSON a line with
   `"kind": "dead_lettered"` and an `error` object carrying that code
 
+### Requirement: A listener on an operator that does not exist SHALL be refused at once
+
+`Flezha.Service.Listener.listen/4` SHALL answer `operator.not_found`, having enabled and
+detached nothing, when its target is neither registered nor declared in its namespace, read
+once from the namespace's rows before any enable. A target that is declared but not yet
+registered, or whose rows cannot be read, SHALL go through the enable as before.
+
+#### Scenario: A target that exists nowhere
+
+- **WHEN** a listener is started on `ghost` in a namespace where no operator or group of that id is registered or declared
+- **THEN** it SHALL answer `operator.not_found` without waiting for the namespace's hub to settle, and no listener plugin SHALL be enabled or detached
+
 ### Requirement: A listener SHALL be bounded, and SHALL leave nothing behind
 
 A listener SHALL run for `--duration-ms` milliseconds, sharing the option, its default

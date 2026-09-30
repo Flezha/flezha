@@ -231,7 +231,8 @@ restart that loads the package.
 | `plugin.provider_failed` | internal | a package provider's worker failed to start with such a reason |
 
 A package cannot add codes of its own. A provider refusal whose reason the catalogue
-already maps keeps that code; any other is wrapped as `plugin.provider_refused` or
+already maps keeps that code, and so does the reason a provider's worker stopped with at
+start; any other is wrapped as `plugin.provider_refused` or
 `plugin.provider_failed`, with the package, the provider and the package's own text in
 `details`. The full catalogue is [`errors.md`](../errors.md).
 

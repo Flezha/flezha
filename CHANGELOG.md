@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Added: an operator behind HTTP, as a plugin package
+
+The HTTP server plugin, the package `flezha_http` (provider `http_server`), is built in its own
+repository, `Flezha/flezha_http_plugin`, on Bandit and Plug, and installed with
+`flz plugin install`. Enabled on an operator of either kind, it listens on `port` (loopback
+unless `bind` says otherwise) and makes every request one outside call of that operator,
+carrying a JSON request envelope; the operator's `response()` answers with a status, headers
+and a body, or with a stream answer naming an operator of its namespace, whose parts, outputs
+and dead-letter notices the plugin then writes as server-sent events. Connections, waiting
+requests (counted before the body is read), bodies (size and one deadline; a body without
+`content-length` is refused 411) and open streams are bounded, only the headers `pass_headers` names reach the operator, and every failure is an HTTP
+status with the error model's document, stripped of a tasklet's error text and entries. A member of a partition group
+is refused. The reference is `docs/plugins/http_server.md`.
+
+The catalogue gains the plugin's eight codes (`http.body_too_large`, `http.body_timeout`,
+`http.length_required`,
+`http.busy`, `http.streams_full`, `http.answer_invalid`, `http.partitioned_host`,
+`http.listen_failed`). A package provider's worker that stops at start with a detailed reason
+(one tag and a map of details the catalogue maps, `Flezha.Error.detailed?/1`) keeps that code,
+and so does such an activation failure, instead of `plugin.provider_failed` or
+`plugin.activation_failed`. `flz plugin enable` on a partition
+group that every member refuses answers the members' own error instead of
+`plugin.group_enable_partial`. A listener, `flz operator listen` included, on an operator
+neither running nor declared is refused with `operator.not_found` at once, where it waited out
+the hub's settling first.
+
 ### Added: an operator calls another from its graph
 
 `call(...)` ends a chain on a call to another operator, in every SDK and from an operator of

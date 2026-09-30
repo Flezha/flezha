@@ -719,8 +719,9 @@ pointing at `flz plugin list --installed`. `flz plugin enable` naming a provider
 refused package declares SHALL answer `plugin.provider_unavailable`, naming the package and
 its refusal code, and SHALL NOT answer that the provider is unknown.
 
-A loaded package's provider refusal whose reason the error catalogue maps by its tag SHALL
-keep the code the catalogue gives it, on the enable path and when the refusal is nested in an
+A loaded package's provider refusal whose reason is a tuple the error catalogue maps by its
+tag SHALL keep the code the catalogue gives it (a bare atom such as `:closed` SHALL be wrapped
+as below), on the enable path and when the refusal is nested in an
 operator's park reason. A refusal whose reason the catalogue does not map SHALL be wrapped: a
 provider that refuses its options in `init_provider/1` SHALL answer `plugin.provider_refused`
 (invalid), and one whose declared worker fails to start SHALL answer

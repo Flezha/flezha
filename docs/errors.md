@@ -166,6 +166,19 @@ SDK raises or returns its one error type carrying them.
 |---|---|---|---|---|
 | `durability.sync_ship_failed` | unavailable | 7 | operator '{operator}' declares synchronous durability, and shipping its state to the durability backend failed: {reason} |  |
 
+### http
+
+| Code | Class | Exit | Message | Hint |
+|---|---|---|---|---|
+| `http.answer_invalid` | invalid | 2 | operator '{operator}' answered the request with something that is not an HTTP answer envelope: {reason} |  |
+| `http.body_timeout` | invalid | 2 | the client stopped sending the request body for {timeout_ms} ms |  |
+| `http.body_too_large` | invalid | 2 | the request body is larger than the limit of {limit} bytes |  |
+| `http.busy` | unavailable | 7 | operator '{operator}' already has {max_waiting} requests waiting for an answer; try again |  |
+| `http.length_required` | invalid | 2 | a request body must carry a content-length: a body sent without one is refused before it is read |  |
+| `http.listen_failed` | unavailable | 7 | the HTTP server of operator '{operator}' cannot listen on {address} port {port}: {reason} |  |
+| `http.partitioned_host` | invalid | 2 | the HTTP server cannot be enabled on '{operator}', a member of a partition group: one port serves one operator |  |
+| `http.streams_full` | unavailable | 7 | operator '{operator}' already has {max_streams} streams open; try again |  |
+
 ### input
 
 | Code | Class | Exit | Message | Hint |

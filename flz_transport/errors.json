@@ -487,6 +487,52 @@
         {"tag": "sync_ship_failed", "args": ["operator", "reason"]}
       ]
     },
+    "http.answer_invalid": {
+      "class": "invalid",
+      "message": "operator '{operator}' answered the request with something that is not an HTTP answer envelope: {reason}",
+      "details": ["operator", "reason"]
+    },
+    "http.body_timeout": {
+      "class": "invalid",
+      "message": "the client stopped sending the request body for {timeout_ms} ms",
+      "details": ["timeout_ms"]
+    },
+    "http.body_too_large": {
+      "class": "invalid",
+      "message": "the request body is larger than the limit of {limit} bytes",
+      "details": ["limit"]
+    },
+    "http.busy": {
+      "class": "unavailable",
+      "message": "operator '{operator}' already has {max_waiting} requests waiting for an answer; try again",
+      "details": ["operator", "max_waiting"]
+    },
+    "http.length_required": {
+      "class": "invalid",
+      "message": "a request body must carry a content-length: a body sent without one is refused before it is read",
+      "details": []
+    },
+    "http.listen_failed": {
+      "class": "unavailable",
+      "message": "the HTTP server of operator '{operator}' cannot listen on {address} port {port}: {reason}",
+      "details": ["operator", "address", "port", "reason"],
+      "reasons": [
+        {"tag": "http_listen_failed", "args": ["details"]}
+      ]
+    },
+    "http.partitioned_host": {
+      "class": "invalid",
+      "message": "the HTTP server cannot be enabled on '{operator}', a member of a partition group: one port serves one operator",
+      "details": ["operator"],
+      "reasons": [
+        {"tag": "http_partitioned_host", "args": ["details"]}
+      ]
+    },
+    "http.streams_full": {
+      "class": "unavailable",
+      "message": "operator '{operator}' already has {max_streams} streams open; try again",
+      "details": ["operator", "max_streams"]
+    },
     "input.dead_lettered": {
       "class": "unavailable",
       "message": "an input of operator '{operator}' on channel '{channel}' was dead-lettered as '{entry}' after {attempts} attempt(s): {error}",

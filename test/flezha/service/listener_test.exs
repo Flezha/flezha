@@ -36,6 +36,7 @@ defmodule Flezha.Service.ListenerTest do
     stub(PartitionGroup, :members, fn _ns, _op -> [] end)
     stub(Directory, :hub_nodes, fn _ns -> [node()] end)
     stub(HubManager, :declared_operators, fn _ns -> [] end)
+    stub(HubManager, :operator_plugins, fn _ns, _op -> {:ok, []} end)
     :ok
   end
 
@@ -123,6 +124,18 @@ defmodule Flezha.Service.ListenerTest do
     assert_received {:detached, "ns", "op", _id}
   end
 
+  test "a target neither registered nor declared is refused before anything is enabled" do
+    stub(HubManager, :operator_plugins, fn "ns", "ghost" ->
+      {:error, {:operator_not_found, "ns", "ghost"}}
+    end)
+
+    assert {:error, %Flezha.Error{code: "operator.not_found"}} =
+             Listener.listen("ns", "ghost", [], fn _ -> :continue end)
+
+    refute_received {:attached, _, _, _}
+    refute_received {:detached, _, _, _}
+  end
+
   test "the relay answers the heartbeat, and dies with its caller" do
     %{pid: pid, relay: relay} = listening([])
     send(relay, {:heartbeat_keepalive, self()})
@@ -208,11 +221,12 @@ defmodule Flezha.Service.ListenerTest do
     end
 
     test "an operator no longer registered ended, after what was held before it" do
+      %{pid: pid, relay: relay, id: id} = listening([])
+
       stub(HubManager, :operator_plugins, fn "ns", "op" ->
         {:error, {:operator_not_found, "ns", "op"}}
       end)
 
-      %{pid: pid, relay: relay, id: id} = listening([])
       output(relay, "last")
       send(relay, {:listener_released, id})
 

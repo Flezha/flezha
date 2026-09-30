@@ -37,6 +37,9 @@ defmodule Flezha.Service.CliManager.ListenTest do
       :ok
     end)
 
+    # The operator is registered: the listener's existence read lets it attach.
+    stub(PluginManager, :attachment, fn _ns, _op, _id -> :detached end)
+
     stub(OperatorManager, :send_io_confirming, fn _op, _ns, _message, _metadata ->
       send(test, {:call, :deliver, nil})
       :ok

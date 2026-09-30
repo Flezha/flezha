@@ -251,6 +251,40 @@ defmodule Flezha.Plugin.Installer.LoaderTest do
 
     catalogued = {:unknown_provider, "x"}
     assert Loader.refusal(:provider_failed, FlezhaExamplePlugin.Stamp, catalogued) == catalogued
+
+    # A bare atom that shares a catalogued tag is not the provider's own code.
+    assert {:provider_refused, "flezha_example_plugin", "example_stamp", ":closed"} =
+             Loader.refusal(:provider_refused, FlezhaExamplePlugin.Stamp, :closed)
+
+    partitioned = {:http_partitioned_host, %{operator: "pg#p0"}}
+
+    assert Loader.refusal(:provider_refused, FlezhaExamplePlugin.Stamp, partitioned) ==
+             partitioned
+
+    # A worker that stopped at start with a detailed reason keeps that code; a
+    # bare term that shares a catalogued tag is wrapped.
+    detailed = {:http_listen_failed, %{operator: "op", port: 1}}
+
+    assert Loader.refusal(
+             :provider_failed,
+             FlezhaExamplePlugin.Stamp,
+             {:worker_start_failed, "k", detailed}
+           ) == detailed
+
+    assert {:provider_failed, "flezha_example_plugin", "example_stamp", _} =
+             Loader.refusal(
+               :provider_failed,
+               FlezhaExamplePlugin.Stamp,
+               {:worker_start_failed, "k", :closed}
+             )
+
+    assert {:provider_failed, "flezha_example_plugin", "example_stamp", _} =
+             Loader.refusal(
+               :provider_failed,
+               FlezhaExamplePlugin.Stamp,
+               {:worker_start_failed, "k", :odd}
+             )
+
     assert Loader.refusal(:provider_refused, Flezha.Plugin.Provider.StdOut, :odd) == :odd
   end
 end

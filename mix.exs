@@ -216,6 +216,7 @@ defmodule Flezha.MixProject do
         "docs/plugins/kafka_producer.md",
         "docs/plugins/postgres_sink.md",
         "docs/plugins/operator_forward.md",
+        "docs/plugins/http_server.md",
         "docs/plugins/installation.md",
         "docs/troubleshooting/controller_will_not_start.md",
         "docs/troubleshooting/runner_cannot_connect.md",
