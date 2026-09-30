@@ -4,9 +4,10 @@
 #
 #   wip/tools/walk-agentdesk.sh <sdk> [page...]
 #
-# Pages, in the guides' order: session streamed sleeping rewinding plugins. With
-# none named, all of them run; a page picks up what the pages before it left,
-# so `session` always runs first. The Compose project is agentdesk-walk-<sdk>,
+# Pages, in the guides' order: session streamed sleeping rewinding plugins
+# gateway browser budget. With none named, all of them run; a page picks up what
+# the pages before it left, so `session` always runs first, and the HTTP pages
+# need `plugins`. The Compose project is agentdesk-walk-<sdk>,
 # and everything it started (containers, network, volumes, the images Compose
 # built) is removed at the end, as are the plugin package copied into the
 # project and the scratch copies `plugins` packages from.
@@ -18,7 +19,9 @@
 #
 # Every step's command and output go to $OUT/<page>/<nn>-<step>.txt, so an
 # output block in a guide is copied from a capture rather than typed. `flz` in
-# a step is the pages' alias: the CLI inside the controller's container.
+# a step is the pages' alias: the CLI inside the controller's container. The
+# HTTP pages reach the gateway on the host's port 8080, which compose.yaml
+# publishes.
 set -uo pipefail
 
 SDK=${1:?usage: walk-agentdesk.sh <sdk> [page...]}
@@ -133,6 +136,36 @@ plugins() {
   runner_log
 }
 
+gateway() {
+  step rebuild "$(build_desk) && docker compose up -d --build --wait runner"
+  runner_up
+  step start "flz operator start gateway --id gateway --namespace agents"
+  step enable "flz plugin enable web http_server --operator_id=gateway --namespace agents --hook=on_terminate --Xport=8080 --Xbind=0.0.0.0 --Xchannel=http"
+  until_ok 30 "curl -s localhost:8080/"
+  step post-anna "curl -si -d 'Hello from the web' localhost:8080/sessions/anna/messages"
+  step post-carol "curl -si -d 'Hi, I am Carol' localhost:8080/sessions/carol/messages"
+  until_ok 30 "flz state get carol/reply --namespace agents | grep -q Carol"
+  step state-carol "flz state get carol/reply --namespace agents"
+  step not-found "curl -si localhost:8080/sessions/carol"
+}
+
+browser() {
+  step events "curl -sN --max-time 5 localhost:8080/sessions/anna/events" &
+  local stream=$!
+  n=$((n + 1))
+  sleep 2
+  step post "curl -s -d 'Tell me more' localhost:8080/sessions/anna/messages"
+  wait "$stream"
+}
+
+budget() {
+  step posts "for text in One Two Three Four; do curl -s -o /dev/null -w '%{http_code}\\n' -d \"\$text\" localhost:8080/sessions/dave/messages; sleep 2; done"
+  step over "curl -si -d 'Five' localhost:8080/sessions/dave/messages"
+  step state "flz state get gateway/budget/dave --namespace agents"
+  step call "flz operator call dave --namespace agents --text 'Still there?'"
+  runner_log
+}
+
 cd "$DESK" || exit 1
 mkdir -p "$OUT"
 if [ "${FLEZHA_WALK_REBUILD:-0}" = 1 ] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
@@ -141,7 +174,7 @@ if [ "${FLEZHA_WALK_REBUILD:-0}" = 1 ] || ! docker image inspect "$IMAGE" >/dev/
     { echo "walk: the controller image did not build, see $OUT/image.log" >&2; exit 1; }
 fi
 trap down EXIT
-for page in ${@:-session streamed sleeping rewinding plugins}; do
+for page in ${@:-session streamed sleeping rewinding plugins gateway browser budget}; do
   n=0
   echo "$page"
   "$page"

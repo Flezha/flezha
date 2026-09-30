@@ -53,6 +53,9 @@ public final class AgentOperator implements BoundedOperator {
                 .sink("answer")                          // to whoever listens
                 .into(Deliver.class)
                 .response();                             // to whoever called
+        c.input(Message.class, "message")                // from the gateway
+                .map(String.class, Message::text)
+                .into(Reply.class);
     }
 }
 ```
@@ -68,7 +71,8 @@ leaves twice. The sink `answer` sends it to whoever listens to the session, whic
 [`streamed_answers.md`](streamed_answers.md) uses. The `response()` end sends it back to
 whoever sent the message and is waiting for the answer. A channel ends in one sink or
 one `response()`, never both, so `deliver` passes the answer on to a channel of its
-own.
+own. The second entry channel, `message`, is for the gateway of
+[`http_gateway.md`](http_gateway.md#a-second-way-into-a-session).
 
 ## Answer a message
 
@@ -151,7 +155,8 @@ public final class Deliver implements Tasklet<Answer, Void, Answer> {
 ## The runner
 
 The runner joins the namespace `agents` and registers the `agent` factory, as
-[`namespaces.md`](../tradedesk/namespaces.md) showed for the tradedesk.
+[`namespaces.md`](../tradedesk/namespaces.md) showed for the tradedesk. The `gateway`
+factory is [`http_gateway.md`](http_gateway.md)'s.
 
 <!-- tabs-open -->
 
@@ -164,6 +169,7 @@ public final class Main {
     public static void main(String[] args) throws Exception {
         FlezhaRunner runner = Flezha.createRunner("agents")
                 .registerFactory(AgentOperator.class)
+                .registerFactory(GatewayOperator.class)
                 .start();
 
         runner.awaitTermination();
@@ -209,6 +215,8 @@ services:
     environment:
       FLEZHA_AUTHZ_ENABLED: "false"
       FLEZHA_DURABILITY_BACKEND: none
+    ports:
+      - "127.0.0.1:8080:8080"              # the gateway's HTTP port, on this machine only
     volumes:
       - app_data:/flezha/app_data
       - sockets:/flezha/app_data/sockets
@@ -239,6 +247,8 @@ volumes:
 - **`FLEZHA_DURABILITY_BACKEND: none`** keeps the state on the controller's own volume
   and nowhere else. The image refuses to start without the setting.
 - **`FLEZHA_PARK_IDLE_MS`** is for [`sleeping_sessions.md`](sleeping_sessions.md).
+- **Port 8080** is for [`http_gateway.md`](http_gateway.md#start-the-gateway); nothing
+  listens on it until then.
 
 ## Start it
 
