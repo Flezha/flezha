@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Added: a published record of what is not yet settled
+
+`docs/publishing/maturity.md` names every part of Flezha that is not settled, and anything it
+does not name is stable. It holds one entry today: the QUIC transport is
+[experimental: quic](docs/publishing/maturity.md#quic), so its settings and behaviour may
+change drastically or it may be removed without a compatibility break. The Unix domain socket
+transport stays the default and is stable. A controller that starts its QUIC listener, a
+runner that selects QUIC and an Elixir SDK runner started over QUIC each log one warning
+saying so, once per process; nothing else changes and no setting is needed to keep using it.
+
+The record also gives each SDK a support tier. Rust, Java and Elixir are tier 1, run by the
+maintainer in a live deployment. Node, Python, Ruby and PHP are tier 2: they pass the same
+full conformance run in CI with every capability present and are permanently supported, but
+the maintainer does not yet run them in a live deployment. Each SDK's README and page under
+`docs/sdk/` states its tier. `scripts/check-feature-maturity.sh`, run with the naming gates,
+keeps the record and the tree agreeing.
+
 ### Added: an operator behind HTTP, as a plugin package
 
 The HTTP server plugin, the package `flezha_http` (provider `http_server`), is built in its own

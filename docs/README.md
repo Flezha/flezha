@@ -15,7 +15,7 @@ operator profiles and the runner model. Everything else is grouped by who reads 
 | [`internals/`](#internals) | controller contributors | How the controller is built |
 | [`runbooks/`](#runbooks) | users, contributors | Step-by-step tasklets for one-off operations |
 | [`troubleshooting/`](#troubleshooting) | users | A symptom, what it means, and the fix |
-| [`publishing/`](#publishing) | the maintainer, before the first public release | The decisions publishing makes irreversible, and which of them block a release |
+| [`publishing/`](#publishing) | the maintainer before the first public release; every user after it | The decisions publishing makes irreversible, which of them block a release, and which parts are not yet settled |
 
 Three references sit at the top level: [`glossary.md`](glossary.md) (vocabulary),
 [`configuration.md`](configuration.md) (every knob, by layer) and
@@ -154,6 +154,7 @@ answer "what are the options"; a guide answers "what do I type".
 | Doc | Covers |
 | --- | --- |
 | [`readiness.md`](publishing/readiness.md) | Every decision the first public release makes irreversible: the blocking/owed test, the record, and the decisions the owner owes |
+| [`maturity.md`](publishing/maturity.md) | Which features are not yet settled, each SDK's support tier, and how an entry is added, graduated and removed |
 
 ## dev notes
 

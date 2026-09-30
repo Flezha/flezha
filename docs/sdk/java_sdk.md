@@ -5,6 +5,9 @@ A Java 21 binding hosted on the shared `flz_core` kernel through
 dispatch, overflow, the retry→park ladder, the partition guard, timers and the
 effectively-once tier are one implementation, not two.
 
+**Support tier:** [tier 1](../publishing/maturity.md#sdk-java), run by the maintainer in a
+live deployment, passes the full conformance run in CI and is permanently supported.
+
 Authoring surface: one tasklet form, a class implementing
 `Tasklet<Input, State, Output>` and carrying `@Tasklet.Spec`, wired by an
 `UnboundedOperator` / `BoundedOperator` in `channels(ChannelBuilder)`, the one

@@ -73,6 +73,8 @@ are served by a `StreamAcceptor` per stream pair.
 
 ### QUIC
 
+The QUIC transport is [experimental: quic](../publishing/maturity.md#quic).
+
 With `FLEZHA_TRANSPORT=quic` the runner opens one QUIC connection (UDP) and
 multiplexes every channel over bidirectional streams inside it.
 

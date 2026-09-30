@@ -69,6 +69,8 @@ use TLS distribution when Controller nodes cross a trust boundary.
 
 ## Transport certificates (QUIC)
 
+The QUIC transport is [experimental: quic](../publishing/maturity.md#quic).
+
 UDS deployments need no certificates: the socket is created `0600` inside a
 `0700` directory, so a local same-uid peer is the node owner. Traversal of that
 directory *is* the authentication, which is why a runner run by another user

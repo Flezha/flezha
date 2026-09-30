@@ -37,12 +37,10 @@ import sys
 sys.dont_write_bytecode = True
 sys.path.insert(0, "scripts")
 import naming_gate
+import record_table
 
 RECORD = "docs/publishing/readiness.md"
 
-# The entries table is found by its header rather than by position: the record
-# carries a second table, and a gate that took "the first table" would silently
-# read the wrong one the day someone reorders the document.
 COLUMNS = ("id", "class", "door", "rule", "check", "owner", "settled-by")
 
 # Every column but `settled-by`, which is empty until the entry is closed.
@@ -50,18 +48,6 @@ REQUIRED = COLUMNS[:-1]
 
 CLASSES = ("blocking", "owed")
 QUALIFIERS = ("decision", "settled")
-
-# The record is published, so it may not carry a coordinate that only exists on
-# a maintainer's box or in a working document the repository does not track.
-FORBIDDEN = (
-    (re.compile(r"(?:/home/|/Users/|~/)[A-Za-z0-9._-]+"), "a home-directory path"),
-    (re.compile(r"\bKI-\d+\b"), "a defect-ledger id"),
-)
-
-
-def fields(line):
-    """The fields of a markdown table row, outer pipes stripped."""
-    return [c.strip() for c in line.strip().strip("|").split("|")]
 
 
 def read_entries():
@@ -79,29 +65,12 @@ def read_entries():
     except OSError as exc:
         return [], [], f"{RECORD}: {exc}"
 
-    start = None
-    for i, line in enumerate(lines):
-        if line.startswith("|") and tuple(fields(line)) == COLUMNS:
-            start = i
-            break
-    if start is None:
+    entries = record_table.rows(lines, COLUMNS)
+    if entries is None:
         return lines, [], (
             f"{RECORD}: no entries table. Expected a header row spelling "
             f"| {' | '.join(COLUMNS)} |"
         )
-
-    entries = []
-    # +2 skips the header and the `---` separator beneath it.
-    for lineno, line in enumerate(lines[start + 2:], start=start + 3):
-        if not line.startswith("|"):
-            break
-        row = fields(line)
-        if len(row) != len(COLUMNS):
-            entries.append({"lineno": lineno, "_width": len(row), "id": row[0] if row else "?"})
-            continue
-        entry = dict(zip(COLUMNS, row))
-        entry["lineno"] = lineno
-        entries.append(entry)
     return lines, entries, None
 
 
@@ -165,13 +134,7 @@ def shape_check(lines, entries):
                 f"{where}: entry {ident} is marked settled and names no evidence"
             )
 
-    for lineno, line in enumerate(lines, start=1):
-        for pattern, what in FORBIDDEN:
-            found = pattern.search(line)
-            if found:
-                failures.append(
-                    f"{RECORD}:{lineno}: the record carries {what} ({found.group(0)})"
-                )
+    failures += record_table.forbidden(RECORD, lines)
 
     code = naming_gate.report(
         failures,

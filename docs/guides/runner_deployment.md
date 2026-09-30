@@ -48,7 +48,7 @@ flowchart TB
 Dotted lines are Unix domain sockets, and never leave a machine. The solid line
 is the controllers clustering.
 
-**QUIC is the other transport, and it is experimental.** It lets a runner cross
+**QUIC is the other transport, and it is [experimental: quic](../publishing/maturity.md#quic).** It lets a runner cross
 a machine boundary: `FLEZHA_TRANSPORT=quic` plus `FLEZHA_QUIC_ADDRESSES`, a
 comma separated list of names or addresses, port 4433 by default. It needs
 certificates on both ends

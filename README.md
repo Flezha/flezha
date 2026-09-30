@@ -90,7 +90,8 @@ kernel, the two operator profiles, and the diagrams. Vocabulary:
 - ETL pipelines, run continuously or as scheduled batch jobs ([ETL pipelines](#etl-pipelines))
 - Run a whole graph in process, with no controller ([`docs/quickstart.md`](docs/quickstart.md))
 - Clustered, hot-swap-migratable operators
-- SDK runtimes for Rust, Java, and others over a UDS or QUIC transport
+- SDK runtimes for Rust, Java, and others over a UDS transport, the default and stable, or over
+  QUIC, which is [experimental: quic](docs/publishing/maturity.md#quic)
 - Per-Cell durable state — WAL + snapshot, crash-resume, point-in-time query ([`docs/internals/state_persistence.md`](docs/internals/state_persistence.md))
 - Opt-in effectively-once delivery — durable input log, atomic effect record, fsync-gated outbox ([`docs/architecture/kernel.md`](docs/architecture/kernel.md))
 - Bounded operators — a tasklet tree with saga compensation, a durable loop, and suspension ([`docs/architecture/bounded_profile.md`](docs/architecture/bounded_profile.md))

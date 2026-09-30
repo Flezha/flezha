@@ -50,6 +50,10 @@ defmodule Flezha.Transport.Server do
   @stream_type_primary 1
   @stream_type_secondary 2
 
+  @quic_experimental "[Transport.Server] the QUIC transport is experimental: its settings and " <>
+                       "behaviour may change drastically or it may be removed without a " <>
+                       "compatibility break. See docs/publishing/maturity.md#quic"
+
   def start_link(opts) do
     transport = Keyword.fetch!(opts, :transport)
     GenServer.start_link(__MODULE__, transport, name: name(transport))
@@ -248,6 +252,7 @@ defmodule Flezha.Transport.Server do
 
   def init(:quic) do
     warn_if_transport_auth_disabled()
+    Logger.warning(@quic_experimental)
     init_quic()
   end
 

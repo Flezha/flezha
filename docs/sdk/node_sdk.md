@@ -6,6 +6,11 @@ exclusivity, durability, retries, timers, credit, routing and the bounded operat
 driver. This package supplies threads and user code, and nothing else —
 [`poll_core.md` → "The core decides, the SDK brings the threads"](poll_core.md#the-core-decides-the-sdk-brings-the-threads).
 
+**Support tier:** [tier 2](../publishing/maturity.md#sdk-node), passes the full
+conformance run in CI exactly as tier 1 does, with every capability present, and is
+permanently supported; it is not yet run by the maintainer in a live deployment, so a
+defect specific to it is likely to be found by its users first.
+
 - **Package**: `@flezha/sdk`, TypeScript-first and usable from plain JavaScript
   with no build step.
 - **Source**: `sdk/node/`.

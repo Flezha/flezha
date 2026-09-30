@@ -6,6 +6,11 @@ retries, the retry→park ladder, timers, credit, routing, bounded runs
 and reconnect all live in the core. This package brings the authoring surface,
 the codec for user types, the concurrency host and idiomatic errors.
 
+**Support tier:** [tier 2](../publishing/maturity.md#sdk-php), passes the full conformance
+run in CI exactly as tier 1 does, with every capability present, and is permanently
+supported; it is not yet run by the maintainer in a live deployment, so a defect specific
+to it is likely to be found by its users first.
+
 Everything here is reached through the C ABI (`flz_core_ffi`), the same one the
 Java SDK's JNI bridge consumes — so a capability the PHP SDK cannot reach is a
 defect of the ABI rather than of this package.

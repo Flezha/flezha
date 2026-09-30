@@ -9,6 +9,9 @@ underneath in [`poll_core.md`](poll_core.md) and
 [`../architecture/runner.md`](../architecture/runner.md). The rustdoc on
 `sdk/rust/src/lib.rs` is the authoritative surface; nothing doctests this file.
 
+**Support tier:** [tier 1](../publishing/maturity.md#sdk-rust), run by the maintainer in a
+live deployment, passes the full conformance run in CI and is permanently supported.
+
 ## Concepts at a glance
 
 ```text

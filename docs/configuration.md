@@ -88,16 +88,16 @@ the value and the type.
 
 | Variable | Default | Sets / notes |
 |---|---|---|
-| `FLEZHA_TRANSPORT` | `uds` | `:transport`. `uds`, `quic` or `native` (the in-node Elixir SDK transport, never chosen implicitly); any other value is refused at boot |
-| `FLEZHA_TRANSPORTS` | the value of `FLEZHA_TRANSPORT` (`uds,quic` in test) | `:transports`, comma list validated against the same three names |
+| `FLEZHA_TRANSPORT` | `uds` | `:transport`. `uds`, `quic` ([experimental: quic](publishing/maturity.md#quic)) or `native` (the in-node Elixir SDK transport, never chosen implicitly); any other value is refused at boot |
+| `FLEZHA_TRANSPORTS` | the value of `FLEZHA_TRANSPORT` (`uds,quic` in test) | `:transports`, comma list validated against the same three names; `quic` is [experimental: quic](publishing/maturity.md#quic) |
 | `FLEZHA_TRANSPORT_AUTH` | `true` (required) | `:transport_auth_required`; `off`/`false`/`0`/`no` disables peer authentication and is warned on every boot |
-| `FLEZHA_QUIC_LISTEN_ADDRESS` | `0.0.0.0:4433` (`:test` derives the port from the run) | `:quic_listen_address`, the address the controller listens on (a runner's dial list is `FLEZHA_QUIC_ADDRESSES`, below) |
+| `FLEZHA_QUIC_LISTEN_ADDRESS` | `0.0.0.0:4433` (`:test` derives the port from the run) | `:quic_listen_address`, the address the controller listens on (a runner's dial list is `FLEZHA_QUIC_ADDRESSES`, below); [experimental: quic](publishing/maturity.md#quic) |
 | `FLEZHA_CA_CERT_PATH` | `app_data/certs/ca.pem` | `:ca_cert_path` |
 | `FLEZHA_SERVER_CERT_PATH` | `app_data/certs/server.pem` | `:server_cert_path` |
 | `FLEZHA_SERVER_KEY_PATH` | `app_data/certs/server.key` | `:server_key_path` |
 | `FLEZHA_CLIENT_CERT_PATH` | `app_data/certs/client.pem` | `:client_cert_path` |
 | `FLEZHA_CLIENT_KEY_PATH` | `app_data/certs/client.key` | `:client_key_path` |
-| `FLEZHA_QUIC_CLIENT_CA` | `app_data/certs/ca.pem` | `:quic_client_ca_path`, trust anchor for QUIC client certificates |
+| `FLEZHA_QUIC_CLIENT_CA` | `app_data/certs/ca.pem` | `:quic_client_ca_path`, trust anchor for QUIC client certificates; [experimental: quic](publishing/maturity.md#quic) |
 | `FLEZHA_SOCKET_FILES_PATH` | resolved by the socket ladder (below) | the UDS socket directory. Set, it is used outright; unset, the controller creates the first ladder candidate it can. **At most 60 bytes**: a longer directory refuses the boot, naming the directory, its length and this variable, because a runner's data socket would not fit beside it (see the ladder below) |
 | `FLEZHA_SOCKET_DIR_GROUP` | unset (owner-only) | widens UDS traversal to one named group: the directory becomes `0750` owned by that group, warned on every boot. A group the controller's user does not belong to refuses the boot |
 | `FLEZHA_CONCURRENT_CHANNEL_COUNT` | `0` | `:concurrent_channel_count` |
@@ -388,10 +388,10 @@ crate also reads its rows inside the controller's NIF.
 | `FLEZHA_RUNNER_ID_PATH` | `/var/lib/flezha-runner/id` | `flz_core::persistent_id`, `Flezha.SDK.PersistentId` — the durable stable identity; an unwritable path degrades to a fresh per-boot id with one warning, never a refusal |
 | `FLEZHA_MAILBOX_CAPACITY` | `1024` (range `1..1_048_576`) | per-Cell mailbox bound in all three SDKs; a Tasklet that overrides `mailbox_capacity()` wins over it |
 | `FLEZHA_SOCKET_FILES_PATH` | resolved by the socket ladder (below) | `flz_transport` path helper — every SDK reaches it, Elixir through `flz_nif` |
-| `FLEZHA_TRANSPORT` | `uds` | `flz_transport` (`quic` is the only other value) |
-| `FLEZHA_QUIC_ADDRESSES` | `127.0.0.1:4433` | `flz_transport` — a comma list of controller endpoints, each a name or a literal with an optional port (default `4433`), re-resolved on **every** attempt. `FLEZHA_QUIC_ADDRESS` is not honoured and, set alone, refuses startup naming this one |
+| `FLEZHA_TRANSPORT` | `uds` | `flz_transport` (`quic` is the only other value, [experimental: quic](publishing/maturity.md#quic)) |
+| `FLEZHA_QUIC_ADDRESSES` | `127.0.0.1:4433` | `flz_transport` — a comma list of controller endpoints, each a name or a literal with an optional port (default `4433`), re-resolved on **every** attempt. `FLEZHA_QUIC_ADDRESS` is not honoured and, set alone, refuses startup naming this one; [experimental: quic](publishing/maturity.md#quic) |
 | `FLEZHA_CA_CERT_PATH` | `app_data/certs/ca.pem` | `flz_transport`, `Flezha.SDK.Transport` |
-| `FLEZHA_QUIC_CLIENT_CERT` / `FLEZHA_QUIC_CLIENT_KEY` | `app_data/certs/client.pem` / `app_data/certs/client.key` | `flz_transport` — the client pair presented to a QUIC server that requires peer authentication |
+| `FLEZHA_QUIC_CLIENT_CERT` / `FLEZHA_QUIC_CLIENT_KEY` | `app_data/certs/client.pem` / `app_data/certs/client.key` | `flz_transport` — the client pair presented to a QUIC server that requires peer authentication; [experimental: quic](publishing/maturity.md#quic) |
 | `FLEZHA_MAX_FRAME_BYTES` | `67108864` (64 MiB) | `flz_transport` — pre-auth frame-length limit enforced by both frame parsers, cached on first read |
 | `FLEZHA_MAX_WRITE_BUFFER_BYTES` | `8388608` (8 MiB) | `flz_transport` — per-stream send-buffer cap. A sender that honours the send gate never reaches it; what it refuses is answered to the caller, never discarded |
 | `FLEZHA_SEND_GATE_HIGH_WATER` / `FLEZHA_SEND_GATE_LOW_WATER` | `0.8` / `0.5` | `flz_transport::transport::send_gate` — the send gate's watermarks, as **fractions** of `FLEZHA_MAX_WRITE_BUFFER_BYTES` so lowering the cap moves them with it. The gate rises when a stream's buffered plus queued bytes cross the high mark and falls when they drop under the low one; the sender holds in between. **The pair is taken whole or refused whole**: anything but two fractions with `0 < low < high < 1` leaves both defaults standing, because one configured mark beside one default is how a low-water mark ends up above its high-water one. Widening the gap costs memory and buys fewer wake-ups; narrowing it does the reverse. Neither is a throughput dial — the frames are sent either way |
@@ -548,11 +548,11 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:transports` | `[:uds]` | `lib/flezha/application.ex`, `lib/flezha/transport/server.ex` |
 | `:transport_auth_required` | `true` | `lib/flezha/transport/server.ex` |
 | `:controller_enabled` | `true` | `lib/flezha/application.ex` |
-| `:quic_listen_address` | `"0.0.0.0:4433"` | `lib/flezha/transport/server.ex`, `lib/flezha/service/port_pilot.ex` |
+| `:quic_listen_address` | `"0.0.0.0:4433"` | `lib/flezha/transport/server.ex`, `lib/flezha/service/port_pilot.ex`; [experimental: quic](publishing/maturity.md#quic) |
 | `:ca_cert_path` | `"app_data/certs/ca.pem"` | `lib/flezha/transport/cert_generator.ex`, `lib/flezha/service/port_pilot.ex` |
 | `:server_cert_path` / `:server_key_path` | `"app_data/certs/server.pem"` / `"app_data/certs/server.key"` | `lib/flezha/transport/cert_generator.ex`, `lib/flezha/transport/server.ex` |
 | `:client_cert_path` / `:client_key_path` | `"app_data/certs/client.pem"` / `"app_data/certs/client.key"` | `lib/flezha/transport/cert_generator.ex` |
-| `:quic_client_ca_path` | `"app_data/certs/ca.pem"` | `lib/flezha/transport/server.ex` |
+| `:quic_client_ca_path` | `"app_data/certs/ca.pem"` | `lib/flezha/transport/server.ex`; [experimental: quic](publishing/maturity.md#quic) |
 | `:socket_files_path` | — | `lib/flezha/service/port_pilot.ex`, `lib/flezha/transport/socket/support.ex` |
 | `:external_processes` | — | `lib/flezha/service/port_pilot.ex` |
 | `:concurrent_channel_count` | `0` | `lib/flezha/config.ex` |

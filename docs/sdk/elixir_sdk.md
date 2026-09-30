@@ -8,6 +8,9 @@ the binary protocol, indistinguishable from a Rust runner to the Controller. Eve
 the transport seam is shared code with identical semantics in both modes. The SDK inherits
 nothing from `flz_core` ([`../architecture/runner.md`](../architecture/runner.md#one-change-every-sdk)).
 
+**Support tier:** [tier 1](../publishing/maturity.md#sdk-elixir), run by the maintainer in
+a live deployment, passes the full conformance run in CI and is permanently supported.
+
 ## Local mode: run a graph with no controller
 
 The shortest way to see an operator work, and a third way to run one beside

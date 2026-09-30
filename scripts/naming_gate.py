@@ -435,6 +435,8 @@ GATES = (
     # day of the release and a gate that lands red stops being read.
     {"id": "publish-readiness", "group": "naming",
      "argv": ["scripts/check-publish-readiness.sh"]},
+    {"id": "feature-maturity", "group": "naming",
+     "argv": ["scripts/check-feature-maturity.sh"]},
     # Content: every blocking entry settled. Selected only by `@release`, which
     # the tag-triggered release job runs before it builds any artefact - after
     # an artefact is on a registry it is too late by definition.

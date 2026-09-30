@@ -187,6 +187,8 @@ and the fix. Every verdict, and the two failures that are not verdicts:
 
 ## A remote runner over QUIC
 
+The QUIC transport is [experimental: quic](../../publishing/maturity.md#quic).
+
 `FLEZHA_QUIC_ADDRESSES` is a comma list; each entry is a name or a literal
 address with an optional port (default `4433`). Every entry is resolved through
 DNS on **every** connection attempt, so a controller that moves behind its name

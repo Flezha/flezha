@@ -6,6 +6,11 @@ exclusivity, durability, retries, timers, credit, routing and the bounded operat
 driver. This gem supplies threads and user code, and nothing else —
 [`poll_core.md` → "The core decides, the SDK brings the threads"](poll_core.md#the-core-decides-the-sdk-brings-the-threads).
 
+**Support tier:** [tier 2](../publishing/maturity.md#sdk-ruby), passes the full
+conformance run in CI exactly as tier 1 does, with every capability present, and is
+permanently supported; it is not yet run by the maintainer in a live deployment, so a
+defect specific to it is likely to be found by its users first.
+
 - **Gem**: `flezha`.
 - **Source**: `sdk/ruby/`; the native veneer is `flz_core_ffi/src/ruby_glue.rs`,
   behind that crate's `ruby` feature.
@@ -496,7 +501,7 @@ entire contract, and the gem's unit suite asserts it under both members.
 Ractors are the only path to one-process-all-cores in MRI, and the architecture
 suits them unusually well: `poll_core::global()` is a process-global and only
 bytes cross the seam, so N Ractors polling it is structurally identical to N
-threads. What is not ready is Ruby-side — Ractor is still experimental, the
+threads. What is not ready is Ruby-side — Ractor is not yet stable in Ruby itself, the
 extension would have to be marked `rb_ext_ractor_safe`, and non-shareable
 handler state and unsafe gems break on crossing.
 

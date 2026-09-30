@@ -1,5 +1,6 @@
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Once, OnceLock};
 use std::{fmt, io};
 
 use crate::env::{env_parse_positive, env_raw, env_string};
@@ -50,9 +51,31 @@ pub fn would_overflow_write_buffer(buffered: usize, incoming: usize, cap: usize)
     buffered != 0 && buffered + incoming > cap
 }
 
+/// What a process that selects QUIC states, once. Written to standard error
+/// rather than through `tracing`: no host SDK installs a subscriber of its
+/// own, so a `tracing` event would reach nobody in most runners.
+pub const QUIC_EXPERIMENTAL_NOTICE: &str = "[flezha] the QUIC transport is experimental: its \
+settings and behaviour may change drastically or it may be removed without a compatibility \
+break. See docs/publishing/maturity.md#quic";
+
+static QUIC_NOTICES: AtomicU64 = AtomicU64::new(0);
+
 pub fn get_transport_type() -> TransportType {
-    match env_raw("FLEZHA_TRANSPORT").as_deref() {
-        Some("quic") => TransportType::Quic,
+    transport_type(env_raw("FLEZHA_TRANSPORT").as_deref())
+}
+
+/// Consulted on every connection attempt, so the notice is guarded: once it
+/// has been said, a QUIC answer costs one atomic load.
+fn transport_type(raw: Option<&str>) -> TransportType {
+    match raw {
+        Some("quic") => {
+            static ANNOUNCED: Once = Once::new();
+            ANNOUNCED.call_once(|| {
+                QUIC_NOTICES.fetch_add(1, Ordering::Relaxed);
+                eprintln!("{QUIC_EXPERIMENTAL_NOTICE}");
+            });
+            TransportType::Quic
+        }
         _ => TransportType::Uds,
     }
 }
@@ -258,6 +281,23 @@ pub fn quic_client_key_path() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The notice goes to standard error, which libtest captures without
+    // exposing, so the count it keeps beside the line is what is asserted.
+    #[test]
+    fn quic_is_announced_once_however_often_it_is_selected_and_uds_never() {
+        for _ in 0..3 {
+            assert_eq!(transport_type(Some("uds")), TransportType::Uds);
+            assert_eq!(transport_type(None), TransportType::Uds);
+        }
+        assert_eq!(QUIC_NOTICES.load(Ordering::Relaxed), 0);
+
+        for _ in 0..3 {
+            assert_eq!(transport_type(Some("quic")), TransportType::Quic);
+        }
+        assert_eq!(QUIC_NOTICES.load(Ordering::Relaxed), 1);
+        assert!(QUIC_EXPERIMENTAL_NOTICE.contains("docs/publishing/maturity.md#quic"));
+    }
 
     // The shared count rule is what the byte knobs take, tested where it is
     // written (`crate::env`); the env accessors themselves are not driven here

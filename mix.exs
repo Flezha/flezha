@@ -225,6 +225,7 @@ defmodule Flezha.MixProject do
         "docs/troubleshooting/runner_cannot_connect.md",
         "docs/configuration.md",
         "docs/errors.md",
+        "docs/publishing/maturity.md",
         "docs/operations/authn_authz.md",
         "docs/operations/erlang_vm_tuning.md",
         "docs/operations/elixir_applications.md"
@@ -270,7 +271,8 @@ defmodule Flezha.MixProject do
         SDK: ~r"docs/sdk/",
         Plugins: ~r"docs/plugins/",
         Troubleshooting: ~r"docs/troubleshooting/",
-        Reference: ~r"docs/(quickstart|configuration|errors|operations|guides/cli)"
+        Reference:
+          ~r"docs/(quickstart|configuration|errors|operations|guides/cli|publishing/maturity)"
       ]
     ]
   end
