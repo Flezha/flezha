@@ -7,7 +7,6 @@ sends one input to an operator of either kind and receives the one output a `res
 produced from it, or one coded error saying why none came. This capability defines the token
 that ties the input to its outputs, where an answer leaves per durability tier, the waiting
 table the callee's Overwatch holds, and every way a call ends.
-
 ## Requirements
 ### Requirement: An outside call SHALL carry a token only the controller writes
 
@@ -168,7 +167,10 @@ alike:
   iteration commit (`keep-a-session-after-a-failed-turn`), whose `call.failed` SHALL be sent once
   that turn's `dead_lettered` record is durable;
 - the instance ending, as a bounded run completes, fails or is stopped, or as either kind is
-  stopped, while callers wait: `call.callee_ended` to each, carrying the run's status.
+  stopped, while callers wait: `call.callee_ended` to each, carrying the run's status, except an
+  operator caller of an instance that is stopped without ending and keeps a durable input log:
+  its call stays journaled there and is answered when the instance runs again, or by the
+  caller's deadline.
 
 #### Scenario: An operator that is not running
 
@@ -206,6 +208,11 @@ alike:
 
 - **WHEN** a bounded run fails while two callers wait on it
 - **THEN** both SHALL receive `call.callee_ended` carrying the run's terminal status `error`
+
+#### Scenario: A stopped durable callee keeps its operator callers' calls
+
+- **WHEN** an effectively-once callee is stopped without ending while an outside caller and an operator caller wait on it
+- **THEN** the outside caller SHALL receive `call.callee_ended` carrying `stopped`, and the operator caller SHALL receive no answer until the callee runs again or the call's deadline passes
 
 #### Scenario: A full table refuses
 
@@ -279,4 +286,262 @@ operator.
 
 - **WHEN** a call times out
 - **THEN** one `[:flezha, :call, :timeout]` event SHALL be emitted naming the operator, and the exported counter SHALL move by one
+
+### Requirement: An operator SHALL call another operator through a `call` end in its graph
+
+An operator of either kind SHALL call an operator of either kind by ending a chain in `call(...)`;
+every value that reaches the end SHALL be one call, whose request is that value. The target SHALL
+be one of:
+
+- a named instance, `call(target, deadline_ms: n)`, or a partition group whose member the record's
+  key from a `key_by` before the end chooses by the member resolution outside calls use;
+- the instance of a factory whose id is the record's key, `key_by(...) |> call(factory: f,
+  deadline_ms: n)`, started with the request as its first input when no instance holds that id,
+  unless the end says `create: false`, which SHALL answer `operator.not_found` instead;
+- with no `key_by`, a new bounded instance of the factory per call, under a generated id; an
+  unbounded factory there SHALL be answered `operator.factory_not_bounded`.
+
+The request SHALL enter the callee on the entry channel the end names with `channel:`, or, when it
+names none, on the callee's first declared entry channel. The target SHALL always be resolved in
+the caller's namespace, and a factory call SHALL reach only
+an instance of that factory: a key naming a running instance of another factory SHALL be answered
+`operator.factory_mismatch` and nothing SHALL be delivered. Creating and delivering SHALL go
+through the controller's one spawn-or-deliver, so two concurrent calls for one absent id start one
+instance and deliver the other request to it. A call SHALL never block the invocation that made it.
+
+#### Scenario: One stream calls another by name
+
+- **WHEN** an unbounded `orders` operator ends a chain in `call("pricing", deadline_ms: 500)` and `pricing` is an unbounded operator whose graph ends in `response()`
+- **THEN** each order SHALL reach `pricing` as an input, and each answer SHALL reach `orders` as a `Response`
+
+#### Scenario: A session is created on its first call and reached on its second
+
+- **WHEN** a gateway calls `key_by(& &1.session) |> call(factory: "agent", deadline_ms: 60_000)` twice with the session `anna-42`, which no instance holds
+- **THEN** the first call SHALL start the bounded instance `anna-42` with the request as its first input and its `Response` SHALL say `created: true`, and the second SHALL be delivered to the same instance and say `created: false`
+
+#### Scenario: An absent session is refused when creation is off
+
+- **WHEN** a gateway's end says `create: false` and the key names no running instance
+- **THEN** the caller SHALL receive a `Response` carrying `operator.not_found`, and no instance SHALL start
+
+#### Scenario: A factory call without a key starts one instance per call
+
+- **WHEN** an operator ends a chain in `call(factory: "triage", deadline_ms: 60_000)` with no `key_by` and two values reach it
+- **THEN** two bounded instances SHALL start under generated ids, and each `Response` SHALL name its own instance in `target`
+
+#### Scenario: A key cannot steer a call into another operator
+
+- **WHEN** a gateway's factory call to `agent` carries the key `gateway`, the id of the gateway itself
+- **THEN** the gateway SHALL receive a `Response` carrying `operator.factory_mismatch`, and nothing SHALL be delivered to any operator
+
+#### Scenario: Two concurrent calls for one absent id start one instance
+
+- **WHEN** two callers call the factory `agent` for the key `bob-7` at the same moment and no instance holds it
+- **THEN** exactly one instance `bob-7` SHALL start, both requests SHALL reach it, and exactly one of the two `Response`s SHALL say `created: true`
+
+### Requirement: An operator call's token SHALL come only from the controller's delivery
+
+A callee SHALL take the operator form of a call token (`o:` followed by the caller's instance id,
+the call id, whether the call started the callee and the call's deadline) only from the controller's own call delivery, the delivery worker's message to
+its call entry point, and from the seed option that delivery sets on `spawn_or_deliver` when the
+call creates the callee. It SHALL NEVER read a token from an input's or a plugin's metadata, which
+every entry point strips of `flz.reply_to`. Because no path outside the controller's delivery can
+place an operator token on an input, a call id that can be computed from a call-end frame's
+stamps SHALL NOT let anyone answer a call.
+
+#### Scenario: A forged operator token answers nobody
+
+- **GIVEN** a gateway with a call pending on its session `anna-42` under the call id `c1`, and a plugin enabled on an operator whose graph ends in `response()`
+- **WHEN** the plugin calls `Host.inject/5`, in `:call` mode and in `:confirming` mode, with metadata carrying `flz.reply_to: "o:gateway:c1"`
+- **THEN** the input SHALL carry no `o:` token, no `Response` SHALL reach the gateway or any other operator from it, and the gateway's call SHALL end only with its session's answer or its deadline
+
+### Requirement: The outcome of a call SHALL arrive at the caller as a `Response` input
+
+The outcome of every call SHALL reach the caller as one input on the caller's Response channel,
+named after the calling channel with the suffix `.response`, and that input SHALL be an ordinary
+input: counted, run through the `:on_input` chain, journaled when the caller journals input, and
+delivered to whatever the Response channel feeds, the calling tasklet included. Its payload SHALL be
+one JSON document built by the controller, carrying the call's id, `target` (the callee's instance
+id), `created` (whether this call started the callee), `request` (the request's bytes in base64)
+and either `value` (the answer's bytes in base64) or `error` (an error document of the error model;
+a timeout is the error `call.timeout`). Every SDK SHALL decode it into its `Response` type, decoding
+the request with the call end's request codec (in Elixir, whose request serializer is a function,
+the request's bytes) and the value with its answer codec, so that
+`test/fixtures/call_response_envelope.json` decodes to the same fields in every SDK.
+
+#### Scenario: A bounded callee's answer returns to an unbounded caller
+
+- **WHEN** a gateway calls a `:per_input` bounded session whose turn emits `{"tokens": 812}` on its `response()` end
+- **THEN** the gateway SHALL receive a `Response` whose result is ok with that value, whose request is what it sent, and whose `target` is the session's id
+
+#### Scenario: The calling tasklet receives its own call's outcome
+
+- **WHEN** an operator's `Account` tasklet feeds a call end whose Response channel is wired back into `Account`
+- **THEN** registration SHALL succeed, and `Account` SHALL receive each `Response` as an input like the requests it receives
+
+#### Scenario: Every SDK reads the same envelope
+
+- **WHEN** each SDK's test suite decodes every case of `test/fixtures/call_response_envelope.json`
+- **THEN** each SHALL produce the same request, result, error code, target and `created` for each case
+
+### Requirement: Every call SHALL end with exactly one `Response` while its caller lives
+
+The caller's Overwatch SHALL hold one row per pending call, carrying its deadline, and SHALL append
+at most one `Response` per call id. The first outcome to reach the Overwatch (the callee's answer, a
+refusal, a dead-letter, the callee's end, or the deadline) SHALL be appended; every later one SHALL
+be dropped and counted. When the deadline passes with no outcome, the caller SHALL receive a
+`Response` carrying `call.timeout`; the callee's turn SHALL still run, and its answer SHALL be
+dropped and counted. The deadline SHALL be measured from the moment the calling invocation emitted
+the call, and the time an asleep callee takes to wake SHALL count against it.
+
+#### Scenario: A late answer does not make a second Response
+
+- **WHEN** a call's deadline passes, the caller receives `call.timeout`, and the callee's answer arrives afterwards
+- **THEN** the caller SHALL receive no second `Response`, and the late answer SHALL be counted as dropped
+
+### Requirement: A call between two durable operators SHALL survive a crash of either side with exactly one `Response`
+
+A call SHALL survive a crash of the callee's runner, of the caller's runner, and of the Overwatch
+or controller of either side, when the caller and the callee both keep a durable input log (an
+unbounded operator under the effectively-once tier, a durable bounded operator). The callee SHALL
+run the call's turn at most once to its commit: a request sent again SHALL be absorbed by its
+`flz.msg_id` while the first is retained. The caller's pending calls and their deadlines SHALL be
+recovered with its state: a call output SHALL stay held in the caller's outbox until the call's
+`Response` is durable in the caller's input log, so every call without a durable `Response` is
+dispatched again by the caller's recovery. A recovered call whose `Response` the caller's log
+retains SHALL be settled without a new `Response`; one whose deadline is ahead SHALL be sent again
+and its timer re-armed; one whose deadline has passed within `call_retention_margin_ms` SHALL be
+answered `call.timeout`. A recovered call past its deadline plus that margin, whose `Response` is no
+longer retained, SHALL be settled with no new `Response` and counted as `recovered_unanswered`:
+there the guarantee is at most one `Response`. A caller whose Overwatch restarted and holds no
+row for a call whose output its outbox still holds SHALL NOT drop that call's answer: its Cells
+SHALL dispatch their held calls again at once, and the answer SHALL be taken when its delivery
+retries. The callee SHALL hold its answer in its own outbox until the caller's Overwatch has taken
+it, and SHALL keep retrying it until then, until the call's deadline plus the margin has passed,
+or until the caller is no longer declared in its namespace. An answer whose delivery was lost
+while held SHALL be dispatched again by the callee's outbox and handed to the delivery again.
+
+#### Scenario: The callee dies mid-turn
+
+- **WHEN** a gateway calls a durable `:per_input` bounded session and the session's runner is killed while the turn runs
+- **THEN** the turn SHALL run again from the journaled request on the rebound runner, commit once, and the gateway SHALL receive exactly one `Response`
+
+#### Scenario: The caller dies while a call is pending
+
+- **WHEN** an effectively-once gateway's runner and Overwatch are killed after its call was sent and before the answer arrived
+- **THEN** the recovered gateway SHALL send the request again, the session SHALL absorb it by its message id, and the gateway SHALL receive exactly one `Response`
+
+#### Scenario: The answer reaches a restarted caller before its re-drive
+
+- **WHEN** a durable gateway's Overwatch restarts alone after its call was sent, and the session's answer reaches it before the gateway's outbox dispatches the call again
+- **THEN** the gateway's Cells SHALL dispatch the held call again at once, the answer's delivery SHALL retry, and the gateway SHALL receive exactly one `Response` carrying the answer
+
+#### Scenario: The caller dies after its Response was appended
+
+- **WHEN** the caller's controller dies after a call's `Response` was durable in its input log and before its outbox cursor passed the call
+- **THEN** the recovered caller SHALL find the `Response` by its message id, SHALL settle the call without a second `Response`, and SHALL send nothing again
+
+### Requirement: A call SHALL be best effort when either side is off the durable tier
+
+When the caller or the callee keeps no durable input log, a lost request or a lost answer SHALL end
+the call with `call.timeout` at its deadline while the caller's Overwatch lives, and a caller whose
+Overwatch dies SHALL lose its pending calls. No retry by the caller SHALL be implied.
+
+#### Scenario: A lost answer becomes a timeout
+
+- **WHEN** an unbounded callee off the tier loses its runner after taking a call and before answering
+- **THEN** the caller SHALL receive `call.timeout` at the call's deadline
+
+### Requirement: A `:per_input` bounded operator SHALL call without suspending
+
+A bounded `:per_input` operator SHALL be able to call: the call SHALL leave when the stage that
+emitted it commits, and its `Response` SHALL arrive on the Response channel as a later message, run
+as a later iteration like any other. No pass SHALL wait for a `Response`. A bounded instance that
+ends with calls pending SHALL abandon them: their outcomes SHALL be dropped and counted.
+
+#### Scenario: A session calls a tool and reads the result on its next turn
+
+- **WHEN** a `:per_input` session's turn emits a request on a call end to an unbounded `tools` operator and commits
+- **THEN** the call SHALL leave at that commit, and the tool's `Response` SHALL start a later iteration of the session
+
+### Requirement: Requests SHALL reach a target in order, and `Response`s SHALL carry no order
+
+Requests from one caller to one target SHALL reach the target in the order the caller's Overwatch
+received the call outputs, so a session's turns run in the order they were called. `Response`s
+SHALL reach the caller in the order their appends complete, with no order across calls; a caller
+that needs one SHALL restore it from the request each `Response` carries.
+
+#### Scenario: Two turns for one session keep their order
+
+- **WHEN** a gateway calls the session `anna-42` with turn 1 and then turn 2
+- **THEN** the session SHALL journal turn 1 before turn 2
+
+### Requirement: Pending calls SHALL be bounded at the callee and by the caller's outbox
+
+`call_pending_max` SHALL bound the answers one callee operator owes to the callers waiting on it,
+outside callers and operator callers alike. An operator call to a callee that already owes that
+many SHALL be answered at once with a `Response` carrying `call.busy`, and nothing SHALL be
+ingested for it. An operator's own pending calls SHALL NOT count against `call_pending_max`, its
+own or any callee's: a durable caller's SHALL be bounded per Cell by its outbox window, whose later
+outputs wait until a call ends, and every caller's by each call's deadline.
+
+#### Scenario: A callee that owes too many answers refuses an operator caller
+
+- **WHEN** `call_pending_max` is 1 on `pricing`, which owes one answer to a waiting caller, and `orders` calls it
+- **THEN** `orders` SHALL receive a `Response` carrying `call.busy`, and `pricing` SHALL ingest nothing for that call
+
+#### Scenario: A caller's own calls never refuse its callers
+
+- **GIVEN** a gateway with `call_pending_max` set to 2 and three calls pending on its sessions
+- **WHEN** an outside caller calls the gateway
+- **THEN** the gateway SHALL ingest the request and SHALL NOT answer `call.busy`
+
+### Requirement: A callee's failures SHALL reach an operator caller as error `Response`s
+
+Every error answer an outside caller receives SHALL reach an operator caller as a `Response`
+carrying that error: `call.failed` when the callee dead-letters the call's input, by any park
+route and in either kind; `call.callee_ended` for each call queued in, or taken by, a callee that
+ends; `call.not_accepted` for a `:once` or `:chained` instance that has already taken its input;
+and the controller's own codes for a creation or delivery it refuses (`quota.exceeded`,
+`operator.factory_unknown`, an `authz.*` code). When a `:per_input` `keep_progress` loop
+dead-letters a failed turn and goes on, as `keep-a-session-after-a-failed-turn` defines, that turn's
+caller SHALL receive `call.failed` and the calls queued behind it SHALL be answered by their own
+turns.
+
+#### Scenario: An unbounded callee dead-letters a call
+
+- **WHEN** an effectively-once unbounded callee exhausts its retries on a call's input and parks it
+- **THEN** the caller SHALL receive a `Response` carrying `call.failed` with the dead-letter reference, before the call's deadline
+
+#### Scenario: A failed turn in a session that goes on
+
+- **WHEN** a `keep_progress` `:per_input` session dead-letters a failed turn called by a gateway while a second call waits behind it
+- **THEN** the first call's `Response` SHALL carry `call.failed`, and the second call SHALL be answered by the session's next turn
+
+#### Scenario: A session ends with a call queued
+
+- **WHEN** a session completes on its turn while another caller's request waits in its input log
+- **THEN** that caller SHALL receive a `Response` carrying `call.callee_ended`, or `call.timeout` at its deadline if that answer is lost
+
+### Requirement: A rewind SHALL neither answer a call again nor take an answer back
+
+A rewind of a callee SHALL NOT send a second answer for a call whose answer has left, and SHALL NOT
+withdraw one; its compensation undoes state only. A turn the rewind interrupts before its answer
+left SHALL leave its caller to the call's deadline.
+
+#### Scenario: A rewound session's caller keeps its answer
+
+- **WHEN** a session is rewound to iteration 3 after iterations 4 and 5 answered two calls
+- **THEN** both callers SHALL keep the `Response`s they received, and neither SHALL receive another
+
+### Requirement: Per-key instances SHALL count against the namespace's operator quota
+
+An instance a call creates SHALL count against the namespace's `max_operators` from its start until
+its teardown, asleep or awake. A call whose creation the quota refuses SHALL be answered with a
+`Response` carrying `quota.exceeded`, and no instance SHALL start.
+
+#### Scenario: The quota refuses a new session
+
+- **WHEN** the namespace's `max_operators` is reached and a call would create a new session
+- **THEN** the caller SHALL receive `quota.exceeded`, and the calls to running sessions SHALL still be delivered
 

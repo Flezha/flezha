@@ -488,3 +488,28 @@ consumed offset over the instance's reporters.
 - **WHEN** the controller restarts with a confirmed floor of 1005 and Cell offsets of 1 and 1005
 - **THEN** until the next confirmed marker the floor SHALL be 1, and a rebind SHALL re-forward from 2, every Cell skipping what it already consumed
 
+### Requirement: A record carrying a live call SHALL be kept until its deadline has passed
+
+The log SHALL learn, with its message-id index and at no extra read of the file, the
+`flz.deadline_at` of every record that carries one: a call's request in the callee's log and a
+call's `Response` in the caller's. The retention sweep SHALL NOT truncate at or above the lowest
+such record whose `flz.deadline_at` plus `call_retention_margin_ms` is still ahead, whatever the
+watermark and the hold window allow. A record whose deadline plus the margin has passed SHALL be
+retained by the watermark and the hold window alone, as any record is. A log whose records carry no
+deadline SHALL truncate exactly as it did before.
+
+#### Scenario: A consumed request is kept until its call is over
+
+- **WHEN** a callee consumes a call's request, its watermark passes the request's offset, and the call's deadline plus the margin is ahead
+- **THEN** the sweep SHALL keep the request, so a request sent again for that call is absorbed by its message id
+
+#### Scenario: A finished call's records go with the watermark
+
+- **WHEN** a call's deadline plus the margin has passed and the watermark is above its records
+- **THEN** the next sweep SHALL truncate them like any consumed record
+
+#### Scenario: A log without calls is unchanged
+
+- **WHEN** no record of a log carries `flz.deadline_at`
+- **THEN** the sweep SHALL truncate below `min(watermark, now - hold_window)` as before
+

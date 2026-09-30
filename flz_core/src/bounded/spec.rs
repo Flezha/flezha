@@ -5,12 +5,13 @@
 
 use std::time::Duration;
 
+use flz_transport::errors::{ErrorModel, FlezhaError};
+use serde_json::{Map, Value};
+
 use super::{LoopMode, RollbackMode};
 use crate::channel::{ChannelId, ChannelKind, TaskletId};
 use crate::operator::topology::{OperatorTopology, TaskletDescriptor};
 use crate::Code;
-use flz_transport::errors::{ErrorModel, FlezhaError};
-use serde_json::{Map, Value};
 
 /// The tasklet DAG in Kahn order from the entry channels' consumers, so
 /// every producer sits at a lower index than its consumer. A node's index is
@@ -362,6 +363,12 @@ pub enum BuildBoundedError {
         factory_id: &'static str,
         tasklet: String,
     },
+    /// A call end on a class that is not `:per_input`, which never reads the
+    /// later message its `Response` is.
+    CallOutsidePerInputLoop {
+        factory_id: &'static str,
+        channel: String,
+    },
 }
 
 impl ErrorModel for BuildBoundedError {
@@ -411,6 +418,14 @@ impl BuildBoundedError {
                 factory_id,
                 Code::ChainedLoopTerminalWithoutHandoff,
                 tasklet(t),
+            ),
+            Self::CallOutsidePerInputLoop {
+                factory_id,
+                channel,
+            } => (
+                factory_id,
+                Code::CallOutsidePerInputLoop,
+                vec![("channel", channel.as_str().into())],
             ),
             Self::BranchingChainedLoop {
                 factory_id,

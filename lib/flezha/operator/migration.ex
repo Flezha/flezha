@@ -18,6 +18,7 @@ defmodule Flezha.Operator.Migration do
   alias Flezha.Identificator
   alias Flezha.Operator.Calls
   alias Flezha.Operator.ClassRegistry
+  alias Flezha.Operator.Ingest
   alias Flezha.Operator.Lifecycle
   alias Flezha.Operator.Overwatch
   alias Flezha.Operator.Plugins
@@ -379,14 +380,22 @@ defmodule Flezha.Operator.Migration do
 
   # Every caller still waiting learns at once that no answer will come: the
   # bounded run's terminal status when it ended as one, `stopped` otherwise.
+  # An ended run never reads its undelivered input, so the operators that
+  # called into it are answered too. A stopped one keeps its input for a start:
+  # when it journals its input, the operators' calls are in that log and are
+  # answered when it runs again, or by their callers' deadlines.
   defp calls_step({state, _reason}, _budget) do
-    status =
-      case Completion.read(Overwatch.operator_class(state)) do
-        {:ok, %{status: status}} -> status
-        _no_terminal_record -> "stopped"
-      end
+    callee = Overwatch.callee(state)
 
-    _ = Calls.end_all(state.calls, Overwatch.callee(state), status)
+    case Completion.read(Overwatch.operator_class(state)) do
+      {:ok, %{status: status}} ->
+        Calls.end_all(state.calls, callee, status, Ingest.undelivered_calls(state))
+
+      _no_terminal_record ->
+        calls = if Replay.floor_reporter(state), do: Calls.outside(state.calls), else: state.calls
+        Calls.end_all(calls, callee, "stopped")
+    end
+
     :ok
   end
 

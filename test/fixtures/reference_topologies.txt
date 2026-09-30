@@ -72,6 +72,15 @@ commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 #   <x>.sink(<name>)           terminate x on the plugin layer, naming it
 #   <x>.sink                   the same, leaving the name derived
 #   <x>.response               terminate x on the caller's answer (`response()`)
+#   <x>.call(<target>)         end x in a call to the instance <target>, with a
+#                              500 ms deadline, its Response channel
+#                              (`<x's channel>.response`) wired into the
+#                              tasklet that produces x
+#   <x>.call_factory(<factory>)  the same, calling the factory <factory>
+#   <x>.call_factory_nocreate(<factory>)  the same, with `create: false`
+#   <x>.call_deadline(<ms>)    the same as `call(pricing)`, with deadline <ms>
+#   <x>.call_unread(<target>)  `call(<target>)` with its Response channel
+#                              wired into nothing
 #   <x>.named(<name>)          override x's derived channel name
 #   <x>.keyed                  opt x into output identity
 #   <x>.retry_max(<n>)         the channel's attempt ceiling
@@ -124,6 +133,8 @@ commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 #              manifest may lack this one
 #   response   the `response()` plugin end. Every SDK carries it, so no
 #              manifest may lack this one
+#   call       the `call(...)` end. Every SDK carries it, so no manifest may
+#              lack this one
 #   shorthand_typed_output  a short form on a tasklet whose output the SDK can
 #              see at declaration time. Rust, Java and Python (return hint)
 #              can; Node, Ruby, PHP and Elixir cannot
@@ -150,6 +161,11 @@ topology.mailbox_capacity_too_large | mailbox_huge     | entry(in); in.into(plai
 topology.duplicate_plugin_sink     | dup_sink         | entry(in); in.into(plain); plain.sink(out); plain.sink(out)                           | -
 topology.channel_ends_twice        | response_beside_sink | entry(in); in.into(plain); plain.sink(out); plain.response                        | response
 topology.channel_ends_twice        | two_responses    | entry(in); in.into(plain); plain.named(answer); plain.response; plain.response        | response
+topology.channel_ends_twice        | call_beside_sink | entry(in); in.into(plain); plain.sink(out); plain.call(pricing)                    | call
+topology.call_outside_per_input_loop | call_once_bounded | class.bounded; entry(in); in.into(plain); plain.named(ask); plain.call(pricing)   | bounded
+topology.call_without_key          | call_nocreate_unkeyed | entry(in); in.into(plain); plain.named(ask); plain.call_factory_nocreate(agent) | call
+topology.call_deadline_zero        | call_deadline_zero | entry(in); in.into(plain); plain.named(ask); plain.call_deadline(0)             | call
+topology.call_response_unread      | call_unread      | entry(in); in.into(plain); plain.named(ask); plain.call_unread(pricing)             | call
 topology.keyed_channel_without_plugin_wire | keyed_no_wire    | entry(in); in.into(plain); plain.keyed; plain.into(second)                            | -
 topology.channel_named_twice       | named_twice      | entry(in); in.into(plain); plain.named(a); plain.sink(b)                              | -
 topology.duplicate_sink_name       | two_channels_one_sink | entry(in); in.into(plain); in.into(second); plain.sink(out); second.sink(out)    | -
@@ -192,6 +208,8 @@ ok                                 | checkpoint_every | class.persistent; class.
 ok                                 | hold_outputs     | class.persistent; class.effectively_once; class.outputs_at_checkpoint(50); entry(in); in.into(plain) | -
 ok                                 | two_response_ends | entry(in); in.into(plain); in.into(second); plain.named(accepted); plain.response; second.named(refused); second.response | response
 ok                                 | eo_unkeyed_response | class.persistent; class.effectively_once; entry(in); in.into(plain); plain.named(answer); plain.response | response
+ok                                 | call_back_into_caller | entry(in); in.into(plain); plain.named(ask); plain.call(pricing)                | call
+ok                                 | call_factory_by_key | entry(in); in.into(plain); plain.named(ask); plain.key.call_factory(agent)      | call
 ok                                 | hybrid_channel   | cited above                                                                           | -
 ok                                 | commit_block_chain | cited above                                                                         | bounded
 
@@ -212,6 +230,12 @@ two_response_ends | 1 | accepted | plugin | 0 | - | -
 two_response_ends | 2 | refused | plugin | 1 | - | -
 eo_unkeyed_response | 0 | in | entry | - | 0 | -
 eo_unkeyed_response | 1 | answer | plugin | 0 | - | -
+call_back_into_caller | 0 | in | entry | - | 0 | -
+call_back_into_caller | 1 | ask | plugin | 0 | - | -
+call_back_into_caller | 2 | ask.response | entry | - | 0 | -
+call_factory_by_key | 0 | in | entry | - | 0 | -
+call_factory_by_key | 1 | ask | plugin | 0 | - | -
+call_factory_by_key | 2 | ask.response | entry | - | 0 | -
 
 # The variants `check` raises from a record's raw shape, or registration raises
 # after it, which no builder writes and so no row states: `unrowed | <code>`.

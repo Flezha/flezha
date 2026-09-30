@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+### Added: an operator calls another from its graph
+
+`call(...)` ends a chain on a call to another operator, in every SDK and from an operator of
+either kind: to an instance or a partition group by name (`call("pricing", deadline_ms: 500)`),
+or to the instance of a factory whose id is the record's key
+(`key_by(...) |> call(factory: "agent", deadline_ms: ..., create: false)`), started with the
+request when absent unless `create: false`. Nothing waits: the outcome arrives later as a
+`Response` input on the Response channel `<channel>.response`, carrying the request, the answer
+or the error that ended the call (`call.timeout`, `call.failed`, `call.busy`,
+`operator.not_found`, `operator.factory_mismatch`, `quota.exceeded`, an `authz.*` code, ...),
+the instance that answered and whether the call started it. A `:per_input` bounded operator
+calls too, reading the outcome as a later turn.
+
+When caller and callee both keep a durable input log, a call survives a crash of either side,
+runs its turn at most once and ends with exactly one `Response` (at most one when the caller's
+side was down past the deadline plus `call_retention_margin_ms`, counted
+`[:flezha, :call, :recovered_unanswered]`); off that tier it is best effort. This reverses the
+earlier rule that a call frame is never journaled: the request is journaled in the callee's log
+and the `Response` in the caller's, and each is kept until its call is over. Requests from one
+caller to one target keep their order. `call_pending_max` now bounds the answers a callee owes
+operator callers too; a caller's own calls never count against it. A call is judged as the
+namespace's runner identity (`spawner` or `app`), as `ctx.spawn_bounded` is.
+
+Registration refuses `topology.call_outside_per_input_loop`, `topology.call_without_key`,
+`topology.call_deadline_zero` and `topology.call_response_unread`, and a call beside another
+plugin end on one channel (`topology.channel_ends_twice`). The host class declaration gains the
+`call` link, so the five hosts on the core are rebuilt together; new settings are
+`FLEZHA_CALL_RETENTION_MARGIN_MS` and `call_worker_idle_ms`. See `docs/sdk/calls.md`.
+
+### Fixed: the Elixir SDK judges a keyless graph as the core does
+
+A graph is keyless for a partitioned start when no tasklet an entry channel feeds is keyed, as in
+the other SDKs. The Elixir SDK called a graph keyless only when every tasklet was single, so a
+graph whose only keyed tasklet sits behind an inter-task edge started partitioned there and is
+now refused (`PartitionsWithoutKeyedTasklet`).
+
 ### Added: a tasklet can send a part while it runs
 
 `ctx.part(value)` (`part(ctx, value)` in Elixir, `$ctx->part($value)` in PHP) sends a preview

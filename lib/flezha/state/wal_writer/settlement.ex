@@ -410,23 +410,62 @@ defmodule Flezha.State.WalWriter.Settlement do
   # answered, wedging the cursor for good.
   def resettle_outbox(state) do
     if resettle_due?(state) do
-      {rc, _sh, _pk} = state.cell_id
-      overwatch = Lookup.overwatch(rc)
-
-      {state, chunks} =
-        Enum.reduce(state.outbox_awaiting, {state, []}, fn {key, tally}, {acc, chunks} ->
-          if tally.pending > 0 and State.now_ms() - tally.at >= acc.limits.outbox_resettle_ms,
-            do: resettle_entry(overwatch, acc, chunks, key, tally),
-            else: {acc, chunks}
+      {_count, state} =
+        resettle(state, fn tally ->
+          unanswered?(tally) and State.now_ms() - tally.at >= state.limits.outbox_resettle_ms
         end)
-
-      with {:ok, pid} <- overwatch, do: Outbox.dispatch(pid, in_dispatch_order(chunks))
 
       state
     else
       state
     end
   end
+
+  @doc """
+  Re-dispatch every call this writer holds now, not at the resettle tick: its
+  caller's Overwatch got an answer for a call it has no row for, having
+  restarted since. How many entries went again.
+  """
+  @spec redrive_calls(State.t()) :: {non_neg_integer(), State.t()}
+  def redrive_calls(state),
+    do:
+      resettle(state, fn tally ->
+        unanswered?(tally) and carries?(tally.entry, &call_output?/1)
+      end)
+
+  defp resettle(state, due?) do
+    {rc, _sh, _pk} = state.cell_id
+    overwatch = Lookup.overwatch(rc)
+
+    {state, chunks} =
+      Enum.reduce(state.outbox_awaiting, {state, []}, fn {key, tally}, {acc, chunks} ->
+        if due?.(tally),
+          do: resettle_entry(overwatch, acc, chunks, key, tally),
+          else: {acc, chunks}
+      end)
+
+    with {:ok, pid} <- overwatch, do: Outbox.dispatch(pid, in_dispatch_order(chunks))
+
+    {length(chunks), state}
+  end
+
+  # A chain run that never reported, or an operator's call or answer still
+  # held: the caller's Overwatch keeps a call in memory and the delivery keeps
+  # an answer, so either one lost to a restart comes back only from this
+  # re-dispatch, and a live one re-takes its hold and changes nothing.
+  defp unanswered?(%{pending: pending}) when pending > 0, do: true
+
+  defp unanswered?(%{holds: holds, confirms: confirms, entry: entry}) when holds > confirms,
+    do: carries?(entry, &(call_output?(&1) or answer_output?(&1)))
+
+  defp unanswered?(_tally), do: false
+
+  defp carries?(entry, kind?), do: Enum.any?(entry.outputs, &kind?.(&1.metadata))
+
+  defp call_output?(metadata), do: List.keymember?(metadata, "flz.call", 0)
+
+  defp answer_output?(metadata),
+    do: match?({_, "o:" <> _}, List.keyfind(metadata, "flz.reply_to", 0))
 
   # The inflight head is the oldest dispatch, so one comparison rules the whole
   # sweep out on a healthy stream writer.

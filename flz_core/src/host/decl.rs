@@ -72,6 +72,10 @@ pub enum HostLink {
     /// Terminates the channel on the answer to the outside call its input
     /// carried. Takes no name: nothing outside the operator addresses it.
     Response,
+    /// Terminates the chain on a call to another operator: every value that
+    /// reaches it, after the chain's transforms and key, is one request. The
+    /// outcome enters the operator on the entry channel `response` names.
+    Call(HostCall),
     /// Closes the chain onto a consumer edge into a tasklet index.
     Into {
         tasklet: u32,
@@ -86,6 +90,29 @@ pub enum HostLink {
     Branch {
         arms: usize,
     },
+}
+
+/// A `call(...)` end as the builder recorded it: exactly one of `target` (an
+/// instance or a partition group) and `factory`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct HostCall {
+    #[serde(default)]
+    pub target: Option<String>,
+    #[serde(default)]
+    pub factory: Option<String>,
+    pub deadline_ms: u64,
+    /// A factory call starts the instance its key names when none holds it.
+    #[serde(default = "default_create")]
+    pub create: bool,
+    /// The callee's entry channel the request enters on; its first when absent.
+    #[serde(default)]
+    pub channel: Option<String>,
+    /// The caller's entry channel each outcome arrives on.
+    pub response: String,
+}
+
+fn default_create() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]

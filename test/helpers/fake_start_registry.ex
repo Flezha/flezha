@@ -41,10 +41,13 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
     @doc "Payloads this instance was asked to ingest with their metadata, oldest first."
     def ingested_with_metadata(pid), do: GenServer.call(pid, :ingested)
 
+    @doc "The operator calls its `:call` entry point took, `{message, call}`, oldest first."
+    def calls(pid), do: GenServer.call(pid, :calls)
+
     @impl true
     def init({owner, builder, registry}) do
       Process.monitor(owner)
-      {:ok, %{builder: builder, registry: registry, ingested: []}}
+      {:ok, %{builder: builder, registry: registry, ingested: [], calls: []}}
     end
 
     @impl true
@@ -65,6 +68,11 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
 
     def handle_call({:ingest, message, metadata}, _from, state),
       do: {:reply, :ok, %{state | ingested: [{message, metadata} | state.ingested]}}
+
+    def handle_call(:calls, _from, state), do: {:reply, Enum.reverse(state.calls), state}
+
+    def handle_call({:call, message, _metadata, %{} = call}, _from, state),
+      do: {:reply, :ok, %{state | calls: [{message, call} | state.calls]}}
 
     def handle_call(_msg, _from, state), do: {:reply, {:error, :unsupported}, state}
 

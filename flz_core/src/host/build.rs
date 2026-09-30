@@ -153,6 +153,7 @@ fn build_channel(
         plugin_sink: None,
         response: derived.response,
         sink: derived.sink.is_some(),
+        call: derived.call.as_ref().map(call_end),
         keyed: channel_decl.keyed,
         overflow_policy: match channel_decl.overflow {
             HostOverflow::DropNothing => OverflowPolicy::DropNothing,
@@ -167,6 +168,25 @@ fn build_channel(
         // the lossless HostPayload wrapper, so a durable chained loop
         // can re-seed exactly what the live handoff carried.
         codec: (derived.kind == HostChannelKind::InterTask).then(|| host_payload_codec(channel_id)),
+    }
+}
+
+/// The runtime end of a derived call, with no closures: a host applies the
+/// chain's transform and key on its own side and ships the key it computed.
+pub fn call_end(derived: &super::register::DerivedCall) -> crate::channel::CallEnd {
+    let end = &derived.end;
+    let target = match (&end.target, &end.factory) {
+        (_, Some(factory)) => format!("factory:{factory}"),
+        (target, None) => format!("id:{}", target.as_deref().unwrap_or_default()),
+    };
+    crate::channel::CallEnd {
+        target: Arc::from(target),
+        create: end.create,
+        deadline_ms: end.deadline_ms,
+        channel: end.channel.as_deref().map(Arc::from),
+        response: Arc::from(end.response.as_str()),
+        transform: None,
+        key: None,
     }
 }
 

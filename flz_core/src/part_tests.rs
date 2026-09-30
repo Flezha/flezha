@@ -38,6 +38,8 @@ fn slot_named(id: &str, instance: &str, end: &str, keys: &[&str]) -> Arc<crate::
     let (out, tasklets) = match end {
         "sink" => (r#"{"name":"answer","kind":"plugin","producer":0,"chains":[[{"link":"sink","name":"answer"}]]}"#.to_string(), p0),
         "response" => (r#"{"name":"answer","kind":"plugin","producer":0,"chains":[[{"link":"response"}]]}"#.to_string(), p0),
+        "call" => (r#"{"name":"answer","kind":"plugin","producer":0,"chains":[[{"link":"call","target":"pricing","deadline_ms":500,"response":"answer.response"}]]},
+               {"name":"answer.response","kind":"entry","chains":[[{"link":"into","tasklet":0}]]}"#.to_string(), p0),
         _ => (
             r#"{"name":"mid","kind":"inter_task","producer":0,"chains":[[{"link":"into","tasklet":1}]]},
                {"name":"answer","kind":"plugin","producer":1,"chains":[[{"link":"sink","name":"answer"}]]}"#
@@ -152,6 +154,7 @@ fn a_channel_without_a_sink_refuses_a_part() {
     for (id, end, channel) in [
         ("part_edge", "edge", "mid"),
         ("part_response", "response", "answer"),
+        ("part_call", "call", "answer"),
     ] {
         let slot = slot(id, end, &[]);
         let (stream, mut peer) = crate::test_support::stream_pair();

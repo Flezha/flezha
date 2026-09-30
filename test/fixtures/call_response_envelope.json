@@ -1,0 +1,95 @@
+{
+  "_doc": [
+    "The envelope the controller writes on a caller's Response channel for each call outcome,",
+    "and what every SDK's Response decodes from it. `payload` is the frame's exact bytes as a",
+    "string; its `call` is the call id, which no SDK's Response exposes. `expect` names the decoded",
+    "fields: `request` and `value` are the bytes in base64 (an SDK decodes them with the call end's",
+    "codecs; these cases are read raw), `ok` is the result's kind, and an error case names its code,",
+    "class and message. The error object is the error model's own document (`docs/errors.md`)."
+  ],
+  "cases": [
+    {
+      "name": "ok_text_created",
+      "payload": "{\"call\":\"k3VqAAECAwQFBgcICQoLDA\",\"target\":\"anna-42\",\"created\":true,\"request\":\"YW5uYS00MjpoZWxsbw==\",\"value\":\"eyJ0b2tlbnMiOjgxMn0=\"}",
+      "expect": {
+        "target": "anna-42",
+        "created": true,
+        "request": "YW5uYS00MjpoZWxsbw==",
+        "ok": true,
+        "value": "eyJ0b2tlbnMiOjgxMn0="
+      }
+    },
+    {
+      "name": "ok_text_delivered",
+      "payload": "{\"call\":\"k3VqAAECAwQFBgcICQoLDQ\",\"target\":\"anna-42\",\"created\":false,\"request\":\"YW5uYS00MjphbmQgYWdhaW4=\",\"value\":\"eyJ0b2tlbnMiOjk3fQ==\"}",
+      "expect": {
+        "target": "anna-42",
+        "created": false,
+        "request": "YW5uYS00MjphbmQgYWdhaW4=",
+        "ok": true,
+        "value": "eyJ0b2tlbnMiOjk3fQ=="
+      }
+    },
+    {
+      "name": "ok_binary",
+      "payload": "{\"call\":\"r:Zm9v\",\"target\":\"pricing\",\"created\":false,\"request\":\"AP8QgA==\",\"value\":\"3q2+7wA=\"}",
+      "expect": {
+        "target": "pricing",
+        "created": false,
+        "request": "AP8QgA==",
+        "ok": true,
+        "value": "3q2+7wA="
+      }
+    },
+    {
+      "name": "ok_empty_value",
+      "payload": "{\"call\":\"c-empty\",\"target\":\"pricing\",\"created\":false,\"request\":\"bzE=\",\"value\":\"\"}",
+      "expect": {
+        "target": "pricing",
+        "created": false,
+        "request": "bzE=",
+        "ok": true,
+        "value": ""
+      }
+    },
+    {
+      "name": "error_timeout",
+      "payload": "{\"call\":\"k3VqAAECAwQFBgcICQoLDg\",\"target\":\"anna-42\",\"created\":false,\"request\":\"YW5uYS00MjpzbG93\",\"error\":{\"code\":\"call.timeout\",\"class\":\"unavailable\",\"message\":\"operator 'anna-42' did not answer within 120000 ms; the input stays accepted and its turn still runs\",\"details\":{\"deadline_ms\":120000,\"operator\":\"anna-42\"},\"hint\":null}}",
+      "expect": {
+        "target": "anna-42",
+        "created": false,
+        "request": "YW5uYS00MjpzbG93",
+        "ok": false,
+        "error_code": "call.timeout",
+        "error_class": "unavailable",
+        "error_message": "operator 'anna-42' did not answer within 120000 ms; the input stays accepted and its turn still runs"
+      }
+    },
+    {
+      "name": "error_not_found",
+      "payload": "{\"call\":\"k3VqAAECAwQFBgcICQoLDw\",\"target\":\"bob-7\",\"created\":false,\"request\":\"Ym9iLTc6aGk=\",\"error\":{\"code\":\"operator.not_found\",\"class\":\"not_found\",\"message\":\"operator 'bob-7' is not running in namespace 'chat'\",\"details\":{\"namespace\":\"chat\",\"operator\":\"bob-7\"},\"hint\":\"flz operator list --namespace chat\"}}",
+      "expect": {
+        "target": "bob-7",
+        "created": false,
+        "request": "Ym9iLTc6aGk=",
+        "ok": false,
+        "error_code": "operator.not_found",
+        "error_class": "not_found",
+        "error_message": "operator 'bob-7' is not running in namespace 'chat'"
+      }
+    },
+    {
+      "name": "error_failed_binary_request",
+      "payload": "{\"call\":\"c-failed\",\"target\":\"anna-42\",\"created\":false,\"request\":\"AQID\",\"error\":{\"code\":\"call.failed\",\"class\":\"unavailable\",\"message\":\"operator 'anna-42' dead-lettered the call's input as 'dlq-17': model unavailable\",\"details\":{\"dlq_ref\":\"dlq-17\",\"error\":\"model unavailable\",\"operator\":\"anna-42\"},\"hint\":\"flz dlq list anna-42\"}}",
+      "expect": {
+        "target": "anna-42",
+        "created": false,
+        "request": "AQID",
+        "ok": false,
+        "error_code": "call.failed",
+        "error_class": "unavailable",
+        "error_message": "operator 'anna-42' dead-lettered the call's input as 'dlq-17': model unavailable"
+      }
+    }
+  ]
+}

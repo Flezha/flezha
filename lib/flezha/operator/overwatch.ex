@@ -346,12 +346,9 @@ defmodule Flezha.Operator.Overwatch do
     case Keyword.get(operator.opts, :seed_input) do
       {message, metadata}
       when is_binary(message) and is_map(metadata) and is_nil(state.init_error) ->
-        if Ingest.first_input?(state) do
-          {_verdict, state} = Ingest.confirming_ingest(state, message, metadata, :cast)
-          {:noreply, state}
-        else
-          result
-        end
+        if Ingest.first_input?(state),
+          do: {:noreply, seed(state, message, metadata, Keyword.get(operator.opts, :seed_call))},
+          else: result
 
       _ ->
         result
@@ -359,6 +356,18 @@ defmodule Flezha.Operator.Overwatch do
   end
 
   defp seed_input(result, _operator), do: result
+
+  # A call that started this instance: its request is the first input, taken
+  # through the call entry point so its answer reaches the caller.
+  defp seed(state, message, metadata, nil),
+    do: state |> Ingest.confirming_ingest(message, metadata, :cast) |> elem(1)
+
+  defp seed(state, message, metadata, call) do
+    case Ingest.take_call(state, message, metadata, call, nil) do
+      {:noreply, state} -> state
+      {:reply, _verdict, state} -> state
+    end
+  end
 
   @impl true
   def terminate(reason, state), do: Migration.terminate(state, reason)
@@ -501,36 +510,16 @@ defmodule Flezha.Operator.Overwatch do
     end
   end
 
-  # An outside call: refused at once when nothing can answer it, else a row
-  # with its deadline and the confirming ingest of an input carrying the token
-  # the row is keyed by. Every answer arrives later, from the row.
+  # The `:call` entry point: an outside call (an integer deadline) or an
+  # operator's call the controller delivers (a map); see `Ingest.take_call/5`.
   @impl true
-  def handle_call({:call, message, metadata, deadline_ms}, from, %__MODULE__{} = state)
-      when is_integer(deadline_ms) and deadline_ms > 0 do
-    case call_refusal(state) do
-      nil ->
-        channel = Map.get(metadata, "channel")
+  def handle_call({:call, message, metadata, deadline}, from, %__MODULE__{} = state)
+      when (is_integer(deadline) and deadline > 0) or is_map(deadline),
+      do: Ingest.take_call(state, message, metadata, deadline, from)
 
-        case Calls.admit(state.calls, callee(state), from, channel, deadline_ms) do
-          {:ok, token, calls} ->
-            state =
-              arm_timer(
-                %{state | calls: calls},
-                {:call, token},
-                deadline_ms,
-                {:call_deadline, token}
-              )
-
-            {:noreply, Ingest.call(state, message, Calls.entry_metadata(metadata, token), token)}
-
-          {:error, error} ->
-            {:reply, {:error, error}, state}
-        end
-
-      {code, details} ->
-        {:reply, {:error, Calls.refused(callee(state), code, details)}, state}
-    end
-  end
+  # The outcome of one of this operator's own calls, from the delivery.
+  def handle_call({:call_answer, id, outcome}, from, %__MODULE__{} = state),
+    do: {:noreply, Ingest.respond(state, id, outcome, from)}
 
   @impl true
   def handle_call(:create_snapshot, _from, %__MODULE__{} = state),
@@ -616,6 +605,9 @@ defmodule Flezha.Operator.Overwatch do
     calls = Calls.refuse(state.calls, callee(state), notice.token, "call.failed", details)
     {:noreply, %{state | calls: calls}}
   end
+
+  def handle_cast({:call_accepted, id, callee, created}, %__MODULE__{} = state),
+    do: {:noreply, %{state | calls: Calls.accepted(state.calls, id, callee, created)}}
 
   @impl true
   def handle_cast({:correction_request, cell_id, target}, state) do
@@ -723,11 +715,14 @@ defmodule Flezha.Operator.Overwatch do
     {:noreply, %{state | calls: Calls.expire(state.calls, callee(state), token)}}
   end
 
+  def handle_info({:call_timeout, id}, %__MODULE__{} = state),
+    do: {:noreply, Ingest.timeout(timer_fired(state, {:call, id}), id)}
+
   # The rows went with a handover: the arriving process answers them now.
   @impl true
   def handle_info(:calls_handed_over, %__MODULE__{} = state) do
-    state =
-      Enum.reduce(Map.keys(state.calls.rows), state, &cancel_timer(&2, {:call, &1}))
+    keys = Map.keys(state.calls.rows) ++ Map.keys(state.calls.out)
+    state = Enum.reduce(keys, state, &cancel_timer(&2, {:call, &1}))
 
     {:noreply, %{state | calls: Calls.depart(state.calls)}}
   end
@@ -817,8 +812,10 @@ defmodule Flezha.Operator.Overwatch do
     end
   end
 
-  # One output on either route: an answer goes to its caller and never reaches
-  # the `:on_output` chain, so no plugin, listener or sink sees it.
+  # One output on either route: an answer goes to its caller and a request to
+  # its callee, and neither reaches the `:on_output` chain, so no plugin,
+  # listener or sink sees it. A durable output they take stays held until the
+  # caller has its outcome.
   defp output(%__MODULE__{} = state, message, metadata) do
     case Calls.divert(state.calls, callee(state), message, metadata) do
       :output ->
@@ -827,18 +824,21 @@ defmodule Flezha.Operator.Overwatch do
 
       {:diverted, calls} ->
         %{state | calls: calls}
+
+      {:held, calls} ->
+        Outbox.hold(metadata)
+        %{state | calls: calls}
+
+      :call ->
+        Outbox.hold(metadata)
+        Ingest.request(state, message, metadata, Outbox.guaranteed?(metadata))
     end
   end
 
-  # Why a call cannot be taken at all: a parked operator, or a single-pass
-  # bounded instance that has already been given its input.
-  defp call_refusal(%__MODULE__{init_error: reason}) when reason != nil,
-    do: {"call.unavailable", %{reason: "the operator is parked"}}
-
-  defp call_refusal(%__MODULE__{} = state) do
-    if Ingest.single_input?(state) and (state.fed or not Ingest.first_input?(state)),
-      do: {"call.not_accepted", %{}}
-  end
+  @doc "Answer the outbox hold a call took on `metadata`; `nil` holds nothing."
+  @spec confirm_hold(map() | nil) :: :ok
+  def confirm_hold(nil), do: :ok
+  def confirm_hold(metadata), do: Outbox.confirm(metadata)
 
   # Deliver what arrived while a migrate task was binding, in arrival order;
   # a migrate spawned meanwhile holds them again.

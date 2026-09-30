@@ -110,6 +110,13 @@ defmodule Flezha.Config.DurationRows do
     # What an outside caller waits past its call's deadline, so the callee's
     # own `call.timeout` always reaches it first.
     {:call_grace_ms, :ms, 1_000, key: true},
+    # How long an input log keeps a record carrying a call past the call's
+    # deadline, so a request sent again is absorbed and a caller's recovery
+    # still finds its `Response`.
+    {:call_retention_margin_ms, :ms, 300_000, key: true, env: "FLEZHA_CALL_RETENTION_MARGIN_MS"},
+    # How long an operator call's delivery worker waits with an empty queue
+    # before it stops.
+    {:call_worker_idle_ms, :ms, 30_000, key: true},
     {:overwatch_call_timeout_ms, :ms, 5_000, key: true},
     {:overwatch_ping_timeout_ms, :ms, 2_000, key: true, env: "FLEZHA_OVERWATCH_PING_TIMEOUT_MS"},
     {:overwatch_task_warn_ms, :ms, 2_000, key: true},

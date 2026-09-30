@@ -15,6 +15,7 @@ mod decl;
 mod issue;
 mod prepare;
 mod register;
+mod stamp;
 
 #[cfg(test)]
 mod activation_tests;
@@ -27,15 +28,16 @@ mod decl_tests;
 pub(crate) use activation::empty_effect;
 pub(crate) use activation::settle_bounded_undo;
 pub use activation::{abandon_activation, apply_result, to_schema};
+pub use build::call_end;
 pub use cell::{cell_ref_of, BytesBuffer, HostPayload, HostTaskletFacts};
 pub use commands::{
     apply_state_locked, restore_failed, restore_fold_exclusive, snapshot_frame_crossing,
     state_json_locked,
 };
 pub use decl::{
-    HostAckGranularity, HostBeyondWindow, HostBoundedDecl, HostCellModeDecl, HostChannelDecl,
-    HostChannelKind, HostCheckpointOutputs, HostClassDecl, HostClock, HostLink, HostLoopMode,
-    HostOverflow, HostRollbackMode, HostTaskletDecl,
+    HostAckGranularity, HostBeyondWindow, HostBoundedDecl, HostCall, HostCellModeDecl,
+    HostChannelDecl, HostChannelKind, HostCheckpointOutputs, HostClassDecl, HostClock, HostLink,
+    HostLoopMode, HostOverflow, HostRollbackMode, HostTaskletDecl,
 };
 pub use issue::{render_issues, TopologyIssue};
 pub use prepare::{
@@ -43,6 +45,6 @@ pub use prepare::{
     StagedEntry,
 };
 pub use register::{
-    check, check_class_json, register_host_class, register_host_class_json, Derived,
+    check, check_class_json, register_host_class, register_host_class_json, Derived, DerivedCall,
     DerivedChannel, DerivedEdge, MAX_MAILBOX_CAPACITY,
 };

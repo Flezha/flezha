@@ -358,6 +358,9 @@ operator is declared, naming the operator and the channel.
 
 `.response()` ends a channel on the answer to an outside call instead of a sink,
 and takes the sink's `encode=` and `codec=`: [`calls.md`](calls.md).
+`.call("pricing", deadline_ms=500)` or `.call(factory="agent", deadline_ms=..., create=False, codec=...)`
+ends a chain on a call to another operator and answers an edge of `Response`s:
+[`calls.md`](calls.md#operator-calls-call).
 
 Python's integers survive JSON at any width. A `datetime`, a set, a dataclass,
 `NaN` or an infinity has no JSON form, so sending one to a sink that names no

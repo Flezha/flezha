@@ -291,9 +291,10 @@ defmodule Flezha.Config.Keys do
      key: true, derived: {:factor, :wal_high_watermark_bytes, 4}},
     {:wal_pending_msg_cap, :positive_int, 5_000, key: true},
     {:outbox_inflight_max, :positive_int, 1_000, key: true},
-    # The answers one callee operator owes the outside callers waiting on it;
-    # a call past it is refused `call.busy` before anything is ingested. Its
-    # own outbound calls never count against it.
+    # The answers one callee operator owes the callers waiting on it, outside
+    # callers and operators alike; a call past it is refused `call.busy`
+    # before anything is ingested. An operator's own outbound calls never
+    # count against it, its own or a callee's.
     {:call_pending_max, :positive_int, 10_000, key: true, env: "FLEZHA_CALL_PENDING_MAX"},
     # What one listener holds that its handler has not taken: parts are dropped
     # oldest first to stay inside both, and an output or a notice that still

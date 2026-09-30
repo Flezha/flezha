@@ -397,3 +397,64 @@ lines; the step vocabulary SHALL gain `<x>.response`.
 - **WHEN** a persistent, effectively-once unbounded operator declares `.into(Plain).response()` without `keyed`
 - **THEN** registration SHALL succeed, while the same declaration ending in `sink("out")` SHALL still fail as `UnkeyedChannelUnderEffectivelyOnce`
 
+### Requirement: `call(...)` SHALL end a chain on a callee in every SDK
+
+Every SDK's graph builder SHALL offer `call` on a stream handle with a static target or a factory,
+a required positive deadline in milliseconds, an optional `channel` naming the callee's entry
+channel and, for a factory, an optional `create` defaulting to true, spelled in the SDK's idiom for named arguments: `call("pricing", deadline_ms: 500)` and
+`call(factory: "agent", deadline_ms: 60_000, create: false)` in Elixir and Ruby, keyword arguments
+in Python, an options object in Node, named arguments in PHP, and a target value
+(`CallTarget::id(..)` / `CallTarget::factory(..)`, `CallTarget.id(..)` / `CallTarget.factory(..)`)
+with a deadline in Rust and Java. It SHALL take the request's serialization arguments `sink` takes
+and the answer's decoding arguments `input` takes in that SDK: the answer type in Rust and Java, one
+named codec for both directions in Node, Python, Ruby and PHP (JSON by default), and optional
+`serialize:` and `decode:` functions in Elixir. It SHALL be a plugin end of the channel, counted by
+`ChannelEndsTwice` beside a `sink` or a `response()`. It SHALL answer a handle on a new entry
+channel of the operator, the Response channel, named after the calling channel with the suffix
+`.response`, whose values are the SDK's `Response` type; the handle SHALL carry the whole surface an
+entry handle carries. A call SHALL NOT be a graph edge, so wiring the Response channel into the
+tasklet that made the call SHALL NOT be refused as a cycle. The builder SHALL record a `call` link
+carrying the target or factory, the deadline, the callee's entry channel, `create` and the Response
+channel's name.
+
+#### Scenario: The same gateway in every SDK
+
+- **WHEN** a gateway that keys a turn by its session, calls the factory `agent` and wires the Response channel back into its accounting tasklet is declared in each of the seven SDKs
+- **THEN** each declaration SHALL register with the same derived channels, and each SDK's runner SHALL deliver the same `Response` for the same answer
+
+#### Scenario: The Response channel is an entry channel
+
+- **WHEN** an operator declares `.into(Turn).call("pricing", deadline_ms: 500).into(Price)`
+- **THEN** registration SHALL succeed, the operator SHALL declare the entry channel `<Turn's channel>.response` with `Price` as its consumer, and each `Response` SHALL reach `Price`
+
+### Requirement: A call end SHALL be refused where it cannot work
+
+Registration SHALL refuse, in `flz_core::host::register::check` and its bounded spec check for the
+six SDKs sharing `flz_core` and in the Elixir SDK's re-expression:
+
+- a `:once` or `:chained` bounded class declaring a call end, as `CallOutsidePerInputLoop`
+  (`topology.call_outside_per_input_loop`), because such a class never reads the later message a
+  `Response` is;
+- a factory call with `create: false` and no `key_by` before it, as `CallWithoutKey`
+  (`topology.call_without_key`), because nothing names the instance it may not create;
+- a call end whose deadline is zero, as `CallDeadlineZero` (`topology.call_deadline_zero`);
+- a call end whose Response channel feeds nothing, as `CallResponseUnread`
+  (`topology.call_response_unread`), because every outcome would be journaled and delivered to no
+  tasklet;
+- a call end beside a `sink`, a `response()` or another call end on one channel, as
+  `ChannelEndsTwice`.
+
+`test/fixtures/reference_topologies.txt` SHALL carry one row for each, the steps `<x>.call(<target>)`,
+`<x>.call_factory(<factory>)`, `<x>.call_factory_nocreate(<factory>)`, `<x>.call_deadline(0)` and `<x>.call_unread(<target>)`,
+and an `ok` row wiring a Response channel back into its calling tasklet, with its derived lines.
+
+#### Scenario: A single-pass class that calls is refused
+
+- **WHEN** a `:once` bounded class declares `.into(Plain).call("pricing", deadline_ms: 500)`
+- **THEN** registration SHALL fail with `topology.call_outside_per_input_loop` in every SDK
+
+#### Scenario: A per-input class that calls registers
+
+- **WHEN** a `:per_input` bounded class declares the same call end
+- **THEN** registration SHALL succeed
+

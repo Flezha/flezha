@@ -224,6 +224,10 @@ impl Interpreter {
         let mut links = Vec::new();
         for link in rest.split('.') {
             let (verb, arg) = split_call(link);
+            if verb.starts_with("call") {
+                links.push(self.call(at, verb, arg));
+                continue;
+            }
             links.push(match verb {
                 "map" | "filter" | "flat_map" => r#"{"link":"transform"}"#.to_string(),
                 "key" => r#"{"link":"key"}"#.to_string(),
@@ -241,6 +245,47 @@ impl Interpreter {
         self.channels[at]
             .chains
             .push(format!("[{}]", links.join(",")));
+    }
+
+    /// A call end off channel `at`: its link, and its Response channel wired
+    /// into the tasklet producing `at` unless the step leaves it unread.
+    fn call(&mut self, at: usize, verb: &str, arg: &str) -> String {
+        let response = format!("{}.response", self.derived_name(at));
+        let (target, deadline, create) = match verb {
+            "call" | "call_unread" => (format!(r#""target":"{arg}""#), "500", true),
+            "call_factory" => (format!(r#""factory":"{arg}""#), "500", true),
+            "call_factory_nocreate" => (format!(r#""factory":"{arg}""#), "500", false),
+            "call_deadline" => (r#""target":"pricing""#.to_string(), arg, true),
+            other => panic!("the fixture spells a call this interpreter does not map: {other}"),
+        };
+        let chains = match (verb, self.channels[at].producer) {
+            ("call_unread", _) | (_, None) => Vec::new(),
+            (_, Some(producer)) => vec![format!(r#"[{{"link":"into","tasklet":{producer}}}]"#)],
+        };
+        self.channels.push(Channel {
+            name: response.clone(),
+            kind: "entry",
+            chains,
+            ..Channel::default()
+        });
+        format!(
+            r#"{{"link":"call",{target},"deadline_ms":{deadline},"create":{create},"response":"{response}"}}"#
+        )
+    }
+
+    /// The name channel `at` takes: its last `named` link, else the name its
+    /// sink gives it, else the name it was declared with.
+    fn derived_name(&self, at: usize) -> String {
+        let channel = &self.channels[at];
+        let named = |key: &str| {
+            channel.chains.iter().rev().find_map(|chain| {
+                let (_, rest) = chain.split_once(&format!(r#""link":"{key}","name":""#))?;
+                rest.split_once('"').map(|(name, _)| name.to_string())
+            })
+        };
+        named("named")
+            .or_else(|| named("sink"))
+            .unwrap_or_else(|| channel.name.clone())
     }
 
     fn class_flag(&mut self, flag: &str, value: &str) {
@@ -438,6 +483,8 @@ fn the_table_reaches_every_variant_the_vocabulary_carries() {
         );
     }
 }
+
+mod call;
 
 /// The derivation rules, which no refusal row states: what a well-formed record
 /// MEANS once its chains are read.

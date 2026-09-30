@@ -301,6 +301,9 @@ the class and the channel.
 
 `.response` ends a channel on the answer to an outside call instead of a sink,
 and takes the sink's `encode:` and `codec:`: [`calls.md`](calls.md).
+`.call("pricing", deadline_ms: 500)` or `.call(factory: "agent", deadline_ms: ..., create: false, codec: ...)`
+ends a chain on a call to another operator and answers an edge of `Flezha::Response`s:
+[`calls.md`](calls.md#operator-calls-call).
 
 Ruby's integers survive JSON at any width. A `Float` that is `NaN` or infinite,
 or a `String` that is not valid UTF-8, cannot be sent as JSON and fails the emit

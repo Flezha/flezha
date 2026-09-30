@@ -40,6 +40,7 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
     {Flezha.Transport.Server, :uds},
     Flezha.Service.PluginManager,
     Flezha.Plugin.Provider.Kafka.WorkerRegistry,
+    Flezha.Service.Calls,
     # One worker family per provider that declares a worker, from the provider
     # table, in its order.
     Flezha.Plugin.Provider.MonitoredIOForward.WorkerSup,

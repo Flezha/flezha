@@ -45,6 +45,8 @@ defmodule Flezha.State.InputLog do
     Supervisor
   }
 
+  alias Flezha.State.InputLog.MsgIndex
+
   # Input-log records reuse the WalWriter framing, so they carry its 16-byte
   # header slot. The wire never fills it, which leaves it free for the append
   # wall-time — the column that turns `hold_window` into a real retention
@@ -71,8 +73,6 @@ defmodule Flezha.State.InputLog do
   # The confirmed processed prefix's row beside the reporters' Cell rows; an
   # atom, so `cell_offsets/1` never takes it for a reporter.
   @prefix_key :processed_prefix
-
-  @msg_id_key "flz.msg_id"
 
   # Source-ingestion credit (`credit-grant-flow-control` §source): appends
   # debit the per-Operator ledger; min-watermark advances drain it (batched
@@ -102,9 +102,9 @@ defmodule Flezha.State.InputLog do
     # hand out offsets the file already holds past the failure, and reading
     # would serve the prefix before it as the whole log.
     :refusal,
-    # `flz.msg_id => offset` over the retained records, `nil` until the first
-    # append that carries an id builds it from the file, so a log whose senders
-    # never stamp one walks nothing for it.
+    # The retained records' message ids and live calls
+    # (`Flezha.State.InputLog.MsgIndex`), `nil` until the first append that
+    # carries an id builds it from the file.
     msg_ids: nil,
     # Answers owed until the records they name are synced, newest first, and
     # whether anything was written since the companion was last handed them.
@@ -181,7 +181,7 @@ defmodule Flezha.State.InputLog do
           :gen_server.request_id_collection()
   def append_async(operator_class, message, metadata, reqids, label) do
     {:ok, pid} = Supervisor.find_or_start({operator_class, :input_log})
-    request = {:append, encode_body(message, metadata), msg_id(metadata)}
+    request = {:append, encode_body(message, metadata), MsgIndex.key(metadata)}
     :gen_server.send_request(pid, request, label, reqids)
   end
 
@@ -189,15 +189,6 @@ defmodule Flezha.State.InputLog do
   # its own serialization in parallel instead of queueing behind the one
   # journal process that every operator of this class shares.
   defp encode_body(message, metadata), do: :erlang.term_to_binary({message, metadata})
-
-  # The sender's message id, `nil` for none: two identical payloads without an
-  # id are two messages.
-  defp msg_id(metadata) do
-    case Map.get(metadata, @msg_id_key) do
-      id when is_binary(id) and id != "" -> id
-      _ -> nil
-    end
-  end
 
   @doc "Highest journaled offset, `-1` when the log is empty or absent."
   @spec last_offset(binary()) :: integer() | {:error, term()}
@@ -253,6 +244,18 @@ defmodule Flezha.State.InputLog do
         _none_or_refused -> nil
       end
     end
+  end
+
+  @doc """
+  The lowest offset a live call's record holds in this log, or `nil`: the
+  retention sweep never truncates at or above it.
+  """
+  @spec call_floor(binary()) :: non_neg_integer() | nil
+  def call_floor(operator_class) do
+    with {:ok, pid} <- Supervisor.lookup({operator_class, :input_log}),
+         floor when is_integer(floor) <- call(pid, :call_floor),
+         do: floor,
+         else: (_none_or_down -> nil)
   end
 
   defp retained_last_offset(operator_class) do
@@ -600,6 +603,12 @@ defmodule Flezha.State.InputLog do
     {:reply, collect_range(state.file_handle, state.path, from, to), state}
   end
 
+  # The lowest offset a live call holds, which the sweep's floor may not pass.
+  def handle_call(:call_floor, _from, state) do
+    {floor, index} = MsgIndex.floor(ensure_ids(state).msg_ids)
+    {:reply, floor, %{state | msg_ids: index}}
+  end
+
   def handle_call({:msg_offset, msg_id}, _from, state) do
     state = ensure_ids(state)
 
@@ -915,38 +924,25 @@ defmodule Flezha.State.InputLog do
        | next_offset: offset + 1,
          offset_sizes: :queue.in({offset, byte_size(body)}, state.offset_sizes),
          positions: SeqIndex.note(state.positions, offset, byte_size(record)),
-         msg_ids: if(id, do: Map.put(state.msg_ids, id, offset), else: state.msg_ids)
+         msg_ids: MsgIndex.note(state.msg_ids, id, offset)
      }}
   end
 
   # ---------- Message-id index ----------
 
-  # Walked once per log lifetime, by the first append that carries an id. The
-  # open walked this file to its end, so a record that does not decode here is
+  # Walked once per log lifetime, by the first request that needs it. The open
+  # walked this file to its end, so a record that does not decode is
   # impossible, not a case.
-  defp ensure_ids(%{msg_ids: nil} = state) do
-    {:ok, ids} =
-      RecordFrame.index_by(state.file_handle, state.path, fn {_seq, _header, body} ->
-        {_message, metadata} = :erlang.binary_to_term(body)
-        msg_id(metadata)
-      end)
-
-    %{state | msg_ids: ids}
-  end
+  defp ensure_ids(%{msg_ids: nil} = state),
+    do: %{state | msg_ids: MsgIndex.build(state.file_handle, state.path)}
 
   defp ensure_ids(state), do: state
 
   defp retained(_state, nil), do: :none
-
-  defp retained(state, id) do
-    case Map.fetch(state.msg_ids, id) do
-      {:ok, offset} -> {:duplicate, offset}
-      :error -> :none
-    end
-  end
+  defp retained(state, key), do: MsgIndex.retained(state.msg_ids, key)
 
   defp trim_ids(%{msg_ids: nil}, _floor), do: nil
-  defp trim_ids(state, floor), do: Map.reject(state.msg_ids, fn {_, offset} -> offset < floor end)
+  defp trim_ids(state, floor), do: MsgIndex.trim(state.msg_ids, floor)
 
   # Free the tracked bytes of every journaled offset at or below the
   # watermark (its consumption is durable; the log slot is reclaimable).

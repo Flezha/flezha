@@ -341,7 +341,7 @@ a role the principal does not hold changes nothing.
 | `ops` | app plus the rest of the operator and plugin lifecycle, audit rotation, observability mutation, the schedule family, the dead-letter queue and the records in flight |
 | `admin` | ops plus auth state, namespace and quota mutation, controller shutdown and the controller-wide settings. Only `admin@_system` may target another namespace |
 | `runner` | `runner.connect` and nothing else. It is outside the hierarchy: it is what a runner connection resolves to before a caller grants it more |
-| `spawner` | runner plus the two rights a tasklet's `ctx.spawn_bounded` needs in its own namespace, `operator.start` and `operator.send`, and nothing else. Those rights also open `Operator.start` and `Operator.send` on the SDK administration surface; no stop, plugin or schedule verb. It is outside the hierarchy like `runner`, and `app` holds everything it grants |
+| `spawner` | runner plus the two rights a tasklet's `ctx.spawn_bounded` and an operator's `call(...)` need in its own namespace, `operator.start` (creating a callee, audited) and `operator.send` (delivering to one), and nothing else. Those rights also open `Operator.start` and `Operator.send` on the SDK administration surface; no stop, plugin or schedule verb. It is outside the hierarchy like `runner`, and `app` holds everything it grants |
 | `stopper` | runner plus `operator.stop` on the bound namespace and nothing else, so it combines with `spawner` into an application that starts, sends and stops its own work and still enables no plugin. It is outside the hierarchy like `runner`, and `app` holds everything it grants |
 
 `app`, `spawner` and `stopper` also carry `runner.connect`, because the only
@@ -552,6 +552,15 @@ deliver an input whose answer belongs to the caller that sent it, so they are
 judged as `operator.send` and audited with the record a send writes, naming the
 operator. A plugin's call on the operator it is enabled on is that operator's
 own input and is not judged again. See [`../sdk/calls.md`](../sdk/calls.md).
+
+**An operator's call is judged as its runner identity.** A `call(...)` end in an
+operator's graph is judged as its namespace's runner identity, as a
+`ctx.spawn_bounded` is: creating the callee on the `operator_start` row, which
+records it naming the new instance, and delivering the request on the
+`spawn_deliver` row, which records no permitted delivery. The runner identity needs
+`spawner` or `app`; a refusal ends the call with a `Response` carrying its
+`authz.*` code and starts and delivers nothing. The `Response`'s way back is the
+caller's own call and is not judged again.
 
 **`flz auth whoami` is a gated read.** It answers the identity a token
 resolves to, so while authorization is enforced an invocation with no token is

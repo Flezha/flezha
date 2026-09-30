@@ -394,6 +394,9 @@ operator and the channel.
 
 `.response()` ends a channel on the answer to an outside call instead of a sink,
 and takes the sink's arguments, an encoder or `{ codec }`: [`calls.md`](calls.md).
+`.call("pricing", { deadlineMs, codec })` or `.call({ factory: "agent", create: false }, { deadlineMs })`
+ends a chain on a call to another operator and answers a stream of `Response`s:
+[`calls.md`](calls.md#operator-calls-call).
 
 A JSON number is a double, so an integer above 2^53 loses precision on the way
 in and out. A `bigint`, `undefined` or a function has no JSON form and fails

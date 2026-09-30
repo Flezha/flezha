@@ -68,10 +68,28 @@ pub enum TopologyIssue {
     DuplicatePluginSink {
         channel: String,
     },
-    /// A `sink` beside a `response()`, or two `response()` ends, on one
-    /// channel: a channel carries at most one plugin end.
+    /// Two plugin ends (a `sink`, a `response()`, a `call(...)`) on one
+    /// channel: a channel carries at most one.
     ChannelEndsTwice {
         channel: String,
+    },
+    /// A `:once` or `:chained` bounded class declares a call end: it never
+    /// reads the later message its `Response` would be.
+    CallOutsidePerInputLoop {
+        channel: String,
+    },
+    /// A factory call that may not create its callee, with no key to name
+    /// the instance it reaches.
+    CallWithoutKey {
+        channel: String,
+    },
+    CallDeadlineZero {
+        channel: String,
+    },
+    /// A call end whose Response channel feeds no tasklet.
+    CallResponseUnread {
+        channel: String,
+        response: String,
     },
     ChannelNamedTwice {
         channel: String,
@@ -213,6 +231,10 @@ impl TopologyIssue {
             Self::MailboxCapacityTooLarge { .. } => Code::MailboxCapacityTooLarge,
             Self::DuplicatePluginSink { .. } => Code::DuplicatePluginSink,
             Self::ChannelEndsTwice { .. } => Code::ChannelEndsTwice,
+            Self::CallOutsidePerInputLoop { .. } => Code::CallOutsidePerInputLoop,
+            Self::CallWithoutKey { .. } => Code::CallWithoutKey,
+            Self::CallDeadlineZero { .. } => Code::CallDeadlineZero,
+            Self::CallResponseUnread { .. } => Code::CallResponseUnread,
             Self::ChannelNamedTwice { .. } => Code::ChannelNamedTwice,
             Self::DuplicateSinkName { .. } => Code::DuplicateSinkName,
             Self::KeyedChannelWithoutPluginWire { .. } => Code::KeyedChannelWithoutPluginWire,
@@ -293,9 +315,15 @@ impl TopologyIssue {
                 ("tasklet", tasklet.clone().into()),
                 ("value", (*value).into()),
             ],
-            Self::DuplicatePluginSink { channel } | Self::ChannelEndsTwice { channel } => {
-                vec![("channel", channel.clone().into())]
-            }
+            Self::DuplicatePluginSink { channel }
+            | Self::ChannelEndsTwice { channel }
+            | Self::CallOutsidePerInputLoop { channel }
+            | Self::CallWithoutKey { channel }
+            | Self::CallDeadlineZero { channel } => vec![("channel", channel.clone().into())],
+            Self::CallResponseUnread { channel, response } => vec![
+                ("channel", channel.clone().into()),
+                ("response", response.clone().into()),
+            ],
             Self::ChannelNamedTwice {
                 channel,
                 named,

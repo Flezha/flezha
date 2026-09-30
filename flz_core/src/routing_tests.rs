@@ -160,6 +160,7 @@ fn parsing_bounded(id: &'static str) -> Arc<OperatorInstance> {
             plugin_sink: None,
             response: false,
             sink: false,
+            call: None,
             keyed: false,
             overflow_policy: OverflowPolicy::DropNothing,
             retry: RetryPolicy {

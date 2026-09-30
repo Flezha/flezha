@@ -9,9 +9,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::decl::{HostChannelDecl, HostChannelKind, HostClassDecl, HostLink};
+use super::decl::{HostCall, HostChannelDecl, HostChannelKind, HostClassDecl, HostLink};
 use super::issue::TopologyIssue;
-use super::register::{DerivedChannel, DerivedEdge};
+use super::register::{DerivedCall, DerivedChannel, DerivedEdge};
 
 /// Stage 1 and 2, per channel and in one walk: the chain rules judged
 /// left to right while the consumers, the kind, the name and the sink they
@@ -57,6 +57,7 @@ fn derive_channel(
             .unwrap_or_else(|| channel_decl.name.clone()),
         sink: None,
         response: false,
+        call: None,
         consumers: Vec::new(),
     };
     let mut walk = Walk {
@@ -78,12 +79,13 @@ fn derive_channel(
         consumers: derived.consumers,
         sink: derived.sink,
         response: derived.response,
+        call: derived.call,
         named_by_sink: named.is_none() && from_sink.is_some(),
     }
 }
 
 /// Terminality is read off the wiring, never off which method was called: a
-/// plugin end (a sink or a response) with nothing consuming behind it IS the
+/// plugin end (a sink, a response or a call) with nothing consuming behind it IS the
 /// plugin-bound terminal, and a channel carrying both stays what it was
 /// declared.
 fn derived_kind(channel_decl: &HostChannelDecl, derived: &Chains) -> HostChannelKind {
@@ -154,13 +156,14 @@ struct Chains {
     name: String,
     sink: Option<String>,
     response: bool,
+    call: Option<DerivedCall>,
     consumers: Vec<DerivedEdge>,
 }
 
 impl Chains {
     /// Whether the channel already carries its one plugin end.
     fn ends(&self) -> bool {
-        self.sink.is_some() || self.response
+        self.sink.is_some() || self.response || self.call.is_some()
     }
 }
 
@@ -177,8 +180,10 @@ fn walk_chain(
 
     for link in links {
         // A link declared behind a terminator would reshape a value already
-        // serialized or already delivered.
-        if (shape.closed || derived.ends()) && matches!(link, HostLink::Transform | HostLink::Key) {
+        // serialized or already delivered. A call end closes only its own
+        // chain, as an edge does, so it reshapes nothing another chain sees.
+        let channel_ended = derived.sink.is_some() || derived.response;
+        if (shape.closed || channel_ended) && matches!(link, HostLink::Transform | HostLink::Key) {
             issues.push(TopologyIssue::TransformAfterTerminal {
                 channel: channel.clone(),
             });
@@ -222,8 +227,8 @@ struct Shape {
     closed: bool,
 }
 
-/// The terminators: a sink, a response, an edge, a merge source, a branch
-/// arity. Each ends the chain, and all but the arity are what a channel's
+/// The terminators: a sink, a response, a call, an edge, a merge source, a
+/// branch arity. Each ends the chain, and all but the arity are what a channel's
 /// derivation is read off.
 fn close_chain(
     walk: &mut Walk<'_>,
@@ -241,7 +246,7 @@ fn close_chain(
         HostLink::Sink { .. } => {
             if derived.sink.is_some() {
                 issues.push(TopologyIssue::DuplicatePluginSink { channel });
-            } else if derived.response {
+            } else if derived.ends() {
                 issues.push(TopologyIssue::ChannelEndsTwice { channel });
             } else {
                 derived.sink = Some(channel);
@@ -254,6 +259,7 @@ fn close_chain(
                 derived.response = true;
             }
         }
+        HostLink::Call(end) => close_on_call(walk, end, derived, shape, issues),
         HostLink::Into { tasklet } => {
             wire_consumer(walk, &channel, *tasklet, shape, derived, issues)
         }
@@ -274,6 +280,45 @@ fn close_chain(
         HostLink::Transform | HostLink::Key | HostLink::Named { .. } => return,
     }
     shape.closed = true;
+}
+
+/// Close one chain on a call end: the chain's transform and key belong to the
+/// end, as they belong to the edge a chain closes on.
+fn close_on_call(
+    walk: &Walk<'_>,
+    end: &HostCall,
+    derived: &mut Chains,
+    shape: &Shape,
+    issues: &mut Vec<TopologyIssue>,
+) {
+    let channel = derived.name.clone();
+    if end.target.is_some() == end.factory.is_some() {
+        issues.push(TopologyIssue::DeclarationUnreadable {
+            reason: format!(
+                "the call on channel '{channel}' names neither or both of a target and a factory"
+            ),
+        });
+    }
+    if end.deadline_ms == 0 {
+        issues.push(TopologyIssue::CallDeadlineZero {
+            channel: channel.clone(),
+        });
+    }
+    if end.factory.is_some() && !end.create && !shape.key {
+        issues.push(TopologyIssue::CallWithoutKey {
+            channel: channel.clone(),
+        });
+    }
+    if derived.ends() {
+        issues.push(TopologyIssue::ChannelEndsTwice { channel });
+        return;
+    }
+    derived.call = Some(DerivedCall {
+        end: end.clone(),
+        chain: walk.chain,
+        transform: shape.transform,
+        key: shape.key,
+    });
 }
 
 /// Close one chain onto a consumer edge. Re-declaring an existing bare edge

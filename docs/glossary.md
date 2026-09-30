@@ -84,10 +84,18 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   moved or rescaled, ends when the operator ends, and leaves no plugin row behind.
 - **Call**: one input an outside caller (`flz operator call`, `Flezha.Service.Operator.call/6`
   or a feeding plugin) sends to an operator, waiting up to a deadline for the first answer a
-  response end produces from it. See [`sdk/calls.md`](sdk/calls.md).
+  response end produces from it; or one request an operator's `call(...)` end sends to another
+  operator, whose outcome comes back as a Response. See [`sdk/calls.md`](sdk/calls.md).
 - **Call token**: `flz.reply_to`, the input metadata key the controller mints for each call
   and the runner core carries to every output the input causes. Nothing else can set it, and
   no tasklet sees it. See [`sdk/calls.md`](sdk/calls.md#the-call-token).
+- **Response**: the outcome of one operator call as the caller receives it: an ordinary input
+  carrying the request, the answer or the error that ended the call (a timeout being
+  `call.timeout`), the instance that answered and whether the call started it. See
+  [`sdk/calls.md`](sdk/calls.md#the-response).
+- **Response channel**: the entry channel a `call(...)` end answers, named after the calling
+  channel with `.response`; every Response of that end arrives on it, and it may feed any
+  tasklet, the calling one included.
 - **Edge transform** — a `map` / `filter` / `flat_map` on a stream handle between two `.into`
   calls; everything before the closing `.into` fuses into one closure on that consumer edge and
   costs no tasklet, cell, mailbox or hop. See [`sdk/stream_transforms.md`](sdk/stream_transforms.md).

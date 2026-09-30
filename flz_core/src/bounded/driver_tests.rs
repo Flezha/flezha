@@ -19,8 +19,9 @@ use crate::host::{apply_result, HostPayload};
 use crate::poll_core::{EnginePayload, Polled};
 use crate::runner::{RunnerMessage, RunnerNode};
 use crate::test_support::{capture_parks, host_class, spin_until, stream_pair};
-use crate::ErrorModel;
-use crate::{schema, state_sink};
+use crate::{schema, state_sink, ErrorModel};
+
+mod call;
 
 /// Answers every activation the poll core hands out while it lives: an
 /// apply-state command is recorded and answered applied; each work item is

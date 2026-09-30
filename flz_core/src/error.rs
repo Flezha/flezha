@@ -94,6 +94,10 @@ codes! {
     PartitionsWithoutPerInputLoop => "topology.partitions_without_per_input_loop",
     PartitionsWithoutKeyedTasklet => "topology.partitions_without_keyed_tasklet",
     ExternalStopOnly => "topology.external_stop_only",
+    CallOutsidePerInputLoop => "topology.call_outside_per_input_loop",
+    CallWithoutKey => "topology.call_without_key",
+    CallDeadlineZero => "topology.call_deadline_zero",
+    CallResponseUnread => "topology.call_response_unread",
 
     CompleteOutsideBounded => "runtime.complete_outside_bounded",
     EventTimeTimerWithoutEventTimeClock => "runtime.event_time_timer_without_event_time_clock",

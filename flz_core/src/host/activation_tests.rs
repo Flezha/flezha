@@ -377,9 +377,8 @@ fn off_the_tier_only_the_response_output_carries_the_call() {
     );
 }
 
-/// Under the tier the outputs ride the effect record with the same stamps.
-#[test]
-fn under_the_tier_the_recorded_response_output_carries_the_call() {
+/// The two outputs of the effect record `settle` writes under the tier.
+fn recorded_outputs(settle: impl FnOnce()) -> Vec<crate::effect::OutputRecord> {
     use std::sync::Mutex;
 
     let _guard = crate::state_sink::test_guard();
@@ -392,12 +391,7 @@ fn under_the_tier_the_recorded_response_output_carries_the_call() {
         }
         Ok(())
     }));
-
-    let id = format!("answer_tier_{}", std::process::id());
-    let instance = answering_instance(&id, true);
-    let producer = Arc::clone(&instance.cells[0][0]);
-    let (work, effect) = answering_work(stream_pair().0, Some("w:tok"));
-    settle_item(&producer, &work, effect, None);
+    settle();
     crate::flusher::CellFlusher::instance().drain_now_for_tests();
 
     let body = records
@@ -412,13 +406,23 @@ fn under_the_tier_the_recorded_response_output_carries_the_call() {
                 .filter(|body| body.outputs.len() == 2)
         })
         .expect("the record carrying both outputs");
-    let stamps: Vec<(&str, Option<&str>)> = body
-        .outputs
+    crate::state_sink::reset_for_test();
+    body.outputs
+}
+
+/// Under the tier the outputs ride the effect record with the same stamps.
+#[test]
+fn under_the_tier_the_recorded_response_output_carries_the_call() {
+    let id = format!("answer_tier_{}", std::process::id());
+    let instance = answering_instance(&id, true);
+    let producer = Arc::clone(&instance.cells[0][0]);
+    let (work, effect) = answering_work(stream_pair().0, Some("w:tok"));
+    let outputs = recorded_outputs(|| settle_item(&producer, &work, effect, None));
+    let stamps: Vec<(&str, Option<&str>)> = outputs
         .iter()
         .map(|o| (o.channel.as_str(), reply_to_of(&o.metadata)))
         .collect();
     assert_eq!(stamps, vec![("ans", Some("w:tok")), ("out", None)]);
-    crate::state_sink::reset_for_test();
 }
 
 /// Off the tier a Cell's failed input parks on its own frame, which carries the
@@ -450,4 +454,162 @@ fn a_tier_off_park_carries_the_call_only_when_its_item_had_one() {
         .collect();
     assert_eq!(calls, vec![Some("w:tok".to_string()), None]);
     crate::state_sink::reset_for_test();
+}
+
+// ---- a call end's requests ---------------------------------------------------
+
+/// `p0` feeds `p1`, whose channel `ask` ends in a factory call answered on
+/// `ask.response`, and `p2`, whose channel `out` ends in a keyed sink.
+fn calling_instance(id: &str, tier: bool) -> Arc<crate::operator::instance::OperatorInstance> {
+    let json = format!(
+        r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,
+             "effectively_once":{tier},
+             "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},
+                         {{"name":"mid","kind":"inter_task","producer":0,
+                           "chains":[[{{"link":"into","tasklet":1}}],[{{"link":"into","tasklet":2}}]]}},
+                         {{"name":"ask","kind":"plugin","producer":1,
+                           "chains":[[{{"link":"key"}},{{"link":"call","factory":"agent","deadline_ms":60000,
+                                        "create":false,"channel":"turn","response":"ask.response"}}]]}},
+                         {{"name":"ask.response","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},
+                         {{"name":"out","kind":"plugin","producer":2,"keyed":true,
+                           "chains":[[{{"link":"sink","name":"out"}}]]}}],
+             "tasklets":[{{"name":"p0"}},{{"name":"p1"}},{{"name":"p2"}}]}}"#
+    );
+    crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
+    crate::operator::instance::OperatorInstance::of_class(id, &format!("{id}_inst"))
+        .expect("class registered")
+}
+
+/// A completion emitting one request to the call end under the key `anna-42`
+/// and one output to the sink, both carrying forged call stamps.
+fn calling_work(
+    stream: Arc<flz_transport::transport::FlezhaStream>,
+) -> (ItemAttempt, schema::ItemEffect) {
+    let (mut work, mut effect) = work_and_effect(3, &[]);
+    if let CellItem::Input(payload) = &mut work.item {
+        payload.stream = stream;
+    }
+    let forged = vec![
+        ("flz.call".to_string(), "id:elsewhere".to_string()),
+        ("flz.deadline_at".to_string(), "1".to_string()),
+    ];
+    let plugin = |channel: &str| schema::Output {
+        target: schema::OutputTarget::Plugin {
+            channel: channel.to_string(),
+        },
+        payload: channel.as_bytes().to_vec(),
+        key: Some("anna-42".to_string()),
+        metadata: forged.clone(),
+        event_time: None,
+    };
+    effect.outputs = vec![plugin("ask"), plugin("out")];
+    (work, effect)
+}
+
+/// The call stamps a request carries, its deadline checked against the window
+/// the settle ran in and then left out.
+fn call_stamps(metadata: &[(String, String)], window: (u64, u64)) -> Vec<(String, String)> {
+    let mut stamps: Vec<(String, String)> = metadata
+        .iter()
+        .filter(|(key, _)| {
+            key.starts_with("flz.call") || key == "flz.key" || key == "flz.deadline_at"
+        })
+        .cloned()
+        .collect();
+    stamps.sort();
+    if let Some((_, at)) = stamps.iter().find(|(key, _)| key == "flz.deadline_at") {
+        let at: u64 = at.parse().expect("a millisecond");
+        assert!(
+            (window.0 + 60_000..=window.1 + 60_000).contains(&at),
+            "the deadline is the emit's wall clock plus 60 s: {at} for {window:?}"
+        );
+    }
+    stamps.retain(|(key, _)| key != "flz.deadline_at");
+    stamps
+}
+
+fn expected_call_stamps() -> Vec<(String, String)> {
+    [
+        ("flz.call", "factory:agent"),
+        ("flz.call_channel", "turn"),
+        ("flz.call_create", "false"),
+        ("flz.call_response", "ask.response"),
+        ("flz.key", "anna-42"),
+    ]
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .to_vec()
+}
+
+/// Only an output on a call end reads the wall clock; a sink's output still
+/// loses the call stamps a host forged on it.
+#[test]
+fn only_a_call_end_reads_the_clock() {
+    let instance = calling_instance(&format!("call_clock_{}", std::process::id()), false);
+    let slot = &instance.cells[0][0];
+    let reads = std::cell::Cell::new(0);
+    let clock = || {
+        reads.set(reads.get() + 1);
+        0
+    };
+    let (_, effect) = calling_work(stream_pair().0);
+    let (mut sink, mut both): (Vec<_>, Vec<_>) = (Vec::new(), effect.outputs.clone());
+    sink.extend(effect.outputs.into_iter().skip(1));
+    crate::host::stamp::stamp_plugin_ends(slot, None, &mut sink, clock);
+    assert_eq!(reads.get(), 0, "a sink-only batch reads no clock");
+    assert!(sink[0].metadata.is_empty(), "the forged stamps are gone");
+    crate::host::stamp::stamp_plugin_ends(slot, None, &mut both, clock);
+    assert_eq!(reads.get(), 1, "one read for the batch's call end");
+}
+
+/// Off the tier a request leaves on the item's connection with every stamp,
+/// its key included; the sink's output carries none of them.
+#[test]
+fn off_the_tier_a_request_carries_the_call_stamps_and_its_key() {
+    use flz_transport::service::payloader;
+
+    let id = format!("call_off_tier_{}", std::process::id());
+    let instance = calling_instance(&id, false);
+    let producer = Arc::clone(&instance.cells[0][0]);
+    let (stream, controller_end) = stream_pair();
+    let controller_end = flz_transport::transport::FlezhaStream::Unix(controller_end);
+    let (work, effect) = calling_work(Arc::clone(&stream));
+    let before = crate::util::wall_now_ms();
+    settle_item(&producer, &work, effect, None);
+    let window = (before, crate::util::wall_now_ms());
+    let mut frames = Vec::new();
+    for _ in 0..2 {
+        let (_, payload, metadata) =
+            payloader::extract_payload(&controller_end).expect("a plugin frame");
+        let metadata: Vec<(String, String)> = metadata.into_iter().collect();
+        frames.push((payload, call_stamps(&metadata, window)));
+    }
+    assert_eq!(
+        frames,
+        vec![
+            (b"ask".to_vec(), expected_call_stamps()),
+            (b"out".to_vec(), Vec::new()),
+        ]
+    );
+}
+
+/// Under the tier the request rides the effect record with the same stamps,
+/// so a re-drive after a crash carries its deadline and target.
+#[test]
+fn under_the_tier_the_recorded_request_carries_the_call_stamps() {
+    let id = format!("call_tier_{}", std::process::id());
+    let instance = calling_instance(&id, true);
+    let producer = Arc::clone(&instance.cells[0][0]);
+    let (work, effect) = calling_work(stream_pair().0);
+    let before = crate::util::wall_now_ms();
+    let outputs = recorded_outputs(|| settle_item(&producer, &work, effect, None));
+    let window = (before, crate::util::wall_now_ms());
+    let stamps: Vec<(&str, Vec<(String, String)>)> = outputs
+        .iter()
+        .map(|o| (o.channel.as_str(), call_stamps(&o.metadata, window)))
+        .collect();
+    assert_eq!(
+        stamps,
+        vec![("ask", expected_call_stamps()), ("out", Vec::new())]
+    );
+    assert_eq!(outputs[0].key, "anna-42");
 }

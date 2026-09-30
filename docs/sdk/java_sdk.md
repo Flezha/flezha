@@ -263,7 +263,10 @@ no `codec` element.
 
 `.response()` ends a channel on the answer to an outside call instead of a sink,
 and `.response(Function<T, byte[]>)` takes a serializer as `.sink` does:
-[`calls.md`](calls.md).
+[`calls.md`](calls.md). `.call(CallTarget.id("pricing"), Answer.class, deadlineMs)`
+(or `CallTarget.factory("agent").create(false)` after a `keyBy`) ends a tasklet's
+output chain on a call to another operator and answers an `EntryChannel` of
+`Response<Req, Answer>`: [`calls.md`](calls.md#operator-calls-call).
 
 `id` must be written: the factory id is an address a user types, and a
 class rename must not move it. The written `id` also names the tasklet, so a

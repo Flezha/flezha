@@ -306,7 +306,7 @@ returns: encoded as an emit of the value would be, numbered `flz.part` from `0` 
 attempt and stamped with `flz.part_attempt`, `flz.cell` and `flz.key`; it goes to the
 operator's listeners and to nothing else, never waits, is dropped and counted when the wire
 cannot take it at once, and is sent by no replayed input; it answers `part.no_sink` when the
-node's channel ends in no sink, a `response/1` end included, and `part.outside_invocation`
+node's channel ends in no sink, a `response/1` or `call/3` end included, and `part.outside_invocation`
 through a ctx whose invocation returned),
 `apply/3` (fold a change and record it; a `defchange` recorder calls it),
 `complete/2` (end a bounded instance with a result, encoded as `spawn_bounded` encodes its
@@ -338,7 +338,10 @@ unnamed mentions of one module unify (fan-in). A sink names the channel it termi
 target's `input` entry, and `sink/1` leaves the name derived — `named/2`'s name, else the
 tasklet's `name/0`. Naming one channel twice is refused. `response/1`, or `response_with/2`
 with a serializer, ends a channel on the answer to an outside call instead of a sink
-([`calls.md`](calls.md)). The user's metadata rides the frame. Cell mode is derived: non-empty `cell_keys/0` → static; a keyed edge into a
+([`calls.md`](calls.md)). `call(handle, "pricing", deadline_ms: 500)`, or
+`call(handle, factory: "agent", deadline_ms: ..., create: false)` after a `key_by/2`, ends a
+chain on a call to another operator and answers a handle on its Response channel, whose
+values are `%Flezha.SDK.Response{}` ([`calls.md`](calls.md#operator-calls-call)). The user's metadata rides the frame. Cell mode is derived: non-empty `cell_keys/0` → static; a keyed edge into a
 keyless tasklet → dynamic; else single. Refusals accumulate into one
 `{:error, %Flezha.SDK.Error{}}` carrying the first issue's code and every issue in
 `details.issues` — e.g. `topology.transform_after_key_by`, `topology.retry_max_zero`,
@@ -421,7 +424,9 @@ instance unwinds, instead of parking.
 With `partition_count >= 2` on `AddOperator`, a dynamic key is admitted against the owned
 range **before** any Cell state exists (a miss parks with the contract error naming the key
 and its group); static keys outside the range idle silently; a keyless topology refuses the
-bind (`PartitionsWithoutKeyedTasklet`). The hash is `Flezha.SDK.KeyGroup.group_of/1`, the
+bind (`PartitionsWithoutKeyedTasklet`). Keyless means, as in the other SDKs, that no tasklet an
+entry channel feeds is keyed: a graph whose only keyed tasklet sits behind an inter-task edge is
+refused a partitioned start. The hash is `Flezha.SDK.KeyGroup.group_of/1`, the
 one the controller's range assignment calls ([`partitioned_operators.md`](partitioned_operators.md)).
 
 ## Dynamic cells

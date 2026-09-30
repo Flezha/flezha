@@ -202,6 +202,83 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     assert %{outbox_flushed_seq: 0} = WalWriter.outbox_status(pid)
   end
 
+  test "a held call is re-dispatched until its caller answers it; any other hold waits", %{
+    rc: rc,
+    cell_id: cell_id
+  } do
+    Application.put_env(:flezha, :outbox_resettle_ms, 0)
+    on_exit(fn -> Application.delete_env(:flezha, :outbox_resettle_ms) end)
+
+    pid = armed_writer(rc, cell_id)
+    append_effect(pid, 0, [output("k", "call", [{"flz.call", "id:pricing"}])], 1)
+    append_effect(pid, 1, [output("k", "sink")], 2)
+
+    # The caller's Overwatch holds the call, a sink holds the other output.
+    assert {"call", call_md, _} = next_output()
+    assert {"sink", sink_md, _} = next_output()
+
+    for md <- [call_md, sink_md] do
+      :ok = Outbox.hold(md)
+      settle(md)
+    end
+
+    # A restarted Overwatch holds no row for the call, so the resettle hands
+    # the call back with identical identity; the sink's hold is its own.
+    send(pid, :outbox_retry)
+    :ok = WalWriter.fsync(pid)
+    assert {"call", again, _} = next_output()
+    assert again["flz.seq"] == call_md["flz.seq"]
+    refute_dispatched(0)
+
+    :ok = Outbox.hold(again)
+    settle(again)
+    :ok = Outbox.confirm(again)
+    :ok = WalWriter.fsync(pid)
+    assert %{outbox_flushed_seq: 0} = WalWriter.outbox_status(pid)
+  end
+
+  test "a held answer to an operator caller is re-dispatched until its delivery confirms it", %{
+    rc: rc,
+    cell_id: cell_id
+  } do
+    Application.put_env(:flezha, :outbox_resettle_ms, 0)
+    on_exit(fn -> Application.delete_env(:flezha, :outbox_resettle_ms) end)
+
+    pid = armed_writer(rc, cell_id)
+    answer = [{"flz.reply_to", "o:gateway:c1:0:1"}]
+    append_effect(pid, 0, [output("k", "answer", answer)], 1)
+    assert {"answer", md, _} = next_output()
+    :ok = Outbox.hold(md)
+    settle(md)
+
+    # The delivery that held it went down with its router: the answer goes again.
+    send(pid, :outbox_retry)
+    :ok = WalWriter.fsync(pid)
+    assert {"answer", again, _} = next_output()
+    assert again["flz.seq"] == md["flz.seq"]
+  end
+
+  test "asked for its held calls, a writer re-dispatches them at once and nothing else", %{
+    rc: rc,
+    cell_id: cell_id
+  } do
+    pid = armed_writer(rc, cell_id)
+    append_effect(pid, 0, [output("k", "call", [{"flz.call", "id:pricing"}])], 1)
+    append_effect(pid, 1, [output("k", "sink")], 2)
+    assert {"call", call_md, _} = next_output()
+    assert {"sink", sink_md, _} = next_output()
+
+    for md <- [call_md, sink_md] do
+      :ok = Outbox.hold(md)
+      settle(md)
+    end
+
+    assert WalWriter.redrive_calls(pid) == 1
+    assert {"call", again, _} = next_output()
+    assert again["flz.seq"] == call_md["flz.seq"]
+    refute_dispatched(0)
+  end
+
   # ---------- batched reports ----------
 
   test "one settlement and one confirmation report complete a whole batch", %{

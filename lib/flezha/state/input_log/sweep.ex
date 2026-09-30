@@ -20,7 +20,8 @@ defmodule Flezha.State.InputLog.Sweep do
 
   @doc """
   Sweep one instance: truncate its input log strictly below
-  `min(watermark, now - hold_window)` and emit the frozen-watermark warning
+  `min(watermark, now - hold_window)`, and below the lowest record a live call
+  still holds (`Flezha.State.InputLog.CallRetention`), and emit the frozen-watermark warning
   when the log grows past the size threshold without the watermark advancing.
   No-op when no input-log file exists.
   """
@@ -43,7 +44,7 @@ defmodule Flezha.State.InputLog.Sweep do
 
   defp do_sweep(operator_class, path) do
     watermark = InputLog.watermark(operator_class)
-    floor = truncation_floor(operator_class, watermark)
+    floor = operator_class |> truncation_floor(watermark) |> below_live_calls(operator_class)
 
     # The *floor* decides whether there is work, not the watermark: under a hold
     # window the floor advances with the clock even while every reporter's
@@ -76,6 +77,16 @@ defmodule Flezha.State.InputLog.Sweep do
     case :ets.lookup(InputLog.watermark_table(), {operator_class, key}) do
       [{_, value}] -> value
       [] -> :none
+    end
+  end
+
+  # A record carrying a live call is kept whatever the watermark allows.
+  defp below_live_calls(nil, _operator_class), do: nil
+
+  defp below_live_calls(floor, operator_class) do
+    case InputLog.call_floor(operator_class) do
+      nil -> floor
+      held -> min(floor, held)
     end
   end
 

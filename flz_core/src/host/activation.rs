@@ -737,7 +737,7 @@ fn route_edge_outputs(
 
 /// Fold the invocation into the buffer per its Cell's policy; a Cell that
 /// records no effects hands its wire outputs and park back to ship after the
-/// buffer ops. Both routes leave from here, so the answers are stamped here.
+/// buffer ops. Both routes leave from here, so the plugin ends are stamped here.
 fn settle_into_buffer(
     slot: &Arc<CellSlot>,
     facts: &HostTaskletFacts,
@@ -747,7 +747,7 @@ fn settle_into_buffer(
     dlq: Option<DlqEntryBody>,
     hold: Option<Arc<crate::prefix::Hold>>,
 ) -> (Option<DlqEntryBody>, Vec<schema::Output>) {
-    stamp_answers(slot, call, &mut wire_outputs);
+    super::stamp::stamp_plugin_ends(slot, call, &mut wire_outputs, crate::util::wall_now_ms);
     let mut buffer = slot.flush_buffer.lock_recover();
     let Some(bytes) = buffer.as_any_mut().downcast_mut::<BytesBuffer>() else {
         return (None, Vec::new());
@@ -771,31 +771,6 @@ fn settle_into_buffer(
     );
     crate::cell::keep_hold(slot, bytes, hold);
     (tier_off_dlq, plugin_outputs)
-}
-
-/// Every output of a `response()` end carries `flz.reply_to`, the call's
-/// token or an empty value when its input carried none; no other output
-/// carries the key, whatever the host put in its metadata.
-fn stamp_answers(slot: &CellSlot, call: Option<&Arc<str>>, outputs: &mut [schema::Output]) {
-    for output in outputs {
-        let schema::OutputTarget::Plugin { channel } = &output.target else {
-            continue;
-        };
-        output
-            .metadata
-            .retain(|(key, _)| key != crate::routing::CALL_KEY);
-        let response = slot
-            .topology
-            .lookup_channel_id(channel)
-            .and_then(|id| slot.topology.channel(id))
-            .is_some_and(|descriptor| descriptor.response);
-        if response {
-            output.metadata.push((
-                crate::routing::CALL_KEY.to_string(),
-                call.map_or_else(String::new, |token| token.to_string()),
-            ));
-        }
-    }
 }
 
 fn output_records(wire_outputs: Vec<schema::Output>) -> Vec<OutputRecord> {

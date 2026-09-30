@@ -339,12 +339,13 @@ defmodule Flezha.Service.HubManager.Rows do
   runtime registry does not empty this list, and a deliberate stop removes its
   entry for good. Parsed through the same cspec start-args shapes the registry
   readers use; an entry whose args no current clause understands still counts
-  as declared, with an unknown factory.
+  as declared, with an unknown factory. A hub that cannot be read answers
+  `unreadable`: none declared, unless the caller must tell the two apart.
   """
-  @spec declared_operators(binary() | atom()) ::
-          [%{id: binary(), factory_id: binary() | nil}]
-  def declared_operators(namespace) do
-    with_live_hub(namespace, [], fn hub_id ->
+  @spec declared_operators(binary() | atom(), term()) ::
+          [%{id: binary(), factory_id: binary() | nil}] | term()
+  def declared_operators(namespace, unreadable \\ []) do
+    with_live_hub(namespace, unreadable, fn hub_id ->
       %{children: children} = DeclaredChildren.declared_children(hub_id)
 
       Enum.map(children, fn child_spec ->

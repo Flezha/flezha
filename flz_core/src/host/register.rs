@@ -58,12 +58,26 @@ pub struct DerivedChannel {
     /// input caused them. A plugin end like a sink, never beside one.
     #[serde(skip)]
     pub response: bool,
+    /// The channel ends in `call(...)`. A host knows its own end, so the
+    /// derived answer it parses leaves it out, as it does `response`.
+    #[serde(skip)]
+    pub call: Option<DerivedCall>,
     /// Which rung of [`name`](Self::name) answered: a `sink(...)` with no
     /// `named(...)` beside it. Recorded where the naming links are read rather
     /// than walked again, so a refusal about a name and the name itself cannot
     /// come from different links. Not part of the derived answer a host parses.
     #[serde(skip)]
     pub named_by_sink: bool,
+}
+
+/// A channel's call end and the chain that declared it: the chain's
+/// transform and key are applied to a value before it becomes a request.
+#[derive(Debug)]
+pub struct DerivedCall {
+    pub end: super::decl::HostCall,
+    pub chain: usize,
+    pub transform: bool,
+    pub key: bool,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -114,8 +128,12 @@ pub fn check(decl: HostClassDecl) -> Result<Derived, Vec<TopologyIssue>> {
     for task_decl in &decl.tasklets {
         refuse_tasklet(task_decl, &mut issues);
     }
+    let responses = refuse_calls(&decl, &channels, &mut issues);
     for channel in &channels {
         refuse_channel(&decl, channel, &mut issues);
+        if !responses.contains(channel.name.as_str()) {
+            refuse_channel_ends(channel, &mut issues);
+        }
     }
     refuse_edge_keying(&decl, &channels, &mut issues);
     refuse_graph_shape(&decl, &channels, &mut issues);
@@ -330,7 +348,43 @@ fn refuse_channel(decl: &HostClassDecl, channel: &DerivedChannel, issues: &mut V
             });
         }
     }
-    refuse_channel_ends(channel, issues);
+}
+
+/// A call end needs its Response channel read by a tasklet, and a class that
+/// reads a later message than its first. Answers the Response channels' names:
+/// an unread one is refused here by its call rather than as a bare entry
+/// channel without a consumer.
+fn refuse_calls<'a>(
+    decl: &HostClassDecl,
+    channels: &'a [DerivedChannel],
+    issues: &mut Vec<TopologyIssue>,
+) -> HashSet<&'a str> {
+    let loop_mode = decl.bounded.as_ref().map(|bounded| bounded.loop_mode);
+    let mut responses = HashSet::new();
+    for (channel, call) in channels
+        .iter()
+        .filter_map(|c| c.call.as_ref().map(|call| (c, call)))
+    {
+        if loop_mode.is_some_and(|mode| mode != HostLoopMode::PerInput) {
+            issues.push(TopologyIssue::CallOutsidePerInputLoop {
+                channel: channel.name.clone(),
+            });
+        }
+        let response = channels.iter().find(|c| c.name == call.end.response);
+        if let Some(response) = response {
+            responses.insert(response.name.as_str());
+        }
+        let read = response.is_some_and(|c| {
+            c.kind == HostChannelKind::Entry && c.producer.is_none() && !c.consumers.is_empty()
+        });
+        if !read {
+            issues.push(TopologyIssue::CallResponseUnread {
+                channel: channel.name.clone(),
+                response: call.end.response.clone(),
+            });
+        }
+    }
+    responses
 }
 
 /// Each channel kind names exactly the ends its kind has. A produced

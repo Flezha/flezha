@@ -675,6 +675,14 @@
         {"tag": "factory_language_unserved", "args": ["namespace", "factory", "language"]}
       ]
     },
+    "operator.factory_mismatch": {
+      "class": "conflict",
+      "message": "'{operator}' in namespace '{namespace}' is an operator of factory '{actual}', not of '{factory}', so a call to factory '{factory}' cannot reach it",
+      "details": ["namespace", "operator", "factory", "actual"],
+      "reasons": [
+        {"tag": "factory_mismatch", "args": ["namespace", "operator", "factory", "actual"]}
+      ]
+    },
     "operator.factory_not_bounded": {
       "class": "invalid",
       "message": "factory '{factory}' is an unbounded operator, and only a bounded one can be spawned or scheduled",
@@ -2566,6 +2574,26 @@
       "message": "a handoff-chained loop needs exactly one terminal tasklet per chain; the chain of entry channel '{channel}' has {leaves}",
       "details": ["channel", "leaves"]
     },
+    "topology.call_deadline_zero": {
+      "class": "invalid",
+      "message": "channel '{channel}' calls with a deadline of 0 ms; a call needs a positive deadline_ms",
+      "details": ["channel"]
+    },
+    "topology.call_outside_per_input_loop": {
+      "class": "invalid",
+      "message": "channel '{channel}' ends in a call, and only a :per_input bounded operator reads the later message its Response is; declare the class :per_input, or make the call from an unbounded operator",
+      "details": ["channel"]
+    },
+    "topology.call_response_unread": {
+      "class": "invalid",
+      "message": "channel '{channel}' calls another operator and its Response channel '{response}' feeds no tasklet, so every outcome would be journaled and read by nobody; wire the Response channel into a tasklet, or forward with operator_forward when no outcome is wanted",
+      "details": ["channel", "response"]
+    },
+    "topology.call_without_key": {
+      "class": "invalid",
+      "message": "channel '{channel}' calls a factory with create: false and no key_by before the call, so nothing names the instance it may reach; key the chain, or let the call create its callee",
+      "details": ["channel"]
+    },
     "topology.cell_keys_without_static_mode": {
       "class": "invalid",
       "message": "tasklet '{tasklet}' declares cell_keys without static mode",
@@ -2588,7 +2616,7 @@
     },
     "topology.channel_ends_twice": {
       "class": "invalid",
-      "message": "channel '{channel}' declares two plugin ends; a channel ends in one sink or one response(), so route the value through a pass-through tasklet to give it both",
+      "message": "channel '{channel}' declares two plugin ends; a channel ends in one sink, one response() or one call, so route the value through a pass-through tasklet to give it both",
       "details": ["channel"]
     },
     "topology.channel_name_too_long": {

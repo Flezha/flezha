@@ -687,6 +687,46 @@ mod journal_codec_tests {
     }
 
     #[test]
+    fn a_call_link_builds_its_end_and_create_defaults_to_true() {
+        let derived = check_class_json(
+            r#"{"factory_id":"call_link","sdk_lang":1,"sdk_version":"0.1.0",
+                 "channels":[{"name":"in","kind":"entry","chains":[[{"link":"into","tasklet":0}]]},
+                             {"name":"ask","kind":"inter_task","producer":0,
+                              "chains":[[{"link":"key"},{"link":"call","factory":"agent",
+                                          "deadline_ms":120000,"channel":"turn",
+                                          "response":"ask.response"}]]},
+                             {"name":"ask.response","kind":"entry",
+                              "chains":[[{"link":"into","tasklet":0}]]}],
+                 "tasklets":[{"name":"p0"}]}"#
+                .as_bytes(),
+        )
+        .expect("the class is well formed");
+        let built = build_channels(&derived.decl, &derived.channels).0;
+        let end = built[1].call.as_ref().expect("the call end");
+        assert_eq!(built[1].kind, ChannelKind::PluginBound);
+        assert!(!built[1].sink && !built[1].response);
+        assert_eq!(&*end.target, "factory:agent");
+        assert!(
+            end.create,
+            "a call creates its callee unless it says otherwise"
+        );
+        assert_eq!(end.deadline_ms, 120_000);
+        assert_eq!(end.channel.as_deref(), Some("turn"));
+        assert_eq!(&*end.response, "ask.response");
+        assert!(built[0].call.is_none() && built[2].call.is_none());
+        assert_eq!(
+            end.stamps(Some("anna-42"), 1_000),
+            vec![
+                ("flz.call".to_string(), "factory:agent".to_string()),
+                ("flz.call_response".to_string(), "ask.response".to_string()),
+                ("flz.deadline_at".to_string(), "121000".to_string()),
+                ("flz.call_channel".to_string(), "turn".to_string()),
+                ("flz.key".to_string(), "anna-42".to_string()),
+            ]
+        );
+    }
+
+    #[test]
     fn a_codec_rides_an_inter_task_channel_and_nothing_else() {
         let rows = channels(
             r#"{"factory_id":"codec_kinds","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,

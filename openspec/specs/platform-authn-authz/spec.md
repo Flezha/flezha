@@ -855,3 +855,23 @@ refused call SHALL deliver no input. A call a plugin makes on the operator it is
 - **WHEN** a caller bound to `app` calls an operator
 - **THEN** the audit log SHALL hold one record for the act naming the operator, in the shape an `operator send` writes
 
+### Requirement: An operator's call SHALL be judged as its runner identity
+
+A call an operator's graph makes SHALL be judged as the runner identity of the caller's namespace,
+the identity a tasklet's `ctx.spawn_bounded` is judged as: the creation of a callee against the
+`operator_start` row, which authorizes `operator.start` and writes its audit record, and the
+delivery of a request against the `spawn_deliver` row, which authorizes `operator.send` and writes
+no record of its own. A refused creation or delivery SHALL end the call with a `Response` carrying
+the refusal's `authz.*` code, and SHALL start and deliver nothing. The way an answer returns into
+the caller SHALL NOT be judged again: it is the caller's own call coming back.
+
+#### Scenario: A runner without the spawner role cannot create a session
+
+- **WHEN** authorization is enforced, the caller's runner identity holds only `runner` in the namespace, and a call would create a session
+- **THEN** the caller SHALL receive a `Response` carrying `authz.role_insufficient`, and no session SHALL start
+
+#### Scenario: A creation is audited
+
+- **WHEN** a call creates a session under enforced authorization for a runner identity bound to `spawner`
+- **THEN** the audit log SHALL hold one `operator_start` record naming the new instance
+

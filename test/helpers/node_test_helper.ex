@@ -306,6 +306,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     :schema_evolution,
     :shorthand,
     :call_response,
+    :operator_call,
     :parts
   ]
 
@@ -338,6 +339,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     :bounded,
     :shorthand,
     :call_response,
+    :operator_call,
     :parts
   ]
 

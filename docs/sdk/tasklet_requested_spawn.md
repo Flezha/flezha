@@ -93,6 +93,13 @@ the rule `ctx.complete` applies: bytes as they are, a string as UTF-8, anything 
 so a `text` or `json` entry reads it. A durable instance whose input log already holds records
 is a restart, not a spawn, and is not re-seeded.
 
+An operator's `call(...)` end to a factory reaches its callee through this same spawn-or-deliver
+in the controller, with the options a call adds: it may start an unbounded instance when a key
+names it, `create: false` answers `operator.not_found` for an absent id instead of starting one,
+a key naming an instance of another factory is refused, and the request is delivered through the
+callee's call entry point so its answer comes back as a `Response`. See
+[`calls.md`](calls.md#operator-calls-call).
+
 ## Failures resolve the handle, never `run`
 
 Every failure is the SDK's one error type carrying a code
@@ -192,3 +199,4 @@ A caller that needs at most one instance, or the id on replay, passes its own id
   instance's lifecycle
 - [`../plugins/operator_forward.md`](../plugins/operator_forward.md) — feeding an existing
   operator as configuration
+- [`calls.md`](calls.md) — calling an operator from the graph and reading its outcome

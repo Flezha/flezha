@@ -18,6 +18,7 @@ pub mod admission;
 #[doc(hidden)]
 pub mod bench_support;
 pub mod bounded;
+pub mod call;
 pub mod cell;
 pub mod channel;
 #[doc(hidden)]

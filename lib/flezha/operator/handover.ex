@@ -117,7 +117,8 @@ defmodule Flezha.Operator.Handover do
     |> arm_call_deadlines()
   end
 
-  # Each carried row keeps the deadline it had on the source node.
+  # Each carried row keeps the deadline it had on the source node; an
+  # operator's own call keeps its wall-clock one.
   defp arm_call_deadlines(%Overwatch{calls: calls} = state) do
     timers =
       Enum.reduce(Map.keys(calls.rows), state.timers, fn token, timers ->
@@ -127,6 +128,12 @@ defmodule Flezha.Operator.Handover do
           Calls.remaining_ms(calls, token),
           {:call_deadline, token}
         )
+      end)
+
+    timers =
+      Enum.reduce(calls.out, timers, fn {id, row}, timers ->
+        left = max(row.deadline_at - System.system_time(:millisecond), 0)
+        Timer.arm(timers, {:call, id}, left, {:call_timeout, id})
       end)
 
     %Overwatch{state | timers: timers}

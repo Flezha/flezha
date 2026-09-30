@@ -264,7 +264,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     assert parked.metadata[:reason] == reason
   end
 
-  test "a call's four events reach the bus from the table's own call sites" do
+  test "a call's five events reach the bus from the table's own call sites" do
     call_sink = :"obs_tbridge_call_sink_#{:erlang.unique_integer([:positive])}"
     ref = :counters.new(1, [:atomics])
 
@@ -285,12 +285,23 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     {:diverted, calls} = Calls.divert(calls, callee, "b", %{"flz.reply_to" => answered})
     _ = Calls.expire(calls, callee, waiting)
     _ = Calls.refused(callee, "call.busy", %{pending_max: 1})
+    deadline_at = Integer.to_string(System.system_time(:millisecond))
+
+    stamps = %{
+      "flz.call" => "id:pricing",
+      "flz.call_response" => "r",
+      "flz.deadline_at" => deadline_at
+    }
+
+    {_id, row} = Calls.request("o1", stamps, false)
+    :ok = Calls.recovered_unanswered(callee, row)
 
     for {name, measurement} <- [
           flezha_call_answer_duration: :duration_us,
           flezha_call_answers_dropped_total: :count,
           flezha_call_timeouts_total: :count,
-          flezha_call_refused_total: :count
+          flezha_call_refused_total: :count,
+          flezha_call_recovered_unanswered_total: :count
         ] do
       signal = receive_until(fn s -> s.source == :flezha_call and s.name == name end, 500)
       assert signal, "#{name} never reached the bus"

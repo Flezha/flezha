@@ -181,7 +181,8 @@ defmodule Flezha.Application do
 
     [
       Flezha.Service.PluginManager,
-      Flezha.Plugin.Provider.Kafka.WorkerRegistry
+      Flezha.Plugin.Provider.Kafka.WorkerRegistry,
+      Flezha.Service.Calls
     ] ++
       worker_families ++
       [

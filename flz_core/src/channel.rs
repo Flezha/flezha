@@ -170,6 +170,85 @@ pub struct PluginSink {
     pub serializer: PluginSerializeFn,
 }
 
+/// A `call(...)` end: where each request goes, how long its caller waits, and
+/// the entry channel the outcome comes back on. A typed host also keeps here
+/// the chain's transform and key, applied to a value before it becomes a
+/// request as an edge applies its own.
+#[derive(Clone)]
+pub struct CallEnd {
+    /// `id:<instance or group>` or `factory:<factory id>`.
+    pub target: Arc<str>,
+    pub create: bool,
+    pub deadline_ms: u64,
+    /// The callee's entry channel the request enters on.
+    pub channel: Option<Arc<str>>,
+    /// The caller's entry channel each outcome enters on.
+    pub response: Arc<str>,
+    pub transform: Option<EdgeTransformFn>,
+    pub key: Option<EdgeKeyFn>,
+}
+
+impl CallEnd {
+    /// The requests one emitted value makes, each with its key: the chain's
+    /// transform applied as an edge applies it, then its key. Contained like
+    /// an edge's closures. A host that ships bytes has applied both itself.
+    pub fn requests(&self, value: &Arc<dyn Any + Send + Sync>) -> Result<Requests, FlezhaError> {
+        let edge = ConsumerEdge {
+            tasklet: 0,
+            transform: self.transform.clone(),
+            key: self.key.clone(),
+        };
+        let values: Vec<_> = match edge.transform_value(value)? {
+            Some(yielded) => yielded.into_iter().collect(),
+            None => vec![Arc::clone(value)],
+        };
+        values
+            .into_iter()
+            .map(|value| {
+                let key = edge.key_of(value.as_ref())?;
+                Ok((value, key))
+            })
+            .collect()
+    }
+
+    /// The metadata every request of this end carries: the target, whether
+    /// it may create its callee (only when it may not), the Response channel,
+    /// the wall-clock millisecond its call expires (`now_ms` plus the
+    /// deadline), the callee's entry channel when named, and the request's
+    /// key when it has one.
+    pub fn stamps(&self, key: Option<&str>, now_ms: u64) -> Vec<(String, String)> {
+        let mut stamps = vec![
+            (CALL_TARGET_KEY.to_string(), self.target.to_string()),
+            (CALL_RESPONSE_KEY.to_string(), self.response.to_string()),
+            (
+                DEADLINE_AT_KEY.to_string(),
+                now_ms.saturating_add(self.deadline_ms).to_string(),
+            ),
+        ];
+        if !self.create {
+            stamps.push((CALL_CREATE_KEY.to_string(), "false".to_string()));
+        }
+        if let Some(channel) = &self.channel {
+            stamps.push((CALL_CHANNEL_KEY.to_string(), channel.to_string()));
+        }
+        if let Some(key) = key.filter(|key| !key.is_empty()) {
+            stamps.push(("flz.key".to_string(), key.to_string()));
+        }
+        stamps
+    }
+}
+
+/// The requests one emitted value makes, each with the key it was given.
+pub type Requests = Vec<(Arc<dyn Any + Send + Sync>, Option<String>)>;
+
+/// The metadata keys a call end stamps; the controller reads them to deliver
+/// the request and to answer it.
+pub const CALL_TARGET_KEY: &str = "flz.call";
+pub const CALL_CREATE_KEY: &str = "flz.call_create";
+pub const CALL_RESPONSE_KEY: &str = "flz.call_response";
+pub const CALL_CHANNEL_KEY: &str = "flz.call_channel";
+pub const DEADLINE_AT_KEY: &str = "flz.deadline_at";
+
 pub struct ChannelDescriptor {
     pub name: Arc<str>,
     pub kind: ChannelKind,
@@ -189,6 +268,10 @@ pub struct ChannelDescriptor {
     /// The channel's plugin end is a sink: the one end a part previews, since
     /// a `response()` end's outputs are taken aside before any listener.
     pub sink: bool,
+    /// The channel's plugin end is a `call(...)`: every output is a request
+    /// to another operator, stamped with the end's facts, and never reaches a
+    /// plugin or a listener.
+    pub call: Option<CallEnd>,
     /// `.keyed()`: plugin emits require a key and carry `flz.*` stamps.
     pub keyed: bool,
     pub overflow_policy: OverflowPolicy,

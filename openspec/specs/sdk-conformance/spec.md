@@ -1052,3 +1052,28 @@ and with a file sink attached beside the listener.
 - **THEN** each runtime SHALL deliver the first attempt's parts with attempt `1`, the second
   attempt's from `flz.part` `0` with attempt `2`, and then the output
 
+### Requirement: Calling another operator SHALL be a required capability every SDK proves
+
+`operator_call` SHALL join the capability vocabulary and the required set, so no manifest may defer
+it. Every manifest SHALL list it under `fixtures` with exactly the reference's ids: `call_pricing`,
+an unbounded callee answering through `response()`; `call_orders`, an unbounded caller calling
+`call_pricing` by name; `call_agent`, a durable `:per_input` bounded callee; `call_gateway`, an
+unbounded caller calling `call_agent` by key through its factory, with its Response channel wired
+back into its calling tasklet; and `call_tool_session`, a durable `:per_input` bounded caller calling
+`call_pricing` from a turn. Every test app SHALL declare each through its SDK's builder and list the
+`call` steps under `topology_surfaces`. `test/system/operator_call_e2e_test.exs` SHALL be tagged
+`capability: :operator_call` and SHALL drive every fixture on the selected runtime, including the
+two crash drills (the callee's runner killed mid-turn, the caller killed with a call pending) with
+the assertion of exactly one `Response` per call. The reference refusal rows of the call end SHALL
+be driven through every runtime's real boot.
+
+#### Scenario: Both kinds call and are called on every runtime
+
+- **WHEN** the scenario runs `call_orders`, `call_gateway` and `call_tool_session` on any runtime
+- **THEN** each SHALL receive one `Response` per call, `call_gateway`'s first saying `created: true` and its second `created: false`
+
+#### Scenario: A crash drill holds on every runtime
+
+- **WHEN** the scenario kills `call_agent`'s runner while a turn `call_gateway` sent is running
+- **THEN** `call_gateway` SHALL receive exactly one `Response` for that call, and `call_agent`'s journal SHALL hold that turn committed once
+

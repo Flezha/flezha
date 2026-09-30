@@ -262,6 +262,21 @@ defmodule Flezha.Operator.Replay do
   def seed_bounded_outboxes(%Overwatch{}), do: :ok
 
   @doc """
+  Ask this operator's running Cell writers to dispatch again, now, every call
+  their outboxes hold: how many went. An Overwatch restarted alone relearns its
+  calls from those dispatches.
+  """
+  @spec redrive_calls(Overwatch.t()) :: non_neg_integer()
+  def redrive_calls(%Overwatch{} = state) do
+    state
+    |> Overwatch.operator_class()
+    |> Flezha.State.Supervisor.live_writers()
+    |> Enum.map(&WalWriter.redrive_calls/1)
+    |> Enum.filter(&is_integer/1)
+    |> Enum.sum()
+  end
+
+  @doc """
   Await one Cell's `RestoreInitState` and report a decisive verdict.
 
   The one place the awaited restore's ANSWER is read. `{:error, reason}` covers

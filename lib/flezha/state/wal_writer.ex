@@ -187,6 +187,13 @@ defmodule Flezha.State.WalWriter do
   def outbox_epoch(server), do: call(server, :outbox_epoch)
 
   @doc """
+  Re-dispatch now every operator call this Cell's outbox still holds; how many
+  entries went again, or the writer's refusal.
+  """
+  @spec redrive_calls(GenServer.server()) :: non_neg_integer() | {:error, term()}
+  def redrive_calls(server), do: call(server, :redrive_calls)
+
+  @doc """
   Where a correction for `target_event_time` must rewind to: the last seq whose
   history entirely precedes that event time, plus the input offset consumed as
   of that seq.
@@ -428,6 +435,11 @@ defmodule Flezha.State.WalWriter do
 
   def handle_call(:outbox_epoch, _from, state) do
     {:reply, state.outbox_epoch, state}
+  end
+
+  def handle_call(:redrive_calls, _from, state) do
+    {count, state} = Settlement.redrive_calls(state)
+    {:reply, count, state}
   end
 
   def handle_call({:correction_baseline, target}, _from, state) do
