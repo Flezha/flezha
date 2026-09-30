@@ -48,6 +48,7 @@ export -f flz
 build_desk() {
   case "$SDK" in
     java) echo "mvn -q package" ;;
+    rust) echo "cargo build --release --offline" ;; # --offline: the checkout's .cargo/config.toml, per the README
     *) echo "walk: no build command for $SDK yet; add it here" >&2; exit 1 ;;
   esac
 }

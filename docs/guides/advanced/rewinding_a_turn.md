@@ -48,6 +48,29 @@ last message of the conversation:
 
 `deliver`'s is empty: an answer already given has nothing to take back.
 
+### Rust
+
+`reply`'s undo, from [`agent_session.md`](agent_session.md#answer-a-message), forgets the
+last message of the conversation:
+
+```rust
+    // The undo, when a turn is taken back: the conversation forgets its message.
+    fn compensate(
+        &mut self,
+        _: Vec<Arc<Answer>>,
+        ctx: &mut Ctx<'_, Self>,
+    ) -> Result<(), TaskletError> {
+        println!(
+            "[undo] forgot \"{}\"",
+            ctx.state().messages.last().map_or("", String::as_str)
+        );
+        ctx.change(Edit::Unsaid);
+        Ok(())
+    }
+```
+
+`deliver`'s is empty: an answer already given has nothing to take back.
+
 <!-- tabs-close -->
 
 A rewind asks every tasklet whose output left the session, through a sink or a

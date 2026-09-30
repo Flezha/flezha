@@ -85,6 +85,13 @@ flight can be lost. The gateway asks, with the first line of its graph in
         c.effectivelyOnce();                                 // each request and answer on disk before it runs
 ```
 
+### Rust
+
+```rust
+    fn channels(c: &ChannelBuilder) {
+        c.effectively_once(); // each request and answer on disk before it runs
+```
+
 <!-- tabs-close -->
 
 The gateway now writes each HTTP request to its input log before it runs, and each answer

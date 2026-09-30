@@ -27,6 +27,7 @@ flowchart LR
 > | Language | You need |
 > |---|---|
 > | Java | Java 21 and Maven |
+> | Rust | Rust with Cargo |
 >
 > - **A Kubernetes cluster, such as k3s, and `kubectl`**, for
 >   [`kubernetes_deployment.md`](kubernetes_deployment.md).

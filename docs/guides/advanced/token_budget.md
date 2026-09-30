@@ -83,6 +83,112 @@ answers reach the same cell. A `Response` carries the request it answers, which 
 where the user comes from, and a turn that failed, or took too long, is counted as using
 no tokens.
 
+### Rust
+
+```rust
+// src/budget.rs: each user's tokens for the day, and whether a message is admitted.
+pub const DAILY_TOKENS: u32 = 40;
+const DAY_MS: u64 = 86_400_000;
+
+#[derive(Clone)]
+pub enum Event {
+    Sent(Message),
+    Used { user: String, tokens: u32 },
+}
+
+impl Event {
+    pub fn user(&self) -> &str {
+        match self {
+            Event::Sent(message) => &message.user,
+            Event::Used { user, .. } => user,
+        }
+    }
+
+    // A failed turn used no tokens.
+    pub fn used(response: Response<Message, Answer>) -> Self {
+        Event::Used {
+            user: response.request.user,
+            tokens: response.result.map_or(0, |answer| answer.tokens),
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Verdict {
+    pub message: Message,
+    pub spent: u32,
+}
+
+impl Verdict {
+    pub fn admitted(&self) -> bool {
+        self.spent < DAILY_TOKENS
+    }
+}
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct Spent {
+    day: u64,
+    tokens: u32,
+}
+
+impl Spent {
+    fn on(&self, today: u64) -> u32 {
+        if today == self.day {
+            self.tokens
+        } else {
+            0
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Counted {
+    day: u64,
+    tokens: u32,
+}
+
+impl Change<Spent> for Counted {
+    fn apply_to(&self, spent: &mut Spent) {
+        spent.tokens = spent.on(self.day) + self.tokens;
+        spent.day = self.day;
+    }
+}
+
+#[derive(Default)]
+pub struct Budget;
+
+#[tasklet(name = "budget")]
+impl Tasklet for Budget {
+    type Input = Event;
+    type Output = Verdict;
+    type State = Spent;
+    type Change = Counted;
+
+    fn run(&mut self, event: Event, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
+        let today = ctx.now() / DAY_MS;
+        match event {
+            Event::Sent(message) => ctx.emit(Verdict {
+                message,
+                spent: ctx.state().on(today),
+            }),
+            Event::Used { tokens, .. } => {
+                ctx.change(Counted { day: today, tokens });
+                Ok(())
+            }
+        }
+    }
+}
+```
+
+A tasklet takes one type of input, and `budget` reads two things: the messages, and the
+tokens their answers used. So its input is `Event`, an enum which is either, and the
+gateway's graph maps each into it on the way in and keys both by user, so a user's
+messages and answers reach the same cell. A `Response` carries the request it answers,
+which is where the user comes from, and a turn that failed, or took too long, has an
+error for its `result` and is counted as using no tokens. The day is counted in days
+since 1970, as the standard library has no calendar, so `flz state get` prints it as a
+number.
+
 <!-- tabs-close -->
 
 The state is the day, in UTC, and the tokens used on it; the first answer of a new day

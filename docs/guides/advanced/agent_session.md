@@ -64,6 +64,45 @@ public final class AgentOperator implements BoundedOperator {
 `RollbackMode.KEEP_PROGRESS` is what a failing turn needs, and
 [`rewinding_a_turn.md`](rewinding_a_turn.md#a-turn-that-fails) shows it.
 
+### Rust
+
+The whole example:
+[`sdk/rust/examples/agentdesk`](https://github.com/flezha/flezha_rust_sdk/tree/main/examples/agentdesk).
+
+```rust
+// src/agent.rs: one conversation, one turn per message.
+pub struct AgentOperator;
+
+impl BoundedOperator for AgentOperator {
+    fn factory_id() -> &'static str {
+        "agent"
+    }
+
+    fn loop_mode() -> LoopMode {
+        LoopMode::PerInput // one turn per message
+    }
+
+    fn rollback_mode() -> RollbackMode {
+        RollbackMode::KeepProgress // a failed turn fails alone
+    }
+
+    fn channels(c: &ChannelBuilder) {
+        c.input::<String>("turn")
+            .into::<Reply>()
+            .sink_named("answer") // to whoever listens
+            .into::<Deliver>()
+            .response(); // to whoever called
+        c.input::<Message>("message") // from the gateway
+            .map(|message| message.text)
+            .into::<Reply>();
+    }
+}
+```
+
+`LoopMode::PerInput` runs the chain once per message instead of once in all.
+`RollbackMode::KeepProgress` is what a failing turn needs, and
+[`rewinding_a_turn.md`](rewinding_a_turn.md#a-turn-that-fails) shows it.
+
 <!-- tabs-close -->
 
 A message arrives on the entry channel `turn`, and `reply` answers it. The answer
@@ -150,6 +189,105 @@ public final class Deliver implements Tasklet<Answer, Void, Answer> {
 }
 ```
 
+### Rust
+
+```rust
+// src/reply.rs: answers a message with the demo model, and keeps the conversation.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Answer {
+    pub text: String,
+    pub tokens: u32,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct Conversation {
+    messages: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum Edit {
+    Said(String),
+    Unsaid,
+}
+
+impl Change<Conversation> for Edit {
+    fn apply_to(&self, conversation: &mut Conversation) {
+        match self {
+            Edit::Said(message) => conversation.messages.push(message.clone()),
+            Edit::Unsaid => {
+                conversation.messages.pop();
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Reply;
+
+#[tasklet(name = "reply")]
+impl Tasklet for Reply {
+    type Input = String;
+    type Output = Answer;
+    type State = Conversation;
+    type Change = Edit;
+
+    fn run(&mut self, message: String, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
+        ctx.emit(demo_model::answer(
+            &ctx.state().messages,
+            &message,
+            |part| ctx.part(part),
+        )?)?;
+        ctx.change(Edit::Said(message));
+        Ok(())
+    }
+
+    // The undo, when a turn is taken back: the conversation forgets its message.
+    fn compensate(
+        &mut self,
+        _: Vec<Arc<Answer>>,
+        ctx: &mut Ctx<'_, Self>,
+    ) -> Result<(), TaskletError> {
+        println!(
+            "[undo] forgot \"{}\"",
+            ctx.state().messages.last().map_or("", String::as_str)
+        );
+        ctx.change(Edit::Unsaid);
+        Ok(())
+    }
+}
+```
+
+An answer is its text and the number of tokens the model used for it. `Edit` is the
+one change type `reply` records, a message said or the last one taken back.
+`|part| ctx.part(part)` hands the model a way to send the answer while it is still being
+written, which [`streamed_answers.md`](streamed_answers.md) explains, and `compensate` is
+the undo that [`rewinding_a_turn.md`](rewinding_a_turn.md) uses.
+
+```rust
+// src/deliver.rs: hands the finished answer to the caller.
+#[derive(Default)]
+pub struct Deliver;
+
+#[tasklet(name = "deliver")]
+impl Tasklet for Deliver {
+    type Input = Answer;
+    type Output = Answer;
+
+    fn run(&mut self, answer: Answer, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
+        ctx.emit(answer)
+    }
+
+    // The undo, when a turn is taken back: an answer already given has nothing to take back.
+    fn compensate(
+        &mut self,
+        _: Vec<Arc<Answer>>,
+        _: &mut Ctx<'_, Self>,
+    ) -> Result<(), TaskletError> {
+        Ok(())
+    }
+}
+```
+
 <!-- tabs-close -->
 
 ## The runner
@@ -188,6 +326,47 @@ COPY target/agentdesk.jar /agentdesk/agentdesk.jar
 USER 1000
 ENTRYPOINT ["java", "-jar", "/agentdesk/agentdesk.jar"]
 ```
+
+### Rust
+
+```rust
+// src/main.rs: the runner.
+mod admit;
+mod agent;
+mod budget;
+mod deliver;
+mod demo_model;
+mod gateway;
+mod http;
+mod reply;
+mod request;
+mod watch;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let runner = Flezha::create_runner("agents")?;
+    runner
+        .register_factory(agent::AgentOperator)?
+        .register_factory(gateway::GatewayOperator)?
+        .start()?;
+
+    runner.await_termination()?;
+    Ok(())
+}
+```
+
+The runner's image is the binary Cargo builds, on a Debian runtime:
+
+```dockerfile
+# The runner's image: the binary `cargo build --release` builds, on a Debian 12 runtime.
+FROM debian:bookworm-slim
+COPY target/release/agentdesk /agentdesk/agentdesk
+USER 1000
+ENTRYPOINT ["/agentdesk/agentdesk"]
+```
+
+The image copies the binary built on your machine, so one built against a C library
+newer than Debian 12's may not start in it. The project's `.dockerignore` sends Docker
+that binary alone, not the rest of `target/`.
 
 <!-- tabs-close -->
 
@@ -261,6 +440,12 @@ volumes:
 
 ```sh
 $ mvn -q package
+```
+
+### Rust
+
+```sh
+$ cargo build --release
 ```
 
 <!-- tabs-close -->

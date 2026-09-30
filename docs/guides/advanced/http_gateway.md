@@ -67,6 +67,43 @@ public final class GatewayOperator implements UnboundedOperator {
 }
 ```
 
+### Rust
+
+```rust
+// src/gateway.rs: answers every request, and calls the session a message is for.
+const DEADLINE_MS: u64 = 60_000;
+
+pub struct GatewayOperator;
+
+impl UnboundedOperator for GatewayOperator {
+    fn factory_id() -> &'static str {
+        "gateway"
+    }
+
+    fn channels(c: &ChannelBuilder) {
+        c.effectively_once(); // each request and answer on disk before it runs
+        let http = c.input::<Request>("http");
+        http.filter(|request| !request.sends())
+            .into::<Watch>()
+            .response(); // a stream, or 404
+        let verdicts = http
+            .filter(Request::sends)
+            .map(|request| Event::Sent(request.message()))
+            .key_by(|event| event.user().to_string()) // one cell per user
+            .into::<Budget>();
+        verdicts.into::<Admit>().response(); // 202, or 429 over the budget
+        verdicts
+            .filter(Verdict::admitted)
+            .map(|verdict| verdict.message)
+            .key_by(|message| message.user.clone()) // the user's session
+            .call::<Answer>(CallTarget::factory("agent").channel("message"), DEADLINE_MS)
+            .map(Event::used)
+            .key_by(|event| event.user().to_string())
+            .into::<Budget>(); // the tokens the answer used
+    }
+}
+```
+
 <!-- tabs-close -->
 
 A request that is not a message goes to `watch`, whose answer is a `response()` end. A
@@ -180,6 +217,130 @@ public final class Admit implements Tasklet<Verdict, Void, Http> {
 `Budget.java`, with the `Event`, `Sent`, `Used` and `Verdict` records the graph names, is
 on [`token_budget.md`](token_budget.md#count-the-tokens); copy it from the example.
 
+### Rust
+
+```rust
+// src/request.rs: one HTTP request, as the plugin hands it to the gateway.
+#[derive(Clone, Deserialize)]
+pub struct Request {
+    method: String,
+    path: String,
+    body: Option<String>,
+}
+
+impl Request {
+    pub fn sends(&self) -> bool {
+        self.is("POST", "messages")
+    }
+
+    pub fn listens(&self) -> bool {
+        self.is("GET", "events")
+    }
+
+    pub fn user(&self) -> &str {
+        self.route().map_or("", |(user, _)| user)
+    }
+
+    pub fn message(&self) -> Message {
+        Message {
+            user: self.user().to_string(),
+            text: self.body.clone().unwrap_or_default(),
+        }
+    }
+
+    fn is(&self, verb: &str, what: &str) -> bool {
+        self.method == verb && self.route().is_some_and(|(_, route)| route == what)
+    }
+
+    // `/sessions/<user>/<what>`, the user a short lower-case name; `None` when not a route.
+    fn route(&self) -> Option<(&str, &str)> {
+        let (user, what) = self.path.strip_prefix("/sessions/")?.split_once('/')?;
+        let name = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-';
+        let is_user = user.len() <= 64
+            && user.starts_with(|c: char| c.is_ascii_lowercase())
+            && user.chars().all(name);
+        (is_user && matches!(what, "messages" | "events")).then_some((user, what))
+    }
+}
+```
+
+`route` accepts only a short lower-case name as the user, because the user is the id of
+the session the gateway calls. The body is the plugin's text of the request body,
+absent when it is not valid UTF-8. Fields the envelope carries beside these three are
+ignored.
+
+```rust
+// src/http.rs: the gateway's answer to a request.
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)] // the plugin reads the fields, with no name for the variant around them
+pub enum Http {
+    Plain { status: u16, body: String },
+    Stream { stream: String },
+}
+```
+
+An answer is the JSON object the plugin expects: a status and a body, sent as text, or
+the session to stream. `#[serde(untagged)]` writes a variant as its fields alone,
+because the plugin refuses a key it does not know.
+
+```rust
+// src/watch.rs: a session's events, or 404.
+#[derive(Default)]
+pub struct Watch;
+
+#[tasklet(name = "watch")]
+impl Tasklet for Watch {
+    type Input = Request;
+    type Output = Http;
+
+    fn run(&mut self, request: Request, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
+        ctx.emit(if request.listens() {
+            Http::Stream {
+                stream: request.user().to_string(),
+            }
+        } else {
+            Http::Plain {
+                status: 404,
+                body: "no such route".to_string(),
+            }
+        })
+    }
+}
+```
+
+```rust
+// src/admit.rs: 202 when the message goes on, 429 over the budget.
+#[derive(Default)]
+pub struct Admit;
+
+#[tasklet(name = "admit")]
+impl Tasklet for Admit {
+    type Input = Verdict;
+    type Output = Http;
+
+    fn run(&mut self, verdict: Verdict, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
+        let user = &verdict.message.user;
+        ctx.emit(if verdict.admitted() {
+            Http::Plain {
+                status: 202,
+                body: format!("sent to {user}"),
+            }
+        } else {
+            Http::Plain {
+                status: 429,
+                body: format!(
+                    "{user} has used {} of today's {DAILY_TOKENS} tokens",
+                    verdict.spent
+                ),
+            }
+        })
+    }
+}
+```
+
+`src/budget.rs`, with the `Event` and `Verdict` types the graph names, is on
+[`token_budget.md`](token_budget.md#count-the-tokens); copy it from the example.
+
 <!-- tabs-close -->
 
 ## A second way into a session
@@ -216,6 +377,33 @@ reach the same `reply`, with the same conversation. In `Main`:
                 .registerFactory(GatewayOperator.class)
 ```
 
+### Rust
+
+```rust
+// src/agent.rs: a message for a user's session, as the gateway sends it.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Message {
+    pub user: String,
+    pub text: String,
+}
+```
+
+In `AgentOperator::channels`, after the `turn` chain:
+
+```rust
+        c.input::<Message>("message") // from the gateway
+            .map(|message| message.text)
+            .into::<Reply>();
+```
+
+`into::<Reply>()` names the tasklet the `turn` chain already feeds, so both channels
+reach the same `reply`, with the same conversation. In `main`, with `mod gateway;` among
+the modules:
+
+```rust
+        .register_factory(gateway::GatewayOperator)?
+```
+
 <!-- tabs-close -->
 
 ## Start the gateway
@@ -234,6 +422,12 @@ publishes the port on the host's loopback only, `127.0.0.1:8080`
 
 ```sh
 $ mvn -q package
+```
+
+### Rust
+
+```sh
+$ cargo build --release
 ```
 
 <!-- tabs-close -->

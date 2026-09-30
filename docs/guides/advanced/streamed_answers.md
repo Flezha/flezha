@@ -46,6 +46,48 @@ still running, and the whole answer is returned at the end. A real model's clien
 be called here instead, handing each token it streams to `part` the same way. The
 message limit is for [`rewinding_a_turn.md`](rewinding_a_turn.md#a-turn-that-fails).
 
+### Rust
+
+```rust
+// src/demo_model.rs: a canned answer, one token at a time.
+const MAX_MESSAGE: usize = 200;
+const PER_TOKEN: Duration = Duration::from_millis(50);
+
+pub fn answer(
+    earlier: &[String],
+    message: &str,
+    part: impl Fn(Answer) -> Result<(), TaskletError>,
+) -> Result<Answer, TaskletError> {
+    let length = message.chars().count();
+    if length > MAX_MESSAGE {
+        return Err(TaskletError::NonRetryable(format!(
+            "the demo model reads at most {MAX_MESSAGE} characters, and this message has {length}"
+        )));
+    }
+    let text = format!(
+        "Message {}: you said \"{message}\". I am a demo model.",
+        earlier.len() + 1
+    );
+    let tokens: Vec<&str> = text.split_inclusive(' ').collect();
+    for (i, token) in tokens.iter().enumerate() {
+        part(Answer {
+            text: token.to_string(),
+            tokens: i as u32 + 1,
+        })?;
+        std::thread::sleep(PER_TOKEN);
+    }
+    Ok(Answer {
+        tokens: tokens.len() as u32,
+        text,
+    })
+}
+```
+
+`reply` passes `|part| ctx.part(part)` as `part`, so every token leaves as a part while
+`run` is still running, and the whole answer is returned at the end. A real model's
+client would be called here instead, handing each token it streams to `part` the same
+way. The message limit is for [`rewinding_a_turn.md`](rewinding_a_turn.md#a-turn-that-fails).
+
 <!-- tabs-close -->
 
 ## What a part is
