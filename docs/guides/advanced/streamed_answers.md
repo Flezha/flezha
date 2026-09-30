@@ -125,6 +125,38 @@ holds one of the runner's worker threads for the length of the answer. The messa
 is for [`rewinding_a_turn.md`](rewinding_a_turn.md#a-turn-that-fails).
 [`python_sdk.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/python_sdk.md#authoring) has the details of parts.
 
+### Ruby
+
+```ruby
+# demo_model.rb: a canned answer, one token at a time.
+module DemoModel
+  MAX_MESSAGE = 200
+  PER_TOKEN_S = 0.05
+
+  def self.answer(earlier, message)
+    if message.length > MAX_MESSAGE
+      raise Flezha::NonRetryableError,
+            "the demo model reads at most #{MAX_MESSAGE} characters, and this message has #{message.length}"
+    end
+
+    text = "Message #{earlier.size + 1}: you said \"#{message}\". I am a demo model."
+    tokens = text.split(/(?<= )/)
+    tokens.each.with_index(1) do |token, i|
+      yield({ text: token, tokens: i })
+      sleep PER_TOKEN_S
+    end
+    { text: text, tokens: tokens.size }
+  end
+end
+```
+
+`reply`'s block passes each token to `ctx.part`, so every token leaves as a part while
+`run` is still running, and the whole answer is returned at the end. A real model's
+client would be called here instead, handing each token it streams to the block the same
+way. The pause holds one of the runner's worker threads for the length of the answer.
+The message limit is for [`rewinding_a_turn.md`](rewinding_a_turn.md#a-turn-that-fails).
+[`ruby_sdk.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/ruby_sdk.md#authoring) has the details of parts.
+
 ### PHP
 
 ```php

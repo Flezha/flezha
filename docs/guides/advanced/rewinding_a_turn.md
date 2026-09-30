@@ -85,6 +85,21 @@ last message of the conversation:
 
 `deliver`'s does nothing: an answer already given has nothing to take back.
 
+### Ruby
+
+`reply`'s undo, from [`agent_session.md`](agent_session.md#answer-a-message), forgets the
+last message of the conversation:
+
+```ruby
+  # The undo, when a turn is taken back: the conversation forgets its message.
+  def compensate(_answers, ctx)
+    puts "[undo] forgot \"#{ctx.state[:messages].last}\""
+    ctx.change({ kind: "unsaid" })
+  end
+```
+
+`deliver`'s is empty: an answer already given has nothing to take back.
+
 ### PHP
 
 `reply`'s undo, from [`agent_session.md`](agent_session.md#answer-a-message), forgets the

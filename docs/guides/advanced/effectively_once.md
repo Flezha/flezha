@@ -99,6 +99,13 @@ def gateway(c: flezha.Channels) -> None:
     c.effectively_once()  # each request and answer on disk before it runs
 ```
 
+### Ruby
+
+```ruby
+  channels do |c|
+    c.effectively_once                                       # each request and answer on disk before it runs
+```
+
 ### PHP
 
 ```php

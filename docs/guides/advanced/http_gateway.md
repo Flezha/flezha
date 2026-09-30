@@ -149,6 +149,46 @@ to, and `Request.of` makes it a `Request`, which `watch` takes as it is and `sen
 into the message for `budget`. `user` reads the
 key from the dict each chain carries.
 
+### Ruby
+
+```ruby
+# gateway_operator.rb: answers every request, and calls the session a message is for.
+class GatewayOperator < Flezha::UnboundedOperator
+  factory_id "gateway"
+
+  DEADLINE_MS = 60_000
+
+  channels do |c|
+    c.effectively_once                                       # each request and answer on disk before it runs
+    user = ->(value) { value[:user] }
+    http = c.input("http", decode: Request.method(:decode))
+    http.filter { |request| !request.sends? }
+        .into(Watch)
+        .response                                            # a stream, or 404
+    verdicts = http.filter(&:sends?)
+                   .map(&:message)
+                   .key_by(&user)                            # one cell per user
+                   .into(Budget)
+    verdicts.into(Admit)
+            .response                                        # 202, or 429 over the budget
+    verdicts.filter { |verdict| Budget.admitted?(verdict) }
+            .map { |verdict| verdict[:message] }
+            .key_by(&user)                                   # the user's session
+            .call(factory: "agent", channel: "message", deadline_ms: DEADLINE_MS)
+            .map { |response| Budget.used(response) }
+            .key_by(&user)
+            .into(Budget)                                    # the tokens the answer used
+  end
+end
+```
+
+`c.effectively_once` declares the delivery guarantee, and the call names its target with
+`factory: "agent"` and `channel: "message"`, and its deadline with `DEADLINE_MS`. The call
+sends its request and reads its answer as JSON, the codec it takes when none is named.
+`Request.method(:decode)` is the entry channel's decoder: it makes each request a
+`Request`, which `watch` takes as it is and the chain into `budget` turns into the
+message's Hash. `user` reads the key from the Hash each chain carries.
+
 ### PHP
 
 ```php
@@ -509,6 +549,77 @@ class Admit:
 `budget.py`, with the `Event`, `Verdict`, `admitted`, `sent` and `used` the graph names,
 is on [`token_budget.md`](token_budget.md#count-the-tokens); copy it from the example.
 
+### Ruby
+
+```ruby
+# request.rb: one HTTP request, as the plugin hands it to the gateway.
+class Request
+  ROUTE = %r{\A/sessions/([a-z][a-z0-9_-]{0,63})/(messages|events)\z}
+
+  # The envelope carries more than the gateway reads.
+  def self.decode(json)
+    envelope = JSON.parse(json, symbolize_names: true)
+    new(envelope[:method], envelope[:path], envelope[:body])
+  end
+
+  def initialize(verb, path, body)
+    @verb = verb
+    @path = path
+    @body = body
+  end
+
+  def sends? = route?("POST", "messages")
+  def listens? = route?("GET", "events")
+  def user = route(1)
+  def message = { user: user, text: @body || "" }
+
+  private
+
+  def route?(verb, what) = @verb == verb && route(2) == what
+  def route(part) = ROUTE.match(@path)&.[](part) || "" # "" when the path is not a route
+end
+```
+
+The pattern accepts only a short lower-case name as the user, because the user is the id
+of the session the gateway calls. The body is the plugin's text of the request body,
+absent when it is not valid UTF-8. `decode` reads the three fields the gateway needs from
+an envelope that carries more.
+
+```ruby
+# watch.rb: a session's events, or 404.
+class Watch < Flezha::Tasklet
+  tasklet_name "watch"
+
+  def run(request, ctx)
+    ctx.emit(request.listens? ? { stream: request.user } : { status: 404, body: "no such route" })
+  end
+end
+```
+
+```ruby
+# admit.rb: 202 when the message goes on, 429 over the budget.
+class Admit < Flezha::Tasklet
+  tasklet_name "admit"
+
+  def run(verdict, ctx)
+    user = verdict[:message][:user]
+    ctx.emit(
+      if Budget.admitted?(verdict)
+        { status: 202, body: "sent to #{user}" }
+      else
+        { status: 429, body: "#{user} has used #{verdict[:spent]} of today's #{Budget::DAILY_TOKENS} tokens" }
+      end
+    )
+  end
+end
+```
+
+An answer is the Hash the plugin expects, sent as JSON: a status and a body, sent as
+text, or the session to stream.
+
+`budget.rb`, with the `admitted?` and `used` the graph names, is on
+[`token_budget.md`](token_budget.md#count-the-tokens); copy it from the example.
+
 ### PHP
 
 ```php
@@ -694,6 +805,25 @@ the same `reply`, with the same conversation. In `runner.py`, with
     runner = flezha.create_runner("agents").register_factory(agent).register_factory(gateway)
 ```
 
+### Ruby
+
+The message is the Hash `Request#message` builds, the user and the text, so there is no
+class to add. In `AgentOperator`'s `channels`, after the `turn` chain:
+
+```ruby
+    c.input("message")                                       # from the gateway
+     .map { |message| message[:text] }
+     .into(Reply)
+```
+
+`into(Reply)` names the tasklet the `turn` chain already feeds, so both channels reach
+the same `reply`, with the same conversation. In `runner.rb`, with
+`require_relative "gateway_operator"`:
+
+```ruby
+               .register_factory(GatewayOperator)
+```
+
 ### PHP
 
 The message is the array `Request::message()` builds, the user and the text, so there
@@ -739,6 +869,10 @@ $ cargo build --release
 ```
 
 ### Python
+
+There is nothing to install again: the image copies the new files as they are.
+
+### Ruby
 
 There is nothing to install again: the image copies the new files as they are.
 

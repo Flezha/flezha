@@ -135,6 +135,36 @@ def agent(c: flezha.Channels) -> None:
 [`rewinding_a_turn.md`](rewinding_a_turn.md#a-turn-that-fails) shows it. `turn` reads its
 message as text; `message` names no codec, so its JSON arrives as a dict.
 
+### Ruby
+
+The whole example:
+[`sdk/ruby/examples/agentdesk`](https://github.com/flezha/flezha_ruby_sdk/tree/main/examples/agentdesk).
+
+```ruby
+# agent_operator.rb: one conversation, one turn per message.
+class AgentOperator < Flezha::BoundedOperator
+  factory_id "agent"
+  loop_mode :per_input                                       # one turn per message
+  rollback_mode :keep_progress                               # a failed turn fails alone
+
+  channels do |c|
+    c.input("turn", codec: :text)
+     .into(Reply)
+     .sink("answer")                                         # to whoever listens
+     .into(Deliver)
+     .response                                               # to whoever called
+    c.input("message")                                       # from the gateway
+     .map { |message| message[:text] }
+     .into(Reply)
+  end
+end
+```
+
+`loop_mode :per_input` runs the chain once per message instead of once in all.
+`rollback_mode :keep_progress` is what a failing turn needs, and
+[`rewinding_a_turn.md`](rewinding_a_turn.md#a-turn-that-fails) shows it. `turn` reads its
+message as text; `message` names no codec, so its JSON arrives as a Hash with Symbol keys.
+
 ### PHP
 
 The whole example:
@@ -405,6 +435,53 @@ class Deliver:
         pass
 ```
 
+### Ruby
+
+```ruby
+# reply.rb: answers a message with the demo model, and keeps the conversation.
+class Reply < Flezha::Tasklet
+  tasklet_name "reply"
+
+  def init_state(_session) = { messages: [] } # what the session remembers
+
+  def apply_change(conversation, change)
+    case change
+    in { kind: "said", message: } then conversation[:messages] << message
+    in { kind: "unsaid" } then conversation[:messages].pop
+    end
+  end
+
+  def run(message, ctx)
+    ctx.emit(DemoModel.answer(ctx.state[:messages], message) { |part| ctx.part(part) })
+    ctx.change({ kind: "said", message: message })
+  end
+
+  # The undo, when a turn is taken back: the conversation forgets its message.
+  def compensate(_answers, ctx)
+    puts "[undo] forgot \"#{ctx.state[:messages].last}\""
+    ctx.change({ kind: "unsaid" })
+  end
+end
+```
+
+An answer is a Hash of its text and the number of tokens the model used for it. A
+change is a Hash too, a message said or the last one taken back, and `apply_change` folds
+it into the conversation. The block hands the model a way to send the answer while it is
+still being written, which [`streamed_answers.md`](streamed_answers.md) explains, and
+`compensate` is the undo that [`rewinding_a_turn.md`](rewinding_a_turn.md) uses.
+
+```ruby
+# deliver.rb: hands the finished answer to the caller.
+class Deliver < Flezha::Tasklet
+  tasklet_name "deliver"
+
+  def run(answer, ctx) = ctx.emit(answer)
+
+  # The undo, when a turn is taken back: an answer already given has nothing to take back.
+  def compensate(_answers, _ctx); end
+end
+```
+
 ### PHP
 
 ```php
@@ -579,6 +656,50 @@ the project's `.dockerignore` sends Docker only the Python files and `vendor/`. 
 runner stops when its standard input closes, and a container starts with it closed, so
 the image gives the runner a pipe that stays open.
 
+### Ruby
+
+```ruby
+# runner.rb: the runner.
+# The sessions print their undos; written at once, they reach the log in the
+# order they happened.
+$stdout.sync = true
+
+runner = Flezha.create_runner("agents")
+               .register_factory(AgentOperator)
+               .register_factory(GatewayOperator)
+               .boot
+
+runner.await_termination
+```
+
+The runner's image installs the project's gems on a Ruby image:
+
+```dockerfile
+# The runner's image: the project, and the gems `bundle cache` put in vendor/cache, on Ruby 4.0.
+# msgpack builds a C extension when it is installed, so the gems are installed in the full Ruby
+# image, which has a compiler, and copied onto the slim one.
+FROM ruby:4.0 AS gems
+WORKDIR /agentdesk
+COPY Gemfile Gemfile.lock ./
+COPY vendor/cache vendor/cache
+RUN bundle install --local
+
+FROM ruby:4.0-slim
+COPY --from=gems /usr/local/bundle /usr/local/bundle
+COPY . /agentdesk
+WORKDIR /agentdesk
+# The runner stops when its standard input closes, and a container's is closed: it reads a pipe
+# that stays open instead.
+RUN mkfifo -m 600 stdin && chown 1000 stdin
+USER 1000
+ENTRYPOINT ["sh", "-c", "exec ruby runner.rb <> stdin"]
+```
+
+The image installs the gems `bundle cache` put in `vendor/cache` on your machine, and the
+project's `.dockerignore` sends Docker only the Ruby files, the `Gemfile` with its lock
+and `vendor/cache`. A Ruby runner stops when its standard input closes, and a container
+starts with it closed, so the image gives the runner a pipe that stays open.
+
 ### PHP
 
 ```php
@@ -699,6 +820,12 @@ $ cargo build --release
 
 ```sh
 $ python3 -m pip install --target vendor -r requirements.txt
+```
+
+### Ruby
+
+```sh
+$ bundle cache
 ```
 
 ### PHP

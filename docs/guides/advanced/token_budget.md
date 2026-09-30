@@ -260,6 +260,51 @@ request it answers, where the user comes from; a turn that failed, or took too l
 has no `value` and is counted as using no tokens. `admitted` is the check the graph's
 filter and `admit` share.
 
+### Ruby
+
+```ruby
+# budget.rb: each user's tokens for the day, and whether a message is admitted.
+class Budget < Flezha::Tasklet
+  tasklet_name "budget"
+
+  DAILY_TOKENS = 40
+
+  def self.admitted?(verdict) = verdict[:spent] < DAILY_TOKENS
+
+  def self.used(response)                                    # a failed turn used none
+    { user: response.request[:user], tokens: response.ok? ? response.value[:tokens] : 0 }
+  end
+
+  def init_state(_user) = { day: "", tokens: 0 }             # what each user's cell remembers
+
+  def apply_change(spent, counted)
+    spent[:tokens] = on(spent, counted[:day]) + counted[:tokens]
+    spent[:day] = counted[:day]
+  end
+
+  def run(event, ctx)
+    today = Time.at(ctx.now / 1000, in: "UTC").strftime("%F")
+    if event.key?(:tokens)                                   # the tokens an answer used
+      ctx.change({ day: today, tokens: event[:tokens] })
+    else                                                     # a message to admit
+      ctx.emit({ message: event, spent: on(ctx.state, today) })
+    end
+  end
+
+  private
+
+  def on(spent, today) = spent[:day] == today ? spent[:tokens] : 0
+end
+```
+
+A tasklet takes one type of input, and `budget` reads two things: the messages, and the
+tokens their answers used. Both are Hashes, told apart by whether they carry `:tokens`,
+and the gateway's graph keys both by user, so a user's messages and answers reach the
+same cell. `used` makes the tokens out of the call's `Response`, which carries the
+request it answers, where the user comes from; a turn that failed, or took too long,
+has an `error` and is counted as using no tokens. `admitted?` is the check the graph's
+filter and `admit` share.
+
 ### PHP
 
 ```php
