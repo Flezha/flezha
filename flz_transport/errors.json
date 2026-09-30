@@ -3216,7 +3216,7 @@
   },
   "internal": [
     "already_exist", "already_exists", "already_loaded", "already_present", "already_started", "awake", "bad_header_size",
-    "bad_marker_body", "bad_payload", "chmod", "claim_held", "client_not_running", "corrupt_index",
+    "bad_marker_body", "bad_payload", "call_not_relearned", "chmod", "claim_held", "client_not_running", "corrupt_index",
     "crc_mismatch", "delivery_crashed", "delivery_failed", "dispatch_timeout", "dlq_entry_missing",
     "durability_tier_disabled", "durability_tier_not_running", "einval", "enoent", "exception",
     "exit", "fetch_crashed", "gap", "http", "http_status", "id_taken", "input_log_unavailable",
