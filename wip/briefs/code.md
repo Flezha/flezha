@@ -69,6 +69,23 @@ anything.
 8. A spec edited: SHALL or MUST on each requirement's first body line, every
    surviving scenario carried, and the text claims only what the code does.
 
+**Hand over at 80 % context.** When your context is past 80 % full, start no
+new step. Bring the step in hand to a safe point (no half-applied edit, no
+background process left running), then write `wip/handover/<row-id>.md` and
+report `HANDOVER` to the supervisor, who starts a fresh coder on it. The
+handover lets that coder continue without re-reading what you read:
+
+- the goal and the step of it you reached, and which tasks are checked;
+- what is done, what is half done, and the exact next action;
+- the files changed and why, and any edit that must not be undone;
+- the commands that build, test and walk this item, and their last result
+  (green, or the failing tests by name);
+- the traps found, the decisions taken and their reasons, and open questions.
+
+If you are picking up from a handover, read it and `git diff --stat` first,
+continue from its next action, and discard nothing. Overwrite the file with
+your own handover if you in turn reach 80 %.
+
 **Paperwork:** no dev note unless the item taught a trap the next session would
 fall into. No board edits, except appending a found issue to
 `wip/NEW-ISSUES.md`.
