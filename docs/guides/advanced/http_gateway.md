@@ -45,6 +45,7 @@ public final class GatewayOperator implements UnboundedOperator {
 
     @Override
     public void channels(ChannelBuilder c) {
+        c.effectivelyOnce();                                 // each request and answer on disk before it runs
         EntryChannel<Request> http = c.input(Request.class, "http");
         http.filter(request -> !request.sends())
                 .into(Watch.class)
@@ -74,6 +75,8 @@ message goes to `budget`, one cell per user, which keeps each user's tokens for 
 tokens it admits every message. Its verdict goes two ways. `admit` answers the request,
 through a second `response()` end: a graph may have several, and whichever answers
 first answers the request. And an admitted message is a call to the user's session.
+`effectivelyOnce()` is the delivery guarantee, which
+[`effectively_once.md`](effectively_once.md) comes back to.
 
 `call` ends a chain in a call to another operator, as
 [`calls.md`](../../sdk/calls.md#operator-calls-call) describes. `CallTarget.factory("agent")`

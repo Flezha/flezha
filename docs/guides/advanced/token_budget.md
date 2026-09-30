@@ -67,7 +67,7 @@ public final class Budget implements Tasklet<Budget.Event, Budget.Spent, Budget.
 
     @Override
     public void run(Event event, Ctx<Spent, Verdict> ctx) throws TaskletException {
-        String today = LocalDate.now(ZoneOffset.UTC).toString();
+        String today = LocalDate.ofInstant(Instant.ofEpochMilli(ctx.now()), ZoneOffset.UTC).toString();
         switch (event) {
             case Sent sent -> ctx.emit(new Verdict(sent.message(), ctx.state().on(today)));
             case Used used -> ctx.change(new Counted(today, used.tokens()));
@@ -135,7 +135,7 @@ $ flz state get gateway/budget/dave --namespace agents
 
 ```output
 state get gateway/budget/dave:
-  change_seq: 4
+  change_seq: 9
   state:      {"budget":{"dave":{"day":"2026-09-30","tokens":40}}}
 ```
 
