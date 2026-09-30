@@ -92,6 +92,13 @@ flight can be lost. The gateway asks, with the first line of its graph in
         c.effectively_once(); // each request and answer on disk before it runs
 ```
 
+### Python
+
+```python
+def gateway(c: flezha.Channels) -> None:
+    c.effectively_once()  # each request and answer on disk before it runs
+```
+
 ### PHP
 
 ```php

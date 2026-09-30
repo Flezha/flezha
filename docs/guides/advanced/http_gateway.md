@@ -110,6 +110,45 @@ impl UnboundedOperator for GatewayOperator {
 `effectively_once()` declares the delivery guarantee, and the call names its target with
 `CallTarget::factory("agent").channel("message")` and its deadline with `DEADLINE_MS`.
 
+### Python
+
+```python
+# gateway.py: answers every request, and calls the session a message is for.
+DEADLINE_MS = 60_000
+
+
+@flezha.unbounded_operator("gateway")
+def gateway(c: flezha.Channels) -> None:
+    c.effectively_once()  # each request and answer on disk before it runs
+    user = itemgetter("user")
+    http = c.input("http").map(Request.of)
+    http.filter(lambda request: not request.sends()).into(Watch).response()  # a stream, or 404
+    verdicts = (
+        http.filter(Request.sends)
+        .map(sent)
+        .key_by(user)  # one cell per user
+        .into(Budget)
+    )
+    verdicts.into(Admit).response()  # 202, or 429 over the budget
+    (
+        verdicts.filter(admitted)
+        .map(itemgetter("message"))
+        .key_by(user)  # the user's session
+        .call(factory="agent", channel="message", deadline_ms=DEADLINE_MS)
+        .map(used)
+        .key_by(user)
+        .into(Budget)  # the tokens the answer used
+    )
+```
+
+`c.effectively_once()` declares the delivery guarantee, and the call names its target with
+`factory="agent"` and `channel="message"`, and its deadline with `DEADLINE_MS`. The call
+sends its request and reads its answer as JSON, the codec it takes when none is named.
+The entry channel names no codec, so each envelope arrives as the dict its JSON decodes
+to, and `Request.of` makes it a `Request`, which `watch` takes as it is and `sent` turns
+into the message for `budget`. `user` reads the
+key from the dict each chain carries.
+
 ### PHP
 
 ```php
@@ -387,6 +426,89 @@ impl Tasklet for Admit {
 `src/budget.rs`, with the `Event` and `Verdict` types the graph names, is on
 [`token_budget.md`](token_budget.md#count-the-tokens); copy it from the example.
 
+### Python
+
+```python
+# request.py: one HTTP request, as the plugin hands it to the gateway, and the answer.
+ROUTE = re.compile(r"/sessions/([a-z][a-z0-9_-]{0,63})/(messages|events)")
+
+
+class Http(TypedDict, total=False):  # a status and a body, or the session to stream
+    status: int
+    body: str
+    stream: str
+
+
+@dataclass(frozen=True)
+class Request:
+    method: str
+    path: str
+    body: str | None
+
+    # The envelope carries more than the gateway reads.
+    @classmethod
+    def of(cls, envelope: dict[str, Any]) -> "Request":
+        return cls(envelope["method"], envelope["path"], envelope.get("body"))
+
+    def sends(self) -> bool:
+        return self._is("POST", "messages")
+
+    def listens(self) -> bool:
+        return self._is("GET", "events")
+
+    def user(self) -> str:
+        return self._route(1)
+
+    def message(self) -> Message:
+        return Message(user=self.user(), text=self.body or "")
+
+    def _is(self, verb: str, what: str) -> bool:
+        return self.method == verb and self._route(2) == what
+
+    def _route(self, part: int) -> str:  # "" when the path is not a route
+        route = ROUTE.fullmatch(self.path)
+        return route[part] if route else ""
+```
+
+The pattern accepts only a short lower-case name as the user, because the user is the id
+of the session the gateway calls. The body is the plugin's text of the request body,
+absent when it is not valid UTF-8. `of` reads the three fields the gateway needs from an
+envelope that carries more. An answer, `Http`, is the JSON object the plugin expects:
+a status and a body, sent as text, or the session to stream. It is a `TypedDict` with no
+key required, so an answer carries only the keys it sets, because the plugin refuses a
+key it does not know.
+
+```python
+# watch.py: a session's events, or 404.
+@flezha.tasklet(name="watch")
+class Watch:
+    def run(self, request: Request, ctx: flezha.Ctx[None, Http]) -> None:
+        ctx.emit(
+            Http(stream=request.user())
+            if request.listens()
+            else Http(status=404, body="no such route")
+        )
+```
+
+```python
+# admit.py: 202 when the message goes on, 429 over the budget.
+@flezha.tasklet(name="admit")
+class Admit:
+    def run(self, verdict: Verdict, ctx: flezha.Ctx[None, Http]) -> None:
+        user = verdict["message"]["user"]
+        ctx.emit(
+            Http(status=202, body=f"sent to {user}")
+            if admitted(verdict)
+            else Http(
+                status=429,
+                body=f"{user} has used {verdict['spent']} of today's {DAILY_TOKENS} tokens",
+            )
+        )
+```
+
+`budget.py`, with the `Event`, `Verdict`, `admitted`, `sent` and `used` the graph names,
+is on [`token_budget.md`](token_budget.md#count-the-tokens); copy it from the example.
+
 ### PHP
 
 ```php
@@ -545,6 +667,33 @@ the modules:
         .register_factory(gateway::GatewayOperator)?
 ```
 
+### Python
+
+```python
+# agent.py: a message for a user's session, as the gateway sends it.
+class Message(TypedDict):  # the session is named after the user
+    user: str
+    text: str
+```
+
+In `agent`, after the `turn` chain:
+
+```python
+    (
+        c.input("message")  # from the gateway
+        .map(lambda message: message["text"])
+        .into(Reply)
+    )
+```
+
+`into(Reply)` names the tasklet the `turn` chain already feeds, so both channels reach
+the same `reply`, with the same conversation. In `runner.py`, with
+`from gateway import gateway`:
+
+```python
+    runner = flezha.create_runner("agents").register_factory(agent).register_factory(gateway)
+```
+
 ### PHP
 
 The message is the array `Request::message()` builds, the user and the text, so there
@@ -588,6 +737,10 @@ $ mvn -q package
 ```sh
 $ cargo build --release
 ```
+
+### Python
+
+There is nothing to install again: the image copies the new files as they are.
 
 ### PHP
 

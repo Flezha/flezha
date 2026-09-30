@@ -71,6 +71,20 @@ last message of the conversation:
 
 `deliver`'s is empty: an answer already given has nothing to take back.
 
+### Python
+
+`reply`'s undo, from [`agent_session.md`](agent_session.md#answer-a-message), forgets the
+last message of the conversation:
+
+```python
+    # The undo, when a turn is taken back: the conversation forgets its message.
+    def compensate(self, outputs: list[Answer], ctx: flezha.Ctx[Conversation, Answer]) -> None:
+        print(f'[undo] forgot "{ctx.state.messages[-1]}"', flush=True)
+        ctx.change(Edit(kind="unsaid"))
+```
+
+`deliver`'s does nothing: an answer already given has nothing to take back.
+
 ### PHP
 
 `reply`'s undo, from [`agent_session.md`](agent_session.md#answer-a-message), forgets the

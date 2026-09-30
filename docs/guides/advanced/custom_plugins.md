@@ -67,6 +67,23 @@ flezha_http 0.1.0  loaded  providers: http_server
 A package the controller could not load is listed `refused`, with its error code and what
 to do; [`installation.md`](../../plugins/installation.md#errors) lists them.
 
+The new controller starts the sessions again once the runner has connected to it, within
+about a minute, and a call before that answers `operator.not_found`, so wait until the
+controller lists them:
+
+```sh
+$ flz operator list --namespace agents
+```
+
+```output
+Fetching operators for namespace 'agents'...
+Operators in namespace 'agents':
+
+  OPERATOR                          HEALTH      PARTS   NODE                  RUNNER
+  anna                              suspended   -       flezha@127.0.0.1      agents_e4a79407ad42
+  bob                               suspended   -       flezha@127.0.0.1      agents_e4a79407ad42
+```
+
 > Send Anna a message.
 > {: .step}
 

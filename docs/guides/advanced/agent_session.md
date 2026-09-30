@@ -103,6 +103,38 @@ impl BoundedOperator for AgentOperator {
 `RollbackMode::KeepProgress` is what a failing turn needs, and
 [`rewinding_a_turn.md`](rewinding_a_turn.md#a-turn-that-fails) shows it.
 
+### Python
+
+The whole example:
+[`sdk/python/examples/agentdesk`](https://github.com/flezha/flezha_python_sdk/tree/main/examples/agentdesk).
+
+```python
+# agent.py: one conversation, one turn per message.
+@flezha.bounded_operator(
+    "agent",
+    loop_mode="per_input",  # one turn per message
+    rollback_mode="keep_progress",  # a failed turn fails alone
+)
+def agent(c: flezha.Channels) -> None:
+    (
+        c.input("turn", codec="text")
+        .into(Reply)
+        .sink("answer")  # to whoever listens
+        .into(Deliver)
+        .response()  # to whoever called
+    )
+    (
+        c.input("message")  # from the gateway
+        .map(lambda message: message["text"])
+        .into(Reply)
+    )
+```
+
+`loop_mode="per_input"` runs the chain once per message instead of once in all.
+`rollback_mode="keep_progress"` is what a failing turn needs, and
+[`rewinding_a_turn.md`](rewinding_a_turn.md#a-turn-that-fails) shows it. `turn` reads its
+message as text; `message` names no codec, so its JSON arrives as a dict.
+
 ### PHP
 
 The whole example:
@@ -320,6 +352,59 @@ impl Tasklet for Deliver {
 }
 ```
 
+### Python
+
+```python
+# reply.py: answers a message with the demo model, and keeps the conversation.
+@flezha.state
+@dataclass
+class Conversation:  # what the session remembers
+    messages: list[str] = field(default_factory=list)
+
+
+class Edit(TypedDict):  # a message said, or the last one taken back
+    kind: Literal["said", "unsaid"]
+    message: NotRequired[str]
+
+
+@flezha.tasklet(name="reply")
+class Reply:
+    def run(self, message: str, ctx: flezha.Ctx[Conversation, Answer]) -> None:
+        ctx.emit(demo_model.answer(ctx.state.messages, message, ctx.part))
+        ctx.change(Edit(kind="said", message=message))
+
+    def apply_change(self, conversation: Conversation, edit: Edit) -> None:
+        match edit:
+            case {"kind": "said", "message": message}:
+                conversation.messages.append(message)
+            case _:
+                conversation.messages.pop()
+
+    # The undo, when a turn is taken back: the conversation forgets its message.
+    def compensate(self, outputs: list[Answer], ctx: flezha.Ctx[Conversation, Answer]) -> None:
+        print(f'[undo] forgot "{ctx.state.messages[-1]}"', flush=True)
+        ctx.change(Edit(kind="unsaid"))
+```
+
+An answer, the `Answer` in `demo_model.py`, is a dict of its text and the number of tokens
+the model used for it. `Edit` is the one change `reply` records, a message said or the
+last one taken back, and `apply_change` folds it into the conversation. `ctx.part` hands
+the model a way to send the answer while it is still being written, which
+[`streamed_answers.md`](streamed_answers.md) explains, and `compensate` is the undo that
+[`rewinding_a_turn.md`](rewinding_a_turn.md) uses.
+
+```python
+# deliver.py: hands the finished answer to the caller.
+@flezha.tasklet(name="deliver")
+class Deliver:
+    def run(self, answer: Answer, ctx: flezha.Ctx[None, Answer]) -> None:
+        ctx.emit(answer)
+
+    # The undo, when a turn is taken back: an answer already given has nothing to take back.
+    def compensate(self, outputs: list[Answer], ctx: flezha.Ctx[None, Answer]) -> None:
+        pass
+```
+
 ### PHP
 
 ```php
@@ -459,6 +544,41 @@ The image copies the binary built on your machine, so one built against a C libr
 newer than Debian 12's may not start in it. The project's `.dockerignore` sends Docker
 that binary alone, not the rest of `target/`.
 
+### Python
+
+```python
+# runner.py: the runner.
+def main() -> None:
+    runner = flezha.create_runner("agents").register_factory(agent).register_factory(gateway)
+
+    runner.run()
+
+
+if __name__ == "__main__":
+    main()
+```
+
+The runner's image is the project, with its `vendor/`, on a Python image:
+
+```dockerfile
+# The runner's image: the project and the packages `pip install --target vendor` put in vendor/,
+# on Python 3.12.
+FROM python:3.12-slim
+COPY . /agentdesk
+WORKDIR /agentdesk
+ENV PYTHONPATH=/agentdesk/vendor
+# The runner stops when its standard input closes, and a container's is closed: it reads a pipe
+# that stays open instead.
+RUN mkfifo -m 600 stdin && chown 1000 stdin
+USER 1000
+ENTRYPOINT ["sh", "-c", "exec python runner.py <> stdin"]
+```
+
+The image copies `vendor/` as `pip install --target vendor` left it on your machine, and
+the project's `.dockerignore` sends Docker only the Python files and `vendor/`. A Python
+runner stops when its standard input closes, and a container starts with it closed, so
+the image gives the runner a pipe that stays open.
+
 ### PHP
 
 ```php
@@ -573,6 +693,12 @@ $ mvn -q package
 
 ```sh
 $ cargo build --release
+```
+
+### Python
+
+```sh
+$ python3 -m pip install --target vendor -r requirements.txt
 ```
 
 ### PHP

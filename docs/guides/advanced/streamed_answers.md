@@ -91,6 +91,40 @@ way. The message limit is for [`rewinding_a_turn.md`](rewinding_a_turn.md#a-turn
 The Rust SDK's [README](https://github.com/flezha/flezha_rust_sdk/blob/main/README.md#writing-a-tasklet)
 has the details of parts.
 
+### Python
+
+```python
+# demo_model.py: a canned answer, one token at a time.
+MAX_MESSAGE = 200
+PER_TOKEN_S = 0.05
+
+
+class Answer(TypedDict):  # an answer, or a part of one
+    text: str
+    tokens: int
+
+
+def answer(earlier: list[str], message: str, part: Callable[[Answer], None]) -> Answer:
+    if len(message) > MAX_MESSAGE:
+        raise flezha.NonRetryableError(
+            f"the demo model reads at most {MAX_MESSAGE} characters, "
+            f"and this message has {len(message)}"
+        )
+    text = f'Message {len(earlier) + 1}: you said "{message}". I am a demo model.'
+    tokens = re.split(r"(?<= )", text)
+    for i, token in enumerate(tokens, start=1):
+        part(Answer(text=token, tokens=i))
+        time.sleep(PER_TOKEN_S)
+    return Answer(text=text, tokens=len(tokens))
+```
+
+`reply` passes `ctx.part` as `part`, so every token leaves as a part while `run` is still
+running, and the whole answer is returned at the end. A real model's client would be
+called here instead, handing each token it streams to `part` the same way. The pause
+holds one of the runner's worker threads for the length of the answer. The message limit
+is for [`rewinding_a_turn.md`](rewinding_a_turn.md#a-turn-that-fails).
+[`python_sdk.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/python_sdk.md#authoring) has the details of parts.
+
 ### PHP
 
 ```php

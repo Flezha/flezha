@@ -50,6 +50,7 @@ build_desk() {
     java) echo "mvn -q package" ;;
     rust) echo "cargo build --release --offline" ;; # --offline: the checkout's .cargo/config.toml, per the README
     php) echo "composer install --no-interaction --quiet" ;; # the checkout's SDK, through the COMPOSER_HOME below
+    python) echo "python3 -m pip install --quiet --upgrade --target vendor ../../dist/flezha-0.1.0-*.whl" ;; # the checkout's wheel, per the README
     *) echo "walk: no build command for $SDK yet; add it here" >&2; exit 1 ;;
   esac
 }
@@ -152,6 +153,7 @@ plugins() {
   step plugin-list "flz plugin list --installed"
   runner_up
   phase anna suspended 90 # the new controller restarts the sessions only once the runner has joined (W-022)
+  step list "flz operator list --namespace agents"
   step call "flz operator call anna --namespace agents --text 'Did you notice anything?'"
   logs runner
 }

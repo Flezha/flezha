@@ -189,6 +189,77 @@ error for its `result` and is counted as using no tokens. The day is counted in 
 since 1970, as the standard library has no calendar, so `flz state get` prints it as a
 number.
 
+### Python
+
+```python
+# budget.py: each user's tokens for the day, and whether a message is admitted.
+DAILY_TOKENS = 40
+
+
+class Used(TypedDict):  # the tokens an answer used
+    user: str
+    tokens: int
+
+
+Event = Message | Used  # what reaches a user's cell
+
+
+class Verdict(TypedDict):
+    message: Message
+    spent: int
+
+
+@flezha.state
+@dataclass
+class Spent:  # what each user's cell remembers
+    day: str = ""
+    tokens: int = 0
+
+    def on(self, today: str) -> int:
+        return self.tokens if today == self.day else 0
+
+
+class Counted(TypedDict):  # how an answer's tokens are written down
+    day: str
+    tokens: int
+
+
+def admitted(verdict: Verdict) -> bool:
+    return verdict["spent"] < DAILY_TOKENS
+
+
+def sent(request: Request) -> Event:  # a message to admit
+    return request.message()
+
+
+def used(response: flezha.Response[Message, Answer]) -> Event:  # a failed turn used none
+    tokens = 0 if response.value is None else response.value["tokens"]
+    return Used(user=response.request["user"], tokens=tokens)
+
+
+@flezha.tasklet(name="budget")
+class Budget:
+    def run(self, event: Event, ctx: flezha.Ctx[Spent, Verdict]) -> None:
+        today = time.strftime("%Y-%m-%d", time.gmtime(ctx.now() // 1000))
+        if "tokens" in event:  # the tokens an answer used
+            ctx.change(Counted(day=today, tokens=event["tokens"]))
+        else:  # a message to admit
+            ctx.emit(Verdict(message=event, spent=ctx.state.on(today)))
+
+    def apply_change(self, spent: Spent, counted: Counted) -> None:
+        spent.tokens = spent.on(counted["day"]) + counted["tokens"]
+        spent.day = counted["day"]
+```
+
+A tasklet takes one type of input, and `budget` reads two things: the messages, and the
+tokens their answers used. So its input is `Event`, which is either, told apart by
+whether it carries `tokens`, and the gateway's graph lifts each into it on the way in,
+with `sent` and `used`, and keys both by user, so a user's messages and answers reach
+the same cell. `used` makes the tokens out of the call's `Response`, which carries the
+request it answers, where the user comes from; a turn that failed, or took too long,
+has no `value` and is counted as using no tokens. `admitted` is the check the graph's
+filter and `admit` share.
+
 ### PHP
 
 ```php

@@ -28,6 +28,7 @@ flowchart LR
 > |---|---|
 > | Java | Java 21 and Maven |
 > | Rust | Rust with Cargo |
+> | Python | Python 3.11 or later with pip |
 > | PHP | PHP 8.4 or later with `ext-ffi`, and Composer |
 >
 > - **A Kubernetes cluster, such as k3s, and `kubectl`**, for
