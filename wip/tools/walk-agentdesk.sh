@@ -5,10 +5,15 @@
 #
 #   wip/tools/walk-agentdesk.sh <sdk> [page...]
 #
-# Pages, in the guides' order: session streamed sleeping rewinding plugins
-# gateway browser budget cluster once k8s. With none named, all of them run; a
-# page picks up what the pages before it left, so `session` always runs first,
-# and the HTTP pages need `plugins`. The Compose project is
+# Pages, in the guides' order: session rewinding streamed plugins gateway calls
+# cluster once k8s. With none named, all of them run; a page picks up what the
+# pages before it left, so `session` always runs first, and the HTTP pages need
+# `plugins`.
+#
+# The pages build the example up: WALK_DESK names a scratch copy of the project
+# to walk instead of the tracked one, and WALK_STAGES a folder holding, per page
+# that changes the code, <page>/src, which is copied over the copy's src/ before
+# that page runs. The Compose project is
 # agentdesk-walk-<sdk>, and everything it started (containers, network,
 # volumes, the images Compose built) is removed at the end, as are the plugin
 # package copied into the project, the scratch copies `plugins` packages from,
@@ -30,7 +35,8 @@ SDK=${1:?usage: walk-agentdesk.sh <sdk> [page...]}
 shift
 ROOT=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 OUT=${WALK_OUT:-$ROOT/wip/tools/.cache/walk/agentdesk-$SDK}
-DESK=$ROOT/sdk/$SDK/examples/agentdesk
+DESK=${WALK_DESK:-$ROOT/sdk/$SDK/examples/agentdesk}
+STAGES=${WALK_STAGES:-}
 PLUGIN_SRC=${FLEZHA_HTTP_PLUGIN_DIR:-$ROOT/../flezha_http_plugin}
 SCRATCH=$ROOT/wip/tools/.cache/agentdesk-src
 IMAGE=flezha/flezha:0.1.0
@@ -97,47 +103,44 @@ down() {
 session() {
   step build "$(build_desk)"
   step up "docker compose up -d --build --wait"
-  step ps "docker compose ps --format '{{.Service}}\t{{.Status}}'"
   runner_up
   step runner-list "flz runner list --namespace agents"
   step start "flz operator start agent --id anna --namespace agents"
-  step call-1 "flz operator call anna --namespace agents --text 'Hello'"
-  step call-2 "flz operator call anna --namespace agents --text 'What can you do?'"
-  step start-bob "flz operator start agent --id bob --namespace agents"
-  step call-bob "flz operator call bob --namespace agents --text 'Hi, I am Bob'"
+  step calls "flz operator call anna --namespace agents --text 'Hello' && flz operator call anna --namespace agents --text 'What can you do?'"
+  step bob "flz operator start agent --id bob --namespace agents && flz operator call bob --namespace agents --text 'Hi, I am Bob'"
+  phase anna suspended 60
+  step info-asleep "flz operator info anna --namespace agents"
+  step restart-runner "docker compose restart runner"
+  runner_up
+  step call-awake "flz operator call anna --namespace agents --text 'Are you still there?'"
+}
+
+rebuild() {
+  step rebuild "$(build_desk) && docker compose up -d --build --wait runner"
+  runner_up
+}
+
+rewinding() {
+  step state "flz state get anna/reply --namespace agents"
+  rebuild
+  step rewind "flz operator rewind anna --to-iteration 0 --namespace agents"
+  until_ok 30 "[ \$(docker compose logs runner | grep -c undo) -ge 2 ]"
+  step undo-log "docker compose logs runner | grep undo"
+  step state-after "flz state get anna/reply --namespace agents"
+  step call-after "flz operator call anna --namespace agents --text 'Where were we?'"
+  step call-long "flz operator call anna --namespace agents --text \"\$(printf '%0250d' 0)\""
+  step call-on "flz operator call anna --namespace agents --text 'Sorry, go on'"
+  logs runner
 }
 
 streamed() {
+  rebuild
   step listen "flz operator listen anna --namespace agents --duration-ms 5000" &
   local listener=$!
   n=$((n + 1))                           # the listener's step counted in its own shell
   sleep 2
   step call "flz operator call anna --namespace agents --text 'Tell me a story'"
   wait "$listener"
-}
-
-sleeping() {
-  phase anna suspended 60
-  step info-asleep "flz operator info anna --namespace agents"
-  step restart-runner "docker compose restart runner"
-  runner_up
-  step call "flz operator call anna --namespace agents --text 'Are you still there?'"
-  phase anna running 30
-  step info-awake "flz operator info anna --namespace agents"
-}
-
-rewinding() {
-  step state "flz state get anna/reply --namespace agents"
-  step rewind "flz operator rewind anna --to-iteration 1 --namespace agents"
-  until_ok 30 "[ \$(docker compose logs runner | grep -c undo) -ge 2 ]"
-  step undo-log "docker compose logs runner | grep undo"
-  step state-after "flz state get anna/reply --namespace agents"
-  step call-after "flz operator call anna --namespace agents --text 'Where were we?'"
-  step call-long "flz operator call anna --namespace agents --text \"\$(printf '%0250d' 0)\""
-  step info-failed "flz operator info anna --namespace agents"
-  step dlq-list "flz dlq list anna --namespace agents"
-  step call-on "flz operator call anna --namespace agents --text 'Sorry, go on'"
-  logs runner
 }
 
 plugins() {
@@ -162,32 +165,26 @@ plugins() {
 }
 
 gateway() {
-  step rebuild "$(build_desk) && docker compose up -d --build --wait runner"
-  runner_up
+  rebuild
   step start "flz operator start gateway --id gateway --namespace agents"
   step enable "$ENABLE_WEB"
   until_ok 30 "curl -s localhost:8080/"
-  step post-anna "curl -si -d 'Hello from the web' localhost:8080/sessions/anna/messages"
-  step post-carol "curl -si -d 'Hi, I am Carol' localhost:8080/sessions/carol/messages"
-  until_ok 30 "flz state get carol/reply --namespace agents | grep -q Carol"
-  step state-carol "flz state get carol/reply --namespace agents"
-  step not-found "curl -si localhost:8080/sessions/carol"
-}
-
-browser() {
+  step not-found "curl -si localhost:8080/sessions/anna"
   step events "curl -sN --max-time 5 localhost:8080/sessions/anna/events" &
   local stream=$!
   n=$((n + 1))
   sleep 2
-  step post "curl -s -d 'Tell me more' localhost:8080/sessions/anna/messages"
+  step call "flz operator call anna --namespace agents --text 'Tell me more'"
   wait "$stream"
 }
 
-budget() {
-  step posts "for text in One Two Three Four; do curl -s -o /dev/null -w '%{http_code}\\n' -d \"\$text\" localhost:8080/sessions/dave/messages; sleep 2; done"
-  step over "curl -si -d 'Five' localhost:8080/sessions/dave/messages"
-  step state "flz state get gateway/budget/dave --namespace agents"
-  step call "flz operator call dave --namespace agents --text 'Still there?'"
+calls() {
+  rebuild
+  until_ok 30 "curl -s localhost:8080/"
+  step post-anna "curl -si -d 'Hello from the web' localhost:8080/sessions/anna/messages"
+  step post-carol "curl -s -d 'Hi, I am Carol' localhost:8080/sessions/carol/messages && sleep 1 && flz state get carol/reply --namespace agents"
+  step posts "for text in One Two Three Four Five; do curl -s -o /dev/null -w '%{http_code}\\n' -d \"\$text\" localhost:8080/sessions/dave/messages; sleep 2; done"
+  step state-dave "flz state get gateway/budget/dave --namespace agents"
   logs runner
 }
 
@@ -216,9 +213,11 @@ once() {
   phase anna suspended 30
   step inbox-anna "flz state inbox anna --namespace agents"
   step journal-anna "flz state journal anna --namespace agents"
-  step inbox-gateway "flz state inbox gateway --namespace agents"
+  rebuild
+  until_ok 30 "curl -s localhost:8080/"
+  step inbox-gateway "curl -s -d 'Are you on disk?' localhost:8080/sessions/anna/messages && sleep 2 && flz state inbox gateway --namespace agents"
   step budget-before "flz state get gateway/budget/anna --namespace agents"
-  grep state: "$OUT/$page/03-budget-before.txt" >"$OUT/$page/budget-before.state"
+  grep state: "$OUT/$page/"*-budget-before.txt >"$OUT/$page/budget-before.state"
   step crash "curl -s -d 'Tell me everything' localhost:8080/sessions/anna/messages && sleep 1 && docker compose kill runner"
   step start "docker compose start runner"
   runner_up
@@ -304,9 +303,12 @@ if [ "${FLEZHA_WALK_REBUILD:-0}" = 1 ] || ! docker image inspect "$IMAGE" >/dev/
     { echo "walk: the controller image did not build, see $OUT/image.log" >&2; exit 1; }
 fi
 trap down EXIT
-for page in ${@:-session streamed sleeping rewinding plugins gateway browser budget cluster once k8s}; do
+for page in ${@:-session rewinding streamed plugins gateway calls cluster once k8s}; do
   n=0
   echo "$page"
+  if [ -n "$STAGES" ] && [ -d "$STAGES/$page/src" ]; then
+    rm -rf "$DESK/src" && cp -r "$STAGES/$page/src" "$DESK/src"
+  fi
   "$page"
 done
 echo "captures in $OUT"
