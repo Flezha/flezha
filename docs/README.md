@@ -48,13 +48,17 @@ answer "what are the options"; a guide answers "what do I type".
 | [`partitioning.md`](guides/tradedesk/partitioning.md) | Part 2. Partitions, keys and scaling |
 | [`plugins.md`](guides/tradedesk/plugins.md) | Part 2. The plugin system and the plugins that ship |
 | [`durability.md`](guides/tradedesk/durability.md) | Part 2. What survives a crash |
-| [`advanced_topics.md`](guides/advanced/advanced_topics.md) | Part 3. What it covers, what you need, and its pages |
-| [`clustering.md`](guides/advanced/clustering.md) | Part 3. Setting up the example in Docker, and more than one machine |
-| [`custom_plugins.md`](guides/advanced/custom_plugins.md) | Part 3. Writing and installing your own plugin |
-| [`full_form_tasklets.md`](guides/advanced/full_form_tasklets.md) | Part 3. A tasklet without the annotations |
+| [`advanced_topics.md`](guides/advanced/advanced_topics.md) | Part 3. What it builds, what you need, and its pages |
+| [`agent_session.md`](guides/advanced/agent_session.md) | Part 3. The agentdesk in Docker Compose: one session per bounded operator, a turn sent and answered |
+| [`streamed_answers.md`](guides/advanced/streamed_answers.md) | Part 3. An answer sent token by token while the turn runs |
+| [`sleeping_sessions.md`](guides/advanced/sleeping_sessions.md) | Part 3. An idle session sleeps and wakes on its next turn |
+| [`rewinding_a_turn.md`](guides/advanced/rewinding_a_turn.md) | Part 3. Taking turns back, and a failed turn that leaves the session running |
+| [`custom_plugins.md`](guides/advanced/custom_plugins.md) | Part 3. Installing a plugin by rebuilding the controller image, and writing your own |
+| [`http_gateway.md`](guides/advanced/http_gateway.md) | Part 3. A gateway that serves HTTP and calls the sessions |
+| [`streaming_to_the_browser.md`](guides/advanced/streaming_to_the_browser.md) | Part 3. The answer streamed to a browser |
+| [`token_budget.md`](guides/advanced/token_budget.md) | Part 3. Each user's daily token budget |
+| [`clustering.md`](guides/advanced/clustering.md) | Part 3. Several controllers, and stopping one |
 | [`effectively_once.md`](guides/advanced/effectively_once.md) | Part 3. The delivery guarantee and its cost |
-| [`erlang_vm_tuning.md`](guides/advanced/erlang_vm_tuning.md) | Part 3. Settings for a controller under load |
-| [`elixir_applications.md`](guides/advanced/elixir_applications.md) | Part 3. Flezha inside an Elixir application of your own |
 | [`kubernetes_deployment.md`](guides/advanced/kubernetes_deployment.md) | Part 3. The same images on k3s |
 
 ## sdk
@@ -76,6 +80,7 @@ answer "what are the options"; a guide answers "what do I type".
 | [`multi_input_tasklets.md`](sdk/multi_input_tasklets.md) | Merged subscriptions: what a merge promises |
 | [`cell_timers.md`](sdk/cell_timers.md) | Per-Cell processing-time and event-time timers |
 | [`tasklet_requested_spawn.md`](sdk/tasklet_requested_spawn.md) | `ctx.spawn_bounded`: a running tasklet asks for a worker |
+| [`full_form_tasklets.md`](sdk/full_form_tasklets.md) | A tasklet written in full, and what only that form declares |
 | [`admin.md`](sdk/admin.md) | The surface an application administers its own namespace with, and the role that grants it |
 | [`partitioned_operators.md`](sdk/partitioned_operators.md) | One logical operator, N instances: key groups, sources, rescale |
 | [`protocol_spec.md`](sdk/protocol_spec.md) | The wire protocol: transports, framing, commands, lifecycle, data plane |
@@ -110,6 +115,8 @@ answer "what are the options"; a guide answers "what do I type".
 | [`schedules.md`](operations/schedules.md) | `flz schedule`: cron-driven operator spawns |
 | [`memory_drift.md`](operations/memory_drift.md) | Localising controller memory growth |
 | [`benchmarking.md`](operations/benchmarking.md) | `mix bench`, shapes, recorded floors, CI gates |
+| [`erlang_vm_tuning.md`](operations/erlang_vm_tuning.md) | Scheduler, memory and IO settings for a controller under load |
+| [`elixir_applications.md`](operations/elixir_applications.md) | Flezha inside an Elixir application of your own |
 
 ## resilience
 
