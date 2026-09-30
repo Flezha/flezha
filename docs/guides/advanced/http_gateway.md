@@ -1,356 +1,28 @@
 # An HTTP gateway
 
-So far every message reached a session from the CLI. On this page agentdesk gets an HTTP
-side: an unbounded operator, `gateway`, carries the HTTP plugin that
-[`custom_plugins.md`](custom_plugins.md) installed, and a POST is a message for a user's
-session. The gateway answers it with 202 at once and calls the session; the answer
-itself reaches the browser on [`streaming_to_the_browser.md`](streaming_to_the_browser.md).
+So far only the CLI reached a session. On this page agentdesk gets an HTTP side: an
+unbounded operator, `gateway`, carries the HTTP plugin that
+[`custom_plugins.md`](custom_plugins.md) installed, and a browser follows a session's
+answers as they are written, over server-sent events.
 
 > #### Not a production setup {: .warning}
 >
-> The example runs with authorization off, and the HTTP plugin authenticates nobody:
-> anyone who can reach the port can send any user's session a message and read its
-> answers. The plugin page's [security section](../../plugins/http_server.md#security) says
-> what the plugin guards and what it leaves to the operator.
+> The example runs with authorization off, and the HTTP plugin authenticates nobody: anyone
+> who can reach the port can read any session's answers. The plugin page's
+> [security section](../../plugins/http_server.md#security) says what the plugin guards and
+> what it leaves to the operator.
 
-## The gateway
+## A request is an input
 
-The plugin turns every HTTP request into one input of the operator it is enabled on, on
-an entry channel, as a JSON envelope: the method, the path, the body and a few more
-fields. Whatever a `response()` end of the operator produces from that input is the
-HTTP answer. The plugin has no routes of its own: the gateway's graph routes on the
-method and the path.
+The plugin turns every HTTP request into one input of the operator it is enabled on, as a
+JSON envelope: the method, the path, the body and a few more fields. Whatever a `response()`
+end of the operator produces from that input is the HTTP answer. The plugin has no routes of
+its own: the operator's graph routes on the method and the path.
 
-The gateway knows two routes. `POST /sessions/<user>/messages` is a message for the
-user's session, which is named after the user, as Anna's and Bob's are, and its body is
-the message. `GET /sessions/<user>/events` is the session's answers, for the next page.
+The gateway answers `GET /sessions/<user>/events` with the user's session, named after the
+user as Anna's and Bob's are, and any other request with 404.
 
-> Write the gateway's operator.
-> {: .step}
-
-<!-- tabs-open -->
-
-### Java
-
-```java
-// GatewayOperator.java: answers every request, and calls the session a message is for.
-public final class GatewayOperator implements UnboundedOperator {
-
-    static final long DEADLINE_MS = 60_000;
-
-    @Override
-    public String factoryId() {
-        return "gateway";
-    }
-
-    @Override
-    public void channels(ChannelBuilder c) {
-        c.effectivelyOnce();                                 // each request and answer on disk before it runs
-        EntryChannel<Request> http = c.input(Request.class, "http");
-        http.filter(request -> !request.sends())
-                .into(Watch.class)
-                .response();                                 // a stream, or 404
-        Stream<Verdict> verdicts = http.filter(Request::sends)
-                .map(Event.class, request -> new Sent(request.message()))
-                .keyBy(Event::user)                          // one cell per user
-                .into(Budget.class);
-        verdicts.into(Admit.class)
-                .response();                                 // 202, or 429 over the budget
-        verdicts.filter(Verdict::admitted)
-                .map(Message.class, Verdict::message)
-                .keyBy(Message::user)                        // the user's session
-                .call(CallTarget.factory("agent").channel("message"), Answer.class, DEADLINE_MS)
-                .map(Event.class, Used::of)
-                .keyBy(Event::user)
-                .into(Budget.class);                         // the tokens the answer used
-    }
-}
-```
-
-`effectivelyOnce()` declares the delivery guarantee, and the call names its target with
-`CallTarget.factory("agent").channel("message")` and its deadline with `DEADLINE_MS`.
-
-### Rust
-
-```rust
-// src/gateway.rs: answers every request, and calls the session a message is for.
-const DEADLINE_MS: u64 = 60_000;
-
-pub struct GatewayOperator;
-
-impl UnboundedOperator for GatewayOperator {
-    fn factory_id() -> &'static str {
-        "gateway"
-    }
-
-    fn channels(c: &ChannelBuilder) {
-        c.effectively_once(); // each request and answer on disk before it runs
-        let http = c.input::<Request>("http");
-        http.filter(|request| !request.sends())
-            .into::<Watch>()
-            .response(); // a stream, or 404
-        let verdicts = http
-            .filter(Request::sends)
-            .map(|request| Event::Sent(request.message()))
-            .key_by(|event| event.user().to_string()) // one cell per user
-            .into::<Budget>();
-        verdicts.into::<Admit>().response(); // 202, or 429 over the budget
-        verdicts
-            .filter(Verdict::admitted)
-            .map(|verdict| verdict.message)
-            .key_by(|message| message.user.clone()) // the user's session
-            .call::<Answer>(CallTarget::factory("agent").channel("message"), DEADLINE_MS)
-            .map(Event::used)
-            .key_by(|event| event.user().to_string())
-            .into::<Budget>(); // the tokens the answer used
-    }
-}
-```
-
-`effectively_once()` declares the delivery guarantee, and the call names its target with
-`CallTarget::factory("agent").channel("message")` and its deadline with `DEADLINE_MS`.
-
-### Node
-
-```javascript
-// gateway_operator.mjs: answers every request, and calls the session a message is for.
-const DEADLINE_MS = 60_000;
-const user = (value) => value.user;
-
-export default defineUnbounded({
-  factoryId: 'gateway',
-  channels: (c) => {
-    c.effectivelyOnce(); // each request and answer on disk before it runs
-    const http = c.input('http', Request.decode);
-    http
-      .filter((request) => !request.sends())
-      .into(Watch)
-      .response(); // a stream, or 404
-    const verdicts = http
-      .filter((request) => request.sends())
-      .map((request) => request.message())
-      .keyBy(user) // one cell per user
-      .into(Budget);
-    verdicts.into(Admit).response(); // 202, or 429 over the budget
-    verdicts
-      .filter(admitted)
-      .map((verdict) => verdict.message)
-      .keyBy(user) // the user's session
-      .call({ factory: 'agent', channel: 'message' }, { deadlineMs: DEADLINE_MS })
-      .map(used)
-      .keyBy(user)
-      .into(Budget); // the tokens the answer used
-  },
-});
-```
-
-`c.effectivelyOnce()` declares the delivery guarantee, and the call names its target with
-`{ factory: 'agent', channel: 'message' }` and its deadline with `DEADLINE_MS`. The call
-sends its request and reads its answer as JSON, the codec it takes when none is named.
-`Request.decode` is the entry channel's decoder: it makes each request a `Request`, which
-`watch` takes as it is and the chain into `budget` turns into the message's object.
-`user` reads the key from the object each chain carries.
-
-### Python
-
-```python
-# gateway.py: answers every request, and calls the session a message is for.
-DEADLINE_MS = 60_000
-
-
-@flezha.unbounded_operator("gateway")
-def gateway(c: flezha.Channels) -> None:
-    c.effectively_once()  # each request and answer on disk before it runs
-    user = itemgetter("user")
-    http = c.input("http").map(Request.of)
-    http.filter(lambda request: not request.sends()).into(Watch).response()  # a stream, or 404
-    verdicts = (
-        http.filter(Request.sends)
-        .map(sent)
-        .key_by(user)  # one cell per user
-        .into(Budget)
-    )
-    verdicts.into(Admit).response()  # 202, or 429 over the budget
-    (
-        verdicts.filter(admitted)
-        .map(itemgetter("message"))
-        .key_by(user)  # the user's session
-        .call(factory="agent", channel="message", deadline_ms=DEADLINE_MS)
-        .map(used)
-        .key_by(user)
-        .into(Budget)  # the tokens the answer used
-    )
-```
-
-`c.effectively_once()` declares the delivery guarantee, and the call names its target with
-`factory="agent"` and `channel="message"`, and its deadline with `DEADLINE_MS`. The call
-sends its request and reads its answer as JSON, the codec it takes when none is named.
-The entry channel names no codec, so each envelope arrives as the dict its JSON decodes
-to, and `Request.of` makes it a `Request`, which `watch` takes as it is and `sent` turns
-into the message for `budget`. `user` reads the
-key from the dict each chain carries.
-
-### Ruby
-
-```ruby
-# gateway_operator.rb: answers every request, and calls the session a message is for.
-class GatewayOperator < Flezha::UnboundedOperator
-  factory_id "gateway"
-
-  DEADLINE_MS = 60_000
-
-  channels do |c|
-    c.effectively_once                                       # each request and answer on disk before it runs
-    user = ->(value) { value[:user] }
-    http = c.input("http", decode: Request.method(:decode))
-    http.filter { |request| !request.sends? }
-        .into(Watch)
-        .response                                            # a stream, or 404
-    verdicts = http.filter(&:sends?)
-                   .map(&:message)
-                   .key_by(&user)                            # one cell per user
-                   .into(Budget)
-    verdicts.into(Admit)
-            .response                                        # 202, or 429 over the budget
-    verdicts.filter { |verdict| Budget.admitted?(verdict) }
-            .map { |verdict| verdict[:message] }
-            .key_by(&user)                                   # the user's session
-            .call(factory: "agent", channel: "message", deadline_ms: DEADLINE_MS)
-            .map { |response| Budget.used(response) }
-            .key_by(&user)
-            .into(Budget)                                    # the tokens the answer used
-  end
-end
-```
-
-`c.effectively_once` declares the delivery guarantee, and the call names its target with
-`factory: "agent"` and `channel: "message"`, and its deadline with `DEADLINE_MS`. The call
-sends its request and reads its answer as JSON, the codec it takes when none is named.
-`Request.method(:decode)` is the entry channel's decoder: it makes each request a
-`Request`, which `watch` takes as it is and the chain into `budget` turns into the
-message's Hash. `user` reads the key from the Hash each chain carries.
-
-### PHP
-
-```php
-// src/GatewayOperator.php: answers every request, and calls the session a message is for.
-#[Operator(factoryId: 'gateway')]
-final class GatewayOperator extends UnboundedOperator
-{
-    private const DEADLINE_MS = 60_000;
-
-    public static function channels(Builder $c): void
-    {
-        $c->effectivelyOnce();                       // each request and answer on disk before it runs
-        $user = fn (array $value) => $value['user'];
-        $http = $c->input('http', Request::decode(...));
-        $http->filter(fn (Request $request) => !$request->sends())
-            ->into(Watch::class)
-            ->response();                            // a stream, or 404
-        $verdicts = $http->filter(fn (Request $request) => $request->sends())
-            ->map(fn (Request $request) => $request->message())
-            ->keyBy($user)                           // one cell per user
-            ->into(Budget::class);
-        $verdicts->into(Admit::class)
-            ->response();                            // 202, or 429 over the budget
-        $verdicts->filter(Budget::admitted(...))
-            ->map(fn (array $verdict) => $verdict['message'])
-            ->keyBy($user)                           // the user's session
-            ->call(factory: 'agent', channel: 'message', deadlineMs: self::DEADLINE_MS)
-            ->map(Budget::used(...))
-            ->keyBy($user)
-            ->into(Budget::class);                   // the tokens the answer used
-    }
-}
-```
-
-`effectivelyOnce()` declares the delivery guarantee, and the call names its target with
-`factory: 'agent'` and `channel: 'message'`, and its deadline with `DEADLINE_MS`. The call
-sends its request and reads its answer as JSON, the codec it takes when none is named.
-`Request::decode(...)` is the entry channel's decoder: it makes each request a `Request`,
-which `watch` takes as it is and the chain into `budget` turns into the message's array.
-
-### Elixir
-
-```elixir
-# lib/agentdesk/gateway_operator.ex: answers every request, and calls the session a message is for.
-defmodule Agentdesk.GatewayOperator do
-  use Flezha.SDK.UnboundedOperator, factory_id: "gateway"
-
-  @deadline_ms 60_000
-
-  @impl true
-  def channels(c) do
-    # each request and answer on disk before it runs
-    effectively_once(c)
-    http = input_with(c, "http", &Request.decode/1)
-
-    http
-    |> filter(&(not Request.sends?(&1)))
-    |> into(Watch)
-    # a stream, or 404
-    |> response()
-
-    verdicts =
-      http
-      |> filter(&Request.sends?/1)
-      |> map(&Request.message/1)
-      # one cell per user
-      |> key_by(& &1.user)
-      |> into(Budget)
-
-    verdicts
-    |> into(Admit)
-    # 202, or 429 over the budget
-    |> response()
-
-    verdicts
-    |> filter(&Budget.admitted?/1)
-    |> map(& &1.message)
-    # the user's session
-    |> key_by(& &1.user)
-    |> call(
-      factory: "agent",
-      channel: "message",
-      deadline_ms: @deadline_ms,
-      decode: &Jason.decode/1
-    )
-    |> map(&Budget.used/1)
-    |> key_by(& &1.user)
-    # the tokens the answer used
-    |> into(Budget)
-  end
-end
-```
-
-`effectively_once/1` declares the delivery guarantee, and the call names its target with
-`factory: "agent"` and `channel: "message"`, and its deadline with `@deadline_ms`. The
-call sends its request as a sink sends a map, as JSON, and `decode: &Jason.decode/1` reads
-the answer into a map with string keys. `Request.decode/1` is the entry channel's parser:
-it makes each request a `Request`, which `watch` takes as it is and the chain into
-`budget` turns into the message's map. `key_by/2` reads the key from the map each chain
-carries.
-
-<!-- tabs-close -->
-
-A request that is not a message goes to `watch`, whose answer is a `response()` end. A
-message goes to `budget`, one cell per user, which keeps each user's tokens for the day:
-[`token_budget.md`](token_budget.md) is about it, and until a user has used the day's
-tokens it admits every message. Its verdict goes two ways. `admit` answers the request,
-through a second `response()` end: a graph may have several, and whichever answers
-first answers the request. And an admitted message is a call to the user's session.
-The graph's first line declares the delivery guarantee, which
-[`effectively_once.md`](effectively_once.md) comes back to.
-
-`call` ends a chain in a call to another operator, as
-[`calls.md`](../../sdk/calls.md#operator-calls-call) describes. A call to the factory
-`agent`, after `keyBy`, reaches the instance of `agent` whose id is the key, the user, and
-starts one with the message as its first input when there is none, so a new user needs no
-`flz operator start`. The call waits for nothing: its outcome comes back later as a
-`Response` on the gateway's own Response channel, within the call's deadline of a minute
-at the latest, and `budget` reads the tokens from it.
-
-> Write the request, the answer, and the two tasklets that answer.
+> Write the request, the answer, and the tasklet that answers.
 > {: .step}
 
 <!-- tabs-open -->
@@ -364,20 +36,12 @@ public record Request(String method, String path, String body) {
 
     private static final Pattern ROUTE = Pattern.compile("/sessions/([a-z][a-z0-9_-]{0,63})/(messages|events)");
 
-    boolean sends() {
-        return is("POST", "messages");
-    }
-
     boolean listens() {
         return is("GET", "events");
     }
 
     String user() {
         return route(1);
-    }
-
-    Message message() {
-        return new Message(user(), Objects.requireNonNullElse(body, ""));
     }
 
     private boolean is(String verb, String what) {
@@ -391,9 +55,8 @@ public record Request(String method, String path, String body) {
 }
 ```
 
-The pattern accepts only a short lower-case name as the user, because the user is the id
-of the session the gateway calls. The body is the plugin's text of the request body,
-absent when it is not valid UTF-8.
+The pattern accepts only a short lower-case name as the user, because the user names a
+session. `messages` is the route of [`operator_calls.md`](operator_calls.md).
 
 ```java
 // Http.java: the gateway's answer to a request.
@@ -410,9 +73,8 @@ public record Http(Integer status, String body, String stream) {
 }
 ```
 
-An answer is the JSON object the plugin expects: a status and a body, sent as text, or
-the session to stream. Unset fields are left out, because the plugin refuses a key it
-does not know.
+An answer is the JSON object the plugin expects: a status and a body, or the session to
+stream. Unset fields are left out, because the plugin refuses a key it does not know.
 
 ```java
 // Watch.java: a session's events, or 404.
@@ -426,594 +88,15 @@ public final class Watch implements Tasklet<Request, Void, Http> {
 }
 ```
 
-```java
-// Admit.java: 202 when the message goes on, 429 over the budget.
-@Tasklet.Spec(name = "admit")
-public final class Admit implements Tasklet<Verdict, Void, Http> {
-
-    @Override
-    public void run(Verdict verdict, Ctx<Void, Http> ctx) throws TaskletException {
-        ctx.emit(verdict.admitted()
-                ? Http.of(202, "sent to " + verdict.message().user())
-                : Http.of(429, verdict.message().user() + " has used " + verdict.spent() + " of today's "
-                        + Budget.DAILY_TOKENS + " tokens"));
-    }
-}
-```
-
-`Budget.java`, with the `Event`, `Sent`, `Used` and `Verdict` records the graph names, is
-on [`token_budget.md`](token_budget.md#count-the-tokens); copy it from the example.
-
-### Rust
-
-```rust
-// src/request.rs: one HTTP request, as the plugin hands it to the gateway.
-#[derive(Clone, Deserialize)]
-pub struct Request {
-    method: String,
-    path: String,
-    body: Option<String>,
-}
-
-impl Request {
-    pub fn sends(&self) -> bool {
-        self.is("POST", "messages")
-    }
-
-    pub fn listens(&self) -> bool {
-        self.is("GET", "events")
-    }
-
-    pub fn user(&self) -> &str {
-        self.route().map_or("", |(user, _)| user)
-    }
-
-    pub fn message(&self) -> Message {
-        Message {
-            user: self.user().to_string(),
-            text: self.body.clone().unwrap_or_default(),
-        }
-    }
-
-    fn is(&self, verb: &str, what: &str) -> bool {
-        self.method == verb && self.route().is_some_and(|(_, route)| route == what)
-    }
-
-    // `/sessions/<user>/<what>`, the user a short lower-case name; `None` when not a route.
-    fn route(&self) -> Option<(&str, &str)> {
-        let (user, what) = self.path.strip_prefix("/sessions/")?.split_once('/')?;
-        let name = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-';
-        let is_user = user.len() <= 64
-            && user.starts_with(|c: char| c.is_ascii_lowercase())
-            && user.chars().all(name);
-        (is_user && matches!(what, "messages" | "events")).then_some((user, what))
-    }
-}
-```
-
-`route` accepts only a short lower-case name as the user, because the user is the id of
-the session the gateway calls. The body is the plugin's text of the request body,
-absent when it is not valid UTF-8. Fields the envelope carries beside these three are
-ignored.
-
-```rust
-// src/http.rs: the gateway's answer to a request.
-#[derive(Serialize, Deserialize)]
-#[serde(untagged)] // the plugin reads the fields, with no name for the variant around them
-pub enum Http {
-    Plain { status: u16, body: String },
-    Stream { stream: String },
-}
-```
-
-An answer is the JSON object the plugin expects: a status and a body, sent as text, or
-the session to stream. `#[serde(untagged)]` writes a variant as its fields alone,
-because the plugin refuses a key it does not know.
-
-```rust
-// src/watch.rs: a session's events, or 404.
-#[derive(Default)]
-pub struct Watch;
-
-#[tasklet(name = "watch")]
-impl Tasklet for Watch {
-    type Input = Request;
-    type Output = Http;
-
-    fn run(&mut self, request: Request, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
-        ctx.emit(if request.listens() {
-            Http::Stream {
-                stream: request.user().to_string(),
-            }
-        } else {
-            Http::Plain {
-                status: 404,
-                body: "no such route".to_string(),
-            }
-        })
-    }
-}
-```
-
-```rust
-// src/admit.rs: 202 when the message goes on, 429 over the budget.
-#[derive(Default)]
-pub struct Admit;
-
-#[tasklet(name = "admit")]
-impl Tasklet for Admit {
-    type Input = Verdict;
-    type Output = Http;
-
-    fn run(&mut self, verdict: Verdict, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
-        let user = &verdict.message.user;
-        ctx.emit(if verdict.admitted() {
-            Http::Plain {
-                status: 202,
-                body: format!("sent to {user}"),
-            }
-        } else {
-            Http::Plain {
-                status: 429,
-                body: format!(
-                    "{user} has used {} of today's {DAILY_TOKENS} tokens",
-                    verdict.spent
-                ),
-            }
-        })
-    }
-}
-```
-
-`src/budget.rs`, with the `Event` and `Verdict` types the graph names, is on
-[`token_budget.md`](token_budget.md#count-the-tokens); copy it from the example.
-
-### Node
-
-```javascript
-// request.mjs: one HTTP request, as the plugin hands it to the gateway.
-const ROUTE = /^\/sessions\/([a-z][a-z0-9_-]{0,63})\/(messages|events)$/;
-
-export class Request {
-  // The envelope carries more than the gateway reads.
-  static decode(bytes) {
-    const { method, path, body } = JSON.parse(new TextDecoder().decode(bytes));
-    return new Request(method, path, body);
-  }
-
-  constructor(method, path, body) {
-    this.method = method;
-    this.path = path;
-    this.body = body;
-  }
-
-  sends() {
-    return this.#is('POST', 'messages');
-  }
-
-  listens() {
-    return this.#is('GET', 'events');
-  }
-
-  user() {
-    return this.#route(1);
-  }
-
-  message() {
-    return { user: this.user(), text: this.body ?? '' }; // the session is named after the user
-  }
-
-  #is(verb, what) {
-    return this.method === verb && this.#route(2) === what;
-  }
-
-  #route(part) {
-    return ROUTE.exec(this.path)?.[part] ?? ''; // '' when the path is not a route
-  }
-}
-```
-
-The pattern accepts only a short lower-case name as the user, because the user is the id
-of the session the gateway calls. The body is the plugin's text of the request body,
-absent when it is not valid UTF-8. `decode` is handed the envelope's bytes, and reads the
-three fields the gateway needs from an envelope that carries more.
-
-```javascript
-// watch.mjs: a session's events, or 404.
-export const Watch = defineTasklet({
-  name: 'watch',
-
-  run: (request, ctx) =>
-    ctx.emit(
-      request.listens() ? { stream: request.user() } : { status: 404, body: 'no such route' },
-    ),
-});
-```
-
-```javascript
-// admit.mjs: 202 when the message goes on, 429 over the budget.
-export const Admit = defineTasklet({
-  name: 'admit',
-
-  run: (verdict, ctx) => {
-    const { user } = verdict.message;
-    ctx.emit(
-      admitted(verdict)
-        ? { status: 202, body: `sent to ${user}` }
-        : {
-            status: 429,
-            body: `${user} has used ${verdict.spent} of today's ${DAILY_TOKENS} tokens`,
-          },
-    );
-  },
-});
-```
-
-An answer is the object the plugin expects, sent as JSON: a status and a body, sent as
-text, or the session to stream.
-
-`budget.mjs`, with the `admitted` and `used` the graph names, is on
-[`token_budget.md`](token_budget.md#count-the-tokens); copy it from the example.
-
-### Python
-
-```python
-# request.py: one HTTP request, as the plugin hands it to the gateway, and the answer.
-ROUTE = re.compile(r"/sessions/([a-z][a-z0-9_-]{0,63})/(messages|events)")
-
-
-class Http(TypedDict, total=False):  # a status and a body, or the session to stream
-    status: int
-    body: str
-    stream: str
-
-
-@dataclass(frozen=True)
-class Request:
-    method: str
-    path: str
-    body: str | None
-
-    # The envelope carries more than the gateway reads.
-    @classmethod
-    def of(cls, envelope: dict[str, Any]) -> "Request":
-        return cls(envelope["method"], envelope["path"], envelope.get("body"))
-
-    def sends(self) -> bool:
-        return self._is("POST", "messages")
-
-    def listens(self) -> bool:
-        return self._is("GET", "events")
-
-    def user(self) -> str:
-        return self._route(1)
-
-    def message(self) -> Message:
-        return Message(user=self.user(), text=self.body or "")
-
-    def _is(self, verb: str, what: str) -> bool:
-        return self.method == verb and self._route(2) == what
-
-    def _route(self, part: int) -> str:  # "" when the path is not a route
-        route = ROUTE.fullmatch(self.path)
-        return route[part] if route else ""
-```
-
-The pattern accepts only a short lower-case name as the user, because the user is the id
-of the session the gateway calls. The body is the plugin's text of the request body,
-absent when it is not valid UTF-8. `of` reads the three fields the gateway needs from an
-envelope that carries more. An answer, `Http`, is the JSON object the plugin expects:
-a status and a body, sent as text, or the session to stream. It is a `TypedDict` with no
-key required, so an answer carries only the keys it sets, because the plugin refuses a
-key it does not know.
-
-```python
-# watch.py: a session's events, or 404.
-@flezha.tasklet(name="watch")
-class Watch:
-    def run(self, request: Request, ctx: flezha.Ctx[None, Http]) -> None:
-        ctx.emit(
-            Http(stream=request.user())
-            if request.listens()
-            else Http(status=404, body="no such route")
-        )
-```
-
-```python
-# admit.py: 202 when the message goes on, 429 over the budget.
-@flezha.tasklet(name="admit")
-class Admit:
-    def run(self, verdict: Verdict, ctx: flezha.Ctx[None, Http]) -> None:
-        user = verdict["message"]["user"]
-        ctx.emit(
-            Http(status=202, body=f"sent to {user}")
-            if admitted(verdict)
-            else Http(
-                status=429,
-                body=f"{user} has used {verdict['spent']} of today's {DAILY_TOKENS} tokens",
-            )
-        )
-```
-
-`budget.py`, with the `Event`, `Verdict`, `admitted`, `sent` and `used` the graph names,
-is on [`token_budget.md`](token_budget.md#count-the-tokens); copy it from the example.
-
-### Ruby
-
-```ruby
-# request.rb: one HTTP request, as the plugin hands it to the gateway.
-class Request
-  ROUTE = %r{\A/sessions/([a-z][a-z0-9_-]{0,63})/(messages|events)\z}
-
-  # The envelope carries more than the gateway reads.
-  def self.decode(json)
-    envelope = JSON.parse(json, symbolize_names: true)
-    new(envelope[:method], envelope[:path], envelope[:body])
-  end
-
-  def initialize(verb, path, body)
-    @verb = verb
-    @path = path
-    @body = body
-  end
-
-  def sends? = route?("POST", "messages")
-  def listens? = route?("GET", "events")
-  def user = route(1)
-  def message = { user: user, text: @body || "" }
-
-  private
-
-  def route?(verb, what) = @verb == verb && route(2) == what
-  def route(part) = ROUTE.match(@path)&.[](part) || "" # "" when the path is not a route
-end
-```
-
-The pattern accepts only a short lower-case name as the user, because the user is the id
-of the session the gateway calls. The body is the plugin's text of the request body,
-absent when it is not valid UTF-8. `decode` reads the three fields the gateway needs from
-an envelope that carries more.
-
-```ruby
-# watch.rb: a session's events, or 404.
-class Watch < Flezha::Tasklet
-  tasklet_name "watch"
-
-  def run(request, ctx)
-    ctx.emit(request.listens? ? { stream: request.user } : { status: 404, body: "no such route" })
-  end
-end
-```
-
-```ruby
-# admit.rb: 202 when the message goes on, 429 over the budget.
-class Admit < Flezha::Tasklet
-  tasklet_name "admit"
-
-  def run(verdict, ctx)
-    user = verdict[:message][:user]
-    ctx.emit(
-      if Budget.admitted?(verdict)
-        { status: 202, body: "sent to #{user}" }
-      else
-        { status: 429, body: "#{user} has used #{verdict[:spent]} of today's #{Budget::DAILY_TOKENS} tokens" }
-      end
-    )
-  end
-end
-```
-
-An answer is the Hash the plugin expects, sent as JSON: a status and a body, sent as
-text, or the session to stream.
-
-`budget.rb`, with the `admitted?` and `used` the graph names, is on
-[`token_budget.md`](token_budget.md#count-the-tokens); copy it from the example.
-
-### PHP
-
-```php
-// src/Request.php: one HTTP request, as the plugin hands it to the gateway.
-final readonly class Request
-{
-    private const ROUTE = '#^/sessions/([a-z][a-z0-9_-]{0,63})/(messages|events)$#';
-
-    private function __construct(private string $method, private string $path, private ?string $body)
-    {
-    }
-
-    // The envelope carries more than the gateway reads.
-    public static function decode(string $json): self
-    {
-        $envelope = json_decode($json, true, flags: JSON_THROW_ON_ERROR);
-
-        return new self($envelope['method'], $envelope['path'], $envelope['body'] ?? null);
-    }
-
-    public function sends(): bool
-    {
-        return $this->is('POST', 'messages');
-    }
-
-    public function listens(): bool
-    {
-        return $this->is('GET', 'events');
-    }
-
-    public function user(): string
-    {
-        return $this->route(1);
-    }
-
-    public function message(): array
-    {
-        return ['user' => $this->user(), 'text' => $this->body ?? ''];
-    }
-
-    private function is(string $verb, string $what): bool
-    {
-        return $this->method === $verb && $this->route(2) === $what;
-    }
-
-    private function route(int $part): string        // "" when the path is not a route
-    {
-        return preg_match(self::ROUTE, $this->path, $route) === 1 ? $route[$part] : '';
-    }
-}
-```
-
-The pattern accepts only a short lower-case name as the user, because the user is the id
-of the session the gateway calls. The body is the plugin's text of the request body,
-absent when it is not valid UTF-8. `decode` reads the three fields the gateway needs from
-an envelope that carries more.
-
-```php
-// src/Watch.php: a session's events, or 404.
-#[Task(name: 'watch')]
-final class Watch extends Tasklet
-{
-    public function run(mixed $input, Ctx $ctx): void
-    {
-        $ctx->emit($input->listens()
-            ? ['stream' => $input->user()]
-            : ['status' => 404, 'body' => 'no such route']);
-    }
-}
-```
-
-```php
-// src/Admit.php: 202 when the message goes on, 429 over the budget.
-#[Task(name: 'admit')]
-final class Admit extends Tasklet
-{
-    public function run(mixed $input, Ctx $ctx): void
-    {
-        $user = $input['message']['user'];
-        $ctx->emit(Budget::admitted($input)
-            ? ['status' => 202, 'body' => "sent to $user"]
-            : [
-                'status' => 429,
-                'body' => "$user has used {$input['spent']} of today's " . Budget::DAILY_TOKENS . ' tokens',
-            ]);
-    }
-}
-```
-
-An answer is the array the plugin expects, sent as JSON: a status and a body, sent as
-text, or the session to stream.
-
-`src/Budget.php`, with the `admitted` and `used` the graph names, is on
-[`token_budget.md`](token_budget.md#count-the-tokens); copy it from the example.
-
-### Elixir
-
-```elixir
-# lib/agentdesk/request.ex: one HTTP request, as the plugin hands it to the gateway.
-defmodule Agentdesk.Request do
-  defstruct [:method, :path, :body]
-
-  @route ~r"^/sessions/([a-z][a-z0-9_-]{0,63})/(messages|events)$"
-
-  # The envelope carries more than the gateway reads.
-  def decode(json) do
-    case Jason.decode(json) do
-      {:ok, %{"method" => method, "path" => path} = envelope} ->
-        {:ok, %__MODULE__{method: method, path: path, body: envelope["body"]}}
-
-      _other ->
-        {:error, "not a request envelope"}
-    end
-  end
-
-  def sends?(request), do: is?(request, "POST", "messages")
-
-  def listens?(request), do: is?(request, "GET", "events")
-
-  def user(request), do: route(request, 1)
-
-  # The session is named after the user.
-  def message(request), do: %{user: user(request), text: request.body || ""}
-
-  defp is?(request, verb, what), do: request.method == verb and route(request, 2) == what
-
-  # "" when the path is not a route.
-  defp route(request, part) do
-    case Regex.run(@route, request.path) do
-      nil -> ""
-      groups -> Enum.at(groups, part)
-    end
-  end
-end
-```
-
-The pattern accepts only a short lower-case name as the user, because the user is the id
-of the session the gateway calls. The body is the plugin's text of the request body,
-absent when it is not valid UTF-8. `decode/1` is handed the envelope's bytes, and reads
-the three fields the gateway needs from an envelope that carries more.
-
-```elixir
-# lib/agentdesk/watch.ex: a session's events, or 404.
-defmodule Agentdesk.Watch do
-  use Flezha.SDK.Tasklet, name: "watch"
-
-  @impl true
-  def run(request, state, ctx) do
-    emit(
-      ctx,
-      if Request.listens?(request) do
-        %{stream: Request.user(request)}
-      else
-        %{status: 404, body: "no such route"}
-      end
-    )
-
-    {:ok, state}
-  end
-end
-```
-
-```elixir
-# lib/agentdesk/admit.ex: 202 when the message goes on, 429 over the budget.
-defmodule Agentdesk.Admit do
-  use Flezha.SDK.Tasklet, name: "admit"
-
-  @impl true
-  def run(verdict, state, ctx) do
-    user = verdict.message.user
-
-    emit(
-      ctx,
-      if Budget.admitted?(verdict) do
-        %{status: 202, body: "sent to #{user}"}
-      else
-        %{
-          status: 429,
-          body: "#{user} has used #{verdict.spent} of today's #{Budget.daily_tokens()} tokens"
-        }
-      end
-    )
-
-    {:ok, state}
-  end
-end
-```
-
-An answer is the map the plugin expects, sent as JSON: a status and a body, sent as
-text, or the session to stream.
-
-`budget.ex`, with the `admitted?/1`, `used/1` and `daily_tokens/0` the graph and `admit`
-name, is on [`token_budget.md`](token_budget.md#count-the-tokens); copy it from the
-example.
-
 <!-- tabs-close -->
 
-## A second way into a session
+## The gateway
 
-A call sends the value its chain carries, and `keyBy` reads the session's id from that
-same value, so the gateway sends the user with the text. The session reads the text out
-of it on an entry channel of its own, `message`, and `turn` stays as it was for the CLI.
+The gateway is one chain: each request, on the entry channel `http`, goes to `watch`, and
+`watch`'s answer to the `response()` end. It runs for as long as the desk does, so it is an
+unbounded operator.
 
-> Add the message, give `agent` its second entry channel, and register the gateway's
-> factory in the runner.
+> Write the gateway's operator, and register its factory in the runner.
 > {: .step}
 
 <!-- tabs-open -->
@@ -1021,164 +104,32 @@ of it on an entry channel of its own, `message`, and `turn` stays as it was for 
 ### Java
 
 ```java
-// Message.java: a message for a user's session, as the gateway sends it.
-public record Message(String user, String text) {}
+// GatewayOperator.java: answers every request.
+public final class GatewayOperator implements UnboundedOperator {
+
+    @Override
+    public String factoryId() {
+        return "gateway";
+    }
+
+    @Override
+    public void channels(ChannelBuilder c) {
+        c.input(Request.class, "http")
+                .into(Watch.class)
+                .response();                                 // a stream, or 404
+    }
+}
 ```
 
-In `AgentOperator.channels`, after the `turn` chain:
-
-```java
-        c.input(Message.class, "message")                // from the gateway
-                .map(String.class, Message::text)
-                .into(Reply.class);
-```
-
-`into(Reply.class)` names the tasklet the `turn` chain already feeds, so both channels
-reach the same `reply`, with the same conversation. In `Main`:
+In `Main`, after the `agent` factory:
 
 ```java
                 .registerFactory(GatewayOperator.class)
 ```
 
-### Rust
-
-```rust
-// src/agent.rs: a message for a user's session, as the gateway sends it.
-#[derive(Clone, Serialize, Deserialize)]
-pub struct Message {
-    pub user: String,
-    pub text: String,
-}
-```
-
-In `AgentOperator::channels`, after the `turn` chain:
-
-```rust
-        c.input::<Message>("message") // from the gateway
-            .map(|message| message.text)
-            .into::<Reply>();
-```
-
-`into::<Reply>()` names the tasklet the `turn` chain already feeds, so both channels
-reach the same `reply`, with the same conversation. In `main`, with `mod gateway;` among
-the modules:
-
-```rust
-        .register_factory(gateway::GatewayOperator)?
-```
-
-### Node
-
-The message is the object `Request`'s `message()` builds, the user and the text, so there
-is no class to add. In `agent_operator.mjs`'s `channels`, after the `turn` chain:
-
-```javascript
-    c.input('message') // from the gateway
-      .map((message) => message.text)
-      .into(Reply);
-```
-
-`into(Reply)` names the tasklet the `turn` chain already feeds, so both channels reach
-the same `reply`, with the same conversation. In `runner.mjs`:
-
-```javascript
-await runner.registerFactory('./gateway_operator.mjs');
-```
-
-### Python
-
-```python
-# agent.py: a message for a user's session, as the gateway sends it.
-class Message(TypedDict):  # the session is named after the user
-    user: str
-    text: str
-```
-
-In `agent`, after the `turn` chain:
-
-```python
-    (
-        c.input("message")  # from the gateway
-        .map(lambda message: message["text"])
-        .into(Reply)
-    )
-```
-
-`into(Reply)` names the tasklet the `turn` chain already feeds, so both channels reach
-the same `reply`, with the same conversation. In `runner.py`, with
-`from gateway import gateway`:
-
-```python
-    runner = flezha.create_runner("agents").register_factory(agent).register_factory(gateway)
-```
-
-### Ruby
-
-The message is the Hash `Request#message` builds, the user and the text, so there is no
-class to add. In `AgentOperator`'s `channels`, after the `turn` chain:
-
-```ruby
-    c.input("message")                                       # from the gateway
-     .map { |message| message[:text] }
-     .into(Reply)
-```
-
-`into(Reply)` names the tasklet the `turn` chain already feeds, so both channels reach
-the same `reply`, with the same conversation. In `runner.rb`, with
-`require_relative "gateway_operator"`:
-
-```ruby
-               .register_factory(GatewayOperator)
-```
-
-### PHP
-
-The message is the array `Request::message()` builds, the user and the text, so there
-is no class to add. In `AgentOperator::channels`, after the `turn` chain:
-
-```php
-        $c->input('message')                         // from the gateway
-            ->map(fn (array $message) => $message['text'])
-            ->into(Reply::class);
-```
-
-`into(Reply::class)` names the tasklet the `turn` chain already feeds, so both channels
-reach the same `reply`, with the same conversation. In `runner.php`:
-
-```php
-    ->registerFactory(GatewayOperator::class)
-```
-
-### Elixir
-
-The message is the map `Request.message/1` builds, the user and the text, so there is no
-struct to add. In `Agentdesk.AgentOperator`'s `channels/1`, after the `turn` chain:
-
-```elixir
-    # from the gateway
-    c
-    |> input_with("message", &Jason.decode/1)
-    |> map(& &1["text"])
-    |> into(Reply)
-```
-
-`into(Reply)` names the tasklet the `turn` chain already feeds, so both channels reach
-the same `reply`, with the same conversation. In `Agentdesk.Application`:
-
-```elixir
-       operators: [Agentdesk.AgentOperator, Agentdesk.GatewayOperator],
-```
-
 <!-- tabs-close -->
 
-## Start the gateway
-
-Inside a container, the plugin must listen on every address, `0.0.0.0`: its default,
-loopback, cannot be reached from outside the container. agentdesk's `compose.yaml`
-publishes the port on the host's loopback only, `127.0.0.1:8080`
-([`agent_session.md`](agent_session.md#the-containers)), so only this machine reaches it.
-
-> Build the runner again and replace its container, from the project's folder.
+> Build the runner again and replace its container.
 > {: .step}
 
 <!-- tabs-open -->
@@ -1189,41 +140,17 @@ publishes the port on the host's loopback only, `127.0.0.1:8080`
 $ mvn -q package
 ```
 
-### Rust
-
-```sh
-$ cargo build --release
-```
-
-### Node
-
-There is nothing to install again: the image copies the new files as they are.
-
-### Python
-
-There is nothing to install again: the image copies the new files as they are.
-
-### Ruby
-
-There is nothing to install again: the image copies the new files as they are.
-
-### PHP
-
-There is nothing to compile: the image copies the new classes as they are.
-
-### Elixir
-
-```sh
-$ MIX_ENV=prod mix release
-```
-
-`mix.exs` lets a new release replace the last one without asking.
-
 <!-- tabs-close -->
 
 ```sh
 $ docker compose up -d --build --wait runner
 ```
+
+## Start the gateway
+
+Inside a container, the plugin must listen on every address, `0.0.0.0`: its default,
+loopback, cannot be reached from outside the container. `compose.yaml` publishes the port on
+the host's loopback only, so only this machine reaches it.
 
 > Start the gateway, and enable the HTTP plugin on it.
 > {: .step}
@@ -1245,86 +172,73 @@ Enabling plugin...
 Plugin web enabled successfully.
 ```
 
-`--Xchannel=http` is the entry channel every request arrives on. The plugin's options,
-such as how long a request waits for its answer, are listed on
-[`http_server.md`](../../plugins/http_server.md#options).
-
-## Send a message
-
-> Send Anna a message over HTTP, from the host.
-> {: .step}
-
-```sh
-$ curl -si -d 'Hello from the web' localhost:8080/sessions/anna/messages
-```
-
-```output
-HTTP/1.1 202 Accepted
-date: Wed, 30 Sep 2026 05:22:09 GMT
-content-length: 12
-vary: accept-encoding
-cache-control: max-age=0, private, must-revalidate
-content-type: text/plain; charset=utf-8
-
-sent to anna
-```
-
-The 202 comes from `admit` before the session has read the message: the gateway does
-not wait for the answer.
-
-> Send Carol a message. She has no session yet.
-> {: .step}
-
-```sh
-$ curl -si -d 'Hi, I am Carol' localhost:8080/sessions/carol/messages
-```
-
-```output
-HTTP/1.1 202 Accepted
-date: Wed, 30 Sep 2026 05:22:09 GMT
-content-length: 13
-vary: accept-encoding
-cache-control: max-age=0, private, must-revalidate
-content-type: text/plain; charset=utf-8
-
-sent to carol
-```
-
-```sh
-$ flz state get carol/reply --namespace agents
-```
-
-```output
-state get carol/reply:
-  change_seq: 1
-  state:      {"reply":{"messages":["Hi, I am Carol"]}}
-```
-
-The call started Carol's session, and her first message is its first turn.
+`--Xchannel=http` is the entry channel every request arrives on.
+[`http_server.md`](../../plugins/http_server.md#options) lists the plugin's other options.
 
 > Ask for a path the gateway does not know.
 > {: .step}
 
 ```sh
-$ curl -si localhost:8080/sessions/carol
+$ curl -si localhost:8080/sessions/anna
 ```
 
 ```output
 HTTP/1.1 404 Not Found
-date: Wed, 30 Sep 2026 05:22:10 GMT
-content-length: 13
-vary: accept-encoding
-cache-control: max-age=0, private, must-revalidate
+...
 content-type: text/plain; charset=utf-8
 
 no such route
 ```
 
-A request that fails in the plugin or in the call, such as one no answer came for in
-time, is answered with the status the plugin page's
-[table](../../plugins/http_server.md#status-of-every-outcome) gives it.
+## Stream an answer
+
+When `watch` answers with a session to stream, `{"stream":"anna"}`, the plugin attaches a
+listener to that session and keeps the response open: every part and every output on the
+session's sink `answer` is written as one event, as it happens, until the client goes away.
+The gateway is not in that path; it only named the session.
+
+> In a second terminal, open Anna's stream for five seconds.
+> {: .step}
+
+```sh
+$ curl -sN --max-time 5 localhost:8080/sessions/anna/events
+```
+
+> In the first terminal, send Anna a message.
+> {: .step}
+
+```sh
+$ flz operator call anna --namespace agents --text 'Tell me more'
+```
+
+```output
+{"text":"Message 6: you said \"Tell me more\". I am a demo model.","tokens":12}
+```
+
+The stream shows every token as the demo model wrote it, then the answer:
+
+```output
+:
+
+event: part
+data: {"attempt":1,"channel":"answer","part":0,"payload":"{\"text\":\"Message \",\"tokens\":1}"}
+
+event: part
+data: {"attempt":1,"channel":"answer","part":1,"payload":"{\"text\":\"6: \",\"tokens\":2}"}
+
+...
+
+event: output
+data: {"channel":"answer","payload":"{\"text\":\"Message 6: you said \\\"Tell me more\\\". I am a demo model.\",\"tokens\":12}"}
+```
+
+The first line, `:`, is a comment the plugin writes when the stream opens, and again whenever
+the stream has been quiet for a while, which keeps proxies from closing it. A failed turn is a
+`dead_lettered` event, and the plugin page's [streams section](../../plugins/http_server.md#streams)
+lists every event. A browser reads the same stream with `EventSource`, and that section has
+the few lines that show a growing answer.
 
 ## Next
 
-[`streaming_to_the_browser.md`](streaming_to_the_browser.md) sends the answer to the
-browser as it is written.
+[`operator_calls.md`](operator_calls.md) lets a POST send a session a message, through a call
+from the gateway.

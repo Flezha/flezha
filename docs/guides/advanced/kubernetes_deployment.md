@@ -162,7 +162,7 @@ $ kubectl -n agentdesk get pods
 
 ```output
 NAME          READY   STATUS    RESTARTS   AGE
-agentdesk-0   2/2     Running   0          14s
+agentdesk-0   2/2     Running   0          20s
 ```
 
 > Point the `flz` alias at the controller in the pod.
@@ -176,7 +176,7 @@ $ flz runner list --namespace agents
 ```output
 Fetching runners for namespace 'agents'...
 Runners in namespace 'agents':
-  - agents_11e8bd94707e
+  - agents_4d7736218461
 ```
 
 The cluster is new, so it holds no sessions yet.

@@ -1,4 +1,4 @@
-# Going further
+# Build a trader
 
 Part 2 builds `tradedesk`, a toy trader, and uses it to show what a deployment
 needs beyond the first steps: authorization, a namespace of its own, state,

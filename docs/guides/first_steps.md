@@ -1,4 +1,4 @@
-# First steps
+# Build an echo
 
 Part 1 builds the smallest complete Flezha deployment by hand: a controller, a
 runner of your own that serves an `echo` operator, and a file on each side of

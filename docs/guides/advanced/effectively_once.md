@@ -27,14 +27,14 @@ durable input log for anna (consumed through 11):
 
   offset=0 consumed 5 byte(s)
   offset=1 consumed 16 byte(s)
-  offset=2 consumed 15 byte(s)
-  offset=3 consumed 20 byte(s)
-  offset=4 consumed 14 byte(s)
-  offset=5 consumed 250 byte(s)
-  offset=6 consumed 12 byte(s)
+  offset=2 consumed 20 byte(s)
+  offset=3 consumed 14 byte(s)
+  offset=4 consumed 250 byte(s)
+  offset=5 consumed 12 byte(s)
+  offset=6 consumed 15 byte(s)
   offset=7 consumed 24 byte(s)
-  offset=8 consumed 43 byte(s) channel=message
-  offset=9 consumed 37 byte(s) channel=message
+  offset=8 consumed 12 byte(s)
+  offset=9 consumed 43 byte(s) channel=message
   offset=10 consumed 20 byte(s)
   offset=11 consumed 29 byte(s) channel=message
 ```
@@ -50,107 +50,89 @@ $ flz state journal anna --namespace agents
 
 ```output
 task-journal for instance anna:
+...
+  seq=17 task_committed task_idx=0 iter=5 epoch=1
+    ran: anna/reply/ record=8 channels=answer
+    handoff: 1 item(s), 116 byte(s)
+      edge: channel_id=1 1 item(s), 116 byte(s)
 
-  seq=0 task_committed task_idx=0 iter=0 epoch=0
-    ran: anna/reply/ record=0 channels=answer
-    handoff: 1 item(s), 96 byte(s)
-      edge: channel_id=1 1 item(s), 96 byte(s)
-
-  seq=1 task_committed task_idx=1 iter=0 epoch=0
-    ran: anna/deliver/ record=0 channels=deliver
+  seq=18 task_committed task_idx=1 iter=5 epoch=1
+    ran: anna/deliver/ record=1 channels=deliver
     handoff: 0 item(s), 0 byte(s)
 
-  seq=2 iter_committed task_idx=0 iter=0 epoch=0
+  seq=19 iter_committed task_idx=0 iter=5 epoch=1
     handoff: 0 item(s), 0 byte(s)
-    consumed input-log offset: 0
+    consumed input-log offset: 7
 ...
 ```
 
-Each turn is `reply`, then `deliver`, then the turn's end, `iter_committed`, which names
-the message it consumed.
+A turn is `reply`, then `deliver`, then the turn's end, `iter_committed`, which names the
+message it consumed. The early turns, from before [`streamed_answers.md`](streamed_answers.md)
+added `deliver`, are `reply` alone, and the rewind and the failed turn are there too.
 
 ## The gateway declares it
 
 An unbounded operator keeps no input log unless it asks for one, and without one its
-guarantee is at least once: after a crash an output can leave twice, and a message in
-flight can be lost. The gateway asks, with the first line of its graph in
-[`http_gateway.md`](http_gateway.md#the-gateway):
+guarantee is at least once: after a crash an output can leave twice, and a message in flight
+can be lost. The gateway counts tokens, so it asks.
+
+> Declare the delivery guarantee on the gateway.
+> {: .step}
 
 <!-- tabs-open -->
 
 ### Java
 
+In `GatewayOperator.channels`, as its first line:
+
 ```java
-    public void channels(ChannelBuilder c) {
         c.effectivelyOnce();                                 // each request and answer on disk before it runs
-```
-
-### Rust
-
-```rust
-    fn channels(c: &ChannelBuilder) {
-        c.effectively_once(); // each request and answer on disk before it runs
-```
-
-### Node
-
-```javascript
-  channels: (c) => {
-    c.effectivelyOnce(); // each request and answer on disk before it runs
-```
-
-### Python
-
-```python
-def gateway(c: flezha.Channels) -> None:
-    c.effectively_once()  # each request and answer on disk before it runs
-```
-
-### Ruby
-
-```ruby
-  channels do |c|
-    c.effectively_once                                       # each request and answer on disk before it runs
-```
-
-### PHP
-
-```php
-    public static function channels(Builder $c): void
-    {
-        $c->effectivelyOnce();                       // each request and answer on disk before it runs
-```
-
-### Elixir
-
-```elixir
-  def channels(c) do
-    # each request and answer on disk before it runs
-    effectively_once(c)
 ```
 
 <!-- tabs-close -->
 
-The gateway now writes each HTTP request to its input log before it runs, and each answer
-its calls bring back. A call is effectively once only when both ends keep an input log,
-the caller for the answer and the session for the message, and here both do.
-
-> Look at the gateway's input log.
+> Build the runner again and replace its container.
 > {: .step}
+
+<!-- tabs-open -->
+
+### Java
+
+```sh
+$ mvn -q package
+```
+
+<!-- tabs-close -->
+
+```sh
+$ docker compose up -d --build --wait runner
+```
+
+The gateway now writes each HTTP request to its input log before it runs, and each answer
+its calls bring back. A call is effectively once only when both ends keep an input log, the
+caller for the answer and the session for the message, and here both do.
+
+> Send Anna a message over HTTP, and look at the gateway's input log.
+> {: .step}
+
+```sh
+$ curl -s -d 'Are you on disk?' localhost:8080/sessions/anna/messages
+```
+
+```output
+sent to anna
+```
 
 ```sh
 $ flz state inbox gateway --namespace agents
 ```
 
 ```output
-durable input log for gateway (consumed through 20):
+durable input log for gateway (consumed through 2):
 
   offset=0 consumed 61 byte(s) channel=http
-  offset=1 consumed 102 byte(s) channel=http
-  offset=2 consumed 99 byte(s) channel=http
-  offset=3 consumed 265 byte(s) channel=budget.response
-  offset=4 consumed 253 byte(s) channel=budget.response
-...
+  offset=1 consumed 100 byte(s) channel=http
+  offset=2 consumed 257 byte(s) channel=budget.response
 ```
 
 `http` is a request, and `budget.response` is the answer of a call, on its way to
@@ -169,8 +151,8 @@ $ flz state get gateway/budget/anna --namespace agents
 
 ```output
 state get gateway/budget/anna:
-  change_seq: 6
-  state:      {"budget":{"anna":{"day":"2026-09-30","tokens":35}}}
+  change_seq: 4
+  state:      {"budget":{"anna":{"day":"2026-09-30","tokens":36}}}
 ```
 
 > Send Anna a message, and kill the runner a second later.
@@ -180,8 +162,8 @@ state get gateway/budget/anna:
 $ curl -s -d 'Tell me everything' localhost:8080/sessions/anna/messages && sleep 1 && docker compose kill runner
 ```
 
-The gateway answered `sent to anna`, and then the runner was gone. Whatever was on its way when the runner died, Anna's turn, the call's answer or the
-count, is in an input log.
+The gateway answered `sent to anna`, and then the runner was gone. Whatever was on its way
+when the runner died, Anna's turn, the call's answer or the count, is in an input log.
 
 > Start the runner again, and read the budget once Anna has answered.
 > {: .step}
@@ -196,8 +178,8 @@ $ flz state get gateway/budget/anna --namespace agents
 
 ```output
 state get gateway/budget/anna:
-  change_seq: 8
-  state:      {"budget":{"anna":{"day":"2026-09-30","tokens":47}}}
+  change_seq: 6
+  state:      {"budget":{"anna":{"day":"2026-09-30","tokens":48}}}
 ```
 
 The answer used 12 tokens, and they were counted once.
@@ -207,10 +189,10 @@ $ flz operator call anna --namespace agents --text 'What did I ask?'
 ```
 
 ```output
-{"text":"Message 11: you said \"What did I ask?\". I am a demo model.","tokens":13}
+{"text":"Message 12: you said \"What did I ask?\". I am a demo model.","tokens":13}
 ```
 
-Her tenth message was the one sent before the kill, and it is in her conversation once.
+Her eleventh message was the one sent before the kill, and it is in her conversation once.
 The gateway's log shows that request and its answer once each:
 
 ```sh
@@ -219,9 +201,9 @@ $ flz state inbox gateway --namespace agents
 
 ```output
 ...
-  offset=20 consumed 225 byte(s) channel=budget.response
-  offset=21 consumed 102 byte(s) channel=http
-  offset=22 consumed 265 byte(s) channel=budget.response
+  offset=2 consumed 257 byte(s) channel=budget.response
+  offset=3 consumed 102 byte(s) channel=http
+  offset=4 consumed 265 byte(s) channel=budget.response
 ```
 
 ## What it requires

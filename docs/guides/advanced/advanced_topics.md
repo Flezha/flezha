@@ -1,4 +1,4 @@
-# Advanced topics
+# Build an AI chat
 
 Part 3 builds `agentdesk`, a chat in which every conversation is a session of its
 own, and many run at once. A session remembers its conversation, answers each message
@@ -40,14 +40,12 @@ flowchart LR
 
 | # | Page | What you do |
 |---|---|---|
-| 1 | [`agent_session.md`](agent_session.md) | Run agentdesk in Docker Compose, start one session per conversation as a bounded operator, and send it a turn with the CLI |
-| 2 | [`streamed_answers.md`](streamed_answers.md) | Send the answer token by token while the turn runs, as parts, and watch it with `flz operator listen` |
-| 3 | [`sleeping_sessions.md`](sleeping_sessions.md) | Let an idle session sleep with nothing held on the runner, and wake it with the next turn |
-| 4 | [`rewinding_a_turn.md`](rewinding_a_turn.md) | Take turns back, and see a failed turn set aside while the session goes on |
-| 5 | [`custom_plugins.md`](custom_plugins.md) | Install the HTTP plugin by rebuilding the controller's image, and write a plugin of your own |
-| 6 | [`http_gateway.md`](http_gateway.md) | Serve HTTP from a gateway operator that calls each user's session |
-| 7 | [`streaming_to_the_browser.md`](streaming_to_the_browser.md) | Stream the answer to a browser |
-| 8 | [`token_budget.md`](token_budget.md) | Keep each user's daily token budget in the gateway |
-| 9 | [`clustering.md`](clustering.md) | Run several controllers, stop one, and watch its sessions move |
-| 10 | [`effectively_once.md`](effectively_once.md) | The delivery guarantee, what it requires and what it costs |
-| 11 | [`kubernetes_deployment.md`](kubernetes_deployment.md) | Run the same images on k3s |
+| 1 | [`sessions.md`](sessions.md) | Run agentdesk in Docker Compose, one session per conversation as a bounded operator, send it turns with the CLI, and watch an idle one sleep |
+| 2 | [`rewinding_a_turn.md`](rewinding_a_turn.md) | Take turns back with an undo, and let a failed turn fail alone |
+| 3 | [`streamed_answers.md`](streamed_answers.md) | Send the answer token by token as parts, and watch it with `flz operator listen` |
+| 4 | [`custom_plugins.md`](custom_plugins.md) | Install the HTTP plugin by rebuilding the controller's image, and see a plugin of your own |
+| 5 | [`http_gateway.md`](http_gateway.md) | Serve HTTP from a gateway operator, and stream a session's answer to a browser |
+| 6 | [`operator_calls.md`](operator_calls.md) | Call a user's session from the gateway, and count each answer's tokens against a daily budget |
+| 7 | [`clustering.md`](clustering.md) | Run several controllers, stop one, and watch its sessions move |
+| 8 | [`effectively_once.md`](effectively_once.md) | The delivery guarantee, what it requires and what it costs |
+| 9 | [`kubernetes_deployment.md`](kubernetes_deployment.md) | Run the same images on k3s |

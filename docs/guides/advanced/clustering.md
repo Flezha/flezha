@@ -2,9 +2,8 @@
 
 So far one controller has carried every session. Several controllers can share them: they
 form a cluster, each hosts a part of the operators, and when one stops, the others take its
-operators over. On this page a second controller joins the desk, takes a share of the
-sessions, and is stopped again, and its sessions and the gateway move back with what
-they remember.
+operators over. On this page a second controller joins, takes a share, and is stopped again,
+and its sessions and the gateway move back with what they remember.
 
 ## A second controller
 
@@ -84,12 +83,10 @@ volumes:
 - **The node names** are `flezha@` and a host name, and a host name needs a dot, so each
   controller gets a network alias with one. `FLEZHA_INITIAL_NODES` lists both, which is
   how each finds the other.
-- **Each controller has its own runner**, reached through its own socket volume, as a
-  runner on each machine would.
-- **The database** holds a copy of each controller's state. A session that moves is
-  restored from what its old controller had written; without a copy, a controller that
-  stops can take that with it. [`durability.md`](../tradedesk/durability.md#where-it-is-kept)
-  lists the backends.
+- **Each controller has its own runner**, reached through its own socket volume.
+- **The database** holds a copy of each controller's state, which a session that moves is
+  restored from. [`durability.md`](../tradedesk/durability.md#where-it-is-kept) lists the
+  backends.
 - **Port 8081** is the gateway's while `controller-2` hosts it: the HTTP server runs on
   whichever controller hosts the gateway.
 
@@ -120,8 +117,8 @@ $ flz runner list --namespace agents
 ```output
 Fetching runners for namespace 'agents'...
 Runners in namespace 'agents':
-  - agents_401572df4feb
-  - agents_2b3c601d59dc
+  - agents_c8cade00c78f
+  - agents_00322d6189cc
 ```
 
 > List the operators.
@@ -136,11 +133,11 @@ Fetching operators for namespace 'agents'...
 Operators in namespace 'agents':
 
   OPERATOR                          HEALTH      PARTS   NODE                  RUNNER
-  anna                              suspended   -       flezha@controller-2.agentdeskagents_2b3c601d59dc
-  bob                               suspended   -       flezha@controller-2.agentdeskagents_2b3c601d59dc
-  carol                             suspended   -       flezha@controller.agentdeskagents_401572df4feb
-  dave                              healthy     -       flezha@controller.agentdeskagents_401572df4feb
-  gateway                           healthy     -       flezha@controller-2.agentdeskagents_2b3c601d59dc
+  anna                              suspended   -       flezha@controller-2.agentdeskagents_00322d6189cc
+  bob                               suspended   -       flezha@controller-2.agentdeskagents_00322d6189cc
+  carol                             suspended   -       flezha@controller.agentdeskagents_c8cade00c78f
+  dave                              healthy     -       flezha@controller.agentdeskagents_c8cade00c78f
+  gateway                           healthy     -       flezha@controller-2.agentdeskagents_00322d6189cc
 ```
 
 The new controller took a share: Anna's and Bob's sessions and the gateway moved to
@@ -175,9 +172,9 @@ $ time docker compose stop controller-2 runner-2
 
 ```output
 ...
-real	0m57.678s
-user	0m0.081s
-sys	0m0.034s
+real	0m58.378s
+user	0m0.163s
+sys	0m0.058s
 ```
 
 A controller that is stopped hands its operators to the others before it exits, which is
@@ -192,11 +189,11 @@ Fetching operators for namespace 'agents'...
 Operators in namespace 'agents':
 
   OPERATOR                          HEALTH      PARTS   NODE                  RUNNER
-  anna                              suspended   -       flezha@controller.agentdeskagents_401572df4feb
-  bob                               suspended   -       flezha@controller.agentdeskagents_401572df4feb
-  carol                             suspended   -       flezha@controller.agentdeskagents_401572df4feb
+  anna                              suspended   -       flezha@controller.agentdeskagents_c8cade00c78f
+  bob                               suspended   -       flezha@controller.agentdeskagents_c8cade00c78f
+  carol                             suspended   -       flezha@controller.agentdeskagents_c8cade00c78f
   dave                              suspended   -       flezha@controller.agentdesk(none)
-  gateway                           healthy     -       flezha@controller.agentdeskagents_401572df4feb
+  gateway                           healthy     -       flezha@controller.agentdeskagents_c8cade00c78f
 ```
 
 Everything is on `controller` again.
@@ -212,8 +209,7 @@ $ flz operator call anna --namespace agents --text 'Are you still there?'
 {"text":"Message 8: you said \"Are you still there?\". I am a demo model.","tokens":13}
 ```
 
-Her conversation came with her: her last message, in
-[`streaming_to_the_browser.md`](streaming_to_the_browser.md), was her seventh.
+Her conversation came with her.
 
 > Send Dave a message over HTTP, on port 8080 again.
 > {: .step}

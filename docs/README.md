@@ -49,14 +49,12 @@ answer "what are the options"; a guide answers "what do I type".
 | [`plugins.md`](guides/tradedesk/plugins.md) | Part 2. The plugin system and the plugins that ship |
 | [`durability.md`](guides/tradedesk/durability.md) | Part 2. What survives a crash |
 | [`advanced_topics.md`](guides/advanced/advanced_topics.md) | Part 3. What it builds, what you need, and its pages |
-| [`agent_session.md`](guides/advanced/agent_session.md) | Part 3. The agentdesk in Docker Compose: one session per bounded operator, a turn sent and answered |
-| [`streamed_answers.md`](guides/advanced/streamed_answers.md) | Part 3. An answer sent token by token while the turn runs |
-| [`sleeping_sessions.md`](guides/advanced/sleeping_sessions.md) | Part 3. An idle session sleeps and wakes on its next turn |
+| [`sessions.md`](guides/advanced/sessions.md) | Part 3. The agentdesk in Docker Compose: one session per bounded operator, turns sent and answered, an idle session asleep |
 | [`rewinding_a_turn.md`](guides/advanced/rewinding_a_turn.md) | Part 3. Taking turns back, and a failed turn that leaves the session running |
+| [`streamed_answers.md`](guides/advanced/streamed_answers.md) | Part 3. An answer sent token by token while the turn runs |
 | [`custom_plugins.md`](guides/advanced/custom_plugins.md) | Part 3. Installing a plugin by rebuilding the controller image, and writing your own |
-| [`http_gateway.md`](guides/advanced/http_gateway.md) | Part 3. A gateway that serves HTTP and calls the sessions |
-| [`streaming_to_the_browser.md`](guides/advanced/streaming_to_the_browser.md) | Part 3. The answer streamed to a browser |
-| [`token_budget.md`](guides/advanced/token_budget.md) | Part 3. Each user's daily token budget |
+| [`http_gateway.md`](guides/advanced/http_gateway.md) | Part 3. A gateway that serves HTTP, and streams a session's answer to a browser |
+| [`operator_calls.md`](guides/advanced/operator_calls.md) | Part 3. The gateway calls the sessions, and keeps each user's daily token budget from their answers |
 | [`clustering.md`](guides/advanced/clustering.md) | Part 3. Several controllers, and stopping one |
 | [`effectively_once.md`](guides/advanced/effectively_once.md) | Part 3. The delivery guarantee and its cost |
 | [`kubernetes_deployment.md`](guides/advanced/kubernetes_deployment.md) | Part 3. The same images on k3s |

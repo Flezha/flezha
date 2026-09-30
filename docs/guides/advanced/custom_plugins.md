@@ -3,8 +3,8 @@
 A plugin that does not ship with the controller comes as a package: an Elixir project,
 built into a `.fpz` file, which the controller loads when it starts. On this page
 agentdesk's controller gets the HTTP server plugin, which
-[`http_gateway.md`](http_gateway.md) uses, by rebuilding its image with the package in
-it. Then it shows what a plugin of your own looks like.
+[`http_gateway.md`](http_gateway.md) uses, and you see what a plugin of your own looks
+like.
 
 ## Build the package
 
@@ -46,9 +46,8 @@ the controller does not ship, Bandit and Plug among them.
 ## Rebuild the controller's image
 
 agentdesk's controller image copies the project's `controller/plugins/` folder into the
-controller's plugin root
-([`agent_session.md`](agent_session.md#the-containers)), and the controller loads every
-package there when it starts.
+controller's plugin root ([`sessions.md`](sessions.md#the-containers)), and the controller
+loads every package there when it starts.
 
 > Copy the package into agentdesk's `controller/plugins/` folder, then rebuild the
 > controller's image and replace its container, from agentdesk's folder.
@@ -68,8 +67,7 @@ A package the controller could not load is listed `refused`, with its error code
 to do; [`installation.md`](../../plugins/installation.md#errors) lists them.
 
 The new controller starts the sessions again once the runner has connected to it, within
-about a minute, and a call before that answers `operator.not_found`, so wait until the
-controller lists them:
+about a minute; a call before that answers `operator.not_found`. Wait until it lists them:
 
 ```sh
 $ flz operator list --namespace agents
@@ -80,8 +78,8 @@ Fetching operators for namespace 'agents'...
 Operators in namespace 'agents':
 
   OPERATOR                          HEALTH      PARTS   NODE                  RUNNER
-  anna                              suspended   -       flezha@127.0.0.1      agents_e4a79407ad42
-  bob                               suspended   -       flezha@127.0.0.1      agents_e4a79407ad42
+  anna                              suspended   -       flezha@127.0.0.1      agents_47a1f5f1e9eb
+  bob                               suspended   -       flezha@127.0.0.1      agents_47a1f5f1e9eb
 ```
 
 > Send Anna a message.
@@ -95,11 +93,10 @@ $ flz operator call anna --namespace agents --text 'Did you notice anything?'
 {"text":"Message 5: you said \"Did you notice anything?\". I am a demo model.","tokens":13}
 ```
 
-The new controller found the sessions on the `app_data` volume, and the runner connected
-to it again on its own. To upgrade the plugin, put the newer package in its place and
-rebuild; to remove it, delete it and rebuild. Installing into a running controller, or
-naming the packages in `FLEZHA_PLUGINS`, are the other ways in:
-[`installation.md`](../../plugins/installation.md#deployment-shapes) compares them.
+The new controller found the sessions on the `app_data` volume. To upgrade the plugin,
+put the newer package in its place and rebuild; to remove it, delete it and rebuild.
+[`installation.md`](../../plugins/installation.md#deployment-shapes) compares this with the
+other ways in.
 
 ## A plugin of your own
 
