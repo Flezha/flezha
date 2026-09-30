@@ -509,6 +509,9 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
       # The one way to name a channel whose name contains a comma, which the
       # comma-separated spelling cannot reach.
       assert names_row(["alerts,audit"]) == {:ok, ["alerts,audit"]}
+
+      # A row whose default is the empty set holds `[]` once resolved.
+      assert names_row([]) == {:ok, []}
     end
 
     test "a repeated name is accepted, since it selects the same records" do

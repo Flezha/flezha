@@ -411,6 +411,8 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   defp coerce(:names, field, value, _row) when is_binary(value),
     do: names(field, value, String.split(value, ","))
 
+  # The empty set is a resolved `[]` default; only a written spelling can be empty by mistake.
+  defp coerce(:names, _field, [], _row), do: {:ok, []}
   defp coerce(:names, field, value, _row) when is_list(value), do: names(field, value, value)
   defp coerce(:names, field, value, _row), do: refuse_value(field, value)
   defp coerce(:map, _field, value, _row) when is_map(value), do: {:ok, value}
