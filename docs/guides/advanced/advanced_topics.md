@@ -28,6 +28,7 @@ flowchart LR
 > |---|---|
 > | Java | Java 21 and Maven |
 > | Rust | Rust with Cargo |
+> | Node | Node 20 or later with npm |
 > | Python | Python 3.11 or later with pip |
 > | Ruby | Ruby 3.3 or later with Bundler |
 > | PHP | PHP 8.4 or later with `ext-ffi`, and Composer |

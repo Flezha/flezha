@@ -103,6 +103,35 @@ impl BoundedOperator for AgentOperator {
 `RollbackMode::KeepProgress` is what a failing turn needs, and
 [`rewinding_a_turn.md`](rewinding_a_turn.md#a-turn-that-fails) shows it.
 
+### Node
+
+The whole example:
+[`sdk/node/examples/agentdesk`](https://github.com/flezha/flezha_node_sdk/tree/main/examples/agentdesk).
+
+```javascript
+// agent_operator.mjs: one conversation, one turn per message.
+export default defineBounded({
+  factoryId: 'agent',
+  loopMode: 'per_input', // one turn per message
+  rollbackMode: 'keep_progress', // a failed turn fails alone
+  channels: (c) => {
+    c.input('turn', { codec: 'text' })
+      .into(Reply)
+      .sink('answer') // to whoever listens
+      .into(Deliver)
+      .response(); // to whoever called
+    c.input('message') // from the gateway
+      .map((message) => message.text)
+      .into(Reply);
+  },
+});
+```
+
+`loopMode: 'per_input'` runs the chain once per message instead of once in all.
+`rollbackMode: 'keep_progress'` is what a failing turn needs, and
+[`rewinding_a_turn.md`](rewinding_a_turn.md#a-turn-that-fails) shows it. `turn` reads its
+message as text; `message` names no codec, so its JSON arrives as an object.
+
 ### Python
 
 The whole example:
@@ -382,6 +411,52 @@ impl Tasklet for Deliver {
 }
 ```
 
+### Node
+
+```javascript
+// reply.mjs: answers a message with the demo model, and keeps the conversation.
+export const Reply = defineTasklet({
+  name: 'reply',
+
+  initState: () => ({ messages: [] }), // what the session remembers
+
+  applyChange: (conversation, change) => {
+    if (change.kind === 'said') conversation.messages.push(change.message);
+    else conversation.messages.pop(); // 'unsaid'
+  },
+
+  run: async (message, ctx) => {
+    ctx.emit(await answer(ctx.state.messages, message, (part) => ctx.part(part)));
+    ctx.change({ kind: 'said', message });
+  },
+
+  // The undo, when a turn is taken back: the conversation forgets its message.
+  compensate: (_answers, ctx) => {
+    console.log(`[undo] forgot "${ctx.state.messages.at(-1)}"`);
+    ctx.change({ kind: 'unsaid' });
+  },
+});
+```
+
+An answer is an object of its text and the number of tokens the model used for it. A
+change is an object too, a message said or the last one taken back, and `applyChange`
+folds it into the conversation. `run` awaits the model and hands it a way to send the
+answer through `ctx.part` while it is still being written, which
+[`streamed_answers.md`](streamed_answers.md) explains, and `compensate` is the undo that
+[`rewinding_a_turn.md`](rewinding_a_turn.md) uses.
+
+```javascript
+// deliver.mjs: hands the finished answer to the caller.
+export const Deliver = defineTasklet({
+  name: 'deliver',
+
+  run: (answer, ctx) => ctx.emit(answer),
+
+  // The undo, when a turn is taken back: an answer already given has nothing to take back.
+  compensate: () => {},
+});
+```
+
 ### Python
 
 ```python
@@ -621,6 +696,41 @@ The image copies the binary built on your machine, so one built against a C libr
 newer than Debian 12's may not start in it. The project's `.dockerignore` sends Docker
 that binary alone, not the rest of `target/`.
 
+### Node
+
+```javascript
+// runner.mjs: the runner.
+const runner = createRunner('agents');
+await runner.registerFactory('./agent_operator.mjs');
+await runner.registerFactory('./gateway_operator.mjs');
+
+await runner.run();
+```
+
+An operator is registered by the path of its module, which resolves against the working
+directory, so the runner starts from the project's folder.
+
+The runner's image is the project, with its `node_modules/`, on a Node image:
+
+```dockerfile
+# The runner's image: the project and the packages `npm install` put in node_modules/, on Node 24.
+FROM node:24-bookworm-slim
+COPY . /agentdesk
+WORKDIR /agentdesk
+# The runner stops when its standard input closes, and a container's is closed: it reads a pipe
+# that stays open instead.
+RUN mkfifo -m 600 stdin && chown 1000 stdin
+USER 1000
+ENTRYPOINT ["sh", "-c", "exec node runner.mjs <> stdin"]
+```
+
+The image copies `node_modules/` as `npm install` left it on your machine, and the
+project's `.dockerignore` sends Docker only the JavaScript files, `package.json` and
+`node_modules/`. `npm install` fetches the SDK's native part for the machine it runs on,
+so run it on Linux, on the processor the image runs on. A Node runner stops when its
+standard input closes, and a container starts with it closed, so the image gives the
+runner a pipe that stays open.
+
 ### Python
 
 ```python
@@ -814,6 +924,12 @@ $ mvn -q package
 
 ```sh
 $ cargo build --release
+```
+
+### Node
+
+```sh
+$ npm install
 ```
 
 ### Python

@@ -71,6 +71,21 @@ last message of the conversation:
 
 `deliver`'s is empty: an answer already given has nothing to take back.
 
+### Node
+
+`reply`'s undo, from [`agent_session.md`](agent_session.md#answer-a-message), forgets the
+last message of the conversation:
+
+```javascript
+  // The undo, when a turn is taken back: the conversation forgets its message.
+  compensate: (_answers, ctx) => {
+    console.log(`[undo] forgot "${ctx.state.messages.at(-1)}"`);
+    ctx.change({ kind: 'unsaid' });
+  },
+```
+
+`deliver`'s is empty: an answer already given has nothing to take back.
+
 ### Python
 
 `reply`'s undo, from [`agent_session.md`](agent_session.md#answer-a-message), forgets the

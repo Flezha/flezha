@@ -91,6 +91,37 @@ way. The message limit is for [`rewinding_a_turn.md`](rewinding_a_turn.md#a-turn
 The Rust SDK's [README](https://github.com/flezha/flezha_rust_sdk/blob/main/README.md#writing-a-tasklet)
 has the details of parts.
 
+### Node
+
+```javascript
+// demo_model.mjs: a canned answer, one token at a time.
+const MAX_MESSAGE = 200;
+const PER_TOKEN_MS = 50;
+
+export async function answer(earlier, message, part) {
+  if (message.length > MAX_MESSAGE) {
+    const refusal = `the demo model reads at most ${MAX_MESSAGE} characters, and this message has ${message.length}`;
+    throw Object.assign(new Error(refusal), { nonRetryable: true });
+  }
+  const text = `Message ${earlier.length + 1}: you said "${message}". I am a demo model.`;
+  const tokens = text.split(/(?<= )/);
+  for (const [i, token] of tokens.entries()) {
+    part({ text: token, tokens: i + 1 });
+    await sleep(PER_TOKEN_MS);
+  }
+  return { text, tokens: tokens.length };
+}
+```
+
+`reply` hands the model a function that passes each token to `ctx.part`, so every token
+leaves as a part while `run` is still running, and the whole answer is returned at the
+end. A real model's client would be called here instead, handing each token it streams
+to `part` the same way. The pause is awaited, so it holds nothing: the runner's event
+loop serves every other session meanwhile. The message limit is for
+[`rewinding_a_turn.md`](rewinding_a_turn.md#a-turn-that-fails), and its error carries
+`nonRetryable: true`, so it is not tried again.
+[`node_sdk.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/node_sdk.md#writing-an-operator) has the details of parts.
+
 ### Python
 
 ```python

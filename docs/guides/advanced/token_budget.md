@@ -189,6 +189,52 @@ error for its `result` and is counted as using no tokens. The day is counted in 
 since 1970, as the standard library has no calendar, so `flz state get` prints it as a
 number.
 
+### Node
+
+```javascript
+// budget.mjs: each user's tokens for the day, and whether a message is admitted.
+export const DAILY_TOKENS = 40;
+
+export const admitted = (verdict) => verdict.spent < DAILY_TOKENS;
+
+// The tokens an answer used; a failed turn used none.
+export const used = (response) => ({
+  user: response.request.user,
+  tokens: response.ok ? response.value.tokens : 0,
+});
+
+const on = (spent, today) => (spent.day === today ? spent.tokens : 0);
+
+export const Budget = defineTasklet({
+  name: 'budget',
+
+  initState: () => ({ day: '', tokens: 0 }), // what each user's cell remembers
+
+  applyChange: (spent, counted) => {
+    spent.tokens = on(spent, counted.day) + counted.tokens;
+    spent.day = counted.day;
+  },
+
+  run: (event, ctx) => {
+    const today = new Date(Number(ctx.now())).toISOString().slice(0, 10);
+    if ('tokens' in event) {
+      ctx.change({ day: today, tokens: event.tokens }); // the tokens an answer used
+    } else {
+      ctx.emit({ message: event, spent: on(ctx.state, today) }); // a message to admit
+    }
+  },
+});
+```
+
+A tasklet takes one type of input, and `budget` reads two things: the messages, and the
+tokens their answers used. Both are objects, told apart by whether they carry `tokens`,
+and the gateway's graph keys both by user, so a user's messages and answers reach the
+same cell. `used` makes the tokens out of the call's `Response`, which carries the
+request it answers, where the user comes from; a turn that failed, or took too long, has
+`ok` false and is counted as using no tokens. `admitted` is the check the graph's filter
+and `admit` share. `ctx.now()` is a `bigint` of milliseconds, which `Number` makes a
+`Date`'s time.
+
 ### Python
 
 ```python

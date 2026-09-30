@@ -110,6 +110,47 @@ impl UnboundedOperator for GatewayOperator {
 `effectively_once()` declares the delivery guarantee, and the call names its target with
 `CallTarget::factory("agent").channel("message")` and its deadline with `DEADLINE_MS`.
 
+### Node
+
+```javascript
+// gateway_operator.mjs: answers every request, and calls the session a message is for.
+const DEADLINE_MS = 60_000;
+const user = (value) => value.user;
+
+export default defineUnbounded({
+  factoryId: 'gateway',
+  channels: (c) => {
+    c.effectivelyOnce(); // each request and answer on disk before it runs
+    const http = c.input('http', Request.decode);
+    http
+      .filter((request) => !request.sends())
+      .into(Watch)
+      .response(); // a stream, or 404
+    const verdicts = http
+      .filter((request) => request.sends())
+      .map((request) => request.message())
+      .keyBy(user) // one cell per user
+      .into(Budget);
+    verdicts.into(Admit).response(); // 202, or 429 over the budget
+    verdicts
+      .filter(admitted)
+      .map((verdict) => verdict.message)
+      .keyBy(user) // the user's session
+      .call({ factory: 'agent', channel: 'message' }, { deadlineMs: DEADLINE_MS })
+      .map(used)
+      .keyBy(user)
+      .into(Budget); // the tokens the answer used
+  },
+});
+```
+
+`c.effectivelyOnce()` declares the delivery guarantee, and the call names its target with
+`{ factory: 'agent', channel: 'message' }` and its deadline with `DEADLINE_MS`. The call
+sends its request and reads its answer as JSON, the codec it takes when none is named.
+`Request.decode` is the entry channel's decoder: it makes each request a `Request`, which
+`watch` takes as it is and the chain into `budget` turns into the message's object.
+`user` reads the key from the object each chain carries.
+
 ### Python
 
 ```python
@@ -466,6 +507,93 @@ impl Tasklet for Admit {
 `src/budget.rs`, with the `Event` and `Verdict` types the graph names, is on
 [`token_budget.md`](token_budget.md#count-the-tokens); copy it from the example.
 
+### Node
+
+```javascript
+// request.mjs: one HTTP request, as the plugin hands it to the gateway.
+const ROUTE = /^\/sessions\/([a-z][a-z0-9_-]{0,63})\/(messages|events)$/;
+
+export class Request {
+  // The envelope carries more than the gateway reads.
+  static decode(bytes) {
+    const { method, path, body } = JSON.parse(new TextDecoder().decode(bytes));
+    return new Request(method, path, body);
+  }
+
+  constructor(method, path, body) {
+    this.method = method;
+    this.path = path;
+    this.body = body;
+  }
+
+  sends() {
+    return this.#is('POST', 'messages');
+  }
+
+  listens() {
+    return this.#is('GET', 'events');
+  }
+
+  user() {
+    return this.#route(1);
+  }
+
+  message() {
+    return { user: this.user(), text: this.body ?? '' }; // the session is named after the user
+  }
+
+  #is(verb, what) {
+    return this.method === verb && this.#route(2) === what;
+  }
+
+  #route(part) {
+    return ROUTE.exec(this.path)?.[part] ?? ''; // '' when the path is not a route
+  }
+}
+```
+
+The pattern accepts only a short lower-case name as the user, because the user is the id
+of the session the gateway calls. The body is the plugin's text of the request body,
+absent when it is not valid UTF-8. `decode` is handed the envelope's bytes, and reads the
+three fields the gateway needs from an envelope that carries more.
+
+```javascript
+// watch.mjs: a session's events, or 404.
+export const Watch = defineTasklet({
+  name: 'watch',
+
+  run: (request, ctx) =>
+    ctx.emit(
+      request.listens() ? { stream: request.user() } : { status: 404, body: 'no such route' },
+    ),
+});
+```
+
+```javascript
+// admit.mjs: 202 when the message goes on, 429 over the budget.
+export const Admit = defineTasklet({
+  name: 'admit',
+
+  run: (verdict, ctx) => {
+    const { user } = verdict.message;
+    ctx.emit(
+      admitted(verdict)
+        ? { status: 202, body: `sent to ${user}` }
+        : {
+            status: 429,
+            body: `${user} has used ${verdict.spent} of today's ${DAILY_TOKENS} tokens`,
+          },
+    );
+  },
+});
+```
+
+An answer is the object the plugin expects, sent as JSON: a status and a body, sent as
+text, or the session to stream.
+
+`budget.mjs`, with the `admitted` and `used` the graph names, is on
+[`token_budget.md`](token_budget.md#count-the-tokens); copy it from the example.
+
 ### Python
 
 ```python
@@ -778,6 +906,24 @@ the modules:
         .register_factory(gateway::GatewayOperator)?
 ```
 
+### Node
+
+The message is the object `Request`'s `message()` builds, the user and the text, so there
+is no class to add. In `agent_operator.mjs`'s `channels`, after the `turn` chain:
+
+```javascript
+    c.input('message') // from the gateway
+      .map((message) => message.text)
+      .into(Reply);
+```
+
+`into(Reply)` names the tasklet the `turn` chain already feeds, so both channels reach
+the same `reply`, with the same conversation. In `runner.mjs`:
+
+```javascript
+await runner.registerFactory('./gateway_operator.mjs');
+```
+
 ### Python
 
 ```python
@@ -867,6 +1013,10 @@ $ mvn -q package
 ```sh
 $ cargo build --release
 ```
+
+### Node
+
+There is nothing to install again: the image copies the new files as they are.
 
 ### Python
 

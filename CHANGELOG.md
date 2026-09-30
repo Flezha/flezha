@@ -57,11 +57,11 @@ plugin end on one channel (`topology.channel_ends_twice`). The host class declar
 `call` link, so the five hosts on the core are rebuilt together; new settings are
 `FLEZHA_CALL_RETENTION_MARGIN_MS` and `call_worker_idle_ms`. See `docs/sdk/calls.md`.
 
-### Fixed: a PHP, Python or Ruby entry channel reaches its keyed consumer behind an unkeyed one
+### Fixed: a PHP, Python, Ruby or Node entry channel reaches its keyed consumer behind an unkeyed one
 
 An entry channel feeding an unkeyed tasklet declared first and a keyed one after it answered
 the routing keys from the first consumer's chain, so a value that chain filtered out never
-reached the keyed tasklet. The PHP, Python and Ruby SDKs now answer them from the keyed
+reached the keyed tasklet. The PHP, Python, Ruby and Node SDKs now answer them from the keyed
 consumer's chain.
 
 ### Fixed: the Elixir SDK judges a keyless graph as the core does
