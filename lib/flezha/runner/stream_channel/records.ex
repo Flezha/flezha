@@ -308,6 +308,44 @@ defmodule Flezha.Runner.StreamChannel.Records do
   defp marker_streams(<<streams::16-big>>) when streams > 0, do: {:ok, streams}
   defp marker_streams(body), do: {:error, {:bad_marker_body, body}}
 
+  @doc """
+  Records an earlier stream handed to the writers are not counted by this
+  stream's markers; one batcher flush, asked for by the stream's first marker,
+  makes them durable before any marker of this stream is confirmed, and the
+  channel hears `{:prefix_fenced, stream_ref}`. A stream that never carries a
+  marker never forces a flush.
+  """
+  @spec fence_once(map()) :: map()
+  def fence_once(state) do
+    case Prefix.ask_fence(state.prefix) do
+      {true, prefix} ->
+        channel = self()
+        stream_ref = state.stream_ref
+
+        Task.start(fn ->
+          :ok = Flezha.State.Supervisor.flush_all()
+          send(channel, {:prefix_fenced, stream_ref})
+        end)
+
+        %{state | prefix: prefix}
+
+      {false, _prefix} ->
+        state
+    end
+  end
+
+  @doc "Step the stream's markers and confirm, in each instance's input log, what they release."
+  @spec confirm_prefix(map(), (Prefix.t() -> {[tuple()], Prefix.t()})) :: map()
+  def confirm_prefix(state, step) do
+    {confirmed, prefix} = step.(state.prefix)
+
+    Enum.each(confirmed, fn {rc, offset, streams} ->
+      Flezha.State.Supervisor.confirm_prefix(rc, offset, streams: streams, stream: self())
+    end)
+
+    %{state | prefix: prefix}
+  end
+
   # The DLQ append (an fsync) runs in the store process, never here — this
   # channel also carries the operator's output frames. The ack closure
   # runs in the store process after the fsync; `send_control_async` is a

@@ -222,6 +222,12 @@ defmodule Flezha.State.WalWriter do
   @spec consumed_offset_at(GenServer.server(), non_neg_integer()) :: integer() | {:error, term()}
   def consumed_offset_at(server, seq), do: call(server, {:consumed_offset_at, seq})
 
+  @doc "The highest consumed offset `cell_id`'s WAL records carry on disk; see `Epoch`."
+  defdelegate consumed_offset_on_disk(cell_id), to: Epoch
+
+  @doc "The inter-tasklet values `cell_id`'s WAL records kept above `floor`; see `Epoch`."
+  defdelegate edges_above(cell_id, floor), to: Epoch
+
   @spec last_persisted_seq(GenServer.server()) :: integer()
   def last_persisted_seq(server), do: call(server, :last_persisted_seq)
 

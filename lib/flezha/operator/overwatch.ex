@@ -309,7 +309,9 @@ defmodule Flezha.Operator.Overwatch do
     class = operator_class(state)
     # A move brings the source's journal, input log and Cells over before
     # anything below reads them.
-    operator = Replay.adopt_moved_state(state, operator)
+    operator =
+      Replay.adopt_moved_state(state, operator, HubManager.get_pid(state.namespace, state.id))
+
     state = %__MODULE__{state | builder: operator}
 
     state = %__MODULE__{

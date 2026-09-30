@@ -21,7 +21,6 @@ defmodule Flezha.Operator.Replay do
   alias Flezha.Operator.Overwatch
   alias Flezha.Process.Timer
   alias Flezha.Runner.StreamChannel.Gate
-  alias Flezha.Service.HubManager
   alias Flezha.State.Commands
   alias Flezha.State.DurabilityTier
   alias Flezha.State.InputLog
@@ -31,7 +30,6 @@ defmodule Flezha.Operator.Replay do
   alias Flezha.State.Restore
   alias Flezha.State.WalTransfer
   alias Flezha.State.WalWriter
-  alias Flezha.State.WalWriter.Epoch
 
   require Logger
 
@@ -181,21 +179,19 @@ defmodule Flezha.Operator.Replay do
   destination, the hub still names the source's Overwatch, so the source node
   rides the operator's opts and its durable files are pulled now, before the
   bind reads any resume state. A fresh start, and a restart on this node, is
-  named here or nowhere, and binds as it is.
+  named here or nowhere, and binds as it is. `hub_pid` is the hub's answer
+  for the instance.
   """
-  @spec adopt_moved_state(Overwatch.t(), Flezha.Operator.Builder.t()) ::
+  @spec adopt_moved_state(Overwatch.t(), Flezha.Operator.Builder.t(), term()) ::
           Flezha.Operator.Builder.t()
-  def adopt_moved_state(%Overwatch{} = state, operator) do
-    case HubManager.get_pid(state.namespace, state.id) do
-      {:ok, pid} when is_pid(pid) and node(pid) != node() ->
-        opts = Keyword.put(operator.opts, :state_source_node, node(pid))
-        :ok = adopt_foreign_state(opts, Overwatch.operator_class(state))
-        %{operator | opts: opts}
-
-      _here_or_nowhere ->
-        operator
-    end
+  def adopt_moved_state(%Overwatch{} = state, operator, {:ok, pid})
+      when is_pid(pid) and node(pid) != node() do
+    opts = Keyword.put(operator.opts, :state_source_node, node(pid))
+    :ok = adopt_foreign_state(opts, Overwatch.operator_class(state))
+    %{operator | opts: opts}
   end
+
+  def adopt_moved_state(%Overwatch{}, operator, _here_or_nowhere), do: operator
 
   # `:state_source_node` names the node an operator's durable state was last
   # assembled on. Only a foreign one means anything — a local value is already
@@ -422,7 +418,7 @@ defmodule Flezha.Operator.Replay do
   defp seed_cell_floors(operator_class) do
     if InputLog.cell_offsets(operator_class) == [] do
       for cell_id <- Paths.cells_of(operator_class),
-          offset = Epoch.consumed_offset_on_disk(cell_id),
+          offset = WalWriter.consumed_offset_on_disk(cell_id),
           offset != nil,
           do: InputLog.record_consumed(operator_class, cell_id, offset)
     end
@@ -475,7 +471,7 @@ defmodule Flezha.Operator.Replay do
       edges =
         operator_class
         |> Paths.cells_of()
-        |> Enum.flat_map(&Epoch.edges_above(&1, floor))
+        |> Enum.flat_map(&WalWriter.edges_above(&1, floor))
         |> Enum.sort_by(& &1.origin)
 
       calls = origin_calls(operator_class, edges)

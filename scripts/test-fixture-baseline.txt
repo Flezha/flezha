@@ -28,7 +28,6 @@ test/load/memory_drift_test.exs
 # The directory is a `setup_all` fixture: five subdirectories and the release
 # daemon's whole environment are derived from it before any test runs, and the
 # table installs per test.
-test/flezha/plugin/installer/release_cli_system_test.exs
 
 # `OrchestratorTest`'s own teardown restarts the Orchestrator and must see the
 # RESTORED environment. The table registers its cleanup first, so a module's own

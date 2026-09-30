@@ -29,7 +29,6 @@ defmodule Flezha.Operator.Migration do
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperatorManager
   alias Flezha.Shutdown
-  alias Flezha.State.Completion
   alias Flezha.State.PersistenceResolver
   alias Flezha.State.TaskJournal
   alias ProcessHub.Service.Migration, as: HubMigration
@@ -387,7 +386,7 @@ defmodule Flezha.Operator.Migration do
   defp calls_step({state, _reason}, _budget) do
     callee = Overwatch.callee(state)
 
-    case Completion.read(Overwatch.operator_class(state)) do
+    case OperatorManager.completion(Overwatch.operator_class(state)) do
       {:ok, %{status: status}} ->
         Calls.end_all(state.calls, callee, status, Ingest.undelivered_calls(state))
 
@@ -512,7 +511,7 @@ defmodule Flezha.Operator.Migration do
         runner_id,
         reason
       ) do
-    if Completion.exists?(Overwatch.operator_class(state)) do
+    if OperatorManager.completed?(Overwatch.operator_class(state)) do
       state
     else
       Logger.warning(

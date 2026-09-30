@@ -126,6 +126,12 @@ defmodule Flezha.State.Supervisor do
     :ok
   end
 
+  @doc "Synchronously flush every dirty writer and input log on this node."
+  defdelegate flush_all(), to: FsyncBatcher
+
+  @doc "Confirm an instance's processed prefix in its input log (`InputLog.confirm_prefix/3`)."
+  defdelegate confirm_prefix(operator_class, offset, opts), to: InputLog
+
   @doc "Every registered writer id — Cell writers and input logs alike."
   @spec registered_ids() :: [tuple()]
   defdelegate registered_ids(), to: WriterRegistry

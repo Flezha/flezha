@@ -21,8 +21,6 @@ defmodule Flezha.Runner.StreamChannel do
   alias Flezha.Runner.StreamChannel.Prefix
   alias Flezha.Runner.StreamChannel.Records
   alias Flezha.State.CreditLedger
-  alias Flezha.State.FsyncBatcher
-  alias Flezha.State.InputLog
   alias Flezha.Transport.LivenessCounters
   alias Flezha.Transport.Stream, as: TStream
 
@@ -348,7 +346,9 @@ defmodule Flezha.Runner.StreamChannel do
     state =
       case Records.processed_prefix(state, message) do
         {:ok, rc, offset, streams} ->
-          state |> fence_once() |> confirm_prefix(&Prefix.marker(&1, rc, offset, streams))
+          state
+          |> Records.fence_once()
+          |> Records.confirm_prefix(&Prefix.marker(&1, rc, offset, streams))
 
         :refused ->
           state
@@ -462,14 +462,14 @@ defmodule Flezha.Runner.StreamChannel do
   # buffer. Markers waiting on that writer may confirm, and a credit session
   # frees the bytes.
   def handle_info({:credit_drained, session, bytes, cell_id}, state) do
-    state = confirm_prefix(state, &Prefix.drained(&1, cell_id, bytes))
+    state = Records.confirm_prefix(state, &Prefix.drained(&1, cell_id, bytes))
     {:noreply, drain_credit(state, session, bytes)}
   end
 
   # The fence flush this stream asked for landed; a fence of a stream since
   # replaced is stale.
   def handle_info({:prefix_fenced, stream_ref}, %{stream_ref: stream_ref} = state),
-    do: {:noreply, confirm_prefix(state, &Prefix.fenced/1)}
+    do: {:noreply, Records.confirm_prefix(state, &Prefix.fenced/1)}
 
   def handle_info({:prefix_fenced, _stream_ref}, state), do: {:noreply, state}
 
@@ -552,38 +552,6 @@ defmodule Flezha.Runner.StreamChannel do
   end
 
   defp drain_credit(state, _session, _bytes), do: state
-
-  # Records an earlier stream handed to the writers are not counted here; one
-  # batcher flush, asked for by the stream's first marker, makes them durable
-  # before any marker of this stream is confirmed. A stream that never carries
-  # a marker never forces a flush.
-  defp fence_once(state) do
-    case Prefix.ask_fence(state.prefix) do
-      {true, prefix} ->
-        channel = self()
-        stream_ref = state.stream_ref
-
-        Task.start(fn ->
-          :ok = FsyncBatcher.flush_all()
-          send(channel, {:prefix_fenced, stream_ref})
-        end)
-
-        %{state | prefix: prefix}
-
-      {false, _prefix} ->
-        state
-    end
-  end
-
-  defp confirm_prefix(state, step) do
-    {confirmed, prefix} = step.(state.prefix)
-
-    Enum.each(confirmed, fn {rc, offset, streams} ->
-      InputLog.confirm_prefix(rc, offset, streams: streams, stream: self())
-    end)
-
-    %{state | prefix: prefix}
-  end
 
   defp unbind(state) do
     publish_stream(state.name, nil, state.liveness_ref)

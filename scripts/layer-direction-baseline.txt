@@ -71,7 +71,6 @@ lib/flezha/operator/replay.ex -> Flezha.State.WalTransfer
 lib/flezha/operator/replay.ex -> Flezha.State.WalWriter
 lib/flezha/operator/validator.ex -> Flezha.Service.HubManager
 lib/flezha/plugin.ex -> (no directory owns it)
-lib/flezha/plugin/installer.ex -> Flezha.Service.PluginManager
 lib/flezha/plugin/provider/monitored_io_forward.ex -> Flezha.Service.PluginManager
 lib/flezha/plugin/provider/operator_forward.ex -> Flezha.Service.HubManager
 lib/flezha/plugin/provider/operator_forward.ex -> Flezha.Service.OperatorManager

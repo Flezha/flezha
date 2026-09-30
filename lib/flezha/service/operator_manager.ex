@@ -21,6 +21,7 @@ defmodule Flezha.Service.OperatorManager do
   alias Flezha.Service.OperatorManager.Spawn
   alias Flezha.Service.OperatorManager.Teardown
   alias Flezha.Shutdown
+  alias Flezha.State.Completion
   alias Flezha.State.Paths
 
   defdelegate assign_runner(arg1, arg2, arg3), to: Placement
@@ -395,6 +396,12 @@ defmodule Flezha.Service.OperatorManager do
   """
   @spec delete_state_dir(String.t()) :: :ok
   defdelegate delete_state_dir(operator_id), to: Teardown, as: :delete_operator_state_dir
+
+  @doc "The completion record a finished bounded instance of `operator_class` left."
+  defdelegate completion(operator_class), to: Completion, as: :read
+
+  @doc "Whether a finished bounded instance of `operator_class` left a completion record."
+  defdelegate completed?(operator_class), to: Completion, as: :exists?
 
   def send_io(operator_id, namespace, message, metadata) do
     with_operator_pid(namespace, operator_id, fn pid ->

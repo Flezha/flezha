@@ -32,6 +32,9 @@ defmodule FlezhaTest.Plugin.KafkaTest do
 
   @topic "flezha_test_topic"
   @broker {"kafka", 9092}
+  # overflow-naming-record:begin
+  @retired_policy "block"
+  # overflow-naming-record:end
 
   setup :set_mimic_global_until_exit
 
@@ -251,14 +254,8 @@ defmodule FlezhaTest.Plugin.KafkaTest do
     test "the retired policy spelling is refused on the enable path too" do
       plugin_id = "overflow-retired-#{System.unique_integer([:positive])}"
 
-      assert {:error, {:invalid_option_value, :queue_overflow, "block"}} =
-               prepare(
-                 build_opts(plugin_id, 0, %{
-                   # overflow-naming-record:begin
-                   queue_overflow: "block"
-                   # overflow-naming-record:end
-                 })
-               )
+      assert {:error, {:invalid_option_value, :queue_overflow, @retired_policy}} =
+               prepare(build_opts(plugin_id, 0, %{queue_overflow: @retired_policy}))
 
       assert Registry.lookup(
                WorkerSup.registry_name(WorkerSup.family(Kafka.Producer)),
@@ -422,13 +419,11 @@ defmodule FlezhaTest.Plugin.KafkaTest do
                  "queue_overflow" => "drop_nothing"
                })
 
-      assert {:error, {:invalid_option_value, :queue_overflow, "block"}} =
+      assert {:error, {:invalid_option_value, :queue_overflow, @retired_policy}} =
                Kafka.Producer.build(%{
                  "hosts" => "kafka:9092",
                  "topic" => "x",
-                 # overflow-naming-record:begin
-                 "queue_overflow" => "block"
-                 # overflow-naming-record:end
+                 "queue_overflow" => @retired_policy
                })
     end
 
