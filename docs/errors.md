@@ -136,6 +136,7 @@ SDK raises or returns its one error type carrying them.
 
 | Code | Class | Exit | Message | Hint |
 |---|---|---|---|---|
+| `commit.exit_not_logged` | unavailable | 7 | a scope's exit could not be logged into its outer instance's input log: {reason} |  |
 | `commit.not_owner` | conflict | 6 | this controller does not own operator '{operator}', so its commit is refused |  |
 | `commit.oversized_handoff` | invalid | 2 | a tasklet's handoff of {size} bytes is over the {max}-byte limit |  |
 | `commit.record_not_durable` | unavailable | 7 | the record at seq {seq} of Cell '{cell}' did not become durable in time |  |
@@ -473,6 +474,7 @@ SDK raises or returns its one error type carrying them.
 | `runtime.runner_shutting_down` | unavailable | 7 | the runner is shutting down, so the {activation} activation was not handed to the host |  |
 | `runtime.runner_unavailable` | unavailable | 7 | the runner thread is gone or answered out of turn: {reason} |  |
 | `runtime.schema_mismatch` | invalid | 2 | activation schema version mismatch: the shim speaks {shim}, the core speaks {core} |  |
+| `runtime.scope_input_unencodable` | invalid | 2 | a value on the edge into scope '{scope}' could not be encoded: {reason} |  |
 | `runtime.spawn_handle_released` | not_found | 5 | spawn handle {handle} was released: the activation that made it was completed or abandoned |  |
 | `runtime.state_mutated` | invalid | 2 | tasklet '{tasklet}' assigned state.{path} directly, which a restart loses; record it with a change instead |  |
 | `runtime.state_unencodable` | internal | 1 | the state could not be encoded as JSON: {reason} |  |
@@ -585,6 +587,8 @@ SDK raises or returns its one error type carrying them.
 | `topology.duplicate_sink_name` | invalid | 2 | channel '{channel}' is named by two plugin sinks; a sink names the channel it terminates, so two channels cannot name one sink. Give each its own name; a plugin still reaches both by attaching to the operator with no channel filter |  |
 | `topology.edge_already_wired` | invalid | 2 | channel '{channel}' already feeds tasklet '{tasklet}'; an edge carries exactly one transform and one key or neither, so a re-declaration where either side carries one is refused rather than silently keeping the first |  |
 | `topology.effectively_once_without_persistence` | invalid | 2 | exactly: effectively_once needs a durable other than false: the tier is durable state |  |
+| `topology.embedded_entry_ambiguous` | invalid | 2 | operator '{inner}' declares the entry channels {channels}, and its edge names none; name the one it feeds with `input:` |  |
+| `topology.embedded_exit_ambiguous` | invalid | 2 | operator '{inner}' ends in {channels}, and an embedded graph's output continues on one channel only |  |
 | `topology.entry_channel_with_producer` | invalid | 2 | entry channel '{channel}' cannot name a producer |  |
 | `topology.entry_channel_without_consumer` | invalid | 2 | entry channel '{channel}' names no consumer |  |
 | `topology.inter_task_channel_without_producer` | invalid | 2 | inter_task channel '{channel}' names no producer |  |
@@ -603,6 +607,7 @@ SDK raises or returns its one error type carrying them.
 | `topology.multiple_output_channels` | invalid | 2 | tasklet '{tasklet}' produces more than one channel; a tasklet emits on exactly one output channel |  |
 | `topology.named_on_entry` | invalid | 2 | entry channel '{channel}' cannot be renamed with named; an entry channel is named where it is declared |  |
 | `topology.negative_setting` | invalid | 2 | tasklet '{tasklet}' sets {setting} to {value}, and it must not be negative |  |
+| `topology.nested_steps` | invalid | 2 | operator '{outer}' runs in steps and embeds '{inner}', which runs in steps too; a steps class may embed only a flow class |  |
 | `topology.no_entry_channel` | invalid | 2 | the steps class declares no entry channel for its messages to arrive on |  |
 | `topology.no_operator_exported` | invalid | 2 | module '{module}' exports no operator declaration |  |
 | `topology.no_steps_body` | invalid | 2 | steps class '{factory_id}' declares no channels body, so it has no tasklets to run |  |

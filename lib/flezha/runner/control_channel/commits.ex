@@ -27,6 +27,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   alias Flezha.Config.Durations
   alias Flezha.Identificator
   alias Flezha.Runner.ControlChannel
+  alias Flezha.Operator.Scopes.Exits
   alias Flezha.State.{DurabilityTier, TaskJournal}
 
   def start_link({namespace, runner_id}) do
@@ -70,7 +71,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
     if Map.has_key?(state.waiting, reference_id) do
       {:noreply, state}
     else
-      commit = decode(frame, state)
+      commit = frame |> scoped() |> decode(state) |> owing_exit(frame)
 
       case commit do
         %{turn: _turn} -> {:noreply, park_turn(state, reference_id, commit)}
@@ -81,7 +82,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   end
 
   def handle_cast({:refuse, reference_id, frame}, state) do
-    commit = decode(frame, state)
+    commit = decode(scoped(frame), state)
     error = {:error, {:not_owner, commit.operator_id}}
     {:noreply, ack(state, reference_id, commit, error)}
   end
@@ -96,6 +97,9 @@ defmodule Flezha.Runner.ControlChannel.Commits do
 
   # The ack deadline elapsed with a named record, or a turn's park, still not
   # durable.
+  def handle_info({:exit_logged, reference_id, commit}, state),
+    do: {:noreply, ack(state, reference_id, commit, :ok)}
+
   def handle_info({:records_overdue, reference_id}, state) do
     case Map.fetch(state.waiting, reference_id) do
       {:ok, %{owed: owed}} ->
@@ -155,7 +159,13 @@ defmodule Flezha.Runner.ControlChannel.Commits do
     |> case do
       {:ok, reqids} ->
         owed = MapSet.new(records, fn {cell_id, _first, seq} -> {cell_id, seq} end)
-        owe(%{state | reqids: reqids}, reference_id, commit, owed)
+
+        owe(
+          %{state | reqids: reqids},
+          reference_id,
+          commit,
+          owed
+        )
 
       reason ->
         settle(state, reference_id, commit, {:error, reason})
@@ -279,6 +289,22 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   # handshake is emitted only AFTER the journal answered, carries the append's
   # outcome in its `error` field (absent = durable), and gates whatever post-ack
   # work the barrier owes.
+  # A journaled commit carrying a stepped scope's exit values is acked once
+  # they are in the outer instance's input log: only a final commit's exits
+  # reach the outer graph. A log that failed is the scope's next bind's to
+  # retry, from the journal entry.
+  defp ack(state, reference_id, %{exit: {_outer, _scope, _key, _exit} = exit} = commit, :ok) do
+    worker = self()
+    namespace = state.namespace
+
+    Task.start(fn ->
+      Exits.log(namespace, exit)
+      send(worker, {:exit_logged, reference_id, Map.delete(commit, :exit)})
+    end)
+
+    state
+  end
+
   defp ack(state, reference_id, commit, result) do
     error =
       case result do
@@ -348,6 +374,33 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   # point past which the named records' outputs may be delivered: their Cells'
   # writers release them after it. `compensating` marks the undo twin, the
   # records a compensation hook wrote, journaled as a `compensated` entry.
+  # A stepped scope's barrier journals under the scope's own id, the one its
+  # journal, Cells and input log share.
+  defp scoped(%{scope: %RunnerCommands.Scope{inner: inner, key: key}} = frame),
+    do: %{frame | operator_id: TaskJournal.scope_id(frame.operator_id, inner, key), scope: nil}
+
+  defp scoped(frame), do: frame
+
+  # A scoped commit carrying exit values owes them to its outer instance's
+  # input log, named by the entry they ride: `{iteration, task index}`, or
+  # `{iteration, :iter}` for an iteration's.
+  defp owing_exit(commit, %{scope: %RunnerCommands.Scope{inner: inner, key: key}} = frame) do
+    case exit_entry(frame.exit) do
+      nil -> commit
+      exit -> Map.put(commit, :exit, {frame.operator_id, {inner, key}, exit_key(frame), exit})
+    end
+  end
+
+  defp owing_exit(commit, _frame), do: commit
+
+  defp exit_key(%RunnerCommands.TaskCommit{iter: iter, task_idx: task_idx}), do: {iter, task_idx}
+  defp exit_key(%RunnerCommands.IterCommit{iter: iter}), do: {iter, :iter}
+
+  defp exit_entry(%RunnerCommands.ScopeExit{channel: channel, values: [_ | _] = values}),
+    do: {channel, values}
+
+  defp exit_entry(_none), do: nil
+
   defp decode(%RunnerCommands.TaskCommit{} = commit, state) do
     %RunnerCommands.TaskCommit{
       operator_id: operator_id,
@@ -369,7 +422,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
         do: {:compensated, task_idx, iter, cells},
         else:
           {:task_committed, task_idx, iter, cells, handoff_items(handoff),
-           completion(completes, result), trigger(trigger)}
+           completion(completes, result), trigger(trigger), exit_entry(commit.exit)}
 
     %{
       operator_id: operator_id,
@@ -416,7 +469,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
       operator_id: operator_id,
       barrier:
         {:iter_committed, iter, consumed_offset, entry_channel, handoff_items(handoff),
-         completion(completes, result)},
+         completion(completes, result), exit_entry(commit.exit)},
       records: [],
       telemetry:
         {[:flezha, :state, :iter_commit], %{count: 1},

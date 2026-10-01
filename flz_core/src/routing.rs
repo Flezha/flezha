@@ -253,6 +253,25 @@ fn deliver_to_consumer(
         Some(s) => s,
         None => return Ok(false),
     };
+    if let Some(family) = instance.family(consumer_tasklet_id) {
+        let keys = match consumer.mode {
+            CellMode::Dynamic => with_edge_keys(instance, edge, value, |keys| {
+                keys.iter().cloned().map(Some).collect()
+            })?,
+            _ => vec![None],
+        };
+        crate::operator::scope::deliver(
+            instance,
+            family,
+            channel,
+            keys,
+            value,
+            stream,
+            consumed_offset,
+            call,
+        )?;
+        return Ok(false);
+    }
     match consumer.mode {
         CellMode::Dynamic => deliver_dynamic(instance, edge, value, &mut admit)?,
         CellMode::Single | CellMode::Static => {
@@ -309,6 +328,27 @@ fn deliver_dynamic(
     else {
         return Ok(());
     };
+    with_edge_keys(instance, edge, value, |keys| {
+        for key in keys {
+            if let Ok(slot) = registry.get_or_create(key) {
+                admit(&slot);
+            }
+        }
+    })
+}
+
+/// `f` over the keys a value reaches through a keyed edge: the edge's own
+/// key, else the ones a host answered on its payload. A key this member does
+/// not own means the source and the topology disagree about what a key is:
+/// refused on the first frame, before any Cell or scope is minted, so a
+/// misconfigured group parks its traffic instead of folding part of it into
+/// private state.
+fn with_edge_keys<R>(
+    instance: &OperatorInstance,
+    edge: &ConsumerEdge,
+    value: &Arc<dyn Any + Send + Sync>,
+    f: impl FnOnce(&[String]) -> R,
+) -> Result<R, Error> {
     let edge_key = edge.key_of(value.as_ref()).map_err(Error::Routing)?;
     let keys = match &edge_key {
         Some(key) => std::slice::from_ref(key),
@@ -316,21 +356,12 @@ fn deliver_dynamic(
             .downcast_ref::<crate::host::HostPayload>()
             .map_or(&[][..], |p| p.keys.as_slice()),
     };
-    // A key this member does not own means the source and the topology
-    // disagree about what a key is. Refuse on the first frame — before
-    // `get_or_create` mints any Cell — so a misconfigured group parks
-    // its traffic instead of folding part of it into private state.
     if instance.partition.partitioned() {
         for key in keys {
             instance.partition.admit(key)?;
         }
     }
-    for key in keys {
-        if let Ok(slot) = registry.get_or_create(key) {
-            admit(&slot);
-        }
-    }
-    Ok(())
+    Ok(f(keys))
 }
 
 fn deliver_single(
@@ -452,6 +483,19 @@ impl OperatorDispatchHandle {
         metadata: &HashMap<String, String>,
         stream: Arc<FlezhaStream>,
     ) {
+        // A stepped scope's frame names its outer instance and carries the
+        // rest of the scope's id, which no frame header has room for.
+        let scoped;
+        let suffix = metadata
+            .get("flz.scope")
+            .filter(|suffix| crate::operator::scope::is_scope_suffix(suffix));
+        let instance_id = match suffix {
+            Some(scope) => {
+                scoped = format!("{instance_id}{scope}");
+                scoped.as_str()
+            }
+            None => instance_id,
+        };
         let Some(instance) = self.registry.get(instance_id) else {
             eprintln!("[flezha] operator instance {} not found", instance_id);
             return;
@@ -477,6 +521,29 @@ fn route_stream_frame(
     }
     if consumed_offset.is_some() {
         instance.owed_arrived();
+    }
+    if let Some(channel) = metadata.get("flz.exit") {
+        return crate::operator::scope::exited(
+            instance,
+            channel,
+            payload,
+            &stream,
+            consumed_offset,
+            call.as_ref(),
+        );
+    }
+    if let Some((entry, value)) = crate::operator::scope::forwarded(instance, &payload) {
+        if let Some(channel) = instance.topology.channel(entry) {
+            crate::steps::message(
+                instance,
+                channel,
+                &value,
+                &stream,
+                consumed_offset,
+                call.as_ref(),
+            );
+        }
+        return;
     }
     let Some((channel_id, channel)) =
         entry_channel_or_park(instance, &payload, metadata, consumed_offset, call.as_ref())

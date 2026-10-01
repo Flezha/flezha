@@ -81,6 +81,9 @@ commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 #   <x>.call_deadline(<ms>)    the same as `call(pricing)`, with deadline <ms>
 #   <x>.call_unread(<target>)  `call(<target>)` with its Response channel
 #                              wired into nothing
+#   <x>.into_class(<class>)    wire x into an operator class of the class
+#                              palette; the result is the class's exit,
+#                              addressed by the class's role
 #   <x>.named(<name>)          override x's derived channel name
 #   <x>.keyed                  opt x into output identity
 #   <x>.retry_max(<n>)         the channel's attempt ceiling
@@ -118,6 +121,17 @@ commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 #   dynamic       dynamic cell mode
 #   nochange      logical clock over a tasklet that journals nothing
 #   eventtime     event-time clock
+#
+# class palette — the interpreter binds each class role to one operator class
+# of its own SDK, whose factory id is the role:
+#   inner_session      runs in steps, each per_input: entry `turns` into `plain`
+#   inner_loop         runs in steps, each chained: entry `turns` into
+#                      `plain`, its output named `carry`
+#   inner_cleanup      runs in flow: entry `raw` into `plain`, into `second`
+#   inner_two_entries  runs in steps: entry `a` into `plain`, entry `b` into
+#                      `second`
+#   inner_two_exits    runs in steps: entry `turns` into `plain` and into
+#                      `second`
 #
 # `needs` is `-`, or the surface the row needs. An SDK whose manifest or
 # documented subset lacks that surface skips the row BY NAME and the seam test
@@ -181,6 +195,9 @@ topology.checkpoint_every_zero     | checkpoint_zero  | class.run({"flow":{"exac
 topology.merge_too_few_sources     | merge_one_source | entry(in); merge(plain, in)                                                           | merge
 topology.duplicate_merge_source    | merge_same_twice | entry(in); entry(other); merge(plain, in, in)                                         | merge
 topology.edge_already_wired        | edge_rewired     | entry(in); in.map.into(plain); in.into(plain)                                         | -
+topology.nested_steps              | nested_steps     | class.run("steps"); entry(in); in.into_class(inner_session); inner_session.into(plain) | steps
+topology.embedded_entry_ambiguous  | two_entry_class  | entry(in); in.into_class(inner_two_entries); inner_two_entries.into(plain)            | steps
+topology.embedded_exit_ambiguous   | two_exit_class   | entry(in); in.into_class(inner_two_exits); inner_two_exits.into(plain)                | steps
 topology.at_checkpoint_without_max_delay | hold_no_delay    | class.run({"flow":{"exactly":{"effectively_once":{"ack":{"checkpoint":{"outputs":"at_checkpoint"}}}}}}); entry(in); in.into(plain) | -
 topology.effectively_once_without_persistence | eo_in_memory | class.run({"flow":{"exactly":"effectively_once"}}); class.durable(false); entry(in); in.into(plain) | -
 
@@ -216,6 +233,9 @@ ok                                 | two_response_ends | entry(in); in.into(plai
 ok                                 | eo_unkeyed_response | class.run({"flow":{"exactly":"effectively_once"}}); entry(in); in.into(plain); plain.named(answer); plain.response | response
 ok                                 | call_back_into_caller | entry(in); in.into(plain); plain.named(ask); plain.call(pricing)                | call
 ok                                 | call_factory_by_key | entry(in); in.into(plain); plain.named(ask); plain.key.call_factory(agent)      | call
+ok                                 | keyed_scope      | entry(in); in.key.into_class(inner_session); inner_session.into(plain)                | steps
+ok                                 | chained_scope    | entry(in); in.into_class(inner_loop); inner_loop.into(plain)                          | steps
+ok                                 | inlined_flow     | entry(in); in.into_class(inner_cleanup); inner_cleanup.into(plain)                    | -
 ok                                 | hybrid_channel   | cited above                                                                           | -
 ok                                 | commit_block_chain | cited above                                                                         | steps
 
@@ -242,6 +262,13 @@ call_back_into_caller | 2 | ask.response | entry | - | 0 | -
 call_factory_by_key | 0 | in | entry | - | 0 | -
 call_factory_by_key | 1 | ask | plugin | 0 | - | -
 call_factory_by_key | 2 | ask.response | entry | - | 0 | -
+keyed_scope | 0 | in | entry | - | 0 | -
+keyed_scope | 1 | inner_session | inter_task | 0 | 1 | -
+chained_scope | 0 | in | entry | - | 0 | -
+chained_scope | 1 | inner_loop | inter_task | 0 | 1 | -
+inlined_flow | 0 | in | entry | - | 0 | -
+inlined_flow | 1 | inner_cleanup.plain | inter_task | 0 | 1 | -
+inlined_flow | 2 | inner_cleanup.second | inter_task | 1 | 2 | -
 
 # The variants `check` raises from a record's raw shape, or registration raises
 # after it, which no builder writes and so no row states: `unrowed | <code>`.

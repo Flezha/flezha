@@ -20,7 +20,7 @@ defmodule Flezha.State.Paths do
   """
 
   alias Flezha.Layout.Table, as: Layout
-  alias Flezha.State.Durable
+  alias Flezha.State.{Durable, ScopePaths}
 
   @type cell_id ::
           {operator_class :: binary(), tasklet_id :: binary(), cell_key :: binary()}
@@ -391,8 +391,22 @@ defmodule Flezha.State.Paths do
       outbox_dedup_path(pid),
       compensation_marker_path(pid, :intent),
       compensation_marker_path(pid, :done)
-    ] ++ Enum.map(snapshot_paths(pid), fn {_seq, path} -> path end)
+    ] ++ Enum.map(snapshot_paths(pid), fn {_seq, path} -> path end) ++ scope_facts(pid)
   end
+
+  # A stepped scope's facts ride its journal, so whatever moves the journal
+  # moves them.
+  defp scope_facts({_, _, @journal_cell_key} = journal), do: [scope_fact_path(journal)]
+  defp scope_facts(_pid), do: []
+
+  @doc """
+  Where a stepped scope keeps what outlives its outer instance's process
+  while it is off the runner (`Flezha.Operator.Scopes`), beside its journal
+  `journal`.
+  """
+  @spec scope_fact_path(cell_id()) :: binary()
+  def scope_fact_path({_, _, @journal_cell_key} = journal),
+    do: Path.join(state_dir(journal), "scope.fact")
 
   @typedoc """
   A unit of an instance's durable state that moves between nodes whole: one
@@ -407,9 +421,9 @@ defmodule Flezha.State.Paths do
   """
   @spec durable_refs(binary()) :: [durable_ref()]
   def durable_refs(operator_class) when is_binary(operator_class) do
-    # A staged copy keeps the instance's journal under the instance's own id.
+    # A staged copy keeps an instance's journal under the instance's own id.
     journal_cell =
-      {operator_class, adopting_for(operator_class) || operator_class, @journal_cell_key}
+      put_elem(journal_id(adopting_for(operator_class) || operator_class), 0, operator_class)
 
     journal = if File.exists?(wal_path(journal_cell)), do: [journal_cell], else: []
 
@@ -418,7 +432,12 @@ defmodule Flezha.State.Paths do
         do: [{:input_log, operator_class}],
         else: []
 
-    for(cell <- Enum.uniq(cells_of(operator_class) ++ journal), do: {:cell, cell}) ++ log
+    # An instance's stepped scopes live under its directory and travel with it.
+    scopes =
+      for scope_id <- ScopePaths.scope_ids(operator_class), ref <- durable_refs(scope_id), do: ref
+
+    for(cell <- Enum.uniq(cells_of(operator_class) ++ journal), do: {:cell, cell}) ++
+      log ++ scopes
   end
 
   @doc "Every path `ref` is made of, whether or not the file exists."
@@ -465,12 +484,16 @@ defmodule Flezha.State.Paths do
 
   @doc """
   The class a staged or set-aside directory belongs to, or `nil` for a class
-  directory. Neither sibling is a class to any scanner.
+  directory. Neither sibling is a class to any scanner. A stepped scope under
+  one belongs to the scope of the same name under the class.
   """
   @spec adopting_for(binary()) :: binary() | nil
   def adopting_for(name) do
+    outer = ScopePaths.outer_of(name)
+
     Enum.find_value([@staged, @set_aside], fn suffix ->
-      if String.ends_with?(name, suffix), do: String.replace_suffix(name, suffix, "")
+      if String.ends_with?(outer, suffix),
+        do: String.replace_suffix(outer, suffix, "") <> ScopePaths.suffix(name)
     end)
   end
 
@@ -484,12 +507,13 @@ defmodule Flezha.State.Paths do
     :ok
   end
 
-  @doc "`ref` as the same reference under `operator_class`."
+  @doc "`ref` as the same reference under `operator_class`, a stepped scope's under its scope there."
   @spec ref_under(durable_ref(), binary()) :: durable_ref()
-  def ref_under({:cell, {_class, tasklet_id, cell_key}}, operator_class),
-    do: {:cell, {operator_class, tasklet_id, cell_key}}
+  def ref_under({:cell, {class, tasklet_id, cell_key}}, operator_class),
+    do: {:cell, {operator_class <> ScopePaths.suffix(class), tasklet_id, cell_key}}
 
-  def ref_under({:input_log, _class}, operator_class), do: {:input_log, operator_class}
+  def ref_under({:input_log, class}, operator_class),
+    do: {:input_log, operator_class <> ScopePaths.suffix(class)}
 
   defp snapshot_file_path(pid, cell_key, name) do
     with ["", seq_str] <-

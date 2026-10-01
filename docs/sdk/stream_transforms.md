@@ -3,7 +3,8 @@
 For operator authors wiring a flow topology and for SDK implementers: the
 four edge methods — `map`, `filter`, `flat_map` / `flatMap` and `key_by` /
 `keyBy` — where they run, what that obliges, how a failing closure is
-contained, the build-time refusals, and where the code lives.
+contained, the build-time refusals, and where the code lives; and an edge
+that ends in an operator class instead of a tasklet.
 
 A stateless reshaping step costs one line, not a `Tasklet`, and keying is
 visible at the wiring site instead of inside the consumer class:
@@ -125,6 +126,59 @@ an **entry** channel's closures run as on a flow operator: the driver applies th
 pass on that channel's chain, so a message reaches the first tasklet mapped, filtered or fanned
 out as declared.
 
+## An edge into an operator class
+
+`into` also takes an operator class. The class runs by its own `run` setting:
+
+- **A flow class is inlined.** Its tasklets and channels join the outer graph under names
+  prefixed with the node's name (`<factory_id>.<node>` by default), and the whole graph is
+  judged as one by the rules above. Nothing of the inner class exists at run time.
+- **A steps class becomes a stepped scope** per edge key: one inner instance of the class for
+  each key the edge mints, inside the outer instance, with its own Cells, pass sheet, task
+  journal and input log (an unkeyed edge has one). It runs by its own `each`, `on_failure`
+  and `durable`: a `per_input` scope opens a pass per message, a `chained` one loops until a
+  batch comes back empty, a `once` one takes one message for its life and dead-letters a
+  later one. It sleeps after its own `sleep_after` while the outer instance goes on, an undo
+  compensates its own tasklets only, and `flz operator rewind <outer>/<inner>/<key>` rewinds
+  it alone. `max_cells` on the edge caps how many scopes it keeps at once.
+
+The edge feeds the inner class's one entry channel, or the one `input` names when the class
+declares several. The inner graph's **exit** is its one leaf whose output stays inside it: a
+host SDK names it with `.named(...)`, since a host tasklet emits only on a channel it declares.
+The handle `into` returns is that exit, so consumers wire after it as after a tasklet: a
+`per_input` or `once` scope's output continues at its stage commit, a `chained` scope's last
+non-empty batch when the loop converges, and a `complete(result)` carries the result out.
+
+A scope's messages and exits are as durable as the outer instance's own input. Inside a
+durable outer instance each message is journaled to the scope's input log before the scope
+sees it, once, however often the outer input that sent it is replayed. When the outer
+instance also journals its own input (on the effectively-once tier, or one that sleeps), the
+exit values of a scope that keeps its work ride the commit that makes them final into the
+outer instance's input log, so a runner that dies before the next outer tasklet took them
+costs nothing: the outer instance's next bind delivers them. Anywhere else an exit is
+delivered at most once.
+
+| SDK | Spelling |
+| --- | --- |
+| Rust | `.into_operator::<Session, String>()`, `.into_operator_with::<Session, String>(Embedding { input, name, max_cells })` |
+| Java | `.into(Session.class, String.class)`, `.into(Session.class, String.class, Embedding.of().maxCells(10_000))` |
+| Elixir | `into(SessionOp)`, `into(SessionOp, input: "turns", name: "s", max_cells: 10_000)` |
+| Python | `.into(session, name, input="turns", max_cells=10_000)` |
+| Node | `.into(session, { name, input: 'turns', maxCells: 10_000 })` |
+| Ruby | `.into(SessionSteps, name, input: "turns", max_cells: 10_000)` |
+| PHP | `->into(SessionSteps::class, $name, input: 'turns', maxCells: 10_000)` |
+
+An embedded class is not a factory: the runner announces the outer class only, and
+`flz operator start session` is refused unless the class is also registered on its own. The
+refusals an embedding adds:
+
+| Name | Fires when |
+| --- | --- |
+| `topology.nested_steps` | a steps class embeds a steps class (a steps class may embed a flow class) |
+| `topology.embedded_entry_ambiguous` | the class declares several entry channels and the edge names none with `input` |
+| `topology.embedded_exit_ambiguous` | the class's graph ends in more than one candidate exit |
+| `topology.invalid_setting` (setting `sink`) | a plugin sink, response or call follows the embedding node directly; put a tasklet between them |
+
 ## Two asymmetries between the SDKs
 
 Java `map` / `flatMap` take the post-transform type as an explicit `Class<U>`
@@ -149,13 +203,15 @@ channel has no producer.
 | `ConsumerEdge`, `EdgeTransformFn`, `EdgeYield`, `transform_value`, `key_of` | `flz_core/src/channel.rs` | `flezha-sdk-runtime/.../operator/{ConsumerEdge,EdgeYield}.java` |
 | Routing seam and ladder (`route_to_consumers`, `deliver_edge`, `run_retry_park_ladder`) | `flz_core/src/routing.rs` | `flezha-sdk-runtime/.../core/{EmitContext,CellRouting,EdgeTransforms}.java` |
 | Steps operator containment (`extend_mapped`) and refusals | `flz_core/src/steps/{driver,spec}.rs` | shared core |
-| Elixir SDK | `sdk/elixir/lib/flezha/sdk/{channels,topology}.ex` | — |
+| Embedding an operator class: the judgment, the scope family, routing in and out | `flz_core/src/operator/scope.rs` | shared core |
+| Elixir SDK | `sdk/elixir/lib/flezha/sdk/{channels,topology,scope}.ex` | — |
 
 Tests: `sdk/rust/tests/stream_transforms.rs` (asserts fusion by counting
 traversals), `sdk/rust/tests/ui/tasklet_cell_key_removed.rs`, Java
 `OperatorTopologyBuilderTest` / `CellRoutingTest` /
 `StepsDispatchTest`, and
-`test/system/dynamic_cell_e2e_test.exs` on both runtimes. Examples:
+`test/system/dynamic_cell_e2e_test.exs` on both runtimes;
+`test/system/inner_operator_e2e_test.exs` drives a stepped scope on every runtime. Examples:
 `sdk/rust/examples/stream_transforms.rs`, Java `E10_StreamTransforms`.
 
 ## See also

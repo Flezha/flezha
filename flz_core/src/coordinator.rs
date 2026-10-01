@@ -110,15 +110,28 @@ impl RunnerNode {
         Ok(())
     }
 
+    /// Its scopes go with an outer instance; a scope leaves its family.
     pub fn stop_operator(&self, instance_id: &str) -> bool {
         match self.operator_registry.remove(instance_id) {
             Some(instance) => {
+                crate::operator::scope::stop_children(&instance, &self.operator_registry);
+                crate::operator::scope::detach(&instance);
                 instance.shutdown_background_threads();
                 crate::steps::removed(&instance);
                 true
             }
             None => false,
         }
+    }
+
+    /// A bound scope joins the family of its outer instance, `operator_id`.
+    pub fn attach_scope(
+        &self,
+        child: &OperatorInstance,
+        operator_id: &str,
+        scope: &crate::pb::Scope,
+    ) -> bool {
+        crate::operator::scope::attach(&self.operator_registry, child, operator_id, scope)
     }
 
     pub fn has_operator(&self, instance_id: &str) -> bool {
@@ -308,10 +321,19 @@ impl Coordinator {
             }
             RunnerMessage::EmitOperatorCompleted {
                 operator_id,
+                scope,
                 status,
                 error,
                 result,
-            } => self.write_operator_completed(operator_id, status, error, result),
+                consumed_offset,
+            } => self.write_operator_completed(PbOperatorCompleted {
+                operator_id,
+                status,
+                error,
+                result,
+                scope,
+                consumed_offset,
+            }),
             RunnerMessage::EmitControlRequest {
                 reference_id,
                 command,
@@ -346,23 +368,10 @@ impl Coordinator {
             .set_control_stream(Some(Arc::clone(&self.control_stream)));
     }
 
-    /// The terminal `OperatorCompleted`, carrying the direct-output count.
-    fn write_operator_completed(
-        &mut self,
-        operator_id: String,
-        status: String,
-        error: String,
-        result: Vec<u8>,
-    ) {
-        let frame = control_command_frame(
-            "steps-completed",
-            Command::OperatorCompleted(PbOperatorCompleted {
-                operator_id: operator_id.clone(),
-                status,
-                error,
-                result,
-            }),
-        );
+    /// The terminal `OperatorCompleted`.
+    fn write_operator_completed(&mut self, completed: PbOperatorCompleted) {
+        let operator_id = completed.operator_id.clone();
+        let frame = control_command_frame("steps-completed", Command::OperatorCompleted(completed));
         if let Err(e) = self.write_control(frame) {
             warn!(
                 target: "flezha",

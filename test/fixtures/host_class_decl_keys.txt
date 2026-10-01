@@ -25,6 +25,7 @@ class.change_format_id
 class.compact_after_bytes
 class.channels
 class.tasklets
+class.embedded
 channel.name
 channel.kind
 channel.producer
@@ -45,3 +46,5 @@ tasklet.mailbox_capacity
 tasklet.change_is_nochange
 tasklet.schema_version
 tasklet.min_readable_schema_version
+tasklet.operator
+tasklet.input

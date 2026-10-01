@@ -3,6 +3,7 @@
 pub mod completion;
 pub mod instance;
 pub mod registry;
+pub mod scope;
 pub mod settings;
 pub mod sleep;
 #[cfg(all(test, unix))]

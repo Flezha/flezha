@@ -478,6 +478,7 @@ mod declaration_key_tests {
                 ("tasklet", "cell_mode") => r#""single""#,
                 ("tasklet", "cell_keys") => "[]",
                 ("tasklet", "clock") => r#""wall""#,
+                ("tasklet", "operator") | ("tasklet", "input") => r#""pinned""#,
                 (_, k) if k.ends_with("_ms") || k.ends_with("_bytes") => "1000",
                 (_, k) if k.ends_with("_every") || k.ends_with("_attempts") => "1",
                 (_, k) if k.ends_with("_max") || k.ends_with("_capacity") => "1",

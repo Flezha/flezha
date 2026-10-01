@@ -12,6 +12,7 @@ use super::instance::{FiringKey, Value};
 use super::run::Run;
 use super::StepsError;
 use crate::channel::ChannelId;
+use crate::steps::Each;
 use crate::pb::command_request::Command;
 
 /// How long one send waits for its ack (`FLEZHA_STEPS_ACK_TIMEOUT_MS`)
@@ -21,7 +22,7 @@ const ENV_ACK_TIMEOUT_MS: &str = "FLEZHA_STEPS_ACK_TIMEOUT_MS";
 
 /// Sends of one barrier before an unacked commit fails the run. A re-send is
 /// the controller connection's business, not the class's, so no class sets it.
-pub(super) const BARRIER_SENDS: u32 = 3;
+pub(crate) const BARRIER_SENDS: u32 = 3;
 
 pub(super) fn ack_timeout() -> Duration {
     Duration::from_millis(crate::util::env_parse(
@@ -47,8 +48,14 @@ pub(super) fn task_frame(
         .collect();
     let handoff = encode_handoff(r, r.task(node).output_channel_id, &values)
         .map_err(|e| StepsError::from(format!("task {node} {e}")))?;
+    // A `once` run ends at its last stage, with no iteration commit after.
+    let leaves = r.spec.each != Each::Chained && r.exits_at(node);
+    let result = completion.as_deref().filter(|_| r.spec.each == Each::Once);
+    let exit =
+        crate::operator::scope::wire_exit(r.inst, if leaves { &values } else { &[] }, result)
+            .map_err(|e| StepsError::from(format!("task {node} exit {e}")))?;
     Ok(Command::TaskCommit(crate::pb::TaskCommit {
-        operator_id: r.inst.instance_id.to_string(),
+        operator_id: r.inst.operator_id().to_string(),
         task_idx: node as u32,
         iter,
         cells_ran: cells
@@ -60,6 +67,8 @@ pub(super) fn task_frame(
         completes: completion.is_some(),
         result: completion.unwrap_or_default(),
         trigger: trigger.as_ref().map(FiringKey::to_wire),
+        scope: r.inst.wire_scope(),
+        exit,
     }))
 }
 
@@ -67,6 +76,7 @@ pub(super) fn task_frame(
 /// chain it ran (so a resumed chained loop re-enters that chain) and the
 /// completion a tasklet asked for; or for a turn that failed, carrying the
 /// failure the controller parks its message under.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn iteration_frame(
     r: &Run<'_>,
     iter: u32,
@@ -75,6 +85,7 @@ pub(super) fn iteration_frame(
     values: &[Value],
     completion: Option<Vec<u8>>,
     dead_letter: Option<crate::pb::DeadLetter>,
+    exits: &[Value],
 ) -> Result<Command, StepsError> {
     // The terminal handoff re-seeds iteration N+1 of a handoff-chained loop
     // after a crash; a message-fed loop re-seeds from its input log instead
@@ -87,6 +98,8 @@ pub(super) fn iteration_frame(
         .and_then(|leaf| r.task(leaf).output_channel_id);
     let handoff = encode_handoff(r, terminal_channel, values)
         .map_err(|e| StepsError::from(format!("iteration {iter} {e}")))?;
+    let exit = crate::operator::scope::wire_exit(r.inst, exits, completion.as_deref())
+        .map_err(|e| StepsError::from(format!("iteration {iter} exit {e}")))?;
     let entry_channel = r
         .inst
         .topology
@@ -94,7 +107,7 @@ pub(super) fn iteration_frame(
         .map(|c| c.name.to_string())
         .unwrap_or_default();
     Ok(Command::IterCommit(crate::pb::IterCommit {
-        operator_id: r.inst.instance_id.to_string(),
+        operator_id: r.inst.operator_id().to_string(),
         iter,
         consumed_offset,
         handoff,
@@ -102,6 +115,8 @@ pub(super) fn iteration_frame(
         result: completion.unwrap_or_default(),
         entry_channel,
         dead_letter,
+        scope: r.inst.wire_scope(),
+        exit,
     }))
 }
 
@@ -113,7 +128,7 @@ pub(super) fn undo_frame(
     cells_ran: Vec<crate::pb::CommittedCell>,
 ) -> Command {
     Command::TaskCommit(crate::pb::TaskCommit {
-        operator_id: r.inst.instance_id.to_string(),
+        operator_id: r.inst.operator_id().to_string(),
         task_idx: node as u32,
         iter,
         cells_ran,
@@ -122,6 +137,8 @@ pub(super) fn undo_frame(
         completes: false,
         result: Vec::new(),
         trigger: None,
+        scope: r.inst.wire_scope(),
+        exit: None,
     })
 }
 

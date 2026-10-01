@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Added: an operator inside an operator
+
+`into` takes an operator class as well as a tasklet, in every SDK. A flow class is inlined into
+the graph under its node's name. A steps class runs as a stepped scope per edge key inside the
+outer instance: a session per user inside a gateway, say, each with its own Cells, task journal
+and input log under the outer instance's directory, run by its own `each`, `on_failure` and
+`durable`. A scope sleeps after its own `sleep_after` while the outer instance and the other keys
+go on, a crash between two of its stages resumes at the next one, an undo compensates its own
+tasklets only, and a partition rescale moves it with its key. Its messages are journaled once
+however often the outer input is replayed, and inside an outer instance that journals its own
+input its answers outlive a runner crash. `flz operator info` counts scopes
+awake, sleeping and in a pass, and `flz operator rewind`, `flz state journal` and
+`flz state inbox` take `<outer>/<inner>/<key>`. A steps class embedding a steps class is refused
+as `topology.nested_steps`, and an embedding with no single entry or exit as
+`topology.embedded_entry_ambiguous` or `topology.embedded_exit_ambiguous`. See
+[`docs/sdk/stream_transforms.md`](docs/sdk/stream_transforms.md#an-edge-into-an-operator-class).
+
+### Fixed: a sleeping flow operator confirms its input even when its tasklets keep no state
+
+A flow operator that sleeps, and whose Cells write no record (Rust tasklets without state, say),
+never reported how far it had processed its input, so its input log's floor stayed put and every
+bind delivered the whole log again. The runner now reports that point for every instance whose
+input is journaled.
+
 ### Fixed: an operator moving back to a controller no longer loses the turns taken elsewhere
 
 A controller that kept a copy of an operator's state when the operator moved away bound from that

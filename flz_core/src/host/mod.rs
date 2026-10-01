@@ -12,6 +12,7 @@ mod cell;
 mod chains;
 mod commands;
 mod decl;
+mod embed;
 mod issue;
 mod prepare;
 mod register;
@@ -38,6 +39,7 @@ pub use decl::{
     HostAckGranularity, HostCall, HostCellModeDecl, HostChannelDecl, HostChannelKind,
     HostClassDecl, HostClock, HostLink, HostOverflow, HostTaskletDecl,
 };
+pub use embed::{judge_embedding, judge_inlining, mistyped_inlining};
 pub use issue::{render_issues, TopologyIssue};
 pub use prepare::{
     deferred_end_replay_slice, prepare_wants, stage_prepare, HostPrepareState, PrepareCrossing,

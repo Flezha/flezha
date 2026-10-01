@@ -77,11 +77,94 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   trigger.
   """
   @spec operator_completed(map(), RunnerCommands.OperatorCompleted.t()) :: :ok
-  def operator_completed(state, %RunnerCommands.OperatorCompleted{} = completed) do
+  def operator_completed(state, %RunnerCommands.OperatorCompleted{scope: nil} = completed) do
     if Records.admit(state, completed.operator_id, :operator_completed),
       do: complete(state, completed)
 
     :ok
+  end
+
+  # A stepped scope's end is its outer instance's to settle: the instance
+  # goes on.
+  def operator_completed(state, %RunnerCommands.OperatorCompleted{} = completed) do
+    %RunnerCommands.OperatorCompleted{operator_id: operator_id, scope: scope} = completed
+
+    if Records.admit(state, operator_id, :operator_completed),
+      do:
+        to_outer(
+          state,
+          operator_id,
+          {:scope_completed, scope_of(scope), completed.consumed_offset}
+        )
+
+    :ok
+  end
+
+  @doc """
+  A message on an edge into a stepped scope of a durable instance, handed to
+  that instance's Overwatch, which journals it to the scope's input log,
+  answers, and forwards it. With no Overwatch here it is refused.
+  """
+  @spec scope_input(map(), struct(), binary()) :: :ok
+  def scope_input(state, %RunnerCommands.ScopeInput{} = input, reference_id) do
+    %RunnerCommands.ScopeInput{operator_id: operator_id, scope: scope} = input
+    reply = {self(), reference_id}
+    event = {:scope_input, scope_of(scope), scope_message(input), reply}
+
+    with true <- Records.admit(state, operator_id, :scope_input),
+         :ok <- to_outer(state, operator_id, event) do
+      :ok
+    else
+      _refused -> answer_scope_input(reply, {:not_owner, operator_id})
+    end
+  end
+
+  @doc """
+  The message a `ScopeInput` carries, as the scope's input log keeps it: its
+  payload, the entry channel it is for and, when the runner named the outer
+  input it came from, that identity as its `flz.msg_id`.
+  """
+  @spec scope_message(struct()) :: {binary(), map()}
+  def scope_message(%RunnerCommands.ScopeInput{channel: channel, payload: payload, msg_id: ""}),
+    do: {payload, %{"channel" => channel}}
+
+  def scope_message(%RunnerCommands.ScopeInput{
+        channel: channel,
+        payload: payload,
+        msg_id: msg_id
+      }),
+      do: {payload, %{"channel" => channel, "flz.msg_id" => msg_id}}
+
+  @doc """
+  Answer a scope's input to the runner that sent it: `nil` for a message
+  journaled, `:refused` for one dead-lettered instead (no scope is bound for
+  its key), or the reason the append failed. `nil` as the addressee answers
+  nobody: a message re-entered after its scope ended.
+  """
+  @spec answer_scope_input({pid(), binary()} | nil, term()) :: :ok
+  def answer_scope_input(nil, _error), do: :ok
+
+  def answer_scope_input({channel, reference_id}, :refused) do
+    command = {:scope_input_response, %RunnerCommands.ScopeInputResponse{refused: true}}
+    send(channel, {:sdk_reply, reference_id, command, "ScopeInputResponse"})
+    :ok
+  end
+
+  def answer_scope_input({channel, reference_id}, error) do
+    wire = error && Flezha.Error.to_wire(Flezha.Error.from_reason(error, "wire.message"))
+    command = {:scope_input_response, %RunnerCommands.ScopeInputResponse{error: wire}}
+
+    send(channel, {:sdk_reply, reference_id, command, "ScopeInputResponse"})
+    :ok
+  end
+
+  defp scope_of(%RunnerCommands.Scope{inner: inner, key: key}), do: {inner, key}
+
+  defp to_outer(state, operator_id, event) do
+    case HubManager.get_pid(state.namespace, operator_id) do
+      {:ok, pid} when is_pid(pid) -> GenServer.cast(pid, event)
+      _absent -> :absent
+    end
   end
 
   defp complete(state, completed) do
@@ -213,8 +296,26 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   same reason as the steps-completed teardown.
   """
   @spec iter_park(map(), RunnerCommands.IterPark.t()) :: :ok
-  def iter_park(state, %RunnerCommands.IterPark{} = park) do
+  def iter_park(state, %RunnerCommands.IterPark{scope: nil} = park) do
     if Records.admit(state, park.operator_id, :iter_park), do: park_instance(state, park)
+    :ok
+  end
+
+  # A stepped scope sleeps inside its outer instance, which stays up: what it
+  # parked unread is released from the scope's own log, and the outer
+  # instance evicts it and keeps its wake.
+  def iter_park(state, %RunnerCommands.IterPark{} = park) do
+    %RunnerCommands.IterPark{operator_id: operator_id, scope: scope} = park
+    deadline = if park.wake_deadline_ms == 0, do: nil, else: park.wake_deadline_ms
+    scope_id = TaskJournal.scope_id(operator_id, scope.inner, scope.key)
+
+    if Records.admit(state, operator_id, :iter_park) do
+      Task.start(fn ->
+        with :ok <- TaskJournal.release_unread(scope_id, park.consumed_offset),
+             do: to_outer(state, operator_id, {:scope_parked, scope_of(scope), deadline})
+      end)
+    end
+
     :ok
   end
 

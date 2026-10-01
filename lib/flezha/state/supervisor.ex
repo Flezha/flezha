@@ -15,6 +15,7 @@ defmodule Flezha.State.Supervisor do
   alias Flezha.State.FsyncBatcher
   alias Flezha.State.InputLog
   alias Flezha.State.Paths
+  alias Flezha.State.ScopePaths
   alias Flezha.State.WalWriter
   alias Flezha.State.WriterRegistry
 
@@ -90,10 +91,13 @@ defmodule Flezha.State.Supervisor do
   @doc """
   Run `fun` as a writer start of `operator_class`. Starts run side by side;
   one that arrives while the class's files are being switched waits for the
-  switch to end first.
+  switch to end first. A stepped scope's writer is its instance's: the scope's
+  files are switched with the instance's tree.
   """
   @spec starting(String.t(), (-> result)) :: result when result: term()
-  def starting(operator_class, fun) do
+  def starting(operator_class, fun), do: start_writer(ScopePaths.outer_of(operator_class), fun)
+
+  defp start_writer(operator_class, fun) do
     if :ets.whereis(@switches) == :undefined do
       fun.()
     else
@@ -103,7 +107,7 @@ defmodule Flezha.State.Supervisor do
       if switching?(operator_class) do
         :ets.delete_object(@switches, start)
         await(fn -> not switching?(operator_class) end)
-        starting(operator_class, fun)
+        start_writer(operator_class, fun)
       else
         try do
           fun.()
@@ -193,17 +197,20 @@ defmodule Flezha.State.Supervisor do
   defdelegate live_writers(operator_class), to: WriterRegistry
 
   @doc """
-  Stop every live writer of `operator_class` and its input log; the files
-  stay. What a stopped operator owes whether its state is deleted, retained
-  for inspection or kept for a rescale to move.
+  Stop every live writer of `operator_class` and its input log, and those of
+  its stepped scopes; the files stay. What a stopped operator or an ended
+  scope owes whether its state is deleted, retained for inspection or kept for
+  a rescale to move.
   """
   @spec close_writers(String.t()) :: :ok
   def close_writers(operator_class) do
-    Enum.each(live_writers(operator_class), &WalWriter.close/1)
+    for class <- [operator_class | ScopePaths.scope_ids(operator_class)] do
+      Enum.each(live_writers(class), &WalWriter.close/1)
 
-    case lookup({operator_class, :input_log}) do
-      {:ok, pid} -> _ = DynamicSupervisor.terminate_child(__MODULE__, pid)
-      :error -> :ok
+      case lookup({class, :input_log}) do
+        {:ok, pid} -> _ = DynamicSupervisor.terminate_child(__MODULE__, pid)
+        :error -> :ok
+      end
     end
 
     :ok

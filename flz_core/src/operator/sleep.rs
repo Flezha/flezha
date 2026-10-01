@@ -159,7 +159,7 @@ fn flow_idle_due(inst: &Arc<OperatorInstance>) {
         return arm(inst, window);
     }
     inst.idle.asleep.store(true, Ordering::Release);
-    let (reference_id, command) = iter_park(&inst.instance_id, 0, None, None);
+    let (reference_id, command) = iter_park(inst, 0, None, None);
     crate::runner::emit_control_request(reference_id, command);
 }
 
@@ -168,7 +168,7 @@ fn flow_idle_due(inst: &Arc<OperatorInstance>) {
 /// controller releases it; the controller evicts the instance and wakes it
 /// on the next input or the deadline.
 pub(crate) fn iter_park(
-    instance_id: &str,
+    inst: &OperatorInstance,
     iter: u32,
     wake_deadline_ms: Option<u64>,
     parked_offset: Option<u64>,
@@ -176,15 +176,16 @@ pub(crate) fn iter_park(
     (
         format!(
             "iter-park-{}-{}-{}",
-            instance_id,
+            inst.instance_id,
             iter,
             crate::util::nonce_suffix()
         ),
         crate::pb::command_request::Command::IterPark(crate::pb::IterPark {
-            operator_id: instance_id.to_string(),
+            operator_id: inst.operator_id().to_string(),
             iter,
             wake_deadline_ms: wake_deadline_ms.unwrap_or(0),
             consumed_offset: parked_offset,
+            scope: inst.wire_scope(),
         }),
     )
 }

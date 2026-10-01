@@ -55,12 +55,21 @@ pub fn emit_control_request(reference_id: String, command: crate::pb::command_re
 }
 
 /// A steps operator's `OperatorCompleted`, so the controller deregisters it.
-pub fn emit_operator_completed(operator_id: String, status: String, error: String, result: Vec<u8>) {
+pub fn emit_operator_completed(
+    operator_id: String,
+    scope: Option<crate::pb::Scope>,
+    status: String,
+    error: String,
+    result: Vec<u8>,
+    consumed_offset: Option<u64>,
+) {
     coordinator_send(RunnerMessage::EmitOperatorCompleted {
         operator_id,
+        scope,
         status,
         error,
         result,
+        consumed_offset,
     });
 }
 
@@ -92,9 +101,13 @@ pub enum RunnerMessage {
     /// A steps operator reached an exit trigger.
     EmitOperatorCompleted {
         operator_id: String,
+        /// The scope that ended, absent for a top-level instance.
+        scope: Option<crate::pb::Scope>,
         status: String,
         error: String,
         result: Vec<u8>,
+        /// The input the pass that did not end cleanly took.
+        consumed_offset: Option<u64>,
     },
     /// An SDK-initiated request, written verbatim under the caller's
     /// `reference_id`.

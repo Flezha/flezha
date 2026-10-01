@@ -285,6 +285,12 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   (`IterPark`, recorded first) while the Overwatch and registry entry remain; a new message or its
   wake deadline, the earliest pending processing-time Cell timer, rehydrates it through the
   ordinary bind path.
+- **Stepped scope**: one instance of a steps class an edge embeds (`into(Class)`) inside an
+  outer instance, one per edge key (one for an unkeyed edge). Its id is
+  `<instance>/<inner>/<key>`, which keys its task journal, input log and Cells under the outer
+  instance's directory. It runs by its own `each`, `on_failure` and `durable`, sleeps and wakes on
+  its own, and is undone and rewound alone; its exit output continues on the outer edge. See
+  [`sdk/stream_transforms.md`](sdk/stream_transforms.md#an-edge-into-an-operator-class).
 - **Rewind** — `flz operator rewind <instance> --to-iteration N` appends a `rewound` marker at
   epoch + 1, compensates the tasklets above N in reverse and resumes waiting. It is
   undo-and-continue: inputs are not replayed, and a tasklet that wrote plugin output without a

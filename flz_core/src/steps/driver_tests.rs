@@ -264,6 +264,7 @@ fn drain(
                 status,
                 error,
                 result,
+                ..
             } if operator_id == id => return (wire.outputs_of(id), (status, error, result)),
             _ => {}
         }

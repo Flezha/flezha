@@ -18,7 +18,7 @@ impl CommandAction for AddOperator {
         _message: &str,
         errors: &mut Vec<crate::Error>,
     ) -> Reply {
-        let instance_id = self.operator_id.clone();
+        let instance_id = self.instance_id();
         let factory_id = self.factory_id.clone();
         // The class says what kind it is; the wire's kind string is not asked.
         let class = crate::operator::registry::get_class(&factory_id);
@@ -74,6 +74,13 @@ impl AddOperator {
         ) else {
             return;
         };
+        if let Some(scope) = &self.scope {
+            if !runner.attach_scope(&instance, &self.operator_id, scope) {
+                runner.stop_operator(instance_id);
+                errors.push(super::cell_state::operator_not_found(&self.operator_id));
+                return;
+            }
+        }
         if let Err(e) = crate::command::cell_state::apply_init_values(&instance, &self.init_values)
         {
             errors.push(e);
@@ -86,6 +93,19 @@ impl AddOperator {
         crate::steps::open(&instance);
         crate::operator::sleep::bound(&instance);
         crate::operator::completion::bound(&instance);
+    }
+
+    /// The id the instance is registered under: a scope's own, derived from
+    /// its outer instance's.
+    fn instance_id(&self) -> String {
+        match &self.scope {
+            Some(scope) => crate::operator::scope::scope_id(
+                &self.operator_id,
+                &scope.inner,
+                scope.key.as_deref(),
+            ),
+            None => self.operator_id.clone(),
+        }
     }
 
     /// The member's range; `partition_count < 2` is the whole space, guard
@@ -217,6 +237,20 @@ fn flow_metadata(topology: &OperatorTopology, metadata: &mut HashMap<String, Str
     use crate::operator::topology::BeyondWindowPolicy;
 
     metadata.insert("run".to_string(), "flow".to_string());
+    let scopes: Vec<String> = topology
+        .tasklets
+        .iter()
+        .filter_map(|task| {
+            Some(format!(
+                "{}={}",
+                task.name,
+                task.scope.as_ref()?.inner.factory_id
+            ))
+        })
+        .collect();
+    if !scopes.is_empty() {
+        metadata.insert("scopes".to_string(), scopes.join(","));
+    }
     if topology.effectively_once {
         metadata.insert("exactly".to_string(), "effectively_once".to_string());
     }

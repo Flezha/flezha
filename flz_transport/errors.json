@@ -377,6 +377,14 @@
       "message": "could not write {path}: {reason}",
       "details": ["path", "reason"]
     },
+    "commit.exit_not_logged": {
+      "class": "unavailable",
+      "message": "a scope's exit could not be logged into its outer instance's input log: {reason}",
+      "details": ["reason"],
+      "reasons": [
+        {"tag": "exit_not_logged", "args": ["reason"]}
+      ]
+    },
     "commit.not_owner": {
       "class": "conflict",
       "message": "this controller does not own operator '{operator}', so its commit is refused",
@@ -2261,6 +2269,11 @@
       "message": "activation schema version mismatch: the shim speaks {shim}, the core speaks {core}",
       "details": ["shim", "core"]
     },
+    "runtime.scope_input_unencodable": {
+      "class": "invalid",
+      "message": "a value on the edge into scope '{scope}' could not be encoded: {reason}",
+      "details": ["scope", "reason"]
+    },
     "runtime.spawn_handle_released": {
       "class": "not_found",
       "message": "spawn handle {handle} was released: the activation that made it was completed or abandoned",
@@ -2773,6 +2786,16 @@
       "message": "exactly: effectively_once needs a durable other than false: the tier is durable state",
       "details": []
     },
+    "topology.embedded_entry_ambiguous": {
+      "class": "invalid",
+      "message": "operator '{inner}' declares the entry channels {channels}, and its edge names none; name the one it feeds with `input:`",
+      "details": ["inner", "channels"]
+    },
+    "topology.embedded_exit_ambiguous": {
+      "class": "invalid",
+      "message": "operator '{inner}' ends in {channels}, and an embedded graph's output continues on one channel only",
+      "details": ["inner", "channels"]
+    },
     "topology.entry_channel_with_producer": {
       "class": "invalid",
       "message": "entry channel '{channel}' cannot name a producer",
@@ -2862,6 +2885,11 @@
       "class": "invalid",
       "message": "tasklet '{tasklet}' sets {setting} to {value}, and it must not be negative",
       "details": ["tasklet", "setting", "value"]
+    },
+    "topology.nested_steps": {
+      "class": "invalid",
+      "message": "operator '{outer}' runs in steps and embeds '{inner}', which runs in steps too; a steps class may embed only a flow class",
+      "details": ["outer", "inner"]
     },
     "topology.no_steps_body": {
       "class": "invalid",

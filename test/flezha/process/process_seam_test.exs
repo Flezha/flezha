@@ -76,7 +76,8 @@ defmodule Flezha.Process.SeamTest do
       "lib/flezha/plugin/provider/http_poll/poll_worker.ex",
       "lib/flezha/plugin/provider/operator_forward/forward_worker.ex",
       # a synchronous wait's own monitor, as `GenServer.call` takes one
-      "lib/flezha/operator/calls.ex"
+      "lib/flezha/operator/calls.ex",
+      "lib/flezha/operator/scopes.ex"
     ]
   end
 

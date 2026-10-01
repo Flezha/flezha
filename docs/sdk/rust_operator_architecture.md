@@ -498,6 +498,22 @@ Per-Tasklet counters (`DynamicCellCounters`, Relaxed):
 `cells_created_total`, `cells_evicted_total`,
 `inputs_dropped_capped_total`.
 
+## An operator inside an operator
+
+An edge may end in an operator class: `.into_operator::<Session, String>()`, or
+`.into_operator_with::<Session, String>(Embedding { .. })` for `input`, `name` or `max_cells`. A flow class is inlined into the
+graph; a steps class runs as a stepped scope per edge key inside the instance, with its
+own state, journal and sleep, and the handle returned is its exit. The macros stay
+tasklet sugar: an embedding is written in `channels()`. The rules and refusals are in [`stream_transforms.md`](stream_transforms.md#an-edge-into-an-operator-class).
+
+```rust
+c.input::<String>("requests")
+    .key_by(|input: &String| key_prefix(input))
+    .into_operator::<SessionSteps, String>()
+    .into::<GatewayReplyTasklet>()
+    .sink_named("replies");
+```
+
 ## Partitioning
 
 An instance binds to one runner, so the machine is the ceiling for one

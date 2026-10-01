@@ -136,6 +136,10 @@ pub fn build_cell_frame(cell_identity: &[u8], seq: u64, header: &[u8; 16], body:
 /// registration.
 pub struct CellFlusher {
     entries: Arc<DashMap<FlusherEntryId, FlusherEntry>>,
+    /// Ledgers of instances whose input is journaled, reported after each
+    /// pass whether or not any of their Cells keeps a record: an input that
+    /// settles into no record moves the prefix too.
+    prefixes: Mutex<Vec<std::sync::Weak<crate::prefix::PrefixLedger>>>,
     next_entry_id: AtomicU64,
     shutdown: Arc<AtomicBool>,
     linger_ms: u64,
@@ -153,6 +157,7 @@ impl CellFlusher {
                 let linger_ms = crate::util::env_parse(ENV_LINGER_MS, DEFAULT_LINGER_MS);
                 let flusher = Arc::new(CellFlusher {
                     entries: Arc::new(DashMap::new()),
+                    prefixes: Mutex::new(Vec::new()),
                     next_entry_id: AtomicU64::new(0),
                     shutdown: Arc::new(AtomicBool::new(false)),
                     linger_ms,
@@ -165,6 +170,11 @@ impl CellFlusher {
                 flusher
             })
             .clone()
+    }
+
+    /// Report `prefix` after every pass for as long as its instance lives.
+    pub fn watch_prefix(&self, prefix: &Arc<crate::prefix::PrefixLedger>) {
+        self.prefixes.lock_recover().push(Arc::downgrade(prefix));
     }
 
     /// Drop an evicted Cell's entry. Idempotent.
@@ -248,6 +258,15 @@ impl CellFlusher {
                 prefix.report();
             }
         }
+        self.prefixes
+            .lock_recover()
+            .retain(|watched| match watched.upgrade() {
+                Some(prefix) => {
+                    prefix.report();
+                    true
+                }
+                None => false,
+            });
     }
 }
 

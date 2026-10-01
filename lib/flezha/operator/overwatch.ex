@@ -25,6 +25,7 @@ defmodule Flezha.Operator.Overwatch do
   alias Flezha.Operator.Migration
   alias Flezha.Operator.Plugins
   alias Flezha.Operator.Replay
+  alias Flezha.Operator.Scopes
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.ControlUnit
@@ -132,6 +133,8 @@ defmodule Flezha.Operator.Overwatch do
     # The outside callers waiting on this operator for an answer; each row's
     # deadline is armed under the timer family `:call`.
     calls: %Calls{},
+    # The stepped scopes this instance holds (`Flezha.Operator.Scopes`).
+    scopes: %{},
     # Whether a `:once` or `:chained` steps instance has taken its one
     # input in this process, so a later call is refused; a durable instance
     # also asks its input log (`Ingest.first_input?/1`), which outlives it.
@@ -161,8 +164,10 @@ defmodule Flezha.Operator.Overwatch do
   `{:error, :send_buffer_full}`, with the frame unsent and nothing discarded.
   """
   @spec deliver(t(), {binary(), map()}) :: :ok | {:error, :no_stream | :send_buffer_full}
-  def deliver(%__MODULE__{} = state, payload),
-    do: StreamChannel.io_in(state.channel, state.id, payload)
+  def deliver(%__MODULE__{} = state, payload) do
+    {to, payload} = Scopes.addressed(state.id, payload)
+    StreamChannel.io_in(state.channel, to, payload)
+  end
 
   @doc "Who this operator's call table answers for."
   @spec callee(t()) :: Calls.callee()
@@ -514,6 +519,15 @@ defmodule Flezha.Operator.Overwatch do
     end
   end
 
+  # A logged scope's exit values: journaled to this instance's own input log
+  # and forwarded into its graph, answered with the journal's verdict.
+  def handle_call({:scope_exit, scope, key, exit}, from, %__MODULE__{} = state) do
+    case Scopes.take_exit(state, scope, key, exit, {:ingest, from}) do
+      {:pending, state} -> {:noreply, state}
+      {reply, state} -> {:reply, reply, state}
+    end
+  end
+
   # The `:call` entry point: an outside call (an integer deadline) or an
   # operator's call the controller delivers (a map); see `Ingest.take_call/5`.
   @impl true
@@ -536,11 +550,14 @@ defmodule Flezha.Operator.Overwatch do
 
   @impl true
   def handle_call({:rewind, to_iter}, _from, %__MODULE__{} = state) do
-    case Migration.rewind_to(state, to_iter) do
+    case rewind(state, to_iter) do
       {:ok, state} -> {:reply, :ok, state}
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
+
+  defp rewind(state, {scope, to_iter}), do: Scopes.rewind(state, scope, to_iter)
+  defp rewind(state, to_iter), do: Migration.rewind_to(state, to_iter)
 
   # ---------------------------------------------------------------
   # handle_cast
@@ -624,6 +641,15 @@ defmodule Flezha.Operator.Overwatch do
   end
 
   @impl true
+  def handle_cast({:scope_input, scope, message, reply}, %__MODULE__{} = state),
+    do: {:noreply, Scopes.input(state, scope, message, reply)}
+
+  def handle_cast({:scope_parked, scope, wake_deadline_ms}, %__MODULE__{} = state),
+    do: {:noreply, Scopes.parked(state, scope, wake_deadline_ms)}
+
+  def handle_cast({:scope_completed, scope, took}, %__MODULE__{} = state),
+    do: {:noreply, Scopes.completed(state, scope, took)}
+
   # A sleeper hibernates: the bind's restore frames and plugin setup leave
   # megabytes of garbage on a heap that otherwise sits uncollected until the
   # next wake (2.5 MiB → 5 KiB per sleeper measured).
@@ -696,6 +722,12 @@ defmodule Flezha.Operator.Overwatch do
   # The Cell's durable state never reached the runner, so the operator parks
   # rather than serving from empty state; the convergence loop rebinds it.
   @impl true
+  def handle_info({:scope_bound, scope, result}, %__MODULE__{} = state),
+    do: {:noreply, Scopes.bound(state, scope, result)}
+
+  def handle_info({:scope_wake, scope}, %__MODULE__{} = state),
+    do: {:noreply, Scopes.wake(state, scope)}
+
   def handle_info({:restore_refused, reason}, %__MODULE__{} = state) do
     {:noreply, Lifecycle.park(state, {:restore_refused, reason})}
   end
@@ -806,13 +838,12 @@ defmodule Flezha.Operator.Overwatch do
   # shape — the one message this process expects without naming.
   @impl true
   def handle_info(msg, %__MODULE__{} = state) do
-    case Ingest.journal_reply(state, msg) do
-      {:ok, state} ->
-        {:noreply, state}
-
-      :ignore ->
-        Logger.warning("[Overwatch] #{state.id} dropped an unexpected message: #{inspect(msg)}")
-        {:noreply, state}
+    with :ignore <- Ingest.journal_reply(state, msg),
+         :ignore <- Scopes.journal_reply(state, msg) do
+      Logger.warning("[Overwatch] #{state.id} dropped an unexpected message: #{inspect(msg)}")
+      {:noreply, state}
+    else
+      {:ok, state} -> {:noreply, state}
     end
   end
 

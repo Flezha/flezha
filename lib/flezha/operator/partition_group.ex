@@ -33,6 +33,7 @@ defmodule Flezha.Operator.PartitionGroup do
   alias Flezha.Shutdown
   alias Flezha.State.InputLog
   alias Flezha.State.Paths
+  alias Flezha.State.ScopePaths
   alias Flezha.State.WalTransfer
 
   @doc """
@@ -319,7 +320,9 @@ defmodule Flezha.Operator.PartitionGroup do
          {:ok, template, plugins} <- rescale_template(namespace, group_id, members),
          :ok <- check_partitionable(namespace, template, target, length(members)),
          :ok <- quiesce_group(namespace, members, template.run, opts),
-         cell_moves = plan_moves(members, Partition.ranges(target), group_id),
+         cell_moves =
+           plan_moves(members, Partition.ranges(target), group_id) ++
+             scope_moves(members, Partition.ranges(target), group_id),
          {survivors, leaving} = Enum.split_with(members, &(&1.partition.index < target)),
          sealed = sealed(template.run, survivors),
          :ok <- stop_members(namespace, members, sealed),
@@ -483,6 +486,40 @@ defmodule Flezha.Operator.PartitionGroup do
         do: {member_node(member), {:cell, cell}, {:cell, {new_class, tasklet, key}}}
   end
 
+  # Every keyed stepped scope a member holds follows its key's range whole: its
+  # Cells, its journal and its input log, renamed under the new owner's scope.
+  defp scope_moves(members, new_ranges, group_id) do
+    for member <- members,
+        {inner, key} <- remote_or_local(member, ScopePaths, :scopes_of, [member.id]),
+        key != nil,
+        new_index = Partition.owner(new_ranges, KeyGroup.group_of(key)),
+        new_index != nil,
+        new_class = Partition.member_id(group_id, new_index),
+        new_class != member.id or remote?(member),
+        from = ScopePaths.scope_id(member.id, inner, key),
+        ref <- remote_or_local(member, Paths, :durable_refs, [from]),
+        do:
+          {member_node(member), ref,
+           renamed(ref, from, ScopePaths.scope_id(new_class, inner, key))}
+  end
+
+  # The journal names its instance twice, as class and as tasklet.
+  defp renamed({:cell, {from, from, key}}, from, to), do: {:cell, {to, to, key}}
+  defp renamed(ref, _from, to), do: Paths.ref_under(ref, ScopePaths.outer_of(to))
+
+  defp remote_or_local(member, module, function, args) do
+    if remote?(member),
+      do:
+        :erpc.call(
+          member_node(member),
+          module,
+          function,
+          args,
+          Durations.get(:partition_peer_call_ms)
+        ),
+      else: apply(module, function, args)
+  end
+
   # A steps operator member's journal and input log, gathered here under its own id
   # when it sits on another node. They move together: the journal's floor
   # counts offsets in that one log. A vacated member's then go with its tree.
@@ -509,7 +546,8 @@ defmodule Flezha.Operator.PartitionGroup do
            [member_id],
            Durations.get(:partition_peer_call_ms)
          ) do
-      refs when is_list(refs) -> for {:cell, cell} <- refs, do: cell
+      # Its stepped scopes' refs ride along, and move by their own keys.
+      refs when is_list(refs) -> for {:cell, {^member_id, _, _} = cell} <- refs, do: cell
       other -> log_unreachable_peer(source_node, member_id, other)
     end
   catch

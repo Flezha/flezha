@@ -19,6 +19,7 @@ defmodule Flezha.Operator.Replay do
   alias Flezha.Config.Durations
   alias Flezha.Operator.Lookup
   alias Flezha.Operator.Overwatch
+  alias Flezha.Operator.Scopes.Exits
   alias Flezha.Process.Timer
   alias Flezha.Runner.StreamChannel.Gate
   alias Flezha.State.Adoption
@@ -193,27 +194,29 @@ defmodule Flezha.Operator.Replay do
   end
 
   # Bind-time restore follows the class's persistence switch, for either kind;
-  # for a steps operator it IS its crash-resume.
+  # for a steps operator it IS its crash-resume. The verdict travels to the
+  # Overwatch as a message, the one thing that can stop the operator, whether
+  # this ran in the bind or in a heal's process.
   defp replay_persisted_cells(operator_class, runner_id, overwatch) do
-    # Awaited, not fire-and-forget: the reply carries whether the SDK had to
-    # migrate records from an older schema version, and the controller answers
-    # that with a compaction. Cells are independent, so the awaits run
-    # concurrently rather than serialising a large rebind.
-    refusals =
-      restorable_cells(operator_class)
-      |> Flezha.Parallel.map(&restore_cell(runner_id, &1),
-        max_concurrency: restore_concurrency()
-      )
-      |> Enum.filter(&match?({:error, _}, &1))
-
-    # The verdict travels to the Overwatch as a message, the one thing that can
-    # stop the operator, whether this ran in the bind or in a heal's process.
-    case refusals do
-      [] -> :ok
-      [{:error, reason} | _] -> send(overwatch, {:restore_refused, reason})
-    end
+    with {:error, reason} <- restore_class(operator_class, runner_id),
+         do: send(overwatch, {:restore_refused, reason})
 
     :ok
+  end
+
+  @doc """
+  Restore every persisted Cell of `operator_class` on `runner_id`, awaited:
+  `:ok`, or the first refusal. Cells are independent, so the awaits run
+  concurrently rather than serialising a large rebind; each reply carries
+  whether the SDK had to migrate records from an older schema version, which
+  the controller answers with a compaction.
+  """
+  @spec restore_class(binary(), binary()) :: :ok | {:error, term()}
+  def restore_class(operator_class, runner_id) do
+    operator_class
+    |> restorable_cells()
+    |> Flezha.Parallel.map(&restore_cell(runner_id, &1), max_concurrency: restore_concurrency())
+    |> Enum.find(:ok, &match?({:error, _}, &1))
   end
 
   # Starting the writer replays its WAL scan: it arms the outbox re-drive of
@@ -502,6 +505,36 @@ defmodule Flezha.Operator.Replay do
       _owes_nothing_or_refused -> 0
     end
   end
+
+  @doc """
+  Whether the stepped scope `scope_id` owes work at a bind: input it was never
+  given, an open pass in its journal, or exit values no ack may have followed.
+  """
+  @spec owes_work?(binary()) :: boolean()
+  def owes_work?(scope_id) do
+    owed_count(scope_id) > 0 or
+      match?(%{committed_task_idxs: [_ | _]}, TaskJournal.restore_state(scope_id)) or
+      owed_exits(scope_id) != []
+  end
+
+  @doc """
+  The exit values the journal of the stepped scope `scope_id` holds for its
+  open pass and for the iteration it last committed, each with the entry it
+  rode: `{iteration, task index}`, or `{iteration, :iter}` for an iteration's.
+  """
+  @spec owed_exits(binary()) :: [{Exits.key(), Exits.exit()}]
+  def owed_exits(scope_id) do
+    {:ok, entries} = TaskJournal.read(scope_id)
+    last = entries |> Enum.filter(&(&1.type == :iter_committed)) |> List.last()
+    open = if last, do: last.iter + 1, else: 0
+
+    for %{payload: %{exit: {_channel, _values} = exit}} = entry <- entries,
+        entry == last or (entry.type == :task_committed and entry.iter == open),
+        do: {exit_key(entry), exit}
+  end
+
+  defp exit_key(%{type: :iter_committed, iter: iter}), do: {iter, :iter}
+  defp exit_key(%{task_idx: task_idx, iter: iter}), do: {iter, task_idx}
 
   @doc """
   Arm `reforward_undelivered_tail/1` for a payload an unbound stream could not

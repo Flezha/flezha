@@ -54,6 +54,7 @@ lib/flezha/operator/partition_group.ex -> Flezha.Service.OperatorManager
 lib/flezha/operator/partition_group.ex -> Flezha.Service.PluginManager
 lib/flezha/operator/partition_group.ex -> Flezha.State.InputLog
 lib/flezha/operator/partition_group.ex -> Flezha.State.Paths
+lib/flezha/operator/partition_group.ex -> Flezha.State.ScopePaths
 lib/flezha/operator/partition_group.ex -> Flezha.State.WalTransfer
 lib/flezha/operator/plugins.ex -> Flezha.Plugin.Extension
 lib/flezha/operator/plugins.ex -> Flezha.Plugin.Extension.Ctx
@@ -69,12 +70,20 @@ lib/flezha/operator/replay.ex -> Flezha.State.Restore
 lib/flezha/operator/replay.ex -> Flezha.State.Supervisor
 lib/flezha/operator/replay.ex -> Flezha.State.Adoption
 lib/flezha/operator/replay.ex -> Flezha.State.WalWriter
+lib/flezha/operator/scopes.ex -> Flezha.AuthZ.Quotas
+lib/flezha/operator/scopes.ex -> Flezha.Dlq.Entry
+lib/flezha/operator/scopes.ex -> Flezha.Dlq.Store
+lib/flezha/operator/scopes.ex -> Flezha.State.InputLog
+lib/flezha/operator/scopes.ex -> Flezha.State.Paths
+lib/flezha/operator/scopes.ex -> Flezha.State.ScopePaths
+lib/flezha/operator/scopes.ex -> Flezha.State.Supervisor
 lib/flezha/operator/validator.ex -> Flezha.Service.HubManager
 lib/flezha/plugin.ex -> (no directory owns it)
 lib/flezha/plugin/provider/monitored_io_forward.ex -> Flezha.Service.PluginManager
 lib/flezha/plugin/provider/operator_forward.ex -> Flezha.Service.HubManager
 lib/flezha/plugin/provider/operator_forward.ex -> Flezha.Service.OperatorManager
 lib/flezha/plugin/provider/operator_forward/forward_worker.ex -> Flezha.Service.OperatorManager
+lib/flezha/runner/control_channel/commits.ex -> Flezha.Operator.Scopes.Exits
 lib/flezha/runner/control_channel/commits.ex -> Flezha.State.DurabilityTier
 lib/flezha/runner/control_channel/commits.ex -> Flezha.State.TaskJournal
 lib/flezha/runner/control_channel/requests.ex -> Flezha.Operator.Migration

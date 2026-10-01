@@ -307,7 +307,8 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     :shorthand,
     :call_response,
     :operator_call,
-    :parts
+    :parts,
+    :inner_operator
   ]
 
   # The surface every SDK carries; a manifest cannot defer these, and every
@@ -340,7 +341,8 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     :shorthand,
     :call_response,
     :operator_call,
-    :parts
+    :parts,
+    :inner_operator
   ]
 
   def capabilities, do: @capabilities

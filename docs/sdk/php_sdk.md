@@ -343,6 +343,23 @@ the hook. There is no
 an output type, so nothing in a class says whether it emits. The manifest
 leaves `shorthand_typed_output` off and the conformance row skips by name.
 
+### An operator inside an operator
+
+An edge may end in an operator class: `->into(SessionSteps::class)`, with `input:` and
+`maxCells:` as named arguments, for a class with `channels()`. A flow class is inlined into the
+graph; a steps class runs as a stepped scope per edge key inside the instance, with its
+own state, journal and sleep, and the handle returned is its exit. A tasklet emits only
+on a channel it declares, so the embedded class names its exit with `named`. A short-form class stays a
+tasklet. The rules and refusals are in [`stream_transforms.md`](stream_transforms.md#an-edge-into-an-operator-class).
+
+```php
+$c->input('requests', codec: ChannelCodec::Text)
+    ->keyBy(Wire::prefix(...))
+    ->into(SessionSteps::class)
+    ->into(GatewayReply::class)
+    ->sink('replies', codec: ChannelCodec::Text);
+```
+
 ### Channel payloads
 
 A channel names the format of its payload with `codec:` on `input` and on

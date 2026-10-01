@@ -84,8 +84,10 @@ fn report(inst: &OperatorInstance) {
     };
     crate::runner::emit_operator_completed(
         inst.instance_id.to_string(),
+        None,
         status.to_string(),
         String::new(),
         result,
+        None,
     );
 }

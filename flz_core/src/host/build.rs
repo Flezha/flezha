@@ -254,6 +254,17 @@ fn build_tasklet(
         cells_for_erased: Arc::new(|_| Vec::new()),
         serialize_state: Arc::new(host_serialize_unreachable),
         deserialize_state: Arc::new(host_deserialize_unreachable),
+        // Judged by `check` before the build: a refusal never reaches here.
+        scope: task_decl.operator.as_deref().and_then(|inner| {
+            crate::operator::scope::embed(
+                &decl.factory_id,
+                false,
+                inner,
+                task_decl.input.as_deref(),
+            )
+            .ok()
+            .map(Arc::new)
+        }),
     }
 }
 

@@ -357,7 +357,8 @@ defmodule FlezhaTest.Runner.AddOperatorResponseTest do
                leaf_tasks: nil,
                correction_window_ms: nil,
                compact_after_bytes: nil,
-               persistent: true
+               persistent: true,
+               scopes: %{}
              }
     end
   end
@@ -377,7 +378,8 @@ defmodule FlezhaTest.Runner.AddOperatorResponseTest do
              leaf_tasks: nil,
              correction_window_ms: nil,
              compact_after_bytes: nil,
-             persistent: true
+             persistent: true,
+             scopes: %{}
            }
   end
 
