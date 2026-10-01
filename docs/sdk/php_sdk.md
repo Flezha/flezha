@@ -2,7 +2,7 @@
 
 A poll host over `flz_core`, through `ext-ffi`. The SDK contains no kernel
 code: transport, framing, ordering, per-cell exclusivity, durability,
-retries, the retry→park ladder, timers, credit, routing, bounded runs
+retries, the retry→park ladder, timers, credit, routing, steps runs
 and reconnect all live in the core. This package brings the authoring surface,
 the codec for user types, the concurrency host and idiomatic errors.
 
@@ -80,7 +80,6 @@ use Flezha\Ctx;
 use Flezha\Flezha;
 use Flezha\Graph\Builder;
 use Flezha\Tasklet;
-use Flezha\UnboundedOperator;
 use Flezha\Timer;
 
 #[Task(name: 'session', idleTtlSeconds: 3_600)]
@@ -124,7 +123,7 @@ final class Session extends Tasklet
 }
 
 #[Operator(factoryId: 'sessions')]
-final class SessionOperator extends UnboundedOperator
+final class SessionOperator extends \Flezha\Operator
 {
     public static function channels(Builder $c): void
     {
@@ -157,7 +156,7 @@ implementation therefore cannot disagree.
 - **`$ctx->part($value)` previews the output while `run` is still working.**
   It sends `$value` on the tasklet's own output channel, encoded as
   `$ctx->emit($value)` would encode it, and returns without waiting. It works
-  in `run` and `onTimer`, in an unbounded operator and in a bounded operator's
+  in `run` and `onTimer`, in a flow operator and in a steps operator's
   stage. The operator's listeners receive the parts before the output; a sink
   never does, and a part is never durable or replayed. Parts are numbered from
   0 within each attempt, so a retry starts its preview again. A part that
@@ -189,45 +188,64 @@ Everything a type system would have caught is refused at registration, naming
 the class, the handler and the defect: the same set, in the same vocabulary, as
 the Rust builder's compile-time refusals.
 
-### What each kind takes
+### Class settings
 
-A class extending `BoundedOperator` carries its driver settings in
-`#[Bounded operator]`: the loop mode, the rollback mode, a maximum duration, a wake
-deadline and `syncDurability: true`, the one spelling of synchronous
-durability. Retry is the edge's for both kinds: `retryMax` and
-`retryBackoffMs` on the channel that feeds a tasklet, three attempts from a
-50 ms base when neither is written, and `retryMax(1)` fails fast.
+`#[Operator]` takes the class settings beside the factory id, each written as
+the settings tree's own data, with the branch as an array's one key:
 
-A setting of one kind written on the other is refused by name, never dropped.
-The builder's `effectivelyOnce()`, checkpoint calls and `correctionWindow()`
-reach the core from a bounded operator too, which refuses them as
-`topology.effectively_once_on_bounded`, `topology.checkpoint_on_bounded` and
-`topology.correction_window_on_bounded` when the runner starts. `#[Bounded operator]` on a class
-extending `UnboundedOperator` is refused at `registerFactory`, naming the
-attribute and the class, and as `topology.sync_durability_on_unbounded` when it sets
-`syncDurability: true`.
+```php
+#[Operator(
+    factoryId: 'orders',
+    run: ['steps' => ['each' => 'per_input', 'on_failure' => 'keep_progress']],
+    durable: ['local' => ['sleep_after' => 10_000]],
+    maxDurationMs: 600_000,
+)]
+final class Orders extends \Flezha\Operator
+```
 
-`#[Operator]` carries the two settings of both kinds: `persistent` (default
-`true`) and `sleepWhenIdle`, which defaults to `persistent` on a bounded operator and
-to `false` on an unbounded operator. `sleepWhenIdle: true` with `persistent: false` is
-refused as `topology.sleep_without_persistence` when the runner starts.
+- `run` is `'flow'` (the default) or `'steps'`, bare or with its members.
+  `steps` takes `each` (`'once'`, the default, `'per_input'` or `'chained'`)
+  and `on_failure` (`'undo_all'`, the default, or `'keep_progress'`).
+- A flow takes `exactly`: `'at_least_once'` (the default),
+  `'effectively_once'`, or `['effectively_once' => [...]]` with `ack`
+  (`'per_input'`, `'checkpoint'`, or `['checkpoint' => ['every' => ...,
+  'max_delay_ms' => ..., 'outputs' => 'at_checkpoint']]`), `correction_ms`
+  and `beyond_window`.
+- `durable` is `false`, `'local'` (the default) or `'remote'`, and
+  `['local' => ['sleep_after' => ...]]` or `['remote' => [...]]` with
+  milliseconds or `false`. A kept instance sleeps after six idle hours by
+  default.
+- `maxDurationMs` stops an instance that long after it starts; `description`
+  is free text.
 
-A bounded tasklet registers timers as an unbounded tasklet does, and a firing
-runs as a pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-bounded-operator));
+The core judges the tree when the runner starts: a setting under a parent that
+does not carry it is `topology.unknown_field`, naming the setting and the
+parent, and a value outside its choice is `topology.invalid_setting`. An
+attribute argument is a constant expression, so a tree the environment chooses
+is a constant the program defines before it registers the class.
+
+The attribute and the base share the name `Operator`: a file that imports
+`Flezha\Attribute\Operator` writes the base as `\Flezha\Operator`.
+
+Retry is the edge's for both runs: `retryMax` and `retryBackoffMs` on the
+channel that feeds a tasklet, three attempts from a 50 ms base when neither is
+written, and `retryMax(1)` fails fast.
+
+A steps tasklet registers timers as a flow tasklet does, and a firing
+runs as a pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-steps-operator));
 only inside a `compensate` hook do `timerAfter`, `timerAtEventTime` and
 `cancelTimer` throw naming `runtime.timers_unavailable`.
 
 ### The short form
 
 An operator class that defines its one tasklet's `run` instead of
-`channels()` is a whole operator: one class, no tasklet class beside it. The
-kind is the class it extends, and `#[Operator]` names the channels around that
-tasklet: `sink` is the plugin sink its output reaches, `input` the entry
+`channels()` is a whole operator: one class, no tasklet class beside it.
+`#[Operator]` names the channels around that tasklet: `sink` is the plugin sink its output reaches, `input` the entry
 channel, and `codec` the entry codec the builder's `input` takes.
 
 ```php
 #[Operator(factoryId: 'upcase', sink: 'out', codec: ChannelCodec::Text)]
-final class Upcase extends UnboundedOperator
+final class Upcase extends \Flezha\Operator
 {
     public function run(mixed $input, Ctx $ctx): void
     {
@@ -235,8 +253,8 @@ final class Upcase extends UnboundedOperator
     }
 }
 
-#[Operator(factoryId: 'place', sink: 'placed', input: 'order', codec: ChannelCodec::Text)]
-final class Place extends BoundedOperator
+#[Operator(factoryId: 'place', run: 'steps', sink: 'placed', input: 'order', codec: ChannelCodec::Text)]
+final class Place extends \Flezha\Operator
 {
     public function run(mixed $input, Ctx $ctx): void
     {
@@ -253,21 +271,25 @@ Flezha::createRunner('default')
 The generated operator is the one you would have written by hand with that
 single tasklet: an entry channel named `input` (or the `input` argument's
 value) decoded by `codec`, the tasklet, a plugin sink named by `sink`, a
-factory id equal to `factoryId`, and every class-level setting at its default.
+factory id equal to `factoryId`, and the class settings it writes, as the
+full form takes them.
 The tasklet is named `factoryId` verbatim, so the full form that wires a
 tasklet of that name keeps every cell where it was. It runs the class's
 `run` and takes whichever hooks the class defines (`initState`, `applyChange`, ...),
-and a `#[Task]` on the class carries its settings, all but `name`. A bounded operator
-short form is a `once` bounded operator, run once over its first message:
+and a `#[Task]` on the class carries its settings, all but `name`. A steps operator
+short form is a `once` steps operator, run once over its first message:
 `flz operator start --text '<payload>'`, or a start followed by
 `flz operator send`; a second message to a `once` instance is accepted and
-never read. `#[Bounded(loopMode: ...)]` beside `#[Operator]` sets its loop
-mode, the one class-level setting a short form takes:
+never read. With `each` written it loops, still one class:
 
 ```php
-#[Operator(factoryId: 'chat', sink: 'replies', codec: ChannelCodec::Text)]
-#[Bounded(loopMode: LoopMode::PerInput)]
-final class Chat extends BoundedOperator
+#[Operator(
+    factoryId: 'chat',
+    run: ['steps' => ['each' => 'per_input']],
+    sink: 'replies',
+    codec: ChannelCodec::Text,
+)]
+final class Chat extends \Flezha\Operator
 {
     public function run(mixed $input, Ctx $ctx): void
     {
@@ -282,7 +304,7 @@ state needs:
 
 ```php
 #[Operator(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]
-final class Counter extends UnboundedOperator
+final class Counter extends \Flezha\Operator
 {
     public function initState(?string $cellKey): mixed
     {
@@ -302,19 +324,15 @@ final class Counter extends UnboundedOperator
 ```
 
 Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
-edge, a retry ladder, the effectively-once tier, a correction window, and every
-class-level setting but a bounded operator's loop mode. A short form writing another
-one, `persistent: false`, `sleepWhenIdle` or a `#[Bounded operator]` argument other
-than `loopMode`, is refused at `registerFactory` naming the setting and the
-full form.
+edge or a retry ladder.
 
 The factory id is always written: it is an address a user types, and a
 class rename must not move it, so a class with no `#[Operator]` is refused as
 any operator is. `registerFactory`, where this SDK places every refusal,
 refuses a class defining both `run` and `channels()` naming
 `topology.short_form_with_topology`, and one defining neither naming both. A second
-operator of either kind under a factory id the runner holds is refused naming
-`topology.duplicate_factory_id`. `#[Task]` takes no `kind`, `sink`, `input` or `codec`,
+operator, flow or steps, under a factory id the runner holds is refused naming
+`topology.duplicate_factory_id`. `#[Task]` takes no `run`, `durable`, `sink`, `input` or `codec`,
 and a tasklet carrying one is refused naming `#[Operator]`. `#[Task]` on a
 class defining `channels()` is refused too: a full form's tasklet settings go
 on its tasklet classes. A hook a short form defines is held to the signature
@@ -691,7 +709,7 @@ both rules against the parsed source rather than the prose.
 The manifest at `test/apps/php_runner/conformance.json` defers nothing: every
 capability is carried with the reference's fixtures, the persistence, schema
 evolution and effectively-once set in `test/apps/php_runner/fixtures_state.php`,
-the bounded operator set in `fixtures_bounded.php` and `fixtures_bounded_loop.php`, and
+the steps operator set in `fixtures_steps.php` and `fixtures_steps_loop.php`, and
 the rest in `fixtures.php` and `fixtures_probe.php`.
 
 ## Diagnostics

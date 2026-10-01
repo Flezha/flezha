@@ -2,7 +2,7 @@ defmodule FlezhaTest.System.EffectivelyOnceCheckpointE2ETest do
   @moduledoc """
   End-to-end proof for `effectively-once-checkpoint-granularity` against a live
   Rust runner: a source drives `checkpoint_store` (declared
-  `effectively_once()` + `checkpoint_ack()`), whose keyed outputs land on a
+  `effectively_once()` + `ack_checkpoint()`), whose keyed outputs land on a
   conforming changelog sink. Every input folds into the Cell's state, but
   only a `commit:` input closes the interval — so the durable consumed-offset
   stands still for a whole interval while the outputs of that interval are
@@ -65,7 +65,7 @@ defmodule FlezhaTest.System.EffectivelyOnceCheckpointE2ETest do
     assert wait_until(fn -> ClassRegistry.effectively_once?(operator_id) end, 30_000),
            "the tier declaration never reached the controller"
 
-    assert wait_until(fn -> ClassRegistry.checkpoint_ack?(operator_id) end, 30_000),
+    assert wait_until(fn -> ClassRegistry.ack_checkpoint?(operator_id) end, 30_000),
            "the checkpoint ack-granularity declaration never reached the controller"
 
     # --- Phase 1: an open interval acknowledges nothing --------------------

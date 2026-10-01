@@ -320,8 +320,8 @@ defmodule Flezha.Runner.StreamChannel do
     {:noreply, mark_seen(state)}
   end
 
-  # Bounded-operator saga compensation markers (SDK → controller). A durable
-  # bounded operator records each tasklet's forward completion (`compensation_intent`)
+  # Steps-operator saga compensation markers (SDK → controller). A durable
+  # steps operator records each tasklet's forward completion (`compensation_intent`)
   # and each compensation's completion (`compensation_done`); persisted per
   # Cell and shipped back on the next `RestoreInitState` so a respawn finishes
   # the remaining hooks and skips already-undone ones. Fire-and-forget.

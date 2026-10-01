@@ -1,6 +1,8 @@
 # Every key of the `HostClassDecl` JSON the SDKs send the poll core, one per
-# line, `section.key` for the nested declarations. Six readers pin it: a
-# `flz_core` test serialises a fully populated declaration and asserts its key
+# line, `section.key` for the nested declarations. `class.run` and
+# `class.durable` carry the settings tree as its JSON (`flz_core`'s
+# `operator::settings`), which the core reads and refuses by the member's
+# name. Six readers pin it: a `flz_core` test serialises a fully populated declaration and asserts its key
 # set is exactly this; `HostClassDeclarationTest` asserts the Java builder emits
 # every key here; `sdk/node/test/decl-keys.test.mjs` asserts the same of the
 # Node builder; `sdk/ruby/test/decl_keys_test.rb` of the Ruby builder;
@@ -13,23 +15,16 @@
 # Adding a key: teach the core, add it here, teach the Rust, Java, Node, Ruby,
 # PHP and Python builders — one change, every SDK (docs/architecture/runner.md).
 class.factory_id
-class.persistent
-class.sleep_when_idle
+class.description
+class.max_duration_ms
+class.run
+class.durable
 class.sdk_lang
 class.sdk_version
 class.change_format_id
-class.effectively_once
-class.checkpoint_ack
-class.checkpoint_every
-class.checkpoint_outputs
-class.checkpoint_max_delay_ms
-class.correction_window_ms
-class.beyond_window_policy
 class.compact_after_bytes
-class.sync_durability
 class.channels
 class.tasklets
-class.bounded
 channel.name
 channel.kind
 channel.producer
@@ -50,6 +45,3 @@ tasklet.mailbox_capacity
 tasklet.change_is_nochange
 tasklet.schema_version
 tasklet.min_readable_schema_version
-bounded.loop_mode
-bounded.rollback_mode
-bounded.max_duration_ms

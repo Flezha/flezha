@@ -3,9 +3,8 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
   End-to-end SIGTERM verification for `ship-fresh-state-on-sdk-shutdown`.
 
   Spins up a real runner subprocess for the run's selected runtime, registers
-  an operator with `snapshot_interval: 0` (so the controller has no periodic capture and
-  the only path to populate `Overwatch.state.snapshot` is the SDK's
-  shutdown notification), then sends SIGTERM to the OS pid and asserts
+  an operator (the controller takes no periodic snapshot, so the only path
+  to populate `Overwatch.state.snapshot` is the SDK's shutdown notification), then sends SIGTERM to the OS pid and asserts
   the controller's snapshot is populated within the 2 s ack window.
 
   Tagged `:system` so it stays out of the default `mix test` budget —
@@ -59,13 +58,10 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
     builder = %Builder{
       id: operator_id,
       factory_id: @factory,
-      init_values: %{},
-      # Disabled-snapshot — flezha_market-shape. The only path for
-      # `state.snapshot` to become non-nil is the SDK's
-      # `RunnerShutdownNotification`. If the notification path were
-      # broken, the assertion at the bottom would still see nil and
-      # fail loudly.
-      opts: [snapshot_interval: 0]
+      # The only path for `state.snapshot` to become non-nil is the SDK's
+      # `RunnerShutdownNotification`. If the notification path were broken,
+      # the assertion at the bottom would still see nil and fail loudly.
+      init_values: %{}
     }
 
     assert {:ok, info} = OperatorManager.start_operator(@namespace, builder)
@@ -75,7 +71,7 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
     pre_state = :sys.get_state(overwatch_pid)
 
     assert pre_state.snapshot == nil,
-           "precondition: snapshot must be nil before SIGTERM (snapshot_interval=0)"
+           "precondition: snapshot must be nil before SIGTERM"
 
     # Drive a few inputs so the SDK's per-operator state has something
     # distinguishable from the empty initial state. The `store_input`

@@ -154,7 +154,7 @@ defmodule Flezha.Service.ListenerTest do
     assert_receive {:detached, "ns", "op", ^id}
   end
 
-  describe "a bounded backlog" do
+  describe "a steps backlog" do
     setup do
       Application.put_env(:flezha, :listener_pending_frames, 8)
     end

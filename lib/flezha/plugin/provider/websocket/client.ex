@@ -278,7 +278,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
        ) do
     # Effectively-once tier ingest is confirming: awaiting the journal ack means
     # a zero-credit park blocks this connection process, so the socket stops
-    # being read (TCP back-pressure) instead of the input log growing unbounded.
+    # being read (TCP back-pressure) instead of the input log growing flow.
     mode = if Map.get(state, :sync_ingest?, false), do: :confirming, else: :fire_and_forget
     _ = Host.inject(overwatcher, message, metadata, mode)
 

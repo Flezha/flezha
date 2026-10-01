@@ -41,7 +41,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
     "lib/flezha/convergence/snapshot.ex" => "publishes the record and documents its states",
     # facts in another sense
     "lib/flezha/runner/control_channel/requests.ex" =>
-      "`:failed`/`:parked` are bounded EVENT segments",
+      "`:failed`/`:parked` are steps EVENT segments",
     "lib/flezha/plugin/provider/kafka/producer_worker.ex" =>
       "`:failed` is an event segment; `:unknown` means the last produce reason was not recorded",
     "lib/flezha/plugin/provider/http_poll/poll_worker.ex" =>

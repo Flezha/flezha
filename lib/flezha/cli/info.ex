@@ -8,6 +8,7 @@ defmodule Flezha.Service.Cli.Info do
   alias Flezha.Convergence.Snapshot
   alias Flezha.Convergence.Verdict
   alias Flezha.Operator.Calls
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.Partition
   alias Flezha.Plugin.Extension.Table.Health, as: TableHealth
   alias Flezha.SDK.KeyGroup
@@ -30,7 +31,7 @@ defmodule Flezha.Service.Cli.Info do
         _ -> []
       end
 
-    # A finished bounded operator is gone from the live registry but its
+    # A finished operator is gone from the live registry but its
     # completion record is retained within the window — surface it too.
     finished = finished_operators(namespace_display, live)
 
@@ -64,7 +65,8 @@ defmodule Flezha.Service.Cli.Info do
               id: operator_id,
               runner_id: state.runner_id,
               namespace: state.namespace,
-              kind: operator_kind(state),
+              run: operator_run(state),
+              durable: durable_level(operator_id, state),
               phase: operator_phase(namespace_display, operator_id, state),
               health: Snapshot.operator_health(namespace_display, operator_id),
               uptime_ms: operator_uptime_ms(state),
@@ -181,7 +183,7 @@ defmodule Flezha.Service.Cli.Info do
     IO.puts("")
   end
 
-  # Finished bounded operators with a completion record still inside the
+  # Finished operators with a completion record still inside the
   # retention window, keyed by the operator_class dir (== operator_id).
   defp finished_operators(namespace, live_ids) do
     now = System.system_time(:second)
@@ -207,7 +209,7 @@ defmodule Flezha.Service.Cli.Info do
     %{
       id: operator_id,
       namespace: Map.get(rec, :namespace),
-      kind: "bounded",
+      run: Map.get(rec, :run),
       phase: "finished",
       status: Map.get(rec, :status),
       error: nil_if_empty(Map.get(rec, :error)),
@@ -218,7 +220,7 @@ defmodule Flezha.Service.Cli.Info do
 
   defp display_finished_operator(operator_id, rec) do
     IO.puts("Operator: #{operator_id}")
-    IO.puts("  Kind: bounded")
+    IO.puts("  Run: #{Map.get(rec, :run)}")
     IO.puts("  Phase: finished")
     IO.puts("  Status: #{Map.get(rec, :status)}")
 
@@ -237,9 +239,9 @@ defmodule Flezha.Service.Cli.Info do
   defp nil_if_empty(s) when is_binary(s) and byte_size(s) > 0, do: s
   defp nil_if_empty(_), do: nil
 
-  # The turns a bounded session dead-lettered, from its journal; `nil` for any
+  # The turns a steps session dead-lettered, from its journal; `nil` for any
   # other operator and for a session none of whose turns failed.
-  defp failed_turns(operator_id, %{builder: %{kind: :bounded}}),
+  defp failed_turns(operator_id, %{builder: %{run: :steps}}),
     do: TaskJournal.failed_turns(operator_id)
 
   defp failed_turns(_operator_id, _state), do: nil
@@ -247,8 +249,54 @@ defmodule Flezha.Service.Cli.Info do
   defp failed_turns_json(nil), do: nil
   defp failed_turns_json({count, last}), do: %{count: count, last_iteration: last}
 
-  defp operator_kind(%{builder: %{kind: kind}}) when is_atom(kind), do: Atom.to_string(kind)
-  defp operator_kind(_), do: "unbounded"
+  defp operator_run(%{builder: %{run: :steps}}), do: "steps"
+  defp operator_run(_state), do: "flow"
+
+  # `steps (each: per_input, on_failure: keep_progress)`, or `flow` with its
+  # duplicate rule when it is not the default.
+  defp run_line(%{builder: %{run: :steps}, settings: %{each: each, on_failure: fail}})
+       when not is_nil(each),
+       do: "steps (each: #{each}, on_failure: #{fail || :undo_all})"
+
+  defp run_line(%{effectively_once: true}), do: "flow (exactly: effectively_once)"
+  defp run_line(state), do: operator_run(state)
+
+  # The class an instance's durable records live under.
+  defp class_of(operator_id, state),
+    do:
+      state
+      |> Map.get(:builder, %{})
+      |> Map.get(:opts, [])
+      |> Keyword.get(:operator_class, operator_id)
+
+  # Where the class keeps its work, from what its runner announced.
+  defp durable_level(operator_id, state) do
+    class = class_of(operator_id, state)
+
+    cond do
+      ClassRegistry.remote?(class) -> "remote"
+      ClassRegistry.persistent?(class) -> "local"
+      true -> "memory"
+    end
+  end
+
+  # `local (sleep_after: 6h)`; a class kept in memory has nothing to sleep on.
+  defp durable_line(operator_id, state) do
+    case durable_level(operator_id, state) do
+      "memory" ->
+        "false"
+
+      level ->
+        sleep = ClassRegistry.sleep_after_ms(class_of(operator_id, state))
+        "#{level} (sleep_after: #{format_interval(sleep)})"
+    end
+  end
+
+  defp format_interval(nil), do: "false"
+  defp format_interval(ms) when rem(ms, 3_600_000) == 0, do: "#{div(ms, 3_600_000)}h"
+  defp format_interval(ms) when rem(ms, 60_000) == 0, do: "#{div(ms, 60_000)}m"
+  defp format_interval(ms) when rem(ms, 1_000) == 0, do: "#{div(ms, 1_000)}s"
+  defp format_interval(ms), do: "#{ms}ms"
 
   # The operator's own lifecycle state, read from the verdict record the
   # convergence loop published for it — the same field `flz operator list`,
@@ -316,7 +364,8 @@ defmodule Flezha.Service.Cli.Info do
 
   defp display_operator_info(operator_id, state, namespace) do
     IO.puts("Operator: #{operator_id}")
-    IO.puts("  Kind: #{operator_kind(state)}")
+    IO.puts("  Run: #{run_line(state)}")
+    IO.puts("  Durable: #{durable_line(operator_id, state)}")
     IO.puts("  Phase: #{operator_phase(namespace, operator_id, state)}")
     IO.puts("  Health: #{Snapshot.operator_health(namespace, operator_id)}")
 

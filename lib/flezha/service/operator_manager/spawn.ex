@@ -1,6 +1,6 @@
 defmodule Flezha.Service.OperatorManager.Spawn do
   @moduledoc """
-  Spawn-or-deliver: the controller half of a tasklet's `ctx.spawn_bounded`
+  Spawn-or-deliver: the controller half of a tasklet's `ctx.spawn_steps`
   and of an operator's call, and the one path either takes to start or reach
   an instance by id.
 
@@ -25,14 +25,14 @@ defmodule Flezha.Service.OperatorManager.Spawn do
   @type outcome :: :spawned | :delivered | {:refused, Flezha.Error.t()} | {:retry, term()}
 
   @typedoc """
-  What a call adds to a request: the kinds it may start (`ctx.spawn_bounded`
-  starts bounded only), whether an absent id is started or refused
+  What a call adds to a request: the runs it may start (`ctx.spawn_steps`
+  starts steps only), whether an absent id is started or refused
   `operator.not_found`, the metadata the seed and the delivery carry, and the
   operator call itself, which the callee's `:call` entry point reads its token
   from and which never rides metadata.
   """
   @type opts :: [
-          kinds: [:bounded | :unbounded],
+          runs: [:steps | :flow],
           if_absent: :spawn | :not_found,
           metadata: map(),
           call: map() | nil
@@ -74,7 +74,7 @@ defmodule Flezha.Service.OperatorManager.Spawn do
           payload: payload,
           if_running: repeat || if_running,
           identity: identity,
-          kinds: Keyword.get(opts, :kinds, [:bounded]),
+          runs: Keyword.get(opts, :runs, [:steps]),
           if_absent: Keyword.get(opts, :if_absent, :spawn),
           metadata: Keyword.get(opts, :metadata, %{}),
           call: Keyword.get(opts, :call)
@@ -144,31 +144,31 @@ defmodule Flezha.Service.OperatorManager.Spawn do
     end
   end
 
-  # A generated id always starts a bounded instance: nothing would ever end an
-  # unbounded one nobody can name.
+  # A generated id always starts a steps instance: a flow one nobody can name
+  # would be one nothing outside could stop.
   defp spawn_absent(namespace, instance_id, factory_id, request, caller_context) do
-    case OperatorManager.factory_kind(namespace, factory_id) do
+    case OperatorManager.factory_run(namespace, factory_id) do
       {:error, :no_such_factory} ->
         {refused({:factory_unknown, namespace, factory_id}), instance_id}
 
-      {:ok, :unbounded} when instance_id != "" ->
-        if :unbounded in request.kinds,
+      {:ok, :flow} when instance_id != "" ->
+        if :flow in request.runs,
           do:
-            spawn_fresh(namespace, instance_id, factory_id, :unbounded, request, caller_context),
-          else: {not_bounded(namespace, factory_id), instance_id}
+            spawn_fresh(namespace, instance_id, factory_id, :flow, request, caller_context),
+          else: {not_steps(namespace, factory_id), instance_id}
 
-      {:ok, :unbounded} ->
-        {not_bounded(namespace, factory_id), instance_id}
+      {:ok, :flow} ->
+        {not_steps(namespace, factory_id), instance_id}
 
-      _bounded_or_refused ->
-        spawn_fresh(namespace, instance_id, factory_id, :bounded, request, caller_context)
+      _steps_or_refused ->
+        spawn_fresh(namespace, instance_id, factory_id, :steps, request, caller_context)
     end
   end
 
-  defp not_bounded(namespace, factory_id),
-    do: refused({:factory_kind_mismatch, :bounded, namespace, factory_id, :unbounded})
+  defp not_steps(namespace, factory_id),
+    do: refused({:factory_run_mismatch, :steps, namespace, factory_id, :flow})
 
-  defp spawn_fresh(namespace, instance_id, factory_id, kind, request, caller_context) do
+  defp spawn_fresh(namespace, instance_id, factory_id, run, request, caller_context) do
     requested = if instance_id == "", do: nil, else: instance_id
     {:ok, {message, metadata}} = OperatorBuilder.seed_input(request.payload, nil)
     seed = {message, stamped(Map.merge(metadata, request.metadata), request)}
@@ -182,7 +182,7 @@ defmodule Flezha.Service.OperatorManager.Spawn do
       |> OperatorManager.start_operator(%OperatorBuilder{
         id: requested,
         factory_id: factory_id,
-        kind: kind,
+        run: run,
         init_values: %{},
         opts: opts
       })

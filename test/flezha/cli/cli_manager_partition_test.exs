@@ -399,7 +399,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
       refute out =~ "Sealed"
     end
 
-    test "a bounded group's rescale names the members it sealed" do
+    test "a steps group's rescale names the members it sealed" do
       stub(PartitionGroup, :rescale, fn _ns, "orders", 3, _opts ->
         {:ok,
          %{

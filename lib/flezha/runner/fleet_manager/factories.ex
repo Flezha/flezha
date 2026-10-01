@@ -1,14 +1,16 @@
 defmodule Flezha.Runner.FleetManager.Factories do
   @moduledoc """
-  The per-namespace factory table, and the SDK language and kind each factory
+  The per-namespace factory table, and the SDK language and run each factory
   is established at.
 
-  A factory is advertised by one or more runners; its language and its kind are
-  each established by the first advertisement that names one and never change
-  afterwards. Invariant: a runner advertising a factory at a language or kind
-  other than the established one is not a placement candidate for it — durable
-  State/Change bodies are per-SDK and are never decoded across languages, and
-  every instance of a factory is of the one kind its class declares.
+  A factory is advertised by one or more runners; its language, its run
+  (`flow` or `steps`) and a steps run's shape (`each`, `on_failure`) are each
+  established by the first advertisement that names one and never change
+  afterwards. Invariant: a runner advertising a
+  factory at a language or run other than the established one is not a
+  placement candidate for it — durable State/Change bodies are per-SDK and are
+  never decoded across languages, and every instance of a factory runs the one
+  way its class declares.
   """
 
   alias Flezha.Operator.ClassRegistry
@@ -20,7 +22,7 @@ defmodule Flezha.Runner.FleetManager.Factories do
   # The value of each established attribute that says nothing: an
   # advertisement carrying it never places, since the runner most likely to be
   # untagged is the one most likely to be mismatched.
-  @unspecified %{sdk_lang: 0, kind: nil}
+  @unspecified %{sdk_lang: 0, run: nil, shape: nil}
 
   def store_factories(state, namespace, runner_id, factories) do
     ns_factories = Map.get(state.namespace_factories, namespace, %{})
@@ -30,10 +32,15 @@ defmodule Flezha.Runner.FleetManager.Factories do
         factory_id = factory["id"]
 
         existing = factory_entry(Map.get(acc, factory_id))
-        advert = %{sdk_lang: advertised_lang(factory), kind: advertised_kind(factory)}
+
+        advert = %{
+          sdk_lang: advertised_lang(factory),
+          run: advertised_run(namespace, runner_id, factory),
+          shape: advertised_shape(factory)
+        }
 
         # Stored even when it conflicts, so user tooling can see the
-        # runner that is advertising the wrong language or kind;
+        # runner that is advertising the wrong language or run;
         # `placeable_runners/3` is what refuses it.
         Enum.each(advert, fn {attribute, value} ->
           establish(namespace, runner_id, factory_id, attribute, value)
@@ -77,7 +84,7 @@ defmodule Flezha.Runner.FleetManager.Factories do
   end
 
   # The one constructor for a stored factory entry: its description and, per
-  # advertising runner, what that runner announced (`%{sdk_lang:, kind:}`).
+  # advertising runner, what that runner announced (`%{sdk_lang:, run:}`).
   # Total on an older entry: a `KeyError` here would take the whole
   # FleetManager down over a shape question, and every placement lookup with it.
   def factory_entry(nil), do: %{description: nil, adverts: %{}}
@@ -97,16 +104,39 @@ defmodule Flezha.Runner.FleetManager.Factories do
     end
   end
 
-  # The kind a factory entry advertises. Absent, empty or unknown stays
-  # unspecified and is refused at the placement filter, as a missing language
-  # is; only a kind this controller knows becomes an atom.
-  defp advertised_kind(factory) do
-    case factory["kind"] do
-      "unbounded" -> :unbounded
-      "bounded" -> :bounded
-      _ -> @unspecified.kind
+  # The run a factory entry advertises. Absent, empty or anything but `flow`
+  # and `steps` stays unspecified and is refused at the placement filter, as a
+  # missing language is; a value that says something else is logged by name,
+  # so a runner announcing anything else is visible.
+  defp advertised_run(namespace, runner_id, factory) do
+    case factory["run"] do
+      "flow" ->
+        :flow
+
+      "steps" ->
+        :steps
+
+      unknown when unknown in [nil, ""] ->
+        @unspecified.run
+
+      unknown ->
+        Logger.warning(
+          "[fleet_manager] runner #{runner_id} on #{namespace} announces factory " <>
+            "#{factory["id"]} with run #{inspect(unknown)}, which is neither flow nor " <>
+            "steps; it will not be a placement candidate for it"
+        )
+
+        @unspecified.run
     end
   end
+
+  # A steps run's loop shape and failure mode, as one value a run conflict can
+  # name; nothing for a flow, or for a steps entry that names neither.
+  defp advertised_shape(%{"run" => "steps", "each" => each, "on_failure" => on_failure})
+       when each not in [nil, ""] and on_failure not in [nil, ""],
+       do: "steps (each: #{each}, on_failure: #{on_failure})"
+
+  defp advertised_shape(_factory), do: @unspecified.shape
 
   # An advertisement establishes the factory's `attribute` if nothing has yet,
   # and is reported when it disagrees. The one place either is RECORDED, so
@@ -151,12 +181,12 @@ defmodule Flezha.Runner.FleetManager.Factories do
         meta
       )
 
-  defp report_conflict(:kind, meta),
+  defp report_conflict(attribute, meta) when attribute in [:run, :shape],
     do:
       conflict(
-        :factory_kind_conflict,
-        "as kind",
-        "every instance of a factory is of the one kind its class declares",
+        :factory_run_conflict,
+        "to run as",
+        "every instance of a factory runs the one way its class declares",
         meta
       )
 
@@ -237,7 +267,7 @@ defmodule Flezha.Runner.FleetManager.Factories do
   end
 
   # ACTIVE runners advertising `factory_id` **at that factory's established SDK
-  # language and kind** — the one filter every placement path reads (initial
+  # language and run** — the one filter every placement path reads (initial
   # start, the convergence rebind, the reroute off a dead runner), so a future
   # caller inherits the guard rather than having to remember it.
   #
@@ -260,7 +290,8 @@ defmodule Flezha.Runner.FleetManager.Factories do
   def placement(state, namespace, factory_id) do
     {info, candidates} = advertising_runners(state, namespace, factory_id)
 
-    Enum.reduce_while([:sdk_lang, :kind], {:ok, candidates}, fn attribute, {:ok, runners} ->
+    Enum.reduce_while([:sdk_lang, :run, :shape], {:ok, candidates}, fn attribute,
+                                                                       {:ok, runners} ->
       verdict = established(namespace, factory_id, attribute, info, candidates)
       narrowed = narrow(runners, info, attribute, verdict)
 
@@ -273,6 +304,8 @@ defmodule Flezha.Runner.FleetManager.Factories do
   defp narrow(runners, info, attribute, {:ok, established}),
     do: MapSet.filter(runners, &(get_in(info.adverts, [&1, attribute]) == established))
 
+  # A flow, or a steps run that named no shape, decides nothing about it.
+  defp narrow(runners, _info, :shape, :none), do: runners
   defp narrow(_runners, _info, _attribute, _undecided), do: MapSet.new()
 
   # The factories `runner_id` advertises in `namespace`, at any language or
@@ -291,9 +324,9 @@ defmodule Flezha.Runner.FleetManager.Factories do
   end
 
   # The stored entry and the ACTIVE runners advertising `factory_id` at any
-  # language or kind — what separates "the factory exists in another language"
+  # language or run — what separates "the factory exists in another language"
   # from "no runner has this factory at all". `placeable_runners/3` is this set
-  # narrowed to the established language and kind, so the two never disagree on
+  # narrowed to the established language and run, so the two never disagree on
   # who is even a candidate.
   def advertising_runners(state, namespace, factory_id) do
     active_ids = MapSet.new(Roster.get_runner_ids(state, namespace, :active))

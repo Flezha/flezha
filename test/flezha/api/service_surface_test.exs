@@ -22,7 +22,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
   alias Flezha.Service.Operator
   alias Flezha.Service.PluginManager
   alias Flezha.Service.Schedule
-  alias Flezha.Service.Bounded
+  alias Flezha.Service.Steps
   alias FlezhaTest.Helper.RpcSurface
 
   @published %{
@@ -72,7 +72,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       {:registry, ["default"]},
       {:partition_coverage, [[]]},
       {:partition_groups, [[]]},
-      {:kind_known?, [:unbounded]},
+      {:run_known?, [:flow]},
       {:cell_state, ["default", "rc", "key"]},
       {:overwatch_state, ["default", "rc"]},
       {:start, ["default", %{}]},
@@ -95,7 +95,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       {:parse_cron, ["* * * * *"]},
       {:next_fire, [%{}, "Etc/UTC", ~U[2026-01-01 00:00:00Z]]}
     ],
-    Bounded => [
+    Steps => [
       {:operator_classes, []},
       {:completion, ["instance"]},
       {:completed_retention_hours, ["rc", %{}]},
@@ -200,7 +200,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       assert {:ok, kinds} = Namespace.quota_kinds(context)
       assert is_list(kinds) and kinds != []
 
-      assert {:ok, true} = Operator.kind_known?(:unbounded, context)
+      assert {:ok, true} = Operator.run_known?(:flow, context)
 
       assert {:ok, []} = Operator.partition_groups([], context)
       assert {:ok, _coverage} = Operator.partition_coverage([], context)
@@ -214,10 +214,10 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       assert {:ok, counters} = Controller.liveness_counters(context)
       assert is_map(counters) or is_list(counters)
 
-      assert {:ok, classes} = Bounded.operator_classes(context)
+      assert {:ok, classes} = Steps.operator_classes(context)
       assert is_list(classes)
 
-      assert {:ok, hours} = Bounded.completed_retention_hours("rc", %{}, context)
+      assert {:ok, hours} = Steps.completed_retention_hours("rc", %{}, context)
       assert is_integer(hours) and hours > 0
 
       assert {:ok, cron} = Schedule.parse_cron("* * * * *", context)

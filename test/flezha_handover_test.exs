@@ -10,7 +10,7 @@ defmodule FlezhaTest.Handover do
   alias Flezha.Service.OperatorManager
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Fixtures.OperatorFixture
-  alias FlezhaTest.Helper.BoundedResumeHarness
+  alias FlezhaTest.Helper.StepsResumeHarness
   alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.OperatorTestHelper
@@ -455,7 +455,7 @@ defmodule FlezhaTest.Handover do
 
     # Cleanup reaps the dead runner ref but must NOT tear the hub down while it
     # still holds the 15 registered operators — they stay addressable and
-    # reseat onto the next runner (bounded-operator.md, hub-outlives-runner).
+    # reseat onto the next runner (operator.md, hub-outlives-runner).
     assert HubManager.registered_operators?(namespace)
     assert HubManager.hub_alive?(namespace) === true
   end
@@ -687,8 +687,8 @@ defmodule FlezhaTest.Handover do
     :erpc.call(peer, Application, :put_env, [:flezha, :group_withdraw_grace_ms, 500])
     _local_runner = NodeTestHelper.start_runner(@temp_namespace)
     {_rem, os_pid} = start_remote_runner(peer)
-    collector = spawn_link(fn -> BoundedResumeHarness.collect_loop([]) end)
-    op = start_bounded_on_peer(peer, "keyed_loop_bounded", collector)
+    collector = spawn_link(fn -> StepsResumeHarness.collect_loop([]) end)
+    op = start_steps_on_peer(peer, "keyed_loop_steps", collector)
 
     for _ <- 1..3, do: send_trade(op, "SOL-USD:1")
 
@@ -708,7 +708,7 @@ defmodule FlezhaTest.Handover do
            ),
            "the message sent after the move did not commit one iteration: " <>
              inspect(
-               {committed_iters(node(), op), BoundedResumeHarness.collected(collector),
+               {committed_iters(node(), op), StepsResumeHarness.collected(collector),
                 OperatorManager.get_overwatch_state(@temp_namespace, op)
                 |> then(fn {:ok, s} ->
                   Map.take(s, [
@@ -717,7 +717,7 @@ defmodule FlezhaTest.Handover do
                     :parked,
                     :init_error,
                     :migrate_task,
-                    :durable_bounded
+                    :durable_steps
                   ])
                 end), Flezha.State.InputLog.tail(op),
                 FleetManager.active_runners(@temp_namespace)},
@@ -730,7 +730,7 @@ defmodule FlezhaTest.Handover do
     # under the same identity, which a sink absorbs; no iteration ran twice.
     emitted =
       collector
-      |> BoundedResumeHarness.collected_with_meta()
+      |> StepsResumeHarness.collected_with_meta()
       |> Enum.uniq_by(fn {_payload, md} -> {md["flz.cell"], md["flz.seq"], md["flz.epoch"]} end)
       |> Enum.map(&elem(&1, 0))
 
@@ -739,7 +739,7 @@ defmodule FlezhaTest.Handover do
     NodeTestHelper.stop_peer_node(peer_pid, peer)
   end
 
-  defp start_bounded_on_peer(peer, factory_id, collector) do
+  defp start_steps_on_peer(peer, factory_id, collector) do
     NodeTestHelper.wait_until(
       fn -> peer in HubManager.get_hub_nodes(@temp_namespace, false) end,
       10_000
@@ -751,9 +751,9 @@ defmodule FlezhaTest.Handover do
       builder = %Builder{
         id: id,
         factory_id: factory_id,
-        kind: :bounded,
+        run: :steps,
         init_values: %{},
-        opts: [plugins: [BoundedResumeHarness.forward_sink("out", collector)]]
+        opts: [plugins: [StepsResumeHarness.forward_sink("out", collector)]]
       }
 
       {:ok, _info} = OperatorManager.start_operator(@temp_namespace, builder)
@@ -761,7 +761,7 @@ defmodule FlezhaTest.Handover do
       if overwatch_node(id) == peer,
         do: id,
         else: OperatorManager.request_stop(@temp_namespace, id) && nil
-    end) || flunk("no bounded operator landed on #{inspect(peer)} in 20 attempts")
+    end) || flunk("no steps operator landed on #{inspect(peer)} in 20 attempts")
   end
 
   defp send_trade(op, text),

@@ -83,7 +83,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   defmodule CounterOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "counter_op"
 
     def channels(c) do
@@ -97,15 +97,15 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   defmodule OptedOutCounterOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "opted_out_counter"
-    def persistence_enabled, do: false
+    def durable, do: false
     defdelegate channels(c), to: CounterOp
   end
 
   defmodule EchoOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "echo_op"
 
     def channels(c) do
@@ -116,7 +116,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   defmodule StaticCounterOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "static_counter"
 
     def channels(c) do
@@ -131,7 +131,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   defmodule DynCounterOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "dyn_counter"
 
     def channels(c) do
@@ -147,7 +147,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   defmodule TwoCountersOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "two_counters"
 
     def channels(c) do
@@ -159,9 +159,9 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   defmodule OptedOutOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "opted_out"
-    def persistence_enabled, do: false
+    def durable, do: false
 
     def channels(c) do
       import Flezha.SDK.Channels
@@ -205,7 +205,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   defmodule KeyedOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "keyed_op"
 
     def channels(c) do
@@ -224,7 +224,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   # the ordinal counts both.
   defmodule MixedSinksOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "mixed_sinks"
 
     def channels(c) do
@@ -246,7 +246,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
   # nothing to fall back on.
   defmodule SingleKeyedOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "single_keyed"
 
     def channels(c) do
@@ -277,7 +277,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   defmodule CappedOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "capped_op"
 
     def channels(c) do
@@ -568,7 +568,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   defmodule EventTimerOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "event_timer_op"
 
     def channels(c) do
@@ -582,7 +582,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   defmodule GatedTimerOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "gated_timer_op"
 
     def channels(c) do
@@ -593,7 +593,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   defmodule PoisonTimerOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "poison_timer_op"
 
     def channels(c) do
@@ -604,7 +604,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   defmodule NoHandlerOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "no_handler_op"
 
     def channels(c) do
@@ -615,7 +615,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   defmodule CancelOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "cancel_op"
 
     def channels(c) do
@@ -626,7 +626,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   defmodule KillableTimerOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "killable_timer_op"
 
     def channels(c) do
@@ -637,7 +637,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   defmodule TtlTimerOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "ttl_timer_op"
 
     def channels(c) do
@@ -653,7 +653,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   defmodule CappedTimersOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "capped_timers_op"
 
     def channels(c) do
@@ -668,7 +668,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   defmodule LogicalClockOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "logical_clock_op"
 
     def channels(c) do
@@ -683,7 +683,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   defmodule EventTimeOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "event_time_op"
 
     def channels(c) do
@@ -698,7 +698,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   defmodule NowOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "now_op"
 
     def channels(c) do
@@ -709,7 +709,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   defmodule TimerOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "timer_op"
 
     def channels(c) do
@@ -735,7 +735,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   defmodule TtlOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "ttl_op"
 
     def channels(c) do
@@ -768,7 +768,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   defmodule GatedTtlOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "gated_ttl_op"
 
     def channels(c) do
@@ -821,7 +821,7 @@ defmodule FlezhaTest.Helper.SdkPersistenceFixtures do
 
   defmodule CounterV2Op do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "counter_v2_op"
 
     def channels(c) do

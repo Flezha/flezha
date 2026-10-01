@@ -50,7 +50,7 @@ defmodule Flezha.Transport.Native do
   """
   def driver_stats(_server_ref), do: :erlang.nif_error(:not_loaded)
 
-  # --- Behaviour callbacks (unbounded tasklets) ---
+  # --- Behaviour callbacks (flow tasklets) ---
 
   @impl true
   def set_active(_stream_ref), do: :erlang.nif_error(:not_loaded)

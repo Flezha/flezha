@@ -1,7 +1,7 @@
 # partitioned-operators Specification
 
 ## Purpose
-Run one logical unbounded Operator across N machines. `--partitions N` starts it
+Run one logical flow Operator across N machines. `--partitions N` starts it
 as N ordinary operator instances, each owning a contiguous range of the 256
 key groups a routing key hashes into; the group is a view derived from the
 members' own rows, never a stored record. Every mis-routing failure mode is
@@ -14,12 +14,12 @@ quietly missing data.
 `flz operator start <factory> --id <id> --partitions N` (N ≥ 2) SHALL start N ordinary operator
 instances named `<id>#p0` … `<id>#p{N-1}`, each a full operator of the factory's kind: own
 Overwatch, own ProcessHub child and registry row, own runner binding, own input log, own state
-tree, own plugins, own DLQ identity, and, for a bounded operator, own journal and own pass sheet. Each
+tree, own plugins, own DLQ identity, and, for a steps operator, own journal and own pass sheet. Each
 member's durable cspec opts SHALL carry `group` (the base id), `partition`, `partitions`, and its
 owned key-group range. There SHALL be no stored group record: every group-level view SHALL be
 derived from member rows at read time. `partitions: 1` (the default) SHALL be byte-identical to
 an unpartitioned start. The group SHALL be started, converged, read and rescaled through the one
-group module for either kind; a bounded kind SHALL add no group mechanism of its own. A
+group module for either kind; a steps run SHALL add no group mechanism of its own. A
 partitioned start SHALL NOT carry a first message (`--text`): a message names one instance, and a
 group's message reaches its member by key; such a start SHALL be refused before any member
 starts, naming the keyed forward and the member id as the ways in.
@@ -33,11 +33,11 @@ base as the started id. A generated base is never refused on the id budget.
 - **WHEN** `flz operator start <factory> --id ohlc --partitions 3` succeeds
 - **THEN** registry rows `ohlc#p0`, `ohlc#p1`, `ohlc#p2` exist, each with cspec opts `group: "ohlc"`, its `partition`, `partitions: 3`, and a key-group range, and each member is bound and running as an ordinary operator
 
-#### Scenario: A per-input bounded starts as N instances
+#### Scenario: A per-input steps starts as N instances
 
 - **WHEN** `flz operator start <factory> --id orders --partitions 2` names a `per_input`
-  bounded factory
-- **THEN** `orders#p0` and `orders#p1` exist as ordinary bounded instances, each with its own
+  steps factory
+- **THEN** `orders#p0` and `orders#p1` exist as ordinary steps instances, each with its own
   journal at its own state key, its own durable input log and its own key-group range, bound and
   waiting for a message, and no record of the group exists beyond the two rows
 
@@ -51,9 +51,9 @@ base as the started id. A generated base is never refused on the id budget.
 - **WHEN** an operator is started without `--partitions` (or with `--partitions 1`)
 - **THEN** exactly one instance starts with no partition opts and behavior is identical to an unpartitioned start
 
-#### Scenario: A once or chained bounded operator is refused partitions
+#### Scenario: A once or chained steps operator is refused partitions
 
-- **WHEN** `--partitions 2` names a bounded factory whose loop mode is `once` or `chained`
+- **WHEN** `--partitions 2` names a steps factory whose loop mode is `once` or `chained`
 - **THEN** the start is refused with `topology.partitions_without_per_input_loop`, naming that its one
   message would reach one member while the others waited for nothing, at the controller when the
   class's loop mode is already recorded and at the first member's bind otherwise, and no member
@@ -112,7 +112,7 @@ The partition function SHALL be `group(key) = fnv1a128(key_bytes) mod 256`, usin
 - **THEN** the migrate-time AddOperator carries the same partition fields and the guard re-arms on the new runner
 
 ### Requirement: The SDK SHALL refuse a mis-routed key on its first frame
-When `partition_count ≥ 2`, the SDK dispatch SHALL check that each computed cell key hashes into the partition's own key-group range. A miss SHALL take the park path with an error naming the key, its group, the owning partition, and the contract ("the routing item / flz.key must equal the key_by result") — before any state for that key is created or modified. When `partition_count < 2` the check SHALL cost no more than one comparison. The check SHALL be the one the router applies where a value is addressed to a Cell, for an instance of either kind: on a bounded operator member it runs for the entry stage and for every inner keyed stage alike, and a message none of whose entry items it admits SHALL open no pass and SHALL NOT count as a message, exactly as a message the entrance cannot read does not.
+When `partition_count ≥ 2`, the SDK dispatch SHALL check that each computed cell key hashes into the partition's own key-group range. A miss SHALL take the park path with an error naming the key, its group, the owning partition, and the contract ("the routing item / flz.key must equal the key_by result") — before any state for that key is created or modified. When `partition_count < 2` the check SHALL cost no more than one comparison. The check SHALL be the one the router applies where a value is addressed to a Cell, for an instance of either kind: on a steps operator member it runs for the entry stage and for every inner keyed stage alike, and a message none of whose entry items it admits SHALL open no pass and SHALL NOT count as a message, exactly as a message the entrance cannot read does not.
 
 #### Scenario: Mis-routed frame parks loudly
 - **WHEN** a frame whose key hashes to a group outside the member's range is dispatched
@@ -122,8 +122,8 @@ When `partition_count ≥ 2`, the SDK dispatch SHALL check that each computed ce
 - **WHEN** every arriving key hashes into the member's range
 - **THEN** dispatch behavior and output are identical to an unpartitioned operator
 
-#### Scenario: A mis-routed message to a bounded operator member opens no pass
-- **WHEN** a member of a partitioned `per_input` bounded operator receives a message whose `key_by` result hashes outside its range
+#### Scenario: A mis-routed message to a steps operator member opens no pass
+- **WHEN** a member of a partitioned `per_input` steps operator receives a message whose `key_by` result hashes outside its range
 - **THEN** the message is parked under the entry channel with the named contract error, no Cell is minted for its key, no pass opens, no iteration commits, and the member's next in-range message runs its pass as the next iteration
 
 ### Requirement: Partitioning SHALL be refused for a keyless topology
@@ -180,7 +180,7 @@ A `--plugins` config given at group start SHALL be decoded once per member with 
 - **THEN** the missing member's instance is enabled, the two existing instances are untouched, and the command exits 0 reporting one enabled and two already enabled
 
 ### Requirement: The CLI SHALL present the group as one logical operator
-`flz operator list` SHALL aggregate members (by the `group` opt) into one row showing partition count, health, and per-member placement. `flz operator info <group>` SHALL show per-member detail and SHALL validate coverage (every key group owned exactly once), rendering gaps or overlaps as loud warnings. `flz operator stop <group>` SHALL stop all members, each the way its kind is stopped: a bounded operator member cooperatively, ending `cancelled` with its own completion record. `flz state get <group>/<tasklet>/<key>` SHALL resolve the owning member by key hash and answer through the existing state-get path; tasklet-level and selector-less reads SHALL fan out over members and merge. Everything a bounded instance records for itself, its completion record, its journal, its input log and its rewind, SHALL be per member and addressed by the member id; a member that ended itself SHALL appear in `info` as a finished bounded operator under its member id, and the group SHALL show the coverage gap it left until a converge restarts it.
+`flz operator list` SHALL aggregate members (by the `group` opt) into one row showing partition count, health, and per-member placement. `flz operator info <group>` SHALL show per-member detail and SHALL validate coverage (every key group owned exactly once), rendering gaps or overlaps as loud warnings. `flz operator stop <group>` SHALL stop all members, each the way its kind is stopped: a steps operator member cooperatively, ending `cancelled` with its own completion record. `flz state get <group>/<tasklet>/<key>` SHALL resolve the owning member by key hash and answer through the existing state-get path; tasklet-level and selector-less reads SHALL fan out over members and merge. Everything a steps instance records for itself, its completion record, its journal, its input log and its rewind, SHALL be per member and addressed by the member id; a member that ended itself SHALL appear in `info` as a finished steps operator under its member id, and the group SHALL show the coverage gap it left until a converge restarts it.
 
 #### Scenario: List shows one row
 - **WHEN** `ohlc` runs with 3 partitions
@@ -194,12 +194,12 @@ A `--plugins` config given at group start SHALL be decoded once per member with 
 - **WHEN** `flz state get ohlc/<tasklet>/BTC-USD` is issued
 - **THEN** the controller hashes the key, routes to the member owning that group, and returns that member's live cell state
 
-#### Scenario: A bounded operator member that completed itself is a finished member
-- **WHEN** `orders#p1` of a 2-member `per_input` bounded operator group ends itself with `ctx.complete` while `orders#p0` keeps running
-- **THEN** `flz operator info` lists `orders#p1` as a finished bounded operator with its status and result under its own id, reports the group as `1/2` with the gap over `orders#p1`'s key groups, and `orders#p0` is untouched
+#### Scenario: A steps operator member that completed itself is a finished member
+- **WHEN** `orders#p1` of a 2-member `per_input` steps operator group ends itself with `ctx.complete` while `orders#p0` keeps running
+- **THEN** `flz operator info` lists `orders#p1` as a finished steps operator with its status and result under its own id, reports the group as `1/2` with the gap over `orders#p1`'s key groups, and `orders#p0` is untouched
 
-#### Scenario: Stopping a bounded operator group stops each member cooperatively
-- **WHEN** `flz operator stop orders` is issued against a 2-member `per_input` bounded operator group
+#### Scenario: Stopping a steps operator group stops each member cooperatively
+- **WHEN** `flz operator stop orders` is issued against a 2-member `per_input` steps operator group
 - **THEN** each member receives its own cooperative stop, each ends `cancelled` with its own completion record, and no group-level record is written
 
 ### Requirement: One partition's entire state SHALL live on one controller node
@@ -242,7 +242,7 @@ Converging needs the group's id. A partitioned start with no `--id` generates a 
 
 ### Requirement: Group-base and singleton id collisions SHALL be refused in both directions
 
-A plain (unpartitioned) start of an id that names an existing group's base SHALL be refused, naming the group's member count and `--partitions N` as the way to address it: the base id itself is unclaimed (only member ids are), so without the guard a rogue singleton starts beside the group. Symmetrically, a partitioned start of an id currently held by a live unpartitioned operator SHALL be refused before any member starts. The plain-start guard SHALL live in the single start-authority seam so every starter path (CLI, schedules, tasklet-requested spawns, routed starts) is covered. A generated id that meets either guard SHALL be drawn again rather than refused. A tasklet-requested spawn and a schedule carry no key and SHALL therefore address an unpartitioned instance only: a spawn naming a group's base id finds no instance under it, takes the start path and is refused by this guard, and the requester's result SHALL be `refused` with that sentence; a tasklet feeds a partitioned bounded operator through a keyed sink forwarded by `operator_forward`, which resolves the member from the group's ranges.
+A plain (unpartitioned) start of an id that names an existing group's base SHALL be refused, naming the group's member count and `--partitions N` as the way to address it: the base id itself is unclaimed (only member ids are), so without the guard a rogue singleton starts beside the group. Symmetrically, a partitioned start of an id currently held by a live unpartitioned operator SHALL be refused before any member starts. The plain-start guard SHALL live in the single start-authority seam so every starter path (CLI, schedules, tasklet-requested spawns, routed starts) is covered. A generated id that meets either guard SHALL be drawn again rather than refused. A tasklet-requested spawn and a schedule carry no key and SHALL therefore address an unpartitioned instance only: a spawn naming a group's base id finds no instance under it, takes the start path and is refused by this guard, and the requester's result SHALL be `refused` with that sentence; a tasklet feeds a partitioned steps operator through a keyed sink forwarded by `operator_forward`, which resolves the member from the group's ranges.
 
 #### Scenario: A plain start of a group base is refused
 
@@ -256,56 +256,56 @@ A plain (unpartitioned) start of an id that names an existing group's base SHALL
 
 #### Scenario: A spawn naming a group's base is refused
 
-- **WHEN** a tasklet calls `ctx.spawn_bounded` with instance id `demo`, `if_running: deliver` and a payload, while `demo` is a live partition group of a `per_input` bounded operator
+- **WHEN** a tasklet calls `ctx.spawn_steps` with instance id `demo`, `if_running: deliver` and a payload, while `demo` is a live partition group of a `per_input` steps operator
 - **THEN** no instance starts, nothing is delivered to any member, and the requester's async result is `refused` with the sentence naming the group's member count
 
 #### Scenario: A keyed forward reaches the member
 
-- **WHEN** an unbounded operator's keyed sink is forwarded by `operator_forward` to the group `demo` and emits a value whose `flz.key` hashes into `demo#p1`'s range
+- **WHEN** a flow operator's keyed sink is forwarded by `operator_forward` to the group `demo` and emits a value whose `flz.key` hashes into `demo#p1`'s range
 - **THEN** `demo#p1` receives the message and runs its pass over it, and no other member receives it
 
-### Requirement: Partitioning SHALL be refused for a bounded operator that reads one message
+### Requirement: Partitioning SHALL be refused for a steps operator that reads one message
 
-A bounded class whose loop mode is `once` or `chained` SHALL NOT run partitioned: its one
+A steps class whose loop mode is `once` or `chained` SHALL NOT run partitioned: its one
 message reaches one member, and the other members would wait for a message that never comes.
-Only a `per_input` bounded operator, one pass per message, is a group. Because the loop mode is a class
+Only a `per_input` steps operator, one pass per message, is a group. Because the loop mode is a class
 declaration the topology carries and the controller never sees at start, the authoritative
 refusal SHALL live in the SDK at the `AddOperator` boundary: when `partition_count >= 2` names a
-bounded class whose loop mode is not `per_input`, the SDK SHALL refuse the `AddOperator` with an
-error named `topology.partitions_without_per_input_loop` that names the class, its loop mode and `loop_mode
+steps class whose loop mode is not `per_input`, the SDK SHALL refuse the `AddOperator` with an
+error named `topology.partitions_without_per_input_loop` that names the class, its loop mode and `each
 per_input` as the remedy, and the controller SHALL treat that refusal as a member start failure
-(group rollback, error surfaced to the caller). Additionally, a bounded class SHALL declare its
-loop mode as `loop_mode` (`once` | `per_input` | `chained`) in the `AddOperatorResponse.metadata`
+(group rollback, error surfaced to the caller). Additionally, a steps class SHALL declare its
+loop mode as `each` (`once` | `per_input` | `chained`) in the `AddOperatorResponse.metadata`
 declaration seam beside `keyed`, recorded against the factory as the keyless fact is, so a later
 partitioned start of a known `once` or `chained` class is refused at the controller before any
-member starts, with the same sentence. The keyless refusal applies to a bounded operator unchanged: a
-`per_input` bounded operator whose entry-fed tasklet declares neither `key_by` nor cell keys SHALL be
+member starts, with the same sentence. The keyless refusal applies to a steps operator unchanged: a
+`per_input` steps operator whose entry-fed tasklet declares neither `key_by` nor cell keys SHALL be
 refused with `topology.partitions_without_keyed_tasklet`.
 
-#### Scenario: First partitioned start of a once bounded operator fails at bind, loudly
+#### Scenario: First partitioned start of a once steps operator fails at bind, loudly
 
-- **WHEN** `--partitions 3` is used with a bounded class whose loop mode is `once` and that has
+- **WHEN** `--partitions 3` is used with a steps class whose loop mode is `once` and that has
   never bound
 - **THEN** the first member's `AddOperator` is refused with `topology.partitions_without_per_input_loop`, any
   already-started members are stopped, and the CLI receives the SDK's error naming the class,
-  `once` and `loop_mode per_input`
+  `once` and `each per_input`
 
-#### Scenario: Repeat partitioned start of a known chained bounded operator fails immediately
+#### Scenario: Repeat partitioned start of a known chained steps operator fails immediately
 
-- **WHEN** a `chained` bounded class has bound before, so its `loop_mode` declaration is
+- **WHEN** a `chained` steps class has bound before, so its `each` declaration is
   recorded against its factory, and a partitioned start of it is attempted
 - **THEN** the controller refuses before starting any member, with the same named error
 
-#### Scenario: A per-input bounded operator with a keyed entry partitions normally
+#### Scenario: A per-input steps operator with a keyed entry partitions normally
 
-- **WHEN** a `per_input` bounded operator whose entry edge declares `key_by` is started with
+- **WHEN** a `per_input` steps operator whose entry edge declares `key_by` is started with
   `--partitions 2`
 - **THEN** the start succeeds, both members bind, and each member's response metadata carries
-  `loop_mode: "per_input"`
+  `each: "per_input"`
 
-#### Scenario: A per-input bounded operator with a single-cell entry is refused as keyless
+#### Scenario: A per-input steps operator with a single-cell entry is refused as keyless
 
-- **WHEN** a `per_input` bounded operator whose entry-fed tasklet declares no `key_by` and no cell keys is
+- **WHEN** a `per_input` steps operator whose entry-fed tasklet declares no `key_by` and no cell keys is
   started with `--partitions 2`
-- **THEN** the start is refused with `topology.partitions_without_keyed_tasklet`, as an unbounded operator's would be
+- **THEN** the start is refused with `topology.partitions_without_keyed_tasklet`, as a flow operator's would be
 

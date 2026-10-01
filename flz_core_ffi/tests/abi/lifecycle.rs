@@ -62,7 +62,7 @@ fn c_abi_full_scenario() {
     restores_and_applies_the_offset_floor(ctx, &controller, &stream);
     a_live_read_answers_with_the_host_json(ctx, &controller);
     a_keyed_dynamic_route_crosses_for_its_key(ctx, &controller, &stream);
-    a_bounded_tasklet_completes_through_the_abi(ctx, &controller);
+    a_steps_tasklet_completes_through_the_abi(ctx, &controller);
     crate::shutdown::shutdown_ships_state_then_wakes_the_poller(ctx, &controller);
 
     unsafe { flz_core_context_free(ctx) };
@@ -323,8 +323,8 @@ fn restores_and_applies_the_offset_floor(
 fn declares_the_effectively_once_class(ctx: *mut FlzContext, controller: &Controller) {
     let decl = br#"{
         "factory_id": "abi_eff",
-        "persistent": true,
-        "effectively_once": true,
+        "durable":{"local":{"sleep_after":false}},
+        "run": {"flow": {"exactly": "effectively_once"}},
         "sdk_lang": 2,"sdk_version":"0.1.0",
         "change_format_id": 4,
         "channels": [
@@ -645,9 +645,9 @@ fn declares_the_dynamic_class(ctx: *mut FlzContext, controller: &Controller) {
     controller.await_success("AddOperator dyn response", "ref-add-dyn");
 }
 
-fn a_bounded_tasklet_completes_through_the_abi(ctx: *mut FlzContext, controller: &Controller) {
-    declares_the_bounded_class(ctx, controller);
-    // A bounded operator's input is a message on its entry channel, as an unbounded operator's is.
+fn a_steps_tasklet_completes_through_the_abi(ctx: *mut FlzContext, controller: &Controller) {
+    declares_the_steps_class(ctx, controller);
+    // A steps operator's input is a message on its entry channel, as a flow operator's is.
     let registry = flz_core::coordinator::LIVE_REGISTRY
         .lock()
         .unwrap_or_else(|p| p.into_inner())
@@ -655,24 +655,24 @@ fn a_bounded_tasklet_completes_through_the_abi(ctx: *mut FlzContext, controller:
         .expect("a runner registry is live");
     assert!(
         registry.contains("wf-1"),
-        "AddOperator built the bounded operator"
+        "AddOperator built the steps operator"
     );
     flz_core::runner::OperatorDispatchHandle { registry }.dispatch(
         "wf-1",
         b"seed".to_vec(),
         &Default::default(),
-        flz_core::bounded::unwired_stream(),
+        flz_core::steps::unwired_stream(),
     );
     let (status, act) = abi_poll(ctx, 5_000);
     assert_eq!(
         status, FLZ_POLL_ACTIVATION,
-        "the bounded operator's step hands out"
+        "the steps operator's step hands out"
     );
     let act = act.unwrap();
     assert_eq!(act.target.operator, "wf-1");
     assert!(
         matches!(act.kind, schema::ActivationKind::Work(_)),
-        "a bounded step is ordinary work, got {:?}",
+        "a steps step is ordinary work, got {:?}",
         act.kind
     );
     abi_complete(
@@ -686,13 +686,13 @@ fn a_bounded_tasklet_completes_through_the_abi(ctx: *mut FlzContext, controller:
         },
     );
 
-    controller.await_frame("BoundedCompleted teardown", |captured| {
+    controller.await_frame("OperatorCompleted teardown", |captured| {
         captured.iter().find_map(|(id, m)| {
             (id == "control_command"
                 && flz_core::pb::CommandRequest::decode(m.as_slice()).is_ok_and(|r| {
                     matches!(
                         r.command,
-                        Some(flz_core::pb::command_request::Command::BoundedCompleted(ref c))
+                        Some(flz_core::pb::command_request::Command::OperatorCompleted(ref c))
                             if c.operator_id == "wf-1"
                                 && c.status == "ok"
                                 && c.result == b"done".to_vec()
@@ -703,13 +703,14 @@ fn a_bounded_tasklet_completes_through_the_abi(ctx: *mut FlzContext, controller:
     });
 }
 
-fn declares_the_bounded_class(ctx: *mut FlzContext, controller: &Controller) {
+fn declares_the_steps_class(ctx: *mut FlzContext, controller: &Controller) {
     let decl = br#"{
-        "factory_id": "abi_bounded",
+        "factory_id": "abi_steps",
         "sdk_lang": 1,"sdk_version":"0.1.0",
         "channels": [{"name": "in", "kind": "entry", "chains": [[{"link": "into", "tasklet": 0}]]}],
-        "tasklets": [{"name": "bounded_step"}],
-        "bounded": {}
+        "tasklets": [{"name": "steps_step"}],
+        "run": "steps",
+        "durable": false
     }"#;
     assert_eq!(
         unsafe { flz_core_declare_class(ctx, decl.as_ptr(), decl.len()) },
@@ -719,10 +720,10 @@ fn declares_the_bounded_class(ctx: *mut FlzContext, controller: &Controller) {
         "ref-add-wf",
         flz_core::pb::command_request::Command::AddOperator(flz_core::pb::AddOperator {
             operator_id: "wf-1".to_string(),
-            factory_id: "abi_bounded".to_string(),
-            kind: "bounded".to_string(),
+            factory_id: "abi_steps".to_string(),
+            run: "steps".to_string(),
             ..Default::default()
         }),
     );
-    controller.await_success("AddOperator bounded response", "ref-add-wf");
+    controller.await_success("AddOperator steps response", "ref-add-wf");
 }

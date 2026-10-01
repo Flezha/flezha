@@ -32,7 +32,7 @@ defmodule Flezha.SDK.InNodeE2ETest do
   end
 
   defmodule ProbeOp do
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "sdk_probe"
 
     def channels(c) do
@@ -171,7 +171,7 @@ defmodule Flezha.SDK.SocketRoundtripTest do
   end
 
   defmodule ProbeOp do
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "sdk_socket_probe_factory"
 
     def channels(c) do
@@ -334,7 +334,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
   end
 
   defmodule EchoOp do
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "lr_echo"
 
     def channels(c) do
@@ -344,7 +344,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
   end
 
   defmodule OtherOp do
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "lr_other"
 
     def channels(c) do
@@ -367,7 +367,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
   end
 
   defmodule StoreOp do
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "lr_store"
 
     def channels(c) do
@@ -564,7 +564,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
            "the third refused reconnect waited #{third} ms, no longer than the first (#{first} ms)"
   end
 
-  test "post-start define_unbounded ships UpdateFactories; removal with a live instance refuses",
+  test "post-start define_operator ships UpdateFactories; removal with a live instance refuses",
        %{
          ns: ns
        } do
@@ -619,8 +619,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
              OperatorManager.start_operator(ns, %Builder{
                id: operator_id,
                factory_id: "lr_store",
-               init_values: %{},
-               opts: [snapshot_interval: 0]
+               init_values: %{}
              })
 
     {:ok, overwatch} = OperatorManager.get_operator_pid(ns, operator_id)
@@ -690,10 +689,10 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
   end
 end
 
-defmodule Flezha.SDK.SpawnBoundedE2ETest do
+defmodule Flezha.SDK.SpawnStepsE2ETest do
   @moduledoc """
   Tasklet-requested spawn against the same-BEAM controller: a stream
-  tasklet on an in-node runner spawns an instance of a bounded class the same
+  tasklet on an in-node runner spawns an instance of a steps class the same
   runner offers, delivers to it under the same id, and is answered
   `already_running` under the error policy. The request, the controller's
   resolution and the runner server's waiter run end to end.
@@ -717,7 +716,7 @@ defmodule Flezha.SDK.SpawnBoundedE2ETest do
     @impl true
     def run(input, s, ctx) do
       [instance_id, policy, payload] = String.split(input, ":", parts: 3)
-      handle = spawn_bounded(ctx, "sdk_spawned_inbox", payload, options(instance_id, policy))
+      handle = spawn_steps(ctx, "sdk_spawned_inbox", payload, options(instance_id, policy))
       result = Spawn.await(handle)
 
       case Process.whereis(:sdk_spawn_probe) do
@@ -734,7 +733,7 @@ defmodule Flezha.SDK.SpawnBoundedE2ETest do
   end
 
   defmodule RequesterOp do
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "sdk_spawn_requester"
 
     def channels(c) do
@@ -751,18 +750,17 @@ defmodule Flezha.SDK.SpawnBoundedE2ETest do
     def run(input, s, _ctx) do
       case Process.whereis(:sdk_spawn_probe) do
         nil -> :ok
-        pid -> send(pid, {:bounded_received, input})
+        pid -> send(pid, {:steps_received, input})
       end
 
       {:ok, s}
     end
   end
 
-  defmodule InboxBounded do
-    @behaviour Flezha.SDK.BoundedOperator
+  defmodule InboxSteps do
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "sdk_spawned_inbox"
-    def loop_mode, do: :per_input
-    def self_terminating?, do: false
+    def run, do: {:steps, each: :per_input}
     def max_duration_ms, do: 60_000
 
     def channels(c) do
@@ -778,7 +776,7 @@ defmodule Flezha.SDK.SpawnBoundedE2ETest do
     handle =
       Flezha.SDK.create_runner(ns, transport: :native)
       |> Flezha.SDK.register_factory(RequesterOp)
-      |> Flezha.SDK.register_factory(InboxBounded)
+      |> Flezha.SDK.register_factory(InboxSteps)
       |> Flezha.SDK.start()
 
     assert %Flezha.SDK{} = handle, "SDK start failed: #{inspect(handle)}"
@@ -796,7 +794,7 @@ defmodule Flezha.SDK.SpawnBoundedE2ETest do
     {:ok, ns: ns}
   end
 
-  test "a tasklet spawns a bounded instance, delivers to it, is refused under the error policy, and spawns another without an id",
+  test "a tasklet spawns a steps instance, delivers to it, is refused under the error policy, and spawns another without an id",
        %{ns: ns} do
     assert NodeTestHelper.wait_until(fn -> FleetManager.active_runners(ns) != [] end, 15_000)
 
@@ -836,8 +834,8 @@ defmodule Flezha.SDK.SpawnBoundedE2ETest do
     assert_receive {:spawn_result, "p4", {:ok, %{id: generated, outcome: :spawned}}}, 20_000
     assert generated =~ ~r/\Asdk_spawned_\w*-[a-z2-7]{16}\z/
 
-    assert_receive {:bounded_received, "p1"}, 20_000
-    assert_receive {:bounded_received, "p2"}, 20_000
-    assert_receive {:bounded_received, "p4"}, 20_000
+    assert_receive {:steps_received, "p1"}, 20_000
+    assert_receive {:steps_received, "p2"}, 20_000
+    assert_receive {:steps_received, "p4"}, 20_000
   end
 end

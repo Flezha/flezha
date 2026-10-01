@@ -40,7 +40,7 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
   # Two declared entry channels: "prices" (the first, and where an unresolved
   # name used to land) and "volumes".
   defmodule TwoEntryOp do
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "q2_two_entry_op"
 
     def channels(c) do
@@ -62,7 +62,7 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
   # and NOT in the order a map's keys come back: "volumes" sorts after
   # "prices", so the first declared and the alphabetically first differ.
   defmodule ReverseOrderOp do
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "q2_reverse_order_op"
 
     def channels(c) do
@@ -83,7 +83,7 @@ defmodule Flezha.SDK.ParkUnresolvedChannelTest do
   # A class that declares no entry channel at all: nothing to resolve, and
   # nothing to default to.
   defmodule NoEntryOp do
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "q2_no_entry_op"
     def channels(c), do: c
   end

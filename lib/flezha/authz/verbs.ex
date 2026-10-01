@@ -34,7 +34,7 @@ defmodule Flezha.AuthZ.Verbs do
     # Liveness surfaces and the helpers a consumer names: no policy question.
     boot_status: @public,
     boot_await: @public,
-    kind_read: @public,
+    run_read: @public,
     partition_report: @public,
     cron_arithmetic: @public,
     retention_default: @public,
@@ -147,13 +147,13 @@ defmodule Flezha.AuthZ.Verbs do
     operator_scale: [
       action: :"operator.scale",
       scope: {:argument, 1},
-      audit: {:after, :bounded_service},
+      audit: {:after, :steps_service},
       target: [:_, :group, :partitions]
     ],
     operator_rewind: [
       action: :"operator.rewind",
       scope: {:argument, 1},
-      audit: {:after, :bounded_service},
+      audit: {:after, :steps_service},
       target: [:_, :operator, :to_iteration]
     ],
     operator_send: [
@@ -169,7 +169,7 @@ defmodule Flezha.AuthZ.Verbs do
       audit: {:after, :operator_service},
       target: [:_, :operator]
     ],
-    # A tasklet's `ctx.spawn_bounded` feeding a running instance: the right
+    # A tasklet's `ctx.spawn_steps` feeding a running instance: the right
     # `operator_send` judges, with no record of its own because it runs once per
     # event. A refusal is still audited, by the policy point.
     spawn_deliver: [action: :"operator.send", scope: {:argument, 1}],

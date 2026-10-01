@@ -113,7 +113,7 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
     }
   end
 
-  test "KB-209: runner B's BoundedCompleted stops nothing and records nothing for A's operator",
+  test "KB-209: runner B's OperatorCompleted stops nothing and records nothing for A's operator",
        ctx do
     test_pid = self()
     %{operator_id: op, runner_b: runner_b} = ctx
@@ -126,8 +126,8 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
 
     write_frame(
       ctx.channel_b,
-      {:bounded_completed,
-       %RunnerCommands.BoundedCompleted{operator_id: op, status: "ok", result: "forged-by-b"}}
+      {:operator_completed,
+       %RunnerCommands.OperatorCompleted{operator_id: op, status: "ok", result: "forged-by-b"}}
     )
 
     # The refusal is the positive signal that the frame was judged; a completion

@@ -166,15 +166,15 @@ defmodule Flezha.Operator.Lifecycle do
 
     with {:ok, state} <- Plugins.prepare(state, declared_plugins(state, operator)),
          {:ok, state, operator} <- Plugins.resolve_init_state(state, operator),
-         # Before the resume state is read: a bounded operator resumes from the
+         # Before the resume state is read: a steps operator resumes from the
          # journal, restore count and log tail it finds here.
          :ok <- Replay.adopt_foreign_state(operator.opts, Overwatch.operator_class(state)),
          operator =
            with_resume_state(operator, Overwatch.operator_class(state)),
          # Before the runner starts: its Cell writers learn their commit unit
-         # from the kind, and a live one drops what the journal never named.
-         :ok <- ClassRegistry.put(Overwatch.operator_class(state), state.builder.kind),
-         :ok <- Replay.seed_bounded_outboxes(state),
+         # from the run, and a live one drops what the journal never named.
+         :ok <- ClassRegistry.put(Overwatch.operator_class(state), state.builder.run || :flow),
+         :ok <- Replay.seed_steps_outboxes(state),
          # A park landing after the runner starts the instance writes a record
          # that stays; a failed start leaves none for a boot to take for a sleep.
          :ok <- ClassRegistry.put_parked(Overwatch.operator_class(state), nil),
@@ -185,14 +185,17 @@ defmodule Flezha.Operator.Lifecycle do
          %{
            effectively_once: effectively_once,
            correction_window_ms: correction_window_ms,
-           sleep_when_idle: sleeps
+           sleep_after_ms: sleep_after_ms
          } = declarations = ClassRegistry.decode_declarations(add_operator_raw),
+         :ok <- refuse_remote_without_backend(declarations, operator.factory_id),
          state =
            %{
              state
              | effectively_once: effectively_once,
                correction_window_ms: correction_window_ms,
-               sleeps: sleeps
+               sleeps: sleep_after_ms != nil,
+               settings:
+                 Map.take(declarations, [:run, :each, :on_failure, :durable, :sleep_after_ms])
            }
            |> Map.put(:init_error, nil),
          :ok <- await_stream_bound(state),
@@ -205,7 +208,7 @@ defmodule Flezha.Operator.Lifecycle do
              operator.factory_id,
              Overwatch.operator_class(state)
            ),
-         # The tier and a sleeping unbounded operator: restore every persisted Cell
+         # The tier and a sleeping flow operator: restore every persisted Cell
          # (awaited) before the tail is re-forwarded onto them.
          {:ok, state} <- awaited_restore(state),
          # Once per bind, for either kind, BEFORE sources activate: the log's
@@ -219,6 +222,14 @@ defmodule Flezha.Operator.Lifecycle do
       {:error, reason} -> {:error, reason, state}
     end
   end
+
+  # `durable: remote` is a promise the machine keeps only with a durability
+  # backend: where the class meets the controller, the start is refused.
+  defp refuse_remote_without_backend(%{durable: :remote}, factory_id) do
+    if DurabilityTier.enabled?(), do: :ok, else: {:error, {:remote_without_backend, factory_id}}
+  end
+
+  defp refuse_remote_without_backend(_declarations, _factory_id), do: :ok
 
   # The operator's registry row, which every enable and disable rewrites, so a
   # restart of this process after a runtime enable (a listener) brings that
@@ -247,7 +258,7 @@ defmodule Flezha.Operator.Lifecycle do
     _ = ClassRegistry.put_declarations(operator_class, declarations)
     # Partitionability is a class-code fact, so it is recorded against the
     # factory: a later `--partitions N` start of a known-keyless class, or of
-    # a bounded operator that reads one message, is then refused before a runner is
+    # a steps operator that reads one message, is then refused before a runner is
     # touched.
     _ = ClassRegistry.put_partitioning(operator.factory_id, declarations)
     _ = ClassRegistry.put_state_keys(operator.id, operator_class)
@@ -537,7 +548,7 @@ defmodule Flezha.Operator.Lifecycle do
   end
 
   # ---------------------------------------------------------------
-  # Suspension (`bounded-durable-suspension`)
+  # Suspension (`durable-suspension`)
   # ---------------------------------------------------------------
 
   # The durable timer: a park record's wake deadline, re-armed from the record

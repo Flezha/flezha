@@ -2,37 +2,11 @@
 
 ## Purpose
 
-The operator-model capability is the canonical vocabulary and kind model for Flezha's compute workloads. It defines the **Operator** (the top-level unit of work a Runner hosts at a Controller's direction), its two kinds, **bounded** (every run reaches a terminal state) and **unbounded** (no run does), and the per-Operator concepts of **Tasklet** (a typed stage) and **Cell** (the per-key, state-bearing slice). What an instance does is decided by its class's settings, never by its kind; the class's persistence switch gates per-Cell state introspection. The unified `flz operator` CLI verb tree manages every kind's lifecycle.
+The operator-model capability is the canonical vocabulary and model for Flezha's compute workloads. It defines the **Operator** (the top-level unit of work a Runner hosts at a Controller's direction), configured by one settings tree whose `run` is **flow** (it takes inputs for as long as it lives) or **steps** (a chain of tasklets whose every step is journaled), and the per-Operator concepts of **Tasklet** (a typed stage) and **Cell** (the per-key, state-bearing slice). What an instance does is decided by its class's settings; the class's `durable` gates per-Cell state introspection. The unified `flz operator` CLI verb tree manages every operator's lifecycle.
 ## Requirements
-### Requirement: The capability model is extensible without affecting existing kinds
-
-Introducing a new operator kind SHALL be additive: it SHALL require registering the new kind
-and nothing else. Adding a third (or later) kind SHALL NOT force edits to the existing
-`:bounded` or `:unbounded` kinds, to user-authored computation code, or to the routing boundary
-beyond registering the new kind. Kind names SHALL be independent words rather than variations
-on a shared pattern, so that a third kind joins as a peer without renaming the existing two.
-There SHALL be no per-kind capability table: what an instance can do SHALL follow from what
-its class declares (its persistence switch, its sleep setting, the tier) and from its own state
-(sleeping, bound, journaling), never from a flag attached to its kind.
-
-#### Scenario: A future kind is additive
-
-- **WHEN** a new operator kind is registered
-- **THEN** the existing kinds SHALL be unaffected, and the new kind SHALL be selectable at start without changing the existing kinds' behavior
-
-#### Scenario: A third kind requires no rename of the existing two
-
-- **WHEN** a third operator kind is introduced
-- **THEN** `:bounded` and `:unbounded` SHALL keep their names, and no shared naming pattern SHALL have to be extended or abandoned to accommodate it
-
-#### Scenario: No gate reads a kind's capability
-
-- **WHEN** the controller's time-travel query, retention sweep, dynamic-cell delete, output-stall watch and input-silence sweep are inspected
-- **THEN** none SHALL consult a kind-to-capability map, and <!-- docs-citation-record:begin -->`Flezha.Operator.Kind` and `ClassRegistry.capable?/2` SHALL NOT exist<!-- docs-citation-record:end -->
-
 ### Requirement: Operator start requests SHALL be location-transparent across controller nodes
 
-A bounded operator start request (`flz operator start`/`add`, a schedule fire, or a tasklet-requested spawn) submitted on any controller node SHALL succeed whenever any node in the cluster holds a connected runner advertising the requested factory in the requested namespace. When the receiving node cannot satisfy the request locally, the controller SHALL resolve the set of capable nodes against fleet state current at request time and execute the same start call on one capable node, chosen deterministically, forwarded at most once. A request that carries no id SHALL be given its generated id on the receiving node before capable nodes are resolved, so the forwarded call carries that id and the executing node generates none of its own. A routed request SHALL be validated on the executing node (namespace, factory, quota, duplicate id) exactly as a local request, and its verdict SHALL be returned to the origin unchanged. When no cluster node is capable, the refusal SHALL state that no runner exists on any cluster node: a node-local "no runners" answer SHALL NOT be reported for a cluster that holds one. Resolution of capable peers SHALL be bounded in time; an unreachable or unresponsive peer SHALL be treated as not capable rather than stalling the request. The local fast path SHALL be unchanged: a node that can satisfy the request itself SHALL perform no cluster round.
+A steps operator start request (`flz operator start`/`add`, a schedule fire, or a tasklet-requested spawn) submitted on any controller node SHALL succeed whenever any node in the cluster holds a connected runner advertising the requested factory in the requested namespace. When the receiving node cannot satisfy the request locally, the controller SHALL resolve the set of capable nodes against fleet state current at request time and execute the same start call on one capable node, chosen deterministically, forwarded at most once. A request that carries no id SHALL be given its generated id on the receiving node before capable nodes are resolved, so the forwarded call carries that id and the executing node generates none of its own. A routed request SHALL be validated on the executing node (namespace, factory, quota, duplicate id) exactly as a local request, and its verdict SHALL be returned to the origin unchanged. When no cluster node is capable, the refusal SHALL state that no runner exists on any cluster node: a node-local "no runners" answer SHALL NOT be reported for a cluster that holds one. Resolution of capable peers SHALL be bounded in time; an unreachable or unresponsive peer SHALL be treated as not capable rather than stalling the request. The local fast path SHALL be unchanged: a node that can satisfy the request itself SHALL perform no cluster round.
 
 #### Scenario: CLI start against a runner-less controller node
 
@@ -128,7 +102,7 @@ Each controller node SHALL advertise into a cluster-replicated directory which n
 
 ### Requirement: `flz operator info` SHALL report the operator's phase and the loop's health verdict
 
-`flz operator info` SHALL report each live operator's lifecycle phase as one of `running`, `suspended`, `unbound` or `parked`, and its health as the state of the one verdict record the convergence loop publishes for it, both read from that record — the phase is the record's own fact, read from the operator's state, and the health is the record's state, one of `healthy`, `degraded`, `failed`, `unbound`, `parked`, `suspended` or `unknown`, except that a `failed` or `unbound` record SHALL read `recovering` while the convergence loop is inside the unmet-intent grace `/healthz` weighs it against, and its own word past it. It SHALL report `parked` — never `running` — for an operator the Controller has parked, whatever the park reason, and `unbound` — never `running` and never `parked` — for an operator that holds no runner binding at all. Phase SHALL be derived in the same order as health: suspended first, then unbound, then parked, so the two words cannot describe one operator differently. `flz operator list`, `flz cluster status`, the published `Flezha.Service.Operator.operator_rows/2` and `/healthz` SHALL read the same record, and every one of them except `/healthz`, which folds the records, SHALL show it through the same `recovering` rule, so no two user surfaces describe one operator in contradictory words. `info` SHALL NOT derive a phase or a health verdict of its own, and no surface SHALL keep a second vocabulary or a second rank order: the worst row of a listing is chosen by the record module's one rank. Both the text and the JSON rendering SHALL carry both fields. A finished bounded operator, surfaced from its retained completion record rather than from a live Overwatch, SHALL keep reporting phase `finished`.
+`flz operator info` SHALL report each live operator's lifecycle phase as one of `running`, `suspended`, `unbound` or `parked`, and its health as the state of the one verdict record the convergence loop publishes for it, both read from that record — the phase is the record's own fact, read from the operator's state, and the health is the record's state, one of `healthy`, `degraded`, `failed`, `unbound`, `parked`, `suspended` or `unknown`, except that a `failed` or `unbound` record SHALL read `recovering` while the convergence loop is inside the unmet-intent grace `/healthz` weighs it against, and its own word past it. It SHALL report `parked` — never `running` — for an operator the Controller has parked, whatever the park reason, and `unbound` — never `running` and never `parked` — for an operator that holds no runner binding at all. Phase SHALL be derived in the same order as health: suspended first, then unbound, then parked, so the two words cannot describe one operator differently. `flz operator list`, `flz cluster status`, the published `Flezha.Service.Operator.operator_rows/2` and `/healthz` SHALL read the same record, and every one of them except `/healthz`, which folds the records, SHALL show it through the same `recovering` rule, so no two user surfaces describe one operator in contradictory words. `info` SHALL NOT derive a phase or a health verdict of its own, and no surface SHALL keep a second vocabulary or a second rank order: the worst row of a listing is chosen by the record module's one rank. Both the text and the JSON rendering SHALL carry both fields. A finished steps operator, surfaced from its retained completion record rather than from a live Overwatch, SHALL keep reporting phase `finished`.
 
 #### Scenario: A parked operator is not reported as running
 
@@ -147,7 +121,7 @@ Each controller node SHALL advertise into a cluster-replicated directory which n
 
 #### Scenario: A suspended instance is still suspended
 
-- **WHEN** a durable bounded instance evicted at a committed iteration boundary also carries a park reason
+- **WHEN** a durable steps instance evicted at a committed iteration boundary also carries a park reason
 - **THEN** its phase SHALL be reported `suspended`, the phase the convergence loop classifies it under
 
 #### Scenario: The health reported is the loop's own verdict
@@ -198,96 +172,39 @@ Reporting a park SHALL NOT change when one happens: an unloadable provider modul
 
 ### Requirement: Cell-state introspection is gated by the class's persistence switch
 
-A request for an operator's live per-Cell state SHALL succeed for an instance of either kind
-whose class's persistence switch is on and which is resident on a runner. When the class has
+A request for an operator's live per-Cell state SHALL succeed for an instance of either run
+whose class keeps its work (`durable` is not `false`) and which is resident on a runner. When the class has
 opted out of persistence, the request SHALL fail with the structured error
 `{:error, %Flezha.Error{code: "state.persistence_off"}}` on the published surface rather than querying a computation whose state is held in memory
-alone, for an unbounded operator and a bounded operator alike; the CLI SHALL render it as a clear, non-zero outcome
+alone, for a flow operator and a steps operator alike; the CLI SHALL render it as a clear, non-zero outcome
 naming the class's declaration. A suspended or unbound instance SHALL be refused as
 the code `state.not_resident`, its details naming `suspended` or `unbound`. Point-in-time
-`flz state at` queries SHALL serve a Cell of either kind from its retained snapshots and WAL
-records, under the same retention rule; no kind SHALL be refused time travel.
+`flz state at` queries SHALL serve a Cell of either run from its retained snapshots and WAL
+records, under the same retention rule; no run SHALL be refused time travel.
 
 #### Scenario: Cell-state query succeeds for a durable operator
 
-- **WHEN** the live per-Cell state of a bound instance whose class's persistence switch is on is requested, for an unbounded or a bounded operator
+- **WHEN** the live per-Cell state of a bound instance whose class keeps its work is requested, for a flow or a steps operator
 - **THEN** the request SHALL return the serialized current state
 
 #### Scenario: Cell-state query is rejected for a stateless operator
 
-- **WHEN** the live per-Cell state of an instance whose class declares persistence off is requested, for an unbounded or a bounded operator
+- **WHEN** the live per-Cell state of an instance whose class declares `durable: false` is requested, for a flow or a steps operator
 - **THEN** the request SHALL return `{:error, %Flezha.Error{code: "state.persistence_off"}}` and SHALL NOT contact the computation
 
-#### Scenario: Time travel serves a bounded operator Cell
+#### Scenario: Time travel serves a steps operator Cell
 
-- **WHEN** `flz state at <instance/tasklet/cell> <seq>` targets a Cell of a durable `per_input` bounded operator whose iteration-boundary snapshots and WAL records cover `<seq>`
-- **THEN** the query SHALL answer the Cell's state at that sequence exactly as it would for an unbounded operator Cell
-
-### Requirement: Canonical operator vocabulary
-
-The system SHALL use exactly these terms for compute workloads in code, modules, protobuf, wire payload-ids, CLI, config keys, env vars, documentation, and on-disk path components:
-
-- **Operator** — the generic top-level unit of work that a Runner hosts at a Controller's direction; the thing you start and stop. It operates its Tasklets, which the runner's threads execute. Every Operator has a `kind`.
-- **Bounded Operator** — the kind whose every run reaches a terminal state: an ordered, journaled run with saga compensation on abort, which may iterate once, per inbox item, or chained, and may park between iterations. A `per_input` bounded operator reads an unbounded input in bounded runs.
-- **Unbounded Operator** — the kind no run of which reaches a terminal state: it folds an ongoing input until it is stopped from outside.
-- **Tasklet** — a typed stage within an Operator that processes inputs from a Channel.
-- **Cell** — the per-key, state-bearing slice of a Tasklet; durable state lives at the Cell level.
-- **Controller**, **Runner**, and **Channel** are unchanged. A runner hosts operators.
-
-`bounded` and `unbounded` name the run, never the input: the words remain correct English for a capacity concept such as a bounded mailbox. `stream` remains the name of the channel handle and the runner's data streams, never of a kind. `operator` in ProcessHub's internal ring-node jargon is ProcessHub's and is not read as this term. The person running the controller is addressed as "you" in guides and named "the caller" or "the principal" in authorization text, never "the operator".
-
-#### Scenario: Documentation and glossary use operator vocabulary
-
-- **WHEN** any spec, doc under `docs/`, `docs/glossary.md`, or `README.md` references the top-level unit of work, its stage, or its per-key slice
-- **THEN** it SHALL use "Operator" (with kind "bounded" or "unbounded"), "Tasklet", and "Cell" respectively, and SHALL NOT use "Operative", or "Stream"/"Workflow" as a kind name
-
-#### Scenario: No old unit or kind name survives in a shipped surface
-
-- **WHEN** the controller, SDKs, protobuf, CLI, config, env-var, telemetry and on-disk surfaces are inspected after this change
-- **THEN** no identifier, message name, field name, wire payload-id string, CLI verb, config key, env var, event name or path component SHALL contain `operative`, or a kind-sense `stream`/`workflow`
-
-#### Scenario: The surviving senses are untouched
-
-- **WHEN** the channel-sense `stream` identifiers (`Stream`, `LocalStream`, `Flezha.Runner.StreamChannel`, `Flezha.Runner.StreamPool`, `stream_id`), the capacity-sense `bounded` identifiers (`BoundedMailboxSource`, `:flezha_bounded_mailbox`) and ProcessHub's ring-node `operator` are inspected after this change
-- **THEN** each SHALL be unchanged
-
-### Requirement: An operator declares a kind
-
-Every Operator SHALL carry a `kind` atom. The kind SHALL be the kind its class declares, read from the factory announcement the runner shipped for the factory id the start names, and SHALL be frozen for the operator's lifetime — it cannot change without a stop + start cycle. No start path (`flz operator start`, a schedule fire, a tasklet-requested spawn, the service verb) SHALL take a kind from its caller; a caller that asserts one (a spawn or a schedule, which are bounded-only) SHALL be judged against the announced kind and refused by name when they disagree. The recognized kinds are `:bounded` and `:unbounded`; a factory whose announced kind is any other literal, or empty, SHALL NOT be placeable, and a start naming it SHALL fail with a clear error naming the factory and the missing or unknown kind, and no operator process SHALL be created. On the wire from controller to runner, the accepted set of `kind` string literals on `AddOperator` SHALL be exactly `""` (empty ⇒ the `:unbounded` default), `"unbounded"`, and `"bounded"`; the SDK SHALL reject any other literal with an error naming the unknown kind. The former literals `"stream"` and `"workflow"` SHALL NOT be accepted.
-
-#### Scenario: The kind is the class's
-
-- **WHEN** a runner announces factory `prices` as unbounded and `paper_order` as bounded, and a caller starts one of each naming only the factory
-- **THEN** the first instance's kind SHALL be `:unbounded` and the second's `:bounded`
-
-#### Scenario: Bounded is a recognized kind
-
-- **WHEN** an operator is started for a factory announced with kind `:bounded`
-- **THEN** the start SHALL be accepted and the operator's kind SHALL be `:bounded`
-
-#### Scenario: Kind is frozen for the operator's lifetime
-
-- **WHEN** an operator is running with a given kind
-- **THEN** there SHALL be no tasklet that mutates the kind of a running operator; changing kind requires stopping and re-starting it
-
-#### Scenario: Unknown kind is rejected at start
-
-- **WHEN** an operator is started for a factory whose announcement carries a kind that is not recognized (any literal other than `"bounded"` or `"unbounded"`, or none)
-- **THEN** the start SHALL fail with an error that names the factory and the unknown or missing kind, and no operator process SHALL be created
-
-#### Scenario: A retired kind literal is rejected
-
-- **WHEN** an operator is started with the wire literal `"stream"` or `"workflow"`
-- **THEN** the start SHALL fail with an error naming the unknown kind, exactly as for any other unrecognized literal, and no compatibility mapping to `:unbounded` or `:bounded` SHALL be applied
+- **WHEN** `flz state at <instance/tasklet/cell> <seq>` targets a Cell of a durable `per_input` steps operator whose iteration-boundary snapshots and WAL records cover `<seq>`
+- **THEN** the query SHALL answer the Cell's state at that sequence exactly as it would for a flow operator Cell
 
 ### Requirement: Unified `flz operator` CLI verb
 
-The CLI SHALL expose a single `flz operator` verb tree for lifecycle management of every operator kind: `flz operator start <factory> [--id|-i <id>]`, `flz operator stop`, `flz operator list`, and `flz operator info`. The kind SHALL be the one the factory's runner announced; `flz operator start` SHALL carry no `--kind` option, and a written `--kind` SHALL be refused as an unknown option, never read and never ignored. The factory SHALL be the start verb's only positional argument, and the id SHALL be an option: a start with no `--id` SHALL be given a generated id. A successful start SHALL print `Started <id>`, naming the id it started under whether the caller wrote it or the controller generated it, and SHALL print no progress line before it. With `--output json` (`-o json`) or `--json` it SHALL print one JSON object `{"id": <id>, "outcome": <outcome>}` and nothing else, the way `flz operator list` and `flz operator info` render JSON. `flz operator list` and `flz operator info` SHALL print the kind as `bounded` or `unbounded`. There SHALL be no `flz operative` verb and no `flz relay` verb.
+The CLI SHALL expose a single `flz operator` verb tree for lifecycle management of every operator: `flz operator start <factory> [--id|-i <id>]`, `flz operator stop`, `flz operator list`, and `flz operator info`. The kind SHALL be the one the factory's runner announced; `flz operator start` SHALL carry no `--kind` option, and a written `--kind` SHALL be refused as an unknown option, never read and never ignored. The factory SHALL be the start verb's only positional argument, and the id SHALL be an option: a start with no `--id` SHALL be given a generated id. A successful start SHALL print `Started <id>`, naming the id it started under whether the caller wrote it or the controller generated it, and SHALL print no progress line before it. With `--output json` (`-o json`) or `--json` it SHALL print one JSON object `{"id": <id>, "outcome": <outcome>}` and nothing else, the way `flz operator list` and `flz operator info` render JSON. `flz operator list` and `flz operator info` SHALL print the kind as `steps` or `flow`. There SHALL be no `flz operative` verb and no `flz relay` verb.
 
-#### Scenario: Start a bounded operator
+#### Scenario: Start a steps operator
 
-- **WHEN** the caller runs `flz operator start <factory>` for a factory its runner announced as bounded
-- **THEN** a bounded operator SHALL be started
+- **WHEN** the caller runs `flz operator start <factory>` for a factory its runner announced as steps
+- **THEN** a steps operator SHALL be started
 
 #### Scenario: A start without an id prints the generated id
 
@@ -306,11 +223,66 @@ The CLI SHALL expose a single `flz operator` verb tree for lifecycle management 
 
 #### Scenario: A written kind is rejected
 
-- **WHEN** the caller runs `flz operator start <factory> --kind bounded`
+- **WHEN** the caller runs `flz operator start <factory> --kind steps`
 - **THEN** the CLI SHALL reject `--kind` as an unknown option and SHALL NOT start an operator
 
 #### Scenario: The retired verbs are gone
 
 - **WHEN** the caller runs `flz operative start` or `flz relay start`
 - **THEN** the CLI SHALL reject it as an unknown command
+
+### Requirement: The capability model is extensible without affecting existing operators
+
+Introducing a new run SHALL be additive: it SHALL require a new branch of the settings tree's
+`run` and nothing else. Adding a third (or later) run SHALL NOT force edits to the existing
+`flow` or `steps` branches, to user-authored computation code, or to the routing boundary
+beyond the new branch. Run names SHALL be independent words rather than variations on a shared
+pattern, so that a third run joins as a peer without renaming the existing two. There SHALL be
+no per-run capability table: what an instance can do SHALL follow from what its class declares
+(its `durable`, its `sleep_after`, the tier) and from its own state (sleeping, bound,
+journaling), never from a flag attached to its run.
+
+#### Scenario: A future run is additive
+
+- **WHEN** a new branch of `run` is added
+- **THEN** the existing runs SHALL be unaffected, and a class declaring the new branch SHALL be startable without changing the existing runs' behavior
+
+#### Scenario: A third run requires no rename of the existing two
+
+- **WHEN** a third run is introduced
+- **THEN** `flow` and `steps` SHALL keep their names, and no shared naming pattern SHALL have to be extended or abandoned to accommodate it
+
+#### Scenario: No gate reads a run's capability
+
+- **WHEN** the controller's time-travel query, retention sweep, dynamic-cell delete, output-stall watch and input-silence sweep are inspected
+- **THEN** none SHALL consult a run-to-capability map, and <!-- docs-citation-record:begin -->`Flezha.Operator.Kind` and `ClassRegistry.capable?/2` SHALL NOT exist<!-- docs-citation-record:end -->
+
+### Requirement: An operator declares its run and its durability
+
+Every operator class SHALL declare, through the settings tree, how it runs and where its
+work is kept, and the runner SHALL announce the run with the factory id. A start SHALL name
+only the factory. The run and the durability of an instance SHALL be frozen for its life.
+
+#### Scenario: The announcement carries the run
+
+- **WHEN** a runner registers a class with `run: {steps, each: once}`
+- **THEN** `UpdateFactories` SHALL carry `steps` with `each: once` for that factory, and the controller's class record SHALL answer "keeps a journal" for it
+
+#### Scenario: A start names only the factory
+
+- **WHEN** `flz operator start checkout --id order-1` runs
+- **THEN** the controller SHALL build the instance from the announced run and durability, and no option of the start SHALL be able to override them
+
+### Requirement: Canonical operator vocabulary without kinds
+
+The unit SHALL be the Operator, which operates its Tasklets, each holding Cells of state.
+An operator SHALL be described by how it runs, in flow or in steps, and by where its work
+is kept, in memory, on the controller's disk or in the remote copy. The words `steps`
+and `flow` SHALL describe input data only. The `flz operator` verb tree SHALL be
+unchanged.
+
+#### Scenario: The glossary and the CLI use the vocabulary
+
+- **WHEN** `docs/glossary.md` and every `flz operator` help screen are read
+- **THEN** each SHALL describe an operator by its run and its durability, and neither SHALL name a kind
 

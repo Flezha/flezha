@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Helper.SdkSpawnFixtures do
   @moduledoc """
-  The unbounded class the tasklet-requested spawn tests drive: one spawn per
+  The flow class the tasklet-requested spawn tests drive: one spawn per
   input, named by the input, whose answer is read inside the invocation and
   emitted on `out`. An `unread:` input spawns and reads nothing, so a failure
   nobody reads has something to be logged for.
@@ -14,13 +14,13 @@ defmodule FlezhaTest.Helper.SdkSpawnFixtures do
 
     @impl true
     def run("unread:" <> instance_id, state, ctx) do
-      spawn_bounded(ctx, "worker", "payload", id: instance_id)
+      spawn_steps(ctx, "worker", "payload", id: instance_id)
       emit(ctx, "sent")
       {:ok, state}
     end
 
     def run(instance_id, state, ctx) do
-      handle = spawn_bounded(ctx, "worker", "payload", id: instance_id)
+      handle = spawn_steps(ctx, "worker", "payload", id: instance_id)
       emit(ctx, inspect(Spawn.await(handle, 5_000)))
       {:ok, state}
     end
@@ -28,7 +28,7 @@ defmodule FlezhaTest.Helper.SdkSpawnFixtures do
 
   defmodule SpawnerOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "spawner"
 
     def channels(c),

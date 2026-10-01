@@ -305,27 +305,27 @@ defmodule Flezha.State.WatchdogTest do
     refute_received {:compaction_trigger, _, %{key: ^key}}
   end
 
-  test "an awake silent bounded is flagged like a stream; a sleeping instance is not", %{
+  test "an awake silent steps is flagged like a stream; a sleeping instance is not", %{
     header: header
   } do
     # The sweep is off at its default, so the rule is only observable with the
     # window armed.
     on_exit(TestHelpers.override_env(:input_silence_timeout_ms, @stall_ms))
 
-    bounded = "BoundedWatch" <> uniq()
+    steps = "StepsWatch" <> uniq()
     asleep = "SleepingWatch" <> uniq()
-    ClassRegistry.put(bounded, :bounded)
+    ClassRegistry.put(steps, :steps)
     :ok = ClassRegistry.put_parked(asleep, %{wake_deadline_ms: nil})
 
     on_exit(fn ->
       ClassRegistry.put_parked(asleep, nil)
-      ClassRegistry.delete(bounded)
+      ClassRegistry.delete(steps)
       ClassRegistry.delete(asleep)
     end)
 
     forward_state_event(:input_silence)
 
-    for class <- [bounded, asleep] do
+    for class <- [steps, asleep] do
       pid = {class, "task", "seg" <> uniq()}
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, w} = Supervisor.lookup(pid)
@@ -340,7 +340,7 @@ defmodule Flezha.State.WatchdogTest do
     ExUnit.CaptureLog.capture_log(fn ->
       :ok = Watchdog.sweep_now()
 
-      assert_receive {:input_silence, _, %{operator_class: ^bounded}}, 1_000
+      assert_receive {:input_silence, _, %{operator_class: ^steps}}, 1_000
       refute_received {:input_silence, _, %{operator_class: ^asleep}}
     end)
   end
@@ -355,7 +355,7 @@ defmodule Flezha.State.WatchdogTest do
 
     per_input = "PerInputWatch" <> uniq()
     checkpoint = "CheckpointWatch" <> uniq()
-    ClassRegistry.put_checkpoint_ack(checkpoint, true)
+    ClassRegistry.put_ack_checkpoint(checkpoint, true)
 
     on_exit(fn ->
       ClassRegistry.delete(per_input)

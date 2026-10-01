@@ -127,7 +127,7 @@ defmodule Flezha.Runner.FleetManagerHubLifecycleTest do
   (durably-suspended) operators. `runner_cleanup` reaps the dead runner ref but
   must NOT `stop_hub` while operators remain — otherwise a parked fleet whose
   sole runner restarts loses every Overwatch and its durable registry, breaking
-  the "still addressable" promise (bounded_operator.md). When the registry is
+  the "still addressable" promise (operator.md). When the registry is
   empty, cleanup still tears the hub down.
 
   Drives `FleetManager` directly with a synthetic `:inactive` runner against a
@@ -442,48 +442,87 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
     end
   end
 
-  describe "the established kind" do
+  describe "the established run" do
     test "the first announcement establishes it, and a start reads it", %{namespace: ns} do
       id = factory("paper_order")
       forget(ns, [id])
-      FleetStateHelper.seed(ns, %{"r1" => [{id, @rust, :bounded}]})
+      FleetStateHelper.seed(ns, %{"r1" => [{id, @rust, :steps}]})
 
-      assert ClassRegistry.established(ns, id, :kind) == :bounded
-      assert FleetManager.factory_kind(ns, id) == {:ok, :bounded}
-      assert {:ok, [%{id: ^id, kind: :bounded}]} = FleetManager.list_factories(ns)
+      assert ClassRegistry.established(ns, id, :run) == :steps
+      assert FleetManager.factory_run(ns, id) == {:ok, :steps}
+      assert {:ok, [%{id: ^id, run: :steps}]} = FleetManager.list_factories(ns)
     end
 
-    test "a runner announcing the other kind is stored, logged and never placed",
+    test "a runner announcing the other run is stored, logged and never placed",
          %{namespace: ns} do
       id = factory("prices")
       forget(ns, [id])
-      FleetStateHelper.seed(ns, %{"r1" => [{id, @rust, :unbounded}], "r2" => []})
-      event = [:flezha, :runner, :factory_kind_conflict]
+      FleetStateHelper.seed(ns, %{"r1" => [{id, @rust, :flow}], "r2" => []})
+      event = [:flezha, :runner, :factory_run_conflict]
       ref = :telemetry_test.attach_event_handlers(self(), [event])
 
       log =
         ExUnit.CaptureLog.capture_log(fn ->
-          :ok = FleetStateHelper.sync(ns, "r2", [{id, @rust, :bounded}])
+          :ok = FleetStateHelper.sync(ns, "r2", [{id, @rust, :steps}])
         end)
 
       assert log =~ "r2"
-      assert log =~ "as kind bounded"
+      assert log =~ "to run as steps"
 
       assert_received {^event, ^ref, %{count: 1},
-                       %{factory: ^id, established: :unbounded, advertised: :bounded}}
+                       %{factory: ^id, established: :flow, advertised: :steps}}
 
       assert FleetManager.runners_for_factory(ns, id) == ["r1"]
 
       :ok = FleetStateHelper.sync(ns, "r1", [])
-      assert FleetManager.placement_refusal(ns, id) == {:kind, :unbounded}
-      assert FleetManager.factory_kind(ns, id) == {:error, {:kind, :unbounded}}
+      assert FleetManager.placement_refusal(ns, id) == {:run, :flow}
+      assert FleetManager.factory_run(ns, id) == {:error, {:run, :flow}}
     end
 
-    test "a runner announcing no kind never places", %{namespace: ns} do
+    test "a runner announcing another steps shape is reported as a run conflict and never placed",
+         %{namespace: ns} do
+      id = factory("loop")
+      forget(ns, [id])
+      FleetStateHelper.seed(ns, %{"r1" => [], "r2" => []})
+
+      steps =
+        &%{
+          "id" => id,
+          "sdk_lang" => @rust,
+          "run" => "steps",
+          "each" => &1,
+          "on_failure" => "undo_all"
+        }
+
+      once = "steps (each: once, on_failure: undo_all)"
+      chained = "steps (each: chained, on_failure: undo_all)"
+      GenServer.cast(FleetManager, {:sync_factories, ns, "r1", [steps.("once")]})
+      event = [:flezha, :runner, :factory_run_conflict]
+      ref = :telemetry_test.attach_event_handlers(self(), [event])
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          GenServer.cast(FleetManager, {:sync_factories, ns, "r2", [steps.("chained")]})
+          {:ok, _} = FleetManager.list_factories(ns)
+        end)
+
+      assert log =~ "r2"
+      assert log =~ "to run as #{chained}"
+
+      assert_received {^event, ^ref, %{count: 1},
+                       %{factory: ^id, established: ^once, advertised: ^chained}}
+
+      assert FleetManager.runners_for_factory(ns, id) == ["r1"]
+
+      :ok = FleetStateHelper.sync(ns, "r1", [])
+      assert FleetManager.placement_refusal(ns, id) == {:run, once}
+    end
+
+    test "a runner announcing no run never places", %{namespace: ns} do
       id = factory("unkinded")
       forget(ns, [id])
 
-      # The init frame of a runner built before the kind was announced.
+      # The init frame of a runner built before the run was announced.
       FleetStateHelper.seed(ns, %{"old_runner" => []})
 
       GenServer.cast(
@@ -492,9 +531,31 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
       )
 
       {:ok, factories} = FleetManager.list_factories(ns)
-      assert [%{id: ^id, kind: nil}] = factories
+      assert [%{id: ^id, run: nil}] = factories
       assert FleetManager.runners_for_factory(ns, id) == []
-      assert FleetManager.placement_refusal(ns, id) == :no_kind_declared
+      assert FleetManager.placement_refusal(ns, id) == :no_run_declared
+    end
+
+    test "a runner announcing a retired kind literal is logged by name and never places",
+         %{namespace: ns} do
+      id = factory("kind_literal")
+      forget(ns, [id])
+      FleetStateHelper.seed(ns, %{"old_runner" => []})
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          GenServer.cast(
+            FleetManager,
+            {:sync_factories, ns, "old_runner",
+             [%{"id" => id, "sdk_lang" => @rust, "run" => "unbounded"}]}
+          )
+
+          {:ok, _} = FleetManager.list_factories(ns)
+        end)
+
+      assert log =~ ~s(run "unbounded")
+      assert FleetManager.runners_for_factory(ns, id) == []
+      assert FleetManager.placement_refusal(ns, id) == :no_run_declared
     end
   end
 end

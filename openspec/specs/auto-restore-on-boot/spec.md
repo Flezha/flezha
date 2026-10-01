@@ -91,7 +91,7 @@ When the kill-switch `:flezha, :auto_restore_enabled` is `false`, ProcessHub doe
 
 ### Requirement: Cell state restoration fires on first stream attach
 
-When a Cell's data stream attaches to a `StreamChannel` AND the owning Operator has `persistence_enabled = true` AND `Restore.assemble_payload/1` returns a payload with non-empty `snapshot_bytes` OR non-empty `change_log_bytes` AND the Operator did NOT arrive via HotSwap, the controller SHALL invoke `Flezha.State.Commands.dispatch_restore_init_state/2` for that Cell exactly once per Operator-startup BEFORE allowing input frames to flow.
+When a Cell's data stream attaches to a `StreamChannel` AND the owning Operator has `keeps_state = true` AND `Restore.assemble_payload/1` returns a payload with non-empty `snapshot_bytes` OR non-empty `change_log_bytes` AND the Operator did NOT arrive via HotSwap, the controller SHALL invoke `Flezha.State.Commands.dispatch_restore_init_state/2` for that Cell exactly once per Operator-startup BEFORE allowing input frames to flow.
 
 The Operator's `arrived_via_hotswap?` flag SHALL be set to `true` by `Overwatch.alter_handover_state/2` on the destination of a HotSwap migration. When this flag is set, `Flezha.State.Commands.dispatch_restore_init_state/2` SHALL NOT fire — the in-band handover state stands.
 
@@ -120,14 +120,14 @@ This works identically across: ProcessHub-driven cold-boot replay, fresh `flz op
 
 `state_root` is node-local and MUST NOT be assumed shared. `prepare_handover_state/1` sources the operator's state from its **runner**, falling back only to the final state a runner handed its Overwatch on a graceful shutdown, which a later bind of the operator to any runner discards. A migration triggered by a runner's death therefore ships an empty payload unless that runner left such a state and no runner has been bound since, and the source controller's disk then holds the only surviving copy.
 
-`prepare_handover_state/1` SHALL stamp `source_node` on the handover map. When `alter_handover_state/2` receives an empty payload and a `source_node` other than this node, the destination SHALL pull every durable file of the operator from that node via `Flezha.State.WalTransfer.pull_operator/3` and then run the ordinary per-Cell replay, both through `Flezha.Operator.Replay.dispatch_restore/3`, the step every bind's restore runs. An operator's durable files are its Cells' file sets and, for a bounded instance, its journal and its durable input log, which SHALL travel together: a journal pulled without its log would seed the instance's floor in an empty offset space, under which no retained input is ever owed. The same pull SHALL serve a partition member placed on a node other than the one its group was last assembled on.
+`prepare_handover_state/1` SHALL stamp `source_node` on the handover map. When `alter_handover_state/2` receives an empty payload and a `source_node` other than this node, the destination SHALL pull every durable file of the operator from that node via `Flezha.State.WalTransfer.pull_operator/3` and then run the ordinary per-Cell replay, both through `Flezha.Operator.Replay.dispatch_restore/3`, the step every bind's restore runs. An operator's durable files are its Cells' file sets and, for a steps instance, its journal and its durable input log, which SHALL travel together: a journal pulled without its log would seed the instance's floor in an empty offset space, under which no retained input is ever owed. The same pull SHALL serve a partition member placed on a node other than the one its group was last assembled on.
 
 The pull SHALL be:
 
 1. **Destination-driven.** The source only answers reads (`Paths.durable_refs/1`, `manifest/1`, `read_chunk/3` over `:erpc`), so a source that dies mid-transfer fails the pull instead of stranding a partial file on the destination.
 2. **Atomic per file.** Chunks are written to a `.transferring` sibling, fsynced, then renamed onto the destination path. Any failure removes the artefact and leaves that Cell cold — never half-restored.
 3. **Scoped by the reference's own file set.** A requested name is resolved against the file set the reference names, `Flezha.State.Paths.cell_files/1` for a Cell or the journal's reserved identity and the input log's one path for the log, never joined onto the state directory, so a peer cannot read arbitrary paths off the node.
-4. **Ahead of the bind's resume read, and never over state already here.** A bind whose operator names a foreign `state_source_node` pulls before it reads the instance's journal, restore count and input-log tail, so a bounded operator member resumes from what arrived; a node that already holds any of the instance's durable files pulls nothing, so a later restore never overwrites newer progress with the copy the source was left holding. The migration's pull runs off the Overwatch loop, since the copy is bounded by file size.
+4. **Ahead of the bind's resume read, and never over state already here.** A bind whose operator names a foreign `state_source_node` pulls before it reads the instance's journal, restore count and input-log tail, so a steps operator member resumes from what arrived; a node that already holds any of the instance's durable files pulls nothing, so a later restore never overwrites newer progress with the copy the source was left holding. The migration's pull runs off the Overwatch loop, since the copy is bounded by file size.
 5. **Non-fatal.** A Cell that cannot be pulled is skipped; the operator keeps the Cells that did land. Telemetry: `[:flezha, :state, :wal_pulled]` / `[:flezha, :state, :wal_pull_failed]`.
 
 Source-side files SHALL NOT be deleted at migration completion; the Retention sweeper reaps orphans.
@@ -142,9 +142,9 @@ This is one-shot transfer at migration time, NOT replication: a controller that 
 - **AND** because A's runner is gone the handover payload is empty, so B pulls `p1`'s Cell files from A and replays them
 - **AND** `p1` resumes on B with its pre-migration state; A's files remain on A until Retention sweeps them
 
-#### Scenario: A durable bounded operator migrates with its journal and log
+#### Scenario: A durable steps operator migrates with its journal and log
 
-- **GIVEN** controller A hosting a durable `per_input` bounded instance with three committed iterations and one retained input above its floor, and peer controller B with a runner for its factory
+- **GIVEN** controller A hosting a durable `per_input` steps instance with three committed iterations and one retained input above its floor, and peer controller B with a runner for its factory
 - **WHEN** A's last runner disconnects and the hub assigns the instance to B
 - **THEN** B pulls the instance's Cells, its `task.journal` and its `input.log` from A, byte for byte, and A's copies stay for Retention
 

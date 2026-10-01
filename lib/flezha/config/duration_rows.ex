@@ -267,7 +267,7 @@ defmodule Flezha.Config.DurationRows do
     {:data_heartbeat_ms, :ms, 10_000,
      env: "FLEZHA_DATA_HEARTBEAT_MS", runtimes: [:controller, :elixir_sdk, :rust]},
     {:sdk_commit_ack_ms, :ms, 30_000,
-     key: true, env: "FLEZHA_BOUNDED_ACK_TIMEOUT_MS", runtimes: [:controller, :elixir_sdk, :rust]},
+     key: true, env: "FLEZHA_STEPS_ACK_TIMEOUT_MS", runtimes: [:controller, :elixir_sdk, :rust]},
     # A call into one of the runner's own control processes: the RunnerServer,
     # an Operator, a local run. None of them runs author code on the answering
     # clause, so a wait here is a wedged process rather than a busy one.
@@ -290,7 +290,7 @@ defmodule Flezha.Config.DurationRows do
      derived: {:headroom, :control_unit_reply_timeout_ms, -1_000}, runtimes: [:elixir_sdk]},
     {:sdk_idle_probe_ms, :ms, 50, runtimes: [:elixir_sdk]},
     {:sdk_max_reap_interval_ms, :ms, 30_000, runtimes: [:elixir_sdk]},
-    # How long a rehydrated per-input bounded loop waits for the input-log tail
+    # How long a rehydrated per-input steps loop waits for the input-log tail
     # its bind still owes before it may park: a park there would drop the tail.
     {:sdk_owed_inbox_wait_ms, :ms, 60_000, runtimes: [:elixir_sdk]},
     {:sdk_serialize_wait_ms, :ms, 5_000, runtimes: [:elixir_sdk]},

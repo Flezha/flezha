@@ -80,7 +80,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   Kill the Overwatch so its supervised replacement re-binds, without waiting
   for the replacement to be observable.
 
-  For a bounded operator the replacement is what `force_fresh_rebind/2`
+  For a steps operator the replacement is what `force_fresh_rebind/2`
   cannot wait on: a resumed chain can run to completion and deregister between
   two polls, so "a live replacement pid" is a state the test may legitimately
   never see. The terminal completion record is the thing to wait on instead.

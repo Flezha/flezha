@@ -232,7 +232,7 @@ pub fn stream_socket_path_in(
             "{}{}{}{}",
             stream_type,
             STREAM_SOCKET_INFIX,
-            bounded_id(runner_id),
+            steps_id(runner_id),
             SOCKET_SUFFIX
         ),
     ))
@@ -242,7 +242,7 @@ pub fn stream_socket_path_in(
 /// It reads the runner id and nothing else: the controller and the runner
 /// compose this name in different processes, and a rule that consulted either
 /// one's directory could give one runner two names.
-fn bounded_id(runner_id: &str) -> Cow<'_, str> {
+fn steps_id(runner_id: &str) -> Cow<'_, str> {
     if runner_id.len() <= STREAM_SOCKET_ID_MAX {
         return Cow::Borrowed(runner_id);
     }
@@ -750,14 +750,14 @@ mod tests {
 
     #[test]
     fn a_shortened_id_is_the_ids_own_prefix_and_its_digest() {
-        let field = bounded_id(LONG_ID);
+        let field = steps_id(LONG_ID);
 
         assert_eq!(field.len(), STREAM_SOCKET_ID_MAX);
         // The digest is SHA-256 over the runner id's bytes, so it is
         // reproducible outside this repository: `printf %s <id> | sha256sum`.
         assert_eq!(field, "schema_evol~d33017db4b61");
         assert_eq!(
-            bounded_id(LONG_ID),
+            steps_id(LONG_ID),
             field,
             "the same id gives the same field"
         );
@@ -780,8 +780,8 @@ mod tests {
         // namespace: four numbers of four digits each.
         let id = "default_1000100010001000";
         assert_eq!(id.len(), STREAM_SOCKET_ID_MAX);
-        assert_eq!(bounded_id(id), id);
-        assert_eq!(bounded_id("default_1_2_3_4"), "default_1_2_3_4");
+        assert_eq!(steps_id(id), id);
+        assert_eq!(steps_id("default_1_2_3_4"), "default_1_2_3_4");
     }
 
     #[test]
@@ -805,7 +805,7 @@ mod tests {
     fn the_socket_predicate_recognises_the_names_this_module_creates() {
         assert!(is_flezha_socket(CONTROL_SOCKET_FILE));
         for stream_type in ["primary", "secondary"] {
-            for id in ["runner-1", &bounded_id(LONG_ID)] {
+            for id in ["runner-1", &steps_id(LONG_ID)] {
                 let name = format!(
                     "{}{}{}{}",
                     stream_type, STREAM_SOCKET_INFIX, id, SOCKET_SUFFIX

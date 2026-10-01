@@ -39,8 +39,8 @@ pub(super) fn event_time_due_pending(slot: &Arc<CellSlot>) -> bool {
 /// One batch: the re-handed head of line, then what an earlier round left,
 /// then the mailbox.
 pub(super) fn assemble_batch(slot: &Arc<CellSlot>) -> Vec<ItemAttempt> {
-    // An unbounded operator's Cell pays one field read here; only a bounded operator Cell looks further.
-    if slot.topology.bounded.is_some() && crate::bounded::pass_dead(slot) {
+    // A flow operator's Cell pays one field read here; only a steps operator Cell looks further.
+    if slot.topology.steps.is_some() && crate::steps::pass_dead(slot) {
         consume_dead_pass(slot);
         return Vec::new();
     }
@@ -71,7 +71,7 @@ pub(super) fn assemble_batch(slot: &Arc<CellSlot>) -> Vec<ItemAttempt> {
         if let Some(stream) = crate::state_sink::secondary_stream() {
             let from = items.len();
             push_due_event_timers(slot, &stream, &mut items, &mut fired, policy);
-            if slot.topology.bounded.is_some() {
+            if slot.topology.steps.is_some() {
                 keep_admitted_firings(slot, &mut items, from);
             }
         }
@@ -97,17 +97,17 @@ pub(super) fn assemble_batch(slot: &Arc<CellSlot>) -> Vec<ItemAttempt> {
     items
 }
 
-/// A bounded operator Cell's firings run only where its pass sheet admits them; the
+/// A steps operator Cell's firings run only where its pass sheet admits them; the
 /// rest wait on the sheet for their pass.
 fn keep_admitted_firings(slot: &Arc<CellSlot>, items: &mut Vec<ItemAttempt>, from: usize) {
     let generated = items.split_off(from);
     items.extend(generated.into_iter().filter(|work| match &work.item {
-        CellItem::Timer(fire) => crate::bounded::firing_assembled(slot, fire),
+        CellItem::Timer(fire) => crate::steps::firing_assembled(slot, fire),
         CellItem::Input(_) | CellItem::CloseInterval => true,
     }));
 }
 
-/// A failed or cancelled bounded operator pass: what its Cell still has queued would
+/// A failed or cancelled steps operator pass: what its Cell still has queued would
 /// only be undone, so it is consumed unrun and the stage owes it no longer.
 fn consume_dead_pass(slot: &Arc<CellSlot>) {
     let mut dropped = slot.pending_retry.lock_recover().drain(..).count()
@@ -116,7 +116,7 @@ fn consume_dead_pass(slot: &Arc<CellSlot>) {
         slot.waiters.serve_one();
         dropped += 1;
     }
-    crate::bounded::items_dropped(slot, dropped);
+    crate::steps::items_dropped(slot, dropped);
 }
 
 /// Live items an earlier round deferred behind a draining slice: older than
@@ -276,8 +276,8 @@ fn stage_timer(
         });
     } else {
         crate::cell::DISPATCHES_COMPLETED.fetch_add(1, Ordering::Relaxed);
-        if slot.topology.bounded.is_some() {
-            crate::bounded::items_dropped(slot, 1);
+        if slot.topology.steps.is_some() {
+            crate::steps::items_dropped(slot, 1);
         }
     }
 }
@@ -326,12 +326,12 @@ fn stage_input(
     }
     // Event-time timers fire on the high-water this input just advanced,
     // ascending, and BEFORE the input itself — otherwise a window would
-    // close after the record that belongs to the next one. In a bounded operator
+    // close after the record that belongs to the next one. In a steps operator
     // they join the stage that delivered the input.
     let from = items.len();
     push_due_event_timers(slot, &payload.stream, items, fired, policy);
-    if slot.topology.bounded.is_some() {
-        crate::bounded::firings_joined(slot, items.len() - from);
+    if slot.topology.steps.is_some() {
+        crate::steps::firings_joined(slot, items.len() - from);
     }
     items.push(ItemAttempt {
         now: Some(event_time),

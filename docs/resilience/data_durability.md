@@ -3,7 +3,7 @@
 The reference for **where Flezha can lose operator state or output, where it cannot, and how
 to operate so a planned action never loses data**, for users and operator authors. It
 covers the scenario matrix, the hard-kill gap, the delivery semantics (at-least-once by
-default, the effectively-once tier), the durable input log and a bounded operator's stage commit, the cross-hop
+default, the effectively-once tier), the durable input log and a steps operator's stage commit, the cross-hop
 guarantee, timers, the dead-letter queue, late-input correction, the remote durability tier
 and the user playbook. Operator *placement* recovery is
 [`../internals/process_hub.md`](../internals/process_hub.md); the WAL substrate itself is
@@ -27,7 +27,7 @@ Between the two sits the wire itself, and what a runner does when it refuses a f
 by the frame's declared **guarantee class**, never at the write site. A change record, a
 snapshot, an eviction's delete, a saga marker, a park payload and the shutdown state ship are
 `durable`: held in a bounded drop-oldest ring, the shed counted, replayed in write order on the
-next bound stream. A plugin or bounded operator emit is `output`: held already framed, so a keyed
+next bound stream. A plugin or steps operator emit is `output`: held already framed, so a keyed
 output's channel and identity stamps survive the replay. A control frame is refused to its
 caller and never held, because the reconnect re-issues the request it belonged to, and the data
 heartbeat is held by nothing at all — it reports a moment that has passed. The seam is
@@ -55,15 +55,15 @@ re-attaches its full plugin set and the convergence loop re-adds anything missin
 | **Node rejoins a live cluster** | Synced from peers; local durable copy kept | n/a | The reconcile's difference against live peers is empty, so the node starts nothing. The on-disk copy is never discarded to force that. |
 | **Kafka broker down, runners alive** | No loss | Buffered, resumes | The producer reconnects; the queue drains when the broker returns. |
 | **Sustained overload** (changes outpace fsync) | **No loss** | At-least-once | Credit-grant flow control: the sender's byte window (`:wal_high_watermark_bytes`, 16 MiB) is minted back only on WAL fsync, so an exhausted window *parks* the SDK's flush path — park, never drop. A shed on a credit session emits `[:flezha, :state, :credit_anomaly]`. |
-| **Bounded operator runner SIGKILL** (durable, the default) | **No loss** of a committed tasklet; an uncommitted one re-runs | Never lost; released only after its stage commits | Respawns on a new runner, restores committed Cell state behind the restore-before-run gate, and resumes at the **first un-journaled tasklet**: `task.journal` records each completed tasklet, the effect records its Cells wrote and its handoff, and an entry is appended only once every record it names is durable, so committed tasks are skipped, not redone, over state that is on disk. Inspect with `flz state journal`. |
-| **Looping bounded operator runner SIGKILL** (durable) | **No loss** of a committed tasklet | Never lost; released only after its stage commits | Resumes at the iteration after the last `iter_committed`; the in-flight one re-runs from its own last committed task. Unconsumed input is still in the instance's durable input log. |
-| **Input sent to a suspended / crashed / migrating bounded instance** (durable) | **No loss** | n/a | Appended to the instance's durable input log (`input.log`) before forwarding, delivered on rehydrate; a suspended instance is woken by the append. |
-| **Input sent to a sleeping unbounded instance** (its class declares `sleep_when_idle`) | **No loss** | n/a | Appended to the instance's input log before forwarding; the append wakes it, its Cells are restored before the log's tail is re-forwarded, and the message is folded once, also when the controller restarts while the instance is awake. |
-| **Controller redeploy while an instance of either kind is suspended** | **No loss** | n/a | Suspension is durable state (the park record in the class directory + input log + snapshots): the instance is rediscovered from disk, stays evicted, and rehydrates on the next input or its wake deadline. |
-| **Bounded operator runner SIGKILL** (persistence opted out) | **Full: re-runs from the top** | At-least-once | No WAL; the operator re-runs from the top on its next message and the messages waiting in its memory are lost. Idempotent by author contract, or don't opt out. |
+| **Steps operator runner SIGKILL** (durable, the default) | **No loss** of a committed tasklet; an uncommitted one re-runs | Never lost; released only after its stage commits | Respawns on a new runner, restores committed Cell state behind the restore-before-run gate, and resumes at the **first un-journaled tasklet**: `task.journal` records each completed tasklet, the effect records its Cells wrote and its handoff, and an entry is appended only once every record it names is durable, so committed tasks are skipped, not redone, over state that is on disk. Inspect with `flz state journal`. |
+| **Looping steps operator runner SIGKILL** (durable) | **No loss** of a committed tasklet | Never lost; released only after its stage commits | Resumes at the iteration after the last `iter_committed`; the in-flight one re-runs from its own last committed task. Unconsumed input is still in the instance's durable input log. |
+| **Input sent to a suspended / crashed / migrating steps instance** (durable) | **No loss** | n/a | Appended to the instance's durable input log (`input.log`) before forwarding, delivered on rehydrate; a suspended instance is woken by the append. |
+| **Input sent to a sleeping flow instance** (its class keeps its work and sleeps) | **No loss** | n/a | Appended to the instance's input log before forwarding; the append wakes it, its Cells are restored before the log's tail is re-forwarded, and the message is folded once, also when the controller restarts while the instance is awake. |
+| **Controller redeploy while an instance of either run is suspended** | **No loss** | n/a | Suspension is durable state (the park record in the class directory + input log + snapshots): the instance is rediscovered from disk, stays evicted, and rehydrates on the next input or its wake deadline. |
+| **Steps operator runner SIGKILL** (persistence opted out) | **Full: re-runs from the top** | At-least-once | No WAL; the operator re-runs from the top on its next message and the messages waiting in its memory are lost. Idempotent by author contract, or don't opt out. |
 | **Failed turn of a `per_input` keep-progress session** (durable) | **No loss**: the turn's message is parked | The turn's committed outputs stay out; its `compensate` hooks undo them | The message is parked in the DLQ before the iteration is journaled `dead_lettered`; the turn is undone and the next message runs. A crash after the record re-runs the owed undo; a crash before it re-runs the turn and parks it at most once. |
-| **Bounded operator SIGKILL mid-compensation** (durable) | Compensation resumes | n/a | Compensation-intent / -done markers ride the restore; the respawn finishes the outstanding undo hooks and skips the done ones. |
-| **Elixir operator process dies** (killed, or any crash outside a clean stop) | Whatever its class keeps after any rebind | Whatever its class keeps after any rebind | The runner drops the instance and reports `OperatorExited`; the controller parks it and the convergence loop rebinds it, restoring its Cells before the input log's tail above the floor is re-forwarded. A durable bounded run resumes from its journal. |
+| **Steps operator SIGKILL mid-compensation** (durable) | Compensation resumes | n/a | Compensation-intent / -done markers ride the restore; the respawn finishes the outstanding undo hooks and skips the done ones. |
+| **Elixir operator process dies** (killed, or any crash outside a clean stop) | Whatever its class keeps after any rebind | Whatever its class keeps after any rebind | The runner drops the instance and reports `OperatorExited`; the controller parks it and the convergence loop rebinds it, restoring its Cells before the input log's tail above the floor is re-forwarded. A durable steps run resumes from its journal. |
 | **Elixir Cell dies with unfinished input** (killed, or an exit linked into it) | **No loss** of input that has an offset | At-least-once, or effectively-once on the tier | The Operator ends instead of re-minting the Cell, and the rebind above re-forwards the log, so every input the dead Cell held runs again. With no offset held, the Cell is minted again from its slot. An instance that dies on every bind is retried on its backoff rung. |
 | **Poison payload** (fails every retry) | **No loss** | Cell continues | Retry-then-park: after `retry_max` attempts the payload is parked durably to the DLQ *before* the Cell advances. Only retention (30 d / 4 GiB, loud) ever discards it. |
 
@@ -118,7 +118,7 @@ controller's outbox lineage. A conforming sink reads a keyed default-tier record
 and orders by `flz.seq`; a *regressing* seq from a Cell that cold-started without a baseline
 is refused rather than guessed. The epoch, bumped by a WAL realign or a stream correction,
 resolves that and exists only where the controller's outbox mints the identity: under the tier
-and on a durable bounded operator's Cells.
+and on a durable steps operator's Cells.
 
 Nothing journals a default-tier input, which also decides the fate of input queued in a
 Cell's mailbox when a restore lands: with no log to re-forward from, the queue is the only
@@ -155,7 +155,7 @@ guarantee.
 
 - **Durable input log.** `Flezha.Operator.Ingest.ingest/4` appends every inbound payload to a
   per-instance `input.log` before forwarding, stamped `flz.offset`; the log answers once the
-  record is synced. It is the one durable input log, shared with a durable bounded operator (below). The
+  record is synced. It is the one durable input log, shared with a durable steps operator (below). The
   host never waits on the log (`InputLog.append_async/5`): the input is forwarded when the log
   answers, and a zero-credit park lands on the source's call alone. A repeat of a `flz.msg_id`
   the log still retains is absorbed; a message without an id is always appended. Retention
@@ -233,8 +233,8 @@ guarantee.
   longer than `window / ingest rate` delays ingestion; it never wedges it.
 - **Cost-free default.** Operators without the flag keep every path byte-identical. Under the
   tier a slow or unreachable sink backs the outbox up on disk, never in memory.
-- **Bounded operators** do not declare the tier (`topology.effectively_once_on_bounded`): a durable
-  bounded operator's Cells write the same effect record as their ordinary durability, released at the
+- **Steps operators** do not declare the tier (it is a member of the flow run only): a durable
+  steps operator's Cells write the same effect record as their ordinary durability, released at the
   stage commit below.
 
 Wire shapes: [`../sdk/protocol_spec.md`](../sdk/protocol_spec.md) "Output identity stamps" and
@@ -244,20 +244,20 @@ Wire shapes: [`../sdk/protocol_spec.md`](../sdk/protocol_spec.md) "Output identi
 
 The tier acknowledges an input by making its state durable. An operator that folds *many*
 inputs into one coherent push — a window that only closes on its boundary — declares
-`checkpoint_ack()` beside `effectively_once()` (`checkpointAck()` in Java) and calls
-`ctx.checkpoint()` where its state is coherent:
+`ack: checkpoint` under `exactly: effectively_once` and calls `ctx.checkpoint()` where its
+state is coherent:
 
 - **The consumed offset advances only at the checkpoint.** Changes in between are held in the
   Cell's flush buffer; the checkpoint ships the interval's changes with the closing input's
   offset as one record, one fsync.
 - **Emits flush as they happen by default.** A mid-interval emit ships in a record carrying no
   offset and reaches its plugin as soon as that record is fsynced.
-- **`outputs_at_checkpoint(max_delay_ms)`** (`outputsAtCheckpoint`) holds the interval's outputs
+- **`outputs: at_checkpoint`** with its `max_delay_ms` holds the interval's outputs
   with its changes and ships them inside the checkpoint record — one WAL append per interval,
   flushed as one batch after the fsync. `max_delay_ms` bounds the latency: the interval closes
   that long after the input that opened it, so a quiet Cell never holds an output
   indefinitely, and an unbounded hold cannot be declared by omission.
-- **`checkpoint_every(n)`** (`checkpointEvery`) closes the interval after `n` inputs; an explicit
+- **`every: n`** closes the interval after `n` inputs; an explicit
   `ctx.checkpoint()` still closes it early. The core owns the interval, so every host language
   gets the same rules.
 - **A park closes the interval.** An input that exhausts its retries is acknowledged into the
@@ -269,33 +269,33 @@ inputs into one coherent push — a window that only closes on its boundary — 
 **The interval is the knob you size the system with**: the input-log retention floor, the
 recovery work after a crash, and the cadence at which source credit is minted. An operator
 that never checkpoints stops truncating its input log and eventually parks its own source.
-`checkpoint_ack()` without `effectively_once()` is refused at build time
-(`topology.checkpoint_ack_without_tier` / `checkpointAckWithoutTier()`), and the controller's dataflow-stop
-watchdog skips a checkpoint class — silence between checkpoints is its steady state.
+A checkpoint cannot be declared without the tier, because `ack` sits under
+`effectively_once` in the tree, and the controller's dataflow-stop watchdog skips a
+checkpoint class — silence between checkpoints is its steady state.
 
-## Bounded operators: one record, released at the stage commit
+## Steps operators: one record, released at the stage commit
 
-A **durable structured** bounded operator (tasklets declared, the default
-`PERSISTENCE_ENABLED`) never lets a tasklet's plugin output escape before that tasklet is
+A **durable structured** steps operator (tasklets declared, the default
+`durable: local`) never lets a tasklet's plugin output escape before that tasklet is
 durable. The commit path, crash-resume and journal layout are in
-[`bounded_operator.md`](bounded_operator.md); this is the flush contract.
+[`steps_operator.md`](steps_operator.md); this is the flush contract.
 
-- **One record per invocation.** A bounded operator Cell writes the `cell_effect_record` a tier unbounded operator
+- **One record per invocation.** A steps operator Cell writes the `cell_effect_record` a tier flow operator
   Cell writes: its state changes and its plugin outputs (channel, key, the author's metadata,
   payload) in one record under one fsync, with no consumed offset (the iteration's
   `iter_committed` carries it). The runner sends the record as the item settles, before the
-  stage's barrier, never on the flush linger. A bounded class does not declare the tier; the
+  stage's barrier, never on the flush linger. A steps class does not declare the tier; the
   record is what its durability means.
 - **Records, then the marker, then the ack.** The barrier's `TaskCommit` names, per Cell, the
   range of records it wrote in the stage and the plugin channels they wrote on, and carries no
   output. The controller appends the `task_committed` entry only after every named record is
   durable on its Cell's writer, so a durable marker always implies durable records. A record
-  that is refused or not durable within `FLEZHA_BOUNDED_ACK_TIMEOUT_MS` fails the barrier. A
+  that is refused or not durable within `FLEZHA_STEPS_ACK_TIMEOUT_MS` fails the barrier. A
   barrier re-sent under the same reference id is answered from the existing entry, or joins
   the wait of the copy still waiting.
-- **One outbox.** The Cell writer's outbox serves both kinds: same `{:cursor, seq}` key,
-  dedup-file cursor, confirmation tally, resettle and restart re-drive. An unbounded Cell's entry is
-  committed by its own fsync; a bounded operator Cell's entry is **held** until a durable stage marker
+- **One outbox.** The Cell writer's outbox serves both runs: same `{:cursor, seq}` key,
+  dedup-file cursor, confirmation tally, resettle and restart re-drive. A flow Cell's entry is
+  committed by its own fsync; a steps operator Cell's entry is **held** until a durable stage marker
   names its record, and the commit worker releases the named range after the ack. Compute is
   not coupled to sink health: the next tasklet runs while the flush lands.
 - **A failed stage leaks nothing.** A held entry that no marker will name (a stage interrupted
@@ -314,16 +314,16 @@ durable. The commit path, crash-resume and journal layout are in
 - **Keys.** Each flushed frame carries the stream's identity: `flz.cell`,
   `flz.seq = <record seq>.<emit ordinal>`, `flz.epoch` (the Cell's realign epoch), `channel`,
   `flz.key` when the channel is keyed, and the author's metadata. `emit_keyed` and emit with
-  metadata work in a bounded tasklet in every SDK.
+  metadata work in a steps tasklet in every SDK.
 - **The epoch rule.** A crash re-drive keeps every stamp, so a dedup sink absorbs the repeat. A
-  deliberate [rewind](bounded_operator.md#rewind-taking-a-loop-back-to-a-committed-iteration)
+  deliberate [rewind](steps_operator.md#rewind-taking-a-loop-back-to-a-committed-iteration)
   leaves `flz.epoch` alone: a re-run's output is a newer record of the same Cell, so its
   `flz.seq` sorts above the unwound run's and an `(epoch, seq)`-guarded sink overwrites.
 - **Compensation rides the same path.** A `compensate` hook's output is a newer record of the
   compensating Cell, named by the `compensated` entry and released once that entry is durable;
   its seq is above the forward output's, so an undo never collides with it.
 - **Persistence off.** An opted-out class writes no record and no journal; its outputs go
-  straight to the wire with channel, key and metadata, as a tier-off unbounded operator's do.
+  straight to the wire with channel, key and metadata, as a tier-off flow operator's do.
 
 **Guarantee.** Never lost, never leaked before commit, and **at-least-once with stable keys** on
 the re-drive window (between a sink's confirmation and the flush cursor's write); a
@@ -360,9 +360,9 @@ re-forward starts. It is not what the controller forwarded, and not any one Cell
 A plain sleeping stream therefore folds nothing twice across a controller restart while it is
 awake, and a stream keyed by one quiet key does not pin the log for everyone else.
 
-## Bounded operators: the same durable input log
+## Steps operators: the same durable input log
 
-The input half of the same story. A durable bounded instance's input goes through the one
+The input half of the same story. A durable steps instance's input goes through the one
 durable input log the tier uses (above), keyed by the instance id: appended **before** it is
 forwarded, answered once synced, stamped `flz.offset`, and an append that fails is not
 forwarded. A crash after the append re-delivers on rehydrate (at-least-once *into* the
@@ -370,7 +370,7 @@ operator, exactly-once *completion* via the consumed offset). A repeat of a `flz
 log still retains is absorbed, so an at-least-once sender cannot produce a duplicate turn,
 while a message without an id is always appended.
 
-What differs is the reporter. A bounded operator's Cells report no consumed offset; its journal does,
+What differs is the reporter. A steps operator's Cells report no consumed offset; its journal does,
 under its own reserved identity: each durable iteration commit reports the offset it consumed
 into the log's watermark, and a message dead-lettered unread is journaled as released
 (`input_released`) before the instance sleeps. Every bind seeds that row from the highest offset
@@ -378,7 +378,7 @@ the journal released, and the driver drops a re-forwarded message at or below it
 is the instance's floor: retention reclaims below it, the bind re-forwards the retained records
 above it, and a rewind never lowers it, so a deferred truncation costs disk, never a re-delivery.
 
-**Source credit applies too.** A durable bounded operator's appends debit the same per-instance
+**Source credit applies too.** A durable steps operator's appends debit the same per-instance
 `:source_credit_window_bytes` window, drained as iterations commit, so a sender that has the
 window's worth of input (16 MiB by default) owed by one instance parks until the instance
 commits an iteration, instead of growing the log without bound.
@@ -386,29 +386,30 @@ commits an iteration, instead of growing the log without bound.
 **Guarantee.** Input sent to a suspended, crashed or migrating durable instance is **never
 lost**. Inspect with `flz state inbox <operator/instance>`, which renders the log of either
 kind. An opted-out class keeps its waiting messages in memory only. Mechanics:
-[`bounded_operator.md`](bounded_operator.md) "Durable loop and suspension".
+[`steps_operator.md`](steps_operator.md) "Durable loop and suspension".
 
 ## Sleeping instances
 
-Sleeping when idle is a class setting of both kinds, `sleep_when_idle`: on by default for a
-bounded operator whose persistence is on, off for an unbounded operator, and refused as `topology.sleep_without_persistence` on a
-class whose persistence is off. An instance whose Cells hold nothing queued, in flight, retrying,
-unflushed or timed, idle for `FLEZHA_PARK_IDLE_MS` (default ten minutes), ships `IterPark` and is
-evicted; the controller writes its park record first. A bounded operator sleeps only at a committed
-boundary, an unbounded operator at iteration `0`.
+Sleeping when idle is a setting of every class that keeps its work: `sleep_after` under
+`durable: local` or `remote`, by default never for a flow class and six hours for a steps class,
+`false` for never; a class kept in memory
+has nothing to sleep on. An instance whose Cells hold nothing queued, in flight, retrying,
+unflushed or timed, idle for its class's `sleep_after`, ships `IterPark` and is
+evicted; the controller writes its park record first. A steps operator sleeps only at a committed
+boundary, a flow operator at iteration `0`.
 
-An unbounded operator that sleeps keeps durable input: every message is appended to its input log before it
+A flow operator that sleeps keeps durable input: every message is appended to its input log before it
 is forwarded, one append per message. Its floor is the tier's: the offsets its Cells' records
 carry and the processed prefix the controller confirms
 ([above](#the-input-floor-a-processed-prefix)). A forward alone releases nothing, so an input the
 runner took and lost before recording it is re-forwarded. A controller that boots while the
 instance sleeps reads the floor from its Cells' records. The bind that wakes it restores every
-persisted Cell, awaited, before it re-forwards the tail. An unbounded operator that does not
+persisted Cell, awaited, before it re-forwards the tail. A flow operator that does not
 declare the setting pays nothing.
 
 **Guarantee.** A message sent to a sleeping instance of either kind wakes it and is delivered
-once, across a controller restart while it sleeps. A sleeping bounded operator stopped by a user is
-woken to end `cancelled`; a sleeping unbounded operator's stop removes it, as an unbounded operator's stop always does.
+once, across a controller restart while it sleeps. A sleeping steps operator stopped by a user is
+woken to end `cancelled`; a sleeping flow operator's stop removes it, as a flow operator's stop always does.
 
 ## Operator to operator: the cross-hop delivery guarantee
 
@@ -424,9 +425,9 @@ source with no outbox has nothing to re-send from:
 
 | Source operator | Across the hop |
 | --- | --- |
-| effectively-once unbounded operator | effectively-once |
-| durable bounded operator | effectively-once |
-| plain unbounded operator (no outbox) | at-least-once, best effort — no de-duplication |
+| effectively-once flow operator | effectively-once |
+| durable steps operator | effectively-once |
+| plain flow operator (no outbox) | at-least-once, best effort — no de-duplication |
 
 **A partitioned target adds a routing precondition.** Forwarding into a partition group routes
 by `hash(flz.key)` to the owning member; a message *without* `flz.key` (an emit on an unkeyed
@@ -435,9 +436,9 @@ channel, from either kind) is **parked to the source's DLQ** with
 cursor may pass.
 
 **In-flight items survive a controller restart.** The Cell writer's outbox gates its cursor on
-the sink, for a durable bounded operator and an effectively-once unbounded operator alike: it keeps each dispatched
+the sink, for a durable steps operator and an effectively-once flow operator alike: it keeps each dispatched
 entry in its confirmation tally and re-drives everything above the persisted
-`outbox_flushed_seq` on restore. A plain unbounded operator keeps retry-until-confirmed within the worker's lifetime only. Verdicts,
+`outbox_flushed_seq` on restore. A plain flow operator keeps retry-until-confirmed within the worker's lifetime only. Verdicts,
 refusals and telemetry: [`../plugins/operator_forward.md`](../plugins/operator_forward.md).
 
 ## Per-Cell timers: folded state, not a scheduler
@@ -462,7 +463,7 @@ a `format_id = 3` record under `cell_state_change` (a postcard `Vec<TimerOp>`) o
 
 ## Dead-letter queue: poison payloads park, never drop
 
-A permanently-failing (poison) payload in an Unbounded operator is never silently discarded. A
+A permanently-failing (poison) payload in a Flow operator is never silently discarded. A
 failing invocation — returned error or panic/exception, same policy in both SDKs — is retried
 up to the channel's `retry_max` (default 3 attempts, exponential backoff with jitter); authors
 mark an error non-retryable with `TaskletError::non_retryable` /
@@ -492,9 +493,9 @@ re-parks with `generation` incremented; `drop` is audited. Retention bounds the 
 AND size (30 d / 4 GiB, more restrictive wins); a retention deletion is genuine loss and is
 loud: `[:flezha, :dlq, :retention_dropped]`, exported as `dlq_dropped_by_retention_total`.
 
-**Bounded operators.** A bounded operator Cell runs the same first rung: retried in place,
+**Steps operators.** A steps operator Cell runs the same first rung: retried in place,
 non-retryable errors skipping the ladder (see
-[Cell retry](bounded_operator.md#cell-retry-the-rung-before-the-abort)). Its terminal escape is
+[Cell retry](steps_operator.md#cell-retry-the-rung-before-the-abort)). Its terminal escape is
 usually not a park: the tasklet fails, AbortAll fires and saga compensation unwinds. Two cases
 park. A message the entry channel cannot read parks under the channel. A failed turn of a
 `per_input` loop declaring keep-progress parks under the `_turn` slot: the controller reads the
@@ -502,7 +503,7 @@ turn's bytes from the instance's input log and appends the entry (keyed `_turn@<
 re-run that fails again lands on it) before it journals the iteration as `dead_lettered`; the
 turn's committed tasklets are then undone and the session takes its next message. A replay sends
 the bytes back as a new message; a replay to an ended session is refused. See
-[A failed turn of a keep-progress session](bounded_operator.md#a-failed-turn-of-a-keep-progress-session).
+[A failed turn of a keep-progress session](steps_operator.md#a-failed-turn-of-a-keep-progress-session).
 
 ## Late-input correction: fix the past, and the sinks fix themselves
 
@@ -595,14 +596,14 @@ to a build without the tier (`durability_posture: local_only`).
 When enabled, immutable artifacts — snapshots, WAL record bundles, task-journal suffixes, the
 durable input log, the registry cspec, parked DLQ records, the authz and schedule stores —
 ship to a Postgres, S3-compatible or file backend at boundaries that already exist (checkpoint
-close, compaction, bounded operator commit barriers, a park or a drop) plus one backstop timer
+close, compaction, steps operator commit barriers, a park or a drop) plus one backstop timer
 (`ship_interval_ms`, 30 s). The manifest is written last, so a torn upload is invisible to
 recovery, which hydrates the artifacts into the local layout and runs the ordinary restore path.
 
-| Kind | Mode | Loss when the disk is gone |
+| Run | Mode | Loss when the disk is gone |
 | --- | --- | --- |
-| Bounded operator | declared `SYNC_DURABILITY` | **none** — the barrier is remote before it is acked |
-| Bounded operator | default | at most the work since the last shipped barrier |
+| Steps operator | declared `durable: remote` | **none** — the barrier is remote before it is acked |
+| Steps operator | default | at most the work since the last shipped barrier |
 | Stream | checkpoint-ack | at most the current, unclosed interval |
 | Stream | per-input | at most one `ship_interval_ms` |
 
@@ -628,7 +629,7 @@ and `/healthz` (`degraded, reason: durability_rpo_exceeded`).
   `effectively_once()` — the Kafka and Postgres plugins conform out of the box.
 - **Never treat the on-disk registry as the live source of truth** in code or ops; it is
   what the orphan reconcile replays on a cold start.
-- **Bounded operators are durable and at-least-once by default.** Author each tasklet and
+- **Steps operators are durable and at-least-once by default.** Author each tasklet and
   compensation idempotently, or opt the class out of persistence for a fire-and-forget job that
   must re-run from a clean slate.
 
@@ -651,6 +652,6 @@ and `/healthz` (`degraded, reason: durability_rpo_exceeded`).
 ## See also
 
 - [`overview.md`](overview.md) — the map of every resilience mechanism and its owning doc
-- [`bounded_operator.md`](bounded_operator.md) — commit path, crash-resume, suspension, retention
+- [`steps_operator.md`](steps_operator.md) — commit path, crash-resume, suspension, retention
 - [`../architecture/kernel.md`](../architecture/kernel.md) — the write path, the effect record, the epoch rule, flow control
 - [`../internals/state_persistence.md`](../internals/state_persistence.md) — WAL layout, snapshots, retention knobs

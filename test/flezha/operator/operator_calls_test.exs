@@ -140,7 +140,7 @@ defmodule FlezhaTest.Operator.OperatorCallsTest do
         nil
       end)
 
-      state = Host.state(inst, durable_bounded: true, suspended: true, channel: nil)
+      state = Host.state(inst, durable_steps: true, suspended: true, channel: nil)
       host = start_supervised!({Host, state})
       dispatch(host, "o1", request_metadata(now() + 30_000))
       assert_receive {:delivery_request, _, ^inst, %{id: id}}
@@ -258,15 +258,16 @@ defmodule FlezhaTest.Operator.OperatorCallsTest do
 
     test "an ended callee answers the calls it took and never ran call.callee_ended" do
       callee = %{namespace: "default", operator_id: "agent-1"}
-      waiting = "o:gateway:c1:0:#{now() + 5_000}"
-      tail = "o:tools:c2:1:#{now() + 5_000}"
+      deadline_at = now() + 5_000
+      waiting = "o:gateway:c1:0:#{deadline_at}"
+      tail = "o:tools:c2:1:#{deadline_at}"
 
       {:ok, ^waiting, calls} =
         Calls.admit_operator(%Calls{}, callee, %{
           caller: "gateway",
           call: "c1",
           created: false,
-          deadline_at: now() + 5_000
+          deadline_at: deadline_at
         })
 
       Calls.end_all(calls, callee, "completed", [tail, waiting])
@@ -301,11 +302,11 @@ defmodule FlezhaTest.Operator.OperatorCallsTest do
 
     test "a stopped callee leaves its operator callers to its next run only if it journals them",
          %{inst: inst} do
-      token = "o:gateway:c1:0:#{now() + 5_000}"
       call = %{caller: "gateway", call: "c1", created: false, deadline_at: now() + 5_000}
+      token = "o:gateway:c1:0:#{call.deadline_at}"
 
       for journals? <- [true, false] do
-        state = Host.state(inst, durable_bounded: journals?, runner_id: nil)
+        state = Host.state(inst, durable_steps: journals?, runner_id: nil)
         {:ok, ^token, calls} = Calls.admit_operator(%Calls{}, Overwatch.callee(state), call)
         from = {self(), make_ref()}
         {:ok, _outside, calls} = Calls.admit(calls, Overwatch.callee(state), from, "in", 5_000)

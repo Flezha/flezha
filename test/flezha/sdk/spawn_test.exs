@@ -43,18 +43,18 @@ defmodule Flezha.SDK.SpawnTest do
   # The controller's answer to `reference_id`, as the control stream delivers it:
   # an outcome word, or the refusal `code` names as the wire's `Error`.
   defp answered(reference_id, outcome, code, instance_id) do
-    response = %RunnerCommands.SpawnBoundedResponse{
+    response = %RunnerCommands.SpawnStepsResponse{
       outcome: outcome,
       error: code && code |> Flezha.Error.new() |> Flezha.Error.to_wire(),
       instance_id: instance_id
     }
 
-    bin = Codec.encode_request(reference_id, {:spawn_bounded_response, response})
+    bin = Codec.encode_request(reference_id, {:spawn_steps_response, response})
     {:flz_data, "control", "control_command", bin, %{}}
   end
 
   defp warnings_naming(log, instance_id) do
-    marker = "spawn_bounded(factory `worker`, id `#{instance_id}`) failed"
+    marker = "spawn_steps(factory `worker`, id `#{instance_id}`) failed"
     length(String.split(log, marker)) - 1
   end
 
@@ -119,10 +119,10 @@ defmodule Flezha.SDK.SpawnTest do
       ctx = Ctx.new(Spawner, nil, 0)
 
       assert {:error, %Error{code: "spawn.unavailable"}} =
-               Spawn.try_result(Ctx.spawn_bounded(ctx, "worker", "payload", id: "w1"))
+               Spawn.try_result(Ctx.spawn_steps(ctx, "worker", "payload", id: "w1"))
 
       assert {:error, %Error{code: "spawn.unavailable"}} =
-               Spawn.try_result(Ctx.spawn_bounded(ctx, "worker", "payload"))
+               Spawn.try_result(Ctx.spawn_steps(ctx, "worker", "payload"))
 
       refute_received {:"$gen_cast", _}
     end
@@ -130,10 +130,10 @@ defmodule Flezha.SDK.SpawnTest do
     test "a replayed invocation issues no request, and answers the given id or none" do
       ctx = Ctx.new(Spawner, nil, 0, runner: self(), replay: true)
 
-      named = Ctx.spawn_bounded(ctx, "worker", "payload", id: "w1")
+      named = Ctx.spawn_steps(ctx, "worker", "payload", id: "w1")
       assert Spawn.await(named, 1_000) == {:ok, %{id: "w1", outcome: :skipped_on_replay}}
 
-      unnamed = Ctx.spawn_bounded(ctx, "worker", "payload")
+      unnamed = Ctx.spawn_steps(ctx, "worker", "payload")
       assert Spawn.await(unnamed, 1_000) == {:ok, %{id: "", outcome: :skipped_on_replay}}
 
       refute_received {:"$gen_cast", _}
@@ -143,32 +143,32 @@ defmodule Flezha.SDK.SpawnTest do
       ctx = Ctx.new(Spawner, nil, 0, runner: self())
       caller = self()
 
-      _handle = Ctx.spawn_bounded(ctx, "worker", "payload", id: "w1", if_running: :error)
+      _handle = Ctx.spawn_steps(ctx, "worker", "payload", id: "w1", if_running: :error)
 
       assert_received {:"$gen_cast",
                        {:spawn, ^caller,
                         %Spawn{
                           instance_id: "w1",
                           factory_id: "worker",
-                          reference_id: "spawn-bounded-w1-" <> _
+                          reference_id: "spawn-steps-w1-" <> _
                         }, "payload", :error}}
 
-      _handle = Ctx.spawn_bounded(ctx, "worker", "payload", id: "w2")
+      _handle = Ctx.spawn_steps(ctx, "worker", "payload", id: "w2")
       assert_received {:"$gen_cast", {:spawn, ^caller, %Spawn{instance_id: "w2"}, _, :deliver}}
     end
 
     test "a payload is encoded as a sink with no codec encodes it, and a term with no JSON form raises" do
       ctx = Ctx.new(Spawner, nil, 0, runner: self())
 
-      _handle = Ctx.spawn_bounded(ctx, "worker", %{symbol: "EURUSD", quantity: 3})
+      _handle = Ctx.spawn_steps(ctx, "worker", %{symbol: "EURUSD", quantity: 3})
       assert_received {:"$gen_cast", {:spawn, _, %Spawn{}, json, _}}
       assert Jason.decode!(json) == %{"symbol" => "EURUSD", "quantity" => 3}
 
-      _handle = Ctx.spawn_bounded(ctx, "worker", "as is")
+      _handle = Ctx.spawn_steps(ctx, "worker", "as is")
       assert_received {:"$gen_cast", {:spawn, _, %Spawn{}, "as is", _}}
 
       assert_raise Protocol.UndefinedError, fn ->
-        Ctx.spawn_bounded(ctx, "worker", {:no, :json})
+        Ctx.spawn_steps(ctx, "worker", {:no, :json})
       end
 
       refute_received {:"$gen_cast", _}
@@ -192,7 +192,7 @@ defmodule Flezha.SDK.SpawnTest do
 
       error =
         assert_raise ArgumentError, fn ->
-          Ctx.spawn_bounded(ctx, "worker", "payload", if_running: :error)
+          Ctx.spawn_steps(ctx, "worker", "payload", if_running: :error)
         end
 
       assert error.message =~ "`if_running`"
@@ -204,7 +204,7 @@ defmodule Flezha.SDK.SpawnTest do
       ctx = Ctx.new(Spawner, nil, 0, runner: self())
 
       for opts <- [[instance: "w1"], [id: ""], [id: :w1], [id: "w1", if_running: :replace]] do
-        assert_raise ArgumentError, fn -> Ctx.spawn_bounded(ctx, "worker", "payload", opts) end
+        assert_raise ArgumentError, fn -> Ctx.spawn_steps(ctx, "worker", "payload", opts) end
       end
 
       refute_received {:"$gen_cast", _}
@@ -238,7 +238,7 @@ defmodule Flezha.SDK.SpawnTest do
 
       assert_receive {:flz_data, _stream, "control_command", bin, _meta}
 
-      assert {:ok, %{reference_id: ^id, command: {:spawn_bounded_request, request}}} =
+      assert {:ok, %{reference_id: ^id, command: {:spawn_steps_request, request}}} =
                Codec.decode_command(bin)
 
       assert %{instance_id: "w1", factory_id: "worker", payload: "payload", if_running: "error"} =
@@ -260,7 +260,7 @@ defmodule Flezha.SDK.SpawnTest do
       assert {:noreply, s} = RunnerServer.handle_cast(cast, connected())
       assert_receive {:flz_data, _stream, "control_command", bin, _meta}
 
-      assert {:ok, %{reference_id: ^id, command: {:spawn_bounded_request, request}}} =
+      assert {:ok, %{reference_id: ^id, command: {:spawn_steps_request, request}}} =
                Codec.decode_command(bin)
 
       assert %{instance_id: "", factory_id: "worker", if_running: "deliver"} = request

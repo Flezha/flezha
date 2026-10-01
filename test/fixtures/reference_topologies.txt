@@ -9,10 +9,10 @@
 # sources, read at `c6f5dbfa`:
 #
 #   hybrid_channel      test/apps/rust_runner/src/channel.rs, HybridChannelOperator
-#   commit_block_chain  test/apps/rust_runner/src/bounded.rs, TierCommitBlockBounded
+#   commit_block_chain  test/apps/rust_runner/src/steps.rs, TierCommitBlockSteps
 #
 # `commit_block_chain` is this file's name for the second shape because no
-# veneer registers a bounded fixture yet; it is `tier_commit_block_bounded`'s
+# veneer registers a steps fixture yet; it is `tier_commit_block_steps`'s
 # topology, which declares nothing about its handoffs — no SDK does, because the
 # runtime derives an inter-tasklet channel's journal codec (from the channel
 # kind for a host that ships bytes, `flz_core/src/host/register.rs`).
@@ -36,13 +36,13 @@
 # descriptor name — which the record now carries as a `sink` link, so the core
 # derives it rather than being told a channel name and nothing else.
 
-# hybrid_channel — an unbounded class. One entry, one producer whose single output
+# hybrid_channel — a flow class. One entry, one producer whose single output
 # channel carries a plugin sink AND an inter-tasklet consumer.
 # Tasklets: 0 hybrid_producer_tasklet, 1 hybrid_consumer_tasklet.
 hybrid_channel | 0 | input | entry | - | 0 | -
 hybrid_channel | 1 | hybrid_indicator | inter_task | 0 | 1 | hybrid_indicator
 
-# commit_block_chain — a structured bounded class with the same hybrid shape
+# commit_block_chain — a structured steps class with the same hybrid shape
 # mid-chain.
 # Tasklets: 0 tier_commit_a, 1 block_b.
 commit_block_chain | 0 | in | entry | - | 0 | -
@@ -88,18 +88,22 @@ commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 #   merge(<task>, <x>, <x>…)   one merge over the listed sources
 #   branch(<x>, <n>)           the branch sugar's arity
 #   <task>.mailbox(<n>)        the tasklet's per-Cell mailbox capacity
-#   class.<flag>[(<value>)]    persistent | effectively_once | checkpoint_ack |
-#                              checkpoint_every(n) | outputs_at_checkpoint(ms) |
-#                              correction_window(ms) | sync_durability |
-#                              sleep_when_idle | bounded
+#   class.run(<tree>)          the class's `run`, as the tree's JSON: "flow",
+#                              "steps", {"flow":{"exactly":...}} or
+#                              {"steps":{"each":...,"on_failure":...}}; absent
+#                              is flow
+#   class.durable(<tree>)      the class's `durable`, as the tree's JSON: false,
+#                              "local", "remote", {"local":{"sleep_after":ms}};
+#                              absent is local
 #   shorthand(<id>|-, <sink>|-, <input>|-)
-#                              one §5 short form, an unbounded operator declaration
+#                              one §5 short form, a flow operator declaration
 #                              carrying a tasklet body: the factory id, the
 #                              plugin sink and the entry channel name, each `-`
 #                              when the row leaves it unwritten. The step
 #                              declares NO builder topology — it is the whole
 #                              operator. A second step in one row declares a
-#                              bounded short form, so a collision crosses kinds
+#                              short form that runs in steps, so a collision
+#                              crosses runs
 #   shorthand(...).noout       the same, on a body declaring no output
 #   shorthand(...).topology    the same, on a declaration that also carries a
 #                              topology body
@@ -120,15 +124,13 @@ commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 # counts the skip against the declared surface. The surfaces named here:
 #   merge      a merge terminator
 #   branch     the branch sugar
-#   bounded    a bounded class kind
+#   steps      a class that runs in steps
 #   detached   a tasklet no entry can reach — unauthorable in a fluent
 #              builder, where a node exists only once something wires it
-#   raw_flags  the checkpoint-outputs flag set without its delay, which every
-#              SDK's `outputs_at_checkpoint(ms)` makes it impossible to write
-#   sync_durability  the class flag a TYPED stream builder does not carry: Rust
-#              and Java declare it on a bounded class only, so an unbounded class of
-#              theirs cannot spell it at all and the refusal cannot be reached
-#              from one. The row stays for the five builders that can
+#   untyped_tree  a settings tree written as data, which can put a setting
+#              under a parent that does not carry it. Rust and Java cannot
+#              write one: their tree is types, so each of these rows is a
+#              compile-fail fixture there instead
 #   shorthand  the §5 single-tasklet short form. Every SDK carries it, so no
 #              manifest may lack this one
 #   response   the `response()` plugin end. Every SDK carries it, so no
@@ -162,7 +164,7 @@ topology.duplicate_plugin_sink     | dup_sink         | entry(in); in.into(plain
 topology.channel_ends_twice        | response_beside_sink | entry(in); in.into(plain); plain.sink(out); plain.response                        | response
 topology.channel_ends_twice        | two_responses    | entry(in); in.into(plain); plain.named(answer); plain.response; plain.response        | response
 topology.channel_ends_twice        | call_beside_sink | entry(in); in.into(plain); plain.sink(out); plain.call(pricing)                    | call
-topology.call_outside_per_input_loop | call_once_bounded | class.bounded; entry(in); in.into(plain); plain.named(ask); plain.call(pricing)   | bounded
+topology.call_outside_per_input_loop | call_once_steps | class.run("steps"); entry(in); in.into(plain); plain.named(ask); plain.call(pricing)   | steps
 topology.call_without_key          | call_nocreate_unkeyed | entry(in); in.into(plain); plain.named(ask); plain.call_factory_nocreate(agent) | call
 topology.call_deadline_zero        | call_deadline_zero | entry(in); in.into(plain); plain.named(ask); plain.call_deadline(0)             | call
 topology.call_response_unread      | call_unread      | entry(in); in.into(plain); plain.named(ask); plain.call_unread(pricing)             | call
@@ -170,23 +172,28 @@ topology.keyed_channel_without_plugin_wire | keyed_no_wire    | entry(in); in.in
 topology.channel_named_twice       | named_twice      | entry(in); in.into(plain); plain.named(a); plain.sink(b)                              | -
 topology.duplicate_sink_name       | two_channels_one_sink | entry(in); in.into(plain); in.into(second); plain.sink(out); second.sink(out)    | -
 topology.unservable_clock          | logical_nochange | entry(in); in.into(nochange)                                                          | -
-topology.unkeyed_channel_under_effectively_once | eo_unkeyed_sink  | class.persistent; class.effectively_once; entry(in); in.into(plain); plain.sink(out)  | -
+topology.unkeyed_channel_under_effectively_once | eo_unkeyed_sink  | class.run({"flow":{"exactly":"effectively_once"}}); entry(in); in.into(plain); plain.sink(out)  | -
 topology.retry_max_zero            | retry_zero       | entry(in); in.retry_max(0); in.into(plain)                                            | -
-topology.dropping_policy_under_effectively_once | eo_sheds         | class.persistent; class.effectively_once; entry(in); in.on_full(drop_newest); in.into(plain) | -
-topology.correction_without_tier   | correction_bare  | class.correction_window(60000); entry(in); in.into(eventtime)                         | -
-topology.correction_without_event_time | correction_wall  | class.persistent; class.effectively_once; class.correction_window(60000); entry(in); in.into(plain) | -
-topology.correction_window_zero    | correction_zero  | class.persistent; class.effectively_once; class.correction_window(0); entry(in); in.into(eventtime) | -
-topology.checkpoint_every_zero     | checkpoint_zero  | class.persistent; class.effectively_once; class.checkpoint_every(0); entry(in); in.into(plain) | -
-topology.checkpoint_ack_without_tier | ack_no_tier      | class.checkpoint_ack; entry(in); in.into(plain)                                       | -
+topology.dropping_policy_under_effectively_once | eo_sheds         | class.run({"flow":{"exactly":"effectively_once"}}); entry(in); in.on_full(drop_newest); in.into(plain) | -
+topology.correction_without_event_time | correction_wall  | class.run({"flow":{"exactly":{"effectively_once":{"correction_ms":60000}}}}); entry(in); in.into(plain) | -
+topology.correction_window_zero    | correction_zero  | class.run({"flow":{"exactly":{"effectively_once":{"correction_ms":0}}}}); entry(in); in.into(eventtime) | -
+topology.checkpoint_every_zero     | checkpoint_zero  | class.run({"flow":{"exactly":{"effectively_once":{"ack":{"checkpoint":{"every":0}}}}}}); entry(in); in.into(plain) | -
 topology.merge_too_few_sources     | merge_one_source | entry(in); merge(plain, in)                                                           | merge
 topology.duplicate_merge_source    | merge_same_twice | entry(in); entry(other); merge(plain, in, in)                                         | merge
 topology.edge_already_wired        | edge_rewired     | entry(in); in.map.into(plain); in.into(plain)                                         | -
-topology.effectively_once_on_bounded | eo_bounded      | class.bounded; class.persistent; class.effectively_once; entry(in); in.into(plain)   | bounded
-topology.correction_window_on_bounded | correction_bounded    | class.bounded; class.persistent; class.correction_window(60000); entry(in); in.into(plain) | bounded
-topology.checkpoint_on_bounded    | checkpoint_bounded | class.bounded; class.persistent; class.checkpoint_every(500); entry(in); in.into(plain) | bounded
-topology.sync_durability_on_unbounded | sync_unbounded      | class.persistent; class.sync_durability; entry(in); in.into(plain)                    | sync_durability
-topology.sleep_without_persistence | sleep_no_persist | class.sleep_when_idle; entry(in); in.into(plain)                                      | -
-topology.at_checkpoint_without_max_delay | hold_no_delay    | class.persistent; class.effectively_once; class.outputs_at_checkpoint; entry(in); in.into(plain) | raw_flags
+topology.at_checkpoint_without_max_delay | hold_no_delay    | class.run({"flow":{"exactly":{"effectively_once":{"ack":{"checkpoint":{"outputs":"at_checkpoint"}}}}}}); entry(in); in.into(plain) | -
+topology.effectively_once_without_persistence | eo_in_memory | class.run({"flow":{"exactly":"effectively_once"}}); class.durable(false); entry(in); in.into(plain) | -
+topology.remote_on_flow            | remote_flow      | class.durable("remote"); entry(in); in.into(plain)                                    | -
+
+# The settings tree's misplaced settings: each is written under a parent that
+# does not carry it, and the answer names the setting and that parent.
+topology.unknown_field             | each_under_flow  | class.run({"flow":{"each":"per_input"}}); entry(in); in.into(plain)                | untyped_tree
+topology.unknown_field             | ack_under_at_least_once | class.run({"flow":{"exactly":{"at_least_once":{"ack":"checkpoint"}}}}); entry(in); in.into(plain) | untyped_tree
+topology.unknown_field             | ack_under_steps  | class.run({"steps":{"ack":"checkpoint"}}); entry(in); in.into(plain)                | untyped_tree
+topology.unknown_field             | correction_under_steps | class.run({"steps":{"correction_ms":5000}}); entry(in); in.into(plain)        | untyped_tree
+topology.unknown_field             | exactly_under_steps | class.run({"steps":{"exactly":"effectively_once"}}); entry(in); in.into(plain)  | untyped_tree
+topology.unknown_field             | sleep_after_in_memory | class.durable({"false":{"sleep_after":1000}}); entry(in); in.into(plain)       | untyped_tree
+topology.invalid_setting           | kind_literal     | class.run("bounded"); entry(in); in.into(plain)                                       | untyped_tree
 
 # The §5 short-form refusals. Their codes are the authoring contract's, not
 # `flz_core`'s: the core never sees a short form, so these rows are exempt from
@@ -203,15 +210,15 @@ ok                                 | filter_then_into | entry(in); in.filter.int
 ok                                 | flat_map_then_into | entry(in); in.flat_map.into(plain)                                                  | -
 ok                                 | named_sink       | entry(in); in.into(plain); plain.named(renamed); plain.sink                            | -
 ok                                 | sink_names_channel | entry(in); in.into(plain); plain.sink(items_output)                                  | -
-ok                                 | checkpoint_ack   | class.persistent; class.effectively_once; class.checkpoint_ack; entry(in); in.into(plain) | -
-ok                                 | checkpoint_every | class.persistent; class.effectively_once; class.checkpoint_every(500); entry(in); in.into(plain) | -
-ok                                 | hold_outputs     | class.persistent; class.effectively_once; class.outputs_at_checkpoint(50); entry(in); in.into(plain) | -
+ok                                 | ack_checkpoint   | class.run({"flow":{"exactly":{"effectively_once":{"ack":"checkpoint"}}}}); entry(in); in.into(plain) | -
+ok                                 | checkpoint_every | class.run({"flow":{"exactly":{"effectively_once":{"ack":{"checkpoint":{"every":500}}}}}}); entry(in); in.into(plain) | -
+ok                                 | hold_outputs     | class.run({"flow":{"exactly":{"effectively_once":{"ack":{"checkpoint":{"outputs":"at_checkpoint","max_delay_ms":50}}}}}}); entry(in); in.into(plain) | -
 ok                                 | two_response_ends | entry(in); in.into(plain); in.into(second); plain.named(accepted); plain.response; second.named(refused); second.response | response
-ok                                 | eo_unkeyed_response | class.persistent; class.effectively_once; entry(in); in.into(plain); plain.named(answer); plain.response | response
+ok                                 | eo_unkeyed_response | class.run({"flow":{"exactly":"effectively_once"}}); entry(in); in.into(plain); plain.named(answer); plain.response | response
 ok                                 | call_back_into_caller | entry(in); in.into(plain); plain.named(ask); plain.call(pricing)                | call
 ok                                 | call_factory_by_key | entry(in); in.into(plain); plain.named(ask); plain.key.call_factory(agent)      | call
 ok                                 | hybrid_channel   | cited above                                                                           | -
-ok                                 | commit_block_chain | cited above                                                                         | bounded
+ok                                 | commit_block_chain | cited above                                                                         | steps
 
 # The derived declarations of the `ok` rows above, in the same seven columns as
 # the two twins: topology | index | name | kind | producer | consumers | sink
@@ -222,7 +229,7 @@ named_sink | 0 | in | entry | - | 0 | -
 named_sink | 1 | renamed | plugin | 0 | - | renamed
 sink_names_channel | 0 | in | entry | - | 0 | -
 sink_names_channel | 1 | items_output | plugin | 0 | - | items_output
-checkpoint_ack | 0 | in | entry | - | 0 | -
+ack_checkpoint | 0 | in | entry | - | 0 | -
 checkpoint_every | 0 | in | entry | - | 0 | -
 hold_outputs | 0 | in | entry | - | 0 | -
 two_response_ends | 0 | in | entry | - | 0,1 | -
@@ -242,8 +249,6 @@ call_factory_by_key | 2 | ask.response | entry | - | 0 | -
 unrowed | topology.unknown_sdk_lang
 unrowed | topology.unusable_sdk_version
 unrowed | topology.no_tasklets
-unrowed | topology.sync_durability_without_persistence
-unrowed | topology.effectively_once_without_persistence
 unrowed | topology.checkpoint_max_delay_zero
 unrowed | topology.producer_out_of_range
 unrowed | topology.consumer_out_of_range

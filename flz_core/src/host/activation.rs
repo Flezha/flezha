@@ -216,19 +216,19 @@ fn settle_items(
     effects: Vec<schema::ItemEffect>,
 ) -> Result<(), Error> {
     let mut queue: std::collections::VecDeque<ItemAttempt> = items.into();
-    let bounded = slot.topology.bounded.is_some();
+    let steps = slot.topology.steps.is_some();
     for mut effect in effects {
-        if !bounded {
-            refuse_completion(&mut effect);
-        }
+        // A flow operator ends through its own path; a steps one through its
+        // stage's settlement.
+        let flow_end = if steps { None } else { effect.complete.take() };
         let Some(work) = queue.pop_front() else {
             core.abandon(token, Vec::new());
             return Err(Error::Answer(Code::CompletionTooManyEffects.with([])));
         };
-        // A bounded operator's unreadable message rides its ladder before it parks;
-        // an unbounded operator's parks at once.
+        // A steps operator's unreadable message rides its ladder before it parks;
+        // a flow operator's parks at once.
         let verdict = match effect.verdict.clone() {
-            schema::Verdict::Unreadable { message } if bounded => {
+            schema::Verdict::Unreadable { message } if steps => {
                 schema::Verdict::RetryableError { message }
             }
             verdict => verdict,
@@ -237,6 +237,9 @@ fn settle_items(
             schema::Verdict::Ok => {
                 settle_item(slot, &work, effect, None);
                 crate::cell::DISPATCHES_COMPLETED.fetch_add(1, Ordering::Relaxed);
+                if let Some(result) = flow_end {
+                    crate::operator::completion::complete(slot, result);
+                }
             }
             schema::Verdict::RetryableError { message } => {
                 if work.is_final {
@@ -264,21 +267,6 @@ fn settle_items(
     }
     finish_batch(core, token, queue);
     Ok(())
-}
-
-/// An unbounded operator never completes: an item whose tasklet asked to fails as the
-/// author's own non-retryable error would, carrying nothing it recorded.
-pub(super) fn refuse_completion(effect: &mut schema::ItemEffect) {
-    if effect.complete.is_some() && effect.verdict == schema::Verdict::Ok {
-        *effect = schema::ItemEffect {
-            verdict: schema::Verdict::NonRetryableError {
-                message: crate::bounded::complete_outside_bounded().text(),
-            },
-            consumed_offset: effect.consumed_offset,
-            event_time: effect.event_time,
-            ..empty_effect()
-        };
-    }
 }
 
 /// Anything still queued behind a parked head is owed a fresh round, or a
@@ -361,8 +349,8 @@ pub(super) fn settle_item(
     let Some(stream) = stream_of(&work.item) else {
         return;
     };
-    if slot.topology.bounded.is_some() {
-        return settle_bounded_item(slot, facts, work, &stream, effect, park);
+    if slot.topology.steps.is_some() {
+        return settle_steps_item(slot, facts, work, &stream, effect, park);
     }
     let parked = park.is_some();
     let timers = committed_timers(&work.item, effect.timers, parked);
@@ -417,18 +405,18 @@ pub(super) fn settle_item(
     }
 }
 
-/// A host's answer to a bounded operator undo: its changes and plugin outputs settled
+/// A host's answer to a steps operator undo: its changes and plugin outputs settled
 /// as an item's are, into the undo's own record; a failed hook reported.
-pub(crate) fn settle_bounded_undo(slot: &Arc<CellSlot>, outcome: schema::ActivationOutcome) {
+pub(crate) fn settle_steps_undo(slot: &Arc<CellSlot>, outcome: schema::ActivationOutcome) {
     match outcome {
         schema::ActivationOutcome::Work(effects) => {
             let Some(facts) = slot.dispatcher.host_facts() else {
                 return;
             };
-            let stream = crate::bounded::unwired_stream();
+            let stream = crate::steps::unwired_stream();
             for effect in effects {
                 let (_edge, wire) = split_outputs(effect.outputs);
-                settle_bounded_effects(
+                settle_steps_effects(
                     slot,
                     facts,
                     effect.changes,
@@ -439,9 +427,9 @@ pub(crate) fn settle_bounded_undo(slot: &Arc<CellSlot>, outcome: schema::Activat
                 );
             }
         }
-        schema::ActivationOutcome::Failed(error) => crate::bounded::note_failure(
+        schema::ActivationOutcome::Failed(error) => crate::steps::note_failure(
             slot,
-            crate::bounded::BoundedError::from(error.message),
+            crate::steps::StepsError::from(error.message),
             None,
             1,
         ),
@@ -449,11 +437,11 @@ pub(crate) fn settle_bounded_undo(slot: &Arc<CellSlot>, outcome: schema::Activat
     }
 }
 
-/// A bounded operator Cell's changes, durable timer ops and plugin outputs. A class
+/// A steps operator Cell's changes, durable timer ops and plugin outputs. A class
 /// that journals writes them as one effect record, sent at once and named on
 /// the pass sheet for the stage's barrier; one that does not sends the outputs
 /// to the wire with their channel, key and metadata.
-fn settle_bounded_effects(
+fn settle_steps_effects(
     slot: &Arc<CellSlot>,
     facts: &HostTaskletFacts,
     changes: Vec<Vec<u8>>,
@@ -479,7 +467,7 @@ fn settle_bounded_effects(
         checkpointed: false,
         parked: false,
     };
-    let call = crate::bounded::pass_call(slot);
+    let call = crate::steps::pass_call(slot);
     let (_park, plugin_outputs) = settle_into_buffer(
         slot,
         facts,
@@ -490,19 +478,19 @@ fn settle_bounded_effects(
         None,
     );
     ship_plugin_outputs(slot, stream, plugin_outputs);
-    if !slot.topology.records_effects(slot.persistence_enabled) {
+    if !slot.topology.records_effects(slot.keeps_state) {
         return;
     }
     let mut buffer = slot.flush_buffer.lock_recover();
-    crate::bounded::ship_stage_record(slot, &mut **buffer, &facts.header(), channels);
+    crate::steps::ship_stage_record(slot, &mut **buffer, &facts.header(), channels);
 }
 
-/// A bounded operator Cell's item: its changes and plugin outputs settled into its
+/// A steps operator Cell's item: its changes and plugin outputs settled into its
 /// record, its edge outputs held for the stage's commit and its completion
-/// noted; or, where an unbounded operator would park it, its stage failed with no dead
+/// noted; or, where a flow operator would park it, its stage failed with no dead
 /// letter and only its changes recorded. Either way the stage owes it no
 /// longer.
-fn settle_bounded_item(
+fn settle_steps_item(
     slot: &Arc<CellSlot>,
     facts: &HostTaskletFacts,
     work: &ItemAttempt,
@@ -521,7 +509,7 @@ fn settle_bounded_item(
         effect.outputs
     };
     let (edge_outputs, wire_outputs) = split_outputs(outputs);
-    settle_bounded_effects(
+    settle_steps_effects(
         slot,
         facts,
         effect.changes,
@@ -533,9 +521,9 @@ fn settle_bounded_item(
     match park {
         Some((error, attempts)) => {
             let error = if unreadable {
-                crate::bounded::BoundedError::unreadable(error)
+                crate::steps::StepsError::unreadable(error)
             } else {
-                crate::bounded::BoundedError::non_retryable(error)
+                crate::steps::StepsError::non_retryable(error)
             };
             let payload = match &work.item {
                 CellItem::Input(p) => p
@@ -544,16 +532,16 @@ fn settle_bounded_item(
                     .map(|hp| hp.bytes.clone()),
                 CellItem::Timer(_) | CellItem::CloseInterval => None,
             };
-            crate::bounded::note_failure(slot, error, payload, attempts);
+            crate::steps::note_failure(slot, error, payload, attempts);
         }
-        None => hold_bounded_edges(slot, stream, edge_outputs, effect.complete),
+        None => hold_steps_edges(slot, stream, edge_outputs, effect.complete),
     }
-    crate::bounded::item_settled(slot);
+    crate::steps::item_settled(slot);
 }
 
-/// A host bounded stage emits one untransformed output per released value,
+/// A host steps stage emits one untransformed output per released value,
 /// naming its producing channel; the consumer applies the edge on delivery.
-fn hold_bounded_edges(
+fn hold_steps_edges(
     slot: &Arc<CellSlot>,
     stream: &Arc<FlezhaStream>,
     edge_outputs: Vec<schema::Output>,
@@ -576,10 +564,10 @@ fn hold_bounded_edges(
             event_time: output.event_time,
             metadata: output.metadata,
         });
-        crate::bounded::hold_emit(&instance, Some(descriptor), &value, stream, slot);
+        crate::steps::hold_emit(&instance, Some(descriptor), &value, stream, slot);
     }
     if let Some(result) = complete {
-        crate::bounded::complete(slot, result);
+        crate::steps::complete(slot, result);
     }
 }
 
@@ -752,7 +740,7 @@ fn settle_into_buffer(
     let Some(bytes) = buffer.as_any_mut().downcast_mut::<BytesBuffer>() else {
         return (None, Vec::new());
     };
-    let records_effects = slot.topology.records_effects(slot.persistence_enabled);
+    let records_effects = slot.topology.records_effects(slot.keeps_state);
     let mut plugin_outputs = Vec::new();
     if records_effects {
         effects.outputs = output_records(wire_outputs);

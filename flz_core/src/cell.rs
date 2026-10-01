@@ -172,7 +172,7 @@ pub struct CellSlot {
     /// Locked by the dispatcher for the whole invocation and by the flusher
     /// on every linger tick.
     pub flush_buffer: Arc<Mutex<Box<dyn crate::flusher::FlushableBuffer>>>,
-    pub persistence_enabled: bool,
+    pub keeps_state: bool,
     /// Per-Cell WAL seq, stamped into a frame before it reaches the sink so
     /// a frame buffered across a reconnect replays with its original seq.
     pub change_seq: Arc<std::sync::atomic::AtomicU64>,
@@ -331,7 +331,7 @@ impl CellSlot {
     /// the record carries the offset the Cell took, whose floor then skips the
     /// re-forwarded input.
     pub fn keeps_edges(&self, offset: Option<u64>) -> bool {
-        self.topology.records_effects(self.persistence_enabled)
+        self.topology.records_effects(self.keeps_state)
             || (self.flusher_entry_id.is_some() && offset.is_some())
     }
 
@@ -354,7 +354,7 @@ impl CellSlot {
     /// else the mailbox is the input's only copy. Returns the count, added to
     /// [`RESTORE_DISCARDED_INPUTS`].
     pub fn discard_queued_input_on_restore(&self) -> usize {
-        if !self.topology.effectively_once && !self.topology.sleep_when_idle {
+        if !self.topology.effectively_once && self.topology.sleep_after().is_none() {
             return 0;
         }
         let discarded = self.mailbox.clear()
@@ -404,7 +404,7 @@ pub trait TaskletDispatcher: Send + Sync + 'static {
     }
 
     /// Append timer ops committed outside an invocation to this Cell's
-    /// record stream and ship them at once: a bounded operator firing's removal, at
+    /// record stream and ship them at once: a steps operator firing's removal, at
     /// its stage's commit.
     fn write_timer_ops(&self, slot: &Arc<CellSlot>, ops: Vec<crate::timer::TimerOp>);
 
@@ -450,7 +450,7 @@ pub trait TaskletDispatcher: Send + Sync + 'static {
     /// extractor can produce.
     fn event_time_of(&self, payload: &CellPayload) -> Option<u64>;
 
-    /// A bounded operator undo served in process: `compensate` over the outputs this
+    /// A steps operator undo served in process: `compensate` over the outputs this
     /// Cell recorded forward, its emits through the Cell's own sink. A host
     /// serves the `CompensateRun` activation itself and never reaches this.
     fn compensate(&self, slot: &Arc<CellSlot>, outputs: Vec<Arc<dyn Any + Send + Sync>>) {
@@ -540,7 +540,7 @@ pub fn assemble_slot(
         waiters: Waiters::new(),
         drain_active: AtomicBool::new(false),
         flush_buffer,
-        persistence_enabled: args.persistence_enabled,
+        keeps_state: args.keeps_state,
         change_seq: parts.change_seq,
         consumed_floor: AtomicI64::new(-1),
         event_time_high_water: parts.event_time_high_water,

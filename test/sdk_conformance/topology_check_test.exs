@@ -54,7 +54,7 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
     "flz_core/src/host/issue.rs",
     "sdk/elixir/lib/flezha/sdk/topology.ex",
     "sdk/elixir/lib/flezha/sdk/channels.ex",
-    "sdk/elixir/lib/flezha/sdk/bounded/spec.ex"
+    "sdk/elixir/lib/flezha/sdk/steps/spec.ex"
   ]
 
   # Sites that carry a verdict `flz_core` already reached without deciding
@@ -288,8 +288,7 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
     for {struct, section} <- [
           {"HostClassDecl", "class"},
           {"HostChannelDecl", "channel"},
-          {"HostTaskletDecl", "tasklet"},
-          {"HostBoundedDecl", "bounded"}
+          {"HostTaskletDecl", "tasklet"}
         ],
         key <- struct_fields(body, struct),
         into: MapSet.new() do

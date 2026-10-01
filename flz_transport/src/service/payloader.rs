@@ -336,7 +336,7 @@ mod tests {
     }
 
     #[test]
-    fn inner_message_length_bounded_by_enclosing_payload() {
+    fn inner_message_length_steps_by_enclosing_payload() {
         // payload of 10 bytes whose inner message_size claims 100.
         let mut bytes = header(10);
         bytes.extend_from_slice(&100u32.to_be_bytes());

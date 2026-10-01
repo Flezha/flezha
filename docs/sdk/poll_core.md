@@ -2,7 +2,7 @@
 
 For SDK implementers and for anyone reading the kernel. `flz_core` is the
 language-agnostic runner kernel: transport, ordering, durability, retries,
-timers, credit, routing and a bounded operator's pass live in one Rust crate. A host
+timers, credit, routing and a steps operator's pass live in one Rust crate. A host
 language SDK drives it through exactly one invocation surface:
 
 ```text
@@ -36,12 +36,12 @@ the C ABI and where the code lives; the system-level picture is
 | `flz_core/src/retry.rs`, `park.rs`     | The retry→park ladder: backoff computation, `RETRIES_TOTAL`, DLQ parks |
 | `flz_core/src/flusher.rs`, `state_sink.rs`, `credit.rs`, `correction.rs`, `timer.rs`, `restore.rs`, `header.rs` | Durability: WAL framing + linger drain, the reliable sink, credit windows, late-input machinery, timers, restore payloads, record headers |
 | `flz_core/src/coordinator.rs`, `control_unit.rs`, `runner.rs`, `command/` | RunnerNode, wire readers, control channel + reconnect, one handler module per controller command |
-| `flz_core/src/bounded/`               | A bounded instance's run: `instance.rs` (the pass sheet a journal resume fills), `run.rs` (the events that advance it), `commit.rs` (the barrier frames), `resume.rs` (the journal readers), `compensation.rs` (the undo plan), `spec.rs` (the spec/DAG kernel) |
+| `flz_core/src/steps/`               | A steps instance's run: `instance.rs` (the pass sheet a journal resume fills), `run.rs` (the events that advance it), `commit.rs` (the barrier frames), `resume.rs` (the journal readers), `compensation.rs` (the undo plan), `spec.rs` (the spec/DAG kernel) |
 | `flz_core_ffi/src/lib.rs`              | The `flz_core_*` C entry points (crate types `cdylib`, `staticlib`, `rlib`) |
 | `flz_core_ffi/src/jni_glue.rs`         | `Java_com_flezha_sdk_native_1_FlzCore_*` exports behind the `jni` feature |
 | `flz_core_ffi/tests/abi_scenario.rs`   | The CI scenario that drives the whole runtime through the C ABI |
 | `flz_transport/`                       | The transport tier both the kernel and the controller NIF share: `transport/` (QUIC, TLS, config, liveness, `protocol.rs` stream constants `STREAM_TYPE_PRIMARY 0x01` / `STREAM_TYPE_SECONDARY 0x02`), `service/payloader.rs` (binary framing), `utility/socket_dir.rs` (socket paths), `utility/socket_probe.rs` (reachability) |
-| `sdk/rust/src/`                        | The Rust SDK — the typed layer over `flz_core`: `lib.rs` (runner handle), `tasklet/`, `channel/` (builder DSL), `operator/` (typed dispatcher, poll pool), `cell/`, `bounded/`, `runner/`, `testing/` (harness), `diag.rs` |
+| `sdk/rust/src/`                        | The Rust SDK — the typed layer over `flz_core`: `lib.rs` (runner handle), `tasklet/`, `channel/` (builder DSL), `operator/` (typed dispatcher, poll pool), `cell/`, `steps/`, `runner/`, `testing/` (harness), `diag.rs` |
 | `sdk/java/`                            | The Java SDK (Maven): `flezha-sdk-api` (authoring surface), `flezha-sdk-runtime` (`PollHost`, `ActivationDispatcher`, codec), `flezha-sdk-native` (`FlzCore`, `NativeLibraryLoader`, bundled binaries), `flezha-sdk-testing` (`TaskletTestHarness`), `flezha-sdk-examples` (the `E01`–`E12` authoring samples), `flezha-sdk` (fat-jar aggregator) |
 
 ## The core decides, the SDK brings the threads
@@ -55,13 +55,13 @@ durability, and caps how many work activations may be underway at once —
 `FLEZHA_MAX_INFLIGHT_ACTIVATIONS`, default 1024, enforced at handout: at the
 cap `poll` blocks as if nothing were ready, and the completion that drops the
 count below it releases the next one. Direct activations (restore folds,
-snapshot requests, the other command crossings, a bounded operator's undo) are exempt —
+snapshot requests, the other command crossings, a steps operator's undo) are exempt —
 a command crossing answers a caller blocked on a rendezvous, so holding one
 behind capped cell work would deadlock that caller, and an undo holds its
 cell's gate until it is answered. They are also what a queued direct
 activation with no thread inside `poll` reports as starvation: a blocked caller
-must be able to buy a thread. A bounded stage's items are ordinary cell work
-and take the cap like an unbounded operator's.
+must be able to buy a thread. A steps stage's items are ordinary cell work
+and take the cap like a flow operator's.
 
 **The SDK brings the threads**, with whatever its runtime does best. The count
 is a servicing detail, not a limit on concurrency — that limit is the core's
@@ -150,7 +150,7 @@ An **Activation** targets exactly one cell and carries one `ActivationKind`:
 | `Work(items)`                                                        | An ordered per-cell batch of `Input` items (payload bytes, metadata, `consumed_offset`, replay flag, core-evaluated `now`) and `Timer` firings (kind, `scheduled_at`; its `now` IS `scheduled_at`, so a chained `timer_after` anchors replay-stably on the firing that woke it). Timer firings are validated against the pending set at assembly — a stale entry fires nothing. |
 | `RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState`, `MigrationSerialize` | The five host-participating command kinds, under the same per-cell exclusivity. No other controller command produces an activation (pinned: a `Ping` generates none). |
 | `KeyRequest`                                                         | Batched keying for unkeyed entry payloads bound for a keyed edge, answered before anything reaches a cell mailbox. |
-| `CompensateRun`                                                      | An undo step of a bounded chain. |
+| `CompensateRun`                                                      | An undo step of a steps chain. |
 
 An **ActivationResult** (`ActivationOutcome::Work(Vec<ItemEffect>)`) carries,
 per processed item, the effect record the flusher consumes exactly as it
@@ -358,7 +358,7 @@ Context lifecycle: `flz_core_context_new(shim_schema_version)` →
   different one than the thread that polled. No affinity.
 - **A host whose unit of concurrency is bound to one thread must keep every
   blocking entry point off that thread.** The blocking ones are the poll, the
-  starvation wait, the completion, the bounded operator receive, the spawn result read
+  starvation wait, the completion, the steps operator receive, the spawn result read
   with a nonzero timeout and the runner start. The spawn request, and the spawn
   result read with a timeout of zero, never wait. An event loop is the case this rule exists for, and
   `flz_core_complete` is what makes it a correctness rule rather than a latency
@@ -393,7 +393,7 @@ The CI scenario (`flz_core_ffi/tests/abi_scenario.rs`, `c_abi_full_scenario`)
 drives connect, AddOperator over the real control path, input activations, a
 timer firing, a restore fold, a live state read, a
 keyed dynamic route through the prepare crossing, an effectively-once floor
-skip, a bounded tasklet completing its instance and shutdown entirely
+skip, a steps tasklet completing its instance and shutdown entirely
 through the C ABI —
 a capability reachable in the crate API but not the ABI is a defect, not a
 backlog item.
@@ -408,9 +408,9 @@ cell modes (single, static with declared keys, dynamic with idle-TTL eviction
 and `max_cells`), clock kinds (wall, logical, event-time), the
 effectively-once tier and checkpoint ack-granularity, the late-input correction
 window, the record-header lang/format bytes (`sdk_lang`, `change_format_id` — a
-Java host's durable records claim Kryo), and bounded lifecycle facts
-(`bounded`: loop mode, rollback mode, stage retry, max-duration, wake-after;
-a bounded class declaring no tasklet is refused).
+Java host's durable records claim Kryo), and steps lifecycle facts
+(`steps`: loop mode, rollback mode, stage retry, max-duration, wake-after;
+a steps class declaring no tasklet is refused).
 
 At runtime the full contract crosses the boundary:
 
@@ -427,24 +427,24 @@ At runtime the full contract crosses the boundary:
   enqueued; a per-payload failure climbs the entry channel's retry→park
   ladder, and the end-of-slice broadcast defers behind staged slice members.
 - **Tiers ride completions.** `ItemEffect` carries changes, outputs, timer ops,
-  `checkpoint` and a bounded tasklet's `complete` request (an unbounded operator's item
-  carrying one fails, non-retryable, naming `runtime.complete_outside_bounded`); the core builds effect records (offsets are
+  `checkpoint` and a tasklet's `complete` request (a flow instance ends once its
+  Cells are idle); the core builds effect records (offsets are
   core-authoritative), stages checkpoint intervals, holds a
   failed-but-retryable attempt's changes out of the flusher's reach, and mints
   DLQ entries where the typed layer does.
 - **Inter-tasklet edges route on `(edge, key)`**: outputs name their
   consumer; keys and event times are producer-evaluated (the host holds the
   typed value and the extractor; the core holds neither).
-- **Bounded operator lifecycles run under poll**: a bounded stage's items are routed
+- **Steps operator lifecycles run under poll**: a steps stage's items are routed
   into its cells' mailboxes and handed out as ordinary `Work` batches, and an
   undo crosses as a `CompensateRun` on the direct queue. Nothing waits for
   them: a settled item, a commit ack, a deadline and an undo's answer are
   events that advance a pass sheet on the instance, on the thread that brings
   each one. Both language paths take that route, so a stage costs exactly the
   SDK threads that run its items and no core thread belongs to an instance.
-  The retry ladder is the unbounded operator's; barriers, the task journal, loop modes,
+  The retry ladder is the flow operator's; barriers, the task journal, loop modes,
   suspension and rewind are the sheet's
-  ([`../architecture/bounded_profile.md`](../architecture/bounded_profile.md)).
+  ([`../architecture/steps_profile.md`](../architecture/steps_profile.md)).
 
 ### In-process residuals
 
@@ -463,7 +463,7 @@ class — `schemaVersion()`, `contextNew(shimSchemaVersion)`,
 `complete(ctx, result)`, `spawnRequest` / `spawnResult`, `monotonicNanos()`,
 `shutdown(ctx)`, `contextFree(ctx)`. `PollHost`'s fetcher threads loop
 `poll → decode Activation → hand off → poll`; the kernel (transport, ordering,
-durability, retries, timers, credit, routing, a bounded operator's pass, reconnect)
+durability, retries, timers, credit, routing, a steps operator's pass, reconnect)
 lives entirely in the core.
 
 **The shipped binary.** One `libflz_core_ffi.{so,dylib,dll}` per platform

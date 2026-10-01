@@ -9,7 +9,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
   which operators existed — with it. Both cases here destroy exactly that,
   after the operator has committed real work, and demand it come back.
 
-    * **bounded operator, synchronous** — a class declaring `SYNC_DURABILITY`. Its
+    * **steps operator, synchronous** — a class declaring `durable: remote`. Its
       commit barrier is acked only after the barrier reaches the backend, so
       destroying the state directory afterwards loses *nothing*: the resumed
       run skips the committed tasklet rather than re-running it.
@@ -57,11 +57,11 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
                  )
   @moduletag skip: @postgres_skip
 
-  @tag capability: :bounded, skip: FlezhaTest.SystemCase.deferral(:bounded) || @postgres_skip
-  test "a sync-declared bounded loses nothing when the controller's disk is destroyed" do
+  @tag capability: :steps, skip: FlezhaTest.SystemCase.deferral(:steps) || @postgres_skip
+  test "a sync-declared steps loses nothing when the controller's disk is destroyed" do
     backend_opts = install_durability_tier()
-    namespace = unique("dur_bounded")
-    operator_id = unique("sync_durable_bounded")
+    namespace = unique("dur_steps")
+    operator_id = unique("sync_durable_steps")
     id_path = unique_id_path()
 
     on_exit(fn -> cleanup(namespace, operator_id, id_path) end)
@@ -72,8 +72,8 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
 
     builder = %Builder{
       id: operator_id,
-      factory_id: "sync_durable_bounded",
-      kind: :bounded,
+      factory_id: "sync_durable_steps",
+      run: :steps,
       init_values: %{},
       opts: [seed_input: {~s({"seed":"go"}), %{}}]
     }
@@ -81,7 +81,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
     assert {:ok, info} = OperatorManager.start_operator(namespace, builder)
     assert info.runner_id == exec_a
 
-    assert wait_until(fn -> ClassRegistry.sync_durability?(operator_id) end, 30_000),
+    assert wait_until(fn -> ClassRegistry.remote?(operator_id) end, 30_000),
            "the sync-durability declaration never reached the controller"
 
     assert wait_until(fn -> TaskJournal.restore_state(operator_id) != nil end, 60_000),
@@ -113,7 +113,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
 
     # A replacement runner with the release flag: the resumed chain can finish.
     {_port_b, exec_b} =
-      boot_runner(namespace, id_path, env: [{"FLEZHA_BOUNDED_E2E_RELEASE", "1"}])
+      boot_runner(namespace, id_path, env: [{"FLEZHA_STEPS_E2E_RELEASE", "1"}])
 
     assert exec_b != exec_a
 
@@ -135,7 +135,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
            "task A was re-run after the drill — the hydrated journal was not honoured"
   end
 
-  test "a checkpoint unbounded class comes back from the shipped cut after the disk is destroyed" do
+  test "a checkpoint flow class comes back from the shipped cut after the disk is destroyed" do
     backend_opts = install_durability_tier()
     namespace = unique("dur_cp")
     operator_id = unique("checkpoint_store")
@@ -165,7 +165,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
 
     assert info.runner_id == exec_a
 
-    assert wait_until(fn -> ClassRegistry.checkpoint_ack?(operator_id) end, 30_000)
+    assert wait_until(fn -> ClassRegistry.ack_checkpoint?(operator_id) end, 30_000)
 
     # Fold two keys, then close the interval. The checkpoint is the cut whose
     # state and consumed offset are consistent — exactly what ships.
@@ -282,7 +282,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
 
     assert {:ok, info} = OperatorManager.start_operator(namespace, builder)
     assert info.runner_id == exec_a
-    assert wait_until(fn -> ClassRegistry.checkpoint_ack?(operator_id) end, 30_000)
+    assert wait_until(fn -> ClassRegistry.ack_checkpoint?(operator_id) end, 30_000)
 
     # A second controller sharing this backend, collecting on every round while
     # the first ships. It runs against the SAME state root on purpose: that puts

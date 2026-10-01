@@ -734,7 +734,7 @@ public final class BuyAboveAverage implements Tasklet<Move, Void, String> {
         }
         int quantity = (int) Math.round(percent * UNITS_PER_PERCENT);   // a stronger move buys more
 
-        ctx.spawnBounded("order_executor", new OrderTicket(move.symbol(), quantity));   // one bounded operator per order
+        ctx.spawnSteps("order_executor", new OrderTicket(move.symbol(), quantity));   // one steps operator per order
 
         ctx.emit(String.format(
                 "%s %.4f is %.2f%% above its average of %.4f, buying %d",
@@ -745,7 +745,7 @@ public final class BuyAboveAverage implements Tasklet<Move, Void, String> {
 
 `Tasklet<Move, Void, String>`: it takes the move, keeps no state, because it
 remembers nothing, and emits a line. It does two things per input through the
-context: it starts a bounded operator and it emits. `spawnBounded` sends the
+context: it starts a bounded operator and it emits. `spawnSteps` sends the
 order as JSON, and `order_executor` decodes it back into an `OrderTicket`, the
 order it takes, declared in [`building_a_workflow.md`](building_a_workflow.md).
 
@@ -776,7 +776,7 @@ impl Tasklet for BuyAboveAverage {
             quantity,
         };
         let order = serde_json::to_vec(&ticket).map_err(|e| TaskletError::Custom(e.to_string()))?;
-        let _ = ctx.spawn_bounded("order_executor", order); // one bounded operator per order
+        let _ = ctx.spawn_steps("order_executor", order); // one steps operator per order
 
         ctx.emit(format!(
             "{} {:.4} is {:.2}% above its average of {:.4}, buying {}",
@@ -788,7 +788,7 @@ impl Tasklet for BuyAboveAverage {
 
 It takes the move and emits a line, and writes no `type State`, because it
 remembers nothing. It does two things per input through the context: it starts
-a bounded operator and it emits. `spawn_bounded` takes the order's bytes, so
+a bounded operator and it emits. `spawn_steps` takes the order's bytes, so
 the ticket is written as JSON with `serde_json`, and `order_executor` decodes it
 back into an `OrderTicket`, the order it takes, declared in
 [`building_a_workflow.md`](building_a_workflow.md). The handle it returns
@@ -814,7 +814,7 @@ export const BuyAboveAverage = defineTasklet({
     const quantity = Math.round(percent * UNITS_PER_PERCENT); // a stronger move buys more
 
     const order = { symbol: move.symbol, quantity };
-    ctx.spawnBounded('order_executor', order); // one bounded operator per order
+    ctx.spawnSteps('order_executor', order); // one steps operator per order
 
     ctx.emit(
       `${move.symbol} ${move.price.toFixed(4)} is ${percent.toFixed(2)}% above its average ` +
@@ -826,7 +826,7 @@ export const BuyAboveAverage = defineTasklet({
 
 It takes the move and emits a line, and writes no `initState`, because it
 remembers nothing. It does two things per input through the context: it starts
-a bounded operator and it emits. `spawnBounded` sends the order, a plain
+a bounded operator and it emits. `spawnSteps` sends the order, a plain
 object, as JSON, and `order_executor` reads it back as the object its first
 step takes, declared in [`building_a_workflow.md`](building_a_workflow.md). The
 handle it returns reports whether the order started; the desk does not read it.
@@ -848,7 +848,7 @@ class BuyAboveAverage:
         quantity = round(percent * UNITS_PER_PERCENT)  # a stronger move buys more
 
         order = OrderTicket(symbol=move["symbol"], quantity=quantity)
-        ctx.spawn_bounded("order_executor", order)  # one bounded operator per order
+        ctx.spawn_steps("order_executor", order)  # one steps operator per order
 
         ctx.emit(
             f"{move['symbol']} {move['price']:.4f} is {percent:.2f}% above its average "
@@ -858,7 +858,7 @@ class BuyAboveAverage:
 
 `Ctx[None, str]`: it keeps no state, because it remembers nothing, and emits a
 line. It does two things per input through the context: it starts a bounded
-operator and it emits. `spawn_bounded` sends the order, a dict, as JSON, and
+operator and it emits. `spawn_steps` sends the order, a dict, as JSON, and
 `order_executor` reads it back as the `OrderTicket` its first step takes,
 declared in [`building_a_workflow.md`](building_a_workflow.md). The handle it
 returns reports whether the order started; the desk does not read it, and never
@@ -881,7 +881,7 @@ class BuyAboveAverage < Flezha::Tasklet
     quantity = (percent * UNITS_PER_PERCENT).round           # a stronger move buys more
 
     order = { symbol: move[:symbol], quantity: quantity }
-    ctx.spawn_bounded("order_executor", order)               # one bounded operator per order
+    ctx.spawn_steps("order_executor", order)               # one steps operator per order
 
     ctx.emit(format("%<symbol>s %<price>.4f is %<percent>.2f%% above its average of %<average>.4f, buying %<quantity>d",
                     symbol: move[:symbol], price: move[:price], percent: percent,
@@ -892,7 +892,7 @@ end
 
 It takes the move and emits a line, and writes no `init_state`, because it
 remembers nothing. It does two things per input through the context: it starts
-a bounded operator and it emits. `spawn_bounded` sends the order, a Hash, as
+a bounded operator and it emits. `spawn_steps` sends the order, a Hash, as
 JSON, and `order_executor` reads it back as the Hash its first step takes,
 declared in [`building_a_workflow.md`](building_a_workflow.md). The handle it
 returns reports whether the order started; the desk does not read it.
@@ -916,7 +916,7 @@ final class BuyAboveAverage extends Tasklet
         $quantity = (int) round($percent * self::UNITS_PER_PERCENT);   // a stronger move buys more
 
         $order = ['symbol' => $input['symbol'], 'quantity' => $quantity];
-        $ctx->spawnBounded('order_executor', $order);        // one bounded operator per order
+        $ctx->spawnSteps('order_executor', $order);        // one steps operator per order
 
         $ctx->emit(sprintf(
             '%s %.4f is %.2f%% above its average of %.4f, buying %d',
@@ -932,7 +932,7 @@ final class BuyAboveAverage extends Tasklet
 
 It takes the move and emits a line, and writes no `initState`, because it
 remembers nothing. It does two things per input through the context: it starts
-a bounded operator and it emits. `spawnBounded` sends the order, an array, as
+a bounded operator and it emits. `spawnSteps` sends the order, an array, as
 JSON, and `order_executor` reads it back as the array its first step takes,
 declared in [`building_a_workflow.md`](building_a_workflow.md). The handle it
 returns reports whether the order started; the desk does not read it.
@@ -956,7 +956,7 @@ defmodule Tradedesk.BuyAboveAverage do
       quantity = round(percent * @units_per_percent)
 
       # One bounded operator per order.
-      spawn_bounded(ctx, "order_executor", %{symbol: symbol, quantity: quantity})
+      spawn_steps(ctx, "order_executor", %{symbol: symbol, quantity: quantity})
 
       emit(
         ctx,
@@ -976,10 +976,10 @@ It takes the move and emits a line, and has no `state` block, because it
 remembers nothing. The move arrives as the map `track_prices` emitted, with
 atom keys: a value that goes from one tasklet to the next on the same runner
 stays an Elixir term. It does two things per input through the context:
-`spawn_bounded/3` starts a bounded operator, and `emit/2` sends the line.
-`spawn_bounded/3` sends the order, a map, as JSON, and `order_executor` decodes
+`spawn_steps/3` starts a bounded operator, and `emit/2` sends the line.
+`spawn_steps/3` sends the order, a map, as JSON, and `order_executor` decodes
 it into the `OrderTicket` its first step takes, declared in
-[`building_a_workflow.md`](building_a_workflow.md). `spawn_bounded/3` answers
+[`building_a_workflow.md`](building_a_workflow.md). `spawn_steps/3` answers
 a handle that reports whether the order started; the desk does not read it.
 
 <!-- tabs-close -->
@@ -1073,8 +1073,8 @@ have several. The desk needs only one.
 ### Java
 
 ```java
-// TradeWatcherOperator.java: the unbounded operator. Trades in, signals out.
-public final class TradeWatcherOperator implements UnboundedOperator {
+// TradeWatcherOperator.java: the flow operator. Trades in, signals out.
+public final class TradeWatcherOperator implements Operator {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record TradeMessage(String channel, List<Trade> data) {}
@@ -1109,7 +1109,7 @@ above, `TrackPrices` and `BuyAboveAverage`, and `sink("signals")` is the sink.
 ### Rust
 
 ```rust
-// src/trade_watcher.rs: the unbounded operator. Trades in, signals out.
+// src/trade_watcher.rs: the flow operator. Trades in, signals out.
 #[derive(Clone, Deserialize)]
 pub struct TradeMessage {
     #[serde(default)]
@@ -1120,7 +1120,7 @@ pub struct TradeMessage {
 
 pub struct TradeWatcherOperator;
 
-impl UnboundedOperator for TradeWatcherOperator {
+impl Operator for TradeWatcherOperator {
     fn factory_id() -> &'static str {
         "trade_watcher"
     }
@@ -1149,13 +1149,13 @@ aside. `into::<...>()` names the two tasklet types above, `TrackPrices` and
 ### Node
 
 ```javascript
-// trade_watcher_operator.mjs: the unbounded operator. Trades in, signals out.
-import { defineUnbounded } from '@flezha/sdk';
+// trade_watcher_operator.mjs: the flow operator. Trades in, signals out.
+import { defineOperator } from '@flezha/sdk';
 
 import { BuyAboveAverage } from './buy_above_average.mjs';
 import { TrackPrices } from './track_prices.mjs';
 
-export default defineUnbounded({
+export default defineOperator({
   factoryId: 'trade_watcher',
   channels: (c) => {
     c.input('trades')
@@ -1176,13 +1176,13 @@ subscription confirmation has no `channel`, so the first `filter` reads
 `undefined` there and drops it. `flatMap` hands on each trade with every field
 the exchange sent; the tasklets read the ones they need. `into` names the two
 tasklets above, and `sink('signals')` is the sink. The module exports what
-`defineUnbounded` returned, and that export is what the runner registers.
+`defineOperator` returned, and that export is what the runner registers.
 
 ### Python
 
 ```python
-# trade_watcher.py: the unbounded operator. Trades in, signals out.
-@flezha.unbounded_operator("trade_watcher")
+# trade_watcher.py: the flow operator. Trades in, signals out.
+@flezha.operator("trade_watcher")
 def trade_watcher(c: flezha.Channels) -> None:
     (
         c.input("trades")
@@ -1208,8 +1208,8 @@ tasklet classes above, `TrackPrices` and `BuyAboveAverage`, and
 ### Ruby
 
 ```ruby
-# trade_watcher_operator.rb: the unbounded operator. Trades in, signals out.
-class TradeWatcherOperator < Flezha::UnboundedOperator
+# trade_watcher_operator.rb: the flow operator. Trades in, signals out.
+class TradeWatcherOperator < Flezha::Operator
   factory_id "trade_watcher"
 
   channels do |c|
@@ -1236,9 +1236,9 @@ tasklet classes above, `TrackPrices` and `BuyAboveAverage`, and
 ### PHP
 
 ```php
-// src/TradeWatcherOperator.php: the unbounded operator. Trades in, signals out.
+// src/TradeWatcherOperator.php: the flow operator. Trades in, signals out.
 #[Operator(factoryId: 'trade_watcher')]
-final class TradeWatcherOperator extends UnboundedOperator
+final class TradeWatcherOperator extends \Flezha\Operator
 {
     public static function channels(Builder $c): void
     {
@@ -1265,9 +1265,9 @@ tasklet classes above, `TrackPrices` and `BuyAboveAverage`, and
 ### Elixir
 
 ```elixir
-# lib/tradedesk/trade_watcher.ex: the unbounded operator. Trades in, signals out.
+# lib/tradedesk/trade_watcher.ex: the flow operator. Trades in, signals out.
 defmodule Tradedesk.TradeWatcher do
-  use Flezha.SDK.UnboundedOperator, factory_id: "trade_watcher"
+  use Flezha.SDK.Operator, factory_id: "trade_watcher"
 
   @impl true
   def channels(c) do
@@ -1290,7 +1290,7 @@ function over the map it decodes to. The subscription confirmation has no
 `"channel"`, so the first `filter` reads `nil` there and drops it. `flat_map`
 hands on each trade with every field the exchange sent; the tasklets match the
 ones they need. `into` names the two tasklet modules above, and
-`sink("signals")` is the sink. `use Flezha.SDK.UnboundedOperator` imports the
+`sink("signals")` is the sink. `use Flezha.SDK.Operator` imports the
 builder, so the pipe needs no module prefix.
 
 <!-- tabs-close -->

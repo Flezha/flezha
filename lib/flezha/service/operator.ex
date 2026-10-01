@@ -88,10 +88,10 @@ defmodule Flezha.Service.Operator do
     {:ok, Partition.groups(rows)}
   end
 
-  @doc "Whether `kind` is an operator kind this controller knows."
-  @spec kind_known?(term(), caller_context()) :: {:ok, boolean()} | {:error, term()}
-  verb kind_known?(kind, caller_context), verb: :kind_read do
-    {:ok, ClassRegistry.known_kind?(kind)}
+  @doc "Whether `run` is a way an operator runs that this controller knows."
+  @spec run_known?(term(), caller_context()) :: {:ok, boolean()} | {:error, term()}
+  verb run_known?(run, caller_context), verb: :run_read do
+    {:ok, ClassRegistry.known_run?(run)}
   end
 
   @doc """

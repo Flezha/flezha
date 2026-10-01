@@ -91,7 +91,7 @@ defmodule FlezhaTest.Helper.CallHarness do
 
   @doc "An Overwatch whose input is durable, as a caller of a durable pair is."
   def durable_caller(inst) do
-    state = Host.state(inst, durable_bounded: true, channel: :fake_channel)
+    state = Host.state(inst, durable_steps: true, channel: :fake_channel)
     ExUnit.Callbacks.start_supervised!({Host, state})
   end
 

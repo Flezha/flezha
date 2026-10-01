@@ -1,7 +1,7 @@
 # Rust SDK Operator Architecture
 
 For operator authors and SDK implementers: the Rust SDK's runtime model
-(Unbounded Operator class, instance, Tasklet, Cell, Channel, Runner), the
+(Flow Operator class, instance, Tasklet, Cell, Channel, Runner), the
 path a message takes from the wire to `Tasklet::run` and out to a plugin,
 the backpressure and emit contracts, and the limits. The authoring surface is
 specified in [`authoring_contract.md`](authoring_contract.md); the kernel
@@ -35,8 +35,8 @@ live deployment, passes the full conformance run in CI and is permanently suppor
             └─────────────────────────────────────────┘
 ```
 
-- **Unbounded Operator class** — the type-level declaration (`UnboundedOperator`
-  trait: `factory_id()` + `channels(&ChannelBuilder)`). Declared once per
+- **Operator class** — the type-level declaration (`Operator`
+  trait: `factory_id()` + `channels(&ChannelBuilder)` + `settings()`). Declared once per
   runner via `FlezhaRunner::register_factory(R)`; `unregister_factory(R)` is
   its inverse. The topology is built and validated at the declaring call site
   and shared (`Arc<OperatorTopology>`) by every instance of the class.
@@ -61,7 +61,7 @@ live deployment, passes the full conformance run in CI and is permanently suppor
 
 ### Operator kinds (controller side)
 
-Every operator carries a **kind** (`:unbounded` or `:bounded`), the one its
+Every operator carries a **kind** (`:flow` or `:steps`), the one its
 class declares and its runner announces with the factory id, resolved at start
 and frozen. No behaviour is attached to the kind: what an instance can do
 follows from what its class declares (the persistence switch, the sleep
@@ -69,19 +69,19 @@ setting, the tier) and from its own state. `flz state get` on an instance of
 either kind whose class declares persistence off answers
 `{:error, :persistence_off}`.
 
-### The `:bounded` kind
+### The `:steps` kind
 
-A bounded operator is a job that ends itself: `flz operator start <factory>
+A steps operator is a job that ends itself: `flz operator start <factory>
 [--id <id>]` names only the factory, and the controller puts the kind the
 runner announced on `AddOperator`. Both kinds are one instance type in one
-registry, resolved once per frame at the dispatch boundary; a bounded instance
+registry, resolved once per frame at the dispatch boundary; a steps instance
 is an `OperatorInstance` that also carries its pass sheet, and its class is
-told apart by the `bounded` field on its topology. A bounded class declares
-its graph in `channels`, on the same builder an unbounded operator uses:
+told apart by the `steps` field on its topology. A steps class declares
+its graph in `channels`, on the same builder a flow operator uses:
 
 ```rust
 struct Greet;
-impl flezha_runner::BoundedOperator for Greet {
+impl flezha_runner::Operator for Greet {
     fn factory_id() -> &'static str { "greet" }
     fn channels(c: &flezha_runner::ChannelBuilder) {
         c.input::<String>("in").into::<SayHello>().sink_named("out");
@@ -93,35 +93,34 @@ flezha_runner::Flezha::create_runner("my_app")?.register_factory(Greet)?.run()?;
 `SayHello` is an ordinary `Tasklet` whose `run` emits `format!("hello {input}")`.
 The entry channel takes the instance's first message, from a spawn,
 `flz operator send` or `flz operator start --text`; `init_values` is the
-tasklets' initial state, as on an unbounded operator. A class declaring no tasklet is
-refused at registration, and so is one whose `channels` set the unbounded operator's
-`effectively_once`, a checkpoint flag or `correction_window`
-(`topology.effectively_once_on_bounded`, `topology.checkpoint_on_bounded`,
-`topology.correction_window_on_bounded`). A tasklet's retry ladder is its input edge's
-`retry_max` / `retry_backoff_ms`, as on an unbounded operator, and its timers fire as passes
-of their own ([`cell_timers.md`](cell_timers.md#timers-in-a-bounded-operator)). A tasklet ends a
+tasklets' initial state, as on a flow operator. A class declaring no tasklet is
+refused at registration; the effectively-once tier, its checkpoint and its
+correction window are members of `Run::Flow`, so a steps class cannot write
+them. A tasklet's retry ladder is its input edge's
+`retry_max` / `retry_backoff_ms`, as on a flow operator, and its timers fire as passes
+of their own ([`cell_timers.md`](cell_timers.md#timers-in-a-steps-operator)). A tasklet ends a
 looping instance with `ctx.complete(result)`. When the job ends, the SDK emits
-`BoundedCompleted` on the control stream and the controller drives the one
+`OperatorCompleted` on the control stream and the controller drives the one
 teardown path (`Flezha.Service.OperatorManager.stop_operator/3`). A tasklet
 that fails past its retry ladder is terminal: compensation, then teardown
-plus `[:flezha, :bounded, :failed]`, no re-run. A job that
+plus `[:flezha, :steps, :failed]`, no re-run. A job that
 completes before the start RPC confirms its binding is reported as a successful
 start with no live `runner_id`. Lifecycle, durable loop, suspension, saga
 compensation, cell retry and finished-job retention are in
-[`../resilience/bounded_operator.md`](../resilience/bounded_operator.md).
+[`../resilience/steps_operator.md`](../resilience/steps_operator.md).
 
-Both traits carry the two class settings: `PERSISTENCE_ENABLED` (default `true`)
-and `SLEEP_WHEN_IDLE`, `false` on `UnboundedOperator` and `Self::PERSISTENCE_ENABLED`
-on `BoundedOperator`. An instance whose class sleeps is evicted after
-`FLEZHA_PARK_IDLE_MS` of idleness and wakes on its next message with its Cells
-restored; declaring it with persistence off fails `register_factory` with
-`topology.sleep_without_persistence`.
+Every class carries `durable` in its `OperatorSettings`: `Durable::Memory`,
+`Durable::Local` (the default) or `Durable::Remote`, the last two with a
+`sleep_after`: `SleepAfter::RunDefault` (the default: a flow class never sleeps,
+a steps class after six hours), `SleepAfter::Never` or `SleepAfter::After(d)`. An instance whose
+class sleeps is evicted after that much idleness and wakes on its next message
+with its Cells restored.
 
 ## Public API
 
 ```rust
 use flezha_runner::{
-    tasklet, ChannelBuilder, Ctx, Flezha, Tasklet, TaskletError, UnboundedOperator,
+    tasklet, ChannelBuilder, Ctx, Flezha, Tasklet, TaskletError, Operator,
 };
 ```
 
@@ -220,7 +219,7 @@ no `&mut State` anywhere, so a mutation the runtime did not record does not
 compile. Emits are typed as the tasklet's `Output`.
 
 Hooks are declared by writing them: `event_time` (which makes the clock event
-time), `on_timer`, `compensate` (bounded saga), `cells_for`, `init_state`,
+time), `on_timer`, `compensate` (steps saga), `cells_for`, `init_state`,
 `migrate_state`, `migrate_change`. Settings are keys on the attribute:
 `keys` (static mode, with a written `cells_for`), `max_cells` and
 `idle_ttl_seconds` (dynamic-mode knobs; the key itself is declared on the
@@ -237,7 +236,7 @@ takes its name in.
 
 ### The short form
 
-`#[flezha_runner::unbounded_operator]` or `#[flezha_runner::bounded_operator]`
+`#[flezha_runner::operator]`
 declares a whole one-tasklet operator of the kind the attribute names. On a
 function with no state, it emits two types: the operator under the function's
 PascalCase name, which is what you register, and the tasklet beside it,
@@ -245,12 +244,12 @@ suffixed `Tasklet`. The function returns its output: a value emits, an
 `Option` emits when present, `()` declares no output.
 
 ```rust
-#[flezha_runner::unbounded_operator(id = "upcase", sink = "out")]
+#[flezha_runner::operator(id = "upcase", sink = "out")]
 fn upcase(value: String) -> String {
     value.to_uppercase()
 }
 
-#[flezha_runner::bounded_operator(id = "place", sink = "placed", input = "order")]
+#[flezha_runner::operator(id = "place", sink = "placed", input = "order")]
 fn place(order: String) -> String {
     order
 }
@@ -267,12 +266,12 @@ the tasklet, a plugin sink named by `sink` when one is written, a factory id
 equal to `id`, and every class-level setting at its trait default. The
 tasklet (`UpcaseTasklet`) is named `id` verbatim, so its cells keep their
 state path when the operator grows into the full form, and it wires into
-another operator's `channels()` body like any tasklet. A bounded short form
-is a `once` bounded operator, run once over its first message: `flz operator start
+another operator's `channels()` body like any tasklet. A steps short form
+is a `once` steps operator, run once over its first message: `flz operator start
 <id> --text '<payload>'`, or a start followed by `flz operator send`; a second
 message to a `once` instance is accepted and never read. It may declare
-another loop mode, `#[flezha_runner::bounded_operator(id = "chat", sink =
-"replies", loop_mode = "per_input")]`, and then runs once per message.
+another loop mode, `#[flezha_runner::operator(id = "chat", sink =
+"replies", each = "per_input")]`, and then runs once per message.
 
 A one-tasklet operator with state or hooks puts the same attribute on its
 `impl Tasklet` block. The attribute completes the block as `#[tasklet]` does,
@@ -295,7 +294,7 @@ impl Change<Seen> for Ticked {
 #[derive(Default)]
 pub struct Counter;
 
-#[flezha_runner::unbounded_operator(id = "counter", input = "ticks")]
+#[flezha_runner::operator(id = "counter", input = "ticks")]
 impl Tasklet for Counter {
     type Input = String;
     type State = Seen;
@@ -319,7 +318,7 @@ The refusals are compile errors. A `sink` on a unit return, or on a block
 whose `Output` is `()`, fails with a message beginning `topology.sink_without_output`; a
 function with a `&mut` parameter fails with one beginning
 `ShortFormStateOnFunction`; a missing `id` names the attribute. A hand-written
-`UnboundedOperator` or `BoundedOperator` impl beside a short form is rustc's
+`Operator` impl beside a short form is rustc's
 conflicting-implementation error, which the contract calls
 `topology.short_form_with_topology`. `#[flezha_runner::tasklet]` declares a tasklet only:
 it refuses `sink`, `input`, `kind` and `on_full`, a function target, and a
@@ -333,7 +332,7 @@ form in one operator, and it is shown here only: the guides always use the
 attribute.
 
 ```rust
-use flezha_runner::{ChannelBuilder, ClockKind, Ctx, Flezha, NoChange, Tasklet, TaskletError, UnboundedOperator};
+use flezha_runner::{ChannelBuilder, ClockKind, Ctx, Flezha, NoChange, Tasklet, TaskletError, Operator};
 
 #[derive(Default)]
 struct ParseTask;
@@ -357,7 +356,7 @@ impl Tasklet for ParseTask {
 }
 
 struct MarketOperator;
-impl UnboundedOperator for MarketOperator {
+impl Operator for MarketOperator {
     fn factory_id() -> &'static str { "market" }
 
     fn channels(c: &ChannelBuilder) {
@@ -412,11 +411,11 @@ dynamic mode is read off the wiring on both sides, with
 `@Tasklet.Spec(idleTtlSeconds, maxCells)` as its knobs; zero-copy
 passes the value by reference, so the producer must treat an emitted value as
 immutable. Nothing is generated: a change is a record the author writes, and a
-`@UnboundedOperator` or `@BoundedOperator` tasklet class is a whole short-form
+`@Operator` tasklet class is a whole short-form
 operator, built when the application registers it with
 `registerFactory`. Persisted
 Changes declare `sdk_lang = 2`, `change_format_id = 4` (Kryo). A Java
-`BoundedOperator` emits `BoundedCompleted` byte-identically to Rust.
+`Operator` emits `OperatorCompleted` byte-identically to Rust.
 
 ## Hot-path dispatch
 
@@ -556,7 +555,7 @@ c.input::<Vec<u8>>("trade.raw")
 
 | `OverflowPolicy` | Behaviour |
 |---|---|
-| `DropNothing` (default, every kind) | Nothing is discarded, and **how** that is realized depends on who produced the value. A producing Cell's `ctx.emit` never parks: the push is held in that Cell's push holdback, the Cell is handed no further activation until it drains, and the consumer's next free slot drains it. The wire reader, which has no producing Cell, retries after a bounded 50 ms park on the consumer's `Waiters`, woken per pop — the one park left, and what carries ingress backpressure to the controller. Preserves ordering either way, loses nothing, never stalls indefinitely; a producer blocked longer than 5 s logs one `flezha::mailbox` warning naming the consumer. |
+| `DropNothing` (default, either run) | Nothing is discarded, and **how** that is realized depends on who produced the value. A producing Cell's `ctx.emit` never parks: the push is held in that Cell's push holdback, the Cell is handed no further activation until it drains, and the consumer's next free slot drains it. The wire reader, which has no producing Cell, retries after a bounded 50 ms park on the consumer's `Waiters`, woken per pop — the one park left, and what carries ingress backpressure to the controller. Preserves ordering either way, loses nothing, never stalls indefinitely; a producer blocked longer than 5 s logs one `flezha::mailbox` warning naming the consumer. |
 | `DropNewest` | The incoming item is discarded; `drops_newest_total` += 1. |
 | `DropOldest` | The mailbox pops its oldest item and accepts the new one (`force_push`); `drops_oldest_total` += 1 **and `pushes_total` += 1** — the force-push admitted, so it is a successful enqueue by that counter's definition. Which item is evicted is best-effort under MPMC contention; the evicted one is named in a `flezha::mailbox` debug line. |
 
@@ -657,8 +656,8 @@ replay-stable natural key (`runtime.key_not_allowed_on_non_keyed_channel` elsewh
 ### Parts
 
 `ctx.part(value)` sends a preview of the output the invocation is producing
-while it runs, from `run` or `on_timer`, in an unbounded operator and in a
-bounded one's stage alike. It takes no channel: it previews the tasklet's own
+while it runs, from `run` or `on_timer`, in a flow operator and in a
+steps one's stage alike. It takes no channel: it previews the tasklet's own
 output channel, and the value is serialized as an emit of it on that channel
 would be. The context calls `flz_core::part::send`, which frames the part under
 the payload id `output_part` with `channel`, `flz.part` (from 0, per attempt),
@@ -730,9 +729,8 @@ per Tasklet and produces the JSON shape in
 Persistence rides the `Change` trait: `ctx.change(change)` is a `Vec::push`
 on the hot path; serialization, coalescing and the wire send happen on one
 per-process flusher thread on a 5 ms linger (`FLEZHA_FLUSH_LINGER_MS`).
-A tasklet that leaves `Change` at `NoChange` opts out. The class toggle
-`PERSISTENCE_ENABLED` (default `true`, on both kind traits) is frozen at
-instance start and announced to the controller, which a user can override
+A tasklet that leaves `Change` at `NoChange` opts out. The class's `durable`
+(default `Durable::Local`) is frozen at instance start and announced to the controller, which a user can override
 per class with `:operator_persistence`. Trait surface, wire format,
 `TaskletTestHarness` (`replay_equals`, `replay_emits_equal`) and the Java
 port: [`state_persistence.md`](state_persistence.md).
@@ -745,7 +743,7 @@ port: [`state_persistence.md`](state_persistence.md).
   handlers are in [`../plugins/message_handlers.md`](../plugins/message_handlers.md).
 - **One started runner per process** (`FlezhaError::AlreadyRunning`).
 - **`UpdateFactories` has no ack**; the reconnect init frame is the resync.
-- **`unregister_factory` cannot see a suspended durable bounded instance**:
+- **`unregister_factory` cannot see a suspended durable steps instance**:
   the removal succeeds and rehydration fails placement.
 - **Only the overflow aggregates leave the process** — `blocked_parks`,
   `drops_newest`, `drops_oldest`, `pending_pushes` and `pending_push_oldest_ms`
@@ -760,7 +758,7 @@ port: [`state_persistence.md`](state_persistence.md).
 
 | Concern | File |
 |---|---|
-| `UnboundedOperator` trait; `Tasklet`, `Ctx`, `Change`, `ClockKind`, `TaskletError` | `sdk/rust/src/operator/mod.rs`; `sdk/rust/src/tasklet/{mod,ctx,change,clock,error}.rs` |
+| `Operator` trait; `Tasklet`, `Ctx`, `Change`, `ClockKind`, `TaskletError` | `sdk/rust/src/operator/mod.rs`; `sdk/rust/src/tasklet/{mod,ctx,change,clock,error}.rs` |
 | `ChannelBuilder`, `Stream<T>`, `TopologyIssue` | `sdk/rust/src/channel/builder/`, `sdk/rust/src/channel/mod.rs` (kernel types: `flz_core/src/channel.rs`) |
 | Topology builder, mailbox-capacity resolution | `sdk/rust/src/operator/builder.rs` |
 | Authoring macros | `sdk/rust/macros/src/{tasklet,short_form,operator}.rs` |
@@ -771,7 +769,7 @@ port: [`state_persistence.md`](state_persistence.md).
 | Wire dispatch (`OperatorDispatchHandle`); wire input routing | `flz_core/src/routing.rs`, `flz_core/src/command/streams_connect.rs` |
 | Enqueue, overflow policies, `send_plugin_frame`; Change flusher | `flz_core/src/routing.rs`, `flz_core/src/flusher.rs` |
 | Operator state JSON shape, `apply_init_values` | `flz_core/src/command/cell_state.rs` |
-| `BoundedOperator`; `TaskletTestHarness` | `sdk/rust/src/bounded/mod.rs`, `flz_core/src/bounded/mod.rs`; `sdk/rust/src/testing/harness.rs` |
+| `Operator`; `TaskletTestHarness` | `sdk/rust/src/steps/mod.rs`, `flz_core/src/steps/mod.rs`; `sdk/rust/src/testing/harness.rs` |
 
 ## See also
 

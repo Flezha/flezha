@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
   @moduledoc """
-  A tasklet-requested bounded spawn (`ctx.spawn_bounded`) is judged like
+  A tasklet-requested steps spawn (`ctx.spawn_steps`) is judged like
   any other act, as the identity its connection proved: a start against the
   `operator_start` row, which records it, and a delivery to a running instance
   against `spawn_deliver`, the `operator.send` right with no record of a
@@ -47,7 +47,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
   setup :set_mimic_global_until_exit
 
   setup do
-    registry = FakeStartRegistry.install(runners: ["runner-1"], kind: :bounded)
+    registry = FakeStartRegistry.install(runners: ["runner-1"], run: :steps)
 
     test_pid = self()
 
@@ -236,7 +236,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
   end
 
   defp run_instance(%{registry: registry, instance_id: instance_id}) do
-    builder = %Builder{id: instance_id, factory_id: @factory, kind: :bounded, init_values: %{}}
+    builder = %Builder{id: instance_id, factory_id: @factory, run: :steps, init_values: %{}}
     FakeStartRegistry.insert(registry, self(), builder)
   end
 
@@ -244,8 +244,8 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
     payload =
       ControlFrame.encode_request(
         "ref-spawn",
-        {:spawn_bounded_request,
-         %RunnerCommands.SpawnBoundedRequest{
+        {:spawn_steps_request,
+         %RunnerCommands.SpawnStepsRequest{
            instance_id: instance_id,
            factory_id: @factory,
            payload: "p1",
@@ -261,7 +261,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
 
     %RunnerCommands.CommandRequest{
       reference_id: reference_id,
-      command: {:spawn_bounded_response, response}
+      command: {:spawn_steps_response, response}
     } = ControlFrame.decode_request(framed)
 
     {reference_id, response}

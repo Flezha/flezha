@@ -163,7 +163,7 @@ the logical id.
 | `data_heartbeat` | runner → controller | Data-channel liveness, empty message + counters in metadata |
 | `{operator_id}` | both | Operator input (primary) and output (secondary) |
 | `cell_state_change`, `cell_effect_record`, `cell_state_snapshot` | runner → controller | Per-Cell persistence records (§11) |
-| `compensation_intent`, `compensation_done` | runner → controller | Bounded saga markers (§11) |
+| `compensation_intent`, `compensation_done` | runner → controller | Steps saga markers (§11) |
 | `delete_cell_state` | runner → controller | Dynamic-Cell hard delete (§11) |
 | `park_payload` | runner → controller | Dead-letter park (§11) |
 | `correction_request` | runner → controller | Late-input correction (§11) |
@@ -220,11 +220,11 @@ than at emit.
 | `channel` | controller → runner | The Operator's entry channel that receives this input. Absent ⇒ the Operator's first declared input channel. A name that is not one of the Operator's entry channels — undeclared, or declared as a channel of another kind — is parked to the dead-letter store under that name, never dropped and never routed to another channel. |
 | `channel` | runner → controller | Set on every plugin-bound emit. Plugin providers match on it via their `:channel` option to select which channel's outputs they consume. |
 | `flz.cell` | runner → controller | Output-identity stamp on `.keyed()` channels: `<operator_instance_id>/<tasklet_name>/<cell_key>` (empty key for single-mode). |
-| `flz.seq` | runner → controller | Output-identity stamp: `<change_seq>.<emit_ordinal>`; for a Cell that records effects (an unbounded operator on the effectively-once tier, or a durable bounded operator Cell) the controller stamps `<record seq>.<emit_ordinal>` from the effect record. |
+| `flz.seq` | runner → controller | Output-identity stamp: `<change_seq>.<emit_ordinal>`; for a Cell that records effects (a flow operator on the effectively-once tier, or a durable steps operator Cell) the controller stamps `<record seq>.<emit_ordinal>` from the effect record. |
 | `flz.key` | runner → controller | Output-identity stamp: the emitting Cell's own key, or the caller's natural key from `emit_keyed(key, value)`. |
-| `flz.epoch` | controller → plugins | The Cell's WAL realign epoch, for an unbounded operator on the effectively-once tier and a durable bounded operator Cell alike; a bounded operator rewind does not move it. `(flz.cell, flz.seq, flz.epoch)` is the exact dedup identity a conforming sink deduplicates on. |
+| `flz.epoch` | controller → plugins | The Cell's WAL realign epoch, for a flow operator on the effectively-once tier and a durable steps operator Cell alike; a steps operator rewind does not move it. `(flz.cell, flz.seq, flz.epoch)` is the exact dedup identity a conforming sink deduplicates on. |
 | `flz.ack` | controller → plugins | Delivery-confirmation token minted by a durable outbox flush; the owning writer advances its cursor when the sink confirms or parks it. Absent on live non-durable output. |
-| `flz.offset` | controller → runner | The durable input-log offset of this forwarded input, for an instance with durable input: an unbounded operator on the effectively-once tier or a durable bounded operator (§11). An unbounded operator's invocation carries it back as its effect record's `consumed_offset`, a bounded operator's iteration as `IterCommit.consumed_offset`. |
+| `flz.offset` | controller → runner | The durable input-log offset of this forwarded input, for an instance with durable input: a flow operator on the effectively-once tier or a durable steps operator (§11). A flow operator's invocation carries it back as its effect record's `consumed_offset`, a steps operator's iteration as `IterCommit.consumed_offset`. |
 | `flz.msg_id` | sender → controller | Sender-supplied message id: an append whose id the instance's input log still retains is absorbed (§11). |
 | `flz.replay`, `flz.replay_end` | controller → runner | Replayed-slice markers for late-input correction (§11). |
 | `flz.change_seq` | runner → controller | On the `CellState` reply frame: the seq a single selected Cell was serialized at (§6). |
@@ -319,10 +319,10 @@ minted on first sight of a key and none exists at the bind, so the entry
 reaches nothing. Migration is unaffected, because a dynamic tasklet's
 Cells are restored from their own records rather than through this path.
 
-A bounded operator takes this shape exactly as an unbounded operator does: its
+A steps operator takes this shape exactly as a flow operator does: its
 `init_values` are applied as its tasklets' initial state before the
 `AddOperator` acknowledgement, so before any message can reach it. Nothing
-seeds an entry channel from the document; a bounded operator's input is the messages
+seeds an entry channel from the document; a steps operator's input is the messages
 sent to it.
 
 ### Frame buffering
@@ -389,8 +389,8 @@ message Error {
 | 18 | `CellMailboxStatus` | C → R | none (one-way) |
 | 19 | `Ping` | C → R | `CommandResponse` (`raw_data` = `PingResponse`) |
 | 20, 21 | `RunnerReconnected`, `ReassignRunnerId` | — | reserved; never emitted (§6) |
-| 22 | `BoundedCompleted` | R → C | none |
-| 23 | `BoundedStop` | C → R | `CommandResponse` |
+| 22 | `OperatorCompleted` | R → C | none |
+| 23 | `StepsStop` | C → R | `CommandResponse` |
 | 24 | `CreditWindowInit` | C → R | `CommandResponse` (`raw_data` = `CreditWindowAck`, tag 25) |
 | 26 | `CreditGrant` | C → R | generic `CommandResponse`, ignored |
 | 27 | `ParkPayloadAck` | C → R | generic `CommandResponse`, ignored |
@@ -400,8 +400,8 @@ message Error {
 | 31 | `IterCommitResponse` | C → R | none |
 | 32 | `IterPark` | R → C | none |
 | 33 | `UpdateFactories` | R → C | none (fire-and-forget) |
-| 34 | `SpawnBoundedRequest` | R → C | `SpawnBoundedResponse` (tag 35) under the same `reference_id` |
-| 35 | `SpawnBoundedResponse` | C → R | none |
+| 34 | `SpawnStepsRequest` | R → C | `SpawnStepsResponse` (tag 35) under the same `reference_id` |
+| 35 | `SpawnStepsResponse` | C → R | none |
 | 36 | `AdminRequest` | R → C | `AdminResponse` (tag 37) under the same `reference_id` |
 | 37 | `AdminResponse` | C → R | none |
 | 38 | `OperatorExited` | R → C | none |
@@ -455,7 +455,7 @@ One frame, payload id `connect_control_channel`, empty metadata, JSON message:
 {
   "namespace": "<namespace>",
   "factory_ids": ["<factory_id>", ...],
-  "factories": [{"id": "<factory_id>", "description": null, "sdk_lang": 1, "kind": "bounded"}, ...],
+  "factories": [{"id": "<factory_id>", "description": null, "sdk_lang": 1, "kind": "steps"}, ...],
   "stable_id": "<namespace>-<profile_hash8>-<rand6>",
   "incarnation": "<opaque, minted once per process>",
   "namespace_secret": "flzt_<base32>"
@@ -472,7 +472,7 @@ One frame, payload id `connect_control_channel`, empty metadata, JSON message:
   `runner.namespace_not_proven`) instead of retrying in silence.
 - `factory_ids` / `factories` — every factory the runner currently declares
   (`factories` adds an optional `description`, the class's `sdk_lang` and its
-  `kind`, `"unbounded"` or `"bounded"`), read at write time so a reconnect
+  `kind`, `"flow"` or `"steps"`), read at write time so a reconnect
   resyncs post-start defines/removes: the init frame is the resync of record.
   The controller establishes each factory's language and kind from the first
   announcement and places only on a runner announcing both as established; an
@@ -636,9 +636,9 @@ message AddOperator {
     string operator_id = 1;
     string factory_id = 2;
     string init_values = 3;            // JSON; "" for none
-    string kind = 4;                   // the announced kind: "unbounded" | "bounded"; empty ⇒ "unbounded"
+    string kind = 4;                   // the announced kind: "flow" | "steps"; empty ⇒ "flow"
     uint32 resume_cell_count = 5;      // RestoreInitState frames to expect on this bind
-    TaskJournalState task_journal = 6; // bounded crash-resume state (§11)
+    TaskJournalState task_journal = 6; // steps crash-resume state (§11)
     uint32 partition_index = 7;
     uint32 partition_count = 8;        // < 2 ⇒ unpartitioned
     uint32 key_group_from = 9;         // inclusive key-group range, 0..255
@@ -650,10 +650,10 @@ message AddOperator {
 
 | Field | Value |
 |-------|-------|
-| Behaviour | Create an instance of `factory_id` under `operator_id`. `"unbounded"`: an unbounded operator whose non-empty `init_values` JSON is applied as initial state in the tasklet-keyed shape of "Operator state JSON shape" above. `"bounded"`: a bounded instance, whose run is a pass sheet its events advance, its non-empty `init_values` applied as initial state in the same shape, its input the messages that arrive on its entry channels; a durable instance holds its first tasklet until `resume_cell_count` restores have landed. For either kind, while any of its `inbox_tail_count` owed input-log records has not arrived its idle deadline is 60 s instead of the park idle |
+| Behaviour | Create an instance of `factory_id` under `operator_id`. `"flow"`: a flow operator whose non-empty `init_values` JSON is applied as initial state in the tasklet-keyed shape of "Operator state JSON shape" above. `"steps"`: a steps instance, whose run is a pass sheet its events advance, its non-empty `init_values` applied as initial state in the same shape, its input the messages that arrive on its entry channels; a durable instance holds its first tasklet until `resume_cell_count` restores have landed. For either run, while any of its `inbox_tail_count` owed input-log records has not arrived its idle deadline is 60 s instead of its class's `sleep_after` |
 | Idempotency | A duplicate `operator_id` (a reconnect re-issue) is answered `success` without re-registering |
 | Reply | `raw_data` = `AddOperatorResponse { map<string,string> metadata }` — empty when the class declares nothing |
-| Errors | factory not found; JSON parse / deserialization failure; unknown `kind`; `PartitionsWithoutPerInputLoop: ...`; `PartitionsWithoutKeyedTasklet: ...` |
+| Errors | factory not found; JSON parse / deserialization failure; `PartitionsWithoutPerInputLoop: ...`; `PartitionsWithoutKeyedTasklet: ...` |
 
 `AddOperatorResponse.metadata` carries the class's SDK-side declarations so
 the controller resolves per-class capabilities without a parallel config
@@ -661,18 +661,20 @@ channel (absent/undecodable ⇒ every default):
 
 | Key | Value | Meaning |
 |-----|-------|---------|
-| `persistent` | `"false"` | either kind: the class keeps no durable Cell state (sent only when false) |
-| `sleep_when_idle` | `"true"` | either kind: an idle instance sleeps (sent only when true) |
-| `effectively_once` | `"true"` | the class runs on the effectively-once tier |
-| `durability` | `"sync_remote"` | bounded only: withhold barrier acks until the remote backend holds them |
-| `keyed` | `"false"` | unbounded class with no keyed entry-fed tasklet (sent only when false) |
-| `loop_mode` | `"once"` / `"per_input"` / `"chained"` | bounded only: how the class repeats; only `per_input` partitions |
-| `correction_window_ms` | ms | late-input correction window |
-| `beyond_window_policy` | `"process_as_arrival"` / `"drop"` | what a late input beyond the window gets |
-| `ack_granularity` | `"checkpoint"` | the class acknowledges input only at checkpoints |
+| `run` | `"flow"` / `"steps"` | how the class runs |
+| `durable` | `"memory"` / `"local"` / `"remote"` | where an instance keeps its work; `remote` withholds barrier acks until the remote backend holds them |
+| `sleep_after_ms` | ms | how long an idle instance waits before it sleeps (absent: it never sleeps) |
+| `max_duration_ms` | ms | the wall-clock stop, when the class declares one |
+| `each` | `"once"` / `"per_input"` / `"chained"` | steps only: how the class repeats; only `per_input` partitions |
+| `on_failure` | `"undo_all"` / `"keep_progress"` | steps only: what a failed iteration undoes |
+| `exactly` | `"effectively_once"` | flow only: the class runs on the effectively-once tier |
+| `keyed` | `"false"` | flow class with no keyed entry-fed tasklet (sent only when false) |
+| `correction_ms` | ms | late-input correction window |
+| `beyond_window` | `"process_as_arrival"` / `"drop"` | what a late input beyond the window gets |
+| `ack` | `"checkpoint"` | the class acknowledges input only at checkpoints |
 | `compact_after_bytes` | bytes | the smallest per-tasklet compaction trigger, when it differs from the default |
-| `compensable_tasks` | list | bounded operator tree positions whose tasklet declares `compensate` |
-| `leaf_tasks` | list | the bounded operator tree's leaf positions |
+| `compensable_tasks` | list | steps operator tree positions whose tasklet declares `compensate` |
+| `leaf_tasks` | list | the steps operator tree's leaf positions |
 
 #### Partition identity
 
@@ -683,13 +685,13 @@ carry one member of a partitioned operator over 256 key groups
 checks that each computed Cell key hashes into
 `[key_group_from, key_group_to]` and parks a miss with an error naming the
 key, its key group and the owning partition. A migrate-time `AddOperator`
-carries the same fields, for either kind. A bounded class whose loop mode is
+carries the same fields, for either kind. A steps class whose loop mode is
 `once` or `chained` is refused first, with `PartitionsWithoutPerInputLoop`:
 its one message would reach one member while the others waited. A class with
 no keyed entry-fed tasklet is refused with `PartitionsWithoutKeyedTasklet`.
-An unbounded class answers `keyed: "false"` and a bounded class its `loop_mode`,
+A flow class answers `keyed: "false"` and a steps class its `each`,
 so the controller refuses a later partitioned start of a known class before
-touching a runner. On a bounded operator member a refused entry key parks the message
+touching a runner. On a steps operator member a refused entry key parks the message
 under its entry channel and opens no pass.
 
 ### RemOperator
@@ -697,25 +699,25 @@ under its entry channel and opens no pass.
 `RemOperator { operator_id: string }` removes the instance from the registry
 (hard teardown). Error: `runtime.operator_not_found`.
 
-### BoundedStop
+### StepsStop
 
-`BoundedStop { operator_id: string }` is the cooperative stop
+`StepsStop { operator_id: string }` is the cooperative stop
 (`flz operator stop`): the runner trips the instance's cancellation token,
 lets in-flight work unwind, runs any saga compensation, then emits the normal
-`BoundedCompleted` with status `"cancelled"`. An unknown id is answered
+`OperatorCompleted` with status `"cancelled"`. An unknown id is answered
 `success` and ignored.
 
-### BoundedCompleted
+### OperatorCompleted
 
-`BoundedCompleted { operator_id, status, error, result: bytes }` travels
-runner → controller, one-way, when a bounded instance reaches an exit
-trigger. `status` is `"ok"`, `"error"` (with
-`error`) or `"cancelled"`; `result` is the terminal payload. The controller
+`OperatorCompleted { operator_id, status, error, result: bytes }` travels
+runner → controller, one-way, when an instance reaches an exit
+trigger. `status` is `"ok"` (a steps run's clean end), `"completed"` (a flow
+instance's `complete`), `"error"` (with `error`) or `"cancelled"`; `result` is the terminal payload. The controller
 drives the single stop/teardown path (deregister-on-completion) so a finished
 instance leaves the durable registry and is never replayed on boot; an errored
 one is torn down identically (terminal — the platform never re-runs it; a
 structured chain's per-Cell retry ladder runs *inside* the run) and surfaced
-via `[:flezha, :bounded, :failed]`.
+via `[:flezha, :steps, :failed]`.
 
 An opted-out instance writes its plugin-bound outputs straight
 to the data stream — a frame whose payload id is the instance id, on a
@@ -735,7 +737,7 @@ reserved; a runner that still sets it is simply not read.
 `OperatorExited { operator_id, reason }` travels runner → controller,
 one-way, when the process of an operator instance of either kind exits
 abnormally: any reason but a clean stop, which a `RemOperator`, a finished
-bounded run or a graceful shutdown produce. The runner has already dropped the
+steps run or a graceful shutdown produce. The runner has already dropped the
 instance, so nothing it reads is routed to the dead process and the next
 `AddOperator` for the id starts a fresh one. `reason` renders the exit reason
 for the log, the telemetry and the park reason; nothing branches on it. The
@@ -768,7 +770,7 @@ runtimes decode it as a notification they never act on.
 | Message | `CellState { operator_id, tasklet, cell_key }` |
 | Behaviour | Serialize live in-memory Cell state as JSON (shape in §3), narrowed by the selector |
 | Reply | `raw_data` = JSON; reply-frame metadata `flz.change_seq` when the selector names exactly one Cell |
-| Errors | `UnboundedOperator instance with id {id} not found`, plus the refusal tokens below |
+| Errors | `Operator instance with id {id} not found`, plus the refusal tokens below |
 
 **Selector.** `tasklet` and `cell_key` are optional (empty = absent), so a
 selector-less command encodes byte-identically to the migration/handover
@@ -872,11 +874,11 @@ is corrected by the next one or by the reconnect init frame. Dropping a factory
 that still has operators bound to the runner logs a `FleetManager` warning
 naming namespace, runner, factory id and affected operators.
 
-### SpawnBoundedRequest
+### SpawnStepsRequest
 
-`SpawnBoundedRequest { instance_id, factory_id, payload: bytes, if_running:
+`SpawnStepsRequest { instance_id, factory_id, payload: bytes, if_running:
 string, identity: string }` travels runner → controller (tag 34) when a tasklet asks for a
-bounded instance (`ctx.spawn_bounded` / `ctx.spawnBounded`). The controller
+steps instance (`ctx.spawn_steps` / `ctx.spawnSteps`). The controller
 spawns `factory_id` under `instance_id` when free, with `payload` as its first
 message (empty = spawn only): an ordinary entry message naming no channel, so
 it enters the first declared entry channel, encoded by the SDK's no-codec sink
@@ -910,14 +912,14 @@ With authorization enforced, an unbound principal is `runner`, and a start or a
 delivery answers `refused`. See
 [`tasklet_requested_spawn.md`](tasklet_requested_spawn.md).
 
-### SpawnBoundedResponse
+### SpawnStepsResponse
 
-`SpawnBoundedResponse { outcome, error, instance_id }` returns controller →
+`SpawnStepsResponse { outcome, error, instance_id }` returns controller →
 runner under the request's `reference_id`; `outcome` is a success word,
 `spawned` or `delivered`, and is empty when `error` carries the refusal under
 the controller's own code: `operator.already_running`,
-`operator.factory_unknown`, `operator.factory_not_bounded` (a factory its
-runners announced as an unbounded operator, decided before anything is placed),
+`operator.factory_unknown`, `operator.factory_not_steps` (a factory its
+runners announced as a flow operator, decided before anything is placed),
 an `authz.*` or `quota.exceeded` code, or any other. `instance_id` is the id
 the request resolved to: the requester's own, or
 the generated one (empty when a request that carried none started nothing). It resolves the requester's result handle and never faults the
@@ -972,7 +974,7 @@ parks to the dead-letter queue under that name, with one attempt), wraps the pay
 bytes through that
 channel's declared type, and pushes the item onto every consumer Tasklet's
 Cell mailbox under the mailbox policy of §3; `flz.offset`, `flz.replay` and
-`flz.replay_end` ride along as described in §11. A **bounded operator** instance takes
+`flz.replay_end` ride along as described in §11. A **steps operator** instance takes
 the same entrance: the channel is resolved the same way (an undeclared name
 parks under that name), the payload is wrapped through the channel's declared
 type or parser, a parse failure rides the entry channel's retry ladder to the
@@ -1003,7 +1005,7 @@ happens when the wire refuses it. There are three, the same in every runtime:
 - **durable** — a change record, an effect record, a compaction snapshot, an
   eviction's delete, a saga marker, a park payload, a shutdown state ship. Held
   in the ring below and replayed in write order on the next bound stream.
-- **output** — a plugin or bounded operator emit. Held **already framed**, so a keyed
+- **output** — a plugin or steps operator emit. Held **already framed**, so a keyed
   output's `channel` and its `flz.*` identity stamps survive the replay; a
   re-framed record would carry empty metadata and strip them.
 
@@ -1095,7 +1097,7 @@ Total frame: 32 + 4 + 24 = 60 bytes
 **Command errors.** A failing handler replies `status: "error"` with one
 `Error` per failure in `errors` and normally an empty `raw_data`. Every failure
 on the wire is that one message: a command reply, `TaskCommitResponse`,
-`IterCommitResponse`, `OperatorMessageResponse`, `SpawnBoundedResponse`,
+`IterCommitResponse`, `OperatorMessageResponse`, `SpawnStepsResponse`,
 `AdminResponse` and `ConnectRefused`. The receiver branches on `code` (for
 example `runtime.class_not_registered`, `state.cell_key_without_tasklet`,
 `state.apply_not_supported`), never on `message`, which may be reworded.
@@ -1174,8 +1176,8 @@ header for every host it serves — and the Elixir SDK's own fold does the same
 
 ### Data-stream payload-id `cell_effect_record`
 
-Runner → controller, from a Cell that records effects: an unbounded Cell on the
-effectively-once tier, and every Cell of a durable bounded class (which does
+Runner → controller, from a Cell that records effects: a flow Cell on the
+effectively-once tier, and every Cell of a durable steps class (which does
 not declare the tier; the record is its durability). A persistent Cell off the
 tier writes one too for the inputs it took with a `flz.offset`: the changes of
 a drain fold into one record carrying the highest offset folded, so the offset
@@ -1183,7 +1185,7 @@ rides the record of the state it produced. Same frame as
 `cell_state_change` with `format_id = 2`; `body` is the postcard
 `EffectRecordBody`: one invocation's state change(s), plugin outputs and
 consumed input-log offset, persisted by the controller as ONE WAL record under
-ONE fsync so state, outputs and progress can never tear apart. A bounded operator
+ONE fsync so state, outputs and progress can never tear apart. A steps operator
 Cell's record carries no consumed offset (the iteration's `IterCommit` does)
 and no dead-letter park, and is sent as the item settles, ahead of the stage's
 `TaskCommit`, never on the flush linger. Decoded by
@@ -1228,7 +1230,7 @@ as concatenated fields and `Option` as `0x00 | 0x01 ++ T`.
   `cell_key@consumed_offset`) and sends no `ParkPayloadAck` for it.
 - A recorded plugin emit never rides the primary stream: the controller
   dispatches it to the `:on_output` chain only after the record's fsync (for a
-  bounded operator Cell, only once the durable `task_committed` or `compensated` entry
+  steps operator Cell, only once the durable `task_committed` or `compensated` entry
   naming the record has been acked), stamped with `flz.cell`,
   `flz.seq = <record WAL seq>.<emit ordinal>`, `flz.epoch`, `channel`, `flz.key`
   when keyed, and the author's metadata. Effect records are never coalesced at
@@ -1243,7 +1245,7 @@ up to `seq` and clears the in-flight compaction.
 
 ### Data-stream payload-ids `compensation_intent` / `compensation_done`
 
-Runner → controller, bounded saga change-log, same frame as
+Runner → controller, steps saga change-log, same frame as
 `cell_state_change`. `compensation_intent` records a tasklet's forward
 completion (so a crash mid-compensation knows what to undo),
 `compensation_done` a compensation hook's completion (so a resume skips it);
@@ -1408,7 +1410,7 @@ Changes refused as duplicates. `RestoreInitStateResponse` returns as
 restore rides the control channel, the replay the data channel) and expects
 the next `cell_state_change` at `seq = terminal_seq + 1`. The task-journal is
 **not** here — it is instance-scoped and rides `AddOperator.task_journal`; a
-durable bounded class with no per-Cell state receives no `RestoreInitState`
+durable steps class with no per-Cell state receives no `RestoreInitState`
 at all.
 
 #### Schema evolution
@@ -1596,13 +1598,13 @@ message TimerTrigger {
 message TaskCommitResponse { string operator_id = 1; uint32 task_idx = 2; Error error = 3; }
 ```
 
-Emitted at each tasklet barrier of a **durable structured** bounded operator
+Emitted at each tasklet barrier of a **durable structured** steps operator
 instance: tasklet `task_idx` completed forward on `cells_ran` and released
 the inter-task handoff batch, serialized through the producing channel's byte
 codec, which the runtime derives and no SDK declares. The tasklet's outputs reach its children
 only on `TaskCommitResponse` — the next tasklet must not race ahead of the committed record —
-and nothing waits for it: the ack is an event that releases them. Opted-out classes
-(`PERSISTENCE_ENABLED = false`) skip the barrier and keep the direct
+and nothing waits for it: the ack is an event that releases them. Classes kept in memory
+(`durable: false`) skip the barrier and keep the direct
 at-least-once wire path.
 
 `cells_ran` names each Cell the stage ran, with the range `first_seq..seq` of
@@ -1621,7 +1623,7 @@ undo output.
 
 **Reply and durability.** Before it appends, the controller waits until every
 record `cells_ran` names is durable on its Cell's writer; a record the writer
-refuses, or one not durable within `FLEZHA_BOUNDED_ACK_TIMEOUT_MS`, fails the
+refuses, or one not durable within `FLEZHA_STEPS_ACK_TIMEOUT_MS`, fails the
 barrier with `record_not_durable: <cell> seq=<n>`, and a re-sent barrier whose
 first copy still waits joins that wait. `TaskCommitResponse` rides a
 controller-initiated `CommandRequest` under the request's `reference_id`,
@@ -1635,7 +1637,7 @@ A non-empty `error` (journal write failure, oversized payload, a record not
 durable) terminates the run abnormally through the terminal-error path, including saga compensation.
 
 **Idempotent re-send.** An ack that does not arrive within
-`FLEZHA_BOUNDED_ACK_TIMEOUT_MS` (default 30 s) of a send is re-sent: the same
+`FLEZHA_STEPS_ACK_TIMEOUT_MS` (default 30 s) of a send is re-sent: the same
 frame goes out under the **same `reference_id`**, up to three sends in all, a constant of the connection that no
 class sets. The
 controller journals a barrier once by its identity `{task_idx, iter, epoch}` —
@@ -1649,14 +1651,14 @@ at-least-once).
 **Release.** The response is the durable point past which the named records'
 outputs may be seen: right after the ack the controller tells each named
 Cell's writer that its range is committed, and the writer's outbox, the same
-one a tier unbounded operator Cell uses, dispatches those outputs through the
+one a tier flow operator Cell uses, dispatches those outputs through the
 `:on_output` chain. A held entry of that Cell below the range belongs to an
 attempt that never committed and is dropped. On restart the writer re-queues
 every record above its flush cursor and releases what a live journal entry
 names; a crash between commit and flush duplicates at worst (at-least-once
 with stable keys) and loses nothing.
 
-**Bounded output identity.** Every released frame carries the identity a tier
+**Steps output identity.** Every released frame carries the identity a tier
 stream's output carries, minted by the Cell's writer from the effect record:
 
 | Key | Value |
@@ -1671,7 +1673,7 @@ stream's output carries, minted by the Cell's writer from the effect record:
 The tuple is a pure function of the record, so a re-drive replays
 byte-identical stamps. An opted-out class writes no record: its outputs go
 straight to the wire with `channel`, `flz.key` and metadata, as a tier-off
-unbounded operator's do.
+flow operator's do.
 
 ### Control command `IterCommit` (runner → controller)
 
@@ -1692,7 +1694,7 @@ message IterCommitResponse { string operator_id = 1; uint32 iter = 2; Error erro
 
 Emitted at each **iteration** boundary of a looping durable structured
 instance, after the last tasklet's `TaskCommit` is acked. A class opts into
-looping with `loop_mode()`: `PerInput` runs one iteration per message,
+looping with `each()`: `PerInput` runs one iteration per message,
 `Chained` takes the first message and seeds each later iteration from the
 previous terminal handoff into the chain that message started; the default
 `Once` takes one message, runs one pass and never emits this frame. Every
@@ -1731,19 +1733,19 @@ instead.
 ```protobuf
 message IterPark {
     string operator_id = 1;
-    uint32 iter = 2;               // the last COMMITTED iteration; 0 for an unbounded operator
+    uint32 iter = 2;               // the last COMMITTED iteration; 0 for a flow operator
     uint64 wake_deadline_ms = 3;   // earliest pending processing-time timer; 0 = wake on input only
     optional uint64 consumed_offset = 4;  // the last message parked unread; absent = none
 }
 ```
 
-An instance of either kind whose class sleeps (`sleep_when_idle`) asks to
-sleep with this once it has been idle past `FLEZHA_PARK_IDLE_MS` (default ten
-minutes) with every Cell holding nothing queued, in flight, retrying or
-unflushed. A pending timer keeps an unbounded operator awake; a bounded operator sleeps with its
-timers pending and names the earliest in `wake_deadline_ms`. A bounded operator of any loop mode does so only at a **committed** iteration
+An instance of either run whose class sleeps (`durable` `local` or `remote`
+with a `sleep_after`) asks to sleep with this once it has been idle past its
+class's `sleep_after` (by default never for a flow class, six hours for a steps class) with every Cell holding nothing
+queued, in flight, retrying or unflushed. A pending timer keeps a flow operator awake; a steps operator sleeps with its
+timers pending and names the earliest in `wake_deadline_ms`. A steps operator of any loop mode does so only at a **committed** iteration
 boundary, the boundary before its first pass included, and emits it instead of
-`BoundedCompleted`; an unbounded operator sends `iter` `0`. Suspension is not a terminal
+`OperatorCompleted`; a flow operator sends `iter` `0`. Suspension is not a terminal
 outcome. A rehydrated instance waits up to 60 s for the input-log tail the
 controller owes it (`AddOperator.inbox_tail_count`) before it may sleep again.
 
@@ -1764,7 +1766,7 @@ that holds zero resources, and `flz operator info` reports the instance
 `suspended`. Rehydration has one path, whichever wakes it — a new input-log
 append, or the journaled deadline elapsing — and both re-bind the instance
 through the normal spawn path on any live runner, restoring its Cells (and a
-bounded operator's journal) and delivering the input log's undelivered tail. The
+steps operator's journal) and delivering the input log's undelivered tail. The
 deadline appends nothing: `wake_deadline_ms` is the earliest processing-time
 timer pending on any of the instance's Cells when it parked, so the restored
 Cell re-arms that timer and its firing opens the pass. An elapsed deadline
@@ -1774,13 +1776,13 @@ racing wakes collapse into exactly one rehydration.
 
 ### Data frame metadata: the durable input log (`flz.offset`, `flz.msg_id`)
 
-An instance has durable input when it is an unbounded operator on the effectively-once tier,
-a durable bounded operator, or an instance of a class that sleeps. Its input is appended to the instance's one input log
+An instance has durable input when it is a flow operator on the effectively-once tier,
+a durable steps operator, or an instance of a class that sleeps. Its input is appended to the instance's one input log
 (`<state key>/input.log`) **before** it is forwarded, answered only once the
 record is synced, and the forwarded frame carries the assigned offset as
 `flz.offset`. Offsets are 0-based; absent means the input was not journaled (an
-instance without durable input), never offset `0`. An unbounded operator threads it into
-its Cells' effect records' `consumed_offset`; a bounded operator into
+instance without durable input), never offset `0`. A flow operator threads it into
+its Cells' effect records' `consumed_offset`; a steps operator into
 `IterCommit.consumed_offset`, or `IterPark.consumed_offset` for a message it
 parked unread, and an iteration that consumed no journaled input (a carry-fed
 pass) carries none. A Cell drops an input stamped at or below the highest
@@ -1795,7 +1797,7 @@ the runner hands such a frame to that one consumer, never to an entry channel.
 
 ### Data-stream payload-id `processed_prefix`
 
-Runner → controller, on the data stream of an unbounded instance whose input
+Runner → controller, on the data stream of a flow instance whose input
 is journaled: a Cell frame whose identity names the instance (empty tasklet and
 key), whose seq is the offset `P` and whose 16 header bytes are zero. It says
 every input at or below `P` has been processed by every Cell it reached and
@@ -1846,7 +1848,7 @@ consumers that upsert on `flz.key`. It is NOT a sufficient handle for exact
 append-only dedup: consecutive invocations that apply no state change can
 produce colliding `<change_seq>.<emit_ordinal>` pairs. Exact dedup needs a
 durable outbox: the Cell writer's outbox stamps `flz.epoch` for the
-effectively-once tier and for a durable bounded operator alike, and `(flz.cell, flz.seq, flz.epoch)` is the identity a
+effectively-once tier and for a durable steps operator alike, and `(flz.cell, flz.seq, flz.epoch)` is the identity a
 conforming sink deduplicates on (the Kafka producer uses `flz.key` as the
 record key and ships `<cell>/<outbox_seq>/<epoch>` in its
 `flezha.dedup_key` header; the Postgres sink guards on `(epoch, seq)`). See
@@ -1859,4 +1861,4 @@ record key and ships `<cell>/<outbox_seq>/<epoch>` in its
 - [`../internals/state_persistence.md`](../internals/state_persistence.md) — the controller's on-disk layout, WAL writer and `flz state` CLI
 - [`../internals/transport_liveness.md`](../internals/transport_liveness.md) — keep-alives, watchdogs and the stall classifier
 - [`../internals/nif_transport.md`](../internals/nif_transport.md) — the controller-side UDS/QUIC drivers
-- [`../architecture/bounded_profile.md`](../architecture/bounded_profile.md) — the bounded operator barrier, journal and outbox model
+- [`../architecture/steps_profile.md`](../architecture/steps_profile.md) — the steps operator barrier, journal and outbox model

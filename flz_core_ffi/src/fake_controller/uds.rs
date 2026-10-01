@@ -204,7 +204,7 @@ impl Controller {
     pub fn try_answer_spawn(
         &self,
         reference_id: &str,
-        request: &pb::SpawnBoundedRequest,
+        request: &pb::SpawnStepsRequest,
         refusal: Option<&flz_core::FlezhaError>,
     ) -> std::io::Result<String> {
         let (outcome, error, id) = match refusal {
@@ -216,7 +216,7 @@ impl Controller {
         };
         self.try_send(
             reference_id,
-            pb::command_request::Command::SpawnBoundedResponse(pb::SpawnBoundedResponse {
+            pb::command_request::Command::SpawnStepsResponse(pb::SpawnStepsResponse {
                 outcome: outcome.to_string(),
                 error,
                 instance_id: id.clone(),
@@ -259,13 +259,13 @@ pub fn shutdown_notification(
     }
 }
 
-/// The `SpawnBoundedRequest` in a captured frame, with its reference id.
+/// The `SpawnStepsRequest` in a captured frame, with its reference id.
 pub fn spawn_request(
     payload_id: &str,
     message: &[u8],
-) -> Option<(String, pb::SpawnBoundedRequest)> {
+) -> Option<(String, pb::SpawnStepsRequest)> {
     match command_in(payload_id, message)? {
-        (reference_id, pb::command_request::Command::SpawnBoundedRequest(request)) => {
+        (reference_id, pb::command_request::Command::SpawnStepsRequest(request)) => {
             Some((reference_id, request))
         }
         _ => None,

@@ -1,7 +1,7 @@
 defmodule FlezhaTest.Service.OperatorManagerSpawnTest do
   @moduledoc """
   `OperatorManager.spawn_or_deliver/6` — the controller half of a tasklet's
-  `ctx.spawn_bounded` (`tasklet-requested-spawn`).
+  `ctx.spawn_steps` (`tasklet-requested-spawn`).
 
   The registry is `FakeStartRegistry`, whose `insert_new` is the same atomic
   claim ProcessHub's `start_child` performs, so the concurrency case exercises
@@ -31,7 +31,7 @@ defmodule FlezhaTest.Service.OperatorManagerSpawnTest do
   setup :set_mimic_global_until_exit
 
   setup do
-    %{registry: FakeStartRegistry.install(runners: ["runner-1"], kind: :bounded)}
+    %{registry: FakeStartRegistry.install(runners: ["runner-1"], run: :steps)}
   end
 
   # The one request every case sends: instance "w1" in this module's namespace.
@@ -48,7 +48,7 @@ defmodule FlezhaTest.Service.OperatorManagerSpawnTest do
              spawn_or_deliver(@factory, "p1", :deliver)
 
     assert [operator] = FakeStartRegistry.started()
-    assert operator.kind == :bounded
+    assert operator.run == :steps
     assert operator.factory_id == @factory
     assert Keyword.get(operator.opts, :seed_input) == {"p1", %{}}
   end
@@ -119,9 +119,9 @@ defmodule FlezhaTest.Service.OperatorManagerSpawnTest do
   end
 
   test "a factory its runners announced as a stream is named, not spawned" do
-    stub(FleetManager, :factory_kind, fn _ns, _factory -> {:ok, :unbounded} end)
+    stub(FleetManager, :factory_run, fn _ns, _factory -> {:ok, :flow} end)
 
-    assert {{:refused, %Flezha.Error{code: "operator.factory_not_bounded"}}, "w1"} =
+    assert {{:refused, %Flezha.Error{code: "operator.factory_not_steps"}}, "w1"} =
              spawn_or_deliver("prices", "p1", :deliver)
 
     assert FakeStartRegistry.started() == []
@@ -278,14 +278,14 @@ defmodule FlezhaTest.Service.OperatorManagerSpawnTest do
       %Flezha.Operator.Builder{id: id, factory_id: @factory, init_values: %{}}
     end
 
-    test "a builder naming no kind takes the one its factory's runners announced" do
+    test "a builder naming no run takes the one its factory's runners announced" do
       assert {:ok, _} = OperatorManager.start_operator(@namespace, builder("k1"))
-      assert [%{kind: :bounded}] = FakeStartRegistry.started()
+      assert [%{run: :steps}] = FakeStartRegistry.started()
     end
 
-    test "a kind the caller asserts is judged against the factory's, never taken" do
-      assert {:error, {:factory_kind_mismatch, :unbounded, @namespace, _factory, :bounded}} =
-               OperatorManager.start_operator(@namespace, %{builder("k2") | kind: :unbounded})
+    test "a run the caller asserts is judged against the factory's, never taken" do
+      assert {:error, {:factory_run_mismatch, :flow, @namespace, _factory, :steps}} =
+               OperatorManager.start_operator(@namespace, %{builder("k2") | run: :flow})
 
       assert FakeStartRegistry.started() == []
     end

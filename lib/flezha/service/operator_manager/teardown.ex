@@ -20,7 +20,7 @@ defmodule Flezha.Service.OperatorManager.Teardown do
   @typedoc """
   The `:operator` walk's target: the operator, the node its Overwatch ran
   on, the runner it is bound to (or `nil`), whether its state stays on disk (a
-  rescale moving it, `:sealed` for a bounded operator survivor), and the Cell count its
+  rescale moving it, `:sealed` for a steps operator survivor), and the Cell count its
   start allocated.
   """
   @type target :: %{
@@ -45,7 +45,7 @@ defmodule Flezha.Service.OperatorManager.Teardown do
 
   # Flush the runner's stream channels before the child is deregistered: a
   # frame already queued there is routed, never counted, so nothing the runner
-  # wrote is lost to the teardown (`fix-bounded-teardown-drain`).
+  # wrote is lost to the teardown (`fix-steps-teardown-drain`).
   defp stream_flush_step(%{runner_id: nil}, _budget), do: :ok
 
   defp stream_flush_step(%{runner_id: runner_id}, _budget) do
@@ -89,7 +89,7 @@ defmodule Flezha.Service.OperatorManager.Teardown do
   a rescale taking the group down to redistribute its Cells — keeps the files:
   they are the state about to be handed to another member, not garbage. Its
   writers close all the same, so the member restarted under this id opens the
-  files where the move left them. `:sealed` first cuts a bounded operator's journal to
+  files where the move left them. `:sealed` first cuts a steps operator's journal to
   its latest committed iteration (`TaskJournal.cut/2`), the history boundary a
   surviving member of a rescale resumes from.
   """
@@ -162,7 +162,7 @@ defmodule Flezha.Service.OperatorManager.Teardown do
   # On explicit stop, delete the on-disk state directories owned by the
   # operator. The operator_id is used as the operator_class identifier — the SDK
   # convention is that each operator's cell frames carry the operator_id
-  # as operator_class. A finished bounded operator keeps its state and
+  # as operator_class. A finished steps operator keeps its state and
   # completion record for the retention window so the outcome stays
   # inspectable; `Flezha.State.Retention` reclaims it once the window elapses.
   #

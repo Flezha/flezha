@@ -26,13 +26,13 @@ defmodule Flezha.State.PersistenceResolver do
 
   @doc """
   Whether `operator_class` keeps durable per-Cell state (WAL, snapshots,
-  bind-time restore, live Cell reads), for either kind: the user's
-  `:operator_persistence` override, then the class's own switch as the
-  runner announced it (`ClassRegistry.persistent?/1`, on unless declared off).
+  bind-time restore, live Cell reads), whichever way it runs: the user's
+  `:operator_persistence` override, then the class's own `durable` as the
+  runner announced it (`ClassRegistry.persistent?/1`, kept unless `false`).
   """
-  @spec persistence_enabled?(binary(), map()) :: boolean()
-  def persistence_enabled?(operator_class, metadata \\ %{}) when is_binary(operator_class) do
-    resolve(:operator_persistence, :operator_persistence_enabled, operator_class, metadata,
+  @spec keeps_state?(binary(), map()) :: boolean()
+  def keeps_state?(operator_class, metadata \\ %{}) when is_binary(operator_class) do
+    resolve(:operator_persistence, :keeps_state, operator_class, metadata,
       valid: &is_boolean/1,
       default: fn -> ClassRegistry.persistent?(operator_class) end
     )
@@ -47,22 +47,22 @@ defmodule Flezha.State.PersistenceResolver do
   end
 
   @doc """
-  How many hours a finished bounded operator's data (retained Cell state +
+  How many hours a finished steps operator's data (retained Cell state +
   completion record) is kept before the retention sweeper reclaims it.
-  Precedence: user override map `:bounded_completed_retention_hours` →
-  instance metadata → global `:default_bounded_completed_retention_hours`
-  (`72`, env `FLEZHA_BOUNDED_RETENTION_HOURS`).
+  Precedence: user override map `:operator_completed_retention_hours` →
+  instance metadata → global `:default_operator_completed_retention_hours`
+  (`72`, env `FLEZHA_STEPS_RETENTION_HOURS`).
   """
   @spec completed_retention_hours(binary(), map()) :: non_neg_integer()
   def completed_retention_hours(operator_class, metadata \\ %{})
       when is_binary(operator_class) do
     resolve(
-      :bounded_completed_retention_hours,
-      :bounded_completed_retention_hours,
+      :operator_completed_retention_hours,
+      :operator_completed_retention_hours,
       operator_class,
       metadata,
       valid: &non_neg_int?/1,
-      default: fn -> Config.get(:default_bounded_completed_retention_hours) end
+      default: fn -> Config.get(:default_operator_completed_retention_hours) end
     )
   end
 
@@ -98,21 +98,14 @@ defmodule Flezha.State.PersistenceResolver do
   end
 
   @doc """
-  Whether `operator_class` requires its commit barriers to reach the remote
-  durability tier before they are acked (`remote-durability-tier`, RPO 0).
-
-  Same three-source cascade as every other per-class knob, with the SDK
-  declaration as the default — so a user can force a class either way
-  (`:sync_durability => %{class => bool}`) without an SDK change, and a class
-  that declares nothing costs nothing.
+  Whether `operator_class` keeps its work `durable: remote`: its commit
+  barriers reach the remote durability tier before they are acked
+  (`remote-durability-tier`, RPO 0). The class's own setting and nothing else:
+  a behaviour of an operator is declared in its class.
   """
-  @spec sync_durability?(binary(), map()) :: boolean()
-  def sync_durability?(operator_class, metadata \\ %{}) when is_binary(operator_class) do
-    resolve(:sync_durability, :sync_durability, operator_class, metadata,
-      valid: &is_boolean/1,
-      default: fn -> ClassRegistry.sync_durability?(operator_class) end
-    )
-  end
+  @spec remote?(binary()) :: boolean()
+  def remote?(operator_class) when is_binary(operator_class),
+    do: ClassRegistry.remote?(operator_class)
 
   @spec output_stall_timeout_ms(binary(), map()) :: non_neg_integer()
   def output_stall_timeout_ms(operator_class, metadata \\ %{}) when is_binary(operator_class) do
@@ -164,7 +157,7 @@ defmodule Flezha.State.PersistenceResolver do
   The WAL soft watermark (`:wal_high_watermark_bytes`) — the one definition of
   "how many bytes is too many for one Cell-scale payload".
 
-  It bounds the per-Cell WAL, the input log, a bounded journal entry, the
+  It bounds the per-Cell WAL, the input log, a steps journal entry, the
   default credit window, and a live state read, so it lives here rather than as
   a literal at each of those.
   """

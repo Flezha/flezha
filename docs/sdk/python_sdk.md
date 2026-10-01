@@ -3,7 +3,7 @@
 The `flezha` package is a poll host over `flz_core`, the runner kernel the
 Rust, Java, Node and Ruby SDKs also drive. The kernel owns transport, ordering,
 per-cell exclusivity, durability, retries, timers, credit, routing and
-bounded runs. This package supplies threads and user code, and nothing else —
+steps runs. This package supplies threads and user code, and nothing else —
 [`poll_core.md` → "The core decides, the SDK brings the threads"](poll_core.md#the-core-decides-the-sdk-brings-the-threads).
 
 **Support tier:** [tier 2](../publishing/maturity.md#sdk-python), passes the full
@@ -97,7 +97,7 @@ class Tally:
         state.seen = change.seen
 
 
-@unbounded_operator("local_word_count_example")
+@operator("local_word_count_example")
 def word_count(c: Channels) -> None:
     # One Cell per word: the hop from `Split` to `Tally` is the runtime's,
     # not this file's.
@@ -125,7 +125,7 @@ def word_count(c: Channels) -> None:
   `ctx.emit(value)` would encode it there, and never waits: a part that cannot
   leave at once is dropped. A listener receives it, numbered from 0 within each
   attempt; a sink never does, and nothing about it is durable. It works in
-  `run` and `on_timer`, for an unbounded tasklet and a bounded stage alike. It
+  `run` and `on_timer`, for a flow tasklet and a steps stage alike. It
   raises `FlezhaError` coded `part.no_sink` when the output channel does not
   end in a sink (a `response()` end is not one), and `part.outside_invocation`
   through a context kept past its invocation.
@@ -162,21 +162,20 @@ The keywords `flezha.tasklet` takes beside `name`:
 
 ### The short form
 
-`@flezha.unbounded_operator` and `@flezha.bounded_operator` declare a whole
-single-tasklet operator when they decorate a tasklet's body instead of a
-channels body: one declaration, no `flezha.tasklet` beside it. The decorator
-names the kind. `id` is the factory id and is always written; `sink`, `input`
+`@flezha.operator` declares a whole single-tasklet operator when it decorates
+a tasklet's body instead of a channels body: one declaration, no
+`flezha.tasklet` beside it. `id` is the factory id and is always written; `sink`, `input`
 and `codec` (the entry codec `Channels.input` takes) are optional, and so are
 the tasklet's own keywords (`cell_keys`, `logical_clock`, `idle_ttl_seconds`,
 `mailbox_capacity` and the rest `flezha.tasklet` takes, except `name`).
 
 ```python
-@flezha.unbounded_operator(id="upcase", sink="out", codec="text")
+@flezha.operator(id="upcase", sink="out", codec="text")
 def upcase(value: str) -> str:
     return value.upper()
 
 
-@flezha.bounded_operator(id="place", sink="placed", input="order", codec="text")
+@flezha.operator(id="place", run="steps", sink="placed", input="order", codec="text")
 def place(order: str) -> str:
     return order
 
@@ -204,7 +203,7 @@ A class body is how a one-tasklet operator with state is written, from
 `sdk/python/test_app/fixtures.py`:
 
 ```python
-@flezha.unbounded_operator(id="sugar_store_input", sink="sugar_store_sink", codec="text")
+@flezha.operator(id="sugar_store_input", sink="sugar_store_sink", codec="text")
 class SugarStoreInput:
     def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], str]) -> None:
         ctx.change({"push": value})
@@ -223,24 +222,23 @@ plugin channel, which is how an operator that only keeps state is written.
 The generated operator is the one you would have written by hand with that
 single tasklet: an entry channel named `input` (or the `input` keyword's
 value) decoded by `codec`, the tasklet, a plugin sink named by `sink` when one
-is written, a factory id equal to `id`, and every class-level setting at its
-default. The tasklet is named `id` verbatim, so growing out of the short form
+is written, a factory id equal to `id`, and the class settings it writes, as
+the full form takes them. The tasklet is named `id` verbatim, so growing out of the short form
 keeps every cell's state where it was, and `upcase.tasklet` wires it into
-another operator's channels body. A bounded short form is a `once` bounded operator,
+another operator's channels body. A steps short form is a `once` steps operator,
 run once over its first message: `flz operator start --text '<payload>'`, or
 a start followed by `flz operator send`; a second message to a `once`
-instance is accepted and never read. `loop_mode="per_input"` (or `"chained"`)
-is the one class setting a short form keeps, so a loop is still one
-declaration:
+instance is accepted and never read. With `each` written it loops, still
+one declaration:
 
 ```python
-@flezha.bounded_operator(id="chat", sink="replies", codec="text", loop_mode="per_input")
+@flezha.operator(id="chat", run={"steps": {"each": "per_input"}}, sink="replies", codec="text")
 def chat(turn: str) -> str:
     return turn
 ```
 
 Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
-edge, an edge's retry budget, any other class setting. The short form declares
+edge, an edge's retry budget. The short form declares
 none of them, and nothing is harvested: an operator a runner declares is one
 you registered.
 
@@ -249,41 +247,54 @@ that also declares `channels`) and `topology.sink_without_output` (a `sink` on a
 with no return annotation, or `None`, or on a class whose context names no
 output) are raised where the decorator runs, and
 `topology.duplicate_factory_id` where a second operator under one factory id is
-registered. A missing `id`, a class-level setting other than `loop_mode` on a
-short form, and `sink`, `input`, `codec` or a tasklet keyword on a channels
-body are refused where the decorator runs too, as is `kind`, `sink`, `input`
-or `codec` on `flezha.tasklet`.
+registered. A missing `id`, and `sink`, `input`, `codec` or a tasklet keyword
+on a channels body, are refused where the decorator runs too, as is `run`,
+`durable`, `sink`, `input` or `codec` on `flezha.tasklet`.
 
-### Bounded settings
+### Class settings
 
-A bounded operator declares its graph in a channels body exactly as an unbounded operator does, and
-retries a failing tasklet on the edge that feeds it: `retry_max` and
-`retry_backoff_ms` on the channel (3 attempts, 50 ms base by default), so
-`retry_max(1)` is fail-fast. The decorator's own keywords are `persistent`,
-`loop_mode` (`"once"`, `"per_input"`, `"chained"`), `rollback_mode`
-(`"all_or_nothing"`, `"keep_progress"`), `max_duration_ms` and
-`sync_durability`; a mode outside its values raises `FlezhaError` (`topology.invalid_mode`) naming
-the keyword and the value where the decorator runs.
+The decorator takes the class settings as keywords, in either form, written as
+the tree's own data:
 
-Every builder call reaches the core whatever the kind, and a setting of the
-other kind is refused under its own name when the runner declares its
-operators, before it connects: `effectively_once()` on a bounded operator as
-`topology.effectively_once_on_bounded`, any checkpoint call as
-`topology.checkpoint_on_bounded`, `correction_window` as `topology.correction_window_on_bounded`,
-and `sync_durability=True` on `@flezha.unbounded_operator` as
-`topology.sync_durability_on_unbounded`. The decorator keyword is the one spelling of
-synchronous durability; `Channels` has no such call.
+```python
+@flezha.operator(
+    "orders",
+    run={"steps": {"each": "per_input", "on_failure": "keep_progress"}},
+    durable={"local": {"sleep_after": 10_000}},
+    max_duration_ms=600_000,
+)
+def orders(c: flezha.Channels) -> None:
+    c.input("order", codec="text").into(Place).sink("placed")
+```
 
-Both decorators take `persistent` (default `True`) and `sleep_when_idle`, which
-defaults to `persistent` on a bounded operator and to `False` on an unbounded operator;
-`sleep_when_idle=True` with `persistent=False` is refused as
-`topology.sleep_without_persistence` when the runner declares its operators.
+- `run` is `"flow"` (the default) or `"steps"`, bare or with its members.
+  `steps` takes `each` (`"once"`, the default, `"per_input"` or `"chained"`)
+  and `on_failure` (`"undo_all"`, the default, or `"keep_progress"`).
+- A flow takes `exactly`: `"at_least_once"` (the default), `"effectively_once"`,
+  or `{"effectively_once": {"ack": ..., "correction_ms": ..., "beyond_window": ...}}`,
+  with `ack` either `"per_input"` or `"checkpoint"`, or
+  `{"checkpoint": {"every": ..., "max_delay_ms": ..., "outputs": ...}}`.
+- `durable` is `False`, `"local"` (the default) or `"remote"`, and
+  `{"local": {"sleep_after": ...}}` or `{"remote": {...}}` with milliseconds or
+  `False`. A kept instance sleeps after six idle hours by default.
+- `max_duration_ms` stops an instance that long after it starts;
+  `description` is free text.
 
-A bounded tasklet registers timers as an unbounded tasklet does, and a firing
-runs as a pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-bounded-operator));
+The `Run` and `Durable` type aliases spell the tree with `Literal` unions for a
+type checker. The core judges the tree when the runner declares its operators,
+before it connects: a setting under a parent that does not carry it is
+`topology.unknown_field`, naming the setting and the parent, and a value
+outside its choice is `topology.invalid_setting`.
+
+A steps operator retries a failing tasklet on the edge that feeds it, as a flow
+does: `retry_max` and `retry_backoff_ms` on the channel (3 attempts, 50 ms base
+by default), so `retry_max(1)` is fail-fast.
+
+A steps tasklet registers timers as a flow tasklet does, and a firing
+runs as a pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-steps-operator));
 only inside a `compensate` hook do `ctx.timer_after`, `ctx.timer_at_event_time`
-and `ctx.cancel_timer` raise a `FlezhaError` with the code `runtime.timers_unavailable`. A `ctx.spawn_bounded`
-naming an unbounded factory resolves its handle to a `FlezhaError` with the code `operator.factory_not_bounded`.
+and `ctx.cancel_timer` raise a `FlezhaError` with the code `runtime.timers_unavailable`. A `ctx.spawn_steps`
+naming a flow factory resolves its handle to a `FlezhaError` with the code `operator.factory_not_steps`.
 
 ### Type hints are the declaration
 

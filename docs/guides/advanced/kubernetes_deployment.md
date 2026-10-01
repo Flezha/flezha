@@ -67,8 +67,6 @@ spec:
           env:
             - name: FLEZHA_SOCKET_FILES_PATH
               value: /flezha/run/sockets
-            - name: FLEZHA_PARK_IDLE_MS
-              value: "10000"
           volumeMounts:
             - name: run
               mountPath: /flezha/run

@@ -56,7 +56,7 @@ defmodule FlezhaTest.State.WalTransferTest do
   # fails when: the log's name is resolved by joining it onto the class
   # directory, where the class's sidecars live beside it.
   test "read_chunk refuses a name that is not the input log's" do
-    class = "bounded_guard_#{System.unique_integer([:positive])}"
+    class = "steps_guard_#{System.unique_integer([:positive])}"
     {:ok, 0} = InputLog.append(class, "m", %{})
     FsyncBatcher.flush_now()
 
@@ -171,11 +171,11 @@ defmodule FlezhaTest.State.WalTransferTest do
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end
 
-  # fails when: the pull enumerates Cells only, so a bounded instance placed
+  # fails when: the pull enumerates Cells only, so a steps instance placed
   # on another controller resumes without its journal and its input log.
   @tag :multi_node
-  test "a bounded instance's journal and input log are pulled with its cells" do
-    class = "bounded_pull_#{System.unique_integer([:positive])}"
+  test "a steps instance's journal and input log are pulled with its cells" do
+    class = "steps_pull_#{System.unique_integer([:positive])}"
     cell_id = {class, "counter", "k"}
     {:ok, srv} = Supervisor.find_or_start(cell_id)
     :ok = WalWriter.append(srv, 0, TestHelpers.stub_header(), "alpha")

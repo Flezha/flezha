@@ -250,8 +250,8 @@ defmodule Flezha.State.DurabilityTierTest do
       assert File.dir?(Path.dirname(log_path)), "hydration must not replace the class dir"
     end
 
-    test "a bounded operator's commit ships its input log beside its journal", ctx do
-      # A bounded keys its journal, Cells and input log by its instance id, so
+    test "a steps operator's commit ships its input log beside its journal", ctx do
+      # A steps keys its journal, Cells and input log by its instance id, so
       # the commit's refs name all three under the one key.
       instance = ctx.class
       journal = Paths.journal_id(instance)
@@ -259,7 +259,7 @@ defmodule Flezha.State.DurabilityTierTest do
       File.write!(Paths.input_log_path(instance), TestHelpers.wal_records(0..2))
 
       assert {:cell, journal} in DurabilityTier.refs_of_state_key(instance)
-      assert :ok = DurabilityTier.on_bounded_commit(instance)
+      assert :ok = DurabilityTier.on_steps_commit(instance)
 
       assert NodeTestHelper.wait_until(
                fn ->
@@ -778,7 +778,7 @@ defmodule Flezha.State.DurabilityTierTest do
     end
 
     test "the RPO-0 gate arms on the class an instance resolves to", ctx do
-      Application.put_env(:flezha, :sync_durability, %{ctx.class => true})
+      :ok = ClassRegistry.put_remote(ctx.class, true)
 
       assert DurabilityTier.sync_class?(ctx.instance),
              "a gate keyed by class must still arm for a caller holding the id"

@@ -339,11 +339,11 @@ a role the principal does not hold changes nothing.
 | Role | What it adds |
 | --- | --- |
 | `viewer` | the reads: operators, plugins, cell state, audit, observability, the schedule registry |
-| `app` | viewer plus the lifecycle an application runs on its own work: start, stop and send to an operator, including the start and the delivery a tasklet's `ctx.spawn_bounded` asks for, listen to what an operator ingests and emits, and enable and disable a plugin. It destroys no record and moves no work it did not create, which is why it is not `ops`: no DLQ drop or replay, no state rotation or deletion, no rewind, no replay and no rescale |
+| `app` | viewer plus the lifecycle an application runs on its own work: start, stop and send to an operator, including the start and the delivery a tasklet's `ctx.spawn_steps` asks for, listen to what an operator ingests and emits, and enable and disable a plugin. It destroys no record and moves no work it did not create, which is why it is not `ops`: no DLQ drop or replay, no state rotation or deletion, no rewind, no replay and no rescale |
 | `ops` | app plus the rest of the operator and plugin lifecycle, audit rotation, observability mutation, the schedule family, the dead-letter queue and the records in flight |
 | `admin` | ops plus auth state, namespace and quota mutation, controller shutdown and the controller-wide settings. Only `admin@_system` may target another namespace |
 | `runner` | `runner.connect` and nothing else. It is outside the hierarchy: it is what a runner connection resolves to before a caller grants it more |
-| `spawner` | runner plus the two rights a tasklet's `ctx.spawn_bounded` and an operator's `call(...)` need in its own namespace, `operator.start` (creating a callee, audited) and `operator.send` (delivering to one), and nothing else. Those rights also open `Operator.start` and `Operator.send` on the SDK administration surface; no stop, plugin or schedule verb. It is outside the hierarchy like `runner`, and `app` holds everything it grants |
+| `spawner` | runner plus the two rights a tasklet's `ctx.spawn_steps` and an operator's `call(...)` need in its own namespace, `operator.start` (creating a callee, audited) and `operator.send` (delivering to one), and nothing else. Those rights also open `Operator.start` and `Operator.send` on the SDK administration surface; no stop, plugin or schedule verb. It is outside the hierarchy like `runner`, and `app` holds everything it grants |
 | `stopper` | runner plus `operator.stop` on the bound namespace and nothing else, so it combines with `spawner` into an application that starts, sends and stops its own work and still enables no plugin. It is outside the hierarchy like `runner`, and `app` holds everything it grants |
 
 `app`, `spawner` and `stopper` also carry `runner.connect`, because the only
@@ -386,9 +386,9 @@ list` shows for it. That is what keeps the administration surface's namespace
 and quota mutations out of reach of runner code: an identity holding `spawner`
 and `admin` connects as `spawner` alone.
 
-A namespace whose tasklets spawn bounded operators, and that needs nothing else from
+A namespace whose tasklets spawn steps operators, and that needs nothing else from
 this surface, is bound to `spawner` instead. It grants the start and the
-delivery a `ctx.spawn_bounded` asks for, and not the stop or the plugin enable
+delivery a `ctx.spawn_steps` asks for, and not the stop or the plugin enable
 and disable that `app` adds:
 
 ```sh
@@ -474,8 +474,8 @@ told nothing about whether the name exists.
 | `operator_classes` | published surface only | `operator.list` | viewer | the caller's own namespace | - |
 | `operator_start` | `operator_start` | `operator.start` | spawner | argument 1 (the namespace named) | after on `operator_service` |
 | `operator_stop` | `operator_stop` | `operator.stop` | stopper | argument 1 (the namespace named) | after on `operator_service` |
-| `operator_scale` | `operator_scale` | `operator.scale` | ops | argument 1 (the namespace named) | after on `bounded_service` |
-| `operator_rewind` | `operator_rewind` | `operator.rewind` | ops | argument 1 (the namespace named) | after on `bounded_service` |
+| `operator_scale` | `operator_scale` | `operator.scale` | ops | argument 1 (the namespace named) | after on `steps_service` |
+| `operator_rewind` | `operator_rewind` | `operator.rewind` | ops | argument 1 (the namespace named) | after on `steps_service` |
 | `operator_send` | `operator_send` | `operator.send` | spawner | argument 1 (the namespace named) | after on `operator_service` |
 | `operator_call` | `operator_call` | `operator.send` | spawner | argument 1 (the namespace named) | after on `operator_service` |
 | `spawn_deliver` | runner session only | `operator.send` | spawner | argument 1 (the namespace named) | - |
@@ -542,7 +542,7 @@ credential above for managing schedules — can add, list and remove a schedule
 but cannot run one; a token bound to the schedule's namespace with
 `operator.start` (an `ops` or `admin` there), or `admin@_system`, can.
 
-**A spawn's delivery is judged and not recorded.** A tasklet's `ctx.spawn_bounded`
+**A spawn's delivery is judged and not recorded.** A tasklet's `ctx.spawn_steps`
 that names a running instance feeds it, and that delivery is judged as
 `operator.send` through the `spawn_deliver` row, which writes no record of a
 permitted delivery because it happens once per event. A refused one is audited as
@@ -557,7 +557,7 @@ own input and is not judged again. See [`../sdk/calls.md`](../sdk/calls.md).
 
 **An operator's call is judged as its runner identity.** A `call(...)` end in an
 operator's graph is judged as its namespace's runner identity, as a
-`ctx.spawn_bounded` is: creating the callee on the `operator_start` row, which
+`ctx.spawn_steps` is: creating the callee on the `operator_start` row, which
 records it naming the new instance, and delivering the request on the
 `spawn_deliver` row, which records no permitted delivery. The runner identity needs
 `spawner` or `app`; a refusal ends the call with a `Response` carrying its
@@ -580,7 +580,7 @@ Two kinds of record reach the audit log. The auth stores' own events land on
 `:bootstrap_completed`, `:rebootstrap_recovery`. An administration verb's act lands on
 the source its row declares — `namespace_service` for namespace and role
 mutations, `dlq_service`, `schedule_service`, `operator_service`,
-`plugin_service`, `state_service`, `controller_service`, `bounded_service`,
+`plugin_service`, `state_service`, `controller_service`, `steps_service`,
 `observability_service` and `audit_log` — in one record shape: the record's
 `name` is the verb, `metadata.action` the action it was judged as,
 `metadata.outcome` (`ok` or `error`) for a mutation and `metadata.error_code` for a

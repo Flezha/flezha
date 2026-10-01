@@ -17,20 +17,28 @@ defmodule FlezhaTest.Operator.ClassRegistryTest do
     %{class: "cr_" <> Integer.to_string(System.unique_integer([:positive]))}
   end
 
-  test "an unknown class defaults to :unbounded", %{class: class} do
-    assert ClassRegistry.get(class) == :unbounded
+  test "an unknown class defaults to :flow", %{class: class} do
+    assert ClassRegistry.get(class) == :flow
   end
 
-  test "the known kinds are unbounded and bounded" do
-    assert ClassRegistry.known_kind?(:unbounded)
-    assert ClassRegistry.known_kind?(:bounded)
-    refute ClassRegistry.known_kind?(:made_up_kind)
+  test "an operator runs in flow or in steps, and nothing else" do
+    assert ClassRegistry.known_run?(:flow)
+    assert ClassRegistry.known_run?(:steps)
+    refute ClassRegistry.known_run?(:bounded)
   end
 
-  test "a class persists unless it declares otherwise, whichever kind it is", %{class: class} do
+  test "a class keeps a task journal exactly when it runs in steps", %{class: class} do
+    refute ClassRegistry.journals?(class)
+    :ok = ClassRegistry.put(class, :steps)
+    assert ClassRegistry.journals?(class)
+    :ok = ClassRegistry.delete(class)
+    assert ClassRegistry.journals?(class), "the run survives eviction"
+  end
+
+  test "a class persists unless it declares otherwise, whichever way it runs", %{class: class} do
     assert ClassRegistry.persistent?(class)
 
-    :ok = ClassRegistry.put(class, :bounded)
+    :ok = ClassRegistry.put(class, :steps)
     :ok = ClassRegistry.put_persistent(class, false)
     refute ClassRegistry.persistent?(class)
     assert File.read!(Path.join(Paths.class_dir(class), "persistence_off")) == "true"
@@ -43,15 +51,17 @@ defmodule FlezhaTest.Operator.ClassRegistryTest do
     refute File.exists?(Path.join(Paths.class_dir(class), "persistence_off"))
   end
 
-  test "the sleep setting defaults off and survives eviction", %{class: class} do
-    refute ClassRegistry.sleep_when_idle?(class)
+  test "the sleep interval is what the class announced and survives eviction",
+       %{class: class} do
+    refute ClassRegistry.sleeps?(class)
 
-    :ok = ClassRegistry.put_sleep_when_idle(class, true)
+    :ok = ClassRegistry.put_sleep_after(class, 21_600_000)
     :ok = ClassRegistry.delete(class)
-    assert ClassRegistry.sleep_when_idle?(class)
+    assert ClassRegistry.sleep_after_ms(class) == 21_600_000
+    assert ClassRegistry.sleeps?(class)
 
-    :ok = ClassRegistry.put_sleep_when_idle(class, false)
-    refute ClassRegistry.sleep_when_idle?(class)
+    :ok = ClassRegistry.put_sleep_after(class, nil)
+    refute ClassRegistry.sleeps?(class)
   end
 
   test "a park record survives a table wipe and is gone once cleared", %{class: class} do
@@ -71,29 +81,29 @@ defmodule FlezhaTest.Operator.ClassRegistryTest do
     assert ClassRegistry.parked(class) == nil
   end
 
-  test "an :unbounded put writes no sidecar; a :bounded put does", %{class: class} do
+  test "an :flow put writes no sidecar; a :steps put does", %{class: class} do
     cont = class <> "_c"
-    :ok = ClassRegistry.put(cont, :unbounded)
+    :ok = ClassRegistry.put(cont, :flow)
     refute File.exists?(sidecar(cont))
 
-    :ok = ClassRegistry.put(class, :bounded)
-    assert File.read!(sidecar(class)) == "bounded"
+    :ok = ClassRegistry.put(class, :steps)
+    assert File.read!(sidecar(class)) == "steps"
   end
 
   test "get falls back to the durable sidecar after the ETS entry is evicted", %{class: class} do
-    :ok = ClassRegistry.put(class, :bounded)
+    :ok = ClassRegistry.put(class, :steps)
     :ok = ClassRegistry.delete(class)
 
-    # ETS entry gone, durable sidecar remains → still resolves :bounded, so a
+    # ETS entry gone, durable sidecar remains → still resolves :steps, so a
     # process-less retention sweep over retained state gets the right kind.
-    assert ClassRegistry.get(class) == :bounded
+    assert ClassRegistry.get(class) == :steps
   end
 
   test "a garbage sidecar resolves to the default", %{class: class} do
     File.mkdir_p!(Paths.class_dir(class))
     File.write!(sidecar(class), "definitely_not_a_kind")
 
-    assert ClassRegistry.get(class) == :unbounded
+    assert ClassRegistry.get(class) == :flow
   end
 
   test "effectively_once? defaults to false for an unknown class", %{class: class} do
@@ -128,37 +138,37 @@ defmodule FlezhaTest.Operator.ClassRegistryTest do
     refute File.exists?(Paths.class_dir(class))
   end
 
-  test "checkpoint_ack? defaults to false — per-input is the tier's granularity",
+  test "ack_checkpoint? defaults to false — per-input is the tier's granularity",
        %{class: class} do
-    refute ClassRegistry.checkpoint_ack?(class)
+    refute ClassRegistry.ack_checkpoint?(class)
 
     :ok = ClassRegistry.put_effectively_once(class, true)
 
-    refute ClassRegistry.checkpoint_ack?(class),
+    refute ClassRegistry.ack_checkpoint?(class),
            "declaring the tier must not imply checkpoint granularity"
   end
 
   test "a checkpoint-ack put resolves true and survives ETS eviction", %{class: class} do
-    :ok = ClassRegistry.put_checkpoint_ack(class, true)
+    :ok = ClassRegistry.put_ack_checkpoint(class, true)
 
-    assert ClassRegistry.checkpoint_ack?(class)
+    assert ClassRegistry.ack_checkpoint?(class)
     assert File.read!(checkpoint_sidecar(class)) == "true"
 
     # The durable sidecar answers after the in-memory entry is evicted — the
     # process-less Retention sweep and a fresh bind both read it.
     :ok = ClassRegistry.delete(class)
-    assert ClassRegistry.checkpoint_ack?(class)
+    assert ClassRegistry.ack_checkpoint?(class)
   end
 
   test "a class that drops the declaration reverts to per-input", %{class: class} do
-    :ok = ClassRegistry.put_checkpoint_ack(class, true)
-    :ok = ClassRegistry.put_checkpoint_ack(class, false)
+    :ok = ClassRegistry.put_ack_checkpoint(class, true)
+    :ok = ClassRegistry.put_ack_checkpoint(class, false)
 
-    refute ClassRegistry.checkpoint_ack?(class)
+    refute ClassRegistry.ack_checkpoint?(class)
     refute File.exists?(checkpoint_sidecar(class))
 
     :ok = ClassRegistry.delete(class)
-    refute ClassRegistry.checkpoint_ack?(class)
+    refute ClassRegistry.ack_checkpoint?(class)
   end
 
   test "put_declarations persists every declaration, and a rebind clears what was dropped",
@@ -167,68 +177,98 @@ defmodule FlezhaTest.Operator.ClassRegistryTest do
     :ok =
       ClassRegistry.put_declarations(class, %{
         effectively_once: true,
-        checkpoint_ack: true,
+        ack_checkpoint: true,
         compensable_tasks: [0, 2],
         leaf_tasks: [1, 2],
         correction_window_ms: 60_000,
         compact_after_bytes: 4_194_304,
-        sync_durability: true,
+        durable: :remote,
         persistent: false,
-        sleep_when_idle: true
+        sleep_after_ms: 2_000
       })
 
     assert ClassRegistry.effectively_once?(class)
-    assert ClassRegistry.checkpoint_ack?(class)
+    assert ClassRegistry.ack_checkpoint?(class)
     assert ClassRegistry.compensable_tasks(class) == [0, 2]
     assert ClassRegistry.leaf_tasks(class) == [1, 2]
     assert ClassRegistry.correction_window_ms(class) == 60_000
     assert ClassRegistry.compact_after_bytes(class) == 4_194_304
-    assert ClassRegistry.sync_durability?(class)
+    assert ClassRegistry.remote?(class)
     refute ClassRegistry.persistent?(class)
-    assert ClassRegistry.sleep_when_idle?(class)
+    assert ClassRegistry.sleep_after_ms(class) == 2_000
 
     # A class that rebinds having dropped its declarations must not read the
     # previous bind's — every sidecar goes with the claim.
     :ok =
       ClassRegistry.put_declarations(class, %{
         effectively_once: false,
-        checkpoint_ack: false,
+        ack_checkpoint: false,
         compensable_tasks: nil,
         leaf_tasks: nil,
         correction_window_ms: nil,
         compact_after_bytes: nil,
-        sync_durability: false,
+        durable: :local,
         persistent: true,
-        sleep_when_idle: false
+        sleep_after_ms: nil
       })
 
     refute ClassRegistry.effectively_once?(class)
-    refute ClassRegistry.checkpoint_ack?(class)
+    refute ClassRegistry.ack_checkpoint?(class)
     refute ClassRegistry.compensable_tasks(class)
     refute ClassRegistry.leaf_tasks(class)
     refute ClassRegistry.correction_window_ms(class)
     refute ClassRegistry.compact_after_bytes(class)
-    refute ClassRegistry.sync_durability?(class)
+    refute ClassRegistry.remote?(class)
     assert ClassRegistry.persistent?(class)
-    refute ClassRegistry.sleep_when_idle?(class)
+    refute ClassRegistry.sleeps?(class)
   end
 
-  test "sync durability defaults false, survives eviction, and reverts when dropped",
-       %{class: class} do
-    refute ClassRegistry.sync_durability?(class)
+  test "the declarations decode from the metadata the class announced" do
+    {:ok, raw, _size} =
+      Protox.encode(%RunnerCommands.AddOperatorResponse{
+        metadata: %{
+          "run" => "steps",
+          "each" => "per_input",
+          "on_failure" => "keep_progress",
+          "durable" => "remote",
+          "sleep_after_ms" => "2000",
+          "max_duration_ms" => "60000"
+        }
+      })
 
-    :ok = ClassRegistry.put_sync_durability(class, true)
-    assert ClassRegistry.sync_durability?(class)
-    assert File.read!(sync_durability_sidecar(class)) == "true"
+    raw = IO.iodata_to_binary(raw)
+
+    assert %{
+             run: :steps,
+             each: :per_input,
+             on_failure: :keep_progress,
+             durable: :remote,
+             persistent: true,
+             sleep_after_ms: 2_000,
+             max_duration_ms: 60_000,
+             effectively_once: false
+           } = ClassRegistry.decode_declarations(raw)
+
+    assert %{run: :flow, durable: :local, sleep_after_ms: nil, persistent: true} =
+             ClassRegistry.decode_declarations(<<>>)
+  end
+
+  test "remote durability defaults false, survives eviction, and reverts when dropped",
+       %{class: class} do
+    refute ClassRegistry.remote?(class)
+
+    :ok = ClassRegistry.put_remote(class, true)
+    assert ClassRegistry.remote?(class)
+    assert File.read!(remote_sidecar(class)) == "true"
 
     # The commit gate is read on an instance a previous controller may have
     # bound, so it must answer without the in-memory entry.
     :ok = ClassRegistry.delete(class)
-    assert ClassRegistry.sync_durability?(class)
+    assert ClassRegistry.remote?(class)
 
-    :ok = ClassRegistry.put_sync_durability(class, false)
-    refute ClassRegistry.sync_durability?(class)
-    refute File.exists?(sync_durability_sidecar(class))
+    :ok = ClassRegistry.put_remote(class, false)
+    refute ClassRegistry.remote?(class)
+    refute File.exists?(remote_sidecar(class))
   end
 
   describe "correction window declaration" do
@@ -304,13 +344,13 @@ defmodule FlezhaTest.Operator.ClassRegistryTest do
       factory = "kinded-#{System.unique_integer([:positive])}"
 
       :ok = ClassRegistry.put_established("ns", factory, :sdk_lang, 1)
-      :ok = ClassRegistry.put_established("ns", factory, :kind, :bounded)
+      :ok = ClassRegistry.put_established("ns", factory, :run, :steps)
 
-      assert ClassRegistry.established("ns", factory, :kind) == :bounded
+      assert ClassRegistry.established("ns", factory, :run) == :steps
       assert ClassRegistry.established("ns", factory, :sdk_lang) == 1
 
       :ok = ClassRegistry.delete_established("ns", factory)
-      assert ClassRegistry.established("ns", factory, :kind) == nil
+      assert ClassRegistry.established("ns", factory, :run) == nil
       assert ClassRegistry.established("ns", factory, :sdk_lang) == nil
     end
   end
@@ -338,14 +378,14 @@ defmodule FlezhaTest.Operator.ClassRegistryTest do
     end
   end
 
-  defp sidecar(class), do: Path.join(Paths.class_dir(class), "kind")
+  defp sidecar(class), do: Path.join(Paths.class_dir(class), "run")
   defp tier_sidecar(class), do: Path.join(Paths.class_dir(class), "effectively_once")
 
   defp checkpoint_sidecar(class),
-    do: Path.join(Paths.class_dir(class), "checkpoint_ack")
+    do: Path.join(Paths.class_dir(class), "ack_checkpoint")
 
-  defp sync_durability_sidecar(class),
-    do: Path.join(Paths.class_dir(class), "sync_durability")
+  defp remote_sidecar(class),
+    do: Path.join(Paths.class_dir(class), "remote")
 
   defp correction_sidecar(class),
     do: Path.join(Paths.class_dir(class), "correction_window_ms")

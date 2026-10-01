@@ -10,9 +10,8 @@ live deployment, passes the full conformance run in CI and is permanently suppor
 
 Authoring surface: one tasklet form, a class implementing
 `Tasklet<Input, State, Output>` and carrying `@Tasklet.Spec`, wired by an
-`UnboundedOperator` / `BoundedOperator` in `channels(ChannelBuilder)`, the one
-graph body the `Operator` base declares for both kinds; and the
-`@UnboundedOperator` / `@BoundedOperator` short form. Nothing is generated: the
+`Operator` in `channels(ChannelBuilder)` under the settings tree its `run()` and
+`durable()` declare; and the `@Operator` short form. Nothing is generated: the
 class you write is the class every call names. See
 [`authoring_contract.md`](authoring_contract.md) for the rules every SDK shares
 and [`state_persistence.md`](state_persistence.md) for the state and Kryo side.
@@ -50,14 +49,14 @@ The operator names that class: `.into(TrackPrices.class)`.
 - **`run(input, ctx)`** returns nothing. `ctx` is the one way out: `ctx.emit(value)`
   typed by `Output`, `ctx.emit(channel, value)` for a named channel,
   `ctx.emitKeyed(key, value)`, and the rest of the context (`now()`, `stableId()`,
-  `cellKey()`, `checkpoint()`, the timer calls, `spawnBounded`, `complete`).
+  `cellKey()`, `checkpoint()`, the timer calls, `spawnSteps`, `complete`).
 - **`ctx.part(value)`** sends a part: a preview of the output the invocation is
   producing, which leaves now instead of when `run` returns. It previews the
   tasklet's own output channel, is encoded as `ctx.emit(value)` would be, and
   never waits: a part that cannot leave at once is dropped. A listener receives
   it, numbered from 0 within each attempt; a sink never does, and nothing about
-  it is durable. It works in `run` and in `onTimer`, for an unbounded tasklet
-  and a bounded stage alike. It throws `part.no_sink` when the output channel
+  it is durable. It works in `run` and in `onTimer`, for a flow tasklet
+  and a steps stage alike. It throws `part.no_sink` when the output channel
   does not end in a sink (a `response()` end is not one), and
   `part.outside_invocation` through a context kept past its invocation.
 - **State** is read with `ctx.state()` and changed only with `ctx.change(change)`.
@@ -184,15 +183,57 @@ because a runner's most interesting diagnostics are the ones it writes while
 shutting down. A write that fails is swallowed, so a standard error closed
 during a drain cannot turn a clean drain into a crash.
 
-## The short form
+## The settings tree
 
-A tasklet class annotated `@UnboundedOperator` or `@BoundedOperator` is a whole
-operator: one class, no hand-written operator beside it. The annotation names
-the kind, and the class you wrote is what you register. `registerFactory` reads
-the annotation and declares the operator; nothing is generated.
+`Operator` is the one base. Besides `factoryId()` and `channels(...)` it carries
+`description()`, `maxDuration()` (a wall-clock stop for either run), `run()` and
+`durable()`. Each "one of" is a sealed interface and each nested setting a
+record component of its parent only, so a setting under the wrong parent does
+not compile:
+
+| Setting | Values | Default |
+|---|---|---|
+| `run()` | `Run.Flow(exactly)`, `Run.Steps(each, onFailure)` | `Run.flow()` |
+| `exactly` | `Exactly.AtLeastOnce()`, `Exactly.EffectivelyOnce(ack, correctionMs, beyondWindow)` | at least once |
+| `ack` | `Ack.PerInput()`, `Ack.Checkpoint(every, maxDelayMs, outputs)` | per input |
+| `each` | `Each.ONCE`, `PER_INPUT`, `CHAINED` | `ONCE` |
+| `onFailure` | `OnFailure.UNDO_ALL`, `KEEP_PROGRESS` | `UNDO_ALL` |
+| `durable()` | `Durable.Memory()`, `Durable.Local(sleepAfter)`, `Durable.Remote(sleepAfter)` | local; a flow never sleeps, a steps class after six hours |
 
 ```java
-@UnboundedOperator(id = "upcase", sink = "out")
+public final class Checkout implements Operator {
+    @Override public String factoryId() { return "checkout"; }
+
+    @Override public Run run() {
+        return new Run.Steps(Each.PER_INPUT, OnFailure.KEEP_PROGRESS);
+    }
+
+    @Override public Durable durable() {
+        return new Durable.Local(Duration.ofMinutes(10));
+    }
+
+    @Override public void channels(ChannelBuilder c) { ... }
+}
+```
+
+`sleepAfter` is an `Optional<Duration>`: empty never sleeps. A sleeping instance
+is evicted from its runner and wakes on its next message with its cells
+restored. `EffectivelyOnce` and `Ack.Checkpoint` take `withAck`,
+`withCorrectionMs`, `withBeyondWindow`, `withEvery`, `withMaxDelayMs` and
+`withOutputs`. The one cross rule the tree cannot express, `EffectivelyOnce` with
+`Durable.Memory()`, makes `registerFactory` throw naming
+`topology.effectively_once_without_persistence`; a value outside a setting's
+range is refused by the core by name.
+
+## The short form
+
+A tasklet class annotated `@Operator` (`com.flezha.sdk.authoring`) is a whole
+operator: one class, no hand-written operator beside it. The class you wrote is
+what you register. `registerFactory` reads the annotation and declares the
+operator; nothing is generated.
+
+```java
+@Operator(id = "upcase", sink = "out")
 public class Upcase implements Tasklet<String, Void, String> {
     @Override
     public void run(String value, Ctx<Void, String> ctx) throws TaskletException {
@@ -200,7 +241,7 @@ public class Upcase implements Tasklet<String, Void, String> {
     }
 }
 
-@BoundedOperator(id = "place", sink = "placed", input = "order")
+@Operator(id = "place", sink = "placed", input = "order", run = @Run(steps = @Steps))
 public class Place implements Tasklet<String, Void, String> {
     @Override
     public void run(String order, Ctx<Void, String> ctx) throws TaskletException {
@@ -217,15 +258,20 @@ Flezha.createRunner("default")
 The operator is the one you would have written by hand with that single
 tasklet: an entry channel named `input`, or the `input` element's value; the
 class; a plugin sink named by `sink` when one is written; a `factoryId()` equal
-to `id`; `loopMode()` returning the `loopMode` element on `@BoundedOperator`;
-and every other operator method at its interface default. A bounded short form
-is a `once` bounded operator unless it writes `loopMode`, run once over its
-first message: `flz operator start place --text '<payload>'`, or a start
-followed by `flz operator send`; a second message to a `once` instance is
-accepted and never read. `loopMode = LoopMode.PER_INPUT` runs `run` once per
-message, and the instance does not complete after the first. `onFull` sets the
-entry channel's overflow policy. `LocalOperator.start(Upcase.class)` runs a
-short form locally the same way.
+to `id`; and the settings tree the annotation writes. The short form takes the
+class settings the full form takes, as nested annotations whose members exist
+only under their parent: `run = @Run(flow = @Flow(effectivelyOnce =
+@EffectivelyOnce(checkpoint = @Checkpoint(every = 100))))`, `run = @Run(steps =
+@Steps(each = Each.PER_INPUT))`, `durable = @Durable(false)`, `durable =
+@Durable(local = @Level(sleepAfterMs = 2_000))`, `maxDurationMs` and
+`description`. A "one of" is an array holding at most one branch; two written at
+once make `registerFactory` throw naming `topology.invalid_setting`. A steps
+short form runs once over its first message unless it writes `each`:
+`flz operator start place --text '<payload>'`, or a start followed by
+`flz operator send`; a second message to a `once` instance is accepted and never
+read. `each = Each.PER_INPUT` runs `run` once per message, and the instance does
+not complete after the first. `onFull` sets the entry channel's overflow policy.
+`LocalOperator.start(Upcase.class)` runs a short form locally the same way.
 
 The tasklet is named after the `id`, so a short form needs no `@Tasklet.Spec`.
 It carries one only for settings (`keys`, `capacity`, `maxCells`, ...), and then
@@ -237,7 +283,7 @@ its `name` must equal the `id`, or registration fails with
 tasklet and no plugin channel: the operator that only keeps state.
 
 ```java
-@UnboundedOperator(id = "counter", input = "ticks")
+@Operator(id = "counter", input = "ticks")
 public class Counter implements Tasklet<String, Counter.Seen, Void> {
 
     public static class Seen {
@@ -259,10 +305,8 @@ public class Counter implements Tasklet<String, Counter.Seen, Void> {
 ```
 
 Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
-edge, an edge's retry ladder, the effectively-once tier, a correction window,
-any bounded setting other than the loop mode, a `.response()` end. Java names
-no entry codec: an entry decodes by its declared type, so the short form takes
-no `codec` element.
+edge, an edge's retry ladder, a `.response()` end. Java names no entry codec: an
+entry decodes by its declared type, so the short form takes no `codec` element.
 
 `.response()` ends a channel on the answer to an outside call instead of a sink,
 and `.response(Function<T, byte[]>)` takes a serializer as `.sink` does:
@@ -276,42 +320,30 @@ class rename must not move it. The written `id` also names the tasklet, so a
 Java tasklet's state is saved under the same name its Rust twin uses. The
 refusals are raised when the class is registered, each naming the class: an
 absent `id`; `topology.short_form_with_topology` (an annotated class that also implements
-`UnboundedOperator` or `BoundedOperator`); `topology.sink_without_output` (a `sink` on a
+`Operator`); `topology.sink_without_output` (a `sink` on a
 class whose `Output` is `Void`); and `ShortFormNameMismatch`. A second operator
-of either kind under a factory id the runner holds fails `registerFactory` with
-`topology.duplicate_factory_id`.
+under a factory id the runner holds fails `registerFactory` with
+`topology.duplicate_factory_id`, and a class that is neither an operator nor a
+short form with `topology.no_operator_exported`.
 
 Nothing registers itself. There is no aggregator class: every operator a
 runner declares is one the application handed to `registerFactory`.
 
-## Bounded operators
+## Operators that run in steps
 
-A `BoundedOperator` declares its graph in `channels`, on the builder an unbounded operator
-uses, and its kind is the interface it implements: `flz operator start` names
-the factory and nothing else. Retry is the edge's, as on an unbounded operator:
-`.retryMax(n)` / `.retryBackoffMs(ms)` on the channel that feeds a tasklet
-(default 3 attempts, 50 ms), and `retryMax(0)` is refused as `topology.retry_max_zero`.
+A class whose `run()` is `Run.Steps` declares its graph in `channels`, on the same
+builder a flow uses: `flz operator start` names the factory and nothing else.
+Retry is the edge's, as in a flow: `.retryMax(n)` / `.retryBackoffMs(ms)` on the
+channel that feeds a tasklet (default 3 attempts, 50 ms), and `retryMax(0)` is
+refused as `topology.retry_max_zero`. A steps class has no `exactly`: a durable
+one already commits stage by stage.
 
-A bounded operator carries none of an unbounded operator's delivery settings. The builder's
-`effectivelyOnce()`, checkpoint calls and `correctionWindow(ms)` reach the core
-as written, and `registerFactory` throws a `FlezhaException` with the code
-`topology.effectively_once_on_bounded`, `topology.checkpoint_on_bounded` or
-`topology.correction_window_on_bounded`. `syncDurability()` is the bounded operator's own.
-
-Both kind interfaces carry the two class settings: `persistenceEnabled()` (default
-`true`, read from the class whatever its tasklets' states) and
-`sleepWhenIdle()`, `false` on `UnboundedOperator` and `persistenceEnabled()` on
-`BoundedOperator`. An instance whose class sleeps is evicted after
-`FLEZHA_PARK_IDLE_MS` of idleness and wakes on its next message with its cells
-restored; declaring it with persistence off makes `registerFactory` throw naming
-`topology.sleep_without_persistence`.
-
-A bounded operator
-tasklet registers timers as an unbounded tasklet does, and a firing runs as a pass
-of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-bounded-operator)); only a
-`compensate` hook's context carries no timer session, and there every timer
-call throws a `FlezhaException` with the code `runtime.timers_unavailable`. A `spawnBounded` naming
-an unbounded factory reads `operator.factory_not_bounded`.
+A tasklet of a steps operator registers timers as a flow tasklet does, and a
+firing runs as a pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-steps-operator));
+only a `compensate` hook's context carries no timer session, and there every
+timer call throws a `FlezhaException` with the code `runtime.timers_unavailable`.
+A `spawnSteps` naming a flow factory reads `operator.factory_not_steps`. A flow
+tasklet's `complete` ends its instance once the work its cells hold has run.
 
 ## Scope
 

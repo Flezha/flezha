@@ -9,16 +9,16 @@ defmodule Flezha.State.PersistenceResolverTest do
   alias Flezha.Operator.ClassRegistry
   alias Flezha.State.PersistenceResolver
 
-  describe "persistence_enabled?/2" do
+  describe "keeps_state?/2" do
     test "a class that declares nothing is durable" do
-      assert PersistenceResolver.persistence_enabled?("pe_default")
+      assert PersistenceResolver.keeps_state?("pe_default")
     end
 
-    test "the class's declaration decides, for a stream and a bounded alike" do
-      for {class, kind} <- [{"pe_off_unbounded", :unbounded}, {"pe_off_bounded", :bounded}] do
+    test "the class's declaration decides, for a stream and a steps alike" do
+      for {class, kind} <- [{"pe_off_flow", :flow}, {"pe_off_steps", :steps}] do
         :ok = ClassRegistry.put(class, kind)
         :ok = ClassRegistry.put_persistent(class, false)
-        refute PersistenceResolver.persistence_enabled?(class)
+        refute PersistenceResolver.keeps_state?(class)
         :ok = ClassRegistry.put_persistent(class, true)
       end
     end
@@ -31,8 +31,8 @@ defmodule Flezha.State.PersistenceResolverTest do
         "pe_forced_off" => false
       })
 
-      assert PersistenceResolver.persistence_enabled?("pe_declared_off")
-      refute PersistenceResolver.persistence_enabled?("pe_forced_off")
+      assert PersistenceResolver.keeps_state?("pe_declared_off")
+      refute PersistenceResolver.keeps_state?("pe_forced_off")
       :ok = ClassRegistry.put_persistent("pe_declared_off", true)
     end
   end
@@ -84,33 +84,16 @@ defmodule Flezha.State.PersistenceResolverTest do
     end
   end
 
-  describe "sync_durability?/2" do
+  describe "remote?/1" do
     test "a class that declares nothing never waits on a remote store" do
-      refute PersistenceResolver.sync_durability?("undeclared_sync_class")
+      refute PersistenceResolver.remote?("undeclared_sync_class")
     end
 
-    test "the SDK declaration governs" do
-      ClassRegistry.put_sync_durability("sdk_sync_class", true)
+    test "the class's own durable setting is the one answer" do
+      ClassRegistry.put_remote("sdk_sync_class", true)
       on_exit(fn -> ClassRegistry.delete("sdk_sync_class") end)
 
-      assert PersistenceResolver.sync_durability?("sdk_sync_class")
-    end
-
-    test "a user override wins over the SDK declaration, in both directions" do
-      ClassRegistry.put_sync_durability("ovr_sync_class", true)
-      Application.put_env(:flezha, :sync_durability, %{"ovr_sync_class" => false})
-
-      on_exit(fn -> ClassRegistry.delete("ovr_sync_class") end)
-
-      refute PersistenceResolver.sync_durability?("ovr_sync_class")
-
-      Application.put_env(:flezha, :sync_durability, %{"ovr_sync_class" => true})
-      ClassRegistry.put_sync_durability("ovr_sync_class", false)
-      assert PersistenceResolver.sync_durability?("ovr_sync_class")
-    end
-
-    test "instance metadata resolves ahead of the declaration" do
-      assert PersistenceResolver.sync_durability?("meta_sync_class", %{"sync_durability" => true})
+      assert PersistenceResolver.remote?("sdk_sync_class")
     end
   end
 
@@ -137,19 +120,19 @@ defmodule Flezha.State.PersistenceResolverTest do
     end
 
     test "honours the global default override" do
-      Application.put_env(:flezha, :default_bounded_completed_retention_hours, 5)
+      Application.put_env(:flezha, :default_operator_completed_retention_hours, 5)
       assert PersistenceResolver.completed_retention_hours("c") == 5
     end
 
     test "honours a per-class user override; other classes fall back to default" do
-      Application.put_env(:flezha, :bounded_completed_retention_hours, %{"c" => 1})
+      Application.put_env(:flezha, :operator_completed_retention_hours, %{"c" => 1})
       assert PersistenceResolver.completed_retention_hours("c") == 1
       assert PersistenceResolver.completed_retention_hours("d") == 72
     end
 
     test "honours an instance-metadata override" do
       assert PersistenceResolver.completed_retention_hours("c", %{
-               "bounded_completed_retention_hours" => 3
+               "operator_completed_retention_hours" => 3
              }) == 3
     end
   end

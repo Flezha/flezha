@@ -4,7 +4,7 @@ defmodule FlezhaTest.Runner.ControlUnitAddOperatorTest do
   onto the operator's opts by `Flezha.Operator.Lifecycle`.
 
   `task_journal` rides the bind rather than a per-Cell `RestoreInitState`
-  because it is instance-scoped: a durable bounded class with no per-Cell
+  because it is instance-scoped: a durable steps class with no per-Cell
   state ships no restore at all, so a journal delivered there would never arrive
   and the driver would resume at iteration 0 on every wake.
   """
@@ -40,7 +40,7 @@ defmodule FlezhaTest.Runner.ControlUnitAddOperatorTest do
   end
 
   defp start_operator(runner_id, opts) do
-    operator = %Builder{id: "op-1", factory_id: "f", kind: :bounded, opts: opts}
+    operator = %Builder{id: "op-1", factory_id: "f", run: :steps, opts: opts}
     # The reply only lands on the AddOperator response, which never arrives here.
     catch_exit(
       GenServer.call(
@@ -77,7 +77,7 @@ defmodule FlezhaTest.Runner.ControlUnitHealthTest do
   @moduledoc """
   ControlUnit stuck-caller unblocking. A control reply left unacked past the
   threshold would otherwise hang the caller: the ControlUnit fails the waiter
-  with `:timeout` and drops the ref so `response_refs` cannot grow unbounded.
+  with `:timeout` and drops the ref so `response_refs` cannot grow flow.
 
   Runner liveness/eviction is NOT this sweep's job — it is the
   `ControlChannel` watchdog's. This heartbeat evicts nothing.
@@ -179,7 +179,7 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
   end
 
   defp add_operator(runner_id, opts) do
-    operator = %Builder{id: "ohlc#p1", factory_id: "candles", kind: :unbounded, opts: opts}
+    operator = %Builder{id: "ohlc#p1", factory_id: "candles", run: :flow, opts: opts}
 
     catch_exit(
       GenServer.call(
@@ -221,7 +221,7 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
         operator_id: add.operator_id,
         factory_id: add.factory_id,
         init_values: add.init_values,
-        kind: add.kind,
+        run: add.run,
         resume_cell_count: add.resume_cell_count,
         task_journal: add.task_journal,
         dead_letter_turns: add.dead_letter_turns
@@ -247,16 +247,16 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
       builder: %Builder{
         id: "ohlc#p1",
         factory_id: "candles",
-        kind: :bounded,
+        run: :steps,
         opts: [{:plugins, []} | Partition.member_opts("ohlc", 1, 3, range)]
       }
     }
 
     migrated = Migration.bind_operator(state)
 
-    # The kind travels with the migrate: a bounded instance re-added as a
-    # unbounded class is refused by the runner and never heals.
-    assert migrated.kind == :bounded
+    # The run travels with the migrate: a steps instance re-added as a
+    # flow class is refused by the runner and never heals.
+    assert migrated.run == :steps
 
     assert Partition.identity(migrated.opts) == %{
              group: "ohlc",
@@ -267,12 +267,12 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
   end
 end
 
-defmodule FlezhaTest.Runner.ControlUnitBoundedStopTest do
+defmodule FlezhaTest.Runner.ControlUnitStepsStopTest do
   @moduledoc """
-  §5a.1/§6.2: the cooperative external-stop send. `ControlUnit.bounded_stop/2`
-  ships a `BoundedStop` command over the control channel — distinct from the hard
+  §5a.1/§6.2: the cooperative external-stop send. `ControlUnit.steps_stop/2`
+  ships a `StepsStop` command over the control channel — distinct from the hard
   `RemOperator` the stream stop uses. Fire-and-forget: the SDK trips its
-  cancellation token and the teardown follows on `BoundedCompleted`.
+  cancellation token and the teardown follows on `OperatorCompleted`.
   """
 
   # async: false: Mimic global mode; Mimic stubs; registered runner channels.
@@ -286,11 +286,11 @@ defmodule FlezhaTest.Runner.ControlUnitBoundedStopTest do
   alias Flezha.Runner.ControlUnit
   alias FlezhaTest.Helper.NodeTestHelper
 
-  @namespace "ctrl-unit-bounded-stop-test"
+  @namespace "ctrl-unit-steps-stop-test"
 
   setup :set_mimic_global_until_exit
 
-  test "bounded_stop/2 sends a BoundedStop command (cooperative), not RemOperator" do
+  test "steps_stop/2 sends a StepsStop command (cooperative), not RemOperator" do
     test_pid = self()
     runner_id = "exec-bs-#{System.unique_integer([:positive])}"
 
@@ -303,19 +303,19 @@ defmodule FlezhaTest.Runner.ControlUnitBoundedStopTest do
     {:ok, pid} = ControlUnit.start_link({@namespace, runner_id})
     on_exit(fn -> NodeTestHelper.ensure_stopped(pid, :normal, 1_000) end)
 
-    assert :ok = ControlUnit.bounded_stop(runner_id, "op-1")
+    assert :ok = ControlUnit.steps_stop(runner_id, "op-1")
 
-    assert_receive {:sent, {:bounded_stop, %RunnerCommands.BoundedStop{operator_id: "op-1"}}},
+    assert_receive {:sent, {:steps_stop, %RunnerCommands.StepsStop{operator_id: "op-1"}}},
                    500
 
     # Cooperative stop must NOT use the hard removal command.
     refute_received {:sent, {:rem_operator, _}}
   end
 
-  test "bounded_stop/2 returns {:error, :no_control_unit} when the runner is gone" do
+  test "steps_stop/2 returns {:error, :no_control_unit} when the runner is gone" do
     missing = "exec-missing-#{System.unique_integer([:positive])}"
     assert GenServer.whereis(Identificator.control_unit(missing)) == nil
-    assert {:error, :no_control_unit} = ControlUnit.bounded_stop(missing, "op-1")
+    assert {:error, :no_control_unit} = ControlUnit.steps_stop(missing, "op-1")
   end
 end
 
@@ -333,53 +333,60 @@ defmodule FlezhaTest.Runner.AddOperatorResponseTest do
   defp declarations(metadata), do: ClassRegistry.decode_declarations(encode(metadata))
 
   test "tier declaration in the response metadata resolves true" do
-    assert declarations(%{"effectively_once" => "true"}).effectively_once
+    assert declarations(%{"exactly" => "effectively_once"}).effectively_once
   end
 
   test "metadata without the tier key resolves false" do
     refute declarations(%{"other" => "x"}).effectively_once
-    refute declarations(%{"effectively_once" => "false"}).effectively_once
+    refute declarations(%{"exactly" => "at_least_once"}).effectively_once
   end
 
   test "empty raw_data (pre-tier or Java runner) resolves the defaults" do
     for raw <- ["", nil] do
       assert ClassRegistry.decode_declarations(raw) == %{
+               run: :flow,
+               each: nil,
+               on_failure: nil,
+               durable: :local,
+               sleep_after_ms: nil,
+               max_duration_ms: nil,
                effectively_once: false,
                keyless: false,
-               loop_mode: nil,
-               checkpoint_ack: false,
+               ack_checkpoint: false,
                compensable_tasks: nil,
                leaf_tasks: nil,
                correction_window_ms: nil,
                compact_after_bytes: nil,
-               sync_durability: false,
-               persistent: true,
-               sleep_when_idle: false
+               persistent: true
              }
     end
   end
 
   test "undecodable raw_data resolves the defaults" do
     assert ClassRegistry.decode_declarations(<<255, 255, 255, 1>>) == %{
+             run: :flow,
+             each: nil,
+             on_failure: nil,
+             durable: :local,
+             sleep_after_ms: nil,
+             max_duration_ms: nil,
              effectively_once: false,
              keyless: false,
-             loop_mode: nil,
-             checkpoint_ack: false,
+             ack_checkpoint: false,
              compensable_tasks: nil,
              leaf_tasks: nil,
              correction_window_ms: nil,
              compact_after_bytes: nil,
-             sync_durability: false,
-             persistent: true,
-             sleep_when_idle: false
+             persistent: true
            }
   end
 
-  test "a class persists and stays awake unless it says otherwise" do
+  test "a class keeps its work locally, and sleeps only after the interval it announced" do
     assert declarations(%{"other" => "x"}).persistent
-    refute declarations(%{"persistent" => "false"}).persistent
-    refute declarations(%{"other" => "x"}).sleep_when_idle
-    assert declarations(%{"sleep_when_idle" => "true"}).sleep_when_idle
+    refute declarations(%{"durable" => "memory"}).persistent
+    assert declarations(%{"durable" => "local"}).durable == :local
+    assert declarations(%{"other" => "x"}).sleep_after_ms == nil
+    assert declarations(%{"sleep_after_ms" => "21600000"}).sleep_after_ms == 21_600_000
   end
 
   test "keyless is declared only when true — a keyed class says nothing" do
@@ -401,26 +408,25 @@ defmodule FlezhaTest.Runner.AddOperatorResponseTest do
   end
 
   test "a correction window resolves from the metadata; absent or invalid is nil" do
-    assert declarations(%{"correction_window_ms" => "600000"}).correction_window_ms == 600_000
+    assert declarations(%{"correction_ms" => "600000"}).correction_window_ms == 600_000
     # A class that declares nothing never corrects — the cost-free default.
     assert declarations(%{"other" => "x"}).correction_window_ms == nil
-    assert declarations(%{"correction_window_ms" => "0"}).correction_window_ms == nil
-    assert declarations(%{"correction_window_ms" => "nope"}).correction_window_ms == nil
+    assert declarations(%{"correction_ms" => "0"}).correction_window_ms == nil
+    assert declarations(%{"correction_ms" => "nope"}).correction_window_ms == nil
   end
 
   test "checkpoint ack-granularity resolves from the metadata; anything else is per-input" do
-    assert declarations(%{"ack_granularity" => "checkpoint"}).checkpoint_ack
+    assert declarations(%{"ack" => "checkpoint"}).ack_checkpoint
     # Per-input is the tier's default granularity — an undeclaring class keeps it.
-    refute declarations(%{"effectively_once" => "true"}).checkpoint_ack
-    refute declarations(%{"ack_granularity" => "per_input"}).checkpoint_ack
+    refute declarations(%{"exactly" => "effectively_once"}).ack_checkpoint
+    refute declarations(%{"ack" => "per_input"}).ack_checkpoint
   end
 
-  test "synchronous remote durability resolves from the metadata; anything else is async" do
-    assert declarations(%{"durability" => "sync_remote"}).sync_durability
-    # Async is the cost-free default: a class that declares nothing never makes
+  test "remote durability resolves from the metadata; anything else is local" do
+    assert declarations(%{"durable" => "remote"}).durable == :remote
+    # Local is the cost-free default: a class that declares nothing never makes
     # a commit barrier wait on a remote store.
-    refute declarations(%{"other" => "x"}).sync_durability
-    refute declarations(%{"durability" => "async"}).sync_durability
+    assert declarations(%{"other" => "x"}).durable == :local
   end
 
   test "compensable chain positions resolve to a list" do
@@ -434,12 +440,15 @@ defmodule FlezhaTest.Runner.AddOperatorResponseTest do
     assert declarations(%{"other" => "x"}).compensable_tasks == nil
   end
 
-  test "a bounded operator's loop mode resolves to an atom, and anything else to none" do
-    assert declarations(%{"loop_mode" => "per_input"}).loop_mode == :per_input
-    assert declarations(%{"loop_mode" => "once"}).loop_mode == :once
-    assert declarations(%{"loop_mode" => "chained"}).loop_mode == :chained
-    assert declarations(%{"loop_mode" => "sometimes"}).loop_mode == nil
-    assert declarations(%{"other" => "x"}).loop_mode == nil
+  test "a steps operator's run and loop shape resolve to atoms, and anything else to none" do
+    assert declarations(%{"run" => "steps"}).run == :steps
+    assert declarations(%{"run" => "bounded"}).run == :flow
+    assert declarations(%{"on_failure" => "keep_progress"}).on_failure == :keep_progress
+    assert declarations(%{"each" => "per_input"}).each == :per_input
+    assert declarations(%{"each" => "once"}).each == :once
+    assert declarations(%{"each" => "chained"}).each == :chained
+    assert declarations(%{"each" => "sometimes"}).each == nil
+    assert declarations(%{"other" => "x"}).each == nil
   end
 
   test "leaf positions resolve to a list — the tree's completion rule" do

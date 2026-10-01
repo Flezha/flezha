@@ -1,8 +1,8 @@
 # Benchmarking
 
 For contributors running and interpreting Flezha benches: the `mix bench`
-harness and its `./scripts/bench.sh` wrapper, the `mix bench.bounded`
-bounded operator bench, the Rust SDK Criterion microbenches, the controller-side
+harness and its `./scripts/bench.sh` wrapper, the `mix bench.steps`
+steps operator bench, the Rust SDK Criterion microbenches, the controller-side
 microbenches, the recorded floors, the CI jobs that run benches, and how to
 triage a failed `bench-regression` job.
 
@@ -178,27 +178,27 @@ isolates two axes:
 No CI job benches the elixir runtime. Use `-n 100 -m 10000` after
 pre-building the standalone app; small runs are setup-dominated.
 
-## Bounded operator bench (`mix bench.bounded`)
+## Steps operator bench (`mix bench.steps`)
 
-Measures the paths an unbounded operator never takes: instance lifecycle (spawn → chain →
+Measures the paths a flow operator never takes: instance lifecycle (spawn → chain →
 completion), the durable task barrier, the chat turn (iteration commit),
-suspension and the wake paths. Runs in the scratch namespace `bench_bounded`
-against `--runtime rust|java` (the Elixir SDK has no bounded operators).
+suspension and the wake paths. Runs in the scratch namespace `bench_steps`
+against `--runtime rust|java` (the Elixir SDK has no steps operators).
 
 ```sh
-mix bench.bounded --scenario chain -n 1000 --tasks 4 -c 100
-mix bench.bounded --scenario chain -n 2000 --tasks 4 --rate 200
-mix bench.bounded --scenario turns -n 100 -m 100 --rate 1000
-mix bench.bounded --scenario turns -n 100 --duration 600 --rate 500 --kill-runner-at 120
-mix bench.bounded --scenario sleep -n 10000 --wake-after-ms 15000
-mix bench.bounded --scenario sleep -n 10000 --keep
-mix bench.bounded --scenario sleep-boot -n 10000
+mix bench.steps --scenario chain -n 1000 --tasks 4 -c 100
+mix bench.steps --scenario chain -n 2000 --tasks 4 --rate 200
+mix bench.steps --scenario turns -n 100 -m 100 --rate 1000
+mix bench.steps --scenario turns -n 100 --duration 600 --rate 500 --kill-runner-at 120
+mix bench.steps --scenario sleep -n 10000 --wake-after-ms 15000
+mix bench.steps --scenario sleep -n 10000 --keep
+mix bench.steps --scenario sleep-boot -n 10000
 ```
 
 | Scenario     | What it measures                                                                                                                                                                                                                |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `chain`      | Spawn `-n` run-once bounded operators of `bench_chain_<tasks>` (`--tasks 1\|4\|16`; `--tier optout` picks `bench_chain_optout_4`, the persistence-off twin), each seeded with `"<seq>,<send_ts_ns>"` passed through to the sink. `-c N` keeps N in flight (closed loop), `--rate R` spawns R/s (open loop); neither = one burst. |
-| `turns`      | Spawn `-n` `bench_loop_bounded` instances, send `-m` turns each round-robin (`--rate` total turns/s, else unpaced under an in-flight cap) and measure the reply. `--duration S` sizes `-m` from the rate; `--kill-runner-at S` SIGKILLs one runner S seconds in. |
+| `chain`      | Spawn `-n` run-once steps operators of `bench_chain_<tasks>` (`--tasks 1\|4\|16`; `--tier optout` picks `bench_chain_optout_4`, the persistence-off twin), each seeded with `"<seq>,<send_ts_ns>"` passed through to the sink. `-c N` keeps N in flight (closed loop), `--rate R` spawns R/s (open loop); neither = one burst. |
+| `turns`      | Spawn `-n` `bench_loop_steps` instances, send `-m` turns each round-robin (`--rate` total turns/s, else unpaced under an in-flight cap) and measure the reply. `--duration S` sizes `-m` from the rate; `--kill-runner-at S` SIGKILLs one runner S seconds in. |
 | `sleep`      | Spawn `-n` loops, one turn each, wait until every instance has parked; report resting cost per sleeper and the convergence tick time, then a message wake storm (`--wake-rate R` paces it, `--no-wake` skips it) and, with `--wake-after-ms`, a timer wake storm. `--keep` leaves the namespace for `sleep-boot`. |
 | `sleep-boot` | Boot over the namespace `sleep --keep` left: time until every sleeper is back as a suspended Overwatch, then the same wake storm.                                                                                               |
 
@@ -289,7 +289,7 @@ is a trend signal, not a CI gate.
 **The first run of a series is not a result on every instrument — and which
 instruments it is not a result on was measured, not assumed.** A figure taken
 from a series that contains its own warm-up is not a floor. On
-`mix bench.bounded` the first run is roughly four times the plateau, so six
+`mix bench.steps` the first run is roughly four times the plateau, so six
 consecutive runs of one identical arm spread 316 % while the four plateau
 samples spread 1.3 %.
 On `mix bench.extension`, on the same box in the same week, the first run sits
@@ -312,18 +312,18 @@ Every recorded number, on any instrument:
 
 | Instrument | First run | Discard | The measurement behind it |
 | --- | --- | --- | --- |
-| `mix bench.bounded --scenario chain --tasks 4 -n 1000 -c 100` | ~4x the plateau, and run 2 is still ~1.4x | first **2** | Six runs of one identical arm on a quiet box: 94.5 / 31.8 / 23.0 / 22.9 / 23.0 / 22.7 bounded/s. **316 %** over the six; **1.3 %** over the four plateau samples. An earlier five-run series read 93.2 / 33.3 / 23.1 / 24.2 / 23.1 — the same shape. |
+| `mix bench.steps --scenario chain --tasks 4 -n 1000 -c 100` | ~4x the plateau, and run 2 is still ~1.4x | first **2** | Six runs of one identical arm on a quiet box: 94.5 / 31.8 / 23.0 / 22.9 / 23.0 / 22.7 steps/s. **316 %** over the six; **1.3 %** over the four plateau samples. An earlier five-run series read 93.2 / 33.3 / 23.1 / 24.2 / 23.1 — the same shape. |
 | `mix bench.extension` | inside the plateau | **none** | Five runs: run 1 within **3.6 %** of the plateau on the four rows above 100 ns. The 60 ns row spreads 16.7 % and resolves nothing. |
 | `./scripts/bench.sh -n 100 -m 10000` (the `bench-regression` workload) | not separated from the noise | first **1** | Five runs: receive window spread **12.1 %**, end-to-end **5.1 %**. |
 
-**Two runs, not one, is what the bounded operator measurement establishes.** Run 1 sits
+**Two runs, not one, is what the steps operator measurement establishes.** Run 1 sits
 at 4.1x the plateau and run 2 at 1.4x, so a series that discards only its first
 sample still carries a 39 % warm-up into its floor. The four plateau samples
 above spread 1.3 %, taken with the 1-minute load average climbing 1.2 to 9.4
 across the series — the plateau is the *loaded* steady state, and it is what a
 comparison on this driver must be taken against, on both arms.
 
-**Two explanations for the bounded operator transient were refuted, which is what makes
+**Two explanations for the steps operator transient were refuted, which is what makes
 the number usable.** A cold run of the same arm after 4.5 minutes idle came back
 at 91.1 operators/s with an identical state directory, so nothing accumulates on
 disk or in the namespace. `package_throttle_count` was flat before the cooldown,

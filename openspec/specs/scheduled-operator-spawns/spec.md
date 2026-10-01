@@ -3,9 +3,9 @@
 ## Purpose
 TBD - created by archiving change add-scheduled-operator-spawns. Update Purpose after archive.
 ## Requirements
-### Requirement: The controller SHALL maintain a durable registry of cron schedules for bounded spawns
+### Requirement: The controller SHALL maintain a durable registry of cron schedules for steps spawns
 
-`flz schedule add <name> --cron "<expr>" --tz <iana> --factory <factory_id> [--namespace ns] [--init-values json] [--text payload] [--channel ch] [--plugins json]` SHALL create a durable schedule entry; `flz schedule list` SHALL show entries (with next fire time, the node running each schedule, the last fired instance and its result) and `flz schedule remove <name>` SHALL delete them. Entries SHALL persist across controller restarts and warm restarts. Only a bounded factory SHALL be schedulable, and the kind is the factory's own, announced by its runner: `add` SHALL take no `--kind`, SHALL reject a factory the namespace has established as an unbounded operator, and SHALL accept a factory no runner has yet announced; every fire SHALL resolve the factory's established kind through the standard start path, where an unbounded factory fails the slot as any refused start does. Cron syntax, timezone, and the plugin spec SHALL be validated at `add`. `--init-values` SHALL be the initial state per tasklet the fired instance starts with, as it is for `flz operator start`; `--text` SHALL be the first message every fired instance receives, on the entry channel `--channel` names or on the first declared one, stored verbatim; an entry stored without `--text` SHALL fire an instance that waits for its first message. `--channel` without `--text` SHALL be refused at `add`. The plugin spec SHALL use the same JSON array `flz operator start --plugins` accepts and SHALL be stored verbatim; an entry stored without one SHALL fire with no plugins.
+`flz schedule add <name> --cron "<expr>" --tz <iana> --factory <factory_id> [--namespace ns] [--init-values json] [--text payload] [--channel ch] [--plugins json]` SHALL create a durable schedule entry; `flz schedule list` SHALL show entries (with next fire time, the node running each schedule, the last fired instance and its result) and `flz schedule remove <name>` SHALL delete them. Entries SHALL persist across controller restarts and warm restarts. Only a steps factory SHALL be schedulable, and the kind is the factory's own, announced by its runner: `add` SHALL take no `--kind`, SHALL reject a factory the namespace has established as a flow operator, and SHALL accept a factory no runner has yet announced; every fire SHALL resolve the factory's established kind through the standard start path, where a flow factory fails the slot as any refused start does. Cron syntax, timezone, and the plugin spec SHALL be validated at `add`. `--init-values` SHALL be the initial state per tasklet the fired instance starts with, as it is for `flz operator start`; `--text` SHALL be the first message every fired instance receives, on the entry channel `--channel` names or on the first declared one, stored verbatim; an entry stored without `--text` SHALL fire an instance that waits for its first message. `--channel` without `--text` SHALL be refused at `add`. The plugin spec SHALL use the same JSON array `flz operator start --plugins` accepts and SHALL be stored verbatim; an entry stored without one SHALL fire with no plugins.
 
 #### Scenario: Schedule survives restart
 
@@ -17,15 +17,15 @@ TBD - created by archiving change add-scheduled-operator-spawns. Update Purpose 
 - **WHEN** `schedule add` is issued with a malformed cron expression or unknown timezone
 - **THEN** the command SHALL fail with a message naming the invalid field and no entry SHALL be stored
 
-#### Scenario: An unbounded factory is rejected at add
+#### Scenario: A flow factory is rejected at add
 
-- **WHEN** `schedule add` names a factory a connected runner has announced as an unbounded operator
-- **THEN** the command SHALL fail stating that only a bounded factory is schedulable, naming the factory, and no entry SHALL be stored
+- **WHEN** `schedule add` names a factory a connected runner has announced as a flow operator
+- **THEN** the command SHALL fail stating that only a steps factory is schedulable, naming the factory, and no entry SHALL be stored
 
 #### Scenario: A factory that changed kind fails its slot, not the schedule
 
-- **GIVEN** a schedule added for a factory announced as a bounded operator
-- **WHEN** at a later fire the only runner announcing that id has established it as an unbounded operator
+- **GIVEN** a schedule added for a factory announced as a steps operator
+- **WHEN** at a later fire the only runner announcing that id has established it as a flow operator
 - **THEN** the slot SHALL fail with a result naming the kind, SHALL be retried and listed as any failed slot is, and the entry SHALL remain
 
 #### Scenario: A first message is stored with the entry
@@ -48,9 +48,9 @@ TBD - created by archiving change add-scheduled-operator-spawns. Update Purpose 
 - **WHEN** a schedule's job process does not answer the status query within its bounded timeout
 - **THEN** `flz schedule list` SHALL still render the entry (placement known, last fire unknown) rather than failing the command
 
-### Requirement: Each slot SHALL fire exactly once cluster-wide via the standard bounded spawn path
+### Requirement: Each slot SHALL fire exactly once cluster-wide via the standard steps spawn path
 
-At each matching slot (evaluated in the entry's IANA timezone by a single schedule process that exists on exactly one node cluster-wide, hosted in the dedicated `:flz_schedules` hub), the controller SHALL spawn a fresh bounded instance with deterministic id `<name>@<slot>`, the stored `init_values` as its initial state and the stored first message, when one is stored, delivered as the instance's first input on the mechanism a tasklet's spawn uses, through the same start path as `flz operator start` (quota, plugins, teardown, retention inherited). The fire SHALL succeed whenever any controller node in the cluster holds a runner advertising the entry's factory in the entry's namespace: the node hosting the schedule process SHALL NOT affect the outcome, and the spawn SHALL be routed to a capable node at fire time against the fleet state current at that moment. A fire SHALL be refused as unsatisfiable only when no node in the cluster holds such a runner, and the refusal SHALL say so cluster-wide (not "no runners" on the deciding node alone). The entry's stored plugin spec SHALL be decoded at each firing and attached at spawn, with the fire's namespace and instance id stamped on every plugin and each plugin's id prefixed by the instance id so concurrent slots never share one. A firing whose plugin spec cannot be decoded SHALL NOT spawn an instance and SHALL be logged and reported on telemetry as a spawn failure. A duplicate fire attempt for the same slot SHALL no-op on the deterministic id. DST: nonexistent local times skip; ambiguous local times fire once.
+At each matching slot (evaluated in the entry's IANA timezone by a single schedule process that exists on exactly one node cluster-wide, hosted in the dedicated `:flz_schedules` hub), the controller SHALL spawn a fresh steps instance with deterministic id `<name>@<slot>`, the stored `init_values` as its initial state and the stored first message, when one is stored, delivered as the instance's first input on the mechanism a tasklet's spawn uses, through the same start path as `flz operator start` (quota, plugins, teardown, retention inherited). The fire SHALL succeed whenever any controller node in the cluster holds a runner advertising the entry's factory in the entry's namespace: the node hosting the schedule process SHALL NOT affect the outcome, and the spawn SHALL be routed to a capable node at fire time against the fleet state current at that moment. A fire SHALL be refused as unsatisfiable only when no node in the cluster holds such a runner, and the refusal SHALL say so cluster-wide (not "no runners" on the deciding node alone). The entry's stored plugin spec SHALL be decoded at each firing and attached at spawn, with the fire's namespace and instance id stamped on every plugin and each plugin's id prefixed by the instance id so concurrent slots never share one. A firing whose plugin spec cannot be decoded SHALL NOT spawn an instance and SHALL be logged and reported on telemetry as a spawn failure. A duplicate fire attempt for the same slot SHALL no-op on the deterministic id. DST: nonexistent local times skip; ambiguous local times fire once.
 
 #### Scenario: The runner lives on a different node than the schedule process
 
@@ -64,7 +64,7 @@ At each matching slot (evaluated in the entry's IANA timezone by a single schedu
 
 #### Scenario: A fired instance runs on the stored first message
 
-- **WHEN** a schedule storing `--text '{"day":"today"}'` fires a `once` bounded operator
+- **WHEN** a schedule storing `--text '{"day":"today"}'` fires a `once` steps operator
 - **THEN** the spawned instance SHALL run its pass over that message on the stored channel or the first declared entry channel, and SHALL end with status `ok`
 
 #### Scenario: A fired instance produces output through its scheduled plugins

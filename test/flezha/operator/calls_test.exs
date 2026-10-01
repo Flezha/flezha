@@ -340,8 +340,8 @@ defmodule FlezhaTest.Operator.CallsTest do
       Task.shutdown(waiting, :brutal_kill)
 
       ClassRegistry.ensure_table()
-      :ok = ClassRegistry.put_partitioning("once_chat", %{keyless: false, loop_mode: :once})
-      builder = %Builder{id: inst, factory_id: "once_chat", kind: :bounded, opts: []}
+      :ok = ClassRegistry.put_partitioning("once_chat", %{keyless: false, each: :once})
+      builder = %Builder{id: inst, factory_id: "once_chat", run: :steps, opts: []}
 
       once =
         start_supervised!({Host, state(inst, factory_id: "once_chat", builder: builder)},
@@ -394,11 +394,11 @@ defmodule FlezhaTest.Operator.CallsTest do
       assert {:ok, "hi", _} = Task.await(caller)
     end
 
-    test "a call on an asleep durable bounded instance is journaled with its token and waits",
+    test "a call on an asleep durable steps instance is journaled with its token and waits",
          %{inst: inst} do
       FlezhaTest.Case.install([:state_tree])
       stub(Flezha.Service.OperatorManager, :assign_runner, fn _, _, ^inst -> nil end)
-      asleep = state(inst, durable_bounded: true, suspended: true, channel: nil)
+      asleep = state(inst, durable_steps: true, suspended: true, channel: nil)
       {:ok, host} = start_supervised({Host, asleep})
 
       caller = call(host, "turn")
@@ -479,7 +479,7 @@ defmodule FlezhaTest.Operator.CallsTest do
 
     # Bounded and bound to no runner: a handover ships nothing to one.
     defp bare(inst, overrides \\ []) do
-      builder = %Builder{id: inst, factory_id: "chat", kind: :bounded, opts: []}
+      builder = %Builder{id: inst, factory_id: "chat", run: :steps, opts: []}
       Host.state(inst, [runner_id: nil, channel: :fake_channel, builder: builder] ++ overrides)
     end
 
@@ -515,7 +515,7 @@ defmodule FlezhaTest.Operator.CallsTest do
       assert {:error, %Error{code: "call.timeout"}} = Task.await(short, 2_000)
     end
 
-    test "a failed bounded run answers both waiting callers call.callee_ended", %{inst: inst} do
+    test "a failed steps run answers both waiting callers call.callee_ended", %{inst: inst} do
       FlezhaTest.Case.install([:state_tree])
       {_, r1} = c1 = from()
       {_, r2} = c2 = from()

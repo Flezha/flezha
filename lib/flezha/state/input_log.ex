@@ -2,8 +2,8 @@ defmodule Flezha.State.InputLog do
   @moduledoc """
   Per-instance offset-addressable journal of durable input.
 
-  An instance has durable input when it is an unbounded operator on the
-  effectively-once tier or one that sleeps, or a durable bounded operator; all
+  An instance has durable input when it is a flow operator on the
+  effectively-once tier or one that sleeps, or a durable steps operator; all
   journal through this one log. One GenServer
   per instance journals every inbound payload (post-`:on_input`) at
   `<state_root>/<namespace>/<state key>/input.log` before the Overwatch
@@ -15,9 +15,9 @@ defmodule Flezha.State.InputLog do
   rather than journaled twice.
 
   Retention is watermark-driven: each reporter's durable consumed-offset (an
-  unbounded Cell's record, a bounded operator's iteration commit or released
+  flow Cell's record, a steps operator's iteration commit or released
   input under its journal's identity) is reported into a public ETS table
-  (`record_consumed/3`), an unbounded operator's runner-reported processed
+  (`record_consumed/3`), a flow operator's runner-reported processed
   prefix is confirmed beside them (`confirm_prefix/2`), and the sweep truncates
   strictly below `min(watermark, now - hold_window)`. A reporter that consumed
   nothing holds the watermark at the log start; a frozen watermark over a
@@ -306,9 +306,9 @@ defmodule Flezha.State.InputLog do
   # ---------- Min-watermark tracker (public ETS, rebuildable cache) ----------
 
   @doc """
-  Report a reporter's durable consumed-offset: an unbounded Cell's when an effect
+  Report a reporter's durable consumed-offset: a flow Cell's when an effect
   record carrying `consumed_offset` becomes durable (and on boot repopulation
-  from the WAL tail), a durable bounded operator's under `Paths.journal_id/1` when an
+  from the WAL tail), a durable steps operator's under `Paths.journal_id/1` when an
   iteration commit or a park carrying one becomes durable (and at every bind,
   from the journal).
 

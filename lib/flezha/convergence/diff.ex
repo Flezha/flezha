@@ -185,7 +185,7 @@ defmodule Flezha.Convergence.Diff do
         :skip
 
       # Suspended at a committed iteration boundary: unbound BY DESIGN
-      # (`bounded-durable-suspension`). Rebinding it would undo the very
+      # (`durable-suspension`). Rebinding it would undo the very
       # eviction it asked for; its own wake sources bring it back.
       %Verdict{state: :suspended} ->
         :skip
@@ -380,7 +380,7 @@ defmodule Flezha.Convergence.Diff do
     end)
   end
 
-  # A live pid that is not running: a suspended bounded instance released
+  # A live pid that is not running: a suspended steps instance released
   # its plugins with its runner and the rehydrating bind replays them; a
   # parked one (init failed) activates them on its un-park. Neither has
   # anything to heal until then.

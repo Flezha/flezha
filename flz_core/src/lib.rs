@@ -17,7 +17,7 @@ pub mod admission;
 #[cfg(feature = "bench-internals")]
 #[doc(hidden)]
 pub mod bench_support;
-pub mod bounded;
+pub mod steps;
 pub mod call;
 pub mod cell;
 pub mod channel;

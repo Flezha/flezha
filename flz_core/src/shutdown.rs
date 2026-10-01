@@ -26,7 +26,7 @@ pub const ACK_TIMEOUT: Duration = Duration::from_secs(2);
 /// The bidirectional `CommandRequest` envelope's payload id.
 const SHUTDOWN_PAYLOAD_ID: &str = "control_command";
 
-/// `(instance_id, serialized state)` per live unbounded instance.
+/// `(instance_id, serialized state)` per live flow instance.
 pub type OperatorSnapshotFn = Box<dyn Fn() -> Vec<(String, Vec<u8>)> + Send + Sync>;
 
 /// What a graceful shutdown needs of the runner, reachable from the SIGTERM

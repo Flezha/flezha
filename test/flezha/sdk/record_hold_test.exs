@@ -1,7 +1,7 @@
 defmodule Flezha.SDK.RecordHoldTest do
   @moduledoc """
   Every frame the SDK writes to a secondary stream that no stream will take: a
-  Cell's records, the delete an evicted one ships, and the bounded driver's
+  Cell's records, the delete an evicted one ships, and the steps driver's
   writes the runner relays. Each is held and replayed on the next bound stream,
   in the order it was written, still ahead of the outputs of its own dispatch —
   and the credit window is debited by the write rather than by the hold.
@@ -26,7 +26,7 @@ defmodule Flezha.SDK.RecordHoldTest do
   alias FlezhaTest.Helper.SdkOperatorHarness
   alias FlezhaTest.Helper.SdkPersistenceFixtures.{CounterOp, OptedOutCounterOp, TimerOp}
 
-  # The saga marker the bounded driver ships on the record wire: a real payload
+  # The saga marker the steps driver ships on the record wire: a real payload
   # id, because the class table refuses one it does not declare.
   @saga_marker Wire.payload_id_compensation_intent()
 
@@ -214,7 +214,7 @@ defmodule Flezha.SDK.RecordHoldTest do
     assert [{:output, "op-1", "2", _}] = kinds(1)
   end
 
-  describe "the bounded driver's writes, which the runner ships" do
+  describe "the steps driver's writes, which the runner ships" do
     test "records cast with no stream bound are held and replayed in order" do
       s = runner_state([])
 

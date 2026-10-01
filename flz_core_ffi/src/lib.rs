@@ -593,7 +593,7 @@ pub extern "C" fn flz_core_watch_stdin_eof(grace_ms: u32) {
     flz_core::shutdown::watch_stdin_eof(grace_ms);
 }
 
-/// Ask for a bounded instance from the live activation `token`: start
+/// Ask for a steps instance from the live activation `token`: start
 /// `factory_id` under `id`, or under an id the controller generates when `id`
 /// is empty. `if_running` (`"deliver"`, the default when empty, or `"error"`)
 /// applies only to an id that is already running. A nonzero `replay` sends
@@ -718,7 +718,7 @@ pub unsafe extern "C" fn flz_core_part(
 /// [`FLZ_SPAWN_PENDING`]: no answer yet, `out` untouched. [`FLZ_ERR`]: `out`
 /// untouched and [`flz_core_last_error`] holds the failure, whose code is the
 /// controller's (`operator.already_running`, `operator.factory_unknown`,
-/// `operator.factory_not_bounded`, or any other refusal's own), the core's
+/// `operator.factory_not_steps`, or any other refusal's own), the core's
 /// (`spawn.timeout`, `spawn.unavailable`), or `runtime.spawn_handle_released`
 /// for a handle whose activation was completed or abandoned. A resolved handle
 /// answers every later read the same.
@@ -879,7 +879,7 @@ mod tests {
     #[test]
     fn a_refused_check_names_every_issue_in_the_error_document() {
         let decl = br#"{"factory_id":"ffi_check","sdk_lang":1,"sdk_version":"0.1.0",
-            "sleep_when_idle":true,"persistent":false,"tasklets":[],"channels":[]}"#;
+            "durable":{"false":{"sleep_after":1000}},"tasklets":[],"channels":[]}"#;
         let ctx = flz_core_context_new(flz_core::SCHEMA_VERSION);
         let mut buf: *mut u8 = std::ptr::null_mut();
         let mut len = 0;
@@ -900,7 +900,7 @@ mod tests {
             .collect();
         assert_eq!(
             codes,
-            ["topology.no_tasklets", "topology.sleep_without_persistence"]
+            ["topology.no_tasklets", "topology.unknown_field"]
         );
         assert_eq!(error.code, codes[0], "the first issue names the refusal");
         unsafe { flz_core_context_free(ctx) };

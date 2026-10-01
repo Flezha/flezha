@@ -144,7 +144,7 @@ defmodule Flezha.Operator.Ingest do
   end
 
   # Why a call cannot be taken at all: a parked operator, or a single-pass
-  # bounded instance that has already been given its input.
+  # steps instance that has already been given its input.
   defp call_refusal(%Overwatch{init_error: reason}) when reason != nil,
     do: {"call.unavailable", %{reason: "the operator is parked"}}
 
@@ -420,8 +420,8 @@ defmodule Flezha.Operator.Ingest do
 
   # Durable ingest point — the one place an inbound payload is made durable
   # BEFORE it is forwarded, asynchronously, for an instance with durable input
-  # (`durable-input-log`): an unbounded operator on the effectively-once tier or a durable
-  # bounded operator. The payload is appended to the instance's input log and the
+  # (`durable-input-log`): a flow operator on the effectively-once tier or a durable
+  # steps operator. The payload is appended to the instance's input log and the
   # answer stamps `flz.offset`, which the SDK threads into the effect record or
   # the iteration commit as the consumed offset. A `flz.msg_id` the log still
   # retains is absorbed (`nil` — nothing is forwarded), and an append that
@@ -432,24 +432,24 @@ defmodule Flezha.Operator.Ingest do
   # Every other operator passes through untouched (cost-free default).
   @doc """
   Whether the next input is the instance's first: always for an instance
-  without a durable bounded operator's log, and for one whose log has journaled
+  without a durable steps operator's log, and for one whose log has journaled
   nothing. A log that holds records makes a bind a restart, not a spawn.
   """
   @spec first_input?(Overwatch.t()) :: boolean()
-  def first_input?(%Overwatch{durable_bounded: true} = state),
+  def first_input?(%Overwatch{durable_steps: true} = state),
     do: match?({:ok, _floor, -1}, InputLog.tail(Overwatch.operator_class(state)))
 
   def first_input?(%Overwatch{}), do: true
 
   @doc """
-  Whether the instance reads one input only: a `:once` or `:chained` bounded
+  Whether the instance reads one input only: a `:once` or `:chained` steps
   operator's pass never reads a second.
   """
   @spec single_input?(Overwatch.t()) :: boolean()
   def single_input?(%Overwatch{factory_id: nil}), do: false
 
   def single_input?(%Overwatch{} = state),
-    do: ClassRegistry.partitioning(state.factory_id).loop_mode in [:once, :chained]
+    do: ClassRegistry.partitioning(state.factory_id).each in [:once, :chained]
 
   defp journal_input(state, nil, _reply_to), do: {nil, state}
 

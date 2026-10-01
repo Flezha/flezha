@@ -152,7 +152,7 @@ pub struct ItemEffect {
     /// The host called `ctx.checkpoint()`.
     pub checkpoint: bool,
     pub dlq: Option<DlqEntry>,
-    /// The host called `ctx.complete(result)`: inside a bounded operator the instance
+    /// The host called `ctx.complete(result)`: inside a steps operator the instance
     /// ends after the iteration commits; a stream refuses it.
     pub complete: Option<Vec<u8>>,
 }
@@ -167,8 +167,8 @@ pub enum Verdict {
         message: String,
     },
     /// The host's entry decoder rejected the payload: only an entry channel's
-    /// decoder answers this. An unbounded operator parks the item as a non-retryable error;
-    /// a bounded operator parks the message once the stage's ladder exhausts and goes
+    /// decoder answers this. A flow operator parks the item as a non-retryable error;
+    /// a steps operator parks the message once the stage's ladder exhausts and goes
     /// on waiting instead of ending.
     Unreadable {
         message: String,

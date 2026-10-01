@@ -6,7 +6,7 @@ TBD - created by archiving change sdk-graph-authoring-api. Update Purpose after 
 ### Requirement: Producer-first stream-handle graph builder
 Every SDK SHALL author operator topologies through a producer-first fluent builder in which `.into(<tasklet>)` wires a consumer onto the current stream and returns the **consumed tasklet's own output stream handle**. `input(<type>, "name").into(A)` SHALL wire the entry consumer and return A's output stream; `stream.into(B)` SHALL add B as a consumer of `stream`'s channel and return B's output stream, so a linear pipeline is a single chained expression. A tasklet node SHALL own **exactly one output channel**, created on first use and reused by every later call on a handle whose source is that node, so wiring a second consumer, attaching a plugin sink or overriding the channel name reaches the same channel rather than declaring another. A declaration in which one tasklet produces two channels SHALL NOT be constructible: the runtime resolves a tasklet's output channel to a single id, and a second producing channel would be journaled by nothing and re-seeded by nothing on crash-resume. The handle SHALL be a lightweight, copyable reference into the operator's topology builder (Java: an object; Rust: a `Copy` value), and per-channel configuration (`keyed()`, `onFull(...)`, `retryMax(...)`, `retryBackoffMs(...)`, `named(...)`) SHALL remain available on the handle, chainable in any order relative to consumer wiring. Handles SHALL be invalidated when the topology freezes at registration; using one afterwards SHALL fail with an error naming the operator.
 
-The runtime SHALL derive the journal codec for every inter-tasklet channel, and no builder in any SDK SHALL offer a method to declare one. An inter-tasklet channel of a durable structured bounded class is journalable and re-seedable with no codec declaration and no declaration key.
+The runtime SHALL derive the journal codec for every inter-tasklet channel, and no builder in any SDK SHALL offer a method to declare one. An inter-tasklet channel of a durable structured steps class is journalable and re-seedable with no codec declaration and no declaration key.
 
 An SDK whose tasklets hand the core **bytes** derives it from the channel's kind, which is what every host over the erased poll core already does. An SDK whose tasklets hand the core **typed values** derives it from the producing tasklet's declared `Output` type, and SHALL therefore require every `Output` to be writable to bytes and readable back, the way it already requires this of every `State`. That requirement SHALL be unconditional rather than resolved against whether a class journals, because whether a class journals is a user's setting at deploy time and not a fact available where the code is compiled. A typed SDK SHALL state the requirement in its own vocabulary when a type does not meet it, rather than surfacing the serialization library's message about a trait the author never named.
 
@@ -41,13 +41,13 @@ The payload type of every non-entry channel SHALL be taken from the producing ta
 
 #### Scenario: No SDK declares an inter-tasklet codec
 
-- **WHEN** any SDK declares a durable structured bounded class whose tasklet A is wired into tasklet B
+- **WHEN** any SDK declares a durable structured steps class whose tasklet A is wired into tasklet B
 - **THEN** registration SHALL succeed with no codec declared anywhere on the A to B channel, the declaration SHALL carry no codec key, and A's handoff to B SHALL be journaled at the commit barrier and re-seeded on crash-resume from the codec the runtime derived
 
 #### Scenario: A typed SDK refuses an output it cannot write down
 
 - **WHEN** a typed-value SDK declares a tasklet whose `Output` type cannot be written to bytes and read back
-- **THEN** the program SHALL fail to compile, and the refusal SHALL name the type and state that a tasklet's output is journaled at a bounded operator's commit barrier
+- **THEN** the program SHALL fail to compile, and the refusal SHALL name the type and state that a tasklet's output is journaled at a steps operator's commit barrier
 
 ### Requirement: Branching is handle reuse; `branch()` is equivalent sugar
 Using one stream handle to wire more than one consumer SHALL declare fan-out: every consumer receives every value released on that stream's channel. The builder SHALL also expose `branch(arm1, arm2, ...)` taking two or more lambdas, each invoked with a copy of the same handle; `branch` SHALL be pure sugar — the resulting topology SHALL be identical to the equivalent handle-reuse declaration, and the two spellings SHALL be freely mixable.
@@ -122,21 +122,21 @@ A graph node SHALL be identified by its Tasklet class unless an explicit node na
 - **THEN** registration SHALL fail naming both nodes
 
 ### Requirement: Graphs are DAGs; fan-in accumulates in both SDKs
-The shared graph-shape rule for both kinds SHALL be: one **or more** entry channels feeding the graph, every node reachable from some entry channel, at most one output channel per node, any number of incoming channels per node, and no cycles. Multiple entry channels let a single operator ingest several external sources (e.g. a market pipeline consuming a trade feed and an order-book feed on distinct channels); the controller routes each inbound frame to its entry channel by the `metadata["channel"]` name, falling back to the first-declared entry channel when that metadata is absent. An entry channel MAY feed more than one tasklet. Validation SHALL use a topological ordering (all of a node's producers precede it); a cycle SHALL be rejected naming a node on it. A node with several incoming channels (fan-in) SHALL receive the **accumulated** contributions of all its producers — no producer's output may be overwritten or dropped. In bounded operators each entry channel roots its own chain, the tasklets reachable from that channel's consumers; a message runs only the chain of the channel it arrived on, and a fan-in node SHALL be dispatched only after every one of its producers **in that pass's chain** has completed and committed, with an input batch that is the concatenation of those producers' released outputs. A producer of another chain SHALL NOT be waited for, live or on a crash-resume. In unbounded operators the existing per-channel dispatch SHALL deliver both producers' values to the shared consumer as they arrive. No registration refusal SHALL exist for an entry channel feeding several tasklets, for several entry channels on a bounded operator, or for an entry channel as a merge source on a bounded operator.
+The shared graph-shape rule for both kinds SHALL be: one **or more** entry channels feeding the graph, every node reachable from some entry channel, at most one output channel per node, any number of incoming channels per node, and no cycles. Multiple entry channels let a single operator ingest several external sources (e.g. a market pipeline consuming a trade feed and an order-book feed on distinct channels); the controller routes each inbound frame to its entry channel by the `metadata["channel"]` name, falling back to the first-declared entry channel when that metadata is absent. An entry channel MAY feed more than one tasklet. Validation SHALL use a topological ordering (all of a node's producers precede it); a cycle SHALL be rejected naming a node on it. A node with several incoming channels (fan-in) SHALL receive the **accumulated** contributions of all its producers — no producer's output may be overwritten or dropped. In steps operators each entry channel roots its own chain, the tasklets reachable from that channel's consumers; a message runs only the chain of the channel it arrived on, and a fan-in node SHALL be dispatched only after every one of its producers **in that pass's chain** has completed and committed, with an input batch that is the concatenation of those producers' released outputs. A producer of another chain SHALL NOT be waited for, live or on a crash-resume. In flow operators the existing per-channel dispatch SHALL deliver both producers' values to the shared consumer as they arrive. No registration refusal SHALL exist for an entry channel feeding several tasklets, for several entry channels on a steps operator, or for an entry channel as a merge source on a steps operator.
 
-#### Scenario: Bounded operator join runs once with both contributions
+#### Scenario: Steps operator join runs once with both contributions
 
-- **WHEN** a bounded graph A→(B,C)→D runs to completion
+- **WHEN** a steps graph A→(B,C)→D runs to completion
 - **THEN** D SHALL be dispatched exactly once, after both B and C committed, with an input batch containing both B's and C's released outputs
 
 #### Scenario: A join where two chains meet waits only for this pass's producer
 
-- **WHEN** a bounded operator declares entry `a` feeding A→J and entry `b` feeding B→J, and a message arrives on `a`
+- **WHEN** a steps operator declares entry `a` feeding A→J and entry `b` feeding B→J, and a message arrives on `a`
 - **THEN** J SHALL be dispatched once A committed, with A's released output only, and B SHALL NOT run in that pass
 
 #### Scenario: An entry channel fans out to two roots
 
-- **WHEN** a bounded operator declares entry channel `order` feeding both `reserve` and `audit`
+- **WHEN** a steps operator declares entry channel `order` feeding both `reserve` and `audit`
 - **THEN** a message on `order` SHALL be delivered to both, each through its own edge's transforms, in the same first level of the pass
 
 #### Scenario: Cycle is refused
@@ -178,17 +178,17 @@ Plugin egress SHALL be declared by exactly one builder method in every SDK, taki
 
 #### Scenario: sink is hybrid by default
 
-- **WHEN** an unbounded operator declares `.sink("indicators", serializer)` and a consumer is wired from the same handle afterwards
+- **WHEN** a flow operator declares `.sink("indicators", serializer)` and a consumer is wired from the same handle afterwards
 - **THEN** each emitted value SHALL reach the typed consumer and, serialized once, the plugin layer, stamped `channel = "indicators"`
 
 #### Scenario: Terminal by construction
 
-- **WHEN** an unbounded operator declares `.sink("pager_sink")` and nothing further is wired from the handle
+- **WHEN** a flow operator declares `.sink("pager_sink")` and nothing further is wired from the handle
 - **THEN** the channel SHALL be plugin-bound and named `"pager_sink"`
 
 #### Scenario: The no-name form is available in every SDK
 
-- **WHEN** an unbounded operator declares the no-name form in any SDK
+- **WHEN** a flow operator declares the no-name form in any SDK
 - **THEN** the channel SHALL be plugin-bound, its name SHALL be whatever it would have been without the sink, and the declaration SHALL compile or register in every SDK
 
 #### Scenario: Old spellings do not exist
@@ -357,16 +357,16 @@ wired after it on the same channel, exactly as after `sink`; a channel ending in
 no consumer SHALL be declared plugin-bound. The builder SHALL record it as a `response` link in the
 channel's chain, from which the runtime derives the end. `response()` SHALL NOT be a plugin egress:
 nothing it carries reaches a plugin. A graph MAY end any number of channels in `response()`, in an
-unbounded and in a bounded operator.
+unbounded and in a steps operator.
 
 #### Scenario: One graph, two answering paths
 
-- **WHEN** an unbounded operator declares `admitted |> filter(&accepted?/1) |> into(Accept) |> response()` and `admitted |> filter(&refused?/1) |> into(Refuse) |> response()`
+- **WHEN** a flow operator declares `admitted |> filter(&accepted?/1) |> into(Accept) |> response()` and `admitted |> filter(&refused?/1) |> into(Refuse) |> response()`
 - **THEN** registration SHALL succeed with two plugin-bound channels, `Accept`'s and `Refuse`'s, each ending in a response
 
 #### Scenario: A response channel feeds a consumer too
 
-- **WHEN** a bounded operator declares `.into(Turn).response().into(Log)` on one handle
+- **WHEN** a steps operator declares `.into(Turn).response().into(Log)` on one handle
 - **THEN** the channel produced by `Turn` SHALL keep its inter-tasklet kind, list `Log` as its consumer, and each emitted value SHALL both answer and reach `Log`
 
 #### Scenario: Every SDK spells it
@@ -394,7 +394,7 @@ lines; the step vocabulary SHALL gain `<x>.response`.
 
 #### Scenario: An unkeyed answer under the tier is accepted
 
-- **WHEN** a persistent, effectively-once unbounded operator declares `.into(Plain).response()` without `keyed`
+- **WHEN** a persistent, effectively-once flow operator declares `.into(Plain).response()` without `keyed`
 - **THEN** registration SHALL succeed, while the same declaration ending in `sink("out")` SHALL still fail as `UnkeyedChannelUnderEffectivelyOnce`
 
 ### Requirement: `call(...)` SHALL end a chain on a callee in every SDK
@@ -429,10 +429,10 @@ channel's name.
 
 ### Requirement: A call end SHALL be refused where it cannot work
 
-Registration SHALL refuse, in `flz_core::host::register::check` and its bounded spec check for the
+Registration SHALL refuse, in `flz_core::host::register::check` and its steps spec check for the
 six SDKs sharing `flz_core` and in the Elixir SDK's re-expression:
 
-- a `:once` or `:chained` bounded class declaring a call end, as `CallOutsidePerInputLoop`
+- a `:once` or `:chained` steps class declaring a call end, as `CallOutsidePerInputLoop`
   (`topology.call_outside_per_input_loop`), because such a class never reads the later message a
   `Response` is;
 - a factory call with `create: false` and no `key_by` before it, as `CallWithoutKey`
@@ -450,11 +450,11 @@ and an `ok` row wiring a Response channel back into its calling tasklet, with it
 
 #### Scenario: A single-pass class that calls is refused
 
-- **WHEN** a `:once` bounded class declares `.into(Plain).call("pricing", deadline_ms: 500)`
+- **WHEN** a `:once` steps class declares `.into(Plain).call("pricing", deadline_ms: 500)`
 - **THEN** registration SHALL fail with `topology.call_outside_per_input_loop` in every SDK
 
 #### Scenario: A per-input class that calls registers
 
-- **WHEN** a `:per_input` bounded class declares the same call end
+- **WHEN** a `:per_input` steps class declares the same call end
 - **THEN** registration SHALL succeed
 

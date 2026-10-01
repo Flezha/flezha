@@ -86,7 +86,7 @@ partition behind the slowest, while per-key ordering only needs per-member
 FIFO.
 
 A message with **no `flz.key`** (an emit on a channel not declared `.keyed()`,
-from an unbounded or a bounded operator) is parked via the DLQ store with
+from a flow or a steps operator) is parked via the DLQ store with
 `partitioned target requires keyed emit`, naming the source, the target and the
 contract. It is never round-robined and never payload-hashed: both scatter one
 key across partitions and fail downstream, where the cause is invisible. A key

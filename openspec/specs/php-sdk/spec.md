@@ -4,11 +4,11 @@
 TBD - created by archiving change add-php-sdk. Update Purpose after archive.
 ## Requirements
 ### Requirement: PHP SDK entry point and runner lifecycle
-The PHP SDK SHALL expose a runner handle created by `Flezha::createRunner(string $namespace)`, carrying declaration and lifecycle on one object, with `registerFactory()` registering an operator class of either kind (the kind is read from the class), `unregisterFactory()` as its inverse, `executor()` selecting the concurrency adapter, `start()` connecting, `awaitTermination()` blocking, and `run()` as `start()` + `awaitTermination()`.
+The PHP SDK SHALL expose a runner handle created by `Flezha::createRunner(string $namespace)`, carrying declaration and lifecycle on one object, with `registerFactory()` registering an operator class of either run (the run is read from its `#[Operator]`), `unregisterFactory()` as its inverse, `executor()` selecting the concurrency adapter, `start()` connecting, `awaitTermination()` blocking, and `run()` as `start()` + `awaitTermination()`.
 
 The runner SHALL map onto the ABI lifecycle `flz_core_context_new(SCHEMA_VERSION)` → `flz_core_declare_class` per class → `flz_core_start(namespace)` → poll/complete → `flz_core_shutdown` → `flz_core_context_free`. Naming SHALL follow `docs/sdk/naming_conventions.md`, matching the Rust and Java surfaces.
 
-#### Scenario: A declared unbounded operator connects and is placed
+#### Scenario: A declared flow operator connects and is placed
 - **WHEN** a script calls `Flezha::createRunner('trading')->registerFactory(OrderTotals::class)->run()` against a live controller
 - **THEN** the runner SHALL connect, `AddOperator` SHALL place an instance of that class, and inputs routed to it SHALL reach the declared tasklet
 
@@ -109,7 +109,7 @@ Durable records SHALL be stamped `sdk_lang = SDK_LANG_PHP` with the PHP change-f
 - **THEN** the core's host restore fold SHALL refuse before any body reaches the PHP codec, and the controller SHALL leave the operator unbound rather than cold-starting it
 
 ### Requirement: Full host-class declaration
-The PHP SDK SHALL build the complete `HostClassDecl` JSON accepted by `flz_core_declare_class`: the channels graph (entry, inter-tasklet, plugin, with per-channel retry, overflow and plugin keying), cell modes, clock kinds, the effectively-once tier and ack granularity, the correction window, header lang and format bytes, and bounded lifecycle facts.
+The PHP SDK SHALL build the complete `HostClassDecl` JSON accepted by `flz_core_declare_class`: the channels graph (entry, inter-tasklet, plugin, with per-channel retry, overflow and plugin keying), cell modes, clock kinds, the effectively-once tier and ack granularity, the correction window, header lang and format bytes, and steps lifecycle facts.
 
 A declaration the core refuses SHALL surface the core's error naming the offending field, and the class SHALL NOT be registered.
 
@@ -212,25 +212,25 @@ The PHP SDK SHALL support the producer-side edge surface — map, filter, flatMa
 - **WHEN** `$c->routeLatest($config, $trades, fn ($t) => $t['symbol'])` is declared and the harness feeds a document, trades for `A` and `B`, the same document, then a trade for `A`
 - **THEN** exactly one `['A', $document]` and one `['B', $document]` SHALL be emitted, and the repeated document SHALL be inert
 
-### Requirement: Bounded operators at parity
-The PHP SDK SHALL support bounded operators as structured chains, where each stage partition arrives as a step activation and completion answers the driver's barrier. `Flezha\BoundedOperator` SHALL carry no one-function `run`, and `Flezha\BoundedCtx` SHALL NOT exist; a tasklet inside a bounded operator SHALL end its instance with `$ctx->complete($result)`, carried in its step answer.
+### Requirement: Steps operators at parity
+The PHP SDK SHALL support steps operators as structured chains, where each stage partition arrives as a step activation and completion answers the driver's barrier. `Flezha\Operator` SHALL carry no one-function `run`, and `Flezha\StepsCtx` SHALL NOT exist; a tasklet inside a steps operator SHALL end its instance with `$ctx->complete($result)`, carried in its step answer.
 
 Compensation hooks, loop modes, suspension and rewind SHALL be the core driver's existing machinery, reached through step activations; the SDK SHALL NOT implement a driver.
 
 #### Scenario: A structured chain completes in order
-- **WHEN** a bounded class declaring a multi-stage chain is spawned
+- **WHEN** a steps class declaring a multi-stage chain is spawned
 - **THEN** each stage SHALL arrive as a step activation, and the instance SHALL report completion after the terminal stage
 
 #### Scenario: An aborted chain compensates in reverse
 - **WHEN** a stage fails after earlier stages committed
 - **THEN** the core SHALL hand out `CompensateRun` activations for the committed stages in reverse order
 
-#### Scenario: A tasklet ends its bounded operator
-- **WHEN** a tasklet of a `PerInput` bounded operator calls `$ctx->complete(['turns' => 4])` while handling a message
+#### Scenario: A tasklet ends its steps operator
+- **WHEN** a tasklet of a `PerInput` steps operator calls `$ctx->complete(['turns' => 4])` while handling a message
 - **THEN** the iteration SHALL commit and the instance SHALL complete with that result instead of waiting for the next message
 
 #### Scenario: A resumed chain skips journaled stages
-- **WHEN** a bounded instance is resumed after a crash mid-chain
+- **WHEN** a steps instance is resumed after a crash mid-chain
 - **THEN** stages recorded as committed in the task-journal SHALL NOT re-run
 
 ### Requirement: Clean shutdown on an activation budget
@@ -249,7 +249,7 @@ The budget SHALL default to unlimited, and a clean shutdown SHALL leave unpolled
 ### Requirement: End-to-end parity is the acceptance gate
 The PHP SDK SHALL be gated by a runner application under `test/apps/php_runner`, declaring its launch line and its fixtures in a `conformance.json` manifest exactly as the Rust, Java and Elixir apps do, and driven by `php_sdk`-tagged suites in `test/system` selected by `FLEZHA_E2E_RUNTIME=php`.
 
-Coverage SHALL include timers, dynamic cells, compaction, DLQ park, effectively-once, live state read and bounded crash-resume — the same scenarios the Java arm asserts — and the manifest SHALL defer nothing, because this SDK claims full parity.
+Coverage SHALL include timers, dynamic cells, compaction, DLQ park, effectively-once, live state read and steps crash-resume — the same scenarios the Java arm asserts — and the manifest SHALL defer nothing, because this SDK claims full parity.
 
 #### Scenario: The e2e matrix does not branch per runtime
 - **WHEN** a system suite asserts a capability on the Rust and Java runners
@@ -289,37 +289,37 @@ The SDK SHALL prove the set by one conformance run over every row of
 - **THEN** it authors the row with `$c->merge()->from(...)…->into(...)` rather than throwing, registration refuses with `topology.merge_too_few_sources` or `topology.duplicate_merge_source`, and the manifest's `topology_surfaces` lists `merge`
 
 ### Requirement: The single-tasklet short form is four attribute arguments
-The short form SHALL be declared with the `#[Operator]` attribute a full-form operator already carries, on a class extending `Flezha\UnboundedOperator` or `Flezha\BoundedOperator`, and SHALL NOT be declared with `#[Task]`, which SHALL accept none of `kind`, `sink`, `input` or `codec` and SHALL throw naming the argument and `#[Operator]` when one is given. `#[Operator]` SHALL accept `sink`, `input` and `codec` (a `ChannelCodec`) beside the `factoryId` it already requires; the kind is the base class the attributed class extends and SHALL NOT be an argument. `Flezha\OperatorKind` SHALL be deleted, its only readers being the removed `kind`.
+The short form SHALL be declared with the `#[Operator]` attribute a full-form operator already carries, on a class extending `Flezha\Operator`, and SHALL NOT be declared with `#[Task]`, which SHALL accept none of `run`, `durable`, `sink`, `input` or `codec` and SHALL throw naming the argument and `#[Operator]` when one is given. `#[Operator]` SHALL accept `sink`, `input` and `codec` (a `ChannelCodec`) beside the `factoryId` and the class settings it already takes; how the class runs is its `run` argument.
 
 A class SHALL be a short form exactly when it defines the tasklet body `run(mixed $input, Ctx $ctx): mixed` and does not override the topology body `channels`, which is the mechanism `Definition` already uses to read which hooks a class overrides; defining `run` and overriding `channels` SHALL throw `FlezhaException` naming `topology.short_form_with_topology`, and doing neither SHALL throw naming the missing body. A short-form class MAY define the tasklet hooks a `Flezha\Tasklet` subclass defines (`state`, `applyChange`), which the generated tasklet takes.
 
-`sink` SHALL be optional. The class SHALL carry a generated operator of its base class's kind whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` argument's value) into a generated tasklet named `factoryId` and, when a `sink` is written, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A bounded short form MAY carry `#[Bounded(loopMode: ...)]` beside `#[Operator]` and SHALL be a `once` bounded operator when it does not, with every other bounded setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state; a `#[Bounded operator]` on a short form that sets any argument other than `loopMode`, or `persistent: false` on `#[Operator]`, SHALL throw `FlezhaException` naming the setting and the full form. The entry SHALL be decoded by `codec` where one is written, whether or not a `sink` is. An absent `factoryId` SHALL throw naming the required argument, and the SDK SHALL NOT derive one from the class.
+`sink` SHALL be optional. The class SHALL carry a generated operator whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` argument's value) into a generated tasklet named `factoryId` and, when a `sink` is written, that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A short form SHALL take the class settings on `#[Operator]` as the full form does; a steps short form SHALL be a `once` steps operator unless its `run` writes another `each`, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state. The entry SHALL be decoded by `codec` where one is written, whether or not a `sink` is. An absent `factoryId` SHALL throw naming the required argument, and the SDK SHALL NOT derive one from the class.
 
 `Runner::registerFactory` SHALL accept such a class string and register the generated operator, throwing `FlezhaException` at registration whose code is the refusal's code. A duplicate factory id SHALL throw `FlezhaException` with the code `topology.duplicate_factory_id`. The PHP SDK owes no `topology.sink_without_output`: `Flezha\Tasklet::run` is declared `: mixed` and PHP refuses an override narrowing that to `: void`, so a tasklet declaring no output cannot be written; the manifest SHALL NOT list `shorthand_typed_output`.
 
-#### Scenario: An attributed class is a whole unbounded operator
+#### Scenario: An attributed class is a whole flow operator
 
-- **WHEN** a class extending `Flezha\UnboundedOperator` is attributed `#[Operator(factoryId: 'upcase', sink: 'out', codec: ChannelCodec::Text)]`, defines `run`, and the runner is given `registerFactory(Upcase::class)`
-- **THEN** the runner declares an unbounded operator `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and sink `out`, and no `Flezha\Tasklet` subclass exists for it
+- **WHEN** a class extending `Flezha\Operator` is attributed `#[Operator(factoryId: 'upcase', sink: 'out', codec: ChannelCodec::Text)]`, defines `run`, and the runner is given `registerFactory(Upcase::class)`
+- **THEN** the runner declares a flow operator `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and sink `out`, and no `Flezha\Tasklet` subclass exists for it
 
-#### Scenario: An attributed class is a whole bounded operator
+#### Scenario: An attributed class is a whole steps operator
 
-- **WHEN** a class extending `Flezha\BoundedOperator` is attributed `#[Operator(factoryId: 'place', sink: 'placed', input: 'order', codec: ChannelCodec::Text)]` and defines `run`, the runner is given `registerFactory(Place::class)`, an instance is started, and one message is sent on `order`
+- **WHEN** a class extending `Flezha\Operator` is attributed `#[Operator(factoryId: 'place', sink: 'placed', input: 'order', codec: ChannelCodec::Text)]` and defines `run`, the runner is given `registerFactory(Place::class)`, an instance is started, and one message is sent on `order`
 - **THEN** `run` receives the message as text, the value it passes to `$ctx->emit` reaches `placed`, and the instance completes
 
-#### Scenario: A short-form bounded operator declares its loop mode
+#### Scenario: A short-form steps operator declares its loop mode
 
-- **WHEN** a class extending `Flezha\BoundedOperator` is attributed `#[Operator(factoryId: 'chat', sink: 'replies', codec: ChannelCodec::Text)]` and `#[Bounded(loopMode: LoopMode::PerInput)]`, defines `run`, is registered, and two messages reach its entry channel
-- **THEN** the declaration carries `loop_mode` `per_input`, `run` runs once per message, and the instance does not complete after the first
+- **WHEN** a class extending `Flezha\Operator` is attributed `#[Operator(factoryId: 'chat', sink: 'replies', codec: ChannelCodec::Text)]` and `#[Steps(each: Each::PerInput)]`, defines `run`, is registered, and two messages reach its entry channel
+- **THEN** the declaration carries `each` `per_input`, `run` runs once per message, and the instance does not complete after the first
 
 #### Scenario: A short form with no sink is declared
 
-- **WHEN** a class extending `Flezha\UnboundedOperator` is attributed `#[Operator(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]` and defines `run`, `state` and `applyChange`
+- **WHEN** a class extending `Flezha\Operator` is attributed `#[Operator(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]` and defines `run`, `state` and `applyChange`
 - **THEN** the operator declares `ticks` into the generated tasklet and no plugin channel
 
 #### Scenario: An input and codec need no sink
 
-- **WHEN** a class extending `Flezha\UnboundedOperator` is attributed `#[Operator(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]` with no `sink`
+- **WHEN** a class extending `Flezha\Operator` is attributed `#[Operator(factoryId: 'counter', input: 'ticks', codec: ChannelCodec::Text)]` with no `sink`
 - **THEN** `registerFactory` accepts it and the entry channel takes that name and codec
 
 #### Scenario: A run body beside a channels override is refused
@@ -339,31 +339,26 @@ A class SHALL be a short form exactly when it defines the tasklet body `run(mixe
 
 #### Scenario: A derived factory id is refused
 
-- **WHEN** a class extending `Flezha\UnboundedOperator` defines `run` and carries no `#[Operator]` attribute
+- **WHEN** a class extending `Flezha\Operator` defines `run` and carries no `#[Operator]` attribute
 - **THEN** `registerFactory` throws naming the required `#[Operator(factoryId: ...)]`
 
-### Requirement: A PHP class of either kind is judged on what it wrote
+### Requirement: A PHP class is judged on the settings tree it wrote
 
-`HostClassDecl::of` SHALL put every key the builder recorded on the wire for either kind, with no kind gate, so an unbounded-only builder call on a bounded operator reaches the core and is refused under its name (`topology.effectively_once_on_bounded`, `topology.checkpoint_on_bounded`, `topology.correction_window_on_bounded`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `FlezhaException` naming it. `#[Bounded operator]` on a class extending `Flezha\UnboundedOperator` SHALL be refused at `registerFactory` naming the attribute and the class, as the attribute's own documentation states. `#[Bounded operator]` SHALL carry no `retryAttempts`, `retryBackoffMs`, `barrierRetryAttempts` or `wakeAfterMs`, and the declaration SHALL carry no `wake_after_ms`; the builder SHALL carry no `syncDurability()` call, `#[Bounded(syncDurability: true)]` being the one spelling. A `Ctx` inside a bounded operator SHALL offer `timerAfter`, `timerAtEventTime` and `cancelTimer` exactly as inside a stream, and a tasklet's `onTimer` SHALL run on its firing in both kinds; only a `compensate` hook's `Ctx` SHALL throw an error naming `runtime.timers_unavailable` from them.
+`#[Operator]` SHALL take the class settings as the tree's own data (`run`, `durable`, `maxDurationMs`, `description`), and `HostClassDecl::of` SHALL put the tree on the wire as written, so a setting under a parent that does not carry it reaches the core and is refused as `topology.unknown_field`, naming the setting and its parent, when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `FlezhaException` naming it. `#[Operator]` SHALL carry no `retryAttempts`, `retryBackoffMs`, `barrierRetryAttempts` or `wakeAfterMs`, and the declaration SHALL carry no `wake_after_ms`. A `Ctx` inside a steps operator SHALL offer `timerAfter`, `timerAtEventTime` and `cancelTimer` exactly as inside a flow operator, and a tasklet's `onTimer` SHALL run on its firing in both runs; only a `compensate` hook's `Ctx` SHALL throw an error naming `runtime.timers_unavailable` from them.
 
-#### Scenario: A tier call on a bounded operator reaches the core
+#### Scenario: A misplaced setting reaches the core
 
-- **WHEN** a class extending `Flezha\BoundedOperator` calls `$c->effectivelyOnce()` in `channels`, the runner registers it and starts
-- **THEN** declaring it to the core throws `FlezhaException` whose code is `topology.effectively_once_on_bounded`, and the operator is not declared
-
-#### Scenario: A bounded attribute on an unbounded class is refused
-
-- **WHEN** a class extending `Flezha\UnboundedOperator` carries `#[Bounded(loopMode: LoopMode::PerInput)]`
-- **THEN** `registerFactory` throws `FlezhaException` naming `#[Bounded operator]` and the class
+- **WHEN** a class declares `#[Operator(factoryId: 'w', run: ['flow' => ['each' => 'per_input']])]`, and the runner declares it
+- **THEN** declaring it to the core throws `FlezhaException` whose code is `topology.unknown_field`, naming `each` and `flow`, and the operator is not declared
 
 #### Scenario: The retired wake argument is refused
 
-- **WHEN** a class carries `#[Bounded(wakeAfterMs: 5000)]`
+- **WHEN** a class carries `#[Operator(factoryId: 'w', wakeAfterMs: 5000)]`
 - **THEN** PHP refuses the unknown named argument when the attribute is instantiated, and no declaration carries `wake_after_ms`
 
-#### Scenario: A timer inside a bounded tasklet fires
+#### Scenario: A timer inside a steps tasklet fires
 
-- **WHEN** a tasklet of a running `PerInput` bounded operator calls `$ctx->timerAfter(300)` in `run`
+- **WHEN** a tasklet of a running `per_input` steps operator calls `$ctx->timerAfter(300)` in `run`
 - **THEN** the call returns the scheduled timestamp, the effect carries the timer op, and `onTimer` runs on that Cell at that timestamp, opening a pass at that tasklet
 
 ### Requirement: A PHP tasklet names itself and declares its settings on one attribute

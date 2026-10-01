@@ -1,5 +1,5 @@
 //! The coordinator's tests: the heartbeat's self-report and the ladder a
-//! heartbeat that reaches nothing arms, and the bounded output a runner
+//! heartbeat that reaches nothing arms, and the steps output a runner
 //! holds while it has no secondary.
 
 use super::*;
@@ -99,14 +99,14 @@ fn heartbeat_reaching_no_stream_arms_the_reconnect_ladder() {
     crate::state_sink::reset_for_test();
 }
 
-/// A removed bounded operator's Cells leave the flusher with it: an entry holds its
+/// A removed steps operator's Cells leave the flusher with it: an entry holds its
 /// Cell's buffer, so one left behind is drained for the life of the process.
 #[test]
-fn a_stopped_bounded_leaves_no_cell_with_the_flusher() {
+fn a_stopped_steps_leaves_no_cell_with_the_flusher() {
     let _env = crate::runner::env_test_guard();
     let factory = format!("flusher_stop_{}", std::process::id());
-    let class = crate::test_support::host_class::bounded_json(&factory, &["in"], 1)
-        .replace(r#""persistent":false"#, r#""persistent":true"#);
+    let class = crate::test_support::host_class::steps_json(&factory, &["in"], 1)
+        .replace(r#""durable":false"#, r#""durable":{"local":{"sleep_after":false}}"#);
     crate::host::register_host_class_json(class.as_bytes()).expect("class registers");
     let mut node = RunnerNode::new("test-ns".to_string());
     let id = format!("{factory}_inst");

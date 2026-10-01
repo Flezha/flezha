@@ -193,9 +193,9 @@ defmodule FlezhaTest.Runner.ControlChannelUpdateFactoriesTest do
              %RunnerCommands.FactoryDecl{
                id: "alpha",
                description: "the alpha factory",
-               kind: "bounded"
+               run: "steps"
              },
-             %RunnerCommands.FactoryDecl{id: "beta", description: "", kind: "unbounded"}
+             %RunnerCommands.FactoryDecl{id: "beta", description: "", run: "flow"}
            ]
          }}
       )
@@ -213,8 +213,8 @@ defmodule FlezhaTest.Runner.ControlChannelUpdateFactoriesTest do
                {:ok, factories} = FleetManager.list_factories(@namespace)
 
                factories == [
-                 %{id: "alpha", description: "the alpha factory", kind: :bounded},
-                 %{id: "beta", description: nil, kind: :unbounded}
+                 %{id: "alpha", description: "the alpha factory", run: :steps},
+                 %{id: "beta", description: nil, run: :flow}
                ]
              end,
              500,

@@ -186,7 +186,7 @@ defmodule Flezha.Runner.FleetManager do
 
   Candidates come from the same filter `runners_for_factory/3` answers with — a
   `nil` factory widens it to every active runner — and one of them is chosen by
-  bounded-load rendezvous hashing (`Load.select/3`). The choice is counted
+  steps-load rendezvous hashing (`Load.select/3`). The choice is counted
   against the runner before this returns, which is what a recovery batch needs:
   its members are placed under one `Task.async_stream` and none of their rows is
   written until the last of them has been placed, so a count that only advanced
@@ -211,8 +211,8 @@ defmodule Flezha.Runner.FleetManager do
   Why `factory_id` has no placement candidate in `namespace`.
 
   `:none` when some runner can take it; `:no_such_factory` when no runner
-  advertises the id at all; `{:language, established}` or `{:kind, established}`
-  when runners advertise it at another language or kind than the one the
+  advertises the id at all; `{:language, established}` or `{:run, established}`
+  when runners advertise it at another language or run than the one the
   factory is established at — a factory that exists and is simply unplaceable
   here, which must not be reported as a factory that does not exist.
   """
@@ -222,22 +222,22 @@ defmodule Flezha.Runner.FleetManager do
           | :ambiguous_language
           | :no_language_declared
           | {:language, byte()}
-          | :ambiguous_kind
-          | :no_kind_declared
-          | {:kind, :unbounded | :bounded}
+          | :ambiguous_run
+          | :no_run_declared
+          | {:run, :flow | :steps}
   def placement_refusal(namespace, factory_id, timeout \\ Durations.get(:runner_lookup_ms)) do
     GenServer.call(__MODULE__, {:placement_refusal, namespace, factory_id}, timeout)
   end
 
   @doc """
-  The kind `factory_id` is established at in `namespace`, which a start takes
-  rather than names: `{:ok, :unbounded | :bounded}` when a runner here can place
+  How `factory_id` is established to run in `namespace`, which a start takes
+  rather than names: `{:ok, :flow | :steps}` when a runner here can place
   it, else `{:error, refusal}` in `placement_refusal/3`'s vocabulary.
   """
-  @spec factory_kind(String.t(), String.t(), timeout()) ::
-          {:ok, :unbounded | :bounded} | {:error, term()}
-  def factory_kind(namespace, factory_id, timeout \\ Durations.get(:runner_lookup_ms)) do
-    GenServer.call(__MODULE__, {:factory_kind, namespace, factory_id}, timeout)
+  @spec factory_run(String.t(), String.t(), timeout()) ::
+          {:ok, :flow | :steps} | {:error, term()}
+  def factory_run(namespace, factory_id, timeout \\ Durations.get(:runner_lookup_ms)) do
+    GenServer.call(__MODULE__, {:factory_run, namespace, factory_id}, timeout)
   end
 
   @doc """
@@ -445,10 +445,10 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   @impl true
-  def handle_call({:factory_kind, namespace, factory_id}, _from, state) do
+  def handle_call({:factory_run, namespace, factory_id}, _from, state) do
     reply =
       case placement_refusal_of(state, namespace, factory_id) do
-        :none -> {:ok, kind_of(state, namespace, factory_id)}
+        :none -> {:ok, run_of(state, namespace, factory_id)}
         refusal -> {:error, refusal}
       end
 
@@ -495,7 +495,7 @@ defmodule Flezha.Runner.FleetManager do
         %{
           id: factory_id,
           description: info.description,
-          kind: kind_of(state, namespace, factory_id)
+          run: run_of(state, namespace, factory_id)
         }
       end)
       |> Enum.sort_by(& &1.id)
@@ -634,16 +634,18 @@ defmodule Flezha.Runner.FleetManager do
   defp refusal(:sdk_lang, {:ok, lang}), do: {:language, lang}
   defp refusal(:sdk_lang, :ambiguous), do: :ambiguous_language
   defp refusal(:sdk_lang, :none), do: :no_language_declared
-  defp refusal(:kind, {:ok, kind}), do: {:kind, kind}
-  defp refusal(:kind, :ambiguous), do: :ambiguous_kind
-  defp refusal(:kind, :none), do: :no_kind_declared
+  defp refusal(:run, {:ok, run}), do: {:run, run}
+  defp refusal(:run, :ambiguous), do: :ambiguous_run
+  defp refusal(:run, :none), do: :no_run_declared
+  defp refusal(:shape, {:ok, shape}), do: {:run, shape}
+  defp refusal(:shape, :ambiguous), do: :ambiguous_run
 
-  # The kind a listed factory is established at, `nil` while nothing decides it.
-  defp kind_of(state, namespace, factory_id) do
+  # The run a listed factory is established at, `nil` while nothing decides it.
+  defp run_of(state, namespace, factory_id) do
     {info, advertising} = Factories.advertising_runners(state, namespace, factory_id)
 
-    case Factories.established(namespace, factory_id, :kind, info, advertising) do
-      {:ok, kind} -> kind
+    case Factories.established(namespace, factory_id, :run, info, advertising) do
+      {:ok, run} -> run
       _undecided -> nil
     end
   end

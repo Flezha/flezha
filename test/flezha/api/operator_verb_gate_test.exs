@@ -20,7 +20,7 @@ defmodule Flezha.Api.AdministrationVerbGateTest do
   alias Flezha.Schedule.Store, as: ScheduleStore
   alias Flezha.Service.Dlq
   alias Flezha.Service.Schedule
-  alias Flezha.Service.Bounded
+  alias Flezha.Service.Steps
   alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.ScheduleTestHelper
 
@@ -91,8 +91,8 @@ defmodule Flezha.Api.AdministrationVerbGateTest do
     test "still reaches the two verbs that move live work" do
       # Neither target exists, so both answer their own refusal — what matters
       # is that neither is an authorization refusal.
-      refute refused?(Bounded.rescale("_system", "gate-group", 2, [], @ops))
-      refute refused?(Bounded.rewind("_system", @class, 1, @ops))
+      refute refused?(Steps.rescale("_system", "gate-group", 2, [], @ops))
+      refute refused?(Steps.rewind("_system", @class, 1, @ops))
     end
 
     test "a viewer is refused the dead-letter reads and the schedule mutations", ctx do

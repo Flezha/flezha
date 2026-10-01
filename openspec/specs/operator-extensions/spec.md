@@ -192,7 +192,7 @@ Plugins in the `prepared` state SHALL NOT emit `:io_in` to the operator host. Th
 - **AND** the upstream TLS connection SHALL open at this point and the subscribe handshake SHALL issue
 
 #### Scenario: Plugins stay in prepared state when SDK never starts
-- **GIVEN** an operator `r1` whose Overwatch enters the parked-error state because `:start_operator` exhausts its bounded-retry budget
+- **GIVEN** an operator `r1` whose Overwatch enters the parked-error state because `:start_operator` exhausts its steps-retry budget
 - **WHEN** the Overwatch parks with `state.init_error != nil`
 - **THEN** every plugin in `state.extensions` SHALL be in the `:prepared` phase
 - **AND** no plugin SHALL have invoked `activate/1`

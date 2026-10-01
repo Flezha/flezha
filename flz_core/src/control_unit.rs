@@ -55,9 +55,14 @@ struct FactoryInfo {
     /// The class's declared language, from the registry; `0` for a factory
     /// with no class, which the controller refuses to place.
     sdk_lang: u8,
-    /// `"unbounded"` or `"bounded"`, from the registry; empty for a factory
-    /// with no class.
-    kind: &'static str,
+    /// `"flow"` or `"steps"`, from the registry; empty for a factory with no
+    /// class.
+    run: String,
+    /// A steps class's loop shape and failure mode; empty for flow.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    each: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    on_failure: String,
 }
 
 #[derive(Serialize)]
@@ -557,12 +562,14 @@ fn send_init_msg(
     let factories: Vec<FactoryInfo> = factory_ids
         .iter()
         .map(|id| {
-            let (sdk_lang, kind) = crate::operator::registry::advertised_for_factory(id);
+            let decl = crate::operator::registry::advertised_for_factory(id);
             FactoryInfo {
-                id: id.clone(),
-                description: None,
-                sdk_lang,
-                kind,
+                id: decl.id,
+                description: (!decl.description.is_empty()).then_some(decl.description),
+                sdk_lang: decl.sdk_lang as u8,
+                run: decl.run,
+                each: decl.each,
+                on_failure: decl.on_failure,
             }
         })
         .collect();

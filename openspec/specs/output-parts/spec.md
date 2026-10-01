@@ -10,8 +10,8 @@ never durable and never reaches a sink or a waiting caller.
 
 Every SDK SHALL give a tasklet's invocation context one call that sends a **part**: a
 preview of the output the invocation is producing, which leaves the runner when the call is
-made rather than when the invocation returns. The call SHALL be available to a tasklet of an
-unbounded operator and of a bounded operator, in `run` and in a timer handler, and SHALL be
+made rather than when the invocation returns. The call SHALL be available to a tasklet of a
+flow operator and of a steps operator, in `run` and in a timer handler, and SHALL be
 callable any number of times, from any point of the invocation, including between two reads
 of a long blocking call made inside `run`. The value SHALL be encoded exactly as an emit of
 the same value on the tasklet's output channel would be. The call SHALL return without
@@ -19,17 +19,17 @@ waiting for the controller, for a listener or for any acknowledgement. A part SH
 the tasklet's own output channel, the one channel a tasklet node owns; it SHALL take no
 channel argument.
 
-#### Scenario: An unbounded tasklet streams parts before its output
+#### Scenario: A flow tasklet streams parts before its output
 
-- **GIVEN** an unbounded operator whose tasklet sends the parts `he`, `hel` and `hell` and
+- **GIVEN** a flow operator whose tasklet sends the parts `he`, `hel` and `hell` and
   then emits `hello` on its sink `answer`
 - **WHEN** a listener is attached and the operator is sent one input
 - **THEN** the listener SHALL receive the three parts in order, each on channel `answer`,
   and then the output `hello`
 
-#### Scenario: A bounded session streams parts within its turn
+#### Scenario: A steps session streams parts within its turn
 
-- **GIVEN** a `per_input` bounded operator whose tasklet sends two parts and then emits its
+- **GIVEN** a `per_input` steps operator whose tasklet sends two parts and then emits its
   answer on the sink `answer`
 - **WHEN** a listener is attached and the instance is sent one message
 - **THEN** the listener SHALL receive both parts before the answer, and the answer SHALL
@@ -43,7 +43,7 @@ channel argument.
 
 #### Scenario: A part leaves before the effect record under the tier
 
-- **GIVEN** an unbounded operator on the effectively-once tier whose tasklet sends a part
+- **GIVEN** a flow operator on the effectively-once tier whose tasklet sends a part
   and then emits
 - **WHEN** the input is processed under a listener
 - **THEN** the part SHALL reach the listener before the effect record is durable, and the
@@ -107,9 +107,9 @@ it would produce without them. The part SHALL NOT be the answer: the output is.
   path, and the parts the listener receives after the rebind SHALL be the ones the new
   invocation sends, starting at `flz.part` `0`
 
-#### Scenario: A bounded session's parts leave nothing in its journal
+#### Scenario: A steps session's parts leave nothing in its journal
 
-- **WHEN** a `per_input` bounded session's turn sends parts and commits
+- **WHEN** a `per_input` steps session's turn sends parts and commits
 - **THEN** its task journal, its Cells' WAL and its outbox SHALL hold exactly what the same
   turn without parts would have written
 

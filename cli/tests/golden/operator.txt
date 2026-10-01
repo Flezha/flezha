@@ -13,7 +13,7 @@ COMMANDS:
     listen      Print the frames an operator emits or ingests
     send        Send a payload to an operator's input stream
     call        Send one input and print the operator's answer
-    rewind      Rewind a bounded loop to a committed iteration
+    rewind      Rewind a steps loop to a committed iteration
     replay      Re-run a Cell's retained inputs from a point in the past
     help        Show this help message
 

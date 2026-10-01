@@ -176,7 +176,7 @@ defmodule Flezha.Service.Cli.State do
     end
   end
 
-  # Same ceiling the bounded operator handoff uses — a whole-Tasklet read of a big
+  # Same ceiling the steps operator handoff uses — a whole-Tasklet read of a big
   # Operator is the way to blow it, and naming the narrowing selector is the
   # way out.
   defp within_read_ceiling(json) do
@@ -309,8 +309,8 @@ defmodule Flezha.Service.Cli.State do
 
   @doc """
   `flz state outbox <operator/tasklet/key>`: outbox status for one Cell
-  (effectively-once tier or durable bounded operator): durable seq, flush cursor,
-  epoch, undispatched lag, the entries a bounded operator Cell holds until its stage
+  (effectively-once tier or durable steps operator): durable seq, flush cursor,
+  epoch, undispatched lag, the entries a steps operator Cell holds until its stage
   commits, and the operator's input-log min-watermark.
   """
   def state_outbox(_path_string, %{row: %{cell_id: {rc, sh, pk} = cell_id}}) do
@@ -346,7 +346,7 @@ defmodule Flezha.Service.Cli.State do
   the stale rows by natural key, which is what makes "deploy a fix, heal the
   recent past" a single verb rather than a migration.
 
-  A Cell of a bounded operator is refused before anything is rewound.
+  A Cell of a steps operator is refused before anything is rewound.
   """
   def operator_replay(_namespace, path_string, from_string, %{row: %{cell_id: cell_id}}) do
     {operator_class, _, _} = cell_id
@@ -364,10 +364,9 @@ defmodule Flezha.Service.Cli.State do
   end
 
   defp replayable(operator_class, path_string) do
-    case ClassRegistry.get(operator_class) do
-      :bounded -> {:error, {:bounded_cell, path_string}}
-      _stream -> :ok
-    end
+    if ClassRegistry.journals?(operator_class),
+      do: {:error, {:steps_cell, path_string}},
+      else: :ok
   end
 
   defp resolve_replay_overwatch(operator_class) do

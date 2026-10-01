@@ -75,7 +75,7 @@ user. A message arrives on the entry channel `turn`, `reply` answers it, and the
 
 ```java
 // AgentOperator.java: one conversation, one turn per message.
-public final class AgentOperator implements BoundedOperator {
+public final class AgentOperator implements Operator {
 
     @Override
     public String factoryId() {
@@ -83,8 +83,13 @@ public final class AgentOperator implements BoundedOperator {
     }
 
     @Override
-    public LoopMode loopMode() {
-        return LoopMode.PER_INPUT;                       // one turn per message
+    public Run run() {
+        return Run.steps(Each.PER_INPUT);                // one turn per message
+    }
+
+    @Override
+    public Durable durable() {
+        return new Durable.Local(Duration.ofSeconds(10)); // an idle session sleeps after 10 s
     }
 
     @Override
@@ -96,8 +101,9 @@ public final class AgentOperator implements BoundedOperator {
 }
 ```
 
-`LoopMode.PER_INPUT` runs the chain once per message, instead of once in all as an order
-did.
+`Run.steps(Each.PER_INPUT)` runs the chain once per message, instead of once in all as an
+order did. `durable()` keeps each session on the controller and lets an idle one sleep after
+ten seconds, which [An idle session sleeps](#an-idle-session-sleeps) shows.
 
 <!-- tabs-close -->
 
@@ -174,7 +180,6 @@ services:
     build: .
     environment:
       FLEZHA_SOCKET_FILES_PATH: /flezha/app_data/sockets
-      FLEZHA_PARK_IDLE_MS: "10000"         # an idle session sleeps after 10 s
     volumes:
       - sockets:/flezha/app_data/sockets
     depends_on:
@@ -279,10 +284,10 @@ Bob's session has a conversation of its own.
 ## An idle session sleeps
 
 A session waiting for its next message still holds a place on its runner, and with many
-sessions that adds up. So a bounded operator that keeps its state sleeps when it is idle:
-it leaves its runner, and its next message wakes it on whichever runner is there. `agent`
-declares nothing for this. How long "idle" is comes from `FLEZHA_PARK_IDLE_MS` on the
-runner, ten minutes by default and ten seconds in `compose.yaml`.
+sessions that adds up. So an operator that keeps its state sleeps when it is idle: it
+leaves its runner, and its next message wakes it on whichever runner is there. How long
+"idle" is, `agent` declares in `durable()`: ten seconds here, and six hours for a steps
+class that says nothing.
 
 > Leave Anna alone for ten seconds, then ask the controller about her session.
 > {: .step}
@@ -294,7 +299,8 @@ $ flz operator info anna --namespace agents
 ```output
 ...
 Operator: anna
-  Kind: bounded
+  Run: steps (each: per_input, on_failure: undo_all)
+  Durable: local (sleep_after: 10s)
   Phase: suspended
   Health: suspended
   Runner ID: 

@@ -3,13 +3,13 @@ use std::collections::HashMap;
 use prost::Message;
 
 use super::{CommandAction, Reply};
-use crate::bounded::spec::BoundedSpec;
-use crate::bounded::LoopMode;
 use crate::error::Code;
 use crate::operator::instance::KeyGroupRange;
+use crate::operator::settings::Each;
 use crate::operator::topology::OperatorTopology;
 use crate::pb::{AddOperator, AddOperatorResponse};
 use crate::runner::RunnerNode;
+use crate::steps::spec::StepsSpec;
 
 impl CommandAction for AddOperator {
     fn handle(
@@ -43,9 +43,9 @@ impl CommandAction for AddOperator {
 
 impl AddOperator {
     /// Bind an instance of either kind and seed it from `init_values`. A
-    /// keyless class, or a bounded operator that reads one message, cannot be
+    /// keyless class, or a steps operator that reads one message, cannot be
     /// partitioned, and only the SDK can tell — key closures are compiled
-    /// code — so the refusal is here. A bounded operator takes the bind's resume facts
+    /// code — so the refusal is here. A steps operator takes the bind's resume facts
     /// and opens once its state is in place.
     fn start(
         &self,
@@ -59,8 +59,8 @@ impl AddOperator {
             errors.push(refusal);
             return;
         }
-        let bounded = topology.bounded.is_some();
-        let resume = crate::bounded::Resume {
+        let steps = topology.steps.is_some();
+        let resume = crate::steps::Resume {
             expected: self.resume_cell_count as usize,
             owed_inbox: self.inbox_tail_count,
             journal: self.task_journal.as_ref().map(Into::into),
@@ -77,14 +77,15 @@ impl AddOperator {
         if let Err(e) = crate::command::cell_state::apply_init_values(&instance, &self.init_values)
         {
             errors.push(e);
-            // A bounded operator refused before it ran leaves nothing behind.
-            if bounded {
+            // A steps operator refused before it ran leaves nothing behind.
+            if steps {
                 runner.stop_operator(instance_id);
             }
             return;
         }
-        crate::bounded::open(&instance);
+        crate::steps::open(&instance);
         crate::operator::sleep::bound(&instance);
+        crate::operator::completion::bound(&instance);
     }
 
     /// The member's range; `partition_count < 2` is the whole space, guard
@@ -133,14 +134,14 @@ fn partition_refusal(
     // Ahead of the keyless arm: a one-message loop is unpartitionable however
     // it is keyed, and its loop mode is what the author can change.
     if let Some(spec) = topology
-        .bounded
+        .steps
         .as_ref()
-        .filter(|spec| spec.loop_mode != LoopMode::PerInput)
+        .filter(|spec| spec.each != Each::PerInput)
     {
         return Some(crate::Error::Declaration(
             Code::PartitionsWithoutPerInputLoop.with([
                 ("factory", factory_id.into()),
-                ("loop_mode", spec.loop_mode.as_str().into()),
+                ("each", spec.each.as_str().into()),
                 ("partitions", command.partition_count.into()),
             ]),
         ));
@@ -154,22 +155,23 @@ fn partition_refusal(
     }
 }
 
-/// The class's declarations as `AddOperatorResponse` metadata; empty bytes
-/// when nothing is declared, and for a class that never registered. The
-/// persistence switch rides only when off and the sleep setting only when on,
-/// for either kind.
+/// The class's settings and declarations as `AddOperatorResponse` metadata;
+/// empty bytes for a class that never registered. The run and the durability
+/// always ride; a member rides only when its parent is chosen.
 fn metadata_response(class: Option<&OperatorTopology>) -> Vec<u8> {
     let mut metadata = std::collections::HashMap::new();
     if let Some(topology) = class {
-        if !topology.persistence_enabled_const {
-            metadata.insert("persistent".to_string(), "false".to_string());
+        let mut put = |key: &str, value: String| metadata.insert(key.to_string(), value);
+        put("durable", topology.durable.as_str().to_string());
+        if let Some(after) = topology.sleep_after() {
+            put("sleep_after_ms", after.as_millis().to_string());
         }
-        if topology.sleep_when_idle {
-            metadata.insert("sleep_when_idle".to_string(), "true".to_string());
+        if let Some(limit) = topology.max_duration {
+            put("max_duration_ms", limit.as_millis().to_string());
         }
-        match &topology.bounded {
-            Some(spec) => bounded_metadata(topology, spec, &mut metadata),
-            None => unbounded_metadata(topology, &mut metadata),
+        match &topology.steps {
+            Some(spec) => steps_metadata(topology, spec, &mut metadata),
+            None => flow_metadata(topology, &mut metadata),
         }
     }
     if metadata.is_empty() {
@@ -178,19 +180,20 @@ fn metadata_response(class: Option<&OperatorTopology>) -> Vec<u8> {
     AddOperatorResponse { metadata }.encode_to_vec()
 }
 
-/// What a bounded class declares: synchronous durability, its loop mode
-/// (only a `per_input` loop partitions), the compensable positions (a rewind
-/// may only unwind those) and the leaves (the operator is done when all
-/// committed).
-fn bounded_metadata(
+/// What a steps class declares: its loop shape (only a `per_input` loop
+/// partitions) and failure mode, the compensable positions (a rewind may only
+/// unwind those) and the leaves (the operator is done when all committed).
+fn steps_metadata(
     topology: &OperatorTopology,
-    spec: &BoundedSpec,
+    spec: &StepsSpec,
     metadata: &mut HashMap<String, String>,
 ) {
-    metadata.insert("loop_mode".to_string(), spec.loop_mode.as_str().to_string());
-    if spec.sync_durability {
-        metadata.insert("durability".to_string(), "sync_remote".to_string());
-    }
+    metadata.insert("run".to_string(), "steps".to_string());
+    metadata.insert("each".to_string(), spec.each.as_str().to_string());
+    metadata.insert(
+        "on_failure".to_string(),
+        spec.on_failure.as_str().to_string(),
+    );
     metadata.insert(
         "compensable_tasks".to_string(),
         declared_tasks(spec, |node| {
@@ -205,27 +208,25 @@ fn bounded_metadata(
     );
 }
 
-/// What an unbounded class declares: the tier; partitionability only when
+/// What a flow class declares: the tier; partitionability only when
 /// `false` (the refusable fact); the correction window the controller's
-/// retention must cover; checkpoint ack-granularity, which the liveness
-/// detectors read as a still watermark; the compaction threshold when it
-/// differs from the default.
-fn unbounded_metadata(topology: &OperatorTopology, metadata: &mut HashMap<String, String>) {
+/// retention must cover; checkpoint ack, which the liveness detectors read as
+/// a still watermark; the compaction threshold when it differs from the
+/// default.
+fn flow_metadata(topology: &OperatorTopology, metadata: &mut HashMap<String, String>) {
     use crate::operator::topology::BeyondWindowPolicy;
 
+    metadata.insert("run".to_string(), "flow".to_string());
     if topology.effectively_once {
-        metadata.insert("effectively_once".to_string(), "true".to_string());
+        metadata.insert("exactly".to_string(), "effectively_once".to_string());
     }
     if !has_keyed_entry_tasklet(topology) {
         metadata.insert("keyed".to_string(), "false".to_string());
     }
     if let Some(policy) = topology.correction {
+        metadata.insert("correction_ms".to_string(), policy.window_ms.to_string());
         metadata.insert(
-            "correction_window_ms".to_string(),
-            policy.window_ms.to_string(),
-        );
-        metadata.insert(
-            "beyond_window_policy".to_string(),
+            "beyond_window".to_string(),
             match policy.beyond_window {
                 BeyondWindowPolicy::ProcessAsArrival => "process_as_arrival",
                 BeyondWindowPolicy::Drop => "drop",
@@ -234,7 +235,7 @@ fn unbounded_metadata(topology: &OperatorTopology, metadata: &mut HashMap<String
         );
     }
     if topology.ack_granularity.is_checkpoint() {
-        metadata.insert("ack_granularity".to_string(), "checkpoint".to_string());
+        metadata.insert("ack".to_string(), "checkpoint".to_string());
     }
     if let Some(min_bytes) = topology
         .tasklets
@@ -250,7 +251,7 @@ fn unbounded_metadata(topology: &OperatorTopology, metadata: &mut HashMap<String
 
 /// The positions `select` picks out, comma-separated; an empty string is "a
 /// tree, none selected".
-fn declared_tasks(spec: &BoundedSpec, select: impl Fn(usize) -> bool) -> String {
+fn declared_tasks(spec: &StepsSpec, select: impl Fn(usize) -> bool) -> String {
     (0..spec.dag.len())
         .filter(|&node| select(node))
         .map(|node| node.to_string())
@@ -266,81 +267,82 @@ mod metadata_tests {
 
     use super::{metadata_response, AddOperatorResponse, Message};
 
-    fn register_bounded(id: &str, sync: bool) {
+    fn register_steps(id: &str, durable: &str) {
         let json = format!(
-            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,"sync_durability":{sync},
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","durable":{durable},
                  "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
-                 "tasklets":[{{"name":"p0"}}],"bounded":{{}}}}"#
+                 "tasklets":[{{"name":"p0"}}],"run":"steps"}}"#
         );
         crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
     }
 
+    fn metadata_of(id: &str) -> std::collections::BTreeMap<String, String> {
+        let encoded = metadata_response(crate::operator::registry::get_class(id).as_deref());
+        AddOperatorResponse::decode(encoded.as_slice())
+            .expect("response decodes")
+            .metadata
+            .into_iter()
+            .collect()
+    }
+
     #[test]
-    fn a_sync_declaring_bounded_class_ships_the_durability_key() {
-        let id = format!("meta_sync_{}", std::process::id());
-        register_bounded(&id, true);
+    fn a_remote_steps_class_ships_its_durability_level() {
+        let id = format!("meta_remote_{}", std::process::id());
+        register_steps(&id, r#""remote""#);
 
-        let encoded = metadata_response(crate::operator::registry::get_class(&id).as_deref());
-        assert!(!encoded.is_empty());
-
-        let decoded = AddOperatorResponse::decode(encoded.as_slice()).expect("response decodes");
-
+        let metadata = metadata_of(&id);
+        assert_eq!(metadata.get("durable").map(String::as_str), Some("remote"));
         assert_eq!(
-            decoded.metadata.get("durability").map(String::as_str),
-            Some("sync_remote")
+            metadata.get("sleep_after_ms").map(String::as_str),
+            Some("21600000"),
+            "the six-hour default is the class's, announced"
         );
     }
 
     #[test]
-    fn the_persistence_switch_and_the_sleep_setting_ride_for_either_kind() {
-        let keys = |id: &str, facts: &str, kind: &str| {
-            let json = format!(
-                r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0",{facts}
-                     "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
-                     "tasklets":[{{"name":"p0"}}]{kind}}}"#
-            );
-            crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
-            let encoded = metadata_response(crate::operator::registry::get_class(id).as_deref());
-            AddOperatorResponse::decode(encoded.as_slice())
-                .expect("response decodes")
-                .metadata
-        };
-        for (suffix, kind) in [("unbounded", ""), ("bounded", r#","bounded":{}"#)] {
-            let off = keys(
-                &format!("meta_off_{suffix}_{}", std::process::id()),
-                r#""persistent":false,"#,
-                kind,
-            );
-            assert_eq!(off.get("persistent").map(String::as_str), Some("false"));
-            assert!(!off.contains_key("sleep_when_idle"));
+    fn the_durability_and_the_sleep_interval_ride_for_either_run() {
+        for (suffix, run) in [("flow", r#""flow""#), ("steps", r#""steps""#)] {
+            let keys = |name: &str, durable: &str| {
+                let id = format!("meta_{name}_{suffix}_{}", std::process::id());
+                let json = format!(
+                    r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","durable":{durable},"run":{run},
+                         "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
+                         "tasklets":[{{"name":"p0"}}]}}"#
+                );
+                crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
+                metadata_of(&id)
+            };
+            let memory = keys("memory", "false");
+            assert_eq!(memory.get("durable").map(String::as_str), Some("memory"));
+            assert!(!memory.contains_key("sleep_after_ms"));
 
-            let sleeps = keys(
-                &format!("meta_sleeps_{suffix}_{}", std::process::id()),
-                r#""persistent":true,"sleep_when_idle":true,"#,
-                kind,
+            let sleeps = keys("sleeps", r#"{"local":{"sleep_after":2000}}"#);
+            assert_eq!(sleeps.get("durable").map(String::as_str), Some("local"));
+            assert_eq!(
+                sleeps.get("sleep_after_ms").map(String::as_str),
+                Some("2000")
             );
             assert_eq!(
-                sleeps.get("sleep_when_idle").map(String::as_str),
-                Some("true")
+                sleeps.get("run").map(String::as_str),
+                Some(run.trim_matches('"'))
             );
-            assert!(!sleeps.contains_key("persistent"));
         }
     }
 
     #[test]
-    fn a_bounded_declaring_nothing_extra_ships_only_its_graph() {
+    fn a_steps_declaring_nothing_extra_ships_its_run_and_its_graph() {
         let id = format!("meta_plain_{}", std::process::id());
-        register_bounded(&id, false);
+        register_steps(&id, r#"{"local":{"sleep_after":false}}"#);
 
-        let encoded = metadata_response(crate::operator::registry::get_class(&id).as_deref());
-        let decoded = AddOperatorResponse::decode(encoded.as_slice()).expect("response decodes");
-        let keys: std::collections::BTreeMap<_, _> = decoded.metadata.into_iter().collect();
         assert_eq!(
-            keys.into_iter().collect::<Vec<_>>(),
+            metadata_of(&id).into_iter().collect::<Vec<_>>(),
             vec![
                 ("compensable_tasks".to_string(), String::new()),
+                ("durable".to_string(), "local".to_string()),
+                ("each".to_string(), "once".to_string()),
                 ("leaf_tasks".to_string(), "0".to_string()),
-                ("loop_mode".to_string(), "once".to_string())
+                ("on_failure".to_string(), "undo_all".to_string()),
+                ("run".to_string(), "steps".to_string()),
             ]
         );
         assert!(metadata_response(
@@ -360,7 +362,7 @@ mod partition_tests {
 
     fn register(id: &str, cell_mode: &str, cell_keys: &str) {
         let json = format!(
-            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","durable":{{"local":{{"sleep_after":false}}}},
                  "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
                  "tasklets":[{{"name":"p","cell_mode":"{cell_mode}","cells_for_overridden":true,
                                  "cell_keys":[{cell_keys}]}}]}}"#
@@ -415,10 +417,13 @@ mod partition_tests {
         register(&id, "dynamic", "");
 
         assert!(partition_refusal(&partitioned(&id, 3), &class_of(&id), &id).is_none());
-        // Declaring nothing keeps a keyed class's response byte-identical.
+        let encoded =
+            super::metadata_response(crate::operator::registry::get_class(&id).as_deref());
+        let decoded = AddOperatorResponse::decode(encoded.as_slice()).expect("decodes");
         assert!(
-            super::metadata_response(crate::operator::registry::get_class(&id).as_deref())
-                .is_empty()
+            !decoded.metadata.contains_key("keyed"),
+            "{:?}",
+            decoded.metadata
         );
     }
 
@@ -457,40 +462,44 @@ mod partition_tests {
 
     /// A chained loop registers non-durable: a durable one needs a terminal
     /// handoff this one-tasklet class does not have.
-    fn register_bounded(id: &str, cell_mode: &str, loop_mode: &str) {
-        let persistent = loop_mode != "chained";
+    fn register_steps(id: &str, cell_mode: &str, each: &str) {
+        let durable = if each == "chained" {
+            "false"
+        } else {
+            r#""local""#
+        };
         let json = format!(
-            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":{persistent},
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","durable":{durable},
                  "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
                  "tasklets":[{{"name":"p","cell_mode":"{cell_mode}"}}],
-                 "bounded":{{"loop_mode":"{loop_mode}"}}}}"#
+                 "run":{{"steps":{{"each":"{each}"}}}}}}"#
         );
         crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
     }
 
-    fn declared_loop_mode(id: &str) -> Option<String> {
+    fn declared_each(id: &str) -> Option<String> {
         let encoded = super::metadata_response(crate::operator::registry::get_class(id).as_deref());
         AddOperatorResponse::decode(encoded.as_slice())
             .expect("decodes")
             .metadata
-            .get("loop_mode")
+            .get("each")
             .cloned()
     }
 
     #[test]
-    fn a_bounded_that_reads_one_message_is_refused_before_the_keyless_arm() {
-        for loop_mode in ["once", "chained"] {
-            let id = format!("part_bounded_{loop_mode}_{}", std::process::id());
-            register_bounded(&id, "dynamic", loop_mode);
+    fn a_steps_that_reads_one_message_is_refused_before_the_keyless_arm() {
+        for each in ["once", "chained"] {
+            let id = format!("part_steps_{each}_{}", std::process::id());
+            register_steps(&id, "dynamic", each);
 
             let refusal =
                 partition_refusal(&partitioned(&id, 2), &class_of(&id), &id).expect("refused");
             assert_eq!(refusal.code(), "topology.partitions_without_per_input_loop");
             let details = refusal.to_error().details;
             assert_eq!(details["factory"], id.as_str());
-            assert_eq!(details["loop_mode"], loop_mode);
+            assert_eq!(details["each"], each);
             assert_eq!(details["partitions"], 2);
-            assert_eq!(declared_loop_mode(&id).as_deref(), Some(loop_mode));
+            assert_eq!(declared_each(&id).as_deref(), Some(each));
 
             let mut single = partitioned(&id, 2);
             single.partition_count = 0;
@@ -499,14 +508,14 @@ mod partition_tests {
     }
 
     #[test]
-    fn a_per_input_bounded_partitions_when_keyed_and_is_refused_as_keyless_otherwise() {
-        let keyed = format!("part_bounded_keyed_{}", std::process::id());
-        register_bounded(&keyed, "dynamic", "per_input");
+    fn a_per_input_steps_partitions_when_keyed_and_is_refused_as_keyless_otherwise() {
+        let keyed = format!("part_steps_keyed_{}", std::process::id());
+        register_steps(&keyed, "dynamic", "per_input");
         assert!(partition_refusal(&partitioned(&keyed, 2), &class_of(&keyed), &keyed).is_none());
-        assert_eq!(declared_loop_mode(&keyed).as_deref(), Some("per_input"));
+        assert_eq!(declared_each(&keyed).as_deref(), Some("per_input"));
 
-        let keyless = format!("part_bounded_keyless_{}", std::process::id());
-        register_bounded(&keyless, "single", "per_input");
+        let keyless = format!("part_steps_keyless_{}", std::process::id());
+        register_steps(&keyless, "single", "per_input");
         let refusal = partition_refusal(&partitioned(&keyless, 2), &class_of(&keyless), &keyless)
             .expect("refused");
         assert_eq!(refusal.code(), "topology.partitions_without_keyed_tasklet");

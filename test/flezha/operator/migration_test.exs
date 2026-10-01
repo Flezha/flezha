@@ -1,11 +1,11 @@
 defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
   @moduledoc """
-  `bounded-durable-suspension` lifecycle on the Overwatch: park (evict from the
+  `durable-suspension` lifecycle on the Overwatch: park (evict from the
   runner, keep the registry entry), rehydrate on a new input or the durable
   timer, exactly one rehydration when both wake sources race, and rediscovery of
   a suspended instance from durable state alone after a controller redeploy.
 
-  Plus `bounded-loop-rewind`, which rides the same evict → rehydrate path: the
+  Plus `steps-loop-rewind`, which rides the same evict → rehydrate path: the
   refusals (uncommitted target, uncompensable output) and the durable effect of
   the ones that go through.
 
@@ -48,9 +48,9 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
       # The test process stands in for the operator's StreamChannel: a
       # forwarded input arrives as an `{:io_in, ...}` cast.
       channel: self(),
-      builder: %Builder{id: inst, factory_id: "chat", kind: :bounded, opts: []},
+      builder: %Builder{id: inst, factory_id: "chat", run: :steps, opts: []},
       extensions: Table.new(Overwatch.__extensions_catalog__()),
-      durable_bounded: true
+      durable_steps: true
     }
 
     struct!(base, overrides)
@@ -396,7 +396,7 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
   end
 
   test "whether an instance sleeps is read from its park record and its log, for either kind" do
-    for kind <- [:unbounded, :bounded] do
+    for kind <- [:flow, :steps] do
       inst = instance_id()
       refute Flezha.Operator.Migration.suspended_on_disk?(inst)
 
@@ -424,9 +424,9 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
   # floor is read from its Cells' own records.
   test "a sleeping stream is rediscovered asleep at boot, its floor read from its Cells" do
     inst = instance_id()
-    builder = %Builder{id: inst, factory_id: "counter", kind: :unbounded, opts: []}
+    builder = %Builder{id: inst, factory_id: "counter", run: :flow, opts: []}
     for n <- 0..1, do: {:ok, ^n} = InputLog.append(inst, "in-#{n}", %{})
-    :ok = ClassRegistry.put_sleep_when_idle(inst, true)
+    :ok = ClassRegistry.put_sleep_after(inst, 2_000)
     :ok = ClassRegistry.put_parked(inst, park())
 
     cell_id = {inst, "counter_tasklet", "a"}
@@ -473,7 +473,7 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
       :ok
     end)
 
-    Flezha.Operator.Replay.reforward_undelivered_tail(state(inst, durable_bounded: false))
+    Flezha.Operator.Replay.reforward_undelivered_tail(state(inst, durable_steps: false))
 
     assert_received {:delivered, {"kept", %{"flz.edge" => "0:1", "flz.offset" => "1"}}}
     assert_received {:delivered, {"in-0", %{"flz.offset" => "0"}}}
@@ -511,14 +511,14 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
       :ok
     end)
 
-    Flezha.Operator.Replay.reforward_undelivered_tail(state(inst, durable_bounded: false))
+    Flezha.Operator.Replay.reforward_undelivered_tail(state(inst, durable_steps: false))
 
     assert_received {:delivered, {"plain", plain}}
     refute Map.has_key?(plain, "flz.reply_to")
     assert_received {:delivered, {"called", %{"flz.edge" => "0:1", "flz.reply_to" => "w:caller"}}}
   end
 
-  test "a stop of a sleeping bounded wakes it with the stop, and the bind sends it" do
+  test "a stop of a sleeping steps operator wakes it with the stop, and the bind sends it" do
     inst = instance_id()
     stub(Flezha.Service.OperatorManager, :assign_runner, fn _, _, _ -> "ex_2" end)
     :ok = ClassRegistry.put_parked(inst, park())
@@ -534,8 +534,8 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
     stub(Flezha.Service.HubManager, :operator_set_runner, fn _, _, _ -> :ok end)
     stub(Flezha.Runner.StreamPool, :put_route, fn _, _, _ -> :ok end)
 
-    stub(Flezha.Runner.ControlUnit, :bounded_stop, fn runner, id ->
-      send(test_pid, {:bounded_stop, runner, id})
+    stub(Flezha.Runner.ControlUnit, :steps_stop, fn runner, id ->
+      send(test_pid, {:steps_stop, runner, id})
       :ok
     end)
 
@@ -549,7 +549,7 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
     {:noreply, _awake} =
       Overwatch.handle_info({:migrate_task_result, self(), {:bound, recovered}}, carrying)
 
-    assert_received {:bounded_stop, "ex_2", ^inst}
+    assert_received {:steps_stop, "ex_2", ^inst}
   end
 
   test "a stop finds no runner to wake on, or the instance already awake" do
@@ -570,7 +570,7 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
 
   test "a suspended instance is rediscovered from durable state after a redeploy" do
     inst = instance_id()
-    builder = %Builder{id: inst, factory_id: "chat", kind: :bounded, opts: []}
+    builder = %Builder{id: inst, factory_id: "chat", run: :steps, opts: []}
 
     # Durable state of a suspended instance: iteration 0 consumed the log's first
     # input and committed, then parked.
@@ -626,13 +626,13 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
     refute_received {:trace, ^log, :receive, {:"$gen_call", _, {:read_range, _, _}}}
   end
 
-  test "a bounded operator whose state key is not its instance id is refused before it binds" do
+  test "a steps operator whose state key is not its instance id is refused before it binds" do
     inst = instance_id()
 
     builder = %Builder{
       id: inst,
       factory_id: "chat",
-      kind: :bounded,
+      run: :steps,
       opts: [operator_class: "elsewhere"]
     }
 
@@ -647,7 +647,7 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
     assert log =~ "its state key is its instance id"
   end
 
-  # ---------- bounded-loop-rewind ----------
+  # ---------- steps-loop-rewind ----------
 
   # The rewind rides the same evict → rehydrate path a park does, so the same
   # stubs stand in for the runner side.
@@ -750,14 +750,14 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
 
       st =
         state(inst,
-          durable_bounded: false,
+          durable_steps: false,
           corrections: %{{inst, "task", "k"} => 100}
         )
 
       assert Overwatch.migration_consent(st) == :defer
     end
 
-    test "an unsuspended durable bounded defers; a suspended one consents" do
+    test "an unsuspended durable steps operator defers; a suspended one consents" do
       inst = instance_id()
       assert Overwatch.migration_consent(state(inst)) == :defer
       assert Overwatch.migration_consent(state(inst, suspended: true)) == :ready
@@ -765,7 +765,7 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
 
     test "an effectively-once instance with pending outbox defers, drained consents" do
       inst = instance_id()
-      st = state(inst, durable_bounded: false, effectively_once: true)
+      st = state(inst, durable_steps: false, effectively_once: true)
 
       stub(Flezha.State.WriterRegistry, :live_writers, fn _class -> [self()] end)
 
@@ -791,7 +791,7 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
 
     test "an outbox-query failure fails open to :ready" do
       inst = instance_id()
-      st = state(inst, durable_bounded: false, effectively_once: true)
+      st = state(inst, durable_steps: false, effectively_once: true)
 
       stub(Flezha.State.WriterRegistry, :live_writers, fn _class -> [self()] end)
       stub(Flezha.State.WalWriter, :outbox_status, fn _pid, _timeout -> exit(:timeout) end)
@@ -799,14 +799,14 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
       assert Overwatch.migration_consent(st) == :ready
     end
 
-    test "an idle unbounded instance consents immediately" do
+    test "an idle flow instance consents immediately" do
       inst = instance_id()
-      assert Overwatch.migration_consent(state(inst, durable_bounded: false)) == :ready
+      assert Overwatch.migration_consent(state(inst, durable_steps: false)) == :ready
     end
 
     test "a stream that sleeps consents awake and asleep" do
       inst = instance_id()
-      st = state(inst, durable_bounded: false, sleeps: true)
+      st = state(inst, durable_steps: false, sleeps: true)
       assert Overwatch.migration_consent(st) == :ready
       assert Overwatch.migration_consent(%{st | suspended: true}) == :ready
     end
@@ -843,14 +843,14 @@ defmodule FlezhaTest.Operator.OverwatchSuspensionTest do
 
       # A stale debounce timer for a cell that is not pending: the pop leaves
       # `corrections` empty, which is the completion condition.
-      st = state(inst, durable_bounded: false, corrections: %{})
+      st = state(inst, durable_steps: false, corrections: %{})
       {:noreply, _} = Overwatch.handle_info({:run_correction, {inst, "task", "k"}}, st)
       assert_receive {:migration_ready, ^inst}
 
       # Another cell still pending: not complete, no signal.
       busy =
         state(inst,
-          durable_bounded: false,
+          durable_steps: false,
           corrections: %{{inst, "task", "other"} => 5}
         )
 

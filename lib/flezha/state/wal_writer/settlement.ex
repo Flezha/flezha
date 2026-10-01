@@ -1,12 +1,12 @@
 defmodule Flezha.State.WalWriter.Settlement do
   @moduledoc """
-  The writer's outbox, for an unbounded operator Cell under the effectively-once tier and a
-  durable bounded operator Cell alike: which durable entries are owed, which are in
+  The writer's outbox, for a flow operator Cell under the effectively-once tier and a
+  durable steps operator Cell alike: which durable entries are owed, which are in
   flight, and when the cursor may pass one.
 
   An effect record's outputs queue on append and dispatch only once the record
-  is durable and its kind has committed it: an unbounded operator's record is its own
-  commit; a bounded operator Cell's entry is held until the stage marker naming it is
+  is durable and its kind has committed it: a flow operator's record is its own
+  commit; a steps operator Cell's entry is held until the stage marker naming it is
   durable (`commit_records/3`), and one that no marker will ever name (an
   interrupted, failed or unwound attempt's) is dropped without reaching the
   chain. An entry completes when every output has settled and every hold has
@@ -249,7 +249,7 @@ defmodule Flezha.State.WalWriter.Settlement do
   end
 
   @doc """
-  A bounded operator Cell's records `first..last` are named by a durable stage marker:
+  A steps operator Cell's records `first..last` are named by a durable stage marker:
   release them. A held entry below `first` belongs to an attempt of an earlier
   stage that never committed (a stage's attempts on one Cell run one after
   another, and each commit names the attempt that succeeded), so it is dropped

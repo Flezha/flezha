@@ -26,7 +26,7 @@ pub struct TaskletDescriptor {
     pub name: Arc<str>,
     pub cell_keys: Vec<&'static str>,
     pub cells_for_overridden: bool,
-    /// A bounded run compensates only a tasklet with this set.
+    /// A steps run compensates only a tasklet with this set.
     pub compensate_overridden: bool,
     pub mode: CellMode,
     /// Dynamic-mode idle eviction window; `None` never evicts.
@@ -70,12 +70,13 @@ pub struct OperatorTopology {
     pub tasklets: Vec<TaskletDescriptor>,
     pub tasklet_name_to_id: HashMap<&'static str, TaskletId>,
     pub factory_id: &'static str,
-    /// The class's declared persistence; the instance resolves the runner
-    /// override against it.
-    pub persistence_enabled_const: bool,
-    /// An idle instance sleeps: parks, is evicted and wakes on its next
-    /// input. Refused without persistence.
-    pub sleep_when_idle: bool,
+    /// What the class is for, announced with its factory id.
+    pub description: &'static str,
+    /// Where the class keeps its work, and how long an idle instance waits
+    /// before it sleeps.
+    pub durable: crate::operator::settings::Durable,
+    /// A wall-clock stop, for either run.
+    pub max_duration: Option<std::time::Duration>,
     /// The effectively-once tier: emits ride the effect record on the
     /// reliable sink instead of the primary stream.
     pub effectively_once: bool,
@@ -86,9 +87,16 @@ pub struct OperatorTopology {
     /// Where the effectively-once tier acknowledges its inputs.
     pub ack_granularity: AckGranularity,
 
-    /// `Some` for a bounded class: its DAG and lifecycle facts. The kind of
-    /// a class is this field and nothing else.
-    pub bounded: Option<crate::bounded::spec::BoundedSpec>,
+    /// `Some` for a class that runs in steps: its DAG and lifecycle facts.
+    /// How a class runs is this field and nothing else.
+    pub steps: Option<crate::steps::spec::StepsSpec>,
+}
+
+impl OperatorTopology {
+    /// How long an idle instance waits before it sleeps; `None` never.
+    pub fn sleep_after(&self) -> Option<std::time::Duration> {
+        self.durable.sleep_after(self.steps.is_some())
+    }
 }
 
 // Manual: channels and tasklets hold closures. A summary is enough for test
@@ -99,7 +107,7 @@ impl std::fmt::Debug for OperatorTopology {
             .field("factory_id", &self.factory_id)
             .field("channels", &self.channels.len())
             .field("tasklets", &self.tasklets.len())
-            .field("bounded", &self.bounded)
+            .field("steps", &self.steps)
             .finish()
     }
 }
@@ -184,13 +192,11 @@ pub enum ChannelLookup<'a> {
 
 impl OperatorTopology {
     /// Whether a Cell of this class settles every invocation into one effect
-    /// record: under the effectively-once tier, and for a durable bounded operator,
+    /// record: under the effectively-once tier, and for a durable steps operator,
     /// whose stage commit names the records it stands for.
-    pub fn records_effects(&self, persistence_enabled: bool) -> bool {
+    pub fn records_effects(&self, keeps_state: bool) -> bool {
         self.effectively_once
-            || (self.bounded.is_some()
-                && persistence_enabled
-                && crate::runner::coordinator_installed())
+            || (self.steps.is_some() && keeps_state && crate::runner::coordinator_installed())
     }
 
     pub fn lookup_channel_id(&self, name: &str) -> Option<ChannelId> {
@@ -232,7 +238,7 @@ impl OperatorTopology {
     }
 
     /// Each entry channel with the tasklets it feeds, in declaration order:
-    /// the roots of a bounded operator's chains.
+    /// the roots of a steps operator's chains.
     pub fn entry_consumers(&self) -> Vec<(ChannelId, Vec<TaskletId>)> {
         self.channels
             .iter()

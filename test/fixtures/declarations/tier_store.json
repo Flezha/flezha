@@ -1,4 +1,6 @@
 {
-  "effectively_once": "true",
-  "keyed": "false"
+  "durable": "local",
+  "exactly": "effectively_once",
+  "keyed": "false",
+  "run": "flow"
 }

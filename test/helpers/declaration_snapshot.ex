@@ -73,7 +73,7 @@ defmodule FlezhaTest.Helper.DeclarationSnapshot do
              OperatorManager.start_operator(namespace, %Builder{
                id: unique.("d_#{factory}"),
                factory_id: factory,
-               kind: kind
+               run: kind
              })
 
     assert_receive {:declaration_metadata, metadata}, 60_000

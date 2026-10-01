@@ -35,13 +35,13 @@ defmodule FlezhaTest.Operator.PartitionGroupTest do
     registry = FakeStartRegistry.install()
 
     ClassRegistry.ensure_table()
-    ClassRegistry.put_partitioning(@factory, %{keyless: false, loop_mode: nil})
+    ClassRegistry.put_partitioning(@factory, %{keyless: false, each: nil})
 
     %{registry: registry}
   end
 
-  defp builder(id \\ "ohlc", kind \\ :unbounded) do
-    %Builder{id: id, factory_id: @factory, kind: kind}
+  defp builder(id \\ "ohlc", run \\ :flow) do
+    %Builder{id: id, factory_id: @factory, run: run}
   end
 
   defp started_members, do: FakeStartRegistry.started()
@@ -73,22 +73,22 @@ defmodule FlezhaTest.Operator.PartitionGroupTest do
   end
 
   describe "refusals, all of which run before the first member starts" do
-    test "a per-input bounded passes the preflight and starts as N ordinary members" do
-      ClassRegistry.put_partitioning(@factory, %{keyless: false, loop_mode: :per_input})
-      stub(FleetManager, :factory_kind, fn _ns, @factory -> {:ok, :bounded} end)
+    test "a per-input steps passes the preflight and starts as N ordinary members" do
+      ClassRegistry.put_partitioning(@factory, %{keyless: false, each: :per_input})
+      stub(FleetManager, :factory_run, fn _ns, @factory -> {:ok, :steps} end)
 
       assert {:ok, %{members: ["chat#p0", "chat#p1"]}} =
-               PartitionGroup.start(@namespace, builder("chat", :bounded), 2)
+               PartitionGroup.start(@namespace, builder("chat", :steps), 2)
 
-      assert Enum.all?(started_members(), &(&1.kind == :bounded))
+      assert Enum.all?(started_members(), &(&1.run == :steps))
     end
 
-    test "a bounded class known to read one message is refused without touching a runner" do
+    test "a steps class known to read one message is refused without touching a runner" do
       for mode <- [:once, :chained] do
-        ClassRegistry.put_partitioning(@factory, %{keyless: false, loop_mode: mode})
+        ClassRegistry.put_partitioning(@factory, %{keyless: false, each: mode})
 
         assert {:error, {:partitions_without_per_input_loop, @factory, ^mode, 2}} =
-                 PartitionGroup.start(@namespace, builder("chat", :bounded), 2)
+                 PartitionGroup.start(@namespace, builder("chat", :steps), 2)
 
         assert started_members() == []
       end
@@ -138,7 +138,7 @@ defmodule FlezhaTest.Operator.PartitionGroupTest do
     end
 
     test "a class already known to be keyless is refused without touching a runner" do
-      ClassRegistry.put_partitioning(@factory, %{keyless: true, loop_mode: nil})
+      ClassRegistry.put_partitioning(@factory, %{keyless: true, each: nil})
 
       assert {:error, {:partitions_without_keyed_tasklet, @factory}} =
                PartitionGroup.start(@namespace, builder(), 3)
@@ -288,11 +288,11 @@ defmodule FlezhaTest.Operator.PartitionGroupTest do
 
     # A spawn carries no key, so it can only name one instance; the group's
     # base is none, and the start authority refuses it as it refuses any start.
-    test "a spawn naming a live bounded group's base is refused, and nothing is delivered" do
-      stub(FleetManager, :factory_kind, fn _ns, @factory -> {:ok, :bounded} end)
+    test "a spawn naming a live steps group's base is refused, and nothing is delivered" do
+      stub(FleetManager, :factory_run, fn _ns, @factory -> {:ok, :steps} end)
       stub(FleetManager, :placement_refusal, fn _ns, @factory -> :none end)
-      ClassRegistry.put_partitioning(@factory, %{keyless: false, loop_mode: :per_input})
-      assert {:ok, _} = PartitionGroup.start(@namespace, builder("orders", :bounded), 2)
+      ClassRegistry.put_partitioning(@factory, %{keyless: false, each: :per_input})
+      assert {:ok, _} = PartitionGroup.start(@namespace, builder("orders", :steps), 2)
       _ = started_members()
 
       caller = %{source: :sdk, principal: "runner@" <> @namespace, namespace: @namespace}
@@ -326,7 +326,7 @@ defmodule FlezhaTest.Operator.PartitionGroupTest do
     test "generates a base that leaves room for its largest member" do
       factory = "orders_enrichment_pipeline_v2x"
       assert byte_size(factory) == 30
-      ClassRegistry.put_partitioning(factory, %{keyless: false, loop_mode: nil})
+      ClassRegistry.put_partitioning(factory, %{keyless: false, each: nil})
 
       assert {:ok, result} =
                PartitionGroup.start(@namespace, %Builder{id: nil, factory_id: factory}, 16)
@@ -425,7 +425,7 @@ defmodule FlezhaTest.Operator.PartitionGroupRescaleTest do
     parent = self()
 
     registry =
-      FakeStartRegistry.install(seed: seed(:unbounded), runners: ["r1", "r2", "r3", "r4", "r5"])
+      FakeStartRegistry.install(seed: seed(:flow), runners: ["r1", "r2", "r3", "r4", "r5"])
 
     stub(PluginManager, :disable_operators, fn _ns, ids ->
       for id <- ids, do: send(parent, {:sources_off, id})
@@ -436,7 +436,7 @@ defmodule FlezhaTest.Operator.PartitionGroupRescaleTest do
     stub(InputLog, :tail, fn _class -> {:ok, -1, -1} end)
 
     ClassRegistry.ensure_table()
-    ClassRegistry.put_partitioning(@factory, %{keyless: false, loop_mode: nil})
+    ClassRegistry.put_partitioning(@factory, %{keyless: false, each: nil})
 
     %{registry: registry}
   end
@@ -447,7 +447,7 @@ defmodule FlezhaTest.Operator.PartitionGroupRescaleTest do
       %Builder{
         id: Partition.member_id(@group, index),
         factory_id: @factory,
-        kind: kind,
+        run: kind,
         opts: [plugins: []] ++ Partition.member_opts(@group, index, 3, range)
       }
     end
@@ -481,7 +481,7 @@ defmodule FlezhaTest.Operator.PartitionGroupRescaleTest do
         if class == "ohlc#p1", do: {:ok, 7, 42}, else: {:ok, -1, -1}
       end)
 
-      assert {:error, {:quiesce_timeout, "ohlc#p1", :unbounded, progress}} =
+      assert {:error, {:quiesce_timeout, "ohlc#p1", :flow, progress}} =
                PartitionGroup.rescale(@namespace, @group, 2, quiesce_timeout_ms: 0)
 
       assert progress == %{last_offset: 42, watermark: 7}
@@ -636,14 +636,14 @@ defmodule FlezhaTest.Operator.PartitionGroupRescaleTest do
     end
   end
 
-  describe "a bounded group" do
+  describe "a steps group" do
     setup do
       parent = self()
 
       FakeStartRegistry.install(
-        seed: seed(:bounded),
+        seed: seed(:steps),
         runners: ["r1", "r2", "r3", "r4"],
-        kind: :bounded
+        run: :steps
       )
 
       stub(InputLog, :tail, fn class ->

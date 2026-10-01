@@ -169,7 +169,7 @@ opt = fn
 end
 
 title =
-  "Bounded bench — profile #{profile} — #{DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_string()}"
+  "Steps bench — profile #{profile} — #{DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_string()}"
 
 header =
   "| case | runtime | throughput (median) | latency p50 | peak mem | fsync p99 | integrity | runs | vs baseline |\n" <>
@@ -186,7 +186,7 @@ legend = """
 
 **What the columns mean**
 
-- **throughput** — work finished per second: `bounded/s` (chain), `turns/s`
+- **throughput** — work finished per second: `steps/s` (chain), `turns/s`
   (chat turns), `wakes/s` (sleep wake storm). Higher is better.
 - **latency p50** — median end-to-end for that work: spawn→completed (chain),
   turn→reply (turns), wake→reply (sleep).

@@ -196,7 +196,7 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
     {:ok, _} = ScheduleStore.add(ScheduleTestHelper.entry_fields(%{name: "walk-run"}))
     test = self()
 
-    stub(OperatorManager, :start_bounded, fn "default", id, _factory, _init, _opts ->
+    stub(OperatorManager, :start_steps, fn "default", id, _factory, _init, _opts ->
       send(test, {:spawned, id})
       {:ok, %{operator_id: id}}
     end)

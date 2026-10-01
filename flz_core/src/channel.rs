@@ -279,7 +279,7 @@ pub struct ChannelDescriptor {
     /// Byte codec for inter-tasklet payloads, derived by the runtime and
     /// declared by no SDK. `Some` exactly when `kind` is
     /// [`ChannelKind::InterTasklet`], because that is the channel the journal
-    /// reads back: a durable structured bounded operator re-seeds a resumed tasklet
+    /// reads back: a durable structured steps operator re-seeds a resumed tasklet
     /// through it, and nothing re-seeds from an entry or a plugin-bound
     /// terminal.
     pub codec: Option<ChannelCodec>,
@@ -326,7 +326,7 @@ pub struct BuildCellArgs<'a> {
     pub tasklet_id: TaskletId,
     pub cell_key: Option<&'a str>,
     pub cell_index: usize,
-    pub persistence_enabled: bool,
-    /// The instance's processed prefix, `None` for a bounded operator.
+    pub keeps_state: bool,
+    /// The instance's processed prefix, `None` for a steps operator.
     pub prefix: Option<Arc<crate::prefix::PrefixLedger>>,
 }

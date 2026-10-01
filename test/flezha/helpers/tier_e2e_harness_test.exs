@@ -14,7 +14,7 @@ defmodule FlezhaTest.Helper.TierE2EHarnessTest do
   # The widest prefix the suite mints, and two computed ones. 24 bytes leaves
   # room for 7 digits, which is one more than a full run reaches.
   @widest "checkpoint_batched_store"
-  @prefixes [@widest, "d_do_nothing", "pipe_compare_filter", "tier_commit_block_bounded"]
+  @prefixes [@widest, "d_do_nothing", "pipe_compare_filter", "tier_commit_block_steps"]
 
   defp counter_of(digits), do: String.to_integer(String.duplicate("9", digits))
 

@@ -454,7 +454,7 @@ acts on, and SHALL NOT terminate `PluginManager` itself. A teardown walking many
 operators SHALL continue past one that cannot be reached, and SHALL report which
 ones it could not disable.
 
-The bound SHALL be applied through the one bounded-call seam rather than a
+The bound SHALL be applied through the one steps-call seam rather than a
 `catch` clause written at the site, and the inner bound SHALL stay strictly
 smaller than the bound the caller of `PluginManager` applies, so the two do not
 give up at the same instant.

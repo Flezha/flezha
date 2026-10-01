@@ -1,6 +1,6 @@
 //! The class registry (process-global, by `factory_id`) and the per-runner
 //! instance registry (by `instance_id`). One of each serves both kinds: a
-//! class's kind is its topology's `bounded` field, and a bounded instance is
+//! class's kind is its topology's `steps` field, and a steps instance is
 //! an [`OperatorInstance`] that also carries a run.
 
 use std::collections::HashMap;
@@ -31,22 +31,29 @@ pub fn class_factory_ids() -> Vec<&'static str> {
     CLASS_REGISTRY.read().unwrap().keys().copied().collect()
 }
 
-/// What a runner advertises for `factory_id`: the class's SDK language and
-/// its kind. An undeclared factory answers
-/// [`crate::header::SDK_LANG_UNSPECIFIED`] and an empty kind, which the
+/// What a runner advertises for `factory_id`: the class's SDK language, how
+/// it runs and what it is for. An undeclared factory answers
+/// [`crate::header::SDK_LANG_UNSPECIFIED`] and an empty run, which the
 /// controller refuses to place.
-pub fn advertised_for_factory(factory_id: &str) -> (u8, &'static str) {
-    get_class(factory_id)
-        .map(|topology| (topology.sdk_lang, kind_of(&topology)))
-        .unwrap_or((crate::header::SDK_LANG_UNSPECIFIED, ""))
-}
-
-/// The kind a class declares, as the wire names it.
-pub fn kind_of(topology: &OperatorTopology) -> &'static str {
-    match topology.bounded {
-        Some(_) => "bounded",
-        None => "unbounded",
+pub fn advertised_for_factory(factory_id: &str) -> crate::pb::FactoryDecl {
+    let mut decl = crate::pb::FactoryDecl {
+        id: factory_id.to_string(),
+        sdk_lang: crate::header::SDK_LANG_UNSPECIFIED as u32,
+        ..Default::default()
+    };
+    if let Some(topology) = get_class(factory_id) {
+        decl.sdk_lang = topology.sdk_lang as u32;
+        decl.description = topology.description.to_string();
+        match &topology.steps {
+            Some(spec) => {
+                decl.run = "steps".to_string();
+                decl.each = spec.each.as_str().to_string();
+                decl.on_failure = spec.on_failure.as_str().to_string();
+            }
+            None => decl.run = "flow".to_string(),
+        }
     }
+    decl
 }
 
 pub struct OperatorRegistry {
@@ -101,13 +108,13 @@ impl OperatorRegistry {
         self.inner.contains_key(instance_id)
     }
 
-    /// The unbounded instances. A durable bounded operator is suspended through its
+    /// The flow instances. A durable steps operator is suspended through its
     /// journal and resumed at its stage, never re-seeded from a shipped state
     /// document, so the graceful-shutdown walk leaves it out.
     pub fn snapshot_stream(&self) -> HashMap<String, Arc<OperatorInstance>> {
         self.inner
             .iter()
-            .filter(|r| r.value().bounded.is_none())
+            .filter(|r| r.value().steps.is_none())
             .map(|r| (r.key().clone(), Arc::clone(r.value())))
             .collect()
     }

@@ -263,15 +263,15 @@ impl Drop for LocalRun {
 /// local run is unpartitioned by construction.
 fn refuse_controller_only(factory_id: &str) -> Result<(), Error> {
     let class = crate::operator::registry::get_class(factory_id);
-    let bounded = class
+    let steps = class
         .as_ref()
-        .is_some_and(|topology| topology.bounded.is_some());
+        .is_some_and(|topology| topology.steps.is_some());
     let tier = class.is_some_and(|topology| topology.effectively_once);
-    // A bounded operator's messages come from the controller's input log and
+    // A steps operator's messages come from the controller's input log and
     // its commit barriers are durable; under the tier an output is released
     // once its effect record is durable. Local mode has neither.
-    let capability = if bounded {
-        "a bounded operator"
+    let capability = if steps {
+        "a steps operator"
     } else if tier {
         "effectively_once"
     } else {

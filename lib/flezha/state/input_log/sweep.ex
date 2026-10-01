@@ -10,7 +10,7 @@ defmodule Flezha.State.InputLog.Sweep do
 
   A log that grows past the size threshold while its watermark stands still is
   not silently accumulating: the frozen-watermark event names the reporter (an
-  unbounded Cell, or a bounded operator's journal) that is holding it. Two memos are kept
+  flow Cell, or a steps operator's journal) that is holding it. Two memos are kept
   per instance, because they answer two questions — the floor "is there
   anything left to reclaim?", the watermark "is a reporter refusing to
   consume?".

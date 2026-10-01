@@ -36,11 +36,13 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
   @test_operator_factory "do_nothing"
   @test_filter_factory "compare_filter"
 
-  # Unbounded operators that request bounded spawns: the bounded capability
+  # Flow operators that request steps spawns: the steps capability
   # lists them because its scenarios drive them, not because they are one.
   @stream_requesters ~w(spawn_requester spawn_hold_requester spawn_once_requester)
-  # The bounded operator half of the shorthand capability.
-  @bounded_short_forms ~w(sugar_bounded sugar_bounded_per_input)
+  # Steps operators another capability lists: the shorthand's steps half, the
+  # operator-call sessions and the steps parts fixture.
+  @steps_elsewhere ~w(sugar_steps sugar_steps_per_input call_agent call_tool_session
+                      part_echo_steps)
 
   # A namespace per test: these scenarios start, kill and migrate runners, and
   # a neighbour's teardown must never be able to reach into one of them.
@@ -89,8 +91,8 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
         assert MapSet.difference(live_ids, declared) |> MapSet.to_list() == [],
                "the runner registers fixtures the manifest does not list"
 
-        for %{id: id, kind: kind} <- live do
-          expected = if bounded_fixture?(id), do: :bounded, else: :unbounded
+        for %{id: id, run: kind} <- live do
+          expected = if steps_fixture?(id), do: :steps, else: :flow
 
           assert kind == expected,
                  "#{NodeTestHelper.runtime()} announced #{id} as #{inspect(kind)}, " <>
@@ -134,7 +136,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
       # tasklet model exists for. Registration alone has always passed: a
       # per-edge model declares a second channel for the sink, so the plugin
       # frame names the SINK rather than the producing channel and the durable
-      # handoff a bounded journals is the wrong one. The channel name on the
+      # handoff a steps journals is the wrong one. The channel name on the
       # frame is what makes that visible from the controller.
       @tag capability: :graph_builder,
            skip: FlezhaTest.SystemCase.deferral(:graph_builder),
@@ -287,11 +289,11 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
   # The runner's stdout until `needle` appears. A hybrid channel's consumer
   # tasklet holds no state and answers nothing, so what it prints is its only
   # observable effect — and every SDK's fixture prints the same line.
-  # A fixture of the bounded kind: a bounded short form, or one the bounded operator
-  # capability lists that is not a stream requester.
-  defp bounded_fixture?(id) do
-    bounded = Map.get(NodeTestHelper.fixtures(), "bounded", []) -- @stream_requesters
-    id in bounded or id in @bounded_short_forms
+  # A fixture of the steps run: one the steps operator capability lists that is
+  # not a stream requester, or one another capability lists.
+  defp steps_fixture?(id) do
+    steps = Map.get(NodeTestHelper.fixtures(), "steps", []) -- @stream_requesters
+    id in steps or id in @steps_elsewhere
   end
 
   defp runner_said(port, needle, budget \\ 30_000) do

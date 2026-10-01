@@ -91,7 +91,7 @@ defmodule Flezha.Service.OperatorManager do
     end
   end
 
-  # One bounded operator forward; an unreachable or crashed peer maps through `on_error`
+  # One steps operator forward; an unreachable or crashed peer maps through `on_error`
   # instead of raising into the caller. Must exceed the remote start's own
   # internal budget (ProcessHub's 15s wait plus the :no_response retry ladder).
 
@@ -125,7 +125,7 @@ defmodule Flezha.Service.OperatorManager do
   forward, never a wrong start.
 
   This is the single start-authority seam: every in-cluster starter — the
-  CLI/manager, a schedule's slot, a tasklet's `spawn_bounded`, and the
+  CLI/manager, a schedule's slot, a tasklet's `spawn_steps`, and the
   orphan reconcile through the same durable registry — resolves the id claim
   here. A start that loses the claim answers `:duplicate` and leaves the
   winner strictly alone; it is never reported as a failed start, because the
@@ -265,15 +265,15 @@ defmodule Flezha.Service.OperatorManager do
   end
 
   @doc """
-  Stops `operator_id` the way its kind expects.
+  Stops `operator_id` in the way its run expects.
 
-  A `:bounded` operator is stopped **cooperatively**, awake or asleep: a
-  `BoundedStop` trips the SDK's cancellation token and the operator winds
-  down to its own `BoundedCompleted` (status "cancelled"), which drives the
-  single teardown via `ControlChannel.handle_bounded_completed/2`. A sleeping
-  one is first woken onto a runner, and the stop follows the bind. An unbounded operator,
-  and a bounded one no runner can take or whose runner cannot be reached, take the
-  hard `stop_operator/2` teardown. An unreadable kind (not found / wedged)
+  A `:steps` operator is stopped **cooperatively**, awake or asleep: a
+  `StepsStop` trips the SDK's cancellation token and the operator winds
+  down to its own `OperatorCompleted` (status "cancelled"), which drives the
+  single teardown via `ControlChannel.handle_operator_completed/2`. A sleeping
+  one is first woken onto a runner, and the stop follows the bind. A flow operator,
+  and a steps one no runner can take or whose runner cannot be reached, take the
+  hard `stop_operator/2` teardown. An unreadable run (not found / wedged)
   also falls back to the hard stop so `flz operator stop` always attempts
   removal.
 
@@ -293,7 +293,7 @@ defmodule Flezha.Service.OperatorManager do
 
   defp do_request_stop(namespace, operator_id, wake? \\ true) do
     case get_overwatch_state(namespace, operator_id) do
-      {:ok, %{builder: %{kind: :bounded}, suspended: true}} when wake? ->
+      {:ok, %{builder: %{run: :steps}, suspended: true}} when wake? ->
         case wake_to_stop(namespace, operator_id) do
           :ok -> {:ok, :cooperative}
           # Woken meanwhile: stopped as an awake one, once.
@@ -301,9 +301,9 @@ defmodule Flezha.Service.OperatorManager do
           {:error, _no_runner} -> stop_operator(namespace, operator_id)
         end
 
-      {:ok, %{builder: %{kind: :bounded}, runner_id: runner_id}}
+      {:ok, %{builder: %{run: :steps}, runner_id: runner_id}}
       when is_binary(runner_id) ->
-        case ControlUnit.bounded_stop(runner_id, operator_id) do
+        case ControlUnit.steps_stop(runner_id, operator_id) do
           :ok -> {:ok, :cooperative}
           # No control unit to cooperate with — fall back to the hard teardown.
           {:error, _} -> stop_operator(namespace, operator_id)
@@ -328,8 +328,8 @@ defmodule Flezha.Service.OperatorManager do
   channels, stop the child through the hub, delete its on-disk state, release
   its quota — under the one operator-stop budget. Drives `RemOperator`
   (terminal) — the converged teardown for both an explicit stop and a
-  `BoundedCompleted`. `preserve_state: true` keeps the files for a rescale to
-  move and `:sealed` also seals a bounded operator's journal at its latest committed
+  `OperatorCompleted`. `preserve_state: true` keeps the files for a rescale to
+  move and `:sealed` also seals a steps operator's journal at its latest committed
   iteration; either closes the writers on the node the operator ran on.
   """
   @spec stop_operator(String.t(), String.t(), keyword()) :: :ok | {:error, term()}
@@ -397,10 +397,10 @@ defmodule Flezha.Service.OperatorManager do
   @spec delete_state_dir(String.t()) :: :ok
   defdelegate delete_state_dir(operator_id), to: Teardown, as: :delete_operator_state_dir
 
-  @doc "The completion record a finished bounded instance of `operator_class` left."
+  @doc "The completion record a finished steps instance of `operator_class` left."
   defdelegate completion(operator_class), to: Completion, as: :read
 
-  @doc "Whether a finished bounded instance of `operator_class` left a completion record."
+  @doc "Whether a finished steps instance of `operator_class` left a completion record."
   defdelegate completed?(operator_class), to: Completion, as: :exists?
 
   def send_io(operator_id, namespace, message, metadata) do
@@ -551,7 +551,7 @@ defmodule Flezha.Service.OperatorManager do
   end
 
   @doc """
-  Start a bounded instance of `factory_id` under `instance_id`, or under a
+  Start a steps instance of `factory_id` under `instance_id`, or under a
   generated id when it is `nil`, answering `:duplicate` when a given id is
   already claimed.
 
@@ -559,13 +559,13 @@ defmodule Flezha.Service.OperatorManager do
   tasklet's `spawn_or_deliver/6`. The duplicate verdict itself is minted by
   `start_operator/3`, the one start-authority seam.
   """
-  @spec start_bounded(String.t(), String.t() | nil, String.t(), map(), Keyword.t()) ::
+  @spec start_steps(String.t(), String.t() | nil, String.t(), map(), Keyword.t()) ::
           {:ok, map()} | :duplicate | {:error, term()}
-  def start_bounded(namespace, instance_id, factory_id, init_values \\ %{}, opts \\ []) do
+  def start_steps(namespace, instance_id, factory_id, init_values \\ %{}, opts \\ []) do
     start_operator(namespace, %OperatorBuilder{
       id: instance_id,
       factory_id: factory_id,
-      kind: :bounded,
+      run: :steps,
       init_values: init_values,
       opts: opts
     })
@@ -603,10 +603,10 @@ defmodule Flezha.Service.OperatorManager do
 
   @doc """
   Spawn-or-deliver `instance_id` in `namespace`, the controller half of a
-  tasklet's `ctx.spawn_bounded`, for the identity `caller_context` names,
+  tasklet's `ctx.spawn_steps`, for the identity `caller_context` names,
   answering the outcome and the id the request resolved to.
 
-  A free id spawns a bounded instance of `factory_id` carrying `payload` as its
+  A free id spawns a steps instance of `factory_id` carrying `payload` as its
   first input (`:seed_input`, ingested inside the instance's bind continue, so
   nothing can be ingested ahead of it). A taken id either receives `payload` as
   one more input (`if_running: :deliver`) or refuses (`if_running: :error`).
@@ -630,8 +630,8 @@ defmodule Flezha.Service.OperatorManager do
   event. A refusal of either is audited. A start no local runner can take is
   forwarded by `start_operator/3` inside that judgment, so no peer acts on a
   request nobody judged. `operator.already_running`, `operator.factory_unknown`
-  and `operator.factory_not_bounded` (a factory its runners announced as an
-  unbounded operator) perform no act and are answered without one.
+  and `operator.factory_not_steps` (a factory its runners announced as a
+  flow operator) perform no act and are answered without one.
 
   `opts` (`Flezha.Service.OperatorManager.Spawn.opts/0`) is what an operator's
   call adds: the kinds it may start, `if_absent: :not_found`, the metadata the
@@ -651,20 +651,20 @@ defmodule Flezha.Service.OperatorManager do
               to: Spawn
 
   @doc """
-  The kind `factory_id` is established at, asked of this node when a runner
+  How `factory_id` is established to run, asked of this node when a runner
   here advertises it and of a node the directory names otherwise, so the
   answer is the cluster's.
   """
-  def factory_kind(namespace, factory_id) do
+  def factory_run(namespace, factory_id) do
     if FleetManager.runners_for_factory(namespace, factory_id) != [] do
-      FleetManager.factory_kind(namespace, factory_id)
+      FleetManager.factory_run(namespace, factory_id)
     else
       case capable_nodes(namespace, factory_id) do
         [] ->
           {:error, :no_such_factory}
 
         [target | _] ->
-          route_call(target, FleetManager, :factory_kind, [namespace, factory_id], &{:error, &1})
+          route_call(target, FleetManager, :factory_run, [namespace, factory_id], &{:error, &1})
       end
     end
   end

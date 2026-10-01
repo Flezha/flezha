@@ -4,13 +4,13 @@ defmodule FlezhaTest.System.OperatorCallE2ETest do
   selects, through the `operator_call` fixtures:
 
     * `call_orders` calls `call_pricing` by name (unbounded to unbounded);
-    * `call_gateway` calls `call_agent` by key through its factory (unbounded
-      to a per-session durable bounded operator): the first call creates the
+    * `call_gateway` calls `call_agent` by key through its factory (flow
+      to a per-session durable steps operator): the first call creates the
       session, the second reaches it, a failed turn is answered `call.failed`
       while the session goes on, a `resume:` turn with creation off is refused
       `operator.not_found`, and a session asleep is woken by its call;
     * `call_tool_session` calls `call_pricing` from a turn and reads the
-      outcome as its next one (a bounded caller);
+      outcome as its next one (a steps caller);
 
   and the crash drills of a durable pair, each asserting exactly one outcome
   per call and one committed turn: the runner killed while a turn runs, and
@@ -26,7 +26,7 @@ defmodule FlezhaTest.System.OperatorCallE2ETest do
 
   import ExUnit.CaptureLog, only: [capture_log: 1]
 
-  import FlezhaTest.Helper.BoundedResumeHarness,
+  import FlezhaTest.Helper.StepsResumeHarness,
     only: [
       boot_runner: 4,
       collect_loop: 1,
@@ -77,7 +77,7 @@ defmodule FlezhaTest.System.OperatorCallE2ETest do
              OperatorManager.start_operator(namespace, %Builder{
                id: id,
                factory_id: factory,
-               kind: kind,
+               run: kind,
                opts: [plugins: plugins]
              })
 
@@ -110,10 +110,10 @@ defmodule FlezhaTest.System.OperatorCallE2ETest do
 
   defp session(prefix), do: "#{prefix}-#{System.unique_integer([:positive])}"
 
-  test "an unbounded operator calls another by name", ctx do
+  test "a flow operator calls another by name", ctx do
     boot(ctx)
-    start(ctx.namespace, "call_pricing", :unbounded, "pricing")
-    orders = start(ctx.namespace, "call_orders", :unbounded, unique("orders"), ctx.collector)
+    start(ctx.namespace, "call_pricing", :flow, "pricing")
+    orders = start(ctx.namespace, "call_orders", :flow, unique("orders"), ctx.collector)
 
     send_in(ctx.namespace, orders, "o1")
     send_in(ctx.namespace, orders, "o2")
@@ -126,7 +126,7 @@ defmodule FlezhaTest.System.OperatorCallE2ETest do
 
   test "a gateway creates a session, reaches it again, and outlives its failed turn", ctx do
     boot(ctx)
-    gateway = start(ctx.namespace, "call_gateway", :unbounded, unique("gateway"), ctx.collector)
+    gateway = start(ctx.namespace, "call_gateway", :flow, unique("gateway"), ctx.collector)
     anna = session("anna")
 
     send_in(ctx.namespace, gateway, "#{anna}:hello")
@@ -157,10 +157,10 @@ defmodule FlezhaTest.System.OperatorCallE2ETest do
     assert settled_lines(ctx.collector, [gateway, anna]) == 6
   end
 
-  test "a bounded session calls pricing and reads the outcome as its next turn", ctx do
+  test "a steps session calls pricing and reads the outcome as its next turn", ctx do
     boot(ctx)
-    start(ctx.namespace, "call_pricing", :unbounded, "pricing")
-    tool = start(ctx.namespace, "call_tool_session", :bounded, unique("tool"), ctx.collector)
+    start(ctx.namespace, "call_pricing", :flow, "pricing")
+    tool = start(ctx.namespace, "call_tool_session", :steps, unique("tool"), ctx.collector)
 
     send_in(ctx.namespace, tool, "t1", "turn")
     send_in(ctx.namespace, tool, "t2", "turn")
@@ -172,8 +172,8 @@ defmodule FlezhaTest.System.OperatorCallE2ETest do
   end
 
   test "a call to an asleep session wakes it and is answered", ctx do
-    boot(ctx, [{"FLEZHA_PARK_IDLE_MS", "700"}])
-    gateway = start(ctx.namespace, "call_gateway", :unbounded, unique("gateway"), ctx.collector)
+    boot(ctx, [{"FLEZHA_FIXTURE_SLEEP_AFTER_MS", "700"}])
+    gateway = start(ctx.namespace, "call_gateway", :flow, unique("gateway"), ctx.collector)
     anna = session("anna")
 
     send_in(ctx.namespace, gateway, "#{anna}:hello")
@@ -189,7 +189,7 @@ defmodule FlezhaTest.System.OperatorCallE2ETest do
   describe "a durable pair's crash drills" do
     test "the runner killed while a turn runs: one outcome and one committed turn", ctx do
       {port, runner} = boot(ctx)
-      gateway = start(ctx.namespace, "call_gateway", :unbounded, unique("gateway"), ctx.collector)
+      gateway = start(ctx.namespace, "call_gateway", :flow, unique("gateway"), ctx.collector)
       anna = session("anna")
 
       send_in(ctx.namespace, gateway, "#{anna}:slow")
@@ -210,7 +210,7 @@ defmodule FlezhaTest.System.OperatorCallE2ETest do
 
     test "the gateway's Overwatch and writers killed while its call waits", ctx do
       boot(ctx)
-      gateway = start(ctx.namespace, "call_gateway", :unbounded, unique("gateway"), ctx.collector)
+      gateway = start(ctx.namespace, "call_gateway", :flow, unique("gateway"), ctx.collector)
       anna = session("anna")
 
       send_in(ctx.namespace, gateway, "#{anna}:hello")

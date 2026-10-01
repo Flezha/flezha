@@ -356,7 +356,7 @@ defmodule Flezha.State.Watchdog do
         # A sleeping instance receives no Change by design, and a
         # checkpoint-ack one makes nothing durable for a whole interval
         # between checkpoints: neither silence is a dead feed.
-        if not ClassRegistry.checkpoint_ack?(rc) and is_nil(ClassRegistry.parked(rc)) do
+        if not ClassRegistry.ack_checkpoint?(rc) and is_nil(ClassRegistry.parked(rc)) do
           any_silent? = Enum.any?(list, fn {_pid, s} -> input_silent?(s, now, timeout) end)
           latched? = MapSet.member?(acc.input_silence, rc)
 

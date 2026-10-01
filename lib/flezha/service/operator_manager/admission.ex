@@ -1,7 +1,7 @@
 defmodule Flezha.Service.OperatorManager.Admission do
   @moduledoc """
   The checks a start must clear before an operator is created: the three
-  quotas, the factory's placement validity and kind, and the refusals a
+  quotas, the factory's placement validity and run, and the refusals a
   partition group's base id earns.
   """
 
@@ -27,7 +27,7 @@ defmodule Flezha.Service.OperatorManager.Admission do
 
   def cluster_wide_refusal(namespace, _factory_id), do: {:no_runners, namespace}
 
-  # A factory that exists in another language or as the other kind is not a
+  # A factory that exists in another language or run the other way is not a
   # factory nobody has: reporting it as missing sends the user looking for a
   # runner that is already connected. Both refusal sites read this, so the two
   # cannot drift.
@@ -40,33 +40,33 @@ defmodule Flezha.Service.OperatorManager.Admission do
   defp placement_reason(:ambiguous_language, namespace, factory_id),
     do: {:factory_language_ambiguous, namespace, factory_id}
 
-  defp placement_reason({:kind, established}, namespace, factory_id),
-    do: {:factory_kind_unserved, namespace, factory_id, established}
+  defp placement_reason({:run, established}, namespace, factory_id),
+    do: {:factory_run_unserved, namespace, factory_id, established}
 
-  defp placement_reason(:no_kind_declared, namespace, factory_id),
-    do: {:factory_kind_undeclared, namespace, factory_id}
+  defp placement_reason(:no_run_declared, namespace, factory_id),
+    do: {:factory_run_undeclared, namespace, factory_id}
 
-  defp placement_reason(:ambiguous_kind, namespace, factory_id),
-    do: {:factory_kind_ambiguous, namespace, factory_id}
+  defp placement_reason(:ambiguous_run, namespace, factory_id),
+    do: {:factory_run_ambiguous, namespace, factory_id}
 
   defp placement_reason(_absent, namespace, factory_id),
     do: {:factory_unknown, namespace, factory_id}
 
   @doc """
-  Admit the start's factory and take its kind: a runner here must be able to
-  place it, and the kind is the one its runners announced, which no caller
-  names. A kind a caller asserts (a spawn or a schedule fire, both
-  bounded-only) is judged against it rather than taken.
+  Admit the start's factory and take its run: a runner here must be able to
+  place it, and the run is the one its runners announced, which no caller
+  names. A run a caller asserts (a spawn or a schedule fire, both
+  steps-only) is judged against it rather than taken.
   """
   @spec resolve_factory(String.t(), map()) :: {:ok, map()} | {:error, tuple()}
-  def resolve_factory(namespace, %{factory_id: factory_id, kind: asserted} = operator)
+  def resolve_factory(namespace, %{factory_id: factory_id, run: asserted} = operator)
       when is_binary(factory_id) do
-    case FleetManager.factory_kind(namespace, factory_id) do
-      {:ok, kind} when asserted in [nil, kind] ->
-        {:ok, %{operator | kind: kind}}
+    case FleetManager.factory_run(namespace, factory_id) do
+      {:ok, run} when asserted in [nil, run] ->
+        {:ok, %{operator | run: run}}
 
-      {:ok, kind} ->
-        {:error, {:factory_kind_mismatch, asserted, namespace, factory_id, kind}}
+      {:ok, run} ->
+        {:error, {:factory_run_mismatch, asserted, namespace, factory_id, run}}
 
       {:error, refusal} ->
         {:error, placement_reason(refusal, namespace, factory_id)}
@@ -77,7 +77,7 @@ defmodule Flezha.Service.OperatorManager.Admission do
 
   @doc """
   Whether a `generated?` id names nothing yet: no partition group and no state
-  directory in the namespace. A finished bounded operator keeps its directory for its
+  directory in the namespace. A finished steps operator keeps its directory for its
   retention window, and a start over it would read the old journal as its own.
   A caller's own id passes, because its directory is the ordinary restore.
   """

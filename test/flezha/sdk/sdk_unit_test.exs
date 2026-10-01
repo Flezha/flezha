@@ -27,7 +27,7 @@ defmodule Flezha.SDK.UnitTest do
   end
 
   defmodule EchoOp do
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "echo_op"
 
     def channels(c),
@@ -48,7 +48,7 @@ defmodule Flezha.SDK.UnitTest do
   end
 
   defmodule DynamicOp do
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "dyn_op"
 
     def channels(c) do
@@ -84,7 +84,7 @@ defmodule Flezha.SDK.UnitTest do
   end
 
   defmodule StaticOp do
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "static_op"
 
     def channels(c),
@@ -221,9 +221,9 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.into(KeyedTask)
     end
 
-    defmodule SyncUnbounded do
-      def factory_id, do: "sync_unbounded"
-      def sync_durability, do: true
+    defmodule RemoteFlow do
+      def factory_id, do: "remote_flow"
+      def durable, do: :remote
 
       def channels(c),
         do: c |> Channels.input("in") |> Channels.into(EchoTask) |> Channels.sink()
@@ -232,7 +232,7 @@ defmodule Flezha.SDK.UnitTest do
     assert {"topology.keyed_channel_without_plugin_wire", %{"channel" => "echo"}} =
              one_issue(KeyedNoWire)
 
-    assert {"topology.sync_durability_on_unbounded", _} = one_issue(SyncUnbounded)
+    assert {"topology.remote_on_flow", %{"factory_id" => "remote_flow"}} = one_issue(RemoteFlow)
   end
 
   test "the ctx refuses a keyless emit where a key is required, and a key where none is allowed" do
@@ -268,7 +268,7 @@ defmodule Flezha.SDK.UnitTest do
   # --- branch: fan-out sugar over one handle ---
 
   defmodule BranchedOp do
-    use Flezha.SDK.UnboundedOperator, factory_id: "branched"
+    use Flezha.SDK.Operator, factory_id: "branched"
 
     @impl true
     def channels(c) do
@@ -281,7 +281,7 @@ defmodule Flezha.SDK.UnitTest do
   end
 
   defmodule ReusedHandleOp do
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "reused_handle"
 
     def channels(c) do
@@ -358,7 +358,7 @@ defmodule Flezha.SDK.UnitTest do
 
   # --- the effectively-once tier: the builder, the refusals, the declaration ---
 
-  test "the four tier calls pipe, and the three checkpoint options compose in any order" do
+  test "the tier and its checkpoint policy are read from the class's run" do
     assert {:ok, tier} = Topology.build(TierStoreOp)
     assert tier.effectively_once?
     assert tier.checkpoint == nil
@@ -367,14 +367,18 @@ defmodule Flezha.SDK.UnitTest do
     assert batched.effectively_once?
     assert batched.checkpoint == %{every: nil, outputs: :at_checkpoint, max_delay_ms: 1_500}
 
-    defmodule EveryFirst do
-      def factory_id, do: "every_first"
+    defmodule EveryAndHeld do
+      def factory_id, do: "every_and_held"
+
+      def run,
+        do:
+          {:flow,
+           exactly:
+             {:effectively_once,
+              ack: {:checkpoint, every: 3, outputs: :at_checkpoint, max_delay_ms: 50}}}
 
       def channels(c) do
         c
-        |> Channels.effectively_once()
-        |> Channels.checkpoint_every(3)
-        |> Channels.outputs_at_checkpoint(50)
         |> Channels.input("in")
         |> Channels.into(KeyedTask)
         |> Channels.named("sink")
@@ -383,26 +387,8 @@ defmodule Flezha.SDK.UnitTest do
       end
     end
 
-    defmodule DelayFirst do
-      def factory_id, do: "delay_first"
-
-      def channels(c) do
-        c
-        |> Channels.outputs_at_checkpoint(50)
-        |> Channels.checkpoint_every(3)
-        |> Channels.effectively_once()
-        |> Channels.input("in")
-        |> Channels.into(KeyedTask)
-        |> Channels.named("sink")
-        |> Channels.keyed()
-        |> Channels.sink()
-      end
-    end
-
-    assert {:ok, a} = Topology.build(EveryFirst)
-    assert {:ok, b} = Topology.build(DelayFirst)
-    assert a.checkpoint == %{every: 3, outputs: :at_checkpoint, max_delay_ms: 50}
-    assert b.checkpoint == a.checkpoint
+    assert {:ok, topo} = Topology.build(EveryAndHeld)
+    assert topo.checkpoint == %{every: 3, outputs: :at_checkpoint, max_delay_ms: 50}
   end
 
   # A zero delay is the one checkpoint refusal the reference vocabulary spells
@@ -411,11 +397,15 @@ defmodule Flezha.SDK.UnitTest do
     defmodule DelayZero do
       def factory_id, do: "delay_zero"
 
+      def run,
+        do:
+          {:flow,
+           exactly:
+             {:effectively_once, ack: {:checkpoint, outputs: :at_checkpoint, max_delay_ms: 0}}}
+
       def channels(c),
         do:
           c
-          |> Channels.effectively_once()
-          |> Channels.outputs_at_checkpoint(0)
           |> Channels.input("in")
           |> Channels.into(KeyedTask)
           |> Channels.named("sink")
@@ -426,17 +416,14 @@ defmodule Flezha.SDK.UnitTest do
     assert {"topology.checkpoint_max_delay_zero", _} = one_issue(DelayZero)
   end
 
-  # How the two correction options compose is this SDK's own rule, not a row:
-  # a fate declared alone leaves the window at zero, which is refused.
   test "a beyond-window policy declared alone is a window of zero" do
     defmodule PolicyWithoutWindow do
       def factory_id, do: "policy_no_window"
+      def run, do: {:flow, exactly: {:effectively_once, beyond_window: :drop}}
 
       def channels(c),
         do:
           c
-          |> Channels.effectively_once()
-          |> Channels.beyond_window_policy(:drop)
           |> Channels.input("in")
           |> Channels.into(EventTimeTask)
           |> Channels.named("sink")
@@ -448,17 +435,16 @@ defmodule Flezha.SDK.UnitTest do
   end
 
   # `register.rs` refuses a shedding channel under a declared window with its own
-  # message; here a window requires the tier and the tier already refuses every
+  # message; here a window sits under the tier and the tier already refuses every
   # shedding edge, so the same program is refused by the check that exists.
   test "a shedding policy under a declared window is refused by the tier's own check" do
     defmodule SheddingUnderWindow do
       def factory_id, do: "shedding_window"
+      def run, do: {:flow, exactly: {:effectively_once, correction_ms: 600_000}}
 
       def channels(c),
         do:
           c
-          |> Channels.effectively_once()
-          |> Channels.correction_window(600_000)
           |> Channels.input("in")
           |> Channels.on_full(:drop_oldest)
           |> Channels.into(EventTimeTask)
@@ -471,33 +457,16 @@ defmodule Flezha.SDK.UnitTest do
             %{"channel" => "in", "policy" => "drop_oldest"}} = one_issue(SheddingUnderWindow)
   end
 
-  test "the two correction options compose in either order and neither clears the other" do
-    defmodule WindowThenPolicy do
-      def factory_id, do: "window_then_policy"
+  test "a correction window and its fate are read together" do
+    defmodule WindowAndPolicy do
+      def factory_id, do: "window_and_policy"
 
-      # The tier declared LAST, which is still legal and is the point.
-      def channels(c),
-        do:
-          c
-          |> Channels.correction_window(600_000)
-          |> Channels.beyond_window_policy(:drop)
-          |> Channels.effectively_once()
-          |> Channels.input("in")
-          |> Channels.into(EventTimeTask)
-          |> Channels.named("sink")
-          |> Channels.keyed()
-          |> Channels.sink()
-    end
-
-    defmodule PolicyThenWindow do
-      def factory_id, do: "policy_then_window"
+      def run,
+        do: {:flow, exactly: {:effectively_once, correction_ms: 600_000, beyond_window: :drop}}
 
       def channels(c),
         do:
           c
-          |> Channels.effectively_once()
-          |> Channels.beyond_window_policy(:drop)
-          |> Channels.correction_window(600_000)
           |> Channels.input("in")
           |> Channels.into(EventTimeTask)
           |> Channels.named("sink")
@@ -506,21 +475,17 @@ defmodule Flezha.SDK.UnitTest do
     end
 
     assert {:ok, %{correction: %{window_ms: 600_000, beyond_window: :drop}}} =
-             Topology.build(WindowThenPolicy)
-
-    assert {:ok, %{correction: %{window_ms: 600_000, beyond_window: :drop}}} =
-             Topology.build(PolicyThenWindow)
+             Topology.build(WindowAndPolicy)
   end
 
   test "a correction class declares the two keys the candle golden pins" do
     defmodule CandleShape do
       def factory_id, do: "candle_shape"
+      def run, do: {:flow, exactly: {:effectively_once, correction_ms: 600_000}}
 
       def channels(c),
         do:
           c
-          |> Channels.effectively_once()
-          |> Channels.correction_window(600_000)
           |> Channels.input("in")
           |> Channels.into(EventTimeTask)
           |> Channels.named("sink")
@@ -532,7 +497,7 @@ defmodule Flezha.SDK.UnitTest do
     assert Declarations.for(topo) == golden("candle")
   end
 
-  test "the tier ships two more declaration keys, and they equal the committed goldens" do
+  test "a tier class declares its settings, and they equal the committed goldens" do
     assert {:ok, tier} = Topology.build(TierStoreOp)
     assert {:ok, batched} = Topology.build(CheckpointBatchedOp)
 
@@ -588,13 +553,15 @@ defmodule Flezha.SDK.UnitTest do
     assert {:ok, %RunnerCommands.AddOperatorResponse{metadata: %{"keyed" => "false"}}} =
              RunnerCommands.AddOperatorResponse.decode(raw)
 
-    uf = Codec.encode_request("uf-1", Codec.update_factories_command([{"a", "d", "bounded"}]))
+    run = %{run: "steps", each: "chained", on_failure: "keep_progress"}
+    uf = Codec.encode_request("uf-1", Codec.update_factories_command([{"a", "d", run}]))
 
     assert {:ok,
             %RunnerCommands.CommandRequest{command: {:update_factories, %{factories: [decl]}}}} =
              Codec.decode_command(uf)
 
-    assert {decl.id, decl.kind} == {"a", "bounded"}
+    assert {decl.id, decl.run, decl.each, decl.on_failure} ==
+             {"a", "steps", "chained", "keep_progress"}
   end
 
   # --- KeyGroup / partition ---

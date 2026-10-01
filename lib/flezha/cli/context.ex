@@ -19,7 +19,6 @@ defmodule Flezha.Service.Cli.Context do
       "on_message" => :on_message,
       "on_snapshot" => :on_snapshot,
       "on_terminate" => :on_terminate,
-      "snapshot_interval" => :snapshot_interval,
       "plugins" => :plugins,
       "partitions" => :partitions,
       "group" => :group,

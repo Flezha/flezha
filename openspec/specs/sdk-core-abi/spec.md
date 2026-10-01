@@ -68,7 +68,7 @@ core SHALL NOT require thread affinity from the host.
 
 The converse binds the host. A host whose unit of concurrency cannot migrate between threads, such
 as an event loop, SHALL keep every blocking ABI entry point off that thread. The blocking entry
-points are the poll, the starvation wait, the completion, the bounded operator receive, the spawn result
+points are the poll, the starvation wait, the completion, the steps operator receive, the spawn result
 read with a nonzero timeout, and the runner start, and such a host SHALL reach them only from threads
 whose blocking cannot stall its dispatch. The spawn request, and the spawn result read with a timeout
 of zero, never wait and MAY be called from any thread.
@@ -100,7 +100,7 @@ this capability, not a backlog item.
 
 Every host language binding SHALL be built from this crate and SHALL be a one-to-one veneer over its
 entry points, including a binding added under its own feature on the crate. A binding SHALL NOT
-re-express dispatch, ordering, overflow, the retry ladder, durability or the bounded driver, SHALL
+re-express dispatch, ordering, overflow, the retry ladder, durability or the steps driver, SHALL
 NOT reach a kernel capability the C ABI does not expose, and SHALL NOT alter the artifacts the other
 bindings consume when its feature is enabled.
 
@@ -138,7 +138,7 @@ kind, correction window and beyond-window policy, delivery tier
 (effectively-once, checkpoint ack-granularity), inter-tasklet channels
 with edge ids and keying markers, per-channel retry and overflow
 policies, the record-header lang/format bytes, the declaring SDK's own
-version, persistence, and bounded operator
+version, persistence, and steps operator
 lifecycle facts (loop mode, rollback mode, retry, wake-after,
 compensable tasks). Timer caps stay host-layer policy — in both SDKs the
 cap is enforced where the registration API lives, not in the core. A declaration
@@ -196,13 +196,13 @@ differs per SDK.
 Every capability the widened host layer supports SHALL be exercisable
 through `flz_core_ffi` alone — the five command activation kinds, the
 prepare crossing, cell modes, tiers, timers, inter-tasklet routing,
-and bounded operator lifecycles. The CI scenario suite SHALL grow to drive at least:
+and steps operator lifecycles. The CI scenario suite SHALL grow to drive at least:
 a restore fold, a live state read, a keyed dynamic route via the prepare
-crossing, an effectively-once completion with offsets, and a bounded operator
+crossing, an effectively-once completion with offsets, and a steps operator
 tasklet's `complete` ending its instance, all through the C entry points,
 failing if any required surface is missing. A step answer SHALL carry a
 tasklet's completion request and its result, and no entry point SHALL exist
-for a one-function bounded body, which no host declares.
+for a one-function steps body, which no host declares.
 
 Every shim is a consumer of the C entry points, never a fork of them —
 whether it is a language veneer built from this crate (the JNI veneer behind
@@ -245,8 +245,8 @@ exported symbols the way a veneer's exports are.
 - **WHEN** a shim-based host completes an activation whose emit blocks on a full `DropNothing` consumer mailbox, and the inline-drain hook the in-process Rust host installs is unavailable to it
 - **THEN** the core SHALL report the condition through `flz_core_wait_starvation`, so a host that services that wait can recover without a per-host kernel path
 
-#### Scenario: A step answer ends its bounded operator
-- **WHEN** a host answers a bounded operator step activation whose tasklet called `ctx.complete(result)`
+#### Scenario: A step answer ends its steps operator
+- **WHEN** a host answers a steps operator step activation whose tasklet called `ctx.complete(result)`
 - **THEN** the core SHALL end the instance with that result once the iteration commits, with no host-side path of its own
 
 ### Requirement: The restore crossing carries each record's stamped schema version
@@ -379,7 +379,7 @@ crate's source.
 ### Requirement: A spawn is a request and a result read through a handle
 
 The C ABI SHALL expose a tasklet's spawn as two entry points and SHALL NOT expose a blocking
-spawn-and-wait entry (`flz_core_spawn_bounded` is removed):
+spawn-and-wait entry (`flz_core_spawn_steps` is removed):
 
 - `flz_core_spawn_request(ctx, factory_id, id, payload, if_running, handle_out)` SHALL send the
   request and return a handle number without waiting for the controller. An empty `id` SHALL ask the
@@ -390,7 +390,7 @@ spawn-and-wait entry (`flz_core_spawn_bounded` is removed):
   `skipped_on_replay`), or the failure, reported the way every other entry reports one: the status
   `FLZ_ERR` and the JSON error document in `flz_core_last_error`, whose code is the
   controller's (`operator.already_running`, `operator.factory_unknown`,
-  `operator.factory_not_bounded`, or any other refusal's own code) or the core's
+  `operator.factory_not_steps`, or any other refusal's own code) or the core's
   (`spawn.timeout`, `spawn.unavailable`). A timeout of zero
   SHALL never wait, including while another thread's read of the same handle is waiting. A handle
   read to resolution SHALL answer every later read the same while its activation is outstanding.
@@ -414,13 +414,13 @@ released rather than wait.
 - **WHEN** a handle's request is refused and the host completes the activation without reading the handle
 - **THEN** the reaper SHALL log the refusal once, naming the instance id (empty when none was given), the factory id and the reason, and a later `flz_core_spawn_result` on that handle SHALL answer that it was released
 
-#### Scenario: An unbounded factory is a named failure through the ABI
-- **WHEN** the controller refuses a request with the code `operator.factory_not_bounded`
+#### Scenario: A flow factory is a named failure through the ABI
+- **WHEN** the controller refuses a request with the code `operator.factory_not_steps`
 - **THEN** `flz_core_spawn_result` SHALL report that code, distinct from `operator.factory_unknown`, and every veneer SHALL surface it as the `code` of its one error type
 
 #### Scenario: The blocking spawn entry is gone
 - **WHEN** the ABI surface fixture is compared with the exported symbols
-- **THEN** it SHALL list `flz_core_spawn_request` and `flz_core_spawn_result` and SHALL NOT list `flz_core_spawn_bounded`
+- **THEN** it SHALL list `flz_core_spawn_request` and `flz_core_spawn_result` and SHALL NOT list `flz_core_spawn_steps`
 
 ### Requirement: The ABI SHALL carry every failure as the one error document
 

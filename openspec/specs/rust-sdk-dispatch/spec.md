@@ -1,7 +1,7 @@
 # rust-sdk-dispatch Specification
 
 ## Purpose
-This capability covers the Rust SDK's Operator/Tasklet/Cell dispatch path: sticky per-Cell ordering invariants under ThreadPool dispatch, dispatch throughput reporting on the reference workload, the per-message dispatch-overhead budget, live Operator-instance registry concurrency, reconnect semantics across transient and intentional disconnects, command-dispatch byte-stability for surviving wire commands, the per-Cell flusher's single-thread linger drain (with toggle-aware semantics for `persistence_enabled = false`), the `ctx.change` hot-path cost, drain-time coalescing, the public `TaskletTestHarness` testing surface, and the 16-byte version header stamped on persisted Changes.
+This capability covers the Rust SDK's Operator/Tasklet/Cell dispatch path: sticky per-Cell ordering invariants under ThreadPool dispatch, dispatch throughput reporting on the reference workload, the per-message dispatch-overhead budget, live Operator-instance registry concurrency, reconnect semantics across transient and intentional disconnects, command-dispatch byte-stability for surviving wire commands, the per-Cell flusher's single-thread linger drain (with toggle-aware semantics for `keeps_state = false`), the `ctx.change` hot-path cost, drain-time coalescing, the public `TaskletTestHarness` testing surface, and the 16-byte version header stamped on persisted Changes.
 ## Requirements
 ### Requirement: Sticky Per-Cell Ordering Under ThreadPool Dispatch
 
@@ -47,7 +47,7 @@ The 4-op invariant is an analytical bound enforced by code review, consistent wi
 
 ### Requirement: Live Registry Concurrent Access
 
-The live Operator-instance registry used by the Rust SDK SHALL support concurrent reads from many threads without inter-reader blocking, and writes (Operator instance create / destroy) SHALL NOT block readers for longer than a single tasklet's critical section. Operator classes are declared via `FlezhaRunner::register_factory(operator)` for either kind, callable before and after `.start()`/`.run()` on a runner obtained from `Flezha::create_runner(namespace)`; the class registries SHALL be overwrite-on-insert and SHALL support `unregister_class` for on-demand removal. `AddOperator` / `RemOperator` wire commands add and remove Operator instances by what the wire calls `operator_id` (mapped to the SDK's `operator_instance_id`); lookup by that id returns an `Arc<OperatorInstance>` or equivalent handle. Bounded instances SHALL record their `factory_id` so live instances of a factory are attributable during a removal check.
+The live Operator-instance registry used by the Rust SDK SHALL support concurrent reads from many threads without inter-reader blocking, and writes (Operator instance create / destroy) SHALL NOT block readers for longer than a single tasklet's critical section. Operator classes are declared via `FlezhaRunner::register_factory(operator)` for either kind, callable before and after `.start()`/`.run()` on a runner obtained from `Flezha::create_runner(namespace)`; the class registries SHALL be overwrite-on-insert and SHALL support `unregister_class` for on-demand removal. `AddOperator` / `RemOperator` wire commands add and remove Operator instances by what the wire calls `operator_id` (mapped to the SDK's `operator_instance_id`); lookup by that id returns an `Arc<OperatorInstance>` or equivalent handle. Steps instances SHALL record their `factory_id` so live instances of a factory are attributable during a removal check.
 
 The "registry" name carries forward from the pre-change implementation; what's stored in it is unchanged by this requirement. The concurrency guarantees are unchanged.
 
@@ -128,20 +128,20 @@ The flusher SHALL run an infinite loop that on each iteration: (a) sleeps for `l
 - **WHEN** a Rust process calls `.register_factory(R)` for an Operator containing a Tasklet with `Change = MyChange`
 - **THEN** exactly one OS thread named `flezha-flusher` SHALL be spawned for the lifetime of the process
 
-### Requirement: Toggle-aware drain semantics for persistence_enabled = false
+### Requirement: Toggle-aware drain semantics for keeps_state = false
 
-The Rust SDK's `CellFlusher` SHALL inspect each registered Cell's `persistence_enabled` flag at drain time. When `false`, the flusher SHALL acquire the buffer's Mutex, invoke `FlushableBuffer::drain_to_frames` (which still applies coalescing), and discard the resulting frames without invoking `send_frame`. The Cell's `change_seq` counter SHALL still advance through the discarded frames.
+The Rust SDK's `CellFlusher` SHALL inspect each registered Cell's `keeps_state` flag at drain time. When `false`, the flusher SHALL acquire the buffer's Mutex, invoke `FlushableBuffer::drain_to_frames` (which still applies coalescing), and discard the resulting frames without invoking `send_frame`. The Cell's `change_seq` counter SHALL still advance through the discarded frames.
 
 When `true`, the flusher SHALL invoke `send_frame` for each frame and propagate any `Err(SendError)` by decrementing the seq counter so the next drain re-sends from the right point (no gaps in the agent's WAL view).
 
 #### Scenario: Toggle-off drain discards without wire I/O
 
-- **WHEN** an Operator with `persistence_enabled = false` records 10 Changes via `ctx.change(...)` and the flusher's linger elapses
+- **WHEN** an Operator with `keeps_state = false` records 10 Changes via `ctx.change(...)` and the flusher's linger elapses
 - **THEN** the Cell's flush buffer SHALL be empty after the tick AND the Cell's `send_frame` function SHALL NOT have been invoked AND the Cell's `change_seq` SHALL have advanced by the post-coalesce record count
 
 #### Scenario: Toggle-on drain invokes send_frame per frame
 
-- **WHEN** an Operator with `persistence_enabled = true` records 10 Changes (no coalescing) via `ctx.change(...)` and the flusher's linger elapses
+- **WHEN** an Operator with `keeps_state = true` records 10 Changes (no coalescing) via `ctx.change(...)` and the flusher's linger elapses
 - **THEN** the Cell's `send_frame` function SHALL have been invoked exactly 10 times with frame bytes built from `[cell_id][seq: u64 BE][header: 16B][change_bytes][crc32: u32 BE]`
 
 #### Scenario: send_frame failure preserves seq monotonicity
@@ -363,7 +363,7 @@ The Rust SDK SHALL provide `Flezha::create_runner(namespace: impl Into<String>) 
 
 ### Requirement: Runner declaration and connection failures surface as typed Results
 
-Every fallible call on the entry-point chain SHALL return `Result<_, FlezhaError>` — one unified public error type (`thiserror`-derived) so `Flezha::create_runner(ns)?.register_factory(A)?.run()?` compiles under a single `?`. `FlezhaError` SHALL carry at least: `InvalidNamespace`, `AlreadyRunning { namespace }`, `ConnectFailed(String)`, `InvalidTopology(#[from] TopologyBuildError)`, `InvalidBounded(#[from] BuildBoundedError)`, `DuplicateFactoryId { factory_id }`, `NotDefined { factory_id }`, `OperatorTypeInUse { factory_id, live_instances }`, `NotStarted`, `RunnerUnavailable(String)`. An invalid topology (duplicate channel names, unwired channels, missing `cells_for` overrides, etc.) SHALL be reported as a typed `Err` at the call site, not a panic; a consumer whose `Input` does not match the channel payload SHALL instead be refused by the compiler at the `.into::<S>()` call site, so `TopologyIssue` SHALL carry no runtime type-mismatch variant; connect-handshake failures (socket error, or the confirmation channel closing unexpectedly) SHALL be `Err(FlezhaError::ConnectFailed(..))`, not a panic. The per-issue topology enum formerly named `BuildTopologyError` SHALL be renamed `TopologyIssue`, resolving its collision with the per-kind `TopologyBuildError`; Java throws the identically-named failure classes per naming rule 6.
+Every fallible call on the entry-point chain SHALL return `Result<_, FlezhaError>` — one unified public error type (`thiserror`-derived) so `Flezha::create_runner(ns)?.register_factory(A)?.run()?` compiles under a single `?`. `FlezhaError` SHALL carry at least: `InvalidNamespace`, `AlreadyRunning { namespace }`, `ConnectFailed(String)`, `InvalidTopology(#[from] TopologyBuildError)`, `InvalidSteps(#[from] BuildStepsError)`, `DuplicateFactoryId { factory_id }`, `NotDefined { factory_id }`, `OperatorTypeInUse { factory_id, live_instances }`, `NotStarted`, `RunnerUnavailable(String)`. An invalid topology (duplicate channel names, unwired channels, missing `cells_for` overrides, etc.) SHALL be reported as a typed `Err` at the call site, not a panic; a consumer whose `Input` does not match the channel payload SHALL instead be refused by the compiler at the `.into::<S>()` call site, so `TopologyIssue` SHALL carry no runtime type-mismatch variant; connect-handshake failures (socket error, or the confirmation channel closing unexpectedly) SHALL be `Err(FlezhaError::ConnectFailed(..))`, not a panic. The per-issue topology enum formerly named `BuildTopologyError` SHALL be renamed `TopologyIssue`, resolving its collision with the per-kind `TopologyBuildError`; Java throws the identically-named failure classes per naming rule 6.
 
 `operators()` SHALL return `Result<HashMap<String, Arc<OperatorInstance>>, FlezhaError>` — `Err(FlezhaError::NotStarted)` on a never-started runner, never a panic; the internal snapshot path SHALL contain no `expect`/`unwrap` reachable from it.
 
@@ -436,7 +436,7 @@ The Rust SDK SHALL allow at most one runner to be **started** per process. `Flez
 
 ### Requirement: On-demand operator type declaration and removal (Rust)
 
-`FlezhaRunner` SHALL provide `register_factory(operator)` and its inverse `unregister_factory(operator)`, each generic as `fn register_factory<O: Operator<K>, K>(&self, operator: O) -> Result<&Self, FlezhaError>` over the sealed `Operator<K>` trait the SDK implements for every `UnboundedOperator` and every `BoundedOperator`, so one method takes an operator of either kind, passed as a value, and dispatches on the kind the trait impl names; both are legal before and after `.start()`. There SHALL be no `define_unbounded`, `define_bounded`, `remove_stream` or `remove_bounded`. The declared factory set SHALL be per-runner, starting empty each generation and holding exactly what `register_factory` and `unregister_factory` put in it; nothing SHALL be merged into it at `.start()`. A post-start `register_factory` or `unregister_factory` SHALL update the process-global class registries and ship the runner's full current factory set to the controller via the `UpdateFactories` control message (see the `runner-factory-sync` capability); the reconnect init frame SHALL serialize the same per-runner set, so reconnect naturally resyncs post-start mutations. `unregister_factory` SHALL return `Err(FlezhaError::NotDefined { .. })` for an undefined factory and `Err(FlezhaError::OperatorTypeInUse { factory_id, live_instances })` when live instances of the factory exist, leaving the type defined. Duplicate definition of the same factory id on one runner, of either kind, SHALL return `Err(FlezhaError::DuplicateFactoryId { .. })`, whose `code()` SHALL be `topology.duplicate_factory_id`.
+`FlezhaRunner` SHALL provide `register_factory(operator)` and its inverse `unregister_factory(operator)`, each generic as `fn register_factory<O: Operator>(&self, operator: O) -> Result<&Self, FlezhaError>`, so one method takes an operator of either run, passed as a value, and reads the run from the class's `settings()`; both are legal before and after `.start()`. There SHALL be no `define_operator`, `remove_stream` or `remove_steps`. The declared factory set SHALL be per-runner, starting empty each generation and holding exactly what `register_factory` and `unregister_factory` put in it; nothing SHALL be merged into it at `.start()`. A post-start `register_factory` or `unregister_factory` SHALL update the process-global class registries and ship the runner's full current factory set to the controller via the `UpdateFactories` control message (see the `runner-factory-sync` capability); the reconnect init frame SHALL serialize the same per-runner set, so reconnect naturally resyncs post-start mutations. `unregister_factory` SHALL return `Err(FlezhaError::NotDefined { .. })` for an undefined factory and `Err(FlezhaError::OperatorTypeInUse { factory_id, live_instances })` when live instances of the factory exist, leaving the type defined. Duplicate definition of the same factory id on one runner, of either run, SHALL return `Err(FlezhaError::DuplicateFactoryId { .. })`, whose `code()` SHALL be `topology.duplicate_factory_id`.
 
 #### Scenario: Pre-start unregister shapes the init frame
 - **WHEN** user code registers A and B on an unstarted runner, unregisters B, then starts
@@ -455,23 +455,23 @@ The Rust SDK SHALL allow at most one runner to be **started** per process. `Flez
 - **WHEN** user code calls `.unregister_factory(X)` and X's factory id is not in the runner's declared set
 - **THEN** the call SHALL return `Err(FlezhaError::NotDefined { .. })`
 
-#### Scenario: One method registers either kind
-- **WHEN** user code calls `.register_factory(EchoOperator)` for an `UnboundedOperator` and `.register_factory(PlaceOrder)` for a `BoundedOperator` on one runner
-- **THEN** both factory ids SHALL be in the declared set, the first in the unbounded class registry and the second in the bounded class registry
+#### Scenario: One method registers either run
+- **WHEN** user code calls `.register_factory(EchoOperator)` for a flow `Operator` and `.register_factory(PlaceOrder)` for a steps `Operator` on one runner
+- **THEN** both factory ids SHALL be in the declared set and the class registry, the second announced with run `steps`
 
-#### Scenario: A type of both kinds does not compile
-- **WHEN** a type implements both `UnboundedOperator` and `BoundedOperator` and is passed to `.register_factory(...)`
-- **THEN** compilation SHALL fail, because the kind parameter cannot be inferred
+#### Scenario: A type that is not an operator does not compile
+- **WHEN** a type that does not implement `Operator` is passed to `.register_factory(...)`
+- **THEN** compilation SHALL fail, because the bound `O: Operator` is not met
 
-#### Scenario: A duplicate across kinds is refused, never skipped
-- **WHEN** user code calls `.register_factory(A)` for an unbounded operator and then `.register_factory(B)` for a bounded operator where both declare factory id `plain`
+#### Scenario: A duplicate across runs is refused, never skipped
+- **WHEN** user code calls `.register_factory(A)` for a flow operator and then `.register_factory(B)` for a steps operator where both declare factory id `plain`
 - **THEN** the second call SHALL return `Err(FlezhaError::DuplicateFactoryId { .. })`, the declared set SHALL still hold only A, and the process-global registry entry for `plain` SHALL still be A's
 
 ### Requirement: A restore SHALL NOT silently discard un-recoverable queued input
 
 A restore SHALL discard a Cell's queued input only where the Controller will re-forward it. Where the Controller will not re-forward it, the queued input SHALL NOT be silently destroyed.
 
-`restore_into_slot` today clears the mailbox on every restore, justified by the claim that every queued input "is durable in the input log the controller is about to re-forward". That claim holds only for classes whose inputs are journaled before forwarding — `Ingest.journal_input/2` journals for the effectively-once tier and for durable bounded instances, and passes every other operator through untouched. A plain stateful unbounded operator, which is the default configuration, has no such log.
+`restore_into_slot` today clears the mailbox on every restore, justified by the claim that every queued input "is durable in the input log the controller is about to re-forward". That claim holds only for classes whose inputs are journaled before forwarding — `Ingest.journal_input/2` journals for the effectively-once tier and for durable steps instances, and passes every other operator through untouched. A plain stateful flow operator, which is the default configuration, has no such log.
 
 #### Scenario: Journaled input may be discarded
 - **GIVEN** a Cell whose class journals its inputs before forwarding
@@ -537,15 +537,15 @@ The frame SHALL carry a payload-id constant defined alongside the sink's other p
 
 ### Requirement: The Rust SDK SHALL take the task-journal from the bind
 
-`start_bounded_resumable` SHALL accept the instance's task-journal alongside the
-restore count and SHALL pass it to `BoundedInstance::new`, so the resume state is
+`start_steps_resumable` SHALL accept the instance's task-journal alongside the
+restore count and SHALL pass it to `StepsInstance::new`, so the resume state is
 present before the driver is spawned. The `RestoreInitState` handler SHALL NOT
 carry the journal — that frame is per-Cell and is not shipped for a class with
 no persisted Cell.
 
 #### Scenario: A resuming bind with no Cell restores still resumes at its iteration
 
-- **GIVEN** a durable bounded class whose tasklets hold no per-Cell state, so no `RestoreInitState` is shipped
+- **GIVEN** a durable steps class whose tasklets hold no per-Cell state, so no `RestoreInitState` is shipped
 - **WHEN** the controller binds it with `AddOperator.task_journal`
 - **THEN** the driver SHALL enter the journaled iteration and skip the tasklets committed in it
 
@@ -641,23 +641,23 @@ consumer.
 - **THEN** the reader parks on the consumer's parker until the pool pops a
   slot, and no tasklet runs on the reader thread
 
-### Requirement: A bounded output whose write fails SHALL be held for the reconnect ring
+### Requirement: A steps output whose write fails SHALL be held for the reconnect ring
 
-A plugin-bound bounded output whose write to the secondary stream fails SHALL be
+A plugin-bound steps output whose write to the secondary stream fails SHALL be
 held in the same reconnect ring a failed plugin-emit write uses, and SHALL be
 replayed when a stream is next bound. It SHALL NOT be reported only to stderr and
 discarded, and a write the host cannot hold SHALL be counted where a user
 reads counts, never dropped in silence.
 
-#### Scenario: The secondary stream is closed when a bounded operator emits
+#### Scenario: The secondary stream is closed when a steps operator emits
 
-- **WHEN** `write_bounded_output` finds no stream, or its write returns an error
+- **WHEN** `write_steps_output` finds no stream, or its write returns an error
 - **THEN** the framed output SHALL enter the reconnect ring rather than being
   printed and dropped, and SHALL be delivered once a stream binds
 
 #### Scenario: A held output keeps the identity it was framed with
 
-- **WHEN** a held bounded output is replayed after a rebind
+- **WHEN** a held steps output is replayed after a rebind
 - **THEN** it SHALL carry the metadata it was framed with, so a keyed or
   identity-stamped output is not replayed with an empty metadata map
 
@@ -709,7 +709,7 @@ The `bench-regression` GitHub Actions job SHALL run that bench, SHALL read both 
 
 ### Requirement: `FlezhaError` SHALL expose the error model's fields
 
-`FlezhaError` SHALL be the Rust SDK's one error type. Every variant SHALL answer `code()`, `class()`, `details()` and `hint()`, and its `Display` SHALL be the catalogue message. The payload types it wraps (`TopologyIssue`, `BuildBoundedError`, `TaskletError`, and the administration and spawn failures) SHALL answer the same accessors, each code taken from an exhaustive match. The variant identifiers keep their Rust spelling.
+`FlezhaError` SHALL be the Rust SDK's one error type. Every variant SHALL answer `code()`, `class()`, `details()` and `hint()`, and its `Display` SHALL be the catalogue message. The payload types it wraps (`TopologyIssue`, `BuildStepsError`, `TaskletError`, and the administration and spawn failures) SHALL answer the same accessors, each code taken from an exhaustive match. The variant identifiers keep their Rust spelling.
 
 #### Scenario: A duplicate factory id reads as its code
 

@@ -11,31 +11,35 @@ defmodule Flezha.Operator.Builder do
   the first declared one) and `:operator_class` (the on-disk persistence
   key, defaulting to `operator.id`).
 
-  Invariant: `:kind` is the factory's, resolved at start from what its runners
+  Invariant: `:run` is the factory's, resolved at start from what its runners
   announced, and frozen for the operator's lifetime; a caller that sets one
   asserts it and is refused when the factory disagrees.
   """
 
-  # What a caller may write. The kind is not among them: it is the factory's,
+  # What a caller may write. The run is not among them: it is the factory's,
   # announced by its runners, and the start resolves it.
   @declared [:id, :factory_id, :init_values, :opts]
 
   @type t() :: %__MODULE__{
           id: String.t() | nil,
           factory_id: String.t(),
-          kind: :unbounded | :bounded | nil,
+          run: :flow | :steps | nil,
           init_values: map(),
           opts: Keyword.t()
         }
   @enforce_keys [:factory_id]
-  defstruct [:id, :factory_id, :kind, init_values: %{}, opts: []]
+  defstruct [:id, :factory_id, :run, init_values: %{}, opts: []]
+
+  @doc "Whether an instance of this spec keeps a task journal: it runs in steps."
+  @spec journals?(t()) :: boolean()
+  def journals?(%__MODULE__{run: run}), do: run == :steps
 
   @doc """
   Build a spec from named fields, so a caller that reached the controller over
   a wire never has to name this struct.
 
   `:opts` may be written as a map keyed by text, which is what a JSON document
-  carries. A field a caller may not write (the kind among them) or a missing
+  carries. A field a caller may not write (the run among them) or a missing
   `:factory_id` is refused rather than guessed. A missing `:id` is not: the start authority generates one. A
   spec that is already built passes through.
   """

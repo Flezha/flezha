@@ -34,9 +34,9 @@ defmodule Flezha.Convergence.Probe.Table do
       kind: :operator,
       facts: &Readers.suspension/1,
       events: [
-        [:flezha, :bounded, :parked],
-        [:flezha, :bounded, :suspended],
-        [:flezha, :bounded, :failed]
+        [:flezha, :steps, :parked],
+        [:flezha, :steps, :suspended],
+        [:flezha, :steps, :failed]
       ]
     },
     %{

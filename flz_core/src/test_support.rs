@@ -151,8 +151,13 @@ pub(crate) mod host_class {
             .collect::<Vec<_>>()
             .join(",");
         let entry_json = entry_channels(entries, "");
+        let run = if tier {
+            r#"{"flow":{"exactly":"effectively_once"}}"#
+        } else {
+            r#""flow""#
+        };
         let json = format!(
-            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,"effectively_once":{tier},
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","durable":{{"local":{{"sleep_after":false}}}},"run":{run},
                  "channels":[{entry_json}
                              {{"name":"mid","kind":"inter_task","producer":0,
                                "chains":[{chain_list}]}},
@@ -164,21 +169,21 @@ pub(crate) mod host_class {
         OperatorInstance::of_class(id, &format!("{id}_inst")).expect("class registered")
     }
 
-    /// A host `once` bounded class: an entry channel per name in `entries`,
+    /// A host `once` steps class: an entry channel per name in `entries`,
     /// each into the one tasklet `p0` on an edge whose ladder has `retry_max`
     /// rungs of 1 ms.
-    pub(crate) fn bounded_json(id: &str, entries: &[&str], retry_max: u32) -> String {
+    pub(crate) fn steps_json(id: &str, entries: &[&str], retry_max: u32) -> String {
         let entry_json = entry_channels(
             entries,
             &format!(r#""retry_max":{retry_max},"retry_backoff_ms":1,"#),
         );
         format!(
-            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":false,
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","durable":false,
                  "channels":[{entry_json}
                              {{"name":"out","kind":"plugin","producer":0,
                                "chains":[[{{"link":"sink","name":"out"}}]]}}],
                  "tasklets":[{{"name":"p0"}}],
-                 "bounded":{{}}}}"#
+                 "run":"steps"}}"#
         )
     }
 
@@ -204,10 +209,10 @@ pub(crate) mod host_class {
         errors
     }
 
-    /// A host bounded instance built as the bind builds it and not yet
+    /// A host steps instance built as the bind builds it and not yet
     /// opened, so a test reads the messages its run queues.
-    pub(crate) fn bounded(id: &str, entries: &[&str]) -> Arc<OperatorInstance> {
-        crate::host::register_host_class_json(bounded_json(id, entries, 1).as_bytes())
+    pub(crate) fn steps(id: &str, entries: &[&str]) -> Arc<OperatorInstance> {
+        crate::host::register_host_class_json(steps_json(id, entries, 1).as_bytes())
             .expect("class registers");
         OperatorInstance::of_class(id, &format!("{id}_inst")).expect("class registered")
     }

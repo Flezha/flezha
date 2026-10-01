@@ -1,4 +1,4 @@
-//! `MigrationDeserialization` — restore an UnboundedOperator instance's per-Tasklet /
+//! `MigrationDeserialization` — restore an Operator instance's per-Tasklet /
 //! per-Cell state from a snapshot blob and register it locally.
 //! Reuses `apply_init_values` for the state-application path so a
 //! migrated instance ends up with byte-identical Cell state to the
@@ -23,7 +23,7 @@ impl CommandAction for MigrationDeserialization {
             self.factory_id.clone(),
             self.operator_id.clone(),
             crate::operator::instance::KeyGroupRange::UNPARTITIONED,
-            crate::bounded::Resume::default(),
+            crate::steps::Resume::default(),
         ) {
             Some(instance) => {
                 if !self.serialized_state.is_empty() {

@@ -164,7 +164,7 @@ SDK raises or returns its one error type carrying them.
 
 | Code | Class | Exit | Message | Hint |
 |---|---|---|---|---|
-| `durability.sync_ship_failed` | unavailable | 7 | operator '{operator}' declares synchronous durability, and shipping its state to the durability backend failed: {reason} |  |
+| `durability.sync_ship_failed` | unavailable | 7 | operator '{operator}' declares durable: remote, and shipping its state to the durability backend failed: {reason} |  |
 
 ### http
 
@@ -226,15 +226,15 @@ SDK raises or returns its one error type carrying them.
 | `operator.already_running` | conflict | 6 | operator '{operator}' is already running | `flz operator list` |
 | `operator.busy` | conflict | 6 | the operator is busy moving to another runner; try again |  |
 | `operator.channel_without_text` | invalid | 2 | --channel names the entry channel of a first message, and no --text was given |  |
-| `operator.factory_kind_ambiguous` | conflict | 6 | factory '{factory}' in namespace '{namespace}' is announced as both unbounded and bounded, and neither is established; run runners of one kind for it |  |
-| `operator.factory_kind_undeclared` | unavailable | 7 | factory '{factory}' in namespace '{namespace}' is served only by runners that announce no kind for it, and such a runner is never placed on |  |
-| `operator.factory_kind_unserved` | unavailable | 7 | factory '{factory}' in namespace '{namespace}' is established as {kind}, and every runner serving it announces the other kind |  |
 | `operator.factory_language_ambiguous` | conflict | 6 | factory '{factory}' in namespace '{namespace}' is served in more than one SDK language and none is established; run one language's runners, or clear the factory's durable state |  |
 | `operator.factory_language_undeclared` | unavailable | 7 | factory '{factory}' in namespace '{namespace}' is served only by runners that declare no SDK language, and such a runner is never placed on |  |
 | `operator.factory_language_unserved` | unavailable | 7 | factory '{factory}' in namespace '{namespace}' is established in SDK language {language}, and no connected runner of that language serves it; start one, or clear the factory's durable state |  |
 | `operator.factory_mismatch` | conflict | 6 | '{operator}' in namespace '{namespace}' is an operator of factory '{actual}', not of '{factory}', so a call to factory '{factory}' cannot reach it |  |
-| `operator.factory_not_bounded` | invalid | 2 | factory '{factory}' is an unbounded operator, and only a bounded one can be spawned or scheduled |  |
-| `operator.factory_not_unbounded` | invalid | 2 | factory '{factory}' is a bounded operator, and only an unbounded one is started here |  |
+| `operator.factory_not_flow` | invalid | 2 | factory '{factory}' is a steps operator, and only a flow one is started here |  |
+| `operator.factory_not_steps` | invalid | 2 | factory '{factory}' is a flow operator, and only a steps one can be spawned or scheduled |  |
+| `operator.factory_run_ambiguous` | conflict | 6 | factory '{factory}' in namespace '{namespace}' is announced as both flow and steps, and neither is established; serve it from runners that agree on how it runs |  |
+| `operator.factory_run_undeclared` | unavailable | 7 | factory '{factory}' in namespace '{namespace}' is served only by runners that announce no run for it, or a run that is neither flow nor steps, and such a runner is never placed on |  |
+| `operator.factory_run_unserved` | unavailable | 7 | factory '{factory}' in namespace '{namespace}' is established as {run}, and every runner serving it announces the other run |  |
 | `operator.factory_unknown` | not_found | 5 | no runner in namespace '{namespace}' serves factory '{factory}' | `flz runner list --namespace {namespace}` |
 | `operator.first_message_not_text` | invalid | 2 | a first message and its channel must be text |  |
 | `operator.group_base_taken` | conflict | 6 | '{operator}' names a partition group of {members} live members; start it with --partitions {partitions} to converge it, or stop the group first |  |
@@ -256,7 +256,8 @@ SDK raises or returns its one error type carrying them.
 | `operator.outside_retention` | invalid | 2 | seq {target} of Cell '{cell}' is older than its retention window; the earliest point kept is seq {earliest} |  |
 | `operator.partitioned_first_message` | invalid | 2 | a partitioned start carries no first message, because a group's message reaches its member by key; send it through a keyed forward, or to a member id such as '{member}' once the group runs |  |
 | `operator.partitions_out_of_range` | invalid | 2 | partitions must be between 2 and {max}, one per key group; got {partitions} |  |
-| `operator.replay_bounded` | invalid | 2 | '{cell}' is a Cell of a bounded operator, whose baseline is a committed iteration across every Cell rather than one Cell's WAL seq, so it cannot be replayed; take the loop back with a rewind | `flz operator rewind <operator> --to-iteration <n>` |
+| `operator.remote_without_backend` | unavailable | 7 | factory '{factory}' declares durable: remote, and this controller has no durability backend; set FLEZHA_DURABILITY_BACKEND, or declare durable: local |  |
+| `operator.replay_steps` | invalid | 2 | '{cell}' is a Cell of a steps operator, whose baseline is a committed iteration across every Cell rather than one Cell's WAL seq, so it cannot be replayed; take the loop back with a rewind | `flz operator rewind <operator> --to-iteration <n>` |
 | `operator.rescale_id_held` | unavailable | 7 | the rescale stopped before anything moved: '{member}' still holds its id {timeout_ms} ms after it was stopped; retry once it has gone |  |
 | `operator.rescale_move_failed` | internal | 1 | the rescale stopped: a Cell move failed, so the group is stopped with no member started; run the scale again to finish the remaining moves |  |
 | `operator.rescale_parked_entries` | conflict | 6 | the group holds parked DLQ entries ({entries}); replay or drop them before a rescale | `flz dlq list` |
@@ -427,14 +428,13 @@ SDK raises or returns its one error type carrying them.
 | `runtime.channel_wrong_kind` | invalid | 2 | operator '{operator}' channel '{channel}' is a {declared} channel, not a {kind} one |  |
 | `runtime.class_not_registered` | not_found | 5 | no operator class is registered as '{factory}' on this runner |  |
 | `runtime.command_crashed` | internal | 1 | the runner failed while answering the command: {reason} |  |
-| `runtime.complete_outside_bounded` | invalid | 2 | only a tasklet running inside a bounded operator can complete it; an unbounded operator never completes |  |
 | `runtime.completion_too_many_effects` | invalid | 2 | the completion carries more effects than the activation had items |  |
 | `runtime.connect_unconfirmed` | unreachable | 3 | the controller connect was not confirmed within {seconds}s |  |
 | `runtime.edge_closure_panicked` | internal | 1 | the edge {closure} panicked: {reason} |  |
 | `runtime.event_time_timer_without_event_time_clock` | invalid | 2 | tasklet '{tasklet}' declared clock '{clock}'; an event-time timer needs an event-time clock |  |
 | `runtime.executor_unavailable` | unavailable | 7 | the {executor} executor cannot run here: {reason} |  |
 | `runtime.factory_in_service` | conflict | 6 | '{module}' cannot be unregistered, because a running runner cannot stop serving a started declaration |  |
-| `runtime.factory_kind_mismatch` | conflict | 6 | factory '{factory}' is registered as a {declared} class, and the controller started it as {kind} |  |
+| `runtime.factory_run_mismatch` | conflict | 6 | factory '{factory}' is registered as a {declared} class, and the controller started it as {run} |  |
 | `runtime.forked_process` | invalid | 2 | the core was started in process {owner} and this is process {pid}; fork does not carry the core's threads, so start the core in each child |  |
 | `runtime.hook_missing` | invalid | 2 | tasklet '{tasklet}' {action}, and declares no {hook} to handle it |  |
 | `runtime.host_command_failed` | internal | 1 | the host failed the {command} activation: {reason} |  |
@@ -550,13 +550,11 @@ SDK raises or returns its one error type carrying them.
 
 | Code | Class | Exit | Message | Hint |
 |---|---|---|---|---|
-| `topology.ambiguous_operator_kind` | invalid | 2 | '{module}' declares both an unbounded and a bounded operator; an operator is one kind |  |
 | `topology.at_checkpoint_without_max_delay` | invalid | 2 | checkpoint_outputs at_checkpoint requires checkpoint_max_delay_ms: an interval that never closes would hold its outputs forever on a quiet Cell |  |
-| `topology.bounded_setting_on_unbounded` | invalid | 2 | unbounded operator '{factory_id}' declares {settings}, which only a bounded operator carries |  |
 | `topology.branch_too_few_arms` | invalid | 2 | branch requires at least two arms; {arms} given |  |
 | `topology.branching_chained_loop` | invalid | 2 | a handoff-chained loop needs exactly one terminal tasklet per chain; the chain of entry channel '{channel}' has {leaves} |  |
 | `topology.call_deadline_zero` | invalid | 2 | channel '{channel}' calls with a deadline of 0 ms; a call needs a positive deadline_ms |  |
-| `topology.call_outside_per_input_loop` | invalid | 2 | channel '{channel}' ends in a call, and only a :per_input bounded operator reads the later message its Response is; declare the class :per_input, or make the call from an unbounded operator |  |
+| `topology.call_outside_per_input_loop` | invalid | 2 | channel '{channel}' ends in a call, and only a :per_input steps operator reads the later message its Response is; declare the class :per_input, or make the call from a flow operator |  |
 | `topology.call_response_unread` | invalid | 2 | channel '{channel}' calls another operator and its Response channel '{response}' feeds no tasklet, so every outcome would be journaled and read by nobody; wire the Response channel into a tasklet, or forward with operator_forward when no outcome is wanted |  |
 | `topology.call_without_key` | invalid | 2 | channel '{channel}' calls a factory with create: false and no key_by before the call, so nothing names the instance it may reach; key the chain, or let the call create its callee |  |
 | `topology.cell_keys_without_static_mode` | invalid | 2 | tasklet '{tasklet}' declares cell_keys without static mode |  |
@@ -566,17 +564,13 @@ SDK raises or returns its one error type carrying them.
 | `topology.channel_ends_twice` | invalid | 2 | channel '{channel}' declares two plugin ends; a channel ends in one sink, one response() or one call, so route the value through a pass-through tasklet to give it both |  |
 | `topology.channel_name_too_long` | invalid | 2 | channel '{channel}' has a {len}-byte name; the name rides every frame this channel produces, under a one-byte length prefix, so it may be at most {max} bytes |  |
 | `topology.channel_named_twice` | invalid | 2 | channel '{channel}' is named twice: named('{named}') and sink('{sink}') both name it. A sink names the channel it terminates, so write the name once: sink('{named}') to keep the channel's name, or named('{named}') with a sink that takes no name |  |
-| `topology.checkpoint_ack_without_tier` | invalid | 2 | the operator declares checkpoint_ack without effectively_once; the checkpoint is where the tier's consumed offset advances, and an at-least-once operator has no durable offset to hold back (nor a durable input log to replay the interval from) |  |
 | `topology.checkpoint_every_zero` | invalid | 2 | the operator declares checkpoint_every(0); an interval that closes every zero inputs is not an interval, so omit it to close only on an explicit checkpoint call |  |
 | `topology.checkpoint_max_delay_zero` | invalid | 2 | checkpoint_max_delay_ms must be greater than zero |  |
-| `topology.checkpoint_on_bounded` | invalid | 2 | a bounded class cannot declare a checkpoint (checkpoint_ack, checkpoint_every, checkpoint_outputs, checkpoint_max_delay_ms); a bounded commits at its stage boundary |  |
 | `topology.class_not_constructible` | invalid | 2 | class '{class}' could not be constructed through a public no-argument constructor: {reason} |  |
 | `topology.codec_with_callable` | invalid | 2 | channel '{channel}' names both a codec and its own callable; give one |  |
 | `topology.consumer_out_of_range` | invalid | 2 | channel '{channel}' names consumer {consumer} but the class declares {tasklets} tasklet(s) |  |
-| `topology.correction_window_on_bounded` | invalid | 2 | a bounded class cannot declare correction_window_ms |  |
 | `topology.correction_window_zero` | invalid | 2 | the operator declares correction_window(0); a zero window can correct nothing |  |
 | `topology.correction_without_event_time` | invalid | 2 | the operator declares correction_window but tasklet '{tasklet}' declares clock '{clock_type}'; correction orders a replayed slice by event time, which only an event-time clock yields |  |
-| `topology.correction_without_tier` | invalid | 2 | the operator declares correction_window without effectively_once; correction replays the input log against a rewound baseline, and only the tier journals inputs before forwarding them (an at-least-once operator has no durable input to replay) |  |
 | `topology.cycle` | invalid | 2 | tasklet '{tasklet}' is on a cycle; an operator topology is a DAG, so a node's output may never reach its own input |  |
 | `topology.dangling_transform_chain` | invalid | 2 | channel '{channel}' declares a transform or key_by that is never closed by into; a transform chain is stored on the consumer edge it terminates in, so a dangling one would silently do nothing |  |
 | `topology.declaration_unreadable` | invalid | 2 | the class declaration is not valid JSON for the schema: {reason} |  |
@@ -590,11 +584,9 @@ SDK raises or returns its one error type carrying them.
 | `topology.duplicate_plugin_sink` | invalid | 2 | channel '{channel}' was declared with sink more than once; only one plugin sink per channel is allowed |  |
 | `topology.duplicate_sink_name` | invalid | 2 | channel '{channel}' is named by two plugin sinks; a sink names the channel it terminates, so two channels cannot name one sink. Give each its own name; a plugin still reaches both by attaching to the operator with no channel filter |  |
 | `topology.edge_already_wired` | invalid | 2 | channel '{channel}' already feeds tasklet '{tasklet}'; an edge carries exactly one transform and one key or neither, so a re-declaration where either side carries one is refused rather than silently keeping the first |  |
-| `topology.effectively_once_on_bounded` | invalid | 2 | a bounded class cannot declare effectively_once |  |
-| `topology.effectively_once_without_persistence` | invalid | 2 | effectively_once requires persistent: the tier is durable state |  |
+| `topology.effectively_once_without_persistence` | invalid | 2 | exactly: effectively_once needs a durable other than false: the tier is durable state |  |
 | `topology.entry_channel_with_producer` | invalid | 2 | entry channel '{channel}' cannot name a producer |  |
 | `topology.entry_channel_without_consumer` | invalid | 2 | entry channel '{channel}' names no consumer |  |
-| `topology.external_stop_only` | invalid | 2 | bounded class '{factory_id}' can only end by an external stop: let its chain complete, have a tasklet call complete, or declare max_duration |  |
 | `topology.inter_task_channel_without_producer` | invalid | 2 | inter_task channel '{channel}' names no producer |  |
 | `topology.invalid_mode` | invalid | 2 | operator '{factory_id}' sets {knob} to {value}, which is not one of its modes |  |
 | `topology.invalid_setting` | invalid | 2 | {declaration} sets {setting} to {value}, and it must be {expected} |  |
@@ -611,17 +603,18 @@ SDK raises or returns its one error type carrying them.
 | `topology.multiple_output_channels` | invalid | 2 | tasklet '{tasklet}' produces more than one channel; a tasklet emits on exactly one output channel |  |
 | `topology.named_on_entry` | invalid | 2 | entry channel '{channel}' cannot be renamed with named; an entry channel is named where it is declared |  |
 | `topology.negative_setting` | invalid | 2 | tasklet '{tasklet}' sets {setting} to {value}, and it must not be negative |  |
-| `topology.no_bounded_body` | invalid | 2 | bounded class '{factory_id}' declares no channels body, so it has no tasklets to run |  |
-| `topology.no_entry_channel` | invalid | 2 | the bounded class declares no entry channel for its messages to arrive on |  |
+| `topology.no_entry_channel` | invalid | 2 | the steps class declares no entry channel for its messages to arrive on |  |
 | `topology.no_operator_exported` | invalid | 2 | module '{module}' exports no operator declaration |  |
+| `topology.no_steps_body` | invalid | 2 | steps class '{factory_id}' declares no channels body, so it has no tasklets to run |  |
 | `topology.no_tasklets` | invalid | 2 | the class declares no tasklet; a host class declares at least one |  |
 | `topology.node_identity_collision` | invalid | 2 | node identity '{name}' is declared by two distinct nodes; a node name must be unique per operator and distinct from every tasklet name |  |
 | `topology.operator_field_on_tasklet` | invalid | 2 | tasklet '{tasklet}' declares {fields}, which an operator declaration carries; declare the short form with {instead} |  |
 | `topology.partitions_without_keyed_tasklet` | invalid | 2 | factory '{factory}' has no keyed entry-fed tasklet, so each partition would fold a slice of the input into its own copy of the same state; declare key_by on the entry edge before partitioning |  |
-| `topology.partitions_without_per_input_loop` | invalid | 2 | factory '{factory}' reads one message (loop_mode {loop_mode}), so its {partitions} partitions would each wait for a message that reaches only one of them; declare loop_mode per_input before partitioning |  |
+| `topology.partitions_without_per_input_loop` | invalid | 2 | factory '{factory}' reads one message (each {each}), so its {partitions} partitions would each wait for a message that reaches only one of them; declare each per_input before partitioning |  |
 | `topology.payload_type_mismatch` | invalid | 2 | channel '{channel}' delivers {delivered}, which does not match the input type {input} of tasklet '{tasklet}' |  |
 | `topology.plugin_channel_with_consumers` | invalid | 2 | plugin channel '{channel}' cannot name consumers |  |
 | `topology.producer_out_of_range` | invalid | 2 | channel '{channel}' names producer {producer} but the class declares {tasklets} tasklet(s) |  |
+| `topology.remote_on_flow` | invalid | 2 | flow operator '{factory_id}' declares durable: remote, which a flow operator does not carry until keep-work-remote-on-a-flow-operator gates its commit points; declare durable: local |  |
 | `topology.retired_callback` | invalid | 2 | tasklet '{tasklet}' defines {callback}, which no longer exists; use {instead} |  |
 | `topology.retry_max_zero` | invalid | 2 | channel '{channel}' declared retry_max 0; at least one attempt is required (fail an input as non-retryable to park it without retries) |  |
 | `topology.schema_floor_above_version` | invalid | 2 | tasklet '{tasklet}' reads back to schema version {floor}, above its own schema version {version} |  |
@@ -633,13 +626,10 @@ SDK raises or returns its one error type carrying them.
 | `topology.short_form_with_topology` | invalid | 2 | operator '{factory_id}' is a single-tasklet short form and also declares a channels body; declare one or the other |  |
 | `topology.sink_on_entry` | invalid | 2 | entry channel '{channel}' is given a plugin sink, and a sink is fed by a tasklet; wire the entry channel into one first |  |
 | `topology.sink_without_output` | invalid | 2 | operator '{factory_id}' names a sink, and its tasklet declares no output to feed it |  |
-| `topology.sleep_without_persistence` | invalid | 2 | class '{factory_id}' declares sleep_when_idle with persistence off: a sleeping instance is evicted and restored from its durable state, and this class keeps none |  |
 | `topology.state_not_constructible` | invalid | 2 | tasklet '{tasklet}' has state class '{state}' with no accessible no-argument constructor; add one, or write initState |  |
 | `topology.state_type_id_collision` | invalid | 2 | tasklet '{tasklet}' has state types '{first}' and '{second}' that derive the same encoding id {id}; rename one, or list the types to own their ids |  |
 | `topology.state_unrepresentable` | invalid | 2 | {path} cannot be encoded for durable state: {reason} |  |
 | `topology.static_tasklet_without_cell_keys` | invalid | 2 | static tasklet '{tasklet}' declares no cell_keys |  |
-| `topology.sync_durability_on_unbounded` | invalid | 2 | class '{factory_id}' declares sync_durability, which only a bounded class may: a stream class acknowledges at input rates, and a remote round trip per acknowledgement is not a guarantee it can keep |  |
-| `topology.sync_durability_without_persistence` | invalid | 2 | sync_durability requires persistent: there is no commit barrier to ship for a class that journals nothing |  |
 | `topology.tasklet_name_missing` | invalid | 2 | tasklet class '{tasklet}' declares no name, and the name is where its state is saved |  |
 | `topology.transform_after_key_by` | invalid | 2 | channel '{channel}' declares a transform after key_by; the key is evaluated on the final post-transform value, so it must be the last link before into |  |
 | `topology.transform_after_terminal` | invalid | 2 | channel '{channel}' declares a transform or key_by after a plugin sink; the sink serializes the channel's own value, so nothing downstream of it can be reshaped |  |
@@ -648,7 +638,6 @@ SDK raises or returns its one error type carrying them.
 | `topology.unkeyed_edge_into_dynamic_tasklet` | invalid | 2 | channel '{channel}' feeds tasklet '{tasklet}' without a key_by, but another edge keys it into dynamic mode; every edge into a dynamic-mode tasklet must name the Cell its inputs reach |  |
 | `topology.unknown_codec` | invalid | 2 | channel '{channel}' names codec '{codec}', which is not one of {codecs} |  |
 | `topology.unknown_field` | invalid | 2 | {declaration} declares {fields}, which it does not carry |  |
-| `topology.unknown_operator_kind` | invalid | 2 | '{module}' declares neither an unbounded nor a bounded operator |  |
 | `topology.unknown_sdk_lang` | invalid | 2 | sdk_lang {sdk_lang} is not an allocated SDK language; every class declares the byte its SDK holds in the allocation table, because the controller places an operator only on a runner of its factory's language |  |
 | `topology.unreachable_tasklet` | invalid | 2 | tasklet '{tasklet}' is not reachable from any entry channel |  |
 | `topology.unresolved_type_argument` | invalid | 2 | tasklet class '{tasklet}' leaves its {parameter} type argument unresolved; declare it concretely where the class implements the tasklet |  |

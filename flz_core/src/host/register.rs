@@ -12,19 +12,19 @@ use std::sync::Arc;
 
 use flz_transport::service::payloader::MAX_METADATA_FIELD_LEN;
 
-use super::build::{
-    bounded_spec, build_channels, build_host_dag, build_tasklets, resolve_class_facts,
-};
+use super::build::{build_channels, build_host_dag, build_tasklets, resolve_class_facts};
 use super::chains::derive_channels;
 use super::decl::{
-    HostAckGranularity, HostBoundedDecl, HostCellModeDecl, HostChannelKind, HostCheckpointOutputs,
-    HostClassDecl, HostClock, HostLoopMode, HostOverflow, HostTaskletDecl,
+    HostAckGranularity, HostCellModeDecl, HostChannelKind, HostClassDecl, HostClock, HostOverflow,
+    HostTaskletDecl,
 };
 use super::issue::{render_issues, TopologyIssue};
-use crate::bounded::spec::{graph_order, GraphSeed, TaskDag};
-use crate::bounded::LoopMode;
 use crate::error::Error;
-use crate::operator::topology::OperatorTopology;
+use crate::operator::settings::{
+    self, Durable, Each, Exactly, OnFailure, Run, SettingIssue,
+};
+use crate::operator::topology::{AckGranularity, BeyondWindowPolicy, CheckpointOutputs, OperatorTopology};
+use crate::steps::spec::{graph_order, GraphSeed, StepsSpec, TaskDag};
 use crate::ErrorModel;
 
 /// Hard upper bound on a per-Cell mailbox: ~1M items is past sanity for any
@@ -38,6 +38,11 @@ pub const MAX_MAILBOX_CAPACITY: usize = 1_048_576;
 pub struct Derived {
     pub channels: Vec<DerivedChannel>,
     pub ack_granularity: HostAckGranularity,
+    /// How the class runs and where its work is kept, as its tree declared.
+    #[serde(skip)]
+    pub run: Run,
+    #[serde(skip)]
+    pub durable: Durable,
     #[serde(skip)]
     pub decl: HostClassDecl,
 }
@@ -121,16 +126,22 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), Error> {
 /// one seam every SDK's builder submits to.
 pub fn check(decl: HostClassDecl) -> Result<Derived, Vec<TopologyIssue>> {
     let mut issues = Vec::new();
-    refuse_class_facts(&decl, &mut issues);
+    let (run, durable) = refuse_class_facts(&decl, &mut issues);
+    let effectively_once = matches!(
+        run,
+        Run::Flow {
+            exactly: Exactly::EffectivelyOnce { .. }
+        }
+    );
 
     let channels = derive_channels(&decl, &mut issues);
     refuse_names(&decl, &channels, &mut issues);
     for task_decl in &decl.tasklets {
         refuse_tasklet(task_decl, &mut issues);
     }
-    let responses = refuse_calls(&decl, &channels, &mut issues);
+    let responses = refuse_calls(&run, &channels, &mut issues);
     for channel in &channels {
-        refuse_channel(&decl, channel, &mut issues);
+        refuse_channel(&decl, effectively_once, channel, &mut issues);
         if !responses.contains(channel.name.as_str()) {
             refuse_channel_ends(channel, &mut issues);
         }
@@ -140,8 +151,13 @@ pub fn check(decl: HostClassDecl) -> Result<Derived, Vec<TopologyIssue>> {
 
     if issues.is_empty() {
         Ok(Derived {
-            ack_granularity: derive_ack_granularity(&decl),
+            ack_granularity: match ack_of(&run) {
+                AckGranularity::PerInput => HostAckGranularity::PerInput,
+                AckGranularity::Checkpoint(_) => HostAckGranularity::Checkpoint,
+            },
             channels,
+            run,
+            durable,
             decl,
         })
     } else {
@@ -149,17 +165,13 @@ pub fn check(decl: HostClassDecl) -> Result<Derived, Vec<TopologyIssue>> {
     }
 }
 
-/// Any checkpoint key implies the granularity — the rule six per-SDK helpers
-/// each carried before it was stated once here (KI-122).
-fn derive_ack_granularity(decl: &HostClassDecl) -> HostAckGranularity {
-    let asked = decl.checkpoint_ack
-        || decl.checkpoint_every.is_some()
-        || decl.checkpoint_outputs == HostCheckpointOutputs::AtCheckpoint
-        || decl.checkpoint_max_delay_ms.is_some();
-    if asked {
-        HostAckGranularity::Checkpoint
-    } else {
-        HostAckGranularity::PerInput
+/// Where a flow class on the tier acknowledges; every other class per input.
+pub(super) fn ack_of(run: &Run) -> AckGranularity {
+    match run {
+        Run::Flow {
+            exactly: Exactly::EffectivelyOnce { ack, .. },
+        } => *ack,
+        _ => AckGranularity::PerInput,
     }
 }
 
@@ -208,8 +220,10 @@ fn refuse_names(
     }
 }
 
-/// The class-level refusals.
-fn refuse_class_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) {
+/// The class-level refusals, and the settings tree read. A tree that cannot
+/// be read is refused naming the setting and its parent, and judged as the
+/// default from there on so the rest of the record is still judged.
+fn refuse_class_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) -> (Run, Durable) {
     if !crate::header::sdk_lang_allocated(decl.sdk_lang) {
         issues.push(TopologyIssue::UnknownSdkLang {
             sdk_lang: decl.sdk_lang,
@@ -224,68 +238,84 @@ fn refuse_class_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) {
     if decl.tasklets.is_empty() {
         issues.push(TopologyIssue::NoTasklets);
     }
-    if decl.sleep_when_idle && !decl.persistent {
-        issues.push(TopologyIssue::SleepWithoutPersistence {
-            factory_id: decl.factory_id.clone(),
-        });
-    }
-    // Each kind is judged on its own settings; a setting of the other kind is
-    // refused by its own name rather than by the rule that assumes its kind.
-    match &decl.bounded {
-        Some(_) => refuse_bounded_facts(decl, issues),
-        None => {
-            if decl.sync_durability {
-                issues.push(TopologyIssue::SyncDurabilityOnUnbounded {
-                    factory_id: decl.factory_id.clone(),
-                });
-            }
-            refuse_tier_facts(decl, issues);
+    let mut read = |issue: SettingIssue| issues.push(setting_issue(&decl.factory_id, issue));
+    let run = settings::parse_run(decl.run.as_ref()).unwrap_or_else(|issue| {
+        read(issue);
+        Run::default()
+    });
+    let durable = settings::parse_durable(decl.durable.as_ref()).unwrap_or_else(|issue| {
+        read(issue);
+        Durable::default()
+    });
+    if let Run::Flow { exactly } = &run {
+        if durable.is_remote() {
+            issues.push(TopologyIssue::RemoteOnFlow {
+                factory_id: decl.factory_id.clone(),
+            });
         }
+        refuse_tier_facts(decl, exactly, &durable, issues);
+    }
+    (run, durable)
+}
+
+fn setting_issue(factory_id: &str, issue: SettingIssue) -> TopologyIssue {
+    match issue {
+        SettingIssue::UnknownField {
+            declaration,
+            fields,
+        } => TopologyIssue::UnknownField {
+            declaration: format!("'{declaration}' of operator '{factory_id}'"),
+            fields,
+        },
+        SettingIssue::InvalidSetting {
+            setting,
+            value,
+            expected,
+        } => TopologyIssue::InvalidSetting {
+            declaration: format!("operator '{factory_id}'"),
+            setting,
+            value,
+            expected,
+        },
     }
 }
 
-fn refuse_bounded_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) {
-    if decl.effectively_once {
-        issues.push(TopologyIssue::EffectivelyOnceOnBounded);
-    }
-    if decl.correction_window_ms.is_some() {
-        issues.push(TopologyIssue::CorrectionWindowOnBounded);
-    }
-    if derive_ack_granularity(decl) == HostAckGranularity::Checkpoint {
-        issues.push(TopologyIssue::CheckpointOnBounded);
-    }
-    if decl.sync_durability && !decl.persistent {
-        issues.push(TopologyIssue::SyncDurabilityWithoutPersistence);
-    }
-}
-
-/// The tier, the checkpoint interval and the correction window each need
-/// what they rest on declared with them.
-fn refuse_tier_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) {
-    if decl.effectively_once && !decl.persistent {
+/// The value checks of the effectively-once tier's members. The one cross
+/// rule of the tree stays: the tier needs a disk.
+fn refuse_tier_facts(
+    decl: &HostClassDecl,
+    exactly: &Exactly,
+    durable: &Durable,
+    issues: &mut Vec<TopologyIssue>,
+) {
+    let Exactly::EffectivelyOnce {
+        ack,
+        correction_ms,
+        beyond_window,
+    } = exactly
+    else {
+        return;
+    };
+    if !durable.keeps() {
         issues.push(TopologyIssue::EffectivelyOnceWithoutPersistence);
     }
-    if derive_ack_granularity(decl) == HostAckGranularity::Checkpoint && !decl.effectively_once {
-        issues.push(TopologyIssue::CheckpointAckWithoutTier);
+    if let AckGranularity::Checkpoint(policy) = ack {
+        if policy.outputs == CheckpointOutputs::AtCheckpoint && policy.max_delay_ms.is_none() {
+            issues.push(TopologyIssue::AtCheckpointWithoutMaxDelay);
+        }
+        if policy.every == Some(0) {
+            issues.push(TopologyIssue::CheckpointEveryZero);
+        }
+        if policy.max_delay_ms == Some(0) {
+            issues.push(TopologyIssue::CheckpointMaxDelayZero);
+        }
     }
-    if decl.checkpoint_outputs == HostCheckpointOutputs::AtCheckpoint
-        && decl.checkpoint_max_delay_ms.is_none()
-    {
-        issues.push(TopologyIssue::AtCheckpointWithoutMaxDelay);
-    }
-    if decl.checkpoint_every == Some(0) {
-        issues.push(TopologyIssue::CheckpointEveryZero);
-    }
-    if decl.checkpoint_max_delay_ms == Some(0) {
-        issues.push(TopologyIssue::CheckpointMaxDelayZero);
-    }
-    if decl.correction_window_ms.is_some() && !decl.effectively_once {
-        issues.push(TopologyIssue::CorrectionWithoutTier);
-    }
-    if decl.correction_window_ms == Some(0) {
+    // A beyond-window policy with no window is a window of zero.
+    let window = correction_ms.or((*beyond_window != BeyondWindowPolicy::default()).then_some(0));
+    if window == Some(0) {
         issues.push(TopologyIssue::CorrectionWindowZero);
     }
-    if decl.correction_window_ms.is_some() {
+    if window.is_some() {
         for task_decl in &decl.tasklets {
             if task_decl.clock != HostClock::EventTime {
                 issues.push(TopologyIssue::CorrectionWithoutEventTime {
@@ -299,7 +329,12 @@ fn refuse_tier_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) {
 
 /// What a channel's declarations may claim about its plugin wire, its ends
 /// and what it discards.
-fn refuse_channel(decl: &HostClassDecl, channel: &DerivedChannel, issues: &mut Vec<TopologyIssue>) {
+fn refuse_channel(
+    decl: &HostClassDecl,
+    effectively_once: bool,
+    channel: &DerivedChannel,
+    issues: &mut Vec<TopologyIssue>,
+) {
     let channel_decl = &decl.channels[channel.index as usize];
     if channel_decl.keyed && channel.sink.is_none() {
         issues.push(TopologyIssue::KeyedChannelWithoutPluginWire {
@@ -308,7 +343,7 @@ fn refuse_channel(decl: &HostClassDecl, channel: &DerivedChannel, issues: &mut V
     }
     // A sink de-duplicates by a natural key; an answer is identified by its
     // call, so a response end needs none.
-    if decl.effectively_once && !channel_decl.keyed && channel.sink.is_some() {
+    if effectively_once && !channel_decl.keyed && channel.sink.is_some() {
         issues.push(TopologyIssue::UnkeyedChannelUnderEffectivelyOnce {
             channel: channel.name.clone(),
         });
@@ -322,7 +357,7 @@ fn refuse_channel(decl: &HostClassDecl, channel: &DerivedChannel, issues: &mut V
     // trade-off: a dropped input's offset is advanced past by a later item's
     // watermark. A correction window needs the tier, so this one arm covers
     // it too.
-    if decl.effectively_once {
+    if effectively_once {
         // The policy is named as the record spells it, so an author reads
         // back the literal they wrote.
         let policy = match channel_decl.overflow {
@@ -355,17 +390,20 @@ fn refuse_channel(decl: &HostClassDecl, channel: &DerivedChannel, issues: &mut V
 /// an unread one is refused here by its call rather than as a bare entry
 /// channel without a consumer.
 fn refuse_calls<'a>(
-    decl: &HostClassDecl,
+    run: &Run,
     channels: &'a [DerivedChannel],
     issues: &mut Vec<TopologyIssue>,
 ) -> HashSet<&'a str> {
-    let loop_mode = decl.bounded.as_ref().map(|bounded| bounded.loop_mode);
+    let each = match run {
+        Run::Steps { each, .. } => Some(*each),
+        Run::Flow { .. } => None,
+    };
     let mut responses = HashSet::new();
     for (channel, call) in channels
         .iter()
         .filter_map(|c| c.call.as_ref().map(|call| (c, call)))
     {
-        if loop_mode.is_some_and(|mode| mode != HostLoopMode::PerInput) {
+        if each.is_some_and(|mode| mode != Each::PerInput) {
             issues.push(TopologyIssue::CallOutsidePerInputLoop {
                 channel: channel.name.clone(),
             });
@@ -391,7 +429,7 @@ fn refuse_calls<'a>(
 /// inter_task channel with no consumer is NOT one of them: it is a leaf's
 /// retained output — what the typed SDK's `sealed()` declares, what a saga
 /// archive leaf's undo reverses, what a handoff-chained loop feeds back — and
-/// the bounded run, not another tasklet, is what reads it.
+/// the steps run, not another tasklet, is what reads it.
 fn refuse_channel_ends(channel: &DerivedChannel, issues: &mut Vec<TopologyIssue>) {
     let channel_name = channel.name.clone();
     issues.push(match channel.kind {
@@ -541,10 +579,12 @@ fn refuse_graph_shape(
 fn register(derived: Derived) -> Result<(), Error> {
     let Derived {
         channels: derived_channels,
-        ack_granularity,
+        run,
+        durable,
         decl,
+        ..
     } = derived;
-    let class = resolve_class_facts(&decl, ack_granularity);
+    let class = resolve_class_facts(&decl, &run, durable.keeps());
     let (channels, name_to_id) = build_channels(&decl, &derived_channels);
     let (tasklets, tasklet_name_to_id) =
         build_tasklets(&decl, &class, &channels, &derived_channels);
@@ -555,15 +595,16 @@ fn register(derived: Derived) -> Result<(), Error> {
         tasklets,
         tasklet_name_to_id,
         factory_id: class.factory_id,
-        persistence_enabled_const: decl.persistent,
-        sleep_when_idle: decl.sleep_when_idle,
-        effectively_once: decl.effectively_once,
+        description: Box::leak(decl.description.clone().into_boxed_str()),
+        durable,
+        max_duration: decl.max_duration_ms.map(std::time::Duration::from_millis),
+        effectively_once: class.effectively_once,
         correction: class.correction,
         ack_granularity: class.ack_granularity,
-        bounded: None,
+        steps: None,
     };
-    if let Some(bounded) = &decl.bounded {
-        topology.bounded = Some(structured_bounded(&decl, bounded, &topology)?);
+    if let Run::Steps { each, on_failure } = run {
+        topology.steps = Some(structured_steps(&topology, each, on_failure)?);
     }
     crate::operator::registry::register_class(class.factory_id, Arc::new(topology));
     Ok(())
@@ -582,12 +623,11 @@ fn register(derived: Derived) -> Result<(), Error> {
 /// `declare_class`. The typed Rust SDK refuses the same shape in its own
 /// vocabulary, because it never passes through here.
 fn refuse_loop_terminal_without_handoff(
-    decl: &HostClassDecl,
-    bounded: &HostBoundedDecl,
     topology: &OperatorTopology,
+    each: Each,
     dag: &TaskDag,
 ) -> Result<(), Error> {
-    if !decl.persistent || bounded.loop_mode != HostLoopMode::Chained {
+    if !topology.durable.keeps() || each != Each::Chained {
         return Ok(());
     }
     match dag.terminal_without_handoff(topology) {
@@ -603,13 +643,13 @@ fn refuse_loop_terminal_without_handoff(
 
 /// A structured chain: its DAG from the topology, a chained loop decided
 /// against it.
-fn structured_bounded(
-    decl: &HostClassDecl,
-    bounded: &HostBoundedDecl,
+fn structured_steps(
     topology: &OperatorTopology,
-) -> Result<crate::bounded::spec::BoundedSpec, Error> {
+    each: Each,
+    on_failure: OnFailure,
+) -> Result<StepsSpec, Error> {
     let dag = build_host_dag(topology)?;
-    if bounded.loop_mode == HostLoopMode::Chained {
+    if each == Each::Chained {
         if let Some((channel_id, branching)) = dag.branching_chain() {
             return Err(Error::Declaration(
                 TopologyIssue::BranchingChainedLoop {
@@ -623,11 +663,10 @@ fn structured_bounded(
             ));
         }
     }
-    refuse_loop_terminal_without_handoff(decl, bounded, topology, &dag)?;
-    let loop_mode = match bounded.loop_mode {
-        HostLoopMode::Once => LoopMode::Once,
-        HostLoopMode::PerInput => LoopMode::PerInput,
-        HostLoopMode::Chained => LoopMode::Chained,
-    };
-    Ok(bounded_spec(decl, bounded, dag, loop_mode))
+    refuse_loop_terminal_without_handoff(topology, each, &dag)?;
+    Ok(StepsSpec {
+        dag,
+        on_failure,
+        each,
+    })
 }

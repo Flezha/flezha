@@ -7,7 +7,7 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   so a state added to the vocabulary and driven by nothing fails here by name.
   Each row either names the condition that mints it — a killed runner OS
   process, a bind-time restore the SDK refused, an unloadable provider, an
-  Overwatch suspended past the probe budget, a bounded instance evicted at a
+  Overwatch suspended past the probe budget, a steps instance evicted at a
   committed boundary — or is a RECORDED deferral saying which tier owns it.
 
   Per driven row the drill reads `GET /healthz` on the test's bound port,

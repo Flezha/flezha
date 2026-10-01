@@ -19,7 +19,7 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
   import FlezhaTest.Helper.ListenerHarness
   import FlezhaTest.Helper.TierE2EHarness, only: [cleanup: 3, kill_overwatch: 2, unique: 1]
 
-  import FlezhaTest.Helper.BoundedResumeHarness,
+  import FlezhaTest.Helper.StepsResumeHarness,
     only: [boot_runner: 4, replace_runner: 4, suspended?: 2]
 
   alias Flezha.Operator.{Builder, PartitionGroup}
@@ -45,7 +45,7 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
     {port, runner} =
       boot_runner(namespace, ctx, id_path,
         release?: false,
-        extra_env: [{"FLEZHA_PARK_IDLE_MS", "700"}]
+        extra_env: [{"FLEZHA_FIXTURE_SLEEP_AFTER_MS", "700"}]
       )
 
     {:ok, namespace: namespace, id_path: id_path, port: port, runner: runner}
@@ -55,7 +55,7 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
   test "a sleeper restarted asleep wakes with its declared sink beside the listener",
        %{namespace: ns} do
     path = "#{unique("drill_sink")}.ndjson"
-    id = start!(ns, "sleeping_counter", :unbounded, [file_sink("drill_sink", path)])
+    id = start!(ns, "sleeping_counter", :flow, [file_sink("drill_sink", path)])
 
     send!(ns, id, "a:2")
     assert wait_until(fn -> sink_lines(path) == ["a=2"] end, 30_000)
@@ -79,10 +79,10 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
   end
 
   @tag capability: :state_persistence, skip: FlezhaTest.SystemCase.deferral(:state_persistence)
-  test "a listener hears an unbounded sleeper and a per_input session wake, unattached again",
+  test "a listener hears a flow sleeper and a per_input session wake, unattached again",
        %{namespace: ns} do
-    stream = start!(ns, "sleeping_counter", :unbounded)
-    session = start!(ns, "part_echo_bounded", :bounded)
+    stream = start!(ns, "sleeping_counter", :flow)
+    session = start!(ns, "part_echo_steps", :steps)
     stream_listener = listen(ns, stream)
     session_listener = listen(ns, session)
 
@@ -107,7 +107,7 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
   test "a listener hears the outputs after its runner dies and the operator is rebound",
        ctx do
     %{namespace: ns, port: port, runner: dead, id_path: id_path} = ctx
-    id = start!(ns, "part_echo", :unbounded)
+    id = start!(ns, "part_echo", :flow)
     listener = listen(ns, id)
 
     replace_runner(ns, ctx, {port, dead}, id_path)
@@ -121,7 +121,7 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
   @tag capability: :parts, skip: FlezhaTest.SystemCase.deferral(:parts)
   test "a listener hears the outputs after the Overwatch is killed and restarted",
        %{namespace: ns} do
-    id = start!(ns, "part_echo", :unbounded)
+    id = start!(ns, "part_echo", :flow)
     listener = listen(ns, id)
 
     assert capture_log(fn ->
@@ -135,10 +135,10 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
     stop_listening(listener, ns, [id])
   end
 
-  @tag capability: :bounded, skip: FlezhaTest.SystemCase.deferral(:bounded)
-  test "a listener on a once bounded operator ends when the operator completes",
+  @tag capability: :steps, skip: FlezhaTest.SystemCase.deferral(:steps)
+  test "a listener on a once steps operator ends when the operator completes",
        %{namespace: ns} do
-    id = start!(ns, "echo_bounded", :bounded)
+    id = start!(ns, "echo_steps", :steps)
     %{task: task} = listen(ns, id)
     send!(ns, id, "hi")
 
@@ -327,7 +327,7 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
 
   defp start!(ns, factory, kind, plugins \\ []) do
     id = unique(factory)
-    builder = %Builder{id: id, factory_id: factory, kind: kind, opts: [plugins: plugins]}
+    builder = %Builder{id: id, factory_id: factory, run: kind, opts: [plugins: plugins]}
     assert {:ok, _} = OperatorManager.start_operator(ns, builder)
     id
   end

@@ -1,12 +1,14 @@
 defmodule Flezha.Operator.ClassRegistry do
   @moduledoc """
-  Resolves an `operator_class` to its `kind`, its declarations and its park
-  record, for paths that carry only the class string.
+  Resolves an `operator_class` to how it runs (`:flow` or `:steps`), its
+  declarations and its park record, for paths that carry only the class string.
 
   `Retention`, `Watchdog`, `StreamChannel` and the persistence resolver are
   keyed purely by `operator_class`; this registry answers them with what the
   class declared (its persistence switch, its sleep setting, its tier) and
-  whether its instance is asleep.
+  whether its instance is asleep. `journals?/1` is the one question the
+  controller asks of how a class runs: whether an instance keeps a task
+  journal, which a class that runs in steps does.
 
   Every read resolves in three steps: the in-memory ETS table (written at bind,
   evicted at teardown), a durable per-class sidecar under `Paths.class_dir/1`
@@ -22,18 +24,18 @@ defmodule Flezha.Operator.ClassRegistry do
   require Logger
 
   @table :flezha_operator_class_registry
-  @default_kind :unbounded
-  @kinds [:unbounded, :bounded]
-  @sidecar "kind"
+  @default_run :flow
+  @runs [:flow, :steps]
+  @sidecar "run"
   @tier_sidecar "effectively_once"
   @compensable_sidecar "compensable_tasks"
   @leaf_sidecar "leaf_tasks"
-  @checkpoint_sidecar "checkpoint_ack"
+  @checkpoint_sidecar "ack_checkpoint"
   @correction_sidecar "correction_window_ms"
   @compact_bytes_sidecar "compact_after_bytes"
-  @sync_durability_sidecar "sync_durability"
+  @remote_sidecar "remote"
   @persistence_off_sidecar "persistence_off"
-  @sleep_sidecar "sleep_when_idle"
+  @sleep_sidecar "sleep_after_ms"
   @parked_sidecar "parked"
 
   # Every per-class SDK declaration, keyed `{operator_class, key}` in the ETS
@@ -41,14 +43,14 @@ defmodule Flezha.Operator.ClassRegistry do
   # declaration cannot read a stale one.
   @declaration_keys [
     :effectively_once,
-    :checkpoint_ack,
+    :ack_checkpoint,
     :compensable_tasks,
     :leaf_tasks,
     :correction_window_ms,
     :compact_after_bytes,
-    :sync_durability,
+    :remote,
     :persistence_off,
-    :sleep_when_idle,
+    :sleep_after_ms,
     :parked
   ]
 
@@ -75,44 +77,51 @@ defmodule Flezha.Operator.ClassRegistry do
   # ---------- writes ----------
 
   @doc """
-  Record `operator_class`'s `kind`: an in-memory ETS entry plus, for a
-  non-`:unbounded` kind, a durable sidecar so a process-less `Retention`
-  sweep resolves the kind after teardown. Called at `Overwatch` bind.
+  Record how `operator_class` runs: an in-memory ETS entry plus, for
+  `:steps`, a durable sidecar so a process-less `Retention` sweep resolves it
+  after teardown. Called at `Overwatch` bind.
   """
-  @spec put(binary(), atom()) :: :ok
-  def put(operator_class, kind) when is_binary(operator_class) and is_atom(kind) do
+  @spec put(binary(), run()) :: :ok
+  def put(operator_class, run) when is_binary(operator_class) and run in @runs do
     ensure_table()
-    :ets.insert(@table, {operator_class, kind})
-    if kind != @default_kind, do: write_sidecar(operator_class, kind)
+    :ets.insert(@table, {operator_class, run})
+    if run != @default_run, do: write_sidecar(operator_class, run)
     :ok
   end
 
   # ---------- declarations: decode ----------
 
+  @typedoc "How a class runs: in flow, or in steps."
+  @type run :: :flow | :steps
+
   @typedoc """
-  A class's SDK-side declarations, as resolved from the `AddOperator` response.
+  A class's settings and SDK-side declarations, as resolved from the
+  `AddOperator` response.
 
   `compensable_tasks` is the chain positions whose tasklet declares a `compensate`
-  hook, or `nil` when the class declares nothing (an unbounded operator, or a Java runner) —
+  hook, or `nil` when the class declares nothing (a flow operator, or a Java runner) —
   which a rewind reads as "no coverage information", not as "nothing is
   compensable".
   """
   @type declarations :: %{
+          run: run(),
+          each: each() | nil,
+          on_failure: :undo_all | :keep_progress | nil,
+          durable: :memory | :local | :remote,
+          sleep_after_ms: pos_integer() | nil,
+          max_duration_ms: pos_integer() | nil,
           effectively_once: boolean(),
           keyless: boolean(),
-          loop_mode: loop_mode() | nil,
-          checkpoint_ack: boolean(),
+          ack_checkpoint: boolean(),
           compensable_tasks: [non_neg_integer()] | nil,
           leaf_tasks: [non_neg_integer()] | nil,
           correction_window_ms: pos_integer() | nil,
           compact_after_bytes: pos_integer() | nil,
-          sync_durability: boolean(),
-          persistent: boolean(),
-          sleep_when_idle: boolean()
+          persistent: boolean()
         }
 
-  @typedoc "How a bounded class repeats; an unbounded class declares none."
-  @type loop_mode :: :once | :per_input | :chained
+  @typedoc "How a steps class repeats; a flow class declares none."
+  @type each :: :once | :per_input | :chained
 
   @typedoc """
   An instance asleep: the durable wake deadline it parked with. What it
@@ -121,31 +130,35 @@ defmodule Flezha.Operator.ClassRegistry do
   @type park :: %{wake_deadline_ms: non_neg_integer() | nil}
 
   @doc """
-  Resolve a class's SDK-side declarations from the `AddOperator` response
-  raw_data — an `AddOperatorResponse` metadata map when the class declares
-  anything, empty otherwise (including every pre-tier or Java runner). The one
-  place the wire form is decoded; `put_declarations/2` is the one place it is
-  persisted. A new declared capability is added in those two and nowhere else.
+  Resolve a class's settings and SDK-side declarations from the `AddOperator`
+  response raw_data, an `AddOperatorResponse` metadata map. The one place the
+  wire form is decoded; `put_declarations/2` is the one place it is persisted.
+  A new declared capability is added in those two and nowhere else. The sleep
+  interval's default is the class's, announced by its SDK: a class that
+  announces none never sleeps.
   """
   @spec decode_declarations(binary() | nil) :: declarations()
   def decode_declarations(raw_data) do
     metadata = decode_metadata(raw_data)
+    durable = parse_durable(Map.get(metadata, "durable"))
 
     %{
-      effectively_once: Map.get(metadata, "effectively_once") == "true",
+      run: if(Map.get(metadata, "run") == "steps", do: :steps, else: :flow),
+      each: parse_each(Map.get(metadata, "each")),
+      on_failure: parse_on_failure(Map.get(metadata, "on_failure")),
+      durable: durable,
+      sleep_after_ms: parse_window(Map.get(metadata, "sleep_after_ms")),
+      max_duration_ms: parse_window(Map.get(metadata, "max_duration_ms")),
+      effectively_once: Map.get(metadata, "exactly") == "effectively_once",
       # The SDK declares `keyed` only when it is false — a class with no keyed
       # entry-fed tasklet, which cannot be partitioned.
       keyless: Map.get(metadata, "keyed") == "false",
-      loop_mode: parse_loop_mode(Map.get(metadata, "loop_mode")),
-      checkpoint_ack: Map.get(metadata, "ack_granularity") == "checkpoint",
+      ack_checkpoint: Map.get(metadata, "ack") == "checkpoint",
       compensable_tasks: parse_ops(Map.get(metadata, "compensable_tasks")),
       leaf_tasks: parse_ops(Map.get(metadata, "leaf_tasks")),
-      correction_window_ms: parse_window(Map.get(metadata, "correction_window_ms")),
+      correction_window_ms: parse_window(Map.get(metadata, "correction_ms")),
       compact_after_bytes: parse_window(Map.get(metadata, "compact_after_bytes")),
-      sync_durability: Map.get(metadata, "durability") == "sync_remote",
-      # Announced only when off: a class that says nothing persists.
-      persistent: Map.get(metadata, "persistent") != "false",
-      sleep_when_idle: Map.get(metadata, "sleep_when_idle") == "true"
+      persistent: durable != :memory
     }
   end
 
@@ -158,10 +171,20 @@ defmodule Flezha.Operator.ClassRegistry do
 
   defp decode_metadata(_raw_data), do: %{}
 
-  defp parse_loop_mode("once"), do: :once
-  defp parse_loop_mode("per_input"), do: :per_input
-  defp parse_loop_mode("chained"), do: :chained
-  defp parse_loop_mode(_raw), do: nil
+  defp parse_each("once"), do: :once
+  defp parse_each("per_input"), do: :per_input
+  defp parse_each("chained"), do: :chained
+  defp parse_each(_raw), do: nil
+
+  defp parse_on_failure("undo_all"), do: :undo_all
+  defp parse_on_failure("keep_progress"), do: :keep_progress
+  defp parse_on_failure(_raw), do: nil
+
+  # A class that announces nothing keeps its work locally, as the tree's
+  # default does.
+  defp parse_durable("memory"), do: :memory
+  defp parse_durable("remote"), do: :remote
+  defp parse_durable(_raw), do: :local
 
   defp parse_ops(nil), do: nil
   defp parse_ops(""), do: []
@@ -195,20 +218,20 @@ defmodule Flezha.Operator.ClassRegistry do
   @spec put_declarations(binary(), map()) :: :ok
   def put_declarations(operator_class, declarations) when is_binary(operator_class) do
     put_effectively_once(operator_class, declarations.effectively_once)
-    put_checkpoint_ack(operator_class, declarations.checkpoint_ack)
+    put_ack_checkpoint(operator_class, declarations.ack_checkpoint)
     put_compensable_ops(operator_class, declarations.compensable_tasks)
     put_leaf_ops(operator_class, declarations.leaf_tasks)
     put_correction_window(operator_class, declarations.correction_window_ms)
     put_compact_after_bytes(operator_class, declarations.compact_after_bytes)
-    put_sync_durability(operator_class, declarations.sync_durability)
+    put_remote(operator_class, declarations.durable == :remote)
     put_persistent(operator_class, declarations.persistent)
-    put_sleep_when_idle(operator_class, declarations.sleep_when_idle)
+    put_sleep_after(operator_class, declarations.sleep_after_ms)
   end
 
   @doc """
   Record `operator_class`'s persistence switch. Durable because the bind-time
   restore and the live read resolve it through
-  `Flezha.State.PersistenceResolver.persistence_enabled?/1`, possibly while the
+  `Flezha.State.PersistenceResolver.keeps_state?/1`, possibly while the
   instance is unbound; the sidecar exists only while persistence is off.
   """
   @spec put_persistent(binary(), boolean()) :: :ok
@@ -228,21 +251,26 @@ defmodule Flezha.Operator.ClassRegistry do
   end
 
   @doc """
-  Record whether `operator_class`'s instances sleep when idle. Durable so an
-  instance rediscovered asleep at boot journals the input that wakes it before
-  any runner has told the controller again.
+  Record how long `operator_class`'s idle instances wait before they sleep,
+  or `nil` when they never do. Durable so an instance rediscovered asleep at
+  boot journals the input that wakes it before any runner has told the
+  controller again.
   """
-  @spec put_sleep_when_idle(binary(), boolean()) :: :ok
-  def put_sleep_when_idle(operator_class, sleeps?)
-      when is_binary(operator_class) and is_boolean(sleeps?) do
-    put_declaration(operator_class, :sleep_when_idle, @sleep_sidecar, sleeps?)
+  @spec put_sleep_after(binary(), pos_integer() | nil) :: :ok
+  def put_sleep_after(operator_class, sleep_after_ms) when is_binary(operator_class) do
+    put_declaration(operator_class, :sleep_after_ms, @sleep_sidecar, sleep_after_ms)
   end
 
-  @doc "Resolve `operator_class`'s sleep setting: ETS → durable sidecar → `false`."
-  @spec sleep_when_idle?(binary()) :: boolean()
-  def sleep_when_idle?(operator_class) when is_binary(operator_class) do
-    declaration(operator_class, :sleep_when_idle, @sleep_sidecar, &(&1 == "true")) == true
+  @doc "`operator_class`'s sleep interval: ETS → durable sidecar → `nil` (never)."
+  @spec sleep_after_ms(binary()) :: pos_integer() | nil
+  def sleep_after_ms(operator_class) when is_binary(operator_class) do
+    declaration(operator_class, :sleep_after_ms, @sleep_sidecar, &parse_window/1)
   end
+
+  @doc "Whether `operator_class`'s instances sleep when idle."
+  @spec sleeps?(binary()) :: boolean()
+  def sleeps?(operator_class) when is_binary(operator_class),
+    do: sleep_after_ms(operator_class) != nil
 
   @doc """
   Record that `operator_class`'s instance is asleep, or clear it with `nil`.
@@ -283,9 +311,9 @@ defmodule Flezha.Operator.ClassRegistry do
 
   @typedoc """
   What decides whether a factory's class may run partitioned: no keyed
-  entry-fed tasklet, and for a bounded operator its loop mode.
+  entry-fed tasklet, and for a steps operator its loop mode.
   """
-  @type partitioning :: %{keyless: boolean(), loop_mode: loop_mode() | nil}
+  @type partitioning :: %{keyless: boolean(), each: each() | nil}
 
   @doc """
   Record `factory_id`'s partitioning facts, as its bind declared them.
@@ -297,10 +325,10 @@ defmodule Flezha.Operator.ClassRegistry do
   takes, and the SDK's own refusal is the authority either way.
   """
   @spec put_partitioning(binary(), map()) :: :ok
-  def put_partitioning(factory_id, %{keyless: keyless?, loop_mode: mode})
+  def put_partitioning(factory_id, %{keyless: keyless?, each: mode})
       when is_binary(factory_id) and is_boolean(keyless?) do
     ensure_table()
-    :ets.insert(@table, {{factory_id, :partitioning}, %{keyless: keyless?, loop_mode: mode}})
+    :ets.insert(@table, {{factory_id, :partitioning}, %{keyless: keyless?, each: mode}})
     :ok
   end
 
@@ -312,14 +340,14 @@ defmodule Flezha.Operator.ClassRegistry do
   def partitioning(factory_id) when is_binary(factory_id) do
     case ets_lookup({factory_id, :partitioning}) do
       {:ok, facts} -> facts
-      :error -> %{keyless: false, loop_mode: nil}
+      :error -> %{keyless: false, each: nil}
     end
   end
 
   @doc """
   Record the **established** value of `attribute` for `factory_id` in
   `namespace` — the one value every runner of that factory there must
-  advertise: its SDK language (`:sdk_lang`) and its kind (`:kind`).
+  advertise: its SDK language (`:sdk_lang`) and how it runs (`:run`).
 
   Scoped by namespace as well as factory, because a factory id names a class
   within a deployment, not across the cluster: the test fleet alone gives the
@@ -331,9 +359,10 @@ defmodule Flezha.Operator.ClassRegistry do
   advertisement re-establishes both, and the SDK's own refusal is the backstop
   either way — so a restarted controller simply learns again.
   """
-  @spec put_established(binary(), binary(), :sdk_lang | :kind, byte() | atom()) :: :ok
+  @spec put_established(binary(), binary(), :sdk_lang | :run | :shape, term()) :: :ok
   def put_established(namespace, factory_id, attribute, value)
-      when is_binary(namespace) and is_binary(factory_id) and attribute in [:sdk_lang, :kind] do
+      when is_binary(namespace) and is_binary(factory_id) and
+             attribute in [:sdk_lang, :run, :shape] do
     ensure_table()
     :ets.insert(@table, {{namespace, factory_id, attribute}, value})
     :ok
@@ -343,7 +372,7 @@ defmodule Flezha.Operator.ClassRegistry do
   `factory_id`'s established `attribute` in `namespace`, or `nil` when none is
   established yet.
   """
-  @spec established(binary(), binary(), :sdk_lang | :kind) :: byte() | atom() | nil
+  @spec established(binary(), binary(), :sdk_lang | :run | :shape) :: term()
   def established(namespace, factory_id, attribute)
       when is_binary(namespace) and is_binary(factory_id) do
     case ets_lookup({namespace, factory_id, attribute}) do
@@ -359,14 +388,15 @@ defmodule Flezha.Operator.ClassRegistry do
   advertisement establishes it afresh.
 
   The escape hatch from a factory deliberately re-authored in another language
-  or as the other kind.
+  or to run the other way.
   """
   @spec delete_established(binary(), binary()) :: :ok
   def delete_established(namespace, factory_id)
       when is_binary(namespace) and is_binary(factory_id) do
     if :ets.whereis(@table) != :undefined do
       :ets.delete(@table, {namespace, factory_id, :sdk_lang})
-      :ets.delete(@table, {namespace, factory_id, :kind})
+      :ets.delete(@table, {namespace, factory_id, :run})
+      :ets.delete(@table, {namespace, factory_id, :shape})
     end
 
     :ok
@@ -375,11 +405,11 @@ defmodule Flezha.Operator.ClassRegistry do
   @doc """
   Record that `instance_id` resolves to `operator_class` on disk.
 
-  These are two different key spaces, not two names for one thing. A bounded operator
+  These are two different key spaces, not two names for one thing. A steps operator
   instance's task-journal lives under its INSTANCE id (`Paths.journal_id/1`),
   while an operator's Cells and input log live under the resolved CLASS
   (`:operator_class`, defaulting to the instance id). They coincide unless a
-  user sets that option, which a bounded operator is refused — and where they
+  user sets that option, which a steps operator is refused — and where they
   diverge, asking for one and getting the other returns half an operator's
   artifacts with no error, which is how a synchronous-durability barrier can
   pass having shipped almost nothing.
@@ -413,25 +443,25 @@ defmodule Flezha.Operator.ClassRegistry do
   end
 
   @doc """
-  Record whether `operator_class` requires its commit barriers to be remotely
-  durable before they are acked (`remote-durability-tier`). Same ETS +
-  durable-sidecar shape as the tier: the gate is consulted on the commit path
-  of an instance that may have been bound by a previous controller.
+  Record whether `operator_class` keeps its work `durable: remote`: its commit
+  barriers are remotely durable before they are acked
+  (`remote-durability-tier`). Same ETS + durable-sidecar shape as the tier: the
+  gate is consulted on the commit path of an instance that may have been bound
+  by a previous controller.
   """
-  @spec put_sync_durability(binary(), boolean()) :: :ok
-  def put_sync_durability(operator_class, sync?)
-      when is_binary(operator_class) and is_boolean(sync?) do
-    put_declaration(operator_class, :sync_durability, @sync_durability_sidecar, sync?)
+  @spec put_remote(binary(), boolean()) :: :ok
+  def put_remote(operator_class, remote?)
+      when is_binary(operator_class) and is_boolean(remote?) do
+    put_declaration(operator_class, :remote, @remote_sidecar, remote?)
   end
 
   @doc """
-  Resolve `operator_class`'s synchronous-durability declaration: ETS →
-  durable sidecar → `false` (the cost-free default).
+  Whether `operator_class` keeps its work remotely: ETS → durable sidecar →
+  `false` (the cost-free default).
   """
-  @spec sync_durability?(binary()) :: boolean()
-  def sync_durability?(operator_class) when is_binary(operator_class) do
-    declaration(operator_class, :sync_durability, @sync_durability_sidecar, &(&1 == "true")) ==
-      true
+  @spec remote?(binary()) :: boolean()
+  def remote?(operator_class) when is_binary(operator_class) do
+    declaration(operator_class, :remote, @remote_sidecar, &(&1 == "true")) == true
   end
 
   @doc """
@@ -477,10 +507,10 @@ defmodule Flezha.Operator.ClassRegistry do
   Record whether `operator_class` acknowledges its inputs only at an explicit
   checkpoint. Same ETS + durable-sidecar shape as the tier.
   """
-  @spec put_checkpoint_ack(binary(), boolean()) :: :ok
-  def put_checkpoint_ack(operator_class, checkpoint?)
+  @spec put_ack_checkpoint(binary(), boolean()) :: :ok
+  def put_ack_checkpoint(operator_class, checkpoint?)
       when is_binary(operator_class) and is_boolean(checkpoint?) do
-    put_declaration(operator_class, :checkpoint_ack, @checkpoint_sidecar, checkpoint?)
+    put_declaration(operator_class, :ack_checkpoint, @checkpoint_sidecar, checkpoint?)
   end
 
   @doc """
@@ -499,7 +529,7 @@ defmodule Flezha.Operator.ClassRegistry do
 
   @doc """
   Record which of `operator_class`'s tree tasklets are **leaves** — the set
-  whose commits mean the operator is done (`bounded-branching`). Same ETS +
+  whose commits mean the operator is done (`steps-branching`). Same ETS +
   durable-sidecar shape as the compensable set, and read on the same evidence:
   the journal answers "complete?" with no runner to ask.
   """
@@ -570,7 +600,7 @@ defmodule Flezha.Operator.ClassRegistry do
   @doc """
   Evict the in-memory entry. The durable sidecar is kept — finished-job state
   can outlive its process, and the process-less `Retention` sweep still needs
-  the kind. The sidecar is reclaimed with the class dir.
+  the run. The sidecar is reclaimed with the class dir.
   """
   @spec delete(binary()) :: :ok
   def delete(operator_class) when is_binary(operator_class) do
@@ -588,14 +618,22 @@ defmodule Flezha.Operator.ClassRegistry do
 
   # ---------- reads ----------
 
-  @doc "Resolve `operator_class`'s kind: ETS → durable sidecar → `:unbounded`."
-  @spec get(binary()) :: atom()
+  @doc "Resolve how `operator_class` runs: ETS → durable sidecar → `:flow`."
+  @spec get(binary()) :: run()
   def get(operator_class) when is_binary(operator_class) do
     case ets_lookup(operator_class) do
-      {:ok, kind} -> kind
-      :error -> read_sidecar(operator_class) || @default_kind
+      {:ok, run} -> run
+      :error -> read_sidecar(operator_class) || @default_run
     end
   end
+
+  @doc """
+  Whether an instance of `operator_class` keeps a task journal, answered by
+  how the class runs.
+  """
+  @spec journals?(binary()) :: boolean()
+  def journals?(operator_class) when is_binary(operator_class),
+    do: get(operator_class) == :steps
 
   @doc """
   Resolve `operator_class`'s effectively-once tier: ETS → durable
@@ -610,9 +648,9 @@ defmodule Flezha.Operator.ClassRegistry do
   Resolve `operator_class`'s checkpoint ack-granularity: ETS → durable
   sidecar → `false` (the per-input default).
   """
-  @spec checkpoint_ack?(binary()) :: boolean()
-  def checkpoint_ack?(operator_class) when is_binary(operator_class) do
-    declaration(operator_class, :checkpoint_ack, @checkpoint_sidecar, &(&1 == "true")) == true
+  @spec ack_checkpoint?(binary()) :: boolean()
+  def ack_checkpoint?(operator_class) when is_binary(operator_class) do
+    declaration(operator_class, :ack_checkpoint, @checkpoint_sidecar, &(&1 == "true")) == true
   end
 
   @doc """
@@ -702,7 +740,7 @@ defmodule Flezha.Operator.ClassRegistry do
 
       _ ->
         case :ets.lookup(@table, operator_class) do
-          [{^operator_class, kind}] -> {:ok, kind}
+          [{^operator_class, run}] -> {:ok, run}
           [] -> :error
         end
     end
@@ -711,8 +749,8 @@ defmodule Flezha.Operator.ClassRegistry do
   defp sidecar_path(operator_class, filename \\ @sidecar),
     do: Path.join(Paths.class_dir(operator_class), filename)
 
-  defp write_sidecar(operator_class, kind),
-    do: write_sidecar_file(operator_class, @sidecar, Atom.to_string(kind))
+  defp write_sidecar(operator_class, run),
+    do: write_sidecar_file(operator_class, @sidecar, Atom.to_string(run))
 
   # A declaration whose sidecar did not land is logged and kept in memory: the
   # next bind writes it again.
@@ -737,19 +775,19 @@ defmodule Flezha.Operator.ClassRegistry do
 
   defp read_sidecar(operator_class) do
     case File.read(sidecar_path(operator_class)) do
-      {:ok, bin} -> parse_kind(String.trim(bin))
+      {:ok, bin} -> parse_run(String.trim(bin))
       {:error, _} -> nil
     end
   end
 
-  defp parse_kind(str) do
-    kind = String.to_existing_atom(str)
-    if known_kind?(kind), do: kind, else: nil
+  defp parse_run(str) do
+    run = String.to_existing_atom(str)
+    if known_run?(run), do: run, else: nil
   rescue
     ArgumentError -> nil
   end
 
-  @doc "Whether `kind` is an operator kind."
-  @spec known_kind?(atom()) :: boolean()
-  def known_kind?(kind), do: kind in @kinds
+  @doc "Whether `run` is how an operator runs."
+  @spec known_run?(atom()) :: boolean()
+  def known_run?(run), do: run in @runs
 end

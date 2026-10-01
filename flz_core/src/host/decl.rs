@@ -199,12 +199,20 @@ fn default_clock() -> HostClock {
 #[serde(deny_unknown_fields)]
 pub struct HostClassDecl {
     pub factory_id: String,
-    /// Change bytes in completions reach the per-Cell WAL.
+    /// What the class is for, announced with its factory id.
     #[serde(default)]
-    pub persistent: bool,
-    /// An idle instance sleeps; the SDK resolves the kind's default.
+    pub description: String,
+    /// A wall-clock stop, for either run.
     #[serde(default)]
-    pub sleep_when_idle: bool,
+    pub max_duration_ms: Option<u64>,
+    /// How the class runs, as the settings tree writes it; absent is `flow`.
+    /// Read by [`crate::operator::settings::parse_run`], which names a
+    /// misplaced setting with its parent.
+    #[serde(default)]
+    pub run: Option<serde_json::Value>,
+    /// Where its work is kept; absent is `local`, sleeping as its run does.
+    #[serde(default)]
+    pub durable: Option<serde_json::Value>,
     /// The language byte ([`crate::header`]); mandatory, since an untagged
     /// veneer's state could be handed to another language.
     pub sdk_lang: u8,
@@ -217,61 +225,9 @@ pub struct HostClassDecl {
     #[serde(default = "default_change_format")]
     pub change_format_id: u8,
     #[serde(default)]
-    pub effectively_once: bool,
-    /// The author's explicit `checkpoint_ack()`. The granularity itself is
-    /// DERIVED: any checkpoint key implies it.
-    #[serde(default)]
-    pub checkpoint_ack: bool,
-    #[serde(default)]
-    pub checkpoint_every: Option<u32>,
-    #[serde(default)]
-    pub checkpoint_outputs: HostCheckpointOutputs,
-    #[serde(default)]
-    pub checkpoint_max_delay_ms: Option<u64>,
-    #[serde(default)]
-    pub correction_window_ms: Option<u64>,
-    #[serde(default)]
-    pub beyond_window_policy: HostBeyondWindow,
-    #[serde(default)]
     pub compact_after_bytes: Option<usize>,
-    /// The controller ships each commit barrier to the durability backend
-    /// before acking it; bounded classes only.
-    #[serde(default)]
-    pub sync_durability: bool,
     pub channels: Vec<HostChannelDecl>,
     pub tasklets: Vec<HostTaskletDecl>,
-    /// Present for a bounded class: its loop and rollback facts over the
-    /// tasklets declared above.
-    #[serde(default)]
-    pub bounded: Option<HostBoundedDecl>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct HostBoundedDecl {
-    #[serde(default)]
-    pub loop_mode: HostLoopMode,
-    #[serde(default)]
-    pub rollback_mode: HostRollbackMode,
-    #[serde(default)]
-    pub max_duration_ms: Option<u64>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HostLoopMode {
-    #[default]
-    Once,
-    PerInput,
-    Chained,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HostRollbackMode {
-    #[default]
-    AllOrNothing,
-    KeepProgress,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
@@ -280,22 +236,6 @@ pub enum HostAckGranularity {
     #[default]
     PerInput,
     Checkpoint,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HostCheckpointOutputs {
-    #[default]
-    AsProduced,
-    AtCheckpoint,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HostBeyondWindow {
-    #[default]
-    ProcessAsArrival,
-    Drop,
 }
 
 fn default_decl_schema_version() -> u32 {

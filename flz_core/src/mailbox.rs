@@ -176,7 +176,7 @@ impl Waiters {
         self.wait_for_room_until(mailbox, None);
     }
 
-    /// [`wait_for_room`](Self::wait_for_room) with a bounded park, so a lost
+    /// [`wait_for_room`](Self::wait_for_room) with a steps park, so a lost
     /// wake degrades to a retry loop rather than a silent freeze.
     pub fn wait_for_room_timeout<P: Send + 'static>(
         &self,
@@ -375,7 +375,7 @@ mod tests {
         // absorbs a `serve_one` the next live waiter was owed, which makes
         // that waiter's next timeout more likely, which leaves another dead
         // entry: a deficit that only grows until every wake is absorbed and a
-        // live producer advances one bounded park at a time.
+        // live producer advances one steps park at a time.
         assert_eq!(waiters.waiter_count(), 0);
     }
 

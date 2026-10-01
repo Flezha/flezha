@@ -2,7 +2,7 @@
 
 `@flezha/sdk` is a poll host over `flz_core`, the runner kernel the Rust and
 Java SDKs also drive. The kernel owns transport, ordering, per-cell
-exclusivity, durability, retries, timers, credit, routing and the bounded operator
+exclusivity, durability, retries, timers, credit, routing and the steps operator
 driver. This package supplies threads and user code, and nothing else —
 [`poll_core.md` → "The core decides, the SDK brings the threads"](poll_core.md#the-core-decides-the-sdk-brings-the-threads).
 
@@ -63,7 +63,7 @@ naming the host it detected, the package it looked for and the build above.
 ## Writing an operator
 
 ```ts
-import { createRunner, defineUnbounded, defineTasklet, type Ctx } from '@flezha/sdk';
+import { createRunner, defineOperator, defineTasklet, type Ctx } from '@flezha/sdk';
 
 interface Trade { symbol: string; price: number; at: number }
 interface Candle { symbol: string; close: number }
@@ -85,7 +85,7 @@ const Ohlc = defineTasklet({
   },
 });
 
-export default defineUnbounded({
+export default defineOperator({
   factoryId: 'candles',
   channels: (c) => {
     c.input<Trade>('trades').keyBy((trade) => trade.symbol).into(Ohlc).keyed().sink('candles');
@@ -112,7 +112,7 @@ working.** It previews the tasklet's own output channel, is encoded as
 `ctx.emit(value)` would encode it there, and never waits: a part that cannot
 leave at once is dropped. A listener receives it, numbered from 0 within each
 attempt; a sink never does, and nothing about it is durable. It works in `run`
-and `onTimer`, for an unbounded tasklet and a bounded stage alike. It throws a
+and `onTimer`, for a flow tasklet and a steps stage alike. It throws a
 `FlezhaError` with code `part.no_sink` when the output channel does not end in
 a sink (a `response()` end is not one), and `part.outside_invocation` through a
 context kept past its invocation.
@@ -156,29 +156,46 @@ refusal stops working. Everything static typing cannot see — cycles, missing
 entry channels, unservable clocks, keyed-channel rules, branch arity, duplicate
 sinks — is refused at registration, naming the handler and the defect.
 
-**A setting of one kind is refused by name on the other.** Both kinds use one
-builder, and the declaration carries everything it recorded: the
-effectively-once tier, a checkpoint setting or a correction window on a
-bounded operator is refused at registration as `topology.effectively_once_on_bounded`,
-`topology.checkpoint_on_bounded` or `topology.correction_window_on_bounded`, and
-`syncDurability: true` on an unbounded operator as `topology.sync_durability_on_unbounded`. A bounded operator's
-own options (`loopMode`, `rollbackMode`, `maxDurationMs`)
-written on `defineUnbounded`, full form or short, are refused where it runs,
-naming them. Synchronous durability is only the definition's `syncDurability`
-field; the builder has no call for it.
+**The class settings are one tree.** `defineOperator` takes them beside
+`factoryId`, in either form:
 
-**Persistence and sleeping are settings of both kinds.** Either definition
-takes `persistent` (default `true`) and `sleepWhenIdle`, which defaults to
-`persistent` on a bounded operator and to `false` on an unbounded operator; `sleepWhenIdle: true`
-with `persistent: false` is refused at registration as
-`topology.sleep_without_persistence`.
+```javascript
+export default defineOperator({
+  factoryId: 'orders',
+  steps: { each: 'per_input', onFailure: 'keep_progress' },
+  durable: { local: { sleepAfter: 10_000 } },
+  maxDurationMs: 600_000,
+  channels: (c) => c.input('order', { codec: 'text' }).into(Place).sink('placed'),
+});
+```
 
-**Retry belongs to the edge, for both kinds.** `retryMax` and `retryBackoffMs`
+- An operator runs as a flow unless it writes `steps`. The run is written as
+  its branch, `flow: {...}` or `steps: {...}`, never both, because a short
+  form's `run` is its tasklet body. `steps` takes `each` (`'once'`, the
+  default, `'per_input'` or `'chained'`) and `onFailure` (`'undo_all'`, the
+  default, or `'keep_progress'`).
+- A flow takes `exactly`: `'at_least_once'` (the default),
+  `'effectively_once'`, or `{ effectively_once: { ack, correctionMs, beyondWindow } }`,
+  with `ack` either `'per_input'` or `'checkpoint'`, or
+  `{ checkpoint: { every, maxDelayMs, outputs } }`.
+- `durable` is `false`, `'local'` (the default) or `'remote'`, and
+  `{ local: { sleepAfter } }` or `{ remote: { sleepAfter } }` with milliseconds
+  or `false`. A kept instance sleeps after six idle hours by default.
+- `maxDurationMs` stops an instance that long after it starts; `description`
+  is free text.
+
+The tree reaches the core as its JSON, members spelled as the core reads
+them (`sleepAfter` is `sleep_after`), and the core judges it when the class
+registers: a setting under a parent that does not carry it is refused as
+`topology.unknown_field`, naming the setting and the parent, and a value
+outside its choice as `topology.invalid_setting`.
+
+**Retry belongs to the edge.** `retryMax` and `retryBackoffMs`
 on the channel that feeds a tasklet (3 attempts from a 50 ms base by default),
 and `retryMax(1)` fails fast.
 
-**A bounded tasklet's timers work as an unbounded tasklet's.** A firing runs as a
-pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-bounded-operator)); only
+**A steps tasklet's timers work as a flow tasklet's.** A firing runs as a
+pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-steps-operator)); only
 inside a `compensate` hook do `timerAfter`, `timerAtEventTime` and
 `cancelTimer` throw an error beginning `runtime.timers_unavailable`.
 
@@ -193,9 +210,8 @@ is what makes enabling worker threads a flag rather than a rewrite.
 
 ### The short form
 
-An operator of one tasklet can be one declaration: `defineUnbounded` or
-`defineBounded` carrying that tasklet's `run` body in place of `channels`.
-The function's name is the kind. `factoryId` is required, `sink` is optional,
+An operator of one tasklet can be one declaration: `defineOperator` carrying
+that tasklet's `run` body in place of `channels`. `factoryId` is required, `sink` is optional,
 `input` names the entry channel, and `codec` is the entry codec `c.input`
 takes. The tasklet's own fields (`initState`, `applyChange`, `cells`,
 `eventTime`, `mailboxCapacity`, `schemaVersion` and the rest `defineTasklet`
@@ -205,7 +221,7 @@ form unchanged.
 
 ```javascript
 // upcase.mjs
-export const upcase = defineUnbounded({
+export const upcase = defineOperator({
   factoryId: 'upcase',
   sink: 'out',
   codec: 'text',
@@ -213,8 +229,9 @@ export const upcase = defineUnbounded({
 });
 
 // place.mjs
-export const place = defineBounded({
+export const place = defineOperator({
   factoryId: 'place',
+  steps: {},
   sink: 'placed',
   input: 'order',
   codec: 'text',
@@ -233,19 +250,19 @@ The generated operator is the one you would have written by hand with that
 single tasklet: an entry channel named `input`, or the `input` field's value,
 decoded by `codec`; the tasklet, named `factoryId` verbatim, so its cells
 keep their state path when it grows into the full form; a plugin sink named by
-`sink`; and every class-level setting at its default. A bounded short form is
-a `once` bounded operator unless it writes `loopMode`, run once over its first
+`sink`; and the class settings it writes, as the full form takes them. A steps
+short form is a `once` steps operator unless it writes `each`, run once over its first
 message: `flz operator start --text '<payload>'`, or a start followed by
 `flz operator send`; a second message to a `once` instance is accepted and
-never read. With `loopMode: 'per_input'` it runs once per message and does
+never read. With `each: 'per_input'` it runs once per message and does
 not complete after the first:
 
 ```javascript
-export const chat = defineBounded({
+export const chat = defineOperator({
   factoryId: 'chat',
   sink: 'replies',
   codec: 'text',
-  loopMode: 'per_input',
+  steps: { each: 'per_input' },
   run: (turn, ctx) => ctx.emit(turn),
 });
 ```
@@ -254,7 +271,7 @@ With no `sink` there is no plugin channel, so the tasklet has no output
 channel either: its `run` keeps state and emits nothing.
 
 ```javascript
-export const counter = defineUnbounded({
+export const counter = defineOperator({
   factoryId: 'counter',
   input: 'ticks',
   codec: 'text',
@@ -269,25 +286,20 @@ export const counter = defineUnbounded({
 ```
 
 Anything more is the full form: a second tasklet, a fan-out, a merge, a keyed
-edge, an edge's retry ladder, and every class-level setting but a bounded operator's
-loop mode (the effectively-once tier, a correction window, a rollback mode, a
-maximum duration).
+edge, or an edge's retry ladder.
 
-The spec is built where `defineUnbounded` or `defineBounded` runs, so a
+The spec is built where `defineOperator` runs, so a
 malformed short form is refused while the module loads rather than inside
 `run()`. Two refusals name themselves: `topology.short_form_with_topology` (`run` beside
 `channels`), and `topology.duplicate_factory_id`, raised when the runner declares a second
-operator, of either kind, under a factory id it holds. A key written where it
-does not belong is refused naming the key: a class-level setting other than a
-bounded operator's `loopMode`, `name` or `kind` beside `run`, `sink`, `input`, `codec`
-or a tasklet field beside `channels`, and `kind`, `sink`, `input` or `codec` on
-a `defineTasklet`. There is no `topology.sink_without_output`: a plain `.mjs` definition
+operator under a factory id it holds, whatever either runs. A key written where it
+does not belong is refused naming the key: `name` beside `run`, `sink`, `input`,
+`codec` or a tasklet field beside `channels`, and `flow`, `steps`, `durable`,
+`sink`, `input` or `codec` on a `defineTasklet`. There is no `topology.sink_without_output`: a plain `.mjs` definition
 declares no output type the SDK can read, a TypeScript one names it only in
 types erased before the SDK runs, and no `run` returns output, so nothing the
 SDK can see says whether a short form emits. The manifest leaves
-`shorthand_typed_output` off and the conformance row skips by name. A `.mjs`
-author runs no type checker, so a `loopMode` or `rollbackMode` outside the
-declared values is refused where `defineBounded` runs, naming the value.
+`shorthand_typed_output` off and the conformance row skips by name.
 
 ## The parallelism model, as arithmetic
 
@@ -357,7 +369,7 @@ not exported to JavaScript at all; it is driven from the SDK's own native
 threads, never the runtime's shared I/O threadpool. `complete`, `spawnWait`
 and `start` return promises whose blocking work
 runs on native threads the binding owns; `spawnRequest` and `spawnTryResult`
-never wait, so `ctx.spawnBounded` returns its handle synchronously and only
+never wait, so `ctx.spawnSteps` returns its handle synchronously and only
 the handle's `wait()` is a promise. A test over the addon's exported
 surface asserts this rather than leaving it to review.
 

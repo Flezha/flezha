@@ -1,7 +1,6 @@
 //! What a call end means once its chain is read, and where it is refused.
 
 use super::*;
-use crate::host::decl::HostLoopMode;
 
 fn record(steps: &str) -> HostClassDecl {
     record_of(&Row {
@@ -92,15 +91,11 @@ fn an_unread_response_is_refused_by_its_call_alone() {
 }
 
 #[test]
-fn a_bounded_call_registers_only_in_a_per_input_loop() {
-    let steps = "class.bounded; entry(in); in.into(plain); plain.named(ask); plain.call(pricing)";
-    for (mode, refused) in [
-        (HostLoopMode::Once, true),
-        (HostLoopMode::Chained, true),
-        (HostLoopMode::PerInput, false),
-    ] {
-        let mut decl = record(steps);
-        decl.bounded.as_mut().expect("a bounded record").loop_mode = mode;
+fn a_steps_call_registers_only_in_a_per_input_loop() {
+    for (mode, refused) in [("once", true), ("chained", true), ("per_input", false)] {
+        let decl = record(&format!(
+            r#"class.run({{"steps":{{"each":"{mode}"}}}}); entry(in); in.into(plain); plain.named(ask); plain.call(pricing)"#
+        ));
         match check(decl) {
             Ok(_) => assert!(!refused, "{mode:?} must refuse a call"),
             Err(issues) => {

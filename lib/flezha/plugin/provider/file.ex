@@ -129,7 +129,7 @@ defmodule Flezha.Plugin.Provider.File do
 
     @doc """
     Validate and resolve. Reads nothing: the worker opens the file at
-    activation. The root check is a bounded run of `lstat`s under a folder root
+    activation. The root check is a steps run of `lstat`s under a folder root
     and makes no request under an S3 one, done here so a refusal reaches the
     user who typed the path.
     """

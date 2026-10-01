@@ -168,6 +168,15 @@ defmodule Flezha.Runner.StreamChannel.Records do
   def admit(state, operator_class, kind),
     do: ownership(state, operator_class, kind) != :refused
 
+  @doc """
+  How the instance `operator_id` runs, read from its class's record, which this
+  module already consults for ownership. An `:operator_class` override names a
+  class other than the id, and the record is the class's.
+  """
+  @spec run_of(binary()) :: :flow | :steps
+  def run_of(operator_id),
+    do: operator_id |> ClassRegistry.state_keys() |> List.last() |> ClassRegistry.get()
+
   # The one read of the ownership record: the session owns the operator and
   # the record names its Overwatch, no record exists on this node, or the
   # frame is refused.

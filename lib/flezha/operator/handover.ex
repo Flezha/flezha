@@ -155,13 +155,13 @@ defmodule Flezha.Operator.Handover do
   def consent(%Overwatch{} = state) do
     cond do
       state.corrections != %{} -> :defer
-      state.durable_bounded and not state.suspended -> :defer
+      state.durable_steps and not state.suspended -> :defer
       state.effectively_once and outbox_pending?(state) -> :defer
       true -> :ready
     end
   end
 
-  # Bounded-time and fail-open: a query failure yields `:ready` — worst case
+  # Steps-time and fail-open: a query failure yields `:ready` — worst case
   # is pre-consent behaviour, never a wedged migration.
   defp outbox_pending?(%Overwatch{} = state) do
     Overwatch.operator_class(state)

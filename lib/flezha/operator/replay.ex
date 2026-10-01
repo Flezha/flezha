@@ -125,8 +125,8 @@ defmodule Flezha.Operator.Replay do
 
   @doc """
   Whether the bind restores every persisted Cell, awaited, before it
-  re-forwards the input tail onto them: an unbounded operator whose input is
-  durable. A bounded operator's run holds its tail behind its own restore gate
+  re-forwards the input tail onto them: a flow operator whose input is
+  durable. A steps operator's run holds its tail behind its own restore gate
   instead.
   """
   @spec awaited_restore?(Overwatch.t()) :: boolean()
@@ -204,7 +204,7 @@ defmodule Flezha.Operator.Replay do
   end
 
   # Bind-time restore follows the class's persistence switch, for either kind;
-  # for a bounded operator it IS its crash-resume.
+  # for a steps operator it IS its crash-resume.
   defp replay_persisted_cells(operator_class, runner_id, overwatch) do
     # Awaited, not fire-and-forget: the reply carries whether the SDK had to
     # migrate records from an older schema version, and the controller answers
@@ -237,15 +237,15 @@ defmodule Flezha.Operator.Replay do
   end
 
   @doc """
-  Re-derive what a durable bounded operator's running Cell writers hold from its
+  Re-derive what a durable steps operator's running Cell writers hold from its
   journal, before the bound runner writes anything newer. A writer still
   running from before this bind holds outputs of stages the journal may never
   name (an attempt the rebound runner interrupted, an iteration a rewind
   unwound), and drops them; a writer that is not running derives the same when
   it boots.
   """
-  @spec seed_bounded_outboxes(Overwatch.t()) :: :ok
-  def seed_bounded_outboxes(%Overwatch{durable_bounded: true} = state) do
+  @spec seed_steps_outboxes(Overwatch.t()) :: :ok
+  def seed_steps_outboxes(%Overwatch{durable_steps: true} = state) do
     operator_class = Overwatch.operator_class(state)
     committed = TaskJournal.committed_records(operator_class)
 
@@ -255,7 +255,7 @@ defmodule Flezha.Operator.Replay do
     :ok
   end
 
-  def seed_bounded_outboxes(%Overwatch{}), do: :ok
+  def seed_steps_outboxes(%Overwatch{}), do: :ok
 
   @doc """
   Ask this operator's running Cell writers to dispatch again, now, every call
@@ -324,7 +324,7 @@ defmodule Flezha.Operator.Replay do
   # Persisted, restorable Cells of this class, empty when its persistence is
   # off.
   defp restorable_cells(operator_class) do
-    if PersistenceResolver.persistence_enabled?(operator_class) do
+    if PersistenceResolver.keeps_state?(operator_class) do
       # Remote hydration runs first, and in this one place: a controller
       # adopting an operator whose disk is gone then finds its Cells,
       # task-journal and input log on disk by the time this walks
@@ -344,13 +344,13 @@ defmodule Flezha.Operator.Replay do
   @doc """
   Number of persisted Cells the bind-time restore path will ship a
   `RestoreInitState` for on this (re)bind — the value threaded onto
-  `AddOperator.resume_cell_count` so a durable bounded driver holds its
+  `AddOperator.resume_cell_count` so a durable steps driver holds its
   first Tasklet until that many restores land (crash-resume,
-  `bounded-operator-durability`).
+  `operator-durability`).
 
   `0` for a fresh spawn and for a class whose persistence is off. Matches the
   frames `replay_persisted_cells/3` ships (same enumeration +
-  `has_persisted_state?` filter); only a bounded operator's run waits on it.
+  `has_persisted_state?` filter); only a steps operator's run waits on it.
   """
   @spec resume_cell_count(binary()) :: non_neg_integer()
   def resume_cell_count(operator_class),
@@ -387,12 +387,12 @@ defmodule Flezha.Operator.Replay do
 
   @doc """
   Who reports the instance's floor in its input log, which is what makes its
-  input durable: its journal when it is a durable bounded operator, its Cells'
-  own records when it is an unbounded operator on the effectively-once tier or
+  input durable: its journal when it is a durable steps operator, its Cells'
+  own records when it is a flow operator on the effectively-once tier or
   one that sleeps, or nobody, and its input is not journaled.
   """
   @spec floor_reporter(Overwatch.t()) :: :cells | :journal | nil
-  def floor_reporter(%Overwatch{durable_bounded: true}), do: :journal
+  def floor_reporter(%Overwatch{durable_steps: true}), do: :journal
 
   def floor_reporter(%Overwatch{} = state) when state.effectively_once or state.sleeps,
     do: :cells
@@ -401,8 +401,8 @@ defmodule Flezha.Operator.Replay do
 
   @doc """
   Seed the instance's floor in its input log from its own durable records,
-  before the log is asked anything: a bounded operator's journal, and a
-  sleeping unbounded operator's Cells when no Cell row is held (a controller
+  before the log is asked anything: a steps operator's journal, and a
+  sleeping flow operator's Cells when no Cell row is held (a controller
   restart lost them, and a sleeper boots no Cell writer). Rows only move
   forward, so seeding again is harmless.
   """
@@ -448,21 +448,21 @@ defmodule Flezha.Operator.Replay do
     state
   end
 
-  # A durable bounded operator's turn that was parked but never reached its
+  # A durable steps operator's turn that was parked but never reached its
   # `dead_lettered` record runs again over this tail, so its entry goes first.
-  defp drop_unrecorded_turns(%Overwatch{durable_bounded: true} = state),
+  defp drop_unrecorded_turns(%Overwatch{durable_steps: true} = state),
     do: TaskJournal.drop_unrecorded_turns(Overwatch.operator_class(state))
 
   defp drop_unrecorded_turns(%Overwatch{}), do: :ok
 
-  # An unbounded operator's inter-tasklet value is durable in its producer's
+  # A flow operator's inter-tasklet value is durable in its producer's
   # record wherever that record carries the offset: the values kept for inputs
   # above the floor go first, in origin order, and a consumer whose own records
   # acknowledge an origin drops its value. With nothing above the floor no value
-  # can be owed, and no record is read. A bounded operator's are its journal's.
+  # can be owed, and no record is read. A steps operator's are its journal's.
   # Each value carries the call its origin input carried, so a downstream answer
   # still reaches a caller who waits.
-  defp redeliver_edges(%Overwatch{durable_bounded: true}), do: :ok
+  defp redeliver_edges(%Overwatch{durable_steps: true}), do: :ok
 
   defp redeliver_edges(%Overwatch{} = state) do
     operator_class = Overwatch.operator_class(state)

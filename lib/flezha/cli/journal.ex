@@ -1,6 +1,6 @@
 defmodule Flezha.Service.Cli.Journal do
   @moduledoc """
-  `flz state journal | inbox` — a bounded instance's task-journal entries, and
+  `flz state journal | inbox` — a steps instance's task-journal entries, and
   the durable input log of an instance of either kind.
   """
 
@@ -17,8 +17,8 @@ defmodule Flezha.Service.Cli.Journal do
     do: {:ok, %{namespace: OperatorManager.namespace_of_class(instance_id)}}
 
   @doc """
-  `flz state journal <operator/instance>` — render a bounded instance's
-  task-journal entries (`bounded-task-journal`) in append order: seq, type,
+  `flz state journal <operator/instance>` — render a steps instance's
+  task-journal entries (`steps-task-journal`) in append order: seq, type,
   task index, iteration, the cells that ran with the effect records each wrote
   and the channels they wrote on, and the handoff batch size.
   """
@@ -54,7 +54,7 @@ defmodule Flezha.Service.Cli.Journal do
 
   # The leaf set is what "done" means for a tree-shaped chain: the operator is
   # complete when the in-flight iteration has committed every leaf. A class that
-  # declared none (an unbounded operator, an older SDK) leaves it underivable.
+  # declared none (a flow operator, an older SDK) leaves it underivable.
   defp print_journal_completion(nil, _complete),
     do: IO.puts("\n  complete: unknown (class declares no leaf tasklets)")
 
@@ -235,8 +235,8 @@ defmodule Flezha.Service.Cli.Journal do
   end
 
   @doc """
-  `flz state inbox <instance>` — the instance's durable input log, for an unbounded operator
-  on the effectively-once tier and a durable bounded operator alike
+  `flz state inbox <instance>` — the instance's durable input log, for a flow operator
+  on the effectively-once tier and a durable steps operator alike
   (`durable-input-log`): every retained record with its offset, whether it is
   at or below the instance's floor (consumed) or above it (pending), its size
   and channel.

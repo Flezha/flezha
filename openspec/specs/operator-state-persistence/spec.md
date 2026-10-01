@@ -6,7 +6,7 @@ The operator-state-persistence capability provides agent-side, per-Cell durabili
 ## Requirements
 ### Requirement: Per-Cell append-only WAL on the agent
 
-Each Cell whose Operator has `persistence_enabled = true` and whose Tasklet's `Change` is not `NoChange` SHALL have a per-Cell write-ahead log on the Controller at `app_data/state/{operator_class}/{tasklet_id}/{cell_key}.wal`. The on-disk path SHALL NOT include `runner_id` as a path component. Records SHALL be `[seq: u64 BE][len: u32 BE][header: 16B][change_bytes][crc32: u32 BE]` where `len = 16 + byte_size(change_bytes)` and `crc32 = :erlang.crc32(<<header::binary, change_bytes::binary>>)`. The WAL SHALL be written by the Controller's persistence module (`lib/flezha/state/wal_writer.ex`) and SHALL never be written directly by user code or by the SDK.
+Each Cell whose Operator has `keeps_state = true` and whose Tasklet's `Change` is not `NoChange` SHALL have a per-Cell write-ahead log on the Controller at `app_data/state/{operator_class}/{tasklet_id}/{cell_key}.wal`. The on-disk path SHALL NOT include `runner_id` as a path component. Records SHALL be `[seq: u64 BE][len: u32 BE][header: 16B][change_bytes][crc32: u32 BE]` where `len = 16 + byte_size(change_bytes)` and `crc32 = :erlang.crc32(<<header::binary, change_bytes::binary>>)`. The WAL SHALL be written by the Controller's persistence module (`lib/flezha/state/wal_writer.ex`) and SHALL never be written directly by user code or by the SDK.
 
 `seq` SHALL be strictly monotonic per Cell and assigned by the SDK. The Controller SHALL accept any incoming Change frame whose `seq == last_persisted_seq + 1` for that Cell; SHALL silently drop (with a `dedup_drops_total` counter increment) any frame whose `seq <= last_persisted_seq`. For a frame whose `seq > last_persisted_seq + 1` the Controller SHALL distinguish two cases:
 
@@ -152,7 +152,7 @@ The restore/resync dispatch path SHALL NOT ship a `RestoreInitState` whose assem
 
 Restore SHALL be:
 
-1. **Unconditional on every Overwatch bind, and performed by the bind** — `Lifecycle.complete_init/4` restores the persisted Cells of the operator it binds, awaited for the effectively-once tier and dispatched from the bind for every other class, and stamps `AddOperator.resume_cell_count` from the same enumeration so a durable bounded driver is held until they land. Every way an operator comes onto a runner is that bind: a fresh bind, an un-park, a rehydrate, a rewind, the convergence loop's rebind after its runner died, and the takeover by a restarted runner presenting the same stable identity. The heal's `rebind_operator` SHALL dispatch no restore of its own after the bind; `Flezha.State.Recovery.resync_for_overwatch/2` serves the `resync_runner` primitive alone, the remedy for a binding that is intact but stopped agreeing. When the operator arrived via HotSwap handover, the in-band state is authoritative and the `{:kick_restore}` path SHALL skip to avoid double-applying.
+1. **Unconditional on every Overwatch bind, and performed by the bind** — `Lifecycle.complete_init/4` restores the persisted Cells of the operator it binds, awaited for the effectively-once tier and dispatched from the bind for every other class, and stamps `AddOperator.resume_cell_count` from the same enumeration so a durable steps driver is held until they land. Every way an operator comes onto a runner is that bind: a fresh bind, an un-park, a rehydrate, a rewind, the convergence loop's rebind after its runner died, and the takeover by a restarted runner presenting the same stable identity. The heal's `rebind_operator` SHALL dispatch no restore of its own after the bind; `Flezha.State.Recovery.resync_for_overwatch/2` serves the `resync_runner` primitive alone, the remedy for a binding that is intact but stopped agreeing. When the operator arrived via HotSwap handover, the in-band state is authoritative and the `{:kick_restore}` path SHALL skip to avoid double-applying.
 2. **Keyed by operator instance id, not factory id** — the Cell wire identity is `[rc_len:u8][rc][sh_len:u8][sh][pk_len:u16 BE][pk]` keyed by the operator *instance*, so two operators of the same factory class never collide on one WAL.
 3. **Inclusive of seq 0** — an empty WAL initialises `last_persisted_seq = -1` (not `0`) and the "no snapshot" restore sentinel is `-1`, so the 0-based first change is never dedup-dropped. After fold, the SDK re-arms `change_seq = terminal_seq + 1` so the next produced frame is contiguous.
 4. **Re-armed from the controller's terminal** — `RestoreInitState.terminal_seq` SHALL carry the controller's `max(snapshot seq, last WAL seq shipped)`, and the SDK SHALL re-arm `change_seq = max(change-log terminal, terminal_seq) + 1`. A snapshot-only restore — the WAL tail is empty after a compaction — carries no change-log record to derive the seq from; re-armed below the snapshot's seq, its next Changes would be dropped by the writer as duplicates.
@@ -167,8 +167,8 @@ Restore SHALL be:
 - **WHEN** both runners are gracefully stopped and restarted under load and the operator rebinds
 - **THEN** the operator's restored state is 100 (the WAL snapshot + change-log), driving one more `+7` input emits 107, and no state is lost.
 
-#### Scenario: a durable bounded operator's driver is held until the loop's rebind has restored its Cells
-- **GIVEN** a durable bounded instance with one persisted Cell whose runner is killed
+#### Scenario: a durable steps operator's driver is held until the loop's rebind has restored its Cells
+- **GIVEN** a durable steps instance with one persisted Cell whose runner is killed
 - **WHEN** the convergence loop rebinds it onto a live runner
 - **THEN** the `AddOperator` SHALL carry `resume_cell_count = 1`, the bind SHALL ship that Cell's `RestoreInitState`, the driver SHALL run its first uncommitted tasklet only after the restore landed, and no second `RestoreInitState` for the Cell SHALL follow from the heal
 
@@ -217,7 +217,7 @@ The query SHALL be exposed via the `flz state at <operator/tasklet/cell> <seq | 
 
 #### Scenario: Query against persistence-off Operator errors
 
-- **WHEN** the runner runs `flz state at <operator/tasklet/cell> <target>` for a Cell whose Operator has `persistence_enabled = false`
+- **WHEN** the runner runs `flz state at <operator/tasklet/cell> <target>` for a Cell whose Operator has `keeps_state = false`
 - **THEN** the agent SHALL return `TimeTravelError{kind: :cell_not_persistent, operator, tasklet, cell}`
 
 #### Scenario: Live retention update applies on next sweep
@@ -283,23 +283,23 @@ A (re)started batcher SHALL seed its dirty set with every registered writer: wit
 
 ### Requirement: Per-Operator persistence toggle resolution at operator startup
 
-The controller SHALL resolve a per-Operator-class boolean `persistence_enabled` for an
-instance of either kind using the following ordered rule:
+The controller SHALL resolve a per-Operator-class boolean `keeps_state` for an
+instance of either run using the following ordered rule:
 
 1. If the controller's runtime config defines `operator_persistence.<OperatorClass>` for this
    Operator class, use that value.
-2. Otherwise, use the class's own switch as the runner announced it in the `AddOperator`
-   response metadata (`persistent`, present as `"false"` when the class opts out), recorded by
+2. Otherwise, use the class's own `durable` as the runner announced it in the `AddOperator`
+   response metadata (`durable`, `"memory"` when the class opts out), recorded by
    the class registry with the class's other declarations so a process-less read at boot or in
    a sweep resolves it too.
 3. Otherwise, use the built-in default of `true`.
 
-The kind SHALL NOT enter the resolution: an unbounded and a bounded operator are resolved by the same rule
+The run SHALL NOT enter the resolution: a flow and a steps operator are resolved by the same rule
 from the same declaration. The resolved value SHALL be bound to the Operator instance for its
-entire lifetime. Subsequent changes to the runner-side config or to the SDK's class switch (via
+entire lifetime. Subsequent changes to the runner-side config or to the SDK's class setting (via
 SDK redeploy) SHALL NOT affect already-running instances.
 
-When `persistence_enabled = false`, the controller SHALL NOT allocate WAL or snapshot files for
+When `keeps_state = false`, the controller SHALL NOT allocate WAL or snapshot files for
 any of that Operator's Cells, SHALL ignore (drop with a counter increment) any incoming
 `cell_state_change` or `cell_state_snapshot` frames for those Cells, SHALL NOT issue
 `RestoreInitState` on reconnect, and SHALL refuse a live Cell-state read as
@@ -307,23 +307,23 @@ the code `state.persistence_off`.
 
 #### Scenario: Default-on with no override
 
-- **WHEN** a runner does not configure `operator_persistence.MarketOperator` AND `MarketOperator`'s `AddOperator` response announces no `persistent` key
-- **THEN** the controller SHALL resolve `persistence_enabled = true` for `MarketOperator`
+- **WHEN** a runner does not configure `operator_persistence.MarketOperator` AND `MarketOperator`'s `AddOperator` response announces `durable = "local"`
+- **THEN** the controller SHALL resolve `keeps_state = true` for `MarketOperator`
 
 #### Scenario: The class's opt-out reaches the controller
 
-- **WHEN** a class of either kind declares persistence off in its SDK and an instance of it is added
-- **THEN** the `AddOperator` response SHALL carry `persistent = "false"`, the controller SHALL resolve `persistence_enabled = false` for the class, no restore SHALL be shipped on its next bind, and its live Cell-state read SHALL be refused with the code `state.persistence_off`
+- **WHEN** a class of either run declares `durable: false` in its SDK and an instance of it is added
+- **THEN** the `AddOperator` response SHALL carry `durable = "memory"`, the controller SHALL resolve `keeps_state = false` for the class, no restore SHALL be shipped on its next bind, and its live Cell-state read SHALL be refused with the code `state.persistence_off`
 
 #### Scenario: Runner override takes precedence
 
-- **WHEN** `MarketOperator`'s `AddOperator` response announces nothing (the class switch is on) AND the runner sets `operator_persistence.MarketOperator = false`
-- **THEN** the controller SHALL resolve `persistence_enabled = false` for `MarketOperator`
+- **WHEN** `MarketOperator`'s `AddOperator` response announces `durable = "local"` AND the runner sets `operator_persistence.MarketOperator = false`
+- **THEN** the controller SHALL resolve `keeps_state = false` for `MarketOperator`
 
 #### Scenario: Mid-life config change does not affect running instance
 
-- **WHEN** an Operator instance is running with resolved `persistence_enabled = true` AND the runner subsequently runs `flz config set operator_persistence.MarketOperator false`
-- **THEN** the running instance SHALL continue with `persistence_enabled = true`; the new value SHALL take effect only after the SDK pod hosting the instance is restarted (the new instance's `AddOperator` re-runs the resolution)
+- **WHEN** an Operator instance is running with resolved `keeps_state = true` AND the runner subsequently runs `flz config set operator_persistence.MarketOperator false`
+- **THEN** the running instance SHALL continue with `keeps_state = true`; the new value SHALL take effect only after the SDK pod hosting the instance is restarted (the new instance's `AddOperator` re-runs the resolution)
 
 ### Requirement: 16-byte version header on persisted blobs
 
@@ -465,7 +465,7 @@ The counters SHALL use `Ordering::Relaxed` (the BEAM `:counters` API does not ex
 
 #### Scenario: Counters initialized at Cell construction
 
-- **WHEN** a Cell is constructed with `persistence_enabled = true`
+- **WHEN** a Cell is constructed with `keeps_state = true`
 - **THEN** all six counters SHALL be allocated; `persisted_changes_total = 0`, `persisted_bytes_total = 0`, `wal_size_bytes = 0`, `snapshot_seq = 0` (no snapshot yet), `flush_latency_ms_p99 = 0`, `fsync_durability_lag_ms = 0`
 
 #### Scenario: Counters update after Change append
@@ -680,10 +680,10 @@ State serialization SHALL go through a per-Tasklet fn pointer captured at `regis
 
 When the SDK receives an `AddOperator{operator_id, factory_id, init_values}` command and `init_values` is a non-empty JSON object, the SDK SHALL parse the JSON, walk its top-level keys, and for each key that matches a registered Tasklet name on the Operator's class:
 
-- For single-mode Tasklets: deserialize the JSON value directly into `S::State` via the per-Tasklet `deserialize_state` fn pointer (captured at registration time and bounded operator on `S::State: DeserializeOwned`), then overwrite the freshly-`init_state`d Cell's state with the deserialized value.
+- For single-mode Tasklets: deserialize the JSON value directly into `S::State` via the per-Tasklet `deserialize_state` fn pointer (captured at registration time and steps operator on `S::State: DeserializeOwned`), then overwrite the freshly-`init_state`d Cell's state with the deserialized value.
 - For static-mode Tasklets: walk the inner object's keys; for each `(key, value)` pair where `key` is a declared `cell_key`, deserialize the inner value into `S::State` and overwrite that Cell's state.
 
-The rule SHALL be the same for an unbounded instance and a bounded instance: a bounded operator's stage Cells are built through the stream `build_cell` and take `init_values` through the same application, before the `AddOperator` acknowledgement and therefore before any message can reach the instance. No kind SHALL read `init_values` as anything but state.
+The rule SHALL be the same for a flow instance and a steps instance: a steps operator's stage Cells are built through the stream `build_cell` and take `init_values` through the same application, before the `AddOperator` acknowledgement and therefore before any message can reach the instance. No kind SHALL read `init_values` as anything but state.
 
 Top-level keys that do not match any Tasklet name SHALL be ignored (with an `eprintln!` log line at the SDK boundary). Inner-object keys that do not match a declared `cell_key` SHALL also be ignored.
 
@@ -701,9 +701,9 @@ If `init_values` is empty (`""` on the wire), the SDK SHALL leave each Cell's st
 - **WHEN** the SDK receives `AddOperator{...init_values: "{\"ohlc\":{\"1m\":{\"high\":5},\"1h\":{\"high\":10}}}"}` for an Operator with `cell_keys = ["1m", "1h"]`
 - **THEN** the SDK SHALL deserialize `{"high":5}` into the `"1m"` Cell's state AND deserialize `{"high":10}` into the `"1h"` Cell's state
 
-#### Scenario: A bounded instance takes init_values as state
+#### Scenario: A steps instance takes init_values as state
 
-- **WHEN** the SDK receives `AddOperator{..., kind: "bounded", init_values: "{\"reserve_funds\":{\"budget\":100}}"}` for a bounded class whose tasklet `reserve_funds` holds state
+- **WHEN** the SDK receives `AddOperator{..., kind: "steps", init_values: "{\"reserve_funds\":{\"budget\":100}}"}` for a steps class whose tasklet `reserve_funds` holds state
 - **THEN** the `reserve_funds` Cell's state SHALL be `{"budget":100}` before the instance's first message is read, and no entry channel SHALL receive the document
 
 #### Scenario: Empty init_values uses the default path
@@ -739,7 +739,7 @@ No on-disk format change accompanies this requirement; the binding record's `run
 - **WHEN** the Overwatch resolves `runner_id == stale_runner_id == "e1"`
 - **THEN** the Overwatch SHALL still issue `:ping_runner` before `:start_operator`
 - **AND** the rebind-log line SHALL NOT fire (the ids are equal)
-- **AND** the bounded-retry governor SHALL still apply on ping/start failure
+- **AND** the steps-retry governor SHALL still apply on ping/start failure
 
 ### Requirement: A persistence seq gap triggers resync, not permanent rejection
 
@@ -788,16 +788,16 @@ Each completed sweep SHALL stamp its own freshness into `Flezha.Convergence.Snap
 - **WHEN** `/healthz` is queried once the stamp exceeds 3× the sweep interval
 - **THEN** it SHALL report `200 degraded` with `reason: sensor_stale` naming the watchdog
 
-### Requirement: CompactCell resolves a bounded operator Cell
+### Requirement: CompactCell resolves a steps operator Cell
 
 The SDK SHALL resolve the Cell a `CompactCell` addresses in the same two
-places a `RestoreInitState` looks: the unbounded instance registry and a bounded operator
-instance's stage slots. A bounded operator Cell SHALL therefore be compactable by the
+places a `RestoreInitState` looks: the flow instance registry and a steps operator
+instance's stage slots. A steps operator Cell SHALL therefore be compactable by the
 iteration-boundary snapshot and by the Watchdog's size/age triggers exactly
-like an unbounded operator Cell.
+like a flow operator Cell.
 
-#### Scenario: A looped bounded operator Cell gets its boundary snapshot
-- **GIVEN** a durable looping bounded instance whose tasklet holds Cell state
+#### Scenario: A looped steps operator Cell gets its boundary snapshot
+- **GIVEN** a durable looping steps instance whose tasklet holds Cell state
 - **WHEN** an iteration commits and the Controller ships `CompactCell` for that Cell
 - **THEN** the SDK SHALL answer with the Cell's `cell_state_snapshot` (not "no live cell matches the addressed cell_id") and the Controller SHALL write the snapshot and truncate the WAL behind it
 
@@ -808,8 +808,8 @@ of its class — whether its state directory is deleted or retained for the
 finished-job window. The files decide inspectability; the processes go with
 the operator.
 
-#### Scenario: A finished bounded operator retains its files, not its writers
-- **WHEN** a durable bounded operator completes and its state is retained for `bounded_completed_retention_hours`
+#### Scenario: A finished steps operator retains its files, not its writers
+- **WHEN** a durable steps operator completes and its state is retained for `operator_completed_retention_hours`
 - **THEN** its WAL and journal files SHALL stay on disk and no `WalWriter` process SHALL remain registered for its cells
 
 #### Scenario: A deleted state directory has no writer under it
@@ -909,7 +909,7 @@ session's append path.
 
 ### Requirement: Output is persisted before it is emitted (flush-before-emit)
 
-For a persistence-enabled operator, the SDK SHALL drain a just-applied state change to the durable WAL send path BEFORE writing the corresponding output frame, so durable state never lags emitted output by more than the in-flight network window. This is gated on `persistence_enabled` and `FLEZHA_FLUSH_BEFORE_EMIT` (default on); non-persistent operators keep the zero-cost inline emit. Each change is moved out of the buffer exactly once and seq order is preserved via the shared `change_seq`.
+For a persistence-enabled operator, the SDK SHALL drain a just-applied state change to the durable WAL send path BEFORE writing the corresponding output frame, so durable state never lags emitted output by more than the in-flight network window. This is gated on `keeps_state` and `FLEZHA_FLUSH_BEFORE_EMIT` (default on); non-persistent operators keep the zero-cost inline emit. Each change is moved out of the buffer exactly once and seq order is preserved via the shared `change_seq`.
 
 The guarantee is **per dispatch**, and it SHALL be stated that way wherever it is
 relied on. A dispatch's records and the outputs that dispatch produced have two
@@ -982,9 +982,9 @@ The delete is reachable via two paths:
 The per-Cell WAL SHALL support an additional record type carrying an
 invocation's state change(s), its outbox entries (channel, key, user metadata,
 payload, emit ordinal), and its consumed input offset as one crc-protected record
-appended and fsynced as a unit. A Cell of an unbounded class on the effectively-once tier and a
-Cell of a durable bounded class SHALL both write it, the bounded operator Cell with no consumed offset;
-a plain unbounded operator Cell never produces effect records. Existing change-record and snapshot requirements
+appended and fsynced as a unit. A Cell of a flow class on the effectively-once tier and a
+Cell of a durable steps class SHALL both write it, the steps operator Cell with no consumed offset;
+a plain flow operator Cell never produces effect records. Existing change-record and snapshot requirements
 are unchanged. Restore and
 time-travel readers SHALL fold the state-change portion of effect records exactly
 as they fold plain change records, for either kind.
@@ -996,10 +996,10 @@ as they fold plain change records, for either kind.
 - **THEN** the assembled payload folds the change portions in seq order and the
   restored state equals the pre-crash state
 
-#### Scenario: A bounded operator Cell's WAL holds effect records
+#### Scenario: A steps operator Cell's WAL holds effect records
 
-- **WHEN** a durable bounded operator Cell applies a change and emits in one invocation
-- **THEN** its WAL holds one effect record for the invocation, and the restore handshake folds its change portion into the Cell's state exactly as it folds an unbounded Cell's
+- **WHEN** a durable steps operator Cell applies a change and emits in one invocation
+- **THEN** its WAL holds one effect record for the invocation, and the restore handshake folds its change portion into the Cell's state exactly as it folds a flow Cell's
 
 #### Scenario: Mixed WAL stays readable
 
@@ -1069,10 +1069,10 @@ restore lands. The SDKs consequently disagree, the Rust SDK discards it and the
 Java SDK preserves it, with neither behaviour documented as intended.
 
 The Controller re-forwards input only for instances whose inputs it journals
-before forwarding, into the one durable input log: an unbounded operator on the
-effectively-once tier and a durable bounded instance. `Ingest.journal_input/3`
+before forwarding, into the one durable input log: a flow operator on the
+effectively-once tier and a durable steps instance. `Ingest.journal_input/3`
 passes every other operator through un-journaled, including a plain stateful
-unbounded operator, the default configuration, since persistence defaults to
+flow operator, the default configuration, since persistence defaults to
 enabled and the tier is an explicit opt-in.
 
 A re-forward SHALL NOT be issued onto a data stream that has not yet bound. The
@@ -1088,7 +1088,7 @@ operator's first bind: one re-forward path for both kinds, not one per kind.
 - **WHEN** the restore contract is consulted for the fate of queued input
 - **THEN** it SHALL give different answers for an instance whose inputs are
   journaled and one whose inputs are not, and the same answer for a journaled
-  unbounded and a journaled bounded operator
+  unbounded and a journaled steps operator
 
 #### Scenario: Un-journaled queued input survives a restore
 
@@ -1115,7 +1115,7 @@ operator's first bind: one re-forward path for both kinds, not one per kind.
 
 - **WHEN** the re-forward issued after a restore, the re-forward issued at an
   operator's first data-stream bind, and the re-forward issued when a
-  bounded operator rehydrates are compared
+  steps operator rehydrates are compared
 - **THEN** they SHALL be the same code path, differing only in what triggers them
 
 ### Requirement: The compaction handshake SHALL be verified end to end against a real SDK
@@ -1427,14 +1427,14 @@ already reads as "do not run". The telemetry event SHALL be
 
 #### Scenario: A quiet operator raises nothing by default
 
-- **GIVEN** an unbounded operator that produced output earlier and has received no input for an hour
+- **GIVEN** a flow operator that produced output earlier and has received no input for an hour
 - **WHEN** the watchdog sweeps with `input_silence_timeout_ms` unset
 - **THEN** no event SHALL be emitted and no line SHALL be logged
 
 #### Scenario: A user can turn it back on
 
 - **GIVEN** `input_silence_timeout_ms` set to a positive value
-- **WHEN** an unbounded operator that produced output earlier receives no input for longer than that value
+- **WHEN** a flow operator that produced output earlier receives no input for longer than that value
 - **THEN** `[:flezha, :state, :input_silence]` SHALL be emitted once for that operator class, and one line SHALL be logged at warning level
 
 #### Scenario: The message states what was observed
@@ -1454,9 +1454,9 @@ already reads as "do not run". The telemetry event SHALL be
 - **WHEN** the watchdog sweeps after the window has elapsed with the instance still asleep
 - **THEN** no `input_silence` event SHALL be emitted for it
 
-#### Scenario: An awake silent bounded operator is flagged like an unbounded operator
+#### Scenario: An awake silent steps operator is flagged like a flow operator
 
-- **GIVEN** `input_silence_timeout_ms` set to a positive value and an awake `per_input` bounded operator whose class does not sleep and which produced output earlier
+- **GIVEN** `input_silence_timeout_ms` set to a positive value and an awake `per_input` steps operator whose class does not sleep and which produced output earlier
 - **WHEN** it receives no Change for longer than the window
 - **THEN** `[:flezha, :state, :input_silence]` SHALL be emitted once for it
 

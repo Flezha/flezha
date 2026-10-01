@@ -29,15 +29,16 @@ fn factory(name: &str) -> String {
 }
 
 mod checkpoint_interval_decl_tests {
-    //! The checkpoint interval's declaration crosses the C ABI as JSON, so its
-    //! refusals live here rather than in a typed SDK.
+    //! The checkpoint interval is `ack` under `effectively_once`; its tree
+    //! crosses the C ABI as JSON, so its value refusals live here.
 
     use super::{decl, factory, issue};
     use crate::operator::topology::CheckpointOutputs;
 
-    fn tier_class(id: &str, extra: &str) -> String {
+    fn tier_class(id: &str, ack: &str) -> String {
         format!(
-            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,"effectively_once":true,{extra}
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0",
+                 "run":{{"flow":{{"exactly":{{"effectively_once":{{"ack":{ack}}}}}}}}},
                  "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},
                              {{"name":"out","kind":"plugin","producer":0,"keyed":true,
                                "chains":[[{{"link":"sink","name":"out"}}]]}}],
@@ -45,22 +46,24 @@ mod checkpoint_interval_decl_tests {
         )
     }
 
+    fn policy_of(id: &str) -> crate::operator::topology::CheckpointPolicy {
+        crate::operator::registry::get_class(id)
+            .expect("class registered")
+            .ack_granularity
+            .checkpoint()
+            .expect("the class declared the checkpoint granularity")
+    }
+
     #[test]
     fn a_declared_interval_reaches_the_topology() {
         let id = factory("ckpt_full");
         decl(&tier_class(
             &id,
-            r#""checkpoint_ack":true,"checkpoint_every":500,
-               "checkpoint_outputs":"at_checkpoint","checkpoint_max_delay_ms":50,"#,
+            r#"{"checkpoint":{"every":500,"outputs":"at_checkpoint","max_delay_ms":50}}"#,
         ))
         .expect("a fully declared checkpoint interval registers");
 
-        let policy = crate::operator::registry::get_class(&id)
-            .expect("class registered")
-            .ack_granularity
-            .checkpoint()
-            .expect("the class declared the checkpoint granularity");
-
+        let policy = policy_of(&id);
         assert_eq!(policy.every, Some(500));
         assert_eq!(policy.outputs, CheckpointOutputs::AtCheckpoint);
         assert_eq!(policy.max_delay_ms, Some(50));
@@ -69,15 +72,9 @@ mod checkpoint_interval_decl_tests {
     #[test]
     fn undeclared_options_are_the_as_produced_default() {
         let id = factory("ckpt_bare");
-        decl(&tier_class(&id, r#""checkpoint_ack":true,"#))
-            .expect("a bare checkpoint declaration registers");
+        decl(&tier_class(&id, r#""checkpoint""#)).expect("a bare checkpoint registers");
 
-        let policy = crate::operator::registry::get_class(&id)
-            .expect("class registered")
-            .ack_granularity
-            .checkpoint()
-            .expect("the class declared the checkpoint granularity");
-
+        let policy = policy_of(&id);
         assert_eq!(policy.every, None);
         assert_eq!(policy.outputs, CheckpointOutputs::AsProduced);
         assert_eq!(policy.max_delay_ms, None);
@@ -88,115 +85,117 @@ mod checkpoint_interval_decl_tests {
         let id = factory("ckpt_no_delay");
         let err = decl(&tier_class(
             &id,
-            r#""checkpoint_ack":true,"checkpoint_outputs":"at_checkpoint","#,
+            r#"{"checkpoint":{"outputs":"at_checkpoint"}}"#,
         ))
-        .expect_err("an unbounded output hold must not be declarable");
+        .expect_err("a flow output hold must not be declarable");
 
         issue(&err, "topology.at_checkpoint_without_max_delay");
     }
 
     #[test]
-    fn an_interval_option_implies_the_checkpoint_granularity() {
-        let id = factory("ckpt_implied");
-        decl(&tier_class(&id, r#""checkpoint_every":500,"#))
-            .expect("an interval option is the granularity, asked for by its knob");
-
-        let policy = crate::operator::registry::get_class(&id)
-            .expect("class registered")
-            .ack_granularity
-            .checkpoint()
-            .expect("the interval implied the granularity");
-
-        assert_eq!(policy.every, Some(500));
-    }
-
-    #[test]
     fn a_zero_interval_is_refused() {
         let id = factory("ckpt_zero");
-        let err = decl(&tier_class(
-            &id,
-            r#""checkpoint_ack":true,"checkpoint_every":0,"#,
-        ))
-        .expect_err("an interval that closes every zero inputs is not an interval");
+        let err = decl(&tier_class(&id, r#"{"checkpoint":{"every":0}}"#))
+            .expect_err("an interval that closes every zero inputs is not an interval");
 
         issue(&err, "topology.checkpoint_every_zero");
     }
 }
 
-mod sync_durability_decl_tests {
-    //! Synchronous remote durability is a bounded-only declaration
-    //! (`remote-durability-tier`).
+mod durable_decl_tests {
+    //! `durable` is where a class keeps its work. `remote` gates a steps
+    //! operator's stage acknowledgement on the remote ship; a flow operator
+    //! cannot carry it yet.
+
+    use std::time::Duration;
 
     use super::{decl, factory, issue};
+    use crate::operator::settings::{Durable, DEFAULT_SLEEP_AFTER};
 
-    #[test]
-    fn a_stream_class_declaring_sync_durability_is_refused_by_name() {
-        let id = factory("sync_unbounded");
-        let err = decl(&format!(
-            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,"sync_durability":true,
+    fn class(id: &str, members: &str) -> String {
+        format!(
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0",{members}
                  "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
                  "tasklets":[{{"name":"p0"}}]}}"#
-        ))
-        .expect_err("an unbounded class must not be able to declare sync durability");
+        )
+    }
 
-        let details = issue(&err, "topology.sync_durability_on_unbounded");
+    fn durable_of(id: &str) -> Durable {
+        crate::operator::registry::get_class(id)
+            .expect("class registered")
+            .durable
+    }
+
+    fn sleep_after_of(id: &str) -> Option<Duration> {
+        crate::operator::registry::get_class(id)
+            .expect("class registered")
+            .sleep_after()
+    }
+
+    #[test]
+    fn a_flow_class_declaring_remote_is_refused_naming_the_change_that_lifts_it() {
+        let id = factory("remote_flow");
+        let err = decl(&class(&id, r#""durable":"remote","#))
+            .expect_err("a flow class cannot keep its work remote yet");
+
+        let details = issue(&err, "topology.remote_on_flow");
+        assert_eq!(details["factory_id"], id.as_str());
+        assert!(
+            err.message.contains("keep-work-remote-on-a-flow-operator"),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn a_steps_class_may_declare_remote() {
+        let id = factory("remote_steps");
+        decl(&class(&id, r#""run":"steps","durable":"remote","#))
+            .expect("a steps class keeps its work remote");
+
+        assert_eq!(durable_of(&id), Durable::remote());
+    }
+
+    #[test]
+    fn a_class_that_says_nothing_is_kept_locally_and_sleeps_by_its_run() {
+        let flow = factory("durable_default_flow");
+        decl(&class(&flow, "")).expect("a class declaring nothing registers");
+        assert_eq!(durable_of(&flow), Durable::local());
         assert_eq!(
-            details["factory_id"],
-            id.as_str(),
-            "the refusal names the class"
+            sleep_after_of(&flow),
+            None,
+            "a flow class that says nothing never sleeps"
         );
+
+        let steps = factory("durable_default_steps");
+        decl(&class(&steps, r#""run":"steps","durable":"local","#)).expect("registers");
+        assert_eq!(sleep_after_of(&steps), Some(DEFAULT_SLEEP_AFTER));
+        assert_eq!(DEFAULT_SLEEP_AFTER, Duration::from_secs(6 * 60 * 60));
     }
 
     #[test]
-    fn a_bounded_class_declaring_sync_durability_without_persistence_is_refused() {
-        let id = factory("sync_bounded_transient");
-        let err = decl(&format!(
-            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":false,"sync_durability":true,
-                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
-                 "tasklets":[{{"name":"p0"}}],"bounded":{{}}}}"#
-        ))
-        .expect_err("there is no barrier to ship for a class that journals nothing");
+    fn the_sleep_interval_is_the_class_own_or_never() {
+        let id = factory("durable_sleep");
+        decl(&class(&id, r#""durable":{"local":{"sleep_after":2000}},"#)).expect("registers");
+        assert_eq!(sleep_after_of(&id), Some(Duration::from_millis(2000)));
 
-        issue(&err, "topology.sync_durability_without_persistence");
+        let id = factory("durable_never");
+        decl(&class(
+            &id,
+            r#""run":"steps","durable":{"local":{"sleep_after":false}},"#,
+        ))
+        .expect("registers");
+        assert_eq!(sleep_after_of(&id), None);
     }
 
     #[test]
-    fn a_durable_bounded_class_may_declare_it() {
-        let id = factory("sync_bounded_ok");
-        decl(&format!(
-            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,"sync_durability":true,
-                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
-                 "tasklets":[{{"name":"p0"}}],"bounded":{{}}}}"#
-        ))
-        .expect("a durable bounded class declares sync durability");
+    fn a_zero_sleep_interval_is_refused() {
+        let id = factory("durable_zero");
+        let err = decl(&class(&id, r#""durable":{"local":{"sleep_after":0}},"#))
+            .expect_err("a zero interval sleeps before anything runs");
 
-        let class = crate::operator::registry::get_class(&id).expect("class registered");
-        assert!(
-            class
-                .bounded
-                .as_ref()
-                .expect("a bounded class")
-                .sync_durability
-        );
-    }
-
-    #[test]
-    fn undeclared_is_the_default() {
-        let id = factory("sync_bounded_default");
-        decl(&format!(
-            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,
-                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
-                 "tasklets":[{{"name":"p0"}}],"bounded":{{}}}}"#
-        ))
-        .expect("a bounded class declaring nothing registers");
-
-        let class = crate::operator::registry::get_class(&id).expect("class registered");
-        assert!(
-            !class
-                .bounded
-                .as_ref()
-                .expect("a bounded class")
-                .sync_durability
+        assert_eq!(
+            issue(&err, "topology.invalid_setting")["setting"],
+            "sleep_after"
         );
     }
 }
@@ -209,11 +208,13 @@ mod dropping_policy_decl_tests {
 
     use super::{decl, factory, issue};
 
+    const EO: &str = r#""run":{"flow":{"exactly":"effectively_once"}},"#;
+
     /// One entry channel with a declared overflow policy, plus whatever
     /// durability contract `extra` adds.
     fn class(id: &str, overflow: &str, extra: &str) -> String {
         format!(
-            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,{extra}
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0",{extra}
                  "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]],
                                "overflow":"{overflow}"}},
                              {{"name":"out","kind":"plugin","producer":0,"keyed":true,
@@ -226,7 +227,7 @@ mod dropping_policy_decl_tests {
     fn the_tier_refuses_a_shedding_channel_naming_both_declarations() {
         for policy in ["drop_newest", "drop_oldest"] {
             let id = factory(&format!("shed_tier_{policy}"));
-            let err = decl(&class(&id, policy, r#""effectively_once":true,"#))
+            let err = decl(&class(&id, policy, EO))
                 .expect_err("shedding under the tier must not be declarable");
             let details = issue(&err, "topology.dropping_policy_under_effectively_once");
             assert_eq!(details["channel"], "in", "the refusal names the channel");
@@ -240,7 +241,7 @@ mod dropping_policy_decl_tests {
         let err = decl(&class(
             &id,
             "drop_oldest",
-            r#""effectively_once":true,"correction_window_ms":600000,"#,
+            r#""run":{"flow":{"exactly":{"effectively_once":{"correction_ms":600000}}}},"#,
         ))
         .expect_err("shedding under a correction window must not be declarable");
         let details = issue(&err, "topology.dropping_policy_under_effectively_once");
@@ -256,7 +257,7 @@ mod dropping_policy_decl_tests {
     #[test]
     fn the_tier_accepts_the_policy_that_discards_nothing() {
         let id = factory("shed_none");
-        decl(&class(&id, "drop_nothing", r#""effectively_once":true,"#))
+        decl(&class(&id, "drop_nothing", EO))
             .expect("the default policy is what the tier requires");
     }
 }
@@ -308,7 +309,7 @@ mod sdk_lang_declaration_tests {
 
     fn class(id: &str, lang: &str) -> String {
         format!(
-            r#"{{"factory_id":"{id}",{lang}"sdk_version":"0.1.0","persistent":true,
+            r#"{{"factory_id":"{id}",{lang}"sdk_version":"0.1.0",
                  "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},
                              {{"name":"out","kind":"plugin","producer":0}}],
                  "tasklets":[{{"name":"p0"}}]}}"#
@@ -379,26 +380,33 @@ mod sdk_lang_declaration_tests {
                 .expect("a host class carries host facts")
                 .header();
             assert_eq!((header.sdk_lang, header.format_id), (lang, format));
+            let advertised = crate::operator::registry::advertised_for_factory(&id);
             assert_eq!(
-                crate::operator::registry::advertised_for_factory(&id),
-                (lang, "unbounded"),
-                "the advertisement reads the declared value and kind from the core"
+                (advertised.sdk_lang, advertised.run.as_str()),
+                (u32::from(lang), "flow"),
+                "the advertisement reads the declared value and run from the core"
             );
         }
-        let bounded = factory("host_lang_bounded");
+        let steps = factory("host_lang_steps");
         crate::host::register_host_class_json(
-            crate::test_support::host_class::bounded_json(&bounded, &["in"], 1).as_bytes(),
+            crate::test_support::host_class::steps_json(&steps, &["in"], 1).as_bytes(),
         )
-        .expect("a bounded class registers");
+        .expect("a steps class registers");
+        let advertised = crate::operator::registry::advertised_for_factory(&steps);
         assert_eq!(
-            crate::operator::registry::advertised_for_factory(&bounded).1,
-            "bounded",
-            "the kind is the registry the class declaration landed in"
+            (
+                advertised.run.as_str(),
+                advertised.each.as_str(),
+                advertised.on_failure.as_str()
+            ),
+            ("steps", "once", "undo_all"),
+            "the run is what the class declaration carried"
         );
+        let unknown = crate::operator::registry::advertised_for_factory("never_declared");
         assert_eq!(
-            crate::operator::registry::advertised_for_factory("never_declared"),
-            (SDK_LANG_UNSPECIFIED, ""),
-            "an undeclared factory advertises no language and no kind rather than a guess"
+            (unknown.sdk_lang, unknown.run.as_str()),
+            (u32::from(SDK_LANG_UNSPECIFIED), ""),
+            "an undeclared factory advertises no language and no run rather than a guess"
         );
     }
 }
@@ -443,7 +451,6 @@ mod declaration_key_tests {
             ("class", "HostClassDecl"),
             ("channel", "HostChannelDecl"),
             ("tasklet", "HostTaskletDecl"),
-            ("bounded", "HostBoundedDecl"),
         ] {
             assert_eq!(
                 fields_of(struct_name),
@@ -465,12 +472,11 @@ mod declaration_key_tests {
                 ("class", "sdk_lang") | ("class", "change_format_id") => "1",
                 ("class", "sdk_version") => r#""0.1.0""#,
                 ("tasklet", "schema_version") | ("tasklet", "min_readable_schema_version") => "1",
-                ("class", "checkpoint_ack") => "true",
-                ("class", "checkpoint_outputs") => r#""at_checkpoint""#,
-                ("class", "beyond_window_policy") => r#""drop""#,
+                ("class", "description") => r#""pinned""#,
+                ("class", "run") => r#"{"steps":{"each":"once","on_failure":"undo_all"}}"#,
+                ("class", "durable") => r#"{"local":{"sleep_after":1000}}"#,
                 ("class", "channels") => r#"[{"name":"in","kind":"entry","chains":[]}]"#,
                 ("class", "tasklets") => r#"[{"name":"p0"}]"#,
-                ("class", "bounded") => "null",
                 ("channel", "kind") => r#""entry""#,
                 ("channel", "producer") => "null",
                 ("channel", "chains") => r#"[[{"link":"into","tasklet":0}]]"#,
@@ -478,8 +484,6 @@ mod declaration_key_tests {
                 ("tasklet", "cell_mode") => r#""single""#,
                 ("tasklet", "cell_keys") => "[]",
                 ("tasklet", "clock") => r#""wall""#,
-                ("bounded", "loop_mode") => r#""once""#,
-                ("bounded", "rollback_mode") => r#""all_or_nothing""#,
                 (_, k) if k.ends_with("_ms") || k.ends_with("_bytes") => "1000",
                 (_, k) if k.ends_with("_every") || k.ends_with("_attempts") => "1",
                 (_, k) if k.ends_with("_max") || k.ends_with("_capacity") => "1",
@@ -498,17 +502,16 @@ mod declaration_key_tests {
 
         let id = format!("pinned_decl_{}", std::process::id());
         let json = format!(
-            "{{{},{},{},{}}}",
+            "{{{},{},{}}}",
             object("class").replace(
                 r#""factory_id":"pinned_decl""#,
                 &format!(r#""factory_id":"{id}""#)
             ),
             format_args!(r#""channels":[{{{}}}]"#, object("channel")),
             format_args!(r#""tasklets":[{{{}}}]"#, object("tasklet")),
-            format_args!(r#""bounded":{{{}}}"#, object("bounded")),
         );
 
-        // The class-level `channels` / `tasklets` / `bounded` placeholders
+        // The class-level `channels` / `tasklets` placeholders
         // above are superseded by the fully populated ones appended after them,
         // so strip the placeholders before parsing.
         let json = json
@@ -516,8 +519,7 @@ mod declaration_key_tests {
                 r#""channels":[{"name":"in","kind":"entry","chains":[]}],"#,
                 "",
             )
-            .replace(r#""tasklets":[{"name":"p0"}],"#, "")
-            .replace(r#""bounded":null,"#, "");
+            .replace(r#""tasklets":[{"name":"p0"}],"#, "");
 
         let decl: crate::host::HostClassDecl = serde_json::from_slice(json.as_bytes())
             .unwrap_or_else(|e| panic!("a fully pinned declaration must parse: {e}\n{json}"));
@@ -525,7 +527,7 @@ mod declaration_key_tests {
         assert_eq!(decl.factory_id, id);
         assert_eq!(decl.channels.len(), 1);
         assert_eq!(decl.tasklets.len(), 1);
-        assert!(decl.bounded.is_some());
+        assert!(decl.run.is_some() && decl.durable.is_some());
     }
 }
 
@@ -614,8 +616,8 @@ mod journal_codec_tests {
 
     fn chained_loop(terminal_links: &str) -> String {
         format!(
-            r#"{{"factory_id":"{}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,
-                 "bounded":{{"loop_mode":"chained"}},
+            r#"{{"factory_id":"{}","sdk_lang":1,"sdk_version":"0.1.0",
+                 "run":{{"steps":{{"each":"chained"}}}},
                  "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},
                              {{"name":"out","kind":"inter_task","producer":0,
                                "chains":[{terminal_links}]}}],
@@ -644,8 +646,8 @@ mod journal_codec_tests {
     #[test]
     fn a_durable_chained_loop_with_an_inter_task_terminal_registers() {
         let ok = format!(
-            r#"{{"factory_id":"{}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,
-                 "bounded":{{"loop_mode":"chained"}},
+            r#"{{"factory_id":"{}","sdk_lang":1,"sdk_version":"0.1.0",
+                 "run":{{"steps":{{"each":"chained"}}}},
                  "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},
                              {{"name":"out","kind":"inter_task","producer":0,
                                "chains":[[{{"link":"sink","name":"s"}}],[{{"link":"into","tasklet":1}}]]}},
@@ -729,7 +731,7 @@ mod journal_codec_tests {
     #[test]
     fn a_codec_rides_an_inter_task_channel_and_nothing_else() {
         let rows = channels(
-            r#"{"factory_id":"codec_kinds","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,
+            r#"{"factory_id":"codec_kinds","sdk_lang":1,"sdk_version":"0.1.0",
                  "channels":[{"name":"in","kind":"entry","chains":[[{"link":"into","tasklet":0}]]},
                              {"name":"mid","kind":"inter_task","producer":0,
                               "chains":[[{"link":"into","tasklet":1}]]},

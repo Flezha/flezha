@@ -1,5 +1,7 @@
 {
-  "ack_granularity": "checkpoint",
-  "effectively_once": "true",
-  "keyed": "false"
+  "ack": "checkpoint",
+  "durable": "local",
+  "exactly": "effectively_once",
+  "keyed": "false",
+  "run": "flow"
 }

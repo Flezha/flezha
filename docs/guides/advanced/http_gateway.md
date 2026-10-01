@@ -105,7 +105,7 @@ unbounded operator.
 
 ```java
 // GatewayOperator.java: answers every request.
-public final class GatewayOperator implements UnboundedOperator {
+public final class GatewayOperator implements Operator {
 
     @Override
     public String factoryId() {

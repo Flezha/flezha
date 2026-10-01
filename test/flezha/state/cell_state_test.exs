@@ -238,9 +238,9 @@ defmodule Flezha.State.TimeTravelTest do
              TimeTravel.query(pid, {:seq, 50})
   end
 
-  test "a bounded Cell answers a point-in-time query as a stream Cell does" do
-    class = "tt_bounded_" <> uniq()
-    :ok = ClassRegistry.put(class, :bounded)
+  test "a steps Cell answers a point-in-time query as a stream Cell does" do
+    class = "tt_steps_" <> uniq()
+    :ok = ClassRegistry.put(class, :steps)
     on_exit(fn -> ClassRegistry.delete(class) end)
     cell_id = {class, "task", "seg"}
     header = TestHelpers.stub_header()
@@ -379,7 +379,7 @@ defmodule Flezha.State.RetentionTest do
 
     on_exit(fn ->
       Application.delete_env(:flezha, :time_travel_retention_hours)
-      Application.delete_env(:flezha, :bounded_completed_retention_hours)
+      Application.delete_env(:flezha, :operator_completed_retention_hours)
       # A writer a test started runs under the application's supervisor and
       # still syncs after the body, so it is stopped before its root goes.
       TestHelpers.reset_all_cells()
@@ -443,7 +443,7 @@ defmodule Flezha.State.RetentionTest do
     end
   end
 
-  describe "finished-job retention (bounded)" do
+  describe "finished-job retention (steps)" do
     test "retains a completion record within the window, reclaims it after" do
       now = System.system_time(:second)
 
@@ -458,7 +458,7 @@ defmodule Flezha.State.RetentionTest do
         })
 
       # Past the window (0h retention for this class) → reclaimed wholesale.
-      Application.put_env(:flezha, :bounded_completed_retention_hours, %{"bnd_old" => 0})
+      Application.put_env(:flezha, :operator_completed_retention_hours, %{"bnd_old" => 0})
 
       :ok =
         Completion.write("bnd_old", %{
@@ -478,10 +478,10 @@ defmodule Flezha.State.RetentionTest do
   end
 
   describe "time-travel retention" do
-    test "keeps the older snapshot under the window for a stream and a bounded alike" do
+    test "keeps the older snapshot under the window for a stream and a steps alike" do
       header = TestHelpers.stub_header()
 
-      for kind <- [:unbounded, :bounded] do
+      for kind <- [:flow, :steps] do
         class = "ret_#{kind}_" <> uniq()
         pid = {class, "task", "seg"}
         ClassRegistry.put(class, kind)

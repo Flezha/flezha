@@ -21,7 +21,7 @@ telemetry and limits.
 | Failure posture | inject nothing, keep the last hash, count toward health |
 
 Because the frame is journaled like any other entry input, replay determinism, the
-effectively-once tier and a bounded operator's durable input behave exactly as for any other source.
+effectively-once tier and a steps operator's durable input behave exactly as for any other source.
 
 ```elixir
 Flezha.Service.PluginManager.enable_plugin(

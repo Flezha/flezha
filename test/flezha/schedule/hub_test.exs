@@ -18,7 +18,7 @@ defmodule Flezha.Schedule.HubTest do
 
     # Belt and braces: no entry here is due, but a stray fire must not raise
     # inside a job process.
-    stub(OperatorManager, :start_bounded, fn _ns, id, _factory, _init, _opts ->
+    stub(OperatorManager, :start_steps, fn _ns, id, _factory, _init, _opts ->
       {:ok, %{operator_id: id}}
     end)
 

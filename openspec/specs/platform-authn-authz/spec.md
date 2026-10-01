@@ -858,7 +858,7 @@ refused call SHALL deliver no input. A call a plugin makes on the operator it is
 ### Requirement: An operator's call SHALL be judged as its runner identity
 
 A call an operator's graph makes SHALL be judged as the runner identity of the caller's namespace,
-the identity a tasklet's `ctx.spawn_bounded` is judged as: the creation of a callee against the
+the identity a tasklet's `ctx.spawn_steps` is judged as: the creation of a callee against the
 `operator_start` row, which authorizes `operator.start` and writes its audit record, and the
 delivery of a request against the `spawn_deliver` row, which authorizes `operator.send` and writes
 no record of its own. A refused creation or delivery SHALL end the call with a `Response` carrying

@@ -45,7 +45,7 @@ impl<'a> ParkTarget<'a> {
         Self::declared(channel, "_edge")
     }
 
-    /// A bounded operator's failed turn on its entry channel, under the one
+    /// A steps operator's failed turn on its entry channel, under the one
     /// `_turn` slot whichever tasklet failed.
     pub(crate) fn turn(channel: &'a ChannelDescriptor) -> Self {
         Self {
@@ -115,7 +115,7 @@ fn backoff(base_ms: u64, attempt: u32) -> Duration {
     Duration::from_millis(jittered.min(crate::channel::RETRY_BACKOFF_MAX_MS))
 }
 
-/// Where a re-parsed entry value goes: an unbounded operator's consumers, a bounded operator's
+/// Where a re-parsed entry value goes: a flow operator's consumers, a steps operator's
 /// inbox. The one place the two kinds differ on the entry ladder.
 pub type EntryDeliver = Box<dyn Fn(Arc<dyn Any + Send + Sync>) -> Result<(), String> + Send + Sync>;
 
@@ -228,7 +228,7 @@ pub(crate) fn run_retry_park_ladder(
 
 /// Re-attempt one step per `retry`'s budget; `Err` carries the last error
 /// and the attempts spent once the budget is gone, for the caller's own
-/// terminal: a park, or a bounded stage's failure.
+/// terminal: a park, or a steps stage's failure.
 pub(crate) fn climb_ladder(
     label: &str,
     retry: RetryPolicy,
@@ -251,7 +251,7 @@ pub(crate) fn climb_ladder(
 
 /// Park what a ladder could not deliver after `attempts`, under the
 /// target's identity; the tail every exhausted ladder ends in, whether it
-/// climbed here or at a bounded stage's barrier. `call` rides the park frame
+/// climbed here or at a steps stage's barrier. `call` rides the park frame
 /// so the controller can answer a caller waiting on the parked input.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn park_exhausted(

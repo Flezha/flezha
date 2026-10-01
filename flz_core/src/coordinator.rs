@@ -1,6 +1,6 @@
 //! The coordinator: one thread per runner that owns the control stream and
 //! every control-plane write — command replies, keepalives, heartbeats,
-//! bounded completions and SDK-initiated requests — so those writes never
+//! steps completions and SDK-initiated requests — so those writes never
 //! interleave. Data-plane traffic bypasses it entirely: stream readers push
 //! straight into the targeted operator's cell mailboxes.
 
@@ -19,7 +19,7 @@ use tracing::warn;
 use crate::operator::instance::OperatorInstance;
 use crate::operator::registry::{get_class as get_operator_class, OperatorRegistry};
 use crate::pb::command_request::Command;
-use crate::pb::{BoundedCompleted as PbBoundedCompleted, CommandRequest};
+use crate::pb::{OperatorCompleted as PbOperatorCompleted, CommandRequest};
 use crate::routing::OperatorDispatchHandle;
 use crate::runner::{ClientResponseMessage, RunnerMessage, RunnerStatus};
 use crate::shutdown::ShutdownBridge;
@@ -72,15 +72,15 @@ impl RunnerNode {
     /// Spawn an instance of a registered class of either kind; `instance_id`
     /// is the wire's `operator_id`. Idempotent: a duplicate id answers the
     /// existing instance. The instance takes the input tail the bind owes it;
-    /// a bounded operator also takes the rest of the resume facts and waits for
-    /// [`crate::bounded::open`] before its first pass, so its `init_values`
+    /// a steps operator also takes the rest of the resume facts and waits for
+    /// [`crate::steps::open`] before its first pass, so its `init_values`
     /// land first.
     pub fn start_operator(
         &self,
         factory_id: String,
         instance_id: String,
         partition: crate::operator::instance::KeyGroupRange,
-        resume: crate::bounded::instance::Resume,
+        resume: crate::steps::instance::Resume,
     ) -> Option<Arc<OperatorInstance>> {
         if let Some(existing) = self.operator_registry.get(&instance_id) {
             return Some(existing);
@@ -93,7 +93,7 @@ impl RunnerNode {
             partition,
         );
         instance.owe_inbox(resume.owed_inbox);
-        if let Some(run) = &instance.bounded {
+        if let Some(run) = &instance.steps {
             run.bind(resume);
         }
         Some(self.operator_registry.register(instance))
@@ -114,7 +114,7 @@ impl RunnerNode {
         match self.operator_registry.remove(instance_id) {
             Some(instance) => {
                 instance.shutdown_background_threads();
-                crate::bounded::removed(&instance);
+                crate::steps::removed(&instance);
                 true
             }
             None => false,
@@ -306,12 +306,12 @@ impl Coordinator {
             RunnerMessage::SendDataHeartbeat => {
                 heartbeat_tick(&self.runner.shared_io_streams);
             }
-            RunnerMessage::EmitBoundedCompleted {
+            RunnerMessage::EmitOperatorCompleted {
                 operator_id,
                 status,
                 error,
                 result,
-            } => self.write_bounded_completed(operator_id, status, error, result),
+            } => self.write_operator_completed(operator_id, status, error, result),
             RunnerMessage::EmitControlRequest {
                 reference_id,
                 command,
@@ -346,8 +346,8 @@ impl Coordinator {
             .set_control_stream(Some(Arc::clone(&self.control_stream)));
     }
 
-    /// The terminal `BoundedCompleted`, carrying the direct-output count.
-    fn write_bounded_completed(
+    /// The terminal `OperatorCompleted`, carrying the direct-output count.
+    fn write_operator_completed(
         &mut self,
         operator_id: String,
         status: String,
@@ -355,8 +355,8 @@ impl Coordinator {
         result: Vec<u8>,
     ) {
         let frame = control_command_frame(
-            "bounded-completed",
-            Command::BoundedCompleted(PbBoundedCompleted {
+            "steps-completed",
+            Command::OperatorCompleted(PbOperatorCompleted {
                 operator_id: operator_id.clone(),
                 status,
                 error,
@@ -366,7 +366,7 @@ impl Coordinator {
         if let Err(e) = self.write_control(frame) {
             warn!(
                 target: "flezha",
-                "[flezha] BoundedCompleted write failed for {}: {}", operator_id, e
+                "[flezha] OperatorCompleted write failed for {}: {}", operator_id, e
             );
         }
     }

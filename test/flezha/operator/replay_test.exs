@@ -29,7 +29,7 @@ defmodule FlezhaTest.Operator.ReplayAdoptionTest do
       namespace: "adoption-test",
       factory_id: "candles",
       runner_id: "runner-1",
-      builder: %Builder{id: operator_id, factory_id: "candles", kind: :unbounded}
+      builder: %Builder{id: operator_id, factory_id: "candles", run: :flow}
     }
   end
 
@@ -313,7 +313,7 @@ defmodule FlezhaTest.Operator.RestoreRefusalTest do
       runner_id: "runner_1",
       factory_id: "f",
       effectively_once: true,
-      builder: %Builder{id: operator_class, factory_id: "f", kind: :unbounded, opts: []}
+      builder: %Builder{id: operator_class, factory_id: "f", run: :flow, opts: []}
     }
   end
 end
@@ -451,13 +451,13 @@ defmodule FlezhaTest.Operator.BindReforwardTest do
     end
   end
 
-  describe "a durable bounded's tail" do
+  describe "a durable steps operator's tail" do
     test "is what lies above its journal's floor, each record stamped with its offset", ctx do
       for i <- 0..3, do: {:ok, _} = InputLog.append(ctx.class, "m#{i}", %{})
       # An iteration commit reported offset 1 under the journal's identity.
       :ok = TaskJournal.release_input(ctx.class, 1)
 
-      state = overwatch(ctx, durable_bounded: true)
+      state = overwatch(ctx, durable_steps: true)
       bind_stream(ctx)
       assert %Overwatch{} = Replay.reforward_undelivered_tail(state)
 
@@ -488,7 +488,7 @@ defmodule FlezhaTest.Operator.BindReforwardTest do
           )
       end
 
-      state = overwatch(ctx, durable_bounded: true)
+      state = overwatch(ctx, durable_steps: true)
       bind_stream(ctx)
       assert %Overwatch{} = Replay.reforward_undelivered_tail(state)
 

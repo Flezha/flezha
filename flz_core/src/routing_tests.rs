@@ -57,12 +57,13 @@ fn entry_less_instance(id: &'static str) -> Arc<OperatorInstance> {
         tasklets: Vec::new(),
         tasklet_name_to_id: HashMap::new(),
         factory_id: id,
-        persistence_enabled_const: false,
-        sleep_when_idle: false,
+        description: "",
+        durable: crate::operator::settings::Durable::Memory,
+        max_duration: None,
         effectively_once: false,
         correction: None,
         ack_granularity: Default::default(),
-        bounded: None,
+        steps: None,
     };
     OperatorInstance::new(Arc::new(topology), Arc::from(id))
 }
@@ -96,13 +97,13 @@ fn journaled_metadata(channel: &str, offset: u64) -> HashMap<String, String> {
 type Queued = (u32, Option<u64>, Vec<Arc<dyn Any + Send + Sync>>);
 
 fn queued_messages(instance: &OperatorInstance) -> Vec<Queued> {
-    let run = instance.bounded.as_ref().expect("a bounded instance");
+    let run = instance.steps.as_ref().expect("a steps instance");
     run.sheet()
         .queue
         .iter()
         .filter_map(|trigger| match trigger {
-            crate::bounded::instance::Trigger::Message(message) => Some(message),
-            crate::bounded::instance::Trigger::Firing(_) => None,
+            crate::steps::instance::Trigger::Message(message) => Some(message),
+            crate::steps::instance::Trigger::Firing(_) => None,
         })
         .map(|message| {
             let values = message
@@ -120,7 +121,7 @@ fn queued_messages(instance: &OperatorInstance) -> Vec<Queued> {
 
 /// The offset a park released, once the off-thread park has landed.
 fn parked_offset(instance: &OperatorInstance) -> Option<u64> {
-    let run = instance.bounded.as_ref().expect("a bounded instance");
+    let run = instance.steps.as_ref().expect("a steps instance");
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(offset) = run.sheet().parked_offset {
@@ -133,10 +134,10 @@ fn parked_offset(instance: &OperatorInstance) -> Option<u64> {
     }
 }
 
-/// A bounded operator whose one entry channel parses: `poison` is refused, anything
+/// A steps operator whose one entry channel parses: `poison` is refused, anything
 /// else becomes its text, on a ladder of two. No host declaration builds a
 /// parsed entry, so the topology is hand-built as a typed SDK builds one.
-fn parsing_bounded(id: &'static str) -> Arc<OperatorInstance> {
+fn parsing_steps(id: &'static str) -> Arc<OperatorInstance> {
     use crate::channel::{ChannelDescriptor, ConsumerEdge, OverflowPolicy, RetryPolicy};
     let wrap: crate::channel::EntryWrapFn = Arc::new(|bytes: Vec<u8>| {
         if bytes == b"poison" {
@@ -173,33 +174,32 @@ fn parsing_bounded(id: &'static str) -> Arc<OperatorInstance> {
         tasklets: Vec::new(),
         tasklet_name_to_id: HashMap::new(),
         factory_id: id,
-        persistence_enabled_const: false,
-        sleep_when_idle: false,
+        description: "",
+        durable: crate::operator::settings::Durable::Memory,
+        max_duration: None,
         effectively_once: false,
         correction: None,
         ack_granularity: Default::default(),
-        bounded: Some(crate::bounded::spec::BoundedSpec {
-            dag: crate::bounded::spec::TaskDag::new(
+        steps: Some(crate::steps::spec::StepsSpec {
+            dag: crate::steps::spec::TaskDag::new(
                 vec![0],
                 vec![vec![]],
                 vec![vec![]],
                 [(0, vec![0])],
             ),
-            max_duration: None,
-            rollback_mode: crate::bounded::RollbackMode::AllOrNothing,
-            loop_mode: crate::bounded::LoopMode::Once,
-            sync_durability: false,
+            on_failure: crate::steps::OnFailure::UndoAll,
+            each: crate::steps::Each::Once,
         }),
     };
     OperatorInstance::new(Arc::new(topology), Arc::from(id))
 }
 
 #[test]
-fn a_bounded_frame_naming_an_undeclared_channel_parks_under_that_name() {
+fn a_steps_frame_naming_an_undeclared_channel_parks_under_that_name() {
     let _guard = state_sink::test_guard();
     state_sink::reset_for_test();
     let parks = capture_parks();
-    let instance = host_class::bounded("bounded_undeclared", &["orders"]);
+    let instance = host_class::steps("steps_undeclared", &["orders"]);
 
     feed_with(
         &instance,
@@ -234,11 +234,11 @@ fn a_bounded_frame_naming_an_undeclared_channel_parks_under_that_name() {
 }
 
 #[test]
-fn a_bounded_frame_naming_no_channel_enters_the_first_entry_channel() {
+fn a_steps_frame_naming_no_channel_enters_the_first_entry_channel() {
     let _guard = state_sink::test_guard();
     state_sink::reset_for_test();
     let _parks = capture_parks();
-    let instance = host_class::bounded("bounded_default", &["first", "second"]);
+    let instance = host_class::steps("steps_default", &["first", "second"]);
 
     feed_with(&instance, &HashMap::new(), b"payload-bytes");
 
@@ -256,11 +256,11 @@ fn a_bounded_frame_naming_no_channel_enters_the_first_entry_channel() {
 }
 
 #[test]
-fn a_bounded_frame_on_the_second_entry_channel_carries_that_channel_and_its_facts() {
+fn a_steps_frame_on_the_second_entry_channel_carries_that_channel_and_its_facts() {
     let _guard = state_sink::test_guard();
     state_sink::reset_for_test();
     let _parks = capture_parks();
-    let instance = host_class::bounded("bounded_second", &["first", "second"]);
+    let instance = host_class::steps("steps_second", &["first", "second"]);
     let metadata = HashMap::from([
         ("channel".to_string(), "second".to_string()),
         ("flz.offset".to_string(), "7".to_string()),
@@ -276,11 +276,11 @@ fn a_bounded_frame_on_the_second_entry_channel_carries_that_channel_and_its_fact
 }
 
 #[test]
-fn a_bounded_frame_a_parsed_entry_rejects_rides_the_ladder_and_parks_under_the_channel() {
+fn a_steps_frame_a_parsed_entry_rejects_rides_the_ladder_and_parks_under_the_channel() {
     let _guard = state_sink::test_guard();
     state_sink::reset_for_test();
     let parks = capture_parks();
-    let instance = parsing_bounded("bounded_parsed");
+    let instance = parsing_steps("steps_parsed");
 
     feed_with(&instance, &journaled_metadata("in", 5), b"poison");
 

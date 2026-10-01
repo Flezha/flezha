@@ -21,6 +21,7 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
   alias Flezha.Convergence.Intent
   alias Flezha.Convergence.Snapshot
   alias Flezha.Operator.Calls
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.Service.CliManager
   alias Flezha.Service.OperatorManager
   alias Flezha.State.Completion
@@ -42,9 +43,10 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
     |> stub(:get_overwatch_state, fn _ns, "op-1" -> {:ok, state} end)
   end
 
-  defp bounded_state(uptime_ms) do
+  defp steps_state(uptime_ms) do
     %{
-      builder: %{kind: :bounded},
+      builder: %{run: :steps, opts: []},
+      settings: %{run: :steps, each: :per_input, on_failure: :keep_progress},
       runner_id: "exec1",
       namespace: @namespace,
       started_at: System.system_time(:millisecond) - uptime_ms,
@@ -54,30 +56,35 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
     }
   end
 
-  test "json output carries kind, phase and uptime_ms" do
-    stub_one(bounded_state(120))
+  test "json output carries the run, the durability, the phase and uptime_ms" do
+    stub_one(steps_state(120))
 
     out = capture_io(fn -> CliManager.operator_info(@namespace, output: "json") end)
     %{"operators" => [proc]} = Jason.decode!(out)
 
     assert proc["id"] == "op-1"
-    assert proc["kind"] == "bounded"
+    assert proc["run"] == "steps"
+    assert proc["durable"] == "local"
     assert proc["phase"] == "running"
     assert is_integer(proc["uptime_ms"]) and proc["uptime_ms"] >= 120
   end
 
-  test "text output shows Kind / Phase / Uptime lines" do
-    stub_one(bounded_state(0))
+  test "text output shows the Run, Durable, Phase and Uptime lines and no kind" do
+    stub_one(steps_state(0))
+    :ok = ClassRegistry.put_sleep_after("op-1", 21_600_000)
+    on_exit(fn -> ClassRegistry.put_sleep_after("op-1", nil) end)
 
     out = capture_io(fn -> CliManager.operator_info(@namespace) end)
 
-    assert out =~ "Kind: bounded"
+    assert out =~ "Run: steps (each: per_input, on_failure: keep_progress)"
+    assert out =~ "Durable: local (sleep_after: 6h)"
+    refute out =~ "Kind:"
     assert out =~ "Phase: running"
     assert out =~ "Uptime (ms):"
   end
 
   test "a session that dead-lettered a turn shows how many and the latest iteration" do
-    stub_one(bounded_state(0))
+    stub_one(steps_state(0))
 
     out = capture_io(fn -> CliManager.operator_info(@namespace) end)
     refute out =~ "Failed turns"
@@ -95,7 +102,7 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
   test "the callers waiting on an operator are counted on both surfaces" do
     callee = %{namespace: @namespace, operator_id: "op-1"}
     {:ok, _token, calls} = Calls.admit(%Calls{}, callee, {self(), make_ref()}, "in", 5_000)
-    stub_one(%{bounded_state(0) | calls: calls})
+    stub_one(%{steps_state(0) | calls: calls})
 
     assert capture_io(fn -> CliManager.operator_info(@namespace) end) =~ "Waiting callers: 1"
 
@@ -103,18 +110,18 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
     assert %{"operators" => [%{"waiting_callers" => 1}]} = Jason.decode!(out)
   end
 
-  test "an unbounded operator reports its kind too" do
-    stub_one(%{bounded_state(0) | builder: %{kind: :unbounded}})
+  test "a flow operator reports its run too" do
+    stub_one(%{steps_state(0) | builder: %{run: :flow}})
 
     out = capture_io(fn -> CliManager.operator_info(@namespace, output: "json") end)
     %{"operators" => [proc]} = Jason.decode!(out)
-    assert proc["kind"] == "unbounded"
+    assert proc["run"] == "flow"
   end
 
   # `Lifecycle.park/2` stores the failure reason in `init_error` and leaves the
   # Overwatch alive, so a parked operator is still listed and still readable.
   defp parked_state(reason \\ {:no_runner, "exec1"}),
-    do: Map.put(bounded_state(0), :init_error, reason)
+    do: Map.put(steps_state(0), :init_error, reason)
 
   # The observation `Convergence.Probe` builds from an Overwatch state, so both
   # user surfaces are driven from one operator state rather than two
@@ -196,7 +203,7 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
   # operator holds no binding at all — which is what separates the two words.
   defp held_state,
     do:
-      %{bounded_state(0) | runner_id: nil}
+      %{steps_state(0) | runner_id: nil}
       |> Map.put(:init_error, {:runner_not_ready, :timeout})
 
   # A held operator's health as the loop publishes it, the intent unmet for
@@ -253,7 +260,7 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
   end
 
   test "a healthy operator carries the loop's own verdict on both surfaces" do
-    state = bounded_state(0)
+    state = steps_state(0)
     stub_one(state)
 
     health = judged(state)
@@ -278,13 +285,14 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
     assert proc["phase"] == "parked"
   end
 
-  test "a finished bounded operator is surfaced from its completion record" do
+  test "a finished steps operator is surfaced from its completion record" do
     # No live operators; the finished one comes only from its on-disk record.
     stub(OperatorManager, :get_operator_ids, fn _ns -> {:ok, []} end)
 
     :ok =
       Completion.write("done-1", %{
         namespace: @namespace,
+        run: "steps",
         status: "ok",
         error: "",
         result: "RES",
@@ -295,7 +303,7 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
     %{"operators" => procs} = Jason.decode!(out)
     proc = Enum.find(procs, &(&1["id"] == "done-1"))
 
-    assert proc["kind"] == "bounded"
+    assert proc["run"] == "steps"
     assert proc["phase"] == "finished"
     assert proc["status"] == "ok"
     assert proc["result"] == Base.encode64("RES")
@@ -303,11 +311,12 @@ defmodule FlezhaTest.Service.OperatorInfoTest do
 
   test "a finished operator outside the retention window is not surfaced" do
     stub(OperatorManager, :get_operator_ids, fn _ns -> {:ok, []} end)
-    Application.put_env(:flezha, :bounded_completed_retention_hours, %{"done-old" => 0})
+    Application.put_env(:flezha, :operator_completed_retention_hours, %{"done-old" => 0})
 
     :ok =
       Completion.write("done-old", %{
         namespace: @namespace,
+        run: "flow",
         status: "ok",
         error: "",
         result: "",

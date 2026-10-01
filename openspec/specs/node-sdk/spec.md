@@ -5,15 +5,15 @@ TBD - created by archiving change node-sdk. Update Purpose after archive.
 ## Requirements
 ### Requirement: A Node Runner Entry Point Over the Poll Core
 
-The SDK SHALL provide a runner entry point that takes a namespace, accepts unbounded and bounded
+The SDK SHALL provide a runner entry point that takes a namespace, accepts flow and steps
 operator declarations by module specifier, connects to the controller, and runs until shutdown. It
 SHALL drive `flz_core` through the C ABI and SHALL NOT re-express dispatch, ordering, overflow, the
-retry ladder, durability or the bounded driver.
+retry ladder, durability or the steps driver.
 
 Transport configuration SHALL ride the same environment the other poll hosts read.
 
 #### Scenario: A runner connects and serves
-- **WHEN** a runner is started with a declared unbounded operator
+- **WHEN** a runner is started with a declared flow operator
 - **THEN** it SHALL connect, advertise its factories, receive activations and process inputs in
   per-cell order
 
@@ -23,8 +23,8 @@ Transport configuration SHALL ride the same environment the other poll hosts rea
 
 ### Requirement: Factory-Function Authoring With Type-Driven Wiring
 
-The SDK SHALL provide a factory-function authoring surface (a tasklet definition, an unbounded
-operator definition and a bounded operator definition) wired by a fluent channel builder carrying
+The SDK SHALL provide a factory-function authoring surface (a tasklet definition and an operator
+definition taking the settings tree) wired by a fluent channel builder carrying
 entry channels, inter-tasklet edges, keying and edge transforms. Handler input and output types
 SHALL drive graph wiring: the input type is `run`'s first parameter, and the output type is the one
 the definition declares through its type arguments or its context parameter, never one inferred from
@@ -94,7 +94,7 @@ Every refusal SHALL name the offending handler and the specific defect.
 
 The SDK SHALL provide the invocation context the authoring contract defines: plain, channel-selected
 and keyed emits with metadata, the deterministic clock read, the stable identifier, timer
-registration and cancellation, bounded spawn, and the bounded operator inbox. The reserved metadata
+registration and cancellation, steps spawn, and the steps operator inbox. The reserved metadata
 namespace SHALL be enforced.
 
 #### Scenario: A reserved metadata key is refused
@@ -183,30 +183,30 @@ The Node channel builder SHALL offer `merge()`, returning a merge handle with `f
 - **THEN** exactly one `{key: 'A', document}` and one `{key: 'B', document}` SHALL be emitted, and the repeated document SHALL be inert
 
 ### Requirement: The single-tasklet short form is four definition fields
-The short form SHALL be declared with `defineUnbounded` or `defineBounded`, the same functions that declare a full-form operator, and SHALL NOT be declared with `defineTasklet`, which SHALL accept none of `kind`, `sink`, `input` or `codec` and SHALL throw `FlezhaError` naming the field and the operator function when one is given. Each SHALL accept `factoryId`, `sink`, `input`, `codec` and `run` beside the tasklet fields it already reads; the kind is the function's own name and SHALL NOT be a field. `defineOperator` SHALL NOT exist under that name, with no alias kept.
+The short form SHALL be declared with `defineOperator`, the same function that declares a full-form operator, and SHALL NOT be declared with `defineTasklet`, which SHALL accept none of `sink`, `input` or `codec` and SHALL throw `FlezhaError` naming the field and the operator function when one is given. Each SHALL accept `factoryId`, `sink`, `input`, `codec` and `run` beside the tasklet fields it already reads; how it runs is the run branch it writes (`flow` or `steps`), as on the full form.
 
-A definition SHALL be a short form exactly when it carries `run` and not `channels`; carrying both SHALL throw `FlezhaError` whose code is `topology.short_form_with_topology`, and carrying neither SHALL throw naming the missing body. `sink` SHALL be optional. With `sink`, the definition SHALL return a `ClassSpec` of its kind whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` field's value) into a generated tasklet named `factoryId` and that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A bounded short form SHALL accept `loopMode` and be a `once` bounded operator when it is absent, with every other bounded setting at its default, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state; any other class-level setting on a short form SHALL throw `FlezhaError` naming it. `codec` SHALL take the vocabulary of `c.input(name, { codec })` and SHALL be lowered to that call, whether or not a `sink` is written. The spec SHALL be built at definition time so a refusal is raised while the module loads, as a `dup_node` graph already is.
+A definition SHALL be a short form exactly when it carries `run` and not `channels`; carrying both SHALL throw `FlezhaError` whose code is `topology.short_form_with_topology`, and carrying neither SHALL throw naming the missing body. `sink` SHALL be optional. With `sink`, the definition SHALL return a `ClassSpec` whose factory id is `factoryId`, wiring an entry channel named `input` (or the `input` field's value) into a generated tasklet named `factoryId` and that tasklet to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A short form SHALL take the class settings as the full form does and SHALL refuse only `name` (`topology.setting_on_short_form`); a steps short form SHALL be a `once` steps operator unless `steps` writes another `each`, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state. `codec` SHALL take the vocabulary of `c.input(name, { codec })` and SHALL be lowered to that call, whether or not a `sink` is written. The spec SHALL be built at definition time so a refusal is raised while the module loads, as a `dup_node` graph already is.
 
 An absent or empty `factoryId` SHALL throw naming the required field. The runner's `registerFactory(specifier)` SHALL register the `ClassSpec` of every short form the module exports, as it registers every exported spec. A duplicate factory id SHALL throw with a message beginning `topology.duplicate_factory_id`. Whether `topology.sink_without_output` can be raised at TypeScript's type level without a build step SHALL be decided at implementation and reflected in the manifest's `topology_surfaces`, as it is today.
 
-#### Scenario: A module exporting one definition is a whole unbounded operator
+#### Scenario: A module exporting one definition is a whole flow operator
 
-- **WHEN** `./upcase.mjs` default-exports `defineUnbounded({ factoryId: 'upcase', sink: 'out', codec: 'text', run })` and the runner is given `registerFactory('./upcase.mjs')`
-- **THEN** the runner declares an unbounded operator `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and sink `out`, and the module calls no `defineTasklet`
+- **WHEN** `./upcase.mjs` default-exports `defineOperator({ factoryId: 'upcase', sink: 'out', codec: 'text', run })` and the runner is given `registerFactory('./upcase.mjs')`
+- **THEN** the runner declares a flow operator `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and sink `out`, and the module calls no `defineTasklet`
 
-#### Scenario: A module exporting one definition is a whole bounded operator
+#### Scenario: A module exporting one definition is a whole steps operator
 
-- **WHEN** `./place.mjs` exports `defineBounded({ factoryId: 'place', sink: 'placed', input: 'order', codec: 'text', run })`, the runner is given `registerFactory('./place.mjs')`, an instance is started, and one message is sent on `order`
+- **WHEN** `./place.mjs` exports `defineOperator({ factoryId: 'place', sink: 'placed', input: 'order', codec: 'text', run })`, the runner is given `registerFactory('./place.mjs')`, an instance is started, and one message is sent on `order`
 - **THEN** `run` receives the message as text, the value it passes to `ctx.emit` reaches `placed`, and the instance completes
 
-#### Scenario: A short-form bounded operator declares its loop mode
+#### Scenario: A short-form steps operator declares its loop mode
 
-- **WHEN** a module exports `defineBounded({ factoryId: 'chat', sink: 'replies', codec: 'text', loopMode: 'per_input', run })` and two messages reach its entry channel
-- **THEN** the spec's `bounded.loopMode` is `per_input`, `run` runs once per message, and the instance does not complete after the first
+- **WHEN** a module exports `defineOperator({ factoryId: 'chat', sink: 'replies', codec: 'text', each: 'per_input', run })` and two messages reach its entry channel
+- **THEN** the spec's `steps.each` is `per_input`, `run` runs once per message, and the instance does not complete after the first
 
 #### Scenario: A short form with no sink is declared
 
-- **WHEN** a module exports `defineUnbounded({ factoryId: 'counter', input: 'ticks', codec: 'text', initState, applyChange, run })`
+- **WHEN** a module exports `defineOperator({ factoryId: 'counter', input: 'ticks', codec: 'text', initState, applyChange, run })`
 - **THEN** the operator declares `ticks` into the generated tasklet and no plugin channel
 
 #### Scenario: A codec needs no sink
@@ -216,28 +216,28 @@ An absent or empty `factoryId` SHALL throw naming the required field. The runner
 
 #### Scenario: A run body beside a channels body is refused
 
-- **WHEN** a module calls `defineUnbounded({ factoryId: 'x', run, channels })`
+- **WHEN** a module calls `defineOperator({ factoryId: 'x', run, channels })`
 - **THEN** loading it throws `FlezhaError` whose code is `topology.short_form_with_topology`
 
 #### Scenario: A definition with neither body is refused
 
-- **WHEN** a module calls `defineUnbounded({ factoryId: 'x' })`
+- **WHEN** a module calls `defineOperator({ factoryId: 'x' })`
 - **THEN** loading it throws `FlezhaError` naming the missing `run` or `channels`
 
 #### Scenario: An operator field on a tasklet is refused
 
 - **WHEN** a module calls `defineTasklet({ name: 'upcase', sink: 'out', run })`
-- **THEN** loading it throws `FlezhaError` naming `sink` and `defineUnbounded`
+- **THEN** loading it throws `FlezhaError` naming `sink` and `defineOperator`
 
 #### Scenario: A definition with no factory id is refused
 
-- **WHEN** a module calls `defineUnbounded({ sink: 'out', run })`
+- **WHEN** a module calls `defineOperator({ sink: 'out', run })`
 - **THEN** loading it throws `FlezhaError` naming the required `factoryId`
 
-#### Scenario: The old unbounded function is gone
+#### Scenario: One function defines every operator
 
-- **WHEN** a module imports `defineOperator` from the SDK
-- **THEN** the import is `undefined` and no `defineOperator` export exists, `defineUnbounded` being the unbounded operator's defining function
+- **WHEN** the SDK's exports are listed
+- **THEN** `defineOperator` is the one operator-defining function, beside `defineTasklet`, and it defines a flow and a steps operator alike
 
 #### Scenario: Plain JavaScript still needs no build step
 
@@ -246,7 +246,7 @@ An absent or empty `factoryId` SHALL throw naming the required field. The runner
 
 #### Scenario: A short form emits only through its context
 
-- **WHEN** a module exports `defineUnbounded({ factoryId: 'upcase', sink: 'out', codec: 'text', run: (line, ctx) => ctx.emit(line.toUpperCase()) })` and a second exports the same with `run: (line) => line.toUpperCase()`
+- **WHEN** a module exports `defineOperator({ factoryId: 'upcase', sink: 'out', codec: 'text', run: (line, ctx) => ctx.emit(line.toUpperCase()) })` and a second exports the same with `run: (line) => line.toUpperCase()`
 - **THEN** `hello` sent to the first SHALL reach `out` as `HELLO`, nothing SHALL reach the second's `out`, and the second written in TypeScript SHALL fail to type-check
 
 #### Scenario: A short form grows into its full form unchanged
@@ -255,7 +255,7 @@ An absent or empty `factoryId` SHALL throw naming the required field. The runner
 - **THEN** the full form SHALL declare the same record and SHALL restore the Cells the short form saved
 
 ### Requirement: A Node runner registers a factory with one awaited call
-The runner SHALL provide `async registerFactory(specifier)` and `async unregisterFactory(specifier)`, and SHALL NOT provide the authoring functions or a `declare` method as runner methods. `registerFactory` SHALL be legal before and after `run()`: it SHALL import the module and read its exported operators (stream, bounded operator or short form, the kind read from each), rejecting with an error naming the specifier when the import fails or the module exports no operator; before `run()` it SHALL record the specifier for `run()`, and after `run()` it SHALL also declare every exported operator against the running core and every worker. `unregisterFactory` SHALL drop a specifier recorded before `run()`, rejecting naming the specifier when none was recorded, and after `run()` SHALL reject with an error stating that a running Node runner cannot stop serving a started declaration. The authoring functions SHALL be `defineTasklet`, `defineUnbounded` and `defineBounded`, module-level functions named for what they declare, a class of the named kind.
+The runner SHALL provide `async registerFactory(specifier)` and `async unregisterFactory(specifier)`, and SHALL NOT provide the authoring functions or a `declare` method as runner methods. `registerFactory` SHALL be legal before and after `run()`: it SHALL import the module and read its exported operators (flow, steps or short form, the run read from each), rejecting with an error naming the specifier when the import fails or the module exports no operator; before `run()` it SHALL record the specifier for `run()`, and after `run()` it SHALL also declare every exported operator against the running core and every worker. `unregisterFactory` SHALL drop a specifier recorded before `run()`, rejecting naming the specifier when none was recorded, and after `run()` SHALL reject with an error stating that a running Node runner cannot stop serving a started declaration. The authoring functions SHALL be `defineTasklet` and `defineOperator`, module-level functions named for what they declare.
 
 #### Scenario: Registration is awaited before run
 
@@ -277,29 +277,29 @@ The runner SHALL provide `async registerFactory(specifier)` and `async unregiste
 - **WHEN** `unregisterFactory('./echo_operator.mjs')` is awaited after `run()`
 - **THEN** the promise rejects saying a running Node runner cannot stop serving a started declaration, and the operator stays declared
 
-### Requirement: A Node bounded operator definition carries what its builder recorded
+### Requirement: A Node operator definition carries the settings tree it wrote
 
-`defineBounded` SHALL build its `ClassSpec` from every field the channel builder recorded, exactly as `defineUnbounded` does, and `toHostClassDecl` SHALL put every recorded key on the wire for either kind, so an unbounded-only builder call on a bounded operator reaches the core and is refused under its name (`topology.effectively_once_on_bounded`, `topology.checkpoint_on_bounded`, `topology.correction_window_on_bounded`) when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `FlezhaError` naming it. `BoundedDefinition` SHALL carry no `retryAttempts`, `retryBackoffMs`, `barrierRetryAttempts` or `wakeAfterMs`, and the declaration SHALL carry no `wake_after_ms`; the channel builder SHALL carry no `syncDurability()` call, the definition field being the one spelling. A tasklet context inside a bounded operator SHALL offer `timerAfter`, `timerAtEventTime` and `cancelTimer` exactly as inside a stream, and a tasklet's `onTimer` SHALL run on its firing in both kinds; only a `compensate` hook's context SHALL throw an error naming `runtime.timers_unavailable` from them.
+`defineOperator` SHALL take the class settings as the tree, its run written as the branch key (`flow: {...}` or `steps: {...}`) and `durable` beside it, and `toHostClassDecl` SHALL put the tree on the wire as written with every key snake-cased, so a setting under a parent that does not carry it reaches the core and is refused as `topology.unknown_field`, naming the setting and its parent, when the runner declares the class to the shared core (at start, or at the registration itself for a class registered after start), as every other core refusal in this SDK is raised, as a `FlezhaError` naming it. A definition SHALL carry no `retryAttempts`, `retryBackoffMs`, `barrierRetryAttempts` or `wakeAfterMs`, and the declaration SHALL carry no `wake_after_ms`. A tasklet context inside a steps operator SHALL offer `timerAfter`, `timerAtEventTime` and `cancelTimer` exactly as inside a flow operator, and a tasklet's `onTimer` SHALL run on its firing in both runs; only a `compensate` hook's context SHALL throw an error naming `runtime.timers_unavailable` from them.
 
-#### Scenario: A tier call on a bounded operator reaches the core
+#### Scenario: A misplaced setting reaches the core
 
-- **WHEN** a module exports `defineBounded({ factoryId: 'w', channels: (c) => { c.effectivelyOnce(); c.input('in').into(P).sink('out'); } })`, the runner registers it and runs
-- **THEN** declaring it to the core throws an error naming `topology.effectively_once_on_bounded`, and the operator is not declared
+- **WHEN** a module exports `defineOperator({ factoryId: 'w', flow: { each: 'per_input' }, channels })` and the runner declares it
+- **THEN** declaring it to the core throws an error naming `topology.unknown_field`, `each` and `flow`, and the operator is not declared
 
-#### Scenario: Synchronous durability has one spelling
+#### Scenario: Remote durability is a durable level
 
-- **WHEN** a module exports `defineBounded({ factoryId: 'sd', syncDurability: true, channels })`
-- **THEN** the declaration carries `sync_durability: true`, and `c.syncDurability` is not a function on the builder
+- **WHEN** a module exports `defineOperator({ factoryId: 'sd', steps: {}, durable: 'remote', channels })`
+- **THEN** the declaration carries `durable: "remote"`, and the channel builder carries no durability call
 
-#### Scenario: A timer inside a bounded tasklet fires
+#### Scenario: A timer inside a steps tasklet fires
 
-- **WHEN** a tasklet of a running `perInput` bounded operator calls `ctx.timerAfter(300)` in `run`
+- **WHEN** a tasklet of a running `per_input` steps operator calls `ctx.timerAfter(300)` in `run`
 - **THEN** the call returns the scheduled timestamp, the effect carries the timer op, and `onTimer` runs on that Cell at that timestamp, opening a pass at that tasklet
 
 #### Scenario: The retired wake field is refused
 
-- **WHEN** a module exports `defineBounded({ factoryId: 'w', wakeAfterMs: 5000, channels })`
-- **THEN** `defineBounded` rejects the unknown field by name, and no declaration carries `wake_after_ms`
+- **WHEN** a module exports `defineOperator({ factoryId: 'w', steps: {}, wakeAfterMs: 5000, channels })`
+- **THEN** `defineOperator` refuses the unknown field by name (`topology.unknown_field`), and no declaration carries `wake_after_ms`
 
 ### Requirement: A value leaves a Node tasklet only through its context
 A value SHALL leave a Node tasklet only through its context: `ctx.emit(value, options)`, with the `key`, `channel` and `metadata` options, and `ctx.emitTo(channel, value, options)`. The SDK SHALL NOT emit a value returned from `run`, `onTimer` or `compensate`, under the dispatcher, in local mode and under `TaskletTestHarness` alike.
@@ -423,7 +423,7 @@ The cell mode SHALL be read per tasklet node from what is declared, never from a
 - **THEN** declaring the operator SHALL throw `FlezhaError` whose refusals contain `topology.key_by_on_unkeyable_target`, naming the tasklet
 
 ### Requirement: A Node cell belongs to one operator
-The Node runner SHALL keep a Cell's live state by its operator, its tasklet and its cell key, so that two operators of one factory served by the same runner, such as two instances of a bounded operator or two partitions of an unbounded one, never read or write each other's state. Every activation that reads or writes a Cell (work, restore fold, snapshot, live state read, migration serialize, apply state and compensate) SHALL address it this way.
+The Node runner SHALL keep a Cell's live state by its operator, its tasklet and its cell key, so that two operators of one factory served by the same runner, such as two instances of a steps operator or two partitions of a flow one, never read or write each other's state. Every activation that reads or writes a Cell (work, restore fold, snapshot, live state read, migration serialize, apply state and compensate) SHALL address it this way.
 
 #### Scenario: Two operators of one factory keep their own cell
 

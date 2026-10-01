@@ -5,7 +5,7 @@ TBD - created by archiving change python-sdk. Update Purpose after archive.
 ## Requirements
 ### Requirement: The Python Test App Is Admitted by the Conformance Suite
 
-The SDK SHALL ship `test/apps/python_runner/` with a conformance manifest declaring its runtime, command template, `test` and `bench` artifact profiles, build command, connect timeout, transports, deferred capabilities and fixtures, and SHALL be dispatchable as a runtime option in the nightly end-to-end bounded operator. The suite SHALL pass under `FLEZHA_E2E_RUNTIME=python` for every capability the manifest does not defer, over every transport the manifest lists.
+The SDK SHALL ship `test/apps/python_runner/` with a conformance manifest declaring its runtime, command template, `test` and `bench` artifact profiles, build command, connect timeout, transports, deferred capabilities and fixtures, and SHALL be dispatchable as a runtime option in the nightly end-to-end steps operator. The suite SHALL pass under `FLEZHA_E2E_RUNTIME=python` for every capability the manifest does not defer, over every transport the manifest lists.
 
 Admitting the runtime SHALL require no change to the shared test helpers, the system suites, the test helper configuration or the conformance gate — a new SDK adds an app, not harness clauses.
 

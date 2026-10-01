@@ -117,7 +117,7 @@ The vocabulary is one list in `FlezhaTest.Helper.NodeTestHelper.capabilities/0`:
 
 `runner_lifecycle`, `connect_discovery`, `graph_builder`, `liveness`,
 `pool_wedge`, `retry_ladder`, `state_persistence`, `effectively_once`,
-`cell_timers`, `correction_window`, `keyed_channels`, `bounded`,
+`cell_timers`, `correction_window`, `keyed_channels`, `steps`,
 `dynamic_cell`, `partitioned`, `schema_evolution`, `shorthand`.
 
 A capability can carry no fixtures at all, where the scenarios that prove it
@@ -200,7 +200,7 @@ uses an id belonging to a capability it did not declare.
 | `CONFORMANCE_OUT` | the formatter | Path to write the capability report as JSON |
 | `FLEZHA_SOCKET_FILES_PATH`, `FLEZHA_TRANSPORT`, `FLEZHA_CA_CERT_PATH`, `FLEZHA_QUIC_ADDRESSES` | every test app | Injected by `PortPilot.open_port/2`; a test app must honour them, and an entry a scenario supplies replaces the injected one of the same name. `FLEZHA_QUIC_ADDRESS` is retired: an app reading it fails the gate |
 | `FLEZHA_RUNNER_ID_PATH` | every test app | Where the runner persists its stable identity. Two runners in one namespace need two paths, or the second replaces the first |
-| `FLEZHA_BOUNDED_E2E_RELEASE` | bounded fixtures | Releases a parked crash-resume fixture — see the contract below |
+| `FLEZHA_STEPS_E2E_RELEASE` | steps fixtures | Releases a parked crash-resume fixture — see the contract below |
 
 ## The test tiers
 
@@ -217,7 +217,7 @@ this page that is not here.
 | --- | --- | --- | --- |
 | `:system` | `nightly-e2e.yml` | no | an SDK runtime named by `FLEZHA_E2E_RUNTIME`, built as an OS process |
 | `:sdk_smoke` | `java-sdk.yml`, a subset of `:system` | yes | the same runtime; the two-minute inner loop |
-| `:bounded_crash_resume` | `nightly-e2e.yml`, a subset of `:system` | no | the same runtime; the crash-and-resume slice |
+| `:steps_crash_resume` | `nightly-e2e.yml`, a subset of `:system` | no | the same runtime; the crash-and-resume slice |
 | `:interop` | `nightly-e2e.yml` | no | two SDK runtimes in one run, and a namespace no other tier is using |
 | `:multi_node` | `nightly-e2e.yml` | no | a peer BEAM this tier boots and stops mid-suite |
 | `:testnet` | a person | no | `mix test.setup`, then a free port `Flezha.Testnet.ws_port/0` derives |
@@ -260,7 +260,7 @@ builds the core, and none needs a checkout of it.
 
 What an SDK repository cannot see is everything in the capability vocabulary
 the controller owns: persistence, effectively-once, correction, partitioning,
-bounded operators, liveness, restarts. Every one of those is an end-to-end scenario and
+steps operators, liveness, restarts. Every one of those is an end-to-end scenario and
 runs here, against the commit this tree pins the SDK at. Bumping that pin is
 what brings an SDK change into end-to-end.
 
@@ -406,7 +406,7 @@ operator declaration in every app, with no hand-written operator beside it:
 | `sugar_do_nothing` | stream | `input`, text | `sugar_do_nothing_echo` |
 | `sugar_store_input` | stream | `input`, text | `sugar_store_sink` |
 | `sugar_named_input` | stream | `prices`, text | `sugar_named_input_sink` |
-| `sugar_bounded` | bounded operator | `order`, text | `sugar_bounded_placed` |
+| `sugar_steps` | steps operator | `order`, text | `sugar_steps_placed` |
 | `sugar_state_only` | stream | `ticks`, text | none |
 
 Text entries, so the bytes a sink carries are equal across runtimes: a JSON
@@ -459,9 +459,9 @@ snapshot pins the `flz.*` identity stamps on a keyed output. A key one SDK adds,
 drops or spells differently is a diff on every other.
 
 The committed goldens are `candle`, `checkpoint_batched_store`,
-`commit_block_bounded`, `keyed_output_stamps`, `saga_block_bounded`,
+`commit_block_steps`, `keyed_output_stamps`, `saga_block_steps`,
 `static_cell`, `store_input`, `sugar_do_nothing`, `sugar_named_input`,
-`sugar_state_only`, `sugar_static_cell`, `sugar_bounded` and `tier_store`.
+`sugar_state_only`, `sugar_static_cell`, `sugar_steps` and `tier_store`.
 The four short-form ones (every `sugar_*` but `sugar_static_cell`) pin that a
 short form declares the entry channel, the sink when one is written and the
 kind its author wrote, in every runtime.
@@ -478,7 +478,7 @@ Every SDK test app SHALL:
 - honour the harness-injected environment (`FLEZHA_SOCKET_FILES_PATH`,
   `FLEZHA_TRANSPORT`, `FLEZHA_CA_CERT_PATH`, `FLEZHA_QUIC_ADDRESSES`, plus
   whatever its own template renders);
-- park until `FLEZHA_BOUNDED_E2E_RELEASE` appears, in every bounded fixture a
+- park until `FLEZHA_STEPS_E2E_RELEASE` appears, in every steps fixture a
   crash-resume scenario drives, so the runner keeps answering control pings and
   a sibling tasklet stays dispatchable. The obligation is one; its spelling
   follows the dispatch model the manifest declares. A worker-pool host parks a

@@ -32,7 +32,7 @@ defmodule Flezha.Service.Cli.Schedule do
   @doc """
   The call's options carry the flags: `cron`, `tz` and `factory`; `namespace`,
   `init_values` and `plugins`, each defaulting as the help screen says when
-  absent. The kind is the factory's: one a connected runner announced as a
+  absent. How it runs is the factory's: one a connected runner announced as a
   stream is refused here, and one nobody announces yet is judged at each fire.
   """
   def schedule_add(name, %{opts: opts}) do
@@ -44,7 +44,7 @@ defmodule Flezha.Service.Cli.Schedule do
 
     init_map = Context.json!(Keyword.get(opts, :init_values, ""), "--init-values")
 
-    with :ok <- schedule_bounded_only(ns, factory_id),
+    with :ok <- schedule_steps_only(ns, factory_id),
          :ok <- schedule_check_plugins(plugins_json, ns, name),
          {:ok, entry} <-
            Store.add(%{
@@ -143,10 +143,10 @@ defmodule Flezha.Service.Cli.Schedule do
     end
   end
 
-  defp schedule_bounded_only(namespace, factory_id) do
-    case FleetManager.factory_kind(namespace, factory_id) do
-      {:ok, :unbounded} -> {:error, {:unschedulable_kind, factory_id}}
-      _bounded_or_unannounced -> :ok
+  defp schedule_steps_only(namespace, factory_id) do
+    case FleetManager.factory_run(namespace, factory_id) do
+      {:ok, :flow} -> {:error, {:unschedulable_run, factory_id}}
+      _steps_or_unannounced -> :ok
     end
   catch
     :exit, _ -> :ok

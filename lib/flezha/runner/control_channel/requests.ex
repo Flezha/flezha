@@ -1,7 +1,7 @@
 defmodule Flezha.Runner.ControlChannel.Requests do
   @moduledoc """
   The requests a runner's SDK initiates on its control stream: the ones that
-  act on one operator (a graceful-shutdown notification, a bounded operator
+  act on one operator (a graceful-shutdown notification, a steps operator
   completion, an iteration park, an exit report, a durability barrier) and the ones scoped to
   the runner or its namespace (a factory update, a tasklet-requested spawn,
   an admin call).
@@ -69,23 +69,23 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   end
 
   @doc """
-  Converged teardown for every bounded operator exit trigger (quiescence, ctx.complete,
+  Converged teardown for every steps operator exit trigger (quiescence, ctx.complete,
   loop terminal, max_duration, cooperative stop): surface the outcome and the
   result payload, then deregister on completion so the operator never replays
   on boot. A `status = "error"` tears down identically, with no retry. A
   completion from a runner that does not own the instance is not an exit
   trigger.
   """
-  @spec bounded_completed(map(), RunnerCommands.BoundedCompleted.t()) :: :ok
-  def bounded_completed(state, %RunnerCommands.BoundedCompleted{} = completed) do
-    if Records.admit(state, completed.operator_id, :bounded_completed),
+  @spec operator_completed(map(), RunnerCommands.OperatorCompleted.t()) :: :ok
+  def operator_completed(state, %RunnerCommands.OperatorCompleted{} = completed) do
+    if Records.admit(state, completed.operator_id, :operator_completed),
       do: complete(state, completed)
 
     :ok
   end
 
   defp complete(state, completed) do
-    %RunnerCommands.BoundedCompleted{
+    %RunnerCommands.OperatorCompleted{
       operator_id: operator_id,
       status: status,
       error: error,
@@ -93,7 +93,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
     } = completed
 
     :telemetry.execute(
-      [:flezha, :bounded, :completed],
+      [:flezha, :steps, :completed],
       %{count: 1},
       %{
         namespace: state.namespace,
@@ -103,7 +103,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
       }
     )
 
-    if status == "error", do: report_bounded_failure(state, operator_id, error)
+    if status == "error", do: report_steps_failure(state, operator_id, error)
 
     # Finished-job retention: record the terminal outcome (durably, before the
     # teardown) so `flz operator info` can surface it and `stop_operator`
@@ -112,6 +112,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
     _ =
       Completion.write(operator_id, %{
         namespace: state.namespace,
+        run: Atom.to_string(Records.run_of(operator_id)),
         status: status,
         error: error,
         result: result,
@@ -121,14 +122,14 @@ defmodule Flezha.Runner.ControlChannel.Requests do
     deregister_on_completion(state, operator_id)
   end
 
-  defp report_bounded_failure(state, operator_id, error) do
+  defp report_steps_failure(state, operator_id, error) do
     Logger.warning(
-      "[control_channel] bounded operator #{inspect(operator_id)} failed in namespace " <>
+      "[control_channel] steps operator #{inspect(operator_id)} failed in namespace " <>
         "#{inspect(state.namespace)}: #{inspect(error)}"
     )
 
     :telemetry.execute(
-      [:flezha, :bounded, :failed],
+      [:flezha, :steps, :failed],
       %{count: 1},
       %{namespace: state.namespace, operator_id: operator_id, error: error}
     )
@@ -147,7 +148,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
 
         {:error, reason} ->
           Logger.warning(
-            "[control_channel] bounded operator #{inspect(operator_id)} teardown failed: #{inspect(reason)}"
+            "[control_channel] steps operator #{inspect(operator_id)} teardown failed: #{inspect(reason)}"
           )
       end
     end)
@@ -189,7 +190,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
 
       System.monotonic_time(:millisecond) >= deadline ->
         Logger.warning(
-          "[control_channel] bounded operator #{inspect(operator_id)} completed with " <>
+          "[control_channel] steps operator #{inspect(operator_id)} completed with " <>
             "#{owed} outbox entries still owed"
         )
 
@@ -200,8 +201,8 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   end
 
   @doc """
-  An instance of either kind has been idle past the threshold and stopped
-  without a completion (`bounded-durable-suspension`). Hand it to its
+  An instance has been idle for its class's `sleep_after` and stopped
+  without a completion (`durable-suspension`). Hand it to its
   Overwatch, which writes the park record durably before it evicts the instance
   from this runner and keeps it resumable; with no Overwatch here, the record
   is written under the instance's own key so the sleep is rediscovered when the
@@ -209,7 +210,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
 
   Off this process: the eviction drives a `RemOperator` whose response returns
   on this control stream, so doing it inline would deadlock the reader, the
-  same reason as the bounded-completed teardown.
+  same reason as the steps-completed teardown.
   """
   @spec iter_park(map(), RunnerCommands.IterPark.t()) :: :ok
   def iter_park(state, %RunnerCommands.IterPark{} = park) do
@@ -228,7 +229,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
     deadline = if wake_deadline_ms == 0, do: nil, else: wake_deadline_ms
 
     :telemetry.execute(
-      [:flezha, :bounded, :parked],
+      [:flezha, :steps, :parked],
       %{count: 1},
       %{namespace: state.namespace, operator_id: operator_id, iter: iter}
     )
@@ -295,13 +296,17 @@ defmodule Flezha.Runner.ControlChannel.Requests do
                                id: id,
                                description: description,
                                sdk_lang: sdk_lang,
-                               kind: kind
+                               run: run,
+                               each: each,
+                               on_failure: on_failure
                              } ->
         %{
           "id" => id,
           "description" => if(description == "", do: nil, else: description),
           "sdk_lang" => sdk_lang,
-          "kind" => kind
+          "run" => run,
+          "each" => each,
+          "on_failure" => on_failure
         }
       end)
 
@@ -312,13 +317,13 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   end
 
   @doc """
-  A tasklet asked for a bounded instance (`ctx.spawn_bounded`), judged as
+  A tasklet asked for a steps instance (`ctx.spawn_steps`), judged as
   the identity this connection proved. The namespace is this channel's, never
   the requester's claim, so a request cannot reach another namespace.
   """
-  @spec spawn_bounded(map(), RunnerCommands.SpawnBoundedRequest.t(), binary()) :: :ok
-  def spawn_bounded(state, request, reference_id) do
-    %RunnerCommands.SpawnBoundedRequest{
+  @spec spawn_steps(map(), RunnerCommands.SpawnStepsRequest.t(), binary()) :: :ok
+  def spawn_steps(state, request, reference_id) do
+    %RunnerCommands.SpawnStepsRequest{
       instance_id: instance_id,
       factory_id: factory_id,
       payload: payload,
@@ -361,19 +366,19 @@ defmodule Flezha.Runner.ControlChannel.Requests do
         }
       )
 
-      {{:spawn_bounded_response, spawn_response(outcome, resolved_id)},
-       "spawn-bounded response #{outcome_name(outcome)}"}
+      {{:spawn_steps_response, spawn_response(outcome, resolved_id)},
+       "spawn-steps response #{outcome_name(outcome)}"}
     end)
   end
 
   defp spawn_response({:refused, error}, instance_id),
-    do: %RunnerCommands.SpawnBoundedResponse{
+    do: %RunnerCommands.SpawnStepsResponse{
       error: Flezha.Error.to_wire(error),
       instance_id: instance_id
     }
 
   defp spawn_response(outcome, instance_id),
-    do: %RunnerCommands.SpawnBoundedResponse{
+    do: %RunnerCommands.SpawnStepsResponse{
       outcome: Atom.to_string(outcome),
       instance_id: instance_id
     }

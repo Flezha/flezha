@@ -25,10 +25,10 @@ The SDK's default executor SHALL run a base pool of Ruby threads, each looping `
 
 ### Requirement: Every blocking core call releases the GVL
 
-The binding SHALL release the global VM lock for the duration of every blocking core call — `poll`, `wait_starvation`, `complete` and the bounded operator inbox receive — so that no blocking core call prevents another Ruby thread from running.
+The binding SHALL release the global VM lock for the duration of every blocking core call — `poll`, `wait_starvation`, `complete` and the steps operator inbox receive — so that no blocking core call prevents another Ruby thread from running.
 
-#### Scenario: A blocked bounded operator receive does not freeze the VM
-- **WHEN** a bounded stage waits on the inbox for several seconds
+#### Scenario: A blocked steps operator receive does not freeze the VM
+- **WHEN** a steps stage waits on the inbox for several seconds
 - **THEN** other Ruby threads, including fetchers, SHALL continue to execute Ruby code throughout the wait
 
 #### Scenario: A blocked poll does not freeze the VM

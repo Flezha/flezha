@@ -244,7 +244,7 @@ events.addEventListener("ended", () => events.close());
 
 ## Limits in v1
 
-- An operator carrying the plugin must not declare `sleep_when_idle`: an instance found
+- An operator carrying the plugin must not declare a `sleep_after`: an instance found
   asleep when a controller boots has no plugins until something wakes it, and its only
   input is the port that is not bound (KB-593).
 - A member of a partition group is refused: a group behind one port needs a router by key.

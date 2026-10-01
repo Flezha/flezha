@@ -54,9 +54,9 @@ pub fn emit_control_request(reference_id: String, command: crate::pb::command_re
     coordinator_send(RunnerMessage::control_request(reference_id, command));
 }
 
-/// A bounded operator's `BoundedCompleted`, so the controller deregisters it.
-pub fn emit_bounded_completed(operator_id: String, status: String, error: String, result: Vec<u8>) {
-    coordinator_send(RunnerMessage::EmitBoundedCompleted {
+/// A steps operator's `OperatorCompleted`, so the controller deregisters it.
+pub fn emit_operator_completed(operator_id: String, status: String, error: String, result: Vec<u8>) {
+    coordinator_send(RunnerMessage::EmitOperatorCompleted {
         operator_id,
         status,
         error,
@@ -89,8 +89,8 @@ pub enum RunnerMessage {
     SendControlKeepalive,
     /// The heartbeat timer's tick: a heartbeat on every secondary stream.
     SendDataHeartbeat,
-    /// A bounded operator reached an exit trigger.
-    EmitBoundedCompleted {
+    /// A steps operator reached an exit trigger.
+    EmitOperatorCompleted {
         operator_id: String,
         status: String,
         error: String,

@@ -340,12 +340,12 @@ defmodule Flezha.Convergence.LoopTest do
       assert {["eth_feed"], _} = Intent.intent_mismatch(intent_for(["btc_feed"]), cache)
     end
 
-    test "a finished bounded retained for inspection is not evidence", %{root: root} do
+    test "a finished steps operator retained for inspection is not evidence", %{root: root} do
       seed_cell(root, "btc_feed", "op", "k1")
-      seed_cell(root, "done_bounded", "op", "k1")
+      seed_cell(root, "done_steps", "op", "k1")
 
       :ok =
-        Completion.write("done_bounded", %{
+        Completion.write("done_steps", %{
           namespace: "ns",
           status: "ok",
           error: "",

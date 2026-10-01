@@ -481,7 +481,7 @@
     },
     "durability.sync_ship_failed": {
       "class": "unavailable",
-      "message": "operator '{operator}' declares synchronous durability, and shipping its state to the durability backend failed: {reason}",
+      "message": "operator '{operator}' declares durable: remote, and shipping its state to the durability backend failed: {reason}",
       "details": ["operator", "reason"],
       "reasons": [
         {"tag": "sync_ship_failed", "args": ["operator", "reason"]}
@@ -673,28 +673,28 @@
         {"tag": "channel_without_text"}
       ]
     },
-    "operator.factory_kind_ambiguous": {
+    "operator.factory_run_ambiguous": {
       "class": "conflict",
-      "message": "factory '{factory}' in namespace '{namespace}' is announced as both unbounded and bounded, and neither is established; run runners of one kind for it",
+      "message": "factory '{factory}' in namespace '{namespace}' is announced as both flow and steps, and neither is established; serve it from runners that agree on how it runs",
       "details": ["namespace", "factory"],
       "reasons": [
-        {"tag": "factory_kind_ambiguous", "args": ["namespace", "factory"]}
+        {"tag": "factory_run_ambiguous", "args": ["namespace", "factory"]}
       ]
     },
-    "operator.factory_kind_undeclared": {
+    "operator.factory_run_undeclared": {
       "class": "unavailable",
-      "message": "factory '{factory}' in namespace '{namespace}' is served only by runners that announce no kind for it, and such a runner is never placed on",
+      "message": "factory '{factory}' in namespace '{namespace}' is served only by runners that announce no run for it, or a run that is neither flow nor steps, and such a runner is never placed on",
       "details": ["namespace", "factory"],
       "reasons": [
-        {"tag": "factory_kind_undeclared", "args": ["namespace", "factory"]}
+        {"tag": "factory_run_undeclared", "args": ["namespace", "factory"]}
       ]
     },
-    "operator.factory_kind_unserved": {
+    "operator.factory_run_unserved": {
       "class": "unavailable",
-      "message": "factory '{factory}' in namespace '{namespace}' is established as {kind}, and every runner serving it announces the other kind",
-      "details": ["namespace", "factory", "kind"],
+      "message": "factory '{factory}' in namespace '{namespace}' is established as {run}, and every runner serving it announces the other run",
+      "details": ["namespace", "factory", "run"],
       "reasons": [
-        {"tag": "factory_kind_unserved", "args": ["namespace", "factory", "kind"]}
+        {"tag": "factory_run_unserved", "args": ["namespace", "factory", "run"]}
       ]
     },
     "operator.factory_language_ambiguous": {
@@ -729,21 +729,21 @@
         {"tag": "factory_mismatch", "args": ["namespace", "operator", "factory", "actual"]}
       ]
     },
-    "operator.factory_not_bounded": {
+    "operator.factory_not_steps": {
       "class": "invalid",
-      "message": "factory '{factory}' is an unbounded operator, and only a bounded one can be spawned or scheduled",
+      "message": "factory '{factory}' is a flow operator, and only a steps one can be spawned or scheduled",
       "details": ["factory", "namespace"],
       "reasons": [
-        {"tag": ["factory_kind_mismatch", "bounded"], "args": ["namespace", "factory", "_"]},
-        {"tag": "unschedulable_kind", "args": ["factory"]}
+        {"tag": ["factory_run_mismatch", "steps"], "args": ["namespace", "factory", "_"]},
+        {"tag": "unschedulable_run", "args": ["factory"]}
       ]
     },
-    "operator.factory_not_unbounded": {
+    "operator.factory_not_flow": {
       "class": "invalid",
-      "message": "factory '{factory}' is a bounded operator, and only an unbounded one is started here",
+      "message": "factory '{factory}' is a steps operator, and only a flow one is started here",
       "details": ["factory", "namespace"],
       "reasons": [
-        {"tag": ["factory_kind_mismatch", "unbounded"], "args": ["namespace", "factory", "_"]}
+        {"tag": ["factory_run_mismatch", "flow"], "args": ["namespace", "factory", "_"]}
       ]
     },
     "operator.factory_unknown": {
@@ -921,13 +921,13 @@
         {"tag": "partitions_out_of_range", "args": ["partitions", "max"]}
       ]
     },
-    "operator.replay_bounded": {
+    "operator.replay_steps": {
       "class": "invalid",
-      "message": "'{cell}' is a Cell of a bounded operator, whose baseline is a committed iteration across every Cell rather than one Cell's WAL seq, so it cannot be replayed; take the loop back with a rewind",
+      "message": "'{cell}' is a Cell of a steps operator, whose baseline is a committed iteration across every Cell rather than one Cell's WAL seq, so it cannot be replayed; take the loop back with a rewind",
       "hint": "flz operator rewind <operator> --to-iteration <n>",
       "details": ["cell"],
       "reasons": [
-        {"tag": "bounded_cell", "args": ["cell"]}
+        {"tag": "steps_cell", "args": ["cell"]}
       ]
     },
     "operator.rescale_id_held": {
@@ -955,12 +955,20 @@
         {"tag": "parked_entries", "args": ["entries"]}
       ]
     },
+    "operator.remote_without_backend": {
+      "class": "unavailable",
+      "message": "factory '{factory}' declares durable: remote, and this controller has no durability backend; set FLEZHA_DURABILITY_BACKEND, or declare durable: local",
+      "details": ["factory"],
+      "reasons": [
+        {"tag": "remote_without_backend", "args": ["factory"]}
+      ]
+    },
     "operator.rescale_quiesce_timeout": {
       "class": "unavailable",
       "message": "the rescale stopped before anything moved: '{member}' has not consumed its input log within the timeout; retry with a longer timeout, or let a checkpoint or a pass commit advance it",
-      "details": ["member", "kind", "watermark", "last_offset"],
+      "details": ["member", "run", "watermark", "last_offset"],
       "reasons": [
-        {"tag": "quiesce_timeout", "args": ["member", "kind", "progress"]}
+        {"tag": "quiesce_timeout", "args": ["member", "run", "progress"]}
       ]
     },
     "operator.rescale_running": {
@@ -2028,11 +2036,6 @@
       "message": "the runner failed while answering the command: {reason}",
       "details": ["reason"]
     },
-    "runtime.complete_outside_bounded": {
-      "class": "invalid",
-      "message": "only a tasklet running inside a bounded operator can complete it; an unbounded operator never completes",
-      "details": []
-    },
     "runtime.completion_too_many_effects": {
       "class": "invalid",
       "message": "the completion carries more effects than the activation had items",
@@ -2063,10 +2066,10 @@
       "message": "'{module}' cannot be unregistered, because a running runner cannot stop serving a started declaration",
       "details": ["module"]
     },
-    "runtime.factory_kind_mismatch": {
+    "runtime.factory_run_mismatch": {
       "class": "conflict",
-      "message": "factory '{factory}' is registered as a {declared} class, and the controller started it as {kind}",
-      "details": ["factory", "declared", "kind"]
+      "message": "factory '{factory}' is registered as a {declared} class, and the controller started it as {run}",
+      "details": ["factory", "declared", "run"]
     },
     "runtime.forked_process": {
       "class": "invalid",
@@ -2595,20 +2598,10 @@
       "message": "operator '{operator}' has no tasklet named '{tasklet}'",
       "details": ["operator", "tasklet"]
     },
-    "topology.ambiguous_operator_kind": {
-      "class": "invalid",
-      "message": "'{module}' declares both an unbounded and a bounded operator; an operator is one kind",
-      "details": ["module"]
-    },
     "topology.at_checkpoint_without_max_delay": {
       "class": "invalid",
       "message": "checkpoint_outputs at_checkpoint requires checkpoint_max_delay_ms: an interval that never closes would hold its outputs forever on a quiet Cell",
       "details": []
-    },
-    "topology.bounded_setting_on_unbounded": {
-      "class": "invalid",
-      "message": "unbounded operator '{factory_id}' declares {settings}, which only a bounded operator carries",
-      "details": ["factory_id", "settings"]
     },
     "topology.branch_too_few_arms": {
       "class": "invalid",
@@ -2627,7 +2620,7 @@
     },
     "topology.call_outside_per_input_loop": {
       "class": "invalid",
-      "message": "channel '{channel}' ends in a call, and only a :per_input bounded operator reads the later message its Response is; declare the class :per_input, or make the call from an unbounded operator",
+      "message": "channel '{channel}' ends in a call, and only a :per_input steps operator reads the later message its Response is; declare the class :per_input, or make the call from a flow operator",
       "details": ["channel"]
     },
     "topology.call_response_unread": {
@@ -2675,11 +2668,6 @@
       "message": "channel '{channel}' is named twice: named('{named}') and sink('{sink}') both name it. A sink names the channel it terminates, so write the name once: sink('{named}') to keep the channel's name, or named('{named}') with a sink that takes no name",
       "details": ["channel", "named", "sink"]
     },
-    "topology.checkpoint_ack_without_tier": {
-      "class": "invalid",
-      "message": "the operator declares checkpoint_ack without effectively_once; the checkpoint is where the tier's consumed offset advances, and an at-least-once operator has no durable offset to hold back (nor a durable input log to replay the interval from)",
-      "details": []
-    },
     "topology.checkpoint_every_zero": {
       "class": "invalid",
       "message": "the operator declares checkpoint_every(0); an interval that closes every zero inputs is not an interval, so omit it to close only on an explicit checkpoint call",
@@ -2688,11 +2676,6 @@
     "topology.checkpoint_max_delay_zero": {
       "class": "invalid",
       "message": "checkpoint_max_delay_ms must be greater than zero",
-      "details": []
-    },
-    "topology.checkpoint_on_bounded": {
-      "class": "invalid",
-      "message": "a bounded class cannot declare a checkpoint (checkpoint_ack, checkpoint_every, checkpoint_outputs, checkpoint_max_delay_ms); a bounded commits at its stage boundary",
       "details": []
     },
     "topology.class_not_constructible": {
@@ -2710,11 +2693,6 @@
       "message": "channel '{channel}' names consumer {consumer} but the class declares {tasklets} tasklet(s)",
       "details": ["channel", "consumer", "tasklets"]
     },
-    "topology.correction_window_on_bounded": {
-      "class": "invalid",
-      "message": "a bounded class cannot declare correction_window_ms",
-      "details": []
-    },
     "topology.correction_window_zero": {
       "class": "invalid",
       "message": "the operator declares correction_window(0); a zero window can correct nothing",
@@ -2724,11 +2702,6 @@
       "class": "invalid",
       "message": "the operator declares correction_window but tasklet '{tasklet}' declares clock '{clock_type}'; correction orders a replayed slice by event time, which only an event-time clock yields",
       "details": ["tasklet", "clock_type"]
-    },
-    "topology.correction_without_tier": {
-      "class": "invalid",
-      "message": "the operator declares correction_window without effectively_once; correction replays the input log against a rewound baseline, and only the tier journals inputs before forwarding them (an at-least-once operator has no durable input to replay)",
-      "details": []
     },
     "topology.cycle": {
       "class": "invalid",
@@ -2795,14 +2768,9 @@
       "message": "channel '{channel}' already feeds tasklet '{tasklet}'; an edge carries exactly one transform and one key or neither, so a re-declaration where either side carries one is refused rather than silently keeping the first",
       "details": ["channel", "tasklet"]
     },
-    "topology.effectively_once_on_bounded": {
-      "class": "invalid",
-      "message": "a bounded class cannot declare effectively_once",
-      "details": []
-    },
     "topology.effectively_once_without_persistence": {
       "class": "invalid",
-      "message": "effectively_once requires persistent: the tier is durable state",
+      "message": "exactly: effectively_once needs a durable other than false: the tier is durable state",
       "details": []
     },
     "topology.entry_channel_with_producer": {
@@ -2814,11 +2782,6 @@
       "class": "invalid",
       "message": "entry channel '{channel}' names no consumer",
       "details": ["channel"]
-    },
-    "topology.external_stop_only": {
-      "class": "invalid",
-      "message": "bounded class '{factory_id}' can only end by an external stop: let its chain complete, have a tasklet call complete, or declare max_duration",
-      "details": ["factory_id"]
     },
     "topology.inter_task_channel_without_producer": {
       "class": "invalid",
@@ -2900,14 +2863,14 @@
       "message": "tasklet '{tasklet}' sets {setting} to {value}, and it must not be negative",
       "details": ["tasklet", "setting", "value"]
     },
-    "topology.no_bounded_body": {
+    "topology.no_steps_body": {
       "class": "invalid",
-      "message": "bounded class '{factory_id}' declares no channels body, so it has no tasklets to run",
+      "message": "steps class '{factory_id}' declares no channels body, so it has no tasklets to run",
       "details": ["factory_id"]
     },
     "topology.no_entry_channel": {
       "class": "invalid",
-      "message": "the bounded class declares no entry channel for its messages to arrive on",
+      "message": "the steps class declares no entry channel for its messages to arrive on",
       "details": []
     },
     "topology.no_operator_exported": {
@@ -2940,10 +2903,10 @@
     },
     "topology.partitions_without_per_input_loop": {
       "class": "invalid",
-      "message": "factory '{factory}' reads one message (loop_mode {loop_mode}), so its {partitions} partitions would each wait for a message that reaches only one of them; declare loop_mode per_input before partitioning",
-      "details": ["factory", "loop_mode", "partitions"],
+      "message": "factory '{factory}' reads one message (each {each}), so its {partitions} partitions would each wait for a message that reaches only one of them; declare each per_input before partitioning",
+      "details": ["factory", "each", "partitions"],
       "reasons": [
-        {"tag": "partitions_without_per_input_loop", "args": ["factory", "loop_mode", "partitions"]}
+        {"tag": "partitions_without_per_input_loop", "args": ["factory", "each", "partitions"]}
       ]
     },
     "topology.payload_type_mismatch": {
@@ -2960,6 +2923,11 @@
       "class": "invalid",
       "message": "channel '{channel}' names producer {producer} but the class declares {tasklets} tasklet(s)",
       "details": ["channel", "producer", "tasklets"]
+    },
+    "topology.remote_on_flow": {
+      "class": "invalid",
+      "message": "flow operator '{factory_id}' declares durable: remote, which a flow operator does not carry until keep-work-remote-on-a-flow-operator gates its commit points; declare durable: local",
+      "details": ["factory_id"]
     },
     "topology.retired_callback": {
       "class": "invalid",
@@ -3016,11 +2984,6 @@
       "message": "operator '{factory_id}' names a sink, and its tasklet declares no output to feed it",
       "details": ["factory_id"]
     },
-    "topology.sleep_without_persistence": {
-      "class": "invalid",
-      "message": "class '{factory_id}' declares sleep_when_idle with persistence off: a sleeping instance is evicted and restored from its durable state, and this class keeps none",
-      "details": ["factory_id"]
-    },
     "topology.state_not_constructible": {
       "class": "invalid",
       "message": "tasklet '{tasklet}' has state class '{state}' with no accessible no-argument constructor; add one, or write initState",
@@ -3040,16 +3003,6 @@
       "class": "invalid",
       "message": "static tasklet '{tasklet}' declares no cell_keys",
       "details": ["tasklet"]
-    },
-    "topology.sync_durability_on_unbounded": {
-      "class": "invalid",
-      "message": "class '{factory_id}' declares sync_durability, which only a bounded class may: a stream class acknowledges at input rates, and a remote round trip per acknowledgement is not a guarantee it can keep",
-      "details": ["factory_id"]
-    },
-    "topology.sync_durability_without_persistence": {
-      "class": "invalid",
-      "message": "sync_durability requires persistent: there is no commit barrier to ship for a class that journals nothing",
-      "details": []
     },
     "topology.tasklet_name_missing": {
       "class": "invalid",
@@ -3090,11 +3043,6 @@
       "class": "invalid",
       "message": "{declaration} declares {fields}, which it does not carry",
       "details": ["declaration", "fields"]
-    },
-    "topology.unknown_operator_kind": {
-      "class": "invalid",
-      "message": "'{module}' declares neither an unbounded nor a bounded operator",
-      "details": ["module"]
     },
     "topology.unknown_sdk_lang": {
       "class": "invalid",

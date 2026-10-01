@@ -100,7 +100,7 @@ SHALL terminate on SIGINT rather than answer it with the Erlang break menu.
 
 A listener SHALL also end, with exit 0, when the operator it listens to ends. It SHALL end
 with the error `listener.overrun` when its backlog overflows (see "A listener's backlog
-SHALL be bounded") and with `listener.detached` when its plugin is disabled by anyone but
+SHALL be steps") and with `listener.detached` when its plugin is disabled by anyone but
 itself, exiting with the class's code. However it ends, the disable SHALL be addressed to
 the operator (or every member of the group) by namespace and id, and SHALL NOT depend on
 which controller node recorded the enable: a listener whose operator has moved to another
@@ -153,7 +153,7 @@ member, and the heartbeat's own disable SHALL be addressed the same way.
 
 #### Scenario: A listener ends with its operator
 
-- **WHEN** a `once` bounded operator a listener is attached to completes
+- **WHEN** a `once` steps operator a listener is attached to completes
 - **THEN** `flz operator listen` SHALL exit 0 after printing the operator's outputs,
   before its window closes
 
@@ -280,8 +280,8 @@ bring up every declared plugin its table does not hold").
 
 #### Scenario: A listener across a sleep and a wake
 
-- **GIVEN** a listener on an unbounded operator that sleeps when idle, and one on a
-  `per_input` bounded session
+- **GIVEN** a listener on a flow operator that sleeps when idle, and one on a
+  `per_input` steps session
 - **WHEN** each falls asleep, and is then woken by a new input
 - **THEN** each listener SHALL receive the output the woken operator produces, without
   having been re-attached
@@ -351,8 +351,8 @@ today.
 
 The controller SHALL hand an operator's listeners a notice through the `on_preview` hook
 once an input the operator dead-lettered is durable in the DLQ, for either kind: a
-retry-exhausted or non-retryable input of an unbounded operator, on either durability tier;
-an unreadable message of a bounded operator; any input a bounded loop dead-letters. For a
+retry-exhausted or non-retryable input of a flow operator, on either durability tier;
+an unreadable message of a steps operator; any input a steps loop dead-letters. For a
 failed turn a durable `per_input` `keep_progress` loop parks through its iteration commit
 (`keep-a-session-after-a-failed-turn`), the release point SHALL be that turn's durable
 `dead_lettered` record, not the DLQ append, because a turn whose record was never written
@@ -367,7 +367,7 @@ raise a notice.
 
 #### Scenario: A poison input of a stream is announced
 
-- **GIVEN** an unbounded operator whose tasklet fails every attempt on the input `boom`
+- **GIVEN** a flow operator whose tasklet fails every attempt on the input `boom`
 - **WHEN** a listener is attached and `boom` is sent
 - **THEN** once the entry is parked the listener SHALL receive a `{:dead_lettered, error, _}`
   event with code `input.dead_lettered` naming that entry
@@ -410,7 +410,7 @@ before. This SHALL hold for a listener on an operator of either kind.
 
 #### Scenario: Events reset the idle interval
 
-- **GIVEN** `idle_ms: 500` on a bounded `per_input` session
+- **GIVEN** `idle_ms: 500` on a steps `per_input` session
 - **WHEN** the session's turn sends a part every 100 ms for two seconds
 - **THEN** the handler SHALL receive every part the relay kept, in order, and SHALL NOT be called with `:idle` during those two seconds
 

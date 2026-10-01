@@ -173,7 +173,7 @@ pub fn snapshot_frame_crossing(slot: &Arc<CellSlot>) -> Result<(Vec<u8>, u64, us
             &slot.cell_identity,
             &slot.change_seq,
             &header,
-            slot.persistence_enabled,
+            slot.keeps_state,
         );
     };
     flush(&mut slot.flush_buffer.lock_recover());

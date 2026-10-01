@@ -105,7 +105,7 @@ check, whose silent-continue posture is exactly how runtime skew hid).
 The Java SDK's own repository SHALL run, on every pull request, its three tiers
 against a core release (the modules' suites with the spec-coverage gate, local
 mode, and the smoke tier against the fake controller) and its format check.
-This repository's Java SDK bounded operator SHALL run, on pull requests, the JNI surface
+This repository's Java SDK steps operator SHALL run, on pull requests, the JNI surface
 assertion and the integration-test matrix from the `java-sdk-testing` spec
 against the pinned submodule. Pull-request jobs SHALL NOT cross-build any
 non-host triple and SHALL NOT install `zig` or `cargo-zigbuild`.
@@ -117,7 +117,7 @@ assets for that tag. Maven-registry publication remains out of scope.
 
 #### Scenario: The Java repository proves the SDK on every pull request
 - **WHEN** a pull request is opened in the Java SDK's repository
-- **THEN** its bounded operator SHALL run `scripts/ci.sh` against the pinned core release and SHALL fail when any tier fails
+- **THEN** its steps operator SHALL run `scripts/ci.sh` against the pinned core release and SHALL fail when any tier fails
 
 #### Scenario: A release tag publishes the portable matrix
 - **WHEN** a version tag is pushed

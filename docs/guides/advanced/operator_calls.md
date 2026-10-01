@@ -177,7 +177,7 @@ tokens the answer used come back into `budget`.
 
 ```java
 // GatewayOperator.java: answers every request, and calls the session a message is for.
-public final class GatewayOperator implements UnboundedOperator {
+public final class GatewayOperator implements Operator {
 
     static final long DEADLINE_MS = 60_000;
 

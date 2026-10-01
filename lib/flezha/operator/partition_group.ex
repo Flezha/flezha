@@ -127,9 +127,9 @@ defmodule Flezha.Operator.PartitionGroup do
         suffix = byte_size(Partition.member_suffix(partitions - 1))
         {:error, {:group_id_too_long, operator.id, partitions, id_limit() - suffix}}
 
-      known.loop_mode in [:once, :chained] ->
+      known.each in [:once, :chained] ->
         {:error,
-         {:partitions_without_per_input_loop, operator.factory_id, known.loop_mode, partitions}}
+         {:partitions_without_per_input_loop, operator.factory_id, known.each, partitions}}
 
       known.keyless ->
         {:error, {:partitions_without_keyed_tasklet, operator.factory_id}}
@@ -318,10 +318,10 @@ defmodule Flezha.Operator.PartitionGroup do
     with {:ok, members} <- rescale_members(namespace, group_id),
          {:ok, template, plugins} <- rescale_template(namespace, group_id, members),
          :ok <- check_partitionable(namespace, template, target, length(members)),
-         :ok <- quiesce_group(namespace, members, template.kind, opts),
+         :ok <- quiesce_group(namespace, members, template.run, opts),
          cell_moves = plan_moves(members, Partition.ranges(target), group_id),
          {survivors, leaving} = Enum.split_with(members, &(&1.partition.index < target)),
-         sealed = sealed(template.kind, survivors),
+         sealed = sealed(template.run, survivors),
          :ok <- stop_members(namespace, members, sealed),
          :ok <- apply_moves(cell_moves ++ instance_moves(members)),
          {:ok, started} <-
@@ -405,7 +405,7 @@ defmodule Flezha.Operator.PartitionGroup do
   # Sources off, every input log fully consumed, no parked entries anywhere.
   # Until all three hold, moving a Cell's files would move it away from
   # input it has not read yet.
-  defp quiesce_group(namespace, members, kind, opts) do
+  defp quiesce_group(namespace, members, run, opts) do
     _ = PluginManager.disable_operators(namespace, Enum.map(members, & &1.id))
 
     with :ok <- refuse_on_parked_entries(members) do
@@ -413,7 +413,7 @@ defmodule Flezha.Operator.PartitionGroup do
         System.monotonic_time(:millisecond) +
           Keyword.get(opts, :quiesce_timeout_ms, Durations.get(:partition_quiesce_timeout_ms))
 
-      await_consumed(members, kind, deadline)
+      await_consumed(members, run, deadline)
     end
   end
 
@@ -430,23 +430,23 @@ defmodule Flezha.Operator.PartitionGroup do
     end
   end
 
-  defp await_consumed(members, kind, deadline) do
+  defp await_consumed(members, run, deadline) do
     case Enum.find(members, &(not consumed?(&1.id))) do
       nil ->
         :ok
 
       laggard ->
         if System.monotonic_time(:millisecond) >= deadline do
-          {:error, {:quiesce_timeout, laggard.id, kind, input_log_progress(laggard.id)}}
+          {:error, {:quiesce_timeout, laggard.id, run, input_log_progress(laggard.id)}}
         else
           Process.sleep(Durations.get(:partition_quiesce_poll_ms))
-          await_consumed(members, kind, deadline)
+          await_consumed(members, run, deadline)
         end
     end
   end
 
   # A log that refused a record answers no offset, so its class has not
-  # consumed its inputs and the quiesce times out saying so. A bounded operator
+  # consumed its inputs and the quiesce times out saying so. A steps operator
   # member's floor is its journal's, so a pass in flight holds it below the
   # log's end until the pass commits.
   defp consumed?(member_id) do
@@ -483,7 +483,7 @@ defmodule Flezha.Operator.PartitionGroup do
         do: {member_node(member), {:cell, cell}, {:cell, {new_class, tasklet, key}}}
   end
 
-  # A bounded operator member's journal and input log, gathered here under its own id
+  # A steps operator member's journal and input log, gathered here under its own id
   # when it sits on another node. They move together: the journal's floor
   # counts offsets in that one log. A vacated member's then go with its tree.
   defp instance_moves(members) do
@@ -579,15 +579,15 @@ defmodule Flezha.Operator.PartitionGroup do
     end)
   end
 
-  # Every surviving member of a bounded operator group resumes on a journal cut to its
+  # Every surviving member of a steps operator group resumes on a journal cut to its
   # latest committed iteration, which its stop seals on its own node before the
-  # journal moves. The kind is the template's: a member on another node
+  # journal moves. The run is the template's: a member on another node
   # recorded its own there.
-  defp sealed(:bounded, survivors), do: Enum.map(survivors, & &1.id)
+  defp sealed(:steps, survivors), do: Enum.map(survivors, & &1.id)
   defp sealed(_stream, _survivors), do: []
 
   # An old member past the new count keeps only a fully-consumed input log,
-  # and for a bounded operator its journal, once its Cells have moved out. Removing it
+  # and for a steps operator its journal, once its Cells have moved out. Removing it
   # is what stops a stale class tree from reading as durable evidence of an
   # operator the fleet does not hold; its stop already removed it from the
   # hub's declared set and deleted its registry row, so a returning node can

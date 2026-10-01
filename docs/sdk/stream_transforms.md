@@ -1,6 +1,6 @@
 # Stream transforms and edge keying
 
-For operator authors wiring an unbounded topology and for SDK implementers: the
+For operator authors wiring a flow topology and for SDK implementers: the
 four edge methods — `map`, `filter`, `flat_map` / `flatMap` and `key_by` /
 `keyBy` — where they run, what that obliges, how a failing closure is
 contained, the build-time refusals, and where the code lives.
@@ -49,16 +49,16 @@ delivery and the controller's re-forwarded replay slice travel: in-process
 the producing activation's emit context (Java's `EmitContext`), **once**, as
 that activation completes — the core then routes on `(edge, key)` and
 evaluates no host closure, and the consumer applies nothing. That is the
-**stream** seam. A **bounded stage** has a different one: the core does not
+**stream** seam. A **steps stage** has a different one: the core does not
 route a stage's output on `(edge, key)` at all — it collects every output as
 one released value, and the driver hands that batch to each child itself. A
-bounded producer therefore releases the value **once, raw**, naming only the
+steps producer therefore releases the value **once, raw**, naming only the
 producing channel, and each consumer edge is evaluated at the consumer (Java's
 `CellRouting.valuesForCell`), which is also the seam a journal re-seed
 crosses. Evaluating producer-side there would multiply the released batch by
 the channel's consumer count. A byte-level host's delivery seam therefore
 applies an edge only to a payload no producer transformed: an entry payload,
-whose producer is the wire, and a bounded stage's released value. Two
+whose producer is the wire, and a steps stage's released value. Two
 obligations follow:
 
 - **Pure and total.** A closure re-runs on replay; one that reads the clock or
@@ -78,19 +78,19 @@ the Tasklet. `Tasklet` has no key hook of its own, in Java as in Rust.
 
 A closure that panics or throws does not take the routing thread with it.
 
-- **Unbounded operator.** `ConsumerEdge::transform_value` / `key_of` catch the
+- **Flow operator.** `ConsumerEdge::transform_value` / `key_of` catch the
   unwind once, and the value climbs the channel's retry→DLQ ladder
   (`run_retry_park_ladder`, the one a failing entry parse rides) under its
   `retry_max` / `retry_backoff_ms` budget; the other consumers are still
   served and later inputs keep routing. On Java the closure runs inside an
   activation, so a throw is that activation's failure and rides its ladder.
-- **Bounded operator.** There is no DLQ. An in-process closure runs on the
+- **Steps operator.** There is no DLQ. An in-process closure runs on the
   worker that produced the value, inside the routing seam, is contained there
   and fails the producing stage with no retry; the saga compensates and the
-  instance still reports `BoundedCompleted` with status `error`. Undo scope:
+  instance still reports `OperatorCompleted` with status `error`. Undo scope:
   [`multi_input_tasklets.md`](multi_input_tasklets.md). An edge **key**
-  never reaches a bounded operator: a keyed edge makes its consumer dynamic, which a
-  bounded operator refuses.
+  never reaches a steps operator: a keyed edge makes its consumer dynamic, which a
+  steps operator refuses.
 
 ## Refusals
 
@@ -120,8 +120,8 @@ channel carries both a sink and a transformed consumer: close the transform on
 its `.into(...)` first, then attach the sink to the held handle.
 
 A re-declaration carrying neither transform nor key is the legal fan-in /
-repeated-`.into` no-op (one consumer edge, not two) in every SDK. On a bounded operator
-an **entry** channel's closures run as on an unbounded operator: the driver applies them when it seeds the
+repeated-`.into` no-op (one consumer edge, not two) in every SDK. On a steps operator
+an **entry** channel's closures run as on a flow operator: the driver applies them when it seeds the
 pass on that channel's chain, so a message reaches the first tasklet mapped, filtered or fanned
 out as declared.
 
@@ -145,16 +145,16 @@ channel has no producer.
 | Piece | Rust | Java |
 | --- | --- | --- |
 | The check and its vocabulary | `flz_core/src/host/{register,issue}.rs` — one implementation, every SDK | shared core |
-| Builder surface, fusion (`attach_consumer`, `extend_pending`, `compose`) | `sdk/rust/src/channel/builder/` | `flezha-sdk-api/.../channel/{EdgeStream,EntryChannel,Stream}.java`, `flezha-sdk-runtime/.../operator/builder/UnboundedOperatorTopologyBuilder.java` |
+| Builder surface, fusion (`attach_consumer`, `extend_pending`, `compose`) | `sdk/rust/src/channel/builder/` | `flezha-sdk-api/.../channel/{EdgeStream,EntryChannel,Stream}.java`, `flezha-sdk-runtime/.../operator/builder/OperatorTopologyBuilder.java` |
 | `ConsumerEdge`, `EdgeTransformFn`, `EdgeYield`, `transform_value`, `key_of` | `flz_core/src/channel.rs` | `flezha-sdk-runtime/.../operator/{ConsumerEdge,EdgeYield}.java` |
 | Routing seam and ladder (`route_to_consumers`, `deliver_edge`, `run_retry_park_ladder`) | `flz_core/src/routing.rs` | `flezha-sdk-runtime/.../core/{EmitContext,CellRouting,EdgeTransforms}.java` |
-| Bounded operator containment (`extend_mapped`) and refusals | `flz_core/src/bounded/{driver,spec}.rs` | shared core |
+| Steps operator containment (`extend_mapped`) and refusals | `flz_core/src/steps/{driver,spec}.rs` | shared core |
 | Elixir SDK | `sdk/elixir/lib/flezha/sdk/{channels,topology}.ex` | — |
 
 Tests: `sdk/rust/tests/stream_transforms.rs` (asserts fusion by counting
 traversals), `sdk/rust/tests/ui/tasklet_cell_key_removed.rs`, Java
-`UnboundedOperatorTopologyBuilderTest` / `CellRoutingTest` /
-`BoundedDispatchTest`, and
+`OperatorTopologyBuilderTest` / `CellRoutingTest` /
+`StepsDispatchTest`, and
 `test/system/dynamic_cell_e2e_test.exs` on both runtimes. Examples:
 `sdk/rust/examples/stream_transforms.rs`, Java `E10_StreamTransforms`.
 

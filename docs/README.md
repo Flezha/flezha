@@ -6,7 +6,7 @@ operator profiles and the runner model. Everything else is grouped by who reads 
 | Directory | For | What is in it |
 | --- | --- | --- |
 | [`guides/`](#guides) | someone deploying Flezha for the first time | End-to-end walkthroughs: build, start, connect, run |
-| [`architecture/`](architecture/README.md) | everyone | The conceptual model: kernel, stream profile, bounded profile, runner |
+| [`architecture/`](architecture/README.md) | everyone | The conceptual model: kernel, stream profile, steps profile, runner |
 | [`api/`](api/README.md) | authors of a program that drives the controller | The published consumer surface, its three guards, and the manifest that keeps a consumer's calls resolving |
 | [`sdk/`](#sdk) | operator authors, SDK implementers | Authoring contract, per-SDK surfaces, wire protocol, the shared poll core |
 | [`plugins/`](#plugins) | plugin authors and users | The plugin system and every first-party plugin |
@@ -43,13 +43,13 @@ answer "what are the options"; a guide answers "what do I type".
 | [`going_further.md`](guides/tradedesk/going_further.md) | Part 2. The tradedesk it builds, what you need, and its pages |
 | [`authorization.md`](guides/tradedesk/authorization.md) | Part 2. Claiming the admin, tokens, the runner's key and roles |
 | [`namespaces.md`](guides/tradedesk/namespaces.md) | Part 2. A namespace of your own, joining it from a runner, and quotas |
-| [`building_an_etl_stream.md`](guides/tradedesk/building_an_etl_stream.md) | Part 2. An ETL stream, built as an unbounded operator: chained tasklets, transforms and state |
-| [`building_a_workflow.md`](guides/tradedesk/building_a_workflow.md) | Part 2. A workflow, built as a bounded operator: steps, retries and compensation |
+| [`building_an_etl_stream.md`](guides/tradedesk/building_an_etl_stream.md) | Part 2. An ETL stream, built as a flow operator: chained tasklets, transforms and state |
+| [`building_a_workflow.md`](guides/tradedesk/building_a_workflow.md) | Part 2. A workflow, built as a steps operator: steps, retries and compensation |
 | [`partitioning.md`](guides/tradedesk/partitioning.md) | Part 2. Partitions, keys and scaling |
 | [`plugins.md`](guides/tradedesk/plugins.md) | Part 2. The plugin system and the plugins that ship |
 | [`durability.md`](guides/tradedesk/durability.md) | Part 2. What survives a crash |
 | [`advanced_topics.md`](guides/advanced/advanced_topics.md) | Part 3. What it builds, what you need, and its pages |
-| [`sessions.md`](guides/advanced/sessions.md) | Part 3. The agentdesk in Docker Compose: one session per bounded operator, turns sent and answered, an idle session asleep |
+| [`sessions.md`](guides/advanced/sessions.md) | Part 3. The agentdesk in Docker Compose: one session per steps operator, turns sent and answered, an idle session asleep |
 | [`rewinding_a_turn.md`](guides/advanced/rewinding_a_turn.md) | Part 3. Taking turns back, and a failed turn that leaves the session running |
 | [`streamed_answers.md`](guides/advanced/streamed_answers.md) | Part 3. An answer sent token by token while the turn runs |
 | [`custom_plugins.md`](guides/advanced/custom_plugins.md) | Part 3. Installing a plugin by rebuilding the controller image, and writing your own |
@@ -77,7 +77,7 @@ answer "what are the options"; a guide answers "what do I type".
 | [`stream_transforms.md`](sdk/stream_transforms.md) | Edge transforms and `key_by` keying |
 | [`multi_input_tasklets.md`](sdk/multi_input_tasklets.md) | Merged subscriptions: what a merge promises |
 | [`cell_timers.md`](sdk/cell_timers.md) | Per-Cell processing-time and event-time timers |
-| [`tasklet_requested_spawn.md`](sdk/tasklet_requested_spawn.md) | `ctx.spawn_bounded`: a running tasklet asks for a worker |
+| [`tasklet_requested_spawn.md`](sdk/tasklet_requested_spawn.md) | `ctx.spawn_steps`: a running tasklet asks for a worker |
 | [`full_form_tasklets.md`](sdk/full_form_tasklets.md) | A tasklet written in full, and what only that form declares |
 | [`admin.md`](sdk/admin.md) | The surface an application administers its own namespace with, and the role that grants it |
 | [`partitioned_operators.md`](sdk/partitioned_operators.md) | One logical operator, N instances: key groups, sources, rescale |
@@ -122,7 +122,7 @@ answer "what are the options"; a guide answers "what do I type".
 | --- | --- |
 | [`overview.md`](resilience/overview.md) | The map of every self-healing mechanism and the durability guarantee summary |
 | [`data_durability.md`](resilience/data_durability.md) | What can be lost, when, and how to avoid it — delivery semantics, DLQ, late-input correction |
-| [`bounded_operator.md`](resilience/bounded_operator.md) | Bounded operator structure, lifecycle, durable loop, retry, rewind, saga, crash-resume |
+| [`steps_operator.md`](resilience/steps_operator.md) | Steps operator structure, lifecycle, durable loop, retry, rewind, saga, crash-resume |
 
 ## internals
 

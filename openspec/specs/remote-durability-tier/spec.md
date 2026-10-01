@@ -11,7 +11,7 @@ A backend SHALL implement exactly the blob-level contract — `put`, `get`, `lis
 - **THEN** it implements only the five blob operations and the tier's shipping, manifest, and recovery behavior work against it unchanged
 
 ### Requirement: Shipped artifact scope covers the operator's full durable identity
-The tier SHALL ship every durable artifact an operator needs to resurrect elsewhere: its Cell WALs and snapshots, its task-journal, its durable input log, and the registry cspec. There SHALL be no separate inbox artifact: a bounded instance's post-start input is the same input log an unbounded operator on the effectively-once tier ships, and a bounded operator's commit SHALL enqueue it for shipping with the journal suffix.
+The tier SHALL ship every durable artifact an operator needs to resurrect elsewhere: its Cell WALs and snapshots, its task-journal, its durable input log, and the registry cspec. There SHALL be no separate inbox artifact: a steps instance's post-start input is the same input log a flow operator on the effectively-once tier ships, and a steps operator's commit SHALL enqueue it for shipping with the journal suffix.
 
 An operator's artifacts SHALL be located through both of the identities it is stored under, its instance id, which keys the task-journal, and its resolved operator class, which keys the Cells and the input log. Where the two differ, a request naming one SHALL NOT silently return only the artifacts stored under it; in particular a synchronous-durability barrier SHALL NOT report success having shipped neither the Cell state nor the input log, and the per-class synchronous-durability gate SHALL resolve for a caller holding either identity.
 
@@ -21,8 +21,8 @@ The registry cspec SHALL be stored per writing controller rather than under one 
 - **WHEN** an effectively-once operator closes a checkpoint interval
 - **THEN** both the Cell's state cut and the input log covering its consumed offset are shipped, so a hydrated Cell has a log to replay from
 
-#### Scenario: A bounded operator's input ships with its commit
-- **WHEN** a durable bounded instance commits an iteration
+#### Scenario: A steps operator's input ships with its commit
+- **WHEN** a durable steps instance commits an iteration
 - **THEN** its journal suffix and its input log are enqueued for shipping, and a controller hydrating the instance finds the input the instance has not consumed in that log
 
 #### Scenario: An operator's existence survives with its state
@@ -42,14 +42,14 @@ The registry cspec SHALL be stored per writing controller rather than under one 
 - **THEN** both are stored without either overwriting the other, and a cold controller hydrates exactly one of them
 
 ### Requirement: Shipping triggers reuse existing boundaries plus an RPO backstop
-The tier SHALL ship at existing boundaries — compaction completion, checkpoint-interval close, and bounded operator TaskCommit/IterCommit barriers — and SHALL additionally run a periodic backstop sweep every `ship_interval_ms` (default 30 000) that ships unshipped record ranges for cells that reached no other boundary. A bounded operator barrier's ship SHALL cover the Cell records the journal entry names as well as the journal suffix, through the operator's full artifact set; no boundary snapshot is requested at an iteration commit, so a bounded operator Cell's snapshot ships when the Watchdog's compaction lands, as an unbounded operator Cell's does. Shipping SHALL be per-cell and uncoordinated: no cross-cell barrier or alignment.
+The tier SHALL ship at existing boundaries — compaction completion, checkpoint-interval close, and steps operator TaskCommit/IterCommit barriers — and SHALL additionally run a periodic backstop sweep every `ship_interval_ms` (default 30 000) that ships unshipped record ranges for cells that reached no other boundary. A steps operator barrier's ship SHALL cover the Cell records the journal entry names as well as the journal suffix, through the operator's full artifact set; no boundary snapshot is requested at an iteration commit, so a steps operator Cell's snapshot ships when the Watchdog's compaction lands, as a flow operator Cell's does. Shipping SHALL be per-cell and uncoordinated: no cross-cell barrier or alignment.
 
 #### Scenario: Compaction snapshot ships
 - **WHEN** a compaction completes for a cell
 - **THEN** the snapshot and the segments it supersedes are reflected in a new shipped manifest entry for that cell
 
 #### Scenario: A stage barrier ships the records it names
-- **WHEN** a durable bounded operator's `task_committed` entry naming a Cell record at seq 5 is acked
+- **WHEN** a durable steps operator's `task_committed` entry naming a Cell record at seq 5 is acked
 - **THEN** that Cell's range through seq 5 and the journal suffix are enqueued for shipping together
 
 #### Scenario: Quiet cell is bounded by the backstop
@@ -88,34 +88,11 @@ Garbage collection SHALL NOT delete an artifact younger than the configured coll
 - **THEN** the two uploads land under different keys, and the artifacts the live manifest names still contain the records that writer shipped
 
 ### Requirement: Async shipping never touches the hot path
-In async mode (all unbounded classes, and bounded classes that do not opt into sync), shipping SHALL run off the ack paths: a slow or failing backend SHALL NOT delay any append, fsync, ack, or watermark advance. Failed ships SHALL retry with the shared exponential backoff ladder while local operation continues.
+In async mode (all flow classes, and steps classes that do not opt into sync), shipping SHALL run off the ack paths: a slow or failing backend SHALL NOT delay any append, fsync, ack, or watermark advance. Failed ships SHALL retry with the shared exponential backoff ladder while local operation continues.
 
 #### Scenario: Backend outage does not stall dataflow
-- **WHEN** the remote backend becomes unreachable while an unbounded operator processes input
+- **WHEN** the remote backend becomes unreachable while a flow operator processes input
 - **THEN** throughput and ack latency are unchanged, shipping retries with backoff, and the RPO alarm (below) fires when the target is exceeded
-
-### Requirement: Per-class synchronous mode for bounded operators
-A bounded class SHALL be able to declare synchronous durability via the class-declaration path, in which case the controller SHALL complete the remote ship of the barrier's journal suffix and of every Cell record the barrier's entry names before replying to that TaskCommit/IterCommit; the SDK-observed ack thereby implies remote durability (RPO = 0) of the stage's state and output, not of the marker alone. The gate SHALL be the commit worker's one gate, applied after the entry's local sync and before the ack, and no other path SHALL gate on the remote ship. The declaration SHALL have exactly one spelling per SDK, the class-level one; no SDK's channel builder SHALL carry a synchronous-durability call. An unbounded class declaring synchronous mode SHALL be refused at registration under the name `topology.sync_durability_on_unbounded`, whether the SDK judges the class itself or the shared core does.
-
-#### Scenario: Sync bounded operator commit is remote-durable before ack
-- **WHEN** a sync-declared bounded class reaches an IterCommit and the remote ship succeeds
-- **THEN** the ack is sent only after the backend confirms the manifest write
-
-#### Scenario: A sync stage commit ships its records before the ack
-- **WHEN** a sync-declared bounded class reaches a TaskCommit naming a Cell record at seq 5
-- **THEN** the ack is sent only after the backend confirms the manifest covering that Cell's range through seq 5 and the journal suffix
-
-#### Scenario: Crash between local append and remote ship
-- **WHEN** the controller crashes after the local journal append but before the remote ship of a sync-mode barrier
-- **THEN** the SDK, never having received the ack, re-runs the uncommitted task on resume and no divergent state is exposed
-
-#### Scenario: Unbounded class cannot opt into sync
-- **WHEN** an unbounded class declares synchronous durability, in any SDK whose spelling lets an unbounded class write it
-- **THEN** registration is refused with an error naming the class and `topology.sync_durability_on_unbounded`
-
-#### Scenario: One spelling per SDK
-- **WHEN** the Python, Ruby, PHP and Node channel builders are searched for a synchronous-durability call
-- **THEN** none carries one, and each SDK's bounded class declares the mode through its class-level setting alone
 
 ### Requirement: Recovery hydrates from the manifest into the existing restore path
 Recovery SHALL rebuild local durable files from the manifest and then run the existing restore-and-replay path unchanged. Local state SHALL always take precedence: a reference with local durable files SHALL NOT be overwritten.
@@ -289,4 +266,24 @@ resolves to `none` and warns, neither of which is a refusal.
 
 - **WHEN** a controller boots with a selected backend and every required option present
 - **THEN** the check passes, the tier starts, and the boot is identical to today's
+
+### Requirement: The `remote` durability level gates the commit point's acknowledgement
+
+A class declaring `durable: remote` SHALL have each commit point's acknowledgement gated on
+the remote ship of what that commit point made durable, so that a lost controller disk
+loses nothing of its acknowledged work. In this change the commit point SHALL be a stage of
+a steps instance; a flow class declaring `remote` SHALL be refused at registration with
+`topology.remote_on_flow`, a code that `keep-work-remote-on-a-flow-operator` removes when
+it gates the input and checkpoint commit points too. `local` SHALL ship asynchronously as
+the tier does today and SHALL never touch an acknowledgement path.
+
+#### Scenario: A steps instance acknowledges after the remote ship
+
+- **WHEN** a steps class declares `durable: remote` on a controller with a durability backend, and a stage commits
+- **THEN** the `TaskCommitResponse` SHALL be sent only after the manifest naming that barrier's artifacts is written to the backend, and a controller restarted from an empty disk SHALL resume the instance at that stage
+
+#### Scenario: A flow class declaring `remote` is refused for now
+
+- **WHEN** a flow class declares `durable: remote`
+- **THEN** registration SHALL be refused with `topology.remote_on_flow` naming the change that lifts it
 

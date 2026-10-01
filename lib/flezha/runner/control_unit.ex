@@ -3,7 +3,7 @@ defmodule Flezha.Runner.ControlUnit do
   The controller's request side of one runner's control channel.
 
   Every controller-initiated command — assign runner id, connect sockets, add
-  or remove an operator, ping, partition, compaction, bounded stop — is built
+  or remove an operator, ping, partition, compaction, steps stop — is built
   here, handed to `ControlChannel` to write, and its response matched back by
   reference id.
 
@@ -192,21 +192,21 @@ defmodule Flezha.Runner.ControlUnit do
   end
 
   @doc """
-  Cooperative external stop for a bounded operator (`flz operator stop`).
+  Cooperative external stop for a steps operator (`flz operator stop`).
 
-  Sends a `BoundedStop` command — distinct from the hard `RemOperator`: the SDK
-  trips the bounded driver's cancellation token, lets in-flight work unwind, runs
-  any saga compensation, then emits `BoundedCompleted` (status "cancelled") which
-  drives the single teardown via `ControlChannel.handle_bounded_completed/2`.
+  Sends a `StepsStop` command — distinct from the hard `RemOperator`: the SDK
+  trips the steps driver's cancellation token, lets in-flight work unwind, runs
+  any saga compensation, then emits `OperatorCompleted` (status "cancelled") which
+  drives the single teardown via `ControlChannel.handle_operator_completed/2`.
 
   Fire-and-forget (mirrors `:stop_operator_async`) — the teardown is asynchronous,
   so the caller does not wait on the SDK ack. Returns `{:error, :no_control_unit}`
   when the runner's control unit is gone (caller falls back to a hard stop).
   """
-  @spec bounded_stop(binary(), binary()) :: :ok | {:error, :no_control_unit}
-  def bounded_stop(runner_id, operator_id)
+  @spec steps_stop(binary(), binary()) :: :ok | {:error, :no_control_unit}
+  def steps_stop(runner_id, operator_id)
       when is_binary(runner_id) and is_binary(operator_id) do
-    cast_to_unit(runner_id, {:bounded_stop, operator_id})
+    cast_to_unit(runner_id, {:steps_stop, operator_id})
   end
 
   @doc """
@@ -307,23 +307,20 @@ defmodule Flezha.Runner.ControlUnit do
           ""
       end
 
-    # Empty kind ⇒ `:unbounded` on the SDK side, keeping the wire frame
-    # byte-identical to pre-kind builds for the default kind.
-    kind = if operator.kind in [nil, :unbounded], do: "", else: to_string(operator.kind)
-
     command = %RunnerCommands.AddOperator{
       operator_id: operator.id,
       factory_id: operator.factory_id,
       init_values: init_values,
-      kind: kind,
+      # The class says how it runs; the SDK does not read this.
+      run: Atom.to_string(operator.run || :flow),
       # Both stamped on opts by `Flezha.Operator.Lifecycle`. Non-zero only
-      # for a durable bounded operator (re)bind: the SDK driver holds its first Tasklet
+      # for a durable steps operator (re)bind: the SDK driver holds its first Tasklet
       # until this many Cell restores land (crash-resume). `task_journal` is
       # `nil` unless the instance has a journal to resume from.
       resume_cell_count: Keyword.get(operator.opts, :resume_cell_count, 0),
       inbox_tail_count: Keyword.get(operator.opts, :inbox_tail_count, 0),
       task_journal: Keyword.get(operator.opts, :task_journal),
-      # This controller parks a failed turn a bounded driver sends on
+      # This controller parks a failed turn a steps driver sends on
       # `IterCommit.dead_letter`, whatever the bind.
       dead_letter_turns: true
     }
@@ -370,12 +367,12 @@ defmodule Flezha.Runner.ControlUnit do
   end
 
   @impl true
-  def handle_cast({:bounded_stop, operator_id}, state) do
+  def handle_cast({:steps_stop, operator_id}, state) do
     ControlChannel.send_control_async(
       state.runner_id,
       {
-        :bounded_stop,
-        %RunnerCommands.BoundedStop{operator_id: operator_id}
+        :steps_stop,
+        %RunnerCommands.StepsStop{operator_id: operator_id}
       }
     )
 
@@ -479,7 +476,7 @@ defmodule Flezha.Runner.ControlUnit do
 
   # Unblock callers whose control reply never came (the runner wedged or the
   # transport dropped silently): fail the waiter with `:timeout` and drop the
-  # ref so `response_refs` cannot grow unbounded. Caller-timeout only — runner
+  # ref so `response_refs` cannot grow flow. Caller-timeout only — runner
   # liveness/eviction is the `ControlChannel` watchdog's job, not this sweep.
   @impl true
   def handle_info(:heartbeat, state) do

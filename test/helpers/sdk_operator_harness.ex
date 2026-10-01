@@ -34,7 +34,7 @@ defmodule FlezhaTest.Helper.SdkOperatorHarness do
     counters = Counters.new()
 
     {:ok, pid} =
-      Operator.start_link(
+      Operator.Server.start_link(
         operator_id: Keyword.get(opts, :operator_id, "op-1"),
         topology: topo,
         range: Keyword.get(opts, :range, KeyGroup.decode(0, 0, 0, 0)),
@@ -138,7 +138,7 @@ defmodule FlezhaTest.Helper.SdkOperatorHarness do
 
   @doc "The Cell of `tasklet` at `key`, which must exist."
   def cell!(op, tasklet, key \\ nil) do
-    {:ok, pid} = Operator.lookup(op, tasklet, key)
+    {:ok, pid} = Operator.Server.lookup(op, tasklet, key)
     pid
   end
 

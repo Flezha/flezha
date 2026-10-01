@@ -56,15 +56,15 @@ When a new session presents a stable identity that already has a currently-live 
 - **THEN** the controller SHALL close `sess_old` via the standard disconnect path
 - **AND** SHALL bind each of `S`'s operators onto `sess_new` through the one bind path, so `sess_new` is told `AddOperator` for each with its resume state
 
-#### Scenario: a durable bounded operator mid-run comes back on the restarted process
+#### Scenario: a durable steps operator mid-run comes back on the restarted process
 
-- **GIVEN** a durable bounded instance bound to session `sess_old` of identity `S`, with tasklet A committed and tasklet B in flight
+- **GIVEN** a durable steps instance bound to session `sess_old` of identity `S`, with tasklet A committed and tasklet B in flight
 - **WHEN** the runner process is killed and its replacement presents `S` with a new incarnation before the controller has evicted `sess_old`
 - **THEN** the instance SHALL be bound onto the replacement with `task_journal`, `resume_cell_count` and `inbox_tail_count` set, tasklet A SHALL NOT run again on the replacement, and the instance SHALL reach its terminal completion
 
-#### Scenario: an unbounded operator's inputs reach the restarted process
+#### Scenario: a flow operator's inputs reach the restarted process
 
-- **GIVEN** an unbounded operator bound to session `sess_old` of identity `S`
+- **GIVEN** a flow operator bound to session `sess_old` of identity `S`
 - **WHEN** the runner process is killed and its replacement presents `S` with a new incarnation before `sess_old` is evicted, and an input is sent after the replacement connected
 - **THEN** the operator SHALL have been bound onto the replacement through the one bind path and the input SHALL produce its sink output
 
@@ -99,7 +99,7 @@ SHALL only increment a counter.
 - **WHEN** a new session `sess_new` takes over `S`
 - **THEN** `sess_old`'s channels are unbound from every affected Cell's write path before `sess_new`'s are bound, and no Change from `sess_old` lands in any Cell WAL after the unbind
 
-#### Scenario: Refusal is episode-bounded telemetry
+#### Scenario: Refusal is episode-steps telemetry
 
 - **WHEN** a superseded session forwards many Changes after losing its binding
 - **THEN** one `stale_writer_refused` event is emitted for the episode and a counter tracks the rest
@@ -212,7 +212,7 @@ hold no pending identity, because the runner a rebind moves away from is dead, h
 no copy, or was proved not producing, and its copy is refused and removed when it
 speaks. Every frame the controller reads that names
 an operator (an output frame, the seven cell-write payloads, `correction_request`,
-`BoundedCompleted`, `IterPark`, `RunnerShutdownNotification`, `OperatorExited`,
+`OperatorCompleted`, `IterPark`, `RunnerShutdownNotification`, `OperatorExited`,
 `TaskCommit` and `IterCommit`) SHALL be accepted only when the record names the sending session's
 identity as the owner, or when no record exists for the operator. A
 frame the record refuses SHALL NOT act on the operator: it SHALL be counted on the
@@ -247,7 +247,7 @@ bound session's channels by it; no other mechanism SHALL seed a route.
 #### Scenario: A control frame naming another runner's operator does nothing to it
 
 - **GIVEN** operator `X` bound to runner A and a second session B in the namespace
-- **WHEN** B sends `BoundedCompleted`, `IterPark` or `RunnerShutdownNotification`
+- **WHEN** B sends `OperatorCompleted`, `IterPark` or `RunnerShutdownNotification`
   naming `X`
 - **THEN** `X` SHALL NOT be stopped, no completion record SHALL be written, no park
   SHALL be journaled for `X` or for an instance another namespace claims, `X` SHALL

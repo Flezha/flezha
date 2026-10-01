@@ -248,7 +248,7 @@ defmodule Flezha.State.WalWriter do
     do: :gen_server.send_request(server, {:await_durable, seq}, label, reqids)
 
   @doc """
-  A bounded operator Cell's records `first..last` are named by a stage marker that is
+  A steps operator Cell's records `first..last` are named by a stage marker that is
   now durable: release their outputs (`Flezha.State.WalWriter.Settlement`).
   """
   @spec commit_records(GenServer.server(), non_neg_integer(), non_neg_integer()) :: :ok
@@ -256,7 +256,7 @@ defmodule Flezha.State.WalWriter do
     do: GenServer.cast(server, {:commit_records, first, last})
 
   @doc """
-  At a bounded operator bind, re-derive which of this Cell's queued outputs are
+  At a steps operator bind, re-derive which of this Cell's queued outputs are
   committed from the instance's `TaskJournal.committed_records/1`, dropping the
   rest: what the rebound runner interrupted, and what a rewind unwound.
   """
@@ -267,7 +267,7 @@ defmodule Flezha.State.WalWriter do
 
   @doc """
   Live outbox status (`flz state outbox`): the cursors, the entries owed a
-  dispatch (`pending`), those held for a bounded stage marker (`held`) and
+  dispatch (`pending`), those held for a steps stage marker (`held`) and
   those in the plugin chain awaiting confirmation (`awaiting`).
   """
   @spec outbox_status(GenServer.server(), timeout()) :: map()

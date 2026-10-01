@@ -2,7 +2,7 @@ defmodule Flezha.State.Commands do
   @moduledoc """
   The controller->SDK control commands that carry durable state.
 
-  Restoring a Cell, pulling a snapshot, threading a bounded instance's
+  Restoring a Cell, pulling a snapshot, threading a steps instance's
   task-journal onto its bind, and telling a Tasklet its target Cell's
   mailbox is full are all one thing: a control command the State subsystem
   issues on behalf of an operator it does not own a process for. Its callers —
@@ -12,7 +12,7 @@ defmodule Flezha.State.Commands do
 
   Each cell-scoped function takes the controller-side `runner_id` and a
   structured `cell_id` triple `{operator_class, tasklet_id, cell_key}`.
-  `task_journal_state/1` is the instance-scoped sibling: a bounded instance's
+  `task_journal_state/1` is the instance-scoped sibling: a steps instance's
   journal is not per-Cell, which is why it rides the bind rather than a
   per-Cell restore.
   """
@@ -140,16 +140,16 @@ defmodule Flezha.State.Commands do
   # ---------- task journal ----------
 
   @doc """
-  Bounded operator task-journal crash-resume: the instance's committed task state, threaded
+  Steps operator task-journal crash-resume: the instance's committed task state, threaded
   onto `AddOperator.task_journal` so the resumed driver skips the journaled
   tasklets, seeds the next one from the journaled handoff, and enters the
   iteration after the last committed one.
 
   It rides the bind rather than a per-Cell `RestoreInitState` because it is
-  instance-scoped: a durable bounded class with no per-Cell state ships no
+  instance-scoped: a durable steps class with no per-Cell state ships no
   restore at all, and would otherwise resume at iteration 0 on every wake.
 
-  `nil` when the instance has no journal — a fresh spawn, an unbounded operator
+  `nil` when the instance has no journal — a fresh spawn, a flow operator
   operator, an opted-out class.
   """
   @spec task_journal_state(binary()) :: RunnerCommands.TaskJournalState.t() | nil

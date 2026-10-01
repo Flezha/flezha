@@ -12,21 +12,21 @@ defmodule Flezha.Service.Cli.Operator do
   alias Flezha.Service.Cli.Context
   alias Flezha.Service.OperatorManager
   alias Flezha.Service.Listener
-  alias Flezha.Service.Bounded
+  alias Flezha.Service.Steps
 
   @doc """
   Starts an operator and prints the id it runs under. The call's options carry
   `id` (generated when absent), `plugins` (a JSON array, `[]` when absent) and,
   for a first message, `text` with an optional `channel`, delivered as the
-  instance's first input on the mechanism a tasklet's spawn uses. The kind is
-  the factory's, announced by its runners. Answers `{:ok, %{id:, outcome:}}`,
+  instance's first input on the mechanism a tasklet's spawn uses. How the
+  operator runs is the factory's, announced by its runners. Answers `{:ok, %{id:, outcome:}}`,
   which the start's audit record reads.
   """
   def operator_start(namespace, factory_id, init_values, opts_json, %{opts: opts}) do
     format = frame_format(opts)
 
     opts_kw =
-      Context.json!(opts_json, "--partitions/--snapshot-interval")
+      Context.json!(opts_json, "--partitions")
       |> Context.atom_converter()
       |> Keyword.new()
 
@@ -156,7 +156,7 @@ defmodule Flezha.Service.Cli.Operator do
 
   defp render_start({:error, _reason} = refused, _format), do: refused
 
-  @doc "Stops an operator (cooperatively for a bounded operator, hard otherwise)."
+  @doc "Stops an operator (cooperatively for a steps operator, hard otherwise)."
   def operator_stop(namespace, operator_id, _call) do
     namespace_display = Namespace.or_default(namespace)
 
@@ -189,7 +189,7 @@ defmodule Flezha.Service.Cli.Operator do
 
       {:ok, :cooperative} ->
         IO.puts(
-          "Cooperative stop requested for bounded operator '#{operator_id}'. " <>
+          "Cooperative stop requested for steps operator '#{operator_id}'. " <>
             "It will finish in-flight work, then complete (cancelled) and be removed."
         )
 
@@ -237,7 +237,7 @@ defmodule Flezha.Service.Cli.Operator do
   end
 
   @doc """
-  Rewind a bounded loop to the committed boundary of iteration `to_iter`: the
+  Rewind a steps loop to the committed boundary of iteration `to_iter`: the
   iterations above it are compensated in reverse, state and handoff return to
   that boundary, the epoch is bumped so re-run output supersedes the unwound
   run's at a guarded sink, and the loop waits for its next input: the inputs
@@ -249,7 +249,7 @@ defmodule Flezha.Service.Cli.Operator do
   def operator_rewind(namespace, operator_id, to_iter, _call) do
     namespace = Namespace.or_default(namespace)
 
-    with :ok <- Bounded.rewind_instance(namespace, operator_id, to_iter) do
+    with :ok <- Steps.rewind_instance(namespace, operator_id, to_iter) do
       IO.puts(
         "Operator '#{operator_id}' rewound to iteration #{to_iter}. " <>
           "Iterations above it were compensated; the loop resumes at #{to_iter + 1}."

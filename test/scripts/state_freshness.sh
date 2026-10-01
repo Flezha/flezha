@@ -14,7 +14,7 @@
 #      snapshot reflects the runner's true final state (not the
 #      up-to-interval stale periodic value).
 #   B. disabled-snapshot: operator is started with
-#      `--snapshot-interval 0`. Without the shutdown notification the
+#      `snapshot_interval: 0` in its opts. Without the shutdown notification the
 #      agent would have no snapshot at all (nil); this scenario asserts
 #      the notification populated it anyway.
 #

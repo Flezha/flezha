@@ -7,7 +7,7 @@ report that is the machine contract CI reads.
 ## Requirements
 ### Requirement: Every bench run opens with a header that situates its numbers
 
-Every bench task (`mix bench`, `mix bench.roundtrip`, `mix bench.bounded`) SHALL print, before any measurement, a header composed of three blocks rendered by one shared module:
+Every bench task (`mix bench`, `mix bench.roundtrip`, `mix bench.steps`) SHALL print, before any measurement, a header composed of three blocks rendered by one shared module:
 
 * **run** — the SDK runtime and its dispatch model (from the manifest's `dispatch` key, with the current value of each env var it names), the transport, whether the runner is embedded or spawned (derived from the transport, not declared), the workload shape, the durability backend, the dimensions (operators, messages per operator, warmup), and `MIX_ENV`.
 * **system** — CPU model and logical core count, total memory, 1-minute load average, CPU governor, OTP release, Elixir version, the launched runtime's own toolchain version, and the git SHA with a dirty flag.
@@ -43,7 +43,7 @@ The run SHALL proceed in every case. No condition SHALL abort a bench, because a
 
 ### Requirement: Results render as aligned tables with fixed precision
 
-Bench results SHALL be rendered as aligned plain-text tables by the shared module: a header row, a single horizontal rule, and space-aligned columns. Tables SHALL NOT use box-drawing borders or colour, because the documented comparison bounded operator pipes bench output through `tee` and `diff` and the output is read on terminals that are not reliably UTF-8.
+Bench results SHALL be rendered as aligned plain-text tables by the shared module: a header row, a single horizontal rule, and space-aligned columns. Tables SHALL NOT use box-drawing borders or colour, because the documented comparison steps operator pipes bench output through `tee` and `diff` and the output is read on terminals that are not reliably UTF-8.
 
 Durations SHALL be rendered in milliseconds by the shared module's formatter and rates as integers. No float SHALL reach output text by interpolation: Elixir renders a float of magnitude 1000 or more that lands on a round value in scientific notation, so a window that measures a whole number of milliseconds prints `1.0e3` where a reader and a `diff` expect `1000.0`. One decimal place is the default and what every table uses; a row whose own resolution needs more SHALL ask the shared formatter for the decimals it needs, and SHALL NOT keep a rounding rule of its own.
 
@@ -111,8 +111,8 @@ Every bench task SHALL decide which `--runtime` values it accepts by reading the
 
 #### Scenario: A task is asked for a runtime whose manifest defers the capability it measures
 
-- **WHEN** `mix bench.bounded --runtime node` is run and `test/apps/node_runner/conformance.json` lists `bounded` under `deferred`
-- **THEN** the task SHALL refuse by naming `bounded` and the manifest path, and SHALL NOT name a hard-coded set of runtimes in the refusal
+- **WHEN** `mix bench.steps --runtime node` is run and `test/apps/node_runner/conformance.json` lists `steps` under `deferred`
+- **THEN** the task SHALL refuse by naming `steps` and the manifest path, and SHALL NOT name a hard-coded set of runtimes in the refusal
 
 #### Scenario: A new SDK gains a test app
 
@@ -128,7 +128,7 @@ Every bench task SHALL decide which `--runtime` values it accepts by reading the
 
 `docs/operations/benchmarking.md` SHALL state, for each bench instrument, whether that instrument's first run of a series is a result, and SHALL record the measurement that establishes it. A floor, a comparison or a regression verdict SHALL be computed from plateau samples only, and the number of plateau samples SHALL be reported beside the figure, as SHALL the number of runs discarded before the plateau.
 
-The rule SHALL be stated per instrument rather than per machine, because it was measured to differ between instruments on one box: five consecutive runs of one identical arm of `mix bench.bounded --scenario chain` read a 303 % spread with run 1 at roughly four times the plateau, while the same five-run series on `mix bench.extension` put run 1 within 3.6 % of its plateau.
+The rule SHALL be stated per instrument rather than per machine, because it was measured to differ between instruments on one box: five consecutive runs of one identical arm of `mix bench.steps --scenario chain` read a 303 % spread with run 1 at roughly four times the plateau, while the same five-run series on `mix bench.extension` put run 1 within 3.6 % of its plateau.
 
 Discarding a warm-up SHALL NOT be read as making a row comparable. A row whose measured noise floor exceeds the effect being claimed is a direction and SHALL NOT be run as a gate, and a document that states a settling protocol SHALL say so beside it.
 
@@ -184,7 +184,7 @@ beside them.
 
 #### Scenario: A rate is small enough to reach scientific notation
 
-- **WHEN** a bench prints a rate, a per-sleeper size or a per-bounded count whose
+- **WHEN** a bench prints a rate, a per-sleeper size or a per-steps count whose
   float would render as `1.0e3`
 - **THEN** it SHALL be formatted by the same helper the duration fields use
 

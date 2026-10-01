@@ -252,12 +252,12 @@ defmodule FlezhaTest.Operator.OverwatchCellStateGateTest do
       # A runner id whose control unit is not registered, so the proceeding
       # path's spawned send resolves to a clean error rather than a crash.
       runner_id: "no_such_runner_#{System.unique_integer([:positive])}",
-      builder: %Builder{id: id, factory_id: "f", kind: kind}
+      builder: %Builder{id: id, factory_id: "f", run: kind}
     }
   end
 
-  test "an :unbounded kind proceeds to query the runner" do
-    state = state_for(:unbounded)
+  test "an :flow kind proceeds to query the runner" do
+    state = state_for(:flow)
 
     # {:noreply, state} == the gate passed and the handler went on to contact
     # the runner off-loop (replies later via GenServer.reply), as it does today.
@@ -265,15 +265,15 @@ defmodule FlezhaTest.Operator.OverwatchCellStateGateTest do
              Overwatch.handle_call({:get_cell_state, %{}}, {self(), make_ref()}, state)
   end
 
-  test "a durable :bounded kind proceeds to query the runner" do
-    state = state_for(:bounded)
+  test "a durable :steps kind proceeds to query the runner" do
+    state = state_for(:steps)
 
     assert {:noreply, ^state} =
              Overwatch.handle_call({:get_cell_state, %{}}, {self(), make_ref()}, state)
   end
 
   test "a class that declares persistence off is refused, for either kind" do
-    for kind <- [:unbounded, :bounded] do
+    for kind <- [:flow, :steps] do
       id = "declared_off_#{kind}"
       :ok = ClassRegistry.put_persistent(id, false)
       state = state_for(kind, id)
@@ -289,7 +289,7 @@ defmodule FlezhaTest.Operator.OverwatchCellStateGateTest do
 
   test "a user opt-out is refused the same way" do
     Application.put_env(:flezha, :operator_persistence, %{"opted_out" => false})
-    state = state_for(:unbounded, "opted_out")
+    state = state_for(:flow, "opted_out")
 
     assert {:reply, {:error, {:persistence_off, "opted_out"}}, ^state} =
              Overwatch.handle_call({:get_cell_state, %{}}, {self(), make_ref()}, state)
@@ -416,7 +416,7 @@ defmodule FlezhaTest.Operator.OverwatchResumeCountTest do
   Crash-resume gate (controller half): `Flezha.Operator.Replay.resume_cell_count/1`
   is the number of persisted Cells the bind-time restore path will ship a
   `RestoreInitState` for, threaded onto `AddOperator.resume_cell_count` so a
-  durable bounded operator's run holds its first Tasklet until that many restores land.
+  durable steps operator's run holds its first Tasklet until that many restores land.
 
   `0` for a fresh spawn and for a class whose persistence is off.
   """
@@ -436,14 +436,14 @@ defmodule FlezhaTest.Operator.OverwatchResumeCountTest do
     cell_id
   end
 
-  test "a durable bounded operator counts its persisted Cells" do
+  test "a durable steps operator counts its persisted Cells" do
     seed_cell("resume_class", "task", "even")
     seed_cell("resume_class", "task", "odd")
 
     assert Replay.resume_cell_count("resume_class") == 2
   end
 
-  test "a fresh durable bounded operator (no WAL) waits for nothing" do
+  test "a fresh durable steps operator (no WAL) waits for nothing" do
     assert Replay.resume_cell_count("unseeded_class") == 0
   end
 

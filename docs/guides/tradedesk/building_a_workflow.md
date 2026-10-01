@@ -1287,8 +1287,8 @@ order needs.
 ### Java
 
 ```java
-// OrderExecutorOperator.java: the bounded operator. One instance is one order.
-public final class OrderExecutorOperator implements BoundedOperator {
+// OrderExecutorOperator.java: the steps operator. One instance is one order.
+public final class OrderExecutorOperator implements Operator {
 
     public record OrderTicket(String symbol, int quantity) {}
 
@@ -1296,6 +1296,11 @@ public final class OrderExecutorOperator implements BoundedOperator {
     @Nonnull
     public String factoryId() {
         return "order_executor";
+    }
+
+    @Override
+    public Run run() {
+        return Run.steps();
     }
 
     @Override
@@ -1318,7 +1323,7 @@ The four classes it names in `into` are the four steps themselves:
 ### Rust
 
 ```rust
-// src/order_executor.rs: the bounded operator. One instance is one order.
+// src/order_executor.rs: the steps operator. One instance is one order.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct OrderTicket {
     pub symbol: String,
@@ -1327,7 +1332,7 @@ pub struct OrderTicket {
 
 pub struct OrderExecutorOperator;
 
-impl BoundedOperator for OrderExecutorOperator {
+impl Operator for OrderExecutorOperator {
     fn factory_id() -> &'static str {
         "order_executor"
     }
@@ -1345,6 +1350,13 @@ impl BoundedOperator for OrderExecutorOperator {
                 },
             ]);
     }
+
+    fn settings() -> OperatorSettings {
+        OperatorSettings {
+            run: Run::Steps { each: Each::Once, on_failure: OnFailure::UndoAll },
+            ..OperatorSettings::default()
+        }
+    }
 }
 ```
 
@@ -1357,16 +1369,17 @@ The four types it names in `into::<...>()` are the four steps themselves:
 ### Node
 
 ```javascript
-// order_executor_operator.mjs: the bounded operator. One instance is one order.
-import { defineBounded } from '@flezha/sdk';
+// order_executor_operator.mjs: the steps operator. One instance is one order.
+import { defineOperator } from '@flezha/sdk';
 
 import { ConfirmFill } from './confirm_fill.mjs';
 import { PlaceOrder } from './place_order.mjs';
 import { RecordOrder } from './record_order.mjs';
 import { ReserveFunds } from './reserve_funds.mjs';
 
-export default defineBounded({
+export default defineOperator({
   factoryId: 'order_executor',
+  steps: {},
   channels: (c) => {
     c.input('order')
       .into(ReserveFunds) // step one
@@ -1388,8 +1401,8 @@ is a function that gets the same edge.
 ### Python
 
 ```python
-# order_executor.py: the bounded operator. One instance is one order.
-@flezha.bounded_operator("order_executor")
+# order_executor.py: the steps operator. One instance is one order.
+@flezha.operator("order_executor", run="steps")
 def order_executor(c: flezha.Channels) -> None:
     (
         c.input("order")
@@ -1412,9 +1425,10 @@ order. The four classes it names in `into` are the four steps themselves:
 ### Ruby
 
 ```ruby
-# order_executor_operator.rb: the bounded operator. One instance is one order.
-class OrderExecutorOperator < Flezha::BoundedOperator
+# order_executor_operator.rb: the steps operator. One instance is one order.
+class OrderExecutorOperator < Flezha::Operator
   factory_id "order_executor"
+  run :steps
 
   channels do |c|
     c.input("order")
@@ -1438,10 +1452,9 @@ same edge.
 ### PHP
 
 ```php
-// src/OrderExecutorOperator.php: the bounded operator. One instance is one order.
-#[Operator(factoryId: 'order_executor')]
-#[Bounded(loopMode: LoopMode::PerInput)]
-final class OrderExecutorOperator extends BoundedOperator
+// src/OrderExecutorOperator.php: the steps operator. One instance is one order.
+#[Operator(factoryId: 'order_executor', run: ['steps' => ['each' => 'per_input']])]
+final class OrderExecutorOperator extends \Flezha\Operator
 {
     public static function channels(Builder $c): void
     {
@@ -1463,7 +1476,7 @@ in the ETL stream sends when it starts an order. The four classes it names in
 `ConfirmFill` and `RecordOrder`. Each arm of `branch` is a closure that gets the
 same edge.
 
-`#[Bounded(loopMode: LoopMode::PerInput)]` is where the PHP desk departs from
+`run: ['steps' => ['each' => 'per_input']]` is where the PHP desk departs from
 the default above: the instance stays after its steps have run, until
 `confirm_fill`'s timer calls `$ctx->complete`. A default instance would end
 with its last step, and its pending timer with it. A second message to an
@@ -1472,9 +1485,9 @@ instance would run the steps again, and nothing sends one.
 ### Elixir
 
 ```elixir
-# lib/tradedesk/order_executor.ex: the bounded operator. One instance is one order.
+# lib/tradedesk/order_executor.ex: the steps operator. One instance is one order.
 defmodule Tradedesk.OrderExecutor do
-  use Flezha.SDK.BoundedOperator, factory_id: "order_executor"
+  use Flezha.SDK.Operator, factory_id: "order_executor", run: :steps
 
   defmodule OrderTicket do
     defstruct [:symbol, :quantity]

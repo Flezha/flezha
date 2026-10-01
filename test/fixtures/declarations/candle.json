@@ -1,6 +1,8 @@
 {
-  "beyond_window_policy": "process_as_arrival",
-  "correction_window_ms": "600000",
-  "effectively_once": "true",
-  "keyed": "false"
+  "beyond_window": "process_as_arrival",
+  "correction_ms": "600000",
+  "durable": "local",
+  "exactly": "effectively_once",
+  "keyed": "false",
+  "run": "flow"
 }

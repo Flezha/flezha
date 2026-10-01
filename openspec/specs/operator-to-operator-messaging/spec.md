@@ -99,7 +99,7 @@ unresolvable target SHALL answer `{:error, :not_found}` for every input of the b
   and `journal_input/3`
 
 #### Scenario: A suspended target reports success
-- **WHEN** the confirming entry point is invoked against a suspended durable bounded operator
+- **WHEN** the confirming entry point is invoked against a suspended durable steps operator
 - **THEN** it SHALL return `{:ok, :suspended}`, the payload SHALL be durable in the operator's
   inbox, and the operator SHALL rehydrate and receive the payload in its undelivered tail
 
@@ -179,8 +179,8 @@ carries poison input, not a temporarily unreachable peer.
 ### Requirement: Effectively-once delivery across the hop for durable senders
 
 The system SHALL deliver each emitted payload to the target effectively once when the source
-operator has a transactional outbox — an effectively-once unbounded operator or a durable
-bounded operator — without introducing any new identity scheme, dedup store, or wire-format
+operator has a transactional outbox — an effectively-once flow operator or a durable
+steps operator — without introducing any new identity scheme, dedup store, or wire-format
 change. The guarantee SHALL be composed from the existing identity stamps the sender's outbox
 already applies (`flz.seq`, `flz.key`, `flz.epoch`), the worker's retry-until-confirmed, and the
 target's existing duplicate absorption in `journal_input/2`.
@@ -190,7 +190,7 @@ transactional outbox SHALL receive retry-until-confirmed delivery without a de-d
 guarantee, and this asymmetry SHALL be documented.
 
 #### Scenario: A retried delivery is absorbed rather than duplicated
-- **WHEN** a durable bounded operator source emits a payload, the first delivery attempt is retried after
+- **WHEN** a durable steps operator source emits a payload, the first delivery attempt is retried after
   the target has already durably journaled it, and the retry carries the same identity stamps
 - **THEN** the target SHALL absorb the retry as a duplicate, the worker SHALL observe
   `{:ok, :absorbed}`, and the target SHALL have journaled the payload exactly once
@@ -263,7 +263,7 @@ When the configured `target_operator_id` names a partition group (N ≥ 2 member
 - **THEN** deliveries to the other members continue unaffected
 
 ### Requirement: A message without `flz.key` SHALL be parked, never guessed
-When the target is partitioned, a message whose metadata carries no `flz.key` (an unkeyed stream emit, or any bounded-outbox output — those never carry a key) SHALL be parked via the DLQ store with the error `partitioned target requires keyed emit`, naming the source, target, and contract. The provider SHALL never round-robin or payload-hash an unkeyed message to a partitioned target.
+When the target is partitioned, a message whose metadata carries no `flz.key` (an unkeyed stream emit, or any steps-outbox output — those never carry a key) SHALL be parked via the DLQ store with the error `partitioned target requires keyed emit`, naming the source, target, and contract. The provider SHALL never round-robin or payload-hash an unkeyed message to a partitioned target.
 
 #### Scenario: Unkeyed emit parks with the named error
 - **WHEN** a message without `flz.key` reaches a forward whose target has 2+ members

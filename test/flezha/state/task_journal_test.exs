@@ -1,6 +1,6 @@
 defmodule FlezhaTest.State.TaskJournalTest do
   @moduledoc """
-  `bounded-task-journal` controller store: entry codec round-trip, torn-tail
+  `steps-task-journal` controller store: entry codec round-trip, torn-tail
   recovery, oversize rejection, reserved-type tolerance, lifecycle (path
   helper, invisibility to the Cell scanners, delete), and the resume state
   the bind ships back on `AddOperator.task_journal`.
@@ -72,7 +72,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
 
     # Each committed tasklet's handoff travels under its own task_idx, so a
     # branching tree re-seeds every uncommitted child from ITS parent's edge and
-    # never from a sibling's (`bounded-branching`). The iteration-level handoff
+    # never from a sibling's (`steps-branching`). The iteration-level handoff
     # is the previous iteration's terminal batch — none here.
     assert %{
              committed_task_idxs: [0, 1],
@@ -530,7 +530,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
     assert Commands.task_journal_state(instance_id()) == nil
   end
 
-  # ---------- bounded-loop-rewind ----------
+  # ---------- steps-loop-rewind ----------
 
   # Three committed iterations (0, 1, 2), each one task that ran on `seg` and
   # wrote one record, seq `iter`, with an output on `out`: the shape every
@@ -642,7 +642,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
     assert TaskJournal.current_epoch(inst) == 2
   end
 
-  # ---------- bounded-durable-path-throughput: the cut ----------
+  # ---------- steps-durable-path-throughput: the cut ----------
 
   defp seqs(inst) do
     {:ok, entries} = TaskJournal.read(inst)

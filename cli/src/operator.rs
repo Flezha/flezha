@@ -11,8 +11,6 @@ const OPERATOR_ID: &[Positional] = &[Positional::required("<operator_id>")];
 const ID: OptSpec = OptSpec::text("--id", "-i", "<id>");
 const PLUGINS: OptSpec = OptSpec::text("--plugins", "--plugins", "<json-array>");
 const PARTITIONS: OptSpec = OptSpec::number("--partitions", "--partitions", "<N>");
-const SNAPSHOT_INTERVAL: OptSpec =
-    OptSpec::number("--snapshot-interval", "--snapshot-interval", "<N>");
 const TIMEOUT: OptSpec = OptSpec::number("--timeout", "-t", "<ms>");
 const PAYLOAD: OptSpec = OptSpec::text("--text", "-t", "<payload>").required();
 /// `send`'s payload spelling on `start`, where a first message is optional.
@@ -41,7 +39,6 @@ pub(crate) const TABLE: Command = Command {
                 CHANNEL,
                 PLUGINS,
                 PARTITIONS,
-                SNAPSHOT_INTERVAL,
             ])
             .strict()
             .screen(help::OPERATOR_START),
@@ -96,13 +93,8 @@ pub(crate) const TABLE: Command = Command {
 fn start_opts(read: &Reading) -> String {
     let mut opts: Vec<(String, String)> = Vec::new();
 
-    for (spec, name) in [
-        (SNAPSHOT_INTERVAL, "snapshot_interval"),
-        (PARTITIONS, "partitions"),
-    ] {
-        if let Some(count) = read.opt(spec.long) {
-            opts.push((name.to_string(), count.to_string()));
-        }
+    if let Some(count) = read.opt(PARTITIONS.long) {
+        opts.push(("partitions".to_string(), count.to_string()));
     }
 
     serialize_flags(&opts)
@@ -112,8 +104,8 @@ fn start_opts(read: &Reading) -> String {
 /// only when written: an absent flag is absent from the request and the
 /// controller applies its default, which for the id is one it generates.
 /// `--text` is the instance's first message, on the entry channel `--channel`
-/// names; a channel with no text names nothing and is refused. The kind is the
-/// factory's, announced by its runner, so no flag names it.
+/// names; a channel with no text names nothing and is refused. How the operator
+/// runs is the factory's, announced by its runner, so no flag names it.
 fn handle_start(read: &Reading) {
     let mut opts: Vec<Opt> = Vec::new();
 
@@ -254,7 +246,7 @@ fn key_opt(read: &Reading) -> Vec<Opt<'static>> {
         .unwrap_or_default()
 }
 
-/// `flz operator rewind <instance> --to-iteration N` — take a bounded loop back
+/// `flz operator rewind <instance> --to-iteration N` — take a steps loop back
 /// to a committed iteration: the ones above it are compensated in reverse, state
 /// returns to that boundary, and the epoch is bumped so the re-run's output
 /// supersedes the unwound run's at a guarded sink.

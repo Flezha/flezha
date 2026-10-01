@@ -35,7 +35,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
 
     @impl true
     def run(input, s, ctx) do
-      handle = spawn_bounded(ctx, "worker", input, id: "w-" <> input)
+      handle = spawn_steps(ctx, "worker", input, id: "w-" <> input)
       emit_keyed(ctx, "fold", inspect(Spawn.try_result(handle)))
       {:ok, fold(s, ctx, now(ctx))}
     end
@@ -43,14 +43,13 @@ defmodule Flezha.SDK.CorrectionWindowTest do
 
   defmodule SpawningCorrectionOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "spawning_correction_probe"
+    def run, do: {:flow, exactly: {:effectively_once, correction_ms: 600_000}}
 
     def channels(c),
       do:
         c
-        |> Channels.effectively_once()
-        |> Channels.correction_window(600_000)
         |> Channels.input("input")
         |> Channels.into(SpawningCorrectionTask)
         |> Channels.named("sink")

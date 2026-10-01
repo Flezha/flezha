@@ -92,7 +92,7 @@ defmodule Flezha.SDK.DurableInputFloorTest do
 
   defmodule RelayOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "floor_relay"
 
     def channels(c),
@@ -106,7 +106,7 @@ defmodule Flezha.SDK.DurableInputFloorTest do
 
   defmodule StoreOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "floor_store"
 
     def channels(c),
@@ -119,7 +119,7 @@ defmodule Flezha.SDK.DurableInputFloorTest do
 
   defmodule DropOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "floor_drop"
 
     def channels(c),
@@ -128,7 +128,7 @@ defmodule Flezha.SDK.DurableInputFloorTest do
 
   defmodule SplitOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "floor_split"
 
     def channels(c),
@@ -142,13 +142,13 @@ defmodule Flezha.SDK.DurableInputFloorTest do
 
   defmodule TierSplitOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "floor_tier_split"
+    def run, do: {:flow, exactly: :effectively_once}
 
     def channels(c),
       do:
         c
-        |> Channels.effectively_once()
         |> Channels.input("in")
         |> Channels.into(Splitter)
         |> Channels.named("parts")
@@ -161,7 +161,7 @@ defmodule Flezha.SDK.DurableInputFloorTest do
 
   # The identity of the spawn request `ctx` casts to this process as its runner.
   defp spawned(ctx, factory, payload) do
-    Ctx.spawn_bounded(ctx, factory, payload)
+    Ctx.spawn_steps(ctx, factory, payload)
     assert_receive {:"$gen_cast", {:spawn, _caller, %Spawn{identity: identity}, ^payload, _}}
     identity
   end

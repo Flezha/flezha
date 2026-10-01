@@ -1,6 +1,6 @@
 defmodule Flezha.State.WalWriterStageCommitTest do
   @moduledoc """
-  A durable bounded operator Cell's writer: its effect records' outputs are released
+  A durable steps operator Cell's writer: its effect records' outputs are released
   at the stage marker that names them, not at their fsync; a record no marker
   will name is dropped rather than released; the commit worker can wait on a
   record's durability; and a writer that boots, or an instance that binds,
@@ -11,7 +11,7 @@ defmodule Flezha.State.WalWriterStageCommitTest do
   alias Flezha.State.TaskJournal
 
   setup %{rc: rc} do
-    :ok = ClassRegistry.put(rc, :bounded)
+    :ok = ClassRegistry.put(rc, :steps)
     :ok
   end
 
@@ -24,7 +24,7 @@ defmodule Flezha.State.WalWriterStageCommitTest do
   defp status(pid), do: Map.take(WalWriter.outbox_status(pid), [:pending, :held, :awaiting])
 
   test "a stream Cell's writer commits at its record", %{cell_id: {_rc, sh, pk}} do
-    stream_rc = "wo_unbounded_" <> TestHelpers.uniq()
+    stream_rc = "wo_flow_" <> TestHelpers.uniq()
     pid = armed_writer(stream_rc, {stream_rc, sh, pk})
     assert :sys.get_state(pid).commit_unit == :record
   end

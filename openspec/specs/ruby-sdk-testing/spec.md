@@ -5,7 +5,7 @@ TBD - created by archiving change ruby-sdk. Update Purpose after archive.
 ## Requirements
 ### Requirement: A Ruby test app joins the shared conformance suite without changing the harness
 
-The change SHALL add `test/apps/ruby_runner/` with a `conformance.json` declaring every field the manifest requirement names, and SHALL add `ruby` as a runtime option of the nightly end-to-end bounded operator. The suite SHALL admit the SDK with no change to `test/helpers/`, `test/system/`, `test/test_helper.exs` or the formatter, and with no new clause in the static gate: the gate's per-SDK tables — where an SDK spells its language byte, and which of its sources may name a connect variable — SHALL each gain one row, which is what admission means, and no rule SHALL be added, relaxed or special-cased for `ruby`.
+The change SHALL add `test/apps/ruby_runner/` with a `conformance.json` declaring every field the manifest requirement names, and SHALL add `ruby` as a runtime option of the nightly end-to-end steps operator. The suite SHALL admit the SDK with no change to `test/helpers/`, `test/system/`, `test/test_helper.exs` or the formatter, and with no new clause in the static gate: the gate's per-SDK tables — where an SDK spells its language byte, and which of its sources may name a connect variable — SHALL each gain one row, which is what admission means, and no rule SHALL be added, relaxed or special-cased for `ruby`.
 
 #### Scenario: The app is admitted by manifest and one gate row
 - **WHEN** the Ruby test app and its manifest are added

@@ -50,21 +50,21 @@ The system SHALL combine each subscriber's `{:ok, ctx}` return value into the ac
 
 ### Requirement: Cold-start only, snapshot-wins on migration
 
-The system SHALL invoke the init-state plugin chain only when an operator is started cold — that is, when its Builder `init_values` is `%{}` AND there is no incoming migration snapshot AND there is no incoming `RestoreInitState` changelog payload from the `operator-state-persistence` capability. On migration (`handle_call({:runner_migrate, ...})`), the existing snapshot-or-inline-`init_values` logic MUST be preserved unchanged; init-state providers MUST NOT run for a migrated operator. On reconnect of a Cell whose Operator has `persistence_enabled = true` AND whose agent-side state is non-empty (snapshot file or WAL records exist), the agent SHALL deliver state via `RestoreInitState{cell_id, snapshot_bytes, change_log_bytes}` (per `operator-state-persistence`) instead of via `init_values`; init-state providers MUST NOT run for a Cell restored via `RestoreInitState`.
+The system SHALL invoke the init-state plugin chain only when an operator is started cold — that is, when its Builder `init_values` is `%{}` AND there is no incoming migration snapshot AND there is no incoming `RestoreInitState` changelog payload from the `operator-state-persistence` capability. On migration (`handle_call({:runner_migrate, ...})`), the existing snapshot-or-inline-`init_values` logic MUST be preserved unchanged; init-state providers MUST NOT run for a migrated operator. On reconnect of a Cell whose Operator has `keeps_state = true` AND whose agent-side state is non-empty (snapshot file or WAL records exist), the agent SHALL deliver state via `RestoreInitState{cell_id, snapshot_bytes, change_log_bytes}` (per `operator-state-persistence`) instead of via `init_values`; init-state providers MUST NOT run for a Cell restored via `RestoreInitState`.
 
-For Cells whose Operator has `persistence_enabled = false`, OR whose agent-side state is empty (no snapshot, no WAL records), the existing init-state capability flow runs unchanged: the init-state plugin chain runs (cold start), or the inline Builder `init_values` is used (cold start with non-empty inline values), or the migration snapshot is used (migrated operator).
+For Cells whose Operator has `keeps_state = false`, OR whose agent-side state is empty (no snapshot, no WAL records), the existing init-state capability flow runs unchanged: the init-state plugin chain runs (cold start), or the inline Builder `init_values` is used (cold start with non-empty inline values), or the migration snapshot is used (migrated operator).
 
 `RestoreInitState` and `runner_migrate` SHALL be mutually exclusive per Cell: when `runner_migrate` is invoked for a Cell with persisted state, the migration path's snapshot bytes SHALL be the restoration source AND `RestoreInitState` SHALL NOT be issued for that Cell. The agent's `Overwatch.init/1` SHALL enforce this exclusion.
 
 #### Scenario: Cold start with no inline init_values and no persisted state
 
-- **WHEN** an operator is started and `operator.init_values == %{}` AND no `RestoreInitState` payload is present (either because `persistence_enabled = false` OR no agent-side state exists for any Cell)
+- **WHEN** an operator is started and `operator.init_values == %{}` AND no `RestoreInitState` payload is present (either because `keeps_state = false` OR no agent-side state exists for any Cell)
 - **THEN** the init-state chain MUST run
 
 #### Scenario: Cold start with inline init_values
 
 - **WHEN** an operator is started with non-empty Builder `init_values`
-- **THEN** the init-state chain MUST NOT run, and the Builder's `init_values` MUST be used as-is (regardless of `persistence_enabled`)
+- **THEN** the init-state chain MUST NOT run, and the Builder's `init_values` MUST be used as-is (regardless of `keeps_state`)
 
 #### Scenario: Operator migration
 
@@ -73,17 +73,17 @@ For Cells whose Operator has `persistence_enabled = false`, OR whose agent-side 
 
 #### Scenario: Cell restart via changelog
 
-- **WHEN** a Cell reconnects AND its Operator has `persistence_enabled = true` AND the agent has a non-empty WAL or snapshot under the `operator-state-persistence` capability
+- **WHEN** a Cell reconnects AND its Operator has `keeps_state = true` AND the agent has a non-empty WAL or snapshot under the `operator-state-persistence` capability
 - **THEN** the agent SHALL deliver state via `RestoreInitState{cell_id, snapshot_bytes, change_log_bytes}`; the init-state plugin chain MUST NOT run for that Cell; the SDK SHALL restore via `init_state(cell_key)` + runtime auto-snapshot-decode + change-log fold per `operator-state-persistence`
 
 #### Scenario: Cell restart with persistence disabled at Operator class
 
-- **WHEN** a Cell reconnects AND its Operator has `persistence_enabled = false`
-- **THEN** the agent SHALL NOT issue `RestoreInitState` for that Cell (regardless of any stale agent-side state from a prior `persistence_enabled = true` deploy of the same Operator class); the init-state chain MUST run if `operator.init_values == %{}`
+- **WHEN** a Cell reconnects AND its Operator has `keeps_state = false`
+- **THEN** the agent SHALL NOT issue `RestoreInitState` for that Cell (regardless of any stale agent-side state from a prior `keeps_state = true` deploy of the same Operator class); the init-state chain MUST run if `operator.init_values == %{}`
 
 #### Scenario: Cell restart with persistence enabled but no persisted state
 
-- **WHEN** a Cell reconnects AND its Operator has `persistence_enabled = true` AND no WAL or snapshot file exists for this Cell
+- **WHEN** a Cell reconnects AND its Operator has `keeps_state = true` AND no WAL or snapshot file exists for this Cell
 - **THEN** the agent SHALL NOT issue `RestoreInitState` (there is nothing to restore); the init-state chain MUST run if `operator.init_values == %{}`
 
 ### Requirement: Per-plugin timeout enforcement

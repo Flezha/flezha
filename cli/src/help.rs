@@ -227,7 +227,7 @@ COMMANDS:
     observe        Observability foundation inspection (sources, sinks, tail)
     audit          Durable audit log inspection (list, read, tail, stats, rotate)
     dlq            Dead-letter queue: inspect, replay, or drop parked payloads
-    schedule       Cron-scheduled bounded operator spawns (add, list, remove, run)
+    schedule       Cron-scheduled steps operator spawns (add, list, remove, run)
     auth           Bootstrap claim, identity (whoami), offline break-glass recovery
     token          Scoped-token management (issue, revoke, list)
     role           Principal → role bindings (bind, unbind, list)
@@ -323,13 +323,13 @@ OPTIONS:
     --channel <ch>, -c          Entry channel the first message names
     --plugins <json-array>      Plugin specs attached at start
     --partitions <N>            Start N partition members as one group
-    --snapshot-interval <N>     Changes between snapshots
     --output <text|json>        Output format (default: text)
     --json                      The same as --output json
 
-KIND:
-    The factory's own: its class declares unbounded or bounded and its runner
-    announces it, so a start names only the factory.
+RUN:
+    The factory's own: its class declares how it runs (flow or steps) and
+    where its work is kept, and its runner announces it, so a start names only
+    the factory.
 
 ID:
     Without --id the controller generates one, <factory>-<16 characters>, and
@@ -337,12 +337,12 @@ ID:
     {"id": ..., "outcome": "started" | "already_running"}.
 
     A start without --id that is run again after its answer was lost starts a
-    second operator, and an unbounded one runs until it is stopped. Pass --id
+    second operator, and a flow one runs until it is stopped. Pass --id
     when the start may be retried: a start of an id that is already running
     prints "<id> is already running, left untouched" and starts nothing.
 
 INIT VALUES:
-    An unbounded operator's document is keyed by Tasklet name, one entry per
+    A flow operator's document is keyed by Tasklet name, one entry per
     Tasklet to seed. Name only what you want seeded; a Tasklet you leave
     out keeps the state its class builds.
 
@@ -350,12 +350,12 @@ INIT VALUES:
         --init-values '{"ohlc": {"1m": {"high": 0}}}'   one state per declared key
 
     A name the class does not carry is ignored, not refused: the runner logs
-    it and the start still succeeds, so check the spelling. A bounded
+    it and the start still succeeds, so check the spelling. A steps
     operator's tasklets take the document as state the same way.
 
 FIRST MESSAGE:
     --text is the instance's first input, on the entry channel --channel
-    names or the first declared one, for both kinds; a bounded one started
+    names or the first declared one, whichever way it runs; a steps one started
     without it waits for `flz operator send`. --channel needs --text.
 
 EXAMPLES:
@@ -435,7 +435,7 @@ COMMANDS:
     listen      Print the frames an operator emits or ingests
     send        Send a payload to an operator's input stream
     call        Send one input and print the operator's answer
-    rewind      Rewind a bounded loop to a committed iteration
+    rewind      Rewind a steps loop to a committed iteration
     replay      Re-run a Cell's retained inputs from a point in the past
     help        Show this help message
 
@@ -618,7 +618,7 @@ COMMANDS:
 
 Use 'flz runner <COMMAND> --help' for more information on a specific command."#;
 
-pub(crate) const SCHEDULE: Help = r#"flz schedule - cron-scheduled bounded operator spawns
+pub(crate) const SCHEDULE: Help = r#"flz schedule - cron-scheduled steps operator spawns
 
 USAGE:
     flz schedule <SUBCOMMAND>
@@ -627,8 +627,8 @@ SUBCOMMANDS:
     add <name> --cron "<expr>" --tz <iana> --factory <factory_id>
         [--namespace <ns>] [--init-values <json>] [--text <payload>] [--channel <ch>]
         [--plugins <json>]
-                 Add a durable schedule of a bounded factory; a factory a
-                 connected runner announced as unbounded is refused.
+                 Add a durable schedule of a steps factory; a factory a
+                 connected runner announced as flow is refused.
                  --init-values is the state every fired instance starts with;
                  --text is the first message it receives, on the entry channel
                  --channel names or the first declared one.
@@ -661,8 +661,8 @@ SUBCOMMANDS:
     retention <operator> <hours>             Set time-travel retention
     delete <operator/tasklet/key>            Hard-delete a Cell's persisted state
     outbox <operator/tasklet/key>            Effectively-once outbox status (lag, cursor, watermark)
-    journal <operator/instance>              Bounded instance task-journal (committed tasks, iterations, park)
-    inbox <operator/instance>                Bounded instance durable inbox (offsets, undelivered tail)
+    journal <operator/instance>              Steps instance task-journal (committed tasks, iterations, park)
+    inbox <operator/instance>                Steps instance durable inbox (offsets, undelivered tail)
     help                                     Show this help message
 
 EXAMPLES:

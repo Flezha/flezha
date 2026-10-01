@@ -16,7 +16,7 @@ COMMANDS:
     observe        Observability foundation inspection (sources, sinks, tail)
     audit          Durable audit log inspection (list, read, tail, stats, rotate)
     dlq            Dead-letter queue: inspect, replay, or drop parked payloads
-    schedule       Cron-scheduled bounded operator spawns (add, list, remove, run)
+    schedule       Cron-scheduled steps operator spawns (add, list, remove, run)
     auth           Bootstrap claim, identity (whoami), offline break-glass recovery
     token          Scoped-token management (issue, revoke, list)
     role           Principal → role bindings (bind, unbind, list)

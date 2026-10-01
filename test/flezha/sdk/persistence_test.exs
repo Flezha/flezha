@@ -383,7 +383,7 @@ defmodule Flezha.SDK.PersistenceTest do
 
     test "the topology carries the class's persistence facts" do
       assert {:ok, topo} = Topology.build(OptedOutOp)
-      refute topo.persistence_enabled?
+      refute topo.durable?
       assert topo.compact_after_bytes == 1_048_576
     end
 
@@ -471,7 +471,7 @@ defmodule Flezha.SDK.PersistenceTest do
       for n <- ~w(1 2 3), do: Inbox.input(op, "in", n, %{})
       # Two dispatches: two records and two outputs, and nothing for k3.
       [_, _, _, _] = frames(4)
-      assert [{"capped", :dynamic, [{"k1", _}, {"k2", _}]}] = Operator.cells(op)
+      assert [{"capped", :dynamic, [{"k1", _}, {"k2", _}]}] = Operator.Server.cells(op)
       assert_receive {:dynamic, %{count: 1}, %{operator_id: "op-1", event: :capped}}, 1_000
       assert Counters.dispatches(counters) == 2
 
@@ -484,35 +484,35 @@ defmodule Flezha.SDK.PersistenceTest do
       %{op: op} = start_operator(TtlOp)
       Inbox.input(op, "in", "5", %{})
       assert [{"cell_state_change", _, _}, {"op-1", "5", _}] = frames(2)
-      {:ok, pid} = Operator.lookup(op, "ttl", "k5")
+      {:ok, pid} = Operator.Server.lookup(op, "ttl", "k5")
 
       # A sweep right after the push keeps it: not idle past the TTL yet.
       send(op, :reap)
-      assert {:ok, ^pid} = Operator.lookup(op, "ttl", "k5")
+      assert {:ok, ^pid} = Operator.Server.lookup(op, "ttl", "k5")
 
       assert_evicted(pid, {"op-1", "ttl", "k5"})
       assert_receive {:dynamic, %{count: 1}, %{operator_id: "op-1", event: :evicted}}, 1_000
-      assert {:error, :cell_evicted} = Operator.lookup(op, "ttl", "k5")
-      assert {:error, :cell_not_found} = Operator.lookup(op, "ttl", "never")
-      assert [{"ttl", :dynamic, []}] = Operator.cells(op)
+      assert {:error, :cell_evicted} = Operator.Server.lookup(op, "ttl", "k5")
+      assert {:error, :cell_not_found} = Operator.Server.lookup(op, "ttl", "never")
+      assert [{"ttl", :dynamic, []}] = Operator.Server.cells(op)
 
       # A cold start for the same key: `init_state/1` at seq 0, so the value
       # reads 5 rather than the evicted 10.
       Inbox.input(op, "in", "5", %{})
       assert [{"cell_state_change", _, _} = r, {"op-1", "5", _}] = frames(2)
       assert {0, {:delta, 5}, _} = record(r)
-      assert {:ok, fresh} = Operator.lookup(op, "ttl", "k5")
+      assert {:ok, fresh} = Operator.Server.lookup(op, "ttl", "k5")
       assert fresh != pid
     end
 
     test "a busy Cell is skipped by the sweep and evicted once it is idle" do
       %{op: op} = start_operator(GatedTtlOp)
       Inbox.input(op, "in", "x", %{})
-      {:ok, pid} = Operator.lookup(op, "gated_ttl", "x")
+      {:ok, pid} = Operator.Server.lookup(op, "gated_ttl", "x")
 
       # Blocked inside run/3: the probe finds it busy and the sweep moves on.
       send(op, :reap)
-      assert {:ok, ^pid} = Operator.lookup(op, "gated_ttl", "x")
+      assert {:ok, ^pid} = Operator.Server.lookup(op, "gated_ttl", "x")
       assert Process.alive?(pid)
 
       ref = Process.monitor(pid)
@@ -520,7 +520,7 @@ defmodule Flezha.SDK.PersistenceTest do
       assert_receive {:flz_data, _, "op-1", "x", _}, 2_000
       assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 3_000
       assert_receive {:dynamic, %{count: 1}, %{operator_id: "op-1", event: :evicted}}, 1_000
-      assert {:error, :cell_evicted} = Operator.lookup(op, "gated_ttl", "x")
+      assert {:error, :cell_evicted} = Operator.Server.lookup(op, "gated_ttl", "x")
     end
   end
 
@@ -666,7 +666,7 @@ defmodule Flezha.SDK.PersistenceTest do
       %{op: op} = start_operator(CounterOp)
       stopped = cell!(op, "counter")
       ref = Process.monitor(stopped)
-      Operator.stop(op)
+      Operator.Server.stop(op)
       assert_receive {:DOWN, ^ref, :process, ^stopped, :normal}, 2_000
 
       %{op: op} = start_operator(CounterOp, operator_id: "op-2")
@@ -742,15 +742,15 @@ defmodule Flezha.SDK.PersistenceTest do
 
     test "lookup names what is missing, and materialises a dynamic key only when asked" do
       %{op: op} = start_operator(DynCounterOp)
-      assert {:error, :tasklet_not_found} = Operator.lookup(op, "nope", nil)
-      assert {:error, :cell_not_found} = Operator.lookup(op, "counter", "k1")
-      assert {:ok, pid} = Operator.lookup(op, "counter", "k1", materialise: true)
-      assert {:ok, ^pid} = Operator.lookup(op, "counter", "k1")
-      assert [{"counter", :dynamic, [{"k1", ^pid}]}] = Operator.cells(op)
+      assert {:error, :tasklet_not_found} = Operator.Server.lookup(op, "nope", nil)
+      assert {:error, :cell_not_found} = Operator.Server.lookup(op, "counter", "k1")
+      assert {:ok, pid} = Operator.Server.lookup(op, "counter", "k1", materialise: true)
+      assert {:ok, ^pid} = Operator.Server.lookup(op, "counter", "k1")
+      assert [{"counter", :dynamic, [{"k1", ^pid}]}] = Operator.Server.cells(op)
 
       %{op: single} = start_operator(CounterOp)
-      assert {:error, :cell_not_found} = Operator.lookup(single, "counter", "k")
-      assert [{"counter", :single, [{nil, _}]}] = Operator.cells(single)
+      assert {:error, :cell_not_found} = Operator.Server.lookup(single, "counter", "k")
+      assert [{"counter", :single, [{nil, _}]}] = Operator.Server.cells(single)
     end
   end
 

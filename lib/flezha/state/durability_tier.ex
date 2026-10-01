@@ -293,10 +293,10 @@ defmodule Flezha.State.DurabilityTier do
   Whether `operator_class` requires the remote ship to complete before its
   commit barrier is acked (RPO 0).
 
-  Resolved through the ordinary per-class cascade — user override, instance
-  metadata, then the SDK declaration — so a user can force a class either
-  way without an SDK change. Always `false` while the tier is off: a class
-  cannot be made to wait on a backend that does not exist.
+  The class's own `durable: remote` declaration and nothing else
+  (`PersistenceResolver.remote?/1`), read under every state key the id/class
+  pair holds. Always `false` while the tier is off: a class cannot be made to
+  wait on a backend that does not exist.
   """
   @spec sync_class?(binary()) :: boolean()
   def sync_class?(operator_id) when is_binary(operator_id) do
@@ -305,7 +305,7 @@ defmodule Flezha.State.DurabilityTier do
     # makes those differ, looking up the id finds nothing and the gate silently
     # never arms — the class asked for RPO 0 and gets ordinary async shipping.
     enabled?() and
-      Enum.any?(ClassRegistry.state_keys(operator_id), &PersistenceResolver.sync_durability?/1)
+      Enum.any?(ClassRegistry.state_keys(operator_id), &PersistenceResolver.remote?/1)
   end
 
   # ---------- triggers ----------
@@ -320,7 +320,7 @@ defmodule Flezha.State.DurabilityTier do
 
   @doc """
   Every shippable reference stored under one on-disk STATE KEY: the durable
-  references `Paths.durable_refs/1` names (its Cells, a bounded operator's journal,
+  references `Paths.durable_refs/1` names (its Cells, a steps operator's journal,
   its input log) that hold local state, and its dead-letter trees.
 
   An operator can occupy two state keys — see `refs_of_operator/1`, which is
@@ -356,7 +356,7 @@ defmodule Flezha.State.DurabilityTier do
   @doc """
   Every shippable reference of one operator, across BOTH identities it is
   stored under — its instance id, which keys the task-journal, and its
-  resolved class, which keys the Cells and input log (for a bounded operator the two
+  resolved class, which keys the Cells and input log (for a steps operator the two
   are one key).
 
   Anything holding an operator id and wanting its whole durable identity goes
@@ -387,7 +387,7 @@ defmodule Flezha.State.DurabilityTier do
   @spec on_effect_flushed(tuple(), integer() | nil) :: :ok
   def on_effect_flushed({operator_class, _, _} = cell_id, consumed_offset)
       when is_integer(consumed_offset) do
-    if enabled?() and ClassRegistry.checkpoint_ack?(operator_class) do
+    if enabled?() and ClassRegistry.ack_checkpoint?(operator_class) do
       ship({:cell, cell_id})
 
       # The input log rides the same cut. Shipping the state without it would
@@ -403,12 +403,12 @@ defmodule Flezha.State.DurabilityTier do
   def on_effect_flushed(_cell_id, _consumed_offset), do: :ok
 
   @doc """
-  A bounded instance committed a task or an iteration: its journal suffix, and
+  A steps instance committed a task or an iteration: its journal suffix, and
   the input log holding what it has not consumed, are the artifacts that must
   reach the remote store for the instance to resume elsewhere.
   """
-  @spec on_bounded_commit(binary()) :: :ok
-  def on_bounded_commit(operator_id) when is_binary(operator_id) do
+  @spec on_steps_commit(binary()) :: :ok
+  def on_steps_commit(operator_id) when is_binary(operator_id) do
     if enabled?(), do: Enum.each(refs_of_operator(operator_id), &Shipper.enqueue/1)
     :ok
   end
@@ -420,7 +420,7 @@ defmodule Flezha.State.DurabilityTier do
   @doc """
   Ship `operator_id`'s artifacts and wait for the manifest write, for a class
   that declared synchronous durability. Returns the backend's verdict so the
-  caller can withhold the commit ack: a failure stalls the bounded operator at its
+  caller can withhold the commit ack: a failure stalls the steps operator at its
   barrier, loudly, which is what RPO 0 means.
   """
   @spec commit_sync(binary()) :: :ok | {:error, term()}

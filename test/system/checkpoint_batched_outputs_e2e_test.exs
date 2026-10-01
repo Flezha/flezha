@@ -2,7 +2,7 @@ defmodule FlezhaTest.System.CheckpointBatchedOutputsE2ETest do
   @moduledoc """
   End-to-end proof for the `outputs: :at_checkpoint` opt-in against a live Rust
   runner: `checkpoint_batched_store` declares `effectively_once()` +
-  `checkpoint_ack()` + `outputs_at_checkpoint(1_500)`, so an open interval holds
+  `ack_checkpoint()` + `outputs_at_checkpoint(1_500)`, so an open interval holds
   its outputs with its changes instead of flushing each as it is produced.
 
   Three declared behaviours, each its own phase: no output reaches a plugin
@@ -64,7 +64,7 @@ defmodule FlezhaTest.System.CheckpointBatchedOutputsE2ETest do
 
     assert info.runner_id == runner
 
-    assert wait_until(fn -> ClassRegistry.checkpoint_ack?(operator_id) end, 30_000),
+    assert wait_until(fn -> ClassRegistry.ack_checkpoint?(operator_id) end, 30_000),
            "the checkpoint ack-granularity declaration never reached the controller"
 
     # --- Phase 1: an open interval holds its outputs ------------------------

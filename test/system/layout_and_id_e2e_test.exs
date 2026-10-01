@@ -1,6 +1,6 @@
 defmodule FlezhaTest.System.LayoutAndIdE2ETest do
   @moduledoc """
-  One layout, read by both runtimes, and one bounded id, proved on disk.
+  One layout, read by both runtimes, and one steps id, proved on disk.
 
   The controller resolves where a file lands from `Flezha.Layout.Table`;
   `flz reset` resolves the same thing from `cli/src/reset/plan.rs`. Two

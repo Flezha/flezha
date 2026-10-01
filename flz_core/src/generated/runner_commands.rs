@@ -54,9 +54,9 @@ pub mod command_request {
         #[prost(message, tag = "21")]
         ReassignRunnerId(super::ReassignRunnerId),
         #[prost(message, tag = "22")]
-        BoundedCompleted(super::BoundedCompleted),
+        OperatorCompleted(super::OperatorCompleted),
         #[prost(message, tag = "23")]
-        BoundedStop(super::BoundedStop),
+        StepsStop(super::StepsStop),
         #[prost(message, tag = "24")]
         CreditWindowInit(super::CreditWindowInit),
         #[prost(message, tag = "25")]
@@ -78,9 +78,9 @@ pub mod command_request {
         #[prost(message, tag = "33")]
         UpdateFactories(super::UpdateFactories),
         #[prost(message, tag = "34")]
-        SpawnBoundedRequest(super::SpawnBoundedRequest),
+        SpawnStepsRequest(super::SpawnStepsRequest),
         #[prost(message, tag = "35")]
-        SpawnBoundedResponse(super::SpawnBoundedResponse),
+        SpawnStepsResponse(super::SpawnStepsResponse),
         #[prost(message, tag = "36")]
         AdminRequest(super::AdminRequest),
         #[prost(message, tag = "37")]
@@ -144,30 +144,29 @@ pub struct AddOperator {
     #[prost(string, tag = "2")]
     pub factory_id: ::prost::alloc::string::String,
     /// Initial state per tasklet name, a JSON object, for both kinds: a
-    /// bounded operator's tasklets take it as an unbounded operator's do, and a bounded operator's input
+    /// steps operator's tasklets take it as a flow operator's do, and a steps operator's input
     /// is the messages on its entry channels, never this document.
     #[prost(string, tag = "3")]
     pub init_values: ::prost::alloc::string::String,
-    /// Operator kind for this unit: "unbounded" or "bounded". Default
-    /// (when populated by the Controller from the operator's :kind) is
-    /// "unbounded".
+    /// How the class runs, as its runner announced it: "flow" or "steps".
+    /// The class itself decides; the SDK reads its own settings, not this.
     #[prost(string, tag = "4")]
-    pub kind: ::prost::alloc::string::String,
+    pub run: ::prost::alloc::string::String,
     /// Number of persisted Cells the Controller will ship RestoreInitState
-    /// for on this (re)bind. Non-zero only when re-binding a durable bounded operator
-    /// operator that has WAL state on disk (crash-resume). A durable bounded operator
+    /// for on this (re)bind. Non-zero only when re-binding a durable steps operator
+    /// operator that has WAL state on disk (crash-resume). A durable steps operator
     /// driver holds its first Tasklet until this many Cell restores have
     /// landed, so a resumed run reads persisted state instead of cold-starting.
-    /// 0 for a fresh spawn, an unbounded operator, or an opted-out bounded operator one.
+    /// 0 for a fresh spawn, a flow operator, or an opted-out steps operator one.
     #[prost(uint32, tag = "5")]
     pub resume_cell_count: u32,
-    /// Bounded operator task-journal crash-resume (bounded-task-journal): the instance's
+    /// Steps operator task-journal crash-resume (steps-task-journal): the instance's
     /// committed task indexes + latest journaled handoff. Instance-scoped, so it
     /// rides the bind itself rather than a per-Cell restore — a durable
-    /// bounded class with no per-Cell state ships no RestoreInitState at all,
+    /// steps class with no per-Cell state ships no RestoreInitState at all,
     /// and would otherwise resume at iteration 0 on every wake.
     /// Absent when the instance has no journal (fresh spawn, opted-out class,
-    /// unbounded operator) — the driver then keeps the re-run-from-top behaviour.
+    /// flow operator) — the driver then keeps the re-run-from-top behaviour.
     #[prost(message, optional, tag = "6")]
     pub task_journal: ::core::option::Option<TaskJournalState>,
     /// Partitioned operators: this member's identity within its group. A
@@ -192,18 +191,19 @@ pub struct AddOperator {
     #[prost(uint32, tag = "11")]
     pub inbox_tail_count: u32,
     /// The controller parks a failed turn sent as `IterCommit.dead_letter`.
-    /// Without it a bounded driver ends the instance on a failed turn, because
+    /// Without it a steps driver ends the instance on a failed turn, because
     /// an older controller would journal the commit and drop the message.
     #[prost(bool, tag = "12")]
     pub dead_letter_turns: bool,
 }
 /// SDK -> Controller, as the CommandResponse raw_data of AddOperator.
-/// Carries the operator class's SDK-side declarations (operator metadata)
-/// so the Controller resolves per-class capabilities without a parallel
-/// config channel. Key "effectively_once" = "true" declares the
-/// effectively-once delivery tier. The SDK returns empty raw_data when no
-/// declaration is present (tier off), keeping the default wire byte-identical;
-/// the Controller resolves absent/undecodable metadata to every default.
+/// Carries the operator class's settings and SDK-side declarations (operator
+/// metadata) so the Controller resolves per-class capabilities without a
+/// parallel config channel: "run" ("flow" | "steps", with "each" and
+/// "on_failure" for steps), "durable" ("memory" | "local" | "remote"),
+/// "sleep_after_ms" (absent: the instance never sleeps), and for flow
+/// "exactly" = "effectively_once" with "ack" and "correction_ms". The
+/// Controller resolves absent/undecodable metadata to every default.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AddOperatorResponse {
     #[prost(map = "string, string", tag = "1")]
@@ -351,7 +351,7 @@ pub struct CommittedCell {
     pub first_seq: ::core::option::Option<u64>,
 }
 /// SDK -> Controller, at each tasklet barrier of a durable structured
-/// bounded operator (bounded-task-journal): tasklet `task_idx` completed
+/// steps operator (steps-task-journal): tasklet `task_idx` completed
 /// forward on `cells_ran`, each naming the effect records it wrote in the
 /// stage, and released the serialized `handoff` batch. The Controller waits
 /// until every named record is durable on its Cell's writer, appends ONE
@@ -416,7 +416,7 @@ pub struct TaskCommitResponse {
     pub error: ::core::option::Option<Error>,
 }
 /// SDK -> Controller, at each iteration boundary of a looping durable
-/// structured bounded operator (bounded-durable-loop): iteration `iter`
+/// structured steps operator (steps-durable-loop): iteration `iter`
 /// finished, having consumed the durable input log up to `consumed_offset` —
 /// the `flz.offset` of the input that seeded it, absent when it consumed none
 /// (0 is the log's first offset) — and released `handoff` as its terminal
@@ -484,12 +484,12 @@ pub struct IterCommitResponse {
     pub error: ::core::option::Option<Error>,
 }
 /// SDK -> Controller. An instance of either kind whose class sleeps has been idle
-/// past the threshold (a bounded operator at the committed boundary of iteration `iter`,
-/// an unbounded operator at `iter` 0): it asks to sleep WITHOUT a BoundedCompleted (this is
+/// past the threshold (a steps operator at the committed boundary of iteration `iter`,
+/// a flow operator at `iter` 0): it asks to sleep WITHOUT a OperatorCompleted (this is
 /// not a terminal outcome). The Controller writes the instance's park record and
 /// evicts it from the runner; the registry keeps it `suspended` until a new
 /// input-log append, or the wake deadline, rehydrates it
-/// (bounded-durable-suspension). `wake_deadline_ms` is 0 when the operator
+/// (durable-suspension). `wake_deadline_ms` is 0 when the operator
 /// declared no durable timer. `consumed_offset` is the highest input-log offset
 /// the run parked to the dead-letter queue unread, absent when none: consumed
 /// without a pass, so the Controller releases it rather than re-delivering it.
@@ -506,7 +506,7 @@ pub struct IterPark {
 }
 /// One journaled forward task commit, shipped back on crash-resume so the driver
 /// can rebuild `plan_compensation`'s per-iteration `committed` input from
-/// durable state (bounded-durable-loop): tasklet `task_idx` of iteration `iter`
+/// durable state (steps-durable-loop): tasklet `task_idx` of iteration `iter`
 /// completed forward on `cells_ran`.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TaskCommittedTask {
@@ -524,7 +524,7 @@ pub struct TaskCommittedTask {
     pub trigger: ::core::option::Option<TimerTrigger>,
 }
 /// What one committed tasklet of the in-flight iteration released, keyed by
-/// its task_idx (bounded-branching). A tasklet tree re-seeds each uncommitted
+/// its task_idx (steps-branching). A tasklet tree re-seeds each uncommitted
 /// child branch from its own parent's edge, so the resume state carries every
 /// in-flight commit's handoff — not just the latest one's.
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -535,7 +535,7 @@ pub struct TaskEdgeHandoff {
     pub handoff: ::prost::alloc::vec::Vec<TaskHandoffItem>,
 }
 /// Committed task-journal state shipped back on crash-resume
-/// (bounded-task-journal). `iter` is the iteration to resume at — the one after
+/// (steps-task-journal). `iter` is the iteration to resume at — the one after
 /// the highest journaled `iter_committed` (0 for a non-looping chain);
 /// `committed_task_idxs` are the tasklets already committed inside that
 /// still-in-flight iteration, which the driver skips, and `task_handoffs` what
@@ -550,7 +550,7 @@ pub struct TaskEdgeHandoff {
 /// input.
 ///
 /// `rewind_undo` carries the tasklets a rewind unwound that have not been
-/// compensated yet (bounded-loop-rewind). The driver runs them through the
+/// compensated yet (steps-loop-rewind). The driver runs them through the
 /// ordinary compensation planner before resuming forward at `iter`, which the
 /// journal has already folded back to the rewound-to iteration. Each undo
 /// journals a `compensated` entry, so the list shrinks across a crash and
@@ -602,12 +602,12 @@ pub struct RestoreInitState {
     pub snapshot_bytes: ::prost::alloc::vec::Vec<u8>,
     #[prost(bytes = "vec", tag = "3")]
     pub change_log_bytes: ::prost::alloc::vec::Vec<u8>,
-    /// Saga crash-resume (bounded-operator-saga): the Controller sets these
+    /// Saga crash-resume (operator-saga): the Controller sets these
     /// from the per-Cell compensation markers it persisted for a durable
-    /// bounded operator. `has_compensation_intent` ⇒ this Cell's tasklet
+    /// steps operator. `has_compensation_intent` ⇒ this Cell's tasklet
     /// completed forward and may need undo; `has_compensation_done` ⇒ its
     /// compensation already ran (skip it on resume). Both false for a
-    /// unbounded operator or a bounded operator one that never compensated.
+    /// flow operator or a steps operator one that never compensated.
     #[prost(bool, tag = "4")]
     pub has_compensation_intent: bool,
     #[prost(bool, tag = "5")]
@@ -713,19 +713,20 @@ pub struct ReassignRunnerId {
     #[prost(string, tag = "1")]
     pub new_id: ::prost::alloc::string::String,
 }
-/// SDK -> Controller. Emitted by a bounded operator when it reaches an exit
-/// trigger (chain complete, ctx.complete, loop terminal, duration, or external
-/// stop). `status` is "ok" on clean completion, "error" on failure (with
-/// `error` describing it), or "cancelled" on a cooperative external stop;
+/// SDK -> Controller. Emitted by an instance when it reaches an exit trigger
+/// (chain complete, ctx.complete, loop terminal, duration, or external stop).
+/// `status` is "ok" on a steps run's clean completion, "completed" on a flow
+/// instance's (ctx.complete), "error" on failure (with `error` describing it),
+/// or "cancelled" on a cooperative external stop or a duration that elapsed;
 /// `result` carries the terminal result/error payload. The Controller drives
 /// the same stop/teardown path as an explicit stop (deregister-on-completion)
-/// so a finished bounded operator is removed from the durable registry and
+/// so a finished steps operator is removed from the durable registry and
 /// never replayed on boot or misjudged by convergence. Direction is reversed
 /// like RunnerShutdownNotification: SDK -> Controller over the
 /// "control_command" payload_id; old Controllers ignore the unknown variant via
 /// Protox unknown-field handling.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct BoundedCompleted {
+pub struct OperatorCompleted {
     #[prost(string, tag = "1")]
     pub operator_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
@@ -802,12 +803,18 @@ pub struct FactoryDecl {
     /// per-SDK. 0 (absent) is "unspecified" and never places.
     #[prost(uint32, tag = "3")]
     pub sdk_lang: u32,
-    /// The kind of the class registered under this id, "unbounded" or
-    /// "bounded": the class declares it, so no start names it. The Controller
-    /// places a start only on a runner advertising the factory's established
-    /// kind; empty (absent) never places.
+    /// How the class registered under this id runs, "flow" or "steps": the
+    /// class declares it, so no start names it. The Controller places a start
+    /// only on a runner advertising the factory's established run; empty
+    /// (absent) never places, and any other value is refused by name.
     #[prost(string, tag = "4")]
-    pub kind: ::prost::alloc::string::String,
+    pub run: ::prost::alloc::string::String,
+    /// For "steps" only: the loop shape ("once", "per_input", "chained") and
+    /// the failure mode ("undo_all", "keep_progress").
+    #[prost(string, tag = "5")]
+    pub each: ::prost::alloc::string::String,
+    #[prost(string, tag = "6")]
+    pub on_failure: ::prost::alloc::string::String,
 }
 /// SDK -> Controller. Ships the runner's FULL current factory set after a
 /// post-start define or remove (sdk-runner-entrypoint-redesign). Full-set
@@ -823,20 +830,20 @@ pub struct UpdateFactories {
     #[prost(message, repeated, tag = "1")]
     pub factories: ::prost::alloc::vec::Vec<FactoryDecl>,
 }
-/// Controller -> SDK. Cooperative external stop for a bounded operator
+/// Controller -> SDK. Cooperative external stop for a steps operator
 /// (`flz operator stop`), distinct from the hard `RemOperator` teardown: the
 /// SDK trips its cancellation token, lets in-flight work unwind, runs any saga
-/// compensation, then emits the normal `BoundedCompleted` (status "cancelled")
+/// compensation, then emits the normal `OperatorCompleted` (status "cancelled")
 /// that drives the single teardown path. Rides the "control_command" payload_id
 /// like other CommandRequest variants; SDKs that do not recognise it skip it via
 /// the protobuf decoder (degrading to no cooperative stop).
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct BoundedStop {
+pub struct StepsStop {
     #[prost(string, tag = "1")]
     pub operator_id: ::prost::alloc::string::String,
 }
-/// SDK -> Controller. A tasklet asked for a bounded instance
-/// (`ctx.spawn_bounded`): spawn `factory_id` under `instance_id` if that id is
+/// SDK -> Controller. A tasklet asked for a steps instance
+/// (`ctx.spawn_steps`): spawn `factory_id` under `instance_id` if that id is
 /// free, otherwise apply `if_running`. An empty `instance_id` asks the
 /// Controller to generate one and always spawns, so `if_running` is ignored for
 /// it. The namespace is NOT carried — the
@@ -854,7 +861,7 @@ pub struct BoundedStop {
 /// Controller resolves it to the operator the first request did. Empty when
 /// the request came from outside a tasklet invocation.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SpawnBoundedRequest {
+pub struct SpawnStepsRequest {
     #[prost(string, tag = "1")]
     pub instance_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
@@ -866,18 +873,18 @@ pub struct SpawnBoundedRequest {
     #[prost(string, tag = "5")]
     pub identity: ::prost::alloc::string::String,
 }
-/// Controller -> SDK reply to SpawnBoundedRequest, carrying the originating
+/// Controller -> SDK reply to SpawnStepsRequest, carrying the originating
 /// request's reference_id so the SDK wakes the requester's result handle.
 /// `outcome` is `spawned` or `delivered` when the request reached an
 /// instance, and empty when it was refused; `error` is the refusal, carrying the
 /// controller's own code (`operator.already_running`, `operator.factory_unknown`,
-/// `operator.factory_not_bounded`, `quota.exceeded`, `authz.*`, ...), and is
+/// `operator.factory_not_steps`, `quota.exceeded`, `authz.*`, ...), and is
 /// absent otherwise. `instance_id` is the id the request
 /// resolved to: the requester's own, or the generated one for a request that
 /// carried none (empty when nothing was started). The reply never faults the
 /// requesting tasklet — it only resolves its handle.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SpawnBoundedResponse {
+pub struct SpawnStepsResponse {
     #[prost(string, tag = "1")]
     pub outcome: ::prost::alloc::string::String,
     #[prost(message, optional, tag = "2")]

@@ -1,35 +1,25 @@
-//! Sleeping when idle, for an instance of either kind whose class declares
-//! it: one idle deadline on the poll core's deferred-wake list, one idle
-//! question over the instance's Cells, one `IterPark` frame. A bounded operator asks
-//! the question from its pass sheet (it re-arms on every committed boundary);
-//! an unbounded operator arms once at bind and re-arms from its Cells' latest activity, so
-//! nothing on the input path touches the wake list.
+//! Sleeping when idle, for a durable instance whose class sets `sleep_after`,
+//! whichever way it runs: one idle deadline on the poll core's deferred-wake
+//! list, one idle question over the instance's Cells, one `IterPark` frame. A
+//! steps operator asks the question from its pass sheet (it re-arms on every
+//! committed boundary); a flow operator arms once at bind and re-arms from its
+//! Cells' latest activity, so nothing on the input path touches the wake list.
 
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::bounded::Deadline;
 use crate::operator::instance::OperatorInstance;
+use crate::operator::settings::DEFAULT_SLEEP_AFTER;
+use crate::steps::Deadline;
 use crate::util::LockRecover;
-
-/// How long an instance stays idle before it sleeps (`FLEZHA_PARK_IDLE_MS`).
-const PARK_IDLE_DEFAULT_MS: u64 = 600_000;
-const ENV_PARK_IDLE_MS: &str = "FLEZHA_PARK_IDLE_MS";
 
 /// How long a rehydrated instance waits for the owed input tail before it
 /// may sleep regardless; a lost forward must not wedge it.
 pub(crate) const OWED_INBOX_WAIT: Duration = Duration::from_secs(60);
 
-pub(crate) fn park_idle() -> Duration {
-    Duration::from_millis(crate::util::env_parse(
-        ENV_PARK_IDLE_MS,
-        PARK_IDLE_DEFAULT_MS,
-    ))
-}
-
 /// What an instance's sleep keeps between its deadlines: the input tail the
-/// bind still owes it, and, for an unbounded operator, the armed due time and whether it
+/// bind still owes it, and, for a flow operator, the armed due time and whether it
 /// already asked to sleep.
 #[derive(Default)]
 pub struct IdleWatch {
@@ -58,17 +48,22 @@ impl OperatorInstance {
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1));
     }
 
-    /// Whether this instance may sleep: its class declares it and its state
-    /// is durable.
+    /// Whether this instance may sleep: its class sets `sleep_after` and its
+    /// state is durable.
     pub(crate) fn sleeps(&self) -> bool {
-        self.topology.sleep_when_idle && self.durable()
+        self.topology.sleep_after().is_some() && self.durable()
+    }
+
+    /// How long this instance stays idle before it sleeps.
+    pub(crate) fn sleep_after(&self) -> Duration {
+        self.topology.sleep_after().unwrap_or(DEFAULT_SLEEP_AFTER)
     }
 
     /// Whether every Cell holds nothing queued, in flight, held back,
-    /// retrying, staged or unflushed. A pending timer keeps an unbounded operator awake;
-    /// a bounded operator sleeps with it, its park naming the earliest.
+    /// retrying, staged or unflushed. A pending timer keeps a flow operator awake;
+    /// a steps operator sleeps with it, its park naming the earliest.
     pub(crate) fn cells_idle(&self) -> bool {
-        let timers_hold = self.bounded.is_none();
+        let timers_hold = self.steps.is_none();
         !self.ladders_running()
             && self
                 .all_slots()
@@ -77,7 +72,7 @@ impl OperatorInstance {
     }
 
     /// The earliest processing-time timer pending on any Cell: what a
-    /// sleeping bounded operator wakes at. Event-time timers wait for an input,
+    /// sleeping steps operator wakes at. Event-time timers wait for an input,
     /// which wakes a sleeper anyway.
     pub(crate) fn earliest_processing_timer(&self) -> Option<u64> {
         self.all_slots()
@@ -93,16 +88,16 @@ impl OperatorInstance {
     }
 }
 
-/// The instance is bound: an unbounded operator whose class sleeps arms its idle
-/// deadline once. A bounded operator arms its own on every committed boundary.
+/// The instance is bound: a flow operator whose class sleeps arms its idle
+/// deadline once. A steps operator arms its own on every committed boundary.
 pub fn bound(inst: &Arc<OperatorInstance>) {
-    if inst.bounded.is_some() || !inst.sleeps() {
+    if inst.steps.is_some() || !inst.sleeps() {
         return;
     }
     inst.idle
         .bound_at_ms
         .store(crate::util::monotonic_ms(), Ordering::Release);
-    arm(inst, park_idle());
+    arm(inst, inst.sleep_after());
 }
 
 fn arm(inst: &Arc<OperatorInstance>, after: Duration) {
@@ -115,10 +110,14 @@ fn arm(inst: &Arc<OperatorInstance>, after: Duration) {
     core.arm_instance(Arc::downgrade(inst), inst.seq, Deadline::ParkIdle, due);
 }
 
-/// A deadline the deferred-wake list promoted, for either kind.
+/// A deadline the deferred-wake list promoted, whichever way the instance
+/// runs.
 pub(crate) fn deadline_due(inst: &Arc<OperatorInstance>, deadline: Deadline, due: u64) {
-    if inst.bounded.is_some() {
-        return crate::bounded::deadline_due(inst, deadline, due);
+    if inst.steps.is_some() {
+        return crate::steps::deadline_due(inst, deadline, due);
+    }
+    if matches!(deadline, Deadline::MaxDuration | Deadline::Complete) {
+        return crate::operator::completion::deadline_due(inst, deadline);
     }
     if deadline != Deadline::ParkIdle
         || inst
@@ -129,17 +128,17 @@ pub(crate) fn deadline_due(inst: &Arc<OperatorInstance>, deadline: Deadline, due
     {
         return;
     }
-    unbounded_idle_due(inst);
+    flow_idle_due(inst);
 }
 
-/// An unbounded operator's idle deadline came due: re-arm while the owed tail is still
+/// A flow operator's idle deadline came due: re-arm while the owed tail is still
 /// awaited or a Cell was active inside the window, else sleep if every Cell
 /// is idle.
-fn unbounded_idle_due(inst: &Arc<OperatorInstance>) {
+fn flow_idle_due(inst: &Arc<OperatorInstance>) {
     if inst.idle.asleep.load(Ordering::Acquire) {
         return;
     }
-    let window = park_idle();
+    let window = inst.sleep_after();
     let now = crate::util::monotonic_ms();
     let bound_at = inst.idle.bound_at_ms.load(Ordering::Acquire);
     let owed_wait = OWED_INBOX_WAIT.as_millis() as i64;
@@ -164,7 +163,7 @@ fn unbounded_idle_due(inst: &Arc<OperatorInstance>) {
     crate::runner::emit_control_request(reference_id, command);
 }
 
-/// `IterPark` for the boundary an instance sleeps at (`0` for an unbounded operator),
+/// `IterPark` for the boundary an instance sleeps at (`0` for a flow operator),
 /// with its wake deadline and the last message it parked unread, so the
 /// controller releases it; the controller evicts the instance and wakes it
 /// on the next input or the deadline.

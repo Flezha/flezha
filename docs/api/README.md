@@ -26,7 +26,7 @@ policy judges, the rule that resolves its namespace, and the audit it leaves;
 `docs/operations/authn_authz.md` carries the whole table. A published function
 that took a caller context and bound no row would fail
 `test/flezha/authz/verbs_test.exs`, so there is no ungoverned function on this
-surface: a read the policy calls public (`kind_known?/2`, `parse_cron/2`, the
+surface: a read the policy calls public (`run_known?/2`, `parse_cron/2`, the
 partition arithmetic) binds a `:public` row and is served to any caller.
 
 The namespace a mutation is judged in is **resolved by the callee** from what is

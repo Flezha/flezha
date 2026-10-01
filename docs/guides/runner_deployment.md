@@ -314,7 +314,7 @@ itself: nothing is generated.
 
 ```java
 // EchoOperator.java: the operator. The graph, and the unit the controller schedules.
-public final class EchoOperator implements UnboundedOperator {
+public final class EchoOperator implements Operator {
 
     @Override
     @Nonnull
@@ -341,7 +341,7 @@ the two apart, because that is the form that grows: a second tasklet or a
 transform on the way needs it. This is the whole echo too:
 
 ```java
-@UnboundedOperator(id = "echo", input = "in", sink = "out")
+@Operator(id = "echo", input = "in", sink = "out")
 public final class EchoOperator implements Tasklet<String, Void, String> {
 
     @Override
@@ -419,7 +419,7 @@ and emits through `ctx`, whose `emit` takes the declared `Output`. With no
 // src/operator.rs: the operator. The graph, and the unit the controller schedules.
 pub struct EchoOperator;
 
-impl UnboundedOperator for EchoOperator {
+impl Operator for EchoOperator {
     fn factory_id() -> &'static str {
         "echo"
     }
@@ -443,7 +443,7 @@ the two apart, because that is the form that grows: a second tasklet or a
 transform on the way needs it. This is the whole echo too:
 
 ```rust
-#[flezha_runner::unbounded_operator(id = "echo", input = "in", sink = "out")]
+#[flezha_runner::operator(id = "echo", input = "in", sink = "out")]
 fn echo_operator(input: String) -> String {
     format!("echo: {input}")
 }
@@ -507,11 +507,11 @@ messages and journals nothing.
 
 ```javascript
 // echo_operator.mjs: the operator. The graph, and the unit the controller schedules.
-import { defineUnbounded } from '@flezha/sdk';
+import { defineOperator } from '@flezha/sdk';
 
 import { EchoTasklet } from './echo_tasklet.mjs';
 
-export default defineUnbounded({
+export default defineOperator({
   factoryId: 'echo',
   channels: (c) => {
     c.input('in', { codec: 'text' })
@@ -525,7 +525,7 @@ export default defineUnbounded({
 delivers as a string; an entry that names no codec reads JSON instead. The sink
 names no codec, so the tasklet's string leaves as its UTF-8 bytes, and any
 value other than a string or bytes would leave as JSON. The module exports what
-`defineUnbounded` returned, and that export is what the runner finds.
+`defineOperator` returned, and that export is what the runner finds.
 
 **The same operator, written short.** The echo is one tasklet between one
 input and one sink, and an operator of that shape can be declared in one
@@ -535,9 +535,9 @@ transform on the way needs it. This is the whole echo too:
 
 ```javascript
 // echo_operator.mjs
-import { defineUnbounded } from '@flezha/sdk';
+import { defineOperator } from '@flezha/sdk';
 
-export default defineUnbounded({
+export default defineOperator({
   factoryId: 'echo',
   input: 'in',
   sink: 'out',
@@ -605,7 +605,7 @@ journals nothing, and where its output goes is not its business.
 
 ```python
 # echo_operator.py: the operator. The graph, and the unit the controller schedules.
-@flezha.unbounded_operator("echo")  # the stable identity `flz operator start` takes
+@flezha.operator("echo")  # the stable identity `flz operator start` takes
 def echo_operator(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(Echo).sink("out")
 ```
@@ -622,7 +622,7 @@ the two apart, because that is the form that grows: a second tasklet or a
 transform on the way needs it. This is the whole echo too:
 
 ```python
-@flezha.unbounded_operator(id="echo", input="in", sink="out", codec="text")
+@flezha.operator(id="echo", input="in", sink="out", codec="text")
 def echo_operator(value: str) -> str:
     return f"echo: {value}"
 ```
@@ -680,7 +680,7 @@ optional hooks a tasklet has is read from the methods it defines, so with no
 
 ```ruby
 # echo_operator.rb: the operator. The graph, and the unit the controller schedules.
-class EchoOperator < Flezha::UnboundedOperator
+class EchoOperator < Flezha::Operator
   factory_id "echo"
 
   channels do |c|
@@ -703,7 +703,7 @@ the two apart, because that is the form that grows: a second tasklet or a
 transform on the way needs it. This is the whole echo too:
 
 ```ruby
-class EchoOperator < Flezha::UnboundedOperator
+class EchoOperator < Flezha::Operator
   factory_id "echo"
   input "in"
   sink "out"
@@ -771,7 +771,7 @@ no `applyChange` it keeps nothing and journals nothing.
 ```php
 // src/EchoOperator.php: the operator. The graph, and the unit the controller schedules.
 #[Operator(factoryId: 'echo')]
-final class EchoOperator extends UnboundedOperator
+final class EchoOperator extends \Flezha\Operator
 {
     public static function channels(Builder $c): void
     {
@@ -796,7 +796,7 @@ transform on the way needs it. This is the whole echo too:
 
 ```php
 #[Operator(factoryId: 'echo', input: 'in', sink: 'out', codec: ChannelCodec::Text)]
-final class EchoOperator extends UnboundedOperator
+final class EchoOperator extends \Flezha\Operator
 {
     public function run(mixed $input, Ctx $ctx): void
     {
@@ -869,7 +869,7 @@ messages and journals nothing.
 ```elixir
 # lib/echo/operator.ex: the operator. The graph, and the unit the controller schedules.
 defmodule Echo.Operator do
-  use Flezha.SDK.UnboundedOperator, factory_id: "echo"
+  use Flezha.SDK.Operator, factory_id: "echo"
 
   @impl true
   def channels(c) do
@@ -889,7 +889,7 @@ transform on the way needs it. This is the whole echo too:
 
 ```elixir
 defmodule Echo.Operator do
-  use Flezha.SDK.UnboundedOperator, factory_id: "echo", input: "in", sink: "out"
+  use Flezha.SDK.Operator, factory_id: "echo", input: "in", sink: "out"
 
   def run(input, state, ctx) do
     emit(ctx, "echo: " <> input)
@@ -924,8 +924,8 @@ The runner is a child of your own supervision tree, so a crash restarts it and i
 reconnects under the same identity. `transport: :uds` because this node is not the
 controller's: the default, `:native`, is for code inside the controller's own node,
 and it is not taken from the environment. The example depends on the `flezha_sdk`
-package alone, which starts no controller. `operators:` takes either kind: the
-kind is read from the module, never named by the list.
+package alone, which starts no controller. `operators:` takes any operator: how
+it runs is read from the module, never named by the list.
 
 > #### Concurrency in Elixir {: .info}
 >

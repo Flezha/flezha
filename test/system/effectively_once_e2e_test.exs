@@ -178,7 +178,7 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
              )
 
     sigkill(os_pid(port_a))
-    boot_runner(namespace, id_path, env: [{"FLEZHA_BOUNDED_E2E_RELEASE", "1"}])
+    boot_runner(namespace, id_path, env: [{"FLEZHA_STEPS_E2E_RELEASE", "1"}])
 
     assert await_changelog(%{"k" => "k=2"}, 60_000),
            "the tally never took the value the relay had committed: " <>

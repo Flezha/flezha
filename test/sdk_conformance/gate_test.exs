@@ -92,13 +92,14 @@ defmodule FlezhaTest.SdkConformance.GateTest do
     elixir: "sdk/elixir/lib/flezha/sdk/admin.ex"
   }
 
-  # Names the bounded operator authoring surface retired: a bounded operator declares its graph
-  # in `channels` and its retry ladder on the edge, as an unbounded operator does, and Node's
-  # stream function is `defineUnbounded`. Each pattern is the spelling a
+  # Names the steps operator authoring surface retired: a steps operator declares its graph
+  # in `channels` and its retry ladder on the edge, as a flow operator does, and both are
+  # one `Operator` class, so no kind class survives. Each pattern is the spelling a
   # definition or a use would take, never prose.
-  @retired_bounded_names [
+  @retired_steps_names [
     {"a `tasklets` body", ~r/\b(?:fn|def|void)\s+tasklets\s*\(/},
-    {"`defineOperator`", ~r/\bdefineOperator\b/},
+    {"a kind class",
+     ~r/\b(?:Unbounded|Bounded)Operator\b|\b(?:unbounded|bounded)_operator\b/},
     {"a class-level retry knob",
      ~r/\b(?:retry_attempts|retryAttempts|barrier_retry_attempts|barrierRetryAttempts)\b|\bfn retry_backoff\(|\bretryBackoff\(/},
     {"`ZeroRetryBackoff`", ~r/\bZeroRetryBackoff\b/}
@@ -134,7 +135,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
                             [
                               Mix.Tasks.Bench,
                               Mix.Tasks.Bench.Roundtrip,
-                              Mix.Tasks.Bench.Bounded
+                              Mix.Tasks.Bench.Steps
                             ],
                             &Code.ensure_loaded?/1
                           )
@@ -800,15 +801,15 @@ defmodule FlezhaTest.SdkConformance.GateTest do
     end
   end
 
-  describe "the bounded authoring surface" do
-    test "no SDK reintroduces a name the bounded surface retired" do
+  describe "the steps authoring surface" do
+    test "no SDK reintroduces a name the steps surface retired" do
       files =
         SourceWalk.files(@authoring_roots, ~w(.rs .java .ex .exs .ts .js .mjs .py .rb .php))
 
       assert length(files) > 100, "read only #{length(files)} files; a root moved"
 
       for {file, line, number} <- SourceWalk.code_lines(files),
-          {name, pattern} <- @retired_bounded_names,
+          {name, pattern} <- @retired_steps_names,
           line =~ pattern do
         fail("#{file}:#{number} reintroduces #{name}: #{String.trim(line)}")
       end

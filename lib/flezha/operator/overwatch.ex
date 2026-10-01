@@ -101,13 +101,15 @@ defmodule Flezha.Operator.Overwatch do
     # Input-log appends in flight (`Ingest.journal_reply/2`): each request's
     # label carries the reply it owes and the payload to forward.
     journal_reqids: :gen_server.reqids_new(),
-    # Durable bounded class (kind + per-class persistence): the other way an
+    # The settings the last bind announced, for `flz operator info`.
+    settings: nil,
+    # Durable steps class (run + per-class persistence): the other way an
     # instance has durable input, and the one that journals stage by stage.
-    durable_bounded: false,
+    durable_steps: false,
     # The class sleeps when idle, declared by the SDK: its input is journaled
     # so a message that finds it asleep wakes it and waits in the log.
     sleeps: false,
-    # Asleep (`bounded-durable-suspension`): zero live runner resources,
+    # Asleep (`durable-suspension`): zero live runner resources,
     # registry entry retained. A new input-log append, or the recorded wake
     # deadline — rehydrates through the normal bind path.
     suspended: false,
@@ -130,7 +132,7 @@ defmodule Flezha.Operator.Overwatch do
     # The outside callers waiting on this operator for an answer; each row's
     # deadline is armed under the timer family `:call`.
     calls: %Calls{},
-    # Whether a `:once` or `:chained` bounded instance has taken its one
+    # Whether a `:once` or `:chained` steps instance has taken its one
     # input in this process, so a later call is refused; a durable instance
     # also asks its input log (`Ingest.first_input?/1`), which outlives it.
     fed: false
@@ -285,7 +287,7 @@ defmodule Flezha.Operator.Overwatch do
 
       {:error, {:split_state_key, class}} ->
         Logger.error(
-          "[overwatch] refusing to bind bounded #{state.id}: its state key is its " <>
+          "[overwatch] refusing to bind steps #{state.id}: its state key is its " <>
             "instance id, not #{inspect(class)}"
         )
 
@@ -293,10 +295,10 @@ defmodule Flezha.Operator.Overwatch do
     end
   end
 
-  # A bounded operator's journal, Cells and input log are all keyed by its instance id,
+  # A steps operator's journal, Cells and input log are all keyed by its instance id,
   # so an `:operator_class` naming anything else would split them: it is
   # refused, not ignored.
-  defp one_state_key(%__MODULE__{builder: %{kind: :bounded}} = state) do
+  defp one_state_key(%__MODULE__{builder: %{run: :steps}} = state) do
     case operator_class(state) do
       id when id == state.id -> :ok
       class -> {:error, {:split_state_key, class}}
@@ -316,13 +318,13 @@ defmodule Flezha.Operator.Overwatch do
 
     state = %__MODULE__{
       state
-      | durable_bounded: Migration.durable_bounded?(state, operator),
-        sleeps: ClassRegistry.sleep_when_idle?(class)
+      | durable_steps: Migration.durable_steps?(state, operator),
+        sleeps: ClassRegistry.sleeps?(class)
     }
 
     # Sleeping instances are rediscovered from durable state alone (the park
     # record and the input log), so a controller redeploy neither binds them to
-    # a runner nor loses their sleep (`bounded-durable-suspension`). An
+    # a runner nor loses their sleep (`durable-suspension`). An
     # instance with undelivered input is not asleep any more: it binds and
     # consumes it. The floor is seeded first, since the log answers that
     # question against it.
@@ -447,7 +449,7 @@ defmodule Flezha.Operator.Overwatch do
   def handle_call({:runner_migrate, new_runner_id}, _from, %__MODULE__{} = state),
     do: Migration.runner_migrate(state, new_runner_id)
 
-  # A stop of a sleeping bounded operator: woken onto a runner with the stop carried,
+  # A stop of a sleeping steps operator: woken onto a runner with the stop carried,
   # so it ends as it would stopped awake. `{:error, :awake}` when it is not
   # asleep, and the caller stops it as an awake one.
   @impl true
@@ -734,7 +736,7 @@ defmodule Flezha.Operator.Overwatch do
     {:noreply, %{state | extensions: Table.fire_timer(state.extensions, name, plugin_id)}}
   end
 
-  # The recorded wake deadline elapsed (`bounded-durable-suspension`): it is
+  # The recorded wake deadline elapsed (`durable-suspension`): it is
   # the earliest timer the instance's Cells held when it parked, so the
   # rehydrate alone wakes it: the restored Cells re-arm the timer and its
   # firing opens the pass. Nothing is appended. A racing message collapses
@@ -886,7 +888,7 @@ defmodule Flezha.Operator.Overwatch do
   # effect of a read. `flz state at` is the durable-read path.
   defp read_cell_state(%__MODULE__{} = state, from, selector) do
     cond do
-      not PersistenceResolver.persistence_enabled?(operator_class(state)) ->
+      not PersistenceResolver.keeps_state?(operator_class(state)) ->
         {:reply, {:error, {:persistence_off, state.id}}, state}
 
       state.suspended ->

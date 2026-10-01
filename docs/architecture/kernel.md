@@ -2,8 +2,8 @@
 
 The kernel is the substrate both profiles share: how a state change becomes durable, how an
 output gets an identity, how back-pressure is applied, who is allowed to write, and how the
-system knows work is flowing. Everything here is profile-agnostic — an unbounded operator and
-a bounded operator persist a cell through exactly the same machinery.
+system knows work is flowing. Everything here is profile-agnostic — a flow operator and
+a steps operator persist a cell through exactly the same machinery.
 
 - [The write path](#the-write-path)
 - [The WAL record](#the-wal-record)
@@ -75,7 +75,7 @@ never heard of the tier — the default costs nothing.
 
 ## The WAL record
 
-Every durable file in Flezha — a cell WAL, the input log, the bounded operator task journal — is the
+Every durable file in Flezha — a cell WAL, the input log, the steps operator task journal — is the
 same framed, CRC-protected, append-only log.
 
 ```
@@ -98,7 +98,7 @@ A torn tail — a partial record from a crash mid-write — is detected by the C
 scan at open and truncated. `RecordFrame.fold_records/3` is the one place that walk lives; every
 reader (cell WAL, input log, task journal, retention rewriter, time-travel) goes through it.
 
-The bounded operator task journal reuses byte 0–3 of the header for its **epoch**, which is safe because
+The steps operator task journal reuses byte 0–3 of the header for its **epoch**, which is safe because
 byte 9 is the format-id slot and the journal never writes a cell format id there. The input
 log writes an append timestamp into bytes 0–7 and deliberately forces byte 9 to zero, so an
 input record can never be mistaken for an effect record.
@@ -273,7 +273,7 @@ Deeper detail, including the WAL record format and every configuration knob:
 
 ## The minimum watermark and retention
 
-Each cell of an unbounded operator with journaled input reports the input-log offset it has
+Each cell of a flow operator with journaled input reports the input-log offset it has
 durably consumed. The **minimum** across an operator's cells is safely done everywhere, and it
 is the floor until the runner's processed prefix is confirmed (below).
 
@@ -368,7 +368,7 @@ flowchart LR
 
 - **Ship triggers are the existing boundaries.** Compaction already produces the snapshot
   artifact; a checkpoint close already defines the stream interval; `IterCommit`/`TaskCommit`
-  already define the bounded operator commit points. One backstop timer (`ship_interval_ms`, default
+  already define the steps operator commit points. One backstop timer (`ship_interval_ms`, default
   30 s) covers cells that hit none of them. No barrier alignment exists or is needed — the
   effect record already binds state and offset per cell, so every cell's shipped cut is
   independently consistent.
@@ -379,7 +379,7 @@ flowchart LR
 - **The epoch fence extends outward.** The manifest's conditional write makes the remote store
   an external arbiter: a superseded controller fails its `put_if` and must stop shipping, so two
   controllers can never both own an operator's remote lineage.
-- **Per-class sync mode.** A bounded class declaring `durability: :sync_remote` has its barrier
+- **Per-class sync mode.** A steps class declaring `durability: :sync_remote` has its barrier
   acks gated on the remote ship — RPO 0, one LAN round-trip per barrier at Hz rates. Stream
   classes are refused sync: at ~100K changes/s it would be a lie. Async shipping never blocks
   the hot path; a stalled shipper raises the alarm-grade `[:flezha, :state, :rpo_exceeded]`
@@ -522,7 +522,7 @@ The distinction is a real honesty boundary, not a formality:
   Together they are a sufficient handle for exact append-only dedup.
 
 `flz.` is a reserved metadata namespace. A user emit carrying a `flz.`-prefixed key is rejected
-at emit time, so stamps cannot be forged or clobbered. A durable bounded operator's Cells write the same
+at emit time, so stamps cannot be forged or clobbered. A durable steps operator's Cells write the same
 effect record and mint through the same controller-side function, so their outputs carry the
 same `flz.seq = <record seq>.<emit ordinal>` and `flz.epoch`.
 
@@ -556,7 +556,7 @@ what the world sees, so it reproduces the same identity and the sink swallows it
 correction *must* change what the world sees, so it raises the epoch and the sink lets it
 through.
 
-A bounded operator's `flz operator rewind` moves no output epoch. It bumps only the journal epoch,
+A steps operator's `flz operator rewind` moves no output epoch. It bumps only the journal epoch,
 which keys the re-run's barriers; the re-run's output is a newer record of the same Cell, so its
 higher `flz.seq` passes the sink's guard under the unchanged epoch.
 
@@ -647,7 +647,7 @@ not got back. (Bytes that never enter the buffer at all — a deduplicated re-se
 a refused stale write — are released immediately instead, so every byte is accounted for exactly
 once.)
 
-The park is a bounded operator re-check loop, not an indefinite block, so a lost grant degrades to a
+The park is a steps operator re-check loop, not an indefinite block, so a lost grant degrades to a
 retry rather than a freeze. A sender parked for more than 5 s logs once. `credit_parked` rides
 the runner's data heartbeat, so "fed but parked" is distinguishable from "wedged" from the
 outside.
@@ -659,7 +659,7 @@ protocol.
 
 ### The source→controller credit loop
 
-The input log holds its own credit ledger, for a tier unbounded operator and a durable bounded operator alike. An
+The input log holds its own credit ledger, for a tier flow operator and a durable steps operator alike. An
 `append` debits it. When the ledger is exhausted the append is **parked** — the log defers its
 reply — and the minimum-watermark advance is what drains the ledger and unparks the waiters in
 arrival order.
@@ -711,7 +711,7 @@ sequenceDiagram
 ```
 
 Above the fences sits the **identity check**. `StreamChannel.Records.admit/3` refuses an output,
-a cell write, a `correction_request` or a control frame (`BoundedCompleted`, `IterPark`,
+a cell write, a `correction_request` or a control frame (`OperatorCompleted`, `IterPark`,
 `RunnerShutdownNotification`, `TaskCommit`, `IterCommit`) when the operator's row does not
 name the sending session's identity as its owner. A
 refusal acts on nothing: it is counted on the channel's `foreign_frame_refused` liveness slot,
@@ -828,7 +828,7 @@ detection off:
 | Compaction timeout | a requested snapshot has not arrived in 30 s | resync |
 
 The input-silence sweep is skipped for a checkpoint-ack operator, whose silence between
-checkpoints **is** its steady state, and for a bounded operator, which legitimately goes quiet
+checkpoints **is** its steady state, and for a steps operator, which legitimately goes quiet
 between iterations. The convergence judge holds the same rule for the same observation: a flat
 marker with no input-side advance is idle, and idle is healthy.
 

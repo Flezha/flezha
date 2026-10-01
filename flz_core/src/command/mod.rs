@@ -11,7 +11,7 @@ use crate::pb::{CommandRequest, CommandResponse};
 use crate::runner::RunnerNode;
 use crate::ErrorModel;
 
-mod bounded_stop;
+mod steps_stop;
 mod cell_apply_state;
 pub mod cell_state;
 mod cell_status;
@@ -130,7 +130,7 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
         Some(Command::CompactCell(c)) => regular(c),
         Some(Command::CellMailboxStatus(c)) => regular(c),
         Some(Command::Ping(c)) => regular(c),
-        Some(Command::BoundedStop(c)) => regular(c),
+        Some(Command::StepsStop(c)) => regular(c),
         Some(Command::CreditWindowInit(c)) => regular(c),
         Some(Command::CreditGrant(c)) => regular(c),
         Some(Command::ParkPayloadAck(c)) => regular(c),
@@ -139,20 +139,20 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
         | Some(Command::CompactCellResponse(_))
         | Some(Command::RunnerReconnected(_))
         | Some(Command::ReassignRunnerId(_))
-        | Some(Command::BoundedCompleted(_))
+        | Some(Command::OperatorCompleted(_))
         | Some(Command::CreditWindowAck(_))
         | Some(Command::TaskCommit(_))
         | Some(Command::IterCommit(_))
         | Some(Command::IterPark(_))
         | Some(Command::UpdateFactories(_))
-        | Some(Command::SpawnBoundedRequest(_))
+        | Some(Command::SpawnStepsRequest(_))
         | Some(Command::AdminRequest(_))
         | Some(Command::OperatorExited(_))
         // The control reader answers a refusal itself, before the handshake
         // it ends; one arriving later has no session to refuse.
         | Some(Command::ConnectRefused(_)) => CommandActionType::NotificationIgnore,
         Some(Command::RunnerShutdownAck(_)) => CommandActionType::AckSignal(Ok(String::new())),
-        Some(Command::SpawnBoundedResponse(reply)) => CommandActionType::AckSignal(ack_result(
+        Some(Command::SpawnStepsResponse(reply)) => CommandActionType::AckSignal(ack_result(
             crate::spawn::encode_ack(&reply.outcome, &reply.instance_id),
             reply.error,
         )),
@@ -388,8 +388,8 @@ mod tests {
         let reply = |outcome: &str, error: Option<&FlezhaError>, instance_id: &str| {
             let bytes = CommandRequest {
                 reference_id: "ref-spawn".to_string(),
-                command: Some(Command::SpawnBoundedResponse(
-                    crate::pb::SpawnBoundedResponse {
+                command: Some(Command::SpawnStepsResponse(
+                    crate::pb::SpawnStepsResponse {
                         outcome: outcome.to_string(),
                         error: error.map(crate::pb::Error::from),
                         instance_id: instance_id.to_string(),

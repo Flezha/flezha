@@ -98,6 +98,20 @@ defmodule FlezhaTest.Operator.OverwatchRetryTest do
     assert_receive :activated, 2_000
   end
 
+  test "a remote class is refused at start on a controller with no durability backend" do
+    refute Flezha.State.DurabilityTier.enabled?(), "the suite runs with no durability backend"
+    operator = %Builder{id: "remote_without_backend_op", factory_id: "sync_durable_steps"}
+
+    assert {:error, {:start_failed, "remote_without_backend_op", reason}} =
+             OperatorManager.start_operator(@namespace, operator)
+
+    assert reason == {:remote_without_backend, "sync_durable_steps"}
+    error = Flezha.Error.from_reason(reason, nil)
+    assert error.code == "operator.remote_without_backend"
+    assert error.message =~ "FLEZHA_DURABILITY_BACKEND"
+    assert error.details == %{"factory" => "sync_durable_steps"}
+  end
+
   test "5.1 a failed attempt parks at once with its reason, declares the park, and is not retried in place",
        %{test_pid: test_pid, ets: ets} do
     become_loop()

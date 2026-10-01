@@ -73,7 +73,7 @@ defmodule Flezha.Convergence.StallClassifier do
   @type verdict :: {atom(), map()} | :ok
 
   # `cell_stall_ms` is deliberately far above the longest activation any
-  # bench-fleet fixture produces (a chained bounded operator turn is milliseconds; the
+  # bench-fleet fixture produces (a chained steps operator turn is milliseconds; the
   # slowest e2e Tasklet sleeps seconds), because from the runner an activation
   # that is merely slow and one whose handout was lost look identical. Override
   # with `FLEZHA_CONVERGENCE_CELL_STALL_MS` where real Tasklets run longer.

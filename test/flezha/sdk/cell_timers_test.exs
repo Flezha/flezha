@@ -192,14 +192,14 @@ defmodule Flezha.SDK.CellTimersTest do
     [_r0, _r1] = frames(2)
     assert_receive {:timers, %{count: 1}, %{event: :registered}}, 1_000
     assert Counters.timers_armed(counters) == 1
-    {:ok, pid} = Operator.lookup(op, "ttl_timer", "k1")
+    {:ok, pid} = Operator.Server.lookup(op, "ttl_timer", "k1")
     assert_evicted(pid, {"op-1", "ttl_timer", "k1"})
     assert Counters.timers_armed(counters) == 0
 
     Inbox.input(op, "in", "k1:again", %{})
     [_r0, r1] = frames(2)
     assert {1, [%{register: true}], _} = timer_ops(r1)
-    {:ok, fresh} = Operator.lookup(op, "ttl_timer", "k1")
+    {:ok, fresh} = Operator.Server.lookup(op, "ttl_timer", "k1")
     assert Timers.size(:sys.get_state(fresh).timers.pending) == 1
   end
 

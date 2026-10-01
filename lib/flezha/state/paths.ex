@@ -37,7 +37,7 @@ defmodule Flezha.State.Paths do
 
   @journal_cell_key "_task_journal"
 
-  # The reserved cell-key of a bounded instance's task-journal, paired with the
+  # The reserved cell-key of a steps instance's task-journal, paired with the
   # file it maps onto. It rides the Cell persistence substrate — `wal_path/1`
   # writes this name, so the WalWriter/FsyncBatcher/delete machinery treats it
   # as one more per-instance file — but it is not a Cell: `scan_dir/1` skips the
@@ -61,15 +61,15 @@ defmodule Flezha.State.Paths do
   def reserved_cell_keys(), do: @reserved_cell_keys
 
   @doc """
-  Reserved journal identity for a bounded instance's task-journal
-  (`bounded-task-journal`). Bounded operator per-instance state is keyed by the
+  Reserved journal identity for a steps instance's task-journal
+  (`steps-task-journal`). Steps operator per-instance state is keyed by the
   instance id in the class position, so both dir levels carry it.
   """
   @spec journal_id(binary()) :: cell_id()
   def journal_id(instance_id) when is_binary(instance_id),
     do: {instance_id, instance_id, @journal_cell_key}
 
-  @doc "On-disk path of a bounded instance's task-journal."
+  @doc "On-disk path of a steps instance's task-journal."
   @spec journal_path(binary()) :: binary()
   def journal_path(instance_id) when is_binary(instance_id),
     do: wal_path(journal_id(instance_id))
@@ -322,8 +322,8 @@ defmodule Flezha.State.Paths do
   end
 
   @doc """
-  Path of an instance's durable input log (an unbounded operator on the effectively-once
-  tier, or a durable bounded operator). Lives at the class level beside the `kind`
+  Path of an instance's durable input log (a flow operator on the effectively-once
+  tier, or a durable steps operator). Lives at the class level beside the `kind`
   sidecar — inert to the Cell scanners, which only walk `<class>/<tasklet_id>/`
   dirs.
   """
@@ -333,7 +333,7 @@ defmodule Flezha.State.Paths do
   end
 
   @doc """
-  Path of a per-Cell saga compensation marker (`bounded-operator-saga`
+  Path of a per-Cell saga compensation marker (`operator-saga`
   §4.3). `:intent` marks that the Cell's tasklet completed forward and may
   need undo; `:done` marks that its compensation already ran. Presence is the
   signal (empty file). Inert to `scan_dir/1` (unknown suffix), so a marker never
@@ -359,7 +359,7 @@ defmodule Flezha.State.Paths do
 
   @doc """
   Read a Cell's saga compensation markers, shipped back on `RestoreInitState`
-  so a respawned durable bounded driver finishes the remaining hooks: `intent` ⇒
+  so a respawned durable steps driver finishes the remaining hooks: `intent` ⇒
   its tasklet completed forward and may need undo; `done` ⇒ its compensation
   already ran (skip it).
   """
@@ -390,14 +390,14 @@ defmodule Flezha.State.Paths do
 
   @typedoc """
   A unit of an instance's durable state that moves between nodes whole: one
-  Cell's file set (a bounded operator's journal is this shape, under its reserved
+  Cell's file set (a steps operator's journal is this shape, under its reserved
   identity) or the instance's input log.
   """
   @type durable_ref :: {:cell, cell_id()} | {:input_log, binary()}
 
   @doc """
   The durable references this node holds for `operator_class`: its Cells, a
-  bounded operator's journal and the input log, each only when present.
+  steps operator's journal and the input log, each only when present.
   """
   @spec durable_refs(binary()) :: [durable_ref()]
   def durable_refs(operator_class) when is_binary(operator_class) do
@@ -517,7 +517,7 @@ defmodule Flezha.State.Paths do
   Pass `{operator_class, tasklet_id, ""}` to scan the whole Tasklet. Returns lists
   of `{cell_key, ...}` tuples grouped by file type. A file wearing any
   in-progress suffix `Flezha.State.Durable` declares is skipped — it is
-  crash-residue from an atomic-rename bounded operator, not a Cell.
+  crash-residue from an atomic-rename steps operator, not a Cell.
   """
   @spec scan_dir(cell_id()) :: scan_result()
   def scan_dir({_, _, _} = pid) do

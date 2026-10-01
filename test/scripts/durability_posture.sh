@@ -19,7 +19,7 @@
 #
 # Cell WAL recovery is NOT re-proved here; that is
 # `test/system/remote_durability_e2e_test.exs`, which destroys the state
-# directory of a live bounded operator and a live checkpoint stream against real
+# directory of a live steps operator and a live checkpoint stream against real
 # runners.
 #
 # Usage:

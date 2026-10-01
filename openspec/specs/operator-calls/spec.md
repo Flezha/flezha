@@ -24,7 +24,7 @@ NEVER be taken from an input's or a plugin's metadata, which always loses its `f
 ingest path SHALL put back, after the `:on_input` chain has run, the token the input arrived
 with, so that no hook can add, remove or change one. The token SHALL be journaled with the input wherever the operator
 journals input, so a sleep, a rebind's tail re-forward and a crash re-forward deliver it again.
-This SHALL hold for an unbounded and a bounded operator alike.
+This SHALL hold for an unbounded and a steps operator alike.
 
 #### Scenario: A plugin cannot forge a token
 
@@ -41,16 +41,16 @@ This SHALL hold for an unbounded and a bounded operator alike.
 - **WHEN** an `:on_input` hook returns the input with metadata rebuilt without `flz.reply_to`
 - **THEN** the input SHALL still carry the token the call gave it when it is journaled and forwarded
 
-#### Scenario: A sleeping bounded operator's call keeps its token
+#### Scenario: A sleeping steps operator's call keeps its token
 
-- **WHEN** an outside caller calls a durable `:per_input` bounded operator that is asleep
+- **WHEN** an outside caller calls a durable `:per_input` steps operator that is asleep
 - **THEN** the input SHALL be journaled with its token, the append SHALL wake the instance, and the turn's answer SHALL reach the caller
 
 ### Requirement: The runner core SHALL carry the token from an input to every output it causes
 
 The runner core SHALL carry an input's token beside the input-log offset it already carries: for
-an unbounded operator on every item the input becomes and on every value an inter-tasklet emit
-derives from it, and for a bounded operator on the pass the input opens. A timer firing, a
+a flow operator on every item the input becomes and on every value an inter-tasklet emit
+derives from it, and for a steps operator on the pass the input opens. A timer firing, a
 chained loop's carry and an input without a token SHALL carry none. An inter-tasklet value a
 restore delivers again SHALL be given the token of the input-log record its origin offset names.
 The core SHALL do this for the six SDKs that share `flz_core`, and the Elixir SDK SHALL do the
@@ -58,17 +58,17 @@ same in its re-expression; no SDK's tasklet surface SHALL see the token.
 
 #### Scenario: A downstream tasklet answers
 
-- **WHEN** an unbounded operator declares `input("in") |> into(Parse) |> into(Price) |> response()` and an outside caller calls it
+- **WHEN** a flow operator declares `input("in") |> into(Parse) |> into(Price) |> response()` and an outside caller calls it
 - **THEN** the value `Price` emits for that input SHALL answer the caller, although `Price` never received the input itself
 
-#### Scenario: A bounded turn answers from its last stage
+#### Scenario: A steps turn answers from its last stage
 
-- **WHEN** a `:per_input` bounded operator declares two tasklets in a chain ending in `response()` and is called
+- **WHEN** a `:per_input` steps operator declares two tasklets in a chain ending in `response()` and is called
 - **THEN** the output of the second tasklet in the pass that call's input opened SHALL answer the caller
 
 #### Scenario: A restored edge value keeps its call
 
-- **WHEN** an effectively-once unbounded operator's runner dies after the first tasklet's record is durable and before the second tasklet answered, and the restore delivers the recorded edge value again
+- **WHEN** an effectively-once flow operator's runner dies after the first tasklet's record is durable and before the second tasklet answered, and the restore delivers the recorded edge value again
 - **THEN** the second tasklet's output SHALL carry the call's token and SHALL answer the caller if it is still waiting
 
 ### Requirement: A `response()` end's output SHALL be its caller's answer and SHALL never reach a plugin
@@ -83,7 +83,7 @@ waiting caller SHALL be dropped and counted with the reason `unclaimed`.
 
 #### Scenario: The answer reaches the caller and nothing else
 
-- **WHEN** an outside caller calls an unbounded operator whose tasklet's channel ends in `response()`, and a Kafka sink plugin is enabled on the operator
+- **WHEN** an outside caller calls a flow operator whose tasklet's channel ends in `response()`, and a Kafka sink plugin is enabled on the operator
 - **THEN** the caller SHALL receive the answer's payload, and the Kafka producer SHALL receive nothing
 
 #### Scenario: An output nobody asked for is dropped and counted
@@ -99,25 +99,25 @@ waiting caller SHALL be dropped and counted with the reason `unclaimed`.
 ### Requirement: An answer SHALL leave when its tier releases outputs
 
 An answer SHALL leave the runner exactly where an output of the same operator leaves today: at
-settle for an operator off the effectively-once tier and for a bounded operator that journals
+settle for an operator off the effectively-once tier and for a steps operator that journals
 nothing; after the effect record that carries it is durable under the effectively-once tier; and
-when the stage that produced it commits for a durable bounded operator. No answer SHALL leave
+when the stage that produced it commits for a durable steps operator. No answer SHALL leave
 before the state change its invocation made is durable where the operator's tier promises
 durability.
 
 #### Scenario: An effectively-once answer follows its record's sync
 
-- **WHEN** an effectively-once unbounded operator answers a call from an invocation that changed its Cell's state
+- **WHEN** an effectively-once flow operator answers a call from an invocation that changed its Cell's state
 - **THEN** the answer SHALL reach the Overwatch only in the outbox dispatch that follows the effect record's fsync
 
-#### Scenario: A durable bounded answer follows its stage's commit
+#### Scenario: A durable steps answer follows its stage's commit
 
-- **WHEN** a durable `:per_input` bounded operator's turn emits on a `response()` end
+- **WHEN** a durable `:per_input` steps operator's turn emits on a `response()` end
 - **THEN** the answer SHALL reach the caller only after the stage that emitted it has committed
 
 #### Scenario: An answer off the tier leaves at once
 
-- **WHEN** an unbounded operator on the default tier answers a call
+- **WHEN** a flow operator on the default tier answers a call
 - **THEN** the answer SHALL leave on the frame the core ships at settle, with no durability wait
 
 ### Requirement: The first answer SHALL win
@@ -144,13 +144,13 @@ deadline.
 
 #### Scenario: A slow turn times out and still runs
 
-- **WHEN** a caller calls a bounded operator with a deadline of 100 ms and the turn takes 2 000 ms
+- **WHEN** a caller calls a steps operator with a deadline of 100 ms and the turn takes 2 000 ms
 - **THEN** the caller SHALL receive `call.timeout` after about 100 ms, the turn SHALL commit, and its answer SHALL be dropped and counted as `unclaimed`
 
 ### Requirement: A call that cannot be answered SHALL be answered at once with a code
 
 A call SHALL be answered at once, in the error model of `give-every-error-a-code`, whenever its
-answer can no longer come or the call cannot be taken. For an unbounded and a bounded operator
+answer can no longer come or the call cannot be taken. For an unbounded and a steps operator
 alike:
 
 - no operator or member of that id in the namespace: `operator.not_found`;
@@ -159,15 +159,15 @@ alike:
 - the input absorbed as a duplicate or filtered out by an `:on_input` hook: `call.absorbed`;
 - the operator already owing `call_pending_max` answers to the callers waiting on it (its own
   outbound calls do not count): `call.busy`, nothing ingested;
-- a `:once` or `:chained` bounded instance that has already been given an input:
+- a `:once` or `:chained` steps instance that has already been given an input:
   `call.not_accepted`, nothing ingested;
 - the input dead-lettered by the callee, by any park route that parks an input: `call.failed`,
   carrying the dead-letter reference and the error text, sent once the dead-letter entry is
   durable, except for a failed turn a durable `:per_input` `keep_progress` loop parks through its
   iteration commit (`keep-a-session-after-a-failed-turn`), whose `call.failed` SHALL be sent once
   that turn's `dead_lettered` record is durable;
-- the instance ending, as a bounded run completes, fails or is stopped, or as either kind is
-  stopped, while callers wait: `call.callee_ended` to each, carrying the run's status, except an
+- the instance ending, as a run completes (`ok` for steps, `completed` for a flow), fails or
+  is stopped, while callers wait: `call.callee_ended` to each, carrying the run's status, except an
   operator caller of an instance that is stopped without ending and keeps a durable input log:
   its call stays journaled there and is answered when the instance runs again, or by the
   caller's deadline.
@@ -179,34 +179,34 @@ alike:
 
 #### Scenario: A dead-lettered input on the default tier
 
-- **WHEN** an unbounded operator off the tier exhausts its retries on a called input and parks it
+- **WHEN** a flow operator off the tier exhausts its retries on a called input and parks it
 - **THEN** the caller SHALL receive `call.failed` naming the dead-letter entry before its deadline
 
 #### Scenario: A dead-lettered input under the tier
 
-- **WHEN** an effectively-once unbounded operator parks a called input inside its effect record
+- **WHEN** an effectively-once flow operator parks a called input inside its effect record
 - **THEN** the caller SHALL receive `call.failed` once the dead-letter entry is durable, the token read from the input-log record the entry's origin offset names
 
 #### Scenario: A session's failed turn answers once its record is durable
 
-- **GIVEN** a durable `:per_input` `keep_progress` bounded operator whose turn fails on `boom`, as `keep-a-session-after-a-failed-turn` defines
+- **GIVEN** a durable `:per_input` `keep_progress` steps operator whose turn fails on `boom`, as `keep-a-session-after-a-failed-turn` defines
 - **WHEN** an outside caller calls it with `boom`
 - **THEN** the caller SHALL receive `call.failed` only after the turn's `dead_lettered` record is durable, and a later call SHALL be answered by the next turn
 
 #### Scenario: A failed turn of a session that journals nothing answers its caller
 
-- **GIVEN** a `:per_input` `keep_progress` bounded class with persistence off, whose turn fails on `boom`
+- **GIVEN** a `:per_input` `keep_progress` steps class with persistence off, whose turn fails on `boom`
 - **WHEN** an outside caller calls it with `boom`
 - **THEN** the turn's park frame SHALL carry the pass's token, and the caller SHALL receive `call.failed` once the dead-letter entry is durable
 
 #### Scenario: A single-pass instance refuses a second call
 
-- **WHEN** a `:once` bounded instance has taken its first input and a second call reaches it
+- **WHEN** a `:once` steps instance has taken its first input and a second call reaches it
 - **THEN** the call SHALL be answered `call.not_accepted` and nothing SHALL be journaled
 
-#### Scenario: A failed bounded run answers its waiting callers
+#### Scenario: A failed steps run answers its waiting callers
 
-- **WHEN** a bounded run fails while two callers wait on it
+- **WHEN** a steps run fails while two callers wait on it
 - **THEN** both SHALL receive `call.callee_ended` carrying the run's terminal status `error`
 
 #### Scenario: A stopped durable callee keeps its operator callers' calls
@@ -298,8 +298,8 @@ be one of:
 - the instance of a factory whose id is the record's key, `key_by(...) |> call(factory: f,
   deadline_ms: n)`, started with the request as its first input when no instance holds that id,
   unless the end says `create: false`, which SHALL answer `operator.not_found` instead;
-- with no `key_by`, a new bounded instance of the factory per call, under a generated id; an
-  unbounded factory there SHALL be answered `operator.factory_not_bounded`.
+- with no `key_by`, a new steps instance of the factory per call, under a generated id; a
+  flow factory there SHALL be answered `operator.factory_not_steps`.
 
 The request SHALL enter the callee on the entry channel the end names with `channel:`, or, when it
 names none, on the callee's first declared entry channel. The target SHALL always be resolved in
@@ -311,13 +311,13 @@ instance and deliver the other request to it. A call SHALL never block the invoc
 
 #### Scenario: One stream calls another by name
 
-- **WHEN** an unbounded `orders` operator ends a chain in `call("pricing", deadline_ms: 500)` and `pricing` is an unbounded operator whose graph ends in `response()`
+- **WHEN** a flow `orders` operator ends a chain in `call("pricing", deadline_ms: 500)` and `pricing` is a flow operator whose graph ends in `response()`
 - **THEN** each order SHALL reach `pricing` as an input, and each answer SHALL reach `orders` as a `Response`
 
 #### Scenario: A session is created on its first call and reached on its second
 
 - **WHEN** a gateway calls `key_by(& &1.session) |> call(factory: "agent", deadline_ms: 60_000)` twice with the session `anna-42`, which no instance holds
-- **THEN** the first call SHALL start the bounded instance `anna-42` with the request as its first input and its `Response` SHALL say `created: true`, and the second SHALL be delivered to the same instance and say `created: false`
+- **THEN** the first call SHALL start the steps instance `anna-42` with the request as its first input and its `Response` SHALL say `created: true`, and the second SHALL be delivered to the same instance and say `created: false`
 
 #### Scenario: An absent session is refused when creation is off
 
@@ -327,7 +327,7 @@ instance and deliver the other request to it. A call SHALL never block the invoc
 #### Scenario: A factory call without a key starts one instance per call
 
 - **WHEN** an operator ends a chain in `call(factory: "triage", deadline_ms: 60_000)` with no `key_by` and two values reach it
-- **THEN** two bounded instances SHALL start under generated ids, and each `Response` SHALL name its own instance in `target`
+- **THEN** two steps instances SHALL start under generated ids, and each `Response` SHALL name its own instance in `target`
 
 #### Scenario: A key cannot steer a call into another operator
 
@@ -369,9 +369,9 @@ the request with the call end's request codec (in Elixir, whose request serializ
 the request's bytes) and the value with its answer codec, so that
 `test/fixtures/call_response_envelope.json` decodes to the same fields in every SDK.
 
-#### Scenario: A bounded callee's answer returns to an unbounded caller
+#### Scenario: A steps callee's answer returns to a flow caller
 
-- **WHEN** a gateway calls a `:per_input` bounded session whose turn emits `{"tokens": 812}` on its `response()` end
+- **WHEN** a gateway calls a `:per_input` steps session whose turn emits `{"tokens": 812}` on its `response()` end
 - **THEN** the gateway SHALL receive a `Response` whose result is ok with that value, whose request is what it sent, and whose `target` is the session's id
 
 #### Scenario: The calling tasklet receives its own call's outcome
@@ -402,8 +402,8 @@ the call, and the time an asleep callee takes to wake SHALL count against it.
 ### Requirement: A call between two durable operators SHALL survive a crash of either side with exactly one `Response`
 
 A call SHALL survive a crash of the callee's runner, of the caller's runner, and of the Overwatch
-or controller of either side, when the caller and the callee both keep a durable input log (an
-unbounded operator under the effectively-once tier, a durable bounded operator). The callee SHALL
+or controller of either side, when the caller and the callee both keep a durable input log (a
+flow operator under the effectively-once tier, a durable steps operator). The callee SHALL
 run the call's turn at most once to its commit: a request sent again SHALL be absorbed by its
 `flz.msg_id` while the first is retained. The caller's pending calls and their deadlines SHALL be
 recovered with its state: a call output SHALL stay held in the caller's outbox until the call's
@@ -423,7 +423,7 @@ while held SHALL be dispatched again by the callee's outbox and handed to the de
 
 #### Scenario: The callee dies mid-turn
 
-- **WHEN** a gateway calls a durable `:per_input` bounded session and the session's runner is killed while the turn runs
+- **WHEN** a gateway calls a durable `:per_input` steps session and the session's runner is killed while the turn runs
 - **THEN** the turn SHALL run again from the journaled request on the rebound runner, commit once, and the gateway SHALL receive exactly one `Response`
 
 #### Scenario: The caller dies while a call is pending
@@ -449,19 +449,19 @@ Overwatch dies SHALL lose its pending calls. No retry by the caller SHALL be imp
 
 #### Scenario: A lost answer becomes a timeout
 
-- **WHEN** an unbounded callee off the tier loses its runner after taking a call and before answering
+- **WHEN** a flow callee off the tier loses its runner after taking a call and before answering
 - **THEN** the caller SHALL receive `call.timeout` at the call's deadline
 
-### Requirement: A `:per_input` bounded operator SHALL call without suspending
+### Requirement: A `:per_input` steps operator SHALL call without suspending
 
-A bounded `:per_input` operator SHALL be able to call: the call SHALL leave when the stage that
+A steps `:per_input` operator SHALL be able to call: the call SHALL leave when the stage that
 emitted it commits, and its `Response` SHALL arrive on the Response channel as a later message, run
-as a later iteration like any other. No pass SHALL wait for a `Response`. A bounded instance that
+as a later iteration like any other. No pass SHALL wait for a `Response`. A steps instance that
 ends with calls pending SHALL abandon them: their outcomes SHALL be dropped and counted.
 
 #### Scenario: A session calls a tool and reads the result on its next turn
 
-- **WHEN** a `:per_input` session's turn emits a request on a call end to an unbounded `tools` operator and commits
+- **WHEN** a `:per_input` session's turn emits a request on a call end to a flow `tools` operator and commits
 - **THEN** the call SHALL leave at that commit, and the tool's `Response` SHALL start a later iteration of the session
 
 ### Requirement: Requests SHALL reach a target in order, and `Response`s SHALL carry no order
@@ -508,9 +508,9 @@ dead-letters a failed turn and goes on, as `keep-a-session-after-a-failed-turn` 
 caller SHALL receive `call.failed` and the calls queued behind it SHALL be answered by their own
 turns.
 
-#### Scenario: An unbounded callee dead-letters a call
+#### Scenario: A flow callee dead-letters a call
 
-- **WHEN** an effectively-once unbounded callee exhausts its retries on a call's input and parks it
+- **WHEN** an effectively-once flow callee exhausts its retries on a call's input and parks it
 - **THEN** the caller SHALL receive a `Response` carrying `call.failed` with the dead-letter reference, before the call's deadline
 
 #### Scenario: A failed turn in a session that goes on

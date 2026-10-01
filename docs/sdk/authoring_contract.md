@@ -3,7 +3,7 @@
 For operator authors who use the attribute/annotation sugar and for SDK
 implementers who must keep it identical across bindings. It specifies how a
 declaration (`#[flezha::tasklet]`, the short-form attributes and
-`flezha::operator!` in Rust) maps onto the `UnboundedOperator` / `Tasklet` / `Change` / `Channel`
+`flezha::operator!` in Rust) maps onto the `Operator` / `Tasklet` / `Change` / `Channel`
 trait (interface) surface. The sugar is **pure expansion**: a macro
 (`sdk/rust/macros/`) writes exactly the items a user would write by hand, against the unchanged
 runtime. There is no parallel runtime path, no new protobuf message and no
@@ -18,7 +18,7 @@ author's class implements `Tasklet<Input, State, Output>` and carries
 `@Tasklet.Spec`, its changes are records applied through `ctx.change(...)`, and
 nothing is generated ([`java_sdk.md`](java_sdk.md#tasklets)). The Elixir SDK expands the same
 declarations through `use` macros — `use Flezha.SDK.Tasklet`,
-`use Flezha.SDK.UnboundedOperator` and `use Flezha.SDK.BoundedOperator` take
+`use Flezha.SDK.Operator` takes
 the scalar settings as options named after the behaviour's own callbacks and
 define only the callbacks written, so every default stays where
 `function_exported?` resolves it; a `state do field … end` block declares a
@@ -26,22 +26,22 @@ state's fields and defaults, and `defchange` is the one way to write a change.
 The plain `@behaviour` form, every callback and `apply_change/2` written by
 hand, is the reference form: it keeps working, and is documented in
 [`elixir_sdk.md`](elixir_sdk.md) only. The Node SDK exposes factory functions —
-`defineTasklet`, `defineUnbounded`, `defineBounded`, `registerFactory`, wired by a fluent
+`defineTasklet`, `defineOperator`, `defineOperator`, `registerFactory`, wired by a fluent
 channel builder — and no decorators, because a decorator needs a build step,
 does not apply to a plain function, and cannot reshape the decorated type,
 which is what a typed graph needs ([`node_sdk.md`](node_sdk.md)). The Ruby SDK
-exposes classes — `Flezha::Tasklet`, `Flezha::UnboundedOperator`,
-`Flezha::BoundedOperator`, wired by the same fluent channel builder — and
+exposes classes — `Flezha::Tasklet`, `Flezha::Operator`,
+`Flezha::Operator`, wired by the same fluent channel builder — and
 reads which optional hooks a tasklet declares from the methods it defines, so
 a declaration and its implementation cannot disagree
 ([`ruby_sdk.md`](ruby_sdk.md)). The PHP SDK exposes classes too —
-`Flezha\Tasklet`, `Flezha\UnboundedOperator`, `Flezha\BoundedOperator`, wired
+`Flezha\Tasklet`, `Flezha\Operator`, `Flezha\Operator`, wired
 by the same fluent channel builder — with the scalar declarations in a
 `#[Task]` attribute and the optional hooks read from the methods a tasklet
 **overrides**, which is the closest PHP comes to Java's annotations without a
 build step ([`php_sdk.md`](php_sdk.md)). The Python SDK exposes decorators —
-`@flezha.tasklet`, `@flezha.state`, `@flezha.unbounded_operator`,
-`@flezha.bounded_operator`, wired by the same fluent channel builder — over a
+`@flezha.tasklet`, `@flezha.state`, `@flezha.operator`,
+`@flezha.operator`, wired by the same fluent channel builder — over a
 named tasklet class whose `run` takes the value and a `Ctx[State, Output]` and
 whose other methods are the hooks, with the input, output, state and change
 types all read from the type hints, which is what makes a wrong edge a
@@ -87,7 +87,7 @@ backstop for what typing cannot see.
 | SDK | Compile-time edge typing | Where the refusals are pinned |
 | --- | --- | --- |
 | Rust | yes | 29 compile-fail tests in `sdk/rust/tests/ui/` |
-| Java | yes, through the generic `Tasklet<…>` arguments | `FlezhaException` cases in `sdk/java/.../ClockAndKeyedValidationTest` and `UnboundedOperatorTopologyBuilderTest` |
+| Java | yes, through the generic `Tasklet<…>` arguments | `FlezhaException` cases in `sdk/java/.../ClockAndKeyedValidationTest` and `OperatorTopologyBuilderTest` |
 | Node | yes, through the channel builder's type parameters | `@ts-expect-error` fixtures in `sdk/node/types-tests/`, compiled under `tsc --noEmit`, plus a negative control that strips the directives and requires each pinned line to still produce a diagnostic |
 | Elixir | no — the language cannot | registration-time refusals, plus the `use` macros' `CompileError`s for a declaration named wrongly, in `sdk/elixir/test/flezha/sdk/authoring_macros_test.exs` and `tasklet_clock_test.exs` |
 | Ruby | no — the language cannot | registration-time refusals only, in `sdk/ruby/test/authoring_test.rb` |
@@ -102,7 +102,7 @@ and which side owns the threading model.
 ## 1. Escape-hatch equivalence (non-negotiable)
 
 - Generated code is equivalent to a valid hand-written `Tasklet` /
-  `UnboundedOperator` implementation. It compiles and runs identically; no
+  `Operator` implementation. It compiles and runs identically; no
   protocol, controller or WAL change is required for it to run.
 - An operator MAY mix sugared and hand-written tasklets wired together.
 - "Ejecting" a sugared tasklet to a full impl is a paste of its expansion —
@@ -374,7 +374,7 @@ Three rules make the callback part of the determinism contract:
 2. **`timer_after(d)` is anchored on `ctx.now()`**, not on an ambient read —
    which is what makes a replayed invocation register the same absolute
    timestamp the live one did.
-3. **A registration made during a replay IS registered.** `ctx.spawn_bounded`
+3. **A registration made during a replay IS registered.** `ctx.spawn_steps`
    answers the outcome `skipped_on_replay` because it is an external side effect that must
    not happen twice; a timer is internal state, and skipping it on replay
    would rebuild a pending set the live run never had.
@@ -386,7 +386,7 @@ Tasklet that registers a timer without handling it cannot be refused at
 build time. Full contract, including which
 kind to reach for, in [`cell_timers.md`](cell_timers.md).
 
-The contract holds in both kinds. In a bounded operator, a firing is one more thing
+The contract holds in both runs. In a steps operator, a firing is one more thing
 that starts a pass: it opens a pass at the tasklet that set the timer, or
 joins that tasklet's stage while it runs, or waits its turn behind the pass in
 flight, and its timer leaves the pending set when that stage commits. Only a
@@ -477,30 +477,29 @@ shared between them.
 
 Exactly **one** topology may be written short: a single tasklet from a
 controller input to at most one named sink (`input → tasklet → plugin(sink)`,
-or `input → tasklet` with no sink), as an operator of either kind. **Every
+or `input → tasklet` with no sink), as an operator of either run. **Every
 SDK carries it**: Rust, Java, Python, Node, Ruby, PHP and Elixir.
 
-**The short form is an operator declaration**, written at the SDK's
-kind-named operator entry point, the one a full-form operator already uses.
-An operator declaration is a short form exactly when it carries its one
-tasklet's body **instead of** a topology body, `channels`, the one name both
-kinds give it in every SDK.
-The body is `run`, the name every SDK gives a tasklet's body. The kind is the
-entry point's own name (in PHP, the base class the `#[Operator]` class
-extends), never a key. The identity is the operator's factory id, spelled as
+**The short form is an operator declaration**, written at the SDK's one
+operator entry point, the one a full-form operator already uses. An operator
+declaration is a short form exactly when it carries its one tasklet's body
+**instead of** a topology body, `channels`, the one name every operator gives
+it in every SDK.
+The body is `run`, the name every SDK gives a tasklet's body. How the operator
+runs is a class setting, written as the full form writes it. The identity is the operator's factory id, spelled as
 that SDK's full form spells it, and is **written by the author**: an SDK that
 otherwise derives a name does not derive a factory id, because the factory id
 is an address a user types and a rename must not move it.
 
-| SDK | Unbounded short form | Bounded short form |
+| SDK | Flow short form | Steps short form |
 | --- | --- | --- |
-| Rust | `#[flezha::unbounded_operator(id = "echo", sink = "out", input = "in")] fn echo(s: String) -> String`, or the same attribute on an `impl Tasklet for Echo` block | `#[flezha::bounded_operator(...)]` |
-| Java | `@UnboundedOperator(id = "echo", sink = "out", input = "in") class Echo implements Tasklet<String, Void, String> { void run(String s, Ctx<Void, String> ctx) }` | `@BoundedOperator(...)` |
-| Python | `@flezha.unbounded_operator(id="echo", sink="out", input="in", codec="text") def echo(s: str) -> str`, or the same decorator on a class whose `run(self, s, ctx)` emits through `ctx` | `@flezha.bounded_operator(...)` |
-| Node | `defineUnbounded({ factoryId: 'echo', sink: 'out', input: 'in', codec: 'text', run: (s, ctx) => ctx.emit(s) })` | `defineBounded({ ... })` |
-| Ruby | `class Echo < Flezha::UnboundedOperator; factory_id "echo"; sink "out"; input "in"; codec :text; def run(s, ctx) = ctx.emit(s); end` | `< Flezha::BoundedOperator` |
-| PHP | `#[Operator(factoryId: 'echo', sink: 'out', input: 'in', codec: ChannelCodec::Text)] final class Echo extends UnboundedOperator { public function run(mixed $s, Ctx $ctx): void }` | `extends BoundedOperator` |
-| Elixir | `use Flezha.SDK.UnboundedOperator, factory_id: "echo", sink: "out", input: "in"` with `run/3` | `use Flezha.SDK.BoundedOperator, ...` |
+| Rust | `#[flezha::operator(id = "echo", sink = "out", input = "in")] fn echo(s: String) -> String`, or the same attribute on an `impl Tasklet for Echo` block | `#[flezha::operator(..., run = steps)]` |
+| Java | `@Operator(id = "echo", sink = "out", input = "in") class Echo implements Tasklet<String, Void, String> { void run(String s, Ctx<Void, String> ctx) }` | `@Operator(..., run = @Run(steps = @Steps))` |
+| Python | `@flezha.operator(id="echo", sink="out", input="in", codec="text") def echo(s: str) -> str`, or the same decorator on a class whose `run(self, s, ctx)` emits through `ctx` | `@flezha.operator(..., run="steps")` |
+| Node | `defineOperator({ factoryId: 'echo', sink: 'out', input: 'in', codec: 'text', run: (s, ctx) => ctx.emit(s) })` | `defineOperator({ ..., steps: {} })` |
+| Ruby | `class Echo < Flezha::Operator; factory_id "echo"; sink "out"; input "in"; codec :text; def run(s, ctx) = ctx.emit(s); end` | `run :steps` in the class body |
+| PHP | `#[Operator(factoryId: 'echo', sink: 'out', input: 'in', codec: ChannelCodec::Text)] final class Echo extends \Flezha\Operator { public function run(mixed $s, Ctx $ctx): void }` | `#[Operator(..., run: 'steps')]` |
+| Elixir | `use Flezha.SDK.Operator, factory_id: "echo", sink: "out", input: "in"` with `run/3` | `use Flezha.SDK.Operator, ..., run: :steps` |
 
 **`sink` is optional.** With a `sink`, the generated operator declares an
 entry channel, the tasklet, and a plugin sink of that name. With no `sink`,
@@ -512,24 +511,23 @@ tasklet: the operator that only keeps state is one declaration. `input` and
 **The generated operator is the hand-written one, nothing more.** One entry
 channel named by `input` (or `input` when none is written) and decoded by
 `codec` where one is written (Python, Node, Ruby, PHP); the tasklet; the sink
-when one is written; a factory id equal to the identity; and every class-level
-setting at that SDK's default for that kind, with one exception: a bounded operator
-short form may declare its loop mode. An unbounded short form is a default
-stream. A bounded short form is a `once` bounded operator unless it declares another
-loop mode: its entry channel receives the instance's first message, from a
+when one is written; a factory id equal to the identity; and the class
+settings it writes, as the full form takes them. A flow short form is a default
+stream. A steps short form is a `once` steps operator unless it declares another
+loop shape: its entry channel receives the instance's first message, from a
 spawn, `flz operator send` or `flz operator start --text`, the tasklet runs
 once, its output reaches the sink after the commit, and the instance
-completes; `--init-values` is the tasklet's initial state, as on an unbounded operator.
-With `per_input` the tasklet runs once per message and the instance stays.
-The loop mode is written in the spelling the SDK's full form gives it:
-`loop_mode = "per_input"` on the Rust attribute, `loopMode = LoopMode.PER_INPUT`
-on `@BoundedOperator`, `loopMode: 'per_input'` on the Node definition,
-`loop_mode="per_input"` on the Python decorator, `loop_mode :per_input` in the
-Ruby class body, `#[Bounded(loopMode: LoopMode::PerInput)]` beside
-`#[Operator]` in PHP, `loop_mode: :per_input` on the Elixir `use`. A loop mode
-or rollback mode outside `once` / `per_input` / `chained` and
-`all_or_nothing` / `keep_progress` is refused where it is written, naming the
-value.
+completes; `--init-values` is the tasklet's initial state, as on a flow operator.
+With `each: per_input` the tasklet runs once per message and the instance
+stays. The tree is written in the spelling the SDK's full form gives it:
+`run = steps(each = per_input)` on the Rust attribute,
+`run = @Run(steps = @Steps(each = Each.PER_INPUT))` on `@Operator`,
+`steps: { each: 'per_input' }` on the Node definition,
+`run={"steps": {"each": "per_input"}}` on the Python decorator,
+`run steps: { each: :per_input }` in the Ruby class body,
+`run: ['steps' => ['each' => 'per_input']]` on PHP's `#[Operator]`,
+`run: {:steps, each: :per_input}` on the Elixir `use`. A value outside its
+choice is refused naming it (`topology.invalid_setting`).
 
 **The expansion is an ordinary tasklet and an ordinary operator, and the
 tasklet is named after the factory id, verbatim.** A cell lives at
@@ -550,7 +548,7 @@ refuses a `&mut` parameter with `ShortFormStateOnFunction`.
 The generated tasklet composes in another operator's topology body like any
 tasklet.
 
-Growing out of the short form is a move, not a rewrite. With the unbounded short
+Growing out of the short form is a move, not a rewrite. With the flow short
 form `echo` above, the full form that keeps every cell where it was is:
 
 ```rust
@@ -567,7 +565,7 @@ impl Tasklet for EchoTasklet {
 }
 
 struct Echo;
-impl UnboundedOperator for Echo {
+impl Operator for Echo {
     fn factory_id() -> &'static str { "echo" }
     fn channels(c: &ChannelBuilder) {
         c.input::<String>("in").into::<EchoTasklet>().sink_named("out");
@@ -588,20 +586,17 @@ the short form's, describing the entry channel it generates.
 - **The entry channel takes the name the author writes, and `input` when the
   author writes none.** That name is the address a user injects on and the
   name a forwarded frame has to match, so growing out of the short form keeps
-  it. In Rust it is also an optional name on the `flezha::operator!` pipeline
+  it. In Rust it is also an optional name on the `flezha::pipeline!`
   head, `input::<String>("prices")`, in the same position the `plugin`
   terminator takes one.
 
 - **Multi-tasklet topology stays explicit.** More than one tasklet, any
-  fan-out or multi-input edge, a keyed edge, or any class-level setting other
-  than a bounded operator's loop mode (a duration, persistence off, the
-  effectively-once tier, a correction window, a rollback mode, synchronous
-  durability) requires the full form: an explicit `channels()` body, or, in
-  Rust, the linear `flezha::operator! { pub struct Name; id: "…", pipeline:
-  input::<T> -> A -> B -> plugin::<U>("name") }` sugar for a strictly linear
-  chain. The SDK refuses rather than guessing a graph. A retry ladder is not a
-  class setting: it is the edge's `retry_max` / `retry_backoff_ms`, for both
-  kinds.
+  fan-out or multi-input edge or a keyed edge requires the full form: an
+  explicit `channels()` body, or, in Rust, the linear `flezha::pipeline! { pub
+  struct Name; id: "…", pipeline: input::<T> -> A -> B -> plugin::<U>("name") }`
+  sugar for a strictly linear chain. The SDK refuses rather than guessing a
+  graph. A retry ladder is not a class setting: it is the edge's `retry_max` /
+  `retry_backoff_ms`, for both runs.
 
 - **Registration is written by the author, in every SDK.** The author hands the
   short form to the runner's `register_factory` like any operator, naming the
@@ -611,66 +606,53 @@ the short form's, describing the entry channel it generates.
 
 ### 5.1 One `register_factory`, one `unregister_factory`
 
-Both authoring surfaces are rooted in a shared `Operator` base: in Java an
-interface `UnboundedOperator` and `BoundedOperator` both extend, and in Rust a
-sealed `Operator<K>` trait the SDK implements for every `UnboundedOperator` (as
-`Operator<UnboundedKind>`) and every `BoundedOperator` (as
-`Operator<BoundedKind>`), so an author implements only the kind trait. The
-base's shared members are `factory_id()` and, in Java, `channels(ChannelBuilder)`:
-both kinds declare their graph in a body named `channels`, on the same builder,
-in every SDK (in Rust each kind trait declares it, because an author cannot
-implement the sealed base). The kind-divergent surface (the persistence opt-in
-on one side; loop mode, rollback mode, maximum duration, self-termination and
-synchronous durability on the other) stays on the per-kind traits.
+Every SDK has one operator base, `Operator`: a trait in Rust, an interface in
+Java, a base class in Python, Ruby and PHP, `defineOperator` in Node and a `use`
+macro in Elixir. Its members are `factory_id()`, `channels` (the graph, on the
+same builder in every SDK) and one settings tree: `run` (`flow` or `steps` with
+their members), `durable`, `max_duration_ms` and `description`
+([`../configuration.md`](../configuration.md#class-settings)).
 
-An operator declares its kind where it is written, so a runner call that names
-the kind again says nothing new and can disagree with the declaration. Every
+An operator declares how it runs where it is written, so a runner call that
+names it again says nothing new and can disagree with the declaration. Every
 runner has **one** registration method and **one** inverse, both taking the
 same argument:
 
-| SDK | Register | Unregister | How the kind is read |
+| SDK | Register | Unregister | How the run is read |
 | --- | --- | --- | --- |
-| Rust | `runner.register_factory(EchoOperator)?` | `runner.unregister_factory(EchoOperator)?` | the sealed `Operator<K>` impl; `K` is inferred from the value |
-| Java | `runner.registerFactory(EchoOperator.class)` | `runner.unregisterFactory(EchoOperator.class)` | the kind interface the class implements |
+| Rust | `runner.register_factory(EchoOperator)?` | `runner.unregister_factory(EchoOperator)?` | `Operator::settings()` |
+| Java | `runner.registerFactory(EchoOperator.class)` | `runner.unregisterFactory(EchoOperator.class)` | `Operator.run()` |
 | Python | `runner.register_factory(echo)`, `runner.register_modules("app.ops")` | `runner.unregister_factory(echo)` | read from the operator |
 | Node | `await runner.registerFactory('./echo.mjs')` | `await runner.unregisterFactory('./echo.mjs')` | read from the module's exports |
 | Ruby | `runner.register_factory(Echo)` | `runner.unregister_factory(Echo)` | read from the class |
 | PHP | `$runner->registerFactory(Echo::class)` | `$runner->unregisterFactory(Echo::class)` | read from the class |
-| Elixir | `Flezha.SDK.register_factory(runner, Echo)`, child spec `operators: [Echo]` | `Flezha.SDK.unregister_factory(runner, Echo)` | the behaviour the module's `use` or `@behaviour` names |
+| Elixir | `Flezha.SDK.register_factory(runner, Echo)`, child spec `operators: [Echo]` | `Flezha.SDK.unregister_factory(runner, Echo)` | the module's `run/0`, from its `use` |
 
 Both are methods on the concrete runner handle (functions over the handle in
 Elixir), legal before and after `start()`, and generic over the shared base
 where the host language expresses such a bound. Rust passes the operator as a
-value because a generic function over two unrelated traits cannot be called
-with a type argument alone without naming the marker; operators are unit
-structs, so the value costs nothing.
+value; operators are unit structs, so the value costs nothing.
 
 `unregister_factory` undoes a registration made before the runner starts in
 every SDK, and one made after start in every SDK whose runner can stop serving
 a started declaration. A runner that cannot **rejects** a post-start call with
 an error that says so, and never ignores it.
 
-An operator whose kind cannot be read — it declares both kinds, or neither —
-is refused at registration with the code `topology.ambiguous_operator_kind` or
-`topology.unknown_operator_kind`, naming the class or module. In Rust such a type cannot
-be passed to `register_factory` at all: the kind parameter is unresolvable, so
-it is a compile error. In Java a class implementing both kind interfaces does
-not compile unless it resolves the `persistenceEnabled()` default both declare,
-and one that does is refused at registration.
+A class that is not an operator, such as a tasklet handed to the registration,
+is refused at registration with the code `topology.no_operator_exported`, naming
+the class or module. In Rust such a type cannot be passed to `register_factory`
+at all: it does not implement `Operator`, so it is a compile error.
 
-**The runner announces the kind it read.** Every factory entry a runner ships,
-in its connect frame and in each `UpdateFactories`, carries `kind`, exactly
-`"unbounded"` or `"bounded"`: Rust and Elixir fill it from the registered class,
-and the shared core fills it for Java, Node, Python, Ruby and PHP from the
-registry the class declaration landed in. The controller establishes a
-factory's kind from the first announcement, as it establishes its language,
-and a runner announcing the other kind, or none, is never a placement
+**The runner announces the run it read.** Every factory entry a runner ships,
+in its connect frame and in each `UpdateFactories`, carries `run`, exactly
+`"flow"` or `"steps"`, with `each` and `on_failure` for a steps class: Rust and
+Elixir fill it from the registered class, and the shared core fills it for
+Java, Node, Python, Ruby and PHP from the class declaration. The controller
+establishes a factory's run from the first announcement, as it establishes its
+language, and a runner announcing the other run, or none, is never a placement
 candidate for it. So a start names only the factory: `flz operator start` and
-`flz schedule add` take no `--kind`, a schedule of a factory announced as
-unbounded is refused at `add`, and a tasklet's spawn naming one answers
-`factory_not_bounded`. Adding a future operator kind means implementing the
-base and teaching `register_factory` / `unregister_factory` the kind, without
-editing either existing authoring surface and without adding a runner method.
+`flz schedule add` take no run, a schedule of a factory announced as flow is
+refused at `add`, and a tasklet's spawn naming one answers `factory_not_steps`.
 
 Node's registration imports a module, which is asynchronous, so its pair is
 awaited: before `run()` it imports, reads the exports and records the
@@ -690,7 +672,7 @@ against:
 | --- | --- |
 | `topology.short_form_with_topology` | an operator declaration carries a tasklet body and also a `channels` body |
 | `topology.sink_without_output` | a `sink` on a body the SDK can see declares no output |
-| `topology.duplicate_factory_id` | a second operator, of either kind, under a factory id the runner holds |
+| `topology.duplicate_factory_id` | a second operator, of either run, under a factory id the runner holds |
 
 They are not `TopologyIssue` variants: the core never sees a short form. An SDK
 whose tasklet bodies declare no output type the SDK can read (Node, Ruby,
@@ -702,11 +684,11 @@ before the SDK runs, and its `run` returns nothing either, so nothing the SDK
 can see says whether a short form emits. A declaration with neither body, or with no written identity, is
 refused by the rule every operator already obeys, not by a short-form name.
 There is no other short-form refusal: an operator declaration always has a
-kind, and `input` and `codec` need no sink.
+run, the default `flow` when it writes none, and `input` and `codec` need no sink.
 
-**Duplicate factory id fails fast across kinds.** Declaring a second operator
-under a factory id the runner already holds fails at that call, whichever kind
-either one is, with the code `topology.duplicate_factory_id` and the colliding
+**Duplicate factory id fails fast across runs.** Declaring a second operator
+under a factory id the runner already holds fails at that call, however
+either one runs, with the code `topology.duplicate_factory_id` and the colliding
 id in its details (Rust: `FlezhaError::DuplicateFactoryId`; Elixir:
 `%Flezha.SDK.Error{code: "topology.duplicate_factory_id"}`).
 
@@ -724,20 +706,19 @@ id in its details (Rust: `FlezhaError::DuplicateFactoryId`; Elixir:
   `flz_core`'s declaration validation for the six hosts on it, so a
   hand-written host declaration cannot slip past.
 
-### 5.3 A setting of one kind is refused on the other, by name
+### 5.3 A misplaced setting is refused by name
 
-What an author writes reaches the judgement of its class's kind; no SDK drops
-a setting because the kind does not carry it. An unbounded-only setting on a
-bounded operator is refused at registration as `topology.effectively_once_on_bounded` (the
-effectively-once tier), `topology.checkpoint_on_bounded` (any checkpoint setting) or
-`topology.correction_window_on_bounded` (the correction window); a bounded-only setting
-on an unbounded operator as `topology.sync_durability_on_unbounded`, and in PHP `#[Bounded operator]` on a class
-extending `Flezha\UnboundedOperator` is refused naming the attribute. The shared
-core judges the five host SDKs' declarations; Rust and Elixir judge their own
-under the same names. Synchronous durability has one spelling per SDK, the
-class-level one; no channel builder carries it. Timers belong to a tasklet
-and work in either kind; `compact_after_bytes` belongs to a tasklet and is accepted on
-either kind.
+What an author writes reaches a judgement; no SDK drops a setting. The settings
+tree puts each setting under the one parent that carries it, and a setting
+under any other parent is refused at registration as `topology.unknown_field`,
+naming the setting and its parent; a value outside its choice is
+`topology.invalid_setting`, naming the setting and the value. Rust and Java
+make a misplaced setting a compile error, because the type under the wrong
+parent has no such member; Elixir's `use` raises a `CompileError` naming it;
+the five host SDKs pass the tree as written and the shared core judges it.
+`durable: remote` on a flow class is refused as `topology.remote_on_flow`.
+Timers belong to a tasklet and work in either run; `compact_after_bytes`
+belongs to a tasklet and is accepted on either run.
 
 ## 6. Canonical reference operator (cross-SDK conformance anchor)
 
@@ -801,10 +782,10 @@ The wall clock for both.
 Where the fixtures live: the hand-written `StaticCellOperator`
 (`factory_id` `static_cell`) is in `test/apps/rust_runner/src/cell.rs` and
 its `operator!` twin `sugar_static_cell` in `test/apps/rust_runner/src/sugar.rs`; the Java twin is
-`test/apps/java_runner/src/main/java/com/flezha/test/SugarStaticCellUnboundedOperator.java`
+`test/apps/java_runner/src/main/java/com/flezha/test/SugarStaticCellOperator.java`
 (`sugar_static_cell`, `SugarEntry` writing `cellsFor`), asserted by
 `SugarTwinTest.referenceOperatorMatchesContract`. Java has no pipeline macro,
-so its two-tasklet twin is an explicit `UnboundedOperator` class with a
+so its two-tasklet twin is an explicit `Operator` class with a
 `channels()` body.
 
 ### 6.1 Canonical keyed-collection reference tasklet

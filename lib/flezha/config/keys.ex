@@ -307,7 +307,6 @@ defmodule Flezha.Config.Keys do
     # Per-operator-class user overrides: a map from class to value, read
     # ahead of the SDK's own declaration and of the global default below it.
     {:operator_persistence, :term, %{}, key: true},
-    {:sync_durability, :term, %{}, key: true},
     {:output_stall_timeout_overrides, :term, %{}, key: :output_stall_timeout_ms},
     {:default_time_travel_retention_hours, :int, 6, key: true},
     {:credit_window_bytes, :term, %{}, key: true},
@@ -318,9 +317,9 @@ defmodule Flezha.Config.Keys do
     # every session to the legacy CellMailboxStatus and shed path.
     {:credit_flow_control_enabled, :bool, true, key: true, env: "FLEZHA_CREDIT_FLOW_CONTROL"},
     {:time_travel_retention_hours, :term, %{}, key: true},
-    {:default_bounded_completed_retention_hours, :int, 72,
-     key: true, env: "FLEZHA_BOUNDED_RETENTION_HOURS"},
-    {:bounded_completed_retention_hours, :term, %{}, key: true},
+    {:default_operator_completed_retention_hours, :int, 72,
+     key: true, env: "FLEZHA_STEPS_RETENTION_HOURS"},
+    {:operator_completed_retention_hours, :term, %{}, key: true},
 
     # ---- remote durability tier ---------------------------------------------
     # `backend: :none` wires nothing into the supervision tree and leaves every
@@ -427,7 +426,7 @@ defmodule Flezha.Config.Keys do
      key: {:authn_authz, :token_ttl_default_seconds}},
     {:authz_namespaces, :term, %{}, key: {:authn_authz, :namespaces}},
 
-    # ---- scheduled bounded spawns ------------------------------------------
+    # ---- scheduled steps spawns ------------------------------------------
     {:schedule_dir, :path, "app_data/schedules",
      key: {:schedules, :dir}, env: "FLEZHA_SCHEDULE_DIR"},
     # Same posture as authn_authz: no test gets a stray `:flz_schedules` hub it
@@ -563,7 +562,6 @@ defmodule Flezha.Config.Keys do
      runtimes: [:elixir_sdk, :rust], env: "FLEZHA_RECONNECT_REQUEST_RETRY_MS"},
     {:credit_park_interval_ms, :ms, 50, runtimes: [:rust], env: "FLEZHA_CREDIT_PARK_INTERVAL_MS"},
     {:recovery_window_ms, :ms, nil, runtimes: [:rust], env: "FLEZHA_RECOVERY_WINDOW_MS"},
-    {:park_idle_ms, :ms, 600_000, runtimes: [:rust, :elixir_sdk], env: "FLEZHA_PARK_IDLE_MS"},
     {:control_ack_timeout_ms, :ms, 10_000,
      runtimes: [:rust], env: "FLEZHA_CONTROL_ACK_TIMEOUT_MS"},
     {:control_keepalive_env_ms, :ms, nil, env: "FLEZHA_CONTROL_KEEPALIVE_MS", runtimes: [:rust]},
@@ -595,11 +593,12 @@ defmodule Flezha.Config.Keys do
     {:harness_wait_socket, :string, nil, runtimes: [:harness], env: "FLEZHA_HARNESS_WAIT_SOCKET"},
     {:e2e_runtime, :string, "rust", runtimes: [:harness], env: "FLEZHA_E2E_RUNTIME"},
     {:e2e_snapshot, :string, nil, runtimes: [:harness], env: "FLEZHA_E2E_SNAPSHOT"},
-    {:bounded_e2e_release, :string, nil, runtimes: [:harness], env: "FLEZHA_BOUNDED_E2E_RELEASE"},
+    {:steps_e2e_release, :string, nil, runtimes: [:harness], env: "FLEZHA_STEPS_E2E_RELEASE"},
     {:conformance_report, :path, nil, runtimes: [:harness], env: "FLEZHA_CONFORMANCE_REPORT"},
     {:refusal_fixture, :string, nil, runtimes: [:harness], env: "FLEZHA_REFUSAL_FIXTURE"},
     {:branch_fail, :string, nil, runtimes: [:harness], env: "FLEZHA_BRANCH_FAIL"},
-    {:bounded_retry_fails, :int, nil, runtimes: [:harness], env: "FLEZHA_BOUNDED_RETRY_FAILS"},
+    {:steps_retry_fails, :int, nil, runtimes: [:harness], env: "FLEZHA_STEPS_RETRY_FAILS"},
+    {:fixture_sleep_after_ms, :ms, nil, runtimes: [:harness], env: "FLEZHA_FIXTURE_SLEEP_AFTER_MS"},
     {:data_stream_loss_drill, :bool, false,
      runtimes: [:harness], env: "FLEZHA_DATA_STREAM_LOSS_DRILL"},
     {:reset_probe_override, :string, nil,

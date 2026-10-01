@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   @moduledoc """
-  SDK -> Controller `TaskCommit` dispatch path (`bounded-task-journal`): the
+  SDK -> Controller `TaskCommit` dispatch path (`steps-task-journal`): the
   commit worker waits until every effect record the barrier names is durable
   on its Cell's writer, appends the `task_committed` entry naming them, fsyncs,
   replies `TaskCommitResponse` under the request's reference_id, and only then
@@ -183,10 +183,10 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     send(channel, {:flz_data, :stream_id, "control_command", IO.iodata_to_binary(iodata), %{}})
   end
 
-  # A durable bounded operator Cell of `inst` whose writer holds one effect record at
+  # A durable steps operator Cell of `inst` whose writer holds one effect record at
   # `seq` carrying one output keyed `k` with a metadata pair, on `channel`.
-  defp bounded_cell(inst, seq, payload, opts \\ []) do
-    :ok = ClassRegistry.put(inst, :bounded)
+  defp steps_cell(inst, seq, payload, opts \\ []) do
+    :ok = ClassRegistry.put(inst, :steps)
     cell = {inst, "TaskA", "s0"}
     {:ok, writer} = Flezha.State.Supervisor.find_or_start(cell)
 
@@ -223,7 +223,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
 
     # The record is appended but its batch has not synced when the barrier lands.
     :ok = :sys.suspend(Flezha.State.FsyncBatcher)
-    {_cell, writer} = bounded_cell(inst, 0, "a-out")
+    {_cell, writer} = steps_cell(inst, 0, "a-out")
     seg = Wire.encode_cell_id(inst, "TaskA", "s0")
     payload = build_task_commit_payload(inst, 0, [{seg, 0, 0, ["out"]}], [], "ref-records")
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
@@ -257,7 +257,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     inst = "opc_missing_#{System.unique_integer([:positive])}"
     {control_channel, stream_ref} = start_control_channel("missing")
     own(inst, control_channel)
-    bounded_cell(inst, 5, "never", written?: false)
+    steps_cell(inst, 5, "never", written?: false)
 
     seg = Wire.encode_cell_id(inst, "TaskA", "s0")
     payload = build_task_commit_payload(inst, 0, [{seg, 5, 5, ["out"]}], [], "ref-missing")
@@ -279,7 +279,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     own(inst, control_channel)
 
     :ok = :sys.suspend(Flezha.State.FsyncBatcher)
-    {_cell, writer} = bounded_cell(inst, 0, "once")
+    {_cell, writer} = steps_cell(inst, 0, "once")
     seg = Wire.encode_cell_id(inst, "TaskA", "s0")
     payload = build_task_commit_payload(inst, 0, [{seg, 0, 0, ["out"]}], [], "ref-join")
 
@@ -306,7 +306,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
 
     test "the ack is withheld until the barrier is on the remote store" do
       inst = "opc_sync_#{System.unique_integer([:positive])}"
-      ClassRegistry.put_sync_durability(inst, true)
+      ClassRegistry.put_remote(inst, true)
       {control_channel, stream_ref} = start_control_channel("sync")
 
       seg = Wire.encode_cell_id(inst, "TaskA", "s0")
@@ -325,7 +325,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
 
     test "a failed remote ship withholds the ack's success and re-runs the task on resume" do
       inst = "opc_sync_down_#{System.unique_integer([:positive])}"
-      ClassRegistry.put_sync_durability(inst, true)
+      ClassRegistry.put_remote(inst, true)
       {control_channel, stream_ref} = start_control_channel("syncdown")
 
       seg = Wire.encode_cell_id(inst, "TaskA", "s0")
@@ -373,7 +373,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     {control_channel, stream_ref} = start_control_channel("comp")
     own(inst, control_channel)
 
-    {_cell, writer} = bounded_cell(inst, 0, "undo", channel: "mid")
+    {_cell, writer} = steps_cell(inst, 0, "undo", channel: "mid")
     :ok = WalWriter.fsync(writer)
     seg = Wire.encode_cell_id(inst, "TaskA", "s0")
 
@@ -408,7 +408,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     {control_channel, stream_ref} = start_control_channel("norefuse")
     own(inst, control_channel)
 
-    {_cell, writer} = bounded_cell(inst, 0, "never")
+    {_cell, writer} = steps_cell(inst, 0, "never")
     :ok = WalWriter.fsync(writer)
     seg = Wire.encode_cell_id(inst, "TaskA", "s0")
     fat = :binary.copy(<<0>>, TaskJournal.max_entry_bytes() + 1)
@@ -476,7 +476,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     assert InputLog.watermark(inst) == 1
   end
 
-  test "the iteration boundary requests no snapshot: the Watchdog compacts a bounded operator's Cells" do
+  test "the iteration boundary requests no snapshot: the Watchdog compacts a steps operator's Cells" do
     inst = "iter_snap_#{System.unique_integer([:positive])}"
 
     seg_id = {inst, "TaskA", "s0"}
@@ -551,7 +551,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
 
       :telemetry.attach(
         handler,
-        [:flezha, :bounded, :turn_dead_lettered],
+        [:flezha, :steps, :turn_dead_lettered],
         fn _e, m, md, _ -> send(test_pid, {:dead_lettered, m, md}) end,
         nil
       )

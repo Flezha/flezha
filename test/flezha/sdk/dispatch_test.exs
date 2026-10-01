@@ -29,7 +29,7 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   defmodule EchoOp do
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "echo_op"
 
     def channels(c),
@@ -52,7 +52,7 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   defmodule UnnamedMetaOp do
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "unnamed_meta_op"
 
     def channels(c),
@@ -70,7 +70,7 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   defmodule OrderedOp do
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "ordered_op"
 
     def channels(c) do
@@ -84,7 +84,7 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   defmodule IdentityKeyOp do
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "idkey_op"
 
     def channels(c) do
@@ -117,7 +117,7 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   defmodule FlakyOp do
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "flaky_op"
 
     def channels(c),
@@ -142,7 +142,7 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   defmodule RaiserOp do
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "raiser_op"
 
     def channels(c),
@@ -157,7 +157,7 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   defmodule PoisonOp do
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "poison_op"
 
     def channels(c),
@@ -191,7 +191,7 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   defmodule GatedOp do
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "gated_op"
 
     def channels(c),
@@ -206,7 +206,7 @@ defmodule Flezha.SDK.DispatchTest do
   # Two entries merged into one tasklet, each source's mapping tagging its
   # value, keyed on the symbol after the tag: an unmapped value keys elsewhere.
   defmodule MergeOp do
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "merge_op"
 
     def channels(c) do
@@ -225,7 +225,7 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   defmodule FanOp do
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "fan_op"
 
     def channels(c) do
@@ -399,7 +399,7 @@ defmodule Flezha.SDK.DispatchTest do
 
   test "drop_newest sheds at capacity; the runner stays responsive" do
     defmodule DropOp do
-      @behaviour Flezha.SDK.UnboundedOperator
+      @behaviour Flezha.SDK.Operator
       def factory_id, do: "drop_op"
 
       def channels(c),
@@ -447,7 +447,7 @@ defmodule Flezha.SDK.DispatchTest do
     end
 
     defmodule DefaultOp do
-      @behaviour Flezha.SDK.UnboundedOperator
+      @behaviour Flezha.SDK.Operator
       def factory_id, do: "default_op"
 
       # No `on_full/2`: the kind-independent default is `:drop_nothing`, in

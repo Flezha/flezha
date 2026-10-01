@@ -38,7 +38,7 @@ struct FlusherEntry {
     /// The instance's processed prefix, reported after each drain.
     prefix: Option<Arc<crate::prefix::PrefixLedger>>,
     buffer: Arc<Mutex<Box<dyn FlushableBuffer>>>,
-    persistence_enabled: bool,
+    keeps_state: bool,
     change_seq: Arc<AtomicU64>,
     header: HeaderTemplate,
     /// The Cell's `push_deferred`: while set the drain skips the buffer, or
@@ -179,7 +179,7 @@ impl CellFlusher {
         cell_identity: Arc<Vec<u8>>,
         prefix: Option<Arc<crate::prefix::PrefixLedger>>,
         buffer: Arc<Mutex<Box<dyn FlushableBuffer>>>,
-        persistence_enabled: bool,
+        keeps_state: bool,
         change_seq: Arc<AtomicU64>,
         header: HeaderTemplate,
         push_deferred: Arc<AtomicBool>,
@@ -191,7 +191,7 @@ impl CellFlusher {
                 cell_identity,
                 prefix,
                 buffer,
-                persistence_enabled,
+                keeps_state,
                 change_seq,
                 header,
                 push_deferred,
@@ -239,7 +239,7 @@ impl CellFlusher {
                     &entry.cell_identity,
                     &entry.change_seq,
                     &entry.header,
-                    entry.persistence_enabled,
+                    entry.keeps_state,
                 );
             }
             // Behind this Cell's records; the first Cell of an instance to
@@ -260,7 +260,7 @@ pub fn flush_one(
     cell_identity: &[u8],
     change_seq: &AtomicU64,
     header: &HeaderTemplate,
-    persistence_enabled: bool,
+    keeps_state: bool,
 ) -> Option<u64> {
     // Released only once this drain's frames are written: an input stops
     // holding its instance's processed prefix when its record is on the wire.
@@ -270,10 +270,10 @@ pub fn flush_one(
     }
     let first_seq = change_seq.load(Ordering::Relaxed);
     let (_count, frames) = buffer.drain_to_frames(cell_identity, change_seq, header);
-    if !persistence_enabled {
+    if !keeps_state {
         tracing::trace!(
             target: "flezha::flusher",
-            "drain-and-discard {} frames (persistence_enabled = false)",
+            "drain-and-discard {} frames (keeps_state = false)",
             frames.len(),
         );
         return None;

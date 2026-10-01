@@ -67,12 +67,13 @@ defmodule Flezha.SDK.OperatorExitE2ETest do
   end
 
   defmodule LedgerOp do
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "exit_ledger"
+    def run, do: {:flow, exactly: :effectively_once}
 
     def channels(c) do
       import Flezha.SDK.Channels
-      c |> effectively_once() |> input("in") |> key_by(&String.first/1) |> into(Ledger)
+      c |> input("in") |> key_by(&String.first/1) |> into(Ledger)
     end
   end
 
@@ -102,9 +103,10 @@ defmodule Flezha.SDK.OperatorExitE2ETest do
     def run(_input, s, _ctx), do: {:ok, s}
   end
 
-  defmodule GateBounded do
-    @behaviour Flezha.SDK.BoundedOperator
-    def factory_id, do: "exit_gate_bounded"
+  defmodule GateSteps do
+    @behaviour Flezha.SDK.Operator
+    def run, do: :steps
+    def factory_id, do: "exit_gate_steps"
 
     def channels(c) do
       import Flezha.SDK.Channels
@@ -120,7 +122,7 @@ defmodule Flezha.SDK.OperatorExitE2ETest do
     handle =
       Flezha.SDK.create_runner(ns, transport: :native)
       |> Flezha.SDK.register_factory(LedgerOp)
-      |> Flezha.SDK.register_factory(GateBounded)
+      |> Flezha.SDK.register_factory(GateSteps)
       |> Flezha.SDK.start()
 
     assert %Flezha.SDK{} = handle, "SDK start failed: #{inspect(handle)}"
@@ -139,7 +141,7 @@ defmodule Flezha.SDK.OperatorExitE2ETest do
              fn ->
                HubManager.hub_alive?(ns) and
                  FleetManager.runners_for_factory(ns, "exit_ledger") != [] and
-                 FleetManager.runners_for_factory(ns, "exit_gate_bounded") != []
+                 FleetManager.runners_for_factory(ns, "exit_gate_steps") != []
              end,
              15_000
            )
@@ -267,13 +269,13 @@ defmodule Flezha.SDK.OperatorExitE2ETest do
            "the exit park never cleared after the instance stayed up"
   end
 
-  test "a durable bounded run whose driver is killed resumes and completes", %{ns: ns} do
+  test "a durable steps run whose driver is killed resumes and completes", %{ns: ns} do
     operator_id = "exit_gate_#{System.unique_integer([:positive])}"
 
     builder = %Builder{
       id: operator_id,
-      factory_id: "exit_gate_bounded",
-      kind: :bounded,
+      factory_id: "exit_gate_steps",
+      run: :steps,
       init_values: %{},
       opts: [seed_input: {"go", %{}}]
     }

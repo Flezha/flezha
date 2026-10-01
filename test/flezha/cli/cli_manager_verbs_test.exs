@@ -799,7 +799,7 @@ end
 
 defmodule Flezha.Service.CliManagerReplayTest do
   @moduledoc """
-  `flz operator replay <cell> --from <seq|ts>` on a Cell of a bounded class:
+  `flz operator replay <cell> --from <seq|ts>` on a Cell of a steps class:
   refused before anything is rewound, naming the journal as the instance's
   baseline and `flz operator rewind` as the verb to use.
   """
@@ -812,12 +812,12 @@ defmodule Flezha.Service.CliManagerReplayTest do
   alias Flezha.Service.CliManager
   alias Flezha.State.{TestHelpers, WalWriter}
 
-  test "a bounded Cell is refused, and nothing is rewound" do
+  test "a steps Cell is refused, and nothing is rewound" do
     class = "rp_#{System.unique_integer([:positive])}"
     cell = {class, "task", "key"}
     {:ok, writer} = Flezha.State.Supervisor.find_or_start(cell)
     :ok = WalWriter.append(writer, 0, TestHelpers.stub_header(), "x0")
-    :ok = ClassRegistry.put(class, :bounded)
+    :ok = ClassRegistry.put(class, :steps)
     on_exit(fn -> ClassRegistry.delete(class) end)
 
     stderr =
@@ -829,7 +829,7 @@ defmodule Flezha.Service.CliManagerReplayTest do
         end
       end)
 
-    assert stderr =~ "is a Cell of a bounded operator"
+    assert stderr =~ "is a Cell of a steps operator"
     assert stderr =~ "a committed iteration across every Cell"
     assert stderr =~ "hint: flz operator rewind"
     assert WalWriter.outbox_epoch(writer) == 0, "no epoch was bumped"

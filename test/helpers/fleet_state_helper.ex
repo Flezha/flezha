@@ -9,19 +9,19 @@ defmodule FlezhaTest.Helper.FleetStateHelper do
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Factories
 
-  # Every synthetic runner speaks this language and advertises this kind unless
-  # a test says otherwise. A factory whose established language or kind no
+  # Every synthetic runner speaks this language and advertises this run unless
+  # a test says otherwise. A factory whose established language or run no
   # runner matches is unplaceable by design, so a helper that seeded neither
   # would make every fleet test a test of the refusal path.
   @default_lang 1
-  @default_kind :unbounded
+  @default_kind :flow
 
   @doc """
   Seed `namespace` with `%{runner_id => [factory_id]}`, all `:active`.
 
-  Factory ids may be given as `id` (the default language and kind),
+  Factory ids may be given as `id` (the default language and run),
   `{id, sdk_lang}` to place runners of different languages in one namespace, or
-  `{id, sdk_lang, kind}` to name the kind too. The first runner to advertise a
+  `{id, sdk_lang, run}` to name the run too. The first runner to advertise a
   factory establishes it, exactly as a real connect does.
   """
   def seed(namespace, runner_factories) do
@@ -51,7 +51,7 @@ defmodule FlezhaTest.Helper.FleetStateHelper do
     factories =
       Enum.map(factory_ids, fn factory ->
         {id, lang, kind} = split(factory)
-        %{"id" => id, "description" => nil, "sdk_lang" => lang, "kind" => to_string(kind)}
+        %{"id" => id, "description" => nil, "sdk_lang" => lang, "run" => to_string(kind)}
       end)
 
     GenServer.cast(FleetManager, {:sync_factories, namespace, runner, factories})
@@ -78,7 +78,7 @@ defmodule FlezhaTest.Helper.FleetStateHelper do
     do: Enum.each(factory_ids, &ClassRegistry.delete_established(namespace, &1))
 
   # Fold one advertised factory into the namespace's factory map, establishing
-  # its language and kind the first time a runner names each.
+  # its language and run the first time a runner names each.
   defp record_factory(acc, factory, runner, namespace) do
     {id, lang, kind} = split(factory)
 
@@ -88,12 +88,12 @@ defmodule FlezhaTest.Helper.FleetStateHelper do
       ClassRegistry.put_established(namespace, id, :sdk_lang, lang)
     end
 
-    if kind != nil and is_nil(ClassRegistry.established(namespace, id, :kind)) do
-      ClassRegistry.put_established(namespace, id, :kind, kind)
+    if kind != nil and is_nil(ClassRegistry.established(namespace, id, :run)) do
+      ClassRegistry.put_established(namespace, id, :run, kind)
     end
 
     existing = Factories.factory_entry(Map.get(acc, id))
-    advert = %{sdk_lang: lang, kind: kind}
+    advert = %{sdk_lang: lang, run: kind}
     Map.put(acc, id, %{existing | adverts: Map.put(existing.adverts, runner, advert)})
   end
 

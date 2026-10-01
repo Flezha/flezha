@@ -8,37 +8,37 @@ TBD - created by archiving change effectively-once-output. Update Purpose after 
 For an instance with durable input, the controller SHALL journal every inbound payload (after
 the `:on_input` transform chain) into one durable per-instance input log before forwarding it to
 the runner, assigning a strictly monotonic offset. An instance has durable input when it is a
-stream on the effectively-once tier or a durable bounded operator; there SHALL be one log module, one
+stream on the effectively-once tier or a durable steps operator; there SHALL be one log module, one
 file and one offset space for both, keyed by the instance's on-disk state key, and no second
-input log of any kind. An unbounded operator that declares no durability SHALL NOT write an input log and its
+input log of any kind. A flow operator that declares no durability SHALL NOT write an input log and its
 ingest path SHALL perform no journaling work.
 
 #### Scenario: Payload journaled before forward
 
-- **WHEN** a source plugin delivers a payload to an unbounded operator on the tier
+- **WHEN** a source plugin delivers a payload to a flow operator on the tier
 - **THEN** the payload is appended to the instance's input log with offset N before the runner
   receives it
 
-#### Scenario: A bounded operator's input is journaled to the same log
+#### Scenario: A steps operator's input is journaled to the same log
 
-- **WHEN** a message is sent to a durable bounded instance
+- **WHEN** a message is sent to a durable steps instance
 - **THEN** it is appended to that instance's input log, the same module and file layout a tier
   stream uses, before the runner receives it, and no other durable input file exists for the
   instance
 
 #### Scenario: Tier off means no log
 
-- **WHEN** an unbounded operator that declares no durability receives payloads
+- **WHEN** a flow operator that declares no durability receives payloads
 - **THEN** no input log file exists for it and the forward path performs no journaling work
 
 ### Requirement: Offset travels with the forwarded input
 
 The assigned offset SHALL be stamped on the forwarded frame as reserved metadata `flz.offset`,
 for an instance of either kind, and there SHALL be no other offset stamp. The SDK SHALL thread it
-through to the durable record that consumes it: an unbounded operator's atomic effect record SHALL carry it as
-its consumed offset, and a bounded operator's iteration commit SHALL carry the offset of the input that
-seeded the iteration. A bounded operator Cell's own effect record SHALL carry no consumed offset, whether
-or not the Cell is the one the message entered through: the iteration is the bounded operator's unit of
+through to the durable record that consumes it: a flow operator's atomic effect record SHALL carry it as
+its consumed offset, and a steps operator's iteration commit SHALL carry the offset of the input that
+seeded the iteration. A steps operator Cell's own effect record SHALL carry no consumed offset, whether
+or not the Cell is the one the message entered through: the iteration is the steps operator's unit of
 consumption and its `iter_committed` entry is the instance's one reporter into the log's
 watermark, so a Cell that runs rarely never holds the instance's floor. An iteration or an
 effect record that consumed no journaled input SHALL carry no offset; `0` is an offset, never
@@ -46,19 +46,19 @@ effect record that consumed no journaled input SHALL carry no offset; `0` is an 
 
 #### Scenario: Offset round-trips
 
-- **WHEN** input at offset 4711 is dispatched to an unbounded Cell and the invocation produces an
+- **WHEN** input at offset 4711 is dispatched to a flow Cell and the invocation produces an
   effect record
 - **THEN** the effect record's consumed offset equals 4711
 
 #### Scenario: Offset round-trips through an iteration commit
 
-- **WHEN** input at offset 0 seeds a durable bounded operator's iteration
+- **WHEN** input at offset 0 seeds a durable steps operator's iteration
 - **THEN** that iteration's commit carries consumed offset 0, and the journal records 0, not
   "none"
 
-#### Scenario: A bounded operator Cell's record carries no offset
+#### Scenario: A steps operator Cell's record carries no offset
 
-- **WHEN** input at offset 4711 seeds a durable bounded operator's iteration and the entry tasklet's Cell writes an effect record for it
+- **WHEN** input at offset 4711 seeds a durable steps operator's iteration and the entry tasklet's Cell writes an effect record for it
 - **THEN** that record's consumed offset is absent, the Cell reports no watermark row, and the instance's floor moves only when the iteration commits
 
 #### Scenario: A pass that consumed nothing carries no offset
@@ -119,8 +119,8 @@ The controller SHALL track the instance's floor and SHALL truncate the input log
 below `min(floor, now − hold_window)`. The floor SHALL be the confirmed processed prefix
 (Requirement: The instance floor is a processed prefix the controller confirms durable), and
 before one is confirmed, the minimum durable consumed offset across the instance's reporters (the
-watermark). An unbounded operator's reporters are its Cells, each reporting from its durable
-records (the effect record under the tier, the change record otherwise); a durable bounded
+watermark). A flow operator's reporters are its Cells, each reporting from its durable
+records (the effect record under the tier, the change record otherwise); a durable steps
 operator's reporter is its journal, reporting the consumed offset of each iteration commit and
 each released input under the journal's reserved identity, seeded on every bind from the highest
 offset the journal released. A reporter that has consumed nothing holds the watermark at the log
@@ -138,15 +138,15 @@ non-correcting instance truncates at its floor exactly as it does with no hold w
 - **WHEN** no processed prefix is confirmed yet, cell A has durably consumed to offset 4711 and cell B to 4710
 - **THEN** truncation removes only offsets below 4710
 
-#### Scenario: An iteration commit advances a bounded operator's watermark
+#### Scenario: An iteration commit advances a steps operator's watermark
 
-- **WHEN** a durable bounded operator's iteration N commits with consumed offset 7
+- **WHEN** a durable steps operator's iteration N commits with consumed offset 7
 - **THEN** the instance's watermark is 7, offsets below 7 become eligible for truncation, and
   the source credit those records held is released
 
 #### Scenario: A rewind does not lower the watermark
 
-- **WHEN** a bounded operator whose watermark is 7 is rewound to an earlier iteration
+- **WHEN** a steps operator whose watermark is 7 is rewound to an earlier iteration
 - **THEN** the watermark stays 7 and no released input is re-delivered
 
 #### Scenario: A small released prefix is not rewritten
@@ -157,7 +157,7 @@ non-correcting instance truncates at its floor exactly as it does with no hold w
 
 #### Scenario: A declared correction window holds the log
 
-- **WHEN** an unbounded operator declares `correction_window(60_000)`, its floor is offset 4711,
+- **WHEN** a flow operator declares `correction_window(60_000)`, its floor is offset 4711,
   and offset 4711 was appended 10 s ago
 - **THEN** offset 4711 is retained, because it is newer than the derived 60 s hold window
 
@@ -381,7 +381,7 @@ message, and SHALL NOT stop the log.
 The log SHALL absorb an append whose metadata carries a non-empty `flz.msg_id` equal to that of
 a record it still retains, answering the retained record's offset, and the caller SHALL forward
 nothing for it. A message carrying no id SHALL always be appended: two identical payloads without
-ids are two messages, for an unbounded operator and for a bounded operator alike. The log SHALL keep the id index
+ids are two messages, for a flow operator and for a steps operator alike. The log SHALL keep the id index
 itself, in memory over its retained records, built from the file on the first append that carries
 an id, maintained on every such append and trimmed by every truncation; an append SHALL NOT
 re-read the file. The record header SHALL keep carrying the append time; the id rides the
@@ -414,29 +414,29 @@ On every bind of an instance with durable input, of either kind, the controller 
 the retained records strictly above the instance's floor, in offset order, each stamped with its
 original `flz.offset` and never re-journaled, before the instance's source plugins are brought
 up. There SHALL be one such re-forward function, shared by a fresh bind, a crash resume, a
-migration, a rehydrate from suspension and the bind of an unbounded operator that could not carry
-an earlier input. A re-forward SHALL be safe to repeat: every receiver, a Cell or a bounded
+migration, a rehydrate from suspension and the bind of a flow operator that could not carry
+an earlier input. A re-forward SHALL be safe to repeat: every receiver, a Cell or a steps
 driver, SHALL drop an input at or below its own consumed floor, so a second bind, an orphaned
 bind or a repeated tail changes no state and emits nothing twice. Whether an instance owes
 undelivered input SHALL be answered from the log's tail and floor, without decoding the file.
 
-#### Scenario: A rehydrated bounded operator receives its tail once
+#### Scenario: A rehydrated steps operator receives its tail once
 
-- **WHEN** a durable bounded instance whose journal has released offset 6 rehydrates while the
+- **WHEN** a durable steps instance whose journal has released offset 6 rehydrates while the
   log holds offsets 0..9
 - **THEN** offsets 7..9 are forwarded in order, each stamped with its own `flz.offset`, and
   nothing at or below 6 is forwarded
 
-#### Scenario: A tier unbounded operator receives its tail once
+#### Scenario: A tier flow operator receives its tail once
 
-- **WHEN** an effectively-once unbounded operator whose floor is 4700 rebinds while the log holds
+- **WHEN** an effectively-once flow operator whose floor is 4700 rebinds while the log holds
   offsets up to 4720
 - **THEN** offsets 4701..4720 are forwarded in order, and a Cell ahead of 4700 skips the offsets
   it already consumed
 
 #### Scenario: A tail forwarded twice is taken once
 
-- **WHEN** the same tail 7..9 reaches a bounded driver twice, from an orphaned bind and from the
+- **WHEN** the same tail 7..9 reaches a steps driver twice, from an orphaned bind and from the
   Overwatch's own bind
 - **THEN** each of 7, 8 and 9 SHALL seed exactly one iteration
 

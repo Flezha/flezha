@@ -21,7 +21,7 @@ defmodule Flezha.Service.OperatorManagerRoutingTest do
   @scope :flz_directory
 
   defp builder(id, factory_id) do
-    %Builder{id: id, factory_id: factory_id, kind: :bounded, init_values: %{}, opts: []}
+    %Builder{id: id, factory_id: factory_id, run: :steps, init_values: %{}, opts: []}
   end
 
   defp unique_ns, do: "routing_ns_#{System.unique_integer([:positive])}"

@@ -87,7 +87,7 @@ pub(super) fn build_host_cell_slot(
             Arc::clone(&parts.cell_identity),
             args.prefix.clone(),
             Arc::clone(&flush_buffer),
-            args.persistence_enabled,
+            args.keeps_state,
             Arc::clone(&parts.change_seq),
             header,
             Arc::clone(&parts.push_deferred),
@@ -160,7 +160,7 @@ impl TaskletDispatcher for HostDispatcher {
             &slot.cell_identity,
             &slot.change_seq,
             &self.facts.header(),
-            slot.persistence_enabled,
+            slot.keeps_state,
         );
     }
 

@@ -17,7 +17,7 @@ links; the deep docs live in [`../resilience/`](../resilience/) and
 | **This file** | Roles, the workload model, the eight kernel invariants, process topology, on-disk layout, the failure model |
 | [`kernel.md`](kernel.md) | The shared durable substrate: the input log, the atomic effect record, WAL + snapshot, the outbox, the watermark, output identity, the epoch rule, flow control, the remote durability tier, health |
 | [`stream_profile.md`](stream_profile.md) | Streaming: per-cell recovery, the dead-letter queue, late-input correction, checkpoint intervals, partitioned operators |
-| [`bounded_profile.md`](bounded_profile.md) | Jobs and sessions: the tasklet tree, the task journal, the stage commit over the Cells' outbox, saga compensation, the durable loop, suspension, rewind |
+| [`steps_profile.md`](steps_profile.md) | Jobs and sessions: the tasklet tree, the task journal, the stage commit over the Cells' outbox, saga compensation, the durable loop, suspension, rewind |
 | [`runner.md`](runner.md) | Inside a runner: the shared kernel, the poll boundary, per-cell exclusivity, and what each host SDK owns |
 
 ---
@@ -31,7 +31,7 @@ links; the deep docs live in [`../resilience/`](../resilience/) and
 - **Runner** — the SDK process (any of the seven host languages) where user code runs. Runners **dial the
   controller**, never the reverse. They are disposable: state lives in memory, and the
   controller replicates it durably. Inside a runner there is one more split: transport,
-  ordering, durability, retries, timers and bounded runs live in a shared Rust kernel
+  ordering, durability, retries, timers and steps runs live in a shared Rust kernel
   (`flz_core`), and the host SDK brings the authoring surface and the threads that run user
   code. See [`runner.md`](runner.md).
 - **Source adapter** — where input comes from (a websocket, a feed, an HTTP endpoint). A
@@ -89,10 +89,10 @@ flowchart LR
 ```
 
 - **Operator** — the unit you start and stop. It has a **kind**, frozen at start:
-  `unbounded` (default) or `bounded`. An operator may be started with `--partitions N`,
+  `flow` (default) or `steps`. An operator may be started with `--partitions N`,
   which materializes it as N ordinary instances (`<id>#p0..#p{N-1}`) splitting the key space
   by key group — see [`stream_profile.md`](stream_profile.md#partitioned-operators); a
-  bounded operator must loop `per_input`.
+  steps operator must loop `per_input`.
 - **Tasklet** — a typed stage inside an operator. Declares `Input`, `Output`, `State`,
   `Change`, and `Clock` types, and lives as long as its operator.
 - **Cell** — one keyed instance of a tasklet. Durability is per cell: one WAL, one snapshot
@@ -184,7 +184,7 @@ flowchart TB
         INLOG[("💾 Input log<br/>offset-addressable<br/>effectively-once tier only")]:::store
         ROUTE["Routing · mailboxes · credit"]:::ctrl
         WAL[("💾 Cell WAL<br/>+ snapshots")]:::store
-        JRN[("💾 Task journal<br/>bounded operator step progress")]:::store
+        JRN[("💾 Task journal<br/>steps operator step progress")]:::store
         OBX[("💾 Outbox cursor<br/>key + epoch")]:::store
         REG["Registry — where each operator lives<br/>+ runner ownership"]:::ctrl
     end
@@ -210,7 +210,7 @@ flowchart TB
     OPV -->|"4 state change + output — under runner credit"| ROUTE
     ROUTE -->|"5 ONE atomic record, ONE fsync:<br/>state change + outputs + consumed offset"| WAL
     ROUTE -.->|"part of the same record"| OBX
-    ROUTE -->|"6 task commit — bounded only"| JRN
+    ROUTE -->|"6 task commit — steps only"| JRN
     OBX -->|"7 flush AFTER the fsync"| SINK
     WAL -.->|"R restore state"| OPV
     JRN -.->|"R resume step"| OPV
@@ -226,18 +226,18 @@ flowchart TB
 **Read it as:** input is journaled durably (1–2) before it is forwarded, then routed to the
 runner (3). The runner sends back a state change and any outputs (4), under a byte credit
 it must hold. The controller writes state, outputs, and the consumed input offset as **one
-atomic record under one fsync** (5) — state and emitted effect can never tear apart. Bounded operator
+atomic record under one fsync** (5) — state and emitted effect can never tear apart. Steps operator
 operators additionally commit step progress to a task journal (6). Outputs reach the sink only
 after that record is durable (7). On a crash, the controller restores the cell's state and
-the bounded operator's step position (R).
+the steps operator's step position (R).
 
 ## One kernel, two profiles
 
 ```mermaid
 flowchart TB
     subgraph PROF["PROFILES — two ways to use it"]
-        UNB["UNBOUNDED<br/>endless stream, no barrier, low latency<br/>change-by-change durability<br/>per-cell local recovery<br/>effectively-once tier is opt-in"]:::exec
-        BND["BOUNDED<br/>tasklet tree with a barrier per tasklet<br/>task-boundary journal naming each stage's records<br/>saga compensation<br/>durable loop and suspension"]:::exec
+        UNB["FLOW<br/>endless stream, no barrier, low latency<br/>change-by-change durability<br/>per-cell local recovery<br/>effectively-once tier is opt-in"]:::exec
+        BND["STEPS<br/>tasklet tree with a barrier per tasklet<br/>task-boundary journal naming each stage's records<br/>saga compensation<br/>durable loop and suspension"]:::exec
     end
     subgraph KERN["SHARED KERNEL — durable compute"]
         K1[("Durable input log<br/>offset-addressable, adapter-independent")]:::store
@@ -247,7 +247,7 @@ flowchart TB
         K5["Single-owner write path<br/>bind is the fence"]:::ctrl
         K6["Controller as the durable front<br/>evict · rehydrate"]:::ctrl
     end
-    BEXTRA[("bounded only:<br/>task journal · saga")]:::store
+    BEXTRA[("steps only:<br/>task journal · saga")]:::store
 
     UNB --> KERN
     BND --> KERN
@@ -258,9 +258,9 @@ flowchart TB
     classDef store fill:#e5e7eb,stroke:#374151,color:#111
 ```
 
-The WAL and the snapshot mechanism are **shared** — a bounded operator's cells persist
-exactly like an unbounded operator's, and a durable bounded operator's input goes through the same input
-log an unbounded operator on the effectively-once tier uses. What is bounded-specific is the task journal and
+The WAL and the snapshot mechanism are **shared** — a steps operator's cells persist
+exactly like a flow operator's, and a durable steps operator's input goes through the same input
+log a flow operator on the effectively-once tier uses. What is bounded-specific is the task journal and
 saga compensation.
 
 ---
@@ -286,7 +286,7 @@ log and each cell recovers from its own consumed offset.
 `(flz.cell, flz.seq, flz.key)`; the durable outbox identity adds `flz.epoch`. A crash
 retry, a re-drive, or a runner takeover **keeps** the epoch — sink-side dedup absorbs the
 repeat. Only a deliberate correction or an manual replay **bumps** it, so the corrected
-output passes dedup and overwrites the stale row by natural key; a bounded operator rewind's re-run
+output passes dedup and overwrites the stale row by natural key; a steps operator rewind's re-run
 output passes as a newer record, on its higher `flz.seq`. See
 [`kernel.md`](kernel.md#the-epoch-rule).
 
@@ -309,7 +309,7 @@ freeze a controller serving thousands of operators behind one dead runner. See
 **7. The watermark is the retention signal.** The controller tracks `min(consumed offset)`
 across an operator's cells, replaces it with the runner's processed prefix once it has
 confirmed that prefix durable, and truncates the input log below it, subject to the
-correction hold window. A permanently-failing payload must never freeze it: after bounded operator
+correction hold window. A permanently-failing payload must never freeze it: after steps operator
 retries the cell parks the payload durably to the dead-letter queue and advances its offset.
 Data is never lost and never silently dropped. See
 [`stream_profile.md`](stream_profile.md#dead-letter-queue).
@@ -423,11 +423,11 @@ sequenceDiagram
 
 Those eight metadata keys are the complete set of SDK→controller declarations, and the shared
 runner core emits them for every host language — a Java class and a Rust class declaring the
-same thing send the same map. A class that declares nothing — a plain unbounded class — sends
+same thing send the same map. A class that declares nothing — a plain flow class — sends
 an empty map and the controller keeps every default. `keyed` is declared only when it is
 *false* (a keyless class cannot be partitioned, and the controller preflight uses that to
 refuse a repeat partitioned start without touching a runner); `durability=sync_remote` is a
-bounded class asking the [remote durability tier](kernel.md#the-remote-durability-tier) to
+steps class asking the [remote durability tier](kernel.md#the-remote-durability-tier) to
 gate its barrier acks on the remote ship. Wire detail:
 [`protocol_spec.md`](../sdk/protocol_spec.md).
 
@@ -446,13 +446,13 @@ flowchart TB
     AUD["audit/ · auth/ · certs/"]:::store
 
     CLS["&lt;operator_class&gt;/"]:::store
-    IL["input.log<br/><i>durable input log — effectively-once tier, durable bounded operator</i>"]:::store
-    DECL["effectively_once · checkpoint_ack<br/><i>declaration sidecars</i>"]:::store
+    IL["input.log<br/><i>durable input log — effectively-once tier, durable steps operator</i>"]:::store
+    DECL["effectively_once · ack_checkpoint<br/><i>declaration sidecars</i>"]:::store
     OPID["&lt;tasklet_id&gt;/"]:::store
     SEG["&lt;cell_key&gt;.wal<br/>&lt;cell_key&gt;.snap.&lt;seq&gt;<br/>&lt;cell_key&gt;.outbox.dedup"]:::store
 
     INST["&lt;instance_id&gt;/&lt;instance_id&gt;/"]:::store
-    JRN["task.journal<br/><i>bounded operator step progress</i>"]:::store
+    JRN["task.journal<br/><i>steps operator step progress</i>"]:::store
 
     DLQE["&lt;class&gt;/&lt;tasklet&gt;/entries.jsonl + &lt;id&gt;.bin"]:::store
     PHR["&lt;hub_id&gt;/registry.dets"]:::store
@@ -480,7 +480,7 @@ durability one, so a restarted runner pod inherits the state that was already on
 
 The task journal rides the *same* WalWriter substrate as a cell, under one reserved cell key
 (`_task_journal`), which is why it sits at `<instance_id>/<instance_id>/` and is skipped by the
-cell scan. A bounded instance's class directory is its instance id, so its `input.log` sits at
+cell scan. A steps instance's class directory is its instance id, so its `input.log` sits at
 `<instance_id>/input.log`. Root is configurable
 (`:state_root`, default `app_data/state`).
 
@@ -510,7 +510,7 @@ flowchart LR
     subgraph PROT["What closes it"]
         direction TB
         P1["WAL + snapshot — state mirrored to the controller"]:::prot
-        P2["fsync batching + credit — the un-fsynced buffer is window-bounded"]:::prot
+        P2["fsync batching + credit — the un-fsynced buffer is window-steps"]:::prot
         P3["effectively-once tier — the flush is gated on the fsync"]:::prot
         P4["deterministic key + dedup at the sink"]:::prot
         P5["credit-grant flow control — park, never drop"]:::prot
@@ -552,10 +552,10 @@ the user's concern there. The effectively-once tier is what closes them.
 | Controller graceful restart with a live peer | none — peer sync | at-least-once |
 | Controller recovery-mode restart, sole node | none — DETS replay | at-least-once |
 | Whole-cluster cold boot | recovered from DETS + the on-disk WAL | n/a |
-| Bounded operator SIGKILL, durable | none past the last committed task | at-least-once |
-| Bounded operator SIGKILL, persistence opted out | full — re-runs from the top | at-least-once |
+| Steps operator SIGKILL, durable | none past the last committed task | at-least-once |
+| Steps operator SIGKILL, persistence opted out | full — re-runs from the top | at-least-once |
 | Controller dies with its disk, `backend: none` (default) | that node's operators: total | n/a |
-| Controller dies with its disk, remote tier enabled | bounded operator `sync_remote`: none; otherwise ≤ one checkpoint / ship interval | effectively-once — replays absorbed by sink dedup |
+| Controller dies with its disk, remote tier enabled | steps operator `sync_remote`: none; otherwise ≤ one checkpoint / ship interval | effectively-once — replays absorbed by sink dedup |
 
 The full scenario matrix and the user playbook are in
 [`../resilience/data_durability.md`](../resilience/data_durability.md).
@@ -566,7 +566,7 @@ The full scenario matrix and the user playbook are in
 
 - The durable substrate every profile shares → [`kernel.md`](kernel.md)
 - Streaming workloads → [`stream_profile.md`](stream_profile.md)
-- Jobs, sagas, and agent sessions → [`bounded_profile.md`](bounded_profile.md)
+- Jobs, sagas, and agent sessions → [`steps_profile.md`](steps_profile.md)
 - Inside a runner, and writing a new SDK → [`runner.md`](runner.md)
 - Fault-tolerance mechanisms in depth → [`../resilience/overview.md`](../resilience/overview.md)
 - The wire protocol → [`protocol_spec.md`](../sdk/protocol_spec.md)

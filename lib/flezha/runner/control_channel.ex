@@ -276,8 +276,8 @@ defmodule Flezha.Runner.ControlChannel do
         {ack, log_label} = Requests.runner_shutdown(state, notif)
         emit_control_request(state, reference_id, ack, log_label)
 
-      {:bounded_completed, %{} = completed, _reference_id} ->
-        Requests.bounded_completed(state, completed)
+      {:operator_completed, %{} = completed, _reference_id} ->
+        Requests.operator_completed(state, completed)
 
       {barrier, %{} = commit, reference_id} when barrier in [:task_commit, :iter_commit] ->
         Requests.barrier(state, barrier, commit, reference_id)
@@ -291,8 +291,8 @@ defmodule Flezha.Runner.ControlChannel do
       {:update_factories, %{} = update, _reference_id} ->
         Requests.update_factories(state, update)
 
-      {:spawn_bounded_request, %{} = request, reference_id} ->
-        Requests.spawn_bounded(state, request, reference_id)
+      {:spawn_steps_request, %{} = request, reference_id} ->
+        Requests.spawn_steps(state, request, reference_id)
 
       {:admin_request, %{} = request, reference_id} ->
         Requests.admin(state, request, reference_id)
@@ -439,13 +439,13 @@ defmodule Flezha.Runner.ControlChannel do
   # `:not_sdk_initiated`.
   @sdk_initiated_commands [
     :runner_shutdown_notification,
-    :bounded_completed,
+    :operator_completed,
     :task_commit,
     :iter_commit,
     :iter_park,
     :operator_exited,
     :update_factories,
-    :spawn_bounded_request,
+    :spawn_steps_request,
     :admin_request
   ]
 

@@ -3,8 +3,8 @@
 Distributed stateful operators: a compute graph of tasklets, each with its
 own durable per-Cell state, placed and migrated across a cluster by a
 controller, with static and dynamic creation of operators. A runner hosts
-operators; an operator is the unit you start, and it is either bounded (every
-run ends) or unbounded (it runs until you stop it).
+operators; an operator is the unit you start, and it runs as a flow (until you
+stop it or it completes itself) or in steps (a run with a start and an end).
 
 It is built for ETL pipelines: extract from files, HTTP endpoints, sockets or
 another operator, transform with per-key state that survives a crash, and load
@@ -70,13 +70,13 @@ What a pipeline usually has to build around itself is already there:
   effectively-once, a record that arrives late rewinds its key and replays the
   input in event-time order, and a keyed sink overwrites the stale rows
   ([`data_durability.md`](docs/resilience/data_durability.md#late-input-correction-fix-the-past-and-the-sinks-fix-themselves)).
-- **Batch jobs as well as streams.** A bounded operator is a run with a start
+- **Batch jobs as well as streams.** A steps operator is a run with a start
   and an end: it commits progress at every step, retries a failing step before
   it aborts, and can undo finished steps with saga compensation
-  ([`bounded_profile.md`](docs/architecture/bounded_profile.md)).
+  ([`steps_profile.md`](docs/architecture/steps_profile.md)).
   `flz schedule` starts one on a cron schedule, with no external scheduler.
-- **Scale by key.** `--partitions N` splits one unbounded operator, or a
-  per-input bounded operator, into N instances across its key space
+- **Scale by key.** `--partitions N` splits one flow operator, or a
+  per-input steps operator, into N instances across its key space
   ([`partitioned_operators.md`](docs/sdk/partitioned_operators.md)).
 
 ## Reading further
@@ -94,7 +94,7 @@ kernel, the two operator profiles, and the diagrams. Vocabulary:
   QUIC, which is [experimental: quic](docs/publishing/maturity.md#quic)
 - Per-Cell durable state — WAL + snapshot, crash-resume, point-in-time query ([`docs/internals/state_persistence.md`](docs/internals/state_persistence.md))
 - Opt-in effectively-once delivery — durable input log, atomic effect record, fsync-gated outbox ([`docs/architecture/kernel.md`](docs/architecture/kernel.md))
-- Bounded operators — a tasklet tree with saga compensation, a durable loop, and suspension ([`docs/architecture/bounded_profile.md`](docs/architecture/bounded_profile.md))
+- Steps operators — a tasklet tree with saga compensation, a durable loop, and suspension ([`docs/architecture/steps_profile.md`](docs/architecture/steps_profile.md))
 - Installable plugin subsystem ([`docs/plugins/installation.md`](docs/plugins/installation.md))
 - First-party Kafka producer with retries, idempotence, batching, and bounded queueing ([`docs/plugins/kafka_producer.md`](docs/plugins/kafka_producer.md))
 - Transactional Postgres sink — upsert + progress watermark in one transaction ([`docs/resilience/data_durability.md`](docs/resilience/data_durability.md))

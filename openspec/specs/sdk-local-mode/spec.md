@@ -214,7 +214,7 @@ sixth capability to this list needs its own proposal.
 - **THEN** it SHALL contain a local-mode run for each of the five capabilities, or a refusal assertion where every fixture class for that capability declares something controller-only
 
 #### Scenario: A controller capability is not faked
-- **WHEN** a local-mode test is added for `state_persistence`, `effectively_once`, `bounded` or another controller-owned capability
+- **WHEN** a local-mode test is added for `state_persistence`, `effectively_once`, `steps` or another controller-owned capability
 - **THEN** it SHALL assert the refusal by name and nothing else
 
 ### Requirement: A local run fires the timers a class declares

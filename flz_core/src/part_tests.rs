@@ -48,7 +48,7 @@ fn slot_named(id: &str, instance: &str, end: &str, keys: &[&str]) -> Arc<crate::
         ),
     };
     let json = format!(
-        r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":false,
+        r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","durable":false,
              "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},{out}],
              "tasklets":[{tasklets}]}}"#
     );

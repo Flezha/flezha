@@ -310,7 +310,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
 
     if is_nil(error) do
       commit.post.()
-      DurabilityTier.on_bounded_commit(commit.operator_id)
+      DurabilityTier.on_steps_commit(commit.operator_id)
     end
 
     state
@@ -326,7 +326,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
         "the turn failed in tasklet #{metadata.tasklet} and was dead-lettered as #{entry_ref}"
     )
 
-    :telemetry.execute([:flezha, :bounded, :turn_dead_lettered], %{count: 1}, metadata)
+    :telemetry.execute([:flezha, :steps, :turn_dead_lettered], %{count: 1}, metadata)
   end
 
   # An iteration boundary is durable: the input it consumed is released into
@@ -349,7 +349,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   defp status(:ok), do: :ok
   defp status({:error, _}), do: :error
 
-  # Task-boundary commit (bounded-task-journal): ONE `task_committed` entry
+  # Task-boundary commit (steps-task-journal): ONE `task_committed` entry
   # (the Cells the stage ran, each with the records it wrote, and the handoff),
   # appended once those records are durable and acked once the entry is. The
   # ack IS the durable point the driver gates the next tasklet on, and the
@@ -400,7 +400,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
     }
   end
 
-  # Iteration boundary of a durable structured loop (`bounded-durable-loop`):
+  # Iteration boundary of a durable structured loop (`steps-durable-loop`):
   # ONE `iter_committed(iter, consumed_offset)` record — with the iteration's
   # terminal handoff, so a crash can re-seed the next iteration — then the ack.
   # Everything after the ack is cleanup the commit does not depend on: the
@@ -442,7 +442,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
     }
   end
 
-  # A turn that failed in a `per_input` keep-progress loop (`bounded-durable-loop`):
+  # A turn that failed in a `per_input` keep-progress loop (`steps-durable-loop`):
   # its message is parked first, then ONE `dead_lettered(iter, consumed_offset)`
   # record naming the DLQ entry commits the iteration, then the ack, after
   # which the driver undoes the turn. The post-ack work is an iteration

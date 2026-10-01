@@ -47,13 +47,13 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule TierStoreOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "tier_store"
+    def run, do: {:flow, exactly: :effectively_once}
 
     def channels(c),
       do:
         c
-        |> Channels.effectively_once()
         |> Channels.input("input")
         |> Channels.on_full(:drop_nothing)
         |> Channels.retry_backoff_ms(300)
@@ -65,14 +65,17 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule CheckpointBatchedOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "checkpoint_batched_store"
 
-    def channels(c) do
-      c = c |> Channels.effectively_once() |> Channels.checkpoint_ack()
+    def run,
+      do:
+        {:flow,
+         exactly:
+           {:effectively_once, ack: {:checkpoint, outputs: :at_checkpoint, max_delay_ms: 1_500}}}
 
+    def channels(c) do
       c
-      |> Channels.outputs_at_checkpoint(1_500)
       |> Channels.input("input")
       |> Channels.into(TierStoreTask)
       |> Channels.named("sink")
@@ -83,14 +86,13 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule CheckpointStoreOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "checkpoint_store"
+    def run, do: {:flow, exactly: {:effectively_once, ack: :checkpoint}}
 
     def channels(c),
       do:
         c
-        |> Channels.effectively_once()
-        |> Channels.checkpoint_ack()
         |> Channels.input("input")
         |> Channels.into(TierStoreTask)
         |> Channels.named("sink")
@@ -100,14 +102,13 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule CheckpointEveryOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "checkpoint_every"
+    def run, do: {:flow, exactly: {:effectively_once, ack: {:checkpoint, every: 3}}}
 
     def channels(c),
       do:
         c
-        |> Channels.effectively_once()
-        |> Channels.checkpoint_every(3)
         |> Channels.input("input")
         |> Channels.into(TierStoreTask)
         |> Channels.named("sink")
@@ -117,14 +118,18 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule CheckpointHeldOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "checkpoint_held"
+
+    def run,
+      do:
+        {:flow,
+         exactly:
+           {:effectively_once, ack: {:checkpoint, outputs: :at_checkpoint, max_delay_ms: 20}}}
 
     def channels(c),
       do:
         c
-        |> Channels.effectively_once()
-        |> Channels.outputs_at_checkpoint(20)
         |> Channels.input("input")
         |> Channels.into(TierStoreTask)
         |> Channels.named("sink")
@@ -162,13 +167,13 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule TierTimerOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "tier_timer_op"
+    def run, do: {:flow, exactly: :effectively_once}
 
     def channels(c),
       do:
         c
-        |> Channels.effectively_once()
         |> Channels.input("input")
         |> Channels.into(TierTimerTask)
         |> Channels.named("sink")
@@ -219,12 +224,12 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule TierEdgeOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "tier_edge"
+    def run, do: {:flow, exactly: :effectively_once}
 
     def channels(c) do
       c
-      |> Channels.effectively_once()
       |> Channels.input("input")
       |> Channels.into(EdgeProducerTask)
       |> Channels.named("producer")
@@ -249,13 +254,13 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule StatelessTierOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "stateless_tier"
+    def run, do: {:flow, exactly: :effectively_once}
 
     def channels(c),
       do:
         c
-        |> Channels.effectively_once()
         |> Channels.input("input")
         |> Channels.into(StatelessTierTask)
         |> Channels.named("sink")
@@ -294,14 +299,13 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule CorrectionOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "correction_probe"
+    def run, do: {:flow, exactly: {:effectively_once, correction_ms: 600_000}}
 
     def channels(c),
       do:
         c
-        |> Channels.effectively_once()
-        |> Channels.correction_window(600_000)
         |> Channels.input("input")
         |> Channels.into(CorrectionTask)
         |> Channels.named("sink")
@@ -311,27 +315,19 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
 
   defmodule CorrectionDropOp do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "correction_probe_drop"
+
+    def run,
+      do: {:flow, exactly: {:effectively_once, correction_ms: 600_000, beyond_window: :drop}}
 
     def channels(c),
       do:
         c
-        |> Channels.effectively_once()
-        |> Channels.correction_window(600_000)
-        |> Channels.beyond_window_policy(:drop)
         |> Channels.input("input")
         |> Channels.into(CorrectionTask)
         |> Channels.named("sink")
         |> Channels.keyed()
         |> Channels.sink()
-  end
-
-  defmodule TierStoreNoPersistOp do
-    @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
-    def factory_id, do: "tier_store_nopersist"
-    def persistence_enabled, do: false
-    defdelegate channels(c), to: TierStoreOp
   end
 end

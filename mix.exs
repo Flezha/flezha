@@ -6,7 +6,7 @@ defmodule Flezha.MixProject do
       app: :flezha,
       version: "0.1.0",
       elixir: "~> 1.17",
-      description: "Distributed stateful operators — durable unbounded and bounded compute",
+      description: "Distributed stateful operators — durable flow and steps compute",
       source_url: "https://github.com/flezha/flezha",
       package: [
         licenses: ["MPL-2.0", "Apache-2.0"],

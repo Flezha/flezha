@@ -1,10 +1,10 @@
-# Bounded operator bench acceptance harness
+# Steps operator bench acceptance harness
 
-Repeatable, configurable runs of the bounded operator bench
-(`mix bench.bounded`), with progress streamed as each run lands and a
+Repeatable, configurable runs of the steps operator bench
+(`mix bench.steps`), with progress streamed as each run lands and a
 median summary at the end that flags regressions against a saved baseline.
 
-Everything here drives `mix bench.bounded`; the cases only pick scenarios and
+Everything here drives `mix bench.steps`; the cases only pick scenarios and
 sizes. Transport, runner count and SDK are run-time flags, so one case set
 sweeps across configurations without editing.
 
@@ -32,7 +32,7 @@ bench/acceptance/run.sh --profile soak
 | `--repeat N` | 3 (soak: 1) | Runs per case. The summary takes the **median**, so odd N ≥ 3 tames the box's ±20 % drift. |
 | `--runners N` | 2 | Runner (SDK) processes the controller drives. |
 | `--transport uds\|quic` | `uds` | Wire transport (sets `FLEZHA_TRANSPORT` for the whole run). QUIC first-connects are slower — the harness widens the connect budget automatically. |
-| `--runtime rust\|java` | `rust` | Default SDK. A case can pin its own (the `runtime` column); Elixir has no bounded operators, so it is not an option. |
+| `--runtime rust\|java` | `rust` | Default SDK. A case can pin its own (the `runtime` column); |
 | `--save-baseline` | off | Write the run's medians as the new `baseline.<profile>.tsv` instead of comparing. |
 
 Examples:
@@ -46,7 +46,7 @@ bench/acceptance/run.sh --profile standard --repeat 5 --save-baseline
 ## What you get
 
 - **While it runs:** one readable line per run —
-  `[chain_4 2/3 rust] 90.1 bounded/s · p50 194 ms · peak 267 MiB · fsync 17 ms · clean`.
+  `[chain_4 2/3 rust] 90.1 steps/s · p50 194 ms · peak 267 MiB · fsync 17 ms · clean`.
 - **At the end:** a median table (throughput, p50, **peak MiB**, **fsync p99
   ms**, integrity, vs baseline) printed and written to `summary.<profile>.md`,
   plus a one-line verdict: `all cases within tolerance` or
@@ -78,7 +78,7 @@ chain_4_java	java	--scenario chain -n 100 --tasks 4 -c 20 --stall-timeout 180
 ```
 
 - `runtime` is `default` (use `--runtime`) or a pin (`rust` / `java`).
-- The args are passed straight to `mix bench.bounded`; `--runners` and the
+- The args are passed straight to `mix bench.steps`; `--runners` and the
   transport come from the run flags, so don't put them here.
 - Add a case by adding a line. If you baseline it, re-run `--save-baseline`.
 
@@ -92,10 +92,10 @@ The three profiles:
 - **soak** — long-running (a 20 000-instance chain, an hour of chat turns, a
   1 000-sleeper wake soak). Endurance and integrity over time, not throughput.
 
-## Scenarios (from `mix bench.bounded`)
+## Scenarios (from `mix bench.steps`)
 
 - `chain` — spawn N run-once durable chains (`--tasks 1|4|16`, `--tier optout`);
-  `-c N` keeps N in flight, `--rate R` spawns R/s. Reports **bounded/s** and
+  `-c N` keeps N in flight, `--rate R` spawns R/s. Reports **steps/s** and
   **task commits/s**.
 - `turns` — L loops × T turns (`-n L -m T`, `--rate`); reports **turns/s** and
   turn→reply latency. `--kill-runner-at S` SIGKILLs a runner mid-run.
@@ -103,7 +103,7 @@ The three profiles:
   cost per sleeper and **wakes/s**. `--wake-rate R` paces the storm;
   `--keep` + the `sleep-boot` scenario measures a controller restart.
 
-Run `mix bench.bounded` with no matching case to see the full flag list.
+Run `mix bench.steps` with no matching case to see the full flag list.
 
 ## Limits (read before trusting a number)
 
@@ -114,7 +114,7 @@ Run `mix bench.bounded` with no matching case to see the full flag list.
 - **Shared box.** The controller, runners and any Kafka broker share one
   machine, so numbers drift ±20 %. Always compare **medians** (`--repeat`),
   never single runs, and keep the box quiet during a gate run.
-- **The barrier ceiling.** Until `bounded-durable-path-throughput` lands, the
+- **The barrier ceiling.** Until `workflow-durable-path-throughput` lands, the
   task-commit path is one fsync per barrier on the runner's control channel
   (~350 commits/s on two runners) and the loop journal is never cut, so
   high-rate `turns` cases can stall on the O(history) per-turn cost. The

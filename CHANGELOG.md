@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+### Changed: one operator, configured by one settings tree (breaking)
+
+Every SDK offers one `Operator` class; the two kinds and every spelling of them are gone, with no
+alias. A class says how it runs and where its work is kept in one settings tree: `run` is `flow`
+(the default: the commit point is an input, or a checkpoint) or `steps` (the commit point is a
+stage; `each` is `once`, `per_input` or `chained`, `on_failure` is `undo_all` or `keep_progress`);
+under `flow`, `exactly` is `at_least_once` or `effectively_once` with `ack` (`per_input`, or
+`checkpoint` with `every`, `max_delay_ms` and `outputs`), `correction_ms` and `beyond_window`;
+`durable` is `false`, `local` (the default) or `remote`, and `local` and `remote` carry
+`sleep_after`, a duration or `false`: by default a flow class never sleeps and a steps class
+sleeps after six hours. A sleeping flow instance has its input journaled before it is forwarded,
+which cost the default flow path about 38 % of its throughput, so the flow default stays awake (a
+decision taken while the maintainer was away; it may be overruled). Each SDK spells the tree in its own types, so a
+setting written under the wrong parent does not compile, or is refused at registration with
+`topology.unknown_field` naming it and its parent. A flow operator may now end itself with
+`complete` (it drains what its Cells hold first) and may declare `max_duration_ms`; a steps operator
+that has no way to end is ordinary.
+
+Each setting lives in one place. The channel builder's `effectively_once`, `checkpoint_ack`,
+`checkpoint_every`, `outputs_at_checkpoint`, `correction_window` and `beyond_window_policy` calls
+are gone; `FLEZHA_PARK_IDLE_MS` is gone (the interval is the class's `sleep_after`);
+`flz operator start --snapshot-interval`, which nothing read, is gone; the per-class
+`:sync_durability` override is gone (`durable: remote` is the class's). `durable: remote` on a
+flow class is refused with `topology.remote_on_flow` for now, and on a controller without a
+durability backend the start is refused with `operator.remote_without_backend`, naming
+`FLEZHA_DURABILITY_BACKEND`.
+
+The wire carries the run where it carried the kind: `UpdateFactories` announces `run` (with `each`
+and `on_failure` for steps), `AddOperator.run` replaces `kind`, and the AddOperator response
+announces the run and the durability. `BoundedCompleted` is `OperatorCompleted`. The refusal codes
+that policed kind combinations are removed (`topology.bounded_setting_on_unbounded`,
+`ambiguous_operator_kind`, `unknown_operator_kind`, `checkpoint_on_bounded`,
+`correction_window_on_bounded`, `checkpoint_ack_without_tier`, `correction_without_tier`,
+`sleep_without_persistence`, `sync_durability_on_unbounded`, `sync_durability_without_persistence`,
+`effectively_once_on_bounded`, `external_stop_only`, `runtime.complete_outside_bounded`), and the
+words bounded and unbounded leave the code, the CLI and the specs: a class runs in flow or in steps.
+`flz operator info` prints `Run:` and `Durable:` where it printed `Kind:`. The Rust pipeline macro
+is `flezha::pipeline!`. Upgrade: `flz controller stop && flz reset --yes`.
+
+A chained steps loop declared in Node, Java, Python, Ruby or PHP now runs every pass: its last
+tasklet's value reaches the core as the next pass's input, where before the loop ended after
+its first pass.
+
 ### Added: a published record of what is not yet settled
 
 `docs/publishing/maturity.md` names every part of Flezha that is not settled, and anything it

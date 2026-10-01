@@ -11,7 +11,7 @@ use crate::cell::{CellItem, CellSlot};
 use crate::channel::OverflowPolicy;
 use crate::util::LockRecover;
 
-/// Bounded park per `DropNothing` retry on the entry path, so a lost wake
+/// Steps park per `DropNothing` retry on the entry path, so a lost wake
 /// degrades to a retry loop.
 const ROOM_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(50);
 
@@ -105,7 +105,7 @@ fn wait_for_room(slot: &Arc<CellSlot>, since: std::time::Instant, warned: &mut b
     slot.note_blocked();
     if slot.mailbox.is_full() {
         // A live drainer on another thread owns progress;
-        // bounded park so even a lost wake degrades to a
+        // steps park so even a lost wake degrades to a
         // retry loop instead of a permanent freeze.
         slot.waiters
             .wait_for_room_timeout(&slot.mailbox, ROOM_WAIT_TIMEOUT);

@@ -10,35 +10,6 @@ and a restore would resume past inputs the restored state never saw. This
 capability is the opt-in that moves the acknowledgement to where such an
 operator's state actually becomes kernel-visible — the checkpoint.
 ## Requirements
-### Requirement: Checkpoint ack-granularity is a per-operator opt-in on the effectively-once tier
-
-An operator with the effectively-once tier enabled SHALL be able to opt into
-`checkpoint` ack-granularity (`ChannelBuilder::checkpoint_ack()`). The default
-SHALL remain per-input granularity, byte-identical to the tier's existing
-behaviour. The declaration SHALL be refused at build time without the tier: off
-the tier there is no durable consumed-offset to hold back, and no durable input
-log to replay the interval from.
-
-The mode's other precondition — every plugin-bound channel keyed, so the
-interval's re-emitted outputs are absorbed by sink dedup — needs no new check:
-the tier already refuses an unkeyed plugin-bound channel for every opted-in
-operator.
-
-#### Scenario: Default is unchanged
-
-- **WHEN** a tier-enabled operator does not opt into checkpoint granularity
-- **THEN** its consumed-offset advances per `run` invocation exactly as before
-
-#### Scenario: Opt-in without the tier is refused
-
-- **WHEN** an operator declares `checkpoint_ack()` without `effectively_once()`
-- **THEN** the build fails before the operator starts
-
-#### Scenario: Opt-in without keyed channels is refused
-
-- **WHEN** a checkpoint-ack operator declares an unkeyed plugin-bound channel
-- **THEN** the build fails before the operator starts
-
 ### Requirement: Consumed-offset advances only at checkpoint boundaries
 
 In checkpoint mode the Cell's durable `consumed_offset` SHALL advance only
@@ -176,38 +147,22 @@ interval. Silence between checkpoints is the mode's steady state.
   nothing durable for longer than the input-silence timeout
 - **THEN** no `input_silence` is reported for it
 
-### Requirement: The checkpoint opt-in is one seam every SDK exposes, and each option turns the granularity on itself
+### Requirement: Checkpoint acknowledgement is the `ack` setting under `effectively_once`
 
-Every SDK that carries the effectively-once tier SHALL expose the bare checkpoint opt-in on its channel builder, spelled in that language's casing (`checkpoint_ack()` / `checkpointAck()`), so a class whose interval is closed only by an explicit `ctx.checkpoint()` is expressible without declaring a cadence it does not want. Each option that presumes the checkpoint interval — the bare opt-in, the declared cadence, and holding outputs until the interval closes — SHALL set the checkpoint granularity itself rather than requiring a second call, and setting it SHALL be idempotent, so the options compose in any order and any combination and each preserves the others' policy. An SDK SHALL NOT be able to produce a declaration that holds outputs at the checkpoint, or closes the interval on a cadence, while acknowledging per input: the core refuses that declaration at registration, and a builder that can express it hands its author a class that cannot start.
+`effectively_once` SHALL carry `ack`, one of `per_input` (the default) and `checkpoint`
+with `every` (a positive count) and `max_delay_ms` (a positive delay), and the checkpoint
+behaviour SHALL be what the retired requirement described: the consumed offset advances at
+checkpoint boundaries, mid-interval outputs flush when produced, a park closes the interval,
+recovery replays the interval. `ack` SHALL be writable nowhere else. A zero `every` or
+`max_delay_ms` SHALL stay refused by the existing value codes.
 
-An SDK that carries the tier SHALL prove the opt-in through its own authoring surface rather than by writing the declaration by hand, so the refusal a wrong declaration earns is one an author can actually reach. An SDK that cannot yet carry the tier SHALL defer `effectively_once` by name in its own conformance manifest, naming the follow-up that owes it. The Elixir SDK carries it in its own core: `Flezha.SDK.Channels.checkpoint_ack/1`, `checkpoint_every/2` and `outputs_at_checkpoint/2` route through one private policy amendment that sets the granularity, as the reference's do, and `Flezha.SDK.Topology.build/1` refuses `topology.checkpoint_ack_without_tier` before the operator starts.
+#### Scenario: A checkpointing flow class
 
-#### Scenario: Holding outputs at the checkpoint acknowledges at the checkpoint
+- **WHEN** a flow class declares `exactly: {effectively_once, ack: {checkpoint, every: 100, max_delay_ms: 1000}}`
+- **THEN** its consumed offset SHALL advance only at `ctx.checkpoint()` or at the hundredth input or after a second, whichever the retired requirement's rules reach first, and a crash SHALL replay from the last checkpoint
 
-- **WHEN** a tier-enabled class declares only that its outputs are held until the interval closes, with a maximum delay
-- **THEN** its declaration carries `checkpoint` ack-granularity, and the core registers the class
+#### Scenario: `ack` cannot be written under `at_least_once` or under `steps`
 
-#### Scenario: The bare opt-in needs no cadence
-
-- **WHEN** a tier-enabled class declares the checkpoint opt-in and no cadence
-- **THEN** its declaration carries `checkpoint` ack-granularity and no `checkpoint_every`, and the interval closes only on an explicit `ctx.checkpoint()`
-
-#### Scenario: The options compose in any order
-
-- **WHEN** a class declares the bare opt-in, a cadence, and outputs held at the checkpoint, in any order
-- **THEN** the declaration carries all three, and no later call clears an earlier one's policy
-
-#### Scenario: The opt-in does not imply the tier
-
-- **WHEN** a class declares any of the three checkpoint options without declaring effectively-once
-- **THEN** the build is refused before the operator starts, naming the missing tier
-
-#### Scenario: An SDK that defers the tier says so in its manifest
-
-- **WHEN** an SDK's channel builder does not carry the checkpoint options
-- **THEN** its `conformance.json` lists `effectively_once` under `deferred`, and the conformance gate refuses a manifest that carries the capability without the reference's fixture set
-
-#### Scenario: The Elixir builder's options imply the granularity and compose
-- **WHEN** an Elixir class declares `effectively_once/1` then `outputs_at_checkpoint/2` alone, and another declares the three options in any order
-- **THEN** both register with `checkpoint` ack-granularity, the first with no cadence and the second carrying all three, and a class declaring any of them without `effectively_once/1` is refused at `Topology.build/1` naming the missing tier
+- **WHEN** a class writes `ack` under `exactly: at_least_once`, or under `run: steps`
+- **THEN** the SDK SHALL fail to compile where its language can and otherwise refuse registration with `topology.unknown_field` naming `ack` and its parent
 

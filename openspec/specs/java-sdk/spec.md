@@ -21,7 +21,7 @@ The Java SDK SHALL provide `com.flezha.sdk.Flezha.createRunner(String namespace)
 - **THEN** the runner SHALL connect successfully with an empty `factory_ids` list in the handshake init message, and operator types MAY be defined later on the live runner
 
 #### Scenario: RunnerBuilder is not importable
-- **WHEN** user code references `com.flezha.sdk.RunnerBuilder`, `com.flezha.sdk.operator.UnboundedOperatorRegistry`, `com.flezha.sdk.operator.BoundedOperatorRegistry`, or `Flezha.newRunner`
+- **WHEN** user code references `com.flezha.sdk.RunnerBuilder`, `com.flezha.sdk.operator.OperatorRegistry`, `com.flezha.sdk.operator.OperatorRegistry`, or `Flezha.newRunner`
 - **THEN** compilation SHALL fail: the builder type, both public registry facades, and the old entry-point name are deleted with no shim
 
 ### Requirement: Tasklet Interface and Per-Cell Dispatch
@@ -38,7 +38,7 @@ The `Ctx<State, Output>` parameter SHALL provide:
 - `Optional<String> cellKey()`, the key this Cell was routed by, empty for a single-cell Tasklet. It is part of the invocation's identity, so it is replay-stable.
 - `long now()`, the invocation's time value, computed **once** by the runtime from the Tasklet's clock before `run` executes, and returning that same value for every call within the invocation. This is the determinism-contract replacement for `System.currentTimeMillis()`.
 - `StableId stableId()`, a deterministic, replay-stable 128-bit identifier derived from the Cell identity, the invocation's durable change seq, and a per-invocation call ordinal. Repeated calls within one invocation differ; the n-th call of a replayed invocation SHALL equal the n-th call of the original. This is the determinism-contract replacement for `UUID.randomUUID()`.
-- `void checkpoint()`, the timer calls, `spawnBounded` and `complete`, with the meaning they have on the tasklet context today.
+- `void checkpoint()`, the timer calls, `spawnSteps` and `complete`, with the meaning they have on the tasklet context today.
 
 The runtime SHALL stamp `flz.cell`, `flz.seq`, and (on keyed emits) `flz.key` onto plugin-bound frames. User-supplied metadata keys in the reserved `flz.` namespace SHALL be **rejected** with `TaskletException.ReservedMetadataKey` naming the key, so that identity stamps can neither be spoofed nor clobbered.
 
@@ -152,7 +152,7 @@ the five host-participating interactions SHALL reach Java — as activation
 kinds (`RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState`,
 `MigrationSerialize`), subject to per-cell exclusivity; every other
 command (including `Ping`, credit frames, acks, `AssignRunnerId`,
-`ConnectSocket`, `RemOperator`, `BoundedStop`) SHALL be answered by the
+`ConnectSocket`, `RemOperator`, `StepsStop`) SHALL be answered by the
 core without surfacing to Java. Class capability declarations
 (`effectively_once`, `ack_granularity`, `correction_window_ms`,
 `beyond_window_policy`, `compensable_tasks`, `leaf_tasks`,
@@ -254,36 +254,31 @@ Java `byte[]` before being freed through the core-provided free function.
 - **WHEN** poller threads are blocked in the native `poll` call and the runner shuts down
 - **THEN** every blocked call SHALL return promptly with the distinguishable shutting-down status and the poller threads SHALL exit their loops
 
-### Requirement: Operator declares persistenceEnabled default-method, frozen at instance start
+### Requirement: Operator declares durable, frozen at instance start
 
-The Java SDK's `UnboundedOperator` and `BoundedOperator` interfaces SHALL each declare `default boolean persistenceEnabled() { return true; }` and `default boolean sleepWhenIdle()` (`false` on `UnboundedOperator`, `persistenceEnabled()` on `BoundedOperator`). The runtime SHALL read `persistenceEnabled()` from the class for either kind when it builds the class declaration, SHALL write it as the declaration's `persistent` and SHALL NOT derive `persistent` from whether any Tasklet declares a Change other than `NoChange`; it SHALL write `sleepWhenIdle()` as `sleep_when_idle`. The core resolves the per-instance value from the declaration when `AddOperator` is processed and announces both to the controller.
+The Java SDK's `Operator` interface SHALL declare `default Durable durable()`, answering `Durable.Local` with the run's default `sleepAfter` when the class does not override it; `Durable` SHALL be the sealed interface of `Memory`, `Local(SleepAfter sleepAfter)` and `Remote(SleepAfter sleepAfter)`, where `SleepAfter` is the sealed interface of `RunDefault` (a flow never sleeps, a steps class after six hours), `Never` and `After(Duration)`. The runtime SHALL read `durable()` from the class for either run when it builds the class declaration, SHALL write it as the declaration's `durable` tree and SHALL NOT derive it from whether any Tasklet declares a Change other than `NoChange`. The core resolves the per-instance value from the declaration when `AddOperator` is processed and announces it to the controller.
 
 The resolved value SHALL be bound to the instance and SHALL be propagated to every `CellSlot` constructed for that instance. A change to the class's method (via SDK redeploy) SHALL NOT affect already-running instances.
 
 #### Scenario: Default-on with no override
 
-- **WHEN** an Operator's `persistenceEnabled()` is the default (returns `true`)
-- **THEN** the class declaration SHALL announce `persistent: true` and the instance SHALL resolve `persistenceEnabled = true`
+- **WHEN** an Operator's `durable()` is the default
+- **THEN** the class declaration SHALL announce `durable: "local"`, leaving the sleep interval to the run, and the instance SHALL keep its state
 
 #### Scenario: Code-declared opt-out is honored
 
-- **WHEN** `MarketOperator.persistenceEnabled()` returns `false` (user override)
-- **THEN** the class declaration SHALL announce `persistent: false` and the core SHALL drain-and-discard this instance's change bytes — no `cell_state_change` frame reaches the wire
+- **WHEN** `MarketOperator.durable()` returns `new Durable.Memory()` (user override)
+- **THEN** the class declaration SHALL announce `durable: false` and the core SHALL drain-and-discard this instance's change bytes — no `cell_state_change` frame reaches the wire
 
-#### Scenario: An unbounded operator's opt-out is read from the class, not its Tasklets
+#### Scenario: A flow operator's opt-out is read from the class, not its Tasklets
 
-- **WHEN** an `UnboundedOperator` whose Tasklets keep state (a non-`Void` State) returns `false` from `persistenceEnabled()`
-- **THEN** the class declaration SHALL announce `persistent: false`, no `cell_state_change` frame SHALL reach the wire, and a rebind after the runner dies SHALL restore nothing
-
-#### Scenario: Sleeping without persistence is refused
-
-- **WHEN** a class of either kind returns `true` from `sleepWhenIdle()` and `false` from `persistenceEnabled()`
-- **THEN** `registerFactory` SHALL throw a configuration exception whose message contains `topology.sleep_without_persistence`
+- **WHEN** an `Operator` whose Tasklets keep state (a non-`Void` State) returns `new Durable.Memory()` from `durable()`
+- **THEN** the class declaration SHALL announce `durable: false`, no `cell_state_change` frame SHALL reach the wire, and a rebind after the runner dies SHALL restore nothing
 
 #### Scenario: Resolved value frozen at instance start
 
-- **WHEN** an instance is constructed with resolved `persistenceEnabled = true`, AND the class is redeployed returning `false` while the instance runs
-- **THEN** the running instance SHALL continue with `persistenceEnabled = true`; the new value SHALL take effect only on the next `stop_operator` + `start_operator` cycle for that instance
+- **WHEN** an instance is constructed keeping its state, AND the class is redeployed returning `new Durable.Memory()` while the instance runs
+- **THEN** the running instance SHALL continue keeping its state; the new value SHALL take effect only on the next `stop_operator` + `start_operator` cycle for that instance
 
 ### Requirement: Per-Cell flusher with toggle-aware drain
 
@@ -371,30 +366,30 @@ The Java SDK SHALL expose handler classes whose names use canonical vocabulary: 
 
 ### Requirement: Public Operator / Tasklet / Cell user-facing API names
 
-The Java SDK SHALL expose user-extensible base classes/interfaces under the canonical names `UnboundedOperator`, `Tasklet`, `Cell`, and `Channel`. The Runner process startup hook SHALL be `Runner.start(Config)` (or equivalent factory entry point); class names referring to the SDK process itself SHALL use `Runner` as the role term, not `ComputeEngine` or `User`.
+The Java SDK SHALL expose user-extensible base classes/interfaces under the canonical names `Operator`, `Tasklet`, `Cell`, and `Channel`. The Runner process startup hook SHALL be `Runner.start(Config)` (or equivalent factory entry point); class names referring to the SDK process itself SHALL use `Runner` as the role term, not `ComputeEngine` or `User`.
 
-#### Scenario: User extends UnboundedOperator
-- **WHEN** a user-defined Operator class declares `extends UnboundedOperator`
+#### Scenario: User extends Operator
+- **WHEN** a user-defined Operator class declares `extends Operator`
 - **THEN** the class MUST compile against the published Java SDK; declaring `extends Processor` MUST fail
 
 ### Requirement: Java SDK implements the effectively-once output tier
 
-The Java SDK SHALL implement the `effectively-once-output` capability. A channel declaration SHALL support `c.effectivelyOnce()`; the runtime SHALL then, for each invocation, buffer the invocation's state changes, plugin outputs, consumed input offset, and (on a dead-letter park) its DLQ entry into ONE `cell_effect_record` frame rather than separate change and output frames. A durable bounded class SHALL NOT declare the tier and SHALL produce the same record for every invocation, with no consumed offset and no park, through the shared core; the Java runtime's part is the same output list it hands the core for an unbounded tasklet.
+The Java SDK SHALL implement the `effectively-once-output` capability. A channel declaration SHALL support `c.effectivelyOnce()`; the runtime SHALL then, for each invocation, buffer the invocation's state changes, plugin outputs, consumed input offset, and (on a dead-letter park) its DLQ entry into ONE `cell_effect_record` frame rather than separate change and output frames. A durable steps class SHALL NOT declare the tier and SHALL produce the same record for every invocation, with no consumed offset and no park, through the shared core; the Java runtime's part is the same output list it hands the core for a flow tasklet.
 
 The frame SHALL carry the 16-byte state header with `format_id = 2` and `sdk_lang = 2`, and its body SHALL be the postcard encoding of `EffectRecordBody { changes: Vec<Vec<u8>>, outputs: Vec<OutputRecord>, consumed_offset: Option<u64>, dlq: Option<DlqEntryBody>, event_time: u64 }` in exactly that field order, byte-identical to the Rust SDK. The `changes` elements SHALL be the SDK's own change bytes (Kryo, as a Java plain change record carries) — the controller stores and re-ships them without decoding.
 
 The runtime SHALL read the inbound `flz.offset` metadata key to learn the input's offset, and SHALL re-forward replayed inputs on restore. A dead-letter park under the tier SHALL ride inside the effect record rather than emitting a separate `park_payload` frame, so that the park and the consumed-offset advance are one atomic record.
 
-Declaring `.keyed()` SHALL be required on every plugin-bound channel of a tier-enabled class; a non-keyed plugin channel SHALL fail registration. The runtime SHALL write the `flz.cell`, `flz.seq` and `flz.key` stamps on a keyed plugin output only when the class records no effects: neither under the tier nor for a durable bounded class, whose outputs the controller stamps from the record at flush.
+Declaring `.keyed()` SHALL be required on every plugin-bound channel of a tier-enabled class; a non-keyed plugin channel SHALL fail registration. The runtime SHALL write the `flz.cell`, `flz.seq` and `flz.key` stamps on a keyed plugin output only when the class records no effects: neither under the tier nor for a durable steps class, whose outputs the controller stamps from the record at flush.
 
 #### Scenario: A tier invocation ships one effect record, not separate frames
 
 - **WHEN** a tier-enabled Tasklet's `run` applies two Changes and emits one keyed output for an input carrying `flz.offset = 7`
 - **THEN** the SDK SHALL ship exactly one `cell_effect_record` frame whose decoded body has `changes.length == 2`, `outputs.length == 1`, and `consumed_offset == 7`; and SHALL NOT ship any `cell_state_change` frame for that invocation
 
-#### Scenario: A durable bounded operator invocation ships the same record
+#### Scenario: A durable steps operator invocation ships the same record
 
-- **WHEN** a durable Java bounded tasklet's `run` applies one Change and emits one keyed output
+- **WHEN** a durable Java steps tasklet's `run` applies one Change and emits one keyed output
 - **THEN** exactly one `cell_effect_record` frame SHALL leave for that cell, with `changes.length == 1`, `outputs.length == 1` and no `consumed_offset`, and its output SHALL carry no `flz.` stamp from the runtime
 
 #### Scenario: Effect-record bytes are byte-identical to the Rust encoder
@@ -414,7 +409,7 @@ Declaring `.keyed()` SHALL be required on every plugin-bound channel of a tier-e
 
 ### Requirement: Java SDK implements checkpoint ack granularity
 
-The Java SDK SHALL implement the `effectively-once-checkpoint-granularity` capability. A channel declaration SHALL support `c.checkpointAck()`, valid only together with `c.effectivelyOnce()` — declaring it alone SHALL fail registration with `topology.checkpoint_ack_without_tier`. `TaskletCtx.checkpoint()` SHALL mark the invocation as closing the current interval.
+The Java SDK SHALL implement the `effectively-once-checkpoint-granularity` capability. A class SHALL declare checkpoint acknowledgement as `new Ack.Checkpoint(...)` inside `Exactly.EffectivelyOnce` in its `run()`, so it cannot be written without the tier. `TaskletCtx.checkpoint()` SHALL mark the invocation as closing the current interval.
 
 The per-Cell flush buffer SHALL carry a third `staged` list holding the open interval's changes. `drainToFrames` and `isEmpty` SHALL deliberately **ignore** `staged` — an open interval is not flushable, and draining it alone would put state ahead of its offset. An invocation SHALL emit an effect record carrying `{staged, consumedOffset}` when it checkpointed or parked to the DLQ; otherwise it SHALL emit `{[], outputs, null}` only if it produced outputs. A dead-letter park SHALL close the interval. A restore SHALL discard the open interval.
 
@@ -428,11 +423,6 @@ The per-Cell flush buffer SHALL carry a third `staged` list holding the open int
 - **WHEN** the Tasklet's fourth invocation calls `ctx.checkpoint()` for an input at offset 3
 - **THEN** the SDK SHALL ship one effect record whose `changes` are the four invocations' staged changes and whose `consumed_offset == 3`
 
-#### Scenario: checkpointAck without the tier is refused
-
-- **WHEN** a class declares `c.checkpointAck()` without `c.effectivelyOnce()`
-- **THEN** registration SHALL throw `FlezhaException` whose code is `topology.checkpoint_ack_without_tier`
-
 #### Scenario: A park closes the open interval
 
 - **WHEN** a checkpoint-ack Tasklet has staged two invocations' changes and the third input is poison and exhausts its retries
@@ -445,7 +435,7 @@ The per-Cell flush buffer SHALL carry a third `staged` list holding the open int
 
 ### Requirement: Java SDK implements stream late-input correction
 
-The Java SDK SHALL implement the `unbounded-correction` capability. A channel declaration SHALL support `c.correctionWindow(millis)` and `c.beyondWindowPolicy(policy)` where policy is `PROCESS_AS_ARRIVAL` (the default, today's behaviour) or `DROP`. Declaring a correction window SHALL require the effectively-once tier, an `EventTimeFrom` clock, and all channels keyed; violating any of these SHALL fail registration.
+The Java SDK SHALL implement the `effectively-once-correction` capability. `Exactly.EffectivelyOnce` SHALL carry `correctionMs` and `beyondWindow`, where the policy is `PROCESS_AS_ARRIVAL` (the default, today's behaviour) or `DROP`, so a correction window cannot be written without the tier. Declaring a correction window SHALL require an `EventTimeFrom` clock and all channels keyed; violating either SHALL fail registration.
 
 Every effect record SHALL carry the invocation's `event_time`. The runtime SHALL maintain a per-Cell event-time high-water mark, and SHALL classify an input whose event time is below the high-water by more than the declared window as beyond-window. A replay slice SHALL be recognised via the `flz.replay` metadata key and terminated by a payload-less `flz.replay_end` **broadcast** frame (intercepted before channel lookup, since an input routes to only one cell by key); the buffered slice SHALL be dispatched in **event-time order**, and a closed slice SHALL flush before any live input popped behind it.
 
@@ -466,19 +456,14 @@ A replay SHALL NOT lower the event-time high-water mark.
 - **WHEN** a Cell restored to an event-time high-water of `500` replays an unconsumed tail whose maximum event time is `300`
 - **THEN** the high-water SHALL remain `500`, and a subsequent input at event time `320` SHALL still be classified as late
 
-#### Scenario: A correction window without the tier is refused
-
-- **WHEN** a class declares `c.correctionWindow(60_000)` without `c.effectivelyOnce()`
-- **THEN** registration SHALL throw `FlezhaException` naming the missing tier declaration
-
 #### Scenario: Beyond-window default is process-as-arrival
 
 - **WHEN** a class declares `c.correctionWindow(60_000)` without declaring a policy, and an input arrives whose event time is older than the window
 - **THEN** the input SHALL be processed as an arrival (not dropped), since declaring a window must never silently start dropping data
 
-### Requirement: Java SDK implements the bounded operator task-journal and TaskCommit handshake
+### Requirement: Java SDK implements the steps operator task-journal and TaskCommit handshake
 
-The Java SDK SHALL implement the `bounded-task-journal` capability. At every task barrier of a durable structured bounded class, the shared core SHALL ship `TaskCommit` (tag 28) on the SDK's behalf, carrying the cells that ran, each with the seq of its last effect record in the stage and the plugin channels it wrote on, and the channel-tagged handoff blobs, and SHALL await the controller's `TaskCommitResponse` (tag 29) under the same `reference_id` for up to 30 seconds. A failure or timeout SHALL produce a terminal error and trigger compensation. The Java runtime SHALL hand the core each invocation's changes and outputs as it does for an unbounded tasklet, and the core SHALL settle them into the cell's effect record and send it before the barrier; the runtime SHALL keep no staged output of its own.
+The Java SDK SHALL implement the `steps-task-journal` capability. At every task barrier of a durable structured steps class, the shared core SHALL ship `TaskCommit` (tag 28) on the SDK's behalf, carrying the cells that ran, each with the seq of its last effect record in the stage and the plugin channels it wrote on, and the channel-tagged handoff blobs, and SHALL await the controller's `TaskCommitResponse` (tag 29) under the same `reference_id` for up to 30 seconds. A failure or timeout SHALL produce a terminal error and trigger compensation. The Java runtime SHALL hand the core each invocation's changes and outputs as it does for a flow tasklet, and the core SHALL settle them into the cell's effect record and send it before the barrier; the runtime SHALL keep no staged output of its own.
 
 The SDK SHALL declare no inter-tasklet codec and SHALL offer no method to declare one: it hands the core bytes, so the core derives the journal codec from the channel's kind. Classes that opt out of persistence SHALL skip the journal and the handshake entirely, preserving re-run-from-top, and their plugin outputs SHALL reach the wire with their channel, key and metadata as an opted-out stream's do.
 
@@ -486,22 +471,22 @@ On resume, the SDK SHALL read the journal state shipped on `AddOperator.task_jou
 
 #### Scenario: A committed task is skipped on resume, not re-run
 
-- **WHEN** a durable bounded class commits task A, then the runner is SIGKILLed, then the operator is rebound with a journal recording task A as committed
+- **WHEN** a durable steps class commits task A, then the runner is SIGKILLed, then the operator is rebound with a journal recording task A as committed
 - **THEN** task A's `run` SHALL NOT be invoked again, and task B SHALL run seeded from task A's journaled handoff
 
 #### Scenario: A handoff is journaled with nothing declared
 
-- **WHEN** a durable structured bounded class wires task A into task B and declares nothing about how the value between them is encoded
+- **WHEN** a durable structured steps class wires task A into task B and declares nothing about how the value between them is encoded
 - **THEN** registration SHALL succeed, and A's handoff SHALL be journaled at the commit barrier and re-seeded on resume
 
-#### Scenario: A Java bounded tasklet's emit rides its cell's record
+#### Scenario: A Java steps tasklet's emit rides its cell's record
 
-- **WHEN** a durable Java bounded tasklet calls `ctx.emitKeyedWithMeta("k", v, Map.of("trace", "t1"))` and reaches its barrier
+- **WHEN** a durable Java steps tasklet calls `ctx.emitKeyedWithMeta("k", v, Map.of("trace", "t1"))` and reaches its barrier
 - **THEN** the cell's `cell_effect_record` carries the output with channel, key `k` and the metadata, the `TaskCommit` names that record's seq for the cell, and the sink receives the frame with `flz.key` `k` and `trace` once the controller acks the commit
 
 #### Scenario: An opted-out class re-runs from the top
 
-- **WHEN** a bounded class declares `persistenceEnabled() == false` and is resumed after a crash
+- **WHEN** a steps class declares `durable()` as `new Durable.Memory()` and is resumed after a crash
 - **THEN** the SDK SHALL ship no `TaskCommit`, and every task SHALL re-run from the top
 
 #### Scenario: A commit timeout triggers compensation
@@ -509,63 +494,63 @@ On resume, the SDK SHALL read the journal state shipped on `AddOperator.task_jou
 - **WHEN** the controller does not answer a `TaskCommit` within 30 seconds
 - **THEN** the SDK SHALL treat the task as terminally failed and SHALL run the compensation plan
 
-### Requirement: Java SDK implements the bounded operator durable loop and suspension
+### Requirement: Java SDK implements the steps operator durable loop and suspension
 
-The Java SDK SHALL implement the `bounded-durable-loop` and `bounded-durable-suspension` capabilities. `BoundedOperator` SHALL declare `loopMode()` returning `ONCE` (the default, byte-identical to the current single pass), `PER_INPUT` (one iteration per inbox item), or `CHAINED` (each iteration seeded by the previous iteration's terminal handoff), and no wake setting: a sleeping instance's wake deadline is the earliest pending processing-time timer its tasklets registered.
+The Java SDK SHALL implement the `steps-durable-loop` and `durable-suspension` capabilities. `Operator` SHALL declare `each()` returning `ONCE` (the default, byte-identical to the current single pass), `PER_INPUT` (one iteration per inbox item), or `CHAINED` (each iteration seeded by the previous iteration's terminal handoff), and no wake setting: a sleeping instance's wake deadline is the earliest pending processing-time timer its tasklets registered.
 
 At every iteration boundary the SDK SHALL ship `IterCommit` (tag 30) carrying the iteration index, the consumed input-log offset when the iteration's input carried one and no offset otherwise, the terminal handoff, and a tasklet's completion request with its result when one was made, and SHALL await `IterCommitResponse` (tag 31). A durable `CHAINED` loop whose terminal task releases no inter-tasklet channel, whether it owns no output channel at all or only a plugin-bound one, which the runtime gives no journal codec, SHALL be rejected by the core when the class is declared, and SHALL NOT be re-judged by this SDK, exactly as the branching-chained-loop refusal already is: the rule belongs to the registration every host reaches, not to one SDK's builder.
 
-When the loop is idle past the park hysteresis, the SDK SHALL ship `IterPark` (tag 32) carrying the earliest pending processing-time timer across the instance's Cells as its wake deadline (`0` when none) and exit **without** `BoundedCompleted`, yielding a parked outcome. The offset an input carries SHALL be read from the inbound `flz.offset` metadata key by the shared core on the SDK's behalf; the SDK SHALL read no offset key of its own.
+When the loop is idle past the park hysteresis, the SDK SHALL ship `IterPark` (tag 32) carrying the earliest pending processing-time timer across the instance's Cells as its wake deadline (`0` when none) and exit **without** `OperatorCompleted`, yielding a parked outcome. The offset an input carries SHALL be read from the inbound `flz.offset` metadata key by the shared core on the SDK's behalf; the SDK SHALL read no offset key of its own.
 
 #### Scenario: Each loop iteration commits at its boundary
 
-- **WHEN** a `PER_INPUT` bounded class processes three inbox items
+- **WHEN** a `PER_INPUT` steps class processes three inbox items
 - **THEN** the SDK SHALL ship three `IterCommit` commands, each carrying its iteration index and the input-log offset its item carried, and SHALL await each response before starting the next iteration
 
 #### Scenario: An idle loop parks instead of completing
 
-- **WHEN** a durable looping bounded class has no inbox item for longer than the park hysteresis
-- **THEN** the SDK SHALL ship `IterPark` and exit without shipping `BoundedCompleted`
+- **WHEN** a durable looping steps class has no inbox item for longer than the park hysteresis
+- **THEN** the SDK SHALL ship `IterPark` and exit without shipping `OperatorCompleted`
 
 #### Scenario: A resumed loop restarts at the journaled iteration
 
-- **WHEN** a looping bounded class committed iteration 2 and is then rebound after a crash
+- **WHEN** a looping steps class committed iteration 2 and is then rebound after a crash
 - **THEN** the SDK SHALL resume at iteration 3, seeded (for `CHAINED`) from iteration 2's journaled terminal handoff
 
 #### Scenario: A durable chained loop whose terminal task releases nothing is refused
 
-- **WHEN** a durable `CHAINED` bounded class's terminal task has no output channel, or has one whose only wiring is a plugin sink
+- **WHEN** a durable `CHAINED` steps class's terminal task has no output channel, or has one whose only wiring is a plugin sink
 - **THEN** declaring the class to the core SHALL fail, with an error naming the terminal tasklet and stating that it releases no inter-tasklet handoff
 
-### Requirement: Java SDK implements the bounded cell retry ladder
+### Requirement: Java SDK implements the steps cell retry ladder
 
-The Java SDK SHALL implement the `bounded-cell-retry` capability. The ladder's budget SHALL be the consuming edge's `retryMax()` / `retryBackoffMs()` (default 3 total attempts, 50 ms base), the same builder calls and the same `RetryPolicy` an unbounded operator's edge declares; `BoundedOperator` SHALL declare no `retryAttempts()` or `retryBackoff()`. Only the failing cell SHALL re-run its batch; siblings SHALL stay buffered at the barrier, and each attempt SHALL use a fresh sink so a failed attempt's staged output is dropped rather than double-emitted.
+The Java SDK SHALL implement the `steps-cell-retry` capability. The ladder's budget SHALL be the consuming edge's `retryMax()` / `retryBackoffMs()` (default 3 total attempts, 50 ms base), the same builder calls and the same `RetryPolicy` a flow operator's edge declares; `Operator` SHALL declare no `retryAttempts()` or `retryBackoff()`. Only the failing cell SHALL re-run its batch; siblings SHALL stay buffered at the barrier, and each attempt SHALL use a fresh sink so a failed attempt's staged output is dropped rather than double-emitted.
 
-Backoff SHALL reuse the dead-letter ladder's helper (`base × 2^(n-1)` with ±50% jitter, capped at 5 s) and the wait SHALL be cancellation-aware, so a stop or `maxDuration` ends it at once. Retry is strictly pre-commit: a journaled task SHALL never be retried. `retryMax(1)` SHALL be a single attempt and `retryMax(0)` SHALL be refused at registration with `topology.retry_max_zero`, as on an unbounded operator. A `BoundedException` SHALL carry a `nonRetryable` flag; a thrown `RuntimeException` SHALL stay retryable.
+Backoff SHALL reuse the dead-letter ladder's helper (`base × 2^(n-1)` with ±50% jitter, capped at 5 s) and the wait SHALL be cancellation-aware, so a stop or `maxDuration` ends it at once. Retry is strictly pre-commit: a journaled task SHALL never be retried. `retryMax(1)` SHALL be a single attempt and `retryMax(0)` SHALL be refused at registration with `topology.retry_max_zero`, as on a flow operator. A `StepsException` SHALL carry a `nonRetryable` flag; a thrown `RuntimeException` SHALL stay retryable.
 
 #### Scenario: A transient cell failure recovers on retry
 
-- **WHEN** a bounded cell's batch throws on its first attempt and succeeds on its second
+- **WHEN** a steps cell's batch throws on its first attempt and succeeds on its second
 - **THEN** the operator SHALL complete successfully, only the failing cell SHALL have re-run, and its first attempt's staged output SHALL NOT be emitted
 
 #### Scenario: An exhausted ladder compensates
 
-- **WHEN** a bounded cell fails all three attempts
+- **WHEN** a steps cell fails all three attempts
 - **THEN** the operator SHALL abort and run the compensation plan
 
 #### Scenario: A non-retryable error skips the ladder
 
-- **WHEN** a cell throws `BoundedException.nonRetryable("bad record")`
+- **WHEN** a cell throws `StepsException.nonRetryable("bad record")`
 - **THEN** the SDK SHALL NOT retry and SHALL proceed directly to the abort path
 
 #### Scenario: The edge's budget bounds the ladder
 
-- **WHEN** a bounded operator wires `c.input(String.class, "in").retryMax(2).into(Flaky.class)` and `Flaky` throws on every attempt
+- **WHEN** a steps operator wires `c.input(String.class, "in").retryMax(2).into(Flaky.class)` and `Flaky` throws on every attempt
 - **THEN** the cell SHALL run exactly twice before the operator aborts, and `retryMax(0)` on that edge SHALL be refused at `registerFactory` naming `topology.retry_max_zero`
 
-### Requirement: Java SDK implements bounded loop rewind
+### Requirement: Java SDK implements steps loop rewind
 
-The Java SDK SHALL implement the `bounded-loop-rewind` capability. On restore, the SDK SHALL read `TaskJournalState.rewind_undo` (the tasks the controller's rewind marker determined are still owed an undo) and, before entering the forward loop, SHALL run those undos in reverse order under a **forced** all-or-nothing rollback mode — whatever the class's declared `rollbackMode()` says — since a rewind unwinds committed iterations by definition.
+The Java SDK SHALL implement the `steps-loop-rewind` capability. On restore, the SDK SHALL read `TaskJournalState.rewind_undo` (the tasks the controller's rewind marker determined are still owed an undo) and, before entering the forward loop, SHALL run those undos in reverse order under a **forced** all-or-nothing rollback mode — whatever the class's declared `onFailure()` says — since a rewind unwinds committed iterations by definition.
 
 The SDK SHALL journal exactly one `compensated` record per undone task, **including an empty one for a task with no compensate hook**, since that record is what drains `rewind_undo`. The undo pass SHALL NOT consult the per-cell crash-resume done markers, which are per cell and would wrongly suppress a task that ran in two rewound iterations.
 
@@ -573,7 +558,7 @@ A rewind SHALL NOT replay inputs: the controller truncates the inbox at each ite
 
 #### Scenario: A rewind undoes committed iterations in reverse order
 
-- **WHEN** the controller rewinds a looping bounded class to iteration 1 and the class committed iterations 2 and 3
+- **WHEN** the controller rewinds a looping steps class to iteration 1 and the class committed iterations 2 and 3
 - **THEN** on rebind the SDK SHALL run the compensate hooks for iterations 3 and 2's tasks in reverse order before resuming the forward loop
 
 #### Scenario: A hookless task still drains the rewind undo
@@ -583,18 +568,18 @@ A rewind SHALL NOT replay inputs: the controller truncates the inbox at each ite
 
 #### Scenario: A rewind does not re-deliver consumed inputs
 
-- **WHEN** a looping bounded class is rewound to iteration 1
+- **WHEN** a looping steps class is rewound to iteration 1
 - **THEN** the inputs consumed by iterations 2 and 3 SHALL NOT be re-delivered; the loop SHALL resume waiting, and the next inbound message SHALL become the next iteration
 
-### Requirement: Java SDK implements bounded operator branching
+### Requirement: Java SDK implements steps operator branching
 
-The Java SDK SHALL implement the `bounded-branching` capability. `BoundedSpec` SHALL model the task graph as a tree (`order` plus `children`) rather than the current `List<Integer> chain`; a linear chain SHALL be the degenerate single-child case. `BoundedSpec.linearChain()`'s refusal of any non-linear graph SHALL be removed and replaced with validation over the tree.
+The Java SDK SHALL implement the `steps-branching` capability. `StepsSpec` SHALL model the task graph as a tree (`order` plus `children`) rather than the current `List<Integer> chain`; a linear chain SHALL be the degenerate single-child case. `StepsSpec.linearChain()`'s refusal of any non-linear graph SHALL be removed and replaced with validation over the tree.
 
 The SDK SHALL declare the tree's leaf tasks to the controller via the `leaf_tasks` key of `AddOperatorResponse.metadata`. Fan-in SHALL NOT silently overwrite an edge. Compensation SHALL run in reverse-topological order, which the existing BFS numbering already yields — the compensation planner SHALL NOT be changed.
 
 #### Scenario: A branching chain runs its branches and joins
 
-- **WHEN** a bounded class declares task 0 feeding both task 1 and task 2, which both feed task 3
+- **WHEN** a steps class declares task 0 feeding both task 1 and task 2, which both feed task 3
 - **THEN** tasks 1 and 2 SHALL each run seeded from task 0's handoff, and task 3 SHALL run once both have committed
 
 #### Scenario: Compensation runs in reverse-topological order
@@ -623,22 +608,22 @@ The Java SDK's `data_heartbeat` frame SHALL carry the same metrics the Rust SDK 
 
 ### Requirement: Operator Type Declaration
 
-The Java SDK SHALL provide `FlezhaRunner.registerFactory(Class<? extends Operator>)` and its inverse `FlezhaRunner.unregisterFactory(Class<? extends Operator>)` as chainable builder methods, `registerFactory` reading the kind from the kind interface the class implements and refusing a class that implements both `UnboundedOperator` and `BoundedOperator` with a `FlezhaException` whose code is `topology.ambiguous_operator_kind`, or neither with one whose code is `topology.unknown_operator_kind`, callable **before and after** `.start()`/`.run()`. For each declared UnboundedOperator class the SDK SHALL: (a) instantiate the class via its public no-arg constructor; (b) call its `factoryId()` method to obtain the controller-facing factory id; (c) call its `channels(ChannelBuilder)` method exactly once — the builder being the producer-first graph builder of `sdk-graph-authoring` — and freeze the resulting `OperatorTopology`; (d) verify wiring constraints (entry-channel deserializability, type-equality between an unbounded operator's payload type and its consumer Tasklets' input types, node reachability from the entry, at most one output channel per node, acyclicity, node-identity and channel-name uniqueness, static-mode and dynamic-mode default-impl detection); (e) record `(factoryId → topology)` in the class registry. The registry SHALL stay mutable after `.start()` for as long as the runner is open: `registerFactory` and its `unregisterFactory` inverse are legal on a started runner, and every post-start change SHALL re-sync the runner's full current factory set rather than a delta — the set the next connect/reconnect init frame carries to the controller. A started runner that has been closed SHALL refuse every `registerFactory`/`unregisterFactory` call with an `IllegalStateException` naming the closed runner, and the refused call SHALL NOT reach the class registries or the core — `.close()` destroys the core context, so a declaration made afterwards would otherwise carry a freed handle back across the JNI boundary. A never-started runner has no context to free, so `.close()` on one leaves it mutable, as the runner-lifecycle requirement already states. `unregisterFactory` SHALL throw `FlezhaException` with the code `runtime.class_not_registered` naming the factory id when that id is not defined on this runner, and with the code `runtime.operator_type_in_use` naming the factory id when the runner is started and live operator instances of it exist, leaving the type defined. There SHALL be no `OperatorHandler`-style factory registration in the public surface.
+The Java SDK SHALL provide `FlezhaRunner.registerFactory(Class<? extends Operator>)` and its inverse `FlezhaRunner.unregisterFactory(Class<? extends Operator>)` as chainable builder methods, `registerFactory` reading the run from the class's `run()` and refusing a class that is neither an operator nor a short form with a `FlezhaException` whose code is `topology.no_operator_exported`, callable **before and after** `.start()`/`.run()`. For each declared Operator class the SDK SHALL: (a) instantiate the class via its public no-arg constructor; (b) call its `factoryId()` method to obtain the controller-facing factory id; (c) call its `channels(ChannelBuilder)` method exactly once — the builder being the producer-first graph builder of `sdk-graph-authoring` — and freeze the resulting `OperatorTopology`; (d) verify wiring constraints (entry-channel deserializability, type-equality between a flow operator's payload type and its consumer Tasklets' input types, node reachability from the entry, at most one output channel per node, acyclicity, node-identity and channel-name uniqueness, static-mode and dynamic-mode default-impl detection); (e) record `(factoryId → topology)` in the class registry. The registry SHALL stay mutable after `.start()` for as long as the runner is open: `registerFactory` and its `unregisterFactory` inverse are legal on a started runner, and every post-start change SHALL re-sync the runner's full current factory set rather than a delta — the set the next connect/reconnect init frame carries to the controller. A started runner that has been closed SHALL refuse every `registerFactory`/`unregisterFactory` call with an `IllegalStateException` naming the closed runner, and the refused call SHALL NOT reach the class registries or the core — `.close()` destroys the core context, so a declaration made afterwards would otherwise carry a freed handle back across the JNI boundary. A never-started runner has no context to free, so `.close()` on one leaves it mutable, as the runner-lifecycle requirement already states. `unregisterFactory` SHALL throw `FlezhaException` with the code `runtime.class_not_registered` naming the factory id when that id is not defined on this runner, and with the code `runtime.operator_type_in_use` naming the factory id when the runner is started and live operator instances of it exist, leaving the type defined. There SHALL be no `OperatorHandler`-style factory registration in the public surface.
 
 Dynamic cell mode SHALL be supported: a Tasklet reached by a consumer edge declaring `keyBy`, declaring no `@Tasklet.Spec` `keys`, SHALL be declared successfully and create Cells lazily per key at dispatch time, per the `operator-state-persistence` dynamic-cell behaviour. Eviction SHALL be off by default (`@Tasklet.Spec` `idleTtlSeconds` is 0); when a TTL is declared, the per-Tasklet reaper SHALL evict idle Cells destructively by shipping `delete_cell_state`, and a recreated Cell SHALL cold-start fresh rather than restore from disk.
 
 Because Java's type erasure precludes Rust's compile-time topology refusals, every constraint Rust enforces at compile time SHALL be enforced at declaration time, throwing `FlezhaException` whose code is the code of the corresponding Rust `TopologyIssue` variant and whose message carries the same diagnostic content.
 
-#### Scenario: Declaring an unbounded operator class before start() succeeds
+#### Scenario: Declaring a flow operator class before start() succeeds
 - **WHEN** user code calls `Flezha.createRunner("my_app").registerFactory(MarketOperator.class).start()`
-- **THEN** the handshake init JSON SHALL include `"market"` (the value `MarketOperator::factoryId` returns) in `factory_ids`, and subsequent `AddOperator{factory_id:"market"}` commands SHALL succeed by spawning an `UnboundedOperatorInstance`
+- **THEN** the handshake init JSON SHALL include `"market"` (the value `MarketOperator::factoryId` returns) in `factory_ids`, and subsequent `AddOperator{factory_id:"market"}` commands SHALL succeed by spawning an `OperatorInstance`
 
 #### Scenario: Declaring an operator type after start() is accepted
 - **WHEN** user code calls `.registerFactory(...)` on a started `FlezhaRunner` already declaring `"market"`, for a class whose `factoryId()` returns `"orders"`
 - **THEN** the call SHALL succeed and return the runner, the new class SHALL be declared to the core immediately, and the runner's declared set SHALL become the full set `{"market", "orders"}` the next connect/reconnect init frame carries
 
-#### Scenario: Duplicate factoryId across two unbounded operator classes is rejected
-- **WHEN** two distinct UnboundedOperator classes both return `"market"` from `factoryId()` and both are declared on the same builder
+#### Scenario: Duplicate factoryId across two flow operator classes is rejected
+- **WHEN** two distinct Operator classes both return `"market"` from `factoryId()` and both are declared on the same builder
 - **THEN** the second `.registerFactory(...)` call SHALL throw a `FlezhaException` with the code `topology.duplicate_factory_id`, naming the duplicate factoryId
 
 #### Scenario: Wiring mismatch fails declaration with a diagnosable error
@@ -658,7 +643,7 @@ Because Java's type erasure precludes Rust's compile-time topology refusals, eve
 - **THEN** `.registerFactory(...)` SHALL throw `FlezhaException` naming the Tasklet and stating that a static-mode tasklet must declare `cellsFor`
 
 #### Scenario: A declared hook needs no second declaration
-- **WHEN** a bounded operator Tasklet declares `compensate` and nothing else about it
+- **WHEN** a steps operator Tasklet declares `compensate` and nothing else about it
 - **THEN** `.registerFactory(...)` SHALL record it as compensable and the class declaration shipped to the controller SHALL carry `compensate_overridden` for it, with no further member written by the author
 
 #### Scenario: Dynamic-mode tasklet declares and creates cells lazily
@@ -749,7 +734,7 @@ The Java SDK SHALL allow at most one runner to be **started** per JVM process. `
 
 Each Cell SHALL invoke `run` on its own Tasklet instance, as the Rust SDK does by holding one Tasklet instance per Cell alongside that Cell's State, so that a class authored against either SDK means the same thing.
 
-Today `UnboundedOperatorInstance` builds one Tasklet per `TaskletDispatcher` and `TaskletDispatcher` invokes `run` on that single object for every Cell it owns — static-key, keyless, and dynamic alike. The per-Cell instances it also constructs are used only for `initState` and a `schemaVersion()` read. No instance-level lock guards `run`; the per-Cell `stateLock` and `changeBufferLock` are distinct objects per Cell and serialise nothing between Cells, which drain concurrently on the worker pool. Any mutable field on a user's Tasklet is therefore a shared, unsynchronised channel across Cell keys.
+Today `OperatorInstance` builds one Tasklet per `TaskletDispatcher` and `TaskletDispatcher` invokes `run` on that single object for every Cell it owns — static-key, keyless, and dynamic alike. The per-Cell instances it also constructs are used only for `initState` and a `schemaVersion()` read. No instance-level lock guards `run`; the per-Cell `stateLock` and `changeBufferLock` are distinct objects per Cell and serialise nothing between Cells, which drain concurrently on the worker pool. Any mutable field on a user's Tasklet is therefore a shared, unsynchronised channel across Cell keys.
 
 #### Scenario: Instance state does not leak between Cell keys
 
@@ -868,9 +853,9 @@ core's documented contract. Fetchers SHALL be platform threads, never virtual
 ones: `FlzCore.poll` blocks in native code, which would pin a virtual
 thread's carrier. The runtime SHALL NOT reimplement kernel mechanisms the
 core owns — command handling, flushing, credit, DLQ parks, timer wheels, the
-bounded driver, reconnect, wire framing — and the classes that did
+steps driver, reconnect, wire framing — and the classes that did
 (`runtime/control` handlers, `CellFlusher`, `CreditWindow`, `DlqPark`,
-`TimerWheel`, `BoundedOperatorRunner`, the reconnect loop, `AckRegistry`)
+`TimerWheel`, `OperatorRunner`, the reconnect loop, `AckRegistry`)
 SHALL be deleted, not shimmed. The Java SDK SHALL encode and decode the
 Activation/ActivationResult schema byte-identically to the core's hex-pinned
 fixtures, reproduced in a Java fixture suite.
@@ -1013,74 +998,65 @@ of mixed-language runners SHALL not have to except the Java ones.
 - **WHEN** the application supplies its own logger through the runner builder
 - **THEN** the variable SHALL NOT filter what reaches that logger, which decides for itself what it writes
 
-### Requirement: Both operator kinds live in one package
+### Requirement: The operator base and its settings tree live in one package
 
-The Java SDK SHALL place the shared authoring base and both operator kinds in
-`com.flezha.sdk.operator`. The base SHALL be named `Operator`, and
-`UnboundedOperator` and `BoundedOperator` SHALL both extend it from that package.
-No operator kind SHALL be reachable only from a package that the other kind is
-absent from.
+The Java SDK SHALL place the one authoring base, `Operator`, and its settings tree (`Run`,
+`Exactly`, `Ack`, `Durable`, `Each`, `OnFailure` and their members) in
+`com.flezha.sdk.operator`, with the steps operator supporting types (`OperatorCtx`,
+`StepsLoopBody` and the steps operator exception types) beside them.
 
-#### Scenario: The bounded kind is not in a package of its own
-
-- **WHEN** user code imports `com.flezha.sdk.bounded.BoundedOperator`
-- **THEN** compilation SHALL fail, the package having been folded into
-  `com.flezha.sdk.operator` with no shim
-
-#### Scenario: Both kinds and the base share one package
+#### Scenario: The one base and its settings tree resolve from one package
 
 - **WHEN** the authoring surface is enumerated
-- **THEN** `Operator`, `UnboundedOperator` and `BoundedOperator` SHALL all resolve
-  from `com.flezha.sdk.operator`, and the bounded operator supporting types
-  (`BoundedOperatorCtx`, `LoopMode`, `RollbackMode`, `BoundedLoopBody` and the
-  bounded operator exception types) SHALL resolve from the same package
+- **THEN** `Operator`, `Run`, `Durable`, `Each` and `OnFailure` SHALL all resolve from
+  `com.flezha.sdk.operator`, and no operator type SHALL resolve from a package of its own
 
-### Requirement: Both kinds declare their graph in `channels` on the `Operator` base
+### Requirement: Every operator declares its graph in `channels` on the `Operator` base
 
-`channels(ChannelBuilder)` SHALL be declared once, abstract, on `com.flezha.sdk.operator.Operator`; `UnboundedOperator` and `BoundedOperator` SHALL inherit it and SHALL NOT redeclare it, and `BoundedOperator` SHALL carry no `tasklets` method. A bounded class SHALL be built through the same `UnboundedOperatorTopologyBuilder` entry a stream is, which reads the kind from the class's interface, and SHALL be registered as the same `UnboundedOperatorTopology` a stream is; the `@Tasklet` processor SHALL emit `channels` for a generated operator of either kind. `BoundedOperator` SHALL keep only the settings that are a bounded operator's own: `maxDuration()`, `selfTerminating()`, `loopMode()`, `rollbackMode()`, `persistenceEnabled()` and `syncDurability()`; `retryAttempts()`, `retryBackoff()`, `barrierRetryAttempts()` and `wakeAfter()` SHALL NOT exist, and no `FlezhaException` SHALL carry the code `topology.zero_retry_backoff`. The javadoc of `Operator`, `UnboundedOperator`, `BoundedOperator`, `com.flezha.sdk.operator.package-info` and `com.flezha.sdk.channel.package-info` SHALL describe a bounded operator as a graph of tasklets committed stage by stage and resumed at the stage, and SHALL NOT describe it as ordered steps, a step sequence, or resuming at a step.
+`channels(ChannelBuilder)` SHALL be declared once, abstract, on `com.flezha.sdk.operator.Operator`, and `Operator` SHALL carry no `tasklets` method. A steps class SHALL be built through the same `OperatorTopologyBuilder` entry a flow class is, which reads the run from the class's `run()`, and SHALL be registered as the same `OperatorTopology` a flow class is; the `@Tasklet` processor SHALL emit `channels` for a generated operator of either run. `Operator`'s settings SHALL be `description()`, `maxDuration()`, `run()` and `durable()`; `retryAttempts()`, `retryBackoff()`, `barrierRetryAttempts()` and `wakeAfter()` SHALL NOT exist, and no `FlezhaException` SHALL carry the code `topology.zero_retry_backoff`. The javadoc of `Operator`, `com.flezha.sdk.operator.package-info` and `com.flezha.sdk.channel.package-info` SHALL describe a steps operator as a graph of tasklets committed stage by stage and resumed at the stage, and SHALL NOT describe it as ordered steps, a step sequence, or resuming at a step.
 
-#### Scenario: A bounded class writes channels
+#### Scenario: A steps class writes channels
 
-- **WHEN** a class implementing `BoundedOperator` overrides `channels(ChannelBuilder c)` and wires `c.input(OrderTicket.class, "order").into(ReserveFunds.class)`
-- **THEN** `registerFactory` SHALL declare a bounded operator whose graph is that wiring, and a class that instead declares `tasklets(ChannelBuilder)` SHALL compile only as an unrelated method the runtime never calls, its `channels` being abstract and unimplemented
+- **WHEN** a class implementing `Operator` overrides `channels(ChannelBuilder c)` and wires `c.input(OrderTicket.class, "order").into(ReserveFunds.class)`
+- **THEN** `registerFactory` SHALL declare a steps operator whose graph is that wiring, and a class that instead declares `tasklets(ChannelBuilder)` SHALL compile only as an unrelated method the runtime never calls, its `channels` being abstract and unimplemented
 
-#### Scenario: A class of both kinds is refused
+#### Scenario: A class that is neither an operator nor a short form is refused at registration
 
-- **WHEN** a class implements both `UnboundedOperator` and `BoundedOperator`
-- **THEN** it SHALL fail to compile unless it resolves the `persistenceEnabled()` default both kinds declare, a class that does SHALL be refused at `registerFactory` with `topology.ambiguous_operator_kind`, and the base's single abstract `channels` SHALL give it no second body to write
+- **WHEN** `registerFactory` is handed a class that neither implements `Operator` nor carries `@Operator`
+- **THEN** it SHALL throw `FlezhaException` whose code is `topology.no_operator_exported`, naming the class
 
 #### Scenario: The retry knobs are gone from the interface
 
-- **WHEN** a class overrides `retryAttempts()` on `BoundedOperator`
-- **THEN** compilation SHALL fail, because the interface declares no such method, and the edge's `retryMax` / `retryBackoffMs` SHALL be the only retry declaration a bounded operator can write
+- **WHEN** a class overrides `retryAttempts()` on `Operator`
+- **THEN** compilation SHALL fail, because the interface declares no such method, and the edge's `retryMax` / `retryBackoffMs` SHALL be the only retry declaration a steps operator can write
 
 #### Scenario: The javadoc speaks in the graph vocabulary
 
 - **WHEN** `sdk/java/flezha-sdk-api/src/main/java` is searched for "ordered steps", "step sequence", "resumes at the step", "between two steps" or "step boundary"
 - **THEN** no javadoc or comment carries any of them, and `sdk/java/flezha-sdk-runtime/src/main/java` carries none either
 
-### Requirement: A Java bounded class carries no unbounded-only setting and no wake
+### Requirement: A Java setting under the wrong parent does not compile, and a steps class has no wake
 
-`HostClassDeclaration.forBounded` SHALL put on the wire every key the class's builder recorded, tier and checkpoint keys included, and SHALL run the core's check on a record that carries the `bounded` key, so an unbounded-only setting on a bounded class is refused by the core under its name (`topology.effectively_once_on_bounded`, `topology.checkpoint_on_bounded`, `topology.correction_window_on_bounded`) at `registerFactory`, thrown as `FlezhaException` with that code, and never stripped, never honoured in process while withheld from the controller. `BoundedOperator` SHALL declare no `wakeAfter()`, and the declaration SHALL carry no `wake_after_ms`. Inside a bounded instance, `OperatorInstance.runItem` SHALL attach a `TimerSession` to the `EmitContext` exactly as it does for an unbounded instance, for `run` and for `onTimer`, so `timerAfter`, `timerAtEventTime`, `cancelProcessingTimeTimer` and `cancelEventTimeTimer` work in both kinds; `compensate` SHALL attach none.
+The settings tree SHALL make a setting under the wrong parent a type error: the tier, its checkpoint and its correction window are members of `Run.Flow`'s `Exactly`, and a loop shape and failure mode are members of `Run.Steps`, so neither can be written under the other. The one combination the types allow and the guarantee cannot keep, `Exactly.EffectivelyOnce` with `Durable.Memory`, SHALL be refused by the core at `registerFactory` with `topology.effectively_once_without_persistence`, thrown as `FlezhaException` with that code. `Operator` SHALL declare no `wakeAfter()`, and the declaration SHALL carry no `wake_after_ms`. Inside a steps instance, `OperatorInstance.runItem` SHALL attach a `TimerSession` to the `EmitContext` exactly as it does for a flow instance, for `run` and for `onTimer`, so `timerAfter`, `timerAtEventTime`, `cancelProcessingTimeTimer` and `cancelEventTimeTimer` work in both runs; `compensate` SHALL attach none.
 
-#### Scenario: The tier on a bounded class is refused by the core's name
+#### Scenario: A setting under the wrong parent does not compile
 
-- **WHEN** a `BoundedOperator`'s `channels` calls `c.effectivelyOnce()`
-- **THEN** `registerFactory` SHALL throw `FlezhaException` whose code is `topology.effectively_once_on_bounded`, and the class SHALL NOT be registered
+- **WHEN** a class writes `new Run.Steps(...)` with a checkpoint, or `Run.Flow` with a loop shape
+- **THEN** compilation SHALL fail, the parent's type declaring no such member, as the compile-fail fixtures for the reference rows pin
 
-#### Scenario: A checkpoint setting on a bounded class is refused by its own name
+#### Scenario: The effectively-once tier in memory is refused by name: the guarantee needs a disk
 
-- **WHEN** a `BoundedOperator`'s `channels` calls `c.checkpointEvery(100)`
-- **THEN** `registerFactory` SHALL throw with a message containing `topology.checkpoint_on_bounded`
+- **WHEN** a class returns `new Run.Flow(new Exactly.EffectivelyOnce())` from `run()` and `new Durable.Memory()` from `durable()`
+- **THEN** `registerFactory` SHALL throw `FlezhaException` whose code is `topology.effectively_once_without_persistence`, and the class SHALL NOT be registered
 
-#### Scenario: A timer inside a bounded tasklet fires
+#### Scenario: A timer inside a steps tasklet fires
 
-- **WHEN** a tasklet of a running `PER_INPUT` bounded operator calls `ctx.timerAfter(Duration.ofMillis(300))` in `run`
+- **WHEN** a tasklet of a running `PER_INPUT` steps operator calls `ctx.timerAfter(Duration.ofMillis(300))` in `run`
 - **THEN** the call SHALL answer the scheduled timestamp, the timer op SHALL reach the effect, and `onTimer` SHALL run on that Cell at that timestamp with `firedAt` equal to it, opening a pass at that tasklet
 
 #### Scenario: The retired wake method does not compile
 
-- **WHEN** a class implementing `BoundedOperator` writes `@Override public Optional<Duration> wakeAfter()`
+- **WHEN** a class implementing `Operator` writes `@Override public Optional<Duration> wakeAfter()`
 - **THEN** compilation fails, the interface declaring no such method
 
 ### Requirement: A change applies itself through the context

@@ -47,7 +47,7 @@ introduce a second re-forward mechanism beside the restore's.
 
 The re-forward SHALL be bounded by the Cell's consumed offset, so an input the
 Cell has already consumed is not re-delivered, and SHALL be idempotent across
-repeated binds: an unbounded operator that binds, drops and rebinds without the Cell making
+repeated binds: a flow operator that binds, drops and rebinds without the Cell making
 progress SHALL forward the same tail rather than an accumulating one.
 
 A bind that owes nothing — every input so far having been delivered — SHALL

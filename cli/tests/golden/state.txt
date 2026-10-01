@@ -11,8 +11,8 @@ SUBCOMMANDS:
     retention <operator> <hours>             Set time-travel retention
     delete <operator/tasklet/key>            Hard-delete a Cell's persisted state
     outbox <operator/tasklet/key>            Effectively-once outbox status (lag, cursor, watermark)
-    journal <operator/instance>              Bounded instance task-journal (committed tasks, iterations, park)
-    inbox <operator/instance>                Bounded instance durable inbox (offsets, undelivered tail)
+    journal <operator/instance>              Steps instance task-journal (committed tasks, iterations, park)
+    inbox <operator/instance>                Steps instance durable inbox (offsets, undelivered tail)
     help                                     Show this help message
 
 EXAMPLES:

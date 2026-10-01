@@ -1,7 +1,7 @@
 defmodule Flezha.State.WalTransfer do
   @moduledoc """
   Cross-controller pull of an operator's durable files, one reference at a
-  time: a Cell's file set (`{:cell, cell_id}`, a bounded operator's journal among them
+  time: a Cell's file set (`{:cell, cell_id}`, a steps operator's journal among them
   under its reserved identity) or the instance's input log
   (`{:input_log, class}`).
 
@@ -71,7 +71,7 @@ defmodule Flezha.State.WalTransfer do
 
   @doc """
   Pull every durable file of `operator_class` from `source_node`: its Cells,
-  a bounded operator's journal, and its input log, which travel together because a
+  a steps operator's journal, and its input log, which travel together because a
   journal pulled without its log seeds the instance's floor in an empty
   offset space. Returns the number of references whose files landed; `0`
   means the source held nothing and a cold start is correct. A per-reference

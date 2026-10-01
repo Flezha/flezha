@@ -129,7 +129,7 @@ fi
 # The nightly is pinned to the one .github/workflows/format.yml installs.
 # rustfmt.toml's `imports_granularity`, `group_imports` and `ignore` are
 # nightly-only options, and two nightlies are two style opinions; bump this
-# with the bounded operator and rustfmt.toml together, as rust-toolchain.toml says.
+# with the CI workflow and rustfmt.toml together, as rust-toolchain.toml says.
 gate_run --finding "${drift[rust]:-}" "cargo fmt" cargo:"install Rust via rustup" -- \
   cargo +nightly-2026-05-07 fmt --all "${rust[@]}"
 gate_run --finding "${drift[elixir]:-}" "mix format" mix:"install Elixir" -- \

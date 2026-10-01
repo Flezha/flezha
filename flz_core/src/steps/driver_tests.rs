@@ -1,0 +1,1440 @@
+//! A steps operator's host path, served the way a C-ABI host serves it: the
+//! `init_values` a bind carries land as state through the apply-state
+//! command before the first message, a message the host's entry decoder
+//! rejects rides the ladder and parks under the entry channel while the run
+//! waits for the next one instead of ending, and a durable run's park
+//! releases it. A flow operator given the same verdict parks the item at once.
+
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
+
+use crossbeam::channel::{unbounded, Receiver};
+use flz_transport::service::payloader;
+use flz_transport::transport::FlezhaStream;
+
+use crate::host::{apply_result, HostPayload};
+use crate::poll_core::{EnginePayload, Polled};
+use crate::runner::{RunnerMessage, RunnerNode};
+use crate::test_support::{capture_parks, host_class, spin_until, stream_pair};
+use crate::{schema, state_sink, ErrorModel};
+
+mod call;
+
+/// Answers every activation the poll core hands out while it lives: an
+/// apply-state command is recorded and answered applied; each work item is
+/// answered with `verdict` over the host payload's bytes, an `Ok` item
+/// echoing its bytes to the plugin channel `out`.
+struct FakeHost {
+    stop: Arc<AtomicBool>,
+    applied: Arc<Mutex<Vec<String>>>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl FakeHost {
+    fn serve(verdict: impl Fn(&[u8]) -> schema::Verdict + Send + 'static) -> Self {
+        Self::answering(move |payload, applied| answer(payload, applied, &verdict))
+    }
+
+    /// Answers every activation with `respond`.
+    fn answering(
+        respond: impl Fn(&EnginePayload, &Mutex<Vec<String>>) -> schema::ActivationOutcome
+            + Send
+            + 'static,
+    ) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let applied = Arc::new(Mutex::new(Vec::new()));
+        let thread = {
+            let stop = Arc::clone(&stop);
+            let applied = Arc::clone(&applied);
+            thread::spawn(move || {
+                let core = crate::poll_core::global();
+                while !stop.load(Ordering::Acquire) {
+                    match core.poll(Duration::from_millis(20)) {
+                        Polled::Activation(act) => {
+                            let outcome = respond(&act.payload, &applied);
+                            let token = act.token;
+                            apply_result(core, act, schema::ActivationResult { token, outcome })
+                                .expect("the poll core takes the answer");
+                        }
+                        Polled::Timeout => {}
+                        Polled::ShuttingDown => return,
+                    }
+                }
+            })
+        };
+        Self {
+            stop,
+            applied,
+            thread: Some(thread),
+        }
+    }
+
+    fn applied(&self) -> Vec<String> {
+        self.applied.lock().expect("applied poisoned").clone()
+    }
+}
+
+impl Drop for FakeHost {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn answer(
+    payload: &EnginePayload,
+    applied: &Mutex<Vec<String>>,
+    verdict: &(impl Fn(&[u8]) -> schema::Verdict + Send + 'static),
+) -> schema::ActivationOutcome {
+    match payload {
+        EnginePayload::Command {
+            kind: schema::ActivationKind::ApplyState { state_json },
+            ..
+        } => {
+            applied
+                .lock()
+                .expect("applied poisoned")
+                .push(String::from_utf8_lossy(state_json).to_string());
+            schema::ActivationOutcome::StateApplied
+        }
+        EnginePayload::Work { items, .. } => schema::ActivationOutcome::Work(
+            items
+                .iter()
+                .map(|item| match &item.item {
+                    crate::cell::CellItem::Input(payload) => {
+                        let bytes = host_bytes(&payload.value);
+                        effect(verdict(&bytes), &bytes)
+                    }
+                    _ => effect(schema::Verdict::Ok, &[]),
+                })
+                .collect(),
+        ),
+        _ => schema::ActivationOutcome::Failed(schema::WorkError {
+            message: "unexpected activation".to_string(),
+            non_retryable: true,
+        }),
+    }
+}
+
+fn host_bytes(value: &Arc<dyn std::any::Any + Send + Sync>) -> Vec<u8> {
+    value
+        .downcast_ref::<HostPayload>()
+        .map(|p| p.bytes.clone())
+        .unwrap_or_default()
+}
+
+fn effect(verdict: schema::Verdict, bytes: &[u8]) -> schema::ItemEffect {
+    let outputs = match verdict {
+        schema::Verdict::Ok => vec![schema::Output {
+            target: schema::OutputTarget::Plugin {
+                channel: "out".to_string(),
+            },
+            key: None,
+            event_time: None,
+            metadata: Vec::new(),
+            payload: bytes.to_vec(),
+        }],
+        _ => Vec::new(),
+    };
+    schema::ItemEffect {
+        verdict,
+        changes: Vec::new(),
+        outputs,
+        consumed_offset: None,
+        event_time: 0,
+        timers: Vec::new(),
+        checkpoint: false,
+        dlq: None,
+        complete: None,
+    }
+}
+
+use crate::test_support::host_class::bind as start;
+
+/// The connection a test's messages ride and the frames the run writes back
+/// on it: an opted-out steps operator's plugin outputs leave on the connection their
+/// item came in on, as a flow operator's do.
+struct Wire {
+    stream: Arc<FlezhaStream>,
+    frames: Receiver<(String, Vec<u8>, HashMap<String, String>)>,
+}
+
+impl Wire {
+    fn new() -> Self {
+        let (stream, controller_end) = stream_pair();
+        let (tx, frames) = unbounded();
+        thread::spawn(move || {
+            let controller_end = FlezhaStream::Unix(controller_end);
+            while let Ok(frame) = payloader::extract_payload(&controller_end) {
+                if tx.send(frame).is_err() {
+                    break;
+                }
+            }
+        });
+        Self { stream, frames }
+    }
+
+    /// The payloads written for steps operator `id` until nothing more arrives.
+    fn outputs_of(&self, id: &str) -> Vec<Vec<u8>> {
+        self.frames
+            .try_iter()
+            .chain(std::iter::from_fn(|| {
+                self.frames.recv_timeout(Duration::from_millis(200)).ok()
+            }))
+            .filter(|(payload_id, _, _)| payload_id == id)
+            .map(|(_, payload, _)| payload)
+            .collect()
+    }
+}
+
+/// One message into steps operator `id` on its first entry channel.
+fn feed(wire: &Wire, node: &RunnerNode, id: &str, message: &[u8]) {
+    node.operator_dispatch_handle().dispatch(
+        id,
+        message.to_vec(),
+        &Default::default(),
+        Arc::clone(&wire.stream),
+    );
+}
+
+/// One message into operator `id` on its first entry channel, called by the
+/// outside call `token`.
+fn feed_call(wire: &Wire, node: &RunnerNode, id: &str, message: &[u8], token: &str) {
+    let metadata = HashMap::from([("flz.reply_to".to_string(), token.to_string())]);
+    node.operator_dispatch_handle().dispatch(
+        id,
+        message.to_vec(),
+        &metadata,
+        Arc::clone(&wire.stream),
+    );
+}
+
+/// One message into steps operator `id` naming `channel`, at input-log `offset`.
+fn feed_at(node: &RunnerNode, id: &str, channel: &str, offset: u64, message: &[u8]) {
+    let metadata = HashMap::from([
+        ("channel".to_string(), channel.to_string()),
+        ("flz.offset".to_string(), offset.to_string()),
+    ]);
+    node.operator_dispatch_handle()
+        .dispatch(id, message.to_vec(), &metadata, stream_pair().0);
+}
+
+/// The `IterPark` steps operator `id`'s run shipped when it suspended.
+fn await_park(rx: &Receiver<RunnerMessage>, id: &str) -> crate::pb::IterPark {
+    loop {
+        match rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap_or_else(|_| panic!("steps {id} never parked"))
+        {
+            RunnerMessage::EmitControlRequest { command, .. } => {
+                if let crate::pb::command_request::Command::IterPark(park) = *command {
+                    if park.operator_id == id {
+                        return park;
+                    }
+                }
+            }
+            RunnerMessage::EmitOperatorCompleted {
+                operator_id,
+                status,
+                ..
+            } if operator_id == id => panic!("the run ended with `{status}` instead of parking"),
+            _ => {}
+        }
+    }
+}
+
+/// The outputs and the completion `(status, error, result)` of steps operator `id`.
+fn drain(
+    rx: &Receiver<RunnerMessage>,
+    wire: &Wire,
+    id: &str,
+) -> (Vec<Vec<u8>>, (String, String, Vec<u8>)) {
+    loop {
+        match rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap_or_else(|_| panic!("timed out waiting for steps {id}"))
+        {
+            RunnerMessage::EmitOperatorCompleted {
+                operator_id,
+                status,
+                error,
+                result,
+            } if operator_id == id => return (wire.outputs_of(id), (status, error, result)),
+            _ => {}
+        }
+    }
+}
+
+/// A completion for `id` within `wait` is a failure of the scenario.
+fn assert_no_completion(rx: &Receiver<RunnerMessage>, id: &str, wait: Duration) {
+    let deadline = std::time::Instant::now() + wait;
+    while let Ok(message) =
+        rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+    {
+        if let RunnerMessage::EmitOperatorCompleted {
+            operator_id,
+            status,
+            ..
+        } = message
+        {
+            assert!(
+                operator_id != id,
+                "the run ended with status `{status}` instead of waiting"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_host_steps_takes_init_values_as_state_before_its_first_message() {
+    let _env = crate::runner::env_test_guard();
+    let (tx, rx) = unbounded::<RunnerMessage>();
+    crate::runner::install_reconnect_trigger(tx);
+    let id = format!("host_steps_init_{}", std::process::id());
+    crate::host::register_host_class_json(host_class::steps_json(&id, &["in"], 1).as_bytes())
+        .expect("class registers");
+    let host = FakeHost::serve(|_| schema::Verdict::Ok);
+    let mut node = RunnerNode::new("test-ns".to_string());
+    let wire = Wire::new();
+
+    assert!(start(&mut node, &id, "host-init-1", r#"{"p0":{"budget":100}}"#, 0).is_empty());
+    // The state crossed before the bind was answered, and nothing else did.
+    assert_eq!(host.applied(), vec![r#"{"budget":100}"#.to_string()]);
+
+    feed(&wire, &node, "host-init-1", b"ticket");
+    let (outs, done) = drain(&rx, &wire, "host-init-1");
+    assert_eq!(
+        outs,
+        vec![b"ticket".to_vec()],
+        "the pass ran over the message"
+    );
+    assert_eq!(done.0, "ok");
+
+    let refused = start(&mut node, &id, "host-init-2", "not json", 0);
+    assert_eq!(
+        refused[0].code(),
+        "state.init_values_invalid_json",
+        "{refused:?}"
+    );
+    assert!(!node.has_operator("host-init-2"));
+}
+
+#[test]
+fn a_durable_start_refused_for_its_init_values_leaves_no_cell_registered() {
+    let _env = crate::runner::env_test_guard();
+    let id = format!("host_steps_refused_{}", std::process::id());
+    let durable = host_class::steps_json(&id, &["in"], 1)
+        .replace(r#""durable":false"#, r#""durable":{"local":{"sleep_after":false}}"#);
+    crate::host::register_host_class_json(durable.as_bytes()).expect("class registers");
+    let mut node = RunnerNode::new("test-ns".to_string());
+
+    assert!(!start(&mut node, &id, "host-refused-1", "not json", 0).is_empty());
+    assert!(!crate::flusher::CellFlusher::instance().holds_class("host-refused-1"));
+}
+
+#[test]
+fn a_message_the_host_cannot_read_parks_under_the_entry_channel_and_the_run_waits() {
+    let _env = crate::runner::env_test_guard();
+    let (tx, rx) = unbounded::<RunnerMessage>();
+    crate::runner::install_reconnect_trigger(tx);
+    let _guard = state_sink::test_guard();
+    state_sink::reset_for_test();
+    let parks = capture_parks();
+    let id = format!("host_steps_unread_{}", std::process::id());
+    crate::host::register_host_class_json(host_class::steps_json(&id, &["in"], 2).as_bytes())
+        .expect("class registers");
+    let _host = FakeHost::serve(|bytes| {
+        if bytes == b"bad" {
+            schema::Verdict::Unreadable {
+                message: "not json".to_string(),
+            }
+        } else {
+            schema::Verdict::Ok
+        }
+    });
+    let mut node = RunnerNode::new("test-ns".to_string());
+    let wire = Wire::new();
+    assert!(start(&mut node, &id, "host-unread-1", "", 0).is_empty());
+
+    feed_call(&wire, &node, "host-unread-1", b"bad", "w:unread");
+    spin_until("the unreadable message to be parked", || {
+        !parks.lock().expect("park capture poisoned").is_empty()
+    });
+    let park = parks.lock().expect("park capture poisoned").remove(0);
+    assert_eq!(
+        park.body.entry.channel, "in",
+        "parked under the entry channel"
+    );
+    assert_eq!(park.body.entry.attempts, 2, "after the stage's ladder");
+    assert_eq!(park.body.entry.error, "not json");
+    assert_eq!(park.body.entry.payload.as_deref(), Some(&b"bad"[..]));
+    assert_eq!(
+        park.body.reply_to.as_deref(),
+        Some("w:unread"),
+        "its own call"
+    );
+    assert_eq!(park.identity.1, "in");
+    assert_no_completion(&rx, "host-unread-1", Duration::from_millis(300));
+
+    feed(&wire, &node, "host-unread-1", b"good");
+    let (outs, done) = drain(&rx, &wire, "host-unread-1");
+    assert_eq!(
+        outs,
+        vec![b"good".to_vec()],
+        "the next readable message ran the pass"
+    );
+    assert_eq!(done.0, "ok");
+    state_sink::reset_for_test();
+}
+
+#[test]
+fn a_durable_run_releases_what_it_parked_unread_when_it_suspends() {
+    let _env = crate::runner::env_test_guard();
+    let (tx, rx) = unbounded::<RunnerMessage>();
+    crate::runner::install_reconnect_trigger(tx);
+    let _guard = state_sink::test_guard();
+    state_sink::reset_for_test();
+    let _parks = capture_parks();
+    let id = format!("host_steps_release_{}", std::process::id());
+    let durable = host_class::steps_json(&id, &["in"], 1).replace(
+        r#""durable":false"#,
+        r#""durable":{"local":{"sleep_after":200}}"#,
+    );
+    crate::host::register_host_class_json(durable.as_bytes()).expect("class registers");
+    let _host = FakeHost::serve(|_| schema::Verdict::Unreadable {
+        message: "not json".to_string(),
+    });
+    let mut node = RunnerNode::new("test-ns".to_string());
+
+    // The host's decoder refuses the message, so the stage parks it.
+    assert!(start(&mut node, &id, "host-release-1", "", 0).is_empty());
+    feed_at(&node, "host-release-1", "in", 3, b"bad");
+    let park = await_park(&rx, "host-release-1");
+    assert_eq!((park.iter, park.consumed_offset), (0, Some(3)));
+
+    // The entrance parks a name the class does not declare. The rebound run
+    // owed that message, and still suspends on the idle window rather than
+    // holding out for a message that will never reach it.
+    assert!(start(&mut node, &id, "host-release-2", "", 1).is_empty());
+    feed_at(&node, "host-release-2", "refunds", 4, b"bad");
+    let park = await_park(&rx, "host-release-2");
+    assert_eq!(park.consumed_offset, Some(4));
+
+    state_sink::reset_for_test();
+}
+
+/// A re-forward is safe to repeat: the driver drops a message its journal
+/// already released and runs the first one it has not.
+#[test]
+fn a_message_the_instance_already_took_starts_no_pass() {
+    use crate::command::CommandAction;
+    let _env = crate::runner::env_test_guard();
+    let (tx, rx) = unbounded::<RunnerMessage>();
+    crate::runner::install_reconnect_trigger(tx);
+    let _guard = state_sink::test_guard();
+    state_sink::reset_for_test();
+    let id = format!("host_steps_taken_{}", std::process::id());
+    crate::host::register_host_class_json(host_class::steps_json(&id, &["in"], 1).as_bytes())
+        .expect("class registers");
+    let _host = FakeHost::serve(|_| schema::Verdict::Ok);
+    let mut node = RunnerNode::new("test-ns".to_string());
+
+    let mut errors = Vec::new();
+    crate::pb::AddOperator {
+        operator_id: "host-taken-1".to_string(),
+        factory_id: id.clone(),
+        task_journal: Some(crate::pb::TaskJournalState {
+            released_offset: Some(5),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+    .handle(&mut node, "", &mut errors);
+    assert!(errors.is_empty(), "{errors:?}");
+
+    feed_at(&node, "host-taken-1", "in", 5, b"released");
+    assert_no_completion(&rx, "host-taken-1", Duration::from_millis(300));
+
+    feed_at(&node, "host-taken-1", "in", 6, b"fresh");
+    let (_outs, done) = drain(&rx, &Wire::new(), "host-taken-1");
+    assert_eq!(done.0, "ok", "offset 6 ran its pass: {done:?}");
+    state_sink::reset_for_test();
+}
+
+#[test]
+fn a_flow_given_the_unreadable_verdict_parks_the_item() {
+    let _env = crate::runner::env_test_guard();
+    let _guard = state_sink::test_guard();
+    state_sink::reset_for_test();
+    let parks = capture_parks();
+    // A tier-off flow operator, so the park rides the park frame rather than the
+    // effect record.
+    let id = format!("host_flow_unread_{}", std::process::id());
+    let json = format!(
+        r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","durable":false,
+             "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
+             "tasklets":[{{"name":"p0"}}]}}"#
+    );
+    crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
+    let instance =
+        crate::operator::instance::OperatorInstance::of_class(&id, &format!("{id}_inst"))
+            .expect("class registered");
+    let _host = FakeHost::serve(|_| schema::Verdict::Unreadable {
+        message: "not json".to_string(),
+    });
+    let registry = Arc::new(crate::operator::registry::OperatorRegistry::new());
+    registry.register(Arc::clone(&instance));
+
+    let handle = crate::routing::OperatorDispatchHandle { registry };
+    let called = HashMap::from([("flz.reply_to".to_string(), "w:bad".to_string())]);
+    for metadata in [called, HashMap::new()] {
+        handle.dispatch(
+            &instance.instance_id,
+            b"bad".to_vec(),
+            &metadata,
+            stream_pair().0,
+        );
+    }
+
+    spin_until("both unreadable items to be parked", || {
+        parks.lock().expect("park capture poisoned").len() == 2
+    });
+    let parked = std::mem::take(&mut *parks.lock().expect("park capture poisoned"));
+    assert!(parked.iter().all(|park| park.body.entry.error == "not json"
+        && park.body.entry.payload.as_deref() == Some(&b"bad"[..])));
+    let mut calls: Vec<Option<String>> = parked.into_iter().map(|p| p.body.reply_to).collect();
+    calls.sort();
+    assert_eq!(
+        calls,
+        vec![None, Some("w:bad".to_string())],
+        "a park frame carries the call only when its item had one"
+    );
+    state_sink::reset_for_test();
+}
+
+// ---- a keyed tasklet on the host path -------------------------------------
+
+/// `p0` splits a message on `,` into one released value per part; `k1` is
+/// reached by a keyed edge and echoes `k:<cell key>:<item>` to `out`.
+fn keyed_json(id: &str, mid_retry_max: u32) -> String {
+    format!(
+        r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","durable":false,
+             "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},
+                         {{"name":"mid","kind":"inter_task","producer":0,
+                           "retry_max":{mid_retry_max},"retry_backoff_ms":1,
+                           "chains":[[{{"link":"key"}},{{"link":"into","tasklet":1}}]]}},
+                         {{"name":"out","kind":"plugin","producer":1,
+                           "chains":[[{{"link":"sink","name":"out"}}]]}}],
+             "tasklets":[{{"name":"p0"}},{{"name":"k1","cell_mode":"dynamic"}}],
+             "run":"steps"}}"#
+    )
+}
+
+/// What the keyed host did: the crossings it answered, by entry count.
+#[derive(Default)]
+struct Crossings(Mutex<Vec<usize>>);
+
+/// A host for [`keyed_json`]: every prepare answers each payload's own bytes
+/// as its key, or `refuse` for every one.
+fn keyed_host(mid: u32, crossings: Arc<Crossings>, refuse: bool) -> FakeHost {
+    FakeHost::answering(move |payload, _| match payload {
+        EnginePayload::Prepare(crossing) => {
+            crossings.0.lock().unwrap().push(crossing.entries.len());
+            schema::ActivationOutcome::Prepared(
+                crossing
+                    .entries
+                    .iter()
+                    .map(|entry| match refuse {
+                        true => Err(schema::WorkError {
+                            message: "no key for that".to_string(),
+                            non_retryable: true,
+                        }),
+                        false => Ok(schema::PrepareAnswer {
+                            keys: vec![String::from_utf8_lossy(&entry.bytes).to_string()],
+                            event_time: None,
+                        }),
+                    })
+                    .collect(),
+            )
+        }
+        EnginePayload::Work { slot, items } => schema::ActivationOutcome::Work(
+            items
+                .iter()
+                .map(|item| {
+                    let bytes = match &item.item {
+                        crate::cell::CellItem::Input(payload) => host_bytes(&payload.value),
+                        _ => Vec::new(),
+                    };
+                    keyed_effect(slot, mid, &bytes)
+                })
+                .collect(),
+        ),
+        _ => schema::ActivationOutcome::Failed(schema::WorkError {
+            message: "unexpected activation".to_string(),
+            non_retryable: true,
+        }),
+    })
+}
+
+fn keyed_effect(slot: &crate::cell::CellSlot, mid: u32, bytes: &[u8]) -> schema::ItemEffect {
+    let output = |target, payload: Vec<u8>| schema::Output {
+        target,
+        key: None,
+        event_time: None,
+        metadata: Vec::new(),
+        payload,
+    };
+    let outputs = match slot.cell_key.as_deref() {
+        None => bytes
+            .split(|b| *b == b',')
+            .map(|part| {
+                output(
+                    schema::OutputTarget::Edge {
+                        channel: mid,
+                        consumer: 1,
+                    },
+                    part.to_vec(),
+                )
+            })
+            .collect(),
+        Some(key) => vec![output(
+            schema::OutputTarget::Plugin {
+                channel: "out".to_string(),
+            },
+            format!("k:{key}:{}", String::from_utf8_lossy(bytes)).into_bytes(),
+        )],
+    };
+    schema::ItemEffect {
+        outputs,
+        ..effect(schema::Verdict::Ok, &[])
+    }
+}
+
+fn keyed_class(id: &str, mid_retry_max: u32) -> u32 {
+    crate::host::register_host_class_json(keyed_json(id, mid_retry_max).as_bytes())
+        .expect("class registers");
+    crate::operator::registry::get_class(id)
+        .and_then(|topology| topology.lookup_channel_id("mid"))
+        .expect("the keyed class declares `mid`")
+}
+
+fn live_keys(node: &RunnerNode, id: &str) -> Vec<String> {
+    let instance = node.get_operator(id).expect("a live instance");
+    let mut keys: Vec<String> = instance.dynamic_registries[1]
+        .as_ref()
+        .expect("k1 is keyed")
+        .cells
+        .iter()
+        .map(|e| e.key().clone())
+        .collect();
+    keys.sort();
+    keys
+}
+
+#[test]
+fn a_host_steps_released_values_cross_once_for_their_keys() {
+    let _env = crate::runner::env_test_guard();
+    let (tx, rx) = unbounded::<RunnerMessage>();
+    crate::runner::install_reconnect_trigger(tx);
+    let id = format!("host_steps_keyed_{}", std::process::id());
+    let mid = keyed_class(&id, 1);
+    let crossings = Arc::new(Crossings::default());
+    let _host = keyed_host(mid, Arc::clone(&crossings), false);
+    let mut node = RunnerNode::new("test-ns".to_string());
+    let wire = Wire::new();
+
+    assert!(start(&mut node, &id, "host-keyed-1", "", 0).is_empty());
+    feed(&wire, &node, "host-keyed-1", b"a,b,c");
+    let (mut outs, done) = drain(&rx, &wire, "host-keyed-1");
+    outs.sort();
+    assert_eq!(done.0, "ok");
+    assert_eq!(
+        outs,
+        [b"k:a:a".to_vec(), b"k:b:b".to_vec(), b"k:c:c".to_vec()]
+    );
+    assert_eq!(live_keys(&node, "host-keyed-1"), ["a", "b", "c"]);
+    assert_eq!(
+        *crossings.0.lock().unwrap(),
+        [3],
+        "the three released values crossed together"
+    );
+}
+
+#[test]
+fn a_resumed_host_steps_crosses_its_journaled_handoff() {
+    let _env = crate::runner::env_test_guard();
+    let (tx, rx) = unbounded::<RunnerMessage>();
+    crate::runner::install_reconnect_trigger(tx);
+    let id = format!("host_steps_keyed_resume_{}", std::process::id());
+    let mid = keyed_class(&id, 1);
+    let crossings = Arc::new(Crossings::default());
+    let _host = keyed_host(mid, Arc::clone(&crossings), false);
+    let codec = crate::operator::registry::get_class(&id)
+        .and_then(|topology| topology.channel(mid).and_then(|c| c.codec.clone()))
+        .expect("a host inter-tasklet channel journals through its codec");
+    let released = |bytes: &[u8]| crate::pb::TaskHandoffItem {
+        channel_id: mid,
+        payload: (codec.encode)(&HostPayload {
+            bytes: bytes.to_vec(),
+            channel: mid,
+            keys: Vec::new(),
+            event_time: None,
+            metadata: Vec::new(),
+        })
+        .expect("encodes"),
+    };
+    let mut node = RunnerNode::new("test-ns".to_string());
+    let wire = Wire::new();
+    // The journal's handoff re-seeds on the secondary stream, which is where
+    // the stages it feeds write their outputs.
+    let _sink = state_sink::test_guard();
+    state_sink::set_secondary_stream(Some(Arc::clone(&wire.stream)));
+    let mut errors = Vec::new();
+    crate::command::CommandAction::handle(
+        &crate::pb::AddOperator {
+            operator_id: "host-keyed-resume".to_string(),
+            factory_id: id.clone(),
+            task_journal: Some(crate::pb::TaskJournalState {
+                committed_task_idxs: vec![0],
+                task_handoffs: vec![crate::pb::TaskEdgeHandoff {
+                    task_idx: 0,
+                    handoff: vec![released(b"x"), released(b"y")],
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        &mut node,
+        "",
+        &mut errors,
+    );
+    assert!(errors.is_empty(), "{errors:?}");
+
+    // The committed root is skipped; the re-forwarded message resumes the pass.
+    feed(&wire, &node, "host-keyed-resume", b"ignored");
+    let (mut outs, done) = drain(&rx, &wire, "host-keyed-resume");
+    outs.sort();
+    assert_eq!(done.0, "ok");
+    assert_eq!(outs, [b"k:x:x".to_vec(), b"k:y:y".to_vec()]);
+    assert_eq!(live_keys(&node, "host-keyed-resume"), ["x", "y"]);
+    assert_eq!(*crossings.0.lock().unwrap(), [2]);
+    state_sink::set_secondary_stream(None);
+}
+
+#[test]
+fn a_crossing_the_host_refuses_fails_the_stage_and_parks_nothing() {
+    let _env = crate::runner::env_test_guard();
+    let (tx, rx) = unbounded::<RunnerMessage>();
+    crate::runner::install_reconnect_trigger(tx);
+    let _guard = state_sink::test_guard();
+    state_sink::reset_for_test();
+    let parks = capture_parks();
+    let id = format!("host_steps_keyed_refused_{}", std::process::id());
+    let mid = keyed_class(&id, 2);
+    let crossings = Arc::new(Crossings::default());
+    let _host = keyed_host(mid, Arc::clone(&crossings), true);
+    let mut node = RunnerNode::new("test-ns".to_string());
+    let wire = Wire::new();
+
+    assert!(start(&mut node, &id, "host-keyed-refused", "", 0).is_empty());
+    feed(&wire, &node, "host-keyed-refused", b"a");
+    let (outs, done) = drain(&rx, &wire, "host-keyed-refused");
+    assert!(outs.is_empty());
+    assert_eq!(done.0, "error");
+    assert!(done.1.contains("no key for that"), "{}", done.1);
+    assert_eq!(
+        *crossings.0.lock().unwrap(),
+        [1, 1],
+        "the value climbed the channel's ladder: two attempts"
+    );
+    assert!(parks.lock().expect("park capture poisoned").is_empty());
+    state_sink::reset_for_test();
+}
+
+#[test]
+fn a_host_flow_entry_crossing_mints_its_keyed_cells() {
+    let _env = crate::runner::env_test_guard();
+    let id = format!("host_flow_keyed_{}", std::process::id());
+    let crossings = Arc::new(Crossings::default());
+    let json = format!(
+        r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","durable":false,
+             "channels":[{{"name":"in","kind":"entry",
+                           "chains":[[{{"link":"key"}},{{"link":"into","tasklet":0}}]]}},
+                         {{"name":"out","kind":"plugin","producer":0,
+                           "chains":[[{{"link":"sink","name":"out"}}]]}}],
+             "tasklets":[{{"name":"k0","cell_mode":"dynamic"}}]}}"#
+    );
+    crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
+    let instance =
+        crate::operator::instance::OperatorInstance::of_class(&id, &format!("{id}_inst"))
+            .expect("class registered");
+    let _host = keyed_host(u32::MAX, Arc::clone(&crossings), false);
+    let registry = Arc::new(crate::operator::registry::OperatorRegistry::new());
+    registry.register(Arc::clone(&instance));
+
+    crate::routing::OperatorDispatchHandle { registry }.dispatch(
+        &instance.instance_id,
+        b"q".to_vec(),
+        &Default::default(),
+        stream_pair().0,
+    );
+    let keyed = instance.dynamic_registries[0]
+        .as_ref()
+        .expect("k0 is keyed");
+    spin_until("the entry crossing to mint the key's Cell", || {
+        keyed.cells.contains_key("q")
+    });
+    assert_eq!(*crossings.0.lock().unwrap(), [1]);
+}
+
+// ---- time on the host path ------------------------------------------------
+
+/// `in -> e0 -> out`: `e0` runs on `clock`, and on its first message arms a
+/// processing-time timer 30 ms out, whose firing releases `fired`.
+fn timed_json(id: &str, clock: &str) -> String {
+    format!(
+        r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","durable":false,
+             "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},
+                         {{"name":"out","kind":"plugin","producer":0,
+                           "chains":[[{{"link":"sink","name":"out"}}]]}}],
+             "tasklets":[{{"name":"e0","clock":"{clock}"}}],
+             "run":{{"steps":{{"each":"per_input"}}}}}}"#
+    )
+}
+
+/// Answers a crossing with each payload's bytes as its event time, and each
+/// item with its bytes on `out` (`fired` for a firing), arming a timer on
+/// `arm`; every item's `now` is recorded.
+fn timed_host(nows: Arc<Mutex<Vec<Option<u64>>>>) -> FakeHost {
+    FakeHost::answering(move |payload, _| match payload {
+        EnginePayload::Prepare(crossing) => schema::ActivationOutcome::Prepared(
+            crossing
+                .entries
+                .iter()
+                .map(|entry| {
+                    Ok(schema::PrepareAnswer {
+                        keys: Vec::new(),
+                        event_time: String::from_utf8_lossy(&entry.bytes).parse().ok(),
+                    })
+                })
+                .collect(),
+        ),
+        EnginePayload::Work { items, .. } => schema::ActivationOutcome::Work(
+            items
+                .iter()
+                .map(|item| {
+                    nows.lock().unwrap().push(item.now);
+                    match &item.item {
+                        crate::cell::CellItem::Input(payload) => {
+                            let bytes = host_bytes(&payload.value);
+                            let mut armed = effect(schema::Verdict::Ok, &bytes);
+                            if bytes == b"arm" {
+                                let at = crate::util::wall_now_ms() + 30;
+                                armed.timers = vec![crate::timer::TimerOp::register(
+                                    crate::timer::TimerKind::ProcessingTime,
+                                    at,
+                                )];
+                            }
+                            armed
+                        }
+                        _ => effect(schema::Verdict::Ok, b"fired"),
+                    }
+                })
+                .collect(),
+        ),
+        _ => schema::ActivationOutcome::Failed(schema::WorkError {
+            message: "unexpected activation".to_string(),
+            non_retryable: true,
+        }),
+    })
+}
+
+/// Outputs of steps operator `id` until `count` arrived.
+fn outputs(wire: &Wire, id: &str, count: usize) -> Vec<Vec<u8>> {
+    let mut outs = Vec::new();
+    while outs.len() < count {
+        let (payload_id, payload, _) = wire
+            .frames
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap_or_else(|_| panic!("steps {id} released {outs:?} and then nothing"));
+        if payload_id == id {
+            outs.push(payload);
+        }
+    }
+    outs
+}
+
+#[test]
+fn a_host_steps_entry_crosses_for_its_event_time_and_is_dispatched_at_it() {
+    let _env = crate::runner::env_test_guard();
+    let (tx, _rx) = unbounded::<RunnerMessage>();
+    crate::runner::install_reconnect_trigger(tx);
+    let id = format!("host_steps_event_time_{}", std::process::id());
+    crate::host::register_host_class_json(timed_json(&id, "event_time").as_bytes())
+        .expect("class registers");
+    let nows = Arc::new(Mutex::new(Vec::new()));
+    let _host = timed_host(Arc::clone(&nows));
+    let mut node = RunnerNode::new("test-ns".to_string());
+    let wire = Wire::new();
+
+    assert!(start(&mut node, &id, "host-et-1", "", 0).is_empty());
+    feed(&wire, &node, "host-et-1", b"1234");
+    assert_eq!(outputs(&wire, "host-et-1", 1), [b"1234".to_vec()]);
+    assert_eq!(
+        *nows.lock().unwrap(),
+        [Some(1234)],
+        "the item ran at the event time the host answered on the way in"
+    );
+}
+
+#[test]
+fn a_host_steps_tasklets_timer_fires_into_a_pass_of_its_own() {
+    let _env = crate::runner::env_test_guard();
+    let (tx, _rx) = unbounded::<RunnerMessage>();
+    crate::runner::install_reconnect_trigger(tx);
+    let id = format!("host_steps_timer_{}", std::process::id());
+    crate::host::register_host_class_json(timed_json(&id, "wall").as_bytes())
+        .expect("class registers");
+    let _host = timed_host(Arc::new(Mutex::new(Vec::new())));
+    let mut node = RunnerNode::new("test-ns".to_string());
+    let wire = Wire::new();
+
+    assert!(start(&mut node, &id, "host-timer-1", "", 0).is_empty());
+    feed(&wire, &node, "host-timer-1", b"arm");
+    assert_eq!(
+        outputs(&wire, "host-timer-1", 2),
+        [b"arm".to_vec(), b"fired".to_vec()],
+        "the firing ran with no second message"
+    );
+}
+
+// ---- a failed turn of a per-input keep-progress loop ------------------------
+
+/// `p0` forwards each message to `p1` on `mid`, arms a timer on `arm` whose
+/// firing fails, and declares an undo; `p1` answers `re:<message>` on `out`
+/// and fails every attempt of its three on `boom`.
+fn turn_json(id: &str, persistent: bool, each: &str, rollback: &str) -> String {
+    let durable = if persistent {
+        r#"{"local":{"sleep_after":false}}"#
+    } else {
+        "false"
+    };
+    format!(
+        r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","durable":{durable},
+             "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},
+                         {{"name":"mid","kind":"inter_task","producer":0,
+                           "retry_max":3,"retry_backoff_ms":1,
+                           "chains":[[{{"link":"into","tasklet":1}}]]}},
+                         {{"name":"out","kind":"plugin","producer":1,
+                           "chains":[[{{"link":"sink","name":"out"}}]]}}],
+             "tasklets":[{{"name":"p0","compensate_overridden":true}},{{"name":"p1"}}],
+             "run":{{"steps":{{"each":"{each}","on_failure":"{rollback}"}}}}}}"#
+    )
+}
+
+/// A host for [`turn_json`], counting the undos `p0` ran.
+fn turn_host(mid: u32, undos: Arc<std::sync::atomic::AtomicUsize>) -> FakeHost {
+    FakeHost::answering(move |payload, applied| match payload {
+        EnginePayload::Command {
+            kind: schema::ActivationKind::CompensateRun { .. },
+            ..
+        } => {
+            undos.fetch_add(1, Ordering::SeqCst);
+            schema::ActivationOutcome::Work(vec![schema::ItemEffect {
+                outputs: Vec::new(),
+                ..effect(schema::Verdict::Ok, &[])
+            }])
+        }
+        EnginePayload::Work { slot, items } => schema::ActivationOutcome::Work(
+            items
+                .iter()
+                .map(|item| turn_effect(slot, mid, item))
+                .collect(),
+        ),
+        other => answer(other, applied, &|_: &[u8]| schema::Verdict::Ok),
+    })
+}
+
+fn turn_effect(
+    slot: &crate::cell::CellSlot,
+    mid: u32,
+    item: &crate::poll_core::ItemAttempt,
+) -> schema::ItemEffect {
+    let failed = |message: &str| {
+        effect(
+            schema::Verdict::RetryableError {
+                message: message.to_string(),
+            },
+            &[],
+        )
+    };
+    let bytes = match &item.item {
+        crate::cell::CellItem::Input(payload) => host_bytes(&payload.value),
+        _ => return failed("the firing failed"),
+    };
+    if slot.tasklet_id != 0 {
+        return match bytes.as_slice() {
+            b"boom" => failed("model unavailable"),
+            _ => effect(
+                schema::Verdict::Ok,
+                format!("re:{}", String::from_utf8_lossy(&bytes)).as_bytes(),
+            ),
+        };
+    }
+    let mut forwarded = schema::ItemEffect {
+        outputs: vec![schema::Output {
+            target: schema::OutputTarget::Edge {
+                channel: mid,
+                consumer: 1,
+            },
+            key: None,
+            event_time: None,
+            metadata: Vec::new(),
+            payload: bytes.clone(),
+        }],
+        ..effect(schema::Verdict::Ok, &[])
+    };
+    if bytes == b"arm" {
+        forwarded.timers = vec![crate::timer::TimerOp::register(
+            crate::timer::TimerKind::ProcessingTime,
+            crate::util::wall_now_ms() + 30,
+        )];
+    }
+    forwarded
+}
+
+/// Register a [`turn_json`] class and serve it; the host's undo count.
+fn turn_class(
+    id: &str,
+    persistent: bool,
+    each: &str,
+    rollback: &str,
+) -> (FakeHost, Arc<std::sync::atomic::AtomicUsize>) {
+    crate::host::register_host_class_json(
+        turn_json(id, persistent, each, rollback).as_bytes(),
+    )
+    .expect("class registers");
+    let mid = crate::operator::registry::get_class(id)
+        .and_then(|topology| topology.lookup_channel_id("mid"))
+        .expect("the class declares `mid`");
+    let undos = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    (turn_host(mid, Arc::clone(&undos)), undos)
+}
+
+/// Bind `id` as the controller does, saying whether it parks a failed turn.
+fn bind_turns(
+    node: &mut RunnerNode,
+    factory: &str,
+    id: &str,
+    dead_letter_turns: bool,
+    task_journal: Option<crate::pb::TaskJournalState>,
+) {
+    use crate::command::CommandAction;
+    let mut errors = Vec::new();
+    crate::pb::AddOperator {
+        operator_id: id.to_string(),
+        factory_id: factory.to_string(),
+        task_journal,
+        dead_letter_turns,
+        ..Default::default()
+    }
+    .handle(node, "", &mut errors);
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
+/// What the controller saw of one steps instance: its iteration commits,
+/// the tasklets whose undo it journaled, and its completion.
+#[derive(Default)]
+struct Seen {
+    iters: Vec<crate::pb::IterCommit>,
+    undone: Vec<(u32, u32)>,
+    done: Option<(String, String)>,
+}
+
+/// Answer `id`'s barriers as the controller does, refusing those `refuse`
+/// names, until `until` holds or the run completes.
+fn pump_turns(
+    rx: &Receiver<RunnerMessage>,
+    id: &str,
+    seen: &mut Seen,
+    refuse: impl Fn(&crate::pb::command_request::Command) -> bool,
+    until: impl Fn(&Seen) -> bool,
+) {
+    use crate::pb::command_request::Command;
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !until(seen) && seen.done.is_none() {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        match rx.recv_timeout(remaining) {
+            Ok(RunnerMessage::EmitControlRequest {
+                reference_id,
+                command,
+            }) => {
+                let answer = if refuse(&command) {
+                    Err(crate::FlezhaError::with(
+                        "commit.not_owner",
+                        [("operator", id.into())],
+                    ))
+                } else {
+                    Ok(String::new())
+                };
+                match *command {
+                    Command::IterCommit(commit) if commit.operator_id == id => {
+                        seen.iters.push(commit)
+                    }
+                    Command::TaskCommit(commit)
+                        if commit.operator_id == id && commit.compensating =>
+                    {
+                        seen.undone.push((commit.task_idx, commit.iter))
+                    }
+                    _ => {}
+                }
+                crate::shutdown::signal_result(&reference_id, answer);
+            }
+            Ok(RunnerMessage::EmitOperatorCompleted {
+                operator_id,
+                status,
+                error,
+                ..
+            }) if operator_id == id => seen.done = Some((status, error)),
+            Ok(_) => {}
+            Err(_) => panic!("steps {id} stalled; the controller saw {:?}", seen.iters),
+        }
+    }
+}
+
+fn never(_: &crate::pb::command_request::Command) -> bool {
+    false
+}
+
+/// Every test here binds and feeds under the same guards.
+fn turn_env() -> (
+    std::sync::MutexGuard<'static, ()>,
+    std::sync::MutexGuard<'static, ()>,
+    Receiver<RunnerMessage>,
+) {
+    let env = crate::runner::env_test_guard();
+    let sink = state_sink::test_guard();
+    state_sink::reset_for_test();
+    let (tx, rx) = unbounded::<RunnerMessage>();
+    crate::runner::install_reconnect_trigger(tx);
+    (env, sink, rx)
+}
+
+#[test]
+fn a_failed_turn_is_dead_lettered_undone_once_and_the_next_message_is_the_next_iteration() {
+    let (_env, _sink, rx) = turn_env();
+    let _parks = capture_parks();
+    let id = format!("turn_dead_letter_{}", std::process::id());
+    let (_host, undos) = turn_class(&id, true, "per_input", "keep_progress");
+    let mut node = RunnerNode::new("test-ns".to_string());
+    bind_turns(&mut node, &id, "turn-1", true, None);
+    let mut seen = Seen::default();
+
+    for (offset, message) in [(0, &b"hello"[..]), (1, b"boom"), (2, b"again")] {
+        feed_at(&node, "turn-1", "in", offset, message);
+    }
+    pump_turns(&rx, "turn-1", &mut seen, never, |s| s.iters.len() == 3);
+
+    let commits: Vec<_> = seen
+        .iters
+        .iter()
+        .map(|c| (c.iter, c.consumed_offset, c.dead_letter.is_some()))
+        .collect();
+    assert_eq!(
+        commits,
+        [(0, Some(0), false), (1, Some(1), true), (2, Some(2), false)]
+    );
+    let dead_letter = seen.iters[1].dead_letter.as_ref().expect("dead-lettered");
+    assert_eq!(
+        (dead_letter.tasklet.as_str(), dead_letter.attempts),
+        ("p1", 3)
+    );
+    assert!(
+        dead_letter.error.contains("model unavailable"),
+        "{dead_letter:?}"
+    );
+    assert_eq!(seen.iters[1].entry_channel, "in");
+    assert_eq!(undos.load(Ordering::SeqCst), 1, "p0's hook ran once");
+    assert_eq!(
+        seen.undone,
+        [(0, 1)],
+        "one undo entry, for p0 of iteration 1"
+    );
+    assert!(seen.done.is_none(), "{:?}", seen.done);
+    node.stop_operator("turn-1");
+    state_sink::reset_for_test();
+}
+
+#[test]
+fn a_resume_owing_a_failed_turns_undo_runs_it_once_and_waits() {
+    let (_env, _sink, rx) = turn_env();
+    let id = format!("turn_resume_{}", std::process::id());
+    let (_host, undos) = turn_class(&id, true, "per_input", "keep_progress");
+    let mut node = RunnerNode::new("test-ns".to_string());
+    let p0 = crate::flusher::encode_cell_identity("turn-resume-1", "p0", "");
+    let owed = crate::pb::TaskCommittedTask {
+        task_idx: 0,
+        iter: 1,
+        cells_ran: vec![p0],
+        ..Default::default()
+    };
+    let journal = crate::pb::TaskJournalState {
+        iter: 2,
+        entry_channel: "in".to_string(),
+        consumed_offset: Some(1),
+        released_offset: Some(1),
+        committed_tasks: vec![owed.clone()],
+        rewind_undo: vec![owed],
+        ..Default::default()
+    };
+    bind_turns(&mut node, &id, "turn-resume-1", true, Some(journal));
+    let mut seen = Seen::default();
+
+    pump_turns(&rx, "turn-resume-1", &mut seen, never, |s| {
+        !s.undone.is_empty()
+    });
+    assert_eq!(seen.undone, [(0, 1)]);
+    assert_eq!(undos.load(Ordering::SeqCst), 1);
+
+    feed_at(&node, "turn-resume-1", "in", 2, b"again");
+    pump_turns(&rx, "turn-resume-1", &mut seen, never, |s| {
+        !s.iters.is_empty()
+    });
+    assert_eq!(seen.iters[0].iter, 2, "the turn did not run again");
+    assert_eq!(undos.load(Ordering::SeqCst), 1);
+    assert!(seen.done.is_none(), "{:?}", seen.done);
+    node.stop_operator("turn-resume-1");
+    state_sink::reset_for_test();
+}
+
+/// Every run here fails and ends as it did before a failed turn could be
+/// dead-lettered.
+fn ends_on_failure(
+    id: &str,
+    persistent: bool,
+    each: &str,
+    rollback: &str,
+    dead_letter_turns: bool,
+    refuse: impl Fn(&crate::pb::command_request::Command) -> bool,
+    messages: &[&[u8]],
+) -> Seen {
+    let (_env, _sink, rx) = turn_env();
+    let _parks = capture_parks();
+    let factory = format!("{id}_{}", std::process::id());
+    let (_host, _undos) = turn_class(&factory, persistent, each, rollback);
+    let mut node = RunnerNode::new("test-ns".to_string());
+    bind_turns(&mut node, &factory, id, dead_letter_turns, None);
+    let mut seen = Seen::default();
+    for (offset, message) in messages.iter().enumerate() {
+        feed_at(&node, id, "in", offset as u64, message);
+    }
+    pump_turns(&rx, id, &mut seen, refuse, |_| false);
+    state_sink::reset_for_test();
+    seen
+}
+
+/// An instance id, whether its class persists, its loop and rollback modes,
+/// whether its bind parks failed turns, and the messages it is sent.
+type EndingCase = (
+    &'static str,
+    bool,
+    &'static str,
+    &'static str,
+    bool,
+    &'static [&'static [u8]],
+);
+
+#[test]
+fn a_failure_the_dead_letter_does_not_cover_still_ends_the_run() {
+    use crate::pb::command_request::Command;
+    let cases: [EndingCase; 4] = [
+        (
+            "turn_all",
+            true,
+            "per_input",
+            "undo_all",
+            true,
+            &[b"boom"],
+        ),
+        (
+            "turn_chained",
+            false,
+            "chained",
+            "keep_progress",
+            true,
+            &[b"boom"],
+        ),
+        (
+            "turn_unflagged",
+            true,
+            "per_input",
+            "keep_progress",
+            false,
+            &[b"boom"],
+        ),
+        (
+            "turn_timer",
+            false,
+            "per_input",
+            "keep_progress",
+            true,
+            &[b"arm"],
+        ),
+    ];
+    for (id, persistent, each, rollback, flag, messages) in cases {
+        let seen = ends_on_failure(id, persistent, each, rollback, flag, never, messages);
+        assert_eq!(
+            seen.done.as_ref().map(|d| d.0.as_str()),
+            Some("error"),
+            "{id}"
+        );
+        assert!(
+            seen.iters.iter().all(|c| c.dead_letter.is_none()),
+            "{id} dead-lettered its turn"
+        );
+    }
+
+    // A stage commit the controller refuses is not the turn's failure.
+    let refuse_stage = |c: &Command| matches!(c, Command::TaskCommit(t) if !t.compensating);
+    let seen = ends_on_failure(
+        "turn_refused",
+        true,
+        "per_input",
+        "keep_progress",
+        true,
+        refuse_stage,
+        &[b"hello"],
+    );
+    assert_eq!(seen.done.as_ref().map(|d| d.0.as_str()), Some("error"));
+    assert!(seen.iters.is_empty());
+
+    // Nor is a refused dead-letter commit: the run ends on it.
+    let refuse_dead_letter =
+        |c: &Command| matches!(c, Command::IterCommit(i) if i.dead_letter.is_some());
+    let seen = ends_on_failure(
+        "turn_park_refused",
+        true,
+        "per_input",
+        "keep_progress",
+        true,
+        refuse_dead_letter,
+        &[b"boom"],
+    );
+    let (status, error) = seen.done.expect("the run ended");
+    assert_eq!(status, "error");
+    assert!(error.contains("refused by controller"), "{error}");
+}
+
+#[test]
+fn a_stop_during_a_turn_ends_it_cancelled() {
+    let (_env, _sink, rx) = turn_env();
+    let id = format!("turn_stop_{}", std::process::id());
+    let (_host, _undos) = turn_class(&id, true, "per_input", "keep_progress");
+    let mut node = RunnerNode::new("test-ns".to_string());
+    bind_turns(&mut node, &id, "turn-stop-1", true, None);
+    let mut seen = Seen::default();
+
+    feed_at(&node, "turn-stop-1", "in", 0, b"hello");
+    pump_turns(&rx, "turn-stop-1", &mut seen, never, |s| {
+        !s.iters.is_empty()
+    });
+    let instance = node.get_operator("turn-stop-1").expect("running");
+    crate::steps::stop(&instance);
+    pump_turns(&rx, "turn-stop-1", &mut seen, never, |_| false);
+    assert_eq!(seen.done.map(|d| d.0), Some("cancelled".to_string()));
+    assert!(seen.iters.iter().all(|c| c.dead_letter.is_none()));
+    state_sink::reset_for_test();
+}
+
+#[test]
+fn a_run_that_journals_nothing_parks_its_failed_turn_and_answers_the_next() {
+    let (_env, _sink, rx) = turn_env();
+    let parks = capture_parks();
+    let id = format!("turn_optout_{}", std::process::id());
+    let (_host, undos) = turn_class(&id, false, "per_input", "keep_progress");
+    let mut node = RunnerNode::new("test-ns".to_string());
+    let wire = Wire::new();
+    bind_turns(&mut node, &id, "turn-optout-1", true, None);
+
+    feed_call(&wire, &node, "turn-optout-1", b"boom", "w:boom");
+    spin_until("the failed turn to be parked", || {
+        !parks.lock().expect("park capture poisoned").is_empty()
+    });
+    let park = parks.lock().expect("park capture poisoned").remove(0);
+    assert_eq!(
+        park.identity,
+        (
+            "turn-optout-1".to_string(),
+            "_turn".to_string(),
+            "_turn".to_string()
+        )
+    );
+    assert_eq!(park.body.entry.channel, "in");
+    assert_eq!(park.body.entry.payload, None);
+    assert_eq!(park.body.origin_offset, None);
+    assert_eq!(
+        park.body.reply_to.as_deref(),
+        Some("w:boom"),
+        "the pass's call"
+    );
+    assert!(
+        park.body
+            .entry
+            .error
+            .starts_with("tasklet `p1` failed after 3 attempt(s): "),
+        "{}",
+        park.body.entry.error
+    );
+    spin_until("p0's undo", || undos.load(Ordering::SeqCst) == 1);
+
+    feed(&wire, &node, "turn-optout-1", b"again");
+    assert_eq!(outputs(&wire, "turn-optout-1", 1), [b"re:again".to_vec()]);
+    assert_no_completion(&rx, "turn-optout-1", Duration::from_millis(200));
+    state_sink::reset_for_test();
+}
+
+/// A two-stage `per_input` pass answers the call its message carried from the
+/// second stage, which never saw the message; a message nobody called is
+/// answered with the empty token.
+#[test]
+fn a_per_input_pass_answers_its_call_from_its_last_stage() {
+    let (_env, _sink, rx) = turn_env();
+    let id = format!("turn_answer_{}", std::process::id());
+    let json = turn_json(&id, false, "per_input", "keep_progress")
+        .replace(r#"{"link":"sink","name":"out"}"#, r#"{"link":"response"}"#);
+    crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
+    let mid = crate::operator::registry::get_class(&id)
+        .and_then(|topology| topology.lookup_channel_id("mid"))
+        .expect("the class declares `mid`");
+    let _host = turn_host(mid, Arc::default());
+    let mut node = RunnerNode::new("test-ns".to_string());
+    let wire = Wire::new();
+    bind_turns(&mut node, &id, "turn-answer-1", true, None);
+
+    feed_call(&wire, &node, "turn-answer-1", b"hello", "w:one");
+    feed(&wire, &node, "turn-answer-1", b"plain");
+    let mut answers = Vec::new();
+    while answers.len() < 2 {
+        let (payload_id, payload, metadata) = wire
+            .frames
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap_or_else(|_| panic!("the run answered {answers:?} and then nothing"));
+        if payload_id == "turn-answer-1" {
+            answers.push((payload, metadata.get("flz.reply_to").cloned()));
+        }
+    }
+    assert_eq!(
+        answers,
+        vec![
+            (b"re:hello".to_vec(), Some("w:one".to_string())),
+            (b"re:plain".to_vec(), Some(String::new())),
+        ]
+    );
+    assert_no_completion(&rx, "turn-answer-1", Duration::from_millis(200));
+    state_sink::reset_for_test();
+}

@@ -57,23 +57,25 @@ their place, carrying the outputs rather than preceding them.
 
 ### Persistence toggle
 
-One switch per class, for an unbounded operator and a bounded operator alike, frozen on the instance at start (a
-change applies on the next stop + start). The runner announces it (`persistent = "false"` in the
-`AddOperator` response), so the controller reads the same value: an opted-out class of either
-kind keeps no WAL or snapshot, is given no restore on a rebind, and answers a live Cell read with
-`{:error, :persistence_off}`. Beside it sits the sleep setting, which needs the switch on.
+One setting per class, `durable`, for a flow operator and a steps operator alike, frozen on
+the instance at start (a change applies on the next stop + start). The runner announces it
+(`durable` = `memory`, `local` or `remote` in the `AddOperator` response, with `sleep_after_ms`
+when the class sleeps), so the controller reads the same value: a class kept in memory
+(`durable: false`) keeps no WAL or snapshot, is given no restore on a rebind, and answers a live
+Cell read with `{:error, :persistence_off}`. Under `local` and `remote` sits `sleep_after`, how
+long an idle instance waits before it sleeps: by default never for a flow class and six hours for a
+steps class, `false` never.
 
 | Surface | Rust | Java | Elixir |
 |---|---|---|---|
-| Persistence switch, both kinds | `PERSISTENCE_ENABLED` const on both traits, default `true` | `persistenceEnabled()` on both kind interfaces, default `true`, read from the class whatever its Tasklets' states | `persistence_enabled/0` on both behaviours (a `use` option), default `true` |
-| Sleep setting | `SLEEP_WHEN_IDLE`: `false` on `UnboundedOperator`, `PERSISTENCE_ENABLED` on `BoundedOperator` | `sleepWhenIdle()`: `false` on `UnboundedOperator`, `persistenceEnabled()` on `BoundedOperator` | `sleep_when_idle` (a `use` option or callback): `false` for an unbounded operator, `persistence_enabled/0` for a bounded operator |
-| Sleeping with persistence off | refused as `topology.sleep_without_persistence` | same | same |
-| Controller side | `:operator_persistence` (`%{class => bool}`) overrides the announced switch per class | same | same |
+| Where work is kept | `OperatorSettings::durable`: `Durable::Memory`, `Durable::Local` (default) or `Durable::Remote` | `durable()`: `Durable.Memory`, `Durable.Local` (default) or `Durable.Remote` | `durable:` on the `use`: `false`, `:local` (default) or `:remote` |
+| Sleep interval | `sleep_after: Option<Duration>` on `Local` / `Remote` | `Optional<Duration> sleepAfter` on `Local` / `Remote` | `{:local, sleep_after: ms \| false}` |
+| Controller side | `:operator_persistence` (`%{class => bool}`) overrides the announced setting per class | same | same |
 
-The Node, Python, Ruby and PHP SDKs carry the same two settings under their own spellings
-(`persistent` and `sleepWhenIdle` / `sleep_when_idle`); each SDK page lists them.
+The Node, Python, Ruby and PHP SDKs carry the same tree under their own spellings; each SDK
+page lists them.
 
-Durable-vs-opted-out bounded operator guarantees: [`../resilience/bounded_operator.md`](../resilience/bounded_operator.md).
+Durable-vs-opted-out steps operator guarantees: [`../resilience/steps_operator.md`](../resilience/steps_operator.md).
 
 ### Restoration flow (warm restart)
 
@@ -140,7 +142,7 @@ and give-up are the controller's.
 | data, SDK → controller | `cell_effect_record` | effectively-once effect record (`format_id` 2: changes — enclosed in the writing SDK's own codec, postcard / Kryo / ETF — outputs, consumed offset, timers, dead-letter entry) |
 | data, SDK → controller | `cell_state_snapshot` | compaction snapshot body |
 | data, SDK → controller | `delete_cell_state` | dynamic-Cell eviction |
-| data, SDK → controller | `park_payload`, `compensation_intent`, `compensation_done` | DLQ park; bounded saga markers |
+| data, SDK → controller | `park_payload`, `compensation_intent`, `compensation_done` | DLQ park; steps saga markers |
 | control, controller → SDK | `RestoreInitState` / `RestoreInitStateResponse` | warm restart (reply from the SDK) |
 | control, controller → SDK | `CompactCell` / `CompactCellResponse` | compaction (reply from the SDK) |
 | control, controller → SDK | `CellMailboxStatus` | legacy `full` / `open` back-pressure (pre-credit sessions) |
@@ -332,13 +334,13 @@ The authoring surface is `use Flezha.SDK.Tasklet` with a `state do field … end
 from the controller into the state term, and each `defchange` generates an `apply_change/2`
 clause, which declares the tasklet changeful, and its recorder, journaling through
 `Flezha.SDK.Ctx.apply/3`, the recorded mutation path. `compact_after_bytes` is the compaction threshold, and
-`UnboundedOperator.persistence_enabled/0` is the class toggle;
+the `durable:` option of `use Flezha.SDK.Operator` is the class setting;
 `schema_version/0` and `min_readable_schema_version/0` declare the version and the readable
 floor, and `migrate_state/2` / `migrate_change/2` read an older version's DECODED term into
 the running one — the body codec is the language's own, so there is no second codec to choose.
-The class-level `Flezha.SDK.Channels.effectively_once/1` puts the class on the
-effectively-once tier, and `checkpoint_ack/1` / `checkpoint_every/2` /
-`outputs_at_checkpoint/2` each turn the checkpoint granularity on: the Cell then ships one
+`run: {:flow, exactly: :effectively_once}` puts the class on the effectively-once
+tier, and `ack: :checkpoint` (or `{:checkpoint, every: n, outputs: :at_checkpoint,
+max_delay_ms: ms}`) under it turns the checkpoint granularity on: the Cell then ships one
 `cell_effect_record` per effectful invocation or per closed interval in place of change
 records, and `Flezha.SDK.Ctx.checkpoint/1` closes an interval from inside `run/3`.
 The record, the fold, the slot, the commands and the shutdown are described in
@@ -355,4 +357,4 @@ recorded changes is stated, not machine-checked.
 - [`poll_core.md`](poll_core.md) — the activation model the Java change bytes ride
 - [`cell_timers.md`](cell_timers.md) — timers as folded state
 - [`authoring_contract.md`](authoring_contract.md) — tiers, derived Change types, determinism
-- [`../resilience/bounded_operator.md`](../resilience/bounded_operator.md) — durable-by-default bounded classes
+- [`../resilience/steps_operator.md`](../resilience/steps_operator.md) — durable-by-default steps classes

@@ -15,21 +15,19 @@ use super::cell::{
     host_serialize_unreachable, HostPayload, HostTaskletFacts,
 };
 use super::decl::{
-    HostAckGranularity, HostBeyondWindow, HostBoundedDecl, HostCellModeDecl, HostChannelDecl,
-    HostChannelKind, HostCheckpointOutputs, HostClassDecl, HostClock, HostOverflow,
-    HostRollbackMode, HostTaskletDecl,
+    HostCellModeDecl, HostChannelDecl, HostChannelKind, HostClassDecl, HostClock, HostOverflow,
+    HostTaskletDecl,
 };
 use super::issue::TopologyIssue;
 use super::register::DerivedChannel;
-use crate::bounded::spec::{graph_order, BoundedSpec, GraphSeed, TaskDag};
-use crate::bounded::{LoopMode, RollbackMode};
+use crate::operator::settings::{Exactly, Run};
+use crate::steps::spec::{graph_order, GraphSeed, TaskDag};
 use crate::channel::{
     ChannelDescriptor, ChannelKind, EntryWrapFn, OverflowPolicy, RetryPolicy, TaskletId,
 };
 use crate::error::Error;
 use crate::operator::topology::{
-    AckGranularity, BeyondWindowPolicy, CellMode, CheckpointOutputs, CheckpointPolicy,
-    CorrectionPolicy, OperatorTopology, TaskletDescriptor,
+    AckGranularity, CellMode, CorrectionPolicy, OperatorTopology, TaskletDescriptor,
 };
 use crate::ErrorModel;
 
@@ -40,35 +38,42 @@ pub(super) struct ClassFacts {
     /// The declared version packed as the durable header carries it, resolved
     /// once so every tasklet of the class stamps the same bytes.
     pub(super) sdk_version: u32,
+    pub(super) persistent: bool,
+    pub(super) effectively_once: bool,
     pub(super) correction: Option<CorrectionPolicy>,
     pub(super) ack_granularity: AckGranularity,
     pub(super) compact_after_bytes: usize,
 }
 
-pub(super) fn resolve_class_facts(decl: &HostClassDecl, ack: HostAckGranularity) -> ClassFacts {
-    let correction = decl.correction_window_ms.map(|window_ms| CorrectionPolicy {
-        window_ms,
-        beyond_window: match decl.beyond_window_policy {
-            HostBeyondWindow::ProcessAsArrival => BeyondWindowPolicy::ProcessAsArrival,
-            HostBeyondWindow::Drop => BeyondWindowPolicy::Drop,
-        },
-    });
-    let ack_granularity = match ack {
-        HostAckGranularity::PerInput => AckGranularity::PerInput,
-        HostAckGranularity::Checkpoint => AckGranularity::Checkpoint(CheckpointPolicy {
-            every: decl.checkpoint_every,
-            outputs: match decl.checkpoint_outputs {
-                HostCheckpointOutputs::AsProduced => CheckpointOutputs::AsProduced,
-                HostCheckpointOutputs::AtCheckpoint => CheckpointOutputs::AtCheckpoint,
-            },
-            max_delay_ms: decl.checkpoint_max_delay_ms,
-        }),
+pub(super) fn resolve_class_facts(
+    decl: &HostClassDecl,
+    run: &Run,
+    persistent: bool,
+) -> ClassFacts {
+    let (effectively_once, correction) = match run {
+        Run::Flow {
+            exactly:
+                Exactly::EffectivelyOnce {
+                    correction_ms,
+                    beyond_window,
+                    ..
+                },
+        } => (
+            true,
+            correction_ms.map(|window_ms| CorrectionPolicy {
+                window_ms,
+                beyond_window: *beyond_window,
+            }),
+        ),
+        _ => (false, None),
     };
     ClassFacts {
         factory_id: Box::leak(decl.factory_id.clone().into_boxed_str()),
         sdk_version: crate::header::pack_version(&decl.sdk_version),
+        persistent,
+        effectively_once,
         correction,
-        ack_granularity,
+        ack_granularity: super::register::ack_of(run),
         compact_after_bytes: decl
             .compact_after_bytes
             .unwrap_or(crate::operator::topology::DEFAULT_COMPACT_AFTER_BYTES),
@@ -281,8 +286,8 @@ fn host_facts(
         min_readable_schema_version: task_decl
             .min_readable_schema_version
             .unwrap_or(task_decl.schema_version),
-        persistent: decl.persistent,
-        effectively_once: decl.effectively_once,
+        persistent: class.persistent,
+        effectively_once: class.effectively_once,
         checkpoint: class.ack_granularity.checkpoint(),
         clock: task_decl.clock,
         sdk_lang: decl.sdk_lang,
@@ -293,31 +298,6 @@ fn host_facts(
         } else {
             None
         },
-    }
-}
-
-/// The bounded operator half: the chain's spec over the topology the unbounded half built.
-pub(super) fn bounded_spec(
-    decl: &HostClassDecl,
-    bounded: &HostBoundedDecl,
-    dag: TaskDag,
-    loop_mode: LoopMode,
-) -> BoundedSpec {
-    BoundedSpec {
-        dag,
-        max_duration: bounded
-            .max_duration_ms
-            .map(std::time::Duration::from_millis),
-        rollback_mode: rollback_of(bounded.rollback_mode),
-        loop_mode,
-        sync_durability: decl.sync_durability,
-    }
-}
-
-fn rollback_of(mode: HostRollbackMode) -> RollbackMode {
-    match mode {
-        HostRollbackMode::AllOrNothing => RollbackMode::AllOrNothing,
-        HostRollbackMode::KeepProgress => RollbackMode::KeepProgress,
     }
 }
 
@@ -354,7 +334,7 @@ pub(super) fn build_host_dag(topology: &OperatorTopology) -> Result<TaskDag, Err
     Ok(TaskDag::from_walk(walk, entries))
 }
 
-/// Producer → consumer pairs over the inter-task channels only: a bounded operator's
+/// Producer → consumer pairs over the inter-task channels only: a steps operator's
 /// stages are wired to each other, never through the entry channel.
 fn inter_task_edges(topology: &OperatorTopology) -> Vec<(TaskletId, TaskletId)> {
     let mut edges = Vec::new();

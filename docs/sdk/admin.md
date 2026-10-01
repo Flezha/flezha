@@ -27,7 +27,7 @@ flz role bind runner@team-orders app team-orders
 That is the whole grant, once per namespace. `flz role unbind` revokes it, and
 the revocation takes effect on the next call rather than the next reconnect.
 A namespace bound to `spawner` instead, the role for tasklets that spawn
-bounded operators, reaches `Operator.start` and `Operator.send` here and none of the
+steps operators, reaches `Operator.start` and `Operator.send` here and none of the
 other verbs in the table below.
 
 ## The surface
@@ -124,4 +124,4 @@ its own core.
 
 - [`../operations/authn_authz.md`](../operations/authn_authz.md) — roles, the grant, the audit
 - [`protocol_spec.md`](protocol_spec.md) — the control protocol the frame rides
-- [`tasklet_requested_spawn.md`](tasklet_requested_spawn.md) — the other SDK-initiated request, for a bounded instance
+- [`tasklet_requested_spawn.md`](tasklet_requested_spawn.md) — the other SDK-initiated request, for a steps instance

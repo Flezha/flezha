@@ -10,7 +10,7 @@ defmodule Flezha.State.Retention do
   `retention_hours = 0` disables time-travel for that Operator class: the WAL
   is truncated to the latest snapshot's seq on every pass — compact and forget.
 
-  On the same tick it also runs the **finished-job** sweep: a finished bounded
+  On the same tick it also runs the **finished-job** sweep: a finished steps
   operator's retained state and completion record (`Flezha.State.Completion`)
   are removed once `finished_at + completed_retention_hours` is past.
 
@@ -87,7 +87,7 @@ defmodule Flezha.State.Retention do
     end)
   end
 
-  # Finished-job retention: reclaim a finished bounded operator's retained
+  # Finished-job retention: reclaim a finished steps operator's retained
   # state + completion record once `finished_at + completed_retention_hours`
   # is in the past. A finished operator is fully torn down (no live writer), so
   # the whole class dir goes, through the one guard every state deletion passes.

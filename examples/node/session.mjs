@@ -5,7 +5,7 @@
 // deterministic clock, keying on the wiring, and a timer that closes a session
 // when its user goes quiet.
 
-import { defineUnbounded, defineTasklet } from '@flezha/sdk';
+import { defineOperator, defineTasklet } from '@flezha/sdk';
 
 /** Milliseconds of silence after which a session is closed. */
 const IDLE_MS = 30_000n;
@@ -66,7 +66,7 @@ export const Session = defineTasklet({
   },
 });
 
-export default defineUnbounded({
+export default defineOperator({
   factoryId: 'sessions',
   channels: (c) => {
     // Neither channel names a codec: the activity event is read as JSON, and

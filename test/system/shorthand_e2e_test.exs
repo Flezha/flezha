@@ -11,12 +11,12 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
       `sugar_named_input_sink`;
     * `sugar_store_input`: the same shape with state, whose text inputs are
       read back off the live Cell;
-    * `sugar_bounded`: the bounded short form, a `once` bounded run on its
-      first message on `order`, whose output reaches `sugar_bounded_placed`
+    * `sugar_steps`: the steps short form, a `once` steps run on its
+      first message on `order`, whose output reaches `sugar_steps_placed`
       and which then completes;
-    * `sugar_bounded_per_input`: the bounded short form declaring the
+    * `sugar_steps_per_input`: the steps short form declaring the
       `per_input` loop mode, one pass per message onto
-      `sugar_bounded_per_input_out`, which does not complete after a pass;
+      `sugar_steps_per_input_out`, which does not complete after a pass;
     * `sugar_state_only`: a short form with no sink, whose entry `ticks` feeds
       a tasklet that only keeps state, read back off the live Cell since
       no sink frame exists to observe.
@@ -94,13 +94,13 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
     refute_receive {:message_forward, _payload, _metadata}, 500
   end
 
-  test "a bounded short form runs once on its first message and completes", ctx do
-    operator_id = unique("sugar_bounded")
+  test "a steps short form runs once on its first message and completes", ctx do
+    operator_id = unique("sugar_steps")
 
     assert {:ok, _} =
              OperatorManager.start_operator(ctx.namespace, %Builder{
                id: operator_id,
-               factory_id: "sugar_bounded",
+               factory_id: "sugar_steps",
                opts: [plugins: [sink(ctx.namespace, operator_id)]]
              })
 
@@ -110,15 +110,15 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
     assert [payload] = receive_payloads(1)
     assert payload =~ "o-1"
 
-    # A `once` bounded operator self-terminates, and the controller deregisters it on
+    # A `once` steps operator self-terminates, and the controller deregisters it on
     # the completion it ships. The unit leaving the registry with no stop is
     # the whole loop having run.
     assert wait_until(fn -> not registered?(ctx.namespace, operator_id) end, 30_000),
-           "the bounded short form never completed"
+           "the steps short form never completed"
   end
 
-  test "a bounded short form that declares its loop mode runs once per message", ctx do
-    operator_id = start(ctx.namespace, "sugar_bounded_per_input")
+  test "a steps short form that declares its loop mode runs once per message", ctx do
+    operator_id = start(ctx.namespace, "sugar_steps_per_input")
 
     send_until_accepted(ctx.namespace, operator_id, "m-1", %{"channel" => "input"})
     assert receive_payloads(1) == ["m-1"]
@@ -127,7 +127,7 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
     assert receive_payloads(1) == ["m-2"]
 
     assert registered?(ctx.namespace, operator_id),
-           "a per_input bounded completed after a pass, as a once bounded does"
+           "a per_input steps completed after a pass, as a once steps does"
   end
 
   # A send that lands before the bind is retryable; only an accepted one is

@@ -1,0 +1,10 @@
+{
+  "compensable_tasks": "",
+  "durable": "local",
+  "each": "per_input",
+  "leaf_tasks": "0",
+  "max_duration_ms": "600000",
+  "on_failure": "undo_all",
+  "run": "steps",
+  "sleep_after_ms": "21600000"
+}

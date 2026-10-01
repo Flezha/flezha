@@ -281,7 +281,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
 
   defmodule FailingOperator do
     @moduledoc false
-    @behaviour Flezha.SDK.UnboundedOperator
+    @behaviour Flezha.SDK.Operator
     def factory_id, do: "backoff_drill"
 
     def channels(c) do

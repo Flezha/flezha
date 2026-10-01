@@ -2,7 +2,7 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   @moduledoc """
   What a shipped artifact set *is*, and the naming that addresses it.
 
-  A manifest entry describes one shippable unit — a Cell, a bounded operator
+  A manifest entry describes one shippable unit — a Cell, a steps operator
   instance's task-journal, an instance's durable input log, its parked
   failures, the ProcessHub registry cspec, or a control-plane store — as of one
   shipped cut. It is written **last** in every ship, so a crash mid-upload

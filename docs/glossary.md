@@ -35,25 +35,23 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 ## Workload model
 
 - **Operator** — the unit you start and stop (`flz operator start|stop|list|info`), registered
-  under a **factory id** (`factory_id()` on both Rust traits, `factoryId()` on Java's `Operator` base),
-  with a **kind**, `unbounded` or `bounded`, that its class declares and its runner announces with
-  the factory id; a start names only the factory, and the kind is frozen for the instance's life.
-  No behaviour is attached to the kind: persistence and sleeping are class settings of both.
-- **Sleeping**: an instance whose class declares `sleep_when_idle` (on by default for a durable
-  bounded operator, off for an unbounded operator) and has been idle for `FLEZHA_PARK_IDLE_MS` ships `IterPark`, is
-  evicted from its runner (`suspended`) and wakes on its next message with its Cells restored.
-  Refused as `topology.sleep_without_persistence` on a class whose persistence is off.
-- **Bounded / unbounded** — the two kinds, which describe the run, not the input. Bounded: every
-  run reaches a terminal state; unbounded: no run does, and the operator stops only from outside.
-  A `per_input` bounded operator reads an unbounded input in bounded runs.
-- **Unbounded operator** — the always-on kind: an endless input, no barrier, per-cell recovery.
-  Implements `UnboundedOperator`. See [`architecture/stream_profile.md`](architecture/stream_profile.md).
-- **Bounded operator** — the terminating kind: a DAG of tasklets, each run once its producers
-  have committed and committed behind a barrier as soon as its cells finish, with an inbox,
-  saga compensation, a durable loop and suspension. Implements `BoundedOperator`; ends on
-  chain completion, a tasklet's `ctx.complete(result)`, a loop that runs out of work,
-  `max_duration` or `flz operator stop`. See
-  [`architecture/bounded_profile.md`](architecture/bounded_profile.md).
+  under a **factory id** (`factory_id()` on the Rust `Operator` trait, `factoryId()` on Java's
+  `Operator`), with a **run**, `flow` or `steps`, that its class declares in its settings tree and
+  its runner announces with the factory id; a start names only the factory, and the run is frozen
+  for the instance's life. Where work is kept (`durable`) and sleeping are settings of every class.
+- **Sleeping**: an instance whose class keeps its work (`durable` `local` or `remote`) and has been
+  idle for its class's `sleep_after` (unless the class says otherwise, never for a flow class and
+  six hours for a steps class; `false` never sleeps) ships `IterPark`, is evicted from its runner (`suspended`) and wakes on its next message
+  with its Cells restored. A class kept in memory (`durable: false`) has nothing to sleep on.
+- **Flow operator** — an operator whose `run` is `flow`, the default: its commit point is an
+  input, or a checkpoint, with per-Cell recovery and no barrier. It runs until it is stopped, a
+  tasklet calls `ctx.complete(result)` or its `max_duration_ms` elapses.
+- **Steps operator** — an operator whose `run` is `steps`: a DAG of tasklets, each run once its
+  producers have committed and committed behind a barrier as soon as its cells finish, with an
+  inbox, saga compensation, a durable loop (`each`: `once`, `per_input`, `chained`) and
+  suspension. It ends on chain completion, a tasklet's `ctx.complete(result)`, a loop that runs
+  out of work, `max_duration_ms` or `flz operator stop`; a `per_input` loop may never end. See
+  [`architecture/steps_profile.md`](architecture/steps_profile.md).
 - **Tasklet** — a typed stage inside an operator, declaring `Input`, `Output`, `State`,
   `Change` and `Clock` types. A tasklet has exactly one output channel, is wired to the others by
   channels, and lives as long as its operator: it is fed, never called and returned from.
@@ -107,22 +105,22 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   identically on live delivery and replay. See [`sdk/multi_input_tasklets.md`](sdk/multi_input_tasklets.md).
 - **`route_latest`** — delivers an operator-wide document to each keyed cell on that key's own
   traffic, never as a remembered-set fan-out.
-- **Partition** — one member of a partitioned operator, an unbounded operator or a `per_input` bounded operator: an
+- **Partition** — one member of a partitioned operator, a flow operator or a `per_input` steps operator: an
   ordinary instance `<id>#pK` with its own Overwatch, registry row, binding, input log, state tree,
-  plugins and DLQ identity, and for a bounded operator its own journal and pass sheet.
+  plugins and DLQ identity, and for a steps operator its own journal and pass sheet.
   `flz operator start <factory> --id <id> --partitions N` starts N; `flz operator scale <group> M`
   rescales. See [`sdk/partitioned_operators.md`](sdk/partitioned_operators.md).
 - **Key group** — one of 256 buckets a routing key hashes into, `fnv1a128(key) mod 256`
   (`flz_core/src/util.rs`, identical in every SDK). A partition owns a contiguous range carried on
   `AddOperator`; the SDK **key-group guard** parks the first frame whose key falls outside it.
-- **Group** — the logical operator N partitions make up, named by the base id, of either kind. No
+- **Group** — the logical operator N partitions make up, named by the base id, of either run. No
   group record is stored: the single `flz operator list` row and `info`'s coverage check derive
-  from the members. A bounded operator group has no end, result or rollback of its own; each member has.
+  from the members. A steps operator group has no end, result or rollback of its own; each member has.
 - **Timer (per-cell)** — a deadline a tasklet registers on its own cell. An **event-time**
   timer fires when the cell's event-time high-water crosses it, a **processing-time** timer from
   the deferred-wake list (the BEAM's timer service in the Elixir SDK). `on_timer` receives the
   scheduled timestamp; the pending set is folded
-  state, so a crash-resume owes exactly the timers it owed. In a bounded operator a firing opens a pass
+  state, so a crash-resume owes exactly the timers it owed. In a steps operator a firing opens a pass
   at the tasklet that set it. See [`sdk/cell_timers.md`](sdk/cell_timers.md).
 - **Plugin** — a `%Flezha.Plugin{}` binding a **provider** module to one or more **hooks** on a
   host such as the Overwatch (`:on_input`, `:on_output`, `:on_message`, ...); its provider is
@@ -140,7 +138,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **Operator-to-operator messaging** — one operator's output delivered into another's input
   stream by the `OperatorForward` plugin on the source (same namespace, no self-targeting),
   retried until the target confirms. The guarantee is derived: a source whose Cells record effects
-  (an effectively-once unbounded operator or a durable bounded operator) gets effectively-once across the hop, any
+  (an effectively-once flow operator or a durable steps operator) gets effectively-once across the hop, any
   other at-least-once. See [`plugins/operator_forward.md`](plugins/operator_forward.md).
 - **`:on_message`** — the synchronous request/reply hook (`OperatorMessage` /
   `OperatorMessageResponse` on the control channel, `flz operator send`), as opposed to data
@@ -168,28 +166,28 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   `{changes, outputs, consumed_offset, dlq, event_time}`, appended and fsynced as a unit so
   state, output, progress and a park can never tear apart.
 - **Input log** — the offset-addressable durable log every input is normalised into for an
-  instance with durable input, an unbounded operator under the tier or a durable bounded operator
+  instance with durable input, a flow operator under the tier or a durable steps operator
   (`Flezha.State.InputLog`): one per instance, append before forward, stamped `flz.offset`,
-  deduplicated by `flz.msg_id`, and each reporter (a Cell, or a bounded operator's journal) recovers
+  deduplicated by `flz.msg_id`, and each reporter (a Cell, or a steps operator's journal) recovers
   from its own consumed offset.
 - **At-least-once / effectively-once** — the default tier adds no latency and permits a duplicate
-  output on replay; `effectively_once()` on the channel builder turns on the input log, the
+  output on replay; `exactly: effectively_once` in a flow class's run turns on the input log, the
   effect record and the outbox and forces every plugin-bound channel to be `.keyed()`. It is
   at-least-once delivery + a deterministic key + an idempotent sink, never exactly-once effects.
-- **Checkpoint ack-granularity** — `checkpoint_ack()` moves the acknowledgement from per input to
+- **Checkpoint ack-granularity** — `ack: checkpoint` moves the acknowledgement from per input to
   `ctx.checkpoint()`; the **interval** is the retention floor, the recovery work and the credit
   cadence. A park closes the interval, a restore discards the open one, and
-  `outputs_at_checkpoint(max_delay_ms)` holds the interval's outputs with its changes.
+  `outputs: at_checkpoint` with its `max_delay_ms` holds the interval's outputs with its changes.
 - **Outbox** — the per-cell record of which outputs are durable and which a sink has confirmed
   (`Flezha.State.Outbox`, the `<key>.outbox.dedup` side-file): `outbox_durable_seq` gates the
   flush, `outbox_flushed_seq` advances on the sink's confirmation of the `flz.ack` token,
   `outbox_epoch` names the lineage. A restart re-drives what was durable but unconfirmed.
 - **Output identity** — the replay-stable stamps on a keyed output: `flz.cell`, `flz.seq`,
-  `flz.key`, and `flz.epoch` for a Cell that records effects (the tier, a durable bounded operator). `flz.` is reserved; a user emit carrying one is rejected.
+  `flz.key`, and `flz.epoch` for a Cell that records effects (the tier, a durable steps operator). `flz.` is reserved; a user emit carrying one is rejected.
 - **Epoch** — the lineage counter in the outbox identity. An accident (crash retry, takeover,
   re-drive, `flz dlq replay`) **keeps** it so the sink swallows the repeat; a deliberate correction
   (late-input correction, `flz operator replay`) **bumps** it so the new output passes
-  dedup and overwrites by natural key. A bounded operator rewind bumps only the journal epoch; its re-run's
+  dedup and overwrites by natural key. A steps operator rewind bumps only the journal epoch; its re-run's
   output is a newer record and passes on its higher `flz.seq`.
 - **Owner / fence / realign** — an operator's **owner** is the stable identity its ownership
   record names (the `ClassRegistry` row its Overwatch writes before `AddOperator`); a frame about
@@ -210,11 +208,11 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **Park** — four senses, all "hold, never drop": a **DLQ park** ships a retry-exhausted payload
   durably to the controller (`park_payload` / `ParkPayloadAck`, or inside the effect record)
   before the cell advances; a **credit park** waits for a grant; a **key-group park** refuses a
-  mis-routed key; an **`IterPark`** asks for an idle instance of either kind to sleep.
+  mis-routed key; an **`IterPark`** asks for an idle instance of either run to sleep.
 - **Dead-letter queue (DLQ)** — the controller's durable store for poison payloads
   (`Flezha.Dlq.Store`, `app_data/dlq/<operator_class>/<tasklet_id>/`): retry, park durably,
   advance. Entries are idempotent on their origin, retention is 30 days and 4 GiB, the surface is
-  `flz dlq list|show|replay|drop`; a bounded operator parks only an unreadable message and a
+  `flz dlq list|show|replay|drop`; a steps operator parks only an unreadable message and a
   failed turn of a `per_input` keep-progress loop, and otherwise aborts and compensates. Once an
   input's entry is durable, the operator's listeners see a notice carrying `input.dead_lettered`.
   See [`resilience/data_durability.md`](resilience/data_durability.md).
@@ -231,9 +229,10 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   a backend (`FLEZHA_DURABILITY_BACKEND`; `none` is local-only); local files stay authoritative.
   An **artifact** is one immutable shipped blob; the per-reference **manifest** naming a cut's
   artifacts is written last, so a torn upload is invisible. See [`resilience/data_durability.md`](resilience/data_durability.md).
-- **Synchronous durability** — a bounded class declaring `SYNC_DURABILITY` / `syncDurability()`
-  (its one class-level spelling in each SDK) has each commit barrier's ack gated on the remote
-  ship (RPO 0). Unbounded classes are refused it (`topology.sync_durability_on_unbounded`).
+- **Synchronous durability** — a steps class declaring `durable: remote` has each commit
+  barrier's ack gated on the remote ship (RPO 0). Flow classes are refused it
+  (`topology.remote_on_flow`), and an instance is refused its start without a durability
+  backend (`operator.remote_without_backend`).
 - **RPO breach** — local progress unshipped past `rpo_target_ms` (default 120 s): alarm-grade
   `[:flezha, :state, :rpo_exceeded]`, shown by `flz controller status` and `/healthz`. A
   **supersession** (`[:flezha, :state, :claim_superseded]`) is routine on every migration, not a breach.
@@ -246,9 +245,9 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   The loser answers `:duplicate` after checking the winner is live; `[:flezha, :boot,
   :reconcile_duplicate]` outside a partition recovery means a start bypassed the claim. See [`internals/process_hub.md`](internals/process_hub.md).
 
-## Bounded operator vocabulary
+## Steps operator vocabulary
 
-- **Task journal** — the per-instance append-only journal of bounded operator progress
+- **Task journal** — the per-instance append-only journal of steps operator progress
   (`<state_root>/<namespace>/<instance_id>/<instance_id>/task.journal`, `Flezha.State.TaskJournal`)
   on the WAL substrate under a reserved cell key. Its entries (`task_committed`,
   `iter_committed`, `compensated`, `rewound`) are markers, folded, never truncated; a stage entry
@@ -260,24 +259,24 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   the stage; the controller waits until those records are durable, journals the stage and acks,
   and only then do its outputs reach its children and its plugin outputs leave. Siblings commit independently. A committed
   tasklet is never re-run.
-- **Pass sheet** — a bounded instance's run state in the runner core (iteration, tasklets in
+- **Pass sheet** — a steps instance's run state in the runner core (iteration, tasklets in
   flight and done, outputs held for their commit, completion), advanced by events on the thread
   that brings each one; the in-memory form of what the task journal describes.
-- **Outbox (bounded operator)**: a bounded operator Cell's plugin output is written in its own effect record
-  and leaves through that Cell writer's outbox, the one a tier unbounded operator Cell uses, once the durable
+- **Outbox (steps operator)**: a steps operator Cell's plugin output is written in its own effect record
+  and leaves through that Cell writer's outbox, the one a tier flow operator Cell uses, once the durable
   stage marker naming the record has been acked. It carries the stream's identity
   (`flz.cell`, `flz.seq = <record seq>.<emit ordinal>`, `flz.epoch`, `flz.key`, metadata). A
   record no marker names is dropped, so a failed stage delivers nothing.
 - **Saga compensation** — on an abnormal exit, committed tasklets' `compensate` hooks run in
-  reverse-topological order, each journaled as a `compensated` entry naming its undo record. `RollbackMode::AllOrNothing`
+  reverse-topological order, each journaled as a `compensated` entry naming its undo record. `OnFailure::UndoAll`
   (default) unwinds every committed iteration, `KeepProgress` only the in-flight one; a hookless
   tasklet is skipped, and an undo handle must live in cell state.
-- **Durable loop** — `LoopMode::Once` (default, one pass over the first message), `PerInput`
+- **Durable loop** — `Each::Once` (default, one pass over the first message), `PerInput`
   (one iteration per message) or `Chained` (the first message, then iteration N+1 seeded by
   N's terminal output into that message's chain). The **iteration boundary**
   (`IterCommit`) is where suspension, the keep-progress unit and rewind attach.
-- **Durable input (bounded operator)** — a durable bounded instance's input, journaled to its input
-  log before it is forwarded, as a tier unbounded operator's is, and deduplicated by a `flz.msg_id` the log
+- **Durable input (steps operator)** — a durable steps instance's input, journaled to its input
+  log before it is forwarded, as a tier flow operator's is, and deduplicated by a `flz.msg_id` the log
   still retains; a message without an id is never a duplicate. Its iteration commits move the
   log's watermark, and `flz state inbox` renders it. The driver's own queue of arrived messages
   is still called its inbox.
@@ -288,13 +287,13 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **Rewind** — `flz operator rewind <instance> --to-iteration N` appends a `rewound` marker at
   epoch + 1, compensates the tasklets above N in reverse and resumes waiting. It is
   undo-and-continue: inputs are not replayed, and a tasklet that wrote plugin output without a
-  `compensate` hook refuses it. See [`resilience/bounded_operator.md`](resilience/bounded_operator.md).
+  `compensate` hook refuses it. See [`resilience/steps_operator.md`](resilience/steps_operator.md).
 
 ## Runner internals
 
 - **Poll core (`flz_core`)** — the one Rust kernel every host SDK drives through
   `poll() → Activation` / `complete(ActivationResult)`: transport, per-cell ordering, effect
-  records, the retry→park ladder, timers, credit, routing and bounded runs. Rust consumes
+  records, the retry→park ladder, timers, credit, routing and steps runs. Rust consumes
   it as a crate; Java, Node, Ruby and Python through compiled veneers over the C ABI
   (`flz_core_ffi`); PHP through that same ABI directly, with `ext-ffi` and no veneer of its own. The Elixir SDK is
   its own core and inherits nothing from it. See [`sdk/poll_core.md`](sdk/poll_core.md).
@@ -306,7 +305,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   for the same cell (**per-cell exclusivity**, why user code needs no locks): an input batch
   with timer firings, one of five host-participating commands (restore fold, snapshot, live read,
   apply-state, migration serialize), a **prepare crossing** (`KeyRequest`, batched keying) or a
-  bounded operator step. The result carries change bytes, outputs, consumed offset, timer ops and a
+  steps operator step. The result carries change bytes, outputs, consumed offset, timer ops and a
   verdict (`ok | retryable_error | non_retryable_error`).
 - **Overflow policy** — what a channel discards when the consumer Cell's bounded mailbox is
   full, and the only question the enum answers: `DropNothing` (nothing — the producer waits for
@@ -411,8 +410,8 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 
 ## Disambiguating "Operator"
 
-In Flezha an **operator** is the unit a runner hosts and you start: an instance of a class of the
-bounded or the unbounded kind. It never means the SDK process, which is a **Runner**, and never
+In Flezha an **operator** is the unit a runner hosts and you start: an instance of a class that
+runs as a flow or in steps. It never means the SDK process, which is a **Runner**, and never
 the person running the controller: guides address that person as "you", and authorization text
 names them "the caller" or "the principal". The AuthZ role for day-to-day operations is `ops`.
 ProcessHub's internal ring-node "operator" is ProcessHub's own word and is not this term.

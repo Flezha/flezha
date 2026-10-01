@@ -342,9 +342,9 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       :ok
     end
 
-    test "a bounded operator is flagged for output_stall on stream close, as a stream is",
+    test "a steps operator is flagged for output_stall on stream close, as a stream is",
          %{pid: pid} do
-      ClassRegistry.put("bnd_op", :bounded)
+      ClassRegistry.put("bnd_op", :steps)
       on_exit(fn -> ClassRegistry.delete("bnd_op") end)
 
       :ok = GenServer.call(pid, {:operator_pid_update, "bnd_op", [self()]})
@@ -370,10 +370,13 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       assert_receive {:output_stall, "bnd_op"}
     end
 
-    test "delete_cell_state removes a bounded Cell's state, as a stream's", %{pid: pid} do
+    test "delete_cell_state removes a steps Cell's state, as a stream's", %{pid: pid} do
       class = "bnd_del_#{System.unique_integer([:positive])}"
-      ClassRegistry.put(class, :bounded)
-      on_exit(fn -> ClassRegistry.delete(class) end)
+      ClassRegistry.put(class, :steps)
+      on_exit(fn ->
+      ClassRegistry.delete(class)
+      File.rm_rf!(Paths.class_dir(class))
+    end)
 
       seg = {class, "task", "seg"}
       wal = Paths.wal_path(seg)
@@ -384,7 +387,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       send(pid, {:flz_data, :ref_z, "delete_cell_state", frame, %{}})
 
       assert NodeTestHelper.wait_until(fn -> not File.exists?(wal) end, 5_000),
-             "the evicted bounded Cell's state was kept"
+             "the evicted steps Cell's state was kept"
     end
   end
 
@@ -416,7 +419,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
         end)
 
       :ok = GenServer.call(pid, {:operator_pid_update, class, [dead]})
-      ClassRegistry.put(class, :bounded)
+      ClassRegistry.put(class, :steps)
       ClassRegistry.put_overwatch(class, live, "ce_test")
 
       Process.exit(dead, :kill)
@@ -555,6 +558,16 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
   # fails when: an off-tier park stops telling the Overwatch, once its entry is
   # durable, that the input it parked is dead-lettered, with the call waiting on
   # it if there is one.
+  test "an instance under a class override reads how it runs from its class" do
+    id = "records_run_#{System.unique_integer([:positive])}"
+    class = id <> "_class"
+    :ok = ClassRegistry.put(class, :steps)
+    :ok = ClassRegistry.put_state_keys(id, class)
+    on_exit(fn -> ClassRegistry.delete(class) end)
+
+    assert Flezha.Runner.StreamChannel.Records.run_of(id) == :steps
+  end
+
   test "a park frame is announced once its entry is durable" do
     FlezhaTest.Helper.DlqFixtures.isolated_dir()
     set_mimic_global_until_exit()

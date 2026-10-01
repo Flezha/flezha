@@ -42,7 +42,7 @@ pub struct DynamicCellRegistry {
     topology: Arc<OperatorTopology>,
     instance: Weak<OperatorInstance>,
     instance_id: Arc<str>,
-    persistence_enabled: bool,
+    keeps_state: bool,
     prefix: Option<Arc<crate::prefix::PrefixLedger>>,
 }
 
@@ -54,7 +54,7 @@ impl DynamicCellRegistry {
         topology: Arc<OperatorTopology>,
         instance: Weak<OperatorInstance>,
         instance_id: Arc<str>,
-        persistence_enabled: bool,
+        keeps_state: bool,
         prefix: Option<Arc<crate::prefix::PrefixLedger>>,
     ) -> Self {
         Self {
@@ -66,7 +66,7 @@ impl DynamicCellRegistry {
             topology,
             instance,
             instance_id,
-            persistence_enabled,
+            keeps_state,
             prefix,
         }
     }
@@ -93,13 +93,13 @@ impl DynamicCellRegistry {
     }
 
     /// Evict every Cell idle longer than `idle_ttl`, each under its drain
-    /// gate with an empty mailbox; a bounded operator's only between passes, and
+    /// gate with an empty mailbox; a steps operator's only between passes, and
     /// never one a rollback could still reach.
     pub fn reap_sweep(&self, idle_ttl: Duration) {
         let now = crate::util::monotonic_ms();
         let ttl_ms = idle_ttl.as_millis() as i64;
         let held = match self.instance.upgrade() {
-            Some(instance) => match crate::bounded::reap_holds(&instance) {
+            Some(instance) => match crate::steps::reap_holds(&instance) {
                 Some(held) => held,
                 None => return,
             },
@@ -141,7 +141,7 @@ impl DynamicCellRegistry {
             CellFlusher::instance().deregister(id);
         }
         crate::poll_core::global().discard_cell_timers(&slot.cell_identity);
-        if slot.persistence_enabled {
+        if slot.keeps_state {
             // The delete is a durable frame: the class holds it for the next
             // bound stream, behind this Cell's own records, so an eviction
             // in a reconnect window cannot leave the controller holding state
@@ -188,7 +188,7 @@ impl DynamicCellRegistry {
             tasklet_id: self.tasklet_id,
             cell_key: Some(key),
             cell_index: 0,
-            persistence_enabled: self.persistence_enabled,
+            keeps_state: self.keeps_state,
             prefix: self.prefix.clone(),
         })
     }

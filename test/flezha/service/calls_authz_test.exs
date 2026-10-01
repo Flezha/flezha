@@ -31,7 +31,7 @@ defmodule FlezhaTest.Service.CallsAuthzTest do
   setup :set_mimic_global_until_exit
 
   setup do
-    registry = FakeStartRegistry.install(runners: ["runner-1"], kind: :bounded)
+    registry = FakeStartRegistry.install(runners: ["runner-1"], run: :steps)
     test_pid = self()
 
     # The caller's Overwatch: every report of the delivery reaches the test.

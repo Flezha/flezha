@@ -4,7 +4,7 @@
 TBD - created by archiving change elixir-sdk-native-transport. Update Purpose after archive.
 ## Requirements
 ### Requirement: The Elixir runner entry point mirrors the cross-SDK runner-as-handle surface
-The SDK SHALL expose `Flezha.SDK.create_runner/2` — `create_runner(namespace, opts)` with `transport: :native | :uds | :quic` defaulting to `:native` — returning a runner handle carrying its own declared factory set (empty at creation; no connection, no singleton claim, no process spawn), with `register_factory/2` (an operator module of either kind, the kind read from the behaviour the module declares: `@behaviour Flezha.SDK.UnboundedOperator` makes a stream, `@behaviour Flezha.SDK.BoundedOperator` a bounded operator, both answer `{:error, %Flezha.SDK.Error{code: "topology.ambiguous_operator_kind"}}` and neither `{:error, %Flezha.SDK.Error{code: "topology.unknown_operator_kind"}}`, each naming the module in its details; the body is `channels/1` for both) and its inverse `unregister_factory/2`, and the lifecycle verbs `start/1`, `await_termination/1`, `run/1` (exactly `start/1` then `await_termination/1`, never an independent implementation), `close/1`, and `namespace/1`. The process-wide active-runner slot SHALL be claimed atomically inside `start/1` — any number of unstarted handles may exist; the loser receives `{:error, %Flezha.SDK.Error{code: "runtime.runner_already_running"}}` naming `ns`; double-start on one handle errors; closing a never-started handle is a no-op. Zero-operator start SHALL be legal. Authoring and connection failures SHALL be named error tuples returned at the causing call site (mirroring the Rust `FlezhaError` variants) — never a raise. `Flezha.SDK.child_spec/1` SHALL accept `namespace:`, `operators:` (a list of operator modules of either kind), and `transport:`, and wrap exactly the create → register → start → await sequence for the host application's supervision tree — it MUST NOT introduce a second lifecycle path. On start the SDK SHALL connect over the selected transport with a handshake carrying the namespace, the declared factories (id, description, language and kind), and its stable identity, then handle `AssignRunnerId` (storing the session token) and `ConnectSocket` (establishing N primary + N secondary streams through the mode's transport).
+The SDK SHALL expose `Flezha.SDK.create_runner/2` — `create_runner(namespace, opts)` with `transport: :native | :uds | :quic` defaulting to `:native` — returning a runner handle carrying its own declared factory set (empty at creation; no connection, no singleton claim, no process spawn), with `register_factory/2` (an operator module of either run, the run read from the module's `run/0`, `:flow` when it defines none; a module that is not an operator answers `{:error, %Flezha.SDK.Error{code: "topology.no_operator_exported"}}` naming the module in its details; the body is `channels/1` for both) and its inverse `unregister_factory/2`, and the lifecycle verbs `start/1`, `await_termination/1`, `run/1` (exactly `start/1` then `await_termination/1`, never an independent implementation), `close/1`, and `namespace/1`. The process-wide active-runner slot SHALL be claimed atomically inside `start/1` — any number of unstarted handles may exist; the loser receives `{:error, %Flezha.SDK.Error{code: "runtime.runner_already_running"}}` naming `ns`; double-start on one handle errors; closing a never-started handle is a no-op. Zero-operator start SHALL be legal. Authoring and connection failures SHALL be named error tuples returned at the causing call site (mirroring the Rust `FlezhaError` variants) — never a raise. `Flezha.SDK.child_spec/1` SHALL accept `namespace:`, `operators:` (a list of operator modules of either run), and `transport:`, and wrap exactly the create → register → start → await sequence for the host application's supervision tree — it MUST NOT introduce a second lifecycle path. On start the SDK SHALL connect over the selected transport with a handshake carrying the namespace, the declared factories (id, description, language and run), and its stable identity, then handle `AssignRunnerId` (storing the session token) and `ConnectSocket` (establishing N primary + N secondary streams through the mode's transport).
 
 #### Scenario: SDK boots and binds
 - **WHEN** a host app starts `{Flezha.SDK, namespace: "default", operators: [MyOperator]}` on a node running the Controller
@@ -22,9 +22,9 @@ The SDK SHALL expose `Flezha.SDK.create_runner/2` — `create_runner(namespace, 
 - **WHEN** a handle with an empty declared set calls `start/1`
 - **THEN** the runner connects and registers with zero placeable factories, without error
 
-#### Scenario: The kind is the behaviour, not the body's name
-- **WHEN** a hand-written module declares `@behaviour Flezha.SDK.BoundedOperator` with `factory_id/0` and `channels/1`, and another declares `@behaviour Flezha.SDK.UnboundedOperator` with the same two functions
-- **THEN** `register_factory/2` declares the first as a bounded operator and the second as an unbounded operator, and a module declaring both behaviours answers `{:error, %Flezha.SDK.Error{code: "topology.ambiguous_operator_kind"}}`
+#### Scenario: The run is a setting, not the body's name
+- **WHEN** a hand-written module declares `@behaviour Flezha.SDK.Operator` with `factory_id/0`, `channels/1` and `run/0` answering `:steps`, and another declares the same two functions and no `run/0`
+- **THEN** `register_factory/2` declares the first as a steps operator and the second as a flow operator
 
 ### Requirement: One SDK core serves two deployment modes
 The SDK SHALL support both deployment modes from a single dispatch core, differing only in a client-transport seam: **in-node** (`transport: :native` — the Controller runs in the same BEAM; streams are pid-backed handles) and **standalone** (`transport: :uds | :quic` — the runner is its own BEAM node, on the same machine over UDS or a different machine over QUIC, and the Controller runs elsewhere). In the standalone mode the SDK SHALL speak the existing binary protocol byte-identically to the Rust runner — same `connect_control_channel` handshake framing, same per-runner data-socket paths (UDS) / 2-byte `[stream_type, key]` stream preamble (QUIC), same bounded connect retry, same client environment contract (`FLEZHA_SOCKET_FILES_PATH`, `FLEZHA_QUIC_ADDRESS`, `FLEZHA_CA_CERT_PATH`) — and SHALL require **zero controller-side changes**: the controller cannot distinguish a standalone Elixir runner from a Rust runner. Everything above the transport seam — behaviours, builder, dispatch, ladder, guard, heartbeats, identity — SHALL be shared code with identical semantics in both modes. Distributed Erlang SHALL NOT be a runner transport.
@@ -38,7 +38,7 @@ The SDK SHALL support both deployment modes from a single dispatch core, differi
 - **THEN** it connects with TLS verification against `FLEZHA_CA_CERT_PATH`, opens data streams with the `[type, key]` preamble, and operates identically to the UDS case
 
 #### Scenario: Same operator code runs in both modes
-- **WHEN** the same UnboundedOperator module is deployed once in-node (`:native`) and once standalone (`:uds`)
+- **WHEN** the same Operator module is deployed once in-node (`:native`) and once standalone (`:uds`)
 - **THEN** registration, dispatch semantics, outputs, refusals, and heartbeat self-reports are identical; only the transport differs
 
 #### Scenario: Connection loss reconnects as a binding swap
@@ -83,7 +83,7 @@ Each runner handle SHALL own its declared factory set, starting empty. `register
 - **THEN** the call returns the in-use error and the declared set is unchanged
 
 ### Requirement: Operator and Tasklet behaviours mirror the current cross-SDK model
-The SDK SHALL define `Flezha.SDK.UnboundedOperator` (callbacks: `factory_id/0`, `channels/1` receiving the graph builder; optional `description/0`, `persistence_enabled/0`) and `Flezha.SDK.Tasklet` (mandatory callbacks: `name/0`, `init_state/1` receiving the cell key or nil, `run/3` receiving input, state, and a ctx, returning `{:ok, new_state} | {:error, reason} | {:error, {:non_retryable, reason}}`; optional callbacks with defaults: `cell_keys/0` → `[]`, `cells_for/1`, `mailbox_capacity/0` → 1024 with env override `FLEZHA_MAILBOX_CAPACITY` and range 1..=1_048_576, `max_cells/0` → 100_000 and ENFORCED on a dynamic node — at the cap a new key's input is dropped without a Cell and counted, an existing key's input is unaffected — `cell_idle_ttl_ms/0` → `nil` (no eviction), `schema_version/0` → 1, `min_readable_schema_version/0` → the schema version, `migrate_state/2` and `migrate_change/2` → refuse, `apply_change/2`, `compact_after_bytes/0`, `state_from_json/1`, `clock/0` → `:wall` — the declared clock `now/1` serves: `:wall` (epoch milliseconds at dispatch entry), `:logical` (the Cell's durable change seq, `terminal + 1` after a restore) or `:event_time` (what `event_time_of/1` extracts from the input) — `event_time_of/1`, `on_timer/4` receiving the scheduled timestamp, the kind, the state and a ctx and returning what `run/3` returns, and `max_timers_per_cell/0` → 10_000). The ctx SHALL provide `emit/2`, `emit_with_meta/3` (refusing reserved `flz.`-prefixed metadata keys), `emit_keyed/3` and `emit_keyed_with_meta/4` (the output's natural key on a keyed sink), `apply/3`, `now/1` (the declared clock's value, evaluated once per invocation; inside `on_timer/4` it equals the scheduled timestamp under every clock), `cell_key/1`, the timer surface `timer_after/2`, `timer_at_event_time/2`, `cancel_processing_time_timer/2` and `cancel_event_time_timer/2` (the `cell_timers` requirement below), `checkpoint/1` (closes the open checkpoint interval of a class declaring checkpoint acknowledgement — every input folded in since the last close, this one included, is acknowledged by the record that closes it; a no-op on any other class, as the reference's is) and `stable_id/1` (thirty-two lowercase hex characters of the frozen FNV-1a-128 over the Cell's wire identity, the big-endian change seq the invocation started at and a big-endian per-invocation ordinal — the cross-language fixture every SDK pins, so the n-th call of a replayed invocation equals the n-th call of the original). On a node whose sink is declared keyed, a keyless emit from a Single Cell SHALL be refused at call time with `{:error, %Flezha.SDK.Error{code: "runtime.key_required_on_keyed_channel"}}` naming the channel and nothing emitted; `emit_keyed` on a node with no keyed sink SHALL be refused with `{:error, %Flezha.SDK.Error{code: "runtime.key_not_allowed_on_non_keyed_channel"}}` naming the channel. Emits SHALL accumulate per invocation, with their metadata and key, and flush only on `{:ok, _}` — a failing invocation discards its partial emits. `AddOperator` SHALL instantiate the operator's topology with one process per Cell; `RemOperator` SHALL stop it. Inputs to the same Cell SHALL be processed in arrival order; distinct Cells MAY process concurrently.
+The SDK SHALL define `Flezha.SDK.Operator` (callbacks: `factory_id/0`, `channels/1` receiving the graph builder; optional `description/0`, `max_duration_ms/0`, `run/0`, `durable/0`) and `Flezha.SDK.Tasklet` (mandatory callbacks: `name/0`, `init_state/1` receiving the cell key or nil, `run/3` receiving input, state, and a ctx, returning `{:ok, new_state} | {:error, reason} | {:error, {:non_retryable, reason}}`; optional callbacks with defaults: `cell_keys/0` → `[]`, `cells_for/1`, `mailbox_capacity/0` → 1024 with env override `FLEZHA_MAILBOX_CAPACITY` and range 1..=1_048_576, `max_cells/0` → 100_000 and ENFORCED on a dynamic node — at the cap a new key's input is dropped without a Cell and counted, an existing key's input is unaffected — `cell_idle_ttl_ms/0` → `nil` (no eviction), `schema_version/0` → 1, `min_readable_schema_version/0` → the schema version, `migrate_state/2` and `migrate_change/2` → refuse, `apply_change/2`, `compact_after_bytes/0`, `state_from_json/1`, `clock/0` → `:wall` — the declared clock `now/1` serves: `:wall` (epoch milliseconds at dispatch entry), `:logical` (the Cell's durable change seq, `terminal + 1` after a restore) or `:event_time` (what `event_time_of/1` extracts from the input) — `event_time_of/1`, `on_timer/4` receiving the scheduled timestamp, the kind, the state and a ctx and returning what `run/3` returns, and `max_timers_per_cell/0` → 10_000). The ctx SHALL provide `emit/2`, `emit_with_meta/3` (refusing reserved `flz.`-prefixed metadata keys), `emit_keyed/3` and `emit_keyed_with_meta/4` (the output's natural key on a keyed sink), `apply/3`, `now/1` (the declared clock's value, evaluated once per invocation; inside `on_timer/4` it equals the scheduled timestamp under every clock), `cell_key/1`, the timer surface `timer_after/2`, `timer_at_event_time/2`, `cancel_processing_time_timer/2` and `cancel_event_time_timer/2` (the `cell_timers` requirement below), `checkpoint/1` (closes the open checkpoint interval of a class declaring checkpoint acknowledgement — every input folded in since the last close, this one included, is acknowledged by the record that closes it; a no-op on any other class, as the reference's is) and `stable_id/1` (thirty-two lowercase hex characters of the frozen FNV-1a-128 over the Cell's wire identity, the big-endian change seq the invocation started at and a big-endian per-invocation ordinal — the cross-language fixture every SDK pins, so the n-th call of a replayed invocation equals the n-th call of the original). On a node whose sink is declared keyed, a keyless emit from a Single Cell SHALL be refused at call time with `{:error, %Flezha.SDK.Error{code: "runtime.key_required_on_keyed_channel"}}` naming the channel and nothing emitted; `emit_keyed` on a node with no keyed sink SHALL be refused with `{:error, %Flezha.SDK.Error{code: "runtime.key_not_allowed_on_non_keyed_channel"}}` naming the channel. Emits SHALL accumulate per invocation, with their metadata and key, and flush only on `{:ok, _}` — a failing invocation discards its partial emits. `AddOperator` SHALL instantiate the operator's topology with one process per Cell; `RemOperator` SHALL stop it. Inputs to the same Cell SHALL be processed in arrival order; distinct Cells MAY process concurrently.
 
 #### Scenario: End-to-end dispatch
 - **WHEN** the Controller starts an operator on the Elixir runner and a frame is sent to its input channel
@@ -123,7 +123,7 @@ The SDK SHALL define `Flezha.SDK.UnboundedOperator` (callbacks: `factory_id/0`, 
 - **THEN** the two ids are `bbf81fd4955afd1724203700a240e822` then `bbf81fd4965afd1724203700a240e95d` (the values the Rust and Python SDKs pin), and the Cell ships the interval's closing record at that invocation's end
 
 ### Requirement: The graph builder carries the v1 subset of the producer-first surface
-`channels/1` SHALL author topologies with: `input/2` and `input_with/3` (bytes passthrough, String UTF-8, custom parser; a parse failure rides the entry channel's retry→park ladder), `into/2` and `into_named/3` (unnamed mentions of one Tasklet module unify into one node — fan-in; node-identity collisions refuse), edge transforms `map/2`, `filter/2`, `flat_map/2` and edge keying `key_by/2` (fused structurally into one composed closure per consumer edge — the runtime applies at most one transform + one key per edge and never observes a chain), `named/2`, `keyed/1` (declares output identity on the sink the handle reaches — the reference's `.keyed()`; on an entry handle, or on a handle that reaches `into/2` before any sink, registration refuses with `topology.keyed_on_entry` / `topology.keyed_channel_without_plugin_wire`), `sink/2` and `sink_with/3` (returning the stream handle — hybrid by default; default serialization bytes/UTF-8/JSON), `on_full/2`, `retry_max/2`, `retry_backoff_ms/2`, and fan-out by handle reuse. Every plugin frame SHALL carry `channel` = the producing node's identity — the tasklet's `name/0`, or the name `named/2` gave the node — never the plugin's name, so a `named/2` survives the plugin terminator and a forward target resolves its entry channel by the name the author declared; an entry routed straight to a sink carries the entry's name. User metadata from `emit_with_meta/3` SHALL ride the frame. Cell mode SHALL be derived from the wiring exactly as in the Rust SDK: non-empty `cell_keys/0` → Static; a keyed edge into a keyless tasklet → Dynamic; otherwise Single. Registration SHALL accumulate refusals into one `{:error, %Flezha.SDK.Error{}}` (never a raise), its `details.issues` every issue, using the shared issue codes, including `topology.key_by_on_unkeyable_target`, `topology.unkeyed_edge_into_dynamic_tasklet`, `topology.transform_after_key_by`, `topology.duplicate_channel`, `topology.cycle`, `topology.unreachable_tasklet`, `topology.node_identity_collision`, `topology.mailbox_capacity_zero`/`topology.mailbox_capacity_too_large`, `topology.retry_max_zero`, `topology.duplicate_plugin_sink`, `topology.keyed_on_entry`, `topology.keyed_channel_without_plugin_wire`, `topology.unservable_clock` (a `:logical` clock on a Tasklet without `apply_change/2` — the reference's build refusal), `topology.two_clocks` (a hand-written Tasklet exporting `event_time/1` whose `logical_clock/0` answers `true`), `topology.retired_callback` (a callback that no longer exists, naming its replacement), and the tier's — `topology.checkpoint_ack_without_tier`, `topology.checkpoint_every_zero`, `topology.checkpoint_max_delay_zero`, `topology.unkeyed_channel_under_effectively_once` (naming the sink's channel) and `topology.dropping_policy_under_effectively_once` (naming the node's inbound channel and the policy) — the reference's names for the same contradictions. Edge type mismatch is the documented per-language asymmetry: with no type tokens, a mis-typed payload surfaces at dispatch and rides the retry→park ladder. The tier declarations SHALL exist on the builder token: `effectively_once/1`, `checkpoint_ack/1`, `checkpoint_every/2` and `outputs_at_checkpoint/2`, each answering the token so it pipes, the three checkpoint options routing through one private policy amendment that sets the checkpoint granularity itself (idempotent, composing in any order, none clearing another's policy) and refused without `effectively_once/1` — the reference's `checkpoint_policy`. The correction declarations SHALL exist on the same token: `correction_window/2` and `beyond_window_policy/2` (`:process_as_arrival` — the default — or `:drop`), routing through one private policy amendment so they compose in either order and neither clears the other, which makes `beyond_window_policy/2` alone a zero-window declaration and therefore a refusal, exactly as `builder/mod.rs`'s pair does. Registration SHALL refuse with the reference's names: `topology.correction_without_tier` (a window without `effectively_once/1`), `topology.correction_without_event_time` (no Tasklet in the class declares an `:event_time` clock, naming the first Tasklet and the clock it declares) and `topology.correction_window_zero` (`correction_window(0)`, or a `beyond_window_policy/2` with no window). A shedding overflow policy under a declared window SHALL be refused by the tier's existing `topology.dropping_policy_under_effectively_once`, because a window requires the tier — no second check is added for a program the first already refuses. `merge/1` SHALL return a `%Flezha.SDK.Merge{}` handle that the same `Flezha.SDK.Channels` functions carry forward: `from/3` (a source stream and its mapping), `key_by/2` (declared once, on the merge) and `into/2` / `into_named/3`, each dispatching on the handle it receives, so one import of `Flezha.SDK.Channels` writes a pipe with a merge and `Flezha.SDK.Merge` exports none of the four, with the `multi-input-tasklets` semantics: each mapping composes after that source's own transforms, the key is applied to the mapped value on every source's edge, and the merged node's output stream chains like any other; `Topology.build/1` judges the merge groups. `route_latest/4` and `route_latest_named/5` SHALL expand to a merge into an SDK-packaged single-cell router tasklet with journaled `{document, version, delivered}` state, as the reference's do. `branch` SHALL NOT exist in v1 (fan-out is handle reuse); calling it fails registration with an error naming the module. `sealed/1` SHALL NOT exist: `sdk-graph-authoring` gives `sealed` only to the SDKs whose type system can enforce it, and an identity that seals nothing is a misleading surface.
+`channels/1` SHALL author topologies with: `input/2` and `input_with/3` (bytes passthrough, String UTF-8, custom parser; a parse failure rides the entry channel's retry→park ladder), `into/2` and `into_named/3` (unnamed mentions of one Tasklet module unify into one node — fan-in; node-identity collisions refuse), edge transforms `map/2`, `filter/2`, `flat_map/2` and edge keying `key_by/2` (fused structurally into one composed closure per consumer edge — the runtime applies at most one transform + one key per edge and never observes a chain), `named/2`, `keyed/1` (declares output identity on the sink the handle reaches — the reference's `.keyed()`; on an entry handle, or on a handle that reaches `into/2` before any sink, registration refuses with `topology.keyed_on_entry` / `topology.keyed_channel_without_plugin_wire`), `sink/2` and `sink_with/3` (returning the stream handle — hybrid by default; default serialization bytes/UTF-8/JSON), `on_full/2`, `retry_max/2`, `retry_backoff_ms/2`, and fan-out by handle reuse. Every plugin frame SHALL carry `channel` = the producing node's identity — the tasklet's `name/0`, or the name `named/2` gave the node — never the plugin's name, so a `named/2` survives the plugin terminator and a forward target resolves its entry channel by the name the author declared; an entry routed straight to a sink carries the entry's name. User metadata from `emit_with_meta/3` SHALL ride the frame. Cell mode SHALL be derived from the wiring exactly as in the Rust SDK: non-empty `cell_keys/0` → Static; a keyed edge into a keyless tasklet → Dynamic; otherwise Single. Registration SHALL accumulate refusals into one `{:error, %Flezha.SDK.Error{}}` (never a raise), its `details.issues` every issue, using the shared issue codes, including `topology.key_by_on_unkeyable_target`, `topology.unkeyed_edge_into_dynamic_tasklet`, `topology.transform_after_key_by`, `topology.duplicate_channel`, `topology.cycle`, `topology.unreachable_tasklet`, `topology.node_identity_collision`, `topology.mailbox_capacity_zero`/`topology.mailbox_capacity_too_large`, `topology.retry_max_zero`, `topology.duplicate_plugin_sink`, `topology.keyed_on_entry`, `topology.keyed_channel_without_plugin_wire`, `topology.unservable_clock` (a `:logical` clock on a Tasklet without `apply_change/2` — the reference's build refusal), `topology.two_clocks` (a hand-written Tasklet exporting `event_time/1` whose `logical_clock/0` answers `true`), `topology.retired_callback` (a callback that no longer exists, naming its replacement), and the tier's — `topology.checkpoint_every_zero`, `topology.checkpoint_max_delay_zero`, `topology.unkeyed_channel_under_effectively_once` (naming the sink's channel) and `topology.dropping_policy_under_effectively_once` (naming the node's inbound channel and the policy) — the reference's names for the same contradictions. Edge type mismatch is the documented per-language asymmetry: with no type tokens, a mis-typed payload surfaces at dispatch and rides the retry→park ladder. The tier, its checkpoint and its correction window SHALL be members of the class's `run` tree (`{:flow, exactly: {:effectively_once, ack: ..., correction_ms: ms, beyond_window: ...}}`), never builder calls, so none can be written without the tier or under a steps run; a `beyond_window` with no `correction_ms` is a zero window and therefore a refusal, exactly as the shared core's tree is. Registration SHALL refuse with the reference's names: `topology.correction_without_event_time` (no Tasklet in the class declares an `:event_time` clock, naming the first Tasklet and the clock it declares) and `topology.correction_window_zero` (`correction_ms: 0`, or a `beyond_window` with no window). A shedding overflow policy under a declared window SHALL be refused by the tier's existing `topology.dropping_policy_under_effectively_once`, because a window requires the tier — no second check is added for a program the first already refuses. `merge/1` SHALL return a `%Flezha.SDK.Merge{}` handle that the same `Flezha.SDK.Channels` functions carry forward: `from/3` (a source stream and its mapping), `key_by/2` (declared once, on the merge) and `into/2` / `into_named/3`, each dispatching on the handle it receives, so one import of `Flezha.SDK.Channels` writes a pipe with a merge and `Flezha.SDK.Merge` exports none of the four, with the `multi-input-tasklets` semantics: each mapping composes after that source's own transforms, the key is applied to the mapped value on every source's edge, and the merged node's output stream chains like any other; `Topology.build/1` judges the merge groups. `route_latest/4` and `route_latest_named/5` SHALL expand to a merge into an SDK-packaged single-cell router tasklet with journaled `{document, version, delivered}` state, as the reference's do. `branch` SHALL NOT exist in v1 (fan-out is handle reuse); calling it fails registration with an error naming the module. `sealed/1` SHALL NOT exist: `sdk-graph-authoring` gives `sealed` only to the SDKs whose type system can enforce it, and an identity that seals nothing is a misleading surface.
 
 #### Scenario: Linear chain with a transform and a key
 - **WHEN** an operator declares `c |> input("trades") |> filter(pred) |> key_by(key_fn) |> into(Candle) |> sink("candles")`
@@ -174,12 +174,12 @@ The SDK SHALL define `Flezha.SDK.UnboundedOperator` (callbacks: `factory_id/0`, 
 - **THEN** registration returns `{:error, %Flezha.SDK.Error{code: "topology.unservable_clock"}}` for the first and `topology.two_clocks` for the second, naming the tasklet, and no Cell is started
 
 #### Scenario: The tier declarations register, compose and refuse by the reference's names
-- **WHEN** a class declares `effectively_once/1` with a keyed sink; another declares `checkpoint_ack/1`, `checkpoint_every/2` and `outputs_at_checkpoint/2` in any order behind it; a third declares `checkpoint_ack/1` alone; a fourth declares the tier over an unkeyed sink; a fifth declares the tier over an entry with `on_full(:drop_newest)`
-- **THEN** the first two register with the tier and the checkpoint policy carrying all three options, and the last three are refused with `topology.checkpoint_ack_without_tier`, `topology.unkeyed_channel_under_effectively_once` naming the sink's channel, and `topology.dropping_policy_under_effectively_once` naming the channel and `drop_newest`
+- **WHEN** a class declares `run: {:flow, exactly: :effectively_once}` with a keyed sink; another declares `{:effectively_once, ack: {:checkpoint, every: 4, outputs: :at_checkpoint, max_delay_ms: 250}}`; a third writes `ack` under `:at_least_once`; a fourth declares the tier over an unkeyed sink; a fifth declares the tier over an entry with `on_full(:drop_newest)`
+- **THEN** the first two register with the tier and the checkpoint policy carrying all three members, the third fails to compile naming `ack` and `at_least_once`, and the last two are refused with `topology.unkeyed_channel_under_effectively_once` naming the sink's channel and `topology.dropping_policy_under_effectively_once` naming the channel and `drop_newest`
 
 #### Scenario: The correction declarations register, compose and refuse by the reference's names
-- **WHEN** a class declares `effectively_once/1`, `correction_window/2` and a Tasklet with an `:event_time` clock; a second declares them in the opposite order with `beyond_window_policy/2` between them; a third declares `correction_window/2` without the tier; a fourth declares it over a `:wall`-clocked Tasklet; a fifth declares `correction_window(0)` and a sixth only `beyond_window_policy(:drop)`
-- **THEN** the first two register with the window and the beyond-window policy carried whole whatever the order, and the last four are refused with `topology.correction_without_tier`, `topology.correction_without_event_time` naming the Tasklet and its clock, and `topology.correction_window_zero` twice
+- **WHEN** a class declares `{:effectively_once, correction_ms: 600_000}` and a Tasklet with an `:event_time` clock; a second adds `beyond_window: :drop` beside it; a third writes `correction_ms` under a steps run; a fourth declares the window over a `:wall`-clocked Tasklet; a fifth declares `correction_ms: 0` and a sixth only `beyond_window: :drop`
+- **THEN** the first two register with the window and the beyond-window policy carried whole, the third fails to compile naming `correction_ms` and `steps`, and the last three are refused with `topology.correction_without_event_time` naming the Tasklet and its clock, and `topology.correction_window_zero` twice
 
 ### Requirement: Bounded Cell mailbox with the cross-SDK overflow default
 Each Cell SHALL have a bounded queue (capacity from `mailbox_capacity/0`) with an `OverflowPolicy` of `:drop_nothing`, `:drop_newest`, or `:drop_oldest`. The default SHALL be `:drop_nothing` for **every** edge kind (entry, inter-tasklet, plugin-bound) — in lockstep with the Rust SDK builder, the Java SDK builder and the FFI host — and an operator that prefers to shed SHALL say so with `on_full/2`. The retired spelling SHALL NOT be accepted by `on_full/2`, by `Flezha.SDK.Stream`'s type, or by any manifest. Under `:drop_nothing` the routing caller SHALL wait for room (guarded by a monitor on the Cell so a dead Cell cannot wedge it) and SHALL neither drop nor refuse the input; the documented co-tenancy cost is that a delayed primary-stream router delays every operator fed by that stream, exactly as the Rust reader parks. Drops SHALL be observable via telemetry; `blocked_parks` SHALL count episodes (the first wait of a contiguous full period), and the `dispatches` heartbeat counter SHALL increment only on completed dispatches so a wedged Cell population is visible to the existing `runner_pool_wedged` classifier verdict.
@@ -221,27 +221,27 @@ A failing `run/3` — error tuple, raise, or exit — SHALL be retried up to the
 - **THEN** they are identical
 
 #### Scenario: A tier-on park rides the effect record and holds nothing
-- **WHEN** an invocation on a class declaring `effectively_once/1` fails on every attempt of the budget at consumed offset 7, with an input queued behind it
+- **WHEN** an invocation on a class declaring `exactly: :effectively_once` fails on every attempt of the budget at consumed offset 7, with an input queued behind it
 - **THEN** one `cell_effect_record` ships carrying no change, the `dlq` entry with the error and the payload bytes, and consumed offset 7; no `park_payload` frame ships; and the queued input dispatches without any ack
 
 ### Requirement: Partitioned placement is guarded with the controller's own hash
-The SDK SHALL decode `AddOperator`'s `partition_index`/`partition_count`/`key_group_from`/`key_group_to` (zero values = unpartitioned; the shipped range is authoritative, never re-derived), for an instance of either kind: the bounded driver SHALL hold the range as the unbounded operator does, and the Cell set the two share SHALL apply the guard on it. When `partition_count >= 2`: a dynamically computed cell key SHALL be admitted against the owned range **before** any Cell state is created — a miss parks the input with the named contract error, and on a bounded operator member opens no pass; statically declared Cells outside the range SHALL be silently idle (`owns` filter); a topology with no keyed entry-fed tasklet SHALL refuse the bind with `topology.partitions_without_keyed_tasklet` naming `key_by`, for an unbounded class and a bounded class alike; and a bounded class whose loop mode is `once` or `chained` SHALL refuse the bind with `topology.partitions_without_per_input_loop` naming `loop_mode per_input`. A bounded class's response metadata SHALL declare `loop_mode` with its declared value. When `partition_count < 2` the guard SHALL cost no more than one comparison. The key-group function SHALL be `Flezha.SDK.KeyGroup.group_of/1`, the pinned FNV-1a-128 the controller's range assignment calls too, verified against the shared fixture vectors.
+The SDK SHALL decode `AddOperator`'s `partition_index`/`partition_count`/`key_group_from`/`key_group_to` (zero values = unpartitioned; the shipped range is authoritative, never re-derived), for an instance of either run: the steps driver SHALL hold the range as the flow operator does, and the Cell set the two share SHALL apply the guard on it. When `partition_count >= 2`: a dynamically computed cell key SHALL be admitted against the owned range **before** any Cell state is created — a miss parks the input with the named contract error, and on a steps operator member opens no pass; statically declared Cells outside the range SHALL be silently idle (`owns` filter); a topology with no keyed entry-fed tasklet SHALL refuse the bind with `topology.partitions_without_keyed_tasklet` naming `key_by`, for a flow class and a steps class alike; and a steps class whose loop mode is `once` or `chained` SHALL refuse the bind with `topology.partitions_without_per_input_loop` naming `each per_input`. A steps class's response metadata SHALL declare `each` with its declared value. When `partition_count < 2` the guard SHALL cost no more than one comparison. The key-group function SHALL be `Flezha.SDK.KeyGroup.group_of/1`, the pinned FNV-1a-128 the controller's range assignment calls too, verified against the shared fixture vectors.
 
 #### Scenario: Mis-routed frame parks loudly
 - **WHEN** a partition member receives a frame whose key hashes outside its range
 - **THEN** the input parks with the contract error naming the key, its group, and the owning partition, and no Cell state is created
 
-#### Scenario: A bounded operator member parks a mis-routed message and opens no pass
-- **WHEN** a partition member of a `per_input` bounded operator receives a message whose `key_by` result hashes outside its range
+#### Scenario: A steps operator member parks a mis-routed message and opens no pass
+- **WHEN** a partition member of a `per_input` steps operator receives a message whose `key_by` result hashes outside its range
 - **THEN** the message parks with the contract error through the shared pre-dispatch park, no Cell is minted, no stage is dispatched and the loop waits for its next message
 
 #### Scenario: Keyless class refuses partitioned bind
 - **WHEN** `partition_count >= 2` arrives for a class with no `key_by` edge and no declared cell keys
 - **THEN** the `AddOperator` is refused with `topology.partitions_without_keyed_tasklet`
 
-#### Scenario: A once bounded operator refuses partitioned bind
-- **WHEN** `partition_count >= 2` arrives for a bounded class declaring `loop_mode: :once`
-- **THEN** the `AddOperator` is refused with `topology.partitions_without_per_input_loop`, and a `per_input` class of the same shape binds and declares `loop_mode: "per_input"`
+#### Scenario: A once steps operator refuses partitioned bind
+- **WHEN** `partition_count >= 2` arrives for a steps class declaring `each: :once`
+- **THEN** the `AddOperator` is refused with `topology.partitions_without_per_input_loop`, and a `per_input` class of the same shape binds and declares `each: "per_input"`
 
 #### Scenario: Hash agrees with the fixtures
 - **WHEN** the SDK's key-group function hashes the shared fixture inputs
@@ -283,7 +283,7 @@ genuinely zero one.
 - **THEN** the two sets SHALL be equal, and a key present in one and not the other SHALL fail the cross-SDK gate
 
 ### Requirement: Declarations and deferred commands follow the scope matrix
-`AddOperatorResponse.metadata` SHALL be empty for a class declaring nothing (the legal "declared nothing" encoding), except that a keyless topology SHALL declare `keyed: "false"` so the controller's partitioned-start preflight works, a class whose smallest `compact_after_bytes/0` differs from the 8 MiB default SHALL declare `compact_after_bytes` with that value, a class declaring `effectively_once/1` SHALL declare `effectively_once: "true"`, and one declaring checkpoint acknowledgement SHALL declare `ack_granularity: "checkpoint"` — and a class declaring `correction_window/2` SHALL declare `correction_window_ms` with the declared milliseconds and `beyond_window_policy` with `process_as_arrival` or `drop` — both keys whenever a window is declared, as the reference ships them, so an undeclared policy reaches the controller as the default rather than as an absence — the four keys the reference ships and the goldens `tier_store.json`, `checkpoint_batched_store.json` and `candle.json` pin; the cadence, the held outputs and the delay stay SDK-side and reach no metadata. The persistence-family commands — `RestoreInitState`, `CompactCell`, `CellState`, `CellApplyState`, `MigrationSerialization` / `MigrationDeserialization`, `CreditWindowInit`, `CreditGrant` — SHALL be answered for real, by the SDK's own re-expression of the kernel's rules (the `state_persistence` requirement below); `CellMailboxStatus` SHALL be tolerated with a debug log, as the reference tolerates a pre-credit controller. `BoundedStop` SHALL stop the named bounded instance, and one naming an unknown operator SHALL be acknowledged with a warn. `RunnerDisconnect` SHALL terminate the connection cleanly: a terminal one runs the graceful shutdown and ends the VM with the terminal status; a non-terminal one SHALL stop the runner in place — the reference's `Stopped` — leaving the controller to take the session down, reconnecting into nothing and keeping the process, so a `:permanent` supervisor has nothing to restart into a second registration.
+`AddOperatorResponse.metadata` SHALL be empty for a class declaring nothing (the legal "declared nothing" encoding), except that a keyless topology SHALL declare `keyed: "false"` so the controller's partitioned-start preflight works, a class whose smallest `compact_after_bytes/0` differs from the 8 MiB default SHALL declare `compact_after_bytes` with that value, every class SHALL declare `run` and `durable` (and `sleep_after_ms` when it sleeps), a class on the effectively-once tier SHALL declare `exactly: "effectively_once"`, and one declaring checkpoint acknowledgement SHALL declare `ack: "checkpoint"` — and a class declaring `correction_ms` SHALL declare `correction_ms` with the declared milliseconds and `beyond_window` with `process_as_arrival` or `drop` — both keys whenever a window is declared, as the reference ships them, so an undeclared policy reaches the controller as the default rather than as an absence — the four keys the reference ships and the goldens `tier_store.json`, `checkpoint_batched_store.json` and `candle.json` pin; the cadence, the held outputs and the delay stay SDK-side and reach no metadata. The persistence-family commands — `RestoreInitState`, `CompactCell`, `CellState`, `CellApplyState`, `MigrationSerialization` / `MigrationDeserialization`, `CreditWindowInit`, `CreditGrant` — SHALL be answered for real, by the SDK's own re-expression of the kernel's rules (the `state_persistence` requirement below); `CellMailboxStatus` SHALL be tolerated with a debug log, as the reference tolerates a pre-credit controller. `StepsStop` SHALL stop the named steps instance, and one naming an unknown operator SHALL be acknowledged with a warn. `RunnerDisconnect` SHALL terminate the connection cleanly: a terminal one runs the graceful shutdown and ends the VM with the terminal status; a non-terminal one SHALL stop the runner in place — the reference's `Stopped` — leaving the controller to take the session down, reconnecting into nothing and keeping the process, so a `:permanent` supervisor has nothing to restart into a second registration.
 
 #### Scenario: Declaration-free response is empty
 - **WHEN** an operator with a keyed topology and no declarations binds
@@ -307,8 +307,8 @@ genuinely zero one.
 - **THEN** the first's response metadata is exactly `effectively_once: "true", keyed: "false"` and the second's exactly `ack_granularity: "checkpoint", effectively_once: "true", keyed: "false"` — the committed goldens, key set and values
 
 #### Scenario: The correction keys match the golden
-- **WHEN** `candle` — a class declaring `effectively_once/1`, `correction_window(600_000)` and no beyond-window policy — binds on an Elixir runner
-- **THEN** its response metadata is exactly `beyond_window_policy: "process_as_arrival", correction_window_ms: "600000", effectively_once: "true", keyed: "false"` — the committed golden `test/fixtures/declarations/candle.json`, key set and values
+- **WHEN** `candle` — a class declaring `{:flow, exactly: {:effectively_once, correction_ms: 600_000}}` and no beyond-window policy — binds on an Elixir runner
+- **THEN** its response metadata is exactly `beyond_window: "process_as_arrival", correction_ms: "600000", durable: "local", exactly: "effectively_once", keyed: "false", run: "flow"` — the committed golden `test/fixtures/declarations/candle.json`, key set and values
 
 ### Requirement: Command codec is isolated for future term-native migration and packaging
 All SDK-side control-channel encode/decode SHALL go through a single codec module speaking the `RunnerCommands.*` protobuf structs via the already-compiled `Flezha.Runner.CommandsProto` Protox modules. No SDK or native-transport code outside the codec SHALL reference Protox or `RunnerCommands`, and none SHALL assume control messages are binaries.
@@ -362,7 +362,7 @@ The bounded call SHALL be the package's own `Flezha.SDK.SafeCall`, which the con
 - **THEN** `Flezha.SDK.SafeCall` SHALL resolve inside it, and no SDK file but `Flezha.SDK.Call` SHALL call it
 
 ### Requirement: Bench harness covers the elixir runtime on all three transports
-`mix bench --runtime elixir` SHALL run the `regression`, `cell`, and `dynamic` shapes over the `native` transport (in-process SDK start; one runner, because the runner slot is process-wide) and over `uds`/`quic` (spawning the `test/apps/elixir_runner` app via the same fleet mechanism as the rust/java runners), registering factories `do_nothing`, `cell_stress`, and `dynamic_cell` with the rust_runner topologies, producing the same `Throughput: <n> messages/second` output measured by the unchanged controller-side code. The transport SHALL be selected exactly as today — `scripts/bench.sh -t native|uds|quic` exporting `FLEZHA_TRANSPORT`, read by `mix bench` from the application env — with no new `mix bench` flag. The harness SHALL reject `--runtime rust|java` with the native transport; `scripts/bench.sh -t` SHALL accept `native`. The recorded results SHALL include the same-runtime uds-vs-native comparison (the transport measurement) and the elixir-vs-rust comparison on uds (the runtime measurement). `mix bench.roundtrip --runtime elixir` SHALL run the `identity` and `keyed` workloads at durability `off` through the same fleet mechanism, registering `bench_echo` and `bench_keyed_nopersist` as twins of the rust_runner fixtures (same factory ids, sink names, output bytes and key function), over `uds`, `quic` and `native`, at durability `state` registering `bench_keyed`, the persistent twin, at durability `on` registering `tier_store` (the same upsert under `effectively_once/1` with the reference's 300 ms retry backoff) and at durability `checkpoint` registering `bench_checkpoint` (the upsert acknowledging every `FLEZHA_BENCH_CHECKPOINT_EVERY` inputs, holding its outputs when `FLEZHA_BENCH_CHECKPOINT_OUTPUTS` is `at_checkpoint` for `FLEZHA_BENCH_CHECKPOINT_DELAY_MS`, read in `channels/1` as the reference reads them); a round-trip run combining a `--runtime` with a durability posture whose capability that runtime's manifest defers SHALL be refused at the task with an error naming that capability, before any runner starts.
+`mix bench --runtime elixir` SHALL run the `regression`, `cell`, and `dynamic` shapes over the `native` transport (in-process SDK start; one runner, because the runner slot is process-wide) and over `uds`/`quic` (spawning the `test/apps/elixir_runner` app via the same fleet mechanism as the rust/java runners), registering factories `do_nothing`, `cell_stress`, and `dynamic_cell` with the rust_runner topologies, producing the same `Throughput: <n> messages/second` output measured by the unchanged controller-side code. The transport SHALL be selected exactly as today — `scripts/bench.sh -t native|uds|quic` exporting `FLEZHA_TRANSPORT`, read by `mix bench` from the application env — with no new `mix bench` flag. The harness SHALL reject `--runtime rust|java` with the native transport; `scripts/bench.sh -t` SHALL accept `native`. The recorded results SHALL include the same-runtime uds-vs-native comparison (the transport measurement) and the elixir-vs-rust comparison on uds (the runtime measurement). `mix bench.roundtrip --runtime elixir` SHALL run the `identity` and `keyed` workloads at durability `off` through the same fleet mechanism, registering `bench_echo` and `bench_keyed_nopersist` as twins of the rust_runner fixtures (same factory ids, sink names, output bytes and key function), over `uds`, `quic` and `native`, at durability `state` registering `bench_keyed`, the persistent twin, at durability `on` registering `tier_store` (the same upsert under `exactly: :effectively_once` with the reference's 300 ms retry backoff) and at durability `checkpoint` registering `bench_checkpoint` (the upsert acknowledging every `FLEZHA_BENCH_CHECKPOINT_EVERY` inputs, holding its outputs when `FLEZHA_BENCH_CHECKPOINT_OUTPUTS` is `at_checkpoint` for `FLEZHA_BENCH_CHECKPOINT_DELAY_MS`, read in `channels/1` as the reference reads them); a round-trip run combining a `--runtime` with a durability posture whose capability that runtime's manifest defers SHALL be refused at the task with an error naming that capability, before any runner starts.
 
 #### Scenario: Comparable bench run in-process
 - **WHEN** `mix bench --runtime elixir -n 100 -m 1000` runs with the native transport configured
@@ -506,7 +506,7 @@ The SDK SHALL stamp the same value at byte 0 of every durable record it ships �
 
 ### Requirement: The Elixir SDK persists per-Cell state in its own core
 
-The Elixir SDK SHALL carry the `state_persistence` capability by re-expressing the kernel's rules in Elixir, inheriting nothing from `flz_core` and changing nothing in the controller, which SHALL keep being unable to tell an Elixir runner from a Rust one. A Tasklet that exports `apply_change/2` is changeful and persisted; `Flezha.SDK.Ctx.apply/3` SHALL be the only recorded mutation path, returning `apply_change(state, change)` and recording the change for the record stream, so that one fold is one push; a Tasklet without `apply_change/2` is the reference's `NoChange` and ships nothing. `UnboundedOperator.persistence_enabled/0` (default `true`) SHALL, when `false`, advance the seq and ship nothing. After a successful dispatch the Cell SHALL ship one `cell_state_change` frame per recorded change — the 16-byte header stamping `sdk_lang = 3`, the SDK's version, the Tasklet's schema version and the Erlang External Term Format id `7` allocated in `flz_core::header`, over `Flezha.SDK.Wire.encode_frame/4` and the instance-keyed identity — at `seq = change_seq` advancing from `0`, in dispatch order on one secondary stream, before the dispatch's output frame, each under the credit window's `acquire`; a dispatch that committed timer ops SHALL ship them after its change records as one further `cell_state_change` frame at the next seq, stamped `format_id = 3` over the postcard `Vec<TimerOp>` body every SDK writes, so the controller stores it as any change record and never decodes it; a class declaring the tier SHALL ship one `cell_effect_record` per effectful invocation in place of those records (the effectively-once requirement below). The SDK SHALL answer `RestoreInitState` by folding the snapshot then the change log in the controller's on-disk framing under the Cell's own serialisation — CRC over header and body, language before format before schema, the core's refusal wordings — folding a `format_id = 3` record into the pending-timer set rather than the state, and a `format_id = 2` effect record's enclosed change bodies (each under the enclosing record's version decision), timer ops, consumed offset and event time into the state, the set, the consumed floor and the event-time high-water, re-arming `change_seq` to `max(folded terminal, terminal_seq) + 1`, re-arming the folded processing-time timers, and replying `terminal_seq`; `CompactCell` by shipping `cell_state_snapshot` at `change_seq − 1` after the Cell's records — followed, when the Cell holds pending timers, by one `format_id = 3` record re-stating the whole pending set at the next seq, so the truncation the snapshot authorises cannot take the timers with it — and replying `snapshot_seq` and the body size, with `{0, 0}` and an error for an unknown Cell; `CellState` with the Decision-10 JSON shape narrowed by its selector, `flz.change_seq` on the reply frame for one Cell, and the refusals `cell_key_without_tasklet`, `tasklet_not_found`, `cell_not_found` and `cell_busy` by name; `CellApplyState`, `MigrationDeserialization` and a non-empty `AddOperator.init_values` by handing each Tasklet's JSON to its `state_from_json/1` (default: the object itself); `MigrationSerialization` with the whole-operator JSON; `CreditWindowInit` and `CreditGrant` by arming and replenishing one runner-wide window that parks the shipping Cell, never drops, counts `credit_parked`, and is disarmed on reconnect. On graceful termination — SIGTERM through the BEAM's `init:stop`, `Flezha.SDK.close/1`, `RunnerDisconnect` — the RunnerServer SHALL serialise every live operator, ship one `RunnerShutdownNotification` each and wait at most 2 s in parallel for the acks before closing. `test/apps/elixir_runner` SHALL carry the six reference twins and the manifest SHALL list `state_persistence` under `fixtures`.
+The Elixir SDK SHALL carry the `state_persistence` capability by re-expressing the kernel's rules in Elixir, inheriting nothing from `flz_core` and changing nothing in the controller, which SHALL keep being unable to tell an Elixir runner from a Rust one. A Tasklet that exports `apply_change/2` is changeful and persisted; `Flezha.SDK.Ctx.apply/3` SHALL be the only recorded mutation path, returning `apply_change(state, change)` and recording the change for the record stream, so that one fold is one push; a Tasklet without `apply_change/2` is the reference's `NoChange` and ships nothing. An operator's `durable/0` (default `:local`) SHALL, when `false`, advance the seq and ship nothing. After a successful dispatch the Cell SHALL ship one `cell_state_change` frame per recorded change — the 16-byte header stamping `sdk_lang = 3`, the SDK's version, the Tasklet's schema version and the Erlang External Term Format id `7` allocated in `flz_core::header`, over `Flezha.SDK.Wire.encode_frame/4` and the instance-keyed identity — at `seq = change_seq` advancing from `0`, in dispatch order on one secondary stream, before the dispatch's output frame, each under the credit window's `acquire`; a dispatch that committed timer ops SHALL ship them after its change records as one further `cell_state_change` frame at the next seq, stamped `format_id = 3` over the postcard `Vec<TimerOp>` body every SDK writes, so the controller stores it as any change record and never decodes it; a class declaring the tier SHALL ship one `cell_effect_record` per effectful invocation in place of those records (the effectively-once requirement below). The SDK SHALL answer `RestoreInitState` by folding the snapshot then the change log in the controller's on-disk framing under the Cell's own serialisation — CRC over header and body, language before format before schema, the core's refusal wordings — folding a `format_id = 3` record into the pending-timer set rather than the state, and a `format_id = 2` effect record's enclosed change bodies (each under the enclosing record's version decision), timer ops, consumed offset and event time into the state, the set, the consumed floor and the event-time high-water, re-arming `change_seq` to `max(folded terminal, terminal_seq) + 1`, re-arming the folded processing-time timers, and replying `terminal_seq`; `CompactCell` by shipping `cell_state_snapshot` at `change_seq − 1` after the Cell's records — followed, when the Cell holds pending timers, by one `format_id = 3` record re-stating the whole pending set at the next seq, so the truncation the snapshot authorises cannot take the timers with it — and replying `snapshot_seq` and the body size, with `{0, 0}` and an error for an unknown Cell; `CellState` with the Decision-10 JSON shape narrowed by its selector, `flz.change_seq` on the reply frame for one Cell, and the refusals `cell_key_without_tasklet`, `tasklet_not_found`, `cell_not_found` and `cell_busy` by name; `CellApplyState`, `MigrationDeserialization` and a non-empty `AddOperator.init_values` by handing each Tasklet's JSON to its `state_from_json/1` (default: the object itself); `MigrationSerialization` with the whole-operator JSON; `CreditWindowInit` and `CreditGrant` by arming and replenishing one runner-wide window that parks the shipping Cell, never drops, counts `credit_parked`, and is disarmed on reconnect. On graceful termination — SIGTERM through the BEAM's `init:stop`, `Flezha.SDK.close/1`, `RunnerDisconnect` — the RunnerServer SHALL serialise every live operator, ship one `RunnerShutdownNotification` each and wait at most 2 s in parallel for the acks before closing. `test/apps/elixir_runner` SHALL carry the six reference twins and the manifest SHALL list `state_persistence` under `fixtures`.
 
 #### Scenario: A change is durable on the controller and the state is readable by name
 - **WHEN** a `store_input` operator on an Elixir runner receives three inputs
@@ -564,12 +564,12 @@ The Elixir SDK SHALL carry `keyed_channels` in its own core: every plugin frame 
 - **THEN** the sorted `flz.*` keys of the frame equal `keyed_output_stamps.json`
 
 #### Scenario: No stamps under the tier
-- **WHEN** a class declaring `effectively_once/1` emits with `%{"tag" => "a"}` on its keyed sink
+- **WHEN** a class declaring `exactly: :effectively_once` emits with `%{"tag" => "a"}` on its keyed sink
 - **THEN** no output frame leaves on the primary stream, and the effect record's output carries channel `sink`, the key, metadata `[{"tag", "a"}]` and the payload with no `flz.` key
 
 ### Requirement: The Elixir SDK evicts idle dynamic Cells and caps them
 
-The Elixir SDK SHALL carry `dynamic_cell` in its own core, for both kinds through one module. A dynamic node whose Tasklet declares `idle_ttl_seconds/0` SHALL be swept by one `:reap` tick in the process that owns its Cells, the unbounded Operator's or the bounded Driver's, at `FLEZHA_REAP_INTERVAL_MS`, else `min(ttl / 4, 30 s)` and at least 1 ms, the TTL being the declared seconds; a node declaring none SHALL never be swept and no tick SHALL be scheduled. The sweep SHALL run under the owner's own routing serialisation (the drain gate: no push can be routed while it runs) and SHALL evict a Cell only when it has been idle past the TTL with an empty queue, no dispatch in flight, no held park and no deferred push, skipping a busy one until the next sweep. On a bounded instance the sweep SHALL additionally run only while the loop is waiting for its next message, and SHALL skip a Cell named by a completed stage the class's `rollback_mode` would still undo whose tasklet declares `compensate/3`, the same plan the unwind reads. Eviction SHALL be destructive: the Cell SHALL ship `delete_cell_state` on its own record stream when the class persists (behind its records by construction), SHALL clear its slot so a successor is a cold start from `init_state/1`, and SHALL stop; the owner SHALL drop it from the live map and remember the key in a trace of at most 1 024 keys. `Operator.lookup/4` SHALL answer `:cell_evicted` for a traced key that is not live, and the live read SHALL spell the shared core's `cell_evicted:` wording for it, distinguishably from `cell_not_found`. `max_cells/0` SHALL bind at `ensure_cell/3` as the behaviours requirement states, for a bounded operator's keyed tasklet as for an unbounded operator's. Creation, eviction and capped drops SHALL be reported as one `[:flezha, :sdk, :dynamic]` telemetry event carrying the kind. `test/apps/elixir_runner`'s `dynamic_cell` SHALL journal its push and read its TTL from `DYN_TEST_TTL_MS`, rounded up to whole seconds, and the manifest SHALL list `dynamic_cell` under `fixtures` with the reference's id.
+The Elixir SDK SHALL carry `dynamic_cell` in its own core, for both runs through one module. A dynamic node whose Tasklet declares `idle_ttl_seconds/0` SHALL be swept by one `:reap` tick in the process that owns its Cells, the flow instance's or the steps Driver's, at `FLEZHA_REAP_INTERVAL_MS`, else `min(ttl / 4, 30 s)` and at least 1 ms, the TTL being the declared seconds; a node declaring none SHALL never be swept and no tick SHALL be scheduled. The sweep SHALL run under the owner's own routing serialisation (the drain gate: no push can be routed while it runs) and SHALL evict a Cell only when it has been idle past the TTL with an empty queue, no dispatch in flight, no held park and no deferred push, skipping a busy one until the next sweep. On a steps instance the sweep SHALL additionally run only while the loop is waiting for its next message, and SHALL skip a Cell named by a completed stage the class's `on_failure` would still undo whose tasklet declares `compensate/3`, the same plan the unwind reads. Eviction SHALL be destructive: the Cell SHALL ship `delete_cell_state` on its own record stream when the class persists (behind its records by construction), SHALL clear its slot so a successor is a cold start from `init_state/1`, and SHALL stop; the owner SHALL drop it from the live map and remember the key in a trace of at most 1 024 keys. `Operator.lookup/4` SHALL answer `:cell_evicted` for a traced key that is not live, and the live read SHALL spell the shared core's `cell_evicted:` wording for it, distinguishably from `cell_not_found`. `max_cells/0` SHALL bind at `ensure_cell/3` as the behaviours requirement states, for a steps operator's keyed tasklet as for a flow operator's. Creation, eviction and capped drops SHALL be reported as one `[:flezha, :sdk, :dynamic]` telemetry event carrying the kind. `test/apps/elixir_runner`'s `dynamic_cell` SHALL journal its push and read its TTL from `DYN_TEST_TTL_MS`, rounded up to whole seconds, and the manifest SHALL list `dynamic_cell` under `fixtures` with the reference's id.
 
 #### Scenario: An idle Cell is evicted destructively on the sweep
 - **GIVEN** a persistent dynamic node with a TTL and a Cell that shipped a record at seq 0 and has been idle past the TTL
@@ -580,9 +580,9 @@ The Elixir SDK SHALL carry `dynamic_cell` in its own core, for both kinds throug
 - **WHEN** the sweep meets a Cell mid-dispatch, or one pushed within the TTL
 - **THEN** neither is evicted on that sweep and both are swept again on the next
 
-#### Scenario: A bounded operator's keyed Cell is swept only between passes and outside the rollback's reach
-- **WHEN** a `:per_input` bounded operator's keyed compensable tasklet ran for `"a"` in a committed iteration, the loop is waiting for a message, and `"a"`'s Cell is idle past its TTL
-- **THEN** under `:all_or_nothing` the sweep keeps it and under `:keep_progress` the sweep evicts it, and in either mode no sweep evicts anything while a pass is running
+#### Scenario: A steps operator's keyed Cell is swept only between passes and outside the rollback's reach
+- **WHEN** a `:per_input` steps operator's keyed compensable tasklet ran for `"a"` in a committed iteration, the loop is waiting for a message, and `"a"`'s Cell is idle past its TTL
+- **THEN** under `:undo_all` the sweep keeps it and under `:keep_progress` the sweep evicts it, and in either mode no sweep evicts anything while a pass is running
 
 #### Scenario: A live dynamic Cell is readable by name, and an evicted key is refused by name
 - **WHEN** `CellState` names a live key of a `dynamic_cell` operator on an Elixir runner, then names a key the reaper evicted, then names a key never seen
@@ -647,7 +647,7 @@ The Elixir SDK SHALL carry the `cell_timers` capability by re-expressing the ker
 
 ### Requirement: The Elixir SDK carries the effectively-once tier in its own core
 
-The Elixir SDK SHALL carry the `effectively_once` capability by re-expressing the kernel's rules in Elixir, inheriting nothing from `flz_core` and changing nothing in the controller, which SHALL keep being unable to tell an Elixir runner from a Rust one. A class declaring `effectively_once/1` SHALL, for every effectful invocation — one that applied a change, emitted, committed a timer op or parked — ship ONE `cell_effect_record` frame at the next seq in place of its change records: the 16-byte header stamped `format_id = 2` over the postcard `EffectRecordBody` `Flezha.SDK.Wire.encode_effect_body/1` writes, enclosing the changes as External Term Format bodies, the captured sink outputs, the input's `flz.offset` as `consumed_offset` (absent for a firing), the park as `dlq`, the declared clock's value as `event_time` and the committed timer ops, under the credit window's `acquire`; an invocation with no effect SHALL ship nothing unless it parked. The Cell SHALL read the offset the router threads from the frame's `flz.offset` metadata onto its queue item, SHALL skip an input whose offset is at or below its consumed floor as a completed dispatch, and SHALL hand an inter-tasklet emit the offset of the input that produced it. Under checkpoint acknowledgement the Cell SHALL keep one staged interval — the changes, the timer ops, the offset of the last input folded, the input count, when it opened, and the outputs when `outputs_at_checkpoint/2` is declared — that ships as one closing record carrying the interval's last offset when `Ctx.checkpoint/1` was called, when `checkpoint_every/2` inputs have folded in, when a park closes it, or when `max_delay_ms` has elapsed since it opened (a close message from the BEAM's timer service that rides the Cell's own queue and runs no author code, a stale one finding nothing open); a mid-interval as-produced emit SHALL ship in a record acknowledging nothing; a restore SHALL discard the open interval and rebuild the consumed floor and the event-time high-water from the log's effect records; the replacement of a Cell killed untrappably SHALL re-hold the open interval and the floor from the slot. A compaction SHALL re-state pending timers as a `format_id = 3` record under the tier as it does outside it. Held effect records of an invocation with inter-tasklet outputs (the `effectively-once-output` requirement on edge outputs) SHALL ship in seq order once the router reports the pushes admitted. `test/apps/elixir_runner` SHALL carry `tier_store`, `checkpoint_store`, `checkpoint_batched_store` and `bench_checkpoint` as the reference's twins, and the manifest SHALL list `effectively_once` under `fixtures` with those four ids.
+The Elixir SDK SHALL carry the `effectively_once` capability by re-expressing the kernel's rules in Elixir, inheriting nothing from `flz_core` and changing nothing in the controller, which SHALL keep being unable to tell an Elixir runner from a Rust one. A class declaring `exactly: :effectively_once` SHALL, for every effectful invocation — one that applied a change, emitted, committed a timer op or parked — ship ONE `cell_effect_record` frame at the next seq in place of its change records: the 16-byte header stamped `format_id = 2` over the postcard `EffectRecordBody` `Flezha.SDK.Wire.encode_effect_body/1` writes, enclosing the changes as External Term Format bodies, the captured sink outputs, the input's `flz.offset` as `consumed_offset` (absent for a firing), the park as `dlq`, the declared clock's value as `event_time` and the committed timer ops, under the credit window's `acquire`; an invocation with no effect SHALL ship nothing unless it parked. The Cell SHALL read the offset the router threads from the frame's `flz.offset` metadata onto its queue item, SHALL skip an input whose offset is at or below its consumed floor as a completed dispatch, and SHALL hand an inter-tasklet emit the offset of the input that produced it. Under checkpoint acknowledgement the Cell SHALL keep one staged interval — the changes, the timer ops, the offset of the last input folded, the input count, when it opened, and the outputs when `outputs: :at_checkpoint` is declared — that ships as one closing record carrying the interval's last offset when `Ctx.checkpoint/1` was called, when `every` inputs have folded in, when a park closes it, or when `max_delay_ms` has elapsed since it opened (a close message from the BEAM's timer service that rides the Cell's own queue and runs no author code, a stale one finding nothing open); a mid-interval as-produced emit SHALL ship in a record acknowledging nothing; a restore SHALL discard the open interval and rebuild the consumed floor and the event-time high-water from the log's effect records; the replacement of a Cell killed untrappably SHALL re-hold the open interval and the floor from the slot. A compaction SHALL re-state pending timers as a `format_id = 3` record under the tier as it does outside it. Held effect records of an invocation with inter-tasklet outputs (the `effectively-once-output` requirement on edge outputs) SHALL ship in seq order once the router reports the pushes admitted. `test/apps/elixir_runner` SHALL carry `tier_store`, `checkpoint_store`, `checkpoint_batched_store` and `bench_checkpoint` as the reference's twins, and the manifest SHALL list `effectively_once` under `fixtures` with those four ids.
 
 #### Scenario: An effectful invocation ships one effect record and no output frame
 - **WHEN** a `tier_store` Cell on an Elixir runner receives `k1:a` at `flz.offset` 3
@@ -658,7 +658,7 @@ The Elixir SDK SHALL carry the `effectively_once` capability by re-expressing th
 - **THEN** the first two invocations ship records carrying their outputs and no offset, and the third ships one record carrying both changes and consumed offset 2
 
 #### Scenario: A declared cadence and the delay close the interval without a checkpoint call
-- **WHEN** a class declaring `checkpoint_every(3)` folds three inputs, and a class declaring `outputs_at_checkpoint(20)` folds one input and receives nothing more
+- **WHEN** a class declaring `ack: {:checkpoint, every: 3}` folds three inputs, and a class declaring `ack: {:checkpoint, outputs: :at_checkpoint, max_delay_ms: 20}` folds one input and receives nothing more
 - **THEN** the first ships one record at the third input carrying all three changes and the third offset, and the second ships its held output within the delay in a record carrying its offset
 
 #### Scenario: Held outputs ride the closing record as one batch
@@ -683,10 +683,10 @@ The Elixir SDK SHALL carry the `effectively_once` capability by re-expressing th
 - **THEN** every scenario runs and passes on `uds` and the crash matrix on `quic`, the Postgres-gated ones with the `flezha_postgres_sink` container started by name, and `effectively_once` sits in `@required_capabilities`
 
 ### Requirement: The Elixir SDK carries late-input correction in its own core
-The Elixir SDK SHALL implement late-input correction in its own runner core, which inherits nothing from `flz_core`, against the rules of `unbounded-correction` rather than its Rust. A class MAY declare `correction_window/2` and `beyond_window_policy/2` on the graph builder; the declaration SHALL require `effectively_once/1` and at least one Tasklet declaring an `:event_time` clock, SHALL refuse a zero window, and SHALL reach the controller as `correction_window_ms` and `beyond_window_policy` on `AddOperatorResponse.metadata`. Each Cell SHALL classify every input against the event-time high-water it already tracks and restores, BEFORE advancing it: at or ahead of the high-water, or with no high-water yet, the input SHALL be dispatched and the high-water advanced; behind it by no more than the declared window the input SHALL NOT be dispatched and one `correction_request` frame SHALL be sent on the Cell's own state stream carrying the target event time alone, with the Cell identity on the frame envelope, a seq of zero and a zero record header; behind it by more than the window the declared policy SHALL decide — `process_as_arrival` (the default) dispatches it and `drop` does not — and in NEITHER case SHALL the high-water advance. A Cell with no state stream SHALL dispatch a correctable input as an arrival rather than withhold it for a correction it could not request. An input the controller marked `flz.replay` SHALL be buffered by its Cell rather than dispatched, and the payload-less `flz.replay_end` broadcast SHALL be intercepted before any channel is resolved and delivered to EVERY Cell of the operator, static and dynamic. The close SHALL be placed on each Cell's own queue behind the members that preceded it rather than executed on arrival, so a close can never overtake a member it was meant to include; on reaching it the Cell SHALL order the buffered members by extracted event time, ties broken by ascending input-log offset, and dispatch them ahead of anything enqueued behind the close. A replayed member SHALL advance the high-water and SHALL NOT be re-classified. A `RestoreInitState` SHALL discard a buffered slice. The SDK SHALL write no correction journal, no crash marker, no new control message and no second replay path: the correction is the existing tier restore-and-replay with a rewound baseline and an event-time-ordered slice.
+The Elixir SDK SHALL implement late-input correction in its own runner core, which inherits nothing from `flz_core`, against the rules of `effectively-once-correction` rather than its Rust. A class MAY declare `correction_ms` and `beyond_window` under `exactly: {:effectively_once, ...}` in its `run`; the declaration SHALL require at least one Tasklet declaring an `:event_time` clock, SHALL refuse a zero window, and SHALL reach the controller as `correction_ms` and `beyond_window` on `AddOperatorResponse.metadata`. Each Cell SHALL classify every input against the event-time high-water it already tracks and restores, BEFORE advancing it: at or ahead of the high-water, or with no high-water yet, the input SHALL be dispatched and the high-water advanced; behind it by no more than the declared window the input SHALL NOT be dispatched and one `correction_request` frame SHALL be sent on the Cell's own state stream carrying the target event time alone, with the Cell identity on the frame envelope, a seq of zero and a zero record header; behind it by more than the window the declared policy SHALL decide — `process_as_arrival` (the default) dispatches it and `drop` does not — and in NEITHER case SHALL the high-water advance. A Cell with no state stream SHALL dispatch a correctable input as an arrival rather than withhold it for a correction it could not request. An input the controller marked `flz.replay` SHALL be buffered by its Cell rather than dispatched, and the payload-less `flz.replay_end` broadcast SHALL be intercepted before any channel is resolved and delivered to EVERY Cell of the operator, static and dynamic. The close SHALL be placed on each Cell's own queue behind the members that preceded it rather than executed on arrival, so a close can never overtake a member it was meant to include; on reaching it the Cell SHALL order the buffered members by extracted event time, ties broken by ascending input-log offset, and dispatch them ahead of anything enqueued behind the close. A replayed member SHALL advance the high-water and SHALL NOT be re-classified. A `RestoreInitState` SHALL discard a buffered slice. The SDK SHALL write no correction journal, no crash marker, no new control message and no second replay path: the correction is the existing tier restore-and-replay with a rewound baseline and an event-time-ordered slice.
 
 #### Scenario: A late input inside the window is withheld and asks for a correction
-- **WHEN** a Cell of a class declaring `correction_window(600_000)` has dispatched an input at event time 300 000 and then receives one at event time 299 000
+- **WHEN** a Cell of a class declaring `correction_ms: 600_000` has dispatched an input at event time 300 000 and then receives one at event time 299 000
 - **THEN** the second input is not dispatched, exactly one `correction_request` frame is sent on the Cell's state stream whose decoded body is 299 000, and the Cell's high-water is unchanged
 
 #### Scenario: A beyond-window input follows the policy and never moves the high-water
@@ -732,32 +732,30 @@ the output was lost and no counter records it.
 - **THEN** the SDK SHALL count what it sheds, so a silent loss cannot be mistaken
   for a delivery
 
-### Requirement: The Elixir SDK authors and drives bounded operators in its own core
+### Requirement: The Elixir SDK authors and drives steps operators in its own core
 
-The Elixir SDK SHALL carry a `Flezha.SDK.BoundedOperator` behaviour whose class declares
-a structured DAG in `channels/1`, the same callback and builder token an unbounded class uses, and no one-function
-`run/2` body, plus the optional knobs `max_duration_ms/0`, `self_terminating?/0`,
-`loop_mode/0` (`:once` | `:per_input` | `:chained`), `rollback_mode/0` (`:all_or_nothing` |
-`:keep_progress`), `persistence_enabled/0` and `sync_durability/0`, each reading a default when
-the class is silent. There SHALL be no `retry_attempts/0`, `retry_backoff_ms/0`,
+The Elixir SDK SHALL carry a `Flezha.SDK.Operator` behaviour whose class declares
+a structured DAG in `channels/1`, the same callback and builder token a flow class uses, and no one-function
+`run/2` body, plus the settings tree's `run: {:steps, each: ..., on_failure: ...}` (`each`
+`:once` | `:per_input` | `:chained`, `on_failure` `:undo_all` | `:keep_progress`), `durable`
+and `max_duration_ms`, each reading a default when the class is silent. There SHALL be no `retry_attempts/0`, `retry_backoff_ms/0`,
 `barrier_retry_attempts/0` or `wake_after_ms/0`: a stage's ladder is bounded by the edge's `retry_max/2` and
-`retry_backoff_ms/2` as an unbounded operator's is, a barrier is re-sent a fixed number of times read
+`retry_backoff_ms/2` as a flow operator's is, a barrier is re-sent a fixed number of times read
 from `Flezha.SDK.Knob`, and a sleeping instance's wake deadline is the earliest pending processing-time
 timer its tasklets registered. `Flezha.SDK.register_factory/2` SHALL register such a class onto the runner handle
-exactly as it registers an unbounded class, and the runner SHALL announce the class's kind with its
-factory id, so the controller places by factory id and knows the kind before it sends `AddOperator`.
+exactly as it registers a flow class, and the runner SHALL announce the class's run with its
+factory id, so the controller places by factory id and knows the run before it sends `AddOperator`.
 
 Registration SHALL accumulate refusals into one `{:error, %Flezha.SDK.Error{}}` (never a
-raise), its code the first issue's and its `details.issues` every issue, using the reference's codes: `topology.no_bounded_body` (no `channels/1`), `topology.external_stop_only` (not
-self-terminating and no duration cap), `topology.no_entry_channel`, `topology.branching_chained_loop`, and the kind facts
-`topology.effectively_once_on_bounded`, `topology.checkpoint_on_bounded` and `topology.correction_window_on_bounded`. `EntryRoot`
+raise), its code the first issue's and its `details.issues` every issue, using the reference's codes: `topology.no_steps_body` (no `channels/1`), `topology.no_entry_channel` and
+`topology.branching_chained_loop`. `EntryRoot`
 and `MergeFromEntryChannel` SHALL NOT exist: an entry channel may feed several tasklets, a class
 may declare several entry channels, each rooting its own chain, and an entry channel may be a
 merge source, because every message carries the channel it arrived on. `DynamicCells` SHALL NOT
-exist: a keyed edge into a keyless bounded tasklet makes it dynamic exactly as it makes an unbounded operator's
+exist: a keyed edge into a keyless steps tasklet makes it dynamic exactly as it makes a flow operator's
 tasklet dynamic, and its Cells are minted per key on dispatch. `ZeroRetryBackoff`
 SHALL NOT exist, the knob it judged being gone; `topology.retry_max_zero` on an edge is the shared topology's
-refusal for both kinds. A refusal the shared
+refusal for both runs. A refusal the shared
 topology already raises SHALL be carried through as its own issue, with its own code, rather than restated,
 and the reference's `topology.cycle`, `topology.unreachable_tasklet` and `topology.multiple_output_channels` SHALL NOT exist here:
 the first two are unreachable because the shared topology refuses a cycle first and a node
@@ -773,28 +771,28 @@ one `TaskCommit` in flight at a time. A tasklet becomes runnable only once every
 that chain has committed, so a fan-out interleaves independently, a fan-in is dispatched exactly
 once with the accumulated batch of this pass's producers, and a producer of another chain is
 never waited for. A message SHALL enter through the same `resolve_channel`, `parse` and park
-functions the unbounded operator's `{:input, ...}` handler uses, so an undeclared channel name and
-an unreadable payload park as an unbounded operator's do and start no pass. A stage's Cells SHALL be the
-unbounded operator's Cell set, held through the one module `Flezha.SDK.Operator` holds it
+functions the flow operator's `{:input, ...}` handler uses, so an undeclared channel name and
+an unreadable payload park as a flow operator's do and start no pass. A stage's Cells SHALL be the
+flow operator's Cell set, held through the one module `Flezha.SDK.Operator` holds it
 through: single and static Cells prewarmed at start, a keyed Cell minted on the first value of
 a pass addressed to its key, every value reaching its Cells through the same per-mode target
-resolution the unbounded operator routes with, one barrier queued behind each Cell the stage
+resolution the flow operator routes with, one barrier queued behind each Cell the stage
 handed a value to, and the stage done when those reply; a Cell that exits before replying SHALL
 fail its stage as an exhausted ladder does, and an undo's Cell that exits SHALL count as a failed
 hook, the rest of the plan still running. Every stage Cell SHALL be started with
-the same ctx facts an unbounded Cell gets from its node's sink routes (`channel`, `keyed_sink?`,
-`key_required?`), so `Flezha.SDK.Ctx.emit_keyed/3` and `emit_with_meta/3` answer in a bounded operator
-tasklet exactly as in an unbounded tasklet. A durable class's Cell SHALL capture each sink output
+the same ctx facts a flow Cell gets from its node's sink routes (`channel`, `keyed_sink?`,
+`key_required?`), so `Flezha.SDK.Ctx.emit_keyed/3` and `emit_with_meta/3` answer in a steps operator
+tasklet exactly as in a flow tasklet. A durable class's Cell SHALL capture each sink output
 into its invocation's effect record, unstamped, through the same sink leaf and the same record
-path a tier unbounded operator Cell uses, and SHALL ship the record on its own record stream before the
+path a tier flow operator Cell uses, and SHALL ship the record on its own record stream before the
 stage's barrier; the driver SHALL keep no outbox of its own, and a class that journals nothing
 SHALL route its sink outputs to the wire with their channel, key and metadata as a
-non-persistent unbounded Cell does. A stage's record SHALL name the Cells
+non-persistent flow Cell does. A stage's record SHALL name the Cells
 it dispatched to, by identity, whether or not they emitted, each with the seq of its last effect
 record in the stage and the sink channels it wrote on; its `TaskCommit.cells_ran`, its
 intent markers and its undo SHALL read that record, so the undo runs on exactly the Cells that
 ran and on no declared Cell that received nothing. A restore naming a keyed Cell SHALL
-materialise it through the same lookup an unbounded operator's restore uses, refusing past the cap, and the
+materialise it through the same lookup a flow operator's restore uses, refusing past the cap, and the
 driver SHALL count every restore frame the bind owes as landed whether or not a Cell took it,
 after the frame's fold so the gate never opens over unapplied state, and a frame no Cell takes
 never leaves it waiting. A stage's Cell SHALL hand its due
@@ -812,23 +810,23 @@ declared to the controller in the `AddOperator` response.
 
 #### Scenario: A structured class is refused for every fault at once
 
-- **WHEN** a class declares no tasklets, the effectively-once tier on its builder and no terminal condition
+- **WHEN** a steps class declares no tasklets and no entry channel
 - **THEN** registration answers `{:error, %Flezha.SDK.Error{}}` whose `details.issues` name
-  `topology.no_bounded_body`, `topology.effectively_once_on_bounded` and `topology.external_stop_only` together, not the first alone
+  `topology.no_steps_body` and every other fault together, not the first alone
 
 #### Scenario: A stage's Cells are the SDK's own, not a second mechanism
 
-- **WHEN** a bounded stage dispatches a batch
+- **WHEN** a steps stage dispatches a batch
 - **THEN** it runs on `Flezha.SDK.Cell` processes with the same state, records, timers and
-  retry ladder an unbounded operator's Cells have, the ladder's bounds read from the consuming
-  edge's `retry_max` / `retry_backoff_ms` exactly as an unbounded operator Cell reads them, differing only in
+  retry ladder a flow operator's Cells have, the ladder's bounds read from the consuming
+  edge's `retry_max` / `retry_backoff_ms` exactly as a flow operator Cell reads them, differing only in
   that an exhausted ladder fails the tasklet instead of parking the input to the dead-letter queue
   and that a due firing is handed to the driver, which decides when it runs
 
 #### Scenario: A stage whose Cell dies ends the run instead of waiting for it
 
 - **WHEN** a stage's Cell is killed while its barrier is still queued behind the running input
-- **THEN** the driver fails that stage, the run unwinds and ships `BoundedCompleted` with status
+- **THEN** the driver fails that stage, the run unwinds and ships `OperatorCompleted` with status
   `error` naming the tasklet, and a later stage never runs
 
 #### Scenario: A step commits while its sibling still runs
@@ -837,9 +835,9 @@ declared to the controller in the `AddOperator` response.
 - **THEN** the finished one's `TaskCommit` is sent before the running one ends, so a crash then
   re-runs only the one that had not committed
 
-#### Scenario: A keyed bounded tasklet mints its Cells on dispatch
+#### Scenario: A keyed steps tasklet mints its Cells on dispatch
 
-- **WHEN** a bounded class declares `input("in") |> into(Split) |> key_by(&key/1) |> into(Keyed)`
+- **WHEN** a steps class declares `input("in") |> into(Split) |> key_by(&key/1) |> into(Keyed)`
   and a pass releases values keyed `"a"` and `"b"` from `Split`
 - **THEN** registration accepted the class, two `Keyed` Cells exist only after the release,
   `lookup/4` finds each by its key, the stage's `TaskCommit` names both identities, and a
@@ -853,10 +851,10 @@ declared to the controller in the `AddOperator` response.
   while a third declared Cell of that tasklet that received no value is neither named nor
   compensated
 
-#### Scenario: A bounded tasklet emits to a keyed sink as an unbounded tasklet does
+#### Scenario: A steps tasklet emits to a keyed sink as a flow tasklet does
 
-- **WHEN** a durable bounded tasklet wired `into(Emitter) |> named("out") |> keyed() |> sink()` calls `Ctx.emit_keyed(ctx, "k", value)` and then `Ctx.emit(ctx, value)`
-- **THEN** the first answers `:ok` and the second `{:error, %Flezha.SDK.Error{code: "runtime.key_required_on_keyed_channel"}}` naming `"out"`, exactly as under `use Flezha.SDK.UnboundedOperator`
+- **WHEN** a durable steps tasklet wired `into(Emitter) |> named("out") |> keyed() |> sink()` calls `Ctx.emit_keyed(ctx, "k", value)` and then `Ctx.emit(ctx, value)`
+- **THEN** the first answers `:ok` and the second `{:error, %Flezha.SDK.Error{code: "runtime.key_required_on_keyed_channel"}}` naming `"out"`, exactly as under `use Flezha.SDK.Operator`
 
 #### Scenario: A stage's sink output rides its Cell's record and waits for the commit
 
@@ -865,10 +863,10 @@ declared to the controller in the `AddOperator` response.
 
 #### Scenario: A class that journals nothing sends its output to the wire
 
-- **WHEN** a bounded class with `persistence_enabled: false` emits on its sink
+- **WHEN** a steps class with `durable: false` emits on its sink
 - **THEN** the frame leaves on the wire with `channel`, the key and the metadata during the pass, and nothing of it is dropped with the iteration
 
-#### Scenario: A tasklet ends its bounded operator
+#### Scenario: A tasklet ends its steps operator
 
 - **WHEN** a tasklet of a `:per_input` class calls `Flezha.SDK.Ctx.complete(ctx, result)` while handling a message
 - **THEN** the iteration is committed durably, and the instance then completes with `result`
@@ -882,7 +880,7 @@ declared to the controller in the `AddOperator` response.
 #### Scenario: An unreadable message parks and starts no pass
 
 - **WHEN** a `:once` class whose entry parser raises receives a message the parser rejects
-- **THEN** the message is parked to the dead-letter queue as the unbounded operator parks one, no stage is dispatched, and the instance keeps waiting for its message
+- **THEN** the message is parked to the dead-letter queue as the flow operator parks one, no stage is dispatched, and the instance keeps waiting for its message
 
 #### Scenario: A firing names the chain it starts
 
@@ -929,7 +927,7 @@ change that produced it.
 
 The same SHALL hold for every frame the SDK writes to that stream: the delete an
 evicted Cell ships, the records a Cell still holds when it stops, and the
-bounded driver's outputs and records written through the runner. A hold that
+steps driver's outputs and records written through the runner. A hold that
 dies with the process that owned it is not a hold, so frames a Cell holds
 when it stops in an orderly way SHALL pass to a holder that outlives it and be
 replayed ahead of anything its replacement writes.
@@ -964,9 +962,9 @@ replayed ahead of anything its replacement writes.
   output of the dispatch that produced them and ahead of anything a replacement
   Cell writes
 
-#### Scenario: A bounded operator write the runner cannot ship is held
+#### Scenario: A steps operator write the runner cannot ship is held
 
-- **WHEN** the bounded driver's output or record is cast to the runner with no
+- **WHEN** the steps driver's output or record is cast to the runner with no
   secondary stream bound, or the write is refused
 - **THEN** the frame SHALL be held and replayed on the next bound stream, and
   SHALL NOT be dropped behind a log line
@@ -1005,7 +1003,7 @@ caller is a cast, and never held, because a reply re-driven after its waiter
 timed out is a stale answer), `:durable` (a change record, a snapshot, a delete,
 a park payload or a shutdown state ship — held in the bounded ring, drop-oldest
 counted, replayed in write order on the next bound stream) and `:output` (a
-plugin or bounded operator emit — held already framed, so a keyed output's channel and
+plugin or steps operator emit — held already framed, so a keyed output's channel and
 its identity stamps survive the replay). A payload id the table does not name
 SHALL be refused at the call rather than given a default.
 
@@ -1086,14 +1084,14 @@ If the Elixir SDK discards no queued input on restore, it SHALL still declare th
 - **WHEN** the Elixir SDK performs a restore that discards no queued input
 - **THEN** it SHALL report zero rather than omitting the key, so the surface distinguishes "nothing was discarded" from "nothing was measured"
 
-### Requirement: An Elixir tasklet requests spawn-or-deliver of a bounded instance
+### Requirement: An Elixir tasklet requests spawn-or-deliver of a steps instance
 
-The Elixir SDK SHALL let a tasklet request spawn-or-deliver of a bounded instance in its
+The Elixir SDK SHALL let a tasklet request spawn-or-deliver of a steps instance in its
 own namespace with one call, under the contract the other SDKs implement
-(`docs/sdk/tasklet_requested_spawn.md`). `Flezha.SDK.Ctx.spawn_bounded/4` SHALL take a bounded factory id, a binary
+(`docs/sdk/tasklet_requested_spawn.md`). `Flezha.SDK.Ctx.spawn_steps/4` SHALL take a steps factory id, a binary
 payload and a keyword list of options defaulting to `[]`, whose keys are `id:` (an instance id)
 and `if_running:` (`:deliver` or `:error`, `:deliver` when an `id:` is given without it). The call
-SHALL send `SpawnBoundedRequest` on the runner's control plane, with an empty instance id when no
+SHALL send `SpawnStepsRequest` on the runner's control plane, with an empty instance id when no
 `id:` was given, and return a handle without waiting for the controller. An `if_running:` given
 without an `id:` SHALL raise `ArgumentError` at the call and send nothing.
 
@@ -1101,7 +1099,7 @@ The handle SHALL resolve, through `Flezha.SDK.Spawn.await/2` or `Flezha.SDK.Spaw
 to `{:ok, %{id: id, outcome: :spawned | :delivered | :skipped_on_replay}}`, where `id` is the
 instance id the request resolved to (the caller's, or the one the controller generated), or to
 `{:error, %Flezha.SDK.Error{}}`, whose code is `operator.already_running`, `operator.factory_unknown`,
-`operator.factory_not_bounded`, the controller's own code for any other refusal, `spawn.timeout` or
+`operator.factory_not_steps`, the controller's own code for any other refusal, `spawn.timeout` or
 `spawn.unavailable`.
 A refusal SHALL NOT fault the invocation, its emits or its records. A failure no caller read
 SHALL be logged once as a warning. An invocation of a replayed input SHALL resolve
@@ -1115,33 +1113,33 @@ reaches such a caller. The request SHALL be written as a `:control` frame.
 
 #### Scenario: A free id spawns and a taken id delivers
 
-- **WHEN** an Elixir unbounded tasklet calls `spawn_bounded(ctx, factory_id, payload, id: "w1")`
-  twice, and a connected runner offers the bounded factory
+- **WHEN** an Elixir flow tasklet calls `spawn_steps(ctx, factory_id, payload, id: "w1")`
+  twice, and a connected runner offers the steps factory
 - **THEN** the first handle resolves `{:ok, %{id: "w1", outcome: :spawned}}`, the second
-  `{:ok, %{id: "w1", outcome: :delivered}}`, and the bounded instance receives both payloads as
+  `{:ok, %{id: "w1", outcome: :delivered}}`, and the steps instance receives both payloads as
   inputs
 
 #### Scenario: A call without an id spawns under a generated id
 
-- **WHEN** a tasklet calls `spawn_bounded(ctx, "worker", payload)` with no options
+- **WHEN** a tasklet calls `spawn_steps(ctx, "worker", payload)` with no options
 - **THEN** the request carries an empty instance id, and the handle resolves
   `{:ok, %{id: id, outcome: :spawned}}` where `id` begins `worker-` and names the running instance
 
 #### Scenario: The error policy refuses a running id
 
-- **WHEN** a tasklet calls `spawn_bounded` with `id: instance_id, if_running: :error` for an
+- **WHEN** a tasklet calls `spawn_steps` with `id: instance_id, if_running: :error` for an
   instance id that is running
 - **THEN** the handle resolves `{:error, %Flezha.SDK.Error{code: "operator.already_running"}}`, its details naming the instance id
 
 #### Scenario: if_running without an id raises at the call
 
-- **WHEN** a tasklet calls `spawn_bounded(ctx, "worker", payload, if_running: :error)`
+- **WHEN** a tasklet calls `spawn_steps(ctx, "worker", payload, if_running: :error)`
 - **THEN** the call raises `ArgumentError` naming `if_running` and `id`, and no
-  `SpawnBoundedRequest` leaves the runner
+  `SpawnStepsRequest` leaves the runner
 
 #### Scenario: The call returns before the controller answers
 
-- **WHEN** a tasklet calls `spawn_bounded` and the controller has not answered yet
+- **WHEN** a tasklet calls `spawn_steps` and the controller has not answered yet
 - **THEN** the call has already returned a handle, and `try_result/1` answers `:pending`
 
 #### Scenario: A refusal leaves the invocation intact
@@ -1160,49 +1158,49 @@ reaches such a caller. The request SHALL be written as a `:control` frame.
 #### Scenario: A replayed input issues nothing
 
 - **WHEN** a correction-declaring class re-runs a replayed slice and its tasklet calls
-  `spawn_bounded` with no `id:`
+  `spawn_steps` with no `id:`
 - **THEN** the handle resolves `{:ok, %{id: "", outcome: :skipped_on_replay}}` and no
-  `SpawnBoundedRequest` leaves the runner
+  `SpawnStepsRequest` leaves the runner
 
 #### Scenario: A context with no runner is unavailable
 
 - **WHEN** a tasklet runs under a context that carries no runner, or under a runner whose
-  session is down, and calls `spawn_bounded`
+  session is down, and calls `spawn_steps`
 - **THEN** the handle resolves `{:error, %Flezha.SDK.Error{code: "spawn.unavailable"}}` at once, and nothing is sent or kept
 
 #### Scenario: An unanswered request times out and is forgotten
 
-- **WHEN** the request is written and no `SpawnBoundedResponse` arrives within the reply
+- **WHEN** the request is written and no `SpawnStepsResponse` arrives within the reply
   deadline
 - **THEN** the handle resolves `{:error, %Flezha.SDK.Error{code: "spawn.timeout"}}`, an unread one is logged once, and the
   runner holds no waiter for the request
 
 #### Scenario: The request is a control frame
 
-- **WHEN** the runner writes a `SpawnBoundedRequest`
+- **WHEN** the runner writes a `SpawnStepsRequest`
 - **THEN** `Hold` classes it `:control`, and the runner server does not raise
 
 ### Requirement: The Elixir per-input loop waits for its inbox as the shared core does
 
-A `:per_input` bounded loop in the Elixir SDK SHALL seed every iteration, the first included,
+A `:per_input` steps loop in the Elixir SDK SHALL seed every iteration, the first included,
 from the next input in its inbox and never from the spawn args. With nothing queued it SHALL
 wait, for up to 60 seconds while a rehydrating bind still owes it inputs and otherwise for
-`FLEZHA_PARK_IDLE_MS`, and SHALL park only when that wait ends with nothing to consume and the
-class sleeps (`sleep_when_idle`, which defaults to the class's `persistence_enabled/0`). A class
-whose persistence is off SHALL wait until an input or a stop arrives, because it cannot sleep,
-and declaring `sleep_when_idle: true` on it SHALL be refused by `Topology.build/2` naming
-`topology.sleep_without_persistence`. A stop or the duration cap reached during the wait SHALL complete
+its class's `sleep_after`, and SHALL park only when that wait ends with nothing to consume and
+the class sleeps (its `durable` is `:local` or `:remote` with a `sleep_after` that is not
+`false`). A class kept in memory (`durable: false`) SHALL wait until an input or a stop arrives,
+because it cannot sleep, and a `sleep_after` written under `false` SHALL fail to compile naming
+it. A stop or the duration cap reached during the wait SHALL complete
 the run as `cancelled`. An iteration SHALL commit the durable input-log offset its input
 carried in `flz.offset`, and SHALL commit no offset when its input carried none; the SDK SHALL
 read no other offset key.
 
-An unbounded operator in the Elixir SDK whose class declares `sleep_when_idle` SHALL sleep the
+A flow operator in the Elixir SDK whose class sleeps SHALL sleep the
 same way, re-expressed in its own core: its instance process SHALL arm one idle timer at bind
 (after any owed input tail has arrived), SHALL ask its Cells the idle question when it fires
 (mailbox empty, nothing in flight, buffer flushed, no timer armed) and re-arm from the latest
 activity when any Cell is busy, and, idle, SHALL ship `IterPark` with iteration `0` and stop
-its Cells; the class SHALL announce `sleep_when_idle` and `persistence_enabled` in its
-declarations for the controller.
+its Cells; the class SHALL announce `durable` and `sleep_after_ms` in its declarations for
+the controller.
 
 #### Scenario: The first iteration consumes the first input
 
@@ -1213,7 +1211,7 @@ declarations for the controller.
 
 - **WHEN** a journaling per-input loop finds its inbox empty and no input arrives within the idle
   window
-- **THEN** it ships `IterPark` and no `BoundedCompleted`
+- **THEN** it ships `IterPark` and no `OperatorCompleted`
 
 #### Scenario: An owed tail is waited for past the idle window
 
@@ -1226,15 +1224,15 @@ declarations for the controller.
 - **THEN** it ships no `IterPark`, runs the next input that arrives, and a stop completes it as
   `cancelled`
 
-#### Scenario: A sleeping unbounded class parks its instance
+#### Scenario: A sleeping flow class parks its instance
 
-- **WHEN** an unbounded class declares `sleep_when_idle: true` and an instance of it receives nothing for `FLEZHA_PARK_IDLE_MS` with every Cell drained
+- **WHEN** a flow class sleeps (`durable: {:local, sleep_after: ms}`) and an instance of it receives nothing for that interval with every Cell drained
 - **THEN** the instance ships `IterPark` with iteration `0`, stops its Cells, and the next message the controller forwards after the wake reaches a Cell restored to its state before the sleep
 
-#### Scenario: Sleeping without persistence is refused
+#### Scenario: A sleep interval on a class kept in memory does not compile
 
-- **WHEN** a module declares `sleep_when_idle: true` and `persistence_enabled: false` in either `use` macro
-- **THEN** `register_factory/2` fails with an error naming `topology.sleep_without_persistence` and the module, and nothing is declared
+- **WHEN** a module writes `durable: {false, sleep_after: 1_000}` in its `use`
+- **THEN** compilation fails with a `CompileError` naming `sleep_after` and `false`, and nothing is declared
 
 #### Scenario: An iteration commits its input's offset
 
@@ -1281,7 +1279,7 @@ The SDK SHALL declare a connect behaviour for in-node runners and SHALL call the
 - **THEN** the SDK SHALL refuse naming the behaviour and the modes it does support
 
 ### Requirement: The Elixir SDK authors with `use` macros that expand to its behaviours
-The SDK SHALL provide `use Flezha.SDK.Tasklet`, `use Flezha.SDK.UnboundedOperator` and `use Flezha.SDK.BoundedOperator`. Each SHALL set the module's `@behaviour` and, for every option written, define the zero-arity callback of the same name returning the option's value, and SHALL define nothing for an option not written, so every default stays resolved by `function_exported?` as it is for a hand-written module. `use Flezha.SDK.Tasklet` SHALL require `name` and accept `cell_keys`, `mailbox_capacity`, `max_cells`, `idle_ttl_seconds`, `compact_after_bytes`, `schema_version`, `min_readable_schema_version`, `logical_clock` and `max_timers_per_cell`, plus the short-form options; `idle_ttl_seconds` SHALL be a positive integer and `logical_clock` a boolean, any other value being a `CompileError` naming the option; the retired options `cell_idle_ttl_ms` and `clock`, and a `clock/0`, `event_time_of/1` or `cell_idle_ttl_ms/0` the module defines with `def` or `defp`, SHALL each be a `CompileError` naming what replaced it; it SHALL import `Flezha.SDK.Ctx`'s authoring functions except `apply/3`, SHALL remove any `Flezha.SDK.Channels` import the module inherits lexically, and SHALL define `init_state/1` returning `nil` at `@before_compile` when the module defines neither a `state` block nor its own `init_state/1`. `use Flezha.SDK.UnboundedOperator` SHALL require `factory_id` and accept `description` and `persistence_enabled`. `use Flezha.SDK.BoundedOperator` SHALL require `factory_id` and accept `description`, `max_duration_ms`, `self_terminating?`, `loop_mode`, `rollback_mode`, `persistence_enabled` and `sync_durability`; `loop_mode` SHALL accept only `:once`, `:per_input` and `:chained`, and `rollback_mode` only `:all_or_nothing` and `:keep_progress`, any other value being a `CompileError` naming it. Both operator macros SHALL import `Flezha.SDK.Channels`; a bounded tasklet ends its instance with `complete/2`, which `use Flezha.SDK.Tasklet` imports with the rest of `Flezha.SDK.Ctx`. An unknown option, or a missing required one, SHALL be a `CompileError` naming it. Callbacks that take arguments stay `def`s the author writes. A module that `use`s `Flezha.SDK.Tasklet`, or a short-form operator module, that writes `event_time/1` and declares `logical_clock: true` SHALL fail to compile with a `CompileError` naming both and the module the author wrote. A module written with `@behaviour` and hand-written callbacks is the reference form: it SHALL keep registering and running, with the clock and idle TTL read from its callbacks, and SHALL be documented on the Elixir SDK reference page only, never in the guides.
+The SDK SHALL provide `use Flezha.SDK.Tasklet` and `use Flezha.SDK.Operator`. Each SHALL set the module's `@behaviour` and, for every option written, define the zero-arity callback of the same name returning the option's value, and SHALL define nothing for an option not written, so every default stays resolved by `function_exported?` as it is for a hand-written module. `use Flezha.SDK.Tasklet` SHALL require `name` and accept `cell_keys`, `mailbox_capacity`, `max_cells`, `idle_ttl_seconds`, `compact_after_bytes`, `schema_version`, `min_readable_schema_version`, `logical_clock` and `max_timers_per_cell`, plus the short-form options; `idle_ttl_seconds` SHALL be a positive integer and `logical_clock` a boolean, any other value being a `CompileError` naming the option; the retired options `cell_idle_ttl_ms` and `clock`, and a `clock/0`, `event_time_of/1` or `cell_idle_ttl_ms/0` the module defines with `def` or `defp`, SHALL each be a `CompileError` naming what replaced it; it SHALL import `Flezha.SDK.Ctx`'s authoring functions except `apply/3`, SHALL remove any `Flezha.SDK.Channels` import the module inherits lexically, and SHALL define `init_state/1` returning `nil` at `@before_compile` when the module defines neither a `state` block nor its own `init_state/1`. `use Flezha.SDK.Operator` SHALL require `factory_id` and accept `description`, `max_duration_ms`, `run` and `durable`; under `run: {:steps, ...}` `each` SHALL accept only `:once`, `:per_input` and `:chained`, and `on_failure` only `:undo_all` and `:keep_progress`, any other value, or a setting under a parent that does not carry it, being a `CompileError` naming it. The operator macro SHALL import `Flezha.SDK.Channels`; a tasklet of either run ends its instance with `complete/2`, which `use Flezha.SDK.Tasklet` imports with the rest of `Flezha.SDK.Ctx`. An unknown option, or a missing required one, SHALL be a `CompileError` naming it. Callbacks that take arguments stay `def`s the author writes. A module that `use`s `Flezha.SDK.Tasklet`, or a short-form operator module, that writes `event_time/1` and declares `logical_clock: true` SHALL fail to compile with a `CompileError` naming both and the module the author wrote. A module written with `@behaviour` and hand-written callbacks is the reference form: it SHALL keep registering and running, with the clock and idle TTL read from its callbacks, and SHALL be documented on the Elixir SDK reference page only, never in the guides.
 
 #### Scenario: A written option is a callback, an unwritten one is not
 
@@ -1291,11 +1289,11 @@ The SDK SHALL provide `use Flezha.SDK.Tasklet`, `use Flezha.SDK.UnboundedOperato
 #### Scenario: A stateless tasklet needs no init_state
 
 - **WHEN** a module writes `use Flezha.SDK.Tasklet, name: "echo"` and only `run/3`
-- **THEN** it compiles, `init_state(nil)` answers `nil`, and an unbounded operator wiring it into a sink echoes its input
+- **THEN** it compiles, `init_state(nil)` answers `nil`, and a flow operator wiring it into a sink echoes its input
 
 #### Scenario: A nested tasklet does not see the operator's builder
 
-- **WHEN** a module `use`s `Flezha.SDK.UnboundedOperator` and nests a module that `use`s `Flezha.SDK.Tasklet` and defines its own `input/0`
+- **WHEN** a module `use`s `Flezha.SDK.Operator` and nests a module that `use`s `Flezha.SDK.Tasklet` and defines its own `input/0`
 - **THEN** both compile, and the nested module's `input/0` does not conflict with `Flezha.SDK.Channels.input/2`
 
 #### Scenario: A misspelt option fails to compile
@@ -1303,9 +1301,9 @@ The SDK SHALL provide `use Flezha.SDK.Tasklet`, `use Flezha.SDK.UnboundedOperato
 - **WHEN** a module writes `use Flezha.SDK.Tasklet, name: "p", max_entites: 10`
 - **THEN** compilation fails with a `CompileError` naming `max_entites`
 
-#### Scenario: A retired bounded operator option fails to compile
+#### Scenario: A retired steps operator option fails to compile
 
-- **WHEN** a module writes `use Flezha.SDK.BoundedOperator, factory_id: "w", retry_attempts: 5` or `use Flezha.SDK.BoundedOperator, factory_id: "w", wake_after_ms: 5000`
+- **WHEN** a module writes `use Flezha.SDK.Operator, factory_id: "w", retry_attempts: 5` or `use Flezha.SDK.Operator, factory_id: "w", wake_after_ms: 5000`
 - **THEN** compilation fails with a `CompileError` naming the option, as for any unknown option
 
 #### Scenario: The behaviour form is unchanged
@@ -1315,7 +1313,7 @@ The SDK SHALL provide `use Flezha.SDK.Tasklet`, `use Flezha.SDK.UnboundedOperato
 
 #### Scenario: complete/2 is called without its module
 
-- **WHEN** a tasklet of a bounded operator that `use`s `Flezha.SDK.Tasklet` calls `complete(ctx, "done")` in `run/3`
+- **WHEN** a tasklet of a steps operator that `use`s `Flezha.SDK.Tasklet` calls `complete(ctx, "done")` in `run/3`
 - **THEN** it compiles with no warning and the instance completes with the result `"done"`, exactly as a call to `Flezha.SDK.Ctx.complete/2` would
 
 #### Scenario: The idle TTL is a whole number of seconds
@@ -1339,43 +1337,43 @@ The SDK SHALL provide `use Flezha.SDK.Tasklet`, `use Flezha.SDK.UnboundedOperato
 - **THEN** it compiles, and registering an operator that wires it is refused with `topology.unservable_clock` naming `nochange`
 
 ### Requirement: The single-tasklet short form is three `use` options
-The short form SHALL be declared with `use Flezha.SDK.UnboundedOperator` or `use Flezha.SDK.BoundedOperator`, the same macros that declare a full-form operator, and SHALL NOT be declared with `use Flezha.SDK.Tasklet`, which SHALL accept none of `kind`, `sink` or `input` and SHALL raise a `CompileError` naming the option and the operator macro when one is given. Each operator macro SHALL accept `sink` and `input` beside the `factory_id` it already requires. The kind is the macro's own name and SHALL NOT be an option.
+The short form SHALL be declared with `use Flezha.SDK.Operator`, the same macro that declares a full-form operator, and SHALL NOT be declared with `use Flezha.SDK.Tasklet`, which SHALL accept none of `run`, `sink` or `input` and SHALL raise a `CompileError` naming the option and the operator macro when one is given. The operator macro SHALL accept `sink` and `input` beside the `factory_id` it already requires. How it runs is the `run` setting, written as on a full form.
 
-A module SHALL be a short form exactly when it defines `run/3` and no `channels/1`, the one topology body both kinds share. Defining both SHALL be a `CompileError` beginning `topology.short_form_with_topology`, and defining neither SHALL be a `CompileError` naming the missing body; both SHALL be decided at `@before_compile`, where the module's definitions are known. A bounded short form MAY write `loop_mode:`, which the macro defines as `loop_mode/0` exactly as it does for a full form; every other class option written on a short form SHALL be a `CompileError` naming the option and the full form.
+A module SHALL be a short form exactly when it defines `run/3` and no `channels/1`, the one topology body every operator shares. Defining both SHALL be a `CompileError` beginning `topology.short_form_with_topology`, and defining neither SHALL be a `CompileError` naming the missing body; both SHALL be decided at `@before_compile`, where the module's definitions are known. A short form MAY write the class settings (`run`, `durable`, `max_duration_ms`, `description`), which the macro defines exactly as it does for a full form.
 
-With `sink`, the macro SHALL generate `factory_id/0` equal to the `factory_id` option and `channels/1` wiring an entry channel named `"input"` (or the `input` value) into a generated nested tasklet module and that module to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet module and declare no plugin channel. The nested module SHALL implement `Flezha.SDK.Tasklet`, SHALL answer the `factory_id` verbatim from `name/0`, and SHALL delegate `run/3` to the declaring module, so the expansion is a separate tasklet and a separate operator rather than one module in both roles. Every other operator callback SHALL be left undefined so its default applies, and a bounded short form SHALL be a `once` bounded operator unless it writes `loop_mode:`. The module SHALL be registered as any operator is: listed under `operators:` in the child spec, or passed to `register_factory/2`.
+With `sink`, the macro SHALL generate `factory_id/0` equal to the `factory_id` option and `channels/1` wiring an entry channel named `"input"` (or the `input` value) into a generated nested tasklet module and that module to the `sink` plugin channel; with no `sink`, it SHALL wire the entry channel into the tasklet module and declare no plugin channel. The nested module SHALL implement `Flezha.SDK.Tasklet`, SHALL answer the `factory_id` verbatim from `name/0`, and SHALL delegate `run/3` to the declaring module, so the expansion is a separate tasklet and a separate operator rather than one module in both roles. Every other operator callback SHALL be left undefined so its default applies, and a steps short form SHALL be a `once` steps operator unless it writes `each:`. The module SHALL be registered as any operator is: listed under `operators:` in the child spec, or passed to `register_factory/2`.
 
 The Elixir SDK cannot see a tasklet's output type, owes no `topology.sink_without_output`, and SHALL NOT list `shorthand_typed_output` in its manifest. A duplicate factory id SHALL be refused as `{:error, %Flezha.SDK.Error{code: "topology.duplicate_factory_id"}}` naming the id in its details.
 
-#### Scenario: An operator module with a run body is a whole unbounded operator
+#### Scenario: An operator module with a run body is a whole flow operator
 
-- **WHEN** a module writes `use Flezha.SDK.UnboundedOperator, factory_id: "upcase", sink: "out"` and `run/3`, and the child spec lists it under `operators:`
-- **THEN** the runner declares an unbounded operator `upcase` with entry channel `input` and sink `out`, backed by a generated nested tasklet whose `name/0` is `upcase`
+- **WHEN** a module writes `use Flezha.SDK.Operator, factory_id: "upcase", sink: "out"` and `run/3`, and the child spec lists it under `operators:`
+- **THEN** the runner declares a flow operator `upcase` with entry channel `input` and sink `out`, backed by a generated nested tasklet whose `name/0` is `upcase`
 
-#### Scenario: An operator module with a run body is a whole bounded operator
+#### Scenario: An operator module with a run body is a whole steps operator
 
-- **WHEN** a module writes `use Flezha.SDK.BoundedOperator, factory_id: "place", sink: "placed", input: "order"` and `run/3`, is listed under `operators:`, an instance is started, and one message is sent on `order`
+- **WHEN** a module writes `use Flezha.SDK.Operator, factory_id: "place", sink: "placed", input: "order"` and `run/3`, is listed under `operators:`, an instance is started, and one message is sent on `order`
 - **THEN** `run/3` receives the message on `order`, what it emits reaches `placed`, and the instance completes
 
-#### Scenario: A short-form bounded operator declares its loop mode
+#### Scenario: A short-form steps operator declares its loop mode
 
-- **WHEN** a module writes `use Flezha.SDK.BoundedOperator, factory_id: "chat", sink: "replies", loop_mode: :per_input` and `run/3`, and two messages reach its entry channel
-- **THEN** the module exports `loop_mode/0` returning `:per_input`, `run/3` runs once per message, and the instance does not complete after the first
+- **WHEN** a module writes `use Flezha.SDK.Operator, factory_id: "chat", sink: "replies", each: :per_input` and `run/3`, and two messages reach its entry channel
+- **THEN** the module exports `each/0` returning `:per_input`, `run/3` runs once per message, and the instance does not complete after the first
 
 #### Scenario: A short form with no sink is declared
 
-- **WHEN** a module writes `use Flezha.SDK.UnboundedOperator, factory_id: "counter", input: "ticks"`, a `state do ... end` block, a `defchange` and `run/3`
+- **WHEN** a module writes `use Flezha.SDK.Operator, factory_id: "counter", input: "ticks"`, a `state do ... end` block, a `defchange` and `run/3`
 - **THEN** the operator declares `ticks` into the generated tasklet module and no plugin channel, and the `defchange` recorder journals as it does on any tasklet
 
 #### Scenario: An input needs no sink
 
-- **WHEN** a module writes `use Flezha.SDK.UnboundedOperator, factory_id: "counter", input: "ticks"` and `run/3`
+- **WHEN** a module writes `use Flezha.SDK.Operator, factory_id: "counter", input: "ticks"` and `run/3`
 - **THEN** it compiles and the entry channel is named `ticks`
 
-#### Scenario: register reads a short form's kind
+#### Scenario: register reads a short form's run
 
-- **WHEN** a module written with `use Flezha.SDK.BoundedOperator` and a `sink` is passed to `register_factory/2`
-- **THEN** it is declared as a bounded operator, because the macro set `@behaviour Flezha.SDK.BoundedOperator`, and its generated body is `channels/1` as an unbounded operator's is
+- **WHEN** a module written with `use Flezha.SDK.Operator`, `run: :steps` and a `sink` is passed to `register_factory/2`
+- **THEN** it is declared as a steps operator, because the macro defined `run/0` from the option, and its generated body is `channels/1` as a flow operator's is
 
 #### Scenario: The generated tasklet is a module of its own
 
@@ -1384,47 +1382,47 @@ The Elixir SDK cannot see a tasklet's output type, owes no `topology.sink_withou
 
 #### Scenario: A run body beside a channels body does not compile
 
-- **WHEN** a module writes `use Flezha.SDK.UnboundedOperator, factory_id: "upcase", sink: "out"` and defines both `run/3` and `channels/1`
+- **WHEN** a module writes `use Flezha.SDK.Operator, factory_id: "upcase", sink: "out"` and defines both `run/3` and `channels/1`
 - **THEN** compilation fails with a `CompileError` whose message begins `topology.short_form_with_topology`
 
 #### Scenario: A sink on a tasklet does not compile
 
 - **WHEN** a module writes `use Flezha.SDK.Tasklet, name: "upcase", sink: "out"`
-- **THEN** compilation fails with a `CompileError` naming `sink` and `Flezha.SDK.UnboundedOperator`
+- **THEN** compilation fails with a `CompileError` naming `sink` and `Flezha.SDK.Operator`
 
 #### Scenario: An operator with neither body does not compile
 
-- **WHEN** a module writes `use Flezha.SDK.UnboundedOperator, factory_id: "upcase"` and defines neither `run/3` nor `channels/1`
+- **WHEN** a module writes `use Flezha.SDK.Operator, factory_id: "upcase"` and defines neither `run/3` nor `channels/1`
 - **THEN** compilation fails naming the missing body
 
 #### Scenario: The behaviour form keeps working
 
-- **WHEN** a module writes `@behaviour Flezha.SDK.UnboundedOperator` with hand-written `factory_id/0` and `channels/1`
+- **WHEN** a module writes `@behaviour Flezha.SDK.Operator` with hand-written `factory_id/0` and `channels/1`
 - **THEN** it registers and runs unchanged, and owes no short-form refusal
 
-### Requirement: The Elixir SDK announces each class's kind and refuses the other kind's settings
+### Requirement: The Elixir SDK announces each class's run and refuses a misplaced setting
 
-The handshake's factory entries and every `FactoryDecl` the SDK ships in `UpdateFactories` SHALL carry `kind`, `"unbounded"` or `"bounded"`, read from the module's behaviour, for a class registered before start and for one defined after it alike. `Flezha.SDK.Topology.build/2` SHALL judge kind facts for both kinds: on a bounded class it SHALL answer `topology.effectively_once_on_bounded` for `effectively_once/1`, `topology.checkpoint_on_bounded` for any of `checkpoint_ack/1`, `checkpoint_every/2` and `outputs_at_checkpoint/2`, and `topology.correction_window_on_bounded` for `correction_window/2`, carried in the same `{:error, %Flezha.SDK.Error{}}` as its other refusals are; on an unbounded class it SHALL keep `topology.sync_durability_on_unbounded`. `Flezha.SDK.Declarations.for/1` SHALL declare no `effectively_once` for a bounded operator, because none can register, and no `wake_after_ms` for any class. A hand-written `loop_mode/0` or `rollback_mode/0` outside the values the `use` macro accepts SHALL be refused at `register_factory/2` as the issue `topology.invalid_mode`, its details naming the factory id, the knob and the value, in the same error. A bounded stage's Cells SHALL be started with the same timer policy and clock an unbounded operator's are, so `Flezha.SDK.Ctx.timer_after/2`, `timer_at_event_time/2`, `cancel_processing_time_timer/2` and `cancel_event_time_timer/2` answer inside a bounded tasklet exactly as inside an unbounded tasklet, and `on_timer/4` runs on a firing in both kinds.
+The handshake's factory entries and every `FactoryDecl` the SDK ships in `UpdateFactories` SHALL carry `run`, `"flow"` or `"steps"`, with `each` and `on_failure` for a steps class, read from the module's `run/0`, for a class registered before start and for one defined after it alike. `use Flezha.SDK.Operator` SHALL refuse a setting written under a parent that does not carry it with a `CompileError` naming the setting and the parent, and a value outside its choice naming the value; a module that writes `run/0` or `durable/0` by hand SHALL meet the same check at `register_factory/2`, as `topology.unknown_field` or `topology.invalid_setting`, carried in the same `{:error, %Flezha.SDK.Error{}}` as its other refusals are. `Flezha.SDK.Declarations.for/1` SHALL declare no `effectively_once` for a steps operator, because none can be written, and no `wake_after_ms` for any class. A steps stage's Cells SHALL be started with the same timer policy and clock a flow operator's are, so `Flezha.SDK.Ctx.timer_after/2`, `timer_at_event_time/2`, `cancel_processing_time_timer/2` and `cancel_event_time_timer/2` answer inside a steps tasklet exactly as inside a flow tasklet, and `on_timer/4` runs on a firing in both runs.
 
-#### Scenario: The handshake carries the kind
+#### Scenario: The handshake carries the run
 
-- **WHEN** a runner starts with an unbounded operator module and a bounded operator module under `operators:`
-- **THEN** its handshake's `factories` entries carry `"kind" => "unbounded"` and `"kind" => "bounded"` respectively, and a module defined after start ships an `UpdateFactories` whose `FactoryDecl` carries the same
+- **WHEN** a runner starts with a flow operator module and a steps operator module under `operators:`
+- **THEN** its handshake's `factories` entries carry `"run" => "flow"` and `"run" => "steps"` respectively, and a module defined after start ships an `UpdateFactories` whose `FactoryDecl` carries the same
 
-#### Scenario: The tier on a bounded operator module is refused
+#### Scenario: The tier under a steps run does not compile
 
-- **WHEN** a bounded operator module's `channels/1` calls `Channels.effectively_once/1`
-- **THEN** `register_factory/2` answers `{:error, %Flezha.SDK.Error{code: "topology.effectively_once_on_bounded"}}`, and the module is not declared
+- **WHEN** a module writes `run: {:steps, exactly: :effectively_once}` in its `use`
+- **THEN** compilation fails with a `CompileError` naming `exactly` and `steps`
 
-#### Scenario: A hand-written mode outside its set is refused
+#### Scenario: A hand-written run outside its set is refused
 
-- **WHEN** a module declaring `@behaviour Flezha.SDK.BoundedOperator` defines `loop_mode/0` returning `:forever`
-- **THEN** `register_factory/2` answers `{:error, %Flezha.SDK.Error{code: "topology.invalid_mode"}}` whose details name the factory id, `loop_mode` and `forever`
+- **WHEN** a module declaring `@behaviour Flezha.SDK.Operator` defines `run/0` returning `{:steps, each: :forever}`
+- **THEN** `register_factory/2` answers `{:error, %Flezha.SDK.Error{code: "topology.invalid_setting"}}` whose details name `each` and `forever`
 
-#### Scenario: A timer inside a bounded tasklet fires
+#### Scenario: A timer inside a steps tasklet fires
 
-- **WHEN** a tasklet of a running `:per_input` bounded operator calls `Flezha.SDK.Ctx.timer_after(ctx, 300)` in `run/3`
-- **THEN** the call answers `{:ok, at}`, the same call inside an unbounded tasklet answers the same, and `on_timer/4` runs on that Cell with `fired_at == at`, opening a pass at that tasklet
+- **WHEN** a tasklet of a running `:per_input` steps operator calls `Flezha.SDK.Ctx.timer_after(ctx, 300)` in `run/3`
+- **THEN** the call answers `{:ok, at}`, the same call inside a flow tasklet answers the same, and `on_timer/4` runs on that Cell with `fired_at == at`, opening a pass at that tasklet
 
 ### Requirement: A `state` block declares defaults, and `defchange` is the one way to change state
 `use Flezha.SDK.Tasklet` SHALL make `state do … end` and `defchange` available. Inside `state`, `field name, type, default: value` SHALL declare a field, `type` being one of `:integer`, `:float`, `:string`, `:boolean`, `:list`, `:map` or `:term`. The block SHALL generate `init_state/1` returning the map of field defaults, overridable by the author, and `state_from_json/1` reading each field's string key and falling back to its default. It SHALL generate no change: no `apply_change/2` clause and no recorder. `defchange name(state, args…) do body end` SHALL be the one way to change state in the `use` form, in a module with or without a `state` block: it SHALL generate the clause `apply_change(state, {:name, args…})` evaluating `body`, and the recorder `name(state, ctx, args…)`, which records the change through `Flezha.SDK.Ctx.apply/3` and answers the new state, so a mutation spanning several fields is one journal record. A module with at least one `defchange` SHALL export `apply_change/2` and be changeful; a module with none SHALL export no `apply_change/2`, whether or not it has a `state` block. A module that `use`s `Flezha.SDK.Tasklet`, or a short-form operator module, that defines `apply_change/2` itself SHALL fail to compile with a `CompileError` naming `apply_change/2` and directing the author to `defchange`; the delegation the short form generates in its nested tasklet module is not the author's definition and SHALL NOT be refused. A module that has a `state` block and also defines `state_from_json/1` itself SHALL fail to compile, naming the function and the block.
@@ -1456,8 +1454,8 @@ The handshake's factory entries and every `FactoryDecl` the SDK ships in `Update
 
 ### Requirement: The Elixir runner reports an operator instance that exits abnormally
 
-The runner SHALL treat the exit of the process registered for an operator id, an unbounded
-Operator or a bounded driver, as the end of that instance: it SHALL remove the id from its operator
+The runner SHALL treat the exit of the process registered for an operator id, a flow
+instance or a steps driver, as the end of that instance: it SHALL remove the id from its operator
 map and its registry at once, so that no input is routed to the dead process and a later
 `AddOperator` for the id starts a fresh one. The exit of a process that is not the one registered
 for any id SHALL change nothing.
@@ -1473,7 +1471,7 @@ nothing.
 
 #### Scenario: A killed Operator is dropped and reported
 
-- **GIVEN** an unbounded instance `X` running on an Elixir runner
+- **GIVEN** a flow instance `X` running on an Elixir runner
 - **WHEN** its Operator process is killed
 - **THEN** the runner SHALL remove `X` from its operator map and its registry, an input a primary
   stream then reads for `X` SHALL reach no process, and the controller SHALL receive
@@ -1484,10 +1482,10 @@ nothing.
 - **WHEN** the controller sends `RemOperator` for `X` and its Operator exits `:normal`
 - **THEN** the runner SHALL send no `OperatorExited`
 
-#### Scenario: A bounded driver that dies is reported
+#### Scenario: A steps driver that dies is reported
 
-- **GIVEN** a bounded instance `W` running on an Elixir runner
-- **WHEN** its driver process exits abnormally before it ships `BoundedCompleted`
+- **GIVEN** a steps instance `W` running on an Elixir runner
+- **WHEN** its driver process exits abnormally before it ships `OperatorCompleted`
 - **THEN** the runner SHALL remove `W` and send `OperatorExited` naming `W`
 
 #### Scenario: A report outlives a lost control stream
@@ -1506,7 +1504,7 @@ nothing.
 
 #### Scenario: Inputs a dead Cell held run again after the rebind
 
-- **GIVEN** an in-node Elixir runner and an unbounded instance on the effectively-once tier whose
+- **GIVEN** an in-node Elixir runner and a flow instance on the effectively-once tier whose
   changeful Cell for key `k` has finished the input at offset 9, is running the input at offset
   10 and has 11 and 12 pushed behind it, while the Cell for key `j` has finished and recorded
   offset 13

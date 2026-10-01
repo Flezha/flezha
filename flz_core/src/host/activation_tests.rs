@@ -8,7 +8,7 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use super::activation::{refuse_completion, settle_item};
+use super::activation::settle_item;
 use super::HostPayload;
 use crate::cell::{CellItem, CellPayload, CellSlot};
 use crate::poll_core::ItemAttempt;
@@ -234,52 +234,19 @@ fn outside_the_tier_the_record_carrying_the_offset_keeps_the_edge_value() {
     crate::state_sink::reset_for_test();
 }
 
-/// An unbounded operator never completes: an effect asking to fails as the author's own
-/// non-retryable error, recording nothing, and an item that already failed
-/// keeps its verdict.
-#[test]
-fn an_unbounded_effect_carrying_a_completion_fails_non_retryable() {
-    let (_, mut asked) = work_and_effect(7, &[2]);
-    asked.consumed_offset = Some(7);
-    asked.event_time = 42;
-    asked.checkpoint = true;
-    asked.complete = Some(b"3".to_vec());
-    refuse_completion(&mut asked);
-    assert_eq!(
-        asked,
-        schema::ItemEffect {
-            verdict: schema::Verdict::NonRetryableError {
-                message: crate::bounded::complete_outside_bounded().text()
-            },
-            consumed_offset: Some(7),
-            event_time: 42,
-            ..super::activation::empty_effect()
-        },
-        "the changes, outputs and checkpoint the item recorded go with it"
-    );
-
-    let (_, mut failed) = work_and_effect(0, &[]);
-    failed.complete = Some(b"3".to_vec());
-    failed.verdict = schema::Verdict::RetryableError {
-        message: "own".to_string(),
-    };
-    refuse_completion(&mut failed);
-    assert_eq!(
-        failed.verdict,
-        schema::Verdict::RetryableError {
-            message: "own".to_string()
-        }
-    );
-}
-
 // ---- a response end's answers ------------------------------------------------
 
 /// `p0` feeds `p1`, whose channel `ans` ends in `response()`, and `p2`, whose
 /// channel `out` ends in a keyed sink; unkeyed `ans` registers under the tier.
 fn answering_instance(id: &str, tier: bool) -> Arc<crate::operator::instance::OperatorInstance> {
+    let run = if tier {
+        r#"{"flow":{"exactly":"effectively_once"}}"#
+    } else {
+        r#""flow""#
+    };
     let json = format!(
-        r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,
-             "effectively_once":{tier},
+        r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","durable":{{"local":{{"sleep_after":false}}}},
+             "run":{run},
              "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},
                          {{"name":"mid","kind":"inter_task","producer":0,
                            "chains":[[{{"link":"into","tasklet":1}}],[{{"link":"into","tasklet":2}}]]}},
@@ -461,9 +428,14 @@ fn a_tier_off_park_carries_the_call_only_when_its_item_had_one() {
 /// `p0` feeds `p1`, whose channel `ask` ends in a factory call answered on
 /// `ask.response`, and `p2`, whose channel `out` ends in a keyed sink.
 fn calling_instance(id: &str, tier: bool) -> Arc<crate::operator::instance::OperatorInstance> {
+    let run = if tier {
+        r#"{"flow":{"exactly":"effectively_once"}}"#
+    } else {
+        r#""flow""#
+    };
     let json = format!(
-        r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,
-             "effectively_once":{tier},
+        r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","durable":{{"local":{{"sleep_after":false}}}},
+             "run":{run},
              "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},
                          {{"name":"mid","kind":"inter_task","producer":0,
                            "chains":[[{{"link":"into","tasklet":1}}],[{{"link":"into","tasklet":2}}]]}},

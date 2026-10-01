@@ -3,7 +3,7 @@ defmodule Flezha.Service.CliManagerStateGetTest do
   `flz state get <operator/tasklet[/cell_key]>` operations surface: the live
   read, and every refusal it can report. The SDK-side selector and its
   token-prefixed refusals are covered by `state_serialize.rs` and
-  `UnboundedOperatorStateSerializerTest`; here we pin how each verdict reaches
+  `OperatorStateSerializerTest`; here we pin how each verdict reaches
   the caller, and that the non-resident family points at the durable path.
   """
   # async: false: Mimic global mode; Mimic stubs.

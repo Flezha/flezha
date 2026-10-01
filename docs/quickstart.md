@@ -58,7 +58,7 @@ The two local-mode-specific parts of a word-counting graph — the declaration,
 and the run:
 
 ```rust
-impl UnboundedOperator for WordCount {
+impl Operator for WordCount {
     fn factory_id() -> &'static str {
         "local_word_count"
     }
@@ -155,7 +155,7 @@ defmodule Tally do
 end
 
 defmodule WordCount do
-  use Flezha.SDK.UnboundedOperator, factory_id: "word_count"
+  use Flezha.SDK.Operator, factory_id: "word_count"
 
   @impl true
   def channels(c) do

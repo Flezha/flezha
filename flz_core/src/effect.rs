@@ -505,7 +505,7 @@ impl<B: Bodies> FlushableBuffer for EffectBuffer<B> {
 #[derive(Debug, Clone, Copy)]
 pub struct SettlePolicy {
     /// One effect record per invocation: the effectively-once tier, or a
-    /// durable bounded operator Cell ([`OperatorTopology::records_effects`]).
+    /// durable steps operator Cell ([`OperatorTopology::records_effects`]).
     ///
     /// [`OperatorTopology::records_effects`]: crate::operator::topology::OperatorTopology::records_effects
     pub records_effects: bool,

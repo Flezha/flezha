@@ -1,6 +1,6 @@
 defmodule Flezha.State.Completion do
   @moduledoc """
-  The per-operator *completion record* of a finished bounded operator.
+  The per-operator *completion record* of a finished steps operator.
 
   On terminal teardown (status `ok | error | cancelled`) the controller writes
   a small durable term alongside the operator's retained Cell state, so the
@@ -23,6 +23,7 @@ defmodule Flezha.State.Completion do
 
   @type t :: %{
           namespace: binary(),
+          run: binary(),
           status: binary(),
           error: binary(),
           result: binary(),

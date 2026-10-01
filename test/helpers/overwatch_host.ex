@@ -24,7 +24,7 @@ defmodule FlezhaTest.Helper.OverwatchHost do
   @impl true
   defdelegate handle_info(msg, state), to: Overwatch
 
-  @doc "An unbounded Overwatch of the `chat` factory for `inst`, with `overrides`."
+  @doc "A flow Overwatch of the `chat` factory for `inst`, with `overrides`."
   def state(inst, overrides \\ []) do
     struct!(
       %Overwatch{
@@ -32,7 +32,7 @@ defmodule FlezhaTest.Helper.OverwatchHost do
         namespace: "default",
         runner_id: "ex_1",
         factory_id: "chat",
-        builder: %Builder{id: inst, factory_id: "chat", kind: :unbounded, opts: []},
+        builder: %Builder{id: inst, factory_id: "chat", run: :flow, opts: []},
         extensions: Table.new(Overwatch.__extensions_catalog__())
       },
       overrides

@@ -74,10 +74,9 @@ defmodule FlezhaTest.System.CompactionE2ETest do
     builder = %Builder{
       id: operator_id,
       factory_id: @factory,
-      init_values: %{},
-      # No periodic capture — the ONLY path to a snapshot file is the compaction
-      # this test triggers, so an appearing file cannot come from anywhere else.
-      opts: [snapshot_interval: 0]
+      # The controller takes no periodic snapshot: the ONLY path to a snapshot
+      # file is the compaction this test triggers.
+      init_values: %{}
     }
 
     assert {:ok, info} = OperatorManager.start_operator(@namespace, builder)

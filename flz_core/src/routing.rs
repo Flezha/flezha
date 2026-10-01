@@ -49,17 +49,17 @@ impl EntryView for OperatorInstance {
         &self.ladders
     }
 
-    /// A bounded operator counts the message consumed without a pass, so its park
+    /// A steps operator counts the message consumed without a pass, so its park
     /// record releases it from the input log.
     fn entry_parked(&self, offset: Option<u64>) {
-        crate::bounded::entry_parked(self, offset);
+        crate::steps::entry_parked(self, offset);
     }
 }
 
 /// Route one channel value to every consumer through its own edge — the one
 /// seam live delivery, the replay slice and an inter-tasklet emit share. A
 /// closure that unwinds sends the value up the channel's ladder; the other
-/// consumers are still served. A bounded operator's value is not admitted here: a
+/// consumers are still served. A steps operator's value is not admitted here: a
 /// message starts or queues a pass, a stage's output is held for its commit.
 #[allow(clippy::too_many_arguments)]
 pub fn route_to_consumers(
@@ -72,13 +72,13 @@ pub fn route_to_consumers(
     replay: bool,
     producer: Option<&Arc<CellSlot>>,
 ) -> bool {
-    if instance.bounded.is_some() {
+    if instance.steps.is_some() {
         match producer {
             Some(producer) => {
-                crate::bounded::hold_emit(instance, Some(channel), value, stream, producer)
+                crate::steps::hold_emit(instance, Some(channel), value, stream, producer)
             }
             None => {
-                crate::bounded::message(instance, channel, value, stream, consumed_offset, call)
+                crate::steps::message(instance, channel, value, stream, consumed_offset, call)
             }
         }
         return false;
@@ -115,7 +115,7 @@ pub fn route_to_consumers(
 
 /// Where a routed item goes: into its consumer's mailbox (a producing Cell
 /// withholds work from itself instead of parking), or collected for a
-/// bounded stage, which admits it only once its producer commits.
+/// steps stage, which admits it only once its producer commits.
 pub(crate) enum Destination<'a> {
     Mailbox(Option<&'a Arc<CellSlot>>),
     Held(&'a mut Vec<(Arc<CellSlot>, CellItem)>),
@@ -440,7 +440,7 @@ pub struct OperatorDispatchHandle {
 impl OperatorDispatchHandle {
     /// A frame off the wire into the operator it names: the entry channel
     /// resolved, the bytes wrapped, the value routed to the consumers — or,
-    /// for a bounded operator, into the pass it starts or the queue it waits in. A
+    /// for a steps operator, into the pass it starts or the queue it waits in. A
     /// name the operator does not declare is parked under that name rather
     /// than dropped or rerouted; past that, the input-liveness signal is taken
     /// before anything can decline the frame. A replay-end broadcast defers
@@ -616,8 +616,8 @@ fn redeliver_edge(
     }
 }
 
-/// What the controller stamped: the input-log offset `flz.offset` (an unbounded
-/// or a bounded operator with durable input), the outside call waiting on the
+/// What the controller stamped: the input-log offset `flz.offset` (a flow
+/// or a steps operator with durable input), the outside call waiting on the
 /// input (`flz.reply_to`) and whether the frame is a replayed slice member.
 fn frame_facts(metadata: &HashMap<String, String>) -> (Option<u64>, Option<Arc<str>>, bool) {
     let consumed_offset = metadata

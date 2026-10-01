@@ -331,7 +331,7 @@ fn start_fetcher() -> bool {
 ///
 /// This covers what the core can see — work queued with no thread inside
 /// `poll`, which for this host means a direct activation (a restore fold, a
-/// snapshot request, a bounded operator step) arriving while every fetcher is between
+/// snapshot request, a steps operator step) arriving while every fetcher is between
 /// polls. It is not a substitute for the pool's growth rule: the core cannot
 /// see the host's completion queue, and this thread cannot see the core's.
 fn supervise_loop() {

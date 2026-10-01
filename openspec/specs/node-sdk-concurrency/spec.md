@@ -17,7 +17,7 @@ drains only when its handler runs. If the waiting thread is the event loop, the 
 thread that could run that handler, and no other thread can free it.
 
 Non-blocking entry points (abandon, buffer free, monotonic clock, last-error, `flz_core_spawn_request`,
-and `flz_core_spawn_result` read with a timeout of zero) MAY be synchronous. `ctx.spawnBounded` SHALL
+and `flz_core_spawn_result` read with a timeout of zero) MAY be synchronous. `ctx.spawnSteps` SHALL
 therefore return its handle synchronously, the handle's `tryResult()` SHALL be synchronous, and only
 its `wait()` SHALL be asynchronous.
 
@@ -33,7 +33,7 @@ its `wait()` SHALL be asynchronous.
   drained, and the completion SHALL then return
 
 #### Scenario: Spawn returns on the event loop and waits off it
-- **WHEN** a tasklet calls `ctx.spawnBounded('worker', payload)` on an event loop and then
+- **WHEN** a tasklet calls `ctx.spawnSteps('worker', payload)` on an event loop and then
   awaits `handle.wait()` while the controller is slow to answer
 - **THEN** the spawn call SHALL return the handle without blocking the loop, `tryResult()` SHALL
   answer pending without blocking the loop, and the waiting read SHALL run on a thread that is not
@@ -85,7 +85,7 @@ This covers the condition the core can observe — a queued direct activation wi
 `poll` — which is distinct from, and not a substitute for, the completion-pool growth rule.
 
 #### Scenario: A queued direct activation is promoted
-- **WHEN** a restore fold, snapshot request or bounded operator step is queued with no thread inside `poll`
+- **WHEN** a restore fold, snapshot request or steps operator step is queued with no thread inside `poll`
   for the core's dwell
 - **THEN** the observation SHALL result in a thread entering `poll` and the activation SHALL be
   handed out

@@ -73,7 +73,7 @@ pub enum TopologyIssue {
     ChannelEndsTwice {
         channel: String,
     },
-    /// A `:once` or `:chained` bounded class declares a call end: it never
+    /// A `:once` or `:chained` steps class declares a call end: it never
     /// reads the later message its `Response` would be.
     CallOutsidePerInputLoop {
         channel: String,
@@ -116,14 +116,12 @@ pub enum TopologyIssue {
         channel: String,
         policy: String,
     },
-    CorrectionWithoutTier,
     CorrectionWithoutEventTime {
         tasklet: String,
         clock_type: String,
     },
     CorrectionWindowZero,
     CheckpointEveryZero,
-    CheckpointAckWithoutTier,
     MergeTooFewSources {
         tasklet: String,
         sources: usize,
@@ -135,15 +133,6 @@ pub enum TopologyIssue {
         channel: String,
         tasklet: String,
     },
-    EffectivelyOnceOnBounded,
-    CorrectionWindowOnBounded,
-    CheckpointOnBounded,
-    SyncDurabilityOnUnbounded {
-        factory_id: String,
-    },
-    SleepWithoutPersistence {
-        factory_id: String,
-    },
     AtCheckpointWithoutMaxDelay,
     UnknownSdkLang {
         sdk_lang: u8,
@@ -153,7 +142,6 @@ pub enum TopologyIssue {
         sdk_version: String,
     },
     NoTasklets,
-    SyncDurabilityWithoutPersistence,
     EffectivelyOnceWithoutPersistence,
     CheckpointMaxDelayZero,
     ProducerOutOfRange {
@@ -189,6 +177,21 @@ pub enum TopologyIssue {
     },
     DeclarationUnreadable {
         reason: String,
+    },
+    /// A setting written under a parent that does not carry it.
+    UnknownField {
+        declaration: String,
+        fields: String,
+    },
+    InvalidSetting {
+        declaration: String,
+        setting: String,
+        value: String,
+        expected: String,
+    },
+    /// `durable: remote` on a flow class, until its commit points are gated.
+    RemoteOnFlow {
+        factory_id: String,
     },
     NoEntryChannel,
     MultipleOutputChannels {
@@ -246,24 +249,16 @@ impl TopologyIssue {
             Self::DroppingPolicyUnderEffectivelyOnce { .. } => {
                 Code::DroppingPolicyUnderEffectivelyOnce
             }
-            Self::CorrectionWithoutTier => Code::CorrectionWithoutTier,
             Self::CorrectionWithoutEventTime { .. } => Code::CorrectionWithoutEventTime,
             Self::CorrectionWindowZero => Code::CorrectionWindowZero,
             Self::CheckpointEveryZero => Code::CheckpointEveryZero,
-            Self::CheckpointAckWithoutTier => Code::CheckpointAckWithoutTier,
             Self::MergeTooFewSources { .. } => Code::MergeTooFewSources,
             Self::DuplicateMergeSource { .. } => Code::DuplicateMergeSource,
             Self::EdgeAlreadyWired { .. } => Code::EdgeAlreadyWired,
-            Self::EffectivelyOnceOnBounded => Code::EffectivelyOnceOnBounded,
-            Self::CorrectionWindowOnBounded => Code::CorrectionWindowOnBounded,
-            Self::CheckpointOnBounded => Code::CheckpointOnBounded,
-            Self::SyncDurabilityOnUnbounded { .. } => Code::SyncDurabilityOnUnbounded,
-            Self::SleepWithoutPersistence { .. } => Code::SleepWithoutPersistence,
             Self::AtCheckpointWithoutMaxDelay => Code::AtCheckpointWithoutMaxDelay,
             Self::UnknownSdkLang { .. } => Code::UnknownSdkLang,
             Self::UnusableSdkVersion { .. } => Code::UnusableSdkVersion,
             Self::NoTasklets => Code::NoTasklets,
-            Self::SyncDurabilityWithoutPersistence => Code::SyncDurabilityWithoutPersistence,
             Self::EffectivelyOnceWithoutPersistence => Code::EffectivelyOnceWithoutPersistence,
             Self::CheckpointMaxDelayZero => Code::CheckpointMaxDelayZero,
             Self::ProducerOutOfRange { .. } => Code::ProducerOutOfRange,
@@ -276,6 +271,9 @@ impl TopologyIssue {
             Self::CellKeysWithoutStaticMode { .. } => Code::CellKeysWithoutStaticMode,
             Self::MaxCellsZero { .. } => Code::MaxCellsZero,
             Self::DeclarationUnreadable { .. } => Code::DeclarationUnreadable,
+            Self::UnknownField { .. } => Code::UnknownField,
+            Self::InvalidSetting { .. } => Code::InvalidSetting,
+            Self::RemoteOnFlow { .. } => Code::RemoteOnFlow,
             Self::NoEntryChannel => Code::NoEntryChannel,
             Self::MultipleOutputChannels { .. } => Code::MultipleOutputChannels,
             Self::BranchingChainedLoop { .. } => Code::BranchingChainedLoop,
@@ -368,12 +366,6 @@ impl TopologyIssue {
                 ("channel", channel.clone().into()),
                 ("tasklet", tasklet.clone().into()),
             ],
-            Self::SyncDurabilityOnUnbounded { factory_id } => {
-                vec![("factory_id", factory_id.clone().into())]
-            }
-            Self::SleepWithoutPersistence { factory_id } => {
-                vec![("factory_id", factory_id.clone().into())]
-            }
             Self::UnknownSdkLang { sdk_lang } => vec![("sdk_lang", (*sdk_lang).into())],
             Self::UnusableSdkVersion {
                 factory_id,
@@ -418,6 +410,25 @@ impl TopologyIssue {
             }
             Self::MaxCellsZero { tasklet } => vec![("tasklet", tasklet.clone().into())],
             Self::DeclarationUnreadable { reason } => vec![("reason", reason.clone().into())],
+            Self::UnknownField {
+                declaration,
+                fields,
+            } => vec![
+                ("declaration", declaration.clone().into()),
+                ("fields", fields.clone().into()),
+            ],
+            Self::InvalidSetting {
+                declaration,
+                setting,
+                value,
+                expected,
+            } => vec![
+                ("declaration", declaration.clone().into()),
+                ("setting", setting.clone().into()),
+                ("value", value.clone().into()),
+                ("expected", expected.clone().into()),
+            ],
+            Self::RemoteOnFlow { factory_id } => vec![("factory_id", factory_id.clone().into())],
             Self::MultipleOutputChannels { tasklet } => vec![("tasklet", tasklet.clone().into())],
             Self::BranchingChainedLoop { channel, leaves } => vec![
                 ("channel", channel.clone().into()),
@@ -426,16 +437,10 @@ impl TopologyIssue {
             Self::ChainedLoopTerminalWithoutHandoff { tasklet } => {
                 vec![("tasklet", tasklet.clone().into())]
             }
-            Self::CorrectionWithoutTier
-            | Self::CorrectionWindowZero
+            Self::CorrectionWindowZero
             | Self::CheckpointEveryZero
-            | Self::CheckpointAckWithoutTier
-            | Self::EffectivelyOnceOnBounded
-            | Self::CorrectionWindowOnBounded
-            | Self::CheckpointOnBounded
             | Self::AtCheckpointWithoutMaxDelay
             | Self::NoTasklets
-            | Self::SyncDurabilityWithoutPersistence
             | Self::EffectivelyOnceWithoutPersistence
             | Self::CheckpointMaxDelayZero
             | Self::NoEntryChannel => Vec::new(),

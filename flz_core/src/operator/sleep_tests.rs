@@ -1,6 +1,8 @@
-//! An unbounded operator whose class sleeps parks at iteration `0` once every Cell has
-//! been idle for the window, and not while a Cell still holds work; one that
-//! does not sleep never parks. The deadline is promoted as a waiting poller
+//! A flow operator's deadlines. One whose class sets `sleep_after` parks at
+//! iteration `0` once every Cell has been idle for that long, and not while a
+//! Cell still holds work; one whose `sleep_after` is `false` never parks. One
+//! that ends from inside (a tasklet's `complete`, or `max_duration_ms`) reports
+//! its end once, after its Cells have run what they held. The deadline is promoted as a waiting poller
 //! promotes it, by a thread that takes no activation, so the Cells other
 //! tests hold are never drained here.
 
@@ -18,11 +20,13 @@ use crate::ErrorModel;
 
 const WINDOW_MS: u64 = 150;
 
-/// A persistent host unbounded class with one tasklet.
-fn unbounded_class(id: &str, sleeps: bool) {
+/// A host flow class kept locally with one tasklet, sleeping after
+/// `sleep_after_ms` or never.
+fn flow_class(id: &str, sleep_after_ms: Option<u64>) {
+    let sleep_after = sleep_after_ms.map_or("false".to_string(), |ms| ms.to_string());
     let json = format!(
-        r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,
-             "sleep_when_idle":{sleeps},
+        r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0",
+             "durable":{{"local":{{"sleep_after":{sleep_after}}}}},
              "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
              "tasklets":[{{"name":"p0"}}]}}"#
     );
@@ -96,6 +100,24 @@ fn park_of(
     None
 }
 
+/// The `OperatorCompleted` `(status, result)` of `id` shipped within `within`.
+fn completion_of(rx: &Receiver<RunnerMessage>, id: &str, within: Duration) -> Option<(String, Vec<u8>)> {
+    let deadline = Instant::now() + within;
+    while let Some(left) = deadline.checked_duration_since(Instant::now()) {
+        match rx.recv_timeout(left) {
+            Ok(RunnerMessage::EmitOperatorCompleted {
+                operator_id,
+                status,
+                result,
+                ..
+            }) if operator_id == id => return Some((status, result)),
+            Ok(_) => {}
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
 fn only_cell(node: &RunnerNode, id: &str) -> (Arc<OperatorInstance>, Arc<crate::cell::CellSlot>) {
     let instance = node.get_operator(id).expect("bound");
     let slot = Arc::clone(&instance.all_slots()[0]);
@@ -103,11 +125,10 @@ fn only_cell(node: &RunnerNode, id: &str) -> (Arc<OperatorInstance>, Arc<crate::
 }
 
 #[test]
-fn an_idle_unbounded_that_sleeps_parks_once_at_iteration_zero() {
+fn an_idle_flow_that_sleeps_parks_once_at_iteration_zero() {
     let _env = crate::runner::env_test_guard();
-    std::env::set_var("FLEZHA_PARK_IDLE_MS", WINDOW_MS.to_string());
     let factory = format!("sleep_idle_{}", std::process::id());
-    unbounded_class(&factory, true);
+    flow_class(&factory, Some(WINDOW_MS));
     let _promoter = Promoter::start();
     let (_node, rx) = bound(&factory, "sleep-idle-1");
 
@@ -120,15 +141,13 @@ fn an_idle_unbounded_that_sleeps_parks_once_at_iteration_zero() {
         park_of(&rx, "sleep-idle-1", Duration::from_millis(4 * WINDOW_MS)).is_none(),
         "it asked to sleep once"
     );
-    std::env::remove_var("FLEZHA_PARK_IDLE_MS");
 }
 
 #[test]
-fn an_unbounded_that_does_not_declare_sleeping_never_parks() {
+fn a_flow_that_does_not_declare_sleeping_never_parks() {
     let _env = crate::runner::env_test_guard();
-    std::env::set_var("FLEZHA_PARK_IDLE_MS", WINDOW_MS.to_string());
     let factory = format!("sleep_never_{}", std::process::id());
-    unbounded_class(&factory, false);
+    flow_class(&factory, None);
     let _promoter = Promoter::start();
     let (node, rx) = bound(&factory, "sleep-never-1");
 
@@ -137,15 +156,13 @@ fn an_unbounded_that_does_not_declare_sleeping_never_parks() {
     assert!(crate::poll_core::global()
         .instance_deadlines(instance.seq)
         .is_empty());
-    std::env::remove_var("FLEZHA_PARK_IDLE_MS");
 }
 
 #[test]
 fn a_cell_holding_work_keeps_the_operator_awake_until_it_is_done() {
     let _env = crate::runner::env_test_guard();
-    std::env::set_var("FLEZHA_PARK_IDLE_MS", WINDOW_MS.to_string());
     let factory = format!("sleep_busy_{}", std::process::id());
-    unbounded_class(&factory, true);
+    flow_class(&factory, Some(WINDOW_MS));
     let _promoter = Promoter::start();
     let hold = Duration::from_millis(3 * WINDOW_MS);
 
@@ -177,16 +194,14 @@ fn a_cell_holding_work_keeps_the_operator_awake_until_it_is_done() {
     assert!(park_of(&rx, "sleep-busy-flush", hold).is_none());
     drop(flushing);
     assert!(park_of(&rx, "sleep-busy-flush", Duration::from_secs(5)).is_some());
-    std::env::remove_var("FLEZHA_PARK_IDLE_MS");
 }
 
 #[test]
 fn recent_activity_re_arms_the_deadline_from_the_last_input() {
     let _env = crate::runner::env_test_guard();
     let window = Duration::from_millis(400);
-    std::env::set_var("FLEZHA_PARK_IDLE_MS", window.as_millis().to_string());
     let factory = format!("sleep_rearm_{}", std::process::id());
-    unbounded_class(&factory, true);
+    flow_class(&factory, Some(window.as_millis() as u64));
     let _promoter = Promoter::start();
     let started = Instant::now();
     let (node, rx) = bound(&factory, "sleep-rearm-1");
@@ -208,16 +223,63 @@ fn recent_activity_re_arms_the_deadline_from_the_last_input() {
         "slept {:?} after the bind, inside the window of the last activity",
         started.elapsed()
     );
-    std::env::remove_var("FLEZHA_PARK_IDLE_MS");
 }
 
 #[test]
-fn sleeping_without_persistence_is_refused_by_name() {
+fn a_class_kept_in_memory_has_no_sleep_interval_to_declare() {
     let json = r#"{"factory_id":"sleep_refused","sdk_lang":1,"sdk_version":"0.1.0",
-                   "persistent":false,"sleep_when_idle":true,
+                   "durable":{"false":{"sleep_after":1000}},
                    "channels":[{"name":"in","kind":"entry","chains":[[{"link":"into","tasklet":0}]]}],
                    "tasklets":[{"name":"p0"}]}"#;
     let refusal = crate::host::register_host_class_json(json.as_bytes()).expect_err("refused");
-    assert_eq!(refusal.code(), "topology.sleep_without_persistence");
+    assert_eq!(refusal.code(), "topology.unknown_field");
+    assert_eq!(refusal.to_error().details["fields"], "sleep_after");
     assert!(crate::operator::registry::get_class("sleep_refused").is_none());
+}
+
+#[test]
+fn a_flow_that_completes_from_inside_ends_once_its_cells_are_done() {
+    let _env = crate::runner::env_test_guard();
+    let factory = format!("complete_flow_{}", std::process::id());
+    flow_class(&factory, None);
+    let _promoter = Promoter::start();
+    let (node, rx) = bound(&factory, "complete-flow-1");
+    let (_, slot) = only_cell(&node, "complete-flow-1");
+
+    assert!(slot.mailbox.claim_inflight(), "the Cell holds work");
+    crate::operator::completion::complete(&slot, b"done".to_vec());
+    assert!(
+        completion_of(&rx, "complete-flow-1", Duration::from_millis(3 * WINDOW_MS)).is_none(),
+        "the end waits for the Cell"
+    );
+    slot.mailbox.release_inflight();
+
+    let (status, result) =
+        completion_of(&rx, "complete-flow-1", Duration::from_secs(5)).expect("the instance ended");
+    assert_eq!((status.as_str(), result.as_slice()), ("completed", &b"done"[..]));
+    assert!(
+        completion_of(&rx, "complete-flow-1", Duration::from_millis(3 * WINDOW_MS)).is_none(),
+        "it ended once"
+    );
+}
+
+#[test]
+fn a_flow_with_a_wall_clock_stop_ends_cancelled() {
+    let _env = crate::runner::env_test_guard();
+    let factory = format!("stop_flow_{}", std::process::id());
+    let json = format!(
+        r#"{{"factory_id":"{factory}","sdk_lang":1,"sdk_version":"0.1.0","max_duration_ms":{WINDOW_MS},
+             "durable":{{"local":{{"sleep_after":false}}}},
+             "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
+             "tasklets":[{{"name":"p0"}}]}}"#
+    );
+    crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
+    let _promoter = Promoter::start();
+    let started = Instant::now();
+    let (_node, rx) = bound(&factory, "stop-flow-1");
+
+    let (status, result) =
+        completion_of(&rx, "stop-flow-1", Duration::from_secs(5)).expect("the stop ended it");
+    assert_eq!((status.as_str(), result.len()), ("cancelled", 0));
+    assert!(started.elapsed() >= Duration::from_millis(WINDOW_MS));
 }

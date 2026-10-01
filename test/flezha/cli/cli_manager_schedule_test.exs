@@ -53,16 +53,16 @@ defmodule Flezha.Service.CliManagerScheduleTest do
     assert {:ok, %{init_values: %{"mode" => "daily"}}} = ScheduleStore.get("digest")
   end
 
-  test "schedule_add refuses a factory its runner announced as unbounded" do
-    stub(FleetManager, :factory_kind, fn "default", "prices" -> {:ok, :unbounded} end)
+  test "schedule_add refuses a factory its runner announced as flow" do
+    stub(FleetManager, :factory_run, fn "default", "prices" -> {:ok, :flow} end)
 
     err =
       capture_io(:stderr, fn ->
         assert catch_exit(add_digest(factory: "prices")) == {:shutdown, 2}
       end)
 
-    assert err =~ "factory 'prices' is an unbounded operator"
-    assert err =~ "(operator.factory_not_bounded)"
+    assert err =~ "factory 'prices' is a flow operator"
+    assert err =~ "(operator.factory_not_steps)"
     assert ScheduleStore.get("digest") == :error
   end
 
@@ -184,7 +184,7 @@ defmodule Flezha.Service.CliManagerScheduleTest do
 
     add_digest()
 
-    expect(OperatorManager, :start_bounded, fn "default", id, factory_id, _init, _opts ->
+    expect(OperatorManager, :start_steps, fn "default", id, factory_id, _init, _opts ->
       assert id =~ ~r/^digest@manual-\d+$/
       assert factory_id == "ai_digest"
       {:ok, %{operator_id: id}}

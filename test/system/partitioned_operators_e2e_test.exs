@@ -28,11 +28,11 @@ defmodule FlezhaTest.System.PartitionedOperatorsE2ETest do
   alias Flezha.Service.CliManager
   alias Flezha.Service.OperatorManager
   alias Flezha.Service.PluginManager
-  alias Flezha.Service.Bounded
+  alias Flezha.Service.Steps
   alias Flezha.State.Paths
   alias Flezha.State.TaskJournal
   alias FlezhaTest.Helper.NodeTestHelper
-  alias FlezhaTest.Helper.BoundedResumeHarness
+  alias FlezhaTest.Helper.StepsResumeHarness
 
   @relay_tasklet "partition_relay_tasklet"
   @dynamic_tasklet "dynamic_cell_tasklet"
@@ -312,16 +312,16 @@ defmodule FlezhaTest.System.PartitionedOperatorsE2ETest do
              "the upstream forward is still routing by the old member set"
   end
 
-  # --- a per-input bounded operator as a group ---
+  # --- a per-input steps operator as a group ---
 
   # Every output of every member, into one collector; a rescale re-mints the
   # plugin onto the new members from the live table.
   defp collect_group(namespace, group) do
-    collector = spawn_link(fn -> BoundedResumeHarness.collect_loop([]) end)
+    collector = spawn_link(fn -> StepsResumeHarness.collect_loop([]) end)
     plugin_id = "klw_sink_#{System.unique_integer([:positive])}"
 
     sink = %{
-      BoundedResumeHarness.forward_sink(plugin_id, collector)
+      StepsResumeHarness.forward_sink(plugin_id, collector)
       | namespace: namespace,
         operator_id: group
     }
@@ -331,16 +331,16 @@ defmodule FlezhaTest.System.PartitionedOperatorsE2ETest do
   end
 
   defp trade(namespace, member, text),
-    do: BoundedResumeHarness.send_turn(namespace, member, text, "trades")
+    do: StepsResumeHarness.send_turn(namespace, member, text, "trades")
 
   defp await_sink(collector, expected) do
     assert NodeTestHelper.wait_until(
              fn ->
-               Enum.sort(BoundedResumeHarness.collected(collector)) == Enum.sort(expected)
+               Enum.sort(StepsResumeHarness.collected(collector)) == Enum.sort(expected)
              end,
              30_000
            ),
-           "the sink holds #{inspect(BoundedResumeHarness.collected(collector))}, " <>
+           "the sink holds #{inspect(StepsResumeHarness.collected(collector))}, " <>
              "expected #{inspect(expected)}"
   end
 
@@ -353,14 +353,14 @@ defmodule FlezhaTest.System.PartitionedOperatorsE2ETest do
              "expected #{inspect(expected)}"
   end
 
-  @tag capability: :bounded, skip: FlezhaTest.SystemCase.deferral(:bounded)
-  test "a per-input bounded runs as a group: by key, a mis-route parked, a rescale sealed" do
-    namespace = "partitioned_bounded_e2e"
+  @tag capability: :steps, skip: FlezhaTest.SystemCase.deferral(:steps)
+  test "a per-input steps runs as a group: by key, a mis-route parked, a rescale sealed" do
+    namespace = "partitioned_steps_e2e"
     start_fleet(namespace, 2)
     group = "kloop#{System.unique_integer([:positive])}"
 
     assert {:ok, %{members: [p0, p1]}} =
-             PartitionGroup.start(namespace, builder(group, "keyed_loop_bounded"), 2)
+             PartitionGroup.start(namespace, builder(group, "keyed_loop_steps"), 2)
 
     collector = collect_group(namespace, group)
 
@@ -414,7 +414,7 @@ defmodule FlezhaTest.System.PartitionedOperatorsE2ETest do
     await_iterations(p1, [3])
 
     assert {:error, {:uncommitted_iteration, [1]}} =
-             Bounded.rewind_instance(namespace, p0, 0)
+             Steps.rewind_instance(namespace, p0, 0)
 
     for text <- ["SOL-USD:3", "BTC-USD:4", "ETH-USD:2"] do
       [symbol | _] = String.split(text, ":")
@@ -435,16 +435,16 @@ defmodule FlezhaTest.System.PartitionedOperatorsE2ETest do
     assert info_after =~ "all 256 key groups owned exactly once"
   end
 
-  @tag capability: :bounded, skip: FlezhaTest.SystemCase.deferral(:bounded)
-  test "a bounded operator that reads one message is refused partitions" do
+  @tag capability: :steps, skip: FlezhaTest.SystemCase.deferral(:steps)
+  test "a steps operator that reads one message is refused partitions" do
     namespace = "partitioned_once_e2e"
     start_fleet(namespace, 2)
     group = "once#{System.unique_integer([:positive])}"
 
     # A class whose loop mode no bind has declared is refused at its first
     # member's bind; the record is node-wide, so forget any earlier test's.
-    ClassRegistry.put_partitioning("echo_bounded", %{keyless: false, loop_mode: nil})
-    assert {:error, refusal} = PartitionGroup.start(namespace, builder(group, "echo_bounded"), 2)
+    ClassRegistry.put_partitioning("echo_steps", %{keyless: false, each: nil})
+    assert {:error, refusal} = PartitionGroup.start(namespace, builder(group, "echo_steps"), 2)
     assert refusal =~ "failed to start"
     assert refusal =~ "PartitionsWithoutPerInputLoop"
     refute refusal =~ "PartitionsWithoutKeyedTasklet"
@@ -454,12 +454,12 @@ defmodule FlezhaTest.System.PartitionedOperatorsE2ETest do
     single = "once_single#{System.unique_integer([:positive])}"
 
     assert {:ok, _} =
-             OperatorManager.start_operator(namespace, builder(single, "echo_bounded"))
+             OperatorManager.start_operator(namespace, builder(single, "echo_steps"))
 
     :ok = OperatorManager.stop_operator(namespace, single)
 
-    assert {:error, "PartitionsWithoutPerInputLoop: class echo_bounded" <> _} =
-             PartitionGroup.start(namespace, builder(group, "echo_bounded"), 2)
+    assert {:error, "PartitionsWithoutPerInputLoop: class echo_steps" <> _} =
+             PartitionGroup.start(namespace, builder(group, "echo_steps"), 2)
 
     assert PartitionGroup.members(namespace, group) == []
   end

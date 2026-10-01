@@ -307,7 +307,7 @@ defmodule Flezha.Convergence.DiffTest do
       }
 
       # Alive (the Overwatch stays), unbound, nothing subscribed: a parked
-      # bounded loop. The rehydrating bind replays its plugins.
+      # steps loop. The rehydrating bind replays its plugins.
       reality = %{
         active_runners: %{ns: MapSet.new(["e"])},
         operators: %{

@@ -16,6 +16,7 @@ defmodule Flezha.Operator.Migration do
   """
 
   alias Flezha.Identificator
+  alias Flezha.Operator.Builder
   alias Flezha.Operator.Calls
   alias Flezha.Operator.ClassRegistry
   alias Flezha.Operator.Ingest
@@ -38,8 +39,8 @@ defmodule Flezha.Operator.Migration do
   @behaviour Flezha.Shutdown.Step
 
   @doc """
-  Suspend an instance of either kind that asked to sleep (a bounded operator at the
-  committed boundary of iteration `iter`, an unbounded operator at `0`): write its park
+  Suspend an instance of either kind that asked to sleep (a steps operator at the
+  committed boundary of iteration `iter`, a flow operator at `0`): write its park
   record, evict it from its runner (`RemOperator`), release the registry's
   runner binding, and arm the recorded wake deadline. The registry entry (and
   the Overwatch process) stay, so a new input still has somewhere to land; it
@@ -62,7 +63,7 @@ defmodule Flezha.Operator.Migration do
   end
 
   @doc """
-  Rewind a bounded loop to the committed boundary of iteration `to_iter`: journal
+  Rewind a steps loop to the committed boundary of iteration `to_iter`: journal
   the rewind — which bumps the epoch and un-commits every iteration above it —
   then evict the instance from its runner and rehydrate it.
 
@@ -163,7 +164,7 @@ defmodule Flezha.Operator.Migration do
     end
   end
 
-  # A bounded operator's staged plugin output carries no natural key, so a
+  # A steps operator's staged plugin output carries no natural key, so a
   # re-run's output cannot be relied on to overwrite the original at every sink.
   # The only undo the engine can guarantee is the tasklet's own `compensate`
   # hook — so an unwound tasklet that emitted and declares none blocks the
@@ -185,7 +186,7 @@ defmodule Flezha.Operator.Migration do
   @spec enter_suspended(Overwatch.t(), ClassRegistry.park()) :: Overwatch.t()
   def enter_suspended(%Overwatch{} = state, park) do
     :telemetry.execute(
-      [:flezha, :bounded, :suspended],
+      [:flezha, :steps, :suspended],
       %{count: 1},
       %{namespace: state.namespace, operator_id: state.id}
     )
@@ -266,8 +267,8 @@ defmodule Flezha.Operator.Migration do
   def rehydrate(%Overwatch{} = state), do: state |> wake(nil) |> elem(1)
 
   @doc """
-  `rehydrate/1` with what the wake carries: `then: :stop` sends `BoundedStop`
-  to the runner the un-park binds, so a sleeping bounded operator stopped by a
+  `rehydrate/1` with what the wake carries: `then: :stop` sends `StepsStop`
+  to the runner the un-park binds, so a sleeping steps operator stopped by a
   user ends exactly as one stopped awake at the same boundary. A wake
   already in flight takes the stop on. `{:error, :no_runner}` when no runner
   can take the instance; it stays suspended.
@@ -289,7 +290,7 @@ defmodule Flezha.Operator.Migration do
 
       runner_id ->
         :telemetry.execute(
-          [:flezha, :bounded, :rehydrating],
+          [:flezha, :steps, :rehydrating],
           %{count: 1},
           %{namespace: state.namespace, operator_id: state.id, runner_id: runner_id}
         )
@@ -299,14 +300,14 @@ defmodule Flezha.Operator.Migration do
   end
 
   @doc """
-  A durable bounded class: the kind that owns a task-journal and a durable
+  A durable steps class: the one that owns a task-journal and a durable
   input log. An opted-out class keeps only its run's in-memory queue and
   re-runs from the top.
   """
-  @spec durable_bounded?(Overwatch.t(), map()) :: boolean()
-  def durable_bounded?(%Overwatch{} = state, operator) do
-    state.builder.kind == :bounded and
-      PersistenceResolver.persistence_enabled?(
+  @spec durable_steps?(Overwatch.t(), map()) :: boolean()
+  def durable_steps?(%Overwatch{} = state, operator) do
+    Builder.journals?(state.builder) and
+      PersistenceResolver.keeps_state?(
         Keyword.get(operator.opts, :operator_class, operator.id)
       )
   end
@@ -378,7 +379,7 @@ defmodule Flezha.Operator.Migration do
   end
 
   # Every caller still waiting learns at once that no answer will come: the
-  # bounded run's terminal status when it ended as one, `stopped` otherwise.
+  # steps run's terminal status when it ended as one, `stopped` otherwise.
   # An ended run never reads its undelivered input, so the operators that
   # called into it are answered too. A stopped one keeps its input for a start:
   # when it journals its input, the operators' calls are in that log and are
@@ -543,7 +544,7 @@ defmodule Flezha.Operator.Migration do
       release_runner(state)
 
       :telemetry.execute(
-        [:flezha, :bounded, :rewind],
+        [:flezha, :steps, :rewind],
         %{count: 1, epoch: TaskJournal.current_epoch(state.id)},
         %{namespace: state.namespace, operator_id: state.id, to_iter: to_iter}
       )
@@ -633,7 +634,7 @@ defmodule Flezha.Operator.Migration do
 
     Lifecycle.publish_binding(recovered, state.runner_id)
 
-    if carried(state) == :stop, do: ControlUnit.bounded_stop(recovered.runner_id, state.id)
+    if carried(state) == :stop, do: ControlUnit.steps_stop(recovered.runner_id, state.id)
 
     # The bound runner's state supersedes a snapshot stored before the bind.
     %{recovered | migrate_task: nil, snapshot: nil, bound_at: System.system_time(:millisecond)}

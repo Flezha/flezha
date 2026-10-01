@@ -26,10 +26,10 @@ SHALL run under exactly that id, as before.
 - **WHEN** application code calls the administration surface's start with the factory `echo` and no id
 - **THEN** an operator SHALL start under a generated id beginning with `echo-`
 
-#### Scenario: A tasklet spawns a bounded operator without an id
+#### Scenario: A tasklet spawns a steps operator without an id
 
-- **WHEN** a tasklet requests a spawn of the bounded factory `triage` with a payload and no id
-- **THEN** a new bounded instance SHALL start under a generated id beginning with `triage-`, with the
+- **WHEN** a tasklet requests a spawn of the steps factory `triage` with a payload and no id
+- **THEN** a new steps instance SHALL start under a generated id beginning with `triage-`, with the
   payload as its first input
 
 #### Scenario: A named start keeps its id
@@ -43,7 +43,7 @@ A generated id SHALL be the factory id, a `-`, and 16 lowercase base32 character
 millisecond time and random bits drawn from a cryptographically strong source. The factory part
 SHALL be trimmed, without a trailing `-` or `_`, so the whole id passes the operator id limit. For a
 partitioned start the trim SHALL also leave room for the largest member suffix, so every member id
-passes the limit. The generator SHALL be the one that mints the controller's other bounded ids.
+passes the limit. The generator SHALL be the one that mints the controller's other steps ids.
 
 #### Scenario: A short factory id is kept whole
 
@@ -83,8 +83,8 @@ start that names its own id SHALL never be redrawn.
 
 #### Scenario: A leftover state folder counts as taken
 
-- **GIVEN** a finished bounded operator whose state folder is still inside its retention window
-- **AND** the generator is made to produce that bounded operator's id, then a free one
+- **GIVEN** a finished steps operator whose state folder is still inside its retention window
+- **AND** the generator is made to produce that steps operator's id, then a free one
 - **WHEN** a start without an id is issued
 - **THEN** the operator SHALL start under the free id and the old folder SHALL be untouched
 
@@ -131,7 +131,7 @@ rather than an invented one.
 
 A verb that acts on an existing operator SHALL keep requiring its id: `stop`, `send`, `listen`,
 `info`, `rewind`, `scale`, and plugin enable and disable. A schedule SHALL keep building its own
-per-slot instance id. Delivering into a running bounded operator is governed by the spawn capability, which
+per-slot instance id. Delivering into a running steps operator is governed by the spawn capability, which
 requires an id for it.
 
 #### Scenario: Stop without an id is refused
@@ -148,7 +148,7 @@ requires an id for it.
 
 `docs/guides/running_operators.md`, the `flz operator start` help screen and `docs/sdk/admin.md` SHALL
 state, next to the start call, that a start without an id retried after a lost reply starts a second operator, that a second
-unbounded operator runs until it is stopped, and that passing an id prevents it. The dangers of a spawn without an
+flow operator runs until it is stopped, and that passing an id prevents it. The dangers of a spawn without an
 id are documented by the spawn capability.
 
 #### Scenario: The CLI and administration pages state the retry danger

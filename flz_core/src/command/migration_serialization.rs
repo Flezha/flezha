@@ -1,6 +1,6 @@
 //! `MigrationSerialization` — produces the per-Tasklet / per-Cell
 //! state blob per `operator-mvp-rust/design.md` Decision 10, then removes
-//! the UnboundedOperator instance from the local registry (the controller is migrating
+//! the Operator instance from the local registry (the controller is migrating
 //! it elsewhere).
 
 use super::{CommandAction, Reply};

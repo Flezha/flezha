@@ -200,7 +200,7 @@ override the default. This SHALL hold for a host operator of either kind.
 
 #### Scenario: The gateway answers 202 at once
 
-- **WHEN** an unbounded host's graph answers `{"status":202,"body":{"accepted":true}}` through `response()`
+- **WHEN** a flow host's graph answers `{"status":202,"body":{"accepted":true}}` through `response()`
 - **THEN** the client SHALL receive status 202, `content-type: application/json` and the body `{"accepted":true}`
 
 #### Scenario: The gateway refuses a user over budget
@@ -208,9 +208,9 @@ override the default. This SHALL hold for a host operator of either kind.
 - **WHEN** the host answers `{"status":429,"headers":{"retry-after":"3600"},"body":"daily budget spent"}`
 - **THEN** the client SHALL receive status 429, the header `retry-after: 3600` and the text body
 
-#### Scenario: A bounded host answers a request
+#### Scenario: A steps host answers a request
 
-- **WHEN** the plugin is enabled on a `per_input` bounded operator whose turn answers `{"status":200,"body":"pong"}` through `response()`, and a client sends `GET /ping`
+- **WHEN** the plugin is enabled on a `per_input` steps operator whose turn answers `{"status":200,"body":"pong"}` through `response()`, and a client sends `GET /ping`
 - **THEN** the client SHALL receive status 200 and the body `pong`
 
 ### Requirement: An answer that is not an envelope SHALL be answered 502
@@ -296,13 +296,13 @@ and body. The streamed operator SHALL be either kind, awake or asleep.
 
 #### Scenario: A session's parts, then its answer
 
-- **GIVEN** a gateway that answers `GET /sessions/anna-42/events` with `{"stream":"anna-42"}`, and a `per_input` bounded session `anna-42` whose turn sends three parts and then emits its answer on the sink `events`
+- **GIVEN** a gateway that answers `GET /sessions/anna-42/events` with `{"stream":"anna-42"}`, and a `per_input` steps session `anna-42` whose turn sends three parts and then emits its answer on the sink `events`
 - **WHEN** a client reads the events endpoint with `curl -N` and a message is then posted to the session
 - **THEN** the client SHALL read three `part` events in order and then one `output` event carrying the answer
 
-#### Scenario: An unbounded operator's outputs
+#### Scenario: A flow operator's outputs
 
-- **WHEN** the gateway answers a stream envelope naming an unbounded operator that emits on a sink, and that operator is sent an input
+- **WHEN** the gateway answers a stream envelope naming a flow operator that emits on a sink, and that operator is sent an input
 - **THEN** the client SHALL read an `output` event carrying that output
 
 #### Scenario: An asleep session is streamed

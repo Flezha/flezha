@@ -1,7 +1,7 @@
 defmodule FlezhaTest.System.PartStreamE2ETest do
   @moduledoc """
   Parts end to end on the runtime `FLEZHA_E2E_RUNTIME` selects: the `part_echo`
-  (unbounded) and `part_echo_bounded` (`per_input`) fixtures send the parts
+  (flow) and `part_echo_steps` (`per_input`) fixtures send the parts
   `1..n` for the input `n` and then emit `done:<n>` on their sink `answer`, and
   `retry:<n>` sends them again on a second attempt.
 
@@ -28,7 +28,7 @@ defmodule FlezhaTest.System.PartStreamE2ETest do
 
   @moduletag timeout: 300_000
 
-  @fixtures [part_echo: :unbounded, part_echo_bounded: :bounded]
+  @fixtures [part_echo: :flow, part_echo_steps: :steps]
 
   setup do
     namespace = unique("parts")
@@ -45,7 +45,7 @@ defmodule FlezhaTest.System.PartStreamE2ETest do
 
         text = cli_listen(ns, id, "text", fn -> send!(ns, id, "3") end)
 
-        # A durable bounded output carries its stamps as a third field.
+        # A durable steps output carries its stamps as a third field.
         assert [p1, p2, p3, output | _] = text
         assert p1 == "answer\t1\tpart=0 attempt=1 cell=#{cell(id)}"
         assert p2 == "answer\t2\tpart=1 attempt=1 cell=#{cell(id)}"
@@ -119,9 +119,9 @@ defmodule FlezhaTest.System.PartStreamE2ETest do
     end
   end
 
-  test "a dead-lettered input of an unbounded operator is printed as a notice",
+  test "a dead-lettered input of a flow operator is printed as a notice",
        %{namespace: ns} do
-    id = start!(ns, :poison_probe, :unbounded)
+    id = start!(ns, :poison_probe, :flow)
     text = cli_listen(ns, id, "text", fn -> send!(ns, id, "poison") end, &(&1 =~ "error="))
 
     assert [notice] = Enum.filter(text, &(&1 =~ "error="))
@@ -130,9 +130,9 @@ defmodule FlezhaTest.System.PartStreamE2ETest do
     assert fields =~ ~r/^error=input\.dead_lettered entry=#{id}\/\S+$/
   end
 
-  test "idle events stay away while a bounded session's turn streams parts",
+  test "idle events stay away while a steps session's turn streams parts",
        %{namespace: ns} do
-    id = start!(ns, :part_echo_bounded, :bounded)
+    id = start!(ns, :part_echo_steps, :steps)
     test = self()
 
     {:ok, :done} =
@@ -156,7 +156,7 @@ defmodule FlezhaTest.System.PartStreamE2ETest do
     builder = %Builder{
       id: id,
       factory_id: to_string(factory),
-      kind: kind,
+      run: kind,
       opts: [plugins: plugins]
     }
 
@@ -195,7 +195,7 @@ defmodule FlezhaTest.System.PartStreamE2ETest do
 
   # The fixtures' tasklet names differ by kind; the part names its own Cell.
   defp tasklet(id),
-    do: if(String.starts_with?(id, "part_echo_bounded"), do: "part_echo_turn", else: "part_echo")
+    do: if(String.starts_with?(id, "part_echo_steps"), do: "part_echo_turn", else: "part_echo")
 
   defp hb_parts_sent do
     LivenessCounters.snapshot_all().channels

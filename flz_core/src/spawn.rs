@@ -1,7 +1,7 @@
-//! Tasklet-requested spawn of a bounded operator
+//! Tasklet-requested spawn of a steps operator
 //! (`tasklet-requested-spawn`).
 //!
-//! [`request`] ships one `SpawnBoundedRequest` on the control plane and hands
+//! [`request`] ships one `SpawnStepsRequest` on the control plane and hands
 //! the caller a [`SpawnHandle`] at once. The request never blocks the
 //! tasklet and its failure is never the tasklet's failure: everything the
 //! controller decides comes back through the handle, and a handle nobody reads
@@ -149,7 +149,7 @@ pub struct SpawnResult {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SpawnError {
     /// The controller's refusal under its own code: `operator.already_running`,
-    /// `operator.factory_unknown`, `operator.factory_not_bounded`, a policy
+    /// `operator.factory_unknown`, `operator.factory_not_steps`, a policy
     /// or quota refusal, or any other.
     Refused(FlezhaError),
     /// No answer arrived within [`SPAWN_RESULT_TIMEOUT`].
@@ -370,7 +370,7 @@ fn interpret(instance_id: &str, reply: AckResult) -> Result<SpawnResult, SpawnEr
 
 fn warn(instance_id: &str, factory_id: &str, error: &SpawnError) {
     crate::shutdown::say(&format!(
-        "[flezha] spawn_bounded(factory `{factory_id}`, id `{instance_id}`) failed ({}): {error}",
+        "[flezha] spawn_steps(factory `{factory_id}`, id `{instance_id}`) failed ({}): {error}",
         error.code()
     ));
 }
@@ -425,9 +425,9 @@ pub fn request(
         return SpawnHandle::resolved(id, factory_id, Ok(skipped));
     }
 
-    let reference_id = format!("spawn-bounded-{}-{}", id, crate::util::nonce_suffix());
+    let reference_id = format!("spawn-steps-{}-{}", id, crate::util::nonce_suffix());
     let command =
-        crate::pb::command_request::Command::SpawnBoundedRequest(crate::pb::SpawnBoundedRequest {
+        crate::pb::command_request::Command::SpawnStepsRequest(crate::pb::SpawnStepsRequest {
             instance_id: id.clone(),
             identity: origin.identity(&factory_id, &payload),
             factory_id: factory_id.clone(),
@@ -542,7 +542,7 @@ mod tests {
         for code in [
             "operator.already_running",
             "operator.factory_unknown",
-            "operator.factory_not_bounded",
+            "operator.factory_not_steps",
             "quota.exceeded",
         ] {
             let refusal = FlezhaError::new(code, Default::default());

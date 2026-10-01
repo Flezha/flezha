@@ -184,10 +184,7 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
     builder = %Builder{
       id: operator_id,
       factory_id: @factory,
-      init_values: %{},
-      # No periodic capture: a snapshot would truncate the very records the
-      # drill folds.
-      opts: [snapshot_interval: 0]
+      init_values: %{}
     }
 
     assert {:ok, info} = OperatorManager.start_operator(@namespace, builder)

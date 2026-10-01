@@ -133,7 +133,7 @@ firing is at-least-once, exactly as input processing is; `on_timer` carries
 the same idempotence advice as `run`.
 
 A registration made during a replay **is** registered — the opposite of
-`ctx.spawn_bounded`, which answers `SkippedOnReplay`. A timer is internal
+`ctx.spawn_steps`, which answers `SkippedOnReplay`. A timer is internal
 state; skipping it would rebuild a pending set the live run never had.
 
 ## Failure of a firing
@@ -142,10 +142,10 @@ An `on_timer` panic or error climbs the input channel's retry ladder and
 parks to the dead-letter queue exactly as a failing `run` does. The removal is
 durable either way, so a **poison timer parks once instead of firing forever**.
 
-## Timers in a bounded operator
+## Timers in a steps operator
 
-A bounded tasklet's Cell registers, persists and restores its timers exactly
-as an unbounded operator Cell does. What differs is when a firing runs, since a bounded operator
+A steps tasklet's Cell registers, persists and restores its timers exactly
+as a flow operator Cell does. What differs is when a firing runs, since a steps operator
 runs one pass at a time and commits it stage by stage:
 
 - **A firing is a trigger.** A due timer opens a pass at the tasklet that set
@@ -161,8 +161,8 @@ runs one pass at a time and commits it stage by stage:
   the Cell's pending set, off the wake list, until the stage that ran it
   commits; only then is its removal written. A crash before the pass's root
   commits fires the timer again into a fresh pass; a crash after it does not.
-  A class that journals nothing commits the removal with the firing, as an
-  unbounded operator does.
+  A class that journals nothing commits the removal with the firing, as a
+  flow operator does.
 - **A sleeping instance wakes at its earliest timer.** A parked instance
   records its earliest pending processing-time timer as its wake deadline;
   the controller rehydrates it then, and the restored timer fires into a new
@@ -170,7 +170,7 @@ runs one pass at a time and commits it stage by stage:
   input wakes the instance anyway.
 - **Timers end with the instance.** When an instance completes, fails, is
   stopped or ends its `ONCE` pass, its Cells are removed and their pending
-  timers go with them, as a removed unbounded operator Cell's do. A `ONCE` instance's
+  timers go with them, as a removed flow operator Cell's do. A `ONCE` instance's
   timer therefore fires only while its own stage is still running.
 - **An `on_timer` failure is a tasklet failure.** It climbs the input edge's
   retry ladder and, exhausted, compensates the run.
@@ -198,10 +198,10 @@ wedged, not an idle Operator.
 - **A `compensate` hook has no timers.** A rollback is not a place to arm a
   deadline: every SDK's ctx there answers a timer call with
   `runtime.timers_unavailable`.
-- **A host bounded tasklet fed by another tasklet has no event time.** The
-  host SDKs release a bounded tasklet's output unstamped, so such a tasklet
+- **A host steps tasklet fed by another tasklet has no event time.** The
+  host SDKs release a steps tasklet's output unstamped, so such a tasklet
   reads wall time under an event-time clock and its event-time timers never
-  come due. A tasklet fed by the bounded operator's entry channel is not affected,
+  come due. A tasklet fed by the steps operator's entry channel is not affected,
   nor is any tasklet in Rust or Elixir.
 - **Resolution is milliseconds.**
 - **A firing can run late** — during a restore backlog, or while every poll
@@ -223,8 +223,8 @@ Tests: `sdk/rust/tests/timer_{durability,firing,lifecycle,surface}.rs`, Java `Ac
 Elixir `sdk/elixir/test/flezha/sdk/timers_test.exs` and `test/flezha/sdk/cell_timers_test.exs`,
 and `test/system/cell_timers_e2e_test.exs`, which drives a session-timeout
 fixture on every runtime, including a re-seat from disk that proves the
-pending timer survived it. `test/system/bounded_timers_e2e_test.exs` drives
-the bounded operator rules on every runtime, and `bounded_crash_resume_e2e_test.exs`
+pending timer survived it. `test/system/steps_timers_e2e_test.exs` drives
+the steps operator rules on every runtime, and `steps_crash_resume_e2e_test.exs`
 the two crash placements around a firing's commit. Examples: `sdk/rust/examples/session_timeout.rs`,
 Java `E12_SessionTimeout`.
 

@@ -2,11 +2,11 @@
 
 ## Purpose
 
-The dead-letter-queue capability guarantees that a permanently-failing (poison) payload in an Unbounded operator is never silently dropped and never freezes the operator's progress. A failing tasklet invocation — returned error or panic/unhandled exception, one policy in both SDKs — is retried up to a per-channel budget (default 3 total attempts, exponential backoff + jitter; author-classified non-retryable errors park immediately). After exhaustion the payload is durably parked to the controller's DLQ store (`app_data/dlq/<operator_class>/<tasklet_id>/`, JSONL metadata index + per-entry payload blobs) strictly BEFORE the cell advances: tier-off sessions hold the cell until the fsynced append is acknowledged (`park_payload` data-stream frame + `ParkPayloadAck` control command), while effectively-once sessions record the park and the consumed-offset advance in one atomic WAL record so a crash can never advance past a lost park — parking un-freezes the min-watermark, keeping input-log retention and source credit moving. Users inspect, replay (explicit-only, through the ordinary input path), or drop entries via `flz dlq`; retention is bounded by age and total size with loud telemetry per deletion. A bounded operator's escape is AbortAll + saga compensation, with two exceptions that park: a message its entry channel cannot read, and a failed turn of a `per_input` loop declaring keep-progress, whose message the controller parks under the `_turn` slot before the turn is undone and the loop takes its next message.
+The dead-letter-queue capability guarantees that a permanently-failing (poison) payload in a Flow operator is never silently dropped and never freezes the operator's progress. A failing tasklet invocation — returned error or panic/unhandled exception, one policy in both SDKs — is retried up to a per-channel budget (default 3 total attempts, exponential backoff + jitter; author-classified non-retryable errors park immediately). After exhaustion the payload is durably parked to the controller's DLQ store (`app_data/dlq/<operator_class>/<tasklet_id>/`, JSONL metadata index + per-entry payload blobs) strictly BEFORE the cell advances: tier-off sessions hold the cell until the fsynced append is acknowledged (`park_payload` data-stream frame + `ParkPayloadAck` control command), while effectively-once sessions record the park and the consumed-offset advance in one atomic WAL record so a crash can never advance past a lost park — parking un-freezes the min-watermark, keeping input-log retention and source credit moving. Users inspect, replay (explicit-only, through the ordinary input path), or drop entries via `flz dlq`; retention is bounded by age and total size with loud telemetry per deletion. A steps operator's escape is AbortAll + saga compensation, with two exceptions that park: a message its entry channel cannot read, and a failed turn of a `per_input` loop declaring keep-progress, whose message the controller parks under the `_turn` slot before the turn is undone and the loop takes its next message.
 ## Requirements
 ### Requirement: Failing tasklet invocations are retried with backoff before parking
 
-An Unbounded tasklet invocation that fails — by returned error or by panic/unhandled exception — SHALL be retried up to a per-channel maximum (default 3 attempts) with exponential backoff and jitter. Authors SHALL be able to classify errors as non-retryable, which parks immediately without further attempts. A panic is retryable by default. The Rust and Java SDK dispatchers SHALL implement identical retry semantics, and the current catch-log-continue path SHALL be removed.
+A Flow tasklet invocation that fails — by returned error or by panic/unhandled exception — SHALL be retried up to a per-channel maximum (default 3 attempts) with exponential backoff and jitter. Authors SHALL be able to classify errors as non-retryable, which parks immediately without further attempts. A panic is retryable by default. The Rust and Java SDK dispatchers SHALL implement identical retry semantics, and the current catch-log-continue path SHALL be removed.
 
 #### Scenario: Transient failure recovers within the retry budget
 
@@ -42,7 +42,7 @@ After the retry budget is exhausted the SDK SHALL ship a park frame (payload byt
 - **WHEN** a tier-on cell's poison payload froze the operator's min-watermark
 - **THEN** after the park the cell's consumed offset advances past it, the min-watermark resumes, input-log retention proceeds, and a parked source-credit loop resumes granting
 
-### Requirement: DLQ storage is per-tasklet, durable, and bounded operator
+### Requirement: DLQ storage is per-tasklet, durable, and steps operator
 
 The controller SHALL store parked payloads under `app_data/dlq/<operator_class>/<tasklet_id>/` as a JSONL metadata index (entry id, cell key, channel, origin offset, error, attempts, replay generation, timestamp) with payload bytes in adjacent per-entry blob files. Retention SHALL be bounded by age and total size (defaults 30 days / 4 GiB, more restrictive wins); deleting an entry by retention SHALL emit a dedicated loud telemetry event, since it discards already-parked data. Parking and retention SHALL be observable via counters (`dlq_parked_total`, `dlq_dropped_by_retention_total`, per-tasklet entry count and bytes).
 
@@ -132,12 +132,12 @@ question it raises. An operator declaring none SHALL say so rather than printing
 - **WHEN** the user replays it after the operator is redeclared with a channel of that name
 - **THEN** the payload SHALL reach that channel
 
-### Requirement: A bounded operator SHALL dead-letter only an unreadable message and a failed per-input turn
+### Requirement: A steps operator SHALL dead-letter only an unreadable message and a failed per-input turn
 
-A bounded operator SHALL write to the dead-letter queue in two cases only: a message its
+A steps operator SHALL write to the dead-letter queue in two cases only: a message its
 entry channel cannot read, which is parked without a pass under the entry channel's slot as
 today, and a failed turn of a `per_input` loop declaring keep-progress (see
-`bounded-durable-loop`). In every other case a permanently-failing cell SHALL continue to
+`steps-durable-loop`). In every other case a permanently-failing cell SHALL continue to
 fail its tasklet (AbortAll) and trigger saga compensation, the profile's existing escape.
 Documentation SHALL state both cases and this equivalence, and that configurable
 `on_cell_failure` policies (DeadLetter | MinSuccess) remain deferred.
@@ -150,14 +150,14 @@ recorded them, which the controller SHALL read from the instance's input log bef
 append (the offset is still above the instance's floor then, so the record is retained). A
 class that keeps no input log SHALL park the entry with no payload. The entry's identity
 SHALL be the store's existing origin identity, `_turn@<offset>`, so a turn that fails again
-after a crash lands on the same entry. At every bind of a durable bounded instance, the
+after a crash lands on the same entry. At every bind of a durable steps instance, the
 controller SHALL remove the instance's `_turn` entries whose origin offset is above the
 instance's floor before it re-forwards the input-log tail, because such a turn never
 reached its `dead_lettered` record and will run again.
 
-#### Scenario: Bounded operator failure path unchanged
+#### Scenario: Steps operator failure path unchanged
 
-- **WHEN** a bounded operator that is not a `per_input` keep-progress loop has a cell that
+- **WHEN** a steps operator that is not a `per_input` keep-progress loop has a cell that
   fails permanently on a message it could read
 - **THEN** the tasklet aborts and compensation runs exactly as before this change, and
   nothing is written to the DLQ store
@@ -176,9 +176,9 @@ reached its `dead_lettered` record and will run again.
 - **WHEN** the instance is rebound and the re-run of the turn succeeds
 - **THEN** the DLQ SHALL hold no entry for offset 9
 
-### Requirement: An unbounded operator's failure handling SHALL NOT change
+### Requirement: A flow operator's failure handling SHALL NOT change
 
-The failure handling of an unbounded operator SHALL be the reference the bounded turn
+The failure handling of a flow operator SHALL be the reference the steps turn
 follows and SHALL NOT change with it: the retry ladder, the park before the Cell advances
 on either tier, the entry's slot, identity and fields, and `flz dlq` SHALL behave exactly as
 before this change.

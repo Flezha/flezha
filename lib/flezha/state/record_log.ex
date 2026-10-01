@@ -2,7 +2,7 @@ defmodule Flezha.State.RecordLog do
   @moduledoc """
   Per-instance append-only record log on the Cell persistence substrate.
 
-  What a bounded instance's `task.journal` (`Flezha.State.TaskJournal`) needs
+  What a steps instance's `task.journal` (`Flezha.State.TaskJournal`) needs
   from that substrate: a WAL-framed record stream written through the existing
   `WalWriter` + `FsyncBatcher` path under a reserved `Flezha.State.Paths`
   identity, with exactly two operations — a **durable append** (assign the next

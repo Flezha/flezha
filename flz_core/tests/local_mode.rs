@@ -36,7 +36,7 @@ fn one_run() -> MutexGuard<'static, ()> {
 /// SDK's local-mode example declares. `total` is dynamic, so the run mints
 /// one Cell per key the upstream tasklet resolves.
 const TWO_STEP: &str = r#"{
-    "factory_id": "local_two_step", "sdk_lang": 1, "sdk_version": "0.1.0", "persistent": true,
+    "factory_id": "local_two_step", "sdk_lang": 1, "sdk_version": "0.1.0", "durable":{"local":{"sleep_after":false}},
     "channels": [{"name": "lines",  "kind": "entry",      "chains": [[{"link": "into", "tasklet": 0}]]},
                  {"name": "mid",    "kind": "inter_task", "producer": 0,
                                     "chains": [[{"link": "into", "tasklet": 1}]]},
@@ -413,7 +413,7 @@ fn a_controller_only_declaration_is_refused_at_startup() {
     declare(
         r#"{
         "factory_id": "local_tier", "sdk_lang": 1, "sdk_version": "0.1.0",
-        "persistent": true, "effectively_once": true,
+        "run": {"flow": {"exactly": "effectively_once"}},
         "channels": [{"name": "lines", "kind": "entry", "chains": [[{"link": "into", "tasklet": 0}]]}],
         "tasklets": [{"name": "only"}]
     }"#,

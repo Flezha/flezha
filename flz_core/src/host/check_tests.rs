@@ -27,11 +27,6 @@ struct Row {
     needs: String,
 }
 
-/// The surface no record can express either. `detached` is authorable here —
-/// the record is data, and a tasklet nothing wires is one line of it — so
-/// only the flag family the fixture header names is skipped.
-const UNWRITABLE: [&str; 1] = ["raw_flags"];
-
 /// The rows a record can be judged on. A short-form row is refused by its SDK
 /// before any declaration exists, so the core never sees one.
 fn rows() -> Vec<Row> {
@@ -111,7 +106,6 @@ struct Interpreter {
     roles: Vec<String>,
     mailbox: HashMap<String, usize>,
     class: Vec<String>,
-    bounded: bool,
     merge_group: u32,
 }
 
@@ -288,27 +282,13 @@ impl Interpreter {
             .unwrap_or_else(|| channel.name.clone())
     }
 
+    /// `class.run(<tree>)` and `class.durable(<tree>)`: the tree's JSON is the
+    /// record's own member.
     fn class_flag(&mut self, flag: &str, value: &str) {
         match flag {
-            "bounded" => self.bounded = true,
-            "persistent" | "effectively_once" | "checkpoint_ack" | "sync_durability"
-            | "sleep_when_idle" => {
-                self.class.push(format!(r#""{flag}":true"#));
-            }
-            "checkpoint_every" => self.class.push(format!(r#""checkpoint_every":{value}"#)),
-            "correction_window" => self
-                .class
-                .push(format!(r#""correction_window_ms":{value}"#)),
-            "outputs_at_checkpoint" => {
-                self.class
-                    .push(r#""checkpoint_outputs":"at_checkpoint""#.to_string());
-                if !value.is_empty() {
-                    self.class
-                        .push(format!(r#""checkpoint_max_delay_ms":{value}"#));
-                }
-            }
+            "run" | "durable" => self.class.push(format!(r#""{flag}":{value}"#)),
             other => {
-                panic!("the fixture spells a class flag this interpreter does not map: {other}")
+                panic!("the fixture spells a class setting this interpreter does not map: {other}")
             }
         }
     }
@@ -364,9 +344,8 @@ impl Interpreter {
             .collect();
 
         let class: String = self.class.iter().map(|f| format!(",{f}")).collect();
-        let bounded = if self.bounded { r#","bounded":{}"# } else { "" };
         format!(
-            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0"{class}{bounded},
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0"{class},
                  "channels":[{}],"tasklets":[{}]}}"#,
             channels.join(","),
             tasklets.join(",")
@@ -391,7 +370,7 @@ fn record_of(row: &Row) -> HostClassDecl {
 }
 
 fn drivable(row: &Row) -> bool {
-    row.steps != "cited above" && !UNWRITABLE.contains(&row.needs.as_str())
+    row.steps != "cited above"
 }
 
 /// Every row of the refusal table, judged. This is the whole reference run: a
@@ -437,20 +416,58 @@ fn every_fixture_row_answers_what_it_names() {
     );
 }
 
-/// An unbounded-only setting on a bounded operator is refused by the bounded operator's name, never
-/// by the unbounded rule that assumes the tier it would rest on.
+/// A kind literal where a run is read is refused naming the literal.
 #[test]
-fn a_stream_setting_on_a_bounded_is_refused_by_the_bounded_name() {
+fn a_kind_literal_is_refused_by_name() {
     let row = Row {
-        refusal: "topology.checkpoint_on_bounded".into(),
-        topology: "checkpoint_bounded".into(),
-        steps: "class.bounded; class.persistent; class.checkpoint_ack; entry(in); in.into(plain)"
-            .into(),
-        needs: "bounded".into(),
+        refusal: "topology.invalid_setting".into(),
+        topology: "kind_literal_unbounded".into(),
+        steps: r#"class.run("unbounded"); entry(in); in.into(plain)"#.into(),
+        needs: "untyped_tree".into(),
     };
-    let issues = check(record_of(&row)).expect_err("a checkpoint on a bounded operator is refused");
-    let codes: Vec<String> = issues.iter().map(ErrorModel::code).collect();
-    assert_eq!(codes, ["topology.checkpoint_on_bounded"]);
+    let issues = check(record_of(&row)).expect_err("a kind literal is refused");
+    let error = issues[0].to_error();
+    assert_eq!(error.code, "topology.invalid_setting");
+    assert_eq!(error.details["value"], "unbounded");
+    assert_eq!(error.details["expected"], "flow | steps");
+}
+
+/// A setting written under a parent that does not carry it is refused naming
+/// both, and a class that says nothing is a flow operator kept locally.
+#[test]
+fn a_misplaced_setting_names_itself_and_its_parent() {
+    let row = |steps: &str| Row {
+        refusal: "topology.unknown_field".into(),
+        topology: "misplaced".into(),
+        steps: format!("{steps}; entry(in); in.into(plain)"),
+        needs: "untyped_tree".into(),
+    };
+    let details = |steps: &str| {
+        let issues = check(record_of(&row(steps))).expect_err("a misplaced setting is refused");
+        let error = issues[0].to_error();
+        assert_eq!(error.code, "topology.unknown_field", "{steps}");
+        (
+            error.details["declaration"].as_str().unwrap_or_default().to_string(),
+            error.details["fields"].as_str().unwrap_or_default().to_string(),
+        )
+    };
+    assert_eq!(
+        details(r#"class.run({"flow":{"each":"per_input"}})"#),
+        ("'flow' of operator 'misplaced'".to_string(), "each".to_string())
+    );
+    assert_eq!(
+        details(r#"class.durable({"false":{"sleep_after":1000}})"#),
+        ("'false' of operator 'misplaced'".to_string(), "sleep_after".to_string())
+    );
+    let accepted = check(record_of(&Row {
+        refusal: "ok".into(),
+        topology: "plain".into(),
+        steps: "entry(in); in.into(plain)".into(),
+        needs: "-".into(),
+    }))
+    .expect("a class that says nothing registers");
+    assert_eq!(accepted.run, crate::operator::settings::Run::default());
+    assert_eq!(accepted.durable, crate::operator::settings::Durable::local());
 }
 
 /// Every variant a builder can reach is produced by some row; the `unrowed` codes are
@@ -648,13 +665,12 @@ mod derivation {
     #[test]
     fn a_checkpoint_knob_implies_the_granularity() {
         let derived = derive(
-            "class.persistent; class.effectively_once; class.checkpoint_every(500); \
-             entry(in); in.into(plain)",
+            r#"class.run({"flow":{"exactly":{"effectively_once":{"ack":{"checkpoint":{"every":500}}}}}}); entry(in); in.into(plain)"#,
         );
         assert_eq!(
             derived.ack_granularity,
             HostAckGranularity::Checkpoint,
-            "six per-SDK helpers carried this implication; the core states it once"
+            "a checkpoint ack is the granularity the derived answer names"
         );
     }
 

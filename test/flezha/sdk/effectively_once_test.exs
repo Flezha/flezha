@@ -2,9 +2,9 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
   @moduledoc """
   The effectively-once tier in the SDK's own core: the one effect record an
   effectful invocation ships in place of the change records and the outputs,
-  the consumed offset it carries, the floor a restore rebuilds, and what a
-  class with persistence off does under the tier. No controller, no real
-  transport — frames are read off a native `LocalStream` the test owns.
+  the consumed offset it carries and the floor a restore rebuilds. No
+  controller, no real transport — frames are read off a native `LocalStream`
+  the test owns.
   """
   use ExUnit.Case, async: true
 
@@ -20,7 +20,6 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
     CheckpointStoreOp,
     StatelessTierOp,
     TierEdgeOp,
-    TierStoreNoPersistOp,
     TierStoreOp,
     TierTimerOp
   }
@@ -93,14 +92,6 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
     assert body.changes == []
     assert body.outputs == [%{channel: "sink", key: "k1", metadata: [], payload: "k1=a"}]
     assert body.consumed_offset == 5
-  end
-
-  test "a class with persistence off advances the seq under the tier and ships nothing" do
-    %{op: op} = start_operator(TierStoreNoPersistOp)
-    push(op, "k1=a", 0)
-
-    assert {:ok, %{"k1" => "a"}, 1} = Cell.read(cell!(op, @task), 1_000)
-    refute_received {:flz_data, _, _, _, _}
   end
 
   test "a mid-interval emit acknowledges nothing, and the checkpoint ships the interval" do

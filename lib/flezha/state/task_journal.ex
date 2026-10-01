@@ -1,7 +1,7 @@
 defmodule Flezha.State.TaskJournal do
   @moduledoc """
   Per-instance append-only task-progress journal for a durable structured
-  bounded operator: the markers of its progress, never its Cells' state or
+  steps operator: the markers of its progress, never its Cells' state or
   output.
 
   One `task.journal` per instance, written through the `WalWriter` framing +
@@ -371,7 +371,7 @@ defmodule Flezha.State.TaskJournal do
   `committed_task_idxs` are the tasklets already committed inside that
   still-in-flight iteration (skipped on resume) and `task_handoffs` what each of
   them released, so every uncommitted child branch re-seeds from exactly its own
-  parent's edge (`bounded-branching`). `handoff` is the previous iteration's
+  parent's edge (`steps-branching`). `handoff` is the previous iteration's
   terminal handoff — what a handoff-chained loop feeds its next iteration.
   `committed_tasks` carries every forward task commit with its iteration, the
   identities of the Cells it ran and the completion it asked for, which is what
@@ -493,8 +493,8 @@ defmodule Flezha.State.TaskJournal do
 
   @doc """
   Whether the instance's in-flight iteration has committed every **leaf**
-  tasklet of its tree — the completion rule of a branching bounded operator
-  (`bounded-branching`), derived from the journal alone.
+  tasklet of its tree — the completion rule of a branching steps operator
+  (`steps-branching`), derived from the journal alone.
 
   `leaf_tasks` is the class's declared leaf set (`ClassRegistry.leaf_tasks/1`, from
   the SDK's `AddOperator` response). `nil` — a class that declared none (a
@@ -551,7 +551,7 @@ defmodule Flezha.State.TaskJournal do
   @doc """
   The effect records the live `task_committed` and `compensated` entries name,
   as `first..last` ranges per Cell identity, in journal order. A Cell writer
-  holds its bounded operator Cell's outputs until a range names them; one its Cell
+  holds its steps operator Cell's outputs until a range names them; one its Cell
   wrote outside every range, between two ranges or above the last, belongs to
   an attempt that never committed (a crash, a failed stage, an unwound
   iteration). The cut never drops an entry whose records are still owed, so

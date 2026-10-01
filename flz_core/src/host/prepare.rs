@@ -1,7 +1,7 @@
 //! The prepare crossing: a payload whose consumers need keys or an event time
 //! the core cannot derive from bytes is staged and crossed to the host as a
 //! [`schema::ActivationKind::KeyRequest`] before it is enqueued — an entry
-//! payload, or a bounded operator's released value on its way into a keyed tasklet.
+//! payload, or a steps operator's released value on its way into a keyed tasklet.
 //! The invariant: an end-of-slice broadcast never overtakes a slice member
 //! still waiting on its answer.
 
@@ -52,7 +52,7 @@ pub struct StagedEntry {
     pub call: Option<Arc<str>>,
     pub replay: bool,
     pub stream: Arc<flz_transport::transport::FlezhaStream>,
-    /// The bounded stage that owes this value until its answer addresses
+    /// The steps stage that owes this value until its answer addresses
     /// it; `None` for an entry payload.
     pub stage: Option<usize>,
 }
@@ -262,7 +262,7 @@ fn deliver_prepared(
         metadata: Vec::new(),
     });
     if let Some(node) = entry.stage {
-        return crate::bounded::crossed(instance, node, Ok((value, entry.stream)));
+        return crate::steps::crossed(instance, node, Ok((value, entry.stream)));
     }
     crate::routing::route_to_consumers(
         instance,
@@ -277,7 +277,7 @@ fn deliver_prepared(
 }
 
 /// A failed prepare climbs its channel's ladder, one blocking re-crossing
-/// per attempt. Where the ladder would park an entry payload, a bounded operator
+/// per attempt. Where the ladder would park an entry payload, a steps operator
 /// stage's value fails its stage instead: nothing is parked.
 fn spawn_prepare_ladder(
     instance: Arc<OperatorInstance>,
@@ -321,7 +321,7 @@ fn spawn_prepare_ladder(
                 if let Err((error, _attempts)) =
                     crate::retry::climb_ladder(&label, channel.retry, first_error.message, attempt)
                 {
-                    crate::bounded::crossed(&instance, node, Err(error));
+                    crate::steps::crossed(&instance, node, Err(error));
                 }
             }
             None => crate::retry::run_entrance_ladder(

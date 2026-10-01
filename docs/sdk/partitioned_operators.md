@@ -1,7 +1,7 @@
 # Partitioned operators
 
 For operator authors and the users who run them. `--partitions N` materialises one
-operator, an unbounded operator or a `per_input` bounded operator, as N ordinary instances (`ohlc#p0..#p{N-1}`),
+operator, a flow operator or a `per_input` steps operator, as N ordinary instances (`ohlc#p0..#p{N-1}`),
 each owning a contiguous slice of 256 key groups. The model — partition as instance, no stored group record, key groups
 instead of `mod N`, a guarded routing contract — lives in
 [`../architecture/stream_profile.md`](../architecture/stream_profile.md#partitioned-operators).
@@ -69,11 +69,11 @@ deliberate everything-in-one-place aggregate belongs in the two-stage pattern be
 **statically** keyed class partitions normally: every member declares every key, and the ones
 outside its range receive no input.
 
-**A bounded operator that reads one message is refused.** A `once` or `chained` bounded operator would hand its
+**A steps operator that reads one message is refused.** A `once` or `chained` steps operator would hand its
 one message to one member while the others waited for nothing, so the SDK refuses the
 `AddOperator` with `PartitionsWithoutPerInputLoop`, ahead of the keyless check, and the class
-declares `loop_mode` in its response metadata so a later partitioned start of it is refused
-before any runner is touched. Only a `per_input` bounded operator is a group.
+declares `each` in its response metadata so a later partitioned start of it is refused
+before any runner is touched. Only a `per_input` steps operator is a group.
 
 ## Sources: filter the ask, never the data
 
@@ -96,7 +96,7 @@ which members succeeded and which failed, by name.
 **one worker per target member** (a worker is one queue with one in-flight slot, so a shared
 router would head-of-line-block every partition behind the slowest). Each message routes by
 `group(flz.key)` to the owning member's worker. A message with **no `flz.key`** (an emit on a
-channel not declared `.keyed()`, from an unbounded or a bounded operator) is parked with
+channel not declared `.keyed()`, from a flow or a steps operator) is parked with
 `partitioned target requires keyed emit`; it is never round-robined and never payload-hashed.
 
 ## The user's view
@@ -171,7 +171,7 @@ flz operator scale ohlc 5 --timeout 60000     # quiesce timeout in ms, default 3
    into the new owner's tree — an atomic rename on the same controller, the `WalTransfer`
    chunked pull (fsync, then rename, then drop the source) across controllers. Cell identity
    contains the key and no runner, so no file format changes. A member on another controller
-   is gathered here under its own id, and a bounded operator member's journal and input log travel
+   is gathered here under its own id, and a steps operator member's journal and input log travel
    with its Cells. The stop closed every member's writers first, on the node that ran it.
 5. **Start.** The M members start with the new ranges and restore through the ordinary bind —
    a cold working-set rebuild, the same cost class as crash-resume. A member placed on another
@@ -189,13 +189,13 @@ itself unhealthy, and the convergence loop restarts it so it re-reads the member
 surviving member keeps its worker and queued payloads, a removed member's queue is re-routed to
 the new owner). The rescale command itself reports the move, not the forwards.
 
-## A per-input bounded operator as a group
+## A per-input steps operator as a group
 
-A `per_input` bounded operator partitions like an unbounded operator: `--partitions N` starts N ordinary bounded operator
+A `per_input` steps operator partitions like a flow operator: `--partitions N` starts N ordinary steps operator
 instances, each with its own key-group range, journal, input log and pass sheet, through the
 same start, converge and rescale. Its entry edge must be keyed. A message reaches its member by
 key, through a keyed forward, or by member id (`flz operator send orders#p1 ...`); a key the
-member does not own parks under the entry channel and opens no pass. What a bounded operator adds is
+member does not own parks under the entry channel and opens no pass. What a steps operator adds is
 only what it already is:
 
 - **Each member ends and compensates itself.** `ctx.complete`, `max_duration`, a stop or a
@@ -205,7 +205,7 @@ only what it already is:
 - **Per member, by member id**: `flz operator rewind`, `flz state journal`,
   `flz state inbox`. `flz operator stop <group>` is one cooperative stop per member.
 - **A rescale happens between passes.** The quiesce waits until every member's input log is
-  consumed to its floor, which for a bounded operator holds when no pass is in flight and no message
+  consumed to its floor, which for a steps operator holds when no pass is in flight and no message
   is queued; a pass that outlives `--timeout` refuses the rescale with nothing changed.
 - **A rescale seals.** Each surviving member's journal is cut to its latest committed
   iteration before it restarts, whatever the class declares, because a moved Cell's earlier
@@ -213,7 +213,7 @@ only what it already is:
   range, and an all-or-nothing rollback stops at the seal. The scale command names the members
   it sealed. A new member starts at iteration 0 with an empty log.
 - **`once` and `chained` are refused** (`PartitionsWithoutPerInputLoop`), and so is `--text`.
-- **A spawn and a schedule name one instance.** Neither carries a key: `ctx.spawn_bounded`
+- **A spawn and a schedule name one instance.** Neither carries a key: `ctx.spawn_steps`
   naming a group's base id is refused as a plain start of that id is.
 
 ## Hot keys: two-stage aggregation
@@ -257,7 +257,7 @@ symbol — that stage 1's `key_by` must return, or the guard says so on the firs
   file move, tree adoption); the orchestration above it is exercised single-node.
 - Assignment is contiguous and even; the wire and opts carry an explicit range, but there is
   no authoring surface for a weighted assignment.
-- A `once` or `chained` bounded operator is not partitionable; see above.
+- A `once` or `chained` steps operator is not partitionable; see above.
 
 ## See also
 

@@ -479,7 +479,7 @@ GATES = (
 # `scripts/check-feature-symbols.sh` is deliberately not a row. It is not a gate
 # over the tree: it builds an artefact three ways and compares the exported
 # symbols, so it takes arguments, needs a compiler, and answers about one build
-# rather than about the repository. Two bounded operators call it directly.
+# rather than about the repository. Two CI workflows call it directly.
 
 
 def gate(gate_id):

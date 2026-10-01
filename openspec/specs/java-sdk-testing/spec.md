@@ -26,7 +26,7 @@ Line coverage of the `flezha-sdk-runtime` and `flezha-sdk-api` modules SHALL rea
 
 #### Scenario: Old API tests removed
 - **WHEN** the unit test suite is enumerated for tests referencing `OperatorHandler`, `OperatorRunner.THREAD_SPAWN`, `FactoryRegistry.registerFactory`, `FactoryMetadata`, `InputTransformer`, or `OutputTransformer`
-- **THEN** the count SHALL be zero — every such test is either deleted or rewritten against the new `UnboundedOperator` / `Tasklet` surface
+- **THEN** the count SHALL be zero — every such test is either deleted or rewritten against the new `Operator` / `Tasklet` surface
 
 ### Requirement: JNI Bridge Tests
 
@@ -46,7 +46,7 @@ The `flezha-sdk-native` module SHALL include dedicated JNI bridge tests that exe
 
 ### Requirement: Reference Java Compute Engine Test App
 
-The Java reference test app at `test/apps/java_runner/` SHALL implement its fixtures using the Java SDK's `UnboundedOperator` / `BoundedOperator` / `Tasklet` API. The built jar MUST accept the namespace as its first command-line argument and keep the process alive until stdin closes, matching `rust_runner`'s behavior and the shared test-app contract. The factory ids it registers SHALL be exactly the union of the `fixtures` in `test/apps/java_runner/conformance.json`, and for every capability that manifest does not defer the ids SHALL equal the Rust reference manifest's for that capability — the same id, sink channel names, output bytes and declared options. No registered id SHALL carry a `java_` prefix and no id SHALL be absent from the reference. The legacy `EchoMessageOperator` (and any other `operator-message-handlers`-driven factory) SHALL NOT be present; its inclusion is deferred until `operator-message-handlers` ships per-Tasklet `handleMessage`.
+The Java reference test app at `test/apps/java_runner/` SHALL implement its fixtures using the Java SDK's `Operator` / `Operator` / `Tasklet` API. The built jar MUST accept the namespace as its first command-line argument and keep the process alive until stdin closes, matching `rust_runner`'s behavior and the shared test-app contract. The factory ids it registers SHALL be exactly the union of the `fixtures` in `test/apps/java_runner/conformance.json`, and for every capability that manifest does not defer the ids SHALL equal the Rust reference manifest's for that capability — the same id, sink channel names, output bytes and declared options. No registered id SHALL carry a `java_` prefix and no id SHALL be absent from the reference. The legacy `EchoMessageOperator` (and any other `operator-message-handlers`-driven factory) SHALL NOT be present; its inclusion is deferred until `operator-message-handlers` ships per-Tasklet `handleMessage`.
 
 #### Scenario: Java test app builds and runs
 - **WHEN** `scripts/build-dist.sh` produces `dist/java_runner.jar` and `java -jar dist/java_runner.jar my_namespace` is run while the agent is up
@@ -58,7 +58,7 @@ The Java reference test app at `test/apps/java_runner/` SHALL implement its fixt
 
 #### Scenario: Java test app uses the new Tasklet / Ctx API exclusively
 - **WHEN** the Java test app's source files are scanned for `import com.flezha.sdk.OperatorHandler`, `com.flezha.sdk.FactoryRegistry`, `com.flezha.sdk.OperatorSettings`, `com.flezha.sdk.OperatorResult`, `com.flezha.sdk.OperatorRunner`, `com.flezha.sdk.InputTransformer`, or `com.flezha.sdk.OutputTransformer`
-- **THEN** zero matches SHALL be found — the test app's classes use only `UnboundedOperator`, `Tasklet`, `Ctx`, `ChannelBuilder`, and `FlezhaRunner.registerFactory`
+- **THEN** zero matches SHALL be found — the test app's classes use only `Operator`, `Tasklet`, `Ctx`, `ChannelBuilder`, and `FlezhaRunner.registerFactory`
 
 ### Requirement: Elixir Integration Harness Supports Java Runtime
 
@@ -94,7 +94,7 @@ The shared smoke tier `test/system/sdk_smoke_e2e_test.exs` SHALL exercise the se
 
 ### Requirement: CI Enforces the Full Java SDK Test Suite
 
-The project CI workflow SHALL run the Java SDK unit tests, the JNI bridge tests, and the shared smoke tier under `FLEZHA_E2E_RUNTIME=java` on every pull request that touches `sdk/java/**`, `flz_transport/**`, `test/apps/java_runner/**`, or `test/helpers/node_test_helper.ex`; the nightly end-to-end bounded operator SHALL run the full `:system` suite under `FLEZHA_E2E_RUNTIME=java` as its own matrix job. Failures in any of these SHALL block the PR or mark the nightly job red. After this change merges, every CI matrix entry, integration test, and smoke-tier invocation previously tagged `OPERATOR_MVP_JAVA_PENDING` SHALL be re-enabled (the tag is grep-and-untagged in one pass; see `operator-mvp-java/design.md` Decision 11). Tests tagged `OPERATOR_MESSAGE_HANDLERS_PENDING` SHALL remain disabled until `operator-message-handlers` ships.
+The project CI workflow SHALL run the Java SDK unit tests, the JNI bridge tests, and the shared smoke tier under `FLEZHA_E2E_RUNTIME=java` on every pull request that touches `sdk/java/**`, `flz_transport/**`, `test/apps/java_runner/**`, or `test/helpers/node_test_helper.ex`; the nightly end-to-end steps operator SHALL run the full `:system` suite under `FLEZHA_E2E_RUNTIME=java` as its own matrix job. Failures in any of these SHALL block the PR or mark the nightly job red. After this change merges, every CI matrix entry, integration test, and smoke-tier invocation previously tagged `OPERATOR_MVP_JAVA_PENDING` SHALL be re-enabled (the tag is grep-and-untagged in one pass; see `operator-mvp-java/design.md` Decision 11). Tests tagged `OPERATOR_MESSAGE_HANDLERS_PENDING` SHALL remain disabled until `operator-message-handlers` ships.
 
 #### Scenario: PR touching flz_transport runs the full Java suite
 - **WHEN** a pull request modifies a file under `flz_transport/src/`
@@ -246,38 +246,38 @@ Java SDK integration test class names and test descriptions SHALL use canonical 
 - **WHEN** `mvn -f sdk/java test` is run
 - **THEN** all integration test classes SHALL compile and run; no class name SHALL contain `Processor`, `User`, or `ComputeEngine`
 
-### Requirement: Reference Java test app registers a Bounded Operator
+### Requirement: Reference Java test app registers a steps operator
 
-The Java reference test app at `test/apps/java_runner/` SHALL register at least one `BoundedOperator` class via `Flezha.registerBounded(...)`, mirroring the bounded operator that `test/apps/rust_runner/` registers (an `EchoOperator` that emits its `args` as plugin output and returns success). The bounded operator SHALL be a hand-written `BoundedOperator` implementation (no annotation-processor sugar in v1). Registering the bounded operator SHALL NOT disturb the test app's unbounded operator registrations or its run-until-stdin-closes behavior.
+The Java reference test app at `test/apps/java_runner/` SHALL register at least one `Operator` class via `Flezha.registerSteps(...)`, mirroring the steps operator that `test/apps/rust_runner/` registers (an `EchoOperator` that emits its `args` as plugin output and returns success). The steps operator SHALL be a hand-written `Operator` implementation (no annotation-processor sugar in v1). Registering the steps operator SHALL NOT disturb the test app's flow operator registrations or its run-until-stdin-closes behavior.
 
-#### Scenario: Java test app registers a bounded operator factory
+#### Scenario: Java test app registers a steps operator factory
 
 - **WHEN** the Java test app starts and registers its operators
-- **THEN** it SHALL call `Flezha.registerBounded(EchoOperator.class)`, and the handshake `factory_ids` SHALL include the bounded operator's factory id alongside the unbounded operator factory ids
+- **THEN** it SHALL call `Flezha.registerSteps(EchoOperator.class)`, and the handshake `factory_ids` SHALL include the steps operator's factory id alongside the flow operator factory ids
 
-#### Scenario: Java and Rust test apps expose the same bounded operator factory
+#### Scenario: Java and Rust test apps expose the same steps operator factory
 
-- **WHEN** the bounded operator factory ids registered by the Java test app are compared to those registered by `test/apps/rust_runner/`
-- **THEN** both SHALL expose the mirrored echo bounded-operator factory id, so the same `flz operator start … --kind bounded` exercises either runtime
+- **WHEN** the steps operator factory ids registered by the Java test app are compared to those registered by `test/apps/rust_runner/`
+- **THEN** both SHALL expose the mirrored echo steps-operator factory id, so the same `flz operator start …` exercises either runtime
 
-### Requirement: Integration matrix exercises a run-once Java bounded operator over both transports
+### Requirement: Integration matrix exercises a run-once Java steps operator over both transports
 
-The Elixir↔Java integration suite SHALL exercise a run-once Java bounded operator against the unchanged Elixir controller across both transports (`{transport: [:uds, :quic]}`). The suite SHALL assert, per transport: the bounded operator's `run` executes exactly once with the first message sent to the instance; emitted output reaches a bound plugin; a `BoundedCompleted{status:"ok"}` is received and the bounded operator is torn down and absent from the durable registry; and a deliberately-failing bounded operator emits `BoundedCompleted{status:"error"}` with its message and is likewise deregistered without retry.
+The Elixir↔Java integration suite SHALL exercise a run-once Java steps operator against the unchanged Elixir controller across both transports (`{transport: [:uds, :quic]}`). The suite SHALL assert, per transport: the steps operator's `run` executes exactly once with the first message sent to the instance; emitted output reaches a bound plugin; a `OperatorCompleted{status:"ok"}` is received and the steps operator is torn down and absent from the durable registry; and a deliberately-failing steps operator emits `OperatorCompleted{status:"error"}` with its message and is likewise deregistered without retry.
 
-#### Scenario: Run-once Java bounded operator completes and is torn down over UDS
+#### Scenario: Run-once Java steps operator completes and is torn down over UDS
 
 - **WHEN** the suite starts an `EchoOperator` on a Java runner over UDS with a bound output plugin and sends it the message `hi`
-- **THEN** the bounded operator SHALL run once, its emitted output SHALL reach the plugin, the controller SHALL receive `BoundedCompleted{status:"ok"}`, and the bounded operator SHALL be removed from the durable registry
+- **THEN** the steps operator SHALL run once, its emitted output SHALL reach the plugin, the controller SHALL receive `OperatorCompleted{status:"ok"}`, and the steps operator SHALL be removed from the durable registry
 
-#### Scenario: Run-once Java bounded operator completes and is torn down over QUIC
+#### Scenario: Run-once Java steps operator completes and is torn down over QUIC
 
 - **WHEN** the same scenario runs over QUIC
-- **THEN** the same assertions SHALL hold, exercising the full handshake + bounded operator spawn + run-once + emit + completion path on QUIC
+- **THEN** the same assertions SHALL hold, exercising the full handshake + steps operator spawn + run-once + emit + completion path on QUIC
 
-#### Scenario: A failing Java bounded operator reports a terminal error
+#### Scenario: A failing Java steps operator reports a terminal error
 
-- **WHEN** the suite starts a bounded operator whose `run` throws over either transport
-- **THEN** the controller SHALL receive `BoundedCompleted{status:"error"}` carrying the throwable's message, the bounded operator SHALL be deregistered without retry, and no operator process SHALL remain
+- **WHEN** the suite starts a steps operator whose `run` throws over either transport
+- **THEN** the controller SHALL receive `OperatorCompleted{status:"error"}` carrying the throwable's message, the steps operator SHALL be deregistered without retry, and no operator process SHALL remain
 
 ### Requirement: TaskletTestHarness replayEquals replays against the captured initial snapshot
 
@@ -355,7 +355,7 @@ The harness's `EmitRecord` SHALL expose the emit's key (empty for an emit carryi
 - **THEN** the harness ctx SHALL throw `FlezhaException` with the code `runtime.reserved_metadata_key`, matching the runtime's behaviour
 
 ### Requirement: The reference Java runner carries the round-trip bench fixtures
-The reference Java test app SHALL register the round-trip bench fixtures `bench_echo`, `bench_keyed_nopersist`, `bench_keyed`, `tier_store` and `bench_checkpoint` as twins of the `test/apps/rust_runner` fixtures of the same ids — same sink channel names, same output bytes, same key function, same overflow declaration — and SHALL read the same `FLEZHA_BENCH_CHECKPOINT_EVERY`, `FLEZHA_BENCH_CHECKPOINT_OUTPUTS` and `FLEZHA_BENCH_CHECKPOINT_DELAY_MS` environment as the Rust fixtures, so `mix bench.roundtrip --runtime java` selects a factory by id with no per-runtime branch. `bench_checkpoint` SHALL declare `checkpointAck()` and `checkpointEvery(n)`, and `outputsAtCheckpoint(maxDelayMs)` only when `FLEZHA_BENCH_CHECKPOINT_OUTPUTS=at_checkpoint`.
+The reference Java test app SHALL register the round-trip bench fixtures `bench_echo`, `bench_keyed_nopersist`, `bench_keyed`, `tier_store` and `bench_checkpoint` as twins of the `test/apps/rust_runner` fixtures of the same ids — same sink channel names, same output bytes, same key function, same overflow declaration — and SHALL read the same `FLEZHA_BENCH_CHECKPOINT_EVERY`, `FLEZHA_BENCH_CHECKPOINT_OUTPUTS` and `FLEZHA_BENCH_CHECKPOINT_DELAY_MS` environment as the Rust fixtures, so `mix bench.roundtrip --runtime java` selects a factory by id with no per-runtime branch. `bench_checkpoint` SHALL declare `Ack.Checkpoint` with `every` n, and `outputs` at the checkpoint with its `maxDelayMs` only when `FLEZHA_BENCH_CHECKPOINT_OUTPUTS=at_checkpoint`.
 
 #### Scenario: Every round-trip tier runs on the Java runtime
 - **WHEN** `mix bench.roundtrip --runtime java` runs the identity and keyed workloads at durabilities `off`, `state`, `on` and `checkpoint`
@@ -373,7 +373,7 @@ A `:system` end-to-end test that proves a capability carried by more than one SD
 - **THEN** the three declared behaviours (no output before the checkpoint, one ordered batch at the close, the quiet-Cell delay) pass against a live Java runner as well as a live Rust runner
 
 ### Requirement: The declaration key set is pinned for the core and the Java SDK
-A pinned fixture SHALL list every `HostClassDecl` key; a `flz_core` test SHALL assert that a fully populated declaration serialises to exactly that key set, and a Java unit test SHALL assert that a fully populated `HostClassDeclaration` emits every key in the fixture while a bare `checkpointAck()` emits none of the optional ones, so a key the core accepts that the Java SDK cannot spell fails the Java build.
+A pinned fixture SHALL list every `HostClassDecl` key; a `flz_core` test SHALL assert that a fully populated declaration serialises to exactly that key set, and a Java unit test SHALL assert that a fully populated `HostClassDeclaration` emits every key in the fixture while a bare `Ack.Checkpoint` emits none of the optional ones, so a key the core accepts that the Java SDK cannot spell fails the Java build.
 
 #### Scenario: A new core key without a Java spelling fails CI
 - **WHEN** a key is added to `HostClassDecl` and the fixture, and `HostClassDeclaration` is not taught to emit it

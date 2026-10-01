@@ -113,9 +113,9 @@ defmodule Flezha.Observability.TelemetryBridge do
     # from the table's one transition function.
     [:flezha, :plugin, :phase] => {:flezha_plugin, :phase, :event},
     [:flezha, :operator, :parked] => {:flezha_operator, :operator_parked_total, :metric},
-    # A bounded session's turn that failed and was parked, the session going on.
-    [:flezha, :bounded, :turn_dead_lettered] =>
-      {:flezha_bounded, :flezha_bounded_turns_dead_lettered_total, :metric},
+    # A steps session's turn that failed and was parked, the session going on.
+    [:flezha, :steps, :turn_dead_lettered] =>
+      {:flezha_steps, :flezha_steps_turns_dead_lettered_total, :metric},
     # A call, an outside caller's or an operator's: how long each answer took,
     # and the calls that ended with none, counted by reason or code; a caller's
     # call recovered past its deadline and the retention margin settles with no
@@ -152,8 +152,8 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :correction, :refused] => {:flezha_correction, :refused, :event},
     [:flezha, :runner, :factory_language_conflict] =>
       {:flezha_runner, :factory_language_conflict, :event},
-    [:flezha, :runner, :factory_kind_conflict] =>
-      {:flezha_runner, :factory_kind_conflict, :event},
+    [:flezha, :runner, :factory_run_conflict] =>
+      {:flezha_runner, :factory_run_conflict, :event},
     [:flezha, :runner, :quota_refused] => {:flezha_runner, :quota_refused, :event},
     [:flezha, :runner, :admin_request] => {:flezha_runner, :admin_request, :event},
     [:flezha, :runner, :foreign_frame_refused] =>
@@ -189,7 +189,7 @@ defmodule Flezha.Observability.TelemetryBridge do
   # grouped under the reason it has none. A ratchet: the suite pins the total,
   # so an event may leave a group and none may join.
   @unexported %{
-    # One signal per durable bounded operator commit, at the data plane's rate, with
+    # One signal per durable steps operator commit, at the data plane's rate, with
     # `task_idx` and `iter` unique to each. The commit's outcome rides the ack
     # the SDK observes and the durability counters, not a per-commit event.
     commit_path: [
@@ -230,9 +230,9 @@ defmodule Flezha.Observability.TelemetryBridge do
       [:flezha, :state, :schema_migration],
       [:flezha, :state, :wal_moved],
       [:flezha, :state, :wal_pulled],
-      [:flezha, :bounded, :completed],
-      [:flezha, :bounded, :rehydrating],
-      [:flezha, :bounded, :rewind]
+      [:flezha, :steps, :completed],
+      [:flezha, :steps, :rehydrating],
+      [:flezha, :steps, :rewind]
     ]
   }
 

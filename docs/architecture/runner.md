@@ -4,12 +4,12 @@ The controller's view of a runner is one box: a process that dials in, accepts o
 ships back state changes and outputs. This page opens that box.
 
 A runner is **two layers, not one**. Transport, ordering, durability, retries, timers, credit,
-routing and a bounded operator's pass live in a single Rust kernel, `flz_core`. The host language SDK
+routing and a steps operator's pass live in a single Rust kernel, `flz_core`. The host language SDK
 — Rust, Java, and whatever comes next — brings the authoring surface a user writes against and
 the threads that run their code. The seam between them is one poll loop.
 
 Everything on the [kernel](kernel.md), [stream](stream_profile.md) and
-[bounded operator](bounded_profile.md) pages is the same regardless of which host SDK is running, and
+[steps operator](steps_profile.md) pages is the same regardless of which host SDK is running, and
 that is precisely because those mechanisms sit below this seam.
 
 Mechanism-level detail: [`poll_core.md`](../sdk/poll_core.md). The authoring surface
@@ -34,7 +34,7 @@ flowchart TB
         C2["per-cell ordering + exclusivity · mailboxes"]:::ctrl
         C3["durability: effect records · flusher · restore · compaction"]:::ctrl
         C4["retry→park ladder · deferred wakes · timers · credit"]:::ctrl
-        C5["routing · edge keys · the key-group guard · the bounded operator pass sheet"]:::ctrl
+        C5["routing · edge keys · the key-group guard · the steps operator pass sheet"]:::ctrl
     end
 
     CTRL["🧠 Controller"]:::ctrl
@@ -106,7 +106,7 @@ flowchart LR
     end
 
     KR["KeyRequest — batched keying for unkeyed<br/>entry payloads bound for a keyed edge"]:::exec
-    BS["Bounded step — one per cell of the stage<br/>(or CompensateRun for an undo)"]:::exec
+    BS["Steps step — one per cell of the stage<br/>(or CompensateRun for an undo)"]:::exec
 
     POLL --> WORK
     POLL --> CMD
@@ -190,10 +190,10 @@ core calls no host code, and a host that cannot starve simply never calls it.
 
 **Direct activations are exempt from the cap** — restore folds, snapshot requests and the other
 command crossings answer a caller already blocked on a rendezvous, so holding one behind capped
-cell work would deadlock that caller; a bounded operator's undo rides the same queue and holds its
+cell work would deadlock that caller; a steps operator's undo rides the same queue and holds its
 cell's gate until it is answered. They are also what a queued direct activation with no thread
 inside `poll` reports as starvation: a blocked caller must be able to buy a thread. A
-bounded operator's stage work is not among them: it is ordinary cell work, capped like an unbounded operator's.
+steps operator's stage work is not among them: it is ordinary cell work, capped like a flow operator's.
 
 ## Per-cell exclusivity
 
@@ -269,11 +269,11 @@ Promotion needs a thread in `poll`, so a due entry with every worker inside user
 starvation and reads as such: the starvation wait's deadline considers the nearest due entry,
 which is how a host that grows threads gets one there in time to promote the firing.
 
-## A bounded stage
+## A steps stage
 
-A bounded stage runs the way an unbounded cell does: its items are routed into its cells'
+A steps stage runs the way a flow cell does: its items are routed into its cells'
 mailboxes and the poll core hands them out as ordinary work, under the cap and the fairness
-rules above. What is the bounded operator's own is a small pass sheet on the instance, advanced by
+rules above. What is the steps operator's own is a small pass sheet on the instance, advanced by
 events on the threads that bring them; no core thread belongs to an instance.
 
 ```mermaid
@@ -299,9 +299,9 @@ sequenceDiagram
 A stage therefore costs exactly the SDK threads that run its items, and nothing waits: the
 commit ack, a retry's backoff, `max_duration` and the park are events or entries on the
 deferred-wake list. Barriers, the task journal, loop modes, suspension and rewind are
-described in [`bounded_profile.md`](bounded_profile.md); what an instance costs at population
+described in [`steps_profile.md`](steps_profile.md); what an instance costs at population
 is measured in
-[`../resilience/bounded_operator.md`](../resilience/bounded_operator.md#how-many-instances-a-runner-holds).
+[`../resilience/steps_operator.md`](../resilience/steps_operator.md#how-many-instances-a-runner-holds).
 
 ## The C ABI
 
@@ -328,7 +328,7 @@ flowchart LR
 Silent runtime skew is impossible by construction. `flz_core_declare_class` takes the
 **complete** host-class declaration — the channel graph, cell modes, clock kinds, the
 effectively-once tier and its ack granularity, the correction window, the record-header
-lang/format bytes, and the bounded lifecycle facts — so a field the core never learned is a
+lang/format bytes, and the steps lifecycle facts — so a field the core never learned is a
 refusal, not a silent degrade.
 
 Ownership is "whoever allocates frees"; activation buffers the core hands out are freed with
@@ -512,7 +512,7 @@ shutdown notification, the identity stamps at its routing seam, the idle reaper 
 and eviction trace, the per-Tasklet schema declaration with its migrations, the
 pending-timer set with its two firing paths and the clock kinds, the effect record with its
 staged interval, its consumed-offset floor and its park — and defers correction windows and
-the bounded kind, each owed to a re-expression in Elixir.
+the steps run, each owed to a re-expression in Elixir.
 `state_persistence`, `keyed_channels`, `dynamic_cell`, `schema_evolution`, `cell_timers`
 and `effectively_once` are carried by all seven and sit in the required set: their mechanisms
 live once in the shared core for the six `flz_core` hosts and are re-expressed in the Elixir

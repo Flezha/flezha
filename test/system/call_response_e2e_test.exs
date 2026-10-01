@@ -9,7 +9,7 @@ defmodule FlezhaTest.System.CallResponseE2ETest do
     * `call_split`: one tasklet feeds two filtered paths, each ending in
       `response()`; an input starting `no` is answered `refused:<input>`, every
       other `accepted:<input>`.
-    * `call_turn`: a durable `:per_input` bounded operator whose turn answers
+    * `call_turn`: a durable `:per_input` steps operator whose turn answers
       with its input.
 
       FLEZHA_E2E_RUNTIME=node mix test --include system test/system/call_response_e2e_test.exs
@@ -37,27 +37,27 @@ defmodule FlezhaTest.System.CallResponseE2ETest do
     {:ok, namespace: namespace}
   end
 
-  test "an unbounded operator and a bounded turn both answer the call", ctx do
-    echo = start(ctx.namespace, "call_echo", :unbounded)
+  test "a flow operator and a steps turn both answer the call", ctx do
+    echo = start(ctx.namespace, "call_echo", :flow)
     assert {:ok, "hello", %{"channel" => _}} = call(ctx.namespace, echo, "hello")
 
-    turn = start(ctx.namespace, "call_turn", :bounded)
+    turn = start(ctx.namespace, "call_turn", :steps)
     assert {:ok, "hello", _} = call(ctx.namespace, turn, "hello")
 
     assert {:ok, entries} = TaskJournal.read(turn)
 
-    # A durable bounded answer leaves when the stage that produced it commits.
+    # A durable steps answer leaves when the stage that produced it commits.
     assert Enum.any?(entries, &(&1.type == :task_committed)),
            "the turn answered before its stage committed: #{inspect(entries)}"
   end
 
   test "a downstream tasklet answers a call its input never reached", ctx do
-    downstream = start(ctx.namespace, "call_downstream", :unbounded)
+    downstream = start(ctx.namespace, "call_downstream", :flow)
     assert {:ok, "re:x", _} = call(ctx.namespace, downstream, "x")
   end
 
   test "the path the input took answers, and nothing is dropped as answered", ctx do
-    split = start(ctx.namespace, "call_split", :unbounded)
+    split = start(ctx.namespace, "call_split", :flow)
     test_pid = self()
     handler = "call-split-#{split}"
 
@@ -87,7 +87,7 @@ defmodule FlezhaTest.System.CallResponseE2ETest do
              OperatorManager.start_operator(namespace, %Builder{
                id: operator_id,
                factory_id: factory,
-               kind: kind
+               run: kind
              })
 
     operator_id

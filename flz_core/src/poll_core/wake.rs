@@ -42,7 +42,7 @@ pub(super) enum WakeTiebreak {
     Interval(Arc<Vec<u8>>),
     /// One deadline of one instance, by its seq: re-arming it replaces the
     /// entry.
-    Instance(u64, crate::bounded::Deadline),
+    Instance(u64, crate::steps::Deadline),
 }
 
 pub(super) enum Wake {
@@ -66,7 +66,7 @@ pub(super) enum Wake {
     /// deadlines die with it.
     Instance {
         instance: Weak<crate::operator::instance::OperatorInstance>,
-        deadline: crate::bounded::Deadline,
+        deadline: crate::steps::Deadline,
     },
 }
 
@@ -244,10 +244,10 @@ impl PollCore {
                     scheduled_at,
                     stream: Arc::clone(&stream),
                 };
-                // A bounded operator's firing is a trigger of its run: the pass sheet
+                // A steps operator's firing is a trigger of its run: the pass sheet
                 // decides when it reaches the Cell, and admits it itself.
-                if live.topology.bounded.is_some() {
-                    crate::bounded::firing_promoted(&live, fire);
+                if live.topology.steps.is_some() {
+                    crate::steps::firing_promoted(&live, fire);
                     return None;
                 }
                 let fire = CellItem::Timer(fire);
@@ -332,7 +332,7 @@ impl PollCore {
         &self,
         instance: Weak<crate::operator::instance::OperatorInstance>,
         seq: u64,
-        deadline: crate::bounded::Deadline,
+        deadline: crate::steps::Deadline,
         due_at_ms: u64,
     ) {
         self.wakes.record(
@@ -346,7 +346,7 @@ impl PollCore {
     }
 
     /// Disarm one instance deadline armed for `due_at_ms`. Idempotent.
-    pub fn disarm_instance(&self, seq: u64, deadline: crate::bounded::Deadline, due_at_ms: u64) {
+    pub fn disarm_instance(&self, seq: u64, deadline: crate::steps::Deadline, due_at_ms: u64) {
         self.wakes.remove(&WakeKey {
             due_at_ms,
             tiebreak: WakeTiebreak::Instance(seq, deadline),
@@ -356,7 +356,7 @@ impl PollCore {
     /// The deadlines armed for the instance numbered `seq`, with their due
     /// times.
     #[cfg(test)]
-    pub(crate) fn instance_deadlines(&self, seq: u64) -> Vec<(crate::bounded::Deadline, u64)> {
+    pub(crate) fn instance_deadlines(&self, seq: u64) -> Vec<(crate::steps::Deadline, u64)> {
         self.wakes
             .entries
             .lock_recover()

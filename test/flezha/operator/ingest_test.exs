@@ -77,7 +77,7 @@ defmodule FlezhaTest.Operator.IngestTest do
              Overwatch.handle_call({:ingest, "drop-me now", %{}}, self(), state)
   end
 
-  describe "a durable bounded's input log" do
+  describe "a durable steps operator's input log" do
     setup :set_mimic_global_until_exit
 
     setup do
@@ -103,7 +103,7 @@ defmodule FlezhaTest.Operator.IngestTest do
         nil
       end)
 
-      state = state(inst, durable_bounded: true, suspended: true, channel: nil)
+      state = state(inst, durable_steps: true, suspended: true, channel: nil)
       {:ok, host} = start_supervised({Host, state})
 
       assert {:ok, :suspended} = GenServer.call(host, {:ingest, "turn", %{}})
@@ -113,7 +113,7 @@ defmodule FlezhaTest.Operator.IngestTest do
 
     test "a duplicate absorbed by the input log reports absorbed" do
       inst = instance_id()
-      state = state(inst, durable_bounded: true, channel: fake_channel(:ok))
+      state = state(inst, durable_steps: true, channel: fake_channel(:ok))
       {:ok, host} = start_supervised({Host, state})
       sent_once = %{"flz.msg_id" => "m-again"}
 
@@ -129,7 +129,7 @@ defmodule FlezhaTest.Operator.IngestTest do
       {:ok, writer} = start_supervised(RefusingWriter)
       stub(Supervisor, :find_or_start, fn {^inst, :input_log} -> {:ok, writer} end)
 
-      state = state(inst, durable_bounded: true, channel: fake_channel(:ok))
+      state = state(inst, durable_steps: true, channel: fake_channel(:ok))
       {:ok, host} = start_supervised({Host, state})
 
       log =
@@ -158,7 +158,7 @@ defmodule FlezhaTest.Operator.IngestTest do
       {channel, _pid} = NodeTestHelper.unbound_stream_channel()
 
       {:ok, host} =
-        start_supervised({Host, state(inst, durable_bounded: true, channel: channel)})
+        start_supervised({Host, state(inst, durable_steps: true, channel: channel)})
 
       assert :ok = GenServer.call(host, {:ingest, "x", %{}})
       assert [{0, "x", _metadata}] = InputLog.undelivered(inst)
@@ -166,7 +166,7 @@ defmodule FlezhaTest.Operator.IngestTest do
 
     test "a durable target with no channel that can ever bind is refused" do
       inst = instance_id()
-      {:ok, host} = start_supervised({Host, state(inst, durable_bounded: true, channel: nil)})
+      {:ok, host} = start_supervised({Host, state(inst, durable_steps: true, channel: nil)})
 
       # Nothing will re-forward this, so `:ok` would be the accepted-and-dropped
       # claim the input-delivery guarantee forbids. The log still holds the

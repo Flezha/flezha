@@ -2,34 +2,34 @@
 
 ## Purpose
 
-The java-sdk-tasklet-annotations capability is the Java realization of the SDK authoring contract's declarations. `@Tasklet.Spec`, nested in the `Tasklet` interface, carries a tasklet's name and scalar settings, and `@UnboundedOperator` / `@BoundedOperator` on a tasklet class declare the single-tasklet short form. All three are retained at runtime and read when a class is registered; nothing is generated, so the class the author writes is the class every call names. Multi-tasklet topology stays explicitly declared in a `channels()` method, with no engine, protocol, or WAL change.
+The java-sdk-tasklet-annotations capability is the Java realization of the SDK authoring contract's declarations. `@Tasklet.Spec`, nested in the `Tasklet` interface, carries a tasklet's name and scalar settings, and `@Operator` / `@Operator` on a tasklet class declare the single-tasklet short form. All three are retained at runtime and read when a class is registered; nothing is generated, so the class the author writes is the class every call names. Multi-tasklet topology stays explicitly declared in a `channels()` method, with no engine, protocol, or WAL change.
 ## Requirements
-### Requirement: `@UnboundedOperator` and `@BoundedOperator` carry the short form
+### Requirement: `@Operator` carries the short form
 
-The Java SDK SHALL provide annotations `@UnboundedOperator` and `@BoundedOperator` in `com.flezha.sdk.authoring`, retained at runtime, applied to a class that implements `Tasklet`, declaring a whole single-tasklet operator of the kind the annotation names. Each SHALL require a non-empty `id`, SHALL accept an optional `sink`, an optional `onFull`, and an optional `input` defaulting to the empty string, which registration SHALL lower to the entry channel name `input`, and SHALL NOT accept a `kind` member. `@BoundedOperator` SHALL additionally accept `loopMode()`, a `LoopMode` defaulting to `ONCE`. No other member SHALL exist on either annotation: the output type comes from the tasklet's `Output`, keyed emits are the body's `ctx.emitKeyed`, and cell keys and mailbox capacity are `@Tasklet.Spec` members.
+The Java SDK SHALL provide the annotation `@Operator` in `com.flezha.sdk.authoring`, retained at runtime, applied to a class that implements `Tasklet`, declaring a whole single-tasklet operator that runs as its `run` member says (`flow` when unwritten). It SHALL require a non-empty `id`, SHALL accept an optional `sink`, an optional `onFull`, and an optional `input` defaulting to the empty string, which registration SHALL lower to the entry channel name `input`, and SHALL NOT accept a `kind` member. `@Operator` SHALL additionally accept `each()`, a `Each` defaulting to `ONCE`. No other member SHALL exist on either annotation: the output type comes from the tasklet's `Output`, keyed emits are the body's `ctx.emitKeyed`, and cell keys and mailbox capacity are `@Tasklet.Spec` members.
 
-`FlezhaRunner.registerFactory` and `unregisterFactory` SHALL accept such a class and build, at registration, an operator whose `factoryId()` is the `id`, whose topology wires the entry channel into the class and, when a `sink` is written, the class to that plugin sink, whose bounded `loopMode()` is the annotation's, and whose every other operator method is at its interface default. With no `sink`, the topology SHALL declare the entry channel and the tasklet and no plugin channel. The tasklet's name SHALL be the `id`. The class SHALL need no `@Tasklet.Spec`; one written there carries the tasklet's settings, and its `name` SHALL equal the `id`, or registration SHALL fail with a `FlezhaException` whose code is `topology.short_form_name_mismatch`, naming both. Nothing SHALL be generated and nothing SHALL register itself.
+`FlezhaRunner.registerFactory` and `unregisterFactory` SHALL accept such a class and build, at registration, an operator whose `factoryId()` is the `id`, whose topology wires the entry channel into the class and, when a `sink` is written, the class to that plugin sink, whose `run()` is the annotation's, and whose every other operator method is at its interface default. With no `sink`, the topology SHALL declare the entry channel and the tasklet and no plugin channel. The tasklet's name SHALL be the `id`. The class SHALL need no `@Tasklet.Spec`; one written there carries the tasklet's settings, and its `name` SHALL equal the `id`, or registration SHALL fail with a `FlezhaException` whose code is `topology.short_form_name_mismatch`, naming both. Nothing SHALL be generated and nothing SHALL register itself.
 
-Registration SHALL refuse, each with a `FlezhaException` naming the class: an empty or absent `id` as `topology.missing_factory_id`; a `sink` on a class whose `Output` is `Void` as `topology.sink_without_output`; and an annotated class that also implements `UnboundedOperator` or `BoundedOperator` as `topology.short_form_with_topology`.
+Registration SHALL refuse, each with a `FlezhaException` naming the class: an empty or absent `id` as `topology.missing_factory_id`; a `sink` on a class whose `Output` is `Void` as `topology.sink_without_output`; and an annotated class that also implements `Operator` as `topology.short_form_with_topology`.
 
-#### Scenario: An annotated class is a whole unbounded operator
+#### Scenario: An annotated class is a whole flow operator
 
-- **WHEN** a class `Echo implements Tasklet<String, Void, String>` carries only `@UnboundedOperator(id = "echo", sink = "out")`, and the runner is given `registerFactory(Echo.class)`
-- **THEN** the runner declares an unbounded operator `echo` with entry channel `input` and sink `out`, backed by the tasklet `echo`
+- **WHEN** a class `Echo implements Tasklet<String, Void, String>` carries only `@Operator(id = "echo", sink = "out")`, and the runner is given `registerFactory(Echo.class)`
+- **THEN** the runner declares a flow operator `echo` with entry channel `input` and sink `out`, backed by the tasklet `echo`
 
-#### Scenario: An annotated class is a whole bounded operator
+#### Scenario: An annotated class is a whole steps operator
 
-- **WHEN** a class `Place` is annotated `@BoundedOperator(id = "place", sink = "placed", input = "order")`, is registered, an instance is started, and one message is sent on `order`
-- **THEN** `run` receives the message on `order`, what it emits reaches `placed`, and the instance completes as a `once` bounded operator
+- **WHEN** a class `Place` is annotated `@Operator(id = "place", sink = "placed", input = "order")`, is registered, an instance is started, and one message is sent on `order`
+- **THEN** `run` receives the message on `order`, what it emits reaches `placed`, and the instance completes as a `once` steps operator
 
-#### Scenario: A short-form bounded operator declares its loop mode
+#### Scenario: A short-form steps operator declares its loop mode
 
-- **WHEN** a class is annotated `@BoundedOperator(id = "chat", sink = "replies", loopMode = LoopMode.PER_INPUT)`, is registered, and two messages reach its entry channel
-- **THEN** the operator's `loopMode()` returns `PER_INPUT`, `run` runs once per message, and the instance does not complete after the first
+- **WHEN** a class is annotated `@Operator(id = "chat", sink = "replies", each = Each.PER_INPUT)`, is registered, and two messages reach its entry channel
+- **THEN** the operator's `each()` returns `PER_INPUT`, `run` runs once per message, and the instance does not complete after the first
 
 #### Scenario: A short form with no sink is declared
 
-- **WHEN** a class is annotated `@UnboundedOperator(id = "counter", input = "ticks")` and registered
+- **WHEN** a class is annotated `@Operator(id = "counter", input = "ticks")` and registered
 - **THEN** the operator declares `ticks` into the tasklet and no plugin channel
 
 #### Scenario: The author registers the class they wrote
@@ -44,37 +44,37 @@ Registration SHALL refuse, each with a `FlezhaException` naming the class: an em
 
 #### Scenario: The entry channel keeps its default name
 
-- **WHEN** a class annotated `@UnboundedOperator(id = "echo", sink = "out")` declares no `input` element
+- **WHEN** a class annotated `@Operator(id = "echo", sink = "out")` declares no `input` element
 - **THEN** the operator's entry channel SHALL be named `input`
 
 #### Scenario: The annotation names the entry channel
 
-- **WHEN** a class is annotated `@UnboundedOperator(id = "echo", sink = "out", input = "prices")`
+- **WHEN** a class is annotated `@Operator(id = "echo", sink = "out", input = "prices")`
 - **THEN** the operator's entry channel SHALL be named `prices`
 
 #### Scenario: An annotation with no id is refused
 
-- **WHEN** a class `Upcase` is annotated `@UnboundedOperator(sink = "out")` with no `id`
+- **WHEN** a class `Upcase` is annotated `@Operator(sink = "out")` with no `id`
 - **THEN** registration SHALL fail with the code `topology.missing_factory_id`, and SHALL NOT derive a factory id from the class name
 
 #### Scenario: An annotated class implementing an operator interface is refused
 
-- **WHEN** a class annotated `@UnboundedOperator` also implements `UnboundedOperator`
+- **WHEN** a class annotated `@Operator` also implements `Operator`
 - **THEN** registration SHALL fail with the code `topology.short_form_with_topology`
 
 #### Scenario: A short form takes settings from @Tasklet.Spec
 
-- **WHEN** a class carries `@UnboundedOperator(id = "counter", input = "ticks")` and `@Tasklet.Spec(name = "counter", maxCells = 10)`
+- **WHEN** a class carries `@Operator(id = "counter", input = "ticks")` and `@Tasklet.Spec(name = "counter", maxCells = 10)`
 - **THEN** the tasklet is named `counter` and its cells are capped at 10
 
 #### Scenario: A short form whose tasklet name differs from its id is refused
 
-- **WHEN** a class carries `@UnboundedOperator(id = "counter")` and `@Tasklet.Spec(name = "tally")`
+- **WHEN** a class carries `@Operator(id = "counter")` and `@Tasklet.Spec(name = "tally")`
 - **THEN** registration SHALL fail with the code `topology.short_form_name_mismatch`, naming `counter` and `tally`
 
 #### Scenario: A sink on a Void output is refused
 
-- **WHEN** a class `Drain implements Tasklet<String, Void, Void>` is annotated `@UnboundedOperator(id = "drain", sink = "out")`
+- **WHEN** a class `Drain implements Tasklet<String, Void, Void>` is annotated `@Operator(id = "drain", sink = "out")`
 - **THEN** registration SHALL fail with the code `topology.sink_without_output`
 
 ### Requirement: `@Tasklet.Spec` declares a tasklet's name and settings

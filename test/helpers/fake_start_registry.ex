@@ -87,7 +87,7 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
 
     * `:runners` — the namespace's active runners (default three)
     * `:seed` — builders to pre-register as already-running operators
-    * `:kind` — the kind every factory is established at (default `:unbounded`)
+    * `:run` — the run every factory is established at (default `:flow`)
   """
   @spec install(keyword()) :: :ets.tid()
   def install(opts \\ []) do
@@ -149,12 +149,12 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
     stub(ProcessHub.Future, :await, fn result -> result end)
     stub(FleetManager, :runners_for_factory, fn _ns, _factory -> Enum.take(runners, 1) end)
 
-    # Answers as the real one does: no kind while no runner can place the
+    # Answers as the real one does: no run while no runner can place the
     # factory, so a test that empties the runners empties this too.
-    stub(FleetManager, :factory_kind, fn ns, factory ->
+    stub(FleetManager, :factory_run, fn ns, factory ->
       if FleetManager.runners_for_factory(ns, factory) == [],
         do: {:error, :no_such_factory},
-        else: {:ok, Keyword.get(opts, :kind, :unbounded)}
+        else: {:ok, Keyword.get(opts, :run, :flow)}
     end)
 
     stub(FleetManager, :active_runners, fn _ns -> runners end)

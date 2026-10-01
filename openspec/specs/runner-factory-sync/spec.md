@@ -5,7 +5,7 @@ TBD - created by archiving change sdk-runner-entrypoint-redesign. Update Purpose
 ## Requirements
 ### Requirement: UpdateFactories control message
 
-The wire protocol SHALL define an SDK→controller control message `UpdateFactories` (proto tag 33 in the `CommandRequest` oneof) carrying the runner's **full current factory set** as `repeated FactoryDecl { id, description, sdk_lang, kind }`. `sdk_lang` SHALL be the language byte of the class registered under that factory id — the same value the SDK declares to the poll core as `class.sdk_lang` and stamps at byte 0 of every durable record it writes. `kind` SHALL be exactly `"unbounded"` or `"bounded"`, the kind of the class registered under that id: the Rust and Elixir SDKs SHALL fill it from the registered class, and the shared core SHALL fill it for every host SDK from the registry the class declaration landed in, where it fills `sdk_lang`. The connect/reconnect init frame's factory entries SHALL carry the same keys, since the init frame is the resync of record. The message SHALL be fire-and-forget: the controller SHALL NOT reply with an ack, and the SDK SHALL NOT block on it. Full-set semantics make delivery idempotent; the connect/reconnect init frame remains the resync of record, so a lost `UpdateFactories` frame is corrected by the next frame or the next reconnect. A stale placement racing a removal fails at the SDK's `AddOperator` handler and is re-placed by convergence — the same failure mode as a runner dying mid-placement.
+The wire protocol SHALL define an SDK→controller control message `UpdateFactories` (proto tag 33 in the `CommandRequest` oneof) carrying the runner's **full current factory set** as `repeated FactoryDecl { id, description, sdk_lang, kind }`. `sdk_lang` SHALL be the language byte of the class registered under that factory id — the same value the SDK declares to the poll core as `class.sdk_lang` and stamps at byte 0 of every durable record it writes. `kind` SHALL be exactly `"flow"` or `"steps"`, the kind of the class registered under that id: the Rust and Elixir SDKs SHALL fill it from the registered class, and the shared core SHALL fill it for every host SDK from the registry the class declaration landed in, where it fills `sdk_lang`. The connect/reconnect init frame's factory entries SHALL carry the same keys, since the init frame is the resync of record. The message SHALL be fire-and-forget: the controller SHALL NOT reply with an ack, and the SDK SHALL NOT block on it. Full-set semantics make delivery idempotent; the connect/reconnect init frame remains the resync of record, so a lost `UpdateFactories` frame is corrected by the next frame or the next reconnect. A stale placement racing a removal fails at the SDK's `AddOperator` handler and is re-placed by convergence — the same failure mode as a runner dying mid-placement.
 
 #### Scenario: A post-start define reaches the controller
 - **GIVEN** a connected runner that declared factory A at connect time
@@ -26,8 +26,8 @@ The wire protocol SHALL define an SDK→controller control message `UpdateFactor
 - **THEN** both the init frame's entry for A and the `UpdateFactories` entries for A and C SHALL carry the language byte of the class registered under each id, and the controller SHALL store it beside the id and description
 
 #### Scenario: The advertised kind rides both halves of the seam
-- **WHEN** a runner advertises an unbounded factory A in its connect init frame and later ships `UpdateFactories{factories: [A, W]}` where W is a bounded class
-- **THEN** the init frame's entry for A SHALL carry `kind` `"unbounded"`, the `UpdateFactories` entries SHALL carry `"unbounded"` for A and `"bounded"` for W, and the controller SHALL store each beside the id, description and language
+- **WHEN** a runner advertises a flow factory A in its connect init frame and later ships `UpdateFactories{factories: [A, W]}` where W is a steps class
+- **THEN** the init frame's entry for A SHALL carry `kind` `"flow"`, the `UpdateFactories` entries SHALL carry `"flow"` for A and `"steps"` for W, and the controller SHALL store each beside the id, description and language
 
 ### Requirement: Controller applies UpdateFactories as a full-set replacement
 
@@ -49,10 +49,10 @@ The wire protocol SHALL define an SDK→controller control message `UpdateFactor
 
 ### Requirement: Dropped factory with live controller-known operators logs a warning
 
-When a full-set replacement drops a factory that still has controller-known operators bound to that runner (e.g. a parked/suspended durable bounded instance that is absent from the SDK's live-instance registry and therefore escaped the SDK-side removal check), FleetManager SHALL log a warning naming the namespace, runner, factory id, and the affected operators. The warning is a tripwire, not enforcement — rehydration of such an operator will subsequently fail placement, and convergence surfaces it; a blocking policy is explicitly deferred.
+When a full-set replacement drops a factory that still has controller-known operators bound to that runner (e.g. a parked/suspended durable steps instance that is absent from the SDK's live-instance registry and therefore escaped the SDK-side removal check), FleetManager SHALL log a warning naming the namespace, runner, factory id, and the affected operators. The warning is a tripwire, not enforcement — rehydration of such an operator will subsequently fail placement, and convergence surfaces it; a blocking policy is explicitly deferred.
 
 #### Scenario: Suspended-instance removal hole is surfaced
-- **GIVEN** a durable bounded operator of factory B is suspended (evicted from the SDK registry but registered on the controller as bound to runner R)
+- **GIVEN** a durable steps operator of factory B is suspended (evicted from the SDK registry but registered on the controller as bound to runner R)
 - **WHEN** `UpdateFactories` from R drops factory B
 - **THEN** FleetManager SHALL apply the replacement AND log a warning naming B and the suspended operator
 
@@ -135,22 +135,22 @@ A placement that finds no candidate because of a language refusal SHALL report a
 - **WHEN** an operator of `orders` is started
 - **THEN** the error SHALL name the language mismatch and SHALL NOT claim the factory does not exist
 
-### Requirement: A factory is homogeneous in its kind, and placement enforces it
+### Requirement: A factory is homogeneous in its run, and placement enforces it
 
-The controller SHALL record, per **namespace and factory id**, one **established kind**, beside the established language and by the same rule: the first runner to advertise the factory establishes its kind, held for as long as any runner advertises it; a runner advertising the same id at the other kind SHALL be stored, excluded from placement for that factory by the single placement filter (`Flezha.Runner.FleetManager.Factories.placeable_runners/3`), warned about naming the namespace, runner, factory, established kind and advertised kind, and counted by a telemetry event. A factory entry carrying no kind, or a kind other than `unbounded` or `bounded`, SHALL NOT make its runner a placement candidate for that factory, and a start naming such a factory with no other candidate SHALL fail with an error naming the missing or unknown kind declaration, distinct from "factory does not exist".
+The controller SHALL record, per **namespace and factory id**, one **established kind**, beside the established language and by the same rule: the first runner to advertise the factory establishes its kind, held for as long as any runner advertises it; a runner advertising the same id at the other kind SHALL be stored, excluded from placement for that factory by the single placement filter (`Flezha.Runner.FleetManager.Factories.placeable_runners/3`), warned about naming the namespace, runner, factory, established kind and advertised kind, and counted by a telemetry event. A factory entry carrying no kind, or a kind other than `flow` or `steps`, SHALL NOT make its runner a placement candidate for that factory, and a start naming such a factory with no other candidate SHALL fail with an error naming the missing or unknown kind declaration, distinct from "factory does not exist".
 
-Every start path SHALL resolve the operator's kind from this record before admission: `flz operator start` and the service verb take it as the instance's kind; a schedule fire and a tasklet-requested spawn, which are bounded-only, SHALL be refused by name when the record says `unbounded`. Resolving the established kind SHALL NOT require reading state on each placement.
+Every start path SHALL resolve the operator's kind from this record before admission: `flz operator start` and the service verb take it as the instance's kind; a schedule fire and a tasklet-requested spawn, which are steps-only, SHALL be refused by name when the record says `flow`. Resolving the established kind SHALL NOT require reading state on each placement.
 
 #### Scenario: The first advertisement establishes the kind
 
 - **GIVEN** a namespace with no record for `paper_order`
-- **WHEN** a runner connects announcing `paper_order` with kind `bounded`
-- **THEN** the established kind SHALL be `bounded`, and `flz operator start paper_order` SHALL start a bounded instance
+- **WHEN** a runner connects announcing `paper_order` with kind `steps`
+- **THEN** the established kind SHALL be `steps`, and `flz operator start paper_order` SHALL start a steps instance
 
 #### Scenario: A conflicting kind is visible and not placeable
 
-- **GIVEN** factory `orders` established as an unbounded operator
-- **WHEN** a second runner announces `orders` as a bounded operator
+- **GIVEN** factory `orders` established as a flow operator
+- **WHEN** a second runner announces `orders` as a steps operator
 - **THEN** the controller SHALL store its factory set, SHALL exclude it from `orders` placement, SHALL log a warning naming both kinds, and SHALL emit a telemetry event
 
 #### Scenario: An announcement with no kind is not placeable
@@ -158,8 +158,26 @@ Every start path SHALL resolve the operator's kind from this record before admis
 - **WHEN** a runner announces factory `orders` with an empty `kind`
 - **THEN** it SHALL NOT be a placement candidate for `orders`, and a start of `orders` with no other candidate SHALL fail naming the missing kind declaration
 
-#### Scenario: A spawn naming an unbounded factory is refused by name
+#### Scenario: A spawn naming a flow factory is refused by name
 
-- **WHEN** a tasklet requests a spawn of factory `prices`, which its runner announced as an unbounded operator
-- **THEN** the controller SHALL answer the code `operator.factory_not_bounded` without placing anything, and SHALL NOT answer `operator.factory_unknown`
+- **WHEN** a tasklet requests a spawn of factory `prices`, which its runner announced as a flow operator
+- **THEN** the controller SHALL answer the code `operator.factory_not_steps` without placing anything, and SHALL NOT answer `operator.factory_unknown`
+
+### Requirement: The factory announcement carries the run and refuses a kind literal
+
+`UpdateFactories` SHALL carry each factory's run, `flow` or `steps` with `each` and
+`on_failure`, in place of the retired `kind` field. Two runners announcing the same
+factory id with different runs SHALL be refused as today's kind conflict was, and a runner
+whose announcement carries `steps`, `flow` or an empty run SHALL be refused naming
+the literal; an unspecified run SHALL never place.
+
+#### Scenario: Two runs for one factory id
+
+- **WHEN** one runner announces `checkout` as `flow` and another as `steps`
+- **THEN** the controller SHALL refuse the second announcement naming both runs, and SHALL place `checkout` only on runners announcing the first
+
+#### Scenario: A kind literal never places
+
+- **WHEN** a runner announces a factory whose run field reads `flow`
+- **THEN** the controller SHALL log the refusal naming the literal and SHALL not place that factory
 

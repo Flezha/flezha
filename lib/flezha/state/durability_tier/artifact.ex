@@ -5,7 +5,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   back.
 
   **Seq-addressed** references are read as a range of WAL records —
-  `{:cell, cell_id}` (a Cell's WAL and snapshots; a bounded instance's
+  `{:cell, cell_id}` (a Cell's WAL and snapshots; a steps instance's
   task-journal is this shape too, under `Paths`'s reserved cell key) and
   `{:input_log, operator_class}`. **Whole-payload** ones are the
   files they name, packed by `pack/1`: `{:cspec, {hub_id, writer}}`, `{:dlq,
@@ -186,7 +186,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   intended and which have already run.
 
   They are presence-only files that no state change implies, and the resumed
-  bounded driver reads them off `RestoreInitState` to decide whether to
+  steps driver reads them off `RestoreInitState` to decide whether to
   compensate or resume forward. A recovery that restored the data without them
   resumes forward past a rollback it owes, so they travel on the manifest
   rather than as blobs.

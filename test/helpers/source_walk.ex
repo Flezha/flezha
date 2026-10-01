@@ -13,7 +13,7 @@ defmodule FlezhaTest.Helper.SourceWalk do
       flatters; an untracked module is still a module, and a bypass written into
       one is still a bypass.
     * **Build output is never entered.** What `_build`, `deps`, `target`,
-      `dist`, `cover` and `node_modules` hold was built or fetched, not written
+      `dist`, `cover`, `node_modules` and `vendor` hold was built or fetched, not written
       here, and a runner's `node_modules` links back to its own SDK: a walk that
       follows it reads that SDK again at every turn of the loop.
 
@@ -24,11 +24,11 @@ defmodule FlezhaTest.Helper.SourceWalk do
 
   @source_extensions ~w(.ex .exs .rs .java .ts .mjs .js .py .rb .php .toml .sh .eex)
 
-  @build_output ~w(node_modules target dist _build deps cover)
+  @build_output ~w(node_modules vendor target dist _build deps cover)
 
   @doc """
   Every file under `roots`, whatever its extension, in a stable order: for a
-  gate that reads documents and bounded operators as well as code. A root that is a
+  gate that reads documents and steps operators as well as code. A root that is a
   file is itself.
   """
   @spec tree([binary()]) :: [binary()]

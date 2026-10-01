@@ -129,7 +129,7 @@ When a channel does not call `.on_full(...)`, the runtime SHALL apply a default 
 
 An entry channel SHALL NOT discard a wire frame unless the Operator declared a dropping policy explicitly. Data loss on the ingress path SHALL be a stated intent, never a default: an Operator that wants shedding under saturation declares `.on_full(OverflowPolicy::DropNewest)` or `.on_full(OverflowPolicy::DropOldest)`.
 
-The three SDK builders and the FFI host default SHALL stay in lockstep: the `#[default]` variant of `OverflowPolicy` (`flz_core/src/channel.rs`, read at channel creation by `sdk/rust/src/channel/builder/state.rs`), the policy assigned by `declareChannel` (`UnboundedOperatorTopologyBuilder.java`), the `:on_full` fallback in `Flezha.SDK.Operator` and the serde `#[default]` on `HostOverflow` (`flz_core/src/host/decl.rs`) SHALL all name `DropNothing`.
+The three SDK builders and the FFI host default SHALL stay in lockstep: the `#[default]` variant of `OverflowPolicy` (`flz_core/src/channel.rs`, read at channel creation by `sdk/rust/src/channel/builder/state.rs`), the policy assigned by `declareChannel` (`OperatorTopologyBuilder.java`), the `:on_full` fallback in `Flezha.SDK.Operator` and the serde `#[default]` on `HostOverflow` (`flz_core/src/host/decl.rs`) SHALL all name `DropNothing`.
 
 These defaults SHALL be reflected in the `ChannelDescriptor.overflow_policy` field set by `build_topology` for every channel for which the user did not explicitly call `.on_full(...)`.
 
@@ -189,35 +189,30 @@ The Rust SDK's `Tasklet` trait SHALL declare `fn compact_after_bytes() -> usize 
 - **WHEN** a Rust Tasklet declares `fn compact_after_bytes() -> usize { 16 * 1024 * 1024 }`
 - **THEN** the operator-start metadata SHALL carry `compact_after_bytes = 16777216` for this Tasklet
 
-### Requirement: Operator declares PERSISTENCE_ENABLED const, frozen at instance start (Rust SDK)
-The Rust SDK's `UnboundedOperator` and `BoundedOperator` traits SHALL each declare `const PERSISTENCE_ENABLED: bool = true` and `const SLEEP_WHEN_IDLE: bool` (`false` on `UnboundedOperator`, `Self::PERSISTENCE_ENABLED` on `BoundedOperator`). The runtime SHALL resolve a per-instance `persistence_enabled: bool` when the instance is started from the class's `PERSISTENCE_ENABLED`, for either kind, and SHALL declare both consts to the controller in the class's `AddOperator` response (`persistent = "false"` when off, `sleep_when_idle = "true"` when on). A class declaring `SLEEP_WHEN_IDLE = true` with `PERSISTENCE_ENABLED = false` SHALL be refused at registration as `topology.sleep_without_persistence`.
+### Requirement: Operator declares its durability in its settings, frozen at instance start (Rust SDK)
+The Rust SDK's `Operator` trait SHALL carry the class's durability in `fn settings() -> OperatorSettings` as `durable: Durable::Memory | Durable::Local { sleep_after } | Durable::Remote { sleep_after }`, `Durable::Local` with a six-hour `sleep_after` by default. The runtime SHALL resolve a per-instance `keeps_state: bool` (anything but `Durable::Memory`) when the instance is started, for either run, and SHALL declare the durability to the controller in the class's `AddOperator` response (`durable` = `memory`, `local` or `remote`, and `sleep_after_ms` when the class sleeps). A `sleep_after` cannot be written on `Durable::Memory`, which has no such member.
 
-The resolved value SHALL be bound to the `OperatorInstance` and SHALL be propagated to every `CellSlot` constructed for that instance. A change to the const (via SDK redeploy) SHALL NOT affect already-running instances; the new value takes effect on the next `stop_operator` + `start_operator` cycle for that instance.
+The resolved value SHALL be bound to the `OperatorInstance` and SHALL be propagated to every `CellSlot` constructed for that instance. A change to the settings (via SDK redeploy) SHALL NOT affect already-running instances; the new value takes effect on the next `stop_operator` + `start_operator` cycle for that instance.
 
-#### Scenario: Default const value is true
+#### Scenario: The default keeps state
 
-- **WHEN** an Operator of either kind does not declare `PERSISTENCE_ENABLED`
-- **THEN** `OperatorInstance::persistence_enabled()` SHALL return `true` and the `AddOperator` response SHALL carry no `persistent` key
+- **WHEN** an Operator of either run does not declare `durable`
+- **THEN** `OperatorInstance::keeps_state()` SHALL return `true` and the `AddOperator` response SHALL carry `durable = "local"`
 
-#### Scenario: Const-declared opt-out is honored
+#### Scenario: A declared opt-out is honored
 
-- **WHEN** `MarketOperator` declares `const PERSISTENCE_ENABLED: bool = false`
-- **THEN** `OperatorInstance::persistence_enabled()` SHALL return `false`; the per-Process flusher SHALL drain-and-discard for this instance's Cells; `stub_send_frame` (or its real counterpart) SHALL NOT be invoked for this instance; and the `AddOperator` response SHALL carry `persistent = "false"`
+- **WHEN** `MarketOperator` declares `durable: Durable::Memory`
+- **THEN** `OperatorInstance::keeps_state()` SHALL return `false`; the per-Process flusher SHALL drain-and-discard for this instance's Cells; `stub_send_frame` (or its real counterpart) SHALL NOT be invoked for this instance; and the `AddOperator` response SHALL carry `durable = "memory"`
 
-#### Scenario: A bounded operator's opt-out is the same const
+#### Scenario: A steps operator's opt-out is the same setting
 
-- **WHEN** a `BoundedOperator` declares `const PERSISTENCE_ENABLED: bool = false`
-- **THEN** its Cells SHALL drain-and-discard exactly as an unbounded operator's do, it SHALL ship no `TaskCommit`, and its `SLEEP_WHEN_IDLE` default SHALL read `false`
-
-#### Scenario: Sleeping without persistence is refused
-
-- **WHEN** a class of either kind declares `SLEEP_WHEN_IDLE = true` and `PERSISTENCE_ENABLED = false`
-- **THEN** `register_factory` SHALL fail with an error containing `topology.sleep_without_persistence`
+- **WHEN** an `Operator` running in steps declares `durable: Durable::Memory`
+- **THEN** its Cells SHALL drain-and-discard exactly as a flow operator's do, it SHALL ship no `TaskCommit`, and it SHALL never sleep
 
 #### Scenario: Resolved value frozen at instance start
 
-- **WHEN** an `OperatorInstance` is constructed with resolved `persistence_enabled = true`, AND the class is redeployed with the const `false` while the instance runs
-- **THEN** the running `OperatorInstance` SHALL continue with `persistence_enabled = true`; the new value SHALL take effect only after `stop_operator(instance_id)` and a subsequent `start_operator(...)` invocation
+- **WHEN** an `OperatorInstance` is constructed with resolved `keeps_state = true`, AND the class is redeployed with `Durable::Memory` while the instance runs
+- **THEN** the running `OperatorInstance` SHALL continue with `keeps_state = true`; the new value SHALL take effect only after `stop_operator(instance_id)` and a subsequent `start_operator(...)` invocation
 
 ### Requirement: Per-Cell flush buffer registered for non-NoChange Tasklets
 The Rust SDK's `CellSlot` SHALL hold a type-erased flush buffer (`Arc<Mutex<Box<dyn FlushableBuffer>>>`) for any Cell whose Tasklet's `Change` type is not `NoChange`. The buffer SHALL be a `Vec<S::Change>` initially empty; `ctx.change(...)` SHALL push onto it. The per-process flusher SHALL acquire the Mutex on each linger tick to drain the buffer.
@@ -232,22 +227,22 @@ For Cells whose Tasklet's `Change == NoChange`, the runtime SHALL NOT allocate a
 #### Scenario: Non-NoChange Tasklet Cells are registered
 
 - **WHEN** the runtime constructs a Cell for a Tasklet with `Change = MyChange`
-- **THEN** the `CellFlusher`'s registry SHALL contain an entry keyed by `(operator_instance_id, tasklet_id, cell_key)` with the typed buffer reference, the resolved `persistence_enabled` flag, the `change_seq: AtomicU64`, and the wire-frame send fn pointer
+- **THEN** the `CellFlusher`'s registry SHALL contain an entry keyed by `(operator_instance_id, tasklet_id, cell_key)` with the typed buffer reference, the resolved `keeps_state` flag, the `change_seq: AtomicU64`, and the wire-frame send fn pointer
 
 ### Requirement: Four-layer abstraction with defined responsibilities
 The SDK SHALL expose a four-layer abstraction comprising Operator, Tasklet, Cell, and Runner. Each layer SHALL have the following exclusive responsibilities and no others SHALL be implicitly added:
 
-- **Operator** — a user-defined struct implementing the `UnboundedOperator` trait. Spawned by the agent once per `flz operator start` invocation. Owns the channel topology declaration and the registered Tasklets. Holds no domain state of its own.
+- **Operator** — a user-defined struct implementing the `Operator` trait. Spawned by the agent once per `flz operator start` invocation. Owns the channel topology declaration and the registered Tasklets. Holds no domain state of its own.
 - **Tasklet** — a user-defined struct implementing the `Tasklet` trait. Defines a stage's typed input, typed output, state type, run logic, and cell strategy. Holds no runtime state of its own; acts as the template for Cells.
 - **Cell** — a runtime instance of a Tasklet, identified by an optional string key. Holds exactly one State value, exactly one mailbox, and exactly one `inflight` flag. Created by the SDK at operator startup; not user-instantiable.
 - **Runner** — an OS thread in the SDK's worker pool. Drains Cell mailboxes. Not user-visible at the API surface; pool size is configured via the existing `FLEZHA_WORKER_POOL_SIZE` mechanism.
 
 #### Scenario: Each layer has a distinct programmer-visible role
 - **WHEN** a developer reads the public API of the new SDK
-- **THEN** they SHALL find an `UnboundedOperator` trait, a `Tasklet` trait, but no `Cell` trait or `Runner` trait — Cells and Runners are runtime artifacts created by the SDK, not types the user implements
+- **THEN** they SHALL find an `Operator` trait, a `Tasklet` trait, but no `Cell` trait or `Runner` trait — Cells and Runners are runtime artifacts created by the SDK, not types the user implements
 
 #### Scenario: An Operator holds no domain state
-- **WHEN** an `UnboundedOperator` impl is examined
+- **WHEN** an `Operator` impl is examined
 - **THEN** the trait MUST NOT include a state-init or state-handle method; all stateful behavior MUST live on Tasklets
 
 ### Requirement: Static and single cell modes are supported in v1
@@ -589,7 +584,7 @@ The producing Tasklet's `Tasklet.run` SHALL receive the exception via the normal
 The Runner pool SHALL be the SDK's poll workers over the shared activation
 engine (`flz_core::poll_core`): one base set sized by `FLEZHA_WORKER_POOL_SIZE`
 (default: available parallelism), grown under starvation up to
-`FLEZHA_WORKER_POOL_MAX`. There SHALL be no second, core-owned pool — bounded operator
+`FLEZHA_WORKER_POOL_MAX`. There SHALL be no second, core-owned pool — steps operator
 stage work is handed out as step activations the same workers serve — and the
 per-Cell `inflight` CAS guard SHALL be the same mechanism the per-`CellSlot`
 guard uses.
@@ -603,15 +598,15 @@ guard uses.
 - **THEN** the runner pool SHALL start exactly 4 OS threads
 
 #### Scenario: One worker set serves both operator profiles
-- **WHEN** a bounded operator runs a stage while unbounded cells are being dispatched
+- **WHEN** a steps operator runs a stage while flow cells are being dispatched
 - **THEN** both SHALL be served by the same workers, and no core-owned thread SHALL run user code
 
 ### Requirement: No coexistence with OperatorHandler API
-The `OperatorHandler` trait, `OperatorResult` enum, `OperatorRunner` enum, `register_factory()` function, `FactoryMetadata` struct, and `InputTransformer` / `OutputTransformer` traits SHALL be removed from the public Rust SDK API in the same change that introduces the `UnboundedOperator` / `Tasklet` traits. There SHALL be no transitional period in which both APIs are usable simultaneously.
+The `OperatorHandler` trait, `OperatorResult` enum, `OperatorRunner` enum, `register_factory()` function, `FactoryMetadata` struct, and `InputTransformer` / `OutputTransformer` traits SHALL be removed from the public Rust SDK API in the same change that introduces the `Operator` / `Tasklet` traits. There SHALL be no transitional period in which both APIs are usable simultaneously.
 
 **Reason**: The library is unpublished, the only known runner-app consumer is in this monorepo and migrates atomically as part of the same change, and the user has an explicit "no legacy / backward-compat shims" policy. Coexistence would also force the new abstraction to retain dispatch-by-operator-id baggage that the new model deliberately leaves behind.
 
-**Migration**: runner apps using `OperatorHandler` rewrite to `UnboundedOperator` + one or more `Tasklet` impls in the same change. Concrete example: `flezha_market/market-operator/src/main.rs` and `market_computation.rs` are rewritten in the `operator-mvp-rust` change. State (formerly `Assets`) is decomposed into per-Tasklet state types.
+**Migration**: runner apps using `OperatorHandler` rewrite to `Operator` + one or more `Tasklet` impls in the same change. Concrete example: `flezha_market/market-operator/src/main.rs` and `market_computation.rs` are rewritten in the `operator-mvp-rust` change. State (formerly `Assets`) is decomposed into per-Tasklet state types.
 
 #### Scenario: Old API is not importable
 - **WHEN** a Rust file attempts to `use flezha_runner::OperatorHandler` after the cutover
@@ -725,7 +720,7 @@ Counters SHALL be observable via the same per-Cell / per-Tasklet observability s
 
 The system SHALL name the workload hierarchy **Operator → Tasklet → Cell**, and every artifact — source, comment, document, specification, guide, wire name, and on-disk name — SHALL use those names for those levels.
 
-An **Operator** is the deployable unit: it has an id and a namespace, is placed on a Runner, and is started, stopped, migrated, suspended, and crash-resumed. It carries a kind (`unbounded`, `bounded`) and MUST remain able to accept further kinds as a qualifier.
+An **Operator** is the deployable unit: it has an id and a namespace, is placed on a Runner, and is started, stopped, migrated, suspended, and crash-resumed. It carries a kind (`flow`, `steps`) and MUST remain able to accept further kinds as a qualifier.
 
 A **Tasklet** is a typed stage inside an Operator. It declares `Input`, `Output`, `State`, `Change`, and a clock, implements `run` / `compensate` over changes that apply themselves, and is wired to other Tasklets by Channels. A Tasklet stands for the whole life of its Operator; it is not invoked once and completed.
 
@@ -740,7 +735,7 @@ A **Cell** is one keyed instance of a Tasklet. It owns its mailbox, its state, i
 - **THEN** it MUST still resolve to at least one Cell, and no name, diagnostic, or document MAY imply that a Cell requires state to exist
 
 #### Scenario: Level 1 accepts a new kind without renaming
-- **WHEN** a workload kind beyond `unbounded` and `bounded` is introduced
+- **WHEN** a workload kind beyond `flow` and `steps` is introduced
 - **THEN** it MUST be expressible as a qualifier on `Operator` (for example "scheduled Operator") with no change to the level's name
 
 ### Requirement: A Tasklet resolves to exactly one cell mode
@@ -805,7 +800,7 @@ Per-Cell durable state SHALL live at `state/{operator_class}/{tasklet_id}/{cell_
 - **THEN** the metadata key MUST be `flz.cell`
 
 #### Scenario: On-disk names match the documented vocabulary
-- **WHEN** a bounded Operator writes its journal or its durable inbox
+- **WHEN** a steps Operator writes its journal or its durable inbox
 - **THEN** the filename MUST name the Tasklet level, and MUST NOT use a retired abbreviation
 
 #### Scenario: State written before the rename is not read after it

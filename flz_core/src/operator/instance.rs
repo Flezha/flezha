@@ -1,5 +1,5 @@
 //! `OperatorInstance`: one bound operator of either kind — its Cells by
-//! tasklet and mode, its partition range, its reapers, and for a bounded operator its
+//! tasklet and mode, its partition range, its reapers, and for a steps operator its
 //! run — and the partition hash the controller's placement mirrors bit for
 //! bit.
 
@@ -113,15 +113,17 @@ pub struct OperatorInstance {
     /// on its own thread rather than in any mailbox.
     pub(crate) ladders: AtomicUsize,
     /// Resolved once at start from the class const and the runner override.
-    persistence_enabled: bool,
+    keeps_state: bool,
     pub(crate) seq: u64,
-    /// The owed input tail and, for an unbounded operator, its idle deadline.
+    /// The owed input tail and, for a flow operator, its idle deadline.
     pub(crate) idle: crate::operator::sleep::IdleWatch,
-    /// `Some` for a bounded class: the pass sheet its events advance.
-    pub bounded: Option<crate::bounded::BoundedRun>,
-    /// An unbounded operator's processed prefix; a bounded operator's floor is
+    /// `Some` for a steps class: the pass sheet its events advance.
+    pub steps: Option<crate::steps::StepsRun>,
+    /// A flow operator's processed prefix; a steps operator's floor is
     /// its journal.
     pub prefix: Option<Arc<crate::prefix::PrefixLedger>>,
+    /// The end a flow operator asked for from inside, until it is reported.
+    pub(crate) end: crate::operator::completion::FlowEnd,
 }
 
 impl OperatorInstance {
@@ -144,11 +146,11 @@ impl OperatorInstance {
         partition: KeyGroupRange,
     ) -> Arc<Self> {
         // The runner override wins over the class const when present.
-        let persistence_enabled = config_override.unwrap_or(topology.persistence_enabled_const);
-        let prefix = (topology.bounded.is_none() && persistence_enabled)
+        let keeps_state = config_override.unwrap_or(topology.durable.keeps());
+        let prefix = (topology.steps.is_none() && keeps_state)
             .then(|| crate::prefix::PrefixLedger::new(Arc::clone(&instance_id)));
         Arc::new_cyclic(|weak: &Weak<OperatorInstance>| {
-            let topology_is_bounded = topology.bounded.is_some();
+            let topology_is_steps = topology.steps.is_some();
             let tasklet_count = topology.tasklets.len();
             let mut cells: Vec<Vec<Arc<CellSlot>>> = Vec::with_capacity(tasklet_count);
             let mut cell_key_to_idx: Vec<HashMap<&'static str, usize>> =
@@ -163,7 +165,7 @@ impl OperatorInstance {
                     &instance_id,
                     tasklet_id as u32,
                     tasklet_desc,
-                    persistence_enabled,
+                    keeps_state,
                     &prefix,
                 );
                 cells.push(slots);
@@ -186,12 +188,13 @@ impl OperatorInstance {
                 dynamic_registries,
                 background_stop,
                 background_handles: Mutex::new(background_handles),
-                persistence_enabled,
+                keeps_state,
                 seq: INSTANCE_SEQ.fetch_add(1, Ordering::Relaxed),
                 idle: Default::default(),
-                bounded: topology_is_bounded
-                    .then(|| crate::bounded::BoundedRun::new(Weak::clone(weak))),
+                steps: topology_is_steps
+                    .then(|| crate::steps::StepsRun::new(Weak::clone(weak))),
                 prefix,
+                end: Default::default(),
             }
         })
     }
@@ -253,14 +256,14 @@ impl OperatorInstance {
         }
     }
 
-    pub fn persistence_enabled(&self) -> bool {
-        self.persistence_enabled
+    pub fn keeps_state(&self) -> bool {
+        self.keeps_state
     }
 
     /// Whether this instance's state is durable: persistence on, and a
     /// controller to ship it to. A transport-less run keeps nothing.
     pub(crate) fn durable(&self) -> bool {
-        self.persistence_enabled && crate::runner::coordinator_installed()
+        self.keeps_state && crate::runner::coordinator_installed()
     }
 
     /// Stop and join the reapers; idempotent.
@@ -316,7 +319,7 @@ fn build_tasklet_cells(
     instance_id: &Arc<str>,
     tasklet_id: u32,
     tasklet_desc: &crate::operator::topology::TaskletDescriptor,
-    persistence_enabled: bool,
+    keeps_state: bool,
     prefix: &Option<Arc<crate::prefix::PrefixLedger>>,
 ) -> TaskletCells {
     let build = |cell_key: Option<&str>, cell_index: usize| {
@@ -327,7 +330,7 @@ fn build_tasklet_cells(
             tasklet_id,
             cell_key,
             cell_index,
-            persistence_enabled,
+            keeps_state,
             prefix: prefix.clone(),
         })
     };
@@ -338,7 +341,7 @@ fn build_tasklet_cells(
             Arc::clone(topology),
             Weak::clone(weak),
             Arc::clone(instance_id),
-            persistence_enabled,
+            keeps_state,
             prefix.clone(),
         );
         return (Vec::new(), HashMap::new(), Some(Arc::new(registry)));

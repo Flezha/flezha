@@ -51,7 +51,7 @@ defmodule Flezha.Api.RpcSurfaceTest do
       # and no search by name and arity can reach a name that changed.
       assert :withdrawn =
                verdict(
-                 {Flezha.State.PersistenceResolver, :bounded_completed_retention_hours, 1,
+                 {Flezha.State.PersistenceResolver, :operator_completed_retention_hours, 1,
                   "ui:926"}
                )
 

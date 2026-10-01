@@ -62,23 +62,25 @@ In `Reply`, a second change beside `Said`, and the undo after `run`:
 
 By default a failed turn ends the whole session and undoes every turn, as a failed step
 ended an order in [`building_a_workflow.md`](../tradedesk/building_a_workflow.md). A
-conversation should lose only the turn that failed: with the rollback mode that keeps
+conversation should lose only the turn that failed: with the failure mode that keeps
 progress, a failed turn's message goes to the dead-letter queue, its tasklets are undone,
 and the session takes its next message.
 
-> Declare the rollback mode that keeps progress.
+> Declare the failure mode that keeps progress.
 > {: .step}
 
 <!-- tabs-open -->
 
 ### Java
 
-In `AgentOperator`, after `loopMode`:
+In `AgentOperator`, `run` gains its failure mode:
 
 ```java
     @Override
-    public RollbackMode rollbackMode() {
-        return RollbackMode.KEEP_PROGRESS;               // a failed turn fails alone
+    public Run run() {
+        return new Run.Steps(
+                Each.PER_INPUT,                          // one turn per message
+                OnFailure.KEEP_PROGRESS);                // a failed turn fails alone
     }
 ```
 

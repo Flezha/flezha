@@ -8,7 +8,7 @@ durability tier survives total disk loss.
 ## Requirements
 ### Requirement: Declared intent lives in the hub declared set, not runtime rows
 
-Every durable operator start SHALL be declared through the hub's declared-children set (`durable: true` at the single start authority), user-issued, scheduled, and tasklet-requested alike, and every deliberate stop or bounded completion SHALL remove the entry through the hub stop path. Flezha SHALL NOT maintain any intent store of its own, and no flezha code path outside the start/stop authority SHALL mutate declared intent.
+Every durable operator start SHALL be declared through the hub's declared-children set (`durable: true` at the single start authority), user-issued, scheduled, and tasklet-requested alike, and every deliberate stop or steps completion SHALL remove the entry through the hub stop path. Flezha SHALL NOT maintain any intent store of its own, and no flezha code path outside the start/stop authority SHALL mutate declared intent.
 
 Plugin mutations are declared intent by the same reasoning and SHALL be written to the declared set, through that same start authority, so a restart rebuilds an operator with the plugins it was last known to have. The declared set is written at start and at stop and has no update path of its own; that update is the start authority's to make, and no other flezha code path SHALL make it. A plugin mutation against an operator with no declared entry SHALL be refused rather than declare one, so it can never resurrect an operator a stop removed for good.
 
@@ -27,9 +27,9 @@ Plugin mutations are declared intent by the same reasoning and SHALL be written 
 - **THEN** the operator's entry is absent from every adopted version of the
   declared set and nothing resurrects it
 
-#### Scenario: Spawned bounded operators share the model
+#### Scenario: Spawned steps operators share the model
 
-- **WHEN** a tasklet-requested bounded instance is spawned, and later
+- **WHEN** a tasklet-requested steps instance is spawned, and later
   completes
 - **THEN** its entry exists in the declared set for exactly that lifetime, so
   a whole-cluster cold start mid-lifetime restores it and a cold start after

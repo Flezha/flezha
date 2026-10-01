@@ -72,7 +72,7 @@ added `deliver`, are `reply` alone, and the rewind and the failed turn are there
 
 ## The gateway declares it
 
-An unbounded operator keeps no input log unless it asks for one, and without one its
+A flow operator keeps no input log unless it asks for one, and without one its
 guarantee is at least once: after a crash an output can leave twice, and a message in flight
 can be lost. The gateway counts tokens, so it asks.
 
@@ -83,10 +83,13 @@ can be lost. The gateway counts tokens, so it asks.
 
 ### Java
 
-In `GatewayOperator.channels`, as its first line:
+In `GatewayOperator`, after `factoryId`:
 
 ```java
-        c.effectivelyOnce();                                 // each request and answer on disk before it runs
+    @Override
+    public Run run() {
+        return new Run.Flow(new Exactly.EffectivelyOnce()); // each request and answer on disk before it runs
+    }
 ```
 
 <!-- tabs-close -->

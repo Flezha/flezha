@@ -363,8 +363,8 @@ defmodule Flezha.State.Outbox do
   conforming sink deduplicates on (`Flezha.Plugin.Provider.Postgres`,
   `Flezha.Plugin.Provider.Kafka`).
 
-  The one durable outbox mints it, for an unbounded operator Cell under the
-  effectively-once tier and a durable bounded operator Cell alike
+  The one durable outbox mints it, for a flow operator Cell under the
+  effectively-once tier and a durable steps operator Cell alike
   (`Flezha.State.WalWriter`, `seq` = `<record seq>.<emit_ordinal>`). `seq` is
   a numeric dotted sequence so a sink can order it; `key` is omitted when the
   output carries no natural key.

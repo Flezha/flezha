@@ -161,7 +161,7 @@ MODULE_LAYERS = {
     "Flezha.Http.S3": 0,
     "Flezha.Service.Dlq": 5,
     "Flezha.Service.Namespace": 5,
-    "Flezha.Service.Bounded": 5,
+    "Flezha.Service.Steps": 5,
 }
 
 DEFMODULE = re.compile(r"^\s*defmodule\s+([A-Z][\w.]*)\s+do", re.M)

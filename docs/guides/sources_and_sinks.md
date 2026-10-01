@@ -198,7 +198,8 @@ Fetching operator information for namespace 'default'...
 Operator information for namespace 'default':
 
 Operator: my_echo
-  Kind: stream
+  Run: flow
+  Durable: local (sleep_after: false)
   Phase: running
   Health: healthy
   Runner ID: default_b2e389ab1c13

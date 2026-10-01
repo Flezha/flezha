@@ -184,7 +184,7 @@ defmodule Flezha.Service.Calls.Router do
       :deliver,
       context,
       request.id,
-      kinds: if(request.key, do: [:bounded, :unbounded], else: [:bounded]),
+      runs: if(request.key, do: [:steps, :flow], else: [:steps]),
       if_absent: if(request.create, do: :spawn, else: :not_found),
       metadata: metadata(request),
       call: call_of(caller, request, factory)

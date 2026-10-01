@@ -258,7 +258,7 @@ defmodule Flezha.Service.OperatorManager.Init do
     # `{:error, _}` instead of crashing the GenServer. The
     # `:exit` catch covers older failure modes (timeout, kill).
     # Started, then exited cleanly before we could read its binding — a
-    # run-once bounded operator that already completed, or a concurrent
+    # run-once steps operator that already completed, or a concurrent
     # stop. A clean exit is a successful start, not a failure; no live
     # binding remains, so `runner_id` is nil.
     on_exit = fn

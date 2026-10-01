@@ -36,7 +36,7 @@ The system MUST run exactly one self-healing decision loop (`Flezha.Convergence.
 
 ### Requirement: The reconciler is a pure-function pipeline, not scattered handlers
 
-The self-healing decision logic MUST be expressed as a pure-function pipeline under `lib/flezha/convergence/`: `Loop.declare/1` (the one intake — a fact `{kind, target, args}` held in one map keyed `{kind, target}` with the time of its last declaration, refreshed by a re-declaration, cleared by its counter-fact or by its grace expiry, ticking the loop at once when the key is new) → `Probe.snapshot/0` (observe reality) → `Intent` (declared state) → `Diff.compute/3` (divergence delta, over probed reality AND this tick's facts) → `Planner` (ordered, backoff-filtered ops) → `Heal.execute/1` (bounded primitives). The two telemetry subscriptions and the runner-connected handler SHALL be declarations too, so a site tells the loop in one shape. Adding a failure mode means one `declare/1` kind consumed by one Diff field, or one primitive entry with the Diff rule that plans it — NOT a new self-healing module, a site-local ladder, or decision branches scattered across services. The heal surface is a fixed, small set of idempotent primitives, each an entry naming its key rule, its executor and the evidence that resets it. The Planner SHALL be the only place a divergence becomes an op — no caller may inject ops into or around a produced plan. That rule governs remedies: everything that acts on an operator, a runner, a plugin or a Cell. The loop carries one duty outside it — on each tick it reclaims this node's hub for any namespace whose local fleet is empty and none of whose operators this node hosts. That reclaim names no target, takes no backoff and repairs nothing: it retires a node-local resource the fleet no longer justifies, so it is neither a primitive nor planned.
+The self-healing decision logic MUST be expressed as a pure-function pipeline under `lib/flezha/convergence/`: `Loop.declare/1` (the one intake — a fact `{kind, target, args}` held in one map keyed `{kind, target}` with the time of its last declaration, refreshed by a re-declaration, cleared by its counter-fact or by its grace expiry, ticking the loop at once when the key is new) → `Probe.snapshot/0` (observe reality) → `Intent` (declared state) → `Diff.compute/3` (divergence delta, over probed reality AND this tick's facts) → `Planner` (ordered, backoff-filtered ops) → `Heal.execute/1` (steps primitives). The two telemetry subscriptions and the runner-connected handler SHALL be declarations too, so a site tells the loop in one shape. Adding a failure mode means one `declare/1` kind consumed by one Diff field, or one primitive entry with the Diff rule that plans it — NOT a new self-healing module, a site-local ladder, or decision branches scattered across services. The heal surface is a fixed, small set of idempotent primitives, each an entry naming its key rule, its executor and the evidence that resets it. The Planner SHALL be the only place a divergence becomes an op — no caller may inject ops into or around a produced plan. That rule governs remedies: everything that acts on an operator, a runner, a plugin or a Cell. The loop carries one duty outside it — on each tick it reclaims this node's hub for any namespace whose local fleet is empty and none of whose operators this node hosts. That reclaim names no target, takes no backoff and repairs nothing: it retires a node-local resource the fleet no longer justifies, so it is neither a primitive nor planned.
 
 #### Scenario: a new signal enters through the Diff, not around the plan
 - **WHEN** a sensor produces a fact the Loop must heal from (the data-plane classifier verdict, the Watchdog's stalled instances)
@@ -184,9 +184,9 @@ On each tick the convergence snapshot SHALL compare the live intended set agains
 - **WHEN** a user stops an operator and deletes its durable state
 - **THEN** the operator no longer appears in `intent_mismatch` and health returns to `200 healthy`
 
-#### Scenario: A retained finished bounded operator is not a mismatch
+#### Scenario: A retained finished steps operator is not a mismatch
 
-- **WHEN** a bounded operator completes and its state directory is retained with its `Completion` record while it is no longer intended
+- **WHEN** a steps operator completes and its state directory is retained with its `Completion` record while it is no longer intended
 - **THEN** it SHALL NOT appear in `intent_mismatch` and health SHALL NOT degrade for it
 
 #### Scenario: Fresh install with no evidence is healthy
@@ -391,7 +391,7 @@ extension table, so that fail-open is observable rather than silent.
 
 ### Requirement: Plugin-degraded operators surface on /healthz and telemetry
 
-A declared plugin SHALL carry its own verdict record: `degraded` when it is not subscribed at all, when its owning process crashed, or when its provider self-reports unhealthy. An operator with at least one declared plugin that is not RUNNING — whichever of those it is, and including a plugin subscribed but left `prepared` by a failed activation — SHALL carry that divergence as its own `degraded` reason naming the plugin, so the operator surface and the plugin surface agree without either re-reading the other, and the snapshot's plugin-degraded set SHALL be derived from those records rather than kept as a second list. While any plugin record is `degraded`, `/healthz` SHALL report `degraded` with HTTP 200 and a reason that names `plugin_unhealthy` — degraded MUST NOT trigger a kubelet restart. The loop SHALL log plugin-health verdict transitions (a record's state changes, the degraded set changes membership, or it clears), not steady-state. A suspended bounded instance — alive, unbound, its plugins released with its runner — SHALL NOT be plugin-diffed: the rehydrating bind replays its declared plugins, and until then there is nothing to heal.
+A declared plugin SHALL carry its own verdict record: `degraded` when it is not subscribed at all, when its owning process crashed, or when its provider self-reports unhealthy. An operator with at least one declared plugin that is not RUNNING — whichever of those it is, and including a plugin subscribed but left `prepared` by a failed activation — SHALL carry that divergence as its own `degraded` reason naming the plugin, so the operator surface and the plugin surface agree without either re-reading the other, and the snapshot's plugin-degraded set SHALL be derived from those records rather than kept as a second list. While any plugin record is `degraded`, `/healthz` SHALL report `degraded` with HTTP 200 and a reason that names `plugin_unhealthy` — degraded MUST NOT trigger a kubelet restart. The loop SHALL log plugin-health verdict transitions (a record's state changes, the degraded set changes membership, or it clears), not steady-state. A suspended steps instance — alive, unbound, its plugins released with its runner — SHALL NOT be plugin-diffed: the rehydrating bind replays its declared plugins, and until then there is nothing to heal.
 
 #### Scenario: pluginless running operator is degraded, not healthy
 - **GIVEN** a running operator whose declared cspec lists plugins that are not subscribed
@@ -399,7 +399,7 @@ A declared plugin SHALL carry its own verdict record: `degraded` when it is not 
 - **THEN** the response is HTTP 200 with status `degraded` and a reason naming `plugin_unhealthy`.
 
 #### Scenario: a suspended instance is not degraded
-- **GIVEN** a parked bounded instance whose cspec declares plugins and whose extension table runs none
+- **GIVEN** a parked steps instance whose cspec declares plugins and whose extension table runs none
 - **WHEN** the Loop ticks
 - **THEN** no `missing_plugins` entry, no heal op and no degraded verdict SHALL be produced for it
 
@@ -571,10 +571,10 @@ convergence tick.
 - **WHEN** a `runner_migrate` call times out, or the bind task it spawned reports a failure
 - **THEN** the durable registry binding is not switched to the new runner, the operator is parked with the reason and declared to the loop, and the parked ladder rebinds it
 
-#### Scenario: A bounded instance migrates as a bounded operator
+#### Scenario: A steps instance migrates as a steps operator
 
-- **WHEN** a `runner_migrate` re-adds a durable bounded operator on its new runner
-- **THEN** the `AddOperator` SHALL carry the operator's kind, its folded `task_journal`, a `resume_cell_count` equal to its persisted Cells and its undelivered `inbox_tail_count`, so the runner starts it as a bounded operator, holds its driver until those Cells are restored, skips every committed tasklet and receives the tail it is owed
+- **WHEN** a `runner_migrate` re-adds a durable steps operator on its new runner
+- **THEN** the `AddOperator` SHALL carry the operator's kind, its folded `task_journal`, a `resume_cell_count` equal to its persisted Cells and its undelivered `inbox_tail_count`, so the runner starts it as a steps operator, holds its driver until those Cells are restored, skips every committed tasklet and receives the tail it is owed
 
 #### Scenario: A rebind performs one restore
 
@@ -785,7 +785,7 @@ so a session that is alive over a data plane that is dead is two fields of one r
 
 #### Scenario: A suspended instance with a park reason is suspended
 
-- **GIVEN** a durable bounded instance evicted at a committed boundary that also carries
+- **GIVEN** a durable steps instance evicted at a committed boundary that also carries
   a park reason
 - **WHEN** the judge runs
 - **THEN** its record SHALL be `state: suspended, phase: suspended`, and a parked
@@ -830,7 +830,7 @@ emitted on `[:flezha, :backoff, :wait]` (`delay_ms`, `attempt`; `ladder`, `targe
 `[:flezha, :backoff, :reset]`, so a ladder's behaviour is observable without reading its
 site. A successful attempt SHALL reset the row's attempt count, under the row's own
 definition of success. A row's values SHALL be stated once, by the requirement that owns
-the behaviour they pace: the `:heal` and `:compaction` rows by "Bounded calls and
+the behaviour they pace: the `:heal` and `:compaction` rows by "Steps calls and
 backoff prevent heal-induced churn", and the rest here — the OTLP post's
 `250 ms → 4 s` in five attempts, the cluster reconnect's `1 s` doubling to its
 `:reconnect_max_backoff_ms` knob, the hub-call retry's `150 ms → 5 s` in eight attempts,
@@ -911,7 +911,7 @@ rebound when its key's rung allows and not at once. No new ladder or knob SHALL 
 
 #### Scenario: A killed instance is parked and rebound
 
-- **GIVEN** an unbounded instance `X` bound to a live Elixir runner and a running convergence loop
+- **GIVEN** a flow instance `X` bound to a live Elixir runner and a running convergence loop
 - **WHEN** the runner reports `OperatorExited` for `X`
 - **THEN** `X` SHALL be parked with `{:operator_exited, reason}`, `[:flezha, :operator, :exited]`
   SHALL be emitted, the loop SHALL plan `rebind_operator` for `X` on the declaring tick, an
@@ -934,7 +934,7 @@ rebound when its key's rung allows and not at once. No new ladder or knob SHALL 
 
 #### Scenario: A report for a suspended or completed instance changes nothing
 
-- **WHEN** an `OperatorExited` arrives for an instance that is suspended, or for a bounded instance
+- **WHEN** an `OperatorExited` arrives for an instance that is suspended, or for a steps instance
   whose completion is recorded
 - **THEN** the instance SHALL NOT be parked or rebound, and a completed one's teardown SHALL proceed
 

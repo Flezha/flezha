@@ -1,4 +1,4 @@
-flz schedule - cron-scheduled bounded operator spawns
+flz schedule - cron-scheduled steps operator spawns
 
 USAGE:
     flz schedule <SUBCOMMAND>
@@ -7,8 +7,8 @@ SUBCOMMANDS:
     add <name> --cron "<expr>" --tz <iana> --factory <factory_id>
         [--namespace <ns>] [--init-values <json>] [--text <payload>] [--channel <ch>]
         [--plugins <json>]
-                 Add a durable schedule of a bounded factory; a factory a
-                 connected runner announced as unbounded is refused.
+                 Add a durable schedule of a steps factory; a factory a
+                 connected runner announced as flow is refused.
                  --init-values is the state every fired instance starts with;
                  --text is the first message it receives, on the entry channel
                  --channel names or the first declared one.

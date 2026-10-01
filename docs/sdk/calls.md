@@ -7,7 +7,7 @@ is outside Flezha: `flz operator call`, application code through the published
 `Flezha.Service.Operator.call/6`, or a plugin feeding the operator it is enabled on. An
 **operator call** is one operator calling another from its graph with a `call(...)` end; its
 outcome comes back as a [`Response`](#operator-calls-call) input, and nothing waits for it.
-Both kinds of operator answer calls and make them, unbounded and bounded. This page is the
+Both kinds of operator answer calls and make them, flow and steps. This page is the
 contract: how a graph answers, where the answer goes, when a call ends, and who may make one.
 
 ## Contract
@@ -58,7 +58,7 @@ A value is serialized as the SDK's sink serializes it: the SDK pages describe th
 The operator answers each call with its input. In Rust:
 
 ```rust
-use flezha_runner::{tasklet, ChannelBuilder, Ctx, Tasklet, TaskletError, UnboundedOperator};
+use flezha_runner::{tasklet, ChannelBuilder, Ctx, Tasklet, TaskletError, Operator};
 
 #[derive(Default)]
 pub struct Echo;
@@ -75,7 +75,7 @@ impl Tasklet for Echo {
 
 pub struct CallEcho;
 
-impl UnboundedOperator for CallEcho {
+impl Operator for CallEcho {
     fn factory_id() -> &'static str {
         "call_echo"
     }
@@ -90,7 +90,7 @@ The same operator in Elixir:
 
 ```elixir
 defmodule CallEcho do
-  use Flezha.SDK.UnboundedOperator, factory_id: "call_echo"
+  use Flezha.SDK.Operator, factory_id: "call_echo"
 
   @impl true
   def channels(c), do: c |> input("in") |> into(Echo) |> response()
@@ -118,7 +118,7 @@ hello
 
 The answer may come from any tasklet downstream of the input, not only the one that received
 it: in `input("in") |> into(Parse) |> into(Price) |> response()` the value `Price` emits
-answers the call. In a bounded operator the answer comes from the pass the call's input opened.
+answers the call. In a steps operator the answer comes from the pass the call's input opened.
 
 ## The call token
 
@@ -145,8 +145,8 @@ answers before the state change its turn made is durable where the tier promises
 | --- | --- |
 | Off the effectively-once tier | at settle, with no durability wait |
 | Under the effectively-once tier | after the effect record that carries it is synced to disk |
-| A durable bounded operator | when the stage that produced it commits (for a one-tasklet turn, the iteration's commit) |
-| A bounded operator that journals nothing | at settle |
+| A durable steps operator | when the stage that produced it commits (for a one-tasklet turn, the iteration's commit) |
+| A steps operator that journals nothing | at settle |
 
 The Overwatch takes every answer off the output path before the `:on_output` chain runs: no
 plugin, no `flz operator listen` and no sink sees one. Then:
@@ -182,9 +182,9 @@ cannot be taken:
   durable (for a failed turn of a durable `per_input` `keep_progress` operator, once the turn's
   record is), carrying the entry's reference and the error text. The input is kept in the
   DLQ (`flz dlq list`) and a replay can still succeed; its answer then reaches nobody.
-- **The instance ends.** When a bounded run completes, fails or is stopped, or either kind is
-  stopped, every waiting caller receives `call.callee_ended` with the run's terminal status:
-  `ok`, `error` or `cancelled`. An operator caller of an instance stopped without ending that
+- **The instance ends.** When a run completes, fails or is stopped, every waiting caller
+  receives `call.callee_ended` with the run's terminal status: `ok` (a steps run),
+  `completed` (a flow instance's `complete`), `error` or `cancelled`. An operator caller of an instance stopped without ending that
   keeps a durable input log is the exception: its call stays journaled and is answered when the
   instance runs again, or by the caller's deadline.
 
@@ -199,7 +199,7 @@ Every refusal is in the [error model](../errors.md); the exit code is `flz`'s fo
 | `call.failed` | unavailable (7) | the operator dead-lettered the input; `details.dlq_ref`, `details.error` |
 | `call.callee_ended` | unavailable (7) | the instance ended before it answered; `details.status` |
 | `call.absorbed` | conflict (6) | the input was absorbed as a duplicate, or an `:on_input` hook filtered it out |
-| `call.not_accepted` | conflict (6) | a `once` or `chained` bounded instance has already taken its input; nothing is journaled |
+| `call.not_accepted` | conflict (6) | a `once` or `chained` steps instance has already taken its input; nothing is journaled |
 | `call.busy` | unavailable (7) | the operator already owes `call_pending_max` answers; nothing is ingested |
 | `call.unavailable` | unavailable (7) | the operator is parked or not ready, its durable append was refused, or its Overwatch went away |
 | `call.target_unkeyed` | invalid (2) | a partition group was called with no key; `details.members` |
@@ -289,7 +289,7 @@ c |> input("in") |> into(Route) |> call(factory: "triage", deadline_ms: 60_000)
 | --- | --- |
 | `call("pricing", ...)` | the instance `pricing`, or, when `pricing` is a partition group, the member whose key-group range owns the request's key (from a `key_by` before the end) |
 | `key_by(...) \|> call(factory: "agent", ...)` | the instance of `agent` whose id is the request's key, started with the request as its first input when no instance holds that id |
-| `call(factory: "triage", ...)` | a new bounded instance of `triage` per call, under a generated id |
+| `call(factory: "triage", ...)` | a new steps instance of `triage` per call, under a generated id |
 
 The request enters the callee on the entry channel `channel:` names, or on its first declared
 entry channel. A target is always in the caller's namespace. Creating and delivering go through
@@ -300,10 +300,10 @@ factory: a key naming a running instance of another factory is answered
 steer a request into an unrelated operator. With `create: false` an absent id is answered
 `operator.not_found` and nothing starts; a gateway uses it for the turns of a session that
 may have ended, so an expired session is refused rather than silently started again. A factory
-call without a key cannot say `create: false`, and one to an unbounded factory is refused
-`operator.factory_not_bounded`, since nothing would ever end the instances it started. A key
-may start an unbounded instance: it runs until it is stopped, and should declare
-`sleep_when_idle`.
+call without a key cannot say `create: false`, and one to a flow factory is refused
+`operator.factory_not_steps`, since nothing would ever end the instances it started. A key
+may start a flow instance: it runs until it is stopped, and sleeps when idle
+as its class's `sleep_after` says.
 
 | SDK | Spelling |
 | --- | --- |
@@ -326,7 +326,7 @@ the raw binary; the Elixir `Response` carries the request as the bytes that were
 (`topology.call_without_key`), a Response channel that feeds no tasklet
 (`topology.call_response_unread`: every outcome would be journaled and read by nobody; forward
 with `operator_forward` when no outcome is wanted), and a call in a `:once` or `:chained`
-bounded class (`topology.call_outside_per_input_loop`), which never reads the later message a
+steps class (`topology.call_outside_per_input_loop`), which never reads the later message a
 `Response` is.
 
 ### The `Response`
@@ -360,7 +360,7 @@ tier: the request is journaled in the callee's input log when the callee journal
 
 | Caller and callee | A call |
 | --- | --- |
-| Both keep a durable input log (an effectively-once unbounded operator, a durable bounded one) | survives a crash of either side's runner, Overwatch or controller, runs its turn at most once to its commit, and ends with exactly one `Response`; a request still on its way when only the controller's call delivery crashes is not sent again, and that call ends in `call.timeout` at its deadline |
+| Both keep a durable input log (an effectively-once flow operator, a durable steps one) | survives a crash of either side's runner, Overwatch or controller, runs its turn at most once to its commit, and ends with exactly one `Response`; a request still on its way when only the controller's call delivery crashes is not sent again, and that call ends in `call.timeout` at its deadline |
 | Either keeps none | is best effort: a lost request or answer ends in `call.timeout` at the deadline while the caller's Overwatch lives, and a caller off the tier that loses its Overwatch loses its pending calls |
 
 For a durable pair: the call output stays held in the caller's outbox until its `Response` is
@@ -400,9 +400,9 @@ counted.
   later outputs only as calls end. That is queueing, never loss. A caller off the tier keeps no
   outbox; its calls are bounded by their deadlines.
 
-### A bounded caller
+### A steps caller
 
-A `:per_input` bounded operator calls without suspending: the request leaves when the stage that
+A `:per_input` steps operator calls without suspending: the request leaves when the stage that
 emitted it commits, and the `Response` arrives on the Response channel as a later message, run as
 a later iteration. An agent session calls a tool operator this way. An instance that ends with
 calls pending abandons them; their outcomes are dropped and counted as `unclaimed`.
@@ -429,7 +429,7 @@ timer and `ctx.complete`) no longer holds its id: a call creates a new empty ins
 
 ### Authorization
 
-A call is judged as its namespace's runner identity, as a tasklet's `ctx.spawn_bounded` is:
+A call is judged as its namespace's runner identity, as a tasklet's `ctx.spawn_steps` is:
 creating the callee against `operator.start` (audited as a start naming the new instance),
 delivering the request against `operator.send` (no record of its own). The runner identity needs
 the `spawner` or `app` role in the namespace; a refusal ends the call with its `authz.*` code and
@@ -463,7 +463,7 @@ the number of callers waiting on an operator as `Waiting callers`.
 
 ## Measured latency
 
-On one machine, a durable `per_input` bounded operator on the Rust runner (debug build),
+On one machine, a durable `per_input` steps operator on the Rust runner (debug build),
 measured inside the controller: 14 to 32 ms for an awake instance, 29 to 48 ms for the first
 call after it slept. Through `flz operator call` both are about 300 ms, most of it the start-up
 of the `flzvm` script the CLI runs.

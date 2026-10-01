@@ -43,10 +43,10 @@ The SDK SHALL NOT offer a pool configuration that omits the starvation superviso
 
 ### Requirement: Every blocking core call releases the GIL
 
-The binding SHALL release the global interpreter lock for the duration of every blocking core call — `poll`, `wait_starvation`, `complete` and the bounded operator inbox receive — so that no blocking core call prevents another Python thread from running. The binding SHALL NOT hold a Rust lock across arbitrary Python execution.
+The binding SHALL release the global interpreter lock for the duration of every blocking core call — `poll`, `wait_starvation`, `complete` and the steps operator inbox receive — so that no blocking core call prevents another Python thread from running. The binding SHALL NOT hold a Rust lock across arbitrary Python execution.
 
-#### Scenario: A blocked bounded operator receive does not freeze the interpreter
-- **WHEN** a bounded stage waits on the inbox for several seconds
+#### Scenario: A blocked steps operator receive does not freeze the interpreter
+- **WHEN** a steps stage waits on the inbox for several seconds
 - **THEN** other Python threads, including fetchers, SHALL continue to execute Python code throughout the wait
 
 #### Scenario: A blocked poll does not freeze the interpreter

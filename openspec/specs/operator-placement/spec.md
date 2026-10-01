@@ -6,7 +6,7 @@ the rendezvous ranking, the fairness cap and its knob, the fallback when every
 candidate is at cap, the scope boundary against node selection, and the
 observability of the resulting spread.
 ## Requirements
-### Requirement: One runner is selected from the candidate set by bounded-load rendezvous hashing
+### Requirement: One runner is selected from the candidate set by steps-load rendezvous hashing
 
 The controller SHALL select an operator's runner from the candidate set by
 rendezvous ranking narrowed by a fairness cap. The candidate set SHALL be

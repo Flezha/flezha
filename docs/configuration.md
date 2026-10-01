@@ -12,7 +12,7 @@ to when nothing is set; `(derived)` marks a default computed from another knob.
 |---|---|---|---|
 | 1. Environment variables | the process environment / deploy manifest | whole node | restart the node |
 | 2. Application env | `config/config.exs`, `config/runtime.exs`, `config/<env>.exs` | whole node | rebuild or restart (`runtime.exs` is read at boot) |
-| 3. Operator declarations | the SDK, in the operator's `channels()` and Tasklet/Bounded class | one operator class | redeploy the runner — frozen at registration |
+| 3. Operator declarations | the SDK, in the operator's `channels()` and Tasklet/Steps class | one operator class | redeploy the runner — frozen at registration |
 | 4. Plugin options | the plugin's `opts` map when it is installed | one plugin instance | re-install the plugin |
 
 Underneath all four sits the Erlang VM itself, which is configured before the
@@ -148,7 +148,7 @@ the value and the type.
 | `FLEZHA_INPUT_LOG_HOLD_WINDOW_MS` | `0` | `:input_log_hold_window_ms` — a floor; a declared `correction_window` raises its own hold above it |
 | `FLEZHA_CREDIT_FLOW_CONTROL` | `true` | `:credit_flow_control_enabled` |
 | `FLEZHA_RETENTION_CHECK_INTERVAL_MS` | `60000` | `:time_travel_retention_check_interval_ms` (not in test) |
-| `FLEZHA_BOUNDED_RETENTION_HOURS` | `72` | `:default_bounded_completed_retention_hours` (not in test) |
+| `FLEZHA_STEPS_RETENTION_HOURS` | `72` | `:default_operator_completed_retention_hours` (not in test); how long the record and state of a finished instance are kept, a completed flow instance's as well as a steps one's |
 | `FLEZHA_DURABILITY_BACKEND` | `none` (prod warns when it was defaulted) | `:durability_tier[:backend]`; `none`, `postgres`, `s3`, `local_path`; any other spelling resolves to `none` and warns. A selected backend missing an option it cannot work without refuses the boot naming it |
 | `FLEZHA_DURABILITY_WRITER_ID` | `node()` | read at runtime by `Flezha.State.DurabilityTier.writer_id/0`; the stable lineage-writer identity for a controller whose node name changes on reschedule |
 | `FLEZHA_DURABILITY_SHIP_INTERVAL_MS` | `30000` | `:durability_tier[:ship_interval_ms]` |
@@ -402,17 +402,17 @@ crate also reads its rows inside the controller's NIF.
 | `FLEZHA_DATA_HEARTBEAT_MS` | `10000` | `flz_transport`, `Flezha.SDK.RunnerServer` — `data_heartbeat` interval, jittered into `[base/2, base]` |
 | `FLEZHA_WORKER_POOL_SIZE` | Rust: host parallelism; Java: `2` fetchers | `flezha_runner::operator::poll_pool`, `FlezhaEnv` |
 | `FLEZHA_WORKER_POOL_MAX` | `10 × FLEZHA_WORKER_POOL_SIZE` (derived, never below it) | Rust and Java — ceiling the starvation supervisor may grow the worker/fetcher set to (`flezha_runner::operator::poll_pool`, `FlezhaEnv`) |
-| `FLEZHA_MAX_INFLIGHT_ACTIVATIONS` | `1024` | `flz_core::poll_core` — how many cells are handed out at once, a bounded stage's as well as an unbounded operator's |
+| `FLEZHA_MAX_INFLIGHT_ACTIVATIONS` | `1024` | `flz_core::poll_core` — how many cells are handed out at once, a steps stage's as well as a flow operator's |
 | `FLEZHA_DROP_NOTHING_NONPARKING` | `false` (off) | **Temporary rollout switch** (`flz_core::routing`). On, a `DropNothing` push a producing Cell cannot deliver is held in that Cell's push holdback and the Cell is handed no further work until it lands, instead of parking the calling host thread. Off, the producer parks as before. Reaches Rust and Java (both complete through `flz_core`); the Elixir SDK already defers and reads nothing here. Nothing an author declared changes either way — the guarantee is "nothing discarded, order preserved" in both. **It buys the freed thread and costs throughput under saturation**: free at the default mailbox capacity (p = 0.46), but **30–36% slower than the park** on a mailbox held continuously full (measured at `FLEZHA_MAILBOX_CAPACITY=4`). Turn it on where a host cannot afford to hold a thread — a single-threaded FFI host, a Java carrier pinned by a native frame — not for speed. Flipping the DEFAULT is gated on three things: a ≥ 2 h soak with it on against a genuinely saturated consumer, the Java round-trip bench under both settings (owed), and that 30–36% cost closed or accepted in writing; the flag is deleted in the change that flips it or the next one (`docs/dev_notes/nonblocking-drop-nothing-backpressure.md`) |
 | `FLEZHA_PUSH_HOLDBACK_MAX` | `4096` | `flz_core::routing` — how many undelivered pushes one producing Cell may hold before an emit waits for its own earlier ones to land. Only an in-process typed emit loop can reach it; an FFI host's outputs are materialized before the core sees them. Reaching it logs one throttled `flezha::mailbox` warning naming the producer and the consumer |
 | `FLEZHA_FLUSH_LINGER_MS` | `5` | `flz_core::flusher` |
 | `FLEZHA_FLUSH_BEFORE_EMIT` | `true` (on) | Rust dispatcher; `0`/`false`/`off`/`no` reverts to inline emit |
 | `FLEZHA_REAP_INTERVAL_MS` | `min(cell_idle_ttl / 4, 30 s)` (derived) | `flz_core::dynamic` and the Elixir SDK's Operator — idle-Cell reaper cadence |
-| `FLEZHA_RECONNECT_RING_CAPACITY` | `1024` | `flz_core::state_sink` and `Flezha.SDK.Hold` — frames held while no stream will take them, replayed when one binds, oldest dropped on overflow and counted as a drop-oldest shed. Only a frame whose guarantee class is held enters it: a durable record or a plugin/bounded output, never a control frame and never the heartbeat. In `flz_core` one ring holds them all; the same knob bounds four holders in the Elixir SDK — the Operator's plugin-bound outputs, the frames a stopping Cell hands to it, each Cell's own change records, and the bounded driver's writes the runner relays — an Operator reads it once and hands it to its own two holds and to the Cells it starts, so those three hold at one number, while the runner's own hold and a bounded stage's Cells read it for themselves; and a rebind replays a stopped Cell's frames first, then a Cell's records, then the outputs of the same dispatch |
+| `FLEZHA_RECONNECT_RING_CAPACITY` | `1024` | `flz_core::state_sink` and `Flezha.SDK.Hold` — frames held while no stream will take them, replayed when one binds, oldest dropped on overflow and counted as a drop-oldest shed. Only a frame whose guarantee class is held enters it: a durable record or a plugin/steps output, never a control frame and never the heartbeat. In `flz_core` one ring holds them all; the same knob bounds four holders in the Elixir SDK — the Operator's plugin-bound outputs, the frames a stopping Cell hands to it, each Cell's own change records, and the steps driver's writes the runner relays — an Operator reads it once and hands it to its own two holds and to the Cells it starts, so those three hold at one number, while the runner's own hold and a steps stage's Cells read it for themselves; and a rebind replays a stopped Cell's frames first, then a Cell's records, then the outputs of the same dispatch |
 | `FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD` / `FLEZHA_BROKEN_PIPE_WINDOW_MS` | `10` / `5000` | `flz_core::state_sink` and `Flezha.SDK.Hold` — write failures inside the window that request a reconnect. The Elixir SDK reads them for its `data_heartbeat`, which is owed no delivery and whose misses are the only signal an idle runner gives |
 | `FLEZHA_RECONNECT_REQUEST_RETRY_MS` | `30000` | `flz_core::state_sink` and `Flezha.SDK.Hold` — an unanswered reconnect request re-arms after this, so it cannot disarm the detector for good |
-| `FLEZHA_BOUNDED_ACK_TIMEOUT_MS` | `30000` | `flz_core::bounded` and the controller's commit worker: how long one barrier send waits for its ack before it is re-sent (three sends in all), a deadline on the pass sheet; the controller reads the same value as its deadline for the effect records a barrier names to become durable, and fails the barrier with `record_not_durable` past it |
-| `FLEZHA_PARK_IDLE_MS` | `600000` | `flz_core::operator::sleep` and the Elixir SDK's instances: how long an instance of either kind whose class declares `sleep_when_idle` stays idle before it sleeps |
+| `FLEZHA_STEPS_ACK_TIMEOUT_MS` | `30000` | `flz_core::steps` and the controller's commit worker: how long one barrier send waits for its ack before it is re-sent (three sends in all), a deadline on the pass sheet; the controller reads the same value as its deadline for the effect records a barrier names to become durable, and fails the barrier with `record_not_durable` past it |
+| `FLEZHA_FIXTURE_SLEEP_AFTER_MS` | unset | Test apps only: the `sleep_after` the reference runners' sleeping fixtures declare, so a drill or `mix bench.steps` can watch an instance sleep. An operator's sleep interval is its class's `durable` setting (`sleep_after`; by default a flow class never sleeps and a steps class sleeps after six hours), never the environment |
 | `FLEZHA_NATIVE_LIB_DIR` | `java.io.tmpdir` | Java `NativeLibraryLoader` — where the bundled `flz_core_ffi` library is extracted |
 
 ### The socket-directory ladder
@@ -582,9 +582,9 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:compaction_timeout_ms` | `30_000` | `lib/flezha/state/persistence_resolver.ex`; `0` disables the compaction-timeout sweep |
 | `:record_log_cut_after_bytes` | `64 * 1024` | `lib/flezha/state/persistence_resolver.ex`; `0` rewrites at every release |
 | `:default_time_travel_retention_hours` | `6` | `lib/flezha/state/persistence_resolver.ex` |
-| `:default_bounded_completed_retention_hours` | `72` | `lib/flezha/state/persistence_resolver.ex` |
+| `:default_operator_completed_retention_hours` | `72` | `lib/flezha/state/persistence_resolver.ex` |
 | `:default_output_stall_timeout_ms` | `60_000` | `lib/flezha/state/persistence_resolver.ex` |
-| `:operator_persistence` / `:time_travel_retention_hours` / `:bounded_completed_retention_hours` / `:compact_after_bytes` / `:compact_after_age_ms` / `:output_stall_timeout_ms` / `:sync_durability` / `:credit_window_bytes` | `%{}` | `lib/flezha/state/persistence_resolver.ex`: per-class user overrides, `%{"OperatorClass" => value}`, winning over the SDK declaration and the instance metadata; `:operator_persistence` overrides the persistence switch a class of either kind announces |
+| `:operator_persistence` / `:time_travel_retention_hours` / `:operator_completed_retention_hours` / `:compact_after_bytes` / `:compact_after_age_ms` / `:output_stall_timeout_ms` / `:credit_window_bytes` | `%{}` | `lib/flezha/state/persistence_resolver.ex`: per-class user overrides, `%{"OperatorClass" => value}`, winning over the SDK declaration and the instance metadata; `:operator_persistence` overrides whether a class keeps its work on disk. `durable: remote` is the class's own and has no override |
 | `:wal_high_watermark_bytes` | `16 * 1024 * 1024` | `lib/flezha/state/persistence_resolver.ex` — the one Cell-scale payload bound |
 | `:wal_low_watermark_bytes` | half the high watermark (derived) | `lib/flezha/state/wal_writer.ex` |
 | `:wal_hard_watermark_bytes` | 4 × the high watermark (derived) | `lib/flezha/state/wal_writer.ex` |
@@ -649,7 +649,7 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:healthz_enabled` | `false` | `lib/flezha/application.ex` |
 | `:healthz_port` / `:healthz_bind` | `9569` / `"0.0.0.0"` (`Flezha.Healthz.Server.default_bind/0`, the one default; `config/test.exs` binds loopback) | `lib/flezha/healthz/server.ex` |
 | `:output_watchdog_interval_ms` | `10_000` | `lib/flezha/state/watchdog.ex` |
-| `:input_silence_timeout_ms` | `0` (off) | `lib/flezha/state/watchdog.ex`: how long an unbounded operator that produced output earlier may receive no Change before one warning is logged and `[:flezha, :state, :input_silence]` is emitted. Off by default: silence is not a fault, and the sweep cannot tell a dead upstream from a source that reports hourly. Set a positive value on a feed you know to be continuous |
+| `:input_silence_timeout_ms` | `0` (off) | `lib/flezha/state/watchdog.ex`: how long a flow operator that produced output earlier may receive no Change before one warning is logged and `[:flezha, :state, :input_silence]` is emitted. Off by default: silence is not a fault, and the sweep cannot tell a dead upstream from a source that reports hourly. Set a positive value on a feed you know to be continuous |
 
 ### Observability and audit
 
@@ -709,26 +709,35 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 
 ## Layer 3: operator declarations (SDK)
 
-Declared in code and shipped to the controller at registration: inside
-`channels()` on an unbounded operator, or as trait/interface overrides on a
-Tasklet or Bounded class. Rust names first, Java in parentheses. The Elixir
-SDK carries the channel and edge options and `mailbox_capacity/0`; it has no
-delivery-tier or bounded declarations.
+Declared in code and shipped to the controller at registration: the class
+settings on the operator, the channel options on the graph its `channels`
+builds, the tasklet options on each tasklet. Rust names first, Java in
+parentheses; each SDK spells the tree in its own idiom
+([`sdk/authoring_contract.md`](sdk/authoring_contract.md)).
 
-### Delivery and acknowledgement (unbounded operators)
+### Class settings
 
-| Declaration | Default if absent | What it does |
+One settings tree per operator class (Rust `fn settings()`, Java `run()` and
+`durable()`). A setting written under a parent that does not carry it is
+refused by name (`topology.unknown_field`), and a value outside its choice as
+`topology.invalid_setting`.
+
+| Setting | Default if absent | What it does |
 |---|---|---|
-| `effectively_once()` (`effectivelyOnce`) | off — at-least-once | Every emit rides an atomic effect record through the WAL, and the outbox cursor advances only on a sink's confirmation. Registration refuses it unless every plugin-bound channel is `.keyed()`. |
-| `checkpoint_ack()` (`checkpointAck`) | off — acknowledge per input | Hold the consumed offset until the interval closes, so state and offset advance together. Requires `effectively_once()`. |
-| `checkpoint_every(n)` (`checkpointEvery`) | absent — only `ctx.checkpoint()` closes the interval | Close the interval after `n` inputs; an explicit checkpoint still closes it early. Implies `checkpoint_ack()`, and so requires `effectively_once()` too. |
-| `outputs_at_checkpoint(max_delay_ms)` (`outputsAtCheckpoint`) | absent — outputs flush as produced | Hold the interval's outputs and ship them inside its checkpoint record as one batch. `max_delay_ms` is required and bounds how long a quiet Cell holds an output. Implies `checkpoint_ack()`, and so requires `effectively_once()` too. |
-| `correction_window(window_ms)` (`correctionWindow`) | absent — a late input is just an input | A late input inside the window rewinds the Cell to a baseline and replays the affected slice in event-time order. Needs an event-time clock. |
-| `beyond_window_policy(policy)` (`beyondWindowPolicy`) | `ProcessAsArrival` | Fate of an input later than the window: process it as an arrival, or `Drop` it. |
+| `run` | `flow` | How an instance runs: `flow` takes inputs for as long as it lives, `steps` runs a chain of tasklets whose every step is journaled. |
+| `run.flow.exactly` | `at_least_once` | `effectively_once` puts every emit on an atomic effect record through the WAL; the outbox cursor advances only on a sink's confirmation. Registration refuses it unless every plugin-bound channel is `.keyed()`, and refuses it on a class with `durable: false`. |
+| `exactly.effectively_once.ack` | `per_input` | `checkpoint` holds the consumed offset until the interval closes, so state and offset advance together; its members are `every` (close after `n` inputs; an explicit `ctx.checkpoint()` still closes it early), `outputs` (`at_checkpoint` holds the interval's outputs and ships them inside its checkpoint record) and `max_delay_ms` (required with `at_checkpoint`; bounds how long a quiet Cell holds an output). |
+| `exactly.effectively_once.correction_ms` | absent — a late input is just an input | A late input inside the window rewinds the Cell to a baseline and replays the affected slice in event-time order. Needs an event-time clock. |
+| `exactly.effectively_once.beyond_window` | `process_as_arrival` | Fate of an input later than the window: process it as an arrival, or `drop` it. |
+| `run.steps.each` | `once` | `once`, `per_input` or `chained` looping over the instance's messages (its durable input log when durable). |
+| `run.steps.on_failure` | `undo_all` | How a rewind undoes journaled tasks: `undo_all` or `keep_progress`. |
+| `durable` | `local` | Where an instance keeps its work: `false` in memory only (a crash re-runs from the top), `local` on the controller's disk, `remote` acking a commit barrier only after its remote ship (RPO 0; steps classes only, refused on a flow as `topology.remote_on_flow`, and refused at start without `FLEZHA_DURABILITY_BACKEND`). |
+| `durable.<local\|remote>.sleep_after` | `false` for a flow class, six hours for a steps class | An instance idle this long is written out and evicted from its runner, and wakes on its next message; `false` never sleeps. A sleeping flow instance has its input journaled before it is forwarded, so a flow class pays for that only when it sets an interval. |
+| `max_duration_ms` (`maxDuration`) | none | Wall-clock bound on one run; an instance still running then ends `cancelled`. |
 
-`outputs_at_checkpoint` is a dial, not a switch: the interval closes on
-whichever comes first of `checkpoint_every(n)` inputs or `max_delay_ms`, so you
-add up to `max_delay_ms` of median output latency and buy one WAL append per
+`ack.checkpoint.outputs: at_checkpoint` is a dial, not a switch: the interval
+closes on whichever comes first of `every` inputs or `max_delay_ms`, so you add
+up to `max_delay_ms` of median output latency and buy one WAL append per
 interval instead of one per invocation. Leave it undeclared for the
 latency-optimal setting; declare a small delay when throughput near the ceiling
 matters more. How the numbers trade: [`operations/benchmarking.md`](operations/benchmarking.md).
@@ -740,9 +749,9 @@ Declared on the stream handle returned by `input(...)` or a node's output.
 | Declaration | Default | What it does |
 |---|---|---|
 | `.on_full(OverflowPolicy)` (`onFull`) | `DropNothing` | What a full Cell mailbox discards: `DropNothing`, `DropNewest`, `DropOldest`. Nothing drops by default; `DropNothing` slows the producer to the consumer's rate instead. |
-| `.retry_max(n)` (`retryMax`) | `3` attempts | Attempts before a failing payload is parked to the dead-letter queue, or, into a bounded tasklet, before the tasklet fails and the run compensates (a `per_input` keep-progress session parks the turn instead and goes on). `0` is refused (`topology.retry_max_zero`). |
-| `.retry_backoff_ms(ms)` (`retryBackoffMs`) | `50` | Base of the exponential backoff between attempts, for both kinds; the wait holds no thread. |
-| `.keyed()` (`keyed`) | off | Every plugin emit must carry a natural key; the runtime stamps `flz.cell` / `flz.seq` / `flz.key`. Requires a `sink`; required on every plugin channel under `effectively_once()`. |
+| `.retry_max(n)` (`retryMax`) | `3` attempts | Attempts before a failing payload is parked to the dead-letter queue, or, into a steps tasklet, before the tasklet fails and the run compensates (a `per_input` keep-progress session parks the turn instead and goes on). `0` is refused (`topology.retry_max_zero`). |
+| `.retry_backoff_ms(ms)` (`retryBackoffMs`) | `50` | Base of the exponential backoff between attempts, for both runs; the wait holds no thread. |
+| `.keyed()` (`keyed`) | off | Every plugin emit must carry a natural key; the runtime stamps `flz.cell` / `flz.seq` / `flz.key`. Requires a `sink`; required on every plugin channel under `effectively_once`. |
 | `.key_by(f)` (`keyBy`) | absent — one Cell | Route by a key function, making the consumer dynamic-cell. |
 | `.sink(name)` / `.sink_with(name, f)` (`sink`) | — | Wire the channel to a named plugin; a second sink on one channel is a registration error. |
 
@@ -758,21 +767,9 @@ Overridden on the `Tasklet` trait (Rust) or Tasklet class (Java).
 | `max_cells()` (Elixir `max_cells/0`) | `100_000` | Soft cap on live dynamic Cells per Tasklet; new keys past it are dropped. |
 | `CLOCK` (set by a written `event_time`, or the `logical_clock` key) | wall clock | Wall clock, event time or logical clock; decides `ctx.now()` and event-time ordering. |
 
-### Bounded class options
-
-Overridden on the `BoundedOperator` trait (Rust) or interface (Java). A
-tasklet's retry ladder is its input edge's (above), and a commit barrier whose
-ack timed out is re-sent three times, a constant, before the run ends
-abnormally.
-
-| Override | Default | What it does |
-|---|---|---|
-| `max_duration()` (`maxDuration`) | none | Wall-clock bound on one run. |
-| `self_terminating()` (`selfTerminating`) | `true` | Whether the run ends on its own or waits for a stop. |
-| `loop_mode()` (`loopMode`) | `Once` | `Once`, `PerInput` or `Chained` looping over the instance's messages (its durable input log when durable). |
-| `rollback_mode()` (`rollbackMode`) | `AllOrNothing` | How a rewind undoes journaled tasks: `AllOrNothing` or `KeepProgress`. |
-| `PERSISTENCE_ENABLED` (`persistenceEnabled`) | `true` | `false` keeps the instance in memory only: a crash re-runs from the top. |
-| `SYNC_DURABILITY` (`syncDurability`) | `false` | Ack a commit barrier only after its remote ship (RPO 0); inert without a durability backend, bounded classes only. |
+A steps tasklet's retry ladder is its input edge's (above), and a commit
+barrier whose ack timed out is re-sent three times, a constant, before the run
+ends abnormally.
 
 ## Layer 4: plugin options
 

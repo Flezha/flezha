@@ -423,20 +423,19 @@ const CASES: &[(&[&str], Want)] = &[
             "fac",
             "--id",
             "op",
-            "--snapshot-interval",
-            "5",
             "--partitions",
             "4",
         ],
-        Rpc(r#"Flezha.Service.CliManager.operator_start("", "fac", "{}", "{\"snapshot_interval\": \"5\", \"partitions\": \"4\"}", [id: "op"])"#),
+        Rpc(r#"Flezha.Service.CliManager.operator_start("", "fac", "{}", "{\"partitions\": \"4\"}", [id: "op"])"#),
     ),
     (
         &["operator", "start", "fac", "--partitions", "abc"],
         Refused("invalid --partitions value 'abc'"),
     ),
+    // The snapshot interval is the controller's environment, not a start's.
     (
-        &["operator", "start", "fac", "--snapshot-interval", "abc"],
-        Refused("invalid --snapshot-interval value 'abc'"),
+        &["operator", "start", "echo", "--snapshot-interval", "5000"],
+        Refused("unknown option '--snapshot-interval'"),
     ),
     (
         &["operator", "scale", "g", "2"],
@@ -583,11 +582,11 @@ const CASES: &[(&[&str], Want)] = &[
     // The kind is the factory's, announced by its runner: a written one is an
     // option neither verb declares.
     (
-        &["operator", "start", "echo", "--kind", "unbounded"],
+        &["operator", "start", "echo", "--kind", "flow"],
         Refused("unknown option '--kind'"),
     ),
     (
-        &["schedule", "add", "n", "--cron", "* * * * *", "--tz", "UTC", "--factory", "f", "--kind", "bounded"],
+        &["schedule", "add", "n", "--cron", "* * * * *", "--tz", "UTC", "--factory", "f", "--kind", "steps"],
         Refused("unknown option '--kind'"),
     ),
     (
@@ -740,8 +739,6 @@ const REPEATED: &[&str] = &[
     "fac",
     "--id",
     "op",
-    "--snapshot-interval",
-    "5",
     "--partitions",
     "4",
 ];

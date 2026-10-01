@@ -65,7 +65,7 @@ while a move would tear mid-critical work:
 | Busy signal                         | Safe barrier (Overwatch calls `Migration.signal_migration_ready/1`) |
 | ----------------------------------- | ------------------------------------------------------------ |
 | Late-input correction pending       | The correction transaction completes                         |
-| Durable bounded operator not suspended      | Suspension at a committed iteration boundary                 |
+| Durable steps operator not suspended      | Suspension at a committed iteration boundary                 |
 | Effectively-once outbox not flushed | Consent is re-queried on the next retry tick                 |
 
 A deferring child is parked in the hub's deferred list, re-queried every `retry_interval_ms`

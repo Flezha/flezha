@@ -141,7 +141,7 @@ defmodule FlezhaTest.Service.CallsTest do
       assert_receive {:reached, "turn 1", "c1", opts}
       assert_receive {:reached, "turn 2", "c2", _opts}
       assert opts[:if_absent] == :not_found
-      assert opts[:kinds] == [:bounded, :unbounded]
+      assert opts[:runs] == [:steps, :flow]
       assert opts[:metadata] == %{"channel" => "turn"}
       assert %{caller: "gateway", call: "c1", factory: "agent"} = opts[:call]
       assert_receive {:"$gen_cast", {:call_accepted, "c1", "anna-42", false}}
@@ -275,7 +275,7 @@ defmodule FlezhaTest.Service.CallsTest do
 
   describe "spawn_or_deliver for a call" do
     setup do
-      %{registry: FakeStartRegistry.install(runners: ["runner-1"], kind: :bounded)}
+      %{registry: FakeStartRegistry.install(runners: ["runner-1"], run: :steps)}
     end
 
     defp call_to(id, opts),
@@ -288,7 +288,7 @@ defmodule FlezhaTest.Service.CallsTest do
           :deliver,
           @caller,
           Keyword.get(opts, :identity, "c1"),
-          Keyword.merge([kinds: [:bounded, :unbounded], metadata: %{}, call: call("c1")], opts)
+          Keyword.merge([runs: [:steps, :flow], metadata: %{}, call: call("c1")], opts)
         )
 
     test "creates the instance with the call as its seed, then delivers the next call", %{
@@ -338,7 +338,7 @@ defmodule FlezhaTest.Service.CallsTest do
       assert {{:refused, %Flezha.Error{code: "quota.exceeded"}}, _id} = call_to("dave-1", [])
     end
 
-    test "a call without a key starts a bounded instance per call under a generated id" do
+    test "a call without a key starts a steps instance per call under a generated id" do
       assert {:spawned, a} = call_to("", identity: "c1", call: call("c1"))
       assert {:spawned, b} = call_to("", identity: "c2", call: call("c2"))
       assert a != b and a =~ ~r/\Aagent-/
@@ -348,13 +348,13 @@ defmodule FlezhaTest.Service.CallsTest do
     end
   end
 
-  describe "spawn_or_deliver for a call to an unbounded factory" do
+  describe "spawn_or_deliver for a call to a flow factory" do
     setup do
-      %{registry: FakeStartRegistry.install(runners: ["runner-1"], kind: :unbounded)}
+      %{registry: FakeStartRegistry.install(runners: ["runner-1"], run: :flow)}
     end
 
-    test "a key starts an unbounded instance; no key is refused as not bounded" do
-      opts = [kinds: [:bounded, :unbounded], metadata: %{}, call: call("c1")]
+    test "a key starts a flow instance; no key is refused as not steps" do
+      opts = [runs: [:steps, :flow], metadata: %{}, call: call("c1")]
 
       assert {:spawned, "user-1"} =
                OperatorManager.spawn_or_deliver(
@@ -368,11 +368,11 @@ defmodule FlezhaTest.Service.CallsTest do
                  opts
                )
 
-      assert [%{kind: :unbounded}] = FakeStartRegistry.started()
+      assert [%{run: :flow}] = FakeStartRegistry.started()
 
-      assert {{:refused, %Flezha.Error{code: "operator.factory_not_bounded"}}, _} =
+      assert {{:refused, %Flezha.Error{code: "operator.factory_not_steps"}}, _} =
                OperatorManager.spawn_or_deliver(@ns, "", "agent", "t", :deliver, @caller, "c2", [
-                 {:kinds, [:bounded]} | Keyword.delete(opts, :kinds)
+                 {:runs, [:steps]} | Keyword.delete(opts, :runs)
                ])
     end
   end
