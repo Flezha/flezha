@@ -183,7 +183,6 @@ topology.duplicate_merge_source    | merge_same_twice | entry(in); entry(other);
 topology.edge_already_wired        | edge_rewired     | entry(in); in.map.into(plain); in.into(plain)                                         | -
 topology.at_checkpoint_without_max_delay | hold_no_delay    | class.run({"flow":{"exactly":{"effectively_once":{"ack":{"checkpoint":{"outputs":"at_checkpoint"}}}}}}); entry(in); in.into(plain) | -
 topology.effectively_once_without_persistence | eo_in_memory | class.run({"flow":{"exactly":"effectively_once"}}); class.durable(false); entry(in); in.into(plain) | -
-topology.remote_on_flow            | remote_flow      | class.durable("remote"); entry(in); in.into(plain)                                    | -
 
 # The settings tree's misplaced settings: each is written under a parent that
 # does not carry it, and the answer names the setting and that parent.

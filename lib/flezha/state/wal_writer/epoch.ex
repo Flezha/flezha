@@ -14,7 +14,7 @@ defmodule Flezha.State.WalWriter.Epoch do
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.SDK.Wire
   alias Flezha.State.{InputLog, Metrics, Paths, RecordFrame}
-  alias Flezha.State.WalWriter.{Admission, Settlement, State}
+  alias Flezha.State.WalWriter.{Admission, RemoteGate, Settlement, State}
 
   # Only a frame from a *different* session than the epoch owner consults the
   # takeover fence; the owning session short-circuits on the first comparison
@@ -63,7 +63,7 @@ defmodule Flezha.State.WalWriter.Epoch do
   def realign_epoch(state, seq, runner_id, now) do
     # The truncated epoch's un-fsynced bytes have left the buffer;
     # release them to the stream ledger so the window is not leaked.
-    state = Admission.flush_credit_pending(state)
+    state = RemoteGate.reset(state)
     {:ok, _} = :file.position(state.file_handle, 0)
     :ok = :file.truncate(state.file_handle)
 
@@ -275,6 +275,17 @@ defmodule Flezha.State.WalWriter.Epoch do
   # offsets, so the input-log watermark it advanced is now a claim about inputs
   # nothing has consumed. Lower it, or the next retention sweep truncates away
   # the very inputs the correction is about to replay.
+  # Behind the remote gate a surviving record not yet acknowledged reports its
+  # offset when its ship lands, through its dispatch.
+  defp rewind_input_watermark(%{remote: nil} = state, max_consumed, _surviving, _durable),
+    do: rewind_input_watermark(state, max_consumed)
+
+  defp rewind_input_watermark(state, _max_consumed, surviving, durable) do
+    for(%{seq: s, consumed_offset: o} <- surviving, s <= durable, is_integer(o), do: o)
+    |> Enum.max(fn -> nil end)
+    |> then(&rewind_input_watermark(state, &1))
+  end
+
   defp rewind_input_watermark(state, max_consumed) do
     {operator_class, _, _} = state.cell_id
     InputLog.rewind_consumed(operator_class, state.cell_id, max_consumed || -1)
@@ -332,7 +343,7 @@ defmodule Flezha.State.WalWriter.Epoch do
       if snap_seq > seq, do: File.rm(path)
     end)
 
-    state = Admission.flush_credit_pending(state)
+    state = RemoteGate.reset(state, seq)
 
     # Records at or below the boundary are untouched history: those already
     # flushed stay flushed (re-emitting them under the new epoch would be churn
@@ -343,7 +354,8 @@ defmodule Flezha.State.WalWriter.Epoch do
     # fall back to.
     flushed = min(state.outbox_flushed_seq, seq)
     {surviving, max_consumed} = scan_effect_records_above(state, file, flushed)
-    rewind_input_watermark(state, max_consumed)
+    durable = RemoteGate.durable_through(state, seq, state.outbox_durable_seq)
+    rewind_input_watermark(state, max_consumed, surviving, durable)
 
     size = RecordFrame.file_size(state.wal_path)
     now = State.now_ms()
@@ -366,7 +378,7 @@ defmodule Flezha.State.WalWriter.Epoch do
 
     bump_epoch(state, %{
       pending: :queue.from_list(surviving),
-      durable_seq: seq,
+      durable_seq: durable,
       flushed_seq: flushed,
       epoch: epoch
     })

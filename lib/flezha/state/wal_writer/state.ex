@@ -48,6 +48,9 @@ defmodule Flezha.State.WalWriter.State do
     # operator's Overwatch is not yet resolvable.
     :pending_outbox,
     :commit_unit,
+    # The `durable: remote` gate (`Flezha.State.WalWriter.RemoteGate`), or
+    # `nil` for a writer that acknowledges what it syncs at once.
+    :remote,
     :outbox_durable_seq,
     :outbox_flushed_seq,
     :outbox_epoch,
@@ -109,6 +112,7 @@ defmodule Flezha.State.WalWriter.State do
           refused_sessions: MapSet.t(binary()),
           pending_outbox: :queue.queue(map()),
           commit_unit: :record | :stage,
+          remote: Flezha.State.WalWriter.RemoteGate.t() | nil,
           outbox_durable_seq: integer(),
           outbox_flushed_seq: integer(),
           outbox_epoch: non_neg_integer(),

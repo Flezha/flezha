@@ -159,8 +159,8 @@ end
   the last two optionally written `{:local, sleep_after: ms}`: an idle instance sleeps after
   that long (by default never for a flow class and six hours for a steps class, `false` never)
   and wakes on its next message with its
-  Cells restored. `:remote` is for a class that runs in steps; a flow class declaring it is
-  refused `topology.remote_on_flow`.
+  Cells restored. `:remote` acknowledges each commit point (a stage, an input, a checkpoint)
+  only once the durability backend holds it.
 - `max_duration_ms` is a wall-clock stop for either run: a steps instance unwinds and ends
   `cancelled`, a flow instance ends `cancelled` once its Cells hold nothing.
 

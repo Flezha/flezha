@@ -328,11 +328,12 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       assert %{owner: @peer_writer, claim: 2} = Stub.stored_manifest(ref)
       assert Process.alive?(peer)
 
-      # The loser stops, and it is NOT an alarm: a handover produces one of
-      # these every time, and `pending_since_ms` must clear with it or the
-      # reference reports a permanent RPO breach.
+      # The loser's backstop stops, and it is NOT an alarm: a handover produces
+      # one of these every time, and `pending_since_ms` must clear with it or the
+      # reference reports a permanent RPO breach. (A `ship_now` caller waiting
+      # on the ship keeps the clock running until it stops waiting.)
       TestHelpers.append_wal(ctx.cell_id, 6..7)
-      assert {:error, {:superseded, @peer_writer}} = Shipper.ship_now(ref)
+      :ok = Shipper.sweep_now()
       assert %{superseded_by: @peer_writer, pending_since_ms: nil} = status_of(ref)
       assert DurabilityTier.breaches() == []
     end

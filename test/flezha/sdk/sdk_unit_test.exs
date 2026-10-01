@@ -204,11 +204,11 @@ defmodule Flezha.SDK.UnitTest do
              SdkOperatorHarness.refusal_issues(Topology.build(KeyedEntry))
   end
 
-  # The two names this SDK gains from the reference vocabulary here. Both are
-  # rows of `test/fixtures/reference_topologies.txt`, so this test is the one
-  # to retire once the conformance run drives those rows through this builder;
-  # until then it is their only reader.
-  test "the two refusals this SDK gains from the reference vocabulary" do
+  # A name this SDK gains from the reference vocabulary here. It is a row of
+  # `test/fixtures/reference_topologies.txt`, so this test is the one to retire
+  # once the conformance run drives that row through this builder; until then
+  # it is its only reader.
+  test "the refusal this SDK gains from the reference vocabulary" do
     defmodule KeyedNoWire do
       def factory_id, do: "keyed_no_wire"
 
@@ -221,18 +221,8 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.into(KeyedTask)
     end
 
-    defmodule RemoteFlow do
-      def factory_id, do: "remote_flow"
-      def durable, do: :remote
-
-      def channels(c),
-        do: c |> Channels.input("in") |> Channels.into(EchoTask) |> Channels.sink()
-    end
-
     assert {"topology.keyed_channel_without_plugin_wire", %{"channel" => "echo"}} =
              one_issue(KeyedNoWire)
-
-    assert {"topology.remote_on_flow", %{"factory_id" => "remote_flow"}} = one_issue(RemoteFlow)
   end
 
   test "the ctx refuses a keyless emit where a key is required, and a key where none is allowed" do

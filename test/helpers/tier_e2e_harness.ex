@@ -113,28 +113,41 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   end
 
   @doc """
-  Point the remote durability tier at the compose Postgres and start its
-  shipper for the duration of the test, on a table of its own so concurrent
-  cases never share a manifest namespace.
+  Point the remote durability tier at a backend and start its shipper for the
+  duration of the test: the compose Postgres, on a table of its own so
+  concurrent cases never share a manifest namespace, or a `local_path`
+  directory of its own, which needs nothing running.
 
   The short ship interval is deliberate: the drill's whole claim is a bound on
   loss, so the backstop must be observable inside one test.
   """
-  def install_durability_tier() do
+  def install_durability_tier(backend \\ :postgres)
+
+  def install_durability_tier(:postgres) do
     table = "flezha_durability_e2e_#{System.unique_integer([:positive])}"
 
     opts =
       PostgresSink.conn_opts()
       |> Keyword.merge(table: table, auto_create: true)
 
+    start_supervised!(PostgresBackend.child_spec(opts))
+    start_tier({PostgresBackend, opts})
+  end
+
+  def install_durability_tier(:local_path) do
+    path = NodeTestHelper.claim_tmp_dir("flz_durability_e2e")
+    on_exit(fn -> File.rm_rf(path) end)
+    start_tier({Flezha.State.DurabilityTier.Backend.LocalPath, path: path})
+  end
+
+  defp start_tier({_module, opts} = backend) do
     Application.put_env(:flezha, :durability_tier,
-      backend: {Flezha.State.DurabilityTier.Backend.Postgres, opts},
+      backend: backend,
       ship_interval_ms: 2_000,
       rpo_target_ms: 30_000,
       gc_interval_ms: 3_600_000
     )
 
-    start_supervised!(PostgresBackend.child_spec(opts))
     start_supervised!(Flezha.State.DurabilityTier.Shipper)
 
     on_exit(fn -> Application.delete_env(:flezha, :durability_tier) end)

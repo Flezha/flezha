@@ -14,7 +14,7 @@ defmodule Flezha.State.WalWriter.Boot do
 
   alias Flezha.Operator.ClassRegistry
   alias Flezha.State.{InputLog, Metrics, Outbox, Paths, RecordFrame, SeqIndex, TaskJournal}
-  alias Flezha.State.WalWriter.{Admission, Epoch, Settlement, State}
+  alias Flezha.State.WalWriter.{Admission, Epoch, RemoteGate, Settlement, State}
 
   @doc "The struct a writer starts from, before any disk I/O."
   def new(cell_id) do
@@ -49,6 +49,7 @@ defmodule Flezha.State.WalWriter.Boot do
       refused_sessions: MapSet.new(),
       pending_outbox: :queue.new(),
       commit_unit: :record,
+      remote: nil,
       outbox_durable_seq: -1,
       outbox_flushed_seq: -1,
       outbox_epoch: 0,
@@ -74,7 +75,8 @@ defmodule Flezha.State.WalWriter.Boot do
   rather than the channel's.
   """
   def open(state) do
-    state = %{state | commit_unit: commit_unit(state.cell_id)}
+    unit = commit_unit(state.cell_id)
+    state = %{state | commit_unit: unit, remote: RemoteGate.new(state.cell_id, unit)}
     File.mkdir_p!(Path.dirname(state.wal_path))
     {:ok, file} = :file.open(state.wal_path, [:raw, :read, :write, :binary])
 
@@ -115,7 +117,11 @@ defmodule Flezha.State.WalWriter.Boot do
       Epoch.scan_effect_records_above(state, file, dedup.outbox_flushed_seq)
 
     {rc, _sh, _pk} = state.cell_id
-    if is_integer(max_consumed), do: InputLog.record_consumed(rc, state.cell_id, max_consumed)
+
+    # Behind the remote gate the re-driven records are acknowledged only once a
+    # ship covers them, so their consumed offset is reported by that dispatch.
+    if is_integer(max_consumed) and is_nil(state.remote),
+      do: InputLog.record_consumed(rc, state.cell_id, max_consumed)
 
     state = %{
       state
@@ -125,13 +131,13 @@ defmodule Flezha.State.WalWriter.Boot do
         oldest_unsnapshotted_at: oldest,
         outbox_flushed_seq: dedup.outbox_flushed_seq,
         outbox_epoch: dedup.epoch,
-        outbox_durable_seq: last_seq,
+        outbox_durable_seq: RemoteGate.durable_through(state, last_seq, dedup.outbox_flushed_seq),
         pending_outbox: :queue.from_list(redrive),
         outbox_last_seq: redrive_last_seq(redrive, dedup.outbox_flushed_seq)
     }
 
     case state.commit_unit do
-      :record -> Settlement.try_dispatch_outbox(state)
+      :record -> RemoteGate.synced(state)
       :stage -> Settlement.seed_commits(state, TaskJournal.committed_records(rc), :hold)
     end
   end

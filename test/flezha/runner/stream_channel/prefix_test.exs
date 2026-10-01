@@ -45,6 +45,28 @@ defmodule Flezha.Runner.StreamChannel.PrefixTest do
     assert {[{"op", 2, 1}], _prefix} = Prefix.drained(prefix, @btc, 20)
   end
 
+  test "released bytes confirm nothing they covered and stop holding later markers" do
+    prefix = fenced() |> Prefix.received(@btc, 10)
+    {[], prefix} = Prefix.marker(prefix, "op", 1)
+
+    # The writer let go of its unshipped record; a restarted one carries on.
+    {[], prefix} = Prefix.released(prefix, @btc, 10)
+    prefix = Prefix.received(prefix, @sol, 5)
+    {[], prefix} = Prefix.marker(prefix, "op", 2)
+
+    assert {[{"op", 2, 1}], prefix} = Prefix.drained(prefix, @sol, 5)
+    assert prefix.outstanding == %{} and prefix.markers == %{}
+  end
+
+  test "released bytes leave the writer's other bytes owed" do
+    prefix = fenced() |> Prefix.received(@btc, 10)
+    {[], prefix} = Prefix.released(prefix, @btc, 4)
+    {[], prefix} = Prefix.marker(prefix, "op", 3)
+
+    assert {[], prefix} = Prefix.drained(prefix, @sol, 0)
+    assert {[{"op", 3, 1}], _prefix} = Prefix.drained(prefix, @btc, 6)
+  end
+
   test "an unfenced stream confirms nothing until its fence flush lands" do
     {[], prefix} = Prefix.marker(Prefix.new(), "op", 3)
     assert {[{"op", 3, 1}], _prefix} = Prefix.fenced(prefix)

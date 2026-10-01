@@ -416,7 +416,7 @@ sequenceDiagram
     Note over OW: record this runner's stable identity as the operator's owner, before the start
     OW->>EX: AddOperator {operator_id, factory_id, kind, init_values, resume_cell_count,<br/>partition_index · partition_count · key_group_from · key_group_to — partition members only}
     EX-->>OW: AddOperatorResponse {metadata}
-    Note over OW: decode_declarations — the ONE seam where the SDK declares capability:<br/>effectively_once · ack_granularity · correction_window_ms<br/>compensable_tasks · leaf_tasks · compact_after_bytes<br/>keyed (only when false) · durability (sync_remote)
+    Note over OW: decode_declarations — the ONE seam where the SDK declares capability:<br/>effectively_once · ack_granularity · correction_window_ms<br/>compensable_tasks · leaf_tasks · compact_after_bytes<br/>keyed (only when false) · durable (remote)
     OW->>EX: RestoreInitState per persisted cell (snapshot + WAL tail)
     Note over OW,EX: only now does input flow
 ```
@@ -426,9 +426,9 @@ runner core emits them for every host language — a Java class and a Rust class
 same thing send the same map. A class that declares nothing — a plain flow class — sends
 an empty map and the controller keeps every default. `keyed` is declared only when it is
 *false* (a keyless class cannot be partitioned, and the controller preflight uses that to
-refuse a repeat partitioned start without touching a runner); `durability=sync_remote` is a
-steps class asking the [remote durability tier](kernel.md#the-remote-durability-tier) to
-gate its barrier acks on the remote ship. Wire detail:
+refuse a repeat partitioned start without touching a runner); `durable=remote` is a
+class asking the [remote durability tier](kernel.md#the-remote-durability-tier) to
+gate each commit point's acknowledgement on the remote ship. Wire detail:
 [`protocol_spec.md`](../sdk/protocol_spec.md).
 
 ---
@@ -555,7 +555,7 @@ the user's concern there. The effectively-once tier is what closes them.
 | Steps operator SIGKILL, durable | none past the last committed task | at-least-once |
 | Steps operator SIGKILL, persistence opted out | full — re-runs from the top | at-least-once |
 | Controller dies with its disk, `backend: none` (default) | that node's operators: total | n/a |
-| Controller dies with its disk, remote tier enabled | steps operator `sync_remote`: none; otherwise ≤ one checkpoint / ship interval | effectively-once — replays absorbed by sink dedup |
+| Controller dies with its disk, remote tier enabled | `durable: remote`: nothing acknowledged; otherwise ≤ one checkpoint / ship interval | effectively-once — replays absorbed by sink dedup |
 
 The full scenario matrix and the user playbook are in
 [`../resilience/data_durability.md`](../resilience/data_durability.md).

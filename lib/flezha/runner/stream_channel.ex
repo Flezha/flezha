@@ -466,6 +466,14 @@ defmodule Flezha.Runner.StreamChannel do
     {:noreply, drain_credit(state, session, bytes)}
   end
 
+  # Bytes a writer will never drain here (its gate let go of records the
+  # backend may not hold): the window is freed, and markers waiting on them
+  # stay waiting.
+  def handle_info({:credit_released, session, bytes, cell_id}, state) do
+    state = Records.confirm_prefix(state, &Prefix.released(&1, cell_id, bytes))
+    {:noreply, drain_credit(state, session, bytes)}
+  end
+
   # The fence flush this stream asked for landed; a fence of a stream since
   # replaced is stale.
   def handle_info({:prefix_fenced, stream_ref}, %{stream_ref: stream_ref} = state),

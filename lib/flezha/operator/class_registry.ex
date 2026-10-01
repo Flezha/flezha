@@ -455,6 +455,16 @@ defmodule Flezha.Operator.ClassRegistry do
     put_declaration(operator_class, :remote, @remote_sidecar, remote?)
   end
 
+  @doc "Where `operator_class` keeps its work, as its `durable` level names it."
+  @spec durable_level(binary()) :: :remote | :local | :memory
+  def durable_level(operator_class) when is_binary(operator_class) do
+    cond do
+      remote?(operator_class) -> :remote
+      persistent?(operator_class) -> :local
+      true -> :memory
+    end
+  end
+
   @doc """
   Whether `operator_class` keeps its work remotely: ETS → durable sidecar →
   `false` (the cost-free default).
@@ -585,6 +595,19 @@ defmodule Flezha.Operator.ClassRegistry do
       {:ok, pid, owner}
     else
       _ -> :error
+    end
+  end
+
+  @doc "Every class whose Overwatch is alive on this node, sorted."
+  @spec running() :: [binary()]
+  def running() do
+    if :ets.whereis(@table) == :undefined do
+      []
+    else
+      @table
+      |> :ets.select([{{{:"$1", :overwatch}, :"$2", :_}, [], [{{:"$1", :"$2"}}]}])
+      |> Enum.flat_map(fn {class, pid} -> if Process.alive?(pid), do: [class], else: [] end)
+      |> Enum.sort()
     end
   end
 

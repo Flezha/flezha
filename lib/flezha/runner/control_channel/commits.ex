@@ -91,7 +91,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   # the run — the class asked for RPO 0, so a barrier that is not remotely
   # durable must not be reported as committed.
   @impl true
-  def handle_info({:commit_shipped, reference_id, commit, ship}, state),
+  def handle_info({:remote_committed, {reference_id, commit}, ship}, state),
     do: {:noreply, ack(state, reference_id, commit, ship)}
 
   # The ack deadline elapsed with a named record, or a turn's park, still not
@@ -268,15 +268,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
     :telemetry.execute(event, measurements, Map.put(metadata, :status, status(result)))
 
     if result == :ok and DurabilityTier.sync_class?(commit.operator_id) do
-      worker = self()
-
-      Task.start(fn ->
-        send(
-          worker,
-          {:commit_shipped, reference_id, commit, DurabilityTier.commit_sync(commit.operator_id)}
-        )
-      end)
-
+      :ok = DurabilityTier.commit_async(commit.operator_id, {reference_id, commit})
       state
     else
       ack(state, reference_id, commit, result)

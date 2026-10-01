@@ -614,7 +614,6 @@ SDK raises or returns its one error type carrying them.
 | `topology.payload_type_mismatch` | invalid | 2 | channel '{channel}' delivers {delivered}, which does not match the input type {input} of tasklet '{tasklet}' |  |
 | `topology.plugin_channel_with_consumers` | invalid | 2 | plugin channel '{channel}' cannot name consumers |  |
 | `topology.producer_out_of_range` | invalid | 2 | channel '{channel}' names producer {producer} but the class declares {tasklets} tasklet(s) |  |
-| `topology.remote_on_flow` | invalid | 2 | flow operator '{factory_id}' declares durable: remote, which a flow operator does not carry until keep-work-remote-on-a-flow-operator gates its commit points; declare durable: local |  |
 | `topology.retired_callback` | invalid | 2 | tasklet '{tasklet}' defines {callback}, which no longer exists; use {instead} |  |
 | `topology.retry_max_zero` | invalid | 2 | channel '{channel}' declared retry_max 0; at least one attempt is required (fail an input as non-retryable to park it without retries) |  |
 | `topology.schema_floor_above_version` | invalid | 2 | tasklet '{tasklet}' reads back to schema version {floor}, above its own schema version {version} |  |

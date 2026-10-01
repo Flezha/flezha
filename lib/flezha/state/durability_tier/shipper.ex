@@ -83,6 +83,18 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   @spec ship_now(Manifest.ref()) :: :ok | {:error, term()}
   def ship_now(ref), do: call({:ship_now, ref})
 
+  @doc """
+  Nothing waits on `ref`'s ship any more: if another writer holds its lineage,
+  its RPO clock stops, as it does when an asynchronous ship finds it superseded.
+  """
+  @spec end_wait(Manifest.ref()) :: :ok
+  def end_wait(ref) do
+    case GenServer.whereis(__MODULE__) do
+      nil -> :ok
+      pid -> GenServer.cast(pid, {:end_wait, ref})
+    end
+  end
+
   @doc "Run one orphan-blob collection synchronously. Used by the sweep and by tests."
   @spec gc() :: {:ok, non_neg_integer()} | {:error, term()}
   def gc(), do: call(:gc)
@@ -131,6 +143,11 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   @impl true
   def handle_cast({:enqueue, ref}, state), do: {:noreply, push(state, ref)}
 
+  def handle_cast({:end_wait, ref}, state) do
+    if status_of(ref).superseded_by, do: update_status(ref, &%{&1 | pending_since_ms: nil})
+    {:noreply, state}
+  end
+
   # This node now runs `state_key`'s operator, so it is entitled to take over
   # that lineage remotely. Without this gate a node that merely still has the
   # files — every source of a migration, since the copy is never deleted —
@@ -146,12 +163,15 @@ defmodule Flezha.State.DurabilityTier.Shipper do
 
   @impl true
   def handle_call({:ship_now, ref}, _from, state) do
-    if status_of(ref).superseded_by do
-      {:reply, {:error, :superseded}, state}
-    else
-      {result, state} = ship(state, ref)
-      {:reply, result, state}
-    end
+    {result, state} =
+      if status_of(ref).superseded_by,
+        do: {{:error, :superseded}, state},
+        else: ship(state, ref)
+
+    # A caller withholding an acknowledgement on this ship is behind however
+    # the lineage moved, so a refusal keeps its RPO clock running.
+    if match?({:error, _}, result), do: mark_pending(ref)
+    {:reply, result, state}
   end
 
   def handle_call(:gc, _from, state), do: {:reply, collect_orphans(state), state}

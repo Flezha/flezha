@@ -8,6 +8,7 @@ defmodule Flezha.Service.Cli.Controller do
   alias Flezha.Service.Cli.Context
 
   alias Flezha.Config.Durations
+  alias Flezha.Operator.ClassRegistry
   alias Flezha.Plugin.Provider.File.Storage
   alias Flezha.Shutdown.Coordinator
   alias Flezha.State.DurabilityTier
@@ -198,6 +199,7 @@ defmodule Flezha.Service.Cli.Controller do
         IO.puts("durability_backend:            #{status.durability_backend}")
         IO.puts("durability_posture:            #{status.durability_posture}")
         IO.puts("durability_rpo_breaches:       #{status.durability_rpo_breaches}")
+        IO.puts("durability_levels:             #{levels_line(status.durability_levels)}")
         IO.puts("durability_superseded:         #{status.durability_superseded}")
         IO.puts("state_root:                    #{status.state_root}")
         IO.puts("file_plugin_root:              #{status.file_plugin_root}")
@@ -222,9 +224,17 @@ defmodule Flezha.Service.Cli.Controller do
       # left to be inferred from the backend name.
       durability_posture: DurabilityTier.posture(),
       durability_rpo_breaches: length(DurabilityTier.breaches()),
+      # Beside the RPO because the two read together: a `remote` class loses
+      # nothing it acknowledged, a `local` one up to the RPO target.
+      durability_levels: Map.new(ClassRegistry.running(), &{&1, ClassRegistry.durable_level(&1)}),
       durability_superseded: Enum.count(DurabilityTier.status(), &(&1.superseded_by != nil))
     }
   end
+
+  defp levels_line(levels) when map_size(levels) == 0, do: "none"
+
+  defp levels_line(levels),
+    do: levels |> Enum.sort() |> Enum.map_join(" ", fn {class, level} -> "#{class}=#{level}" end)
 
   defp safe_shutdown_status() do
     try do

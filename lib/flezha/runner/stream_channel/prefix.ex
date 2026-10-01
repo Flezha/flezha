@@ -68,6 +68,36 @@ defmodule Flezha.Runner.StreamChannel.Prefix do
     confirm(prefix, rc)
   end
 
+  @doc """
+  `cell_id`'s writer let go of `bytes` it will never drain: records it held
+  for a remote ship that may never land. A marker waiting on that writer
+  covered them, so it is dropped unconfirmed; the bytes leave the writer's
+  count, so a later marker waits only on what the writer still owes.
+  """
+  @spec released(t(), cell_id(), non_neg_integer()) ::
+          {[{binary(), non_neg_integer(), pos_integer()}], t()}
+  def released(%__MODULE__{} = prefix, {rc, _, _} = cell_id, bytes) do
+    writers = Map.get(prefix.outstanding, rc, %{})
+
+    case Map.fetch(writers, cell_id) do
+      {:ok, {received, drained}} ->
+        pending =
+          Enum.reject(Map.get(prefix.markers, rc, []), &Map.has_key?(elem(&1, 2), cell_id))
+
+        prefix = %{prefix | markers: Map.put(prefix.markers, rc, pending)}
+
+        prefix =
+          if drained >= received - bytes,
+            do: put_writers(prefix, rc, Map.delete(writers, cell_id)),
+            else: put_writers(prefix, rc, Map.put(writers, cell_id, {received - bytes, drained}))
+
+        confirm(prefix, rc)
+
+      :error ->
+        {[], prefix}
+    end
+  end
+
   defp put_writers(prefix, rc, writers) when writers == %{},
     do: %{prefix | outstanding: Map.delete(prefix.outstanding, rc)}
 

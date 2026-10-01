@@ -229,9 +229,9 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   a backend (`FLEZHA_DURABILITY_BACKEND`; `none` is local-only); local files stay authoritative.
   An **artifact** is one immutable shipped blob; the per-reference **manifest** naming a cut's
   artifacts is written last, so a torn upload is invisible. See [`resilience/data_durability.md`](resilience/data_durability.md).
-- **Synchronous durability** — a steps class declaring `durable: remote` has each commit
-  barrier's ack gated on the remote ship (RPO 0). Flow classes are refused it
-  (`topology.remote_on_flow`), and an instance is refused its start without a durability
+- **Synchronous durability** — a class declaring `durable: remote` has each commit point's
+  acknowledgement gated on the remote ship (RPO 0): a steps stage barrier, a flow input, or a
+  flow checkpoint under `ack: checkpoint`. An instance is refused its start without a durability
   backend (`operator.remote_without_backend`).
 - **RPO breach** — local progress unshipped past `rpo_target_ms` (default 120 s): alarm-grade
   `[:flezha, :state, :rpo_exceeded]`, shown by `flz controller status` and `/healthz`. A

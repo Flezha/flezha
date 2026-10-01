@@ -600,17 +600,41 @@ close, compaction, steps operator commit barriers, a park or a drop) plus one ba
 (`ship_interval_ms`, 30 s). The manifest is written last, so a torn upload is invisible to
 recovery, which hydrates the artifacts into the local layout and runs the ordinary restore path.
 
-| Run | Mode | Loss when the disk is gone |
-| --- | --- | --- |
-| Steps operator | declared `durable: remote` | **none** — the barrier is remote before it is acked |
-| Steps operator | default | at most the work since the last shipped barrier |
-| Stream | checkpoint-ack | at most the current, unclosed interval |
-| Stream | per-input | at most one `ship_interval_ms` |
+What a lost disk costs depends on the class's `durable` level and on its commit point: an
+input under `ack: per_input` or `at_least_once`, a checkpoint under `ack: checkpoint`, a stage of
+a steps instance.
 
-Async shipping never touches an ack path: a failing backend delays no append, fsync or
-watermark advance. What degrades is the guarantee, loudly — lag past `rpo_target_ms` (120 s)
-emits the alarm-grade `[:flezha, :state, :rpo_exceeded]`, surfaced by `flz controller status`
-and `/healthz` (`degraded, reason: durability_rpo_exceeded`).
+| Level | Input | Checkpoint | Stage |
+| --- | --- | --- | --- |
+| `false` (memory) | everything, on any crash | not declarable: the tier needs a disk | everything: the run starts over |
+| `local` | the work since the last ship, at most the RPO target | the work since the last ship, at most the RPO target | the work since the last ship, at most the RPO target |
+| `remote` | nothing acknowledged | nothing acknowledged; the open interval replays | nothing acknowledged |
+
+At `local`, shipping is asynchronous and never touches an acknowledgement: a failing backend
+delays no append, fsync or watermark advance. What degrades is the guarantee, loudly: lag past
+`rpo_target_ms` (120 s) emits the alarm-grade `[:flezha, :state, :rpo_exceeded]`, surfaced by
+`flz controller status` and `/healthz` (`degraded, reason: durability_rpo_exceeded`).
+
+At `remote`, every commit point waits for its ship before it is acknowledged. A steps stage's
+`TaskCommitResponse` is held until the manifest naming the barrier is written. A flow Cell's
+writer holds what each fsync made durable, the credit it releases to the runner (which also
+confirms the instance's processed prefix) and the dispatch of its effect records (their
+outputs, their parks, their consumed offsets), until a ship of the Cell and its input log
+lands; one ship is in flight per Cell, and the next covers every input synced meanwhile. A
+record refused unwritten (a duplicate, a gap, a shed) drains behind the held ones. A writer
+that stops, or a lineage cut by a realign or a rewind, frees the runner's credit for what it
+held without confirming the prefix: the markers that covered it are dropped unconfirmed, and
+later markers wait only on what the writer still owes. One window is
+still open: after a writer resets and restarts under the same stream, until its boot ship lands,
+a new marker can confirm an input whose record is on local disk but not yet shipped. Under
+`ack: checkpoint` only the interval's close waits, so an interval ships once: prefer it for a
+`remote` flow class, which otherwise pays a remote write per synced batch. A controller
+restored from the manifest resumes each Cell after the last input it acknowledged and never
+delivers that input again; inputs of an open interval replay. A backend outage stalls only
+`remote` classes: their acknowledgements wait and the RPO alarm fires, while `local` classes on
+the same controller go on. A refused ship keeps the reference's RPO clock running while its
+commit point waits, also when another controller has taken the lineage. `flz controller status` prints each running class's level as
+`durability_levels`, and each remote commit's wait is `[:flezha, :state, :remote_commit]`.
 
 ## How to avoid loss: user playbook
 

@@ -81,7 +81,6 @@ codes! {
     DeclarationUnreadable => "topology.declaration_unreadable",
     UnknownField => "topology.unknown_field",
     InvalidSetting => "topology.invalid_setting",
-    RemoteOnFlow => "topology.remote_on_flow",
     NoEntryChannel => "topology.no_entry_channel",
     MultipleOutputChannels => "topology.multiple_output_channels",
     BranchingChainedLoop => "topology.branching_chained_loop",

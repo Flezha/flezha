@@ -149,7 +149,7 @@ the value and the type.
 | `FLEZHA_CREDIT_FLOW_CONTROL` | `true` | `:credit_flow_control_enabled` |
 | `FLEZHA_RETENTION_CHECK_INTERVAL_MS` | `60000` | `:time_travel_retention_check_interval_ms` (not in test) |
 | `FLEZHA_STEPS_RETENTION_HOURS` | `72` | `:default_operator_completed_retention_hours` (not in test); how long the record and state of a finished instance are kept, a completed flow instance's as well as a steps one's |
-| `FLEZHA_DURABILITY_BACKEND` | `none` (prod warns when it was defaulted) | `:durability_tier[:backend]`; `none`, `postgres`, `s3`, `local_path`; any other spelling resolves to `none` and warns. A selected backend missing an option it cannot work without refuses the boot naming it |
+| `FLEZHA_DURABILITY_BACKEND` | `none` (prod warns when it was defaulted) | `:durability_tier[:backend]`; `none`, `postgres`, `s3`, `local_path`; any other spelling resolves to `none` and warns. A selected backend missing an option it cannot work without refuses the boot naming it. A class at `durable: local` ships to it asynchronously; one at `durable: remote` needs it and waits on it before each acknowledgement |
 | `FLEZHA_DURABILITY_WRITER_ID` | `node()` | read at runtime by `Flezha.State.DurabilityTier.writer_id/0`; the stable lineage-writer identity for a controller whose node name changes on reschedule |
 | `FLEZHA_DURABILITY_SHIP_INTERVAL_MS` | `30000` | `:durability_tier[:ship_interval_ms]` |
 | `FLEZHA_DURABILITY_RPO_TARGET_MS` | `120000` | `:durability_tier[:rpo_target_ms]` |
@@ -731,7 +731,7 @@ refused by name (`topology.unknown_field`), and a value outside its choice as
 | `exactly.effectively_once.beyond_window` | `process_as_arrival` | Fate of an input later than the window: process it as an arrival, or `drop` it. |
 | `run.steps.each` | `once` | `once`, `per_input` or `chained` looping over the instance's messages (its durable input log when durable). |
 | `run.steps.on_failure` | `undo_all` | How a rewind undoes journaled tasks: `undo_all` or `keep_progress`. |
-| `durable` | `local` | Where an instance keeps its work: `false` in memory only (a crash re-runs from the top), `local` on the controller's disk, `remote` acking a commit barrier only after its remote ship (RPO 0; steps classes only, refused on a flow as `topology.remote_on_flow`, and refused at start without `FLEZHA_DURABILITY_BACKEND`). |
+| `durable` | `local` | Where an instance keeps its work: `false` in memory only (a crash re-runs from the top), `local` on the controller's disk, `remote` acknowledging each commit point (a steps stage, a flow input, a flow checkpoint) only after its remote ship (RPO 0; refused at start without `FLEZHA_DURABILITY_BACKEND`). |
 | `durable.<local\|remote>.sleep_after` | `false` for a flow class, six hours for a steps class | An instance idle this long is written out and evicted from its runner, and wakes on its next message; `false` never sleeps. A sleeping flow instance has its input journaled before it is forwarded, so a flow class pays for that only when it sets an interval. |
 | `max_duration_ms` (`maxDuration`) | none | Wall-clock bound on one run; an instance still running then ends `cancelled`. |
 

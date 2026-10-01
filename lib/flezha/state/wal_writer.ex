@@ -13,13 +13,13 @@ defmodule Flezha.State.WalWriter do
   """
 
   use GenServer, restart: :transient
-  use Flezha.Process.Timer, keys: [:outbox_retry]
+  use Flezha.Process.Timer, keys: [:outbox_retry, :remote_retry]
 
   alias Flezha.Config.Durations
   alias Flezha.SDK.RecordFrame, as: Frame
   alias Flezha.SDK.SafeCall
   alias Flezha.State.{FsyncBatcher, Metrics, RecordFrame, SeqIndex, WriterRegistry}
-  alias Flezha.State.WalWriter.{Admission, Boot, Epoch, Settlement, State}
+  alias Flezha.State.WalWriter.{Admission, Boot, Epoch, RemoteGate, Settlement, State}
 
   @type t :: State.t()
 
@@ -508,7 +508,7 @@ defmodule Flezha.State.WalWriter do
     state = %{state | credit_active?: Map.get(credit_opts, :session) != nil}
 
     if Admission.over_hard_bound?(state) do
-      Admission.release_credit(state, credit_opts)
+      state = RemoteGate.released(state, credit_opts)
       {:noreply, Admission.shed(state, seq, runner_id)}
     else
       do_append_async(
@@ -556,7 +556,7 @@ defmodule Flezha.State.WalWriter do
   defp do_append_async(seq, header, change_bytes, runner_id, state, credit_opts) do
     case handle_call({:append, seq, header, change_bytes, runner_id}, nil, state) do
       {:reply, {:error, {:gap, expected: expected, got: got}}, new_state} ->
-        Admission.release_credit(new_state, credit_opts)
+        new_state = RemoteGate.released(new_state, credit_opts)
         Admission.emit_seq_gap(new_state.cell_id, expected, got)
         {:noreply, Admission.open_gap(new_state, runner_id, :seq_gap)}
 
@@ -564,8 +564,7 @@ defmodule Flezha.State.WalWriter do
         {:noreply, Admission.track_credit(new_state, credit_opts)}
 
       {:reply, _result, new_state} ->
-        Admission.release_credit(new_state, credit_opts)
-        {:noreply, new_state}
+        {:noreply, RemoteGate.released(new_state, credit_opts)}
     end
   end
 
@@ -586,6 +585,12 @@ defmodule Flezha.State.WalWriter do
     {:noreply, state}
   end
 
+  def handle_info({:remote_committed, generation, result}, state),
+    do: {:noreply, state |> RemoteGate.shipped(generation, result) |> Settlement.persist_dedup()}
+
+  def handle_info(:remote_retry, state),
+    do: {:noreply, state |> timer_fired(:remote_retry) |> RemoteGate.retry()}
+
   def handle_info(_msg, state), do: {:noreply, state}
 
   # A clean close syncs what it holds and answers the batched appends it owes;
@@ -594,7 +599,7 @@ defmodule Flezha.State.WalWriter do
   def terminate(reason, %{file_handle: file} = state) when not is_nil(file) do
     synced = :file.datasync(file)
     _ = :file.close(file)
-    _ = Admission.flush_credit_pending(state)
+    _ = RemoteGate.reset(state)
     _ = Settlement.persist_dedup(state)
 
     if synced == :ok and clean_exit?(reason), do: reply_synced(state)
@@ -603,7 +608,7 @@ defmodule Flezha.State.WalWriter do
   end
 
   def terminate(_reason, state) do
-    _ = Admission.flush_credit_pending(state)
+    _ = RemoteGate.reset(state)
     :ok
   end
 
@@ -633,17 +638,14 @@ defmodule Flezha.State.WalWriter do
             latency_reservoir: new_reservoir
         }
 
-        # Durable drain: report the fsynced wire bytes back to each owning
-        # stream's ledger — the only point that mints credit for written
-        # records (append alone never does).
-        new_state = Admission.flush_credit_pending(new_state)
         new_state = Admission.maybe_signal_backpressure(new_state, 0)
 
-        # Effectively-once: everything appended is now durable — dispatch
-        # the gated `:on_output` flush and advance the dedup file once per
-        # batch (never per record).
-        new_state = %{new_state | outbox_durable_seq: new_state.last_persisted_seq}
-        new_state = Settlement.try_dispatch_outbox(new_state)
+        # Durable drain: report the fsynced wire bytes back to each owning
+        # stream's ledger — the only point that mints credit for written
+        # records (append alone never does) — and dispatch the gated
+        # `:on_output` flush; behind the remote gate, once the ship lands.
+        # The dedup file advances once per batch (never per record).
+        new_state = RemoteGate.synced(new_state)
 
         new_state |> Settlement.persist_dedup() |> reply_synced()
     end
@@ -702,7 +704,7 @@ defmodule Flezha.State.WalWriter do
     # compaction round-trip, so "now" is a safe age floor for the next trigger.
     oldest = if size > 0, do: State.now_ms()
 
-    state = Admission.flush_credit_pending(state)
+    state = RemoteGate.drained(state)
     state = Epoch.establish_baseline(state, seq)
 
     state = %{state | pending_bytes: 0, pending_since_us: nil, oldest_unsnapshotted_at: oldest}

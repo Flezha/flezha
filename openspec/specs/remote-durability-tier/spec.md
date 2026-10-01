@@ -88,10 +88,10 @@ Garbage collection SHALL NOT delete an artifact younger than the configured coll
 - **THEN** the two uploads land under different keys, and the artifacts the live manifest names still contain the records that writer shipped
 
 ### Requirement: Async shipping never touches the hot path
-In async mode (all flow classes, and steps classes that do not opt into sync), shipping SHALL run off the ack paths: a slow or failing backend SHALL NOT delay any append, fsync, ack, or watermark advance. Failed ships SHALL retry with the shared exponential backoff ladder while local operation continues.
+For every class at `durable: local`, shipping SHALL run off the ack paths: a slow or failing backend SHALL NOT delay any append, fsync, ack, or watermark advance. Failed ships SHALL retry with the shared exponential backoff ladder while local operation continues.
 
 #### Scenario: Backend outage does not stall dataflow
-- **WHEN** the remote backend becomes unreachable while a flow operator processes input
+- **WHEN** the remote backend becomes unreachable while a flow operator at `durable: local` processes input
 - **THEN** throughput and ack latency are unchanged, shipping retries with backoff, and the RPO alarm (below) fires when the target is exceeded
 
 ### Requirement: Recovery hydrates from the manifest into the existing restore path
@@ -267,23 +267,40 @@ resolves to `none` and warns, neither of which is a refusal.
 - **WHEN** a controller boots with a selected backend and every required option present
 - **THEN** the check passes, the tier starts, and the boot is identical to today's
 
-### Requirement: The `remote` durability level gates the commit point's acknowledgement
+### Requirement: The `remote` durability level gates every commit point's acknowledgement
 
 A class declaring `durable: remote` SHALL have each commit point's acknowledgement gated on
-the remote ship of what that commit point made durable, so that a lost controller disk
-loses nothing of its acknowledged work. In this change the commit point SHALL be a stage of
-a steps instance; a flow class declaring `remote` SHALL be refused at registration with
-`topology.remote_on_flow`, a code that `keep-work-remote-on-a-flow-operator` removes when
-it gates the input and checkpoint commit points too. `local` SHALL ship asynchronously as
-the tier does today and SHALL never touch an acknowledgement path.
+the remote ship of what that commit point made durable, on every run: a stage of a steps
+instance, and for a flow instance the input under `ack: per_input` or `at_least_once` and
+the checkpoint under `ack: checkpoint`. The ship SHALL carry the cell records the commit
+point produced, the effect record and outbox cursor where the tier is on, and the input
+log's floor. `topology.remote_on_flow` SHALL not exist. `local` SHALL ship asynchronously
+and SHALL never touch an acknowledgement path.
 
-#### Scenario: A steps instance acknowledges after the remote ship
+#### Scenario: A flow input is acknowledged after the remote ship
 
-- **WHEN** a steps class declares `durable: remote` on a controller with a durability backend, and a stage commits
-- **THEN** the `TaskCommitResponse` SHALL be sent only after the manifest naming that barrier's artifacts is written to the backend, and a controller restarted from an empty disk SHALL resume the instance at that stage
+- **WHEN** a flow class declares `durable: remote` with `ack: per_input` on a controller with a durability backend, and an input is processed
+- **THEN** the input's acknowledgement SHALL be sent only after the manifest naming its records is written to the backend, and a controller restarted from an empty disk SHALL resume the instance after that input and SHALL not deliver it again
 
-#### Scenario: A flow class declaring `remote` is refused for now
+#### Scenario: A checkpoint ships once per interval
 
-- **WHEN** a flow class declares `durable: remote`
-- **THEN** registration SHALL be refused with `topology.remote_on_flow` naming the change that lifts it
+- **WHEN** the same class declares `ack: {checkpoint, every: 100, max_delay_ms: 1000}`
+- **THEN** one remote ship SHALL be made per closed interval, the interval's acknowledgement SHALL wait on it, and inputs inside an open interval SHALL be replayed after a restore from the manifest
+
+#### Scenario: A backend outage stalls only `remote` classes
+
+- **WHEN** the backend is unreachable and a `remote` flow instance and a `local` flow instance run on the same controller
+- **THEN** the `remote` instance's acknowledgements SHALL wait and the RPO alarm SHALL fire, and the `local` instance SHALL process and acknowledge inputs unaffected
+
+### Requirement: The loss statement SHALL cover every level and every commit point
+
+`docs/resilience/data_durability.md` SHALL state what a lost controller disk costs in one
+table with the three durability levels as rows and the commit points (input, checkpoint,
+stage) as columns, and `flz controller status` SHALL show the level posture of each
+running class beside the RPO.
+
+#### Scenario: The table and the status agree
+
+- **WHEN** a `remote` flow class and a `local` steps class run and `flz controller status` is read
+- **THEN** the status SHALL show `remote` for the first and `local` for the second, and the docs table SHALL state "nothing acknowledged" for the first's row and "the work since the last ship, at most the RPO target" for the second's
 

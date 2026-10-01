@@ -716,7 +716,6 @@ naming the setting and its parent; a value outside its choice is
 make a misplaced setting a compile error, because the type under the wrong
 parent has no such member; Elixir's `use` raises a `CompileError` naming it;
 the five host SDKs pass the tree as written and the shared core judges it.
-`durable: remote` on a flow class is refused as `topology.remote_on_flow`.
 Timers belong to a tasklet and work in either run; `compact_after_bytes`
 belongs to a tasklet and is accepted on either run.
 

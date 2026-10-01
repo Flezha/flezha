@@ -65,6 +65,7 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :state, :ship_fenced] => {:flezha_durability, :ship_fenced, :event},
     [:flezha, :state, :ship_failed] => {:flezha_durability, :ship_failed, :event},
     [:flezha, :state, :artifact_shipped] => {:flezha_durability, :artifact_shipped, :metric},
+    [:flezha, :state, :remote_commit] => {:flezha_durability, :remote_commit, :metric},
     [:flezha, :state, :hydrated] => {:flezha_durability, :hydrated, :event},
     [:flezha, :state, :hydration_failed] => {:flezha_durability, :hydration_failed, :event},
     [:flezha, :state, :artifact_missing] => {:flezha_durability, :artifact_missing, :event},
@@ -152,8 +153,7 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :correction, :refused] => {:flezha_correction, :refused, :event},
     [:flezha, :runner, :factory_language_conflict] =>
       {:flezha_runner, :factory_language_conflict, :event},
-    [:flezha, :runner, :factory_run_conflict] =>
-      {:flezha_runner, :factory_run_conflict, :event},
+    [:flezha, :runner, :factory_run_conflict] => {:flezha_runner, :factory_run_conflict, :event},
     [:flezha, :runner, :quota_refused] => {:flezha_runner, :quota_refused, :event},
     [:flezha, :runner, :admin_request] => {:flezha_runner, :admin_request, :event},
     [:flezha, :runner, :foreign_frame_refused] =>

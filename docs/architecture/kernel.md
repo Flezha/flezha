@@ -379,10 +379,11 @@ flowchart LR
 - **The epoch fence extends outward.** The manifest's conditional write makes the remote store
   an external arbiter: a superseded controller fails its `put_if` and must stop shipping, so two
   controllers can never both own an operator's remote lineage.
-- **Per-class sync mode.** A steps class declaring `durability: :sync_remote` has its barrier
-  acks gated on the remote ship — RPO 0, one LAN round-trip per barrier at Hz rates. Stream
-  classes are refused sync: at ~100K changes/s it would be a lie. Async shipping never blocks
-  the hot path; a stalled shipper raises the alarm-grade `[:flezha, :state, :rpo_exceeded]`
+- **Per-class sync mode.** A class declaring `durable: remote` has each commit point's
+  acknowledgement gated on the remote ship — RPO 0: a steps barrier, a flow input, or a flow
+  checkpoint, at one round-trip per ship. A flow Cell keeps one ship in flight and covers the
+  inputs synced meanwhile with the next, and `ack: checkpoint` ships once per interval. A class
+  at `local` never waits: async shipping never blocks the hot path; a stalled shipper raises the alarm-grade `[:flezha, :state, :rpo_exceeded]`
   (surfaced in `flz controller status` and `/healthz`) instead of silently widening the loss
   window.
 

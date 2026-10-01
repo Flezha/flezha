@@ -2924,11 +2924,6 @@
       "message": "channel '{channel}' names producer {producer} but the class declares {tasklets} tasklet(s)",
       "details": ["channel", "producer", "tasklets"]
     },
-    "topology.remote_on_flow": {
-      "class": "invalid",
-      "message": "flow operator '{factory_id}' declares durable: remote, which a flow operator does not carry until keep-work-remote-on-a-flow-operator gates its commit points; declare durable: local",
-      "details": ["factory_id"]
-    },
     "topology.retired_callback": {
       "class": "invalid",
       "message": "tasklet '{tasklet}' defines {callback}, which no longer exists; use {instead}",

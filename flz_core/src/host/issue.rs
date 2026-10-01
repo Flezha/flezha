@@ -189,10 +189,6 @@ pub enum TopologyIssue {
         value: String,
         expected: String,
     },
-    /// `durable: remote` on a flow class, until its commit points are gated.
-    RemoteOnFlow {
-        factory_id: String,
-    },
     NoEntryChannel,
     MultipleOutputChannels {
         tasklet: String,
@@ -273,7 +269,6 @@ impl TopologyIssue {
             Self::DeclarationUnreadable { .. } => Code::DeclarationUnreadable,
             Self::UnknownField { .. } => Code::UnknownField,
             Self::InvalidSetting { .. } => Code::InvalidSetting,
-            Self::RemoteOnFlow { .. } => Code::RemoteOnFlow,
             Self::NoEntryChannel => Code::NoEntryChannel,
             Self::MultipleOutputChannels { .. } => Code::MultipleOutputChannels,
             Self::BranchingChainedLoop { .. } => Code::BranchingChainedLoop,
@@ -428,7 +423,6 @@ impl TopologyIssue {
                 ("value", value.clone().into()),
                 ("expected", expected.clone().into()),
             ],
-            Self::RemoteOnFlow { factory_id } => vec![("factory_id", factory_id.clone().into())],
             Self::MultipleOutputChannels { tasklet } => vec![("tasklet", tasklet.clone().into())],
             Self::BranchingChainedLoop { channel, leaves } => vec![
                 ("channel", channel.clone().into()),

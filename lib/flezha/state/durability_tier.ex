@@ -4,9 +4,11 @@ defmodule Flezha.State.DurabilityTier do
   **with its disk** is recoverable. See
   `docs/resilience/data_durability.md`.
 
-  Local files stay authoritative: every ack path gates on local fsync alone,
-  shipping neither mutates nor deletes one, and turning the tier off is a
-  complete rollback. What ships are immutable artifacts at boundaries that
+  Local files stay authoritative: a class at `durable: local` gates every
+  acknowledgement on local fsync alone, one at `durable: remote` also on the
+  ship of what that acknowledgement covers (`commit_sync/1`); shipping neither
+  mutates nor deletes a local file, and turning the tier off is a complete
+  rollback. What ships are immutable artifacts at boundaries that
   already exist: snapshots, WAL record bundles, task-journal suffixes, the
   durable input log, the registry cspec, parked DLQ records, the control-plane
   registries. The per-cell manifest is written last, so a torn upload is
@@ -290,8 +292,8 @@ defmodule Flezha.State.DurabilityTier do
   # ---------- per-class sync mode ----------
 
   @doc """
-  Whether `operator_class` requires the remote ship to complete before its
-  commit barrier is acked (RPO 0).
+  Whether `operator_class` requires the remote ship to complete before a
+  commit point is acknowledged (RPO 0).
 
   The class's own `durable: remote` declaration and nothing else
   (`PersistenceResolver.remote?/1`), read under every state key the id/class
@@ -418,19 +420,73 @@ defmodule Flezha.State.DurabilityTier do
   def ship_cspec(hub_id), do: ship({:cspec, {to_string(hub_id), writer_id()}})
 
   @doc """
-  Ship `operator_id`'s artifacts and wait for the manifest write, for a class
-  that declared synchronous durability. Returns the backend's verdict so the
-  caller can withhold the commit ack: a failure stalls the steps operator at its
-  barrier, loudly, which is what RPO 0 means.
+  Ship a commit point's artifacts and wait for the manifest write, for a class
+  that keeps its work `durable: remote`. Returns the backend's verdict so the
+  caller can withhold the acknowledgement: a failure stalls the instance at its
+  commit point, loudly, which is what RPO 0 means.
+
+  The commit point is a steps instance's barrier, named by its operator id, or
+  a flow Cell's synced records, named by its Cell id: the Cell and the input
+  log its consumed offsets point into. The wait is reported as
+  `[:flezha, :state, :remote_commit]` for both.
   """
-  @spec commit_sync(binary()) :: :ok | {:error, term()}
-  def commit_sync(operator_id) when is_binary(operator_id) do
-    # Both key spaces: shipping only one of them would let this barrier answer
-    # `:ok` having never sent the Cell state the guarantee is about.
-    Enum.reduce_while(refs_of_operator(operator_id), :ok, fn ref, :ok ->
+  @spec commit_sync(binary() | tuple()) :: :ok | {:error, term()}
+  def commit_sync(subject) do
+    started = System.monotonic_time(:millisecond)
+    {operator, refs} = commit_target(subject)
+    result = ship_through(refs, operator)
+
+    :telemetry.execute(
+      [:flezha, :state, :remote_commit],
+      %{duration_ms: System.monotonic_time(:millisecond) - started},
+      %{subject: inspect(subject), status: if(result == :ok, do: :ok, else: :error)}
+    )
+
+    result
+  end
+
+  @doc """
+  `commit_sync/1` off the caller's process, so a writer or a commit worker
+  keeps serving while the backend answers: `{:remote_committed, tag, result}`
+  arrives in the caller's mailbox.
+  """
+  @spec commit_async(binary() | tuple(), term()) :: :ok
+  def commit_async(subject, tag) do
+    caller = self()
+
+    {:ok, _pid} =
+      Task.start(fn -> send(caller, {:remote_committed, tag, commit_sync(subject)}) end)
+
+    :ok
+  end
+
+  @doc """
+  A flow Cell stopped waiting on its ship: a refused ship's RPO clock, kept
+  running while it waited (`Shipper.ship_now/1`), stops if another
+  controller now ships the reference.
+  """
+  @spec end_wait(tuple()) :: :ok
+  def end_wait({_, _, _} = cell_id) do
+    if enabled?(), do: Enum.each(elem(commit_target(cell_id), 1), &Shipper.end_wait/1)
+    :ok
+  end
+
+  # The operator a commit point belongs to, and what it ships. Both key spaces
+  # of a steps instance: shipping only one of them would let its barrier answer
+  # `:ok` having never sent the Cell state the guarantee is about. A flow Cell
+  # ships its input log first, so the floor its records carry never lands
+  # remotely ahead of the inputs above it.
+  defp commit_target(operator_id) when is_binary(operator_id),
+    do: {operator_id, refs_of_operator(operator_id)}
+
+  defp commit_target({operator_class, _, _} = cell_id),
+    do: {operator_class, [{:input_log, operator_class}, {:cell, cell_id}]}
+
+  defp ship_through(refs, operator) do
+    Enum.reduce_while(refs, :ok, fn ref, :ok ->
       case Shipper.ship_now(ref) do
         :ok -> {:cont, :ok}
-        {:error, reason} -> {:halt, {:error, {:sync_ship_failed, operator_id, reason}}}
+        {:error, reason} -> {:halt, {:error, {:sync_ship_failed, operator, reason}}}
       end
     end)
   end

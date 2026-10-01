@@ -157,6 +157,7 @@ OUTPUT FIELDS:
     durability_backend         none | postgres | s3 | local_path
     durability_posture         local_only | remote_tier
     durability_rpo_breaches    References past the remote RPO target
+    durability_levels          Each running class's durable level: memory | local | remote
     durability_superseded      References another controller now ships
     state_root                 Absolute directory holding this node's durable state
     file_plugin_root           Absolute folder file plugins may read and write"#;

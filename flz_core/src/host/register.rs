@@ -248,11 +248,6 @@ fn refuse_class_facts(decl: &HostClassDecl, issues: &mut Vec<TopologyIssue>) -> 
         Durable::default()
     });
     if let Run::Flow { exactly } = &run {
-        if durable.is_remote() {
-            issues.push(TopologyIssue::RemoteOnFlow {
-                factory_id: decl.factory_id.clone(),
-            });
-        }
         refuse_tier_facts(decl, exactly, &durable, issues);
     }
     (run, durable)

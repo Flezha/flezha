@@ -146,31 +146,34 @@ defmodule Flezha.State.WalWriter.Admission do
   # (fsync/truncate). The channel frees a credit session's debit with it and
   # confirms processed-prefix markers against it, so it is reported whether
   # or not the stream speaks credit (`session` is then `nil`).
-  def track_credit(state, %{channel: ch, session: session, wire_size: n})
-      when is_pid(ch) and n > 0 do
-    %{state | credit_pending: Map.update(state.credit_pending, {ch, session}, n, &(&1 + n))}
-  end
+  def track_credit(state, opts),
+    do: %{state | credit_pending: add_credit(state.credit_pending, opts)}
 
-  def track_credit(state, _), do: state
+  # `credit`, a `credit_pending` map, with one record's wire bytes added.
+  def add_credit(credit, %{channel: ch, session: session, wire_size: n})
+      when is_pid(ch) and n > 0,
+      do: Map.update(credit, {ch, session}, n, &(&1 + n))
+
+  def add_credit(credit, _), do: credit
 
   # A Change that will never occupy the un-fsynced buffer (dedup drop, gap
   # rejection, shed): it is drained at once.
-  def release_credit(state, %{channel: ch, session: session, wire_size: n})
-      when is_pid(ch) and n > 0 do
-    send(ch, {:credit_drained, session, n, state.cell_id})
-    :ok
-  end
-
-  def release_credit(_state, _), do: :ok
+  def release_credit(state, opts), do: drain_credit(state.cell_id, add_credit(%{}, opts))
 
   def flush_credit_pending(%{credit_pending: cp} = state) when map_size(cp) == 0, do: state
 
   def flush_credit_pending(state) do
-    Enum.each(state.credit_pending, fn {{ch, session}, bytes} ->
-      send(ch, {:credit_drained, session, bytes, state.cell_id})
-    end)
-
+    drain_credit(state.cell_id, state.credit_pending)
     %{state | credit_pending: %{}}
+  end
+
+  # Report `credit`, a `credit_pending` map, to each stream it names: drained
+  # frees the debit and counts toward the stream's processed-prefix markers;
+  # released frees the debit only, for bytes no drain will ever make durable
+  # where they must be.
+  def drain_credit(cell_id, credit, tag \\ :credit_drained)
+      when tag in [:credit_drained, :credit_released] do
+    Enum.each(credit, fn {{ch, session}, bytes} -> send(ch, {tag, session, bytes, cell_id}) end)
   end
 
   def emit_seq_gap({rc, sh, pk}, expected, got) do

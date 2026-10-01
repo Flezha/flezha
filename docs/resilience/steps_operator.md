@@ -334,7 +334,7 @@ that releases the stage's outputs into its children.
 | append | `Commits` | once every named record is durable, `TaskJournal.append_async/4`, `sync: :batched`: the reply is deferred until the `FsyncBatcher` tick, a prefix cut or a clean close syncs the batch; the worker's request collection is the set of acks owed and it never waits on a writer |
 | identity | journal writer | the 16-byte header `[epoch u32][type u8][task_idx u16][iter u32]` is the dedup key: a re-sent barrier is answered from the existing entry, never journaled twice |
 | ack | written by the channel | `TaskCommitResponse` under the request's `reference_id`; a non-empty `error` (write failure, `{:oversized_handoff, size, max}`, `record_not_durable`) terminates the run |
-| sync remote | a task, before the ack | `durable: remote` (`durable = "remote"` in the declaration) has `DurabilityTier.commit_sync/1` ship the journal suffix to the [remote tier](data_durability.md) first — RPO 0, steps classes only |
+| sync remote | a task, before the ack | `durable: remote` (`durable = "remote"` in the declaration) has `DurabilityTier.commit_sync/1` ship the journal suffix to the [remote tier](data_durability.md) first — RPO 0, as for a flow class's inputs |
 | release | after the ack, on the worker | `WalWriter.commit_records/3` for each named range: the Cell's writer releases those records' outputs to the plugin chain and drops a held entry of that Cell below the range (an attempt that never committed) |
 
 Each send arms a deadline of `FLEZHA_STEPS_ACK_TIMEOUT_MS` (default 30 000) on the poll core's

@@ -133,17 +133,11 @@ mod durable_decl_tests {
     }
 
     #[test]
-    fn a_flow_class_declaring_remote_is_refused_naming_the_change_that_lifts_it() {
+    fn a_flow_class_may_declare_remote() {
         let id = factory("remote_flow");
-        let err = decl(&class(&id, r#""durable":"remote","#))
-            .expect_err("a flow class cannot keep its work remote yet");
+        decl(&class(&id, r#""durable":"remote","#)).expect("a flow class keeps its work remote");
 
-        let details = issue(&err, "topology.remote_on_flow");
-        assert_eq!(details["factory_id"], id.as_str());
-        assert!(
-            err.message.contains("keep-work-remote-on-a-flow-operator"),
-            "{err:?}"
-        );
+        assert_eq!(durable_of(&id), Durable::remote());
     }
 
     #[test]

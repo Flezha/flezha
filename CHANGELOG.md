@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Changed: `durable: remote` keeps a flow operator's work remote
+
+A flow class may now declare `durable: remote`, and `topology.remote_on_flow` is gone: no level of
+`durable` is refused on any run. Such a class acknowledges an input (under `ack: per_input` or
+`at_least_once`) or a checkpoint (under `ack: checkpoint`) only once the durability backend holds
+the records it produced and the input log they point into, so a controller that loses its disk
+loses nothing it acknowledged and delivers none of those inputs again. A remote write per synced
+batch is the price; `ack: checkpoint` pays it once per interval. A backend outage stalls only the
+`remote` classes on a controller, loudly through the RPO alarm, and a class at `local` ships as
+before, off every acknowledgement. `flz controller status` prints each running class's level as
+`durability_levels`, and each remote commit's wait is reported as
+`[:flezha, :state, :remote_commit]`.
+
 ### Changed: one operator, configured by one settings tree (breaking)
 
 Every SDK offers one `Operator` class; the two kinds and every spelling of them are gone, with no
@@ -24,10 +37,9 @@ Each setting lives in one place. The channel builder's `effectively_once`, `chec
 `checkpoint_every`, `outputs_at_checkpoint`, `correction_window` and `beyond_window_policy` calls
 are gone; `FLEZHA_PARK_IDLE_MS` is gone (the interval is the class's `sleep_after`);
 `flz operator start --snapshot-interval`, which nothing read, is gone; the per-class
-`:sync_durability` override is gone (`durable: remote` is the class's). `durable: remote` on a
-flow class is refused with `topology.remote_on_flow` for now, and on a controller without a
-durability backend the start is refused with `operator.remote_without_backend`, naming
-`FLEZHA_DURABILITY_BACKEND`.
+`:sync_durability` override is gone (`durable: remote` is the class's). On a controller without a
+durability backend a class at `durable: remote` is refused its start with
+`operator.remote_without_backend`, naming `FLEZHA_DURABILITY_BACKEND`.
 
 The wire carries the run where it carried the kind: `UpdateFactories` announces `run` (with `each`
 and `on_failure` for steps), `AddOperator.run` replaces `kind`, and the AddOperator response

@@ -160,7 +160,7 @@ within 30 s is re-sent under the same identity, up to three sends; a refusal or 
 timeout is terminal and drives compensation — a step whose durability the controller will not
 confirm has not happened.
 
-A class declaring `durability: :sync_remote` raises that bar one notch: the controller ships the
+A class declaring `durable: remote` raises that bar one notch: the controller ships the
 journal suffix to the [remote durability tier](kernel.md#the-remote-durability-tier) and awaits
 the backend ack *before* replying — so the commit survives losing the controller's disk (RPO 0),
 at the cost of one remote round-trip per barrier. The runner already waits for that ack before

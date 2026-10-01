@@ -270,15 +270,8 @@ defmodule Flezha.Service.Cli.Info do
       |> Keyword.get(:operator_class, operator_id)
 
   # Where the class keeps its work, from what its runner announced.
-  defp durable_level(operator_id, state) do
-    class = class_of(operator_id, state)
-
-    cond do
-      ClassRegistry.remote?(class) -> "remote"
-      ClassRegistry.persistent?(class) -> "local"
-      true -> "memory"
-    end
-  end
+  defp durable_level(operator_id, state),
+    do: operator_id |> class_of(state) |> ClassRegistry.durable_level() |> Atom.to_string()
 
   # `local (sleep_after: 6h)`; a class kept in memory has nothing to sleep on.
   defp durable_line(operator_id, state) do

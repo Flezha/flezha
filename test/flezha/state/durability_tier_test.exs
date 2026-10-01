@@ -530,12 +530,14 @@ defmodule Flezha.State.DurabilityTierTest do
       assert [%{ref: ^ref}] = DurabilityTier.breaches()
 
       # ...and then another controller takes it over. A handover is not a
-      # backend failure: leaving `pending_since_ms` set would report a breach
-      # forever, and `/healthz` would read `degraded` after every migration the
-      # cluster performs.
+      # backend failure: once nothing waits on the ship, leaving
+      # `pending_since_ms` set would report a breach forever, and `/healthz`
+      # would read `degraded` after every migration the cluster performs.
       Stub.set_down(false)
       Stub.fence_at(9)
       assert {:error, {:superseded, _holder}} = Shipper.ship_now(ref)
+      :ok = Shipper.end_wait(ref)
+      _ = :sys.get_state(Shipper)
       assert DurabilityTier.breaches() == []
     end
 

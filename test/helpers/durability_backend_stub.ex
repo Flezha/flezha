@@ -140,6 +140,16 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
   def fence_at(claim), do: control(:fence, claim)
 
   @doc """
+  Hold every manifest write until the test answers it: `holder` receives
+  `{:manifest_held, key, writer}` with the write still pending, and the write
+  lands when `release_manifest/1` is handed that `writer`.
+  """
+  def hold_manifests(holder), do: control(:hold, holder)
+
+  @doc "Let the manifest write `hold_manifests/1` reported from `writer` land."
+  def release_manifest(writer), do: send(writer, :release_manifest)
+
+  @doc """
   Pretend every stored artifact is `ms` older than it is, so a test can reach
   the collection grace without waiting for it.
   """
@@ -242,7 +252,18 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
         {:error, {:claim_held, control_get(:fence, nil)}}
 
       true ->
+        await_release(control_get(:hold, nil), key)
         write_if_guard_passes(key, blob, claim, guard)
+    end
+  end
+
+  defp await_release(nil, _key), do: :ok
+
+  defp await_release(holder, key) do
+    send(holder, {:manifest_held, key, self()})
+
+    receive do
+      :release_manifest -> :ok
     end
   end
 
