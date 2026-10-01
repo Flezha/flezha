@@ -380,7 +380,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
     else
       epoch = Artifact.epoch(ref)
       manifest = manifest_for(state, ref)
-      local_top = local_top(snapshots, bounds)
+      local_top = Artifact.top_seq(snapshots, bounds)
 
       local = %{epoch: epoch, markers: Artifact.markers(ref)}
 
@@ -415,15 +415,6 @@ defmodule Flezha.State.DurabilityTier.Shipper do
         {:error, _} = err ->
           err
       end
-    end
-  end
-
-  defp local_top(snapshots, bounds) do
-    top_snapshot = Enum.reduce(snapshots, -1, fn {seq, _path}, acc -> max(seq, acc) end)
-
-    case bounds do
-      {_lo, hi} -> max(hi, top_snapshot)
-      :empty -> top_snapshot
     end
   end
 
@@ -542,8 +533,8 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   # leaving it set would report a permanent RPO breach (and a permanently
   # degraded `/healthz`) for every handover the cluster performs.
   #
-  # Nothing local is touched. The tier never deletes local files, and the node
-  # that lost the claim is usually the one that still has the only other copy.
+  # Nothing local is touched: the node that lost the claim is usually the one
+  # that still has the only other copy.
   defp supersede(state, ref, holder) do
     Logger.info(
       "[durability] #{inspect(ref)} is now shipped by #{inspect(holder)}; this node stopped. " <>

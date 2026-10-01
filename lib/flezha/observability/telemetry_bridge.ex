@@ -58,6 +58,7 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :state, :baseline_seed] => {:flezha_state, :baseline_seed, :event},
     [:flezha, :state, :wal_realign] => {:flezha_state, :wal_realign, :event},
     [:flezha, :state, :stale_writer_refused] => {:flezha_state, :stale_writer_refused, :event},
+    [:flezha, :state, :adoption_refused] => {:flezha_state, :adoption_refused, :event},
     # Remote durability tier. Every alarm it documents was a Logger line until
     # these entries existed — including `rpo_exceeded`, which the user guide
     # calls alarm-grade and reports through `/healthz`.

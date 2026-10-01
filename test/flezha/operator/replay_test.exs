@@ -1,7 +1,7 @@
 defmodule FlezhaTest.Operator.ReplayAdoptionTest do
   @moduledoc """
-  `Replay.dispatch_restore/3` adopting an operator's durable state from
-  another controller node.
+  `Replay.adopt_moved_state/3` adopting an operator's durable state from
+  another controller node, once per arrival and never from a restore.
 
   A partition rescale gathers the whole group's Cells onto the node that ran
   it and stamps that node on every new member's opts. ProcessHub then places the
@@ -19,7 +19,7 @@ defmodule FlezhaTest.Operator.ReplayAdoptionTest do
   alias Flezha.Operator.Builder
   alias Flezha.Operator.Overwatch
   alias Flezha.Operator.Replay
-  alias Flezha.State.WalTransfer
+  alias Flezha.State.Adoption
 
   setup :set_mimic_global_until_exit
 
@@ -33,17 +33,15 @@ defmodule FlezhaTest.Operator.ReplayAdoptionTest do
     }
   end
 
-  # `dispatch_restore/3` does its work off-process; the stub reports back so the
-  # test observes the pull rather than racing the spawn.
-  defp expect_pull(reply_to) do
-    stub(WalTransfer, :pull_operator, fn source_node, operator_class ->
-      send(reply_to, {:pulled, source_node, operator_class})
-      0
+  defp expect_adopt(reply_to) do
+    stub(Adoption, :adopt_newest, fn operator_class, source ->
+      send(reply_to, {:adopted, source, operator_class})
+      :ok
     end)
   end
 
-  # The restore enumerates the class's Cells only after any pull: the
-  # message this returns marks that point.
+  # The restore enumerates the class's Cells off-process: the message this
+  # returns marks that it ran.
   defp expect_scan(reply_to) do
     scanned = {:scanned, make_ref()}
 
@@ -55,63 +53,58 @@ defmodule FlezhaTest.Operator.ReplayAdoptionTest do
     scanned
   end
 
-  test "a member placed off the assembling node pulls its class tree first" do
-    expect_pull(self())
-    peer = :"peer@127.0.0.1"
-
-    :ok = Replay.dispatch_restore(state("ohlc#p1"), [state_source_node: peer], "runner-1")
-
-    assert_receive {:pulled, ^peer, "ohlc#p1"}, 2_000
+  defp adopt(operator_id, opts, hub_answer \\ :error) do
+    builder = %Builder{id: operator_id, factory_id: "candles", run: :flow, opts: opts}
+    Replay.adopt_moved_state(%{state(operator_id) | builder: builder}, builder, hub_answer)
   end
 
-  test "the operator_class opt names what is pulled, not the instance id" do
-    expect_pull(self())
-    peer = :"peer@127.0.0.1"
+  @peer :"peer@127.0.0.1"
 
-    :ok =
-      Replay.dispatch_restore(
-        state("ohlc#p1"),
-        [state_source_node: peer, operator_class: "shared_class"],
-        "runner-1"
-      )
+  # fails when: the source stays on the operator's options, so every later bind
+  # of the same instance adopts from it again.
+  test "a member placed off the assembling node adopts from it once" do
+    expect_adopt(self())
 
-    assert_receive {:pulled, ^peer, "shared_class"}, 2_000
+    operator = adopt("ohlc#p1", state_source_node: @peer)
+
+    assert_received {:adopted, @peer, "ohlc#p1"}
+    refute Keyword.has_key?(operator.opts, :state_source_node)
   end
 
-  test "a member placed on the assembling node pulls nothing" do
-    expect_pull(self())
+  test "the operator_class opt names what is adopted, not the instance id" do
+    expect_adopt(self())
+
+    adopt("ohlc#p1", state_source_node: @peer, operator_class: "shared_class")
+
+    assert_received {:adopted, @peer, "shared_class"}
+  end
+
+  test "a member placed on the assembling node adopts from no node" do
+    expect_adopt(self())
+
+    adopt("ohlc#p0", state_source_node: node())
+
+    assert_received {:adopted, nil, "ohlc#p0"}
+  end
+
+  test "an operator that was never rescaled adopts from no node" do
+    expect_adopt(self())
+
+    adopt("plain", [])
+
+    assert_received {:adopted, nil, "plain"}
+  end
+
+  # fails when: the restore a heal kicks on a bound operator adopts again, and
+  # swaps the files of writers that are taking its frames.
+  test "a restore kicked on a bound operator adopts nothing" do
+    expect_adopt(self())
     scanned = expect_scan(self())
 
-    :ok = Replay.dispatch_restore(state("ohlc#p0"), [state_source_node: node()], "runner-1")
+    :ok = Replay.dispatch_restore(state("ohlc#p1"), [state_source_node: @peer], "runner-1")
 
     assert_receive ^scanned, 2_000
-    refute_received {:pulled, _, _}
-  end
-
-  # fails when: the pull runs whatever this node holds, so a restore after the
-  # member made progress here overwrites it with the source's older copy.
-  test "a node that already holds the instance's files pulls nothing" do
-    expect_pull(self())
-    peer = :"peer@127.0.0.1"
-    cell = {"ohlc#p1", "candle", "BTC-USD"}
-    File.mkdir_p!(Flezha.State.Paths.state_dir(cell))
-    File.write!(Flezha.State.Paths.wal_path(cell), "newer")
-
-    assert :ok = Replay.adopt_foreign_state([state_source_node: peer], "ohlc#p1")
-    refute_received {:pulled, _, _}
-
-    assert :ok = Replay.adopt_foreign_state([state_source_node: peer], "ohlc#p2")
-    assert_received {:pulled, ^peer, "ohlc#p2"}
-  end
-
-  test "an operator that was never rescaled pulls nothing" do
-    expect_pull(self())
-    scanned = expect_scan(self())
-
-    :ok = Replay.dispatch_restore(state("plain"), [], "runner-1")
-
-    assert_receive ^scanned, 2_000
-    refute_received {:pulled, _, _}
+    refute_received {:adopted, _, _}
   end
 end
 
@@ -159,6 +152,34 @@ defmodule FlezhaTest.Operator.RestoreRefusalTest do
     assert log =~ "restore REFUSED"
     assert log =~ inspect(cell_id)
     assert log =~ @refusal
+  end
+
+  # fails when: the bind's restore runs off-process, so its `RestoreInitState`
+  # can reach the runner after the hand-over the Overwatch absorbs next and an
+  # input after it, resetting the runner's state to the WAL's.
+  test "the bind's restore has reached the runner before the bind goes on" do
+    {class, _, _} = id = cell("bind")
+    TestHelpers.write_wal(id, 0..1)
+    on_exit(fn -> Flezha.State.Supervisor.delete_cell(id) end)
+    test_pid = self()
+
+    stub(Flezha.State.Commands, :await_restore_init_state, fn _runner, cell_id ->
+      send(test_pid, {:restored, cell_id})
+      {:ok, <<>>}
+    end)
+
+    state = %Overwatch{
+      id: class,
+      namespace: "_system",
+      factory_id: "f",
+      runner_id: "runner_1",
+      builder: %Builder{id: class, factory_id: "f", run: :flow}
+    }
+
+    assert :ok = Replay.restore_on_bind(state, state.builder)
+
+    # Already answered when the bind goes on, not on its way.
+    assert_received {:restored, ^id}
   end
 
   describe "await_restore/2" do

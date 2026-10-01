@@ -95,13 +95,17 @@ For every class at `durable: local`, shipping SHALL run off the ack paths: a slo
 - **THEN** throughput and ack latency are unchanged, shipping retries with backoff, and the RPO alarm (below) fires when the target is exceeded
 
 ### Requirement: Recovery hydrates from the manifest into the existing restore path
-Recovery SHALL rebuild local durable files from the manifest and then run the existing restore-and-replay path unchanged. Local state SHALL always take precedence: a reference with local durable files SHALL NOT be overwritten.
+Recovery SHALL rebuild local durable files from the manifest and then run the existing restore-and-replay path unchanged. A reference with local durable files SHALL NOT be overwritten by that hydration. When an operator arrives on a controller, its local copy SHALL be replaced by the shipped one only whole and only when another controller wrote it and it is the newer copy: on every reference both hold the shipped cut is at least as new, judged by the WAL-owner epoch and then the highest seq covered, a tie going to the shipped copy; a reference only the local copy holds SHALL be carried over, never deleted. The shipped copy SHALL be staged in full before it replaces anything, and the local copy SHALL stay when any of it cannot be read.
 
 A manifest that references an artifact the backend does not hold SHALL be reported as an alarm-grade event naming the reference and the missing artifact. It SHALL NOT be degraded into a silent cold start, because a corrupt lineage and an unreachable backend are different conditions calling for different user responses.
 
 #### Scenario: Node-loss recovery
 - **WHEN** a controller dies with its disk and a fresh controller boots against the same backend
 - **THEN** it hydrates the shipped artifacts into the local layout and the ordinary restore-and-replay brings each operator back at its last shipped cut
+
+#### Scenario: A returning controller hydrates over the copy it kept
+- **WHEN** an operator moves back to a controller still holding the copy it shipped before the operator moved away, and another controller has since shipped a newer cut
+- **THEN** the controller replaces its copy with the newer cut, and a copy with a reference newer than its shipped cut is kept
 
 #### Scenario: Partial hydration by cell key
 - **WHEN** hydration is requested for named cell keys of one tasklet

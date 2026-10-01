@@ -218,6 +218,65 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   end
 
   @doc """
+  How new `ref`'s local copy is: its WAL-owner epoch, then the highest seq it
+  holds (`-1` for none), or `:unreadable` when its WAL refuses a record. A
+  rewind or a realign bumps the epoch and every write raises the seq, so of
+  two copies of one lineage the greater marker is the newer;
+  `Manifest.freshness/1` reads a shipped cut the same way.
+  """
+  @spec freshness(ref()) :: {non_neg_integer(), integer()} | :unreadable
+  def freshness(ref) do
+    {epoch(ref), top_seq(snapshots(ref), seq_bounds(ref))}
+  rescue
+    RuntimeError -> :unreadable
+  end
+
+  @doc """
+  `freshness/1` of every durable reference `operator_class` holds on this node,
+  keyed by the same reference under `as`.
+  """
+  @spec freshness_of(binary(), binary() | nil) :: %{ref() => term()}
+  def freshness_of(operator_class, as \\ nil) do
+    Map.new(
+      Paths.durable_refs(operator_class),
+      &{Paths.ref_under(&1, as || operator_class), freshness(&1)}
+    )
+  end
+
+  @doc """
+  Whether one operator's copy marked `theirs` replaces the local copy marked
+  `ours` (both `%{ref => marker}`): each of its markers can be read, it shares
+  a lineage with ours unless ours is empty, and on every shared reference it is
+  at least as new. A tie goes to it: it is the copy the operator's current
+  owner wrote, and two histories of equal length differ only in who wrote them.
+  A reference only ours holds does not count against it: the switch carries
+  it over (`Flezha.State.Adoption`).
+  """
+  @spec copy_supersedes?(%{ref() => term()}, %{ref() => term()}) :: boolean()
+  def copy_supersedes?(theirs, ours) do
+    shared = Map.take(ours, Map.keys(theirs))
+
+    theirs != %{} and Enum.all?(Map.values(theirs), &match?({_, _}, &1)) and
+      (ours == %{} or shared != %{}) and
+      Enum.all?(shared, fn {ref, mine} -> at_least?(Map.fetch!(theirs, ref), mine) end)
+  end
+
+  defp at_least?({_, _} = theirs, {_, _} = ours), do: theirs >= ours
+  defp at_least?(_theirs, _ours), do: false
+
+  @doc "The highest seq a snapshot set and WAL bounds cover, `-1` for neither."
+  @spec top_seq([{non_neg_integer(), binary()}], {non_neg_integer(), non_neg_integer()} | :empty) ::
+          integer()
+  def top_seq(snapshots, bounds) do
+    top_snapshot = Enum.reduce(snapshots, -1, fn {seq, _path}, acc -> max(seq, acc) end)
+
+    case bounds do
+      {_lo, hi} -> max(hi, top_snapshot)
+      :empty -> top_snapshot
+    end
+  end
+
+  @doc """
   Lowest and highest record seq currently in `ref`'s WAL, or `:empty`.
 
   The low bound is what compaction left behind, and it is the evidence that a

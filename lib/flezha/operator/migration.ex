@@ -374,6 +374,7 @@ defmodule Flezha.Operator.Migration do
       %{scope: :process, order: 10, name: :migrate_task, run: &migrate_task_step/2},
       %{scope: :process, order: 20, name: :class_registry, run: &class_registry_step/2},
       %{scope: :process, order: 30, name: :control_unit, run: &control_unit_step/2},
+      %{scope: :process, order: 35, name: :writers, run: &writers_step/2},
       %{scope: :process, order: 40, name: :plugin_table, run: &plugin_table_step/2}
     ]
   end
@@ -408,6 +409,12 @@ defmodule Flezha.Operator.Migration do
     _ = ClassRegistry.delete(Overwatch.operator_class(state))
     :ok
   end
+
+  # The runner has been told to drop the operator, so it is no longer bound
+  # here: its writers close, flushed, and its files stay. An operator that
+  # moved away leaves nothing open for its return to find (`Flezha.State.Adoption`).
+  defp writers_step({state, _reason}, _budget),
+    do: OperatorManager.close_writers(Overwatch.operator_class(state))
 
   defp control_unit_step({%Overwatch{runner_id: nil}, _reason}, _budget), do: :ok
 

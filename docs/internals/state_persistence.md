@@ -88,12 +88,19 @@ controller whose disk holds it. A HotSwap handover normally carries state in-ban
 `Flezha.Operator.Handover.prepare/1` (via `Overwatch.prepare_handover_state/1`) sources it from
 the runner, so a migration triggered by that runner's death (the hub's own redistribution, after
 a controller loses its last runner for a factory and withdraws it) ships an empty payload. The handover stamps `source_node`; on an
-empty payload the destination runs `WalTransfer.pull_operator/3` against that node before the
+empty payload the destination runs `WalTransfer.stage_operator/3` against that node before the
 ordinary replay. The pull carries every durable file of the instance, one reference at a time:
 each Cell's file set (`{:cell, cell_id}`), a steps operator's journal under its reserved identity, and
 the instance's input log (`{:input_log, class}`), because a journal without its log would seed
-the floor in an empty offset space. It runs only while this node holds none of those files, so a
-later restore never overwrites newer progress with the copy the source was left holding. The
+the floor in an empty offset space. `Flezha.State.Adoption` runs it once, as the operator arrives
+and before any of its writers opens: every reference lands in a staging directory beside the
+class, and one that fails discards the stage. The staged copy replaces the local one only when,
+on every reference both hold, it is at least as new (`Artifact.freshness/1`: the WAL-owner epoch,
+then the highest seq; a tie goes to the staged copy; a reference only the local copy holds is
+carried over). The switch runs under the class's writer-start lock, closes writers left by an operator
+no longer bound here, and is two directory renames that
+`Adoption.settle/0` resolves at boot after a crash: the old copy, or the new one once both renames
+are done. The
 transfer is destination-driven — the source only answers reads
 (`Paths.durable_refs/1`, `manifest/1`, `read_chunk/3` over `:erpc`) — so a source dying mid-transfer fails
 the pull instead of stranding a partial file. Each file lands through `Paths.atomic_install/2`

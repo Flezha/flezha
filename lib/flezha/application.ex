@@ -52,6 +52,10 @@ defmodule Flezha.Application do
 
     _ = StatePathMigrator.migrate()
 
+    # Before any state is read: an adoption a crash interrupted binds the old
+    # copy, or the new one when its switch had completed, never a mix.
+    :ok = Flezha.State.Adoption.settle()
+
     # Before the children are computed: a package's providers are rows of the
     # provider table, whose worker families the tree supervises.
     _ = PackageLoader.load_all()

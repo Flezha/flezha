@@ -116,6 +116,10 @@ defmodule Flezha.State.DurabilityTier.Manifest do
     |> then(fn acc -> Enum.reduce(ranges, acc, &max(&1.to, &2)) end)
   end
 
+  @doc "How new the shipped cut is, read as `Artifact.freshness/1` reads a local copy."
+  @spec freshness(t()) :: {non_neg_integer(), integer()}
+  def freshness(%__MODULE__{epoch: epoch} = manifest), do: {epoch, shipped_through(manifest)}
+
   @doc """
   Drop everything above `seq` — the correction case. A range straddling `seq`
   goes entirely: the records at or below it are still local, so the next ship

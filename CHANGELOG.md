@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Fixed: an operator moving back to a controller no longer loses the turns taken elsewhere
+
+A controller that kept a copy of an operator's state when the operator moved away bound from that
+copy when the operator came back, because any local file counted as the newest. As the operator
+arrives, the controller now stages the whole copy on the node it moves from, or else the cut
+another controller shipped to the durability backend, and switches it in when it is newer, judged
+by the WAL-owner epoch and then the highest seq. The Cells, journal and input log always come from
+one copy, an operator leaving a controller closes its writers there, nothing is replaced while
+the operator is bound on the controller, a refusal is logged with its reason, and a crash during
+the switch boots with the old copy. A bind now awaits its restore, so the state a hand-over brings
+is never reset to the WAL's afterwards.
+
 ### Changed: `durable: remote` keeps a flow operator's work remote
 
 A flow class may now declare `durable: remote`, and `topology.remote_on_flow` is gone: no level of

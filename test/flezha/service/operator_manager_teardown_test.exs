@@ -61,6 +61,27 @@ defmodule FlezhaTest.Service.OperatorManagerTeardownTest do
     assert {:ok, [%{iter: 1}]} = TaskJournal.read(instance)
   end
 
+  # fails when: an Overwatch that ends on this node, a move away among them,
+  # leaves its writers open, and the operator's later return finds its own
+  # stale copy held open.
+  test "an operator no longer bound here closes its writers and keeps its files" do
+    instance = "teardown_moved_#{System.unique_integer([:positive])}"
+    assert :ok = TaskJournal.append_iter_committed(instance, 0, 0, [])
+    assert {:ok, 0} = InputLog.append(instance, "m", %{})
+
+    state = %Flezha.Operator.Overwatch{
+      id: instance,
+      namespace: "_system",
+      builder: %Flezha.Operator.Builder{id: instance, factory_id: "f", opts: []}
+    }
+
+    steps = Enum.filter(Flezha.Operator.Migration.shutdown_steps(), &(&1.name == :writers))
+    assert {:ok, _report} = Shutdown.run(:process, {state, :shutdown}, 5_000, steps)
+
+    assert closed?(instance)
+    assert File.exists?(Paths.input_log_path(instance))
+  end
+
   test "a stop that deletes the files closes the writers and removes the tree" do
     instance = "teardown_drop_#{System.unique_integer([:positive])}"
     assert :ok = TaskJournal.append_iter_committed(instance, 0, 0, [])

@@ -23,7 +23,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.{Artifact, Hydrator, Manifest, Shipper}
-  alias Flezha.State.TestHelpers
+  alias Flezha.State.{Adoption, Paths, TestHelpers}
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -284,7 +284,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     assert :ok = Shipper.ship_now(ref)
 
     # The peer holds the same reference with different records above the shipped
-    # cut — what an ordinary migration leaves behind, since `pull_operator/3`
+    # cut — what an ordinary migration leaves behind, since `stage_operator/3`
     # copies and nothing deletes the source.
     peer = start_peer_node(ctx.peer_base)
 
@@ -348,7 +348,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
       peer_adopts_and_ships(ctx, ref)
 
-      # This node still holds every file — `pull_operator/3` copies and nothing
+      # This node still holds every file — `stage_operator/3` copies and nothing
       # deletes the source — so "has the state" would let it claim straight
       # back. Only never having adopted stops it.
       :ok = Shipper.sweep_now()
@@ -397,6 +397,65 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       assert :ok = Shipper.ship_now(ref)
       assert %{owner: owner, claim: 2} = Stub.stored_manifest(ref)
       assert owner == this_writer()
+    end
+
+    # fails when: hydration skips every reference with local files, so the node
+    # an operator returns to binds from the copy it was left holding and loses
+    # the turns taken elsewhere.
+    test "a returning node adopts the newer lineage over the stale copy it kept", ctx do
+      ref = {:cell, ctx.cell_id}
+      newer = ship_stale_here_newer_on_peer(ctx, ref)
+      sidecar = Path.join(Paths.class_dir(ctx.class), "kind")
+      File.write!(sidecar, "flow")
+
+      assert :ok = Adoption.adopt_newest(ctx.class, nil)
+
+      assert File.read!(Paths.wal_path(ctx.cell_id)) == newer
+      assert File.read!(sidecar) == "flow", "a class-level sidecar is not part of the copy"
+      assert adoption_residue(ctx.class) == []
+    end
+
+    test "CONTROL: a local copy newer than the remote one is kept", ctx do
+      ref = {:cell, ctx.cell_id}
+
+      TestHelpers.write_wal(ctx.cell_id, 0..3)
+      {:ok, _} = start_supervised(Shipper)
+      assert :ok = Shipper.ship_now(ref)
+      TestHelpers.append_wal(ctx.cell_id, 4..7)
+      local = File.read!(Paths.wal_path(ctx.cell_id))
+
+      assert :ok = Adoption.adopt_newest(ctx.class, nil)
+      assert File.read!(Paths.wal_path(ctx.cell_id)) == local
+    end
+
+    # fails when: the stale copy is removed before the newer one has landed, so
+    # an unreadable remote lineage costs the node the only copy it had.
+    # fails when: a Cell created here inside the last ship interval, which no
+    # manifest names yet, is dropped with the copy the newer cut replaces.
+    test "a Cell no manifest names yet survives the adoption", ctx do
+      ref = {:cell, ctx.cell_id}
+      newer = ship_stale_here_newer_on_peer(ctx, ref)
+      unshipped = {ctx.class, "task", "unshipped"}
+      TestHelpers.write_wal(unshipped, 0..1, "local")
+      local = File.read!(Paths.wal_path(unshipped))
+
+      assert :ok = Adoption.adopt_newest(ctx.class, nil)
+
+      assert File.read!(Paths.wal_path(ctx.cell_id)) == newer
+      assert File.read!(Paths.wal_path(unshipped)) == local
+    end
+
+    test "a newer lineage that cannot be read leaves the stale copy in place", ctx do
+      ref = {:cell, ctx.cell_id}
+      ship_stale_here_newer_on_peer(ctx, ref)
+      stale = File.read!(Paths.wal_path(ctx.cell_id))
+      Stub.delete(newest_range_blob(ref), [])
+
+      log = capture_log(fn -> assert :ok = Adoption.adopt_newest(ctx.class, nil) end)
+
+      assert log =~ "which the backend does not hold"
+      assert File.read!(Paths.wal_path(ctx.cell_id)) == stale
+      assert adoption_residue(ctx.class) == []
     end
 
     test "a bid is a compare-and-set, so simultaneous claimants cannot both win", _ctx do
@@ -485,6 +544,33 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     end)
 
     peer
+  end
+
+  # The operator moves away and back: this node shipped 0..3 and kept the files,
+  # the peer adopted it, took turns 4..5 and shipped them. Returns the peer's WAL.
+  defp ship_stale_here_newer_on_peer(ctx, ref) do
+    TestHelpers.write_wal(ctx.cell_id, 0..3)
+    {:ok, _} = start_supervised(Shipper)
+    assert :ok = Shipper.ship_now(ref)
+
+    peer = start_peer_node(ctx.peer_base)
+
+    with_root(ctx.peer_base, fn ->
+      TestHelpers.write_wal(ctx.cell_id, 0..3)
+      TestHelpers.append_wal(ctx.cell_id, 4..5, "peer")
+      GenServer.cast(peer, {:adopt, ctx.class})
+      assert :ok = GenServer.call(peer, {:ship_now, ref})
+      # The adopt also queued a ship; it must run while the peer's root is in
+      # place, or it ships this node's stale files as the peer's lineage.
+      _ = :sys.get_state(peer)
+      File.read!(Paths.wal_path(ctx.cell_id))
+    end)
+  end
+
+  defp adoption_residue(class) do
+    [Paths.staging_class(class), Paths.set_aside_class(class)]
+    |> Enum.map(&Paths.class_dir/1)
+    |> Enum.filter(&File.exists?/1)
   end
 
   # `all_refs/1` reads `:state_root` when collection runs, and app env is global

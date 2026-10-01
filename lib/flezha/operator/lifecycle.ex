@@ -166,9 +166,6 @@ defmodule Flezha.Operator.Lifecycle do
 
     with {:ok, state} <- Plugins.prepare(state, declared_plugins(state, operator)),
          {:ok, state, operator} <- Plugins.resolve_init_state(state, operator),
-         # Before the resume state is read: a steps operator resumes from the
-         # journal, restore count and log tail it finds here.
-         :ok <- Replay.adopt_foreign_state(operator.opts, Overwatch.operator_class(state)),
          operator =
            with_resume_state(operator, Overwatch.operator_class(state)),
          # Before the runner starts: its Cell writers learn their commit unit

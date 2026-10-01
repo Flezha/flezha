@@ -67,7 +67,7 @@ lib/flezha/operator/replay.ex -> Flezha.State.PersistenceResolver
 lib/flezha/operator/replay.ex -> Flezha.State.TaskJournal
 lib/flezha/operator/replay.ex -> Flezha.State.Restore
 lib/flezha/operator/replay.ex -> Flezha.State.Supervisor
-lib/flezha/operator/replay.ex -> Flezha.State.WalTransfer
+lib/flezha/operator/replay.ex -> Flezha.State.Adoption
 lib/flezha/operator/replay.ex -> Flezha.State.WalWriter
 lib/flezha/operator/validator.ex -> Flezha.Service.HubManager
 lib/flezha/plugin.ex -> (no directory owns it)

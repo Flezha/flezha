@@ -21,6 +21,7 @@ defmodule Flezha.Operator.Replay do
   alias Flezha.Operator.Overwatch
   alias Flezha.Process.Timer
   alias Flezha.Runner.StreamChannel.Gate
+  alias Flezha.State.Adoption
   alias Flezha.State.Commands
   alias Flezha.State.DurabilityTier
   alias Flezha.State.InputLog
@@ -28,7 +29,6 @@ defmodule Flezha.Operator.Replay do
   alias Flezha.State.PersistenceResolver
   alias Flezha.State.TaskJournal
   alias Flezha.State.Restore
-  alias Flezha.State.WalTransfer
   alias Flezha.State.WalWriter
 
   require Logger
@@ -107,8 +107,9 @@ defmodule Flezha.Operator.Replay do
   # ---------- bind-time restore ----------
 
   @doc """
-  Walk the on-disk Cell state for this operator and dispatch `RestoreInitState`
-  to the SDK for each Cell that has a non-empty payload.
+  Walk the on-disk Cell state for this operator and send `RestoreInitState`
+  to the SDK for each Cell that has a non-empty payload, awaiting every answer
+  before the bind goes on.
 
   Skipped when the operator arrived via HotSwap — handover already delivers the
   state in-band — and when persistence is disabled for this operator class.
@@ -118,8 +119,15 @@ defmodule Flezha.Operator.Replay do
     do: :ok
 
   def restore_on_bind(%Overwatch{} = state, operator) do
-    # An awaited restore already ran, before the tail was re-forwarded.
-    unless awaited_restore?(state), do: dispatch_restore(state, operator.opts, state.runner_id)
+    # An awaited restore already ran, before the tail was re-forwarded. This
+    # one is awaited too, in the bind: run off-process, its `RestoreInitState`
+    # could reach the runner after a hand-over the Overwatch absorbs next and
+    # an input after that, resetting the runner's state to the WAL's.
+    unless awaited_restore?(state) do
+      operator_class = Keyword.get(operator.opts, :operator_class, state.id)
+      replay_persisted_cells(operator_class, state.runner_id, owner_pid(state))
+    end
+
     :ok
   end
 
@@ -136,8 +144,8 @@ defmodule Flezha.Operator.Replay do
   Enumerate this operator's persisted Cells and ship a `RestoreInitState` for
   each, off-process — the replay does blocking disk reads and never touches state.
 
-  The bind path reaches it through `restore_on_bind/2`; the
-  convergence heal reaches it through the Overwatch's `{:kick_restore, _}` cast.
+  The convergence heal reaches it through the Overwatch's `{:kick_restore, _}`
+  cast; the bind restores in its own process (`restore_on_bind/2`).
   """
   @spec dispatch_restore(Overwatch.t(), keyword(), binary()) :: :ok
   def dispatch_restore(%Overwatch{} = state, operator_opts, runner_id) do
@@ -148,50 +156,31 @@ defmodule Flezha.Operator.Replay do
 
     # Linked to its caller, the Overwatch or its bind task, so it stops with
     # the bind it belongs to.
-    spawn_link(fn ->
-      :ok = adopt_foreign_state(operator_opts, operator_class)
-      replay_persisted_cells(operator_class, runner_id, overwatch)
-    end)
+    spawn_link(fn -> replay_persisted_cells(operator_class, runner_id, overwatch) end)
 
     :ok
   end
 
   @doc """
-  Pull the instance's durable files from the node its state was last assembled
-  on (`:state_source_node`) while this node holds none of them: a partition
-  member placed away from the node that rescaled it, or a migration whose
-  handover arrived empty. A node that holds any of them already runs the
-  instance's state, and a copy from the source would overwrite that progress
-  with what the source was left holding.
-  """
-  @spec adopt_foreign_state(keyword(), binary()) :: :ok
-  def adopt_foreign_state(operator_opts, operator_class) do
-    with source when source != nil <- foreign_state_source(operator_opts),
-         [] <- Paths.durable_refs(operator_class) do
-      _ = WalTransfer.pull_operator(source, operator_class)
-    end
-
-    :ok
-  end
-
-  @doc """
-  The operator a moved instance binds with: while a move starts its
-  destination, the hub still names the source's Overwatch, so the source node
-  rides the operator's opts and its durable files are pulled now, before the
-  bind reads any resume state. A fresh start, and a restart on this node, is
-  named here or nowhere, and binds as it is. `hub_pid` is the hub's answer
-  for the instance.
+  The operator an arriving instance binds with, once its durable state is the
+  newest copy there is (`Flezha.State.Adoption.adopt_newest/2`): the copy on
+  the node it moves from, which is the one the hub still names while a move
+  starts its destination or the `:state_source_node` a partition rescale
+  stamped on a new member, else the backend's. Runs once per arrival, before
+  anything below reads or opens the state, and drops the source from the
+  operator so no later bind or heal adopts from it again. `hub_pid` is the
+  hub's answer for the instance.
   """
   @spec adopt_moved_state(Overwatch.t(), Flezha.Operator.Builder.t(), term()) ::
           Flezha.Operator.Builder.t()
-  def adopt_moved_state(%Overwatch{} = state, operator, {:ok, pid})
-      when is_pid(pid) and node(pid) != node() do
-    opts = Keyword.put(operator.opts, :state_source_node, node(pid))
-    :ok = adopt_foreign_state(opts, Overwatch.operator_class(state))
-    %{operator | opts: opts}
+  def adopt_moved_state(%Overwatch{} = state, operator, hub_pid) do
+    source = moved_from(hub_pid) || foreign_state_source(operator.opts)
+    :ok = Adoption.adopt_newest(Overwatch.operator_class(state), source)
+    %{operator | opts: Keyword.delete(operator.opts, :state_source_node)}
   end
 
-  def adopt_moved_state(%Overwatch{}, operator, _here_or_nowhere), do: operator
+  defp moved_from({:ok, pid}) when is_pid(pid) and node(pid) != node(), do: node(pid)
+  defp moved_from(_here_or_nowhere), do: nil
 
   # `:state_source_node` names the node an operator's durable state was last
   # assembled on. Only a foreign one means anything — a local value is already
@@ -208,8 +197,7 @@ defmodule Flezha.Operator.Replay do
   defp replay_persisted_cells(operator_class, runner_id, overwatch) do
     # Awaited, not fire-and-forget: the reply carries whether the SDK had to
     # migrate records from an older schema version, and the controller answers
-    # that with a compaction. This already runs off-process (the enumeration
-    # does blocking disk reads) and Cells are independent, so the awaits run
+    # that with a compaction. Cells are independent, so the awaits run
     # concurrently rather than serialising a large rebind.
     refusals =
       restorable_cells(operator_class)
@@ -218,8 +206,8 @@ defmodule Flezha.Operator.Replay do
       )
       |> Enum.filter(&match?({:error, _}, &1))
 
-    # Off-process: the bind already returned, so the verdict travels back as a
-    # message — the Overwatch is the only thing that can still stop it.
+    # The verdict travels to the Overwatch as a message, the one thing that can
+    # stop the operator, whether this ran in the bind or in a heal's process.
     case refusals do
       [] -> :ok
       [{:error, reason} | _] -> send(overwatch, {:restore_refused, reason})

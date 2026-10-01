@@ -599,6 +599,13 @@ ship to a Postgres, S3-compatible or file backend at boundaries that already exi
 close, compaction, steps operator commit barriers, a park or a drop) plus one backstop timer
 (`ship_interval_ms`, 30 s). The manifest is written last, so a torn upload is invisible to
 recovery, which hydrates the artifacts into the local layout and runs the ordinary restore path.
+A controller that kept a copy of an operator's state when the operator moved away adopts, when
+it moves back, the copy on the node it moves from (`WalTransfer`), or else the cut another
+controller shipped, whole and only when it is newer: on every reference both hold it is at least
+as new, judged by the WAL-owner epoch and then the highest seq, a tie going to the incoming copy,
+and a reference only the local copy holds is carried over, never deleted. An operator that leaves a controller closes
+its writers there, so its return finds nothing held open. It is staged in full and switched in by two directory renames; a crash in between binds the
+old copy at the next boot, never a mix, and a copy that cannot be read leaves the local one.
 
 What a lost disk costs depends on the class's `durable` level and on its commit point: an
 input under `ack: per_input` or `at_least_once`, a checkpoint under `ack: checkpoint`, a stage of

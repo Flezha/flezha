@@ -9,7 +9,10 @@ defmodule FlezhaTest.State.WalTransferTest do
   # async: false: writes Application env; a shared on-disk root; a peer BEAM.
   use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
 
-  alias Flezha.State.{FsyncBatcher, InputLog, Paths, Supervisor, TaskJournal, TestHelpers}
+  import ExUnit.CaptureLog
+
+  alias Flezha.State.{Adoption, FsyncBatcher, InputLog, Paths, Supervisor, TaskJournal}
+  alias Flezha.State.TestHelpers
   alias Flezha.State.{WalTransfer, WalWriter}
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -81,7 +84,7 @@ defmodule FlezhaTest.State.WalTransferTest do
     cell_id = seed_cell("self")
 
     assert {:ok, 0} = WalTransfer.pull_cell(node(), {:cell, cell_id})
-    assert 0 = WalTransfer.pull_operator(node(), elem(cell_id, 0))
+    assert :none = WalTransfer.stage_operator(node(), "no_such_class")
   end
 
   @tag :multi_node
@@ -182,6 +185,8 @@ defmodule FlezhaTest.State.WalTransferTest do
     :ok = TaskJournal.append_iter_committed(class, 0, 0, [])
     {:ok, 0} = InputLog.append(class, "m", %{})
     FsyncBatcher.flush_now()
+    # The destination opens none of them before it adopts the copy.
+    Supervisor.close_writers(class)
 
     journal_bytes = File.read!(Paths.journal_path(class))
     log_bytes = File.read!(Paths.input_log_path(class))
@@ -192,7 +197,7 @@ defmodule FlezhaTest.State.WalTransferTest do
     dest_root = TestHelpers.tmp_app_data_dir()
     on_exit(fn -> File.rm_rf(dest_root) end)
 
-    WalTransfer.pull_operator(peer_node, class)
+    assert :ok = Adoption.adopt_newest(class, peer_node)
 
     assert File.exists?(Paths.wal_path(cell_id))
     assert File.read!(Paths.journal_path(class)) == journal_bytes
@@ -201,10 +206,159 @@ defmodule FlezhaTest.State.WalTransferTest do
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end
 
+  describe "an operator moving back to a node that kept a copy" do
+    @describetag :multi_node
+
+    # fails when: a node holding any of the instance's files skips the pull, so
+    # an operator moving back binds from the copy this node was left holding.
+    test "takes the source's newer copy, and keeps a newer one of its own" do
+      {class, cell_id} = class_and_cell("newer")
+      newer = with_source_copy(cell_id, 0..5)
+      peer = move_root_to_peer(:waltransfer6)
+      TestHelpers.write_wal(cell_id, 0..3, "stale")
+
+      assert :ok = Adoption.adopt_newest(class, peer)
+      assert File.read!(Paths.wal_path(cell_id)) == newer
+
+      TestHelpers.append_wal(cell_id, 6..7, "local")
+      local = File.read!(Paths.wal_path(cell_id))
+      assert :ok = Adoption.adopt_newest(class, peer)
+      assert File.read!(Paths.wal_path(cell_id)) == local
+    end
+
+    # fails when: a writer left open by an operator that moved away blocks the
+    # adoption, so the node binds the stale copy it was left holding.
+    test "closes the writers a moved-away operator left open, then adopts" do
+      {class, cell_id} = class_and_cell("open")
+      newer = with_source_copy(cell_id, 0..5)
+      peer = move_root_to_peer(:waltransfer7)
+      TestHelpers.write_wal(cell_id, 0..3, "stale")
+      {:ok, writer} = Supervisor.find_or_start(cell_id)
+      ref = Process.monitor(writer)
+
+      assert :ok = Adoption.adopt_newest(class, peer)
+
+      assert_received {:DOWN, ^ref, :process, ^writer, :normal}
+      assert File.read!(Paths.wal_path(cell_id)) == newer
+    end
+
+    # fails when: the adoption closes the writers of an operator bound on this
+    # node, so records it acknowledges land in a file nothing reads.
+    test "leaves a copy alone while an operator bound here owns it" do
+      {class, cell_id} = class_and_cell("bound")
+      with_source_copy(cell_id, 0..5)
+      peer = move_root_to_peer(:waltransfer10)
+      TestHelpers.write_wal(cell_id, 0..3, "stale")
+      stale = File.read!(Paths.wal_path(cell_id))
+      {:ok, writer} = Supervisor.find_or_start(cell_id)
+      bound = spawn_link(fn -> Process.sleep(:infinity) end)
+      :ok = Flezha.Operator.ClassRegistry.put_overwatch(class, bound, nil)
+      on_exit(NodeTestHelper.override_log_level(:warning))
+
+      log = capture_log(fn -> assert :ok = Adoption.adopt_newest(class, peer) end)
+
+      assert log =~ "bound on this node"
+      assert Process.alive?(writer)
+      assert File.read!(Paths.wal_path(cell_id)) == stale
+    end
+
+    # fails when: the incoming copy must hold every reference the local one
+    # does, so a Cell the source deleted blocks every adoption, silently.
+    # fails when: a reference only this node holds is dropped with the local
+    # copy. A partition member re-adopting from the node that rescaled it ties
+    # on every old key, and a key it wrote since exists only here.
+    test "keeps a Cell only this node holds when every shared one ties" do
+      {class, cell_id} = class_and_cell("only_here")
+      source = with_source_copy(cell_id, 0..5)
+      peer = move_root_to_peer(:waltransfer11)
+      TestHelpers.write_wal(cell_id, 0..5, "source")
+      carl = {class, "task", "carl"}
+      TestHelpers.write_wal(carl, 0..2, "only_here")
+      carl_bytes = File.read!(Paths.wal_path(carl))
+
+      assert :ok = Adoption.adopt_newest(class, peer)
+
+      assert File.read!(Paths.wal_path(cell_id)) == source
+      assert File.read!(Paths.wal_path(carl)) == carl_bytes
+    end
+
+    test "says why it keeps a local copy newer than the incoming one" do
+      {class, cell_id} = class_and_cell("refused")
+      with_source_copy(cell_id, 0..3)
+      peer = move_root_to_peer(:waltransfer12)
+      TestHelpers.write_wal(cell_id, 0..5, "local")
+      local = File.read!(Paths.wal_path(cell_id))
+      on_exit(NodeTestHelper.override_log_level(:warning))
+
+      log = capture_log(fn -> assert :ok = Adoption.adopt_newest(class, peer) end)
+
+      assert log =~ "is not newer"
+      assert File.read!(Paths.wal_path(cell_id)) == local
+    end
+
+    # fails when: each reference is decided alone, so the Cells come from the
+    # source while the input log stays behind and the consumed offsets point
+    # past the end of the log.
+    test "keeps every reference as it was when one of them cannot be pulled" do
+      {class, cell_id} = class_and_cell("partial")
+      with_source_copy(cell_id, 0..5)
+      File.write!(Paths.input_log_path(class), TestHelpers.wal_records(0..5, "in"))
+      File.chmod!(Paths.input_log_path(class), 0)
+      peer = move_root_to_peer(:waltransfer8)
+      TestHelpers.write_wal(cell_id, 0..3, "stale")
+      File.write!(Paths.input_log_path(class), TestHelpers.wal_records(0..3, "stale"))
+      stale = {File.read!(Paths.wal_path(cell_id)), File.read!(Paths.input_log_path(class))}
+
+      assert :ok = Adoption.adopt_newest(class, peer)
+
+      assert {File.read!(Paths.wal_path(cell_id)), File.read!(Paths.input_log_path(class))} ==
+               stale
+    end
+
+    # fails when: a tie keeps the local copy, so two histories of equal length
+    # resolve toward the one the operator's current owner did not write.
+    test "settles a tie toward the copy the operator moves from" do
+      {class, cell_id} = class_and_cell("tie")
+      source = with_source_copy(cell_id, 0..5)
+      peer = move_root_to_peer(:waltransfer9)
+      TestHelpers.write_wal(cell_id, 0..5, "local")
+
+      assert :ok = Adoption.adopt_newest(class, peer)
+      assert File.read!(Paths.wal_path(cell_id)) == source
+    end
+  end
+
+  defp class_and_cell(suffix) do
+    class = "adopt_#{suffix}_#{System.unique_integer([:positive])}"
+    {class, {class, "task", "k"}}
+  end
+
+  defp with_source_copy(cell_id, seqs) do
+    TestHelpers.write_wal(cell_id, seqs, "source")
+    File.read!(Paths.wal_path(cell_id))
+  end
+
+  # The peer keeps the root this node was on, so it is the source; this node
+  # moves to a fresh root and writes there what it kept.
+  defp move_root_to_peer(name) do
+    {peer_pid, peer_node} =
+      NodeTestHelper.start_peer_node(name, state_root: Paths.state_root())
+
+    dest_root = TestHelpers.tmp_app_data_dir()
+
+    on_exit(fn ->
+      File.rm_rf(dest_root)
+      NodeTestHelper.stop_peer_node(peer_pid, peer_node)
+    end)
+
+    peer_node
+  end
+
   @tag :multi_node
   test "a cell's files are pulled from a peer controller into this node's tree" do
     cell_id = {class, _, _} = seed_cell("xnode")
     source_bytes = File.read!(Paths.wal_path(cell_id))
+    Supervisor.close_writers(class)
 
     # The peer is handed the CURRENT state_root, so it is the node holding the
     # files. Moving this node's root afterwards makes the pull a genuine
@@ -217,11 +371,12 @@ defmodule FlezhaTest.State.WalTransferTest do
 
     refute File.exists?(Paths.wal_path(cell_id))
 
-    assert 1 = WalTransfer.pull_operator(peer_node, class)
+    assert :ok = Adoption.adopt_newest(class, peer_node)
 
     assert File.read!(Paths.wal_path(cell_id)) == source_bytes
-    # The staging artefact never survives a successful pull.
+    # The staging artefacts never survive a successful pull.
     refute File.exists?(Paths.wal_path(cell_id) <> ".transferring")
+    refute File.exists?(Paths.class_dir(Paths.staging_class(class)))
 
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end

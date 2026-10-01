@@ -226,7 +226,8 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   cell_key> <seq|timestamp>` answers from the controller's WAL. See [`internals/state_persistence.md`](internals/state_persistence.md).
 - **Remote durability tier** — shipping durable artifacts to Postgres or S3 so a controller that
   dies with its disk is recoverable (`Flezha.State.DurabilityTier`); a production boot must choose
-  a backend (`FLEZHA_DURABILITY_BACKEND`; `none` is local-only); local files stay authoritative.
+  a backend (`FLEZHA_DURABILITY_BACKEND`; `none` is local-only); local files stay authoritative
+  unless another controller shipped a newer copy.
   An **artifact** is one immutable shipped blob; the per-reference **manifest** naming a cut's
   artifacts is written last, so a torn upload is invisible. See [`resilience/data_durability.md`](resilience/data_durability.md).
 - **Synchronous durability** — a class declaring `durable: remote` has each commit point's

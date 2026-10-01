@@ -70,34 +70,39 @@ defmodule Flezha.State.WalTransfer do
   # ---------- destination side ----------
 
   @doc """
-  Pull every durable file of `operator_class` from `source_node`: its Cells,
-  a steps operator's journal, and its input log, which travel together because a
+  Pull every durable file of `operator_class` from `source_node` into the
+  class's staging directory (`Paths.staging_class/1`): its Cells, a steps
+  operator's journal, and its input log, which travel together because a
   journal pulled without its log seeds the instance's floor in an empty
-  offset space. Returns the number of references whose files landed; `0`
-  means the source held nothing and a cold start is correct. A per-reference
-  failure is logged via telemetry and skipped — one unreadable Cell must not
-  cost the operator the rest.
+  offset space. `:ok` once every reference has landed, `:none` when the source
+  holds nothing, or the first failure: a copy missing any reference is never
+  adopted (`Flezha.State.Adoption`).
   """
-  @spec pull_operator(node(), binary(), keyword()) :: non_neg_integer()
-  def pull_operator(source_node, operator_class, opts \\ [])
-
-  def pull_operator(source_node, _operator_class, _opts) when source_node == node(), do: 0
-
-  def pull_operator(source_node, operator_class, opts) do
+  @spec stage_operator(node(), binary(), keyword()) :: :ok | :none | {:error, term()}
+  def stage_operator(source_node, operator_class, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, Durations.get(:wal_transfer_call_ms))
+    staged = Paths.staging_class(operator_class)
 
     case call(source_node, Paths, :durable_refs, [operator_class], timeout) do
-      {:ok, refs} ->
-        Enum.count(refs, &landed?(pull_cell(source_node, &1, opts)))
+      {:ok, []} ->
+        :none
 
-      {:error, reason} ->
+      {:ok, refs} ->
+        Enum.reduce_while(refs, :ok, fn ref, :ok ->
+          source_node
+          |> pull_cell(ref, Keyword.put(opts, :as, Paths.ref_under(ref, staged)))
+          |> staged_or_halt()
+        end)
+
+      {:error, reason} = err ->
         emit(:wal_pull_failed, %{operator_class: operator_class, reason: reason})
-        0
+        err
     end
   end
 
-  defp landed?({:ok, files}), do: files > 0
-  defp landed?(_), do: false
+  defp staged_or_halt({:ok, files}) when files > 0, do: {:cont, :ok}
+  defp staged_or_halt({:ok, 0}), do: {:halt, {:error, :nothing_pulled}}
+  defp staged_or_halt({:error, _} = err), do: {:halt, err}
 
   @doc """
   Pull every file of `ref` from `source_node` into this node's state tree.

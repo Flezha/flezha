@@ -397,6 +397,10 @@ defmodule Flezha.Service.OperatorManager do
   @spec delete_state_dir(String.t()) :: :ok
   defdelegate delete_state_dir(operator_id), to: Teardown, as: :delete_operator_state_dir
 
+  @doc "Close every writer of `operator_class` on this node, flushed; its files stay."
+  @spec close_writers(String.t()) :: :ok
+  defdelegate close_writers(operator_class), to: Flezha.State.Supervisor
+
   @doc "The completion record a finished steps instance of `operator_class` left."
   defdelegate completion(operator_class), to: Completion, as: :read
 
