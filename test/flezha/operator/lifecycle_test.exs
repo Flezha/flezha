@@ -28,6 +28,7 @@ defmodule FlezhaTest.Operator.OverwatchRetryTest do
   alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
+  import ExUnit.CaptureLog
   import FlezhaTest.Helper.MessageTestHelper, only: [become_loop: 0]
 
   # async: false: writes Application env; the live controller and its fleet; node-global tables.
@@ -273,7 +274,9 @@ defmodule FlezhaTest.Operator.OverwatchRetryTest do
 
       state = %Overwatch{id: id, namespace: @namespace}
 
-      assert %Overwatch{init_error: ^reason} = Lifecycle.park(state, reason)
+      {parked, log} = with_log(fn -> Lifecycle.park(state, reason) end)
+      assert %Overwatch{init_error: ^reason} = parked
+      assert log =~ "operator #{id} parked: plugin orphan"
 
       assert_receive {:parked, %{count: 1}, meta}
       assert meta.namespace == @namespace

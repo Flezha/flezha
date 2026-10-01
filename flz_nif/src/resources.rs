@@ -18,8 +18,11 @@ pub struct TransportServer {
     pub stats: Arc<DriverStats>,
 }
 
-impl Drop for TransportServer {
-    fn drop(&mut self) {
+impl TransportServer {
+    /// Shut the driver down and wait for its thread to end, so the socket it
+    /// listened on is released by the time this returns. A second call is a
+    /// no-op.
+    pub fn stop(&self) {
         let _ = self.cmd_tx.send(ServerCommand::Shutdown);
         let _ = self.waker.wake();
         if let Ok(mut handle) = self.driver_handle.lock() {
@@ -27,6 +30,12 @@ impl Drop for TransportServer {
                 let _ = h.join();
             }
         }
+    }
+}
+
+impl Drop for TransportServer {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 

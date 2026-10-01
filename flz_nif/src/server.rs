@@ -116,11 +116,11 @@ fn start_quic_server(
     )
 }
 
-/// Stop a running transport server.
-#[rustler::nif]
+/// Stop a running transport server; it has released its socket on return.
+/// Dirty, because it waits for the driver thread to end.
+#[rustler::nif(schedule = "DirtyIo")]
 fn stop_server(env: Env, server: TransportServerArc) -> NifResult<Term> {
-    let _ = server.cmd_tx.send(ServerCommand::Shutdown);
-    let _ = server.waker.wake();
+    server.stop();
     Ok(atoms::ok().encode(env))
 }
 

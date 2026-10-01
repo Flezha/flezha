@@ -39,7 +39,7 @@ defmodule Flezha.Transport.Native do
   def start_quic_server(_bind_address, _cert_path, _key_path, _client_ca_path, _acceptor_pid),
     do: :erlang.nif_error(:not_loaded)
 
-  @doc "Stop a running transport server."
+  @doc "Stop a running transport server. Its socket is released when this returns."
   def stop_server(_server_ref), do: :erlang.nif_error(:not_loaded)
 
   @doc """

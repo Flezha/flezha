@@ -22,6 +22,7 @@ defmodule Flezha.Transport.ServerTest do
   use ExUnit.Case, async: false
   use Mimic
 
+  alias Flezha.Config
   alias Flezha.Runner.FleetManager
   alias Flezha.SDK.Codec
   alias Flezha.Socket.Support
@@ -228,6 +229,24 @@ defmodule Flezha.Transport.ServerTest do
       # which is why the namespace credential is presented on the control
       # channel and nowhere else.
       assert {:noreply, ^state} = Server.handle_info({:flz_stream, make_ref(), 1, 0, 42}, state)
+    end
+  end
+
+  # A supervisor restarts a listener by binding the same address at once.
+  describe "a stopped listener" do
+    test "has released its QUIC port when the supervisor's stop returns" do
+      port = Config.get(:quic_listen_address) |> String.split(":") |> List.last()
+      child = {Server, :quic}
+      # Held here, the handle outlives the listener's heap, so only the
+      # listener's own stop can free the port, never the collector.
+      %{server_ref: held} = :sys.get_state(Server.name(:quic))
+
+      :ok = Supervisor.terminate_child(Flezha.Supervisor, child)
+      on_exit(fn -> Supervisor.restart_child(Flezha.Supervisor, child) end)
+
+      assert {:ok, socket} = :gen_udp.open(String.to_integer(port))
+      :ok = :gen_udp.close(socket)
+      assert is_reference(held)
     end
   end
 end

@@ -8,6 +8,8 @@ defmodule Flezha.SDK.OperatorExitE2ETest do
   # async: false: the live controller and its fleet; registered singletons.
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias Flezha.Config.Backoff
   alias Flezha.Convergence.{Facts, Loop}
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
@@ -188,10 +190,15 @@ defmodule Flezha.SDK.OperatorExitE2ETest do
     assert_receive {:ran, "k:1", _offset, []}, 10_000
 
     old = instance_pid(operator_id)
-    Process.exit(old, :kill)
 
-    assert NodeTestHelper.wait_until(fn -> rebound?(ns, operator_id, old) end, 15_000),
-           "the instance was never bound to a new Operator"
+    # A Cell caught writing its slot as its Operator dies may crash on the
+    # Operator's table; whether one is caught is timing, so nothing is asserted.
+    capture_log(fn ->
+      Process.exit(old, :kill)
+
+      assert NodeTestHelper.wait_until(fn -> rebound?(ns, operator_id, old) end, 15_000),
+             "the instance was never bound to a new Operator"
+    end)
 
     send_in(ns, operator_id, "k:2")
     assert_receive {:ran, "k:2", _offset, ["k:1"]}, 10_000
@@ -217,9 +224,14 @@ defmodule Flezha.SDK.OperatorExitE2ETest do
            )
 
     old = instance_pid(operator_id)
-    Process.exit(cell, :kill)
 
-    assert_receive {:ran, "k:hold", ^o2, ["k:1"]}, 15_000
+    {_, log} =
+      with_log(fn ->
+        Process.exit(cell, :kill)
+        assert_receive {:ran, "k:hold", ^o2, ["k:1"]}, 15_000
+      end)
+
+    assert log =~ "{:cell_exited, :killed}"
     assert_receive {:holding, "k:hold", again}, 5_000
     send(again, :release)
     assert_receive {:ran, "k:3", o3, ["k:1", "k:hold"]}, 5_000
@@ -240,21 +252,27 @@ defmodule Flezha.SDK.OperatorExitE2ETest do
     on_exit(fn -> :persistent_term.erase(:exit_e2e_poison) end)
 
     operator_id = start_ledger(ns)
-    send_in(ns, operator_id, "k:poison")
 
-    [_first, second, third] =
-      for _ <- 1..3 do
-        assert_receive {:poisoned, at}, 20_000
-        at
-      end
+    {[_first, second, third, fourth], log} =
+      with_log(fn ->
+        send_in(ns, operator_id, "k:poison")
+
+        poisoned =
+          for _ <- 1..4 do
+            assert_receive {:poisoned, at}, 20_000
+            at
+          end
+
+        # Each bind reports its run before the poison bites, so the fifth
+        # report is the bind after the fourth crash, the one that stays up.
+        :persistent_term.put(:exit_e2e_poison, false)
+        for _ <- 1..5, do: assert_receive({:ran, "k:poison", _offset, []}, 20_000)
+        poisoned
+      end)
 
     assert third - second >= Backoff.delay(:heal, 1)
-
-    assert_receive {:poisoned, fourth}, 20_000
     assert fourth - third >= Backoff.delay(:heal, 2)
-
-    :persistent_term.put(:exit_e2e_poison, false)
-    assert_receive {:ran, "k:poison", _offset, []}, 20_000
+    assert NodeTestHelper.occurrences(log, "** (stop) {:cell_exited, :boom}") == 4
 
     assert NodeTestHelper.wait_until(
              fn ->
@@ -284,10 +302,13 @@ defmodule Flezha.SDK.OperatorExitE2ETest do
     assert_receive {:gate, _cell}, 10_000
 
     old = instance_pid(operator_id)
-    Process.exit(old, :kill)
 
-    assert_receive {:gate, cell}, 15_000
-    send(cell, :release)
+    # As in the first test, a Cell caught mid-write may crash on the table.
+    capture_log(fn ->
+      Process.exit(old, :kill)
+      assert_receive {:gate, cell}, 15_000
+      send(cell, :release)
+    end)
 
     assert NodeTestHelper.wait_until(
              fn -> match?({:ok, %{status: "ok"}}, Completion.read(operator_id)) end,

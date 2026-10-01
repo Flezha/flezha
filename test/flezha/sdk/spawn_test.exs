@@ -17,6 +17,7 @@ defmodule Flezha.SDK.SpawnTest do
   alias Flezha.SDK.{Codec, Counters, Ctx, Error, Hold, RunnerServer, Spawn}
   alias Flezha.SDK.Operator.Inbox
   alias FlezhaTest.Helper.AuthTestHelper
+  alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.SdkSpawnFixtures.{Spawner, SpawnerOp}
 
   # A request made with this process as its runner, and the cast it sent.
@@ -54,8 +55,7 @@ defmodule Flezha.SDK.SpawnTest do
   end
 
   defp warnings_naming(log, instance_id) do
-    marker = "spawn_steps(factory `worker`, id `#{instance_id}`) failed"
-    length(String.split(log, marker)) - 1
+    NodeTestHelper.occurrences(log, "spawn_steps(factory `worker`, id `#{instance_id}`) failed")
   end
 
   describe "what a controller answer resolves to" do

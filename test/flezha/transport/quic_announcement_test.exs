@@ -36,8 +36,6 @@ defmodule Flezha.Transport.QuicAnnouncementTest do
     port
   end
 
-  defp count(text, line), do: length(String.split(text, line)) - 1
-
   # Everything a runner printed, up to its exit. The port delivers its data
   # before the monitor's DOWN, so a line written at any point is in here.
   defp output_until_exit(port, seen \\ "") do
@@ -70,7 +68,7 @@ defmodule Flezha.Transport.QuicAnnouncementTest do
           for _ <- 1..3, do: start_runner(ns, transport: :quic, runtime: :rust)
         end)
 
-      assert count(log, @controller) == 1
+      assert NodeTestHelper.occurrences(log, @controller) == 1
       assert log =~ "docs/publishing/maturity.md#quic"
 
       for port <- ports do
@@ -87,7 +85,7 @@ defmodule Flezha.Transport.QuicAnnouncementTest do
           start_runner(ns, transport: :uds, runtime: :rust)
         end)
 
-      assert count(log, @controller) == 0
+      assert NodeTestHelper.occurrences(log, @controller) == 0
     end
   end
 
@@ -103,14 +101,14 @@ defmodule Flezha.Transport.QuicAnnouncementTest do
 
       out = stop_and_read(port)
       assert out =~ "[Flezha.SDK] connection lost"
-      assert count(out, @elixir_runner) == 1
+      assert NodeTestHelper.occurrences(out, @elixir_runner) == 1
     end
 
     test "an Elixir runner over UDS announces nothing", %{ns: ns} do
       out = ns |> start_runner(transport: :uds, runtime: :elixir) |> stop_and_read()
 
       assert out =~ "transport=uds"
-      assert count(out, "QUIC transport is experimental") == 0
+      assert NodeTestHelper.occurrences(out, "QUIC transport is experimental") == 0
     end
   end
 end

@@ -412,6 +412,10 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     end)
   end
 
+  @doc "How many times `line` appears in `text`: a captured log or a runner's output."
+  @spec occurrences(String.t(), String.t()) :: non_neg_integer()
+  def occurrences(text, line), do: length(String.split(text, line)) - 1
+
   @doc """
   A runner's stdout until `enough?` says the answer has arrived, or the budget
   runs out. `seen` carries what an earlier read already took, so two reads of

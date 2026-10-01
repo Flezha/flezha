@@ -76,7 +76,7 @@ defmodule FlezhaTest.Transport.QuicNamespaceProofTest do
       assert principal =~ "flezha-runner"
       assert :none = RunnerProof.certificate_namespace(der)
     after
-      Port.close(port)
+      NodeTestHelper.ensure_port_dead(port)
     end
   end
 
@@ -92,7 +92,7 @@ defmodule FlezhaTest.Transport.QuicNamespaceProofTest do
 
       assert FleetManager.active_runners(@ns_a) == []
     after
-      Port.close(port)
+      NodeTestHelper.ensure_port_dead(port)
     end
   end
 end

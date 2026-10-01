@@ -245,15 +245,12 @@ defmodule Flezha.Transport.Server do
   end
 
   @impl true
-  def init(:uds) do
+  def init(transport) when transport in [:uds, :quic] do
+    # Only `terminate/2` releases the listening socket, and a supervisor's
+    # shutdown reaches it only through a trapped exit.
+    Process.flag(:trap_exit, true)
     warn_if_transport_auth_disabled()
-    init_uds()
-  end
-
-  def init(:quic) do
-    warn_if_transport_auth_disabled()
-    Logger.warning(@quic_experimental)
-    init_quic()
+    listen(transport)
   end
 
   # Native (in-node) transport: no NIF server, no listener, no peer to
@@ -282,7 +279,7 @@ defmodule Flezha.Transport.Server do
     Config.get(:transport_auth_required)
   end
 
-  defp init_uds do
+  defp listen(:uds) do
     socket_path = SocketSupport.control_socket_path()
 
     case Native.start_uds_server(socket_path, self()) do
@@ -296,7 +293,8 @@ defmodule Flezha.Transport.Server do
     end
   end
 
-  defp init_quic do
+  defp listen(:quic) do
+    Logger.warning(@quic_experimental)
     # Ensure TLS certificates exist before starting QUIC server.
     CertGenerator.ensure_certs()
 

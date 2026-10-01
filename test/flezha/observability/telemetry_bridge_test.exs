@@ -2,6 +2,8 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
   # async: false: writes Application env; a shared on-disk root; the observability registry.
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Observability.{Registry, Signal, TelemetryBridge}
   alias Flezha.Observability.TestSinks.Counting
@@ -245,10 +247,12 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
 
     reason = {:plugin_prepare_failed, "exchange_sink", {:module_not_loaded, MyOrg.Uninstalled}}
 
-    Lifecycle.park(
-      %Overwatch{id: "obs_park_operator", namespace: "default"},
-      reason
-    )
+    {_, log} =
+      with_log(fn ->
+        Lifecycle.park(%Overwatch{id: "obs_park_operator", namespace: "default"}, reason)
+      end)
+
+    assert log =~ "operator obs_park_operator parked: plugin exchange_sink"
 
     parked =
       receive_until(
