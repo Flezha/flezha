@@ -41,6 +41,42 @@ defmodule Flezha.Observability.BusTest do
     Bus.emit(Signal.new(%{kind: :metric, source: src, name: :n, metadata: metadata}))
   end
 
+  # Two sinks delivering to the test process: one naming `src`, one that names
+  # no source and so takes every one.
+  defp register_named_and_catch_all(src) do
+    for {suffix, sources} <- [named: [src], any: :any] do
+      name = :"obs_bus_#{suffix}_#{:erlang.unique_integer([:positive])}"
+
+      :ok =
+        Registry.register_external_sink(%{
+          name: name,
+          module: __MODULE__,
+          pid: self(),
+          filter: %{kinds: :any, sources: sources}
+        })
+
+      on_exit(fn -> Registry.unregister_sink(name) end)
+    end
+  end
+
+  test "emit_named reaches the sinks naming its source and no catch-all one", %{src: src} do
+    register_named_and_catch_all(src)
+
+    assert :ok = Bus.emit_named(Signal.new(%{kind: :event, source: src, name: :n}))
+
+    assert_receive {:signal, %Signal{source: ^src}}, 500
+    refute_receive {:signal, _}, 200
+  end
+
+  test "emit reaches a catch-all sink for every source", %{src: src} do
+    register_named_and_catch_all(src)
+
+    assert :ok = emit_metric(src)
+
+    assert_receive {:signal, _}, 500
+    assert_receive {:signal, _}, 500
+  end
+
   test "emit to zero sinks is a no-op", %{src: src} do
     # No sinks registered for this source; emit should not raise.
     assert :ok = emit_metric(src)

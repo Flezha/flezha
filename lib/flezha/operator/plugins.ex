@@ -194,7 +194,8 @@ defmodule Flezha.Operator.Plugins do
       )
     end
 
-    %{state | extensions: Table.put_not_started(state.extensions, id, binding, reason)}
+    table = Table.put_not_started(state.extensions, id, binding, reason, state.liveness_ref)
+    %{state | extensions: table}
   end
 
   @doc """
@@ -338,7 +339,7 @@ defmodule Flezha.Operator.Plugins do
   """
   @spec persist_opt(Overwatch.t(), term(), term(), term()) :: Overwatch.t()
   def persist_opt(%Overwatch{} = state, plugin_id, key, value) do
-    shared? = Map.has_key?(Table.workers(state.extensions, plugin_id), :shared)
+    shared? = Table.joined?(state.extensions, plugin_id)
 
     Task.start(fn ->
       if shared?,

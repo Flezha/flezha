@@ -57,6 +57,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
       },
       Map.new(overrides)
     )
+    |> FlezhaTest.Helper.WebsocketSourceFixtures.with_targets()
   end
 
   describe "build/1 — default and conversion" do

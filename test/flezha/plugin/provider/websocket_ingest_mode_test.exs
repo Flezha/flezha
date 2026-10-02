@@ -1,7 +1,7 @@
 defmodule Flezha.Plugin.Provider.WebsocketIngestModeTest do
   @moduledoc """
-  §7.2 source park, adapter side: under the effectively-once tier
-  (`sync_ingest?` from the activation env) the websocket ingests via a
+  §7.2 source park, adapter side: for an effectively-once operator (its
+  target's `effectively_once`) the websocket ingests via a
   blocking call — a zero-credit park then stops the connection process
   reading its socket. Tier-off keeps the fire-and-forget cast unchanged.
   """
@@ -49,7 +49,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIngestModeTest do
 
   test "tier ingest awaits the journal ack (blocking call)" do
     {:ok, stub} = StubOverwatch.start_link(self())
-    state = conn_state(stub, sync_ingest?: true)
+    state = conn_state(stub, effectively_once: true)
 
     assert {:ok, _state} = Websocket.Client.handle_in({:text, "frame-1"}, state)
     assert_receive {:sync_io_in, "frame-1", %{"input_type" => "2"}}
@@ -59,7 +59,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIngestModeTest do
   test "tier-off ingest keeps the fire-and-forget cast" do
     {:ok, stub} = StubOverwatch.start_link(self())
 
-    for state <- [conn_state(stub, sync_ingest?: false), conn_state(stub, [])] do
+    for state <- [conn_state(stub, effectively_once: false), conn_state(stub, [])] do
       assert {:ok, _state} = Websocket.Client.handle_in({:text, "frame-2"}, state)
       assert_receive {:cast_io_in, "frame-2", _}
       refute_received {:sync_io_in, _, _}

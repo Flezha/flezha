@@ -9,13 +9,11 @@ defmodule Flezha.Plugin.Extension.Table do
   pid hygiene. None of them names this module, so effects and lifecycle stay
   here.
 
-  Plugins enter in the `:prepared` phase: `init_provider/1` has validated and
-  normalised the options, and nothing else has happened. `bulk_activate/2` moves
-  them to `:running` once the SDK side is bound, starting each provider's
-  DECLARED worker and then calling `activate/1`, exactly once per binding. A
-  subscriber whose worker crashes is recorded as `{:down, reason}`; the table
-  holds no retry counter, timer or policy, because the restart is the
-  convergence loop's, through `attempt_restart/3`.
+  Plugins enter `:prepared` (`init_provider/1` ran, nothing else did);
+  `bulk_activate/2` makes them `:running` once the SDK side is bound, starting
+  each provider's DECLARED worker, then `activate/1`. A crashed worker leaves
+  its plugin `{:down, reason}`, which the convergence loop restarts through
+  `attempt_restart/3`.
 
   Everything the table does to a provider it reads from that provider's
   declaration (`Flezha.Plugin.ProviderBehaviour.Decl`): which callbacks it
@@ -24,10 +22,9 @@ defmodule Flezha.Plugin.Extension.Table do
   own.
 
   An operator's table is built with `shared:`, the module running shareable
-  plugins once per controller: a shareable plugin there joins that copy at
-  activation instead of starting a worker, and reports the copy's health. A
-  binding that cannot come up is recorded `{:not_started, reason}`
-  (`put_not_started/4`).
+  plugins once per controller, which a shareable plugin joins at activation
+  (`Workers.subscriber?/2`). A binding that cannot come up is recorded
+  `{:not_started, reason}` (`put_not_started/5`).
   """
 
   alias Flezha.Plugin
@@ -231,6 +228,12 @@ defmodule Flezha.Plugin.Extension.Table do
           {table, {:error, _} = refused} -> {table, refused}
         end
 
+      # Under a worker key of its own, beside the shared copy's.
+      Workers.own_source?(table, provider) ->
+        key = "#{plugin_id}@#{plugin.operator_id}"
+        table = put_plugin_opt(table, plugin_id, :plugin_id, key)
+        start_and_activate(table, plugin_id, provider, Map.put(opts, :plugin_id, key))
+
       true ->
         start_and_activate(table, plugin_id, provider, opts)
     end
@@ -400,12 +403,12 @@ defmodule Flezha.Plugin.Extension.Table do
         do: {id, now - at}
   end
 
-  @doc """
-  The provider-owned processes the table started for `plugin_id`, by the key
-  each is registered under. Empty for a `:prepared` plugin, which holds none.
-  """
+  @doc "The processes the table started for `plugin_id`, by key; none while `:prepared`."
   @spec workers(t(), binary()) :: %{term() => pid()}
   def workers(%__MODULE__{} = table, plugin_id), do: Entry.pids(entry(table, plugin_id))
+
+  @doc "Whether `plugin_id` is backed by the shared copy it joined."
+  defdelegate joined?(table, plugin_id), to: Workers
 
   @doc "The one process the host tracks as `plugin_id`'s own, if it started one."
   @spec owned_pid(t(), binary()) :: pid() | nil
@@ -467,17 +470,17 @@ defmodule Flezha.Plugin.Extension.Table do
   holds no worker and runs no hook, its health is `{:unhealthy, reason}`, and
   the convergence loop tries it again as one that is missing. An `on_output`
   hook is held by `Flezha.Plugin.Provider.NotStarted`, so a guaranteed output
-  waits in the outbox for it.
+  waits in the outbox for it, and a plain one is counted on `counters`.
   """
-  @spec put_not_started(t(), binary(), Plugin.t(), term()) :: t()
-  def put_not_started(%__MODULE__{} = table, plugin_id, %Plugin{} = plugin, reason) do
+  @spec put_not_started(t(), binary(), Plugin.t(), term(), :counters.counters_ref() | nil) :: t()
+  def put_not_started(%__MODULE__{} = table, plugin_id, %Plugin{} = plugin, reason, counters) do
     table = unsubscribe(table, plugin_id, :idle)
 
     held =
       for {:on_output, sub_opts} <- plugin.hooks,
           do: {:on_output, Keyword.delete(sub_opts, :position)}
 
-    placeholder = %Plugin{plugin | provider: NotStarted, opts: %{}, hooks: held}
+    placeholder = %Plugin{plugin | provider: NotStarted, opts: %{counters: counters}, hooks: held}
 
     {:ok, table} = do_subscribe(table, plugin_id, placeholder)
     put_phase(table, plugin_id, {:not_started, reason}, reason)
@@ -602,12 +605,9 @@ defmodule Flezha.Plugin.Extension.Table do
   end
 
   @doc """
-  Tear down every subscription: cancel timers, demonitor workers, stop them
+  Tear down every subscription, in any phase: cancel timers, stop workers
   through their supervisor, and leave every shared copy `leave`. Answers the
   emptied table.
-
-  Phase is no precondition: a `:prepared` plugin holds no worker and its
-  teardown is the same call that empties a `:running` one.
   """
   @spec teardown_all(t(), :now | :idle) :: t()
   def teardown_all(%__MODULE__{} = table, leave \\ :idle) do

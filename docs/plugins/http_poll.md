@@ -14,11 +14,11 @@ telemetry and limits.
 | --- | --- |
 | Plugin type | `:operator` |
 | Hooks | `:on_terminate`: the poller drives itself; the hook is there because a plugin spec must name at least one |
-| Shared | yes: one poller per controller for every operator bound to the plugin, or one in the whole cluster with `--single`. Each member of a partitioned operator runs a poller of its own |
+| Shared | yes: one poller per controller for every operator bound to the plugin, or one in the whole cluster with `--single`, which hands each operator the content without waiting for it, so a parked one loses that content until it changes. An operator whose input is durable (effectively-once, sleeping or durable steps), and each member of a partitioned operator, runs a poller of its own, which confirms as below |
 | Upstream | one `http://` or `https://` URL, `GET` only, redirects not followed |
-| Injection | the response body, on the entry channel `:channel` (or `:channel_in`) names, only when its SHA-256 differs from the last delivered one |
-| Delivery | the confirming ingest — the hash advances only once the operator has taken the payload |
-| Seed | the first successful poll after a (re)start always injects |
+| Injection | the response body, on the entry channel `:channel` (or `:channel_in`) names, only to an operator whose last delivered body had another SHA-256 |
+| Delivery | a poller of its own operator uses the confirming ingest: the hash advances only once the operator has taken the payload, and a refused one is offered again |
+| Seed | the first successful poll after a (re)start, or after an operator binds, injects to every operator that holds nothing yet |
 | Failure posture | inject nothing, keep the last hash, count toward health |
 
 Because the frame is journaled like any other entry input, replay determinism, the

@@ -15,11 +15,14 @@ defmodule FlezhaTest.Helper.WebsocketServer do
 
   @guid "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
-  @doc "Listen on a free port; the listener and its acceptor go when the test does."
-  @spec start() :: %{port: :inet.port_number(), agent: pid()}
-  def start do
+  @doc """
+  Listen on `port`, a free one by default; the listener and its acceptor go when
+  the test does.
+  """
+  @spec start(:inet.port_number()) :: %{port: :inet.port_number(), agent: pid()}
+  def start(port \\ 0) do
     {:ok, listen} =
-      :gen_tcp.listen(0, [:binary, packet: :raw, active: false, reuseaddr: true, backlog: 4])
+      :gen_tcp.listen(port, [:binary, packet: :raw, active: false, reuseaddr: true, backlog: 4])
 
     {:ok, port} = :inet.port(listen)
     {:ok, agent} = Agent.start(fn -> %{connections: 0, socket: nil, open: []} end)

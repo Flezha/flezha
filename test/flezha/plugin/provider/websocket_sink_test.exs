@@ -22,6 +22,7 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.ProviderPrepare
   alias FlezhaTest.Helper.Telemetry
+  alias FlezhaTest.Helper.WebsocketSourceFixtures
 
   import ExUnit.CaptureLog
 
@@ -63,7 +64,6 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
         resubscribe_after_ms: opts.resubscribe_after_ms,
         ignore_pattern: nil,
         sink: opts.sink,
-        sync_ingest?: false,
         websocket_established?: true,
         frames_seen: 0,
         last_frame_at: now,
@@ -74,6 +74,7 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
       },
       overrides
     )
+    |> WebsocketSourceFixtures.with_targets()
   end
 
   defp dispatch(state, message, metadata \\ %{}) do
@@ -417,7 +418,7 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
         end
       end)
 
-    send(socket, {:run, state(opts, %{overwatcher_pid: overwatch, sync_ingest?: true})})
+    send(socket, {:run, state(opts, %{overwatcher_pid: overwatch, effectively_once: true})})
     assert_receive {:chain_entered, "inbound"}, 2_000
     send(overwatch, {:socket, socket})
 

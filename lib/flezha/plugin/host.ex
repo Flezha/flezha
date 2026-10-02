@@ -31,13 +31,10 @@ defmodule Flezha.Plugin.Host do
   * `:verdict` waits and answers what the host decided, which a poller reads to
     know whether to advance its content hash.
   * `:fire_and_forget` does not wait. The host owns the payload from the cast.
-  * `:request` is `:confirming` without the wait: it answers the request id
-    whose reply (`:gen_server.check_response/2`) is the journal ack, for a
-    producer that must keep taking records meanwhile.
   * `:call` sends one input and waits for the host's answer to it, the output
     a `response()` end of its graph produced.
   """
-  @type inject_mode() :: :confirming | :verdict | :fire_and_forget | :request | :call
+  @type inject_mode() :: :confirming | :verdict | :fire_and_forget | :call
 
   @doc """
   Hand one record to the host operator. The ONE call a source makes: five
@@ -48,11 +45,11 @@ defmodule Flezha.Plugin.Host do
   is `{:error, {:unreachable, reason}}`. A `:call` takes the call's deadline in
   milliseconds as its last argument and answers `{:ok, payload, %{"channel" =>
   channel}}` or `{:error, %Flezha.Error{}}`: `call.timeout` at the deadline,
-  `call.unavailable` for a host it could not reach. A `:request` answers its
-  request id. The other two answer `:ok`, because there is nothing else to say.
+  `call.unavailable` for a host it could not reach. The other two answer `:ok`,
+  because there is nothing else to say.
   """
   @spec inject(GenServer.server(), binary(), map(), inject_mode(), timeout()) ::
-          :ok | {:ok, binary(), map()} | {:error, term()} | :gen_server.request_id()
+          :ok | {:ok, binary(), map()} | {:error, term()}
   def inject(overwatch, message, metadata, mode, timeout \\ :infinity)
 
   def inject(overwatch, message, metadata, :confirming, timeout) do
@@ -61,16 +58,17 @@ defmodule Flezha.Plugin.Host do
   end
 
   def inject(overwatch, message, metadata, :verdict, timeout) do
-    verdict(GenServer.call(overwatch, {:ingest, message, metadata}, timeout))
+    case GenServer.call(overwatch, {:ingest, message, metadata}, timeout) do
+      :ok -> :ok
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
   catch
     # The exit carries the call, and the call carries the payload, which a
     # verdict is logged and reported with and must never repeat.
     :exit, {reason, {GenServer, :call, _call}} -> {:error, {:unreachable, reason}}
     :exit, reason -> {:error, {:unreachable, reason}}
   end
-
-  def inject(overwatch, message, metadata, :request, _timeout),
-    do: :gen_server.send_request(overwatch, {:io_in, message, metadata})
 
   def inject(overwatch, message, metadata, :fire_and_forget, _timeout) do
     GenServer.cast(overwatch, {:io_in, message, metadata})
@@ -81,8 +79,59 @@ defmodule Flezha.Plugin.Host do
   def inject(overwatch, message, metadata, :call, deadline_ms),
     do: Calls.call(overwatch, message, metadata, deadline_ms, inspect(overwatch))
 
+  # A raw `{:ingest, …}` reply as `inject/5` answers it.
   defp verdict({:ok, _}), do: :ok
   defp verdict(other), do: other
+
+  @typedoc """
+  An operator a feeding worker injects into: its Overwatch, the entry channel
+  its binding names, and whether it is effectively-once, which makes its every
+  record a confirming injection.
+  """
+  @type target() :: %{pid: pid() | nil, channel: binary() | nil, effectively_once: boolean()}
+
+  @doc "`overwatch` as a target, for its binding's entry `channel`."
+  @spec target(pid() | nil, binary() | nil, boolean()) :: target()
+  def target(overwatch, channel, effectively_once?),
+    do: %{pid: overwatch, channel: channel, effectively_once: effectively_once?}
+
+  @doc """
+  The operators a feeding worker started from `opts` injects into: the ones its
+  shared copy names, or else the one host that started it. A worker holds them
+  as its state and is told of a change by `retarget/2`, so none is looked up
+  per record.
+  """
+  @spec targets(map()) :: [target()]
+  def targets(%{targets: targets}), do: targets
+
+  def targets(opts),
+    do: [
+      target(
+        opts[:overwatcher_pid],
+        opts[:entry_channel],
+        Map.get(opts, :effectively_once) not in [nil, false]
+      )
+    ]
+
+  @doc """
+  The operators the shared copy `copy` serves now, which a feeding worker it
+  started reads again on each connect: a `retarget/2` sent while the worker
+  could take no message is lost.
+  """
+  @spec targets_of(pid()) :: {:ok, [target()]} | :error
+  def targets_of(copy) do
+    case Flezha.Plugin.Shared.subscribers(copy) do
+      targets when is_list(targets) -> {:ok, targets}
+      {:error, _unreachable} -> :error
+    end
+  end
+
+  @doc "Tell a feeding `worker` the operators it injects into from now on."
+  @spec retarget(pid(), [target()]) :: :ok
+  def retarget(worker, targets) do
+    send(worker, {:targets, targets})
+    :ok
+  end
 
   @doc """
   Hand a batch of records to the host operator. With `:verdict` up to

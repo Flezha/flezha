@@ -50,7 +50,7 @@ ways is refused when the plugin is enabled, rather than resolved by precedence.
 | | |
 |---|---|
 | Plugin type | `:operator` |
-| Shared | yes: one connection per controller for every operator bound to the plugin, or one in the whole cluster with `--single`; every operator gets every frame. Each member of a partitioned operator runs a connection of its own, for its own share (below) |
+| Shared | yes: one connection per controller for every operator bound to the plugin, or one in the whole cluster with `--single`; the connection hands every frame straight to every operator, and a slow one falls behind alone, in its own queue. An operator whose input is durable (effectively-once, sleeping or durable steps) runs a connection of its own, which waits for it to confirm each frame. Each member of a partitioned operator runs a connection of its own, for its own share (below) |
 | Source | one `http://` or `https://` URL, `GET` only, redirects not followed — or a literal `subscription_items` list |
 | Source response | `{"version": <integer>, "items": [<string>, …]}` |
 | Item strings | opaque — never parsed, validated or interpreted |

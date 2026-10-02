@@ -267,7 +267,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
 
       # The map the socket process is started with, from the options the live
       # table holds: this is what every injection of that socket carries.
-      assert [{^plugin_id, %{payload_metadata: %{"channel" => ^entry}}}] =
+      assert [{^plugin_id, %{targets: [%{channel: ^entry}]}}] =
                Provider.Websocket.worker_specs(stored)
 
       assert {disabled, _printed} =

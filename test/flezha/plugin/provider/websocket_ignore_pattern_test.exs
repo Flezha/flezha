@@ -37,6 +37,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIgnorePatternTest do
       },
       Map.new(overrides)
     )
+    |> FlezhaTest.Helper.WebsocketSourceFixtures.with_targets()
   end
 
   describe "build/1 — :ignore_pattern parsing" do

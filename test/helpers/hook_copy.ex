@@ -24,7 +24,7 @@ defmodule FlezhaTest.Helper.HookCopy do
   @doc "Assert `copy` reports `plugin_lagging` within two seconds and holds at most `bound` events."
   def assert_lagging(copy, bound) do
     assert NodeTestHelper.wait_until(
-             fn -> match?({:unhealthy, {:plugin_lagging, _}}, Shared.health(copy, copy)) end,
+             fn -> match?({:unhealthy, {:plugin_lagging, _}}, Shared.health(copy)) end,
              2_000
            ),
            "the copy never lagged"

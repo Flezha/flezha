@@ -97,7 +97,26 @@ defmodule Flezha.Plugin.Extension.Table.Workers do
   @doc "Whether `provider`'s plugins on `table` are subscribers of a shared copy."
   @spec subscriber?(map(), module()) :: boolean()
   def subscriber?(%{shared: nil}, _provider), do: false
-  def subscriber?(%{shared: _shared}, provider), do: provider.__provider__().shareable
+
+  def subscriber?(table, provider),
+    do: provider.__provider__().shareable and not own_source?(table, provider)
+
+  @doc """
+  Whether a shareable `provider` runs a worker of its own on `table`: a source
+  whose host's input is durable must have each record confirmed, which the
+  shared copy, handing records on to other operators too, never waits for.
+  """
+  @spec own_source?(map(), module()) :: boolean()
+  def own_source?(%{shared: nil}, _provider), do: false
+
+  def own_source?(%{activation_env: env}, provider) do
+    decl = provider.__provider__()
+    decl.shareable and decl.feeds and Map.get(env, :durable_input) == true
+  end
+
+  @doc "Whether `plugin_id` on `table` is backed by a shared copy it joined."
+  @spec joined?(map(), binary()) :: boolean()
+  def joined?(table, plugin_id), do: Entry.worker(entry(table, plugin_id), :shared) != nil
 
   @doc """
   Join the shared copy of `plugin` on this controller (or the cluster's one for

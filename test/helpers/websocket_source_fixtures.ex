@@ -11,6 +11,7 @@ defmodule FlezhaTest.Helper.WebsocketSourceFixtures do
   the metadata half.
   """
 
+  alias Flezha.Plugin.Host
   alias Flezha.Plugin.Provider.Websocket
   alias Flezha.Plugin.Provider.Websocket.Subscription
 
@@ -48,43 +49,52 @@ defmodule FlezhaTest.Helper.WebsocketSourceFixtures do
   def state(overrides \\ %{}) do
     now = :erlang.monotonic_time(:millisecond)
 
-    Map.merge(
-      %{
-        uri: "wss://test.local",
-        plugin_id: "test_ws",
-        post_connect: %{},
-        # `self()` so the `{:io_in, …}` ingest and the applied-set persist cast
-        # are both assertable.
-        overwatcher_pid: self(),
-        payload_metadata: %{},
-        idle_timeout_ms: 10_000,
-        resubscribe_after_ms: 0,
-        ignore_pattern: nil,
-        websocket_established?: true,
-        sink: nil,
-        sync_ingest?: false,
-        frames_seen: 0,
-        last_frame_at: now,
-        last_data_frame_at: now,
-        last_resubscribe_at: now,
-        subscription: subscription(),
-        applied: MapSet.new(),
-        desired: nil,
-        inflight: %{},
-        next_req_id: 1,
-        cycle: 0,
-        poll: nil,
-        timers: Flezha.Process.Timer.new(),
-        source_etag: nil,
-        last_reconcile: nil,
-        last_error: nil,
-        source_plugin_id: "ws_plugin",
-        source_namespace: "default",
-        source_operator_id: "op-1"
-      },
-      Map.new(overrides)
-    )
+    %{
+      uri: "wss://test.local",
+      plugin_id: "test_ws",
+      post_connect: %{},
+      # `self()` so the `{:io_in, …}` ingest and the applied-set persist cast
+      # are both assertable.
+      overwatcher_pid: self(),
+      payload_metadata: %{},
+      idle_timeout_ms: 10_000,
+      resubscribe_after_ms: 0,
+      ignore_pattern: nil,
+      websocket_established?: true,
+      sink: nil,
+      frames_seen: 0,
+      last_frame_at: now,
+      last_data_frame_at: now,
+      last_resubscribe_at: now,
+      subscription: subscription(),
+      applied: MapSet.new(),
+      desired: nil,
+      inflight: %{},
+      next_req_id: 1,
+      cycle: 0,
+      poll: nil,
+      timers: Flezha.Process.Timer.new(),
+      source_etag: nil,
+      last_reconcile: nil,
+      last_error: nil,
+      source_plugin_id: "ws_plugin",
+      source_namespace: "default",
+      source_operator_id: "op-1"
+    }
+    |> Map.merge(Map.new(overrides))
+    |> with_targets()
   end
+
+  @doc """
+  `state` with the injection targets `Client.start_link/1` builds: its one
+  `overwatcher_pid`, confirming when `effectively_once:` is set, unless the
+  state names its own.
+  """
+  def with_targets(state),
+    do:
+      Map.put_new_lazy(state, :targets, fn ->
+        Websocket.Client.ingest_targets(Host.targets(state), state.payload_metadata)
+      end)
 
   @doc "Drive one settled poll through the reconcile loop."
   def poll(state, result) do

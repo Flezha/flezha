@@ -120,8 +120,6 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :plugin, :http_push, :retried] => {:flezha_http_push, :retried, :metric},
     [:flezha, :plugin, :http_push, :failed] => {:flezha_http_push, :failed, :event},
     [:flezha, :plugin, :http_push, :overflowed] => {:flezha_http_push, :overflowed, :metric},
-    # A plain output a binding that is not started could not take, counted.
-    [:flezha, :plugin, :not_started, :dropped] => {:flezha_plugin_not_started, :dropped, :metric},
     # The kafka producer's family, under the same derived prefix as every other
     # provider. Counts are metrics; a failure, a topic creation and a worker
     # swap are events a user reads one at a time.
@@ -282,6 +280,12 @@ defmodule Flezha.Observability.TelemetryBridge do
 
   @all_mapping Map.merge(@derived, @mapping)
 
+  # The controller hooks' lines: plugin notices, not telemetry, which only the
+  # sinks naming their source hear (`Bus.emit_named/1`).
+  @hook_mapping for {_event, {:flezha_hooks, _name, _kind}} = row <- @all_mapping,
+                    into: %{},
+                    do: row
+
   # The shared provider verbs: a failure is read one at a time, the rest are counts.
   @verb_kinds for verb <- ProviderBehaviour.verbs(),
                   do: {verb, if(verb == :failed, do: :event, else: :metric)}
@@ -366,12 +370,10 @@ defmodule Flezha.Observability.TelemetryBridge do
 
   # ---------- :telemetry handler entry point ----------
 
-  # `line` is `nil` for the one handler of the compiled mapping, and the
-  # event's own line for a provider-derived event, which has a handler each.
   @doc false
-  def handle_event(event, measurements, metadata, line) do
+  def handle_event(event, measurements, metadata, _config) do
     try do
-      do_handle_event(event, measurements, metadata, line)
+      do_handle_event(event, measurements, metadata)
     rescue
       e -> handle_error(event, e, __STACKTRACE__)
     catch
@@ -381,9 +383,9 @@ defmodule Flezha.Observability.TelemetryBridge do
     :ok
   end
 
-  defp do_handle_event(event, measurements, metadata, line) do
-    case line || Map.get(@all_mapping, event) do
-      {source, name, kind} ->
+  defp do_handle_event(event, measurements, metadata) do
+    case Map.fetch(@all_mapping, event) do
+      {:ok, {source, name, kind}} ->
         signal =
           Signal.new(%{
             kind: kind,
@@ -395,9 +397,35 @@ defmodule Flezha.Observability.TelemetryBridge do
 
         Bus.emit(signal)
 
-      nil ->
+      :error ->
         :ok
     end
+  end
+
+  # A provider-derived event, whose handler carries its own line.
+  @doc false
+  def handle_line(event, measurements, metadata, line),
+    do: emit_line(&Bus.emit/1, event, measurements, metadata, line)
+
+  # A controller hook's event, which reaches only the sinks naming its source.
+  @doc false
+  def handle_hook(event, measurements, metadata, line),
+    do: emit_line(&Bus.emit_named/1, event, measurements, metadata, line)
+
+  defp emit_line(emit, event, measurements, metadata, {source, name, kind}) do
+    emit.(
+      Signal.new(%{
+        kind: kind,
+        source: source,
+        name: name,
+        measurements: measurements,
+        metadata: metadata
+      })
+    )
+  rescue
+    e -> handle_error(event, e, __STACKTRACE__)
+  catch
+    kind, reason -> handle_error(event, {kind, reason}, __STACKTRACE__)
   end
 
   defp handle_error(event, error, stacktrace) do
@@ -433,21 +461,29 @@ defmodule Flezha.Observability.TelemetryBridge do
         })
     end)
 
-    :ok =
-      :telemetry.attach_many(@handler_id, Map.keys(@all_mapping), &__MODULE__.handle_event/4, nil)
+    compiled = Map.keys(@all_mapping) -- Map.keys(@hook_mapping)
+    :ok = :telemetry.attach_many(@handler_id, compiled, &__MODULE__.handle_event/4, nil)
 
     # A handler's config is copied out of telemetry's table on every execute of
-    # its events, so each provider-derived event carries only its own line.
-    for {event, line} <- providers,
-        do: :ok = :telemetry.attach({@handler_id, event}, event, &__MODULE__.handle_event/4, line)
+    # its events, so each of these carries only its own line.
+    for {handler, lines} <- [handle_line: providers, handle_hook: @hook_mapping],
+        {event, line} <- lines,
+        do:
+          :ok =
+            :telemetry.attach(
+              {@handler_id, event},
+              event,
+              Function.capture(__MODULE__, handler, 4),
+              line
+            )
 
-    {:ok, %{provider_events: Map.keys(providers)}}
+    {:ok, %{line_events: Map.keys(providers) ++ Map.keys(@hook_mapping)}}
   end
 
   @impl true
   def terminate(_reason, state) do
     _ = :telemetry.detach(@handler_id)
-    Enum.each(state.provider_events, &:telemetry.detach({@handler_id, &1}))
+    Enum.each(state.line_events, &:telemetry.detach({@handler_id, &1}))
     :ok
   end
 end

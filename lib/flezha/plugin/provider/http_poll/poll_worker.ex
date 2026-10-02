@@ -8,11 +8,15 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
   worker's mailbox answerable while a hanging endpoint is outstanding — the
   health probe reports on exactly the outage that would otherwise block it.
 
-  Injection is content-gated and the hash advances only once the operator has
-  TAKEN the payload, so a refused ingest re-offers the same content rather than
-  losing a change. A fresh worker holds no hash, so its first success always
-  injects: that seed is what converges a rejoining operator within one
-  interval.
+  Injection is content-gated, per operator it injects into. A poller its own
+  operator started confirms each body, and its hash advances only once the
+  operator has TAKEN the payload, so a refused ingest re-offers the same content
+  rather than losing a change. A shared copy's poller serves only operators
+  whose input is not durable (`Flezha.Plugin.Extension.Table.Workers.own_source?/2`)
+  and casts to them, so no operator's answer holds back another's. An operator
+  the worker holds no hash for (every one at start, and one newly bound) is
+  offered the next body: that seed is what converges a rejoining operator
+  within one interval.
   """
 
   alias Flezha.Plugin.Host
@@ -59,13 +63,13 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
         :plugin_id,
         :interval_ms,
         :timeout_ms,
-        :max_body_bytes,
-        :overwatcher_pid
+        :max_body_bytes
       ])
       |> Map.merge(%{
         host_ref: Process.monitor(host),
+        targets: offered(Host.targets(opts), %{}),
+        mode: if(opts[:targets_from], do: :fire_and_forget, else: :verdict),
         fetch: nil,
-        last_hash: nil,
         etag: nil,
         consecutive_failures: 0,
         last_error: nil,
@@ -103,6 +107,14 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
   def handle_info({:DOWN, ref, :process, _dead, reason}, %{fetch: {_pid, ref, started}} = state) do
     {:noreply,
      settle(%{state | fetch: nil}, {:error, {:fetch_crashed, reason}}, elapsed(started))}
+  end
+
+  # An operator it holds no hash for must be sent a body, which a request
+  # carrying the last validator would not fetch.
+  def handle_info({:targets, targets}, state) do
+    targets = offered(targets, Map.new(state.targets, fn {pid, _md, hash} -> {pid, hash} end))
+    etag = if Enum.any?(targets, &is_nil(elem(&1, 2))), do: nil, else: state.etag
+    {:noreply, %{state | targets: targets, etag: etag}}
   end
 
   def handle_info({:health_probe, from, ref}, state) do
@@ -150,53 +162,59 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
   # server would answer 304, that reads as an unchanged poll, the failure run
   # resets, and the plugin sits healthy and silent forever with no hash.
   defp classify_body(state, body, etag, latency_ms) do
-    cond do
-      not String.valid?(body) ->
-        failed(state, {:invalid_utf8, byte_size(body)}, latency_ms)
+    if String.valid?(body) do
+      hash = :crypto.hash(:sha256, body)
 
-      :crypto.hash(:sha256, body) == state.last_hash ->
-        unchanged(%{state | etag: etag}, latency_ms)
-
-      true ->
-        inject(state, body, etag, latency_ms)
+      if Enum.all?(state.targets, &(elem(&1, 2) == hash)),
+        do: unchanged(%{state | etag: etag}, latency_ms),
+        else: inject(state, body, hash, etag, latency_ms)
+    else
+      failed(state, {:invalid_utf8, byte_size(body)}, latency_ms)
     end
   end
 
-  defp inject(state, body, etag, latency_ms) do
-    seed? = is_nil(state.last_hash)
+  defp inject(state, body, hash, etag, latency_ms) do
+    seed? = Enum.any?(state.targets, &is_nil(elem(&1, 2)))
+    {targets, refusals} = Enum.map_reduce(state.targets, [], &offer(&1, &2, state, body, hash))
+    state = %{state | targets: targets}
 
-    case confirm(state, body) do
-      :ok ->
+    case refusals do
+      [] ->
         emit(
           :shipped,
           %{bytes: byte_size(body), latency_ms: latency_ms},
           Map.put(labels(state), :seed, seed?)
         )
 
-        recovered(%{state | last_hash: :crypto.hash(:sha256, body), etag: etag})
+        recovered(%{state | etag: etag})
 
-      {:error, reason} ->
-        # Neither the hash nor the validator is advanced: the operator did not
-        # take this content, so the next poll must re-offer it rather than read
-        # it as already delivered and go quiet forever.
+      # Neither the refusing operator's hash nor the validator is advanced: it
+      # did not take this content, so the next poll must re-offer it rather
+      # than read it as already delivered and go quiet forever.
+      [reason | _] ->
         failed(state, {:ingest, reason}, latency_ms)
     end
   end
 
-  # The confirming ingest clause, not the fire-and-forget cast: a parked
-  # operator drops the cast silently, and a dropped config push that has
-  # already advanced the hash is lost until the endpoint happens to change
-  # again. `:absorbed` (duplicate) and `:suspended` (journaled for wake) both
-  # mean the operator owns the payload.
-  defp confirm(state, body) do
-    Host.inject(
-      state.overwatcher_pid,
-      body,
-      %{"channel" => state.entry_channel},
-      :verdict,
-      state.timeout_ms
-    )
+  # Its own operator's poller confirms, not casts: a parked operator drops the
+  # cast silently, and a dropped config push that has already advanced the hash
+  # is lost until the endpoint happens to change again. `:absorbed` (duplicate)
+  # and `:suspended` (journaled for wake) both mean the operator owns the
+  # payload. A cast answers `:ok`.
+  defp offer({_pid, _metadata, hash} = target, refusals, _state, _body, hash),
+    do: {target, refusals}
+
+  defp offer({pid, metadata, _held} = target, refusals, state, body, hash) do
+    case Host.inject(pid, body, metadata, state.mode, state.timeout_ms) do
+      :ok -> {{pid, metadata, hash}, refusals}
+      {:error, reason} -> {target, [reason | refusals]}
+    end
   end
+
+  # Each operator the worker injects into, with the hash of the content it
+  # took last, kept across a change of operators.
+  defp offered(targets, held),
+    do: for(t <- targets, do: {t.pid, %{"channel" => t.channel}, Map.get(held, t.pid)})
 
   defp unchanged(state, latency_ms) do
     emit(:unchanged, %{latency_ms: latency_ms}, labels(state))

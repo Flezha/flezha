@@ -303,9 +303,8 @@ defmodule Flezha.Config.Keys do
      key: true, env: "FLEZHA_LISTENER_PENDING_BYTES"},
     {:listener_pending_frames, :positive_int, 4_096,
      key: true, env: "FLEZHA_LISTENER_PENDING_FRAMES"},
-    # What one operator bound to a shared plugin has not taken yet: a record
-    # that does not fit drops that operator's oldest waiting ones, and no other
-    # operator waits for it.
+    # The hook events one copy of a controller plugin has not run yet: an event
+    # that does not fit drops the oldest waiting ones.
     {:plugin_backlog_bytes, :positive_int, 4_194_304,
      key: true, env: "FLEZHA_PLUGIN_BACKLOG_BYTES"},
     {:plugin_backlog_frames, :positive_int, 4_096,

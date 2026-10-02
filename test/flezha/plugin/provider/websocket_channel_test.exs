@@ -62,10 +62,13 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketChannelTest do
     [{_key, worker_opts}] = Websocket.worker_specs(opts)
     {:ok, overwatch} = StubOverwatch.start_link(self())
 
+    targets = for target <- worker_opts.targets, do: %{target | pid: overwatch}
+
     state =
       WebsocketSourceFixtures.state(%{
         overwatcher_pid: overwatch,
         payload_metadata: worker_opts.payload_metadata,
+        targets: Client.ingest_targets(targets, worker_opts.payload_metadata),
         plugin_id: worker_opts.plugin_id,
         sink: worker_opts.sink,
         subscription: nil

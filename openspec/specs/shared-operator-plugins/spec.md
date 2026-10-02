@@ -153,21 +153,38 @@ plugin SHALL be refused with `plugin.single_sink`.
 
 ### Requirement: Every bound operator SHALL get every record, and a slow one SHALL fall behind alone
 
-A shareable source plugin SHALL hand every record to every bound operator. Each binding SHALL
-hold the records its operator has not taken in a backlog bounded by
-`FLEZHA_PLUGIN_BACKLOG_BYTES` and `FLEZHA_PLUGIN_BACKLOG_FRAMES`; a record that does not fit
-SHALL drop that binding's oldest waiting records. The plugin SHALL NOT wait for a slow
-operator, and the other operators' delivery SHALL NOT slow down. A binding that dropped
-records within the last probe window SHALL make the operator's health report
-`plugin_lagging` with the count dropped.
+A shareable source plugin SHALL hand every record to every operator that shares it, straight
+from the worker that reads it, with no process between the worker and the operator and without
+waiting on any operator: a slow one SHALL fall behind in its own input queue and lose nothing,
+and the other operators' delivery SHALL NOT slow down. An operator whose input is durable (an
+effectively-once operator, a sleeping one, a durable steps operator) SHALL NOT share the
+source: it SHALL run the source on its own, as an operator's own plugin runs, so every record
+is confirmed to it, a slow one holds back only its own upstream connection (TCP back-pressure
+on a socket), and its HTTP poller advances the content only once it took it and offers it
+again until it does. A shared HTTP poller SHALL offer each operator the content it does not
+hold yet, so a newly bound operator gets the current content at the next poll. The operators
+sharing a source SHALL be told to its worker when they bind and unbind, and read again by the
+worker each time it connects, never looked up per record.
 
 #### Scenario: One stalled operator
 
-- **GIVEN** `trades` bound to `a` and `b`, a backlog of 10 frames, and `a`'s runner stalled
+- **GIVEN** `trades` bound to `a` and `b`, and `a`'s Overwatch suspended
 - **WHEN** the server sends 100 frames
-- **THEN** `b` SHALL ingest all 100, `a`'s health SHALL report `plugin_lagging`, and when
-  `a`'s runner resumes it SHALL ingest the last 10 frames in order, after at most the one
-  frame it held when it stalled
+- **THEN** `b` SHALL ingest all 100 while `a` is suspended, and when `a` resumes it SHALL
+  ingest all 100 in order
+
+#### Scenario: An effectively-once operator runs its own connection
+
+- **GIVEN** `trades` bound to a plain operator `a` and to an effectively-once operator `b` that
+  confirms nothing
+- **WHEN** the server sends 5 frames
+- **THEN** the server SHALL have seen two connections, and `a` SHALL ingest all 5
+
+#### Scenario: Operators bound while the connection is down
+
+- **GIVEN** `trades` bound to `a` and `b` while its upstream refuses connections
+- **WHEN** the upstream accepts the connection and sends a frame
+- **THEN** `a` and `b` SHALL each ingest it
 
 ### Requirement: An unused plugin SHALL stop and stay enabled
 

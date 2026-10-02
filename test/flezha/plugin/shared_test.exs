@@ -2,7 +2,7 @@ defmodule FlezhaTest.Plugin.SharedTest do
   @moduledoc """
   A shareable plugin bound to several operators on one controller runs once:
   one upstream connection, every record to every operator, a slow operator
-  falling behind alone, a stop when its last operator leaves, and a live option
+  falling behind alone and losing nothing, a stop when its last operator leaves, and a live option
   changed on the open connection.
   """
 
@@ -14,6 +14,7 @@ defmodule FlezhaTest.Plugin.SharedTest do
   alias Flezha.Operator.Builder
   alias Flezha.Operator.PartitionGroup
   alias Flezha.Plugin
+  alias Flezha.Plugin.Host
   alias Flezha.Plugin.Provider.BeamMsgForward
   alias Flezha.Plugin.Provider.HttpPoll
   alias Flezha.Plugin.Provider.Kafka
@@ -198,8 +199,7 @@ defmodule FlezhaTest.Plugin.SharedTest do
     assert [_one] = copies()
   end
 
-  test "a stalled operator falls behind alone and reports plugin_lagging", %{server: server} do
-    Application.put_env(:flezha, :plugin_backlog_frames, 10)
+  test "a stalled operator falls behind alone and loses nothing", %{server: server} do
     a = operator("lag_a")
     b = operator("lag_b")
     trades(server)
@@ -217,16 +217,8 @@ defmodule FlezhaTest.Plugin.SharedTest do
       assert_receive {:ingested, ^b, ^frame}, 5_000
     end)
 
-    [copy] = copies()
-    assert {:unhealthy, {:plugin_lagging, dropped}} = Shared.health(copy, ow_a)
-    assert dropped >= 89
-
     :sys.resume(ow_a)
-    received = for _ <- 1..11, do: ingested(a)
-    refute_receive {:ingested, ^a, _}, 300
-
-    assert Enum.take(received, -10) == Enum.map(91..100, &"f#{&1}")
-    assert {:unhealthy, {:plugin_lagging, _}} = Table.health(table(a))["trades"]
+    assert Enum.map(1..100, fn _ -> ingested(a) end) == Enum.map(1..100, &"f#{&1}")
   end
 
   test "a live option changes the subscription on the same connection", %{server: server} do
@@ -397,7 +389,7 @@ defmodule FlezhaTest.Plugin.SharedTest do
 
       {:ok, copy} = Shared.start_link(%{namespace: @namespace, plugin: Shared.entry(plugin)})
       assert_receive {:ws_open, socket}, 5_000
-      :ok = Shared.adopt(copy, [{spawn_link(&NodeTestHelper.park/0), nil}])
+      :ok = Shared.adopt(copy, [Host.target(spawn_link(&NodeTestHelper.park/0), nil, false)])
       successor = spawn_link(fn -> successor(true) end)
       Directory.join_plugin(successor, @namespace, "lone")
       Shared.retire(copy)
@@ -455,6 +447,8 @@ defmodule FlezhaTest.Plugin.SharedTest do
     assert_receive {:ws_open, _}, 5_000
     [copy] = copies()
     {:ok, ow_a} = HubManager.get_pid(@namespace, a)
+    # Its socket has read its operators from the copy, which it does on connect.
+    _ = :sys.get_state(WorkerSup.worker_pid(Websocket, "trades"))
 
     # The copy takes, in this order: its last operator leaving, its idle stop,
     # and a new operator's join.

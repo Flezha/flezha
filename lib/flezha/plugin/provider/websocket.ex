@@ -17,6 +17,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
   alias Flezha.Config.Durations
   alias Flezha.Plugin.Extension.Ctx
+  alias Flezha.Plugin.Host
   alias Flezha.Plugin.Provider.Websocket.Client
   alias Flezha.Plugin.Provider.Websocket.Sink
   alias Flezha.Plugin.Provider.Websocket.Subscription
@@ -337,28 +338,14 @@ defmodule Flezha.Plugin.Provider.Websocket do
          :applied_subscriptions,
          :source_plugin_id,
          :source_namespace,
-         :source_operator_id
+         :source_operator_id,
+         :targets_from
        ])
-       |> Map.put(:sync_ingest?, opts[:effectively_once] || false)
-       |> Map.put(:payload_metadata, ingest_metadata(opts))}
+       # Both read by access: the teardown path asks for the declared worker
+       # keys from a manifest's RAW options, which hold neither.
+       |> Map.put(:targets, Host.targets(opts))
+       |> Map.put(:payload_metadata, Map.get(opts, :payload_metadata) || %{})}
     ]
-  end
-
-  # The resolved entry channel rides the bag every injection already carries, so
-  # the socket holds one map and the frame path stays one send. Nothing can
-  # overwrite the user's own "channel" key: naming it both ways is refused
-  # when the plugin is enabled.
-  #
-  # Both keys are read by access, never by pattern: the teardown path asks for
-  # the declared worker keys from a manifest's RAW options, where neither the
-  # host's resolution nor the row's default has been applied.
-  defp ingest_metadata(opts) do
-    bag = Map.get(opts, :payload_metadata) || %{}
-
-    case opts[:entry_channel] do
-      nil -> bag
-      channel -> Map.put(bag, "channel", channel)
-    end
   end
 
   @doc """

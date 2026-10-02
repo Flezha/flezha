@@ -43,7 +43,7 @@ defmodule Flezha.Plugin.Extension.Table.Health do
         {:unhealthy, reason}
 
       %{phase: :running, workers: %{shared: {copy, _ref}}} ->
-        table.shared.health(copy, table.host_pid)
+        table.shared.health(copy)
 
       %{phase: :running} = entry ->
         running_plugin_health(entry, plugin_id, plugin)

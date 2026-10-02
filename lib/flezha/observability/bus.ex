@@ -22,10 +22,6 @@ defmodule Flezha.Observability.Bus do
   @sinks :flezha_observability_sinks
   @system_source :observability_registry
 
-  # Sources only a sink naming them hears: the controller hooks are plugin
-  # notices, not telemetry, and a catch-all sink must not record them.
-  @private_sources [:flezha_hooks]
-
   @doc """
   Emit a signal. Always returns `:ok`. Never raises.
   """
@@ -41,6 +37,40 @@ defmodule Flezha.Observability.Bus do
       kind, reason ->
         handle_dispatch_error({kind, reason}, __STACKTRACE__)
         :ok
+    end
+  end
+
+  @doc """
+  Emit a signal only to the sinks whose filter names its source, never to a
+  `sources: :any` one: what the controller hooks hear are plugin notices, not
+  telemetry. The emitter chooses it, so `emit/1` judges no source of its own.
+  Always returns `:ok`. Never raises.
+  """
+  @spec emit_named(Signal.t()) :: :ok
+  def emit_named(%Signal{source: source} = signal) do
+    case Registry.lookup_source(source) do
+      {:ok, %{status: :disabled}} -> :ok
+      _ -> Enum.each(naming_sinks(signal), &dispatch_to_sink(&1, signal))
+    end
+  rescue
+    e ->
+      handle_dispatch_error(e, __STACKTRACE__)
+      :ok
+  catch
+    kind, reason ->
+      handle_dispatch_error({kind, reason}, __STACKTRACE__)
+      :ok
+  end
+
+  defp naming_sinks(%Signal{kind: kind, source: source}) do
+    case :ets.whereis(@sinks) do
+      :undefined ->
+        []
+
+      _ ->
+        for {_name, %{filter: %{kinds: kinds, sources: sources}} = entry} <- :ets.tab2list(@sinks),
+            is_list(sources) and source in sources and kind_match?(kinds, kind),
+            do: entry
     end
   end
 
@@ -115,7 +145,7 @@ defmodule Flezha.Observability.Bus do
   defp kind_match?(list, k) when is_list(list), do: k in list
   defp kind_match?(_, _), do: false
 
-  defp source_match?(:any, s), do: s not in @private_sources
+  defp source_match?(:any, _), do: true
   defp source_match?(list, s) when is_list(list), do: s in list
   defp source_match?(_, _), do: false
 

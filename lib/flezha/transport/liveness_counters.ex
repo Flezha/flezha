@@ -311,7 +311,10 @@ defmodule Flezha.Transport.LivenessCounters do
       [name: :filtered_nil, surface: [{:metric, :operator_filtered_nil}]],
       # Ingress casts a parked operator dropped; the confirming entry point
       # refuses instead, so this counts only what a cast-based source lost.
-      [name: :parked_drops, surface: [{:metric, :operator_parked_drops}]]
+      [name: :parked_drops, surface: [{:metric, :operator_parked_drops}]],
+      # Plain outputs to a binding recorded not started: it makes no delivery
+      # promise, so it drops them.
+      [name: :not_started_drops, surface: [{:metric, :operator_not_started_drops}]]
     ]
 
   # `channel_slots/0`, `operator_slots/0`, `channel_rows/0`,

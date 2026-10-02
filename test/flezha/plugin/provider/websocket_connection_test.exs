@@ -44,6 +44,7 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
       },
       Map.new(overrides)
     )
+    |> FlezhaTest.Helper.WebsocketSourceFixtures.with_targets()
   end
 
   defp attach_telemetry(event) do

@@ -2,7 +2,8 @@ defmodule Flezha.Plugin.Provider.NotStartedTest do
   @moduledoc """
   A sink binding that could not come up keeps a guaranteed output owed: the
   output is held and never settled, so the outbox cursor stays behind it and a
-  re-drive hands it over again. A plain output to it is dropped and counted.
+  re-drive hands it over again. A plain output to it is dropped and counted on
+  its operator's liveness counters, with nothing emitted per output.
   """
   use FlezhaTest.OutboxCase, async: false
 
@@ -11,11 +12,12 @@ defmodule Flezha.Plugin.Provider.NotStartedTest do
   alias Flezha.Plugin.Extension
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
+  alias Flezha.Transport.LivenessCounters
   alias FlezhaTest.Helper.Telemetry
 
   @reason {:module_not_loaded, MyOrg.Absent, :nonode@nohost}
 
-  defp not_started_sink do
+  defp not_started_sink(counters \\ nil) do
     binding = %Plugin{
       id: "out",
       provider: MyOrg.Absent,
@@ -24,7 +26,9 @@ defmodule Flezha.Plugin.Provider.NotStartedTest do
       hooks: [{:on_output, []}]
     }
 
-    Table.put_not_started(Table.new(Overwatch.__extensions_catalog__()), "out", binding, @reason)
+    Overwatch.__extensions_catalog__()
+    |> Table.new()
+    |> Table.put_not_started("out", binding, @reason, counters)
   end
 
   defp dispatch(table, payload, metadata),
@@ -55,12 +59,19 @@ defmodule Flezha.Plugin.Provider.NotStartedTest do
     assert {"owed", _md, _} = next_output()
   end
 
-  test "a plain output is dropped and counted" do
+  test "a plain output is dropped and counted on its operator's liveness counters" do
     :ok = Telemetry.capture([:flezha, :plugin, :not_started, :dropped])
+    table = not_started_sink(LivenessCounters.register_operator("not_started_op"))
 
-    assert {:ok, _ctx} = dispatch(not_started_sink(), "plain", %{})
+    assert {:ok, _ctx} = dispatch(table, "plain", %{})
+    assert {:ok, _ctx} = dispatch(table, "plain", %{})
 
-    assert_receive {:telemetry, [:flezha, :plugin, :not_started, :dropped], %{count: 1},
-                    %{plugin_id: "out", operator_id: "op"}}
+    assert %{not_started_drops: 2} =
+             Enum.find(
+               LivenessCounters.snapshot_all().operators,
+               &(&1.operator_id == "not_started_op")
+             )
+
+    refute_received {:telemetry, _event, _measurements, _metadata}
   end
 end

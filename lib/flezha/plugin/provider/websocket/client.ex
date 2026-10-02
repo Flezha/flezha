@@ -45,13 +45,14 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
       post_connect: opts.post_connect,
       overwatcher_pid: opts.overwatcher_pid,
       payload_metadata: opts.payload_metadata,
+      targets: ingest_targets(opts.targets, opts.payload_metadata),
+      # The shared copy that started it, which it reads its operators from on
+      # each connect; nil for a socket its own operator started.
+      targets_from: opts[:targets_from],
       idle_timeout_ms: idle_window(opts),
       resubscribe_after_ms: opts.resubscribe_after_ms,
       ignore_pattern: compile_ignore_pattern(opts.ignore_pattern),
       sink: opts.sink,
-      # Effectively-once tier (from the activation env): ingest via a
-      # blocking call so a zero-credit park stops the socket read.
-      sync_ingest?: opts.sync_ingest?,
       websocket_established?: false,
       frames_seen: 0,
       last_frame_at: now,
@@ -186,7 +187,11 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
       }
       |> Map.put(:reconnect_attempt, Backoff.reset(:ws_reconnect, state.plugin_id))
 
-    state = state |> schedule_idle_check() |> Subscription.schedule_subscription_poll()
+    state =
+      state
+      |> schedule_idle_check()
+      |> Subscription.schedule_subscription_poll()
+      |> reread_targets()
 
     # Issue the subscribe via Fresh's reply form so the frame is sent
     # after the upgrade lands. A re-entrant `Fresh.send/2` here races the
@@ -272,15 +277,8 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
   @impl Fresh
   def handle_in(frame, state), do: ingest(frame, state)
 
-  defp ingest(
-         {type, message},
-         %{overwatcher_pid: overwatcher, payload_metadata: metadata} = state
-       ) do
-    # Effectively-once tier ingest is confirming: awaiting the journal ack means
-    # a zero-credit park blocks this connection process, so the socket stops
-    # being read (TCP back-pressure) instead of the input log growing flow.
-    mode = if Map.get(state, :sync_ingest?, false), do: :confirming, else: :fire_and_forget
-    _ = Host.inject(overwatcher, message, metadata, mode)
+  defp ingest({type, message}, state) do
+    inject_each(state.targets, message)
 
     # One clock read and one classification per frame; `last_frame_at`
     # is set unconditionally (connection liveness) and `last_data_frame_at`
@@ -301,6 +299,44 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
     state = if is_data?, do: %{state | last_data_frame_at: now}, else: state
 
     {:ok, state}
+  end
+
+  # Every bound operator takes the frame in its own mode. An effectively-once
+  # one is confirming: awaiting its journal ack means a zero-credit park blocks
+  # this connection process, so the socket stops being read (TCP back-pressure)
+  # instead of a record being lost; every other one is cast and falls behind
+  # alone, in its own mailbox.
+  defp inject_each([{overwatch, metadata, mode} | rest], message) do
+    _ = Host.inject(overwatch, message, metadata, mode)
+    inject_each(rest, message)
+  end
+
+  defp inject_each([], _message), do: :ok
+
+  # Fresh drops every message while the socket is down, a retarget among them.
+  defp reread_targets(%{targets_from: copy} = state) when is_pid(copy) do
+    case Host.targets_of(copy) do
+      {:ok, targets} -> %{state | targets: ingest_targets(targets, state.payload_metadata)}
+      :error -> state
+    end
+  end
+
+  defp reread_targets(state), do: state
+
+  @doc """
+  The socket's per-operator injection state for `targets`
+  (`Flezha.Plugin.Host.targets/1`): each operator's metadata, the label `bag`
+  with its entry channel stamped on, and its mode. Built when the operators
+  change, so a frame costs one send per operator. Nothing overwrites the
+  user's own "channel" key: naming it both ways is refused when the plugin is
+  enabled.
+  """
+  @spec ingest_targets([Host.target()], map()) :: [{pid(), map(), Host.inject_mode()}]
+  def ingest_targets(targets, bag) do
+    for %{pid: pid, channel: channel, effectively_once: once?} <- targets do
+      metadata = if channel, do: Map.put(bag, "channel", channel), else: bag
+      {pid, metadata, if(once?, do: :confirming, else: :fire_and_forget)}
+    end
   end
 
   # Data-vs-heartbeat classification (drives `last_data_frame_at`):
@@ -363,6 +399,9 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
     send(from, {ref, {now - state.last_frame_at, now - state.last_data_frame_at}})
     {:ok, state}
   end
+
+  def handle_info({:targets, targets}, state),
+    do: {:ok, %{state | targets: ingest_targets(targets, state.payload_metadata)}}
 
   def handle_info({:subscription_items, items}, %{subscription: subscription} = state) do
     subscription = %{subscription | items: items}

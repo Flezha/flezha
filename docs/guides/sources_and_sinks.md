@@ -248,9 +248,11 @@ under the operator.
 A websocket, an HTTP poll, a Kafka producer or stdout can serve several
 operators at once: bind each one to the same plugin, and each controller runs
 one copy of it for every operator bound to it there, so one connection is
-opened instead of one per operator. Every operator gets every record, through
-a backlog of its own: one that falls behind loses its oldest records and its
-health says `plugin_lagging`, and the others are not slowed. With
+opened instead of one per operator. Every operator gets every record, straight
+from that connection, and one that falls behind does so alone, losing nothing
+and slowing no other. An operator whose input is durable, such as an
+effectively-once one, runs a websocket or an HTTP poll of its own instead, so
+every record is confirmed to it. With
 `flz plugin enable ... --single`, one copy runs in the whole cluster. A copy
 whose last operator leaves stops, at once on an unbind or a stop and after
 `FLEZHA_PLUGIN_IDLE_STOP_MS` otherwise, so the connection survives an

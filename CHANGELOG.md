@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Changed: a shared source hands each record straight to its operators
+
+A shareable source plugin (`operator_websocket`, `operator_http_poll`) still runs once per
+controller, but its worker now injects each record directly into every operator sharing it,
+with no process in between and without waiting on any of them: a slow operator falls behind
+in its own input queue and loses nothing. An operator whose input is durable (effectively-once,
+sleeping or durable steps) runs the source on its own again, as before plugins could be
+shared, so every frame is confirmed to it and a refused poll is offered again, and a slow one
+holds back only its own connection. A shared poller offers each operator the content it does
+not hold yet, so a newly bound operator gets the current content at the next poll. An operator
+no longer reports `plugin_lagging` for a shared source, and
+`FLEZHA_PLUGIN_BACKLOG_BYTES` and `FLEZHA_PLUGIN_BACKLOG_FRAMES` now bound only a controller
+plugin's hook events. A plain output to a binding that is not started is counted as the
+operator metric `operator_not_started_drops` instead of a
+`[:flezha, :plugin, :not_started, :dropped]` event per output. A package provider declaring
+both `feeds` and `shareable` injects into `Flezha.Plugin.Host.targets/1` and takes
+`{:targets, targets}` (see [`custom_plugins.md`](docs/guides/advanced/custom_plugins.md)); one
+that injects into its copy has the record dropped, warned of once and reported as
+`plugin_lagging`.
+
 ### Added: an operator's outputs sent over HTTP (breaking for `hook_webhook` telemetry)
 
 The new provider `operator_http_push` sends each output (or, on `on_input`, each ingested

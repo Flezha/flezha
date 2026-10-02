@@ -161,6 +161,16 @@ option without it does not compile.
 
 A provider whose worker hands records to the operator declares `feeds: true` and calls
 `Flezha.Plugin.Host.inject/5` with the operator its options name (`opts.overwatcher_pid`).
+A source that is also `shareable` hands each record to every operator sharing its plugin on
+the controller instead: `Host.targets(opts)` lists them, each with its entry channel, and the
+worker is sent `{:targets, targets}` each time one binds or leaves; a worker that can miss a
+message (a socket library dropping them while disconnected) reads them again with
+`Host.targets_of/1` from `opts.targets_from` when it reconnects. It keeps them as its state, so
+a record costs one `:fire_and_forget` inject per operator and nothing else. An operator whose
+input is durable runs the source on its own, with itself as the one target, so that the
+worker's own operator is still the one that confirms. A shared worker that injects into
+`opts.overwatcher_pid` reaches the controller's copy, which drops the record, logs one warning
+and reports `plugin_lagging` with the count dropped.
 A source that reads from a system with a position, such as an offset, a cursor or an
 acknowledgement, fetches a batch and hands it over with `Host.inject_many/4` in `:verdict`
 mode: up to `FLEZHA_PLUGIN_INGEST_WINDOW` records wait for their verdicts at once, and the

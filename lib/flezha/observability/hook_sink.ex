@@ -13,8 +13,9 @@ defmodule Flezha.Observability.HookSink do
   `on_plugin_unhealthy`. No event carries an operator's data.
 
   Two signals carry them. Start, stop and dead letter are telemetry events the
-  bridge lifts as source `:flezha_hooks`, which the bus hands to no `sources:
-  :any` sink. The two failures are the convergence judge's transitions
+  bridge lifts as source `:flezha_hooks` and emits to the sinks naming that
+  source only (`Flezha.Observability.Bus.emit_named/1`), never to a `sources:
+  :any` one. The two failures are the convergence judge's transitions
   (`[:flezha, :health, :verdict]`), which already fire once per health change:
   every controller judges every operator, so this sink takes only those of
   subjects on its own node, and it announces an operator's failure once, until
