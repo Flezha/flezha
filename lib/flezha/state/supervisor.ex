@@ -18,12 +18,6 @@ defmodule Flezha.State.Supervisor do
   alias Flezha.State.WalWriter
   alias Flezha.State.WriterRegistry
 
-  # Writer starts and a switch of a class's files (`Flezha.State.Adoption`)
-  # share one guard: starts record themselves by pid and never wait for each
-  # other; a switch marks the class, waits for the live starts in progress,
-  # and every start that arrives meanwhile waits for it to end.
-  @switches :flezha_writer_switches
-
   def child_spec(_arg) do
     Cspec.build(__MODULE__, {__MODULE__, :start_link, [[]]}, :supervisor_permanent)
   end
@@ -41,7 +35,6 @@ defmodule Flezha.State.Supervisor do
     # degrades to the on-disk layout when the claims table is absent (unit
     # tests that use `Flezha.State.Paths` without this supervisor).
     Paths.ensure_claims_table()
-    :ets.new(@switches, [:named_table, :public, :set, write_concurrency: true])
     InputLog.ensure_watermark_table()
     ClassRegistry.ensure_table()
     # Every per-Cell writer and input log on the node hangs here, and they
@@ -75,87 +68,11 @@ defmodule Flezha.State.Supervisor do
             _ -> {WalWriter, cell_id}
           end
 
-        starting(elem(cell_id, 0), fn -> start(spec) end)
-    end
-  end
-
-  defp start(spec) do
-    case DynamicSupervisor.start_child(__MODULE__, spec) do
-      {:ok, pid} -> {:ok, pid}
-      {:error, {:already_started, pid}} -> {:ok, pid}
-      {:error, _} = err -> err
-    end
-  end
-
-  @doc """
-  Run `fun` as a writer start of `operator_class`. Starts run side by side;
-  one that arrives while the class's files are being switched waits for the
-  switch to end first.
-  """
-  @spec starting(String.t(), (-> result)) :: result when result: term()
-  def starting(operator_class, fun) do
-    if :ets.whereis(@switches) == :undefined do
-      fun.()
-    else
-      start = {{:starting, operator_class, make_ref()}, self()}
-      :ets.insert(@switches, start)
-
-      if switching?(operator_class) do
-        :ets.delete_object(@switches, start)
-        await(fn -> not switching?(operator_class) end)
-        starting(operator_class, fun)
-      else
-        try do
-          fun.()
-        after
-          :ets.delete_object(@switches, start)
+        case DynamicSupervisor.start_child(__MODULE__, spec) do
+          {:ok, pid} -> {:ok, pid}
+          {:error, {:already_started, pid}} -> {:ok, pid}
+          {:error, _} = err -> err
         end
-      end
-    end
-  end
-
-  @doc """
-  Run `fun` while no writer of `operator_class` can start on this node: it
-  begins once the starts in progress have ended, and starts that arrive
-  meanwhile wait until it returns. One switch of a class runs at a time.
-  """
-  @spec without_new_writers(String.t(), (-> result)) :: result when result: term()
-  def without_new_writers(operator_class, fun) do
-    switch = {{:switch, operator_class}, self()}
-    await(fn -> not switching?(operator_class) and :ets.insert_new(@switches, switch) end)
-
-    try do
-      await(fn -> not starts_in_progress?(operator_class) end)
-      fun.()
-    after
-      :ets.delete_object(@switches, switch)
-    end
-  end
-
-  # A mark whose process died without its `after` running (an untrappable
-  # kill) is removed by whoever finds it, so neither side waits on the dead.
-  defp switching?(operator_class) do
-    case :ets.lookup(@switches, {:switch, operator_class}) do
-      [] -> false
-      [{_key, owner} = switch] -> alive_or_forget(owner, switch)
-    end
-  end
-
-  defp starts_in_progress?(operator_class) do
-    @switches
-    |> :ets.match_object({{:starting, operator_class, :_}, :_})
-    |> Enum.any?(fn {_key, starter} = start -> alive_or_forget(starter, start) end)
-  end
-
-  defp alive_or_forget(pid, object) do
-    Process.alive?(pid) or (:ets.delete_object(@switches, object) and false)
-  end
-
-  # Only a pending switch is waited on, and a switch is a few renames long.
-  defp await(done?) do
-    unless done?.() do
-      Process.sleep(1)
-      await(done?)
     end
   end
 

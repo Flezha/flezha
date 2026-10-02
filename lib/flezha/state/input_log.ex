@@ -402,13 +402,15 @@ defmodule Flezha.State.InputLog do
 
   @doc """
   Highest offset appended strictly before `ts_ms`, or `nil` when no retained
-  record is that old. Pre-timestamp records are never eligible — an unknown age
-  cannot be judged against a window.
+  record is that old or the log is not open here (the retention sweep's
+  question, which never opens a log). Pre-timestamp records are never
+  eligible — an unknown age cannot be judged against a window.
   """
   @spec offset_before_time(binary(), integer()) :: non_neg_integer() | nil | {:error, term()}
   def offset_before_time(operator_class, ts_ms) do
-    {:ok, pid} = Supervisor.find_or_start({operator_class, :input_log})
-    call(pid, {:offset_before_time, ts_ms})
+    with {:ok, pid} <- Supervisor.lookup({operator_class, :input_log}),
+         do: call(pid, {:offset_before_time, ts_ms}),
+         else: (:error -> nil)
   end
 
   @doc "Drop a hard-deleted Cell's watermark entry so it stops holding truncation."

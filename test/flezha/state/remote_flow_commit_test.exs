@@ -262,7 +262,8 @@ defmodule Flezha.State.RemoteFlowCommitTest do
 
   defp credit(bytes), do: %{channel: self(), session: "s", wire_size: bytes}
 
-  defp drained_bytes(want, got \\ 0) when got >= want, do: got
+  defp drained_bytes(want, got \\ 0)
+  defp drained_bytes(want, got) when got >= want, do: got
 
   defp drained_bytes(want, got) do
     assert_receive {:credit_drained, "s", bytes, _}, 5_000

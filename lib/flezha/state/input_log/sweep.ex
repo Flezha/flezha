@@ -23,16 +23,16 @@ defmodule Flezha.State.InputLog.Sweep do
   `min(watermark, now - hold_window)`, and below the lowest record a live call
   still holds (`Flezha.State.InputLog.CallRetention`), and emit the frozen-watermark warning
   when the log grows past the size threshold without the watermark advancing.
-  No-op when no input-log file exists.
+
+  Only a log open on this node is swept, and the sweep never opens one: the log
+  of an operator that moved away stays closed, so its return can set the stale
+  copy aside (`Flezha.State.Adoption`) with nothing writing into it.
   """
   @spec run(binary()) :: :ok
   def run(operator_class) do
-    path = Paths.input_log_path(operator_class)
-
-    if File.exists?(path) do
-      do_sweep(operator_class, path)
-    else
-      :ok
+    case Supervisor.lookup({operator_class, :input_log}) do
+      {:ok, pid} -> do_sweep(operator_class, pid)
+      :error -> :ok
     end
   end
 
@@ -42,7 +42,7 @@ defmodule Flezha.State.InputLog.Sweep do
     Enum.filter(Paths.operator_classes(), &File.regular?(Paths.input_log_path(&1)))
   end
 
-  defp do_sweep(operator_class, path) do
+  defp do_sweep(operator_class, pid) do
     watermark = InputLog.watermark(operator_class)
     floor = operator_class |> truncation_floor(watermark) |> below_live_calls(operator_class)
 
@@ -53,13 +53,12 @@ defmodule Flezha.State.InputLog.Sweep do
     advanced? = floor != last_sweep_floor(operator_class)
 
     if is_integer(floor) and floor > 0 and advanced? do
-      {:ok, pid} = Supervisor.find_or_start({operator_class, :input_log})
       # A cast: the sweeper is housekeeping and must never die because a log is
       # busy. The log truncates in its turn; the floor remembered below is what
       # the next sweep compares against.
       GenServer.cast(pid, {:truncate_below, floor})
     else
-      maybe_warn_frozen(operator_class, path, watermark)
+      maybe_warn_frozen(operator_class, Paths.input_log_path(operator_class), watermark)
     end
 
     remember_sweep(operator_class, watermark, floor)

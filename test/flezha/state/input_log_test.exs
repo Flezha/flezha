@@ -86,6 +86,20 @@ defmodule Flezha.State.InputLogTest do
     assert InputLog.read_range(class, 0, 9) |> Enum.map(&elem(&1, 0)) == [4, 5, 6, 7, 8, 9]
   end
 
+  # fails when: the sweep reopens the log of an operator that moved away, so
+  # its return sets the stale copy aside under an open writer.
+  test "the sweep never opens a closed log", %{class: class} do
+    for i <- 0..9, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
+    InputLog.record_consumed(class, {class, "task", "a"}, 8)
+    on_exit(TestHelpers.override_env(:input_log_hold_window_ms, 60_000))
+    :ok = Supervisor.close_writers(class)
+
+    :ok = Sweep.run(class)
+    assert InputLog.offset_before_time(class, System.system_time(:millisecond)) == nil
+
+    assert Supervisor.lookup({class, :input_log}) == :error
+  end
+
   describe "the confirmed processed prefix" do
     # An idle Cell's own offset no longer holds the floor once the runner's
     # prefix is confirmed past it.

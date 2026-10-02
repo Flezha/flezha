@@ -284,7 +284,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     assert :ok = Shipper.ship_now(ref)
 
     # The peer holds the same reference with different records above the shipped
-    # cut — what an ordinary migration leaves behind, since `stage_operator/3`
+    # cut — what an ordinary migration leaves behind, since `pull_operator/3`
     # copies and nothing deletes the source.
     peer = start_peer_node(ctx.peer_base)
 
@@ -348,7 +348,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
       peer_adopts_and_ships(ctx, ref)
 
-      # This node still holds every file — `stage_operator/3` copies and nothing
+      # This node still holds every file — `pull_operator/3` copies and nothing
       # deletes the source — so "has the state" would let it claim straight
       # back. Only never having adopted stops it.
       :ok = Shipper.sweep_now()
@@ -412,7 +412,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
       assert File.read!(Paths.wal_path(ctx.cell_id)) == newer
       assert File.read!(sidecar) == "flow", "a class-level sidecar is not part of the copy"
-      assert adoption_residue(ctx.class) == []
+      refute File.exists?(Paths.set_aside_dir(ctx.class))
     end
 
     test "CONTROL: a local copy newer than the remote one is kept", ctx do
@@ -428,8 +428,6 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       assert File.read!(Paths.wal_path(ctx.cell_id)) == local
     end
 
-    # fails when: the stale copy is removed before the newer one has landed, so
-    # an unreadable remote lineage costs the node the only copy it had.
     # fails when: a Cell created here inside the last ship interval, which no
     # manifest names yet, is dropped with the copy the newer cut replaces.
     test "a Cell no manifest names yet survives the adoption", ctx do
@@ -445,17 +443,21 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       assert File.read!(Paths.wal_path(unshipped)) == local
     end
 
+    # fails when: the stale copy is removed before the newer one has landed, so
+    # an unreadable remote lineage costs the node the only copy it had.
     test "a newer lineage that cannot be read leaves the stale copy in place", ctx do
       ref = {:cell, ctx.cell_id}
       ship_stale_here_newer_on_peer(ctx, ref)
       stale = File.read!(Paths.wal_path(ctx.cell_id))
       Stub.delete(newest_range_blob(ref), [])
+      on_exit(NodeTestHelper.override_log_level(:warning))
 
       log = capture_log(fn -> assert :ok = Adoption.adopt_newest(ctx.class, nil) end)
 
       assert log =~ "which the backend does not hold"
+      assert log =~ "did not land whole; the local copy stays"
       assert File.read!(Paths.wal_path(ctx.cell_id)) == stale
-      assert adoption_residue(ctx.class) == []
+      refute File.exists?(Paths.set_aside_dir(ctx.class))
     end
 
     test "a bid is a compare-and-set, so simultaneous claimants cannot both win", _ctx do
@@ -565,12 +567,6 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       _ = :sys.get_state(peer)
       File.read!(Paths.wal_path(ctx.cell_id))
     end)
-  end
-
-  defp adoption_residue(class) do
-    [Paths.staging_class(class), Paths.set_aside_class(class)]
-    |> Enum.map(&Paths.class_dir/1)
-    |> Enum.filter(&File.exists?/1)
   end
 
   # `all_refs/1` reads `:state_root` when collection runs, and app env is global

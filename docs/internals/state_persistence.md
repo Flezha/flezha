@@ -88,19 +88,21 @@ controller whose disk holds it. A HotSwap handover normally carries state in-ban
 `Flezha.Operator.Handover.prepare/1` (via `Overwatch.prepare_handover_state/1`) sources it from
 the runner, so a migration triggered by that runner's death (the hub's own redistribution, after
 a controller loses its last runner for a factory and withdraws it) ships an empty payload. The handover stamps `source_node`; on an
-empty payload the destination runs `WalTransfer.stage_operator/3` against that node before the
+empty payload the destination runs `WalTransfer.pull_operator/3` against that node before the
 ordinary replay. The pull carries every durable file of the instance, one reference at a time:
 each Cell's file set (`{:cell, cell_id}`), a steps operator's journal under its reserved identity, and
 the instance's input log (`{:input_log, class}`), because a journal without its log would seed
 the floor in an empty offset space. `Flezha.State.Adoption` runs it once, as the operator arrives
-and before any of its writers opens: every reference lands in a staging directory beside the
-class, and one that fails discards the stage. The staged copy replaces the local one only when,
-on every reference both hold, it is at least as new (`Artifact.freshness/1`: the WAL-owner epoch,
-then the highest seq; a tie goes to the staged copy; a reference only the local copy holds is
-carried over). The switch runs under the class's writer-start lock, closes writers left by an operator
-no longer bound here, and is two directory renames that
-`Adoption.settle/0` resolves at boot after a crash: the old copy, or the new one once both renames
-are done. The
+and before any of its writers opens, and only when the source's copy is newer than this node's
+(`Artifact.freshness/1`: the WAL-owner epoch, then the highest seq; a tie goes to the source).
+A local copy it replaces is first renamed aside whole, so the pull lands as on a node that holds
+nothing; once every reference has landed, what only the old copy held (a reference the source
+lacks, a class-level sidecar) is copied back and the old copy is removed, and otherwise the old
+copy comes back. The landing is recorded atomically, with the files to copy back, before any is
+copied, so at the next arrival a set-aside copy recorded as landed has its copy-back finished,
+and an unrecorded one (a crash before the newer copy landed) comes back. Writers still open on the class are closed before the bind opens its
+own, nothing is replaced while another operator bound on the node owns the class, and a source
+that cannot be asked is logged and the local copy bound unchecked. The
 transfer is destination-driven — the source only answers reads
 (`Paths.durable_refs/1`, `manifest/1`, `read_chunk/3` over `:erpc`) — so a source dying mid-transfer fails
 the pull instead of stranding a partial file. Each file lands through `Paths.atomic_install/2`

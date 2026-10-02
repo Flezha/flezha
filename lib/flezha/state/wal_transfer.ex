@@ -20,7 +20,10 @@ defmodule Flezha.State.WalTransfer do
   this is NOT ongoing replication.
   """
 
+  require Logger
+
   alias Flezha.Config.Durations
+  alias Flezha.State.DurabilityTier.Artifact
   alias Flezha.State.Paths
 
   @chunk_bytes 64 * 1024
@@ -70,39 +73,57 @@ defmodule Flezha.State.WalTransfer do
   # ---------- destination side ----------
 
   @doc """
-  Pull every durable file of `operator_class` from `source_node` into the
-  class's staging directory (`Paths.staging_class/1`): its Cells, a steps
-  operator's journal, and its input log, which travel together because a
+  Pull every durable file of `operator_class` from `source_node`: its Cells,
+  a steps operator's journal, and its input log, which travel together because a
   journal pulled without its log seeds the instance's floor in an empty
-  offset space. `:ok` once every reference has landed, `:none` when the source
-  holds nothing, or the first failure: a copy missing any reference is never
-  adopted (`Flezha.State.Adoption`).
+  offset space. Returns the number of references whose files landed; `0`
+  means the source held nothing and a cold start is correct. A per-reference
+  failure is logged via telemetry and skipped — one unreadable Cell must not
+  cost the operator the rest.
   """
-  @spec stage_operator(node(), binary(), keyword()) :: :ok | :none | {:error, term()}
-  def stage_operator(source_node, operator_class, opts \\ []) do
+  @spec pull_operator(node(), binary(), keyword()) :: non_neg_integer()
+  def pull_operator(source_node, operator_class, opts \\ [])
+
+  def pull_operator(source_node, _operator_class, _opts) when source_node == node(), do: 0
+
+  def pull_operator(source_node, operator_class, opts) do
     timeout = Keyword.get(opts, :timeout, Durations.get(:wal_transfer_call_ms))
-    staged = Paths.staging_class(operator_class)
 
     case call(source_node, Paths, :durable_refs, [operator_class], timeout) do
-      {:ok, []} ->
-        :none
-
       {:ok, refs} ->
-        Enum.reduce_while(refs, :ok, fn ref, :ok ->
-          source_node
-          |> pull_cell(ref, Keyword.put(opts, :as, Paths.ref_under(ref, staged)))
-          |> staged_or_halt()
-        end)
+        Enum.count(refs, &landed?(pull_cell(source_node, &1, opts)))
 
-      {:error, reason} = err ->
+      {:error, reason} ->
         emit(:wal_pull_failed, %{operator_class: operator_class, reason: reason})
-        err
+        0
     end
   end
 
-  defp staged_or_halt({:ok, files}) when files > 0, do: {:cont, :ok}
-  defp staged_or_halt({:ok, 0}), do: {:halt, {:error, :nothing_pulled}}
-  defp staged_or_halt({:error, _} = err), do: {:halt, err}
+  defp landed?({:ok, files}), do: files > 0
+  defp landed?(_), do: false
+
+  @doc """
+  How new `source_node`'s copy of `operator_class` is (`Artifact.freshness_of/1`),
+  `%{}`, logged, when the source cannot be asked.
+  """
+  @spec freshness(node(), binary()) :: %{ref() => term()}
+  def freshness(source_node, operator_class) do
+    timeout = Durations.get(:wal_transfer_call_ms)
+
+    case call(source_node, Artifact, :freshness_of, [operator_class], timeout) do
+      {:ok, theirs} ->
+        theirs
+
+      {:error, reason} ->
+        Logger.warning(
+          "[state] #{operator_class}: #{source_node} could not be asked for its copy " <>
+            "(#{inspect(reason)}); the local copy is bound unchecked"
+        )
+
+        emit(:wal_pull_failed, %{operator_class: operator_class, reason: reason})
+        %{}
+    end
+  end
 
   @doc """
   Pull every file of `ref` from `source_node` into this node's state tree.

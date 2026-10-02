@@ -231,17 +231,10 @@ defmodule Flezha.State.DurabilityTier.Artifact do
     RuntimeError -> :unreadable
   end
 
-  @doc """
-  `freshness/1` of every durable reference `operator_class` holds on this node,
-  keyed by the same reference under `as`.
-  """
-  @spec freshness_of(binary(), binary() | nil) :: %{ref() => term()}
-  def freshness_of(operator_class, as \\ nil) do
-    Map.new(
-      Paths.durable_refs(operator_class),
-      &{Paths.ref_under(&1, as || operator_class), freshness(&1)}
-    )
-  end
+  @doc "`freshness/1` of every durable reference `operator_class` holds on this node."
+  @spec freshness_of(binary()) :: %{ref() => term()}
+  def freshness_of(operator_class),
+    do: Map.new(Paths.durable_refs(operator_class), &{&1, freshness(&1)})
 
   @doc """
   Whether one operator's copy marked `theirs` replaces the local copy marked
@@ -249,8 +242,8 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   a lineage with ours unless ours is empty, and on every shared reference it is
   at least as new. A tie goes to it: it is the copy the operator's current
   owner wrote, and two histories of equal length differ only in who wrote them.
-  A reference only ours holds does not count against it: the switch carries
-  it over (`Flezha.State.Adoption`).
+  A reference only ours holds does not count against it: the adoption keeps
+  it (`Flezha.State.Adoption`).
   """
   @spec copy_supersedes?(%{ref() => term()}, %{ref() => term()}) :: boolean()
   def copy_supersedes?(theirs, ours) do

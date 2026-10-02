@@ -9,10 +9,11 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   here whatever they are — a torn upload, a superseded range, a half-finished
   correction — which is what makes manifest-last atomicity a recovery property.
 
-  Nothing is hydrated over local state here: a reference with local durable
-  files is left as it is. A newer cut another controller shipped replaces the
-  local copy only whole, through `stage_operator/3`, where the operator is
-  adopted (`Flezha.State.Adoption`).
+  Nothing is hydrated over local state: a reference with local durable files is
+  left exactly as it is, so a partially-restored node can never lose a record
+  that a stale remote copy would have overwritten. A newer cut another
+  controller shipped replaces a local copy only by `Flezha.State.Adoption`
+  setting that copy aside first (`shipped_freshness/3` says how new it is).
 
   Once the files land, the ordinary restore path runs unchanged — there is no
   second restore implementation.
@@ -21,9 +22,9 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   require Logger
 
   alias Flezha.Dlq
-  alias Flezha.State.{DurabilityTier, InputLog, Outbox, Paths, TaskJournal}
   alias Flezha.State.DurabilityTier.{Artifact, Manifest}
   alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig
+  alias Flezha.State.{DurabilityTier, InputLog, Outbox, Paths, TaskJournal}
 
   @doc """
   Hydrate every shipped reference of `operator_class` whose local files are
@@ -55,53 +56,22 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   end
 
   @doc """
-  Stage `operator_class`'s shipped Cells, task-journal and input log under
-  `Paths.staging_class/1` when another controller wrote them and they replace
-  the local copy (`Artifact.copy_supersedes?/2`): `{:ok, manifests}` once every
-  one has landed, for `seed_adopted/1` after the switch, `:none` when no other
-  controller wrote any, `:not_newer` when the local copy is newer, or the
-  first failure.
+  How new the cut of `operator_class`'s Cells, task-journal and input log
+  another controller shipped is, as `%{ref => Manifest.freshness/1}`; `%{}`
+  when this controller shipped every one of them.
   """
-  @spec stage_operator(module(), keyword(), binary()) ::
-          {:ok, [Manifest.t()]} | :none | :not_newer | {:error, term()}
-  def stage_operator(module, opts, operator_class) do
+  @spec shipped_freshness(module(), keyword(), binary()) :: %{Paths.durable_ref() => term()}
+  def shipped_freshness(module, opts, operator_class) do
     log_key = Manifest.key({:input_log, operator_class})
 
     manifests =
       manifests(module, opts, Manifest.prefix(:cell, [operator_class])) ++
         manifests(module, opts, log_key, &(&1 == log_key))
 
-    theirs = Map.new(manifests, &{&1.ref, Manifest.freshness(&1)})
-    staged = Paths.staging_class(operator_class)
-
-    cond do
-      Enum.all?(manifests, &(&1.owner == DurabilityTier.writer_id())) ->
-        :none
-
-      Artifact.copy_supersedes?(theirs, Artifact.freshness_of(operator_class)) ->
-        stage_all(module, opts, manifests, staged)
-
-      true ->
-        :not_newer
-    end
+    if Enum.all?(manifests, &(&1.owner == DurabilityTier.writer_id())),
+      do: %{},
+      else: Map.new(manifests, &{&1.ref, Manifest.freshness(&1)})
   end
-
-  defp stage_all(module, opts, manifests, staged) do
-    Enum.reduce_while(manifests, {:ok, manifests}, fn manifest, staged_so_far ->
-      case hydrate(module, opts, manifest, Paths.ref_under(manifest.ref, staged)) do
-        :ok -> {:cont, staged_so_far}
-        err -> {:halt, err}
-      end
-    end)
-  end
-
-  @doc """
-  Seed what this node keeps in memory about each Cell `stage_operator/3`
-  staged, once its copy is in place: its consumed offset and, for a
-  task-journal, its instance's floor.
-  """
-  @spec seed_adopted([Manifest.t()]) :: :ok
-  def seed_adopted(manifests), do: Enum.each(manifests, &seed_memory/1)
 
   @doc """
   Hydrate only the named cell keys of one Tasklet.
@@ -239,67 +209,57 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
     if Artifact.has_local_state?(ref) do
       :ok
     else
-      with :ok <- hydrate(module, opts, manifest, ref), do: seed_memory(manifest)
+      case fetch_and_write(module, opts, manifest) do
+        :ok ->
+          seed_local_facts(manifest)
+          emit(:hydrated, ref, manifest)
+
+        # A referenced artifact the store does not hold is a CORRUPT LINEAGE, not
+        # a transport problem, and the two call for opposite user responses:
+        # one waits for the backend, the other must be acted on while some node
+        # still has a local copy to re-ship from. Degrading it into a silent cold
+        # start is what made this class of damage discoverable only on recovery
+        # day.
+        {:error, {:missing_artifact, artifact}} ->
+          Logger.error(
+            "[durability] #{inspect(ref)} references #{artifact}, which the backend does not " <>
+              "hold. Its remote lineage is incomplete and cannot be recovered from as it stands."
+          )
+
+          :telemetry.execute(
+            [:flezha, :state, :artifact_missing],
+            %{count: 1},
+            %{ref: inspect(ref), artifact: artifact}
+          )
+
+        {:error, reason} ->
+          Logger.error("[durability] hydration failed for #{inspect(ref)}: #{inspect(reason)}")
+
+          :telemetry.execute(
+            [:flezha, :state, :hydration_failed],
+            %{count: 1},
+            %{ref: inspect(ref), reason: inspect(reason)}
+          )
+      end
     end
   end
 
-  # Writes `manifest`'s cut as `target`: its own reference, or the same one
-  # under a staged class.
-  defp hydrate(module, opts, %Manifest{ref: ref} = manifest, target) do
-    case fetch_and_write(module, opts, manifest, target) do
-      :ok ->
-        seed_files(manifest, target)
-        emit(:hydrated, ref, manifest)
-
-      # A referenced artifact the store does not hold is a CORRUPT LINEAGE, not
-      # a transport problem, and the two call for opposite user responses:
-      # one waits for the backend, the other must be acted on while some node
-      # still has a local copy to re-ship from. Degrading it into a silent cold
-      # start is what made this class of damage discoverable only on recovery
-      # day.
-      {:error, {:missing_artifact, artifact}} = err ->
-        Logger.error(
-          "[durability] #{inspect(ref)} references #{artifact}, which the backend does not " <>
-            "hold. Its remote lineage is incomplete and cannot be recovered from as it stands."
-        )
-
-        :telemetry.execute(
-          [:flezha, :state, :artifact_missing],
-          %{count: 1},
-          %{ref: inspect(ref), artifact: artifact}
-        )
-
-        err
-
-      {:error, reason} = err ->
-        Logger.error("[durability] hydration failed for #{inspect(ref)}: #{inspect(reason)}")
-
-        :telemetry.execute(
-          [:flezha, :state, :hydration_failed],
-          %{count: 1},
-          %{ref: inspect(ref), reason: inspect(reason)}
-        )
-
-        err
-    end
-  end
-
-  defp fetch_and_write(module, opts, %Manifest{file: %{blob: blob}}, target) do
+  defp fetch_and_write(module, opts, %Manifest{file: %{blob: blob}} = manifest) do
     with {:ok, bytes} <- fetch_artifact(module, opts, blob) do
-      Artifact.unpack(target, bytes)
+      Artifact.unpack(manifest.ref, bytes)
     end
   end
 
-  defp fetch_and_write(module, opts, %Manifest{} = manifest, target) do
-    with :ok <- write_snapshots(module, opts, manifest, target) do
-      write_ranges(module, opts, manifest, target)
+  defp fetch_and_write(module, opts, %Manifest{} = manifest) do
+    with :ok <- write_snapshots(module, opts, manifest) do
+      write_ranges(module, opts, manifest)
     end
   end
 
-  defp write_snapshots(module, opts, manifest, target) do
+  defp write_snapshots(module, opts, manifest) do
     Enum.reduce_while(manifest.snapshots, :ok, fn %{seq: seq, blob: blob}, :ok ->
       with {:ok, bytes} <- fetch_artifact(module, opts, blob),
-           :ok <- Artifact.write_snapshot(target, seq, bytes) do
+           :ok <- Artifact.write_snapshot(manifest.ref, seq, bytes) do
         {:cont, :ok}
       else
         {:error, _} = err -> {:halt, err}
@@ -310,7 +270,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   # Ranges are disjoint and ordered by construction, so concatenating them in
   # `from` order reproduces the WAL framing byte for byte — the same bytes the
   # local writer would have left behind.
-  defp write_ranges(module, opts, manifest, target) do
+  defp write_ranges(module, opts, manifest) do
     manifest.ranges
     |> Enum.sort_by(& &1.from)
     |> Enum.reduce_while({:ok, []}, fn %{blob: blob}, {:ok, acc} ->
@@ -321,7 +281,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
     end)
     |> case do
       {:ok, chunks} ->
-        Artifact.write_wal(target, chunks |> Enum.reverse() |> IO.iodata_to_binary())
+        Artifact.write_wal(manifest.ref, chunks |> Enum.reverse() |> IO.iodata_to_binary())
 
       {:error, _} = err ->
         err
@@ -343,22 +303,15 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   # small local files that no record implies — its consumed offset, its WAL-owner
   # epoch, its saga markers — and a Cell that comes back without them looks
   # correct and behaves wrongly. Every write here is an overwrite of a fixed
-  # path, so a retry after a partial hydration converges. The files land with
-  # the cut, wherever it is written; what this node holds in memory is seeded
-  # once the cut is in place.
-  defp seed_files(manifest, {:cell, cell_id}) do
+  # path, so a retry after a partial hydration converges.
+  defp seed_local_facts(%Manifest{ref: {:cell, {class, _, _} = cell_id}} = manifest) do
+    seed_consumed_offset(class, cell_id, manifest)
     seed_epoch(cell_id, manifest)
     seed_markers(cell_id, manifest)
-  end
-
-  defp seed_files(_manifest, _target), do: :ok
-
-  defp seed_memory(%Manifest{ref: {:cell, {class, _, _} = cell_id}} = manifest) do
-    seed_consumed_offset(class, cell_id, manifest)
     seed_journal_floor(cell_id)
   end
 
-  defp seed_memory(_manifest), do: :ok
+  defp seed_local_facts(_manifest), do: :ok
 
   # Normally rebuilt from the effect records in the WAL tail — but a compacted
   # Cell ships a snapshot and no effect record, so the position its cut is

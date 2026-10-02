@@ -81,7 +81,8 @@ defmodule Flezha.State.Durable do
     {:wal_transfer, "lib/flezha/state/wal_transfer.ex", :whole, :inline, ".transferring", false,
      true},
     {:file_sink_progress, "lib/flezha/plugin/provider/file/storage/local.ex", :whole, :inline,
-     ".tmp", false, false}
+     ".tmp", false, false},
+    {:landed_mark, "lib/flezha/state/paths.ex", :whole, :inline, ".tmp", false, true}
   ]
 
   @rows Map.new(@table, fn row ->

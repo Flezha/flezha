@@ -27,7 +27,7 @@ defmodule Flezha.State.DurabilityTier do
   alias Flezha.Config.Durations
   alias Flezha.Operator.ClassRegistry
   alias Flezha.Process.Cspec
-  alias Flezha.State.DurabilityTier.{Artifact, Hydrator, Manifest, Shipper}
+  alias Flezha.State.DurabilityTier.{Artifact, Hydrator, Shipper}
   alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig
   alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
@@ -101,7 +101,7 @@ defmodule Flezha.State.DurabilityTier do
   reference's remote lineage.
 
   Shipping alone must never be enough to claim one: a migration leaves the
-  source node holding a full copy of the state (`WalTransfer.stage_operator/3`
+  source node holding a full copy of the state (`WalTransfer.pull_operator/3`
   copies, and nothing deletes the source), so its backstop sweep would
   otherwise bid the lineage back and fence the node that actually runs the
   operator now.
@@ -496,8 +496,8 @@ defmodule Flezha.State.DurabilityTier do
   @doc """
   Hydrate `operator_class`'s artifacts from the remote manifest when its local
   state is absent. A no-op when the tier is off, when nothing is shipped, or
-  when local state already exists; a newer shipped copy replaces it only
-  through `stage_operator/1`.
+  when local state already exists; a newer shipped copy replaces a local one
+  only through `Flezha.State.Adoption`.
   """
   @spec hydrate_operator(binary()) :: :ok
   def hydrate_operator(operator_class) when is_binary(operator_class) do
@@ -507,22 +507,14 @@ defmodule Flezha.State.DurabilityTier do
     :ok
   end
 
-  @doc """
-  Stage the backend's copy of `operator_class` for `Flezha.State.Adoption` when
-  another controller shipped a newer one (`Hydrator.stage_operator/3`); `:none`
-  when the tier is off.
-  """
-  @spec stage_operator(binary()) :: {:ok, [Manifest.t()]} | :none | :not_newer | {:error, term()}
-  def stage_operator(operator_class) do
+  @doc "`Hydrator.shipped_freshness/3` against the configured backend; `%{}` when the tier is off."
+  @spec shipped_freshness(binary()) :: %{Paths.durable_ref() => term()}
+  def shipped_freshness(operator_class) do
     case BackendConfig.resolve() do
-      {module, opts} -> Hydrator.stage_operator(module, opts, operator_class)
-      :none -> :none
+      {module, opts} -> Hydrator.shipped_freshness(module, opts, operator_class)
+      :none -> %{}
     end
   end
-
-  @doc "Seed what this node keeps in memory about a staged copy now in place."
-  @spec seed_adopted([Manifest.t()]) :: :ok
-  defdelegate seed_adopted(manifests), to: Hydrator
 
   @doc """
   Hydrate only the named cell keys of one Tasklet.

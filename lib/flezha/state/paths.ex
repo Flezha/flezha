@@ -98,10 +98,12 @@ defmodule Flezha.State.Paths do
 
   @claims_table :flezha_state_namespaces
 
-  # The siblings of a class directory that `Flezha.State.Adoption` stages a
-  # newer copy in and sets the old one aside in.
-  @staged ".adopting"
+  # The siblings a class directory is set aside under while a newer copy of its
+  # state is fetched, and discarded under once that copy is in place
+  # (`Flezha.State.Adoption`); no scanner reads either as a class.
   @set_aside ".superseded"
+  @discarded ".discarded"
+  @landed ".landed"
 
   @doc """
   Create the class→namespace claims table. Called once by
@@ -156,8 +158,7 @@ defmodule Flezha.State.Paths do
   """
   @spec namespace_of_class(binary()) :: binary()
   def namespace_of_class(operator_class) when is_binary(operator_class) do
-    class = adopting_for(operator_class) || operator_class
-    claimed_namespace(class) || disk_namespace(class) || "_system"
+    claimed_namespace(operator_class) || disk_namespace(operator_class) || "_system"
   end
 
   @doc "Directory holding one namespace's durable state — the first level under `state_root/0`."
@@ -407,11 +408,8 @@ defmodule Flezha.State.Paths do
   """
   @spec durable_refs(binary()) :: [durable_ref()]
   def durable_refs(operator_class) when is_binary(operator_class) do
-    # A staged copy keeps the instance's journal under the instance's own id.
-    journal_cell =
-      {operator_class, adopting_for(operator_class) || operator_class, @journal_cell_key}
-
-    journal = if File.exists?(wal_path(journal_cell)), do: [journal_cell], else: []
+    journal =
+      if File.exists?(journal_path(operator_class)), do: [journal_id(operator_class)], else: []
 
     log =
       if File.exists?(input_log_path(operator_class)),
@@ -455,41 +453,71 @@ defmodule Flezha.State.Paths do
     prune_class_dir(operator_class)
   end
 
-  @doc "The class a newer copy of `operator_class` is staged under, in its namespace."
-  @spec staging_class(binary()) :: binary()
-  def staging_class(operator_class), do: operator_class <> @staged
+  @doc "Where `operator_class`'s directory is set aside while a newer copy replaces it."
+  @spec set_aside_dir(binary()) :: binary()
+  def set_aside_dir(operator_class), do: class_dir(operator_class) <> @set_aside
 
-  @doc "The class `operator_class`'s directory is set aside under while a staged copy replaces it."
-  @spec set_aside_class(binary()) :: binary()
-  def set_aside_class(operator_class), do: operator_class <> @set_aside
-
-  @doc """
-  The class a staged or set-aside directory belongs to, or `nil` for a class
-  directory. Neither sibling is a class to any scanner.
-  """
-  @spec adopting_for(binary()) :: binary() | nil
-  def adopting_for(name) do
-    Enum.find_value([@staged, @set_aside], fn suffix ->
-      if String.ends_with?(name, suffix), do: String.replace_suffix(name, suffix, "")
-    end)
-  end
+  @doc "Rename `operator_class`'s directory aside (`set_aside_dir/1`)."
+  @spec set_aside(binary()) :: :ok
+  def set_aside(operator_class),
+    do: File.rename!(class_dir(operator_class), set_aside_dir(operator_class))
 
   @doc """
-  Remove a staged or set-aside directory, the one way an adoption deletes
-  state. A path that is no such sibling is left alone.
+  Put a set-aside copy back in place of whatever an interrupted or failed
+  adoption left in the class directory, and finish removing a discarded one;
+  a no-op when neither exists.
   """
-  @spec remove_adoption_dir(binary()) :: :ok
-  def remove_adoption_dir(path) do
-    if adopting_for(Path.basename(path)), do: File.rm_rf(path)
+  @spec restore_set_aside(binary()) :: :ok
+  def restore_set_aside(operator_class) do
+    {:ok, _} = File.rm_rf(class_dir(operator_class) <> @discarded)
+    aside = set_aside_dir(operator_class)
+
+    if File.exists?(aside) do
+      {:ok, _} = File.rm_rf(class_dir(operator_class))
+      File.rename!(aside, class_dir(operator_class))
+    end
+
     :ok
   end
 
-  @doc "`ref` as the same reference under `operator_class`."
-  @spec ref_under(durable_ref(), binary()) :: durable_ref()
-  def ref_under({:cell, {_class, tasklet_id, cell_key}}, operator_class),
-    do: {:cell, {operator_class, tasklet_id, cell_key}}
+  @doc """
+  Remove a set-aside copy and its landing record (`mark_landed/2`) once what it
+  keeps is copied back. A crash part-way leaves a discarded copy, which the
+  next `restore_set_aside/1` finishes removing, never puts back.
+  """
+  @spec drop_set_aside(binary()) :: :ok
+  def drop_set_aside(operator_class) do
+    aside = set_aside_dir(operator_class)
+    discarded = class_dir(operator_class) <> @discarded
 
-  def ref_under({:input_log, _class}, operator_class), do: {:input_log, operator_class}
+    if File.exists?(aside), do: File.rename!(aside, discarded)
+    _ = File.rm(class_dir(operator_class) <> @landed)
+    {:ok, _} = File.rm_rf(discarded)
+    :ok
+  end
+
+  @doc """
+  Record that the copy replacing `operator_class`'s set-aside one has landed,
+  with the paths (relative to the class directory) to copy back from it.
+  """
+  @spec mark_landed(binary(), [binary()]) :: :ok | {:error, term()}
+  def mark_landed(operator_class, kept) do
+    if File.exists?(set_aside_dir(operator_class)) do
+      bytes = :erlang.term_to_binary(kept)
+      atomic_install(class_dir(operator_class) <> @landed, &:file.write(&1, bytes), :landed_mark)
+    else
+      :ok
+    end
+  end
+
+  @doc "The paths `mark_landed/2` recorded, or `:none` when no landing is recorded."
+  @spec landed_kept(binary()) :: {:ok, [binary()]} | :none
+  def landed_kept(operator_class) do
+    case File.read(class_dir(operator_class) <> @landed) do
+      {:ok, bytes} -> {:ok, :erlang.binary_to_term(bytes, [:safe])}
+      {:error, _} -> :none
+    end
+  end
 
   defp snapshot_file_path(pid, cell_key, name) do
     with ["", seq_str] <-
@@ -646,7 +674,7 @@ defmodule Flezha.State.Paths do
         dir = namespace_dir(namespace),
         class <- list_dir(dir),
         File.dir?(Path.join(dir, class)),
-        adopting_for(class) == nil,
+        not String.ends_with?(class, [@set_aside, @discarded]),
         uniq: true,
         do: class
   end
@@ -747,9 +775,7 @@ defmodule Flezha.State.Paths do
     Enum.uniq(keys)
   end
 
-  @doc "The entries of `dir`, or none when it cannot be listed."
-  @spec list_dir(binary()) :: [binary()]
-  def list_dir(dir) do
+  defp list_dir(dir) do
     case File.ls(dir) do
       {:ok, names} -> names
       {:error, _} -> []

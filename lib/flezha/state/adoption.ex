@@ -1,23 +1,23 @@
 defmodule Flezha.State.Adoption do
   @moduledoc """
-  An operator's durable state replaced whole by a newer copy when the operator
-  comes to this node: the copy on the node it moves from, or the cut another
-  controller shipped to the durability backend.
+  An arriving operator's durable state replaced by the newest copy there is:
+  the copy on the node it moves from, or else the cut another controller
+  shipped to the durability backend, compared by the writer epoch and top seq
+  each reference carries (`Artifact.copy_supersedes?/2`).
 
-  The copy is staged beside the class directory (`Paths.staging_class/1`), every
-  reference at once; one that does not land discards the stage, so the Cells,
-  the task-journal and the input log never come from two copies. It replaces
-  the local copy only when `Artifact.copy_supersedes?/2` says so, and never
-  while an operator bound on this node owns the class: writers an operator
-  left open when it moved away are closed first, under the lock every writer
-  start takes (`Supervisor.without_new_writers/2`). A refusal is logged and
-  emitted as `[:flezha, :state, :adoption_refused]`. The switch is two directory
-  renames, the live directory aside and the staged one into its place, and
-  `settle/0` resolves one a crash interrupted before anything reads the tree:
-  the old copy comes back unless the switch had completed.
+  A local copy the newer one replaces is set aside with one rename
+  (`Paths.set_aside/1`), so the pull (`WalTransfer.pull_operator/3`) or the
+  hydration (`DurabilityTier.hydrate_operator/1`) runs as on a node that holds
+  nothing. Once every reference of the newer copy has landed, what only the old
+  copy held (a reference the newer one lacks, a class-level sidecar) is copied
+  back and the old copy is removed; otherwise the old copy comes back whole.
+  The landing is recorded with the files to copy back (`Paths.mark_landed/2`)
+  before any is copied, so a crash leaves either a landed copy whose copy-back
+  the next arrival finishes, or an unmarked set-aside copy it puts back. Nothing is replaced
+  while another operator bound on this node owns the class.
 
-  It runs once per arrival, where the operator is adopted
-  (`Flezha.Operator.Replay.adopt_moved_state/3`), before anything of it is open.
+  It runs once per arrival (`Flezha.Operator.Replay.adopt_moved_state/3`),
+  before any writer of the operator opens on this node.
   """
 
   require Logger
@@ -27,142 +27,110 @@ defmodule Flezha.State.Adoption do
   alias Flezha.State.DurabilityTier.Artifact
 
   @doc """
-  Replace `operator_class`'s local copy with the newest one available: the
-  copy on `source` when a node is named, else the backend's. `:ok` whatever
-  the outcome; a copy that is not newer, or cannot be read, leaves the local
-  one as it is and says why.
+  Replace `operator_class`'s local copy with the newest one: the copy on
+  `source` when a node is named, else the backend's. A copy that is not newer,
+  or that does not land whole, leaves the local one as it is.
   """
   @spec adopt_newest(binary(), node() | nil) :: :ok
   def adopt_newest(operator_class, source) do
-    if source != nil or DurabilityTier.enabled?() do
-      discard_staged(operator_class)
+    :ok = recover(operator_class)
 
-      case stage(operator_class, source) do
-        {:ok, seeds} -> switch_if_newer(operator_class, seeds)
-        :none -> :ok
-        :not_newer -> refuse(operator_class, :not_newer)
-        {:error, reason} -> refuse(operator_class, {:not_staged, reason})
-      end
-
-      discard_staged(operator_class)
+    with theirs when theirs != %{} <- newest(operator_class, source),
+         ours = Artifact.freshness_of(operator_class),
+         true <- Artifact.copy_supersedes?(theirs, ours),
+         :unbound <- bound_here(operator_class) do
+      kept = set_aside(operator_class, ours, theirs)
+      fetch(operator_class, source)
+      settle(operator_class, kept, landed?(operator_class, theirs))
+      # Whatever the replaced copy had open (an operator stopped before its
+      # writers closed, a late frame admitted during the fetch) closes before
+      # the bind opens the class's writers.
+      Supervisor.close_writers(operator_class)
     end
 
     :ok
   end
 
-  defp discard_staged(operator_class),
-    do: Paths.remove_adoption_dir(Paths.class_dir(Paths.staging_class(operator_class)))
+  defp bound_here(operator_class) do
+    case Lookup.overwatch(operator_class) do
+      {:ok, pid} when pid != self() ->
+        Logger.warning(
+          "[state] #{operator_class}: a newer copy is not adopted, the operator is bound " <>
+            "on this node; the local copy stays"
+        )
 
-  defp stage(operator_class, nil), do: DurabilityTier.stage_operator(operator_class)
+        :bound
 
-  defp stage(operator_class, source) do
-    with :ok <- WalTransfer.stage_operator(source, operator_class), do: {:ok, []}
+      _none_or_self ->
+        :unbound
+    end
   end
 
-  defp switch_if_newer(operator_class, seeds) do
-    staged = Artifact.freshness_of(Paths.staging_class(operator_class), operator_class)
+  defp newest(operator_class, nil), do: DurabilityTier.shipped_freshness(operator_class)
+  defp newest(operator_class, source), do: WalTransfer.freshness(source, operator_class)
 
-    if Artifact.copy_supersedes?(staged, Artifact.freshness_of(operator_class)),
-      do: switch(operator_class, seeds),
-      else: refuse(operator_class, :not_newer)
-  end
+  defp fetch(operator_class, nil), do: DurabilityTier.hydrate_operator(operator_class)
+  defp fetch(operator_class, source), do: WalTransfer.pull_operator(source, operator_class)
 
-  # Under the class's start lock, so no writer opens between the close and the
-  # renames. Writers still open belong to an operator that is no longer bound
-  # here (one that moved away, or a sweep's input log) and close flushed; an
-  # operator another Overwatch here is bound with keeps its copy.
-  defp switch(operator_class, seeds) do
-    Supervisor.without_new_writers(operator_class, fn ->
-      if bound_here?(operator_class) do
-        refuse(operator_class, :bound)
-      else
-        :ok = Supervisor.close_writers(operator_class)
-        with :ok <- switch_in(operator_class), do: DurabilityTier.seed_adopted(seeds)
-      end
-    end)
-  end
+  # A node holding no reference fetches over what it has, as it always did.
+  defp set_aside(_operator_class, ours, _theirs) when ours == %{}, do: []
 
-  defp bound_here?(operator_class),
-    do: match?({:ok, pid} when pid != self(), Lookup.overwatch(operator_class))
-
-  defp refuse(operator_class, reason) do
-    Logger.warning(
-      "[state] #{operator_class}: a newer copy is not adopted, #{why(reason)}; " <>
-        "the local copy stays"
-    )
-
-    :telemetry.execute([:flezha, :state, :adoption_refused], %{count: 1}, %{
-      operator_class: operator_class,
-      reason: inspect(reason)
-    })
-  end
-
-  defp why(:not_newer), do: "the incoming copy is not newer than this node's"
-  defp why(:bound), do: "the operator is bound on this node"
-  defp why({:not_staged, reason}), do: "it could not be staged (#{inspect(reason)})"
-
-  # What the staged copy lacks is carried over from the live directory: the
-  # references only this node holds (a key written since the other copy was
-  # taken, a Cell no cut names yet), then the class-level sidecars. Adoption
-  # replaces references, never deletes one.
-  defp switch_in(operator_class) do
+  defp set_aside(operator_class, ours, theirs) do
     live = Paths.class_dir(operator_class)
-    staged_class = Paths.staging_class(operator_class)
-    staged = Paths.class_dir(staged_class)
-    aside = Paths.class_dir(Paths.set_aside_class(operator_class))
-    held = MapSet.new(Paths.durable_refs(staged_class), &Paths.ref_under(&1, operator_class))
+    only_here = Map.keys(ours) -- Map.keys(theirs)
 
-    for ref <- Paths.durable_refs(operator_class),
-        not MapSet.member?(held, ref),
-        path <- Paths.durable_files(ref),
-        File.exists?(path),
-        dest = Paths.durable_file_path(Paths.ref_under(ref, staged_class), Path.basename(path)) do
-      File.mkdir_p!(Path.dirname(dest))
-      File.cp!(path, dest)
-    end
+    kept =
+      for(ref <- only_here, path <- Paths.durable_files(ref), File.exists?(path), do: path) ++
+        for name <- File.ls!(live), path = Path.join(live, name), File.regular?(path), do: path
 
-    for name <- Paths.list_dir(live),
-        File.regular?(Path.join(live, name)),
-        not File.exists?(Path.join(staged, name)),
-        do: File.cp!(Path.join(live, name), Path.join(staged, name))
+    :ok = Paths.set_aside(operator_class)
+    Enum.map(kept, &Path.relative_to(&1, live))
+  end
 
-    with :ok <- rename_present(live, aside),
-         :ok <- rename_or_restore(staged, live, aside) do
-      Paths.remove_adoption_dir(aside)
+  defp landed?(operator_class, theirs) do
+    landed = Artifact.freshness_of(operator_class)
+
+    Enum.all?(Map.keys(theirs), &Map.has_key?(landed, &1)) and
+      Artifact.copy_supersedes?(landed, theirs)
+  end
+
+  # A set-aside copy marked landed only lacks its copy-back; an unmarked one
+  # is an adoption that never completed.
+  defp recover(operator_class) do
+    case Paths.landed_kept(operator_class) do
+      {:ok, kept} -> keep(operator_class, kept)
+      :none -> Paths.restore_set_aside(operator_class)
     end
   end
 
-  defp rename_present(from, to), do: if(File.exists?(from), do: File.rename(from, to), else: :ok)
-
-  defp rename_or_restore(staged, live, aside) do
-    with {:error, reason} = err <- File.rename(staged, live) do
-      _ = rename_present(aside, live)
-      Logger.error("[state] could not switch #{live} to a newer copy: #{inspect(reason)}")
-      err
-    end
+  defp settle(operator_class, kept, true = _landed) do
+    :ok = Paths.mark_landed(operator_class, kept)
+    keep(operator_class, kept)
   end
 
-  @doc """
-  Resolve every adoption a crash interrupted. Runs at boot, before anything
-  reads the state tree: a staged copy is discarded, and a directory set aside
-  comes back when its class has none, or goes when the switch had completed.
-  """
-  @spec settle() :: :ok
-  def settle() do
-    for namespace <- Paths.namespaces(),
-        dir = Paths.namespace_dir(namespace),
-        name <- Paths.list_dir(dir),
-        class = Paths.adopting_for(name),
-        class != nil do
-      path = Path.join(dir, name)
-
-      cond do
-        name == Paths.staging_class(class) -> Paths.remove_adoption_dir(path)
-        File.dir?(Path.join(dir, class)) -> Paths.remove_adoption_dir(path)
-        true -> File.rename!(path, Path.join(dir, class))
-      end
+  defp settle(operator_class, _kept, false) do
+    if File.exists?(Paths.set_aside_dir(operator_class)) do
+      Logger.warning(
+        "[state] #{operator_class}: a newer copy did not land whole; the local copy stays"
+      )
     end
 
-    :ok
+    Paths.restore_set_aside(operator_class)
+  end
+
+  # Idempotent: a file the newer copy or an earlier pass already placed stays.
+  defp keep(operator_class, kept) do
+    live = Paths.class_dir(operator_class)
+    aside = Paths.set_aside_dir(operator_class)
+
+    for rel <- kept,
+        from = Path.join(aside, rel),
+        to = Path.join(live, rel),
+        File.exists?(from) and not File.exists?(to) do
+      File.mkdir_p!(Path.dirname(to))
+      File.cp!(from, to)
+    end
+
+    Paths.drop_set_aside(operator_class)
   end
 end
