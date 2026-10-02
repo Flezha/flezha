@@ -368,12 +368,10 @@ defmodule Flezha.Plugin.Installer do
       customize_hostname_check: [match_fun: :public_key.pkix_verify_hostname_match_fun(:https)]
     ]
 
-    path = (uri.path || "/") <> if(uri.query, do: "?" <> uri.query, else: "")
-
     case Client.connect(:https, host, uri.port, transport) do
       {:ok, conn} ->
         answer =
-          Client.request(conn, "GET", path, [], "", Durations.get(:plugin_fetch_ms),
+          Client.request(conn, "GET", Client.target(uri), [], "", Durations.get(:plugin_fetch_ms),
             max_body_bytes: request.max
           )
 

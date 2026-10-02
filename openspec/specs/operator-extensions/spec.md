@@ -1235,8 +1235,8 @@ row SHALL take `live:` (default `false`); both SHALL be part of the provider's `
 the extension table and the plugin manager from the declaration only. A provider with a live
 option SHALL implement `reconfigure/2`; a declaration with a live option and no
 `reconfigure/2` SHALL fail to compile. The first-party providers `websocket`, `http_poll`,
-`stdout` and `kafka_producer` SHALL declare `shareable: true`; every other first-party
-provider SHALL declare `false`.
+`http_push`, `stdout` and `kafka_producer` SHALL declare `shareable: true`; every other
+first-party provider SHALL declare `false`.
 
 #### Scenario: The declaration answers sharing
 

@@ -27,6 +27,7 @@ defmodule Flezha.Plugin.Providers do
     "operator_postgres" => Provider.Postgres,
     "operator_websocket" => Provider.Websocket,
     "operator_http_poll" => Provider.HttpPoll,
+    "operator_http_push" => Provider.HttpPush,
     "operator_file_source" => Provider.File.Source,
     "operator_file_sink" => Provider.File.Sink,
     "operator_beam_msg" => Provider.BeamMsgForward,

@@ -525,6 +525,16 @@
       "message": "operator '{operator}' already has {max_streams} streams open; try again",
       "details": ["operator", "max_streams"]
     },
+    "http_push.exhausted": {
+      "class": "unavailable",
+      "message": "the output was not delivered to its HTTP endpoint: {reason}",
+      "details": ["reason"]
+    },
+    "http_push.rejected": {
+      "class": "invalid",
+      "message": "the HTTP endpoint refused the output with status {status}",
+      "details": ["status"]
+    },
     "input.dead_lettered": {
       "class": "unavailable",
       "message": "an input of operator '{operator}' on channel '{channel}' was dead-lettered as '{entry}' after {attempts} attempt(s): {error}",
@@ -1307,10 +1317,11 @@
     },
     "plugin.headers_invalid": {
       "class": "invalid",
-      "message": "option '{option}' must be a JSON object mapping header names to text or number values",
-      "details": ["provider", "option"],
+      "message": "option '{option}' must be a JSON object mapping header names to text or number values, without a header the plugin sets itself or one a request cannot carry",
+      "details": ["provider", "option", "header"],
       "reasons": [
-        {"tag": "headers_invalid", "args": ["provider", "option"]}
+        {"tag": "headers_invalid", "args": ["provider", "option"]},
+        {"tag": "headers_invalid", "args": ["provider", "option", "header"]}
       ]
     },
     "plugin.help_failed": {

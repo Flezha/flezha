@@ -178,6 +178,13 @@ SDK raises or returns its one error type carrying them.
 | `http.listen_failed` | unavailable | 7 | the HTTP server of operator '{operator}' cannot listen on {address} port {port}: {reason} |  |
 | `http.streams_full` | unavailable | 7 | operator '{operator}' already has {max_streams} streams open; try again |  |
 
+### http_push
+
+| Code | Class | Exit | Message | Hint |
+|---|---|---|---|---|
+| `http_push.exhausted` | unavailable | 7 | the output was not delivered to its HTTP endpoint: {reason} |  |
+| `http_push.rejected` | invalid | 2 | the HTTP endpoint refused the output with status {status} |  |
+
 ### input
 
 | Code | Class | Exit | Message | Hint |
@@ -314,7 +321,7 @@ SDK raises or returns its one error type carrying them.
 | `plugin.forward_to_self` | invalid | 2 | target_operator_id '{target}' is the operator the plugin is attached to |  |
 | `plugin.group_disable_partial` | unavailable | 7 | the plugin could not be disabled on {failed} |  |
 | `plugin.group_enable_partial` | unavailable | 7 | the plugin was enabled on {enabled} of {total} partitions and failed on {failed} |  |
-| `plugin.headers_invalid` | invalid | 2 | option '{option}' must be a JSON object mapping header names to text or number values |  |
+| `plugin.headers_invalid` | invalid | 2 | option '{option}' must be a JSON object mapping header names to text or number values, without a header the plugin sets itself or one a request cannot carry |  |
 | `plugin.help_failed` | internal | 1 | the help of plugin provider '{provider}' failed to render |  |
 | `plugin.hook_invalid` | invalid | 2 | hook {hook} is not a name, a [name, opts] pair, or an object with a name and an opts object |  |
 | `plugin.hook_key_missing` | invalid | 2 | an on_message hook needs its key option |  |

@@ -386,6 +386,7 @@ name, a provider, an operator and its options.
 | Plugin | What it connects |
 |---|---|
 | [`http_poll.md`](../plugins/http_poll.md) | an HTTP resource as an input |
+| [`http_push.md`](../plugins/http_push.md) | an HTTP endpoint as an output |
 | [`websocket_subscription.md`](../plugins/websocket_subscription.md) | a live socket, both directions |
 | [`kafka_producer.md`](../plugins/kafka_producer.md) | Kafka as an output |
 | [`postgres_sink.md`](../plugins/postgres_sink.md) | Postgres as an output |

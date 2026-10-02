@@ -121,14 +121,8 @@ defmodule Flezha.Observability.Export.OtlpClient do
   # The connection is kept across posts and reopened on disconnect; only the
   # exchange itself is shared with the S3 client.
   defp ensure_conn(state, scheme, host, port) do
-    if HttpClient.open?(state.conn) do
-      {:ok, state}
-    else
-      case HttpClient.connect(scheme, host, port) do
-        {:ok, conn} -> {:ok, %{state | conn: conn}}
-        {:error, reason} -> {:error, reason}
-      end
-    end
+    with {:ok, conn} <- HttpClient.ensure_open(state.conn, scheme, host, port),
+         do: {:ok, %{state | conn: conn}}
   end
 
   defp send_request(%{conn: conn, headers: extra} = state, path, body) do
@@ -149,10 +143,8 @@ defmodule Flezha.Observability.Export.OtlpClient do
     end
   end
 
-  defp close_conn(%{conn: nil} = state), do: state
-
-  defp close_conn(%{conn: conn} = state) do
-    HttpClient.close(conn)
+  defp close_conn(state) do
+    HttpClient.close(state.conn)
     %{state | conn: nil}
   end
 

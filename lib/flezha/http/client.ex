@@ -32,10 +32,30 @@ defmodule Flezha.Http.Client do
   def connect(scheme, host, port, transport_opts \\ []),
     do: Mint.HTTP.connect(scheme, host, port, transport_opts: transport_opts)
 
-  @spec close(conn()) :: :ok
+  @doc "Close `conn`; a connection never opened (`nil`) closes as well."
+  @spec close(conn() | nil) :: :ok
+  def close(nil), do: :ok
+
   def close(conn) do
     _ = Mint.HTTP.close(conn)
     :ok
+  end
+
+  @doc """
+  `conn` while it is open, or a new connection: the one way a caller that keeps
+  a connection across requests reopens it after a disconnect.
+  """
+  @spec ensure_open(conn() | nil, :http | :https, binary(), :inet.port_number(), keyword()) ::
+          {:ok, conn()} | {:error, term()}
+  def ensure_open(conn, scheme, host, port, transport_opts \\ []) do
+    if open?(conn), do: {:ok, conn}, else: connect(scheme, host, port, transport_opts)
+  end
+
+  @doc "The request target of `uri`: its path, `/` when it has none, and its query."
+  @spec target(URI.t()) :: binary()
+  def target(%URI{path: path, query: query}) do
+    path = if path in [nil, ""], do: "/", else: path
+    if query, do: path <> "?" <> query, else: path
   end
 
   @spec open?(conn() | nil) :: boolean()

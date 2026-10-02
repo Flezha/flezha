@@ -215,6 +215,7 @@ defmodule Flezha.MixProject do
         "docs/sdk/full_form_tasklets.md",
         "docs/plugins/file.md",
         "docs/plugins/http_poll.md",
+        "docs/plugins/http_push.md",
         "docs/plugins/websocket_subscription.md",
         "docs/plugins/kafka_producer.md",
         "docs/plugins/postgres_sink.md",

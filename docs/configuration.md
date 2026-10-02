@@ -787,6 +787,7 @@ there is no second list to keep in step, and this page does not carry one.
 | `operator_kafka_producer` | [`plugins/kafka_producer.md`](plugins/kafka_producer.md) |
 | `operator_postgres` | [`plugins/postgres_sink.md`](plugins/postgres_sink.md) |
 | `operator_http_poll` | [`plugins/http_poll.md`](plugins/http_poll.md) |
+| `operator_http_push` | [`plugins/http_push.md`](plugins/http_push.md) |
 | `operator_file_source`, `operator_file_sink` | [`plugins/file.md`](plugins/file.md) |
 | `operator_websocket` | [`plugins/websocket_subscription.md`](plugins/websocket_subscription.md) |
 | `operator_forward` | [`plugins/operator_forward.md`](plugins/operator_forward.md) |

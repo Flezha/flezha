@@ -431,6 +431,7 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
       Flezha.Plugin.Provider.File.Source -> "docs/plugins/file.md"
       Flezha.Plugin.Provider.File.Sink -> "docs/plugins/file.md"
       Flezha.Plugin.Provider.HookWebhook -> "docs/plugins/hook_webhook.md"
+      Flezha.Plugin.Provider.HttpPush -> "docs/plugins/http_push.md"
       _ -> nil
     end
   end

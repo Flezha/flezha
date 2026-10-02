@@ -247,12 +247,19 @@ defmodule Flezha.Plugin do
 
   @doc """
   `opts` (a plugin's options, or a worker state holding them) without its
-  request headers, the one option a provider documents for a secret, for a log
-  or a crash report.
+  request headers and with its URL cut to the scheme, host and port, for a log
+  or a crash report: the headers, path and query are where a token goes.
   """
   @spec redact(map()) :: map()
-  def redact(%{headers: _} = opts), do: %{opts | headers: :redacted}
-  def redact(opts), do: opts
+  def redact(opts) do
+    opts = if is_map_key(opts, :headers), do: %{opts | headers: :redacted}, else: opts
+    if is_binary(opts[:url]), do: %{opts | url: origin(opts.url)}, else: opts
+  end
+
+  defp origin(url) do
+    %URI{scheme: scheme, host: host, port: port} = URI.parse(url)
+    URI.to_string(%URI{scheme: scheme, host: host, port: port})
+  end
 
   @doc """
   Whether this is a controller plugin: one its provider declares `type:

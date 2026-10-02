@@ -91,6 +91,7 @@ answer "what are the options"; a guide answers "what do I type".
 | [`installation.md`](plugins/installation.md) | Plugin packages: building, installing, loading at boot, statuses, errors, signing |
 | [`kafka_producer.md`](plugins/kafka_producer.md) | The Kafka producer sink: idempotence, batching, the in-flight window |
 | [`http_poll.md`](plugins/http_poll.md) | An HTTP resource as an operator input |
+| [`http_push.md`](plugins/http_push.md) | Each output sent as one HTTP request, a guaranteed one held until a 2xx |
 | [`file.md`](plugins/file.md) | A file, or an object in an S3 bucket, as an operator input and as its output |
 | [`websocket_subscription.md`](plugins/websocket_subscription.md) | Changing a live socket's subscription set without reconnecting |
 | [`operator_forward.md`](plugins/operator_forward.md) | One operator's output into another's input |

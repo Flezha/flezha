@@ -49,6 +49,7 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
     Flezha.Plugin.Provider.File.Source.WorkerSup,
     Flezha.Plugin.Provider.OperatorForward.WorkerSup,
     Flezha.Plugin.Provider.HttpPoll.WorkerSup,
+    Flezha.Plugin.Provider.HttpPush.WorkerSup,
     Flezha.Plugin.Provider.Kafka.Producer.WorkerSup,
     Flezha.Plugin.Provider.Postgres.WorkerSup,
     Flezha.Plugin.Provider.Websocket.WorkerSup,

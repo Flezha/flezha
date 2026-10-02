@@ -90,7 +90,8 @@ A 2xx completes an event. A 429, a 5xx, a timeout or a transport error is sent a
 1 s and then after 5 s, at most `retries` times, and is then dropped; any other status is
 dropped at once. The connection is opened again after a failed exchange. Each drop is
 counted, and logged at warning level once per plugin and status, naming the plugin and the
-URL's host: the URL's path and query and the headers may hold a token and are never logged.
+URL's host: the URL's path and query and the headers may hold a token and are never logged,
+nor shown in the status of the plugin's copy or its worker.
 
 ## Delivery
 
@@ -110,11 +111,12 @@ new copy both run for a moment, so an event can be sent twice. The DLQ and
 
 | Event | Source | Measurements | Metadata |
 | --- | --- | --- | --- |
-| `[:flezha, :plugin, :hook_webhook, :sent]` | `:flezha_hook_webhook` metric `sent` | `count` | `plugin` |
-| `[:flezha, :plugin, :hook_webhook, :failed]` | `:flezha_hook_webhook` event `failed` | `count` | `plugin`, `reason` (the status or the transport error) |
-| `[:flezha, :plugin, :hook_webhook, :dropped]` | `:flezha_hook_webhook` metric `dropped` | `count` | `plugin`, `reason` |
+| `[:flezha, :plugin, :hook_webhook, :shipped]` | `:flezha_hook_webhook` metric `shipped` | `count` | `plugin` |
+| `[:flezha, :plugin, :hook_webhook, :retried]` | `:flezha_hook_webhook` metric `retried` | `count` | `plugin`, `reason` (the status or the transport error) |
+| `[:flezha, :plugin, :hook_webhook, :failed]` | `:flezha_hook_webhook` event `failed` | `count` | `plugin`, `reason` |
 
-`failed` is one attempt that will be retried; `dropped` is an event given up.
+`retried` is one attempt that will be retried; `failed` is an event given up. These are the
+names every provider reports; the plugin sends through the worker the HTTP push plugin uses.
 
 ## Limits
 

@@ -1,37 +1,56 @@
 defmodule FlezhaTest.Helper.WebhookServer do
   @moduledoc """
-  A keep-alive HTTP/1.1 receiver on `:gen_tcp`, for a test that drives the
-  `hook_webhook` plugin: it reads every request on every connection, sends it to
-  the process that started it as `{:request, request_line, headers, body}`, and
-  answers it with the next of the statuses it was started with (the last one
-  repeats). `:hang` reads the request and never answers.
+  A keep-alive HTTP/1.1 receiver on `:gen_tcp`, for a test that drives an HTTP
+  sending plugin (`hook_webhook`, `http_push`): it reads every request on every
+  connection, sends it to the process that started it as
+  `{:request, request_line, headers, body}`, and answers it with the next of
+  the statuses it was started with (the last one repeats), which `set/2`
+  replaces. A status is a code, `{code, headers}` to answer with response
+  headers, `:hang` to read the request and never answer, or `:close` to close
+  the connection without an answer. `connections/1` counts the connections
+  accepted.
   """
 
   import ExUnit.Callbacks, only: [on_exit: 1]
 
   @doc "Listen on a free port; the listener and its acceptor go when the test does."
-  @spec start([pos_integer() | :hang]) :: %{port: :inet.port_number()}
+  @spec start([status]) :: %{
+          port: :inet.port_number(),
+          agent: pid(),
+          accepted: :counters.counters_ref()
+        }
+        when status: pos_integer() | {pos_integer(), [{binary(), binary()}]} | :hang | :close
   def start(statuses) do
     {:ok, listen} = :gen_tcp.listen(0, [:binary, packet: :raw, active: false, reuseaddr: true])
     {:ok, port} = :inet.port(listen)
     {:ok, agent} = Agent.start(fn -> statuses end)
+    accepted = :counters.new(1, [])
     test = self()
-    acceptor = spawn(fn -> accept(listen, agent, test) end)
+    acceptor = spawn(fn -> accept(listen, {agent, accepted}, test) end)
 
     on_exit(fn ->
       Process.exit(acceptor, :kill)
       :gen_tcp.close(listen)
     end)
 
-    %{port: port}
+    %{port: port, agent: agent, accepted: accepted}
   end
 
-  defp accept(listen, agent, test) do
+  @doc "Answer the requests from now on with `statuses`."
+  @spec set(map(), list()) :: :ok
+  def set(%{agent: agent}, statuses), do: Agent.update(agent, fn _ -> statuses end)
+
+  @doc "How many connections it has accepted."
+  @spec connections(map()) :: non_neg_integer()
+  def connections(%{accepted: accepted}), do: :counters.get(accepted, 1)
+
+  defp accept(listen, {agent, accepted} = server, test) do
     case :gen_tcp.accept(listen) do
       {:ok, socket} ->
+        :counters.add(accepted, 1, 1)
         pid = spawn(fn -> serve(socket, agent, test, "") end)
         :gen_tcp.controlling_process(socket, pid)
-        accept(listen, agent, test)
+        accept(listen, server, test)
 
       {:error, _} ->
         :ok
@@ -42,8 +61,10 @@ defmodule FlezhaTest.Helper.WebhookServer do
     case read_request(socket, buffer) do
       {:ok, request_line, headers, body, rest} ->
         send(test, {:request, request_line, headers, body})
-        answer(socket, next_status(agent))
-        serve(socket, agent, test, rest)
+
+        if answer(socket, next_status(agent)) == :ok,
+          do: serve(socket, agent, test, rest),
+          else: :gen_tcp.close(socket)
 
       :closed ->
         :ok
@@ -58,9 +79,13 @@ defmodule FlezhaTest.Helper.WebhookServer do
   end
 
   defp answer(_socket, :hang), do: Process.sleep(:infinity)
+  defp answer(_socket, :close), do: :closed
+  defp answer(socket, status) when is_integer(status), do: answer(socket, {status, []})
 
-  defp answer(socket, status),
-    do: :gen_tcp.send(socket, "HTTP/1.1 #{status} X\r\ncontent-length: 0\r\n\r\n")
+  defp answer(socket, {status, headers}) do
+    lines = Enum.map(headers, fn {name, value} -> "#{name}: #{value}\r\n" end)
+    :gen_tcp.send(socket, ["HTTP/1.1 #{status} X\r\n", lines, "content-length: 0\r\n\r\n"])
+  end
 
   defp read_request(socket, buffer) do
     case String.split(buffer, "\r\n\r\n", parts: 2) do

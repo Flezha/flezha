@@ -108,11 +108,18 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :operator, :started] => {:flezha_hooks, :on_operator_started, :event},
     [:flezha, :operator, :stopped] => {:flezha_hooks, :on_operator_stopped, :event},
     [:flezha, :dlq, :dead_lettered] => {:flezha_hooks, :on_dead_letter, :event},
-    # The webhook controller plugin: an event sent and one dropped are counts,
-    # a failed attempt that will be retried is read one at a time.
-    [:flezha, :plugin, :hook_webhook, :sent] => {:flezha_hook_webhook, :sent, :metric},
+    # The two HTTP senders (`Flezha.Plugin.Provider.HttpSend`): a request sent,
+    # retried or overflowed is a count; one given up is read one at a time. The
+    # webhook's queue is its copy's, so it never overflows its own.
+    [:flezha, :plugin, :hook_webhook, :shipped] => {:flezha_hook_webhook, :shipped, :metric},
+    [:flezha, :plugin, :hook_webhook, :retried] => {:flezha_hook_webhook, :retried, :metric},
     [:flezha, :plugin, :hook_webhook, :failed] => {:flezha_hook_webhook, :failed, :event},
-    [:flezha, :plugin, :hook_webhook, :dropped] => {:flezha_hook_webhook, :dropped, :metric},
+    [:flezha, :plugin, :hook_webhook, :overflowed] =>
+      {:flezha_hook_webhook, :overflowed, :metric},
+    [:flezha, :plugin, :http_push, :shipped] => {:flezha_http_push, :shipped, :metric},
+    [:flezha, :plugin, :http_push, :retried] => {:flezha_http_push, :retried, :metric},
+    [:flezha, :plugin, :http_push, :failed] => {:flezha_http_push, :failed, :event},
+    [:flezha, :plugin, :http_push, :overflowed] => {:flezha_http_push, :overflowed, :metric},
     # A plain output a binding that is not started could not take, counted.
     [:flezha, :plugin, :not_started, :dropped] => {:flezha_plugin_not_started, :dropped, :metric},
     # The kafka producer's family, under the same derived prefix as every other

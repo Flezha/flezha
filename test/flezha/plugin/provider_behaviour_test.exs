@@ -186,7 +186,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
             provider.__provider__().shareable,
             do: provider.__provider__().name
 
-      assert Enum.sort(shareable) == ["http_poll", "kafka", "std_out", "websocket"]
+      assert Enum.sort(shareable) == ["http_poll", "http_push", "kafka", "std_out", "websocket"]
     end
 
     test "the websocket's subscription items are its one live option" do

@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Added: an operator's outputs sent over HTTP (breaking for `hook_webhook` telemetry)
+
+The new provider `operator_http_push` sends each output (or, on `on_input`, each ingested
+record) as one `POST` or `PUT` to its `url`, over connections it keeps open, in order by
+default ([`docs/plugins/http_push.md`](docs/plugins/http_push.md)). Every request carries the
+output's `flz-key`, `flz-cell`, `flz-seq` and `flz-epoch`, and a guaranteed output an
+`idempotency-key`. A plain output is retried and then dropped and counted; a delivery-
+guaranteed one is held until a 2xx and otherwise parked as a dead letter with
+`http_push.rejected` or `http_push.exhausted`, after a retry budget bounded by `retries` and
+`delivery_timeout_ms`. The queue is bounded by payloads and bytes with the Kafka producer's
+`queue_overflow` policies, and under `drop_nothing` the dispatch waits only while it is full.
+Operators bound to one plugin share it. `plugin.headers_invalid` now names the header in its
+`header` detail. The webhook controller plugin sends through the same worker, and its events
+take the shared names: `shipped`, `retried` and `failed` replace `sent`, `failed` and
+`dropped`. Neither shows the URL's path or query in a process status any more.
+
 ### Added: what a connector package needs from the core (breaking for `http.partitioned_host`)
 
 Every plugin's options now carry `durable_input`, true when its operator journals its input

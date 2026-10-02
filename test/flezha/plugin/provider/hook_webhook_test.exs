@@ -37,7 +37,7 @@ defmodule FlezhaTest.Plugin.Provider.HookWebhookTest do
 
   setup do
     Telemetry.capture(
-      for verb <- [:sent, :failed, :dropped], do: [:flezha, :plugin, :hook_webhook, verb]
+      for verb <- [:shipped, :retried, :failed], do: [:flezha, :plugin, :hook_webhook, verb]
     )
 
     on_exit(fn -> PluginManager.disable_plugin(@namespace, "hook") end)
@@ -85,7 +85,7 @@ defmodule FlezhaTest.Plugin.Provider.HookWebhookTest do
              Jason.decode!(body)
 
     assert is_binary(text) and text != ""
-    assert_receive {:telemetry, [:flezha, :plugin, :hook_webhook, :sent], _, _}
+    assert_receive {:telemetry, [:flezha, :plugin, :hook_webhook, :shipped], _, _}
   end
 
   test "a 503 then a 200 is sent twice and dropped never" do
@@ -95,8 +95,8 @@ defmodule FlezhaTest.Plugin.Provider.HookWebhookTest do
 
     assert_receive {:request, _, _, first}, 5_000
     assert_receive {:request, _, _, ^first}, 5_000
-    assert_receive {:telemetry, [:flezha, :plugin, :hook_webhook, :sent], _, _}, 5_000
-    refute_received {:telemetry, [:flezha, :plugin, :hook_webhook, :dropped], _, _}
+    assert_receive {:telemetry, [:flezha, :plugin, :hook_webhook, :shipped], _, _}, 5_000
+    refute_received {:telemetry, [:flezha, :plugin, :hook_webhook, :failed], _, _}
   end
 
   test "a 400 is sent once, dropped once and warned without the URL's path" do
@@ -108,7 +108,7 @@ defmodule FlezhaTest.Plugin.Provider.HookWebhookTest do
       capture_log(fn ->
         dead_letter(1)
         assert_receive {:request, _, _, _}, 5_000
-        assert_receive {:telemetry, [:flezha, :plugin, :hook_webhook, :dropped], _, _}, 5_000
+        assert_receive {:telemetry, [:flezha, :plugin, :hook_webhook, :failed], _, _}, 5_000
       end)
 
     restore.()
