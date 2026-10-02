@@ -309,22 +309,3 @@ refused with `topology.partitions_without_keyed_tasklet`.
   started with `--partitions 2`
 - **THEN** the start is refused with `topology.partitions_without_keyed_tasklet`, as a flow operator's would be
 
-### Requirement: A partitioned outer operator SHALL hold its inner instances per member
-
-Each member of a partitioned flow operator that embeds a steps class SHALL hold the inner
-instances of the keys its range owns, with their journals and pass sheets under the
-member's state directory, and a rescale SHALL move an inner instance's journal and input
-log with its key range as it moves a cell's state. The inner
-scope's identity SHALL use the member's instance id so that two members never share a
-scope.
-
-#### Scenario: Inner instances follow their key range
-
-- **WHEN** a partitioned gateway with two members holds inner sessions and is rescaled to three
-- **THEN** every session SHALL be found under the member that owns its key after the rescale, with its journal intact, and no session SHALL exist under two members
-
-#### Scenario: Two members never share a scope
-
-- **WHEN** the same key is sent to two members by a mis-routed frame
-- **THEN** the second member SHALL refuse the frame as mis-routed, as it refuses a mis-routed cell key today, and SHALL create no inner instance for it
-

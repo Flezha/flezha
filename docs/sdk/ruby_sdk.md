@@ -291,27 +291,6 @@ only inside a `compensate` hook do `ctx.timer_after`, `ctx.timer_at_event_time`
 and `ctx.cancel_timer` raise a `Flezha::Error` with the code `runtime.timers_unavailable`. A `ctx.spawn_steps`
 naming a flow factory resolves its handle to a `Flezha::Error` with the code `operator.factory_not_steps`.
 
-### An operator inside an operator
-
-An edge may end in an operator class: `.into(SessionSteps)`, with `input:` and
-`max_cells:`. A flow class is inlined into the
-graph; a steps class runs as a stepped scope per edge key inside the instance, with its
-own state, journal and sleep, and the handle returned is its exit. A tasklet emits only
-on a channel it declares, so the embedded class names its exit with `named`. The rules and refusals are in [`stream_transforms.md`](stream_transforms.md#an-edge-into-an-operator-class).
-
-```ruby
-class Gateway < Flezha::Operator
-  factory_id "gateway"
-  channels do |c|
-    c.input("requests", codec: :text)
-     .key_by { |value| value.split(":").first }
-     .into(SessionSteps)
-     .into(GatewayReply)
-     .sink("replies", codec: :text)
-  end
-end
-```
-
 ### Channel payloads
 
 A channel names the format of its payload with `codec:` on `input` and on

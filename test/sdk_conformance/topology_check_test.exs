@@ -52,7 +52,6 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
     "flz_core/src/host/register.rs",
     "flz_core/src/host/chains.rs",
     "flz_core/src/host/issue.rs",
-    "flz_core/src/host/embed.rs",
     "sdk/elixir/lib/flezha/sdk/topology.ex",
     "sdk/elixir/lib/flezha/sdk/channels.ex",
     "sdk/elixir/lib/flezha/sdk/steps/spec.ex"

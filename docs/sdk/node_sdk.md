@@ -301,27 +301,6 @@ types erased before the SDK runs, and no `run` returns output, so nothing the
 SDK can see says whether a short form emits. The manifest leaves
 `shorthand_typed_output` off and the conformance row skips by name.
 
-### An operator inside an operator
-
-An edge may end in an operator class: `.into(session)`, or `.into(session, { name,
-input, maxCells })`. A flow class is inlined into the
-graph; a steps class runs as a stepped scope per edge key inside the instance, with its
-own state, journal and sleep, and the handle returned is its exit. A tasklet emits only
-on a channel it declares, so the embedded class names its exit with `named`. The rules and refusals are in [`stream_transforms.md`](stream_transforms.md#an-edge-into-an-operator-class).
-
-```js
-export const gateway = defineOperator({
-  factoryId: 'gateway',
-  channels: (c) => {
-    c.input('requests', { codec: 'text' })
-      .keyBy(prefix)
-      .into(session)
-      .into(GatewayReply)
-      .sink('replies', { codec: 'text' });
-  },
-});
-```
-
 ## The parallelism model, as arithmetic
 
 | Number | What sets it | What it bounds |

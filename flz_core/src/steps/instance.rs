@@ -179,11 +179,6 @@ pub(crate) struct PassSheet {
     pub(crate) undo: Option<Undo>,
     /// Items a full mailbox refused that no producing Cell can hold.
     pub(crate) unadmitted: VecDeque<Release>,
-    /// A chained scope's last released batch: its exit output once the loop
-    /// converges.
-    pub(crate) exit_hold: Vec<Value>,
-    /// The input of a pass an undo cleared on its way to an end.
-    pub(crate) took: Option<u64>,
 }
 
 /// One item on its way into a Cell: the stage it belongs to, the Cell, and

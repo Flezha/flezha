@@ -70,7 +70,6 @@ defmodule Flezha.State.Durable do
     {:snapshot, "lib/flezha/state/snapshot.ex", :whole, :inline, ".tmp", false, true},
     {:outbox_dedup, "lib/flezha/state/outbox.ex", :whole, :batched, ".tmp", false, false},
     {:completion, "lib/flezha/state/completion.ex", :whole, :inline, ".tmp", false, true},
-    {:scope_fact, "lib/flezha/operator/scopes.ex", :whole, :inline, ".tmp", false, true},
     {:class_kind, "lib/flezha/operator/class_registry.ex", :whole, :inline, ".tmp", false, true},
     {:dlq_entries, "lib/flezha/dlq/store.ex", :whole, :inline, ".tmp", false, true},
     {:audit_index, "lib/flezha/observability/audit_log/index.ex", :whole, :inline, ".tmp", false,

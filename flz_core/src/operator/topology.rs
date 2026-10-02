@@ -54,9 +54,6 @@ pub struct TaskletDescriptor {
     pub serialize_state: SerializeStateFn,
     /// The JSON back into the erased state `CellSlot::state` holds.
     pub deserialize_state: DeserializeStateFn,
-    /// `Some` for a node that embeds a steps class: it holds no Cells, and
-    /// each edge key runs a scope of that class instead.
-    pub scope: Option<Arc<crate::operator::scope::ScopeNode>>,
 }
 
 /// The compaction threshold default, in lockstep with the controller's

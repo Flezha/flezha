@@ -69,17 +69,6 @@ impl<'a> Run<'a> {
         self.inst.durable()
     }
 
-    /// Whether this scope's exit values ride its commits into its outer
-    /// instance's input log.
-    fn exits_logged(&self) -> bool {
-        crate::operator::scope::exits_logged(self.inst)
-    }
-
-    /// Whether stage `node`'s output is this scope's exit.
-    pub(super) fn exits_at(&self, node: usize) -> bool {
-        self.inst.exit_tasklet() == Some(self.spec.dag.order[node])
-    }
-
     pub(crate) fn task(&self, node: usize) -> &TaskletDescriptor {
         self.inst
             .topology
@@ -946,27 +935,10 @@ impl Decide<'_, '_, '_> {
             return;
         }
         self.s.phase = Phase::Done;
-        // The input a pass that did not end cleanly took, which the scope's
-        // next run must not be given again.
-        let took = match status {
-            "ok" => None,
-            _ => self
-                .s
-                .pass
-                .take()
-                .and_then(|pass| pass.consumed_offset)
-                .or(self.s.took.take()),
-        };
         self.s.pass = None;
         self.r.run.pass_dead.store(true, Ordering::Release);
         self.clear_waits();
-        if status == "ok" && self.r.inst.scope().is_some() && !self.r.exits_logged() {
-            self.fx.exits.append(&mut self.s.exit_hold);
-            self.fx
-                .exits
-                .extend(crate::operator::scope::result_value(self.r.inst, &result));
-        }
-        self.fx.completed = Some((status.to_string(), error, result, took));
+        self.fx.completed = Some((status.to_string(), error, result));
     }
 
     /// `cancelled` when a stop tripped the token, else the error.
@@ -1564,15 +1536,10 @@ impl Decide<'_, '_, '_> {
             }
         }
         if dag.children[node].is_empty() {
-            let values: Vec<Value> = stage
+            let values = stage
                 .cells
                 .values()
-                .flat_map(|run| run.outputs.iter().map(Arc::clone))
-                .collect();
-            if self.r.spec.each != Each::Chained && self.r.exits_at(node) && !self.r.exits_logged()
-            {
-                self.fx.exits.extend(values.iter().map(Arc::clone));
-            }
+                .flat_map(|run| run.outputs.iter().map(Arc::clone));
             pass.leaf_values.extend(values);
             pass.carry.extend(held);
             return self.settle_pass();
@@ -1725,7 +1692,6 @@ impl Decide<'_, '_, '_> {
             values: Vec::new(),
             completion: None,
             dead_letter: Some(dead_letter),
-            exits: Vec::new(),
         };
         self.s.phase = Phase::Sealing;
         let id = self.barrier(BarrierFor::DeadLetter);
@@ -1763,15 +1729,6 @@ impl Decide<'_, '_, '_> {
             }
             _ => pass.leaf_values.clone(),
         };
-        // A chained loop that ends here carries its last batch out.
-        let converges = self.r.spec.each == Each::Chained
-            && pass.leaf_values.is_empty()
-            && matches!(pass.origin, PassOrigin::Message { .. });
-        let exits = if completion.is_some() || converges {
-            self.s.exit_hold.clone()
-        } else {
-            Vec::new()
-        };
         let frame = Frame::Iteration {
             iter,
             offset: pass.consumed_offset,
@@ -1779,7 +1736,6 @@ impl Decide<'_, '_, '_> {
             values,
             completion,
             dead_letter: None,
-            exits,
         };
         self.s.phase = Phase::Sealing;
         let id = self.barrier(BarrierFor::Iteration);
@@ -1805,9 +1761,6 @@ impl Decide<'_, '_, '_> {
         // leaf leaves the carry as it stood.
         if self.r.spec.each == Each::Chained {
             if !pass.leaf_values.is_empty() {
-                if self.r.inst.scope().is_some() {
-                    self.s.exit_hold = pass.leaf_values.clone();
-                }
                 self.s.carry = Some(Carry {
                     channel: pass.channel,
                     values: pass.leaf_values,
@@ -1985,9 +1938,7 @@ impl Decide<'_, '_, '_> {
     /// Undo what the run completed, in reverse completion order, then `then`.
     fn compensate(&mut self, then: AfterUndo) {
         self.r.run.pass_dead.store(true, Ordering::Release);
-        if let Some(pass) = self.s.pass.take() {
-            self.s.took = pass.consumed_offset;
-        }
+        self.s.pass = None;
         let steps = saga_steps(
             self.r,
             &self.s.committed,
@@ -2194,8 +2145,6 @@ enum Frame {
         values: Vec<Value>,
         completion: Option<Vec<u8>>,
         dead_letter: Option<crate::pb::DeadLetter>,
-        /// A logged scope's exit values this iteration ends with.
-        exits: Vec<Value>,
     },
     Built(Box<Command>),
 }
@@ -2212,7 +2161,7 @@ struct Effects {
     admit: Vec<Release>,
     cancel_retries: Vec<Arc<CellSlot>>,
     parked: Option<MessagePark>,
-    completed: Option<(String, String, Vec<u8>, Option<u64>)>,
+    completed: Option<(String, String, Vec<u8>)>,
     run_undo: Option<(Arc<CellSlot>, Vec<Value>)>,
     start: Option<Source>,
     /// Firing removals a stage's commit made durable, per Cell.
@@ -2221,8 +2170,6 @@ struct Effects {
     ready: Vec<Arc<CellSlot>>,
     /// Park at this iteration, naming this offset parked unread.
     park: Option<(u32, Option<u64>)>,
-    /// A scope's exit values, on to the outer graph.
-    exits: Vec<Value>,
 }
 
 impl Run<'_> {
@@ -2243,7 +2190,6 @@ impl Run<'_> {
             removals,
             ready,
             park,
-            exits,
         } = fx;
         // Intent markers precede the commit: a crash between marker and ack
         // resolves as "not committed, re-run".
@@ -2261,7 +2207,7 @@ impl Run<'_> {
         }
         if let Some((iter, offset)) = park {
             let wake = self.inst.earliest_processing_timer();
-            let (reference_id, command) = iter_park(self.inst, iter, wake, offset);
+            let (reference_id, command) = iter_park(&self.inst.instance_id, iter, wake, offset);
             crate::runner::emit_control_request(reference_id, command);
         }
         for reference_id in drop_acks {
@@ -2286,20 +2232,14 @@ impl Run<'_> {
         if let Some(parked) = parked {
             self.park_message(parked);
         }
-        if !exits.is_empty() {
-            crate::operator::scope::exit(self.inst, exits);
-        }
-        if let Some((status, error, result, took)) = completed {
+        if let Some((status, error, result)) = completed {
             self.log_dropped_timers();
             crate::runner::emit_operator_completed(
-                self.inst.operator_id().to_string(),
-                self.inst.wire_scope(),
+                self.inst.instance_id.to_string(),
                 status,
                 error,
                 result,
-                took,
             );
-            crate::operator::scope::ended(self.inst, self.spec.each);
         }
         if let Some((slot, outputs)) = run_undo {
             self.run_undo(slot, outputs);
@@ -2346,7 +2286,6 @@ impl Run<'_> {
                 values,
                 completion,
                 dead_letter,
-                exits,
             } => iteration_frame(
                 self,
                 iter,
@@ -2355,7 +2294,6 @@ impl Run<'_> {
                 &values,
                 completion,
                 dead_letter,
-                &exits,
             ),
             Frame::Built(command) => Ok(*command),
         };

@@ -178,14 +178,6 @@ pub struct HostTaskletDecl {
     /// its own.
     #[serde(default)]
     pub min_readable_schema_version: Option<u32>,
-    /// The factory id of a steps class this node embeds: one scope of it
-    /// per edge key, and no Cells of its own.
-    #[serde(default)]
-    pub operator: Option<String>,
-    /// The embedded class's entry channel the edge feeds, when it declares
-    /// several.
-    #[serde(default)]
-    pub input: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
@@ -236,10 +228,6 @@ pub struct HostClassDecl {
     pub compact_after_bytes: Option<usize>,
     pub channels: Vec<HostChannelDecl>,
     pub tasklets: Vec<HostTaskletDecl>,
-    /// Declared only to be embedded by another class: registered, never
-    /// announced as a factory of its own.
-    #[serde(default)]
-    pub embedded: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]

@@ -451,24 +451,6 @@ byte-compatible `park_payload` and holds the Cell until the controller's `ParkPa
 same ladder, read off the edge that feeds them; an exhausted one fails the tasklet, and the
 instance unwinds, instead of parking.
 
-## An operator inside an operator
-
-An edge may end in an operator class: `into(SessionOp)`, or `into/3` with `input:`,
-`name:` and `max_cells:`. A flow class is inlined into the
-graph; a steps class runs as a stepped scope per edge key inside the instance, with its
-own state, journal and sleep, and the handle returned is its exit. A leaf with no channel is an exit too. The rules and refusals are in [`stream_transforms.md`](stream_transforms.md#an-edge-into-an-operator-class).
-
-```elixir
-def channels(c) do
-  c
-  |> input("requests")
-  |> key_by(&ElixirRunner.Key.prefix/1)
-  |> into(ElixirRunner.SessionOp)
-  |> into(ElixirRunner.GatewayReplyTask)
-  |> sink("replies")
-end
-```
-
 ## Partitioning
 
 With `partition_count >= 2` on `AddOperator`, a dynamic key is admitted against the owned

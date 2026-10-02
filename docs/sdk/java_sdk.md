@@ -345,22 +345,6 @@ timer call throws a `FlezhaException` with the code `runtime.timers_unavailable`
 A `spawnSteps` naming a flow factory reads `operator.factory_not_steps`. A flow
 tasklet's `complete` ends its instance once the work its cells hold has run.
 
-## An operator inside an operator
-
-An edge may end in an operator class: `into(Session.class, String.class)`, with an
-`Embedding` for `input`, `name` or `maxCells`. A flow class is inlined into the
-graph; a steps class runs as a stepped scope per edge key inside the instance, with its
-own state, journal and sleep, and the handle returned is its exit. A tasklet emits only
-on a channel it declares, so the embedded class names its exit with `named`. The rules and refusals are in [`stream_transforms.md`](stream_transforms.md#an-edge-into-an-operator-class).
-
-```java
-c.input(String.class, "requests")
-        .keyBy(input -> input.split(":", 2)[0])
-        .into(Session.class, String.class)
-        .into(GatewayReply.class)
-        .sink("replies");
-```
-
 ## Scope
 
 Every capability of the conformance vocabulary, deferred: none. The one place

@@ -72,15 +72,13 @@ defmodule Flezha.State.TaskJournal.Codec do
     with {:ok, cells, rest} <- decode_cells(payload),
          {:ok, handoff, rest} <- decode_handoff(rest),
          {:ok, completion, rest} <- take_completion(rest),
-         {:ok, trigger, rest} <- take_trigger(rest),
-         {:ok, exit} <- decode_exit(rest) do
+         {:ok, trigger} <- decode_trigger(rest) do
       {:ok,
        %{
          cells_ran: cells,
          handoff: handoff,
          completion: completion,
-         trigger: trigger,
-         exit: exit
+         trigger: trigger
        }}
     else
       {:error, _} = err -> err
@@ -96,16 +94,14 @@ defmodule Flezha.State.TaskJournal.Codec do
     with {:ok, consumed_offset} <- decode_offset(offset),
          {:ok, handoff, rest} <- decode_handoff(rest),
          {:ok, completion, rest} <- take_completion(rest),
-         {:ok, failed_turns, rest} <- take_failed_turns(rest),
-         {:ok, exit} <- decode_exit(rest) do
+         {:ok, failed_turns} <- decode_failed_turns(rest) do
       {:ok,
        %{
          consumed_offset: consumed_offset,
          entry_channel: entry_channel,
          handoff: handoff,
          completion: completion,
-         failed_turns: failed_turns,
-         exit: exit
+         failed_turns: failed_turns
        }}
     else
       _ -> {:error, :bad_payload}
@@ -268,37 +264,9 @@ defmodule Flezha.State.TaskJournal.Codec do
   def encode_failed_turns(nil), do: <<>>
   def encode_failed_turns({count, last}), do: <<3, count::32-big, last::32-big>>
 
-  defp take_failed_turns(<<3, count::32-big, last::32-big, rest::binary>>),
-    do: {:ok, {count, last}, rest}
-
-  defp take_failed_turns(rest), do: {:ok, nil, rest}
-
-  @doc """
-  The trailing exit segment of a `task_committed` or `iter_committed` payload:
-  a stepped scope's exit values the commit made final, `{channel, values}`,
-  which the controller logs into its outer instance's input log; empty on
-  every other entry.
-  """
-  @spec encode_exit({binary(), [binary()]} | nil) :: binary()
-  def encode_exit(nil), do: <<>>
-
-  def encode_exit({channel, values}) do
-    term = :erlang.term_to_binary({channel, values})
-    <<4, byte_size(term)::32-big, term::binary>>
-  end
-
-  defp decode_exit(<<>>), do: {:ok, nil}
-
-  defp decode_exit(<<4, size::32-big, term::binary-size(size)>>) do
-    case :erlang.binary_to_term(term, [:safe]) do
-      {channel, values} when is_binary(channel) and is_list(values) -> {:ok, {channel, values}}
-      _other -> {:error, :bad_payload}
-    end
-  rescue
-    ArgumentError -> {:error, :bad_payload}
-  end
-
-  defp decode_exit(_), do: {:error, :bad_payload}
+  defp decode_failed_turns(<<>>), do: {:ok, nil}
+  defp decode_failed_turns(<<3, count::32-big, last::32-big>>), do: {:ok, {count, last}}
+  defp decode_failed_turns(_), do: {:error, :bad_payload}
 
   @doc """
   The trailing trigger segment of a `task_committed` payload, after the
@@ -310,13 +278,13 @@ defmodule Flezha.State.TaskJournal.Codec do
   def encode_trigger(%{cell_key: cell_key, kind: kind, scheduled_at: at}),
     do: <<2, byte_size(cell_key)::16-big, cell_key::binary, kind_code(kind), at::64-big>>
 
-  defp take_trigger(
-         <<2, key_len::16-big, cell_key::binary-size(key_len), kind, at::64-big, rest::binary>>
-       )
-       when kind in [0, 1],
-       do: {:ok, %{cell_key: cell_key, kind: kind_name(kind), scheduled_at: at}, rest}
+  defp decode_trigger(<<>>), do: {:ok, nil}
 
-  defp take_trigger(rest), do: {:ok, nil, rest}
+  defp decode_trigger(<<2, key_len::16-big, cell_key::binary-size(key_len), kind, at::64-big>>)
+       when kind in [0, 1],
+       do: {:ok, %{cell_key: cell_key, kind: kind_name(kind), scheduled_at: at}}
+
+  defp decode_trigger(_), do: {:error, :bad_payload}
 
   defp kind_code(:processing_time), do: 0
   defp kind_code(:event_time), do: 1

@@ -173,7 +173,7 @@ impl CellFlusher {
     }
 
     /// Report `prefix` after every pass for as long as its instance lives.
-    pub fn watch_prefix(&self, prefix: &Arc<crate::prefix::PrefixLedger>) {
+    pub(crate) fn watch_prefix(&self, prefix: &Arc<crate::prefix::PrefixLedger>) {
         self.prefixes.lock_recover().push(Arc::downgrade(prefix));
     }
 

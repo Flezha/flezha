@@ -10,11 +10,11 @@
 //! It is also the negative control for the two clauses that need a runner: what
 //! the core answers is settled before any runtime is asked to agree.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use super::decl::{HostAckGranularity, HostChannelKind, HostClassDecl};
 use super::issue::TopologyIssue;
-use super::register::{check, register_host_class_json, Derived};
+use super::register::{check, Derived};
 use crate::ErrorModel;
 
 const FIXTURE: &str = "../test/fixtures/reference_topologies.txt";
@@ -85,27 +85,6 @@ fn palette(role: &str) -> Option<&'static str> {
     })
 }
 
-/// The class palette: each steps role's own graph, read by this same
-/// interpreter and registered before the row that embeds it. The flow role
-/// `inner_cleanup` (`raw` into `plain` into `second`) is inlined instead.
-fn class_palette(role: &str) -> Option<String> {
-    const PER_INPUT: &str = r#"class.run({"steps":{"each":"per_input"}})"#;
-    Some(match role {
-        "inner_session" => "entry(turns); turns.into(plain)",
-        "inner_loop" => r#"class.run({"steps":{"each":"chained"}}); entry(turns); turns.into(plain); plain.named(carry)"#,
-        "inner_two_entries" => "entry(a); entry(b); a.into(plain); b.into(second)",
-        "inner_two_exits" => "entry(turns); turns.into(plain); turns.into(second)",
-        _ => return None,
-    })
-    .map(|steps| {
-        if steps.starts_with("class.") {
-            steps.to_string()
-        } else {
-            format!("{PER_INPUT}; {steps}")
-        }
-    })
-}
-
 /// One channel under construction: what the record will spell for it.
 #[derive(Default)]
 struct Channel {
@@ -128,10 +107,6 @@ struct Interpreter {
     mailbox: HashMap<String, usize>,
     class: Vec<String>,
     merge_group: u32,
-    /// The roles that embed a steps class of the class palette.
-    embeds: HashSet<String>,
-    /// A class role → the inlined tasklet that is its exit.
-    exits: HashMap<String, String>,
 }
 
 impl Interpreter {
@@ -148,8 +123,6 @@ impl Interpreter {
     /// channel of the tasklet a role names — minted on first use, exactly as
     /// a fluent builder mints a producer's output.
     fn channel(&mut self, handle: &str) -> usize {
-        let exit = self.exits.get(handle).cloned();
-        let handle = exit.as_deref().unwrap_or(handle);
         if let Some(at) = self.channels.iter().position(|c| c.name == handle) {
             return at;
         }
@@ -260,40 +233,12 @@ impl Interpreter {
                     let tasklet = self.tasklet(arg);
                     format!(r#"{{"link":"into","tasklet":{tasklet}}}"#)
                 }
-                "into_class" => self.embed_class(arg),
                 other => panic!("the fixture spells a link this interpreter does not map: {other}"),
             });
         }
         self.channels[at]
             .chains
             .push(format!("[{}]", links.join(",")));
-    }
-
-    /// `into_class(<role>)`: a steps class is registered and becomes one node
-    /// naming it; the flow class `inner_cleanup` is inlined, its `plain` into
-    /// its `second` under its prefix. Either way the role addresses the exit.
-    fn embed_class(&mut self, role: &str) -> String {
-        if role == "inner_cleanup" {
-            let first = self.tasklet("inner_cleanup.plain");
-            let at = self.channel("inner_cleanup.plain");
-            let second = self.tasklet("inner_cleanup.second");
-            self.channels[at]
-                .chains
-                .push(format!(r#"[{{"link":"into","tasklet":{second}}}]"#));
-            self.exits
-                .insert(role.to_string(), "inner_cleanup.second".to_string());
-            return format!(r#"{{"link":"into","tasklet":{first}}}"#);
-        }
-        let steps = class_palette(role)
-            .unwrap_or_else(|| panic!("the fixture names a class role that is not one: {role}"));
-        let mut inner = Interpreter::default();
-        inner.run(&steps);
-        inner.class.push(r#""embedded":true"#.to_string());
-        register_host_class_json(inner.json(role).as_bytes())
-            .unwrap_or_else(|e| panic!("the palette class {role} must register: {e:?}"));
-        self.embeds.insert(role.to_string());
-        let node = self.tasklet(role);
-        format!(r#"{{"link":"into","tasklet":{node}}}"#)
     }
 
     /// A call end off channel `at`: its link, and its Response channel wired
@@ -378,15 +323,9 @@ impl Interpreter {
             .roles
             .iter()
             .map(|role| {
-                let embeds = format!(r#""operator":"{role}""#);
-                let inlined = role.rsplit('.').next().unwrap_or(role);
-                let facts = if self.embeds.contains(role) {
-                    &embeds
-                } else {
-                    palette(inlined).unwrap_or_else(|| {
-                        panic!("the fixture names a palette role that is not one: {role}")
-                    })
-                };
+                let facts = palette(role).unwrap_or_else(|| {
+                    panic!("the fixture names a palette role that is not one: {role}")
+                });
                 // A twin declares the SAME name as `plain`: that IS the collision.
                 let name = if role == "twin" {
                     "plain"

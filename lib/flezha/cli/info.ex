@@ -9,7 +9,6 @@ defmodule Flezha.Service.Cli.Info do
   alias Flezha.Convergence.Verdict
   alias Flezha.Operator.Calls
   alias Flezha.Operator.ClassRegistry
-  alias Flezha.Operator.Scopes
   alias Flezha.Partition
   alias Flezha.Plugin.Extension.Table.Health, as: TableHealth
   alias Flezha.SDK.KeyGroup
@@ -73,7 +72,6 @@ defmodule Flezha.Service.Cli.Info do
               uptime_ms: operator_uptime_ms(state),
               default_input_type: state.default_input_type,
               waiting_callers: Calls.waiting(state.calls),
-              scopes: Scopes.counts(state),
               failed_turns: failed_turns_json(failed_turns(operator_id, state)),
               plugins: format_plugins_json(state.extensions)
             }
@@ -372,7 +370,6 @@ defmodule Flezha.Service.Cli.Info do
     IO.puts("  Uptime (ms): #{operator_uptime_ms(state)}")
     IO.puts("  Default Input Type: #{state.default_input_type}")
     IO.puts("  Waiting callers: #{Calls.waiting(state.calls)}")
-    display_scopes(Scopes.counts(state))
     IO.puts("  Plugins:")
 
     case state.extensions do
@@ -392,18 +389,5 @@ defmodule Flezha.Service.Cli.Info do
     end
 
     IO.puts("")
-  end
-
-  # The stepped scopes of each node that embeds a steps class.
-  defp display_scopes(counts) when counts == %{}, do: :ok
-
-  defp display_scopes(counts) do
-    IO.puts("  Scopes:")
-
-    for {inner, row} <- Enum.sort(counts) do
-      IO.puts(
-        "    - #{inner}: #{row.awake} awake, #{row.sleeping} sleeping, #{row.in_pass} in a pass"
-      )
-    end
   end
 end

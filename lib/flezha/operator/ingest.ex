@@ -40,10 +40,6 @@ defmodule Flezha.Operator.Ingest do
   """
   @type payload :: {binary(), map()} | nil | :refused
 
-  # Metadata only the controller sets: where a stepped scope's message goes
-  # (`flz.scope`) and which channel a scope's exit value enters (`flz.exit`).
-  @core_set ["flz.scope", "flz.exit"]
-
   # The verdicts under which an operator's call, or its `Response`, was taken:
   # a duplicate absorbed was taken the first time.
   @taken [:ok, {:ok, :suspended}, {:ok, :absorbed}]
@@ -72,7 +68,6 @@ defmodule Flezha.Operator.Ingest do
   def ingest(%Overwatch{} = state, message, metadata, reply_to) do
     metadata =
       metadata
-      |> Map.drop(@core_set)
       |> admitted_token(reply_to)
       |> Map.put_new("input_type", state.default_input_type)
 
@@ -383,21 +378,6 @@ defmodule Flezha.Operator.Ingest do
 
   def confirming_ingest(%Overwatch{} = state, message, metadata, reply_to) do
     case ingest(state, message, metadata, reply_to) do
-      {:pending, state} -> {:pending, state}
-      {payload, state} -> {told(reply_to, verdict(state, payload)), state}
-    end
-  end
-
-  @doc """
-  A stepped scope's exit value into this instance's own graph: journaled with
-  no input hook, since it is the instance's own value and not an outside
-  input, then forwarded like any journaled input; `reply_to` is told the
-  verdict.
-  """
-  @spec exit_value(Overwatch.t(), binary(), map(), reply_to()) ::
-          {term() | :pending, Overwatch.t()}
-  def exit_value(%Overwatch{} = state, message, metadata, reply_to) do
-    case journal_input(state, {message, metadata}, reply_to) do
       {:pending, state} -> {:pending, state}
       {payload, state} -> {told(reply_to, verdict(state, payload)), state}
     end

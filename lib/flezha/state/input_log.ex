@@ -420,17 +420,6 @@ defmodule Flezha.State.InputLog do
   end
 
   @doc """
-  Drop every watermark of a key whose log and Cells were deleted, so a log
-  started again under it begins with no floor. Its writers are closed first.
-  """
-  @spec forget(binary()) :: :ok
-  def forget(operator_class) do
-    ensure_watermark_table()
-    :ets.match_delete(@watermarks, {{operator_class, :_}, :_})
-    :ok
-  end
-
-  @doc """
   The instance's floor: the processed prefix its runner reported and the
   controller confirmed durable (`confirm_prefix/2`), or before one is
   confirmed, and after a restart, the minimum durable consumed-offset across

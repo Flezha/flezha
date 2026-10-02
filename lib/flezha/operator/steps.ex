@@ -30,7 +30,6 @@ defmodule Flezha.Service.Steps do
   alias Flezha.State.Metrics
   alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
-  alias Flezha.State.ScopePaths
   alias Flezha.State.TaskJournal
   alias Flezha.State.TimeTravel
 
@@ -138,15 +137,8 @@ defmodule Flezha.Service.Steps do
   # The effect of a rewind, shared with the terminal.
   @spec rewind_instance(String.t(), String.t(), non_neg_integer()) :: :ok | {:error, term()}
   def rewind_instance(namespace, operator_class, to_iter) do
-    # A stepped scope `<outer>/<inner>/<key>` is rewound by its outer instance.
-    {instance, to} =
-      case ScopePaths.split(operator_class) do
-        {outer, scope} -> {outer, {scope, to_iter}}
-        :error -> {operator_class, to_iter}
-      end
-
-    case OperatorManager.get_operator_pid(namespace, instance) do
-      {:ok, pid} -> Migration.rewind(pid, to)
+    case OperatorManager.get_operator_pid(namespace, operator_class) do
+      {:ok, pid} -> Migration.rewind(pid, to_iter)
       _other -> {:error, {:operator_not_running, operator_class}}
     end
   end

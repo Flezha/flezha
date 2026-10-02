@@ -320,23 +320,21 @@ pub unsafe extern "C" fn flz_core_declare_class(
         return FLZ_ERR;
     };
     let bytes = std::slice::from_raw_parts(json, json_len);
-    // A class declared only to be embedded is never announced as a factory.
     let factory_id = match serde_json::from_slice::<serde_json::Value>(bytes) {
-        Ok(v) if v.get("embedded") != Some(&serde_json::Value::Bool(true)) => v
+        Ok(v) => v
             .get("factory_id")
             .and_then(|f| f.as_str())
             .map(str::to_string),
-        _ => None,
+        Err(_) => None,
     };
     if let Err(e) = flz_core::host::register_host_class_json(bytes) {
         return ctx.fail(e.into());
     }
     if let Some(factory_id) = factory_id {
-        let mut declared = ctx.declared.write().unwrap_or_else(|p| p.into_inner());
-        // Embedded first and registered in its own right later: announced once.
-        if !declared.contains(&factory_id) {
-            declared.push(factory_id);
-        }
+        ctx.declared
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(factory_id);
     }
     FLZ_OK
 }

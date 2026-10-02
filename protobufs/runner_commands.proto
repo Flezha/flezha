@@ -49,51 +49,7 @@ message CommandRequest {
         AdminResponse admin_response = 37;
         OperatorExited operator_exited = 38;
         ConnectRefused connect_refused = 39;
-        ScopeInput scope_input = 40;
-        ScopeInputResponse scope_input_response = 41;
     }
-}
-
-// The stepped scope a frame is about: the node an embedding edge gave the
-// inner steps class (`inner`) and the edge's key, absent on an unkeyed edge.
-// A frame about a top-level instance carries no scope; `operator_id` always
-// names the outer instance.
-message Scope {
-    string inner = 1;
-    optional string key = 2;
-}
-
-// SDK -> Controller. A message on an edge into a steps class inside a durable
-// outer instance: the controller appends it to the scope's input log, binds
-// the scope when it is asleep or absent, and forwards it to the scope's entry
-// channel `channel` stamped with its offset. Answered once the append is
-// durable, or refused with the error that kept it out.
-message ScopeInput {
-    string operator_id = 1;
-    Scope scope = 2;
-    string channel = 3;
-    bytes payload = 4;
-    // The outer input this message came from and its place among the values
-    // that input sent to this scope, kept as the record's `flz.msg_id`: a
-    // replay of that input appends nothing new.
-    string msg_id = 5;
-}
-
-// `refused`: the message went to the dead-letter queue instead of the scope's
-// log (a finished `once` scope, or a new scope past the operator quota), so no
-// scope is bound for its key.
-message ScopeInputResponse {
-    Error error = 1;
-    bool refused = 2;
-}
-
-// A stepped scope's exit values inside a durable outer instance, carried by
-// the commit that makes them final: the controller appends each to the outer
-// instance's input log, as an input on the outer channel `channel` after the
-// embedding node, before it journals the commit.
-message ScopeExit {
-    string channel = 1;
-    repeated bytes values = 2;
 }
 
 // A failure in the error model's one shape (docs/errors.md): a stable `code`
@@ -175,9 +131,6 @@ message AddOperator {
     // Without it a steps driver ends the instance on a failed turn, because
     // an older controller would journal the commit and drop the message.
     bool dead_letter_turns = 12;
-    // Set when the bind is of a stepped scope inside `operator_id`: the
-    // runner starts the inner class `factory_id` as that scope's instance.
-    Scope scope = 13;
 }
 
 // SDK -> Controller, as the CommandResponse raw_data of AddOperator.
@@ -194,8 +147,6 @@ message AddOperatorResponse {
 
 message RemOperator {
     string operator_id = 1;
-    // Set when the stop is of one stepped scope of `operator_id`.
-    Scope scope = 2;
 }
 
 message MigrationSerialization {
@@ -336,8 +287,6 @@ message TaskCommit {
     bytes result = 9;
     // Set on the root stage of a pass a timer firing opened, and on no other.
     optional TimerTrigger trigger = 10;
-    Scope scope = 11;
-    ScopeExit exit = 12;
 }
 
 // The firing that opened a timer-fed pass: the Cell of the stage's tasklet,
@@ -391,8 +340,6 @@ message IterCommit {
     // next message as iteration `iter + 1`. Sent only to a controller that set
     // `AddOperator.dead_letter_turns`.
     optional DeadLetter dead_letter = 8;
-    Scope scope = 9;
-    ScopeExit exit = 10;
 }
 
 // The failure a dead-lettered turn ends on: the tasklet whose Cell failed,
@@ -429,7 +376,6 @@ message IterPark {
     uint32 iter = 2;
     uint64 wake_deadline_ms = 3;
     optional uint64 consumed_offset = 4;
-    Scope scope = 5;
 }
 
 // One journaled forward task commit, shipped back on crash-resume so the driver
@@ -623,10 +569,6 @@ message OperatorCompleted {
     // teardown flushes the runner's stream channels instead of counting, which
     // holds even when an output was lost rather than delivered.
     reserved 5;
-    Scope scope = 6;
-    // The input-log offset of the message the pass that ended took; absent
-    // for a clean end and for a pass a timer started.
-    optional uint64 consumed_offset = 7;
 }
 
 // Controller -> SDK. Offers credit-grant flow control for the runner's

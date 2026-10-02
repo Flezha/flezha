@@ -37,7 +37,6 @@ defmodule Flezha.Operator.ClassRegistry do
   @persistence_off_sidecar "persistence_off"
   @sleep_sidecar "sleep_after_ms"
   @parked_sidecar "parked"
-  @embeds_sidecar "embeds"
 
   # Every per-class SDK declaration, keyed `{operator_class, key}` in the ETS
   # table. `delete/1` evicts them all, so a class that rebinds without a
@@ -52,8 +51,7 @@ defmodule Flezha.Operator.ClassRegistry do
     :remote,
     :persistence_off,
     :sleep_after_ms,
-    :parked,
-    :embeds
+    :parked
   ]
 
   # ---------- table lifecycle ----------
@@ -160,22 +158,8 @@ defmodule Flezha.Operator.ClassRegistry do
       leaf_tasks: parse_ops(Map.get(metadata, "leaf_tasks")),
       correction_window_ms: parse_window(Map.get(metadata, "correction_ms")),
       compact_after_bytes: parse_window(Map.get(metadata, "compact_after_bytes")),
-      persistent: durable != :memory,
-      scopes: parse_scopes(Map.get(metadata, "scopes"))
+      persistent: durable != :memory
     }
-  end
-
-  # `node=factory` pairs: each graph node that embeds a steps class, and the
-  # class it runs one scope of per edge key.
-  defp parse_scopes(nil), do: %{}
-
-  defp parse_scopes(csv) do
-    csv
-    |> String.split(",", trim: true)
-    |> Map.new(fn pair ->
-      [node, factory] = String.split(pair, "=", parts: 2)
-      {node, factory}
-    end)
   end
 
   defp decode_metadata(raw_data) when is_binary(raw_data) and raw_data != "" do
@@ -242,18 +226,7 @@ defmodule Flezha.Operator.ClassRegistry do
     put_remote(operator_class, declarations.durable == :remote)
     put_persistent(operator_class, declarations.persistent)
     put_sleep_after(operator_class, declarations.sleep_after_ms)
-    put_embeds(operator_class, Map.get(declarations, :scopes, %{}) != %{})
   end
-
-  # Durable, so a move or a stop before the class's next bind knows whether
-  # its directory can hold stepped scopes; the sidecar exists only while it can.
-  defp put_embeds(operator_class, embeds?),
-    do: put_declaration(operator_class, :embeds, @embeds_sidecar, embeds?)
-
-  @doc "Whether `operator_class` embeds a steps class, as its last bind declared."
-  @spec embeds?(binary()) :: boolean()
-  def embeds?(operator_class) when is_binary(operator_class),
-    do: declaration(operator_class, :embeds, @embeds_sidecar, &(&1 == "true")) == true
 
   @doc """
   Record `operator_class`'s persistence switch. Durable because the bind-time

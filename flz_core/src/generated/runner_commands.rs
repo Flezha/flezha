@@ -5,7 +5,7 @@ pub struct CommandRequest {
     pub reference_id: ::prost::alloc::string::String,
     #[prost(
         oneof = "command_request::Command",
-        tags = "2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41"
+        tags = "2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39"
     )]
     pub command: ::core::option::Option<command_request::Command>,
 }
@@ -89,64 +89,7 @@ pub mod command_request {
         OperatorExited(super::OperatorExited),
         #[prost(message, tag = "39")]
         ConnectRefused(super::ConnectRefused),
-        #[prost(message, tag = "40")]
-        ScopeInput(super::ScopeInput),
-        #[prost(message, tag = "41")]
-        ScopeInputResponse(super::ScopeInputResponse),
     }
-}
-/// The stepped scope a frame is about: the node an embedding edge gave the
-/// inner steps class (`inner`) and the edge's key, absent on an unkeyed edge.
-/// A frame about a top-level instance carries no scope; `operator_id` always
-/// names the outer instance.
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct Scope {
-    #[prost(string, tag = "1")]
-    pub inner: ::prost::alloc::string::String,
-    #[prost(string, optional, tag = "2")]
-    pub key: ::core::option::Option<::prost::alloc::string::String>,
-}
-/// SDK -> Controller. A message on an edge into a steps class inside a durable
-/// outer instance: the controller appends it to the scope's input log, binds
-/// the scope when it is asleep or absent, and forwards it to the scope's entry
-/// channel `channel` stamped with its offset. Answered once the append is
-/// durable, or refused with the error that kept it out.
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ScopeInput {
-    #[prost(string, tag = "1")]
-    pub operator_id: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "2")]
-    pub scope: ::core::option::Option<Scope>,
-    #[prost(string, tag = "3")]
-    pub channel: ::prost::alloc::string::String,
-    #[prost(bytes = "vec", tag = "4")]
-    pub payload: ::prost::alloc::vec::Vec<u8>,
-    /// The outer input this message came from and its place among the values
-    /// that input sent to this scope, kept as the record's `flz.msg_id`: a
-    /// replay of that input appends nothing new.
-    #[prost(string, tag = "5")]
-    pub msg_id: ::prost::alloc::string::String,
-}
-/// `refused`: the message went to the dead-letter queue instead of the scope's
-/// log (a finished `once` scope, or a new scope past the operator quota), so no
-/// scope is bound for its key.
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ScopeInputResponse {
-    #[prost(message, optional, tag = "1")]
-    pub error: ::core::option::Option<Error>,
-    #[prost(bool, tag = "2")]
-    pub refused: bool,
-}
-/// A stepped scope's exit values inside a durable outer instance, carried by
-/// the commit that makes them final: the controller appends each to the outer
-/// instance's input log, as an input on the outer channel `channel` after the
-/// embedding node, before it journals the commit.
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ScopeExit {
-    #[prost(string, tag = "1")]
-    pub channel: ::prost::alloc::string::String,
-    #[prost(bytes = "vec", repeated, tag = "2")]
-    pub values: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
 }
 /// A failure in the error model's one shape (docs/errors.md): a stable `code`
 /// spelled family.snake, its `class`, a plain `message`, the `details` that
@@ -252,10 +195,6 @@ pub struct AddOperator {
     /// an older controller would journal the commit and drop the message.
     #[prost(bool, tag = "12")]
     pub dead_letter_turns: bool,
-    /// Set when the bind is of a stepped scope inside `operator_id`: the
-    /// runner starts the inner class `factory_id` as that scope's instance.
-    #[prost(message, optional, tag = "13")]
-    pub scope: ::core::option::Option<Scope>,
 }
 /// SDK -> Controller, as the CommandResponse raw_data of AddOperator.
 /// Carries the operator class's settings and SDK-side declarations (operator
@@ -277,9 +216,6 @@ pub struct AddOperatorResponse {
 pub struct RemOperator {
     #[prost(string, tag = "1")]
     pub operator_id: ::prost::alloc::string::String,
-    /// Set when the stop is of one stepped scope of `operator_id`.
-    #[prost(message, optional, tag = "2")]
-    pub scope: ::core::option::Option<Scope>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MigrationSerialization {
@@ -453,10 +389,6 @@ pub struct TaskCommit {
     /// Set on the root stage of a pass a timer firing opened, and on no other.
     #[prost(message, optional, tag = "10")]
     pub trigger: ::core::option::Option<TimerTrigger>,
-    #[prost(message, optional, tag = "11")]
-    pub scope: ::core::option::Option<Scope>,
-    #[prost(message, optional, tag = "12")]
-    pub exit: ::core::option::Option<ScopeExit>,
 }
 /// The firing that opened a timer-fed pass: the Cell of the stage's tasklet,
 /// the timer's kind (`true` for event time) and its scheduled timestamp.
@@ -524,10 +456,6 @@ pub struct IterCommit {
     /// `AddOperator.dead_letter_turns`.
     #[prost(message, optional, tag = "8")]
     pub dead_letter: ::core::option::Option<DeadLetter>,
-    #[prost(message, optional, tag = "9")]
-    pub scope: ::core::option::Option<Scope>,
-    #[prost(message, optional, tag = "10")]
-    pub exit: ::core::option::Option<ScopeExit>,
 }
 /// The failure a dead-lettered turn ends on: the tasklet whose Cell failed,
 /// its attempts, the author's error text, and the Cell's key (empty for a
@@ -575,8 +503,6 @@ pub struct IterPark {
     pub wake_deadline_ms: u64,
     #[prost(uint64, optional, tag = "4")]
     pub consumed_offset: ::core::option::Option<u64>,
-    #[prost(message, optional, tag = "5")]
-    pub scope: ::core::option::Option<Scope>,
 }
 /// One journaled forward task commit, shipped back on crash-resume so the driver
 /// can rebuild `plan_compensation`'s per-iteration `committed` input from
@@ -809,12 +735,6 @@ pub struct OperatorCompleted {
     pub error: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "4")]
     pub result: ::prost::alloc::vec::Vec<u8>,
-    #[prost(message, optional, tag = "6")]
-    pub scope: ::core::option::Option<Scope>,
-    /// The input-log offset of the message the pass that ended took; absent
-    /// for a clean end and for a pass a timer started.
-    #[prost(uint64, optional, tag = "7")]
-    pub consumed_offset: ::core::option::Option<u64>,
 }
 /// Controller -> SDK. Offers credit-grant flow control for the runner's
 /// state stream. `stream_id` is an opaque credit-session id minted fresh per

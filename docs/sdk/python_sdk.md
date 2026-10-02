@@ -350,22 +350,6 @@ invocation, and reproduce on replay. `time.time()`, `datetime.now()` and
 the file and line, and the invocation completes normally. Detection is armed
 only while an invocation runs and only on the thread running it.
 
-### An operator inside an operator
-
-An edge may end in an operator class: `.into(session)`, with `input=` and `max_cells=`
-as keywords. A flow class is inlined into the
-graph; a steps class runs as a stepped scope per edge key inside the instance, with its
-own state, journal and sleep, and the handle returned is its exit. A tasklet emits only
-on a channel it declares, so the embedded class names its exit with `named`. The rules and refusals are in [`stream_transforms.md`](stream_transforms.md#an-edge-into-an-operator-class).
-
-```python
-@flezha.operator("gateway")
-def gateway_operator(c: flezha.Channels) -> None:
-    c.input("requests", codec="text").key_by(prefix).into(session_steps).into(GatewayReply).sink(
-        "replies", codec="text"
-    )
-```
-
 ## Channel payloads
 
 A channel names the format of its payload with `codec=` on `input` and on

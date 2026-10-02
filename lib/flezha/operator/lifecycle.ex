@@ -25,7 +25,6 @@ defmodule Flezha.Operator.Lifecycle do
   alias Flezha.Operator.Overwatch
   alias Flezha.Operator.Plugins
   alias Flezha.Operator.Replay
-  alias Flezha.Operator.Scopes
   alias Flezha.Process.Timer
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.FleetManager.Marks
@@ -193,14 +192,7 @@ defmodule Flezha.Operator.Lifecycle do
                correction_window_ms: correction_window_ms,
                sleeps: sleep_after_ms != nil,
                settings:
-                 Map.take(declarations, [
-                   :run,
-                   :each,
-                   :on_failure,
-                   :durable,
-                   :sleep_after_ms,
-                   :scopes
-                 ])
+                 Map.take(declarations, [:run, :each, :on_failure, :durable, :sleep_after_ms])
            }
            |> Map.put(:init_error, nil),
          :ok <- await_stream_bound(state),
@@ -284,7 +276,7 @@ defmodule Flezha.Operator.Lifecycle do
 
     _ = Replay.restore_on_bind(state, operator)
 
-    {:ok, Scopes.rebound(cancel_wake_timer(%{state | suspended: false}))}
+    {:ok, cancel_wake_timer(%{state | suspended: false})}
   end
 
   # A refused restore is not a cold start: the durable state never reached the
@@ -352,21 +344,14 @@ defmodule Flezha.Operator.Lifecycle do
   # to wait for, the task-journal the run resumes its iteration from, and how
   # many inputs the bind's re-forward owes it, for any instance whose input is
   # journaled. A class without a journal or an input log reads `nil` and `0`.
-  defp with_resume_state(operator, operator_class),
-    do: %{operator | opts: Keyword.merge(operator.opts, resume_state(operator_class))}
+  defp with_resume_state(operator, operator_class) do
+    opts =
+      operator.opts
+      |> Keyword.put(:resume_cell_count, Replay.resume_cell_count(operator_class))
+      |> Keyword.put(:task_journal, Commands.task_journal_state(operator_class))
+      |> Keyword.put(:inbox_tail_count, Replay.owed_count(operator_class))
 
-  @doc """
-  The `AddOperator` resume fields of the instance or stepped scope keyed
-  `operator_class`: its Cell restores to wait for, its task journal, and the
-  inputs its bind's re-forward owes it.
-  """
-  @spec resume_state(binary()) :: keyword()
-  def resume_state(operator_class) do
-    [
-      resume_cell_count: Replay.resume_cell_count(operator_class),
-      task_journal: Commands.task_journal_state(operator_class),
-      inbox_tail_count: Replay.owed_count(operator_class)
-    ]
+    %{operator | opts: opts}
   end
 
   # The one attempt. An awaited runner is re-resolved first so a runner that

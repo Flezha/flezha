@@ -124,12 +124,6 @@ pub struct OperatorInstance {
     pub prefix: Option<Arc<crate::prefix::PrefixLedger>>,
     /// The end a flow operator asked for from inside, until it is reported.
     pub(crate) end: crate::operator::completion::FlowEnd,
-    /// This instance, for the scopes it holds to name their outer one.
-    pub(crate) me: Weak<OperatorInstance>,
-    /// Set once, when this instance runs as a stepped scope of another.
-    pub(crate) scope_of: std::sync::OnceLock<crate::operator::scope::ScopeOf>,
-    /// By `TaskletId`: `Some` for a node that embeds a steps class.
-    pub(crate) families: Vec<Option<Arc<crate::operator::scope::ScopeFamily>>>,
 }
 
 impl OperatorInstance {
@@ -171,22 +165,8 @@ impl OperatorInstance {
                 Vec::with_capacity(tasklet_count);
             let mut dynamic_registries: Vec<Option<Arc<DynamicCellRegistry>>> =
                 Vec::with_capacity(tasklet_count);
-            let mut families = Vec::with_capacity(tasklet_count);
 
             for (tasklet_id, tasklet_desc) in topology.tasklets.iter().enumerate() {
-                families.push(tasklet_desc.scope.as_ref().map(|_| {
-                    Arc::new(crate::operator::scope::ScopeFamily::new(
-                        tasklet_id as TaskletId,
-                        Arc::clone(&tasklet_desc.name),
-                        tasklet_desc.max_cells,
-                    ))
-                }));
-                if tasklet_desc.scope.is_some() {
-                    cells.push(Vec::new());
-                    cell_key_to_idx.push(HashMap::new());
-                    dynamic_registries.push(None);
-                    continue;
-                }
                 let (slots, key_map, registry) = build_tasklet_cells(
                     &topology,
                     weak,
@@ -223,9 +203,6 @@ impl OperatorInstance {
                     .then(|| crate::steps::StepsRun::new(Weak::clone(weak))),
                 prefix,
                 end: Default::default(),
-                me: Weak::clone(weak),
-                scope_of: Default::default(),
-                families,
             }
         })
     }

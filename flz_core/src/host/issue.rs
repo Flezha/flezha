@@ -200,23 +200,6 @@ pub enum TopologyIssue {
     ChainedLoopTerminalWithoutHandoff {
         tasklet: String,
     },
-    /// A steps class embeds a steps class.
-    NestedSteps {
-        outer: String,
-        inner: String,
-    },
-    /// An embedded class declares several entry channels and the edge names
-    /// none.
-    EmbeddedEntryAmbiguous {
-        inner: String,
-        channels: String,
-    },
-    /// An embedded class ends in more than one channel nothing inside it
-    /// consumes.
-    EmbeddedExitAmbiguous {
-        inner: String,
-        channels: String,
-    },
 }
 
 impl ErrorModel for TopologyIssue {
@@ -292,9 +275,6 @@ impl TopologyIssue {
             Self::ChainedLoopTerminalWithoutHandoff { .. } => {
                 Code::ChainedLoopTerminalWithoutHandoff
             }
-            Self::NestedSteps { .. } => Code::NestedSteps,
-            Self::EmbeddedEntryAmbiguous { .. } => Code::EmbeddedEntryAmbiguous,
-            Self::EmbeddedExitAmbiguous { .. } => Code::EmbeddedExitAmbiguous,
         }
     }
 
@@ -451,15 +431,6 @@ impl TopologyIssue {
             Self::ChainedLoopTerminalWithoutHandoff { tasklet } => {
                 vec![("tasklet", tasklet.clone().into())]
             }
-            Self::NestedSteps { outer, inner } => vec![
-                ("outer", outer.clone().into()),
-                ("inner", inner.clone().into()),
-            ],
-            Self::EmbeddedEntryAmbiguous { inner, channels }
-            | Self::EmbeddedExitAmbiguous { inner, channels } => vec![
-                ("inner", inner.clone().into()),
-                ("channels", channels.clone().into()),
-            ],
             Self::CorrectionWindowZero
             | Self::CheckpointEveryZero
             | Self::AtCheckpointWithoutMaxDelay

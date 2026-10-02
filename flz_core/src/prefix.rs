@@ -88,12 +88,6 @@ impl PrefixLedger {
         self.moved.store(true, Ordering::Release);
     }
 
-    /// The highest prefix reported so far: no input at or below it is
-    /// pending anywhere in the instance.
-    pub(crate) fn reported(&self) -> Option<u64> {
-        self.state.lock_recover().reported
-    }
-
     /// A Cell of this instance was restored: its in-memory progress went back
     /// to its durable records, and the controller re-forwards what that
     /// discarded. A lost frame the restore repaired no longer freezes it.

@@ -148,7 +148,6 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
         | Some(Command::SpawnStepsRequest(_))
         | Some(Command::AdminRequest(_))
         | Some(Command::OperatorExited(_))
-        | Some(Command::ScopeInput(_))
         // The control reader answers a refusal itself, before the handshake
         // it ends; one arriving later has no session to refuse.
         | Some(Command::ConnectRefused(_)) => CommandActionType::NotificationIgnore,
@@ -159,14 +158,6 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
         )),
         Some(Command::AdminResponse(reply)) => {
             CommandActionType::AckSignal(ack_result(reply.result, reply.error))
-        }
-        Some(Command::ScopeInputResponse(crate::pb::ScopeInputResponse { error, refused })) => {
-            let outcome = if refused {
-                crate::operator::scope::REFUSED
-            } else {
-                ""
-            };
-            CommandActionType::AckSignal(ack_result(outcome.to_string(), error))
         }
         Some(Command::TaskCommitResponse(crate::pb::TaskCommitResponse { error, .. }))
         | Some(Command::IterCommitResponse(crate::pb::IterCommitResponse { error, .. })) => {

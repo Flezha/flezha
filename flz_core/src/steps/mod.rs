@@ -19,7 +19,6 @@ pub mod spec;
 
 use std::fmt;
 
-pub(crate) use commit::BARRIER_SENDS;
 pub use crate::operator::settings::{Each, OnFailure};
 pub use instance::{Deadline, Resume, StepsRun};
 pub use run::{

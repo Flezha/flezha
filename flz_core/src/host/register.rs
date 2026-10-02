@@ -148,7 +148,6 @@ pub fn check(decl: HostClassDecl) -> Result<Derived, Vec<TopologyIssue>> {
     }
     refuse_edge_keying(&decl, &channels, &mut issues);
     refuse_graph_shape(&decl, &channels, &mut issues);
-    refuse_embeddings(&decl, &run, &channels, &mut issues);
 
     if issues.is_empty() {
         Ok(Derived {
@@ -571,43 +570,6 @@ fn refuse_graph_shape(
         });
     }
 }
-
-/// Every node that embeds a steps class, judged as every SDK's is. Its exit
-/// continues to the outer graph's consumers only: a plugin end on its output
-/// would be fed by no host emit.
-fn refuse_embeddings(
-    decl: &HostClassDecl,
-    run: &Run,
-    channels: &[DerivedChannel],
-    issues: &mut Vec<TopologyIssue>,
-) {
-    let outer_steps = matches!(run, Run::Steps { .. });
-    for (id, task_decl) in decl.tasklets.iter().enumerate() {
-        let Some(inner) = &task_decl.operator else {
-            continue;
-        };
-        let plugin_end = channels.iter().find(|c| {
-            c.producer == Some(id as u32) && (c.sink.is_some() || c.response || c.call.is_some())
-        });
-        if let Some(channel) = plugin_end {
-            issues.push(TopologyIssue::InvalidSetting {
-                declaration: format!("the edge out of '{}'", task_decl.name),
-                setting: "sink".to_string(),
-                value: channel.name.clone(),
-                expected: "a tasklet after the embedded class, which the sink follows".to_string(),
-            });
-        }
-        if let Err(issue) = crate::operator::scope::embed(
-            &decl.factory_id,
-            outer_steps,
-            inner,
-            task_decl.input.as_deref(),
-        ) {
-            issues.push(issue);
-        }
-    }
-}
-
 /// Build the checked declaration's topology and register it.
 fn register(derived: Derived) -> Result<(), Error> {
     let Derived {

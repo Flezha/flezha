@@ -24,7 +24,6 @@ defmodule Flezha.Operator.Migration do
   alias Flezha.Operator.Overwatch
   alias Flezha.Operator.Plugins
   alias Flezha.Operator.Replay
-  alias Flezha.Operator.Scopes
   alias Flezha.Payloader
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.ControlUnit
@@ -79,8 +78,7 @@ defmodule Flezha.Operator.Migration do
   The caller (`CliManager`) has already refused an uncommitted target and an
   iteration whose plugin output cannot be compensated.
   """
-  @spec rewind(pid(), non_neg_integer() | {Scopes.scope(), non_neg_integer()}) ::
-          :ok | {:error, term()}
+  @spec rewind(pid(), non_neg_integer()) :: :ok | {:error, term()}
   def rewind(overwatch_pid, to_iter) when is_pid(overwatch_pid),
     do: GenServer.call(overwatch_pid, {:rewind, to_iter}, 30_000)
 
@@ -377,7 +375,6 @@ defmodule Flezha.Operator.Migration do
       %{scope: :process, order: 20, name: :class_registry, run: &class_registry_step/2},
       %{scope: :process, order: 30, name: :control_unit, run: &control_unit_step/2},
       %{scope: :process, order: 35, name: :writers, run: &writers_step/2},
-      %{scope: :process, order: 37, name: :scope_quota, run: &scope_quota_step/2},
       %{scope: :process, order: 40, name: :plugin_table, run: &plugin_table_step/2}
     ]
   end
@@ -418,13 +415,6 @@ defmodule Flezha.Operator.Migration do
   # moved away leaves nothing open for its return to find (`Flezha.State.Adoption`).
   defp writers_step({state, _reason}, _budget),
     do: OperatorManager.close_writers(Overwatch.operator_class(state))
-
-  # The stepped scopes this instance knows stop counting against the
-  # namespace's operator quota with it.
-  defp scope_quota_step({state, _reason}, _budget) do
-    _ = Scopes.release(state)
-    :ok
-  end
 
   defp control_unit_step({%Overwatch{runner_id: nil}, _reason}, _budget), do: :ok
 
@@ -556,7 +546,8 @@ defmodule Flezha.Operator.Migration do
   """
   @spec rewind_to(Overwatch.t(), non_neg_integer()) :: {:ok, Overwatch.t()} | {:error, term()}
   def rewind_to(%Overwatch{} = state, to_iter) do
-    with :ok <- rewind_journal(state, to_iter) do
+    with :ok <- rewind_guard(state, to_iter),
+         :ok <- TaskJournal.append_rewound(state.id, to_iter) do
       release_runner(state)
 
       :telemetry.execute(
@@ -569,16 +560,6 @@ defmodule Flezha.Operator.Migration do
 
       {:ok, rehydrate(evict_runner(state, nil))}
     end
-  end
-
-  @doc """
-  Journal the rewind marker of the instance `state` names, a stepped scope's
-  included, once `rewind_guard/2` lets it.
-  """
-  @spec rewind_journal(Overwatch.t(), non_neg_integer()) :: :ok | {:error, term()}
-  def rewind_journal(%Overwatch{} = state, to_iter) do
-    with :ok <- rewind_guard(state, to_iter),
-         do: TaskJournal.append_rewound(state.id, to_iter)
   end
 
   # ---------------------------------------------------------------

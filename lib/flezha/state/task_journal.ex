@@ -35,7 +35,6 @@ defmodule Flezha.State.TaskJournal do
     Paths,
     PersistenceResolver,
     RecordLog,
-    ScopePaths,
     Supervisor,
     WalWriter
   }
@@ -124,22 +123,11 @@ defmodule Flezha.State.TaskJournal do
   @type barrier ::
           {:task_committed, non_neg_integer(), non_neg_integer(), [committed_cell()],
            [handoff_item()], completion(), trigger()}
-          | {:task_committed, non_neg_integer(), non_neg_integer(), [committed_cell()],
-             [handoff_item()], completion(), trigger(), scope_exit()}
           | {:compensated, non_neg_integer(), non_neg_integer(), [committed_cell()]}
           | {:iter_committed, non_neg_integer(), non_neg_integer() | nil, String.t(),
              [handoff_item()], completion()}
-          | {:iter_committed, non_neg_integer(), non_neg_integer() | nil, String.t(),
-             [handoff_item()], completion(), scope_exit()}
           | {:dead_lettered, non_neg_integer(), non_neg_integer() | nil, String.t(), String.t(),
              non_neg_integer(), String.t()}
-
-  @typedoc """
-  A stepped scope's exit values a commit made final, `{channel, values}`, kept
-  with the commit until they are logged into the outer instance's input log;
-  `nil` on every other commit.
-  """
-  @type scope_exit :: {binary(), [binary()]} | nil
 
   @typedoc "The result a tasklet's `complete` asked for, or `nil` when none did."
   @type completion :: binary() | nil
@@ -343,10 +331,6 @@ defmodule Flezha.State.TaskJournal do
       when is_binary(instance_id) and is_integer(to_iter) and to_iter >= 0 do
     append(instance_id, @type_rewound, 0, to_iter, <<>>, current_epoch(instance_id) + 1)
   end
-
-  @doc "The id a stepped scope's journal is kept under (`Flezha.State.ScopePaths.scope_id/3`)."
-  @spec scope_id(binary(), binary(), binary() | nil) :: binary()
-  defdelegate scope_id(instance_id, inner, key), to: ScopePaths
 
   @doc """
   Journal that the instance consumed the input at `offset` without an
@@ -941,16 +925,6 @@ defmodule Flezha.State.TaskJournal do
 
   defp barrier_record(
          {:task_committed, task_idx, iter, cells_ran, handoff, completion, trigger},
-         failed
-       ),
-       do:
-         barrier_record(
-           {:task_committed, task_idx, iter, cells_ran, handoff, completion, trigger, nil},
-           failed
-         )
-
-  defp barrier_record(
-         {:task_committed, task_idx, iter, cells_ran, handoff, completion, trigger, exit},
          _failed
        ),
        do:
@@ -959,8 +933,7 @@ defmodule Flezha.State.TaskJournal do
             Codec.encode_cells(cells_ran),
             Codec.encode_handoff(handoff),
             Codec.encode_completion(completion),
-            Codec.encode_trigger(trigger),
-            Codec.encode_exit(exit)
+            Codec.encode_trigger(trigger)
           ]}
 
   defp barrier_record({:compensated, task_idx, iter, cells_ran}, _failed),
@@ -971,16 +944,6 @@ defmodule Flezha.State.TaskJournal do
          failed
        ),
        do:
-         barrier_record(
-           {:iter_committed, iter, consumed_offset, entry_channel, handoff, completion, nil},
-           failed
-         )
-
-  defp barrier_record(
-         {:iter_committed, iter, consumed_offset, entry_channel, handoff, completion, exit},
-         failed
-       ),
-       do:
          {@type_iter_committed, 0, iter,
           [
             Codec.encode_offset(consumed_offset),
@@ -988,8 +951,7 @@ defmodule Flezha.State.TaskJournal do
             entry_channel,
             Codec.encode_handoff(handoff),
             Codec.encode_completion(completion),
-            Codec.encode_failed_turns(failed),
-            Codec.encode_exit(exit)
+            Codec.encode_failed_turns(failed)
           ]}
 
   defp barrier_record(

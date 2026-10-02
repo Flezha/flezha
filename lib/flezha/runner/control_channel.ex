@@ -297,9 +297,6 @@ defmodule Flezha.Runner.ControlChannel do
       {:admin_request, %{} = request, reference_id} ->
         Requests.admin(state, request, reference_id)
 
-      {:scope_input, %{} = input, reference_id} ->
-        Requests.scope_input(state, input, reference_id)
-
       :not_sdk_initiated ->
         GenServer.cast(state.control_unit, {:handle_payload, message, metadata})
     end
@@ -449,8 +446,7 @@ defmodule Flezha.Runner.ControlChannel do
     :operator_exited,
     :update_factories,
     :spawn_steps_request,
-    :admin_request,
-    :scope_input
+    :admin_request
   ]
 
   defp decode_sdk_initiated(message) do
