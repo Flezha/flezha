@@ -50,6 +50,7 @@ ways is refused when the plugin is enabled, rather than resolved by precedence.
 | | |
 |---|---|
 | Plugin type | `:io_binding` |
+| Shared | yes: one connection per controller for every operator bound to the plugin, or one in the whole cluster with `--single`; every operator gets every frame. Each member of a partitioned operator runs a connection of its own, for its own share (below) |
 | Source | one `http://` or `https://` URL, `GET` only, redirects not followed — or a literal `subscription_items` list |
 | Source response | `{"version": <integer>, "items": [<string>, …]}` |
 | Item strings | opaque — never parsed, validated or interpreted |
@@ -279,7 +280,7 @@ direction would close that cycle and hang the operator permanently.
 | `idle_timeout_ms` | int | `30000` | no | Silence on the connection before it is reopened; 0 disables |
 | `resubscribe_after_ms` | int | `0` | no | Silence of DATA frames before the subscription is reasserted; 0 disables |
 | `subscription_url` | string | &mdash; | no | Endpoint the desired item set is polled from |
-| `subscription_items` | list | &mdash; | no | Literal desired item set, instead of polling one |
+| `subscription_items` | list | &mdash; | no | Literal desired item set, instead of polling one; changed in place by flz plugin update |
 | `subscription_interval_ms` | int | `30000` | no | How often the item source is polled |
 | `subscription_headers` | json | `%{}` | no | Headers for the item source poll |
 | `subscribe_template` | string | &mdash; | no | Frame template carrying the items to subscribe |
@@ -341,21 +342,24 @@ before any state for that key is created — see
 ## Observability
 
 `flz operator info` renders the provider's `inspect_state/1` beneath the
-plugin: the applied set, the desired set, requests in flight, the last
-reconcile outcome and the last error.
+plugin: whether the socket is open and, for a subscription source, the applied
+set, the desired set, requests in flight, the last reconcile outcome and the
+last error.
 
 ```text
   Plugins:
     - exchange_ws: Flezha.Plugin.Provider.Websocket
         applied: BTC/USD, ETH/USD
+        connected: true
         desired: BTC/USD, ETH/USD
         inflight: 0
         last_reconcile: %{added: 1, removed: 0, sent: true}
         last_error: (none)
 ```
 
-A connection process that cannot be reached reports the last persisted applied
-set with `last_error: :no_connection` (or `:probe_timeout`). `flz plugin info`
+A connection process that cannot be reached reports `connected: false` and the
+last persisted applied set with `last_error: :no_connection` (or
+`:probe_timeout`). `flz plugin info`
 is the installed-package surface and has no live set to report.
 
 A stalled subscription source is deliberately **not** unhealthy: the socket

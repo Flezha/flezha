@@ -24,6 +24,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
   alias Flezha.Operator.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperatorManager
+  alias FlezhaTest.Fixtures.OperatorFixture
   alias FlezhaTest.Helper.DeclarationSnapshot
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -110,7 +111,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
                  OperatorManager.start_operator(ctx.namespace, %Builder{
                    id: operator_id,
                    factory_id: @test_operator_factory,
-                   opts: [plugins: [sink(ctx.namespace, operator_id)]]
+                   opts: [bindings: sink(ctx.namespace, operator_id)]
                  })
 
         OperatorManager.send_io(operator_id, ctx.namespace, "hello", %{"input_type" => "2"})
@@ -162,7 +163,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
                  OperatorManager.start_operator(ctx.namespace, %Builder{
                    id: operator_id,
                    factory_id: "hybrid_channel",
-                   opts: [plugins: [sink(ctx.namespace, operator_id, include_metadata: true)]]
+                   opts: [bindings: sink(ctx.namespace, operator_id, include_metadata: true)]
                  })
 
         OperatorManager.send_io(operator_id, ctx.namespace, "42", %{
@@ -265,7 +266,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
                OperatorManager.start_operator(ctx.namespace, %Builder{
                  id: operator_id,
                  factory_id: "partition_relay",
-                 opts: [plugins: [sink(ctx.namespace, operator_id, include_metadata: true)]]
+                 opts: [bindings: sink(ctx.namespace, operator_id, include_metadata: true)]
                })
 
       OperatorManager.send_io(operator_id, ctx.namespace, "k1:one", %{
@@ -300,16 +301,15 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
     NodeTestHelper.read_port(port, &String.contains?(&1, needle), budget)
   end
 
-  # Subscribed to every output channel, so it needs no channel name — only an
-  # id unique in the namespace the tests share.
+  # Subscribed to every output channel, so it needs no channel name.
   defp sink(namespace, operator_id, opts \\ []) do
-    %Flezha.Plugin{
-      id: "smoke_sink_#{operator_id}",
-      namespace: namespace,
-      operator_id: operator_id,
-      provider: Flezha.Plugin.Provider.BeamMsgForward,
-      opts: %{recv_pid: self(), include_metadata: Keyword.get(opts, :include_metadata, false)},
-      hooks: [{:on_output, []}]
-    }
+    OperatorFixture.bindings(namespace, operator_id, [
+      %Flezha.Plugin{
+        id: "smoke_sink",
+        provider: Flezha.Plugin.Provider.BeamMsgForward,
+        opts: %{recv_pid: self(), include_metadata: Keyword.get(opts, :include_metadata, false)},
+        hooks: [{:on_output, []}]
+      }
+    ])
   end
 end

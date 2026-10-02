@@ -36,7 +36,7 @@ defmodule Flezha.Service.ListenerTest do
     stub(PartitionGroup, :members, fn _ns, _op -> [] end)
     stub(Directory, :hub_nodes, fn _ns -> [node()] end)
     stub(HubManager, :declared_operators, fn _ns -> [] end)
-    stub(HubManager, :operator_plugins, fn _ns, _op -> {:ok, []} end)
+    stub(HubManager, :operator_bindings, fn _ns, _op -> {:ok, []} end)
     :ok
   end
 
@@ -125,7 +125,7 @@ defmodule Flezha.Service.ListenerTest do
   end
 
   test "a target neither registered nor declared is refused before anything is enabled" do
-    stub(HubManager, :operator_plugins, fn "ns", "ghost" ->
+    stub(HubManager, :operator_bindings, fn "ns", "ghost" ->
       {:error, {:operator_not_found, "ns", "ghost"}}
     end)
 
@@ -175,7 +175,7 @@ defmodule Flezha.Service.ListenerTest do
       numbers = parts_until_output(pid, [])
       assert length(numbers) < 100
       assert numbers == Enum.sort(numbers)
-      assert :sys.get_state(relay).frames <= 8
+      assert :sys.get_state(relay).backlog.frames <= 8
       refute_received {:outcome, _}
       Process.exit(pid, :kill)
     end
@@ -202,7 +202,7 @@ defmodule Flezha.Service.ListenerTest do
 
     test "a row still carrying it is a move: the listener goes on" do
       %{pid: pid, relay: relay, id: id} = listening(window_ms: 300)
-      stub(HubManager, :operator_plugins, fn "ns", "op" -> {:ok, [{id, nil}]} end)
+      stub(HubManager, :operator_bindings, fn "ns", "op" -> {:ok, [{id, nil}]} end)
 
       send(relay, {:listener_released, id})
       send(relay, {:heartbeat_keepalive, self()})
@@ -212,7 +212,7 @@ defmodule Flezha.Service.ListenerTest do
     end
 
     test "a registered operator without the row was disabled by someone else" do
-      stub(HubManager, :operator_plugins, fn "ns", "op" -> {:ok, []} end)
+      stub(HubManager, :operator_bindings, fn "ns", "op" -> {:ok, []} end)
       %{relay: relay, id: id} = listening([])
       send(relay, {:listener_released, id})
 
@@ -223,7 +223,7 @@ defmodule Flezha.Service.ListenerTest do
     test "an operator no longer registered ended, after what was held before it" do
       %{pid: pid, relay: relay, id: id} = listening([])
 
-      stub(HubManager, :operator_plugins, fn "ns", "op" ->
+      stub(HubManager, :operator_bindings, fn "ns", "op" ->
         {:error, {:operator_not_found, "ns", "op"}}
       end)
 

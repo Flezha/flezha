@@ -50,6 +50,7 @@ defmodule FlezhaTest.System.OperatorCallE2ETest do
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperatorManager
   alias Flezha.State.{InputLog, TaskJournal}
+  alias FlezhaTest.Fixtures.OperatorFixture
   alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag timeout: 300_000
@@ -71,14 +72,14 @@ defmodule FlezhaTest.System.OperatorCallE2ETest do
     do: boot_runner(namespace, ctx, id_path, release?: false, extra_env: env)
 
   defp start(namespace, factory, kind, id, collector \\ nil) do
-    plugins = if collector, do: [forward_sink("out_#{id}", collector)], else: []
+    plugins = if collector, do: [forward_sink("out", collector)], else: []
 
     assert {:ok, _} =
              OperatorManager.start_operator(namespace, %Builder{
                id: id,
                factory_id: factory,
                run: kind,
-               opts: [plugins: plugins]
+               opts: [bindings: OperatorFixture.bindings(namespace, id, plugins)]
              })
 
     id

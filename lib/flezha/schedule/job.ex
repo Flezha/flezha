@@ -31,6 +31,7 @@ defmodule Flezha.Schedule.Job do
   alias Flezha.Plugin.SpecDecoder
   alias Flezha.Schedule.{Cron, Store}
   alias Flezha.Service.OperatorManager
+  alias Flezha.Service.PluginManager
 
   # Backoff cap equals the finest cron granularity, so a retrying schedule
   # probes at least once per minute.
@@ -71,18 +72,17 @@ defmodule Flezha.Schedule.Job do
     end
   end
 
-  # Plugin ids are namespaced by the instance id: slot ids differ, so two
-  # overlapping runs must not claim one plugin id.
+  # Every run binds the plugins its specs name; a spec with a provider enables
+  # its plugin the first time.
   defp instance_plugins(entry, instance_id) do
-    with {:ok, plugins} <- SpecDecoder.decode(entry.plugins, entry.namespace, instance_id) do
-      {:ok, Enum.map(plugins, &%{&1 | id: "#{instance_id}_#{&1.id}"})}
-    end
+    with {:ok, plugins} <- SpecDecoder.decode(entry.plugins, entry.namespace, instance_id),
+         do: PluginManager.start_bindings(entry.namespace, plugins)
   end
 
   # The stored first message rides the bind as a spawn's payload does, on the
   # entry channel the entry names or the first declared one.
   defp start(entry, instance_id, plugins, attempt) do
-    opts = if plugins == [], do: [], else: [plugins: plugins]
+    opts = if plugins == [], do: [], else: [bindings: plugins]
 
     opts =
       case Builder.seed_input(Map.get(entry, :text), Map.get(entry, :channel)) do

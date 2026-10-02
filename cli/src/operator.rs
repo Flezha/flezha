@@ -323,10 +323,12 @@ fn handle_listen(read: &Reading) {
 ///
 /// Accepts:
 /// * `"{}"` / empty string — treated as "no plugins attached"; returns `"[]"`.
-/// * A JSON array of plugin objects. Each object MUST have `id`, `provider`
-///   (non-empty strings) and a non-empty `hooks` array. Deeper
-///   validation (provider registration lookup, hook-opts shape)
-///   happens on the Elixir side where the registry is authoritative.
+/// * A JSON array of plugin objects. Each object MUST name the plugin with a
+///   non-empty `name`, and carries nothing but `name`, `provider`, `opts`,
+///   `hooks` and `single`; a `provider` enables the plugin when it is not
+///   enabled yet, and without one the spec only binds. Deeper validation
+///   (provider registration lookup, hook-opts shape) happens on the Elixir
+///   side where the registry is authoritative.
 pub(crate) fn parse_plugins_json(raw: &str) -> Result<String, String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() || trimmed == "{}" {
@@ -345,30 +347,38 @@ pub(crate) fn parse_plugins_json(raw: &str) -> Result<String, String> {
             .as_object()
             .ok_or_else(|| format!("plugin[{}] must be a JSON object", idx))?;
 
-        let id = obj
-            .get("id")
+        let name = obj
+            .get("name")
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
-            .ok_or_else(|| format!("plugin[{}] missing non-empty string field `id`", idx))?;
+            .ok_or_else(|| format!("plugin[{}] missing non-empty string field `name`", idx))?;
 
-        obj.get("provider")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| format!("plugin[{}] ({}) missing `provider`", idx, id))?;
+        if let Some(key) = obj.keys().find(|key| !PLUGIN_KEYS.contains(&key.as_str())) {
+            return Err(format!(
+                "plugin[{}] ({}) does not read `{}`",
+                idx, name, key
+            ));
+        }
 
-        match obj.get("hooks") {
-            Some(serde_json::Value::Array(subs)) if !subs.is_empty() => (),
-            _ => {
-                return Err(format!(
-                    "plugin[{}] ({}) must declare a non-empty `hooks` array",
-                    idx, id
-                ));
-            }
+        if let Some(provider) = obj.get("provider") {
+            provider
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| format!("plugin[{}] ({}) has an empty `provider`", idx, name))?;
+        }
+
+        if obj.get("hooks").is_some_and(|hooks| !hooks.is_array()) {
+            return Err(format!(
+                "plugin[{}] ({}) `hooks` must be an array",
+                idx, name
+            ));
         }
     }
 
     Ok(serde_json::to_string(&value).unwrap_or_else(|_| trimmed.to_string()))
 }
+
+const PLUGIN_KEYS: [&str; 5] = ["name", "provider", "opts", "hooks", "single"];
 
 /// `parse_plugins_json` for a handler that answers `()`: the canonical text,
 /// or the one refusal every verb that takes `--plugins` prints.
@@ -393,7 +403,7 @@ mod tests {
 
     #[test]
     fn valid_sibling_spec_round_trips() {
-        let input = r#"[{"id":"init_state_from_java","provider":"init_state_sibling","opts":{"source_operator_id":"market-init-state","handler_key":"fetch_init_state","request_payload":{"symbol":"XBT/USD"}},"hooks":[["on_operator_init",{"on_error":"empty"}]]}]"#;
+        let input = r#"[{"name":"init_state_from_java","provider":"init_state_sibling","opts":{"source_operator_id":"market-init-state","handler_key":"fetch_init_state","request_payload":{"symbol":"XBT/USD"}},"hooks":[["on_operator_init",{"on_error":"empty"}]]}]"#;
         let canonical = parse_plugins_json(input).unwrap();
         assert!(canonical.contains("\"init_state_from_java\""));
         assert!(canonical.contains("\"init_state_sibling\""));
@@ -407,32 +417,33 @@ mod tests {
 
     #[test]
     fn non_array_returns_err() {
-        let err = parse_plugins_json(r#"{"id":"x","provider":"y"}"#).unwrap_err();
+        let err = parse_plugins_json(r#"{"name":"x","provider":"y"}"#).unwrap_err();
         assert!(err.contains("JSON array"));
     }
 
     #[test]
-    fn missing_id_returns_err() {
+    fn missing_name_returns_err() {
         let err = parse_plugins_json(r#"[{"provider":"init_state_sibling","hooks":[["x",{}]]}]"#)
             .unwrap_err();
-        assert!(err.contains("missing non-empty string field `id`"));
+        assert!(err.contains("missing non-empty string field `name`"));
     }
 
     #[test]
-    fn empty_hooks_returns_err() {
-        let err = parse_plugins_json(r#"[{"id":"p","provider":"init_state_sibling","hooks":[]}]"#)
-            .unwrap_err();
-        assert!(err.contains("non-empty `hooks`"));
+    fn a_spec_naming_only_its_plugin_binds() {
+        assert!(parse_plugins_json(r#"[{"name":"trades"}]"#).is_ok());
     }
 
-    /// fails when: a spec that still names its hooks `subscriptions` passes the
-    /// check and reaches the controller as a plugin with no hooks.
+    /// fails when: a spec that names its hooks `subscriptions`, or its plugin
+    /// `id`, passes the check and reaches the controller without them.
     #[test]
-    fn hooks_under_another_key_return_err() {
+    fn a_key_the_spec_does_not_read_returns_err() {
         let err = parse_plugins_json(
-            r#"[{"id":"p","provider":"operator_stdout","subscriptions":["on_output"]}]"#,
+            r#"[{"name":"p","provider":"operator_stdout","subscriptions":["on_output"]}]"#,
         )
         .unwrap_err();
-        assert!(err.contains("non-empty `hooks`"));
+        assert!(err.contains("does not read `subscriptions`"));
+
+        let err = parse_plugins_json(r#"[{"id":"p","name":"p"}]"#).unwrap_err();
+        assert!(err.contains("does not read `id`"));
     }
 }

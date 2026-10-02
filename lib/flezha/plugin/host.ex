@@ -29,10 +29,13 @@ defmodule Flezha.Plugin.Host do
   * `:verdict` waits and answers what the host decided, which a poller reads to
     know whether to advance its content hash.
   * `:fire_and_forget` does not wait. The host owns the payload from the cast.
+  * `:request` is `:confirming` without the wait: it answers the request id
+    whose reply (`:gen_server.check_response/2`) is the journal ack, for a
+    producer that must keep taking records meanwhile.
   * `:call` sends one input and waits for the host's answer to it, the output
     a `response()` end of its graph produced.
   """
-  @type inject_mode() :: :confirming | :verdict | :fire_and_forget | :call
+  @type inject_mode() :: :confirming | :verdict | :fire_and_forget | :request | :call
 
   @doc """
   Hand one record to the host operator. The ONE call a source makes: five
@@ -43,11 +46,11 @@ defmodule Flezha.Plugin.Host do
   is `{:error, {:unreachable, reason}}`. A `:call` takes the call's deadline in
   milliseconds as its last argument and answers `{:ok, payload, %{"channel" =>
   channel}}` or `{:error, %Flezha.Error{}}`: `call.timeout` at the deadline,
-  `call.unavailable` for a host it could not reach. The other two answer `:ok`,
-  because there is nothing else to say.
+  `call.unavailable` for a host it could not reach. A `:request` answers its
+  request id. The other two answer `:ok`, because there is nothing else to say.
   """
   @spec inject(GenServer.server(), binary(), map(), inject_mode(), timeout()) ::
-          :ok | {:ok, binary(), map()} | {:error, term()}
+          :ok | {:ok, binary(), map()} | {:error, term()} | :gen_server.request_id()
   def inject(overwatch, message, metadata, mode, timeout \\ :infinity)
 
   def inject(overwatch, message, metadata, :confirming, timeout) do
@@ -67,6 +70,9 @@ defmodule Flezha.Plugin.Host do
     :exit, {reason, {GenServer, :call, _call}} -> {:error, {:unreachable, reason}}
     :exit, reason -> {:error, {:unreachable, reason}}
   end
+
+  def inject(overwatch, message, metadata, :request, _timeout),
+    do: :gen_server.send_request(overwatch, {:io_in, message, metadata})
 
   def inject(overwatch, message, metadata, :fire_and_forget, _timeout) do
     GenServer.cast(overwatch, {:io_in, message, metadata})
@@ -89,6 +95,20 @@ defmodule Flezha.Plugin.Host do
     do: GenServer.cast(host, {:plugin_opt_persist, plugin_id, key, value})
 
   def persist_opt(_host, _plugin_id, _key, _value), do: :ok
+
+  @doc """
+  The extension table a host operator holds: shareable plugins on it are served
+  by their shared copy on this controller (`Flezha.Plugin.Shared`). A partition
+  group's member runs every plugin it holds itself, because each member asks
+  upstream for its own share of the key range only.
+  """
+  @spec operator_table(map(), keyword()) :: Flezha.Plugin.Extension.Table.t()
+  def operator_table(catalog, operator_opts) do
+    shared =
+      if Flezha.Partition.identity(operator_opts), do: nil, else: Flezha.Plugin.Shared
+
+    Flezha.Plugin.Extension.Table.new(catalog, shared: shared)
+  end
 
   defmacro __using__(opts) do
     extensions_ast = Keyword.fetch!(opts, :extensions)

@@ -56,7 +56,7 @@ defmodule Flezha.Service.Cli.PluginPackagesTest do
   end
 
   test "the provider list ends naming how many packages were refused" do
-    out = capture_io(fn -> CliPlugin.list_plugins(%{}) end)
+    out = capture_io(fn -> CliPlugin.list_providers(%{}) end)
     assert out =~ "example_stamp"
     refute out =~ "flz_refused_stamp"
     assert out =~ "1 plugin package(s) were refused at boot: flz plugin list --installed"

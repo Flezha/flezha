@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### Changed: a plugin has a name and operators are bound to it
+
+A plugin is enabled once, by name, in its namespace, with no operator, and operators are
+connected to it: `flz plugin enable <name> <provider> [--single] [options]`, then
+`flz plugin bind <name> --operator_id <op> [--hook=...] [--channel ...]`; `flz plugin unbind`
+takes the connection away and the plugin stays enabled, and only `flz plugin disable <name>`
+turns it off. `flz plugin enable ... --operator_id <op>` still enables and binds in one
+command. `flz plugin update <name> [options]` changes a running plugin: in place when the
+provider declares the changed options live (the websocket provider's `subscription_items`),
+by a restart otherwise, naming the operators bound to it. `flz plugin list` shows the plugins
+enabled in a namespace, with their provider, bound operators and the controllers they run on
+or `idle`; the provider registry moves to `flz plugin list --providers`.
+
+A provider that can be shared (`websocket`, `http_poll`, `stdout`, `kafka_producer`) runs once
+on each controller where an operator bound to it runs, and every operator gets every record
+through a backlog of its own (`FLEZHA_PLUGIN_BACKLOG_BYTES`, `FLEZHA_PLUGIN_BACKLOG_FRAMES`): a
+slow one loses its oldest records, its health says `plugin_lagging`, and the others are not
+slowed. With `--single` one copy runs in the whole cluster. A copy whose last operator leaves
+stops, at once on an unbind or a stop and after `FLEZHA_PLUGIN_IDLE_STOP_MS` otherwise, so the
+connection stays open across an operator's move. The members of a partitioned operator do not
+share: each runs its own copy, asking only for its own share of the keys, beside the copy the
+unpartitioned operators share. A provider that cannot be shared refuses a second operator
+(`plugin.not_shareable`). An operator placed on a controller that lacks a
+plugin's package now runs without it, its health naming `plugin.provider_not_loaded`, instead
+of parking. Every SDK's admin object gains `bindPlugin` and `unbindPlugin` in its own spelling.
+
+Nothing converts the plugins an operator carried before: an operator starts without them and
+logs a warning naming them, and each must be enabled and bound again. `--plugins` specs name a
+plugin with `name` instead of `id`. The HTTP server package is the submodule
+`plugins/flezha_http_plugin`.
+
 ### Changed: a plugin package outlives an Erlang or Elixir upgrade
 
 A package built on OTP `N` now loads on OTP `N`, `N+1` and `N+2`, and one built on any older

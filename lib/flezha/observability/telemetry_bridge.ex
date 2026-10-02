@@ -100,6 +100,8 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :plugin, :file_sink, :shipped] => {:flezha_file_sink, :flushed, :metric},
     [:flezha, :plugin, :file_sink, :refused] => {:flezha_file_sink, :refused, :event},
     [:flezha, :plugin, :file_sink, :failed] => {:flezha_file_sink, :failed, :event},
+    # A plain output a binding that is not started could not take, counted.
+    [:flezha, :plugin, :not_started, :dropped] => {:flezha_plugin_not_started, :dropped, :metric},
     # The kafka producer's family, under the same derived prefix as every other
     # provider. Counts are metrics; a failure, a topic creation and a worker
     # swap are events a user reads one at a time.

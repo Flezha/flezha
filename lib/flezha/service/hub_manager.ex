@@ -39,9 +39,11 @@ defmodule Flezha.Service.HubManager do
   defdelegate live_node(arg1), to: Rows
   defdelegate live_pid(arg1), to: Rows
   defdelegate migration_strategy(), to: Lifecycle
-  defdelegate operator_plugins(arg1), to: Rows
-  defdelegate declared_plugins(arg1), to: Rows
-  defdelegate operator_plugins(arg1, arg2), to: Rows
+  defdelegate operator_bindings(arg1), to: Rows
+  defdelegate declared_bindings(arg1), to: Rows
+  defdelegate operator_bindings(arg1, arg2), to: Rows
+  defdelegate plugin_entries(arg1), to: Rows
+  defdelegate plugin_entry(arg1, arg2), to: Rows
   defdelegate operator_rows(arg1), to: Rows
   defdelegate operator_runner_tag(arg1, arg2), to: Placement
   defdelegate operator_set_runner(arg1, arg2, arg3), to: Placement
@@ -205,7 +207,7 @@ defmodule Flezha.Service.HubManager do
 
   defp holds_anything?(namespace) do
     Rows.local_operators?(namespace) or
-      Rows.declared_operators(namespace) != [] or
+      Rows.declares_anything?(namespace) or
       unsettled?(namespace)
   end
 

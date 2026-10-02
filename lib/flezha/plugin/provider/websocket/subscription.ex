@@ -525,7 +525,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
 
   ## ---------- observability ----------
 
-  def subscription_report(state) do
+  def subscription_report(%{subscription: _} = state) do
     %{
       applied: Enum.sort(state.applied),
       desired: state.desired && Enum.sort(state.desired),
@@ -534,6 +534,8 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
       last_error: state.last_error
     }
   end
+
+  def subscription_report(_static), do: %{}
 
   # Armed on the client's behalf, under the `:poll` key that module declares.
   # A literal item list has no endpoint to poll; its desired set is already

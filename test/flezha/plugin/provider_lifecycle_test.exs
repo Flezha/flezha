@@ -57,9 +57,13 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
     "lib/flezha/plugin/provider/kafka/worker_registry.ex"
   ]
 
+  # What stands in a table for a binding that could not come up: no user
+  # enables it, so it is no row.
+  @not_a_row [Flezha.Plugin.Provider.NotStarted]
+
   describe "clause 1: every provider is one declaration and one row" do
     test "every module that uses the behaviour is a row of the provider table" do
-      declared = Providers.all() |> Map.values() |> MapSet.new()
+      declared = Providers.all() |> Map.values() |> Enum.concat(@not_a_row) |> MapSet.new()
 
       missing =
         for path <- Path.wildcard("#{@provider_dir}/**/*.ex"),
@@ -337,7 +341,7 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
     assert Table.uptimes(table)[row_id] >= 0
 
     # Disable: the family registry is emptied and nothing is left behind.
-    {table, [^row_id]} = Table.unsubscribe(table, row_id)
+    table = Table.unsubscribe(table, row_id)
     assert Table.phase(table, row_id) == :unknown
     assert WorkerSup.keys(family) == [], "provider `#{id}` left a worker registered after disable"
 
@@ -347,7 +351,7 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
     assert Enum.any?(seen, &match?({:running, _}, &1)),
            "provider `#{id}` reached :running without emitting the event"
 
-    {_table, _} = Table.teardown_all(table)
+    _ = Table.teardown_all(table)
   end
 
   defp plugin_for(wrapper, provider, row_id) do
@@ -584,6 +588,9 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
 
         @impl true
         def init_provider(opts), do: unquote(provider).init_provider(opts)
+
+        @impl true
+        def reconfigure(_old, _new), do: :ok
 
         unquote_splicing(callbacks)
       end

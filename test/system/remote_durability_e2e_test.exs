@@ -46,6 +46,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
   alias Flezha.State.Completion
   alias Flezha.State.DurabilityTier.{Backend, Manifest, Shipper}
   alias Flezha.State.{InputLog, Paths, TaskJournal}
+  alias FlezhaTest.Fixtures.OperatorFixture
   alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag :postgres_integration
@@ -158,7 +159,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
       id: operator_id,
       factory_id: "checkpoint_store",
       init_values: %{},
-      opts: [plugins: [sink]]
+      opts: [bindings: OperatorFixture.bindings(namespace, operator_id, [sink])]
     }
 
     assert {:ok, info} = OperatorManager.start_operator(namespace, builder)

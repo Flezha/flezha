@@ -71,7 +71,7 @@ $ flz plugin help operator_websocket
 Websocket Plugin Help
 
 USAGE:
-    flz plugin enable <plugin_id> operator_websocket [OPTIONS]
+    flz plugin enable <name> operator_websocket [OPTIONS]
 
 REQUIRED PARAMETERS (X-prefixed):
     --Xuri <value>    The websocket endpoint to connect to
@@ -106,7 +106,8 @@ $ flz plugin enable exchange operator_websocket \
 
 ```output
 Enabling plugin...
-Plugin exchange enabled successfully.
+Plugin exchange enabled.
+Plugin exchange bound to trade_watcher.
 ```
 
 What each setting does:
@@ -219,7 +220,8 @@ $ flz plugin enable signals operator_file_sink \
 
 ```output
 Enabling plugin...
-Plugin signals enabled successfully.
+Plugin signals enabled.
+Plugin signals bound to trade_watcher.
 ```
 
 `--hook=on_output` means the controller hands the plugin everything the
@@ -266,7 +268,7 @@ should record its steps:
 ```sh
 $ flz operator start order_executor --id order_1 --namespace trading \
   --text '{"symbol": "EUR/USD", "quantity": 10}' --channel order \
-  --plugins '[{"id": "order_1_file", "provider": "operator_file_sink", "opts": {"path": "order_1.txt"}, "hooks": [["on_output", {}]]}]'
+  --plugins '[{"name": "order_1_file", "provider": "operator_file_sink", "opts": {"path": "order_1.txt"}, "hooks": [["on_output", {}]]}]'
 ```
 
 ```output

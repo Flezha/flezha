@@ -22,10 +22,15 @@ defmodule Flezha.Plugin.Extension.Table do
   overrode, which options it takes, which worker it runs. Nothing is discovered
   by probing exports, and no provider starts or stops a lifecycle process of its
   own.
+
+  An operator's table is built with `shared:`, the module running shareable
+  plugins once per controller: a shareable plugin there joins that copy at
+  activation instead of starting a worker, and reports the copy's health. A
+  binding that cannot come up is recorded `{:not_started, reason}`
+  (`put_not_started/4`).
   """
 
   alias Flezha.Plugin
-  alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table.Chain
   alias Flezha.Plugin.Extension.Table.Health
   alias Flezha.Plugin.Extension.Table.Entry
@@ -33,6 +38,7 @@ defmodule Flezha.Plugin.Extension.Table do
   alias Flezha.Plugin.Extension.Table.Workers
   alias Flezha.Plugin.Installer
   alias Flezha.Plugin.Installer.Loader
+  alias Flezha.Plugin.Provider.NotStarted
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
 
@@ -50,6 +56,9 @@ defmodule Flezha.Plugin.Extension.Table do
             monitors: %{},
             timers: %{},
             host_pid: nil,
+            # The module serving shareable plugins on this controller, or nil
+            # for a table that runs every plugin it holds itself.
+            shared: nil,
             # Operator-level facts resolved at bind time (currently
             # `:effectively_once`), merged into every provider's opts at
             # activation, including plugin-heal re-activations.
@@ -74,8 +83,8 @@ defmodule Flezha.Plugin.Extension.Table do
   Build a new table from a catalog map (as produced by
   `Flezha.Plugin.Host.build_catalog/2`).
   """
-  @spec new(map()) :: t()
-  def new(catalog) when is_map(catalog) do
+  @spec new(map(), keyword()) :: t()
+  def new(catalog, opts \\ []) when is_map(catalog) do
     subs =
       Enum.reduce(catalog, %{}, fn
         {name, %{kind: :request}}, acc -> Map.put(acc, name, [])
@@ -92,7 +101,8 @@ defmodule Flezha.Plugin.Extension.Table do
       catalog: catalog,
       subs: subs,
       request_subs: request_subs,
-      host_pid: self()
+      host_pid: self(),
+      shared: Keyword.get(opts, :shared)
     }
   end
 
@@ -127,7 +137,7 @@ defmodule Flezha.Plugin.Extension.Table do
   # A provider module this VM does not hold is, when a package on this node
   # declares it, that package's refusal or pending install, which is what the
   # user repairs.
-  defp missing_provider({:module_not_loaded, provider} = reason),
+  defp missing_provider({:module_not_loaded, provider, _controller} = reason),
     do: Installer.unavailable(provider) || reason
 
   defp missing_provider(reason), do: reason
@@ -137,14 +147,13 @@ defmodule Flezha.Plugin.Extension.Table do
     with :ok <- Subscription.validate_plugin_unique(table, plugin_id),
          {:ok, plugin} <- Subscription.canonicalise(table.catalog, plugin),
          :ok <- Subscription.validate_subscriptions(table, plugin) do
-      do_subscribe(table, plugin_id, plugin, plugin.hooks)
+      do_subscribe(table, plugin_id, plugin)
     end
   end
 
   # The halt is the only point holding all three facts a user needs: which
   # plugin refused, what its provider was, and which rows the halt therefore
-  # left unattempted. `invoke_activate/4` already reports phase 2 this way;
-  # phase 1 reported nothing at all, so a parked operator named no plugin.
+  # left unattempted.
   defp log_halt(plugin_id, %Plugin{provider: provider}, reason, unattempted) do
     Logger.error(
       "[Extension.Table] prepare failed for plugin_id=#{plugin_id} " <>
@@ -192,6 +201,9 @@ defmodule Flezha.Plugin.Extension.Table do
       {:down, _reason} ->
         {acc, failed}
 
+      {:not_started, _reason} ->
+        {acc, failed}
+
       _ ->
         case activate_plugin(acc, plugin_id, plugin) do
           {activated, :ok} -> {activated, failed}
@@ -204,25 +216,37 @@ defmodule Flezha.Plugin.Extension.Table do
   # the declaration says it runs, then let it acquire what only it can. A
   # provider that declares a worker and overrides nothing is fully activated by
   # the first step.
-  defp activate_plugin(table, plugin_id, %Plugin{provider: provider, opts: opts}) do
-    if Code.ensure_loaded?(provider) do
-      # Operator-level facts resolved at bind time (currently
-      # `:effectively_once`), merged last so stored opts cannot spoof them.
-      opts = Map.merge(opts || %{}, table.activation_env)
+  defp activate_plugin(table, plugin_id, %Plugin{provider: provider, opts: opts} = plugin) do
+    cond do
+      not Code.ensure_loaded?(provider) ->
+        Logger.warning(
+          "[Extension.Table] activate skipped, provider not loaded plugin_id=#{plugin_id}"
+        )
 
-      case Workers.start(table, plugin_id, provider, opts, invoker(plugin_id, provider)) do
-        {table, :ok} ->
-          invoke_activate(table, plugin_id, provider, opts)
+        {put_phase(table, plugin_id, :running, :provider_not_loaded), :ok}
 
-        {table, {:error, reason}} ->
-          {table, {:error, Loader.refusal(:provider_failed, provider, reason)}}
-      end
-    else
-      Logger.warning(
-        "[Extension.Table] activate skipped, provider not loaded plugin_id=#{plugin_id}"
-      )
+      Workers.subscriber?(table, provider) ->
+        case Workers.join(table, plugin_id, plugin) do
+          {table, :ok} -> {put_phase(table, plugin_id, :running, :joined), :ok}
+          {table, {:error, _} = refused} -> {table, refused}
+        end
 
-      {put_phase(table, plugin_id, :running, :provider_not_loaded), :ok}
+      true ->
+        start_and_activate(table, plugin_id, provider, opts)
+    end
+  end
+
+  # Operator-level facts resolved at bind time (currently `:effectively_once`)
+  # are merged last, so stored opts cannot spoof them.
+  defp start_and_activate(table, plugin_id, provider, opts) do
+    opts = Map.merge(opts || %{}, table.activation_env)
+
+    case Workers.start(table, plugin_id, provider, opts, invoker(plugin_id, provider)) do
+      {table, :ok} ->
+        invoke_activate(table, plugin_id, provider, opts)
+
+      {table, {:error, reason}} ->
+        {table, {:error, Loader.refusal(:provider_failed, provider, reason)}}
     end
   end
 
@@ -426,15 +450,68 @@ defmodule Flezha.Plugin.Extension.Table do
 
   @doc """
   Remove every subscription owned by `plugin_id`, cancel its monitors,
-  timers, and owned pids, and rebuild affected dispatch chains. Answers the
-  table and the ids it dropped — `[]` for a plugin it never held — which the
-  caller unregisters.
+  timers, and owned pids, and rebuild affected dispatch chains. A subscriber
+  leaves its shared copy `leave` (`:now` stops a copy it was the last on at
+  once, `:idle` after the idle stop).
   """
-  @spec unsubscribe(t(), binary()) :: {t(), [binary()]}
-  def unsubscribe(%__MODULE__{} = table, plugin_id) do
+  @spec unsubscribe(t(), binary(), :now | :idle) :: t()
+  def unsubscribe(%__MODULE__{} = table, plugin_id, leave \\ :now) do
     case Map.get(table.plugins, plugin_id) do
-      nil -> {table, []}
-      plugin -> {do_unsubscribe(table, plugin_id, plugin), [plugin_id]}
+      nil -> table
+      plugin -> do_unsubscribe(table, plugin_id, plugin, leave)
+    end
+  end
+
+  @doc """
+  Record `plugin` as declared on this host and not started, for `reason`: it
+  holds no worker and runs no hook, its health is `{:unhealthy, reason}`, and
+  the convergence loop tries it again as one that is missing. An `on_output`
+  hook is held by `Flezha.Plugin.Provider.NotStarted`, so a guaranteed output
+  waits in the outbox for it.
+  """
+  @spec put_not_started(t(), binary(), Plugin.t(), term()) :: t()
+  def put_not_started(%__MODULE__{} = table, plugin_id, %Plugin{} = plugin, reason) do
+    table = unsubscribe(table, plugin_id, :idle)
+
+    held =
+      for {:on_output, sub_opts} <- plugin.hooks,
+          do: {:on_output, Keyword.delete(sub_opts, :position)}
+
+    placeholder = %Plugin{plugin | provider: NotStarted, opts: %{}, hooks: held}
+
+    {:ok, table} = do_subscribe(table, plugin_id, placeholder)
+    put_phase(table, plugin_id, {:not_started, reason}, reason)
+  end
+
+  @doc """
+  Apply `plugin`'s options to `plugin_id` in place, for options its provider
+  declares live: the owner of the plugin's workers calls the provider's
+  `reconfigure/2`, a subscriber only takes the new options.
+  """
+  @spec reconfigure(t(), binary(), Plugin.t()) :: {:ok, t()} | {:error, term()}
+  def reconfigure(%__MODULE__{} = table, plugin_id, %Plugin{provider: provider} = plugin) do
+    with %Plugin{opts: old} <-
+           Map.get(table.plugins, plugin_id, {:error, {:plugin_not_found, plugin_id}}),
+         {:ok, new} <- ProviderOptions.normalise_opts(provider, plugin.opts),
+         :ok <- reconfigure_owned(table, plugin_id, provider, old, new) do
+      live = Map.take(new, ProviderBehaviour.Decl.live_options(decl(provider)))
+
+      {:ok,
+       Enum.reduce(live, table, fn {key, value}, acc ->
+         put_plugin_opt(acc, plugin_id, key, value)
+       end)}
+    end
+  end
+
+  defp reconfigure_owned(table, plugin_id, provider, old, new) do
+    if Workers.subscriber?(table, provider) do
+      :ok
+    else
+      case invoke(:reconfigure, plugin_id, provider, fn -> provider.reconfigure(old, new) end) do
+        :ok -> :ok
+        {:error, _} = refused -> refused
+        other -> {:error, {:invalid_reconfigure_return, other}}
+      end
     end
   end
 
@@ -443,32 +520,7 @@ defmodule Flezha.Plugin.Extension.Table do
   `on_interval/2` callback and reschedules the next tick.
   """
   @spec fire_timer(t(), atom(), binary()) :: t()
-  def fire_timer(%__MODULE__{} = table, name, plugin_id) do
-    case Subscription.find_entry(table, name, plugin_id) do
-      nil ->
-        table
-
-      entry ->
-        ctx = %Ctx.Tick{
-          operator_id: Map.get(table.plugins, plugin_id).operator_id,
-          namespace: Map.get(table.plugins, plugin_id).namespace,
-          runner_id: nil,
-          plugin_id: plugin_id
-        }
-
-        try do
-          entry.provider.on_interval(ctx, entry.provider_opts)
-        catch
-          kind, reason ->
-            Logger.error(
-              "[Extension.Table] on_interval raised for plugin #{plugin_id}: " <>
-                "#{inspect(kind)}/#{inspect(reason)}"
-            )
-        end
-
-        Subscription.reschedule_timer(table, name, plugin_id, entry)
-    end
-  end
+  defdelegate fire_timer(table, name, plugin_id), to: Subscription
 
   @doc """
   Handle a `{:DOWN, ref, :process, pid, reason}` from the host. A worker that
@@ -492,10 +544,15 @@ defmodule Flezha.Plugin.Extension.Table do
             Map.put(entries, plugin_id, Entry.drop_worker(entry(table, plugin_id), key))
           end)
 
-        case reason do
-          :normal ->
+        case {key, reason} do
+          {_key, :normal} ->
             Logger.info("[Extension.Table] subscriber #{plugin_id} terminated normally")
-            {:ok, do_unsubscribe(table, plugin_id, plugin)}
+            {:ok, do_unsubscribe(table, plugin_id, plugin, :idle)}
+
+          # A shared copy that handed over or died: the subscriber joins the
+          # copy that runs now, and the loop restarts it if none does.
+          {:shared, reason} ->
+            {:ok, rejoin(table, plugin_id, plugin, reason)}
 
           _ ->
             Logger.error("[Extension.Table] subscriber #{plugin_id} crashed: #{inspect(reason)}")
@@ -525,7 +582,7 @@ defmodule Flezha.Plugin.Extension.Table do
     Logger.info("[Extension.Table] attempt_restart begin plugin_id=#{plugin_id}")
     %Plugin{} = held = Map.get(table.plugins, plugin_id, declared)
     plugin = %Plugin{held | id: plugin_id}
-    table = release_workers(table, plugin_id, plugin)
+    table = release_workers(table, plugin_id, plugin, :idle)
 
     case run_init_provider(table, plugin) do
       {:ok, fresh_plugin} ->
@@ -546,53 +603,22 @@ defmodule Flezha.Plugin.Extension.Table do
 
   @doc """
   Tear down every subscription: cancel timers, demonitor workers, stop them
-  through their supervisor. Answers the emptied table and the ids it dropped,
-  which the caller unregisters.
+  through their supervisor, and leave every shared copy `leave`. Answers the
+  emptied table.
 
   Phase is no precondition: a `:prepared` plugin holds no worker and its
   teardown is the same call that empties a `:running` one.
   """
-  @spec teardown_all(t()) :: {t(), [binary()]}
-  def teardown_all(%__MODULE__{} = table) do
+  @spec teardown_all(t(), :now | :idle) :: t()
+  def teardown_all(%__MODULE__{} = table, leave \\ :idle) do
     table =
       Enum.reduce(table.plugins, table, fn {plugin_id, plugin}, acc ->
-        release_workers(acc, plugin_id, plugin)
+        release_workers(acc, plugin_id, plugin, leave)
       end)
 
     Enum.each(table.timers, fn {timer_ref, _} -> Health.safe_cancel_timer(timer_ref) end)
 
-    {new(table.catalog), Enum.map(table.plugins, fn {plugin_id, _plugin} -> plugin_id end)}
-  end
-
-  @doc """
-  Re-establish hooks from a serialisable shape (the list of
-  `%Flezha.Plugin{}` entries carried through handover). Live refs are
-  rebuilt on this node.
-  """
-  @spec rehydrate(t(), [{binary(), Plugin.t()}]) :: t()
-  def rehydrate(%__MODULE__{} = table, plugins) when is_list(plugins) do
-    Enum.reduce(plugins, table, fn {plugin_id, plugin}, acc ->
-      case bulk_subscribe(acc, [{plugin_id, plugin}]) do
-        {:ok, new_table} ->
-          new_table
-
-        {:error, {_id, reason}} ->
-          Logger.warning("[Extension.Table] failed to rehydrate #{plugin_id}: #{inspect(reason)}")
-
-          acc
-      end
-    end)
-  end
-
-  @doc """
-  Return the plugins as a serialisable list of `{plugin_id, %Flezha.Plugin{}}`
-  tuples (with transient fields stripped). Used for handover / recovery.
-  """
-  @spec serializable_plugins(t()) :: [{binary(), Plugin.t()}]
-  def serializable_plugins(%__MODULE__{plugins: plugins}) do
-    Enum.map(plugins, fn {plugin_id, plugin} ->
-      {plugin_id, Plugin.strip_transient(plugin)}
-    end)
+    new(table.catalog, shared: table.shared)
   end
 
   @doc "Every subscriber entry registered for the given extension name."
@@ -626,44 +652,24 @@ defmodule Flezha.Plugin.Extension.Table do
       %Plugin{} = plugin ->
         opts = Map.put(plugin.opts || %{}, key, value)
 
-        subs =
-          Map.new(table.subs, fn {name, entries} ->
-            {name,
-             Enum.map(entries, fn
-               %{plugin_id: ^plugin_id} = entry -> %{entry | provider_opts: opts}
-               entry -> entry
-             end)}
-          end)
-
         %{
-          table
-          | plugins: Map.put(table.plugins, plugin_id, %Plugin{plugin | opts: opts}),
-            subs: subs
+          Subscription.put_provider_opts(table, plugin_id, opts)
+          | plugins: Map.put(table.plugins, plugin_id, %Plugin{plugin | opts: opts})
         }
     end
   end
 
   ## Private - subscribe
 
-  defp do_subscribe(%__MODULE__{} = table, plugin_id, %Plugin{} = plugin, subs) do
+  defp do_subscribe(%__MODULE__{} = table, plugin_id, %Plugin{} = plugin) do
     plugin = %Plugin{plugin | id: plugin_id}
 
     case run_init_provider(table, plugin) do
       {:ok, plugin} ->
-        table =
-          %{table | plugins: Map.put(table.plugins, plugin_id, plugin)}
-          |> put_phase(plugin_id, :prepared, :prepared)
-
-        table =
-          Enum.reduce(subs, table, fn {name, sub_opts}, acc ->
-            %{kind: kind} = Map.fetch!(acc.catalog, name)
-
-            acc
-            |> Subscription.add_subscription(kind, name, plugin_id, plugin, sub_opts)
-            |> Chain.refresh(name)
-          end)
-
-        {:ok, table}
+        {:ok,
+         %{table | plugins: Map.put(table.plugins, plugin_id, plugin)}
+         |> put_phase(plugin_id, :prepared, :prepared)
+         |> add_hooks(plugin_id, plugin)}
 
       {:error, _reason} = err ->
         err
@@ -689,7 +695,7 @@ defmodule Flezha.Plugin.Extension.Table do
           err
       end
     else
-      {:error, {:module_not_loaded, provider}}
+      {:error, {:module_not_loaded, provider, node()}}
     end
   end
 
@@ -725,70 +731,69 @@ defmodule Flezha.Plugin.Extension.Table do
 
   ## Private - unsubscribe
 
-  defp do_unsubscribe(%__MODULE__{} = table, plugin_id, %Plugin{hooks: subs} = plugin) do
-    table = release_workers(table, plugin_id, plugin)
+  defp do_unsubscribe(%__MODULE__{} = table, plugin_id, %Plugin{hooks: subs} = plugin, leave) do
+    table = release_workers(table, plugin_id, plugin, leave)
 
-    table =
-      Enum.reduce(subs, table, fn {name, _sub_opts}, acc ->
-        acc |> Subscription.remove_subscription(name, plugin_id) |> Chain.refresh(name)
-      end)
-
-    %{table | plugins: Map.delete(table.plugins, plugin_id)}
+    %{remove_hooks(table, plugin_id, subs) | plugins: Map.delete(table.plugins, plugin_id)}
     |> drop_entry(plugin_id)
   end
 
   # Let the provider release what the table cannot see, then stop every worker
-  # the table started for it. The half of an unsubscribe a restart shares.
-  defp release_workers(%__MODULE__{} = table, plugin_id, %Plugin{provider: provider} = plugin) do
-    terminate_provider(table, plugin_id, plugin)
+  # the table started for it. The half of an unsubscribe a restart shares. A
+  # subscriber holds no worker: it leaves its shared copy instead.
+  defp release_workers(table, plugin_id, %Plugin{provider: provider} = plugin, leave) do
+    cond do
+      not Code.ensure_loaded?(provider) ->
+        table
 
-    if Code.ensure_loaded?(provider),
-      do: Workers.stop_all(table, plugin_id, provider, plugin.opts, invoker(plugin_id, provider)),
-      else: table
+      Workers.subscriber?(table, provider) ->
+        Workers.leave(table, plugin_id, leave)
+
+      true ->
+        terminate_provider(table, plugin_id, plugin)
+        Workers.stop_all(table, plugin_id, provider, plugin.opts, invoker(plugin_id, provider))
+    end
   end
 
   # The teardown hook for what is neither a worker nor an option. Called on both
   # exits, with the processes the table started injected at the one site.
   defp terminate_provider(table, plugin_id, %Plugin{provider: provider, opts: opts}) do
-    if Code.ensure_loaded?(provider) do
-      _ =
-        invoke(:terminate_provider, plugin_id, provider, fn ->
-          provider.terminate_provider(with_worker_pids(table, plugin_id, opts))
-        end)
-    end
+    _ =
+      invoke(:terminate_provider, plugin_id, provider, fn ->
+        provider.terminate_provider(with_worker_pids(table, plugin_id, opts))
+      end)
 
     :ok
   end
 
-  ## Private — active-mask + chains
-
-  ## Private — request dispatch
-
-  # (handled in Flezha.Plugin.Extension.run/3 via table.request_subs directly)
-
-  ## Private — timer
-
-  ## Private — lookups
+  defp rejoin(table, plugin_id, plugin, reason) do
+    case Workers.join(table, plugin_id, plugin) do
+      {table, :ok} -> table
+      {table, {:error, _}} -> put_phase(table, plugin_id, {:down, reason}, reason)
+    end
+  end
 
   ## Private — restart
 
   # Re-register the plugin's hooks against its fresh instance: every
   # entry carries a copy of the provider opts, so a restart that kept the old
   # entries would dispatch to state the provider does not hold.
-  defp resubscribe(%__MODULE__{} = table, plugin_id, %Plugin{} = plugin) do
-    subs = plugin.hooks
+  defp resubscribe(%__MODULE__{} = table, plugin_id, %Plugin{} = plugin),
+    do: table |> remove_hooks(plugin_id, plugin.hooks) |> add_hooks(plugin_id, plugin)
 
-    table =
-      Enum.reduce(subs, table, fn {name, _sub_opts}, acc ->
-        acc |> Subscription.remove_subscription(name, plugin_id) |> Chain.refresh(name)
-      end)
-
-    Enum.reduce(subs, table, fn {name, sub_opts}, acc ->
+  defp add_hooks(table, plugin_id, %Plugin{hooks: hooks} = plugin) do
+    Enum.reduce(hooks, table, fn {name, sub_opts}, acc ->
       %{kind: kind} = Map.fetch!(acc.catalog, name)
 
       acc
       |> Subscription.add_subscription(kind, name, plugin_id, plugin, sub_opts)
       |> Chain.refresh(name)
+    end)
+  end
+
+  defp remove_hooks(table, plugin_id, hooks) do
+    Enum.reduce(hooks, table, fn {name, _sub_opts}, acc ->
+      acc |> Subscription.remove_subscription(name, plugin_id) |> Chain.refresh(name)
     end)
   end
 end

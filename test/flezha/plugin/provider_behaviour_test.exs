@@ -176,6 +176,37 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     end
   end
 
+  describe "a provider declares whether it can be shared and which options are live" do
+    test "the declaration answers sharing" do
+      assert Websocket.__provider__().shareable
+      refute Flezha.Plugin.Provider.File.Source.__provider__().shareable
+
+      shareable =
+        for {_id, provider} <- Flezha.Plugin.Providers.first_party(),
+            provider.__provider__().shareable,
+            do: provider.__provider__().name
+
+      assert Enum.sort(shareable) == ["http_poll", "kafka", "std_out", "websocket"]
+    end
+
+    test "the websocket's subscription items are its one live option" do
+      assert ProviderBehaviour.Decl.live_options(Websocket.__provider__()) == [
+               :subscription_items
+             ]
+    end
+
+    test "a live option without reconfigure/2 does not compile, naming the option" do
+      source = """
+      defmodule Flezha.ProviderBehaviourTest.NoReconfigure#{System.unique_integer([:positive])} do
+        use Flezha.Plugin.ProviderBehaviour, options: [items: [type: :list, live: true]]
+      end
+      """
+
+      error = assert_raise CompileError, fn -> Code.compile_string(source) end
+      assert Exception.message(error) =~ "[:items] need a reconfigure/2"
+    end
+  end
+
   describe "the shared conversion helpers are total" do
     test "parse_int/2 refuses a shape it cannot parse instead of raising" do
       for value <- [nil, :nope, %{}, [1]] do
@@ -600,7 +631,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
         for {id, module} <- Flezha.Plugin.Providers.all(), Code.ensure_loaded?(module) do
           screen = capture_io(fn -> Cli.Plugin.plugin_help(id, %{opts: []}) end)
 
-          assert screen =~ "flz plugin enable <plugin_id> #{id} [OPTIONS]"
+          assert screen =~ "flz plugin enable <name> #{id} [OPTIONS]"
           assert screen =~ "SUPPORTED HOOKS:"
 
           for hook <- module.__provider__().extensions,

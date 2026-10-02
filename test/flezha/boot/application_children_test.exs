@@ -38,7 +38,6 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
     Flezha.AuthZ.Supervisor,
     Flezha.Service.HubManager.Starter,
     {Flezha.Transport.Server, :uds},
-    Flezha.Service.PluginManager,
     Flezha.Plugin.Provider.Kafka.WorkerRegistry,
     Flezha.Service.Calls,
     # One worker family per provider that declares a worker, from the provider
@@ -51,6 +50,8 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
     Flezha.Plugin.Provider.Kafka.Producer.WorkerSup,
     Flezha.Plugin.Provider.Postgres.WorkerSup,
     Flezha.Plugin.Provider.Websocket.WorkerSup,
+    # The running copies of shareable plugins, one per plugin on this controller.
+    Flezha.Plugin.Shared.WorkerSup,
     Flezha.Service.PortPilot,
     Flezha.Operator.MessageHandlerTaskSup,
     Flezha.State.WriterRegistry,

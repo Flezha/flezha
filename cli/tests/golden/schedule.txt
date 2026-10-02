@@ -13,7 +13,7 @@ SUBCOMMANDS:
                  --text is the first message it receives, on the entry channel
                  --channel names or the first declared one.
                  --plugins takes the same array as `operator start --plugins`;
-                 each firing prefixes the plugin ids with its instance id.
+                 each firing binds its instance to the plugins it names.
     list         List schedules with their next fire time
     remove <name>  Remove a schedule
     run <name>     Fire one instance immediately with the stored config;

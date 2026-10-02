@@ -49,15 +49,43 @@ defmodule Flezha.Cluster.Directory do
   nodedown all clean up without a leave call.
   """
   @spec join_hub(pid(), String.t() | atom()) :: :ok
-  def join_hub(pid, namespace) do
-    group = {:hub, to_string(namespace)}
+  def join_hub(pid, namespace), do: join({:hub, to_string(namespace)}, pid)
 
+  @doc """
+  Advertise `pid` as a running copy of the plugin `name` of `namespace` on its
+  node. Membership ends with the pid, like a hub's.
+  """
+  @spec join_plugin(pid(), String.t() | atom(), String.t()) :: :ok
+  def join_plugin(pid, namespace, name), do: join(plugin_group(namespace, name), pid)
+
+  defp join(group, pid) do
     if scope_up?() and pid not in :pg.get_local_members(@scope, group) do
       :pg.join(@scope, group, pid)
     end
 
     :ok
   end
+
+  defp plugin_group(namespace, name), do: {:plugin, to_string(namespace), name}
+
+  @doc "Every running copy of the plugin `name` of `namespace`, on every node."
+  @spec plugin_hosts(String.t() | atom(), String.t()) :: [pid()]
+  def plugin_hosts(namespace, name) do
+    if scope_up?(), do: :pg.get_members(@scope, plugin_group(namespace, name)), else: []
+  end
+
+  @doc """
+  Watch the copies of the plugin `name` of `namespace`: answers the reference
+  `{ref, :join | :leave, group, pids}` messages carry and the copies running
+  now, or `nil` when the directory is not running.
+  """
+  @spec monitor_plugin(String.t() | atom(), String.t()) :: {reference(), [pid()]} | nil
+  def monitor_plugin(namespace, name) do
+    if scope_up?(), do: :pg.monitor(@scope, plugin_group(namespace, name))
+  end
+
+  @doc "Nodes running a copy of the plugin `name` of `namespace`."
+  def plugin_nodes(namespace, name), do: nodes_of(plugin_group(namespace, name))
 
   @doc "Nodes whose runners advertise `factory_id` in `namespace`."
   def factory_nodes(namespace, factory_id), do: nodes_of(factory_group(namespace, factory_id))

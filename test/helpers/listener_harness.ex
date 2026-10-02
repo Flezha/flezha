@@ -21,7 +21,7 @@ defmodule FlezhaTest.Helper.ListenerHarness do
       end
 
     declared =
-      case HubManager.operator_plugins(ns, id) do
+      case HubManager.operator_bindings(ns, id) do
         {:ok, plugins} -> Enum.map(plugins, &elem(&1, 0))
         _ -> []
       end

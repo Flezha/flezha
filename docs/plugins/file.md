@@ -111,6 +111,7 @@ What each direction does differently is under
 | --- | --- |
 | Plugin type | `:io_binding` |
 | Hooks | `:on_terminate`: the reader drives itself; the hook is there because a plugin spec must name at least one |
+| Shared | no: a second operator bound to it is refused (`plugin.not_shareable`) |
 | Upstream | one file inside the root folder, or one object under an S3 root, polled every `poll_interval_ms` |
 | Injection | each line, without its newline, on the entry channel `channel` or `channel_in` names |
 | Delivery | the confirming ingest: the offset moves only once the operator has taken the line |
@@ -130,7 +131,7 @@ As a plugin spec at operator start (`flz operator start --plugins`):
 ```json
 [
   {
-    "id": "reader",
+    "name": "reader",
     "provider": "operator_file_source",
     "opts": {"path": "events.ndjson", "channel_in": "events"},
     "hooks": ["on_terminate"]
@@ -264,6 +265,7 @@ health are the file's.
 | --- | --- |
 | Plugin type | `:io_binding` |
 | Hooks | `:on_input`, `:on_output` |
+| Shared | no: a second operator bound to it is refused (`plugin.not_shareable`) |
 | Downstream | one file inside the root folder, appended to; under `commit: rename`, a directory of parts, or under an S3 root a key prefix of parts |
 | Record | the message bytes followed by one newline, nothing else |
 | Delivery | a batch is written in one call and data-synced before any outbox hold in it is confirmed; under `rename`, once its part is committed |

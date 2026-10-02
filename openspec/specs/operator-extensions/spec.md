@@ -417,17 +417,23 @@ invisible to the sleep gate because that gate counts test files only.
 
 ### Requirement: Plugin enable SHALL be idempotent for an id already registered against the same target
 
-Enabling a plugin id that is already registered for the **same** `{namespace, operator_id}` SHALL succeed as an explicit no-op: the CLI exits 0 stating the plugin is already enabled and the existing instance was left untouched, the live subscriber and its workers observe no restart, and no cspec write occurs. Opts SHALL NOT be compared — a re-run is a presence check, not config convergence. The manager SHALL answer a verdict distinguishable from a fresh enable (`{:ok, :already_enabled}`) so callers can render it. Enabling a plugin id registered against a **different** target SHALL remain an error naming the conflict — a no-op there would silently not enable what the caller asked for.
+Enabling a plugin name that is already enabled in the **same** namespace with the **same** provider SHALL succeed as an explicit no-op: the CLI exits 0 stating the plugin is already enabled and the existing plugin was left untouched, its running copies and their workers observe no restart, and no declared-set write occurs. Opts SHALL NOT be compared; a re-run is a presence check, not config convergence, and `flz plugin update` is the verb that changes options. The manager SHALL answer a verdict distinguishable from a fresh enable (`{:ok, :already_enabled}`) so callers can render it. Enabling a name already enabled in the namespace with a **different** provider SHALL remain an error naming the conflict (`plugin.id_taken`). A one-step enable that also names an operator SHALL, on an already-enabled plugin, go on to the bind, which is itself a no-op for an operator already bound.
 
 #### Scenario: Re-running an enable is quiet
 
-- **WHEN** `flz plugin enable` is re-run with a plugin id already registered for the same operator in the same namespace
-- **THEN** the command exits 0 stating already-enabled, and the running plugin instance and its workers are untouched
+- **WHEN** `flz plugin enable` is re-run with a plugin name already enabled with the same provider in the same namespace
+- **THEN** the command exits 0 stating already-enabled, and the running plugin and its workers are untouched
 
-#### Scenario: A cross-target id conflict still fails
+#### Scenario: A provider conflict still fails
 
-- **WHEN** the plugin id is registered against a different operator or namespace
-- **THEN** the enable fails with an error naming the existing registration, unchanged from today
+- **WHEN** the plugin name is enabled in the namespace with another provider
+- **THEN** the enable fails with `plugin.id_taken` naming the namespace
+
+#### Scenario: A re-run one-step enable binds once
+
+- **GIVEN** `trades` enabled and bound to `a`
+- **WHEN** `flz plugin enable trades websocket --operator_id a` is re-run
+- **THEN** the command exits 0 and `a` holds one binding to `trades`
 
 ### Requirement: A failed activation SHALL be reported to the caller, not only logged
 
@@ -1056,10 +1062,15 @@ operator. The hook list governs only what the plugin sends.
 
 ### Requirement: Hooks preserved across operator handover
 
-The system SHALL serialize the extension table's hook list during `Flezha.Operator.Overwatch.prepare_handover_state/1` and SHALL rehydrate it on the destination node via `Extension.Table.rehydrate/2` during `alter_handover_state/2`. Runtime state that is not transportable (monitor refs, timer refs, subscriber-owned pids) MUST be re-established on the destination node during rehydration. After rehydration the dispatch behaviour MUST match the pre-migration state.
+The system SHALL carry no hook list in an operator's handover state. The destination
+Overwatch SHALL build its extension table from the operator's declared bindings, resolved
+against their plugins' entries, exactly as a bind does, so the hooks after a handover are the
+ones the operator's declared entry holds. Runtime state that is not transportable (monitor
+refs, timer refs, subscriber-owned pids) MUST be established afresh on the destination node.
+After the handover the dispatch behaviour MUST match the pre-migration state.
 
 #### Scenario: Hooked plugins survive migration
-- **WHEN** an operator with subscribers on `:on_input` and `:on_message` is migrated to a new compute engine
+- **WHEN** an operator with bindings on `:on_input` and `:on_message` is migrated to a new compute engine
 - **THEN** after migration `Extension.run(:on_input, ctx)` MUST invoke the same set of subscribers as before migration, and `Extension.run(:on_message, ctx_with_key)` MUST route to the same handler
 
 #### Scenario: Subscriber-owned pids are restarted on destination
@@ -1158,14 +1169,19 @@ implement `on_preview/2`.
 
 ### Requirement: A bind SHALL bring up every declared plugin its table does not hold
 
-Every bind of an instance SHALL subscribe each plugin of the instance's declared set whose
-id its extension table does not hold (a first bind, a wake, an un-park, a rebind to another
-runner alike), and SHALL leave every plugin the table already holds as it is, whatever
-phase it is in. A table that is not empty SHALL NOT make the bind skip the declared set.
+Every bind of an instance SHALL bring up each binding of the instance's declared entry whose
+plugin its extension table does not hold (a first bind, a wake, an un-park, a rebind to another
+runner alike), and SHALL leave every binding the table already holds as it is, whatever phase
+it is in. A table that is not empty SHALL NOT make the bind skip the declared bindings. A
+binding of a non-shareable plugin SHALL be brought up in the instance's own table; a binding
+of a shareable plugin SHALL subscribe the instance to the plugin's running copy on its
+controller (or to the `single` copy), starting that copy if it is not running. A binding that
+cannot be brought up (its provider not loaded, its plugin not enabled) SHALL be recorded as not
+started with its reason and SHALL NOT stop the bind.
 
 #### Scenario: A runtime plugin on a sleeper found at boot
 
-- **GIVEN** an operator with a file sink plugin that was asleep when the controller
+- **GIVEN** an operator bound to a file sink plugin that was asleep when the controller
   restarted, so its table is empty, and a listener then attached to it
 - **WHEN** an input wakes it
 - **THEN** its table SHALL hold both the file sink and the listener, running, before its
@@ -1173,26 +1189,62 @@ phase it is in. A table that is not empty SHALL NOT make the bind skip the decla
 
 #### Scenario: A rebind re-initialises nothing
 
-- **WHEN** a running operator whose table holds all its declared plugins is rebound to
+- **WHEN** a running operator whose table holds all its declared bindings is rebound to
   another runner
 - **THEN** no plugin SHALL be subscribed again and no provider's `init_provider/1` SHALL be
   called
 
+#### Scenario: A missing provider does not stop the bind
+
+- **WHEN** an operator binds on a controller lacking the provider of one of its two bindings
+- **THEN** the operator SHALL run, the other binding SHALL be running, and the missing one
+  SHALL be recorded as not started with `plugin.provider_not_loaded`
+
 ### Requirement: A plugin disable SHALL be addressed by its target
 
-`flz plugin disable <plugin_id>` and every other disable of a plugin by id SHALL find the
-operator, or the partition group for an id fanned out over its members, whose declared plugin
-set holds the id, from the declared sets of the cluster's namespaces, and SHALL remove the row
-and unsubscribe the plugin there, on every current member of a group. It SHALL NOT depend on
-which controller node ran the enable or on any node-local table: a plugin on an operator that
-moved to another controller node, or on a member a rescale added, SHALL be disabled from any
-node, and the verb SHALL be authorized in the namespace the resolution finds.
+`flz plugin disable <name>` and every other disable of a plugin SHALL find the plugin by its
+name in its namespace's declared set and remove it there, and every controller running a copy
+of it SHALL stop that copy. Every binding to it SHALL stay on its operator. `flz plugin unbind
+<name> --operator_id <op>` SHALL find the operator, or the partition group, from the declared
+sets of the cluster's namespaces and remove the binding there, on every current member of a
+group. Neither SHALL depend on which controller node ran the enable or the bind, or on any
+node-local table: a plugin bound to an operator that moved to another controller node, or to a
+member a rescale added, SHALL be disabled or unbound from any node, and the verb SHALL be
+authorized in the namespace the resolution finds.
 
-#### Scenario: Disabling a plugin on a moved operator
+#### Scenario: Unbinding a plugin from a moved operator
 
-- **GIVEN** a file sink plugin enabled through controller node A on an operator that A hosted
-- **WHEN** the operator migrates to node B and `flz plugin disable <plugin_id>` is then run
-  through A (and, in a second run of the same setup, through a third node C that never held it)
-- **THEN** the disable SHALL succeed, the operator's declared plugin set and B's extension
-  table SHALL hold no row for the plugin, and the convergence loop SHALL NOT start it again
+- **GIVEN** a file sink plugin bound through controller node A to an operator that A hosted
+- **WHEN** the operator migrates to node B and `flz plugin unbind <name> --operator_id <op>`
+  is then run through A (and, in a second run of the same setup, through a third node C that
+  never held it)
+- **THEN** the unbind SHALL succeed, the operator's declared bindings and B's extension table
+  SHALL hold no entry for the plugin, and the convergence loop SHALL NOT start it again
+
+#### Scenario: Disabling a plugin that runs on two controllers
+
+- **GIVEN** a shareable plugin running on controllers A and B
+- **WHEN** `flz plugin disable <name>` is run through a third controller C
+- **THEN** no copy SHALL run on A or B, and the bound operators SHALL keep their bindings
+
+### Requirement: A provider SHALL declare whether it can be shared and which options are live
+
+`use Flezha.Plugin.ProviderBehaviour` SHALL take `shareable:` (default `false`) and an option
+row SHALL take `live:` (default `false`); both SHALL be part of the provider's `Decl`, read by
+the extension table and the plugin manager from the declaration only. A provider with a live
+option SHALL implement `reconfigure/2`; a declaration with a live option and no
+`reconfigure/2` SHALL fail to compile. The first-party providers `websocket`, `http_poll`,
+`stdout` and `kafka_producer` SHALL declare `shareable: true`; every other first-party
+provider SHALL declare `false`.
+
+#### Scenario: The declaration answers sharing
+
+- **WHEN** `Flezha.Plugin.Provider.Websocket.__provider__()` and
+  `Flezha.Plugin.Provider.File.Source.__provider__()` are read
+- **THEN** the first SHALL answer `shareable: true` and the second `shareable: false`
+
+#### Scenario: A live option without its callback
+
+- **WHEN** a provider declares an option `live: true` and does not define `reconfigure/2`
+- **THEN** its module SHALL fail to compile with a message naming the option
 

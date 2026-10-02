@@ -32,7 +32,7 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
     [
       {"operator", fn -> CliManager.operator_stop("default", "no-such-op-xyz") end},
       {"operator", fn -> CliManager.cell_state("default", "no-such-op-xyz") end},
-      {"plugin", fn -> CliManager.disable_plugin("no-such-plugin-xyz") end},
+      {"plugin", fn -> CliManager.disable_plugin("no-such-plugin-xyz", "{}") end},
       {"state", fn -> CliManager.state_retention("some_class", "not-a-number") end},
       {"observe", fn -> CliManager.observability_render_enable("no-such-source-xyz") end},
       {"schedule", fn -> CliManager.schedule_add("s", cron: "* * * * *") end},
@@ -99,7 +99,7 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
 
       cases = [
         {2, fn -> CliManager.state_retention("some_class", "not-a-number") end},
-        {5, fn -> CliManager.disable_plugin("no-such-plugin-xyz") end},
+        {5, fn -> CliManager.disable_plugin("no-such-plugin-xyz", "{}") end},
         {1, fn -> Cli.Context.render!(injected, []) end}
       ]
 
@@ -111,7 +111,7 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
 
     test "under --json the error is one object on stderr, and stdout carries none of it" do
       {outcome, out, err} =
-        CliCapture.run(fn -> CliManager.disable_plugin("ghost", output: "json") end)
+        CliCapture.run(fn -> CliManager.disable_plugin("ghost", "{}", output: "json") end)
 
       assert outcome == {:exit, {:shutdown, 5}}
       assert out == ""

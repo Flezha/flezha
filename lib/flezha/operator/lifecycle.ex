@@ -164,7 +164,7 @@ defmodule Flezha.Operator.Lifecycle do
       ) do
     state = bind_to_runner(state, operator.id, runner_id, owner)
 
-    with {:ok, state} <- Plugins.prepare(state, declared_plugins(state, operator)),
+    with {:ok, state} <- Plugins.prepare(state, declared_bindings(state, operator)),
          {:ok, state, operator} <- Plugins.resolve_init_state(state, operator),
          operator =
            with_resume_state(operator, Overwatch.operator_class(state)),
@@ -228,13 +228,17 @@ defmodule Flezha.Operator.Lifecycle do
 
   defp refuse_remote_without_backend(_declarations, _factory_id), do: :ok
 
-  # The operator's registry row, which every enable and disable rewrites, so a
-  # restart of this process after a runtime enable (a listener) brings that
-  # plugin up too; the start arguments when the row cannot be read yet.
-  defp declared_plugins(%Overwatch{namespace: namespace, id: id}, operator) do
-    case HubManager.operator_plugins(namespace, id) do
-      {:ok, plugins} -> plugins
-      {:error, _unreadable} -> Keyword.get(operator.opts, :plugins, [])
+  @doc """
+  The operator's bindings as its registry row holds them, which every bind and
+  unbind rewrites, so a restart of this process after a runtime bind (a
+  listener) brings that binding up too; the start arguments when the row
+  cannot be read yet.
+  """
+  @spec declared_bindings(Overwatch.t(), map()) :: list()
+  def declared_bindings(%Overwatch{namespace: namespace, id: id}, operator) do
+    case HubManager.operator_bindings(namespace, id) do
+      {:ok, bindings} -> bindings
+      {:error, _unreadable} -> Keyword.get(operator.opts, :bindings, [])
     end
   end
 
@@ -460,8 +464,6 @@ defmodule Flezha.Operator.Lifecycle do
   # both the plugin and its provider module.
   @spec park(Overwatch.t(), term()) :: Overwatch.t()
   def park(%Overwatch{} = state, reason) do
-    log_missing_provider(state, reason)
-
     Facts.declare(
       {:operator_parked, {state.namespace, state.id},
        %{reason: reason, transport: transport_verdict(reason)}}
@@ -479,28 +481,6 @@ defmodule Flezha.Operator.Lifecycle do
     )
 
     Map.put(state, :init_error, reason)
-  end
-
-  # A provider this controller did not load is the park a user repairs on this
-  # node, by installing or fixing a package, so its reason is logged; once, not
-  # on every retry that parks again for the same reason.
-  defp log_missing_provider(state, {:plugin_prepare_failed, plugin_id, {tag, _} = why} = reason)
-       when tag == :module_not_loaded,
-       do: log_park_once(state, reason, plugin_id, why)
-
-  defp log_missing_provider(state, {:plugin_prepare_failed, plugin_id, why} = reason)
-       when elem(why, 0) == :provider_unavailable,
-       do: log_park_once(state, reason, plugin_id, why)
-
-  defp log_missing_provider(_state, _reason), do: :ok
-
-  defp log_park_once(state, reason, plugin_id, why) do
-    if Map.get(state, :init_error) != reason do
-      Logger.error(
-        "operator #{state.id} parked: plugin #{plugin_id}: " <>
-          Flezha.Error.from_reason(why, nil).message
-      )
-    end
   end
 
   # No runner has connected yet, which is not a fault: hold the operator alive

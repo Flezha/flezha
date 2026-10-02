@@ -244,7 +244,7 @@ defmodule FlezhaTest.System.PartitionedOperatorsE2ETest do
     plugins =
       Jason.encode!([
         %{
-          "id" => "fwd_#{suffix}",
+          "name" => "fwd_#{suffix}",
           "provider" => "operator_forward",
           "opts" => %{"target_operator_id" => downstream},
           "hooks" => [%{"name" => "on_output"}]

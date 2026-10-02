@@ -18,6 +18,7 @@ cross-hop delivery guarantee itself is specified in
 |---|---|
 | Plugin type | `:io_binding` |
 | Hooks | `:on_output` (feed a downstream operator), `:on_input` (pass-through tap) |
+| Shared | no: a second operator bound to it is refused (`plugin.not_shareable`) |
 | Destination | an operator in the **same namespace** |
 | Delivery | asynchronous; the callback enqueues and returns |
 | Retry | until the target confirms, capped exponential backoff |

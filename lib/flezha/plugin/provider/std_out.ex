@@ -7,7 +7,7 @@ defmodule Flezha.Plugin.Provider.StdOut do
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.ProviderBehaviour
 
-  use ProviderBehaviour
+  use ProviderBehaviour, shareable: true
 
   @impl true
   def on_input(%Ctx.IO{} = ctx, _opts), do: print(ctx)

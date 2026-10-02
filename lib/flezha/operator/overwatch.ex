@@ -27,6 +27,7 @@ defmodule Flezha.Operator.Overwatch do
   alias Flezha.Operator.Replay
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table
+  alias Flezha.Plugin.Host
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.StreamChannel
   alias Flezha.SDK.SafeCall
@@ -177,9 +178,10 @@ defmodule Flezha.Operator.Overwatch do
   Subscribe `plugin` to a running Overwatch — the client side of
   `handle_call({:plugin_subscribe, …})`.
   """
-  @spec plugin_subscribe(pid(), binary(), Plugin.t()) :: :ok | {:error, term()}
-  def plugin_subscribe(pid, plugin_id, %Plugin{} = plugin),
-    do: plugin_call(pid, {:plugin_subscribe, plugin_id, plugin})
+  @spec plugin_subscribe(pid(), binary(), Plugin.t(), Plugin.t() | :none | :read) ::
+          :ok | {:error, term()}
+  def plugin_subscribe(pid, plugin_id, %Plugin{} = binding, entry \\ :read),
+    do: plugin_call(pid, {:plugin_subscribe, plugin_id, binding, entry})
 
   @doc "Drop `plugin_id`'s subscription from a running Overwatch."
   @spec plugin_unsubscribe(pid(), binary()) :: :ok | {:error, term()}
@@ -190,6 +192,12 @@ defmodule Flezha.Operator.Overwatch do
   @spec plugin_restart(pid(), binary(), Plugin.t()) :: :ok | {:error, term()}
   def plugin_restart(pid, plugin_id, %Plugin{} = plugin),
     do: plugin_call(pid, {:plugin_restart, plugin_id, plugin})
+
+  @doc "Apply a changed plugin entry to `plugin_id`'s binding, `:live` or by a `:restart`."
+  @spec plugin_update(pid(), binary(), Plugin.t(), :live | :restart, Plugin.t()) ::
+          :ok | {:error, term()}
+  def plugin_update(pid, plugin_id, %Plugin{} = binding, mode, %Plugin{} = entry),
+    do: plugin_call(pid, {:plugin_update, plugin_id, binding, mode, entry})
 
   defp plugin_call(pid, request) do
     case SafeCall.bounded(pid, request, Durations.get(:plugin_call_timeout_ms)) do
@@ -258,12 +266,13 @@ defmodule Flezha.Operator.Overwatch do
       channel: nil,
       snapshot: nil,
       default_input_type: Keyword.get(operator.opts, :default_input_type, "2"),
-      extensions: Table.new(__extensions_catalog__()),
+      extensions: Host.operator_table(__extensions_catalog__(), operator.opts),
       builder: operator,
       started_at: System.system_time(:millisecond),
       liveness_ref: LivenessCounters.register_operator(operator.id)
     }
 
+    Plugins.warn_old_rows(operator)
     {:ok, state, {:continue, {:bind_runner, stale_runner_id, operator}}}
   end
 
@@ -403,17 +412,23 @@ defmodule Flezha.Operator.Overwatch do
   end
 
   @impl true
-  def handle_call({:plugin_subscribe, plugin_id, %Plugin{} = plugin}, _from, state) do
-    case Plugins.subscribe(state, plugin_id, plugin) do
+  def handle_call({:plugin_subscribe, plugin_id, %Plugin{} = binding, entry}, _from, state) do
+    case Plugins.subscribe(state, plugin_id, binding, entry) do
       {:ok, state} -> {:reply, :ok, state}
       {:error, reason, state} -> {:reply, {:error, reason}, state}
     end
   end
 
   @impl true
-  def handle_call({:plugin_unsubscribe, plugin_id}, _from, %__MODULE__{} = state) do
-    table = Plugins.unregister(Table.unsubscribe(state.extensions, plugin_id))
-    {:reply, :ok, %{state | extensions: table}}
+  def handle_call({:plugin_unsubscribe, plugin_id}, _from, %__MODULE__{} = state),
+    do: {:reply, :ok, %{state | extensions: Table.unsubscribe(state.extensions, plugin_id)}}
+
+  @impl true
+  def handle_call({:plugin_update, plugin_id, %Plugin{} = binding, mode, entry}, _from, state) do
+    case Plugins.update(state, plugin_id, binding, mode, entry) do
+      {:ok, state} -> {:reply, :ok, state}
+      {:error, reason, state} -> {:reply, {:error, reason}, state}
+    end
   end
 
   @impl true

@@ -1,8 +1,9 @@
 defmodule Flezha.Service.HubManagerTest do
   @moduledoc """
   Asserts the cspec-mutation contract for
-  `Flezha.Service.HubManager.rewrite_cspec_plugins/2` and
-  `Flezha.Service.HubManager.operator_plugins/2`.
+  `Flezha.Service.HubManager.rewrite_cspec_plugins/2` (an operator's
+  bindings, or a plugin child's own entry) and
+  `Flezha.Service.HubManager.operator_bindings/2`.
 
   After the `auto-restore-on-boot` change, `update_operator_plugins/3` was
   collapsed into `Flezha.Service.PluginManager` (which writes through
@@ -63,7 +64,7 @@ defmodule Flezha.Service.HubManagerTest do
         {_ns, _ce, b} -> b
       end
 
-    Keyword.get(builder.opts, :plugins, [])
+    Keyword.get(builder.opts, :bindings, [])
   end
 
   describe "registry_backend_config/1" do
@@ -200,8 +201,8 @@ defmodule Flezha.Service.HubManagerTest do
   defp restore_env(key, value), do: Application.put_env(:flezha, key, value)
 
   describe "rewrite_cspec_plugins/2" do
-    test "appends a plugin to a cspec with empty opts[:plugins]" do
-      builder = operator_builder(plugins: [])
+    test "appends a binding to a cspec with empty opts[:bindings]" do
+      builder = operator_builder(bindings: [])
       cs = cspec({@namespace, "ce_1", builder})
       new_plugin = plugin("plug_x", %{a: 1})
 
@@ -215,12 +216,12 @@ defmodule Flezha.Service.HubManagerTest do
       assert got.opts == %{a: 1}
     end
 
-    test "removes a plugin from a cspec with multiple opts[:plugins]" do
+    test "removes a binding from a cspec with multiple opts[:bindings]" do
       a = plugin("a")
       b = plugin("b")
       c = plugin("c")
 
-      builder = operator_builder(plugins: [{"a", a}, {"b", b}, {"c", c}])
+      builder = operator_builder(bindings: [{"a", a}, {"b", b}, {"c", c}])
       cs = cspec({@namespace, "ce_1", builder})
 
       rewritten =
@@ -232,7 +233,7 @@ defmodule Flezha.Service.HubManagerTest do
     end
 
     test "handles the {namespace, operator} start-args shape" do
-      builder = operator_builder(plugins: [])
+      builder = operator_builder(bindings: [])
       cs = cspec({@namespace, builder})
 
       rewritten =
@@ -247,7 +248,7 @@ defmodule Flezha.Service.HubManagerTest do
     end
 
     test "handles the {namespace, runner_id, operator} start-args shape" do
-      builder = operator_builder(plugins: [])
+      builder = operator_builder(bindings: [])
       cs = cspec({@namespace, "ce_42", builder})
 
       rewritten =
@@ -263,9 +264,26 @@ defmodule Flezha.Service.HubManagerTest do
                rewritten.start
     end
 
+    test "rewrites a plugin child's own entry, a list of one" do
+      entry = %Plugin{id: "trades", provider: __MODULE__.NoopProvider, opts: %{uri: "a"}}
+
+      cs = %{
+        id: {:plugin, "trades"},
+        start: {Flezha.Plugin.Home, :start_link, [{@namespace, entry}]}
+      }
+
+      rewritten =
+        HubManager.rewrite_cspec_plugins(cs, fn [{"trades", %Plugin{} = plugin}] ->
+          [{"trades", %Plugin{plugin | opts: %{uri: "b"}}}]
+        end)
+
+      assert {Flezha.Plugin.Home, :start_link, [{@namespace, %Plugin{opts: %{uri: "b"}}}]} =
+               rewritten.start
+    end
+
     @tag :bench
     test "1000 sequential cspec rewrites stay under the documented latency budget" do
-      builder = operator_builder(plugins: [])
+      builder = operator_builder(bindings: [])
       cs = cspec({@namespace, "ce_1", builder})
 
       times =

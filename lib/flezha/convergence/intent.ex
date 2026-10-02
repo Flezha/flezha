@@ -7,10 +7,10 @@ defmodule Flezha.Convergence.Intent do
   wiped runtime registry does not empty this list, and a deliberate stop
   removes its entry for good. Read-only; never mutates the declared set.
 
-  Plugins still come from the durable registry cspec (`operator_plugins/2`),
-  the record `flz plugin enable/disable` keeps current; the declared entry
-  holds the start-time manifest, which only a total registry loss falls back
-  to (via the reconcile replaying it).
+  Bindings come from the durable registry cspec (`operator_bindings/2`), the
+  record `flz plugin bind` and `unbind` keep current; the declared entry holds
+  the same list, which only a total registry loss falls back to (via the
+  reconcile replaying it).
 
   The Loop diffs this against `Probe.snapshot/0` (reality) each tick. Starting
   a declared-but-absent operator is NOT this pipeline's job — the hub's own
@@ -52,7 +52,7 @@ defmodule Flezha.Convergence.Intent do
         namespace: namespace,
         operator_id: operator_id,
         factory_id: factory_id,
-        plugins: declared_plugins(namespace, operator_id)
+        plugins: declared_bindings(namespace, operator_id)
       }
     end)
   catch
@@ -74,14 +74,12 @@ defmodule Flezha.Convergence.Intent do
     end
   end
 
-  # The declared plugin manifest is the durable cspec start-args list,
-  # the single persistence path written by `PluginManager` on `flz plugin
-  # enable/disable`. Returns `{plugin_id, %Plugin{}}` tuples; empty on any
-  # read failure so a transient registry hiccup never spuriously stops a
-  # plugin.
-  defp declared_plugins(namespace, operator_id) do
-    case HubManager.operator_plugins(to_string(namespace), operator_id) do
-      {:ok, plugins} when is_list(plugins) -> plugins
+  # The operator's bindings, as the durable cspec start args hold them: the
+  # one record `flz plugin bind` and `unbind` write. Empty on any read failure,
+  # so a transient registry hiccup never spuriously stops a plugin.
+  defp declared_bindings(namespace, operator_id) do
+    case HubManager.operator_bindings(to_string(namespace), operator_id) do
+      {:ok, bindings} when is_list(bindings) -> bindings
       _ -> []
     end
   end

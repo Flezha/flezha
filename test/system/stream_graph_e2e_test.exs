@@ -25,6 +25,7 @@ defmodule FlezhaTest.System.StreamGraphE2ETest do
   alias Flezha.Operator.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperatorManager
+  alias FlezhaTest.Fixtures.OperatorFixture
   alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag timeout: 300_000
@@ -76,7 +77,7 @@ defmodule FlezhaTest.System.StreamGraphE2ETest do
              OperatorManager.start_operator(namespace, %Builder{
                id: operator_id,
                factory_id: factory,
-               opts: [plugins: [sink(namespace, operator_id)]]
+               opts: [bindings: sink(namespace, operator_id)]
              })
 
     operator_id
@@ -91,13 +92,13 @@ defmodule FlezhaTest.System.StreamGraphE2ETest do
   end
 
   defp sink(namespace, operator_id) do
-    %Flezha.Plugin{
-      id: "stream_graph_sink_#{operator_id}",
-      namespace: namespace,
-      operator_id: operator_id,
-      provider: Flezha.Plugin.Provider.BeamMsgForward,
-      opts: %{recv_pid: self(), include_metadata: true},
-      hooks: [{:on_output, []}]
-    }
+    OperatorFixture.bindings(namespace, operator_id, [
+      %Flezha.Plugin{
+        id: "stream_graph_sink",
+        provider: Flezha.Plugin.Provider.BeamMsgForward,
+        opts: %{recv_pid: self(), include_metadata: true},
+        hooks: [{:on_output, []}]
+      }
+    ])
   end
 end

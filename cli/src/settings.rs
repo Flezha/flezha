@@ -177,9 +177,9 @@ const SHORT_KEYS: &[(&str, &str)] = &[("n", "namespace"), ("o", "output")];
 /// consults it: the readers are the option-row gate, which exempts these words,
 /// and the test below, which proves each still reaches a document.
 #[cfg(test)]
-pub(crate) const SETTING_KEYS: &[&str] = &["--hook", "--namespace", "--operator_id"];
+pub(crate) const SETTING_KEYS: &[&str] = &["--channel", "--hook", "--namespace", "--operator_id"];
 
-/// The plain `--key value` options of a plugin enable, with `namespace`
+/// The plain `--key value` options of a plugin verb, with `namespace`
 /// defaulted to `"default"`. Both spellings of a setting are skipped:
 /// `extract_x_flags` owns them, and `option_key` refuses the bare one because
 /// it carries no leading `-`.

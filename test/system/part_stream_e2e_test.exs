@@ -24,6 +24,7 @@ defmodule FlezhaTest.System.PartStreamE2ETest do
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.{CliManager, Listener, OperatorManager}
   alias Flezha.Transport.LivenessCounters
+  alias FlezhaTest.Fixtures.OperatorFixture
   alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag timeout: 300_000
@@ -157,7 +158,7 @@ defmodule FlezhaTest.System.PartStreamE2ETest do
       id: id,
       factory_id: to_string(factory),
       run: kind,
-      opts: [plugins: plugins]
+      opts: [bindings: OperatorFixture.bindings(ns, id, plugins)]
     }
 
     assert {:ok, _} = OperatorManager.start_operator(ns, builder)

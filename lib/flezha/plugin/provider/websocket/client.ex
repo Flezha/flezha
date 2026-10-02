@@ -364,8 +364,22 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
     {:ok, state}
   end
 
-  def handle_info({:subscription_probe, from, ref}, %{subscription: _} = state) do
-    send(from, {ref, Subscription.subscription_report(state)})
+  def handle_info({:subscription_items, items}, %{subscription: subscription} = state) do
+    subscription = %{subscription | items: items}
+
+    {state, frames} =
+      Subscription.reconcile(%{
+        state
+        | subscription: subscription,
+          desired: Subscription.static_desired(subscription)
+      })
+
+    answer(state, frames)
+  end
+
+  def handle_info({:inspect_probe, from, ref}, state) do
+    report = Subscription.subscription_report(state)
+    send(from, {ref, Map.put(report, :connected, state.websocket_established?)})
     {:ok, state}
   end
 

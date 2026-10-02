@@ -308,8 +308,8 @@ runner-only boot (`controller_enabled: false`) SHALL load no package.
 declares `<id>` and print that the package unloads at the next restart of the controller. It
 SHALL NOT touch `.loaded/` or the running VM. An id with no archive SHALL be refused with `plugin.not_installed`, and a node whose
 list is declared SHALL refuse it with `plugin.list_declared`. After the next restart,
-operators whose persisted plugins name the package's providers park (see "Recovery
-interaction with installed plugins").
+operators bound to plugins of the package's providers run without them, each binding
+reported not started (see "Recovery interaction with installed plugins").
 
 #### Scenario: Uninstall removes the archive, the running controller keeps the package
 
@@ -399,40 +399,40 @@ no `installer_auto_save_ms` duration.
 
 ### Requirement: Recovery interaction with installed plugins
 
-A package provider's persisted plugin SHALL reach the same replay path as a first-party
-one's. A plugin enable is persisted by `Flezha.Service.PluginManager.enable_plugin/2` into
-the owning operator's ProcessHub child spec (`opts[:plugins]`) and replayed when that
-operator binds: `Flezha.Operator.Overwatch.init/1` → `handle_continue({:bind_runner, …})` →
+A package provider's binding SHALL reach the same bring-up path as a first-party one's. A
+binding is written by `Flezha.Service.PluginManager.bind/3` into the owning operator's
+declared entry (`opts[:bindings]`) and brought up when that operator binds:
+`Flezha.Operator.Overwatch.init/1` → `handle_continue({:bind_runner, …})` →
 `Flezha.Operator.Lifecycle.complete_init/4` → `Flezha.Operator.Plugins.prepare/2` →
 `Flezha.Plugin.Extension.Table.bulk_subscribe/2`.
 
-A persisted plugin whose provider module is not loaded (its package was refused at this
-boot, was uninstalled, or was never installed on this node) MUST NOT be subscribed.
-`Table.run_init_provider/1` answers `{:module_not_loaded, provider}`, `bulk_subscribe/2`
-halts at that entry, `Plugins.prepare/2` fails the bind, and `Flezha.Operator.Lifecycle.park/2`
-records the reason in the Overwatch's `init_error`, which `Flezha.Convergence.Probe`
-publishes as `parked?: true`. The recorded reason SHALL name the plugin id, the provider
-module and, when an archive in this node's plugin root declares that module, the package id
-and its status (refused with its code, or pending); otherwise it SHALL state that no package
-installed on this node provides the module. The park SHALL be logged once with that reason.
-The operator stays parked, holding no upstream resources, until a later boot loads the
-package, when its bind subscribes the plugin as for a first-party provider.
+A binding whose provider module is not loaded (its package was refused at this boot, was
+uninstalled, or was never installed on this node) MUST NOT be subscribed and MUST NOT park
+the operator. `Plugins.prepare/2` SHALL record the binding as not started in the operator's
+extension table with the reason `plugin.provider_not_loaded`, naming the binding, the
+provider module and this controller and, when an archive in this node's plugin root declares
+that module, the package id and its status (refused with its code, or pending); the bind SHALL
+go on, and one warning SHALL be logged with that reason. The operator runs without the plugin,
+holding no upstream resources for it, and its health reports `plugin_unhealthy` for the
+binding until a later bring-up on a controller that loaded the package subscribes it as for a
+first-party provider.
 
-#### Scenario: Orphaned persisted subscription parks the operator
+#### Scenario: An orphaned binding leaves the operator running
 
-- **GIVEN** an operator whose persisted child spec carries plugin `s` whose provider is
-  `FlezhaExamplePlugin.Stamp`, and the example package was uninstalled before the restart
+- **GIVEN** an operator whose declared entry carries a binding to plugin `s` whose provider
+  is `FlezhaExamplePlugin.Stamp`, and the example package was uninstalled before the restart
 - **WHEN** the controller restarts
-- **THEN** `s` SHALL NOT be subscribed, the Overwatch SHALL park with a reason naming `s`,
-  `FlezhaExamplePlugin.Stamp` and that no installed package provides it, the reason SHALL be
-  logged once, and `Convergence.Probe` SHALL report `parked?: true`
+- **THEN** `s` SHALL NOT be subscribed, the operator SHALL bind and process its inputs, the
+  warning naming `s`, `FlezhaExamplePlugin.Stamp` and that no installed package provides it
+  SHALL be logged once, and `Convergence.Probe` SHALL report the operator `plugin_unhealthy`
+  for `s` with `plugin.provider_not_loaded`, not parked
 
-#### Scenario: Installed plugin's persisted subscription re-subscribes at bind
+#### Scenario: Installed plugin's binding subscribes at bind
 
 - **GIVEN** the same operator and the example package loaded at this boot
 - **WHEN** the operator binds
 - **THEN** `Flezha.Operator.Plugins.prepare/2` SHALL subscribe `s` exactly as a first-party
-  plugin, and `Plugins.activate/1` SHALL then transition it to `:running`
+  plugin, and `Plugins.bring_up/1` SHALL then transition it to `:running`
 
 ### Requirement: Settings payload schema uses canonical names
 
@@ -918,14 +918,14 @@ when refused.
 When `flz plugin enable` resolves a provider, it SHALL ask every other controller that holds
 a hub for the target namespace whether its provider table has that id, bounded in time, and
 SHALL print a warning naming each controller that does not, or that did not answer, and
-stating that an operator placed there parks. The enable SHALL proceed. No placement
-constraint SHALL be derived from it.
+stating that the plugin will not run there and that an operator bound to it there runs
+without it. The enable SHALL proceed. No placement constraint SHALL be derived from it.
 
 #### Scenario: One controller of the namespace lacks the package
 
 - **GIVEN** two controllers holding hubs for namespace `n`, only the first with the example
   package loaded
-- **WHEN** `flz plugin enable s example_stamp --namespace n --operator_id op` runs against
-  the first
+- **WHEN** `flz plugin enable s example_stamp --namespace n` runs against the first
 - **THEN** the enable SHALL succeed and SHALL print a warning naming the second controller
+  and saying the plugin will not run there
 

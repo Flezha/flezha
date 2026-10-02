@@ -44,6 +44,7 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
   alias Flezha.Service.{EventManager, HubManager, OperatorManager}
   alias Flezha.State.{Paths, WalWriter}
   alias Flezha.Transport.LivenessCounters
+  alias FlezhaTest.Fixtures.OperatorFixture
   alias FlezhaTest.Helper.Telemetry
 
   @tick_ms 1_000
@@ -216,7 +217,13 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
       hooks: [{:on_output, []}]
     }
 
-    builder = %Builder{id: id, factory_id: factory, init_values: %{}, opts: [plugins: [sink]]}
+    builder = %Builder{
+      id: id,
+      factory_id: factory,
+      init_values: %{},
+      opts: [bindings: OperatorFixture.bindings(namespace, id, [sink])]
+    }
+
     assert {:ok, _} = OperatorManager.start_operator(namespace, builder)
     id
   end

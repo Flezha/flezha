@@ -1,6 +1,6 @@
 use flz_transport::errors::FlezhaError;
 
-use crate::args::{OptSpec, Positional, Reading};
+use crate::args::{OptSpec, Positional, Reading, NAMESPACE};
 use crate::dispatch::{Command, Missing, Verb};
 use crate::help;
 use crate::rpc::{self, text};
@@ -9,8 +9,11 @@ use crate::settings::{
 };
 
 const PLUGIN_ID: &[Positional] = &[Positional::required("<plugin_id>")];
+const NAME: &[Positional] = &[Positional::required("<name>")];
 const SOURCE: &[Positional] = &[Positional::required("<path-or-https-url>")];
 const INSTALLED: OptSpec = OptSpec::switch("--installed", "--installed");
+const PROVIDERS: OptSpec = OptSpec::switch("--providers", "--providers");
+const SINGLE: OptSpec = OptSpec::switch("--single", "--single");
 
 /// Where the verbs that place packages run, in a VM of their own.
 const LOCAL: &str = "Flezha.Service.Cli.Plugin";
@@ -21,15 +24,29 @@ pub(crate) const TABLE: Command = Command {
     verbs: &[
         Verb::new("enable", handle_enable)
             .taking(&[
-                Positional::required("<plugin_id>"),
+                Positional::required("<name>"),
                 Positional::required("<provider_id>"),
             ])
+            .reading(&[SINGLE])
             .open(),
-        Verb::new("disable", handle_disable).taking(PLUGIN_ID),
+        Verb::new("bind", |read| with_settings(read, "bind_plugin"))
+            .taking(NAME)
+            .open(),
+        Verb::new("unbind", |read| named(read, "unbind_plugin"))
+            .taking(NAME)
+            .open(),
+        Verb::new("update", |read| with_settings(read, "update_plugin"))
+            .taking(NAME)
+            .open(),
+        Verb::new("disable", |read| named(read, "disable_plugin"))
+            .taking(NAME)
+            .open(),
         // `help` is a verb here, not a spelling of the screen: with a provider
         // id it asks the controller for that provider's own help.
         Verb::new("help", handle_help).taking(&[Positional::optional("<provider_id>")]),
-        Verb::new("list", handle_list).reading(&[INSTALLED]),
+        Verb::new("list", handle_list)
+            .reading(&[INSTALLED, PROVIDERS, NAMESPACE])
+            .refusing(&[("--installed", "--providers")]),
         Verb::new("install", |read| {
             local(read, "install", &[read.pos(SOURCE[0].name)])
         })
@@ -60,22 +77,42 @@ fn local(read: &Reading, verb: &str, args: &[&str]) {
 fn handle_enable(read: &Reading) {
     println!("Enabling plugin...");
 
+    let mut opts = plain_opts(read.rest());
+    if read.switch(SINGLE.long) {
+        opts.push(("single".to_string(), "true".to_string()));
+    }
+
     rpc::run(
         "enable_plugin",
         &[
-            text(read.pos(PLUGIN_ID[0].name)),
+            text(read.pos(NAME[0].name)),
             text(read.pos("<provider_id>")),
-            text(&plugin_flags_json(read.rest())),
-            text(&opts_json(read.rest())),
+            text(&settings_json(read.rest())),
+            text(&serialize_flags(&opts)),
         ],
         &[],
         read,
     );
 }
 
+/// `unbind` and `disable`: the plugin's name and the plain options.
+fn named(read: &Reading, rpc_fun: &str) {
+    let opts = serialize_flags(&plain_opts(read.rest()));
+    let args = [text(read.pos(NAME[0].name)), text(&opts)];
+    rpc::run(rpc_fun, &args, &[], read);
+}
+
+/// `bind` and `update`: the plugin's name, its settings and the plain options.
+fn with_settings(read: &Reading, rpc_fun: &str) {
+    let settings = settings_json(read.rest());
+    let opts = serialize_flags(&plain_opts(read.rest()));
+    let args = [text(read.pos(NAME[0].name)), text(&settings), text(&opts)];
+    rpc::run(rpc_fun, &args, &[], read);
+}
+
 /// The plugin's own settings: the `--X` flags, with any declared
 /// `--hook=NAME` sub-options embedded so the Elixir side sees them.
-fn plugin_flags_json(args: &[String]) -> String {
+fn settings_json(args: &[String]) -> String {
     let base = serialize_flags(&extract_x_flags(args));
     let hooks = extract_hook_flags(args);
 
@@ -89,14 +126,8 @@ fn plugin_flags_json(args: &[String]) -> String {
 /// The plain CLI options. The hook entries are removed first, so the
 /// option parser does not read them as options of their own; the credential is
 /// the walk's and never reaches this document.
-fn opts_json(args: &[String]) -> String {
-    serialize_flags(&extract_opts(&filter_out_hook_entries(args)))
-}
-
-fn handle_disable(read: &Reading) {
-    println!("Disabling plugin...");
-
-    rpc::one_arg(read, PLUGIN_ID[0].name, "disable_plugin");
+fn plain_opts(args: &[String]) -> Vec<(String, String)> {
+    extract_opts(&filter_out_hook_entries(args))
 }
 
 fn handle_help(read: &Reading) {
@@ -110,27 +141,28 @@ fn handle_help(read: &Reading) {
     rpc::run("plugin_help", &[text(provider_id)], &[], read);
 }
 
-/// Two collections, and two flags that must not do each other's job:
-/// `--installed` chooses which list, the output format chooses how it is
-/// rendered. The provider registry has one rendering, so asking it for JSON is
-/// refused rather than silently answered with the other collection.
+/// Three collections, and the flags that choose one must not do the format's
+/// job: `--installed` lists the packages, `--providers` the provider registry,
+/// and the default the plugins enabled in the namespace. The registry has one
+/// rendering, so asking it for JSON is refused rather than silently answered
+/// with another collection.
 fn handle_list(read: &Reading) {
-    let installed = read.switch(INSTALLED.long);
-
-    if !installed && read.output_format() == "json" {
-        rpc::fail(FlezhaError::with(
-            "usage.text_only",
-            [
-                ("what", "the provider registry".into()),
-                ("alternative", "flz plugin list --installed --json".into()),
-            ],
-        ));
-    }
-
-    if installed {
+    if read.switch(INSTALLED.long) {
         rpc::run("list_installed_plugins", &[], &[], read);
+    } else if read.switch(PROVIDERS.long) {
+        if read.output_format() == "json" {
+            rpc::fail(FlezhaError::with(
+                "usage.text_only",
+                [
+                    ("what", "the provider registry".into()),
+                    ("alternative", "flz plugin list --installed --json".into()),
+                ],
+            ));
+        }
+
+        rpc::run("list_providers", &[], &[], read);
     } else {
-        rpc::run("list_plugins", &[], &[], read);
+        rpc::run("list_enabled_plugins", &[text(read.namespace())], &[], read);
     }
 }
 

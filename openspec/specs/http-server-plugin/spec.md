@@ -7,12 +7,13 @@ operator of either kind behind an HTTP/1.1 port: every request becomes one outsi
 that operator carrying a request envelope, its `response()` answer becomes the response or a
 stream of another operator's events as server-sent events, every resource it holds is
 bounded, and every failure is an HTTP status with the error model's document.
-
 ## Requirements
 ### Requirement: The HTTP server SHALL be a plugin package built outside the Flezha repository
 
 The HTTP server SHALL be the plugin application `flezha_http`, a Mix project in the
-repository `Flezha/flezha_http_plugin`, which is not a submodule of the Flezha repository.
+repository `Flezha/flezha_http_plugin`, which the Flezha repository carries as the git
+submodule `plugins/flezha_http_plugin` on its `dev` branch, so the package depends on the core
+by the relative path `../..`.
 It SHALL declare exactly one provider, `http_server`, in its `flezha_providers` application
 environment, SHALL declare no application callback, and SHALL depend on `flezha`, Bandit and
 Plug. `mix flezha.plugin.package` SHALL build it into `flezha_http-<version>.fpz` holding

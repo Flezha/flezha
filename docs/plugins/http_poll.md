@@ -14,6 +14,7 @@ telemetry and limits.
 | --- | --- |
 | Plugin type | `:io_binding` |
 | Hooks | `:on_terminate`: the poller drives itself; the hook is there because a plugin spec must name at least one |
+| Shared | yes: one poller per controller for every operator bound to the plugin, or one in the whole cluster with `--single`. Each member of a partitioned operator runs a poller of its own |
 | Upstream | one `http://` or `https://` URL, `GET` only, redirects not followed |
 | Injection | the response body, on the entry channel `:channel` (or `:channel_in`) names, only when its SHA-256 differs from the last delivered one |
 | Delivery | the confirming ingest — the hash advances only once the operator has taken the payload |
@@ -42,7 +43,7 @@ As a plugin spec at operator start (`flz operator start --plugins`):
 ```json
 [
   {
-    "id": "signal-config",
+    "name": "signal-config",
     "provider": "operator_http_poll",
     "opts": {
       "url": "https://api.internal/internal/signal-config",

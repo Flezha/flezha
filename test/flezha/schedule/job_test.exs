@@ -8,6 +8,7 @@ defmodule Flezha.Schedule.JobTest do
 
   alias Flezha.Schedule.{Cron, Job}
   alias Flezha.Service.OperatorManager
+  alias Flezha.Service.PluginManager
   alias FlezhaTest.Helper.ScheduleTestHelper, as: Helper
   alias Flezha.Process.Timer
 
@@ -207,29 +208,37 @@ defmodule Flezha.Schedule.JobTest do
       assert Process.alive?(pid)
     end
 
-    test "the entry's plugin spec is attached at spawn with the slot's identity" do
+    test "the entry's plugin spec is bound at spawn to the slot's instance" do
       test_pid = self()
 
       stub_spawn(test_pid)
 
+      # The enable and the binding check are the plugin manager's; what the job
+      # owes is the spec decoded for this slot's instance.
+      stub(PluginManager, :start_bindings, fn "default", plugins ->
+        send(test_pid, {:decoded, plugins})
+        {:ok, Enum.map(plugins, &%{&1 | opts: %{}})}
+      end)
+
       spec =
-        ~s([{"id":"reports","provider":"operator_kafka_producer",) <>
+        ~s([{"name":"reports","provider":"operator_kafka_producer",) <>
           ~s("hooks":["on_output"],"opts":{"topic":"ai.reports.v1"}}])
 
       pid = start_supervised!({Job, Helper.quiet_entry(%{plugins: spec})})
       send(pid, {:fire, ~U[2026-07-27 08:01:00Z]})
 
-      assert_receive {:spawned, builder}, 2_000
-      assert [plugin] = builder.opts[:plugins]
-      # Prefixed by the instance id so two overlapping slots never collide.
-      assert plugin.id == "job@2026-07-27T08:01:00Z_reports"
+      assert_receive {:decoded, [plugin]}, 2_000
+      assert plugin.id == "reports"
       assert plugin.operator_id == "job@2026-07-27T08:01:00Z"
       assert plugin.namespace == "default"
       assert plugin.provider == Flezha.Plugin.Provider.Kafka.Producer
       # The decoded form is the boundary shape; `Extension.Table.canonicalise/2`
-      # resolves the name against the host catalog at subscribe time.
+      # resolves the name against the host catalog at bind time.
       assert plugin.hooks == [{"on_output", []}]
       assert plugin.opts == %{topic: "ai.reports.v1"}
+
+      assert_receive {:spawned, builder}, 2_000
+      assert [%{id: "reports"}] = builder.opts[:bindings]
     end
 
     test "an entry with no plugin spec spawns with no plugins opt" do
@@ -249,7 +258,7 @@ defmodule Flezha.Schedule.JobTest do
         flunk("an undecodable plugin spec must not reach the start path")
       end)
 
-      spec = ~s([{"id":"reports","provider":"retired_provider","hooks":["on_output"]}])
+      spec = ~s([{"name":"reports","provider":"retired_provider","hooks":["on_output"]}])
       pid = start_supervised!({Job, Helper.quiet_entry(%{plugins: spec})})
 
       log =

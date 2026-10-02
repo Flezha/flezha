@@ -103,10 +103,12 @@ $ flz plugin enable writer operator_file_sink \
   --Xpath=echo-out.txt
 ```
 
-Read that as four things: `writer` is the id you will use to disable it,
-`operator_file_sink` is which plugin, `--operator_id` is which operator it
-attaches to, and `--hook=on_output` is the hook, meaning **send this plugin
-everything the operator emits**. Options belonging to the plugin itself carry an
+Read that as four things: `writer` is the plugin's name in the namespace,
+`operator_file_sink` is which plugin, `--operator_id` is the operator it is
+bound to, and `--hook=on_output` is the hook, meaning **send this plugin
+everything the operator emits**. The one command enables the plugin and binds
+the operator to it; `flz plugin bind writer --operator_id=<op> --hook=on_output`
+binds another operator later. Options belonging to the plugin itself carry an
 `X` prefix, which is what separates them from the command's own flags.
 
 You do not create the file: the sink creates `echo-out.txt` when the plugin is
@@ -218,21 +220,49 @@ Operator: my_echo
 ```
 
 It lists every operator in the namespace, and under each one the plugins
-attached to it: the id you chose, which plugin it is, the hook it is on, the
+attached to it: the name you chose, which plugin it is, the hook it is on, the
 full path of its file, and whether it is healthy. `reader` has no hook line,
 because a source is not sent anything. When an operator shows `degraded`, this
 is where to look for the plugin that is not healthy.
 
 ## Turn one off
 
-To detach a plugin, disable it by its id:
+To take a plugin away from one operator, unbind it; the plugin stays enabled
+for the others bound to it:
+
+```sh
+$ flz plugin unbind reader --operator_id=my_echo
+```
+
+To turn it off for every operator, disable it by its name:
 
 ```sh
 $ flz plugin disable reader
 ```
 
-The id is the one you chose at enable, the same one `flz operator info` lists
+The name is the one you chose at enable, the same one `flz operator info` lists
 under the operator.
+
+## Share one plugin
+
+A websocket, an HTTP poll, a Kafka producer or stdout can serve several
+operators at once: bind each one to the same plugin, and each controller runs
+one copy of it for every operator bound to it there, so one connection is
+opened instead of one per operator. Every operator gets every record, through
+a backlog of its own: one that falls behind loses its oldest records and its
+health says `plugin_lagging`, and the others are not slowed. With
+`flz plugin enable ... --single`, one copy runs in the whole cluster. A copy
+whose last operator leaves stops, at once on an unbind or a stop and after
+`FLEZHA_PLUGIN_IDLE_STOP_MS` otherwise, so the connection survives an
+operator's move. The members of a partitioned operator do not share: each runs
+a copy of its own, asking only for its own share of the keys. A plugin that
+cannot be shared, such as the file sink here, refuses a second operator with
+`plugin.not_shareable`. Each page
+[Other sources and sinks](#other-sources-and-sinks) lists says which kind it is.
+
+An operator placed on a controller that lacks a plugin's package runs without
+the plugin: its health names `plugin.provider_not_loaded`, a delivery-guaranteed
+output to that sink waits, and any other is dropped and counted.
 
 ## Or from your own code
 
@@ -247,14 +277,14 @@ an application can attach its own plugins:
 ```java
 Admin admin = runner.admin();
 
-ObjectNode sink = JsonNodeFactory.instance.objectNode();
-sink.put("id", "writer");
-sink.put("provider", "operator_file_sink");
-sink.put("operator_id", "my_echo");
-sink.putObject("opts").put("path", "echo-out.txt");
-sink.putArray("hooks").addArray().add("on_output").addObject();
+ObjectNode opts = JsonNodeFactory.instance.objectNode().put("path", "echo-out.txt");
+admin.enablePlugin("writer", PluginSpec.of("operator_file_sink").opts(opts));
 
-admin.enablePlugin("writer", sink);
+ArrayNode hooks = JsonNodeFactory.instance.arrayNode();
+hooks.addArray().add("on_output").addObject();
+admin.bindPlugin("writer", "my_echo", hooks, null);
+
+admin.unbindPlugin("writer", "my_echo");
 admin.disablePlugin("writer");
 ```
 
@@ -265,14 +295,11 @@ let admin = runner.admin();
 
 admin.enable_plugin(
     "writer",
-    serde_json::json!({
-        "id": "writer",
-        "provider": "operator_file_sink",
-        "operator_id": "my_echo",
-        "opts": { "path": "echo-out.txt" },
-        "hooks": [["on_output", {}]],
-    }),
+    &PluginSpec::new("operator_file_sink").opts(serde_json::json!({ "path": "echo-out.txt" })),
 )?;
+admin.bind_plugin("writer", "my_echo", serde_json::json!([["on_output", {}]]), "")?;
+
+admin.unbind_plugin("writer", "my_echo")?;
 admin.disable_plugin("writer")?;
 ```
 
@@ -281,13 +308,10 @@ admin.disable_plugin("writer")?;
 ```javascript
 const admin = runner.admin();
 
-await admin.enablePlugin('writer', {
-  id: 'writer',
-  provider: 'operator_file_sink',
-  operator_id: 'my_echo',
-  opts: { path: 'echo-out.txt' },
-  hooks: [['on_output', {}]],
-});
+await admin.enablePlugin('writer', 'operator_file_sink', { opts: { path: 'echo-out.txt' } });
+await admin.bindPlugin('writer', 'my_echo', { hooks: [['on_output', {}]] });
+
+await admin.unbindPlugin('writer', 'my_echo');
 await admin.disablePlugin('writer');
 ```
 
@@ -296,16 +320,10 @@ await admin.disablePlugin('writer');
 ```python
 admin = runner.admin()
 
-admin.enable_plugin(
-    "writer",
-    {
-        "id": "writer",
-        "provider": "operator_file_sink",
-        "operator_id": "my_echo",
-        "opts": {"path": "echo-out.txt"},
-        "hooks": [["on_output", {}]],
-    },
-)
+admin.enable_plugin("writer", "operator_file_sink", opts={"path": "echo-out.txt"})
+admin.bind_plugin("writer", "my_echo", hooks=[["on_output", {}]])
+
+admin.unbind_plugin("writer", "my_echo")
 admin.disable_plugin("writer")
 ```
 
@@ -314,13 +332,10 @@ admin.disable_plugin("writer")
 ```ruby
 admin = runner.admin
 
-admin.enable_plugin("writer", {
-  "id" => "writer",
-  "provider" => "operator_file_sink",
-  "operator_id" => "my_echo",
-  "opts" => { "path" => "echo-out.txt" },
-  "hooks" => [["on_output", {}]]
-})
+admin.enable_plugin("writer", "operator_file_sink", opts: { "path" => "echo-out.txt" })
+admin.bind_plugin("writer", "my_echo", hooks: [["on_output", {}]])
+
+admin.unbind_plugin("writer", "my_echo")
 admin.disable_plugin("writer")
 ```
 
@@ -329,13 +344,10 @@ admin.disable_plugin("writer")
 ```php
 $admin = $runner->admin();
 
-$admin->enablePlugin('writer', [
-    'id' => 'writer',
-    'provider' => 'operator_file_sink',
-    'operator_id' => 'my_echo',
-    'opts' => ['path' => 'echo-out.txt'],
-    'hooks' => [['on_output', new stdClass()]],
-]);
+$admin->enablePlugin('writer', 'operator_file_sink', ['path' => 'echo-out.txt']);
+$admin->bindPlugin('writer', 'my_echo', hooks: [['on_output', new stdClass()]]);
+
+$admin->unbindPlugin('writer', 'my_echo');
 $admin->disablePlugin('writer');
 ```
 
@@ -345,23 +357,19 @@ $admin->disablePlugin('writer');
 alias Flezha.SDK.Admin
 runner = Flezha.SDK.RunnerServer
 
-{:ok, _} =
-  Admin.enable_plugin(runner, "writer", %{
-    "id" => "writer",
-    "provider" => "operator_file_sink",
-    "operator_id" => "my_echo",
-    "opts" => %{"path" => "echo-out.txt"},
-    "hooks" => [["on_output", %{}]]
-  })
+{:ok, _} = Admin.enable_plugin(runner, "writer", "operator_file_sink", opts: %{"path" => "echo-out.txt"})
+{:ok, _} = Admin.bind_plugin(runner, "writer", "my_echo", hooks: [["on_output", %{}]])
 
+{:ok, _} = Admin.unbind_plugin(runner, "writer", "my_echo")
 {:ok, _} = Admin.disable_plugin(runner, "writer")
 ```
 
 <!-- tabs-close -->
 
-The object carries what the command line carries: the plugin's id, its provider,
-the operator it attaches to, the provider's own options under `opts`, and the
-hook that `--hook=on_output` spells on the command line. Every echo example
+The calls carry what the command line carries: the plugin's name, its
+provider and the provider's own options under `opts` at enable, then the
+operator and the hook that `--hook=on_output` spells on the command line at
+bind. Every echo example
 carries its enable commented out right after the operator's start, ready to
 uncomment, and a message sent after it lands in the file.
 [`../sdk/admin.md`](../sdk/admin.md) is the whole surface.
@@ -372,8 +380,8 @@ application may attach and detach the plugins its own namespace already has.
 
 ## Other sources and sinks
 
-The file plugin is one of a family, and they attach exactly the same way: an id,
-a provider, an operator and its options.
+The file plugin is one of a family, and they attach exactly the same way: a
+name, a provider, an operator and its options.
 
 | Plugin | What it connects |
 |---|---|

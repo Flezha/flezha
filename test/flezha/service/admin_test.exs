@@ -36,8 +36,8 @@ defmodule Flezha.Service.AdminTest do
   defp args_for("Operator.start"), do: ~s([{"id":"o1"}])
   defp args_for("Operator.send"), do: ~s(["o1", "hello", "in"])
   defp args_for("Operator.stop"), do: ~s(["o1"])
-  defp args_for("PluginManager.enable"), do: ~s(["p1", {"id": "p1"}])
-  defp args_for("PluginManager.disable"), do: ~s(["p1"])
+  defp args_for("PluginManager.enable"), do: ~s(["p1", {"provider": "operator_stdout"}])
+  defp args_for("PluginManager.disable"), do: ~s(["p1", {}])
 
   describe "the refusal this change starts from" do
     test "a connected runner's identity holds runner.connect and no user action" do
@@ -208,7 +208,7 @@ defmodule Flezha.Service.AdminTest do
         Admin.call(
           @ns,
           "PluginManager.enable",
-          ~s(["p1", {"id": "p1", "provider": "Elixir.Flezha.Plugin.Providers.Kafka.Producer",
+          ~s(["p1", {"provider": "Elixir.Flezha.Plugin.Providers.Kafka.Producer",
                      "operator_id": "o1", "namespace": "#{@other}"}])
         )
 
@@ -218,19 +218,19 @@ defmodule Flezha.Service.AdminTest do
       assert record.metadata.namespace == @ns
     end
 
-    # Fails when: fields that still name their hooks `subscriptions` leave the
-    # requester waiting on a body that raised, or enable a plugin with no hooks.
-    test "an enable whose fields carry subscriptions is answered with an error" do
+    # Fails when: fields the enable does not read leave the requester waiting
+    # on a body that raised, or enable a plugin with less than was written.
+    test "an enable whose fields carry one it does not read is answered with an error" do
       assert {:error, %Flezha.Error{code: "plugin.fields_unknown", details: details}} =
                Admin.call(
                  @ns,
                  "PluginManager.enable",
-                 ~s(["p_old", {"id": "p_old", "provider": "operator_stdout",
-                               "operator_id": "o1", "subscriptions": ["on_output"]}])
+                 ~s(["p_old", {"provider": "operator_stdout", "operator_id": "o1",
+                               "channel": "on_output"}])
                )
 
-      assert details["fields"] == ["subscriptions"]
-      refute Map.has_key?(Flezha.Service.PluginManager.get_plugins(), "p_old")
+      assert details["fields"] == ["channel"]
+      assert Flezha.Service.PluginManager.plugins(@ns) == []
     end
 
     test "the frame has no namespace field and no principal field" do

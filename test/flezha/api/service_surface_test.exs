@@ -82,8 +82,10 @@ defmodule Flezha.Api.ServiceSurfaceTest do
     ],
     PluginManager => [
       {:list, []},
-      {:enable, ["plug_1", [id: "plug_1", provider: Flezha.Plugin]]},
-      {:disable, ["plug_1"]}
+      {:enable, ["plug_1", [provider: Flezha.Plugin]]},
+      {:bind, ["plug_1", [operator_id: "rc"]]},
+      {:unbind, ["plug_1", [operator_id: "rc"]]},
+      {:disable, ["plug_1", []]}
     ],
     Schedule => [
       {:list, []},

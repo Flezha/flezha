@@ -303,6 +303,13 @@ defmodule Flezha.Config.Keys do
      key: true, env: "FLEZHA_LISTENER_PENDING_BYTES"},
     {:listener_pending_frames, :positive_int, 4_096,
      key: true, env: "FLEZHA_LISTENER_PENDING_FRAMES"},
+    # What one operator bound to a shared plugin has not taken yet: a record
+    # that does not fit drops that operator's oldest waiting ones, and no other
+    # operator waits for it.
+    {:plugin_backlog_bytes, :positive_int, 4_194_304,
+     key: true, env: "FLEZHA_PLUGIN_BACKLOG_BYTES"},
+    {:plugin_backlog_frames, :positive_int, 4_096,
+     key: true, env: "FLEZHA_PLUGIN_BACKLOG_FRAMES"},
     {:record_log_cut_after_bytes, :int, 65_536, key: true},
     # Per-operator-class user overrides: a map from class to value, read
     # ahead of the SDK's own declaration and of the global default below it.
@@ -598,7 +605,8 @@ defmodule Flezha.Config.Keys do
     {:refusal_fixture, :string, nil, runtimes: [:harness], env: "FLEZHA_REFUSAL_FIXTURE"},
     {:branch_fail, :string, nil, runtimes: [:harness], env: "FLEZHA_BRANCH_FAIL"},
     {:steps_retry_fails, :int, nil, runtimes: [:harness], env: "FLEZHA_STEPS_RETRY_FAILS"},
-    {:fixture_sleep_after_ms, :ms, nil, runtimes: [:harness], env: "FLEZHA_FIXTURE_SLEEP_AFTER_MS"},
+    {:fixture_sleep_after_ms, :ms, nil,
+     runtimes: [:harness], env: "FLEZHA_FIXTURE_SLEEP_AFTER_MS"},
     {:data_stream_loss_drill, :bool, false,
      runtimes: [:harness], env: "FLEZHA_DATA_STREAM_LOSS_DRILL"},
     {:reset_probe_override, :string, nil,

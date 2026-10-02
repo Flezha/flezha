@@ -511,28 +511,21 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
     end
   end
 
-  describe "the table reports what it dropped and issues no effect" do
-    test "teardown_all names every plugin it held, in the order it tore them down" do
-      table = table_with(["a", "b", "c"])
-      held = Enum.map(table.plugins, fn {plugin_id, _plugin} -> plugin_id end)
+  describe "the table drops what it is told to and issues no effect of its own" do
+    test "teardown_all empties the table" do
+      emptied = Table.teardown_all(table_with(["a", "b", "c"]))
 
-      {emptied, dropped} = Table.teardown_all(table)
-
-      assert dropped == held
-      assert Enum.sort(dropped) == ["a", "b", "c"]
       assert emptied.plugins == %{}
+      assert emptied.entries == %{}
     end
 
-    test "teardown_all of a table holding nothing reports nothing" do
-      assert {_table, []} = Table.teardown_all(Table.new(@catalog))
+    test "unsubscribe drops the one plugin named" do
+      assert Map.keys(Table.unsubscribe(table_with(["a", "b"]), "b").plugins) == ["a"]
     end
 
-    test "unsubscribe names the one plugin it dropped" do
-      assert {_table, ["b"]} = Table.unsubscribe(table_with(["a", "b"]), "b")
-    end
-
-    test "unsubscribe of a plugin the table never held reports nothing" do
-      assert {_table, []} = Table.unsubscribe(table_with(["a"]), "ghost")
+    test "unsubscribe of a plugin the table never held changes nothing" do
+      table = table_with(["a"])
+      assert Table.unsubscribe(table, "ghost") == table
     end
 
     test "the table names no Flezha.Service module" do
@@ -592,7 +585,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
 
       assert table.active_mask != 0
 
-      {table, _dropped} = Table.unsubscribe(table, "a")
+      table = Table.unsubscribe(table, "a")
       assert table.active_mask == 0
     end
 
@@ -614,8 +607,8 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
         empty = Table.new(@catalog)
         {:ok, one} = subscribe(empty, "a", plugin.("a", unquote(opts)))
         {:ok, two} = subscribe(one, "b", plugin.("b", unquote(other_opts)))
-        {minus_one, _} = Table.unsubscribe(two, "a")
-        {none, _} = Table.unsubscribe(minus_one, "b")
+        minus_one = Table.unsubscribe(two, "a")
+        none = Table.unsubscribe(minus_one, "b")
 
         assert empty.active_mask == 0
         assert one.active_mask != 0

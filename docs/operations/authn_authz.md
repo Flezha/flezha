@@ -484,11 +484,15 @@ told nothing about whether the name exists.
 | `cell_state` | `cell_state` | `state.get` | viewer | argument 1 (the namespace named) | - |
 | `schedule_run` | `schedule_run` | `operator.start` | spawner | the stored row's `namespace` | after on `operator_service` |
 | `runner_connect` | published surface only | `runner.connect` | runner | argument 1 (the namespace named) | - |
-| `plugin_list` | `list_plugins` | `plugin.list` | viewer | the caller's own namespace | - |
+| `plugin_list` | `list_providers` | `plugin.list` | viewer | the caller's own namespace | - |
+| `plugin_enabled` | `list_enabled_plugins` | `plugin.list` | viewer | argument 1 (the namespace named) | - |
 | `list_installed_plugins` | `list_installed_plugins` | `plugin.list` | viewer | the caller's own namespace | - |
 | `plugin_info` | `plugin_help` | `plugin.info` | viewer | the caller's own namespace | - |
 | `plugin_enable` | `enable_plugin` | `plugin.enable` | app | the stored row's `namespace` | after on `plugin_service` |
 | `plugin_disable` | `disable_plugin` | `plugin.disable` | app | the stored row's `namespace` | after on `plugin_service` |
+| `plugin_bind` | `bind_plugin` | `plugin.enable` | app | the stored row's `namespace` | after on `plugin_service` |
+| `plugin_unbind` | `unbind_plugin` | `plugin.disable` | app | the stored row's `namespace` | after on `plugin_service` |
+| `plugin_update` | `update_plugin` | `plugin.enable` | app | the stored row's `namespace` | after on `plugin_service` |
 | `observability_sources` | `observability_render_sources` | `observability.query` | viewer | the caller's own namespace | - |
 | `observability_sinks` | `observability_render_sinks` | `observability.query` | viewer | the caller's own namespace | - |
 | `observability_query` | published surface only | `observability.query` | viewer | the caller's own namespace | - |

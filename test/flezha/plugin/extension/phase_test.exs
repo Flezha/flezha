@@ -277,7 +277,7 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
 
     # Now unsubscribe one and partially tear down. Teardown should not
     # raise regardless of phase mix.
-    {teardown_table, _dropped} = Table.teardown_all(table)
+    teardown_table = Table.teardown_all(table)
     assert teardown_table.plugins == %{}
     assert teardown_table.entries == %{}
   end
@@ -448,41 +448,25 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
           Table.bulk_subscribe(Table.new(@catalog), entries)
         end)
 
-      assert {:error, {"orphan", {:module_not_loaded, MyOrg.UninstalledProvider}}} = result
+      assert {:error, {"orphan", {:module_not_loaded, MyOrg.UninstalledProvider, _node}}} = result
 
       assert log =~ "plugin_id=orphan"
       assert log =~ "MyOrg.UninstalledProvider"
       assert log =~ "healthy"
     end
 
-    test "prepare/2 carries the failing plugin id into the reason the operator parks on",
+    # A binding resolves against its plugin's entry in the operator's
+    # namespace; with no hub there is none, so nothing is subscribed and the
+    # bind goes on (`FlezhaTest.Operator.PackageProviderTest` is the live one).
+    test "prepare/2 records a binding it cannot bring up as not started and binds on",
          %{entries: entries} do
       state = %Overwatch{id: "op1", namespace: "default", extensions: Table.new(@catalog)}
 
       {result, _log} = ExUnit.CaptureLog.with_log(fn -> Plugins.prepare(state, entries) end)
 
-      assert {:error, {:plugin_prepare_failed, plugin_id, reason}} = result
-      assert plugin_id == "orphan"
-      assert reason == {:module_not_loaded, MyOrg.UninstalledProvider}
-    end
-
-    # Fails when: a record an earlier build wrote, whose hooks sit under
-    # `subscriptions`, starts its plugin with no hooks instead of parking the
-    # operator on it. No reader of the old field exists, by design.
-    test "a record in the earlier shape parks the operator on that plugin" do
-      earlier =
-        %Plugin{id: "earlier", provider: ReportingInitProvider, opts: %{report_to: self()}}
-        |> Map.delete(:hooks)
-        |> Map.put(:subscriptions, [{:on_input, [position: 0]}])
-
-      state = %Overwatch{id: "op1", namespace: "default", extensions: Table.new(@catalog)}
-
-      {result, log} =
-        ExUnit.CaptureLog.with_log(fn -> Plugins.prepare(state, [{"earlier", earlier}]) end)
-
-      assert {:error, {:plugin_prepare_failed, "earlier", {:invalid_hook, :not_a_list}}} = result
-      assert log =~ "plugin_id=earlier"
-
+      assert {:ok, %Overwatch{extensions: table}} = result
+      assert Table.phase(table, "orphan") == {:not_started, {:plugin_not_found, "orphan"}}
+      assert Table.phase(table, "healthy") == {:not_started, {:plugin_not_found, "healthy"}}
       refute_received {:init_provider, _}
     end
 

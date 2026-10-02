@@ -86,9 +86,12 @@ before any runner is touched. Only a `per_input` steps operator is a group.
 member's `partition_index` / `partition_count` / `key_group_from` / `key_group_to` are merged
 into every plugin's opts as integers, and the plugin id gains the member's `#pK` suffix so two
 members on one node cannot collide in a provider's worker registry.
-`flz plugin enable <group> …` runs the per-operator enable once per member with those opts
-injected, and `flz plugin disable <group_plugin_id>` is symmetric; a partial enable reports
-which members succeeded and which failed, by name.
+`flz plugin bind <name> --operator_id <group>` binds every member with those opts
+injected, and `flz plugin unbind` is symmetric; a partial bind reports which members
+succeeded and which failed, by name. A plugin that can be shared is not shared with a
+partitioned operator: each member needs its own share of the key range, so each runs its own
+copy, as it runs a plugin that cannot be shared. An unpartitioned operator bound to the same
+plugin keeps the controller's shared copy.
 
 ## Forwarding to a partitioned operator
 

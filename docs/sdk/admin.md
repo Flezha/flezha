@@ -37,10 +37,12 @@ other verbs in the table below.
 | Start an operator | `Operator.start` | the spec `flz operator start` takes: `factory_id`, and optionally `id`, `init_values`, `opts` (the kind is the factory's, announced by its runner, and a written `kind` is refused); answers `{"id": ..., "outcome": "started" \| "already_running"}` |
 | Stop an operator | `Operator.stop` | `operator_id` |
 | Send to an operator | `Operator.send` | `operator_id`, `message`, `channel` (`""` for none) |
-| Enable a plugin | `PluginManager.enable` | `plugin_id`, the fields `flz plugin enable` takes |
-| Disable a plugin | `PluginManager.disable` | `plugin_id` |
+| Enable a plugin | `PluginManager.enable` | the plugin's `name`, then `provider`, `opts` and optionally `single`; with `operator_id` and `hooks` it binds that operator in the same call |
+| Bind an operator to a plugin | `PluginManager.bind` | `name`, then `operator_id` and optionally `hooks` and `channel` |
+| Unbind an operator | `PluginManager.unbind` | `name`, then `operator_id` |
+| Disable a plugin | `PluginManager.disable` | `name` |
 | List operators | `Operator.list_operators` | none |
-| List plugins | `PluginManager.list` | none |
+| List plugins | `PluginManager.list` | none; answers the plugins enabled in the namespace |
 | Read cell state | `Operator.cell_state` | `operator_id`, `cell_key` |
 
 Each SDK spells these as typed methods on its own admin handle:

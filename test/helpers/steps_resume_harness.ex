@@ -23,6 +23,7 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
   alias Flezha.State.Paths
   alias Flezha.State.TaskJournal
   alias Flezha.SDK.RecordFrame
+  alias FlezhaTest.Fixtures.OperatorFixture
   alias FlezhaTest.Helper.NodeTestHelper
 
   def collect_loop(acc) do
@@ -135,9 +136,13 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
   # start info. Every once chain here takes the same first message,
   # `{"seed":"go"}`, delivered as `flz operator start --text` delivers one; a
   # loop passes `first_message: nil` and sends its turns itself.
+  #
+  # `plugins:` are enabled for this operator and bound
+  # (`FlezhaTest.Fixtures.OperatorFixture.bindings/3`).
   def start_steps(namespace, operator_id, factory_id, opts) do
     {first_message, opts} = Keyword.pop(opts, :first_message, ~s({"seed":"go"}))
     opts = if first_message, do: [{:seed_input, {first_message, %{}}} | opts], else: opts
+    opts = bound(namespace, operator_id, opts)
 
     builder = %Builder{
       id: operator_id,
@@ -153,6 +158,7 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
 
   # Start one flow operator of `factory_id` on `namespace`.
   def start_stream(namespace, operator_id, factory_id, opts) do
+    opts = bound(namespace, operator_id, opts)
     builder = %Builder{id: operator_id, factory_id: factory_id, init_values: %{}, opts: opts}
     assert {:ok, info} = OperatorManager.start_operator(namespace, builder)
     info
@@ -263,5 +269,15 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
       end)
 
     seqs
+  end
+
+  defp bound(namespace, operator_id, opts) do
+    case Keyword.pop(opts, :plugins) do
+      {nil, opts} ->
+        opts
+
+      {plugins, opts} ->
+        [{:bindings, OperatorFixture.bindings(namespace, operator_id, plugins)} | opts]
+    end
   end
 end

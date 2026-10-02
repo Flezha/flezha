@@ -28,6 +28,7 @@ defmodule FlezhaTest.System.CheckpointBatchedOutputsE2ETest do
   alias Flezha.Operator.ClassRegistry
   alias Flezha.Service.OperatorManager
   alias Flezha.State.InputLog
+  alias FlezhaTest.Fixtures.OperatorFixture
 
   @moduletag timeout: 300_000
 
@@ -57,7 +58,7 @@ defmodule FlezhaTest.System.CheckpointBatchedOutputsE2ETest do
       id: operator_id,
       factory_id: @factory,
       init_values: %{},
-      opts: [plugins: [sink]]
+      opts: [bindings: OperatorFixture.bindings(namespace, operator_id, [sink])]
     }
 
     assert {:ok, info} = OperatorManager.start_operator(namespace, builder)

@@ -10,10 +10,15 @@ defmodule Flezha.Service.OperatorManager.Init do
   alias Flezha.Config.Durations
   alias Flezha.Config.Backoff
   alias Flezha.Identificator
+  alias Flezha.Process.Hub
   alias Flezha.SDK.SafeCall
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperatorManager.Teardown
   alias ProcessHub.Service.DeclaredChildren
+  alias ProcessHub.Service.ProcessRegistry
+
+  # ProcessHub's own answer for a row it does not hold (yet).
+  @no_child "No child found"
 
   # Losing the id claim is not a failed start: another path already runs this
   # operator. Conceding is the WHOLE remedy — the winner is never stopped,
@@ -51,17 +56,17 @@ defmodule Flezha.Service.OperatorManager.Init do
   @redeclare_attempts 2
 
   @doc """
-  Make `operator_id`'s declared child spec carry the plugins its registry row
-  carries, so a restart-driven start builds the operator from its current
-  plugin set rather than the one it was created with.
+  Make `child_id`'s declared child spec carry the plugins its registry row
+  carries — an operator's bindings, or a plugin child's own entry — so a
+  restart-driven start builds it from its current set rather than the one it
+  was created with.
 
   The row is the source, not the caller. `ProcessRegistry.update/4` applies its
   transform inside the registry, so concurrent plugin writes for one operator
   merge there atomically; building the new list in the caller instead would let
-  two concurrent enables each declare a list computed before the other's and
-  silently drop one, which is the defect this whole change exists to fix. The
-  write is re-checked for the same reason: whoever finishes last observes the
-  settled row and declares it.
+  two concurrent binds each declare a list computed before the other's and
+  silently drop one. The write is re-checked for the same reason: whoever
+  finishes last observes the settled row and declares it.
 
   A declared entry that already matches is left alone, so a no-op write never
   reaches the leader.
@@ -69,33 +74,118 @@ defmodule Flezha.Service.OperatorManager.Init do
   `:ok` when durable starts are off: that mode declares nothing at start either,
   so there is no entry to keep current and none is invented.
   """
-  @spec redeclare_plugins(binary(), binary()) :: :ok | {:error, term()}
-  def redeclare_plugins(namespace, operator_id) do
+  @spec redeclare(binary(), term()) :: :ok | {:error, term()}
+  def redeclare(namespace, child_id) do
     if HubManager.durable_starts?() do
-      sync_declared_plugins(namespace, operator_id, @redeclare_attempts)
+      sync_declared(namespace, child_id, @redeclare_attempts)
     else
       :ok
     end
   end
 
-  defp sync_declared_plugins(_namespace, _operator_id, 0), do: :ok
+  @doc """
+  Apply `transform` to `child_id`'s registry row on every node, then make its
+  declared entry carry the result (`redeclare/2`): two records, one mutation,
+  and every plugin write goes through here. The row is what `flz operator info`
+  and the convergence backstop read while the child runs; the declared set is
+  what a restart rebuilds it from, and it is the ONLY one a restart reads.
 
-  defp sync_declared_plugins(namespace, operator_id, attempts) do
+  The row goes first and is the source the declared write copies from: its
+  transform runs inside the registry, so concurrent writes for one child merge
+  there atomically rather than in two callers that cannot see each other.
+  """
+  @spec write_plugins(binary(), term(), function()) :: :ok | {:error, term()}
+  def write_plugins(namespace, child_id, transform) do
+    with :ok <- write_row(namespace, child_id, transform, 0), do: redeclare(namespace, child_id)
+  end
+
+  defp write_row(namespace, child_id, transform, attempt) do
+    hub_id = Identificator.hub(namespace)
+
+    if Hub.alive?(hub_id) do
+      # propagate: true: every node's row must carry the change, because the
+      # readers answer from whichever node is asked.
+      case update_row(hub_id, child_id, transform) do
+        :ok ->
+          :ok
+
+        {:error, :no_response} = failed ->
+          rewrite_or_give_up(namespace, child_id, transform, attempt, failed)
+
+        # The row may live on a peer whose synchronization has not reached us.
+        {:error, @no_child} = failed ->
+          rewrite_or_give_up(namespace, child_id, transform, attempt, failed)
+
+        {:error, :not_found} ->
+          row_not_found(namespace, child_id)
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    else
+      {:error, :registry_unavailable}
+    end
+  end
+
+  defp update_row(hub_id, child_id, transform) do
+    ProcessRegistry.update(hub_id, child_id, transform, propagate: true)
+  catch
+    :exit, _ -> {:error, :no_response}
+  end
+
+  defp rewrite_or_give_up(namespace, child_id, transform, attempt, failed) do
+    cond do
+      not Backoff.give_up?(:no_response, attempt) ->
+        Backoff.wait(:no_response, attempt + 1, child_id)
+        write_row(namespace, child_id, transform, attempt + 1)
+
+      failed == {:error, @no_child} ->
+        row_not_found(namespace, child_id)
+
+      true ->
+        failed
+    end
+  end
+
+  defp row_not_found(_namespace, {:plugin, name}), do: {:error, {:plugin_not_found, name}}
+
+  defp row_not_found(namespace, operator_id),
+    do: {:error, {:operator_not_found, namespace, operator_id}}
+
+  defp sync_declared(_namespace, _child_id, 0), do: :ok
+
+  defp sync_declared(namespace, child_id, attempts) do
     hub_id = Identificator.hub(namespace)
 
     with {:ok, hub} <- hub_state(hub_id),
-         {:ok, spec} <- declared_spec(hub, operator_id),
-         {:ok, row_plugins} <- HubManager.operator_plugins(namespace, operator_id) do
+         {:ok, spec} <- declared_spec(hub, child_id),
+         {:ok, row_plugins} <- row_plugins(namespace, hub_id, child_id) do
       case HubManager.rewrite_cspec_plugins(spec, fn _ -> row_plugins end) do
         ^spec ->
           :ok
 
         declared ->
           with :ok <- declare(hub, hub_id, declared) do
-            sync_declared_plugins(namespace, operator_id, attempts - 1)
+            sync_declared(namespace, child_id, attempts - 1)
           end
       end
     end
+  end
+
+  defp row_plugins(namespace, _hub_id, operator_id) when is_binary(operator_id),
+    do: HubManager.operator_bindings(namespace, operator_id)
+
+  defp row_plugins(namespace, hub_id, {:plugin, name} = child_id) do
+    case ProcessHub.Service.ProcessRegistry.lookup(hub_id, child_id) do
+      {cspec, _node_pids} -> plugin_of(cspec, name)
+      {cspec, _node_pids, _metadata} -> plugin_of(cspec, name)
+      nil -> {:error, {:plugin_not_found, namespace, name}}
+    end
+  end
+
+  defp plugin_of(cspec, name) do
+    {:ok, {_namespace, %Flezha.Plugin{} = plugin}} = Flezha.Process.Cspec.start_arg(cspec)
+    {:ok, [{name, plugin}]}
   end
 
   defp hub_state(hub_id) do
@@ -104,11 +194,11 @@ defmodule Flezha.Service.OperatorManager.Init do
     :exit, _ -> {:error, :hub_unavailable}
   end
 
-  # An upsert would declare an operator that was never declared, which would
-  # let a plugin write resurrect one a stop removed for good.
-  defp declared_spec(hub, operator_id) do
+  # An upsert would declare a child that was never declared, which would let a
+  # plugin write resurrect one a stop removed for good.
+  defp declared_spec(hub, child_id) do
     case DeclaredChildren.manifest(hub) do
-      %{entries: %{^operator_id => spec}} -> {:ok, spec}
+      %{entries: %{^child_id => spec}} -> {:ok, spec}
       _ -> {:error, :operator_not_declared}
     end
   end
@@ -155,61 +245,58 @@ defmodule Flezha.Service.OperatorManager.Init do
     error -> {:error, {:declared_mutate_failed, error}}
   end
 
-  def init_operator(exist?, namespace, operator, attempt \\ 0) do
-    result = start_child(namespace, operator)
-
-    # `:no_response` surfaces when ProcessHub's `with_partition_check`
-    # short-circuits `execute/2` without sending a response — i.e. the
-    # local hub's `dist_sup` was momentarily missing or dead, so
-    # `Service.State.is_partitioned?/1` returned `true`. The dist_sup
-    # restarts on its own; the only thing the caller can do is wait it
-    # out, on the `:no_response` row of the backoff table, so a transient
-    # partition during controller/cluster startup, a snapshot/restore
-    # taking down `dist_sup`, or parallel-suite test churn doesn't surface
-    # as a hard failure. A steady-state `:no_response` still propagates
-    # once the row gives up.
-    cond do
-      no_response?(result) and not Backoff.give_up?(:no_response, attempt) ->
-        Backoff.wait(:no_response, attempt + 1, operator.id)
-        init_operator(exist?, namespace, operator, attempt + 1)
-
-      true ->
-        finalize_init_operator(exist?, namespace, operator, result)
-    end
-  end
-
-  defp start_child(namespace, operator) do
+  def init_operator(exist?, namespace, operator) do
     child_spec = %{
       id: operator.id,
-      start: {
-        Flezha.Operator.Overwatch,
-        :start_link,
-        [{namespace, operator}]
-      },
+      start: {Flezha.Operator.Overwatch, :start_link, [{namespace, operator}]},
       restart: :transient
     }
 
-    Identificator.hub(namespace)
-    |> ProcessHub.start_child(child_spec,
-      awaitable: true,
-      # We will get the errors from the start result.
-      disable_logging: true,
-      timeout: Durations.get(:hub_start_child_ms),
-      # A partition member's identity is on its row from the first
-      # registration, so `PartitionGroup.members/2` sees it before it binds.
-      # The factory is the group the hub places the operator by, so it travels
-      # with the start request and lands on the row.
-      metadata: start_metadata(operator),
-      # Declared intent: the start records the child in the hub's declared
-      # set BEFORE anything runs, so a whole-cluster cold start restores it
-      # and a deliberate stop (hub stop path) removes it for good. Off in
-      # lockstep with auto-recovery — a hub without the reconcile refuses
-      # durable starts.
-      durable: HubManager.durable_starts?()
-    )
-    |> ProcessHub.Future.await()
+    result = start_declared(namespace, child_spec, start_metadata(operator), operator.id)
+    finalize_init_operator(exist?, namespace, operator, result)
   end
 
+  @doc """
+  Start `child_spec` under `namespace`'s hub as declared intent: the start
+  records the child in the hub's declared set BEFORE anything runs, so a
+  whole-cluster cold start restores it and a deliberate stop (hub stop path)
+  removes it for good. Off in lockstep with auto-recovery — a hub without the
+  reconcile refuses durable starts. Answers the hub's start result.
+
+  `:no_response` surfaces when ProcessHub's `with_partition_check`
+  short-circuits `execute/2` without sending a response — i.e. the local
+  hub's `dist_sup` was momentarily missing or dead. The dist_sup restarts on
+  its own; the only thing the caller can do is wait it out, on the
+  `:no_response` row of the backoff table, so a transient partition during
+  startup doesn't surface as a hard failure. A steady-state `:no_response`
+  still propagates once the row gives up.
+  """
+  @spec start_declared(binary(), map(), map(), term(), non_neg_integer()) :: term()
+  def start_declared(namespace, child_spec, metadata, label, attempt \\ 0) do
+    result =
+      Identificator.hub(namespace)
+      |> ProcessHub.start_child(child_spec,
+        awaitable: true,
+        # We will get the errors from the start result.
+        disable_logging: true,
+        timeout: Durations.get(:hub_start_child_ms),
+        metadata: metadata,
+        durable: HubManager.durable_starts?()
+      )
+      |> ProcessHub.Future.await()
+
+    if no_response?(result) and not Backoff.give_up?(:no_response, attempt) do
+      Backoff.wait(:no_response, attempt + 1, label)
+      start_declared(namespace, child_spec, metadata, label, attempt + 1)
+    else
+      result
+    end
+  end
+
+  # A partition member's identity is on its row from the first registration,
+  # so `PartitionGroup.members/2` sees it before it binds. The factory is the
+  # group the hub places the operator by, so it travels with the start request
+  # and lands on the row.
   defp start_metadata(operator) do
     metadata =
       case Flezha.Partition.identity(operator.opts) do

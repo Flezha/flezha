@@ -9,7 +9,8 @@ OPTIONS:
     --init-values <json>        Seed state at start
     --text <payload>, -t        First message, delivered as `send` does
     --channel <ch>, -c          Entry channel the first message names
-    --plugins <json-array>      Plugin specs attached at start
+    --plugins <json-array>      Plugins to bind at start, enabling each named
+                                with a provider when it is not enabled yet
     --partitions <N>            Start N partition members as one group
     --output <text|json>        Output format (default: text)
     --json                      The same as --output json

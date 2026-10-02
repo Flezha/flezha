@@ -11,6 +11,7 @@ defmodule Flezha.Service.Cli.Operator do
   alias Flezha.Plugin.SpecDecoder
   alias Flezha.Service.Cli.Context
   alias Flezha.Service.OperatorManager
+  alias Flezha.Service.PluginManager
   alias Flezha.Service.Listener
   alias Flezha.Service.Steps
 
@@ -126,12 +127,15 @@ defmodule Flezha.Service.Cli.Operator do
     |> render_start(format)
   end
 
-  # A plugin spec names the operator it attaches to, so it is decoded under
-  # the id the start runs under, which for a generated id is each one drawn.
+  # A plugin spec names the operator it binds, so it is decoded under the id
+  # the start runs under, which for a generated id is each one drawn.
   defp start_with_plugins(namespace, operator, plugins_json, opts) do
-    with {:ok, plugins} <- SpecDecoder.decode(plugins_json, namespace, operator.id) do
+    with {:ok, plugins} <- SpecDecoder.decode(plugins_json, namespace, operator.id),
+         {:ok, bindings} <- PluginManager.start_bindings(namespace, plugins) do
       opts_kw =
-        if plugins == [], do: operator.opts, else: Keyword.put(operator.opts, :plugins, plugins)
+        if bindings == [],
+          do: operator.opts,
+          else: Keyword.put(operator.opts, :bindings, bindings)
 
       OperatorManager.start_operator(namespace, %{operator | opts: opts_kw}, opts)
     end

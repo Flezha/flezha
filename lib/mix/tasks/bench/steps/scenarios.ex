@@ -11,6 +11,7 @@ defmodule Mix.Tasks.Bench.Steps.Scenarios do
   alias Flezha.Convergence.Loop
   alias Flezha.Operator.Builder
   alias Flezha.Service.OperatorManager
+  alias Flezha.Service.PluginManager
   alias Mix.Tasks.Bench.Fleet
   alias Mix.Tasks.Bench.Report
   alias Mix.Tasks.Bench.Tally
@@ -534,12 +535,18 @@ defmodule Mix.Tasks.Bench.Steps.Scenarios do
     # turns later, so it starts with none.
     seed = if cfg.scenario == :chain, do: [seed_input: {"#{seq},#{seed_ts}", %{}}], else: []
 
+    # One sink per instance: the forward cannot be shared between operators.
+    {:ok, bindings} =
+      PluginManager.start_bindings(Run.namespace(), [
+        %{sink | id: "#{sink.id}_#{id}", namespace: Run.namespace(), operator_id: id}
+      ])
+
     builder = %Builder{
       id: id,
       factory_id: cfg.factory,
       run: :steps,
       init_values: %{},
-      opts: [plugins: [sink]] ++ seed
+      opts: [bindings: bindings] ++ seed
     }
 
     t0 = Run.now_ns()

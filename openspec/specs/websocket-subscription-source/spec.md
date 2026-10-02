@@ -238,3 +238,19 @@ Before this, the provider had no option naming its entry channel and a user had 
 - **THEN** an arriving frame SHALL be injected on `requests`
 - **AND** only outputs whose metadata names `responses` SHALL be sent on the socket
 
+### Requirement: `subscription_items` SHALL be a live option
+
+The websocket provider SHALL declare `subscription_items` live. Its `reconfigure/2` SHALL give
+the running plugin the new list as its desired item set and run a reconcile at once, which
+sends the subscribe and unsubscribe frames on the established connection exactly as a polled
+change does. No other websocket option SHALL be live.
+
+#### Scenario: Adding and removing pairs on a shared connection
+
+- **GIVEN** a websocket plugin bound to two operators, connected, with `subscription_items`
+  `["a", "b"]` applied
+- **WHEN** `flz plugin update` sets `subscription_items` to `["a", "c"]`
+- **THEN** a subscribe frame naming `c` and an unsubscribe frame naming `b` SHALL be sent on
+  the same connection, the connection process SHALL be the same before and after, and both
+  operators SHALL keep ingesting
+

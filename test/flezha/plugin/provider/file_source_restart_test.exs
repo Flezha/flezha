@@ -51,8 +51,6 @@ defmodule Flezha.Plugin.Provider.FileSourceRestartTest do
         opts: []
       )
 
-    on_exit(fn -> PluginManager.unregister_plugin(plugin_id) end)
-
     plugin =
       Plugin.new(
         id: plugin_id,
@@ -65,17 +63,20 @@ defmodule Flezha.Plugin.Provider.FileSourceRestartTest do
 
     assert {:ok, _} = PluginManager.enable_plugin(plugin_id, plugin)
 
-    # The durable half of what the Overwatch does with a reader's commit.
-    assert :ok = PluginManager.persist_plugin_opt(@namespace, operator_id, plugin_id, :offset, 6)
+    # The durable half of what the Overwatch does with a reader's commit: a
+    # reader's offset is its operator's position, so it is the binding's.
+    assert :ok = PluginManager.persist_binding_opt(@namespace, operator_id, plugin_id, :offset, 6)
 
     HubRegistryTestHelper.stop_hub_keeping_registry(@namespace)
     {:ok, _} = HubManager.start_hub(@namespace)
     assert :ok = HubManager.await_recovery_complete([hub_id], 10_000)
     assert HubRegistryTestHelper.await_bound_node(hub_id, operator_id, 10_000) == node()
 
-    assert [{^plugin_id, %Plugin{opts: declared}}] =
+    assert [{^plugin_id, %Plugin{opts: %{offset: 6}} = binding}] =
              HubRegistryTestHelper.started_plugins(hub_id, operator_id)
 
+    # What the reader is brought up from: the binding laid over its entry.
+    assert {:ok, %Plugin{opts: declared}} = PluginManager.resolve(@namespace, binding)
     assert declared.offset == 6
 
     File.write!(Path.join(files, "events.ndjson"), "a\nb\nc\n")

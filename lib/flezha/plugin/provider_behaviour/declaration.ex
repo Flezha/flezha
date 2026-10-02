@@ -24,7 +24,8 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
 
   `feeds: true` declares that the provider's own worker injects payloads into
   the operator. It defaults to false and only the providers whose worker calls
-  `Flezha.Plugin.Host.inject/4` write it.
+  `Flezha.Plugin.Host.inject/4` write it. `shareable: true` declares that one
+  running copy can serve several bound operators; it defaults to false.
   """
   defmacro __using__(opts) do
     [
@@ -44,6 +45,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
     type = Keyword.get(opts, :type, :io_binding)
     name = Keyword.get(opts, :name)
     feeds = Keyword.get(opts, :feeds, false)
+    shareable = Keyword.get(opts, :shareable, false)
 
     quote do
       @behaviour unquote(contract)
@@ -54,6 +56,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
       @__provider_type__ unquote(type)
       @__provider_name__ unquote(name) || unquote(Options).provider_name(__MODULE__)
       @__provider_feeds__ unquote(feeds)
+      @__provider_shareable__ unquote(shareable)
     end
   end
 
@@ -189,6 +192,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
   defmacro __before_compile__(env) do
     rows = Module.get_attribute(env.module, :__provider_options__) || []
     validate_rows!(env, rows)
+    require_reconfigure!(env, rows)
 
     [decl(env.module), strict_build(), fall_through()]
   end
@@ -212,7 +216,8 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
           extensions: unquote(extensions),
           own: unquote(own),
           worker: @__provider_worker__,
-          feeds: @__provider_feeds__
+          feeds: @__provider_feeds__,
+          shareable: @__provider_shareable__
         }
       end
     end
@@ -257,7 +262,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
     end
   end
 
-  @row_keys [:type, :default, :required, :min, :max, :values, :internal, :transient, :doc]
+  @row_keys [:type, :default, :required, :min, :max, :values, :internal, :transient, :live, :doc]
   @row_types [:int, :bool, :string, :names, :enum, :pid, :json, :map, :list, :any]
 
   defp validate_rows!(env, rows) do
@@ -269,6 +274,19 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
       other ->
         raise_row!(env, "option row #{inspect(other)} is not `{name, keyword()}`")
     end)
+  end
+
+  # A live option is applied by the provider's own `reconfigure/2`; without it
+  # a change the declaration promises in place could only be dropped.
+  defp require_reconfigure!(env, rows) do
+    case for({name, row} <- rows, Keyword.get(row, :live, false), do: name) do
+      [] ->
+        :ok
+
+      live ->
+        unless Module.defines?(env.module, {:reconfigure, 2}),
+          do: raise_row!(env, "live option(s) #{inspect(live)} need a reconfigure/2")
+    end
   end
 
   defp refuse_row_key!(_env, _name, []), do: :ok

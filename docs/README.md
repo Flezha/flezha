@@ -89,15 +89,12 @@ answer "what are the options"; a guide answers "what do I type".
 | Doc | Covers |
 | --- | --- |
 | [`installation.md`](plugins/installation.md) | Plugin packages: building, installing, loading at boot, statuses, errors, signing |
-| [`lifecycle.md`](plugins/lifecycle.md) | `init_provider/1` vs `activate/1`, host identity, teardown |
 | [`kafka_producer.md`](plugins/kafka_producer.md) | The Kafka producer sink: idempotence, batching, the in-flight window |
 | [`http_poll.md`](plugins/http_poll.md) | An HTTP resource as an operator input |
 | [`file.md`](plugins/file.md) | A file, or an object in an S3 bucket, as an operator input and as its output |
 | [`websocket_subscription.md`](plugins/websocket_subscription.md) | Changing a live socket's subscription set without reconnecting |
 | [`operator_forward.md`](plugins/operator_forward.md) | One operator's output into another's input |
 | [`http_server.md`](plugins/http_server.md) | An operator behind HTTP, and another operator's events as server-sent events (the `flezha_http` package) |
-| [`init_state_providers.md`](plugins/init_state_providers.md) | Cold-start state from a provider chain |
-| [`message_handlers.md`](plugins/message_handlers.md) | Request/response messages into a running operator |
 
 ## operations
 

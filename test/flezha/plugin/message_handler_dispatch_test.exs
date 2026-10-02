@@ -76,7 +76,8 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
       hooks: [{:on_message, [key: key]}]
     }
 
-    GenServer.call(overwatch_pid, {:plugin_subscribe, plugin_id, plugin})
+    # The plugin is its own entry: nothing enables it by name here.
+    GenServer.call(overwatch_pid, {:plugin_subscribe, plugin_id, plugin, plugin})
   end
 
   defp request(pid, key, payload, timeout_ms \\ 1_000) do

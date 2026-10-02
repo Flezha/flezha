@@ -194,8 +194,10 @@ defmodule Flezha.AuthZ.Verbs do
     ],
     runner_connect: [action: :"runner.connect", scope: {:argument, 1}],
     # Plugins: the installed packages are controller-wide, an enabled plugin
-    # lives in its operator's namespace.
+    # and its bindings live in its namespace. Binding and changing a plugin
+    # are judged as enabling it, unbinding as disabling it.
     plugin_list: [action: :"plugin.list", scope: :caller],
+    plugin_enabled: [action: :"plugin.list", scope: {:argument, 1}],
     list_installed_plugins: [action: :"plugin.list", scope: :caller],
     plugin_info: [action: :"plugin.info", scope: :caller],
     plugin_enable: [
@@ -206,6 +208,24 @@ defmodule Flezha.AuthZ.Verbs do
     ],
     plugin_disable: [
       action: :"plugin.disable",
+      scope: {:row, :namespace},
+      audit: {:after, :plugin_service},
+      target: [:plugin_id]
+    ],
+    plugin_bind: [
+      action: :"plugin.enable",
+      scope: {:row, :namespace},
+      audit: {:after, :plugin_service},
+      target: [:plugin_id]
+    ],
+    plugin_unbind: [
+      action: :"plugin.disable",
+      scope: {:row, :namespace},
+      audit: {:after, :plugin_service},
+      target: [:plugin_id]
+    ],
+    plugin_update: [
+      action: :"plugin.enable",
       scope: {:row, :namespace},
       audit: {:after, :plugin_service},
       target: [:plugin_id]

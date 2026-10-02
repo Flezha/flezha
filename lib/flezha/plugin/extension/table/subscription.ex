@@ -9,8 +9,11 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
   """
 
   alias Flezha.Plugin
+  alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table.Health
   alias Flezha.Plugin.ProviderBehaviour
+
+  require Logger
 
   @typedoc "One subscriber's registration under an extension name."
   @type entry() :: map()
@@ -231,7 +234,7 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
   defp validate_callback(provider, name) do
     cond do
       not Code.ensure_loaded?(provider) ->
-        {:error, {:module_not_loaded, provider}}
+        {:error, {:module_not_loaded, provider, node()}}
 
       name not in provider.__provider__().extensions ->
         {:error, {:missing_callback, name}}
@@ -442,6 +445,59 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
 
       :error ->
         nil
+    end
+  end
+
+  @doc """
+  Every subscriber entry of `plugin_id` carrying `opts`: each entry holds a copy
+  of its provider's options, and one left stale dispatches state the provider
+  no longer holds.
+  """
+  @spec put_provider_opts(map(), binary(), map()) :: map()
+  def put_provider_opts(table, plugin_id, opts) do
+    subs =
+      Map.new(table.subs, fn {name, entries} ->
+        {name,
+         Enum.map(entries, fn
+           %{plugin_id: ^plugin_id} = entry -> %{entry | provider_opts: opts}
+           entry -> entry
+         end)}
+      end)
+
+    %{table | subs: subs}
+  end
+
+  @doc """
+  Fire the timer for `{plugin_id, name}`. Invokes the subscriber's
+  `on_interval/2` callback and reschedules the next tick.
+  """
+  @spec fire_timer(map(), atom(), binary()) :: map()
+  def fire_timer(table, name, plugin_id) do
+    case find_entry(table, name, plugin_id) do
+      nil ->
+        table
+
+      entry ->
+        plugin = Map.get(table.plugins, plugin_id)
+
+        ctx = %Ctx.Tick{
+          operator_id: plugin.operator_id,
+          namespace: plugin.namespace,
+          runner_id: nil,
+          plugin_id: plugin_id
+        }
+
+        try do
+          entry.provider.on_interval(ctx, entry.provider_opts)
+        catch
+          kind, reason ->
+            Logger.error(
+              "[Extension.Table] on_interval raised for plugin #{plugin_id}: " <>
+                "#{inspect(kind)}/#{inspect(reason)}"
+            )
+        end
+
+        reschedule_timer(table, name, plugin_id, entry)
     end
   end
 end

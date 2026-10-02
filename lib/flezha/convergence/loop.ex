@@ -26,7 +26,7 @@ defmodule Flezha.Convergence.Loop do
 
   alias Flezha.Convergence.Loop.{Liveness, Progress, State, Summary}
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.{EventManager, HubManager, PluginManager}
+  alias Flezha.Service.{EventManager, HubManager}
 
   require Logger
 
@@ -344,7 +344,7 @@ defmodule Flezha.Convergence.Loop do
 
     {streaks, delta} = apply_misbound_streak(state.misbound_streaks, delta)
 
-    {%{state | misbound_streaks: streaks}, without_pending_enables(delta)}
+    {%{state | misbound_streaks: streaks}, delta}
   end
 
   # The signals the fact readers name, lifted out of the Loop's struct: the
@@ -423,26 +423,6 @@ defmodule Flezha.Convergence.Loop do
     {facts, released} = Facts.settle(state.facts, reality, state.fact_grace_ms, now)
     backoff = Enum.reduce(released, state.backoff, &Backoff.update(&2, &1, :ok, now))
     %{state | facts: facts, backoff: backoff}
-  end
-
-  # An enable in flight has written its cspec and not yet subscribed — that is
-  # the cspec-first order, not a degradation — so its plugin is not healed
-  # (a heal would subscribe it a second time, racing the enable).
-  defp without_pending_enables(%Diff{missing_plugins: []} = delta), do: delta
-
-  defp without_pending_enables(%Diff{} = delta) do
-    pending =
-      if Process.whereis(Flezha.Service.PluginManager),
-        do: PluginManager.pending_ids(),
-        else: MapSet.new()
-
-    %{
-      delta
-      | missing_plugins:
-          Enum.reject(delta.missing_plugins, fn {_ref, plugin_id, _plugin} ->
-            MapSet.member?(pending, plugin_id)
-          end)
-    }
   end
 
   # The plugin-degraded set changed: log the transition, never the steady

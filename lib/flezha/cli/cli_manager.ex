@@ -70,17 +70,22 @@ defmodule Flezha.Service.CliManager do
   verb controller_status(opts \\ []), to: Cli.Controller
   verb controller_stop(opts \\ []), to: Cli.Controller
 
-  verb disable_plugin(plugin_id, opts \\ []),
+  verb bind_plugin(name, flags_json, opts_json, opts \\ []),
+    to: Cli.Plugin,
+    verb: :plugin_bind,
+    row: &Cli.Plugin.bind_row/1
+
+  verb disable_plugin(name, opts_json, opts \\ []),
     to: Cli.Plugin,
     verb: :plugin_disable,
-    row: &Cli.Plugin.plugin_row/1
+    row: &Cli.Plugin.disable_row/1
 
   verb dlq_drop(entry_ref, opts \\ []), to: Cli.Dlq, row: &Cli.Dlq.locate/1
   verb dlq_list(operator_class \\ "", opts \\ []), to: Cli.Dlq, row: &Cli.Dlq.class_row/1
   verb dlq_replay(entry_ref, opts \\ []), to: Cli.Dlq, row: &Cli.Dlq.locate/1
   verb dlq_show(entry_ref, opts \\ []), to: Cli.Dlq, row: &Cli.Dlq.locate/1
 
-  verb enable_plugin(plugin_id, provider_id, flags_json, opts_json, opts \\ []),
+  verb enable_plugin(name, provider_id, flags_json, opts_json, opts \\ []),
     to: Cli.Plugin,
     verb: :plugin_enable,
     row: &Cli.Plugin.enable_row/1
@@ -90,7 +95,8 @@ defmodule Flezha.Service.CliManager do
   verb list_installed_plugins(opts \\ []), to: Cli.Plugin
   verb list_namespaces(opts \\ []), to: Cli.Listing
   verb list_operators(namespace, opts \\ []), to: Cli.Listing
-  verb list_plugins(opts \\ []), to: Cli.Plugin, verb: :plugin_list
+  verb list_enabled_plugins(namespace, opts \\ []), to: Cli.Plugin, verb: :plugin_enabled
+  verb list_providers(opts \\ []), to: Cli.Plugin, verb: :plugin_list
   verb list_runners(namespace, opts \\ []), to: Cli.Listing
 
   verb observability_render_disable(source, opts \\ []),
@@ -167,4 +173,14 @@ defmodule Flezha.Service.CliManager do
   verb state_outbox(path, opts \\ []), to: Cli.State, row: &Cli.State.outbox_row/1
   verb state_retention(operator_class, hours, opts \\ []), to: Cli.State
   verb state_rotate(path, opts \\ []), to: Cli.State, row: &Cli.State.rotate_row/1
+
+  verb unbind_plugin(name, opts_json, opts \\ []),
+    to: Cli.Plugin,
+    verb: :plugin_unbind,
+    row: &Cli.Plugin.unbind_row/1
+
+  verb update_plugin(name, flags_json, opts_json, opts \\ []),
+    to: Cli.Plugin,
+    verb: :plugin_update,
+    row: &Cli.Plugin.update_row/1
 end

@@ -4,15 +4,17 @@ defmodule Flezha.Service.Listener do
   --await` and any plugin (the HTTP plugin's SSE stream first) read an
   operator's frames through `listen/4`.
 
-  `listen/4` attaches a `Flezha.Plugin.Provider.MonitoredIOForward` plugin to
-  the operator (to every member of a partition group), with a relay on the
-  caller's own node as its receiver, and hands the caller one event at a time.
+  `listen/4` enables a `Flezha.Plugin.Provider.MonitoredIOForward` plugin under
+  a generated name and binds the operator (every member of a partition group)
+  to it, with a relay on the caller's own node as its receiver, and hands the
+  caller one event at a time.
   The relay (`Flezha.Service.Listener.Relay`) answers the plugin's heartbeat and
   holds what the handler has not taken, inside `listener_pending_bytes` and
   `listener_pending_frames`, so a slow handler grows neither the operator's
-  memory nor the caller's mailbox. Every way out detaches the plugin by the
-  operator's namespace and id (`Flezha.Service.PluginManager.detach/3`), which
-  holds wherever the operator runs by then.
+  memory nor the caller's mailbox. Every way out unbinds and disables the
+  plugin by the operator's namespace and id
+  (`Flezha.Service.PluginManager.detach/3`), which holds wherever the operator
+  runs by then.
 
   It does not authorize: the CLI's verbs authorize through their rows before
   they call it, and a plugin that calls it is trusted code that decides for
@@ -127,7 +129,7 @@ defmodule Flezha.Service.Listener do
 
     case PluginManager.enable_plugin(plugin_id, plugin) do
       {:ok, summary} when is_binary(summary) -> :ok
-      {:ok, :already_enabled} -> refused({:plugin_id_taken, plugin_id, namespace, operator_id})
+      {:ok, :already_enabled} -> refused({:plugin_id_taken, plugin_id, namespace})
       {:error, reason} -> refused(reason)
     end
   end

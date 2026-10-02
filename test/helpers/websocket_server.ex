@@ -6,7 +6,9 @@ defmodule FlezhaTest.Helper.WebsocketServer do
   and writes nothing unless the test asks it to with `ack/2`.
 
   Just enough of the protocol for what a Fresh client sends a test: masked
-  frames under 64 KiB in, unmasked text frames out.
+  frames under 64 KiB in, unmasked text frames out. Every connection the server
+  accepts is announced as `{:ws_open, socket}` and every one that ends as
+  `{:ws_closed, socket}`, so a test can see which one opened first.
   """
 
   import ExUnit.Callbacks, only: [on_exit: 1]
@@ -20,7 +22,7 @@ defmodule FlezhaTest.Helper.WebsocketServer do
       :gen_tcp.listen(0, [:binary, packet: :raw, active: false, reuseaddr: true, backlog: 4])
 
     {:ok, port} = :inet.port(listen)
-    {:ok, agent} = Agent.start(fn -> %{connections: 0, socket: nil} end)
+    {:ok, agent} = Agent.start(fn -> %{connections: 0, socket: nil, open: []} end)
 
     test = self()
     acceptor = spawn(fn -> accept_loop(listen, agent, test) end)
@@ -45,11 +47,24 @@ defmodule FlezhaTest.Helper.WebsocketServer do
   @spec connections(map()) :: non_neg_integer()
   def connections(server), do: Agent.get(server.agent, & &1.connections)
 
+  @doc "How many connections are open now."
+  @spec open(map()) :: non_neg_integer()
+  def open(server), do: Agent.get(server.agent, &length(&1.open))
+
+  @doc "Send one text frame on every open connection."
+  @spec broadcast(map(), binary()) :: :ok
+  def broadcast(server, payload) do
+    server.agent
+    |> Agent.get(& &1.open)
+    |> Enum.each(&:gen_tcp.send(&1, encode_frame(payload)))
+  end
+
   defp accept_loop(listen, agent, test) do
     case :gen_tcp.accept(listen) do
       {:ok, socket} ->
-        Agent.update(agent, fn s -> %{s | connections: s.connections + 1, socket: socket} end)
-        spawn(fn -> serve(socket, test) end)
+        pid = spawn(fn -> receive(do: (:go -> serve(socket, test, agent))) end)
+        :ok = :gen_tcp.controlling_process(socket, pid)
+        send(pid, :go)
         accept_loop(listen, agent, test)
 
       {:error, _closed} ->
@@ -57,7 +72,7 @@ defmodule FlezhaTest.Helper.WebsocketServer do
     end
   end
 
-  defp serve(socket, test) do
+  defp serve(socket, test, agent) do
     with {:ok, key} <- read_handshake(socket, "") do
       accept = Base.encode64(:crypto.hash(:sha, key <> @guid))
 
@@ -70,7 +85,14 @@ defmodule FlezhaTest.Helper.WebsocketServer do
         "\r\n\r\n"
       ])
 
+      Agent.update(agent, fn s ->
+        %{s | connections: s.connections + 1, socket: socket, open: s.open ++ [socket]}
+      end)
+
+      send(test, {:ws_open, socket})
       read_loop(socket, test, <<>>)
+      Agent.update(agent, fn s -> %{s | open: List.delete(s.open, socket)} end)
+      send(test, {:ws_closed, socket})
     end
   end
 
@@ -102,7 +124,7 @@ defmodule FlezhaTest.Helper.WebsocketServer do
         read_loop(socket, test, rest)
 
       :more ->
-        case :gen_tcp.recv(socket, 0, 30_000) do
+        case :gen_tcp.recv(socket, 0) do
           {:ok, chunk} -> read_loop(socket, test, buffer <> chunk)
           {:error, _} -> :ok
         end

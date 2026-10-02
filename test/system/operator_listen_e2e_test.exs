@@ -27,6 +27,7 @@ defmodule FlezhaTest.System.OperatorListenE2ETest do
   alias Flezha.Plugin
   alias Flezha.SDK.KeyGroup
   alias Flezha.Service.{CliManager, OperatorManager}
+  alias FlezhaTest.Fixtures.OperatorFixture
 
   # The listener, the plugin it enables and what detaches it are controller
   # mechanics; the reference runner's fixtures are what they need.
@@ -180,7 +181,8 @@ defmodule FlezhaTest.System.OperatorListenE2ETest do
 
   defp start!(ns, factory, plugins \\ []) do
     id = "#{factory}_#{System.unique_integer([:positive])}"
-    builder = %Builder{id: id, factory_id: factory, init_values: %{}, opts: [plugins: plugins]}
+    bindings = OperatorFixture.bindings(ns, id, plugins)
+    builder = %Builder{id: id, factory_id: factory, init_values: %{}, opts: [bindings: bindings]}
 
     assert {:ok, _} = OperatorManager.start_operator(ns, builder)
     assert wait_until(fn -> bound?(ns, id) end, 30_000), "#{id} was never bound"

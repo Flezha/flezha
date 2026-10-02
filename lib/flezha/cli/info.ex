@@ -317,25 +317,12 @@ defmodule Flezha.Service.Cli.Info do
           Enum.map(plugin.hooks, fn {name, opts} ->
             %{name: Atom.to_string(name), opts: Map.new(opts)}
           end),
-        state: plugin_state(extensions, plugin_id, plugin)
+        state: TableHealth.inspect_state(extensions, plugin_id)
       }
     end)
   end
 
   defp format_plugins_json(_), do: []
-
-  # A provider's own caller-facing detail. Same shape as the health contract:
-  # the stored opts with the processes the table started injected, and a
-  # provider that raises or has nothing to say reports nothing rather than
-  # failing the whole listing.
-  defp plugin_state(extensions, plugin_id, %{provider: provider, opts: opts}) do
-    if Code.ensure_loaded?(provider) do
-      entry = Map.get(Map.get(extensions, :entries, %{}), plugin_id, %{})
-      provider.inspect_state(TableHealth.with_worker_pids(entry, opts))
-    end
-  catch
-    _, _ -> nil
-  end
 
   defp display_plugin_state(nil), do: :ok
 
@@ -381,7 +368,7 @@ defmodule Flezha.Service.Cli.Info do
             IO.puts("        hook: #{name} #{inspect(opts)}")
           end)
 
-          display_plugin_state(plugin_state(extensions, plugin_id, plugin))
+          display_plugin_state(TableHealth.inspect_state(extensions, plugin_id))
         end)
 
       _ ->

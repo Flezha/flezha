@@ -294,7 +294,7 @@ SDK raises or returns its one error type carrying them.
 | `plugin.channel_written_twice` | invalid | 2 | payload_metadata names channel '{metadata_channel}' and a channel option names '{channel}'; write one of the two |  |
 | `plugin.digest_mismatch` | invalid | 2 | the archive from {source} has SHA-256 {actual}, not the pinned {expected} |  |
 | `plugin.duplicate_id` | conflict | 6 | the archives {files} in the plugin root all declare package '{plugin}', so none of them is loaded | `flz plugin uninstall {plugin}` |
-| `plugin.enabling` | conflict | 6 | plugin '{plugin}' is still being enabled; try again once it is |  |
+| `plugin.enable_failed` | unavailable | 7 | plugin '{plugin}' could not be enabled in namespace '{namespace}': its namespace's hub did not start it |  |
 | `plugin.entry_channel_required` | invalid | 2 | a {provider} plugin needs an entry channel: write channel or channel_in |  |
 | `plugin.entry_channel_set` | invalid | 2 | a {provider} plugin injects on exactly one channel, and option '{option}' names several |  |
 | `plugin.fetch_failed` | unavailable | 7 | the package could not be fetched from {source}: {reason} |  |
@@ -325,7 +325,7 @@ SDK raises or returns its one error type carrying them.
 | `plugin.hook_options_not_object` | invalid | 2 | a hook's options must be an object of names and values |  |
 | `plugin.hook_position_refused` | invalid | 2 | this hook does not take a position; only a transform or fold hook does |  |
 | `plugin.hooks_missing` | invalid | 2 | a plugin needs a list of at least one hook | `flz plugin help <provider_id>` |
-| `plugin.id_taken` | conflict | 6 | plugin id '{plugin}' is already registered for operator '{operator}' in namespace '{namespace}' | `flz plugin list` |
+| `plugin.id_taken` | conflict | 6 | plugin '{plugin}' is already enabled in namespace '{namespace}' | `flz plugin list --namespace {namespace}` |
 | `plugin.init_after_start` | invalid | 2 | an on_operator_init plugin can only be attached when its operator starts | `flz operator start <factory> --plugins '<json-array>'` |
 | `plugin.invalid_regex` | invalid | 2 | option 'regex_pattern' is not a valid regular expression |  |
 | `plugin.library_conflict` | conflict | 6 | the package bundles {application} {version}, and {holder} already holds {application} {loaded_version}; a controller holds one version of each library | `pin {application} to {loaded_version} in the plugin project and package it again` |
@@ -334,8 +334,11 @@ SDK raises or returns its one error type carrying them.
 | `plugin.load_failed` | internal | 1 | the package could not be loaded: {what} failed ({reason}) |  |
 | `plugin.module_conflict` | conflict | 6 | the package's module {module} is already held by {holder} |  |
 | `plugin.native_code` | invalid | 2 | the package carries native code ({entry}); a plugin package holds only BEAM code |  |
+| `plugin.not_bound` | not_found | 5 | operator '{operator}' is not bound to plugin '{plugin}' | `flz plugin list` |
 | `plugin.not_found` | not_found | 5 | plugin '{plugin}' is not enabled | `flz plugin list` |
 | `plugin.not_installed` | not_found | 5 | plugin '{plugin}' is not installed | `flz plugin list --installed` |
+| `plugin.not_running` | unavailable | 7 | plugin '{plugin}' runs as one copy in the cluster, and no copy of it is running yet |  |
+| `plugin.not_shareable` | conflict | 6 | plugin '{plugin}' cannot be shared, and operator '{operator}' is already bound to it | `enable another plugin of the same provider for this operator` |
 | `plugin.operator_not_declared` | not_found | 5 | the plugin's operator is not declared in its namespace, so nothing records the plugin |  |
 | `plugin.option_above_maximum` | invalid | 2 | option '{option}' is {value}, above its maximum of {max} | `flz plugin help <provider_id>` |
 | `plugin.option_below_minimum` | invalid | 2 | option '{option}' is {value}, below its minimum of {min} | `flz plugin help <provider_id>` |
@@ -351,7 +354,7 @@ SDK raises or returns its one error type carrying them.
 | `plugin.provider_conflict` | conflict | 6 | provider id '{provider}' is already taken by {holder} |  |
 | `plugin.provider_crashed` | internal | 1 | provider {provider} crashed while preparing the plugin; the controller's log names the cause |  |
 | `plugin.provider_failed` | internal | 1 | provider '{provider}' of package '{plugin}' failed to start its worker: {reason} |  |
-| `plugin.provider_not_loaded` | not_found | 5 | provider module {provider} is not loaded, and no plugin package installed on this controller provides it | `flz plugin list --installed` |
+| `plugin.provider_not_loaded` | not_found | 5 | provider module {provider} is not loaded on {controller}, and no plugin package installed there provides it | `flz plugin list --installed` |
 | `plugin.provider_refused` | invalid | 2 | provider '{provider}' of package '{plugin}' refused its options: {reason} |  |
 | `plugin.provider_unavailable` | unavailable | 7 | provider {provider} belongs to package '{plugin}', which is {status} on this controller | `flz plugin list --installed` |
 | `plugin.registry_unavailable` | unavailable | 7 | the operator registry of the plugin's namespace did not answer; try again |  |
@@ -360,6 +363,7 @@ SDK raises or returns its one error type carrying them.
 | `plugin.service_unavailable` | unavailable | 7 | the plugin service did not answer; try again |  |
 | `plugin.signature_invalid` | denied | 4 | the package signature does not verify against any trusted key |  |
 | `plugin.signature_required` | denied | 4 | the controller requires signed plugin packages, and this one carries no signature.sig | `package it with mix flezha.plugin.package --sign <key.pem>` |
+| `plugin.single_sink` | invalid | 2 | plugin '{plugin}' runs as one copy in the cluster, so it takes no on_output hook |  |
 | `plugin.source_unsupported` | invalid | 2 | '{source}' is neither a local path nor an https:// URL |  |
 | `plugin.spec_field_missing` | invalid | 2 | a plugin spec needs a non-empty '{field}' string |  |
 | `plugin.spec_field_not_object` | invalid | 2 | a plugin spec's '{field}' must be a JSON object |  |

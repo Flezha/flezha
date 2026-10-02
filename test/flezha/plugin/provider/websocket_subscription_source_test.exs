@@ -422,6 +422,8 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
       assert Table.put_plugin_opt(table, "gone", :applied_subscriptions, ["a"]) == table
     end
 
+    # The applied set describes the one connection every bound operator
+    # shares, so it is written to the plugin's own entry.
     test "the cspec transform round-trips the applied set for a controller restart" do
       plugin = %Flezha.Plugin{
         id: "ws_plugin",
@@ -431,10 +433,8 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
       }
 
       cspec = %{
-        id: "op-1",
-        start:
-          {Flezha.Operator.Overwatch, :start_link,
-           [{"default", %{opts: [plugins: [{"ws_plugin", plugin}]]}}]}
+        id: {:plugin, "ws_plugin"},
+        start: {Flezha.Plugin.Home, :start_link, [{"default", plugin}]}
       }
 
       rewritten =
@@ -443,8 +443,7 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
           RegistryUpdate.put_plugin_opt("ws_plugin", :applied_subscriptions, ["a", "b"])
         )
 
-      {_m, _f, [{_ns, operator}]} = rewritten.start
-      [{"ws_plugin", restored}] = operator.opts[:plugins]
+      {_m, _f, [{_ns, restored}]} = rewritten.start
       assert restored.opts[:applied_subscriptions] == ["a", "b"]
     end
 

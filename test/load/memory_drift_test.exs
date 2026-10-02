@@ -285,7 +285,7 @@ defmodule Flezha.Load.MemoryDriftTest do
   defp stop_load_operator do
     for plugin_id <- [@ws_plugin_id, @kafka_plugin_id] do
       try do
-        _ = PluginManager.disable_plugin_group(plugin_id)
+        _ = PluginManager.disable_plugin(@namespace, plugin_id)
       catch
         _, _ -> :ok
       end

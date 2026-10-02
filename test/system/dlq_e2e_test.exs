@@ -31,6 +31,7 @@ defmodule FlezhaTest.System.DlqE2ETest do
   alias Flezha.Service.CliManager
   alias Flezha.Service.OperatorManager
   alias Flezha.State.InputLog
+  alias FlezhaTest.Fixtures.OperatorFixture
 
   @moduletag timeout: 300_000
 
@@ -74,7 +75,7 @@ defmodule FlezhaTest.System.DlqE2ETest do
       id: operator_id,
       factory_id: "poison_probe",
       init_values: %{},
-      opts: [plugins: [sink]]
+      opts: [bindings: OperatorFixture.bindings(namespace, operator_id, [sink])]
     }
 
     assert {:ok, _info} = OperatorManager.start_operator(namespace, builder)
@@ -139,7 +140,7 @@ defmodule FlezhaTest.System.DlqE2ETest do
       id: operator_id,
       factory_id: "tier_store",
       init_values: %{},
-      opts: [plugins: [sink]]
+      opts: [bindings: OperatorFixture.bindings(namespace, operator_id, [sink])]
     }
 
     assert {:ok, _info} = OperatorManager.start_operator(namespace, builder)

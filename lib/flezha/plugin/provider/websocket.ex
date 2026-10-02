@@ -46,6 +46,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
   use ProviderBehaviour,
     feeds: true,
+    shareable: true,
     options: [
       uri: [type: :string, required: true, doc: "The websocket endpoint to connect to"],
       plugin_id: [type: :string, doc: "Plugin id; defaults to the id it was enabled under"],
@@ -67,7 +68,12 @@ defmodule Flezha.Plugin.Provider.Websocket do
         doc: "Silence of DATA frames before the subscription is reasserted; 0 disables"
       ],
       subscription_url: [type: :string, doc: "Endpoint the desired item set is polled from"],
-      subscription_items: [type: :list, doc: "Literal desired item set, instead of polling one"],
+      subscription_items: [
+        type: :list,
+        live: true,
+        doc:
+          "Literal desired item set, instead of polling one; changed in place by flz plugin update"
+      ],
       subscription_interval_ms: [
         type: :int,
         default: @default_subscription_interval_ms,
@@ -295,6 +301,23 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
   defp handoff_budget(), do: Durations.get(:ws_sink_handoff_timeout_ms)
 
+  @doc """
+  Make a changed `subscription_items` the running connection's desired set: its
+  reconcile sends the subscribe and unsubscribe frames on the open socket.
+  """
+  @impl true
+  def reconfigure(old, new) do
+    with {:ok, %Subscription{items: items}} <- Subscription.from_opts(Map.merge(old, new)),
+         pid when is_pid(pid) <- WorkerSup.worker_pid(__MODULE__, old.plugin_id) do
+      send(pid, {:subscription_items, items})
+      :ok
+    else
+      {:ok, nil} -> {:error, {:no_subscription_source, old.plugin_id}}
+      nil -> {:error, {:no_connection, old.plugin_id}}
+      {:error, _} = refused -> refused
+    end
+  end
+
   @impl true
   def worker_specs(opts) do
     [
@@ -379,44 +402,43 @@ defmodule Flezha.Plugin.Provider.Websocket do
   end
 
   @doc """
-  The reconcile loop's user-facing state: the applied set, the outcome of
-  the last reconcile and the last error. `nil` for a plugin with no
-  subscription source — there is nothing a user needs to see about a
-  static one that its configuration does not already say.
+  The connection's user-facing state: whether the socket is open and, for a
+  plugin with a subscription source, the applied set, the outcome of the last
+  reconcile and the last error.
   """
   @impl ProviderBehaviour
-  @spec inspect_state(map()) :: map() | nil
+  @spec inspect_state(map()) :: map()
   def inspect_state(opts) do
     pid = ProviderBehaviour.worker_pid(opts)
 
-    cond do
-      is_nil(Map.get(opts, :subscription)) ->
-        nil
-
-      not (is_pid(pid) and Process.alive?(pid)) ->
-        last_known(opts, :no_connection)
-
-      true ->
-        case ProviderBehaviour.ask(pid, :subscription_probe) do
-          {:ok, report} -> report
-          :timeout -> last_known(opts, :probe_timeout)
-        end
+    if is_pid(pid) and Process.alive?(pid) do
+      case ProviderBehaviour.ask(pid, :inspect_probe) do
+        {:ok, report} -> report
+        :timeout -> last_known(opts, :probe_timeout)
+      end
+    else
+      last_known(opts, :no_connection)
     end
   end
 
   # An unreachable connection process still has a last-known applied set on its
   # stored opts; reporting that beats reporting nothing.
-  # Same key set as `subscription_report/1`: one callback must not report a
-  # different shape depending on whether its process happened to answer, or an
-  # user reads a missing field as a missing capability.
+  # Same key set as the live report: one callback must not report a different
+  # shape depending on whether its process happened to answer, or an user reads
+  # a missing field as a missing capability.
   defp last_known(opts, reason) do
-    %{
-      applied: opts[:applied_subscriptions] || [],
-      desired: nil,
-      inflight: 0,
-      last_reconcile: nil,
-      last_error: reason
-    }
+    report =
+      if Map.get(opts, :subscription),
+        do: %{
+          applied: opts[:applied_subscriptions] || [],
+          desired: nil,
+          inflight: 0,
+          last_reconcile: nil,
+          last_error: reason
+        },
+        else: %{}
+
+    Map.put(report, :connected, false)
   end
 
   @doc "The watchdog tick interval for `state`, or `nil` when both tiers are off."

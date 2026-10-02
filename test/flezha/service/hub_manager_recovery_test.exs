@@ -199,15 +199,15 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
            "the hub still holds queued work — the WorkerQueue died before reporting it complete"
   end
 
-  # fails when: a plugin a user enabled is erased by the very restart it
-  # was written to survive. The enable writes the hub's registry row; the
-  # reconcile round starts the operator from the DECLARED entry, whose spec
-  # was committed at `flz operator start` and carries no plugins, and that
-  # start writes its own spec into the row verbatim.
-  test "a restart-driven start does not erase an enabled plugin" do
+  # fails when: a binding a user made is erased by the very restart it was
+  # written to survive. The bind writes the hub's registry row; the reconcile
+  # round starts the operator from the DECLARED entry, whose spec was committed
+  # at `flz operator start` and carries no bindings, and that start writes its
+  # own spec into the row verbatim.
+  test "a restart-driven start does not erase a binding" do
     hub_id = Identificator.hub(@namespace)
     operator_id = "plugin_survives_restart_op"
-    plugin_id = "plugin_survives_restart_plugin"
+    name = "plugin_survives_restart_plugin"
 
     seed_runner(@seeded_runner, "market")
     {:ok, _} = HubRegistryTestHelper.ensure_hub(@namespace)
@@ -219,37 +219,37 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
         opts: []
       )
 
-    on_exit(fn -> PluginManager.unregister_plugin(plugin_id) end)
-    assert {:ok, _} = PluginManager.enable_plugin(plugin_id, plugin(operator_id, plugin_id))
+    assert {:ok, _} = PluginManager.enable_plugin(name, plugin(operator_id, name))
 
-    assert {:ok, [{^plugin_id, %Plugin{}}]} =
-             HubManager.operator_plugins(@namespace, operator_id),
-           "the enable did not reach a durable record at all"
+    assert {:ok, [{^name, %Plugin{}}]} = HubManager.operator_bindings(@namespace, operator_id),
+           "the bind did not reach a durable record at all"
 
     restart_hub(hub_id)
     assert await_bound_node(hub_id, operator_id, 10_000) == node()
 
-    # What a restored Overwatch would subscribe: `Lifecycle.complete_init/4`
-    # hands `operator.opts[:plugins]` from its own start argument to
+    # What a restored Overwatch would bring up: `Lifecycle.complete_init/4`
+    # hands `operator.opts[:bindings]` from its own start argument to
     # `Plugins.prepare/2`, and that list IS the extension table it builds.
     refute started_plugins(hub_id, operator_id) == [],
-           "plugin table empty after restart: the restored operator was started " <>
-             "from a declared spec that carries no plugins"
+           "binding list empty after restart: the restored operator was started " <>
+             "from a declared spec that carries no bindings"
 
     # The convergence I2 backstop reads this. A fix that repaired only the
     # started spec would leave the backstop blind to any later divergence.
-    assert {:ok, [{^plugin_id, %Plugin{}}]} =
-             HubManager.operator_plugins(@namespace, operator_id),
-           "the declared plugin set the convergence backstop reads is empty after a restart"
+    assert {:ok, [{^name, %Plugin{}}]} = HubManager.operator_bindings(@namespace, operator_id),
+           "the bindings the convergence backstop reads are empty after a restart"
+
+    # The plugin itself is declared intent of its own and survives with them.
+    assert {:ok, %Plugin{id: ^name}} = HubManager.plugin_entry(@namespace, name)
   end
 
-  # fails when: a disable reaches only the live operator and the declared entry
-  # keeps the plugin, so the next restart switches back on what a user
-  # deliberately switched off, and nothing short of a second disable stops it.
-  test "a restart-driven start does not resurrect a disabled plugin" do
+  # fails when: an unbind reaches only the live operator and the declared entry
+  # keeps the binding, so the next restart switches back on what a user
+  # deliberately switched off, and nothing short of a second unbind stops it.
+  test "a restart-driven start does not resurrect an unbound binding" do
     hub_id = Identificator.hub(@namespace)
     operator_id = "plugin_disabled_before_restart_op"
-    plugin_id = "plugin_disabled_before_restart_plugin"
+    name = "plugin_disabled_before_restart_plugin"
 
     seed_runner(@seeded_runner, "market")
     {:ok, _} = HubRegistryTestHelper.ensure_hub(@namespace)
@@ -261,22 +261,38 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
         opts: []
       )
 
-    on_exit(fn -> PluginManager.unregister_plugin(plugin_id) end)
-    assert {:ok, _} = PluginManager.enable_plugin(plugin_id, plugin(operator_id, plugin_id))
+    assert {:ok, _} = PluginManager.enable_plugin(name, plugin(operator_id, name))
+    assert {:ok, [{^name, %Plugin{}}]} = HubManager.operator_bindings(@namespace, operator_id)
 
-    assert {:ok, [{^plugin_id, %Plugin{}}]} =
-             HubManager.operator_plugins(@namespace, operator_id)
-
-    assert {:ok, _} = PluginManager.disable_plugin_group(plugin_id)
-    assert {:ok, []} = HubManager.operator_plugins(@namespace, operator_id)
+    assert :ok = PluginManager.unbind_plugin(@namespace, name, operator_id)
+    assert {:ok, []} = HubManager.operator_bindings(@namespace, operator_id)
 
     restart_hub(hub_id)
     assert await_bound_node(hub_id, operator_id, 10_000) == node()
 
     assert started_plugins(hub_id, operator_id) == [],
-           "the restart re-subscribed a plugin the user disabled"
+           "the restart brought back a binding the user removed"
 
-    assert {:ok, []} = HubManager.operator_plugins(@namespace, operator_id)
+    assert {:ok, []} = HubManager.operator_bindings(@namespace, operator_id)
+  end
+
+  # fails when: a plugin enabled with no operator lives anywhere a cold start
+  # does not read, so a whole-cluster restart forgets it.
+  test "a plugin with no operator survives a cold start" do
+    hub_id = Identificator.hub(@namespace)
+    {:ok, _} = HubRegistryTestHelper.ensure_hub(@namespace)
+    assert :ok = HubManager.await_recovery_complete([hub_id], 5_000)
+
+    entry = %Plugin{id: "cold_plugin", provider: __MODULE__.NoopProvider, namespace: @namespace}
+    assert {:ok, "plugin enabled"} = PluginManager.enable_plugin("cold_plugin", entry)
+
+    HubRegistryTestHelper.stop_hub_keeping_registry(@namespace)
+    drop_registry_rows()
+    {:ok, _} = HubManager.start_hub(@namespace)
+    assert :ok = HubManager.await_recovery_complete([hub_id], 10_000)
+
+    assert {:ok, %Plugin{id: "cold_plugin", provider: __MODULE__.NoopProvider}} =
+             HubManager.plugin_entry(@namespace, "cold_plugin")
   end
 
   # fails when: one persisted row whose start args match no known shape raises
@@ -709,6 +725,10 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
   defmodule NoopProvider do
     @moduledoc false
+    use Flezha.Plugin.ProviderBehaviour
+
+    @impl true
+    def on_output(ctx, _opts), do: {:ok, ctx}
   end
 
   test "await_recovery_complete/2 times out when a hub is stuck in :recovering" do

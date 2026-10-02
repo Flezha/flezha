@@ -125,13 +125,15 @@ defmodule Flezha.Service.HubManager.Rows do
 
   def live_pid(_), do: nil
 
+  # A plugin entry is a hub child too, keyed `{:plugin, name}`; every reader
+  # here that means operators takes the binary keys only.
   def get_all_operators(namespace) do
     with_live_hub(namespace, [], fn hub_id ->
       ProcessHub.process_list(hub_id, :global)
       |> Enum.flat_map(fn {operator_id, node_pids} ->
-        case live_pid(node_pids) do
-          nil -> []
-          operator_pid -> [{operator_id, operator_pid}]
+        case is_binary(operator_id) && live_pid(node_pids) do
+          pid when is_pid(pid) -> [{operator_id, pid}]
+          _plugin_or_dead -> []
         end
       end)
     end)
@@ -180,7 +182,7 @@ defmodule Flezha.Service.HubManager.Rows do
   def operator_rows(namespace) do
     with_live_hub(namespace, [], fn hub_id ->
       hub_id
-      |> live_registry_dump()
+      |> operator_dump()
       |> Enum.map(fn {operator_id, entry} ->
         {cspec, node_pids, metadata} = normalize_registry_entry(entry)
 
@@ -200,55 +202,86 @@ defmodule Flezha.Service.HubManager.Rows do
   end
 
   @doc """
-  Every operator's declared plugins, as `{operator_id, [%Flezha.Plugin{}]}`.
+  Every operator's bindings, as `{operator_id, [{plugin_id, %Flezha.Plugin{}}]}`.
 
   Read from the same durable registry dump `operator_rows/1` walks, so asking
-  "who depends on X" costs one registry read rather than an Overwatch
-  round-trip per operator. Declared, not live: a plugin the cspec records but
-  whose host has not re-subscribed it yet still appears, which is what a caller
-  looking for dependents wants.
+  "who is bound to X" costs one registry read rather than an Overwatch
+  round-trip per operator. Declared, not live: a binding the cspec records but
+  whose host has not brought it up yet still appears.
   """
-  @spec operator_plugins(binary() | atom()) :: [{binary(), [Flezha.Plugin.t()]}]
-  def operator_plugins(namespace) do
+  @spec operator_bindings(binary() | atom()) :: [{binary(), [{binary(), Plugin.t()}]}]
+  def operator_bindings(namespace) do
     with_live_hub(namespace, [], fn hub_id ->
       hub_id
-      |> live_registry_dump()
+      |> operator_dump()
       |> Enum.map(fn {operator_id, entry} ->
         {cspec, _node_pids, _metadata} = normalize_registry_entry(entry)
-        {operator_id, Keyword.get(cspec_opts(cspec), :plugins, [])}
+        {operator_id, normalize_plugins(Keyword.get(cspec_opts(cspec), :bindings, []))}
       end)
-      |> Enum.reject(fn {_id, plugins} -> plugins == [] end)
+      |> Enum.reject(fn {_id, bindings} -> bindings == [] end)
     end)
   end
 
   @doc """
-  Read the current plugin list embedded in an operator's child-spec
-  start args. Returns `{:ok, [{plugin_id, %Flezha.Plugin{}}]}` (entries
-  are normalised to tuple form regardless of how they are stored).
+  The bindings embedded in an operator's child-spec start args, as
+  `{:ok, [{plugin_id, %Flezha.Plugin{}}]}`.
   """
-  @spec operator_plugins(String.t(), String.t()) ::
+  @spec operator_bindings(String.t(), String.t()) ::
           {:ok, [{binary(), Plugin.t()}]} | {:error, term()}
-  def operator_plugins(namespace, operator_id) do
+  def operator_bindings(namespace, operator_id) do
     with_live_hub(namespace, {:error, {:hub_down, namespace}}, fn hub_id ->
       case ProcessRegistry.lookup(hub_id, operator_id) do
         nil ->
           {:error, {:operator_not_found, namespace, operator_id}}
 
         entry ->
-          case Cspec.start_arg(elem(entry, 0)) do
-            {:ok, arg} -> {:ok, normalize_plugins(extract_plugins(arg))}
-            :error -> {:error, {:operator_not_found, namespace, operator_id}}
+          case cspec_operator(elem(entry, 0)) do
+            %{} = operator -> {:ok, normalize_plugins(Keyword.get(operator.opts, :bindings, []))}
+            nil -> {:error, {:operator_not_found, namespace, operator_id}}
           end
       end
     end)
   end
 
+  @doc """
+  The plugins enabled in `namespace`, each the `%Flezha.Plugin{}` entry its
+  `{:plugin, name}` child carries: the declared set, which a cold start keeps,
+  and the registry rows, which hold an entry while durable starts are off.
+  """
+  @spec plugin_entries(binary() | atom()) :: [Plugin.t()]
+  def plugin_entries(namespace) do
+    with_live_hub(namespace, [], fn hub_id ->
+      %{children: children} = DeclaredChildren.declared_children(hub_id)
+
+      rows =
+        for {{:plugin, _name}, entry} <- live_registry_dump(hub_id),
+            do: elem(normalize_registry_entry(entry), 0)
+
+      for spec <- children ++ rows,
+          {:ok, {_namespace, %Plugin{} = plugin}} <- [Cspec.start_arg(spec)],
+          uniq: true,
+          do: plugin
+    end)
+    |> Enum.uniq_by(& &1.id)
+  end
+
+  @doc "The plugin `name` enabled in `namespace`, or `:error`."
+  @spec plugin_entry(binary() | atom(), binary()) :: {:ok, Plugin.t()} | :error
+  def plugin_entry(namespace, name) do
+    case Enum.find(plugin_entries(namespace), &(&1.id == name)) do
+      %Plugin{} = plugin -> {:ok, plugin}
+      nil -> :error
+    end
+  end
+
   # The declared operator from a registry entry's cspec start-args — the same
   # `{namespace, operator}` / `{namespace, runner, operator}` arg shapes
   # `alter_child_data/2` rewrites. The durable record of everything a start
-  # declared, which is why partition identity lives there.
+  # declared, which is why partition identity lives there. A plugin child's
+  # entry is no operator.
   defp cspec_operator(cspec) do
     case Cspec.start_arg(cspec) do
+      {:ok, {_namespace, %Plugin{}}} -> nil
       {:ok, {_namespace, %{} = operator}} -> operator
       {:ok, {_namespace, _runner, %{} = operator}} -> operator
       _ -> nil
@@ -272,38 +305,34 @@ defmodule Flezha.Service.HubManager.Rows do
   defp normalize_registry_entry({cspec, node_pids}), do: {cspec, node_pids, %{}}
 
   @doc """
-  Apply `update_fn` to the plugin list embedded in a child-spec's
-  start-args and return the rewritten cspec. Used by
-  `Flezha.Service.PluginManager` when it issues a registry-write-first
-  cspec update through `ProcessHub.Service.ProcessRegistry.update/3`.
+  Apply `update_fn` to the plugin list a child spec's start args carry and
+  return the rewritten spec: an operator's bindings, or a plugin child's own
+  entry as a list of one. `Flezha.Service.PluginManager` writes both through
+  `ProcessHub.Service.ProcessRegistry.update/3` with this one transform.
   """
   @spec rewrite_cspec_plugins(map(), ([{binary(), Plugin.t()}] -> [{binary(), Plugin.t()}])) ::
           map()
   def rewrite_cspec_plugins(%{start: {m, f, [arg]}} = cspec, update_fn) do
     new_arg =
       case arg do
+        {namespace, %Plugin{id: id} = plugin} ->
+          [{^id, rewritten}] = update_fn.([{id, plugin}])
+          {namespace, rewritten}
+
         {namespace, operator} ->
-          {namespace, rewrite_operator_plugins(operator, update_fn)}
+          {namespace, rewrite_operator_bindings(operator, update_fn)}
 
         {namespace, runner_id, operator} ->
-          {namespace, runner_id, rewrite_operator_plugins(operator, update_fn)}
+          {namespace, runner_id, rewrite_operator_bindings(operator, update_fn)}
       end
 
     Map.put(cspec, :start, {m, f, [new_arg]})
   end
 
-  defp rewrite_operator_plugins(operator, update_fn) do
-    current = normalize_plugins(extract_plugins({nil, operator}))
-    new_plugins = update_fn.(current)
-    new_opts = Keyword.put(operator.opts, :plugins, new_plugins)
-    %{operator | opts: new_opts}
+  defp rewrite_operator_bindings(operator, update_fn) do
+    current = normalize_plugins(Keyword.get(operator.opts, :bindings, []))
+    %{operator | opts: Keyword.put(operator.opts, :bindings, update_fn.(current))}
   end
-
-  defp extract_plugins({_namespace, operator}),
-    do: Keyword.get(operator.opts, :plugins, [])
-
-  defp extract_plugins({_namespace, _runner_id, operator}),
-    do: Keyword.get(operator.opts, :plugins, [])
 
   defp normalize_plugins(plugins) when is_list(plugins) do
     Enum.map(plugins, fn
@@ -313,8 +342,11 @@ defmodule Flezha.Service.HubManager.Rows do
   end
 
   def durable_operator_count(hub_id) do
-    with_live_hub_id(hub_id, 0, fn id -> map_size(live_registry_dump(id)) end)
+    with_live_hub_id(hub_id, 0, fn id -> map_size(operator_dump(id)) end)
   end
+
+  defp operator_dump(hub_id),
+    do: hub_id |> live_registry_dump() |> Map.filter(fn {id, _entry} -> is_binary(id) end)
 
   @doc """
   Whether operator starts declare durable intent — `durable: true` through
@@ -348,27 +380,36 @@ defmodule Flezha.Service.HubManager.Rows do
     with_live_hub(namespace, unreadable, fn hub_id ->
       %{children: children} = DeclaredChildren.declared_children(hub_id)
 
-      Enum.map(children, fn child_spec ->
+      for %{id: id} = child_spec <- children, is_binary(id) do
         operator = cspec_operator(child_spec)
-        %{id: child_spec.id, factory_id: operator && Map.get(operator, :factory_id)}
-      end)
+        %{id: id, factory_id: operator && Map.get(operator, :factory_id)}
+      end
     end)
   end
 
   @doc """
-  Every declared operator's plugins, as `{operator_id, [plugin]}`, read from the
-  hub's declared set: the intent a move, a restart and a rescale all keep,
+  Every declared operator's bindings, as `{operator_id, [binding]}`, read from
+  the hub's declared set: the intent a move, a restart and a rescale all keep,
   while the registry row of a moving operator may be between its two homes.
   """
-  @spec declared_plugins(binary() | atom()) :: [{binary(), list()}]
-  def declared_plugins(namespace) do
+  @spec declared_bindings(binary() | atom()) :: [{binary(), list()}]
+  def declared_bindings(namespace) do
     with_live_hub(namespace, [], fn hub_id ->
       %{children: children} = DeclaredChildren.declared_children(hub_id)
 
-      for child_spec <- children,
-          plugins = Keyword.get(cspec_opts(child_spec), :plugins, []),
-          plugins != [],
-          do: {child_spec.id, plugins}
+      for %{id: id} = child_spec <- children,
+          is_binary(id),
+          bindings = Keyword.get(cspec_opts(child_spec), :bindings, []),
+          bindings != [],
+          do: {id, normalize_plugins(bindings)}
+    end)
+  end
+
+  @doc "Whether `namespace`'s declared set names any child, operator or plugin."
+  @spec declares_anything?(binary() | atom()) :: boolean()
+  def declares_anything?(namespace) do
+    with_live_hub(namespace, false, fn hub_id ->
+      DeclaredChildren.declared_children(hub_id).children != []
     end)
   end
 

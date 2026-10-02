@@ -16,7 +16,7 @@ defmodule Flezha.ShutdownTest do
 
   alias Flezha.Config.Backoff
   alias Flezha.Convergence.{Intent, Planner}
-  alias Flezha.Service.{HubManager, PluginManager}
+  alias Flezha.Service.HubManager
   alias Flezha.Shutdown
 
   setup :set_mimic_global_until_exit
@@ -100,27 +100,21 @@ defmodule Flezha.ShutdownTest do
   end
 
   describe "the namespace walk" do
-    test "stops the namespace's operators, runners, plugin registrations and hub, in that order" do
+    test "stops the namespace's operators, runners and hub, in that order" do
       test_pid = self()
       stub(HubManager, :get_all_operators, fn _ns -> [] end)
-
-      stub(PluginManager, :disable_namespace_plugins, fn ns ->
-        send(test_pid, {:effect, :plugins, ns})
-        :ok
-      end)
 
       stub(HubManager, :stop_hub, fn ns ->
         send(test_pid, {:effect, :hub, ns})
         :ok
       end)
 
-      assert [:operators, :runners, :plugins, :hub] =
-               Enum.map(Shutdown.steps(:namespace), & &1.name)
+      assert [:operators, :runners, :hub] = Enum.map(Shutdown.steps(:namespace), & &1.name)
 
       assert {:ok, report} =
                Shutdown.run(:namespace, %{namespace: @namespace, runner_ids: []}, 5_000)
 
-      assert report.ran == [:operators, :runners, :plugins, :hub]
+      assert report.ran == [:operators, :runners, :hub]
     end
   end
 

@@ -322,7 +322,8 @@ OPTIONS:
     --init-values <json>        Seed state at start
     --text <payload>, -t        First message, delivered as `send` does
     --channel <ch>, -c          Entry channel the first message names
-    --plugins <json-array>      Plugin specs attached at start
+    --plugins <json-array>      Plugins to bind at start, enabling each named
+                                with a provider when it is not enabled yet
     --partitions <N>            Start N partition members as one group
     --output <text|json>        Output format (default: text)
     --json                      The same as --output json
@@ -459,18 +460,36 @@ pub(crate) const PLUGIN: Help = r#"flz plugin - Plugin management commands
 
 USAGE:
     flz plugin <COMMAND>
-    flz plugin enable <plugin_id> <provider_id> [--hook=<name>]... [OPTIONS]
+    flz plugin enable <name> <provider_id> [--single] [X<key>=<value>]... [OPTIONS]
+    flz plugin bind <name> --operator_id <op> [--hook=<name>]... [--channel <c>]
 
 COMMANDS:
     install    Place a plugin package (.fpz) from a path or an https:// URL
     uninstall  Remove an installed plugin package
     sync       Make the plugin root hold exactly the packages FLEZHA_PLUGINS
                declares
-    enable     Enable a plugin on an operator
-    disable    Disable a plugin
-    list       List plugins: `--installed` (packages, text or json) or
-               providers (default, text only)
+    enable     Enable a plugin by name in a namespace
+    bind       Connect an operator to an enabled plugin
+    unbind     Take an operator's connection to a plugin away
+    update     Change an enabled plugin's settings
+    disable    Turn a plugin off
+    list       List the plugins enabled in a namespace (text or json),
+               `--installed` packages (text or json) or `--providers`
+               (text only)
     help       Show help for a specific plugin provider
+
+PLUGINS:
+    A plugin has a name of its own in its namespace and is enabled once, with
+    no operator; nothing runs until an operator is bound to it. A plugin runs
+    on each controller where an operator bound to it runs, and one copy there
+    serves every such operator when its provider can be shared. `--single`
+    runs one copy in the whole cluster instead. A plugin whose last operator
+    leaves stops and stays enabled; only `disable` turns it off. A provider
+    that cannot be shared serves one operator, or one partition group.
+
+    `enable --operator_id <op>` enables and binds in one command. `update`
+    changes a running plugin in place when its provider declares the changed
+    settings live, and restarts it otherwise, naming the operators bound to it.
 
 PACKAGES:
     install, uninstall and sync change the plugin root, never a running
@@ -478,40 +497,44 @@ PACKAGES:
     when the controller restarts; `flz plugin list --installed` shows each
     package as loaded, refused, pending or removed. An upgrade is an install
     of a newer package of the same id. While FLEZHA_PLUGINS is set, install
-    and uninstall are refused: the declared list is the node's only truth.
+    and uninstall are refused: the declared list is the node's only truth. An
+    operator bound to a plugin whose package a controller lacks runs there
+    without it, and its health says so.
 
 HOOKS:
     A hook is a point at which the operator calls its plugin, named by the
     callback the provider defines: on_input sends every payload the operator
     ingests, on_output every payload it emits, on_interval runs on a timer.
-    `flz plugin help <provider_id>` lists the hooks a provider has.
+    `flz plugin help <provider_id>` lists the hooks a provider has. A hook
+    belongs to a binding.
 
     `--hook=<name>` names one and may be repeated. A hook's sub-options follow
     it as `--<name>.<key>=<value>`. on_interval has no default interval, so
     it needs `--on_interval.interval_ms=<ms>`.
 
-    An enable naming no hook has no hooks. A plugin that only receives still
+    A binding naming no hook has no hooks. A plugin that only receives still
     feeds its operator: its connection is held by the provider's own worker,
     which no hook governs.
 
-    The enable reads --namespace, --operator_id, --hook and the X-prefixed
-    provider settings, and refuses any other option.
+    enable reads --namespace, --single, --operator_id, --hook, --channel and
+    the X-prefixed provider settings; bind reads --namespace, --operator_id,
+    --hook and --channel; unbind --namespace and --operator_id; update
+    --namespace and the X-prefixed settings; disable --namespace. Each
+    refuses any other option.
 
 EXAMPLES:
     flz plugin install ./flezha_example_plugin-0.1.0.fpz
-    flz plugin install https://example.com/flezha_example_plugin-0.1.0.fpz
     flz plugin list --installed
-    flz plugin list --installed --json
-    flz plugin uninstall flezha_example_plugin
-    flz plugin sync
+    flz plugin enable trades operator_websocket \
+        --Xuri=ws://localhost:9000/feed --Xchannel=trades
+    flz plugin bind trades --operator_id my_op
+    flz plugin bind trades --operator_id other_op --channel ticks
     flz plugin enable stamp example_stamp --operator_id my_op \
         --Xpath=/tmp/stamped.txt --hook=on_output
-    flz plugin enable ws_out operator_websocket --operator_id my_op \
-        --Xuri=ws://localhost:4500 --hook=on_output --on_output.position=0
-    # Source only: it injects what arrives and sends nothing back.
-    flz plugin enable ws_in operator_websocket --operator_id my_op \
-        --Xuri=ws://localhost:4500
-    flz plugin disable ws_out"#;
+    flz plugin update trades --Xsubscription_items='["BTC/EUR","ETH/EUR"]'
+    flz plugin list --namespace default
+    flz plugin unbind trades --operator_id other_op
+    flz plugin disable trades"#;
 
 pub(crate) const RESET: Help = r#"flz reset - Clear Controller durable runtime data on disk
 
@@ -634,7 +657,7 @@ SUBCOMMANDS:
                  --text is the first message it receives, on the entry channel
                  --channel names or the first declared one.
                  --plugins takes the same array as `operator start --plugins`;
-                 each firing prefixes the plugin ids with its instance id.
+                 each firing binds its instance to the plugins it names.
     list         List schedules with their next fire time
     remove <name>  Remove a schedule
     run <name>     Fire one instance immediately with the stored config;

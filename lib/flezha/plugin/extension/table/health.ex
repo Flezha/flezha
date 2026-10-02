@@ -39,8 +39,17 @@ defmodule Flezha.Plugin.Extension.Table.Health do
   # table here would close the loop.
   defp plugin_health(table, plugin_id, plugin) do
     case Map.get(table.entries, plugin_id) do
-      %{phase: :running} = entry -> running_plugin_health(entry, plugin_id, plugin)
-      _ -> :healthy
+      %{phase: {:not_started, reason}} ->
+        {:unhealthy, reason}
+
+      %{phase: :running, workers: %{shared: {copy, _ref}}} ->
+        table.shared.health(copy, table.host_pid)
+
+      %{phase: :running} = entry ->
+        running_plugin_health(entry, plugin_id, plugin)
+
+      _ ->
+        :healthy
     end
   end
 
@@ -72,6 +81,20 @@ defmodule Flezha.Plugin.Extension.Table.Health do
     entry = if is_struct(entry, Entry), do: entry, else: struct(Entry, entry)
 
     Map.merge(opts || %{}, %{owned_pid: Entry.owned_pid(entry), workers: Entry.pids(entry)})
+  end
+
+  @doc """
+  `plugin_id`'s `inspect_state/1` report, read with the processes the table
+  started injected: `nil` when its provider is not loaded, has nothing to say
+  or raised, so one plugin never fails its caller.
+  """
+  @spec inspect_state(map(), binary()) :: map() | nil
+  def inspect_state(table, plugin_id) do
+    %Plugin{provider: provider, opts: opts} = Map.fetch!(table.plugins, plugin_id)
+    entry = Map.get(Map.get(table, :entries, %{}), plugin_id, %{})
+    if Code.ensure_loaded?(provider), do: provider.inspect_state(with_worker_pids(entry, opts))
+  catch
+    _kind, _reason -> nil
   end
 
   @doc "Demonitor `ref` if there is one."

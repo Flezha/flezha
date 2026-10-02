@@ -1145,12 +1145,12 @@
         {"tag": "duplicate_id", "args": ["plugin", "files"]}
       ]
     },
-    "plugin.enabling": {
-      "class": "conflict",
-      "message": "plugin '{plugin}' is still being enabled; try again once it is",
-      "details": ["plugin"],
+    "plugin.enable_failed": {
+      "class": "unavailable",
+      "message": "plugin '{plugin}' could not be enabled in namespace '{namespace}': its namespace's hub did not start it",
+      "details": ["plugin", "namespace"],
       "reasons": [
-        {"tag": "plugin_enabling", "args": ["plugin"]}
+        {"tag": "plugin_enable_failed", "args": ["plugin", "namespace"]}
       ]
     },
     "plugin.entry_channel_required": {
@@ -1399,11 +1399,11 @@
     },
     "plugin.id_taken": {
       "class": "conflict",
-      "message": "plugin id '{plugin}' is already registered for operator '{operator}' in namespace '{namespace}'",
-      "hint": "flz plugin list",
-      "details": ["plugin", "namespace", "operator"],
+      "message": "plugin '{plugin}' is already enabled in namespace '{namespace}'",
+      "hint": "flz plugin list --namespace {namespace}",
+      "details": ["plugin", "namespace"],
       "reasons": [
-        {"tag": "plugin_id_taken", "args": ["plugin", "namespace", "operator"]}
+        {"tag": "plugin_id_taken", "args": ["plugin", "namespace"]}
       ]
     },
     "plugin.init_after_start": {
@@ -1481,6 +1481,15 @@
         {"tag": "plugin_not_found", "args": ["plugin"]}
       ]
     },
+    "plugin.not_bound": {
+      "class": "not_found",
+      "message": "operator '{operator}' is not bound to plugin '{plugin}'",
+      "hint": "flz plugin list",
+      "details": ["plugin", "operator"],
+      "reasons": [
+        {"tag": "plugin_not_bound", "args": ["plugin", "operator"]}
+      ]
+    },
     "plugin.not_installed": {
       "class": "not_found",
       "message": "plugin '{plugin}' is not installed",
@@ -1488,6 +1497,23 @@
       "details": ["plugin"],
       "reasons": [
         {"tag": "plugin_not_installed", "args": ["plugin"]}
+      ]
+    },
+    "plugin.not_running": {
+      "class": "unavailable",
+      "message": "plugin '{plugin}' runs as one copy in the cluster, and no copy of it is running yet",
+      "details": ["plugin"],
+      "reasons": [
+        {"tag": "plugin_not_running", "args": ["plugin"]}
+      ]
+    },
+    "plugin.not_shareable": {
+      "class": "conflict",
+      "message": "plugin '{plugin}' cannot be shared, and operator '{operator}' is already bound to it",
+      "hint": "enable another plugin of the same provider for this operator",
+      "details": ["plugin", "operator"],
+      "reasons": [
+        {"tag": "plugin_not_shareable", "args": ["plugin", "operator"]}
       ]
     },
     "plugin.operator_not_declared": {
@@ -1618,11 +1644,11 @@
     },
     "plugin.provider_not_loaded": {
       "class": "not_found",
-      "message": "provider module {provider} is not loaded, and no plugin package installed on this controller provides it",
+      "message": "provider module {provider} is not loaded on {controller}, and no plugin package installed there provides it",
       "hint": "flz plugin list --installed",
-      "details": ["provider"],
+      "details": ["provider", "controller"],
       "reasons": [
-        {"tag": "module_not_loaded", "args": ["provider"]}
+        {"tag": "module_not_loaded", "args": ["provider", "controller"]}
       ]
     },
     "plugin.provider_refused": {
@@ -1692,6 +1718,14 @@
       "details": [],
       "reasons": [
         {"tag": "signature_required"}
+      ]
+    },
+    "plugin.single_sink": {
+      "class": "invalid",
+      "message": "plugin '{plugin}' runs as one copy in the cluster, so it takes no on_output hook",
+      "details": ["plugin"],
+      "reasons": [
+        {"tag": "plugin_single_sink", "args": ["plugin"]}
       ]
     },
     "plugin.source_unsupported": {
@@ -3164,19 +3198,20 @@
     "durability_tier_disabled", "durability_tier_not_running", "einval", "enoent", "exception",
     "exit", "fetch_crashed", "gap", "http", "http_status", "id_taken", "input_log_unavailable",
     "invalid_cert", "invalid_cluster_domain", "invalid_config", "invalid_json", "invalid_kinds",
-    "invalid_pid_format", "invalid_pod_ip_lookup", "invalid_return", "invalid_sink_module",
+    "invalid_pid_format", "invalid_pod_ip_lookup", "invalid_reconfigure_return",
+    "invalid_return", "invalid_sink_module",
     "invalid_source_entry", "invalid_source_name", "invalid_static_nodes", "invalid_worker_specs",
     "items_must_be_strings", "malformed", "malformed_declared_manifest", "malformed_payload",
     "missing_artifact", "missing_config_keys", "missing_config_schema", "missing_filter",
     "missing_items", "namespace_unknown", "no_ca_store", "no_channel", "no_connection",
     "no_endpoint_configured", "no_entry", "no_group_members", "no_partition_in_response",
-    "no_pending_swap", "no_producer", "no_runner_id", "no_stream", "no_such_factory", "no_target_nodes",
+    "no_pending_swap", "no_producer", "no_runner_id", "no_stream", "no_subscription_source", "no_such_factory", "no_target_nodes",
     "no_topic_in_response", "not_a_regular_file", "not_an_ed25519_private_key", "not_an_object", "not_grouped_hashing",
     "not_in_manifest", "not_pem", "not_reusable", "not_running", "not_seq_addressed", "not_snapshotted",
     "not_whole_payload", "nothing_to_correct", "part_ahead_of_progress", "partial", "pem_decode_failed",
     "permanent", "ping_failed", "precondition_failed", "process_not_found", "progress_ahead",
     "progress_corrupt", "progress_unreadable", "queue_full", "raised", "record_append_failed",
-    "refused", "remote_node_rejected", "remove", "replaced", "restart_failed", "retries_exhausted",
+    "refused", "remote_node_rejected", "remove", "replaced", "restart_failed", "retiring", "retries_exhausted",
     "runner_not_found", "running", "same_node", "send_buffer_full", "send_crashed", "send_failed",
     "service_account_path_missing", "shipper_unavailable", "short_entry", "short_read",
     "sink_start_failed", "spki_decode_failed", "split_state_key", "stale_writer", "start_crashed",

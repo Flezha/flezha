@@ -193,6 +193,9 @@ the value and the type.
 | `FLEZHA_CALL_RETENTION_MARGIN_MS` | `300000` | `:call_retention_margin_ms`; how long an input log keeps a record carrying an operator's call (the request in the callee's log, the `Response` in the caller's) past the call's deadline, so a request sent again is absorbed and a recovered caller finds its `Response`. A call whose caller was down past its deadline plus this margin is settled with no `Response` (`[:flezha, :call, :recovered_unanswered]`) |
 | `FLEZHA_LISTENER_PENDING_BYTES` | `4194304` | `:listener_pending_bytes`; the payload bytes one listener (`flz operator listen`, or a plugin through `Flezha.Service.Listener.listen/4`) holds that its handler has not taken. Parts are dropped oldest first to stay inside it; an output or a dead-letter notice that still does not fit ends the listener `listener.overrun` |
 | `FLEZHA_LISTENER_PENDING_FRAMES` | `4096` | `:listener_pending_frames`; the frames one listener holds that its handler has not taken, with the same drops and the same end as `FLEZHA_LISTENER_PENDING_BYTES` |
+| `FLEZHA_PLUGIN_BACKLOG_BYTES` | `4194304` | `:plugin_backlog_bytes`; the payload bytes one operator bound to a shared plugin has not taken yet. A record that does not fit drops that operator's oldest waiting ones, counted, and its health says `plugin_lagging`; no other operator waits for it |
+| `FLEZHA_PLUGIN_BACKLOG_FRAMES` | `4096` | `:plugin_backlog_frames`; the records one operator bound to a shared plugin has not taken yet, with the same drops as `FLEZHA_PLUGIN_BACKLOG_BYTES` |
+| `FLEZHA_PLUGIN_IDLE_STOP_MS` | `60000` | `:plugin_idle_stop_ms`; how long a plugin's running copy whose last operator on that controller went down or moved away waits for one to come back before it stops. A deliberate leave (an unbind, an operator stop) stops it at once; the plugin stays enabled either way |
 
 ### Resilience and convergence
 
@@ -786,13 +789,13 @@ there is no second list to keep in step, and this page does not carry one.
 | `operator_file_source`, `operator_file_sink` | [`plugins/file.md`](plugins/file.md) |
 | `operator_websocket` | [`plugins/websocket_subscription.md`](plugins/websocket_subscription.md) |
 | `operator_forward` | [`plugins/operator_forward.md`](plugins/operator_forward.md) |
-| `operator_stdout`, `operator_io_filter`, `operator_beam_msg`, `monitored_io_forward`, `operator_message_forward` | [`plugins/lifecycle.md`](plugins/lifecycle.md), which lists every provider and what it declares |
+| `operator_stdout`, `operator_io_filter`, `operator_beam_msg`, `monitored_io_forward`, `operator_message_forward` | `flz plugin help <provider>`, which lists the provider's options |
 
 An option a provider does not declare is refused at enable rather than ignored,
 on the CLI path and on the `--plugins` spec path alike, so a config asking for a
 capability the provider does not offer fails loudly.
-| `operator_message_forward` | [`plugins/message_handlers.md`](plugins/message_handlers.md) |
-| `operator_beam_msg` (`:include_metadata` `false`), `operator_stdout`, `operator_io_filter` (`:regex_pattern` required, `:inverted` `false`), `monitored_io_forward` (`:recv_pid` required, `:heartbeat_interval` `5000`) | [`plugins/lifecycle.md`](plugins/lifecycle.md) |
+| `operator_message_forward` | `flz plugin help operator_message_forward` |
+| `operator_beam_msg` (`:include_metadata` `false`), `operator_stdout`, `operator_io_filter` (`:regex_pattern` required, `:inverted` `false`), `monitored_io_forward` (`:recv_pid` required, `:heartbeat_interval` `5000`) | `flz plugin help <provider>` |
 
 ## See also
 

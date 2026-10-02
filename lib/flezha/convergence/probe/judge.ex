@@ -99,11 +99,13 @@ defmodule Flezha.Convergence.Probe.Judge do
     end)
   end
 
+  # A binding recorded not started is probed for its reason while it is not
+  # running, so the reason is read before the phase.
   defp plugin_issue(facts) do
     cond do
       not is_nil(Map.get(facts, :down)) -> {:crashed, Map.get(facts, :down)}
-      not Map.get(facts, :running?, false) -> :not_running
       match?({:unhealthy, _}, Map.get(facts, :probe)) -> Map.get(facts, :probe)
+      not Map.get(facts, :running?, false) -> :not_running
       true -> nil
     end
   end
@@ -219,12 +221,13 @@ defmodule Flezha.Convergence.Probe.Judge do
   # healthy and its PHASE says it is not running; an uncertain probe is healthy
   # and names why.
   defp plugin_probe(:unprobed, _running?), do: {:unknown, {:unobserved, :plugin_probe}}
-  defp plugin_probe(_probe, false), do: {:healthy, :prepared}
-  defp plugin_probe(:healthy, _running?), do: {:healthy, :running}
-  defp plugin_probe({:fail_open, reason}, _running?), do: {:healthy, {:fail_open, reason}}
 
   defp plugin_probe({:unhealthy, reason}, _running?),
     do: {:degraded, {:plugin_unhealthy, reason}}
+
+  defp plugin_probe(_probe, false), do: {:healthy, :prepared}
+  defp plugin_probe(:healthy, _running?), do: {:healthy, :running}
+  defp plugin_probe({:fail_open, reason}, _running?), do: {:healthy, {:fail_open, reason}}
 
   defp plugin_probe(_other, _running?), do: {:unknown, {:unobserved, :plugin_probe}}
 

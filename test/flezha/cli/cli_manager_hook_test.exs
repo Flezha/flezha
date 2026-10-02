@@ -182,7 +182,7 @@ defmodule FlezhaTest.Service.CliManagerHookTest do
       spec =
         Jason.encode!([
           %{
-            "id" => "spec_p",
+            "name" => "spec_p",
             "provider" => "operator_stdout",
             "opts" => %{},
             "hooks" => [
@@ -208,21 +208,22 @@ defmodule FlezhaTest.Service.CliManagerHookTest do
     end
 
     # Fails when: a spec that still names its hooks `subscriptions` decodes to a
-    # plugin with no hooks.
+    # binding with no hooks.
     test "hooks written under another key are refused" do
       spec =
         Jason.encode!([
-          %{"id" => "old", "provider" => "operator_stdout", "subscriptions" => ["on_output"]}
+          %{"name" => "old", "provider" => "operator_stdout", "subscriptions" => ["on_output"]}
         ])
 
-      assert SpecDecoder.decode(spec, "default", "spec_op") == {:error, {:invalid_hook, :empty}}
+      assert SpecDecoder.decode(spec, "default", "spec_op") ==
+               {:error, {:plugin_fields_unknown, ["subscriptions"]}}
     end
 
     test "an ill-typed value in the spec is refused naming the option" do
       spec =
         Jason.encode!([
           %{
-            "id" => "spec_bad",
+            "name" => "spec_bad",
             "provider" => "operator_stdout",
             "opts" => %{},
             "hooks" => [%{"name" => "on_input", "opts" => %{"position" => "first"}}]

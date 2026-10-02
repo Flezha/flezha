@@ -23,7 +23,6 @@ defmodule Flezha.Operator.PartitionGroup do
   alias Flezha.Operator.ClassRegistry
   alias Flezha.Partition
   alias Flezha.Plugin
-  alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.SpecDecoder
   alias Flezha.SDK.KeyGroup
   alias Flezha.Service.HubManager
@@ -83,7 +82,11 @@ defmodule Flezha.Operator.PartitionGroup do
 
   def start(namespace, operator, partitions, plugins_json) do
     plugins = fn member_id, partition_opts ->
-      SpecDecoder.decode(plugins_json, namespace, member_id, partition_opts)
+      identity = Partition.identity(partition_opts)
+
+      with {:ok, plugins} <- SpecDecoder.decode(plugins_json, namespace, member_id),
+           {:ok, bindings} <- PluginManager.start_bindings(namespace, plugins),
+           do: {:ok, Enum.map(bindings, &Plugin.for_partition(&1, member_id, identity))}
     end
 
     case members(namespace, operator.id) do
@@ -263,7 +266,9 @@ defmodule Flezha.Operator.PartitionGroup do
   defp member_opts(base_opts, partition_opts, plugins) do
     base_opts
     |> Keyword.merge(partition_opts)
-    |> then(fn opts -> if plugins == [], do: opts, else: Keyword.put(opts, :plugins, plugins) end)
+    |> then(fn opts ->
+      if plugins == [], do: opts, else: Keyword.put(opts, :bindings, plugins)
+    end)
   end
 
   # A group is all-or-nothing at start: a member that failed leaves the others
@@ -351,47 +356,37 @@ defmodule Flezha.Operator.PartitionGroup do
   # the init values, or the plugin set the group was started with.
   defp rescale_template(namespace, group_id, [%{id: member_id} | _]) do
     case OperatorManager.get_overwatch_state(namespace, member_id) do
-      {:ok, %{builder: builder} = state} ->
+      {:ok, %{builder: builder}} ->
         template = %{
           builder
           | id: group_id,
             opts:
               builder.opts
-              |> Keyword.drop([:plugins, :seed_input | Partition.opt_keys()])
+              |> Keyword.drop([:bindings, :seed_input | Partition.opt_keys()])
               # A rescale assembles the whole group's Cells on the node
               # running it; a member ProcessHub then places elsewhere pulls
               # its class tree from here before restoring.
               |> Keyword.put(:state_source_node, node())
         }
 
-        {:ok, template, restamp_plugins(member_plugins(state, builder))}
+        {:ok, template, restamp_plugins(member_bindings(namespace, member_id, builder))}
 
       {:error, reason} ->
         {:error, {:member_unreadable, member_id, reason}}
     end
   end
 
-  # The plugin set to mint the new members from. `builder.opts[:plugins]` holds
-  # only what a `--plugins` group start supplied, so a group whose plugins were
-  # attached afterwards (`flz plugin enable <group>`, the form a start script
-  # must use when it may not pass `--plugins`) would rescale into members with
-  # no plugins at all — healthy, fully covering the key space, and producing
-  # nothing. The live extension table is the authority; the builder is the
-  # fallback for a member whose table has not populated yet.
-  defp member_plugins(state, builder) do
-    case live_plugins(Map.get(state, :extensions)) do
-      [] -> Keyword.get(builder.opts, :plugins, [])
-      live -> live
+  # The bindings to mint the new members from: the member's declared entry,
+  # which a bind after the group start rewrites, so a group bound afterwards
+  # (`flz plugin bind <name> --operator_id <group>`) does not rescale into
+  # members with no plugins at all. The builder is the fallback for a member
+  # whose row cannot be read.
+  defp member_bindings(namespace, member_id, builder) do
+    case HubManager.operator_bindings(namespace, member_id) do
+      {:ok, bindings} -> Enum.map(bindings, &elem(&1, 1))
+      {:error, _unreadable} -> Keyword.get(builder.opts, :bindings, [])
     end
   end
-
-  defp live_plugins(%Table{} = extensions) do
-    extensions
-    |> Table.serializable_plugins()
-    |> Enum.map(fn {_plugin_id, plugin} -> Plugin.declared_opts_only(plugin) end)
-  end
-
-  defp live_plugins(_), do: []
 
   # Re-point one member's plugin set at another member. Same rule the group
   # start's JSON fan-out applies, from decoded structs instead.
@@ -406,7 +401,7 @@ defmodule Flezha.Operator.PartitionGroup do
   # Until all three hold, moving a Cell's files would move it away from
   # input it has not read yet.
   defp quiesce_group(namespace, members, run, opts) do
-    _ = PluginManager.disable_operators(namespace, Enum.map(members, & &1.id))
+    _ = PluginManager.unbind_all(namespace, Enum.map(members, & &1.id))
 
     with :ok <- refuse_on_parked_entries(members) do
       deadline =

@@ -198,7 +198,8 @@ $ flz plugin enable web http_server --operator_id=gateway --namespace agents --h
 
 ```output
 Enabling plugin...
-Plugin web enabled successfully.
+Plugin web enabled.
+Plugin web bound to gateway.
 ```
 
 ## Send a message

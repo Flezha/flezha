@@ -4,10 +4,13 @@ defmodule FlezhaTest.Operator.OverwatchInitStateTest do
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Service.OperatorManager
+  alias Flezha.Service.PluginManager
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.NodeTestHelper
 
   use ExUnit.Case
+  use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   @namespace "default"
   @factory "store_input"
@@ -41,7 +44,12 @@ defmodule FlezhaTest.Operator.OverwatchInitStateTest do
     def on_operator_init(_ctx, _opts), do: {:error, :intentional_failure}
   end
 
+  setup :set_mimic_global_until_exit
+
+  # Each operator starts bound to a plugin these tests build whole: resolving a
+  # binding against an enabled plugin is `FlezhaTest.Plugin.NamedPluginTest`'s.
   setup do
+    stub(PluginManager, :resolve, fn _ns, plugin, _entry -> {:ok, plugin} end)
     # Clean per-Cell state so a cold-start test sees no leftover WAL to
     # restore (restore now rehydrates on bind).
     TestHelpers.reset_all_cells()
@@ -70,7 +78,7 @@ defmodule FlezhaTest.Operator.OverwatchInitStateTest do
     operator = %Builder{
       id: operator_id,
       factory_id: @factory,
-      opts: [plugins: [plugin]]
+      opts: [bindings: [plugin]]
     }
 
     assert {:ok, _} = OperatorManager.start_operator(@namespace, operator)
@@ -142,7 +150,7 @@ defmodule FlezhaTest.Operator.OverwatchInitStateTest do
       init_values: %{
         "store_input_tasklet" => %{"binary_inputs" => [], "text_inputs" => ["FROM_INLINE"]}
       },
-      opts: [plugins: [plugin]]
+      opts: [bindings: [plugin]]
     }
 
     assert {:ok, _} = OperatorManager.start_operator(@namespace, operator)
@@ -181,7 +189,7 @@ defmodule FlezhaTest.Operator.OverwatchInitStateTest do
     operator = %Builder{
       id: operator_id,
       factory_id: @factory,
-      opts: [plugins: [plugin]]
+      opts: [bindings: [plugin]]
     }
 
     assert {:ok, %{pid: pid, runner_id: current_id}} =
@@ -213,7 +221,7 @@ defmodule FlezhaTest.Operator.OverwatchInitStateTest do
     operator = %Builder{
       id: operator_id,
       factory_id: @factory,
-      opts: [plugins: [plugin]]
+      opts: [bindings: [plugin]]
     }
 
     assert {:error, {:start_failed, ^operator_id, :intentional_failure}} =
@@ -311,11 +319,13 @@ defmodule FlezhaTest.Operator.OverwatchOutputStampPassthroughTest do
   frame's metadata as-is and Overwatch hands it to the plugin ctx as-is.
   """
   use ExUnit.Case, async: true
+  use Mimic
 
   alias Flezha.Operator.Overwatch
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.StreamChannel
+  alias Flezha.Service.PluginManager
 
   defmodule ProbeProvider do
     use Flezha.Plugin.ProviderBehaviour,
@@ -386,9 +396,11 @@ defmodule FlezhaTest.Operator.OverwatchOutputStampPassthroughTest do
       operator_id: "operator-1"
     }
 
+    stub(PluginManager, :resolve, fn _ns, binding, _entry -> {:ok, binding} end)
+
     {:reply, :ok, state_with_plugin} =
       Overwatch.handle_call(
-        {:plugin_subscribe, "stamp_probe_plugin", plugin},
+        {:plugin_subscribe, "stamp_probe_plugin", plugin, :read},
         {self(), make_ref()},
         state
       )
@@ -480,6 +492,15 @@ defmodule FlezhaTest.Operator.OverwatchPluginSubscribeTest do
   # async: false: the primary Logger; node-global tables.
 
   use ExUnit.Case, async: false
+  use Mimic
+
+  alias Flezha.Service.PluginManager
+
+  # These tests drive the Overwatch's own plugin calls with whole plugins.
+  setup do
+    stub(PluginManager, :resolve, fn _ns, plugin, _entry -> {:ok, plugin} end)
+    :ok
+  end
 
   # One case drives a handover with no control unit, which logs a deserialize
   # error by design; capture so a green run stays quiet.
@@ -557,7 +578,11 @@ defmodule FlezhaTest.Operator.OverwatchPluginSubscribeTest do
     }
 
     {:reply, :ok, new_state} =
-      Overwatch.handle_call({:plugin_subscribe, plugin_id, plugin}, {self(), make_ref()}, state)
+      Overwatch.handle_call(
+        {:plugin_subscribe, plugin_id, plugin, :read},
+        {self(), make_ref()},
+        state
+      )
 
     assert_receive {:activate_called, :runtime_subscribe},
                    500,
@@ -570,16 +595,6 @@ defmodule FlezhaTest.Operator.OverwatchPluginSubscribeTest do
   end
 
   test "alter_handover_state activates rehydrated plugins (HotSwap migration / rolling-restart)" do
-    state = %Overwatch{
-      id: "test_operator_handover",
-      namespace: "default",
-      runner_id: "test_exec_handover_no_control_unit",
-      factory_id: "test_factory",
-      channel: nil,
-      extensions: Table.new(Overwatch.__extensions_catalog__()),
-      builder: nil
-    }
-
     plugin_id = "probe_handover_plugin"
 
     plugin = %Plugin{
@@ -591,11 +606,23 @@ defmodule FlezhaTest.Operator.OverwatchPluginSubscribeTest do
       operator_id: "test_operator_handover"
     }
 
-    handover_state = %{
+    # The arriving operator brings its bindings up from its declared entry,
+    # which with no hub is its start arguments.
+    state = %Overwatch{
+      id: "test_operator_handover",
+      namespace: "handover_no_hub",
+      runner_id: "test_exec_handover_no_control_unit",
       factory_id: "test_factory",
-      plugins: [{plugin_id, plugin}],
-      init_values: %{}
+      channel: nil,
+      extensions: Table.new(Overwatch.__extensions_catalog__()),
+      builder: %Flezha.Operator.Builder{
+        id: "test_operator_handover",
+        factory_id: "test_factory",
+        opts: [bindings: [plugin]]
+      }
     }
+
+    handover_state = %{factory_id: "test_factory", init_values: %{}}
 
     new_state = Overwatch.alter_handover_state(state, {handover_state, <<>>})
 
@@ -639,7 +666,7 @@ defmodule FlezhaTest.Operator.OverwatchPluginSubscribeTest do
     test "plugin_subscribe whose activation fails answers an error, not :ok", ctx do
       {:reply, reply, new_state} =
         Overwatch.handle_call(
-          {:plugin_subscribe, "src", ctx.plugin},
+          {:plugin_subscribe, "src", ctx.plugin, :read},
           {self(), make_ref()},
           ctx.state
         )
@@ -661,7 +688,7 @@ defmodule FlezhaTest.Operator.OverwatchPluginSubscribeTest do
 
       {:reply, reply, new_state} =
         Overwatch.handle_call(
-          {:plugin_subscribe, "src", ctx.plugin},
+          {:plugin_subscribe, "src", ctx.plugin, :read},
           {self(), make_ref()},
           ctx.state
         )
@@ -675,7 +702,7 @@ defmodule FlezhaTest.Operator.OverwatchPluginSubscribeTest do
 
       {:reply, reply, _state} =
         Overwatch.handle_call(
-          {:plugin_subscribe, "src", ctx.plugin},
+          {:plugin_subscribe, "src", ctx.plugin, :read},
           {self(), make_ref()},
           ctx.state
         )
@@ -711,7 +738,11 @@ defmodule FlezhaTest.Operator.OverwatchPluginSubscribeTest do
       }
 
       {:reply, :ok, state} =
-        Overwatch.handle_call({:plugin_subscribe, "steady", plugin}, {self(), make_ref()}, state)
+        Overwatch.handle_call(
+          {:plugin_subscribe, "steady", plugin, :read},
+          {self(), make_ref()},
+          state
+        )
 
       assert_receive {:activate_called, :first_activation}
       assert Table.phase(state.extensions, "steady") == :running
@@ -719,7 +750,11 @@ defmodule FlezhaTest.Operator.OverwatchPluginSubscribeTest do
       # `bulk_activate/2` skips a `:running` plugin, so the idempotent path is a
       # no-op rather than a second upstream acquisition.
       {:reply, reply, again} =
-        Overwatch.handle_call({:plugin_subscribe, "steady", plugin}, {self(), make_ref()}, state)
+        Overwatch.handle_call(
+          {:plugin_subscribe, "steady", plugin, :read},
+          {self(), make_ref()},
+          state
+        )
 
       assert reply == :ok
       assert Table.phase(again.extensions, "steady") == :running

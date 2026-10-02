@@ -22,6 +22,7 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperatorManager
   alias Flezha.State.Completion
+  alias FlezhaTest.Fixtures.OperatorFixture
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.TierE2EHarness
 
@@ -85,12 +86,13 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
   test "a static-cell steps tasklet runs on each cell its cells_for names" do
     operator_id = "static_cell_steps_#{System.unique_integer([:positive])}"
     collector = spawn_link(fn -> collect_loop([]) end)
+    sink = forward_sink("static_cell_sink", collector)
 
     assert {:ok, _} =
              OperatorManager.start_operator(@namespace, %Builder{
                id: operator_id,
                factory_id: "static_cell_steps",
-               opts: [plugins: [forward_sink("static_cell_sink", collector)]]
+               opts: [bindings: OperatorFixture.bindings(@namespace, operator_id, [sink])]
              })
 
     send_turn(@namespace, operator_id, "go")

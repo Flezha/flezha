@@ -66,7 +66,7 @@ defmodule Flezha.Plugin.Provider.FileSourceTest do
       assert {table, []} = Table.bulk_activate(table, %{})
       assert Table.running?(table, plugin.id)
 
-      {_table, _} = Table.teardown_all(table)
+      _ = Table.teardown_all(table)
     end
   end
 

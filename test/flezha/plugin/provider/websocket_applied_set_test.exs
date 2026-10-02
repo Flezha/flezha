@@ -134,8 +134,15 @@ defmodule Flezha.Plugin.Provider.WebsocketAppliedSetTest do
   ## ---------- 7.1 observability ----------
 
   describe "reconcile state is reportable" do
-    test "a static plugin reports nothing" do
-      assert Websocket.inspect_state(%{uri: "wss://test.local"}) == nil
+    test "a static plugin reports only whether its socket is open" do
+      assert Websocket.inspect_state(%{uri: "wss://test.local"}) == %{connected: false}
+
+      for established <- [false, true] do
+        pid = probed(state(websocket_established?: established) |> Map.delete(:subscription))
+
+        assert Websocket.inspect_state(%{uri: "wss://test.local", owned_pid: pid}) ==
+                 %{connected: established}
+      end
     end
 
     test "a configured plugin with no live connection reports its last-known set" do
@@ -148,33 +155,40 @@ defmodule Flezha.Plugin.Provider.WebsocketAppliedSetTest do
 
       assert report.applied == ["a", "b"]
       assert report.last_error == :no_connection
+      refute report.connected
     end
 
     test "a live connection reports its applied set, last reconcile and last error" do
-      parent = self()
-
-      pid =
-        spawn(fn ->
-          s = state(applied: MapSet.new(["a"]), last_error: :nxdomain)
-          s = %{s | last_reconcile: %{added: 1, removed: 0, sent: true}}
-          send(parent, :armed)
-
-          receive do
-            msg ->
-              {:ok, _} = Websocket.Client.handle_info(msg, s)
-              NodeTestHelper.park()
-          end
-        end)
-
-      on_exit(fn -> Process.exit(pid, :kill) end)
-      assert_receive :armed, 500
+      s = state(applied: MapSet.new(["a"]), last_error: :nxdomain)
+      pid = probed(%{s | last_reconcile: %{added: 1, removed: 0, sent: true}})
 
       report = Websocket.inspect_state(%{subscription: subscription(), owned_pid: pid})
 
       assert report.applied == ["a"]
       assert report.last_reconcile == %{added: 1, removed: 0, sent: true}
       assert report.last_error == :nxdomain
+      assert report.connected
     end
+  end
+
+  # A socket process holding `s` that answers one probe.
+  defp probed(s) do
+    parent = self()
+
+    pid =
+      spawn(fn ->
+        send(parent, :armed)
+
+        receive do
+          msg ->
+            {:ok, _} = Websocket.Client.handle_info(msg, s)
+            NodeTestHelper.park()
+        end
+      end)
+
+    on_exit(fn -> Process.exit(pid, :kill) end)
+    assert_receive :armed, 500
+    pid
   end
 
   ## ---------- partitioned sources ----------

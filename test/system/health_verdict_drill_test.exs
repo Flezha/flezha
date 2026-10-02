@@ -36,6 +36,7 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   alias Flezha.Operator.Migration
   alias Flezha.Plugin
   alias Flezha.Service.{CliManager, OperatorManager, PluginManager}
+  alias FlezhaTest.Fixtures.OperatorFixture
 
   require Logger
 
@@ -452,7 +453,7 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
       id: id,
       factory_id: "do_nothing",
       init_values: %{},
-      opts: [plugins: plugins]
+      opts: [bindings: OperatorFixture.bindings(ctx.namespace, id, plugins)]
     }
 
     {:ok, _} = OperatorManager.start_operator(ctx.namespace, builder)

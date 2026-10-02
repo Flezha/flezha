@@ -197,19 +197,22 @@ While `FLEZHA_PLUGINS` is set, even empty, `install` and `uninstall` are refused
 
 `--json` prints the rows as an array of objects with `id`, `version`, `status`,
 `loaded_version`, `providers` and `error` (`null`, or `{code, class, message, details,
-hint}`). `flz plugin list` without `--installed` lists the providers that can be enabled
-and ends with a line naming how many packages were refused.
+hint}`). `flz plugin list --providers` lists the providers that can be enabled and ends
+with a line naming how many packages were refused.
 
-A package's providers are enabled like any provider (`flz plugin enable <plugin_id>
+A package's providers are enabled like any provider (`flz plugin enable <name>
 <provider_id> ...`). Enabling a provider of a refused package answers
 `plugin.provider_unavailable`, naming the package and its refusal. When another controller
-holding the namespace's hub lacks the provider, the enable warns naming it: an operator
-placed there parks until its controller has the package.
+holding the namespace's hub lacks the provider, the enable warns naming it: the plugin
+will not run there.
 
-An operator whose persisted plugin names a provider this controller did not load parks at
-bind, logging once why: the package that declared it and whether it was refused or is
-pending, or that no installed package provides it. It binds again by itself after a
-restart that loads the package.
+An operator placed on a controller that did not load a bound plugin's provider runs
+without that plugin. It logs one warning naming the plugin and why: the package that
+declared the provider and whether it was refused or is pending, or that no installed
+package provides it. Its health reports `plugin_unhealthy` with
+`plugin.provider_not_loaded`, a guaranteed output to the missing sink waits, and a plain
+one is dropped and counted. The plugin comes up with the operator's next start on a
+controller that has the package.
 
 ## Errors
 

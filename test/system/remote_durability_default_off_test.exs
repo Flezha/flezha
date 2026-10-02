@@ -23,6 +23,7 @@ defmodule FlezhaTest.System.RemoteDurabilityDefaultOffTest do
   alias Flezha.Service.OperatorManager
   alias Flezha.State.DurabilityTier
   alias Flezha.State.InputLog
+  alias FlezhaTest.Fixtures.OperatorFixture
 
   @moduletag timeout: 300_000
 
@@ -58,7 +59,7 @@ defmodule FlezhaTest.System.RemoteDurabilityDefaultOffTest do
       id: operator_id,
       factory_id: "tier_store",
       init_values: %{},
-      opts: [plugins: [sink]]
+      opts: [bindings: OperatorFixture.bindings(namespace, operator_id, [sink])]
     }
 
     assert {:ok, info} = OperatorManager.start_operator(namespace, builder)

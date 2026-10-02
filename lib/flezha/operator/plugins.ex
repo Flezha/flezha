@@ -23,6 +23,8 @@ defmodule Flezha.Operator.Plugins do
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Service.PluginManager
 
+  require Logger
+
   # Run one extension chain, building its context from the catalog.
   #
   # `Flezha.Plugin.Host`'s catalog already declares which `Ctx` struct each chain
@@ -119,29 +121,33 @@ defmodule Flezha.Operator.Plugins do
   end
 
   @doc """
-  Phase 1: register each plugin's GenServer + struct (`init_provider/1` runs),
-  but do NOT activate upstream resources.
+  Phase 1: subscribe each binding of the operator's declared entry (`init_provider/1`
+  runs), but do NOT activate upstream resources.
 
-  Every declared plugin the table does not hold is subscribed, and every one it
-  holds is left as it is, whatever its phase: an ordinary rebind subscribes
-  nothing, and a sleeper found at boot that got a runtime plugin (a listener)
-  before it woke still brings up its declared set.
+  Every binding the table does not hold is resolved against its plugin's entry
+  and subscribed, and every one it holds is left as it is, whatever its phase:
+  an ordinary rebind subscribes nothing, and a sleeper found at boot that got a
+  runtime binding (a listener) before it woke still brings up its declared set.
+  A binding that cannot come up here (its plugin is not enabled, its provider
+  is not loaded on this controller) is recorded not started with its reason,
+  and the bind goes on.
 
-  A failure answers `{:error, {:plugin_prepare_failed, plugin_id, reason}}`:
-  the operator parks on that reason, so it has to name the plugin.
+  A refusal of a binding that could come up answers
+  `{:error, {:plugin_prepare_failed, plugin_id, reason}}`: the operator parks on
+  that reason, so it has to name the plugin.
   """
   @spec prepare(Overwatch.t(), list()) :: {:ok, Overwatch.t()} | {:error, term()}
-  def prepare(%Overwatch{} = state, plugins) do
-    # `operator.opts[:plugins]` accepts two shapes: bare `%Plugin{}` (the
-    # cold-start `flz operator start --plugins` path emits this) and
-    # `{plugin_id, %Plugin{}}` tuples (the cspec-persistence path written
-    # by `Flezha.Service.PluginManager` through `ProcessRegistry.update/3`
-    # after a successful `flz plugin enable`). Both normalise into the
-    # tuple form `Table.bulk_subscribe/2` expects.
-    entries =
-      plugins
+  def prepare(%Overwatch{} = state, bindings) do
+    {entries, state} =
+      bindings
       |> Enum.map(&normalise/1)
-      |> Enum.filter(fn {id, _plugin} -> Table.phase(state.extensions, id) == :unknown end)
+      |> Enum.filter(fn {id, _binding} -> Table.phase(state.extensions, id) == :unknown end)
+      |> Enum.flat_map_reduce(state, fn {id, binding}, acc ->
+        case PluginManager.resolve(acc.namespace, binding, :read) do
+          {:ok, plugin} -> {[{id, plugin}], acc}
+          {:not_started, reason} -> {[], not_started(acc, id, binding, reason)}
+        end
+      end)
 
     case Table.bulk_subscribe(state.extensions, entries) do
       {:ok, table} ->
@@ -149,15 +155,46 @@ defmodule Flezha.Operator.Plugins do
 
       # The id is the only thing naming WHICH plugin parked the operator. It
       # rides `init_error` out through `:registry_runner_set` to whoever asked
-      # for the start, so discarding it here left the caller with a bare
-      # `{:module_not_loaded, Provider}` and no row to blame.
+      # for the start.
       {:error, {plugin_id, reason}} ->
         {:error, {:plugin_prepare_failed, plugin_id, reason}}
     end
   end
 
+  @doc """
+  Warn that an entry written before plugins had names carries plugin rows of
+  its own: the operator starts without them, and nothing converts them.
+  """
+  @spec warn_old_rows(map()) :: :ok
+  def warn_old_rows(operator) do
+    case Keyword.get(operator.opts, :plugins, []) do
+      [] ->
+        :ok
+
+      rows ->
+        Logger.warning(
+          "[plugins] operator #{operator.id} starts without its old plugin rows " <>
+            "#{inspect(Enum.map(rows, &elem(normalise(&1), 0)))}: enable each plugin by name " <>
+            "and bind it again"
+        )
+    end
+  end
+
   defp normalise({id, %Plugin{} = plugin}), do: {id, plugin}
   defp normalise(%Plugin{id: id} = plugin), do: {id, plugin}
+
+  # One warning per binding: a binding the loop tries again for the same
+  # reason is not logged again.
+  defp not_started(%Overwatch{} = state, id, binding, reason) do
+    unless Table.phase(state.extensions, id) == {:not_started, reason} do
+      Logger.warning(
+        "[plugins] operator #{state.id} runs without plugin #{id}: " <>
+          Flezha.Error.from_reason(reason, nil).message
+      )
+    end
+
+    %{state | extensions: Table.put_not_started(state.extensions, id, binding, reason)}
+  end
 
   @doc """
   Phase 2: bring every subscribed plugin up. The ONE bring-up: it starts each
@@ -176,26 +213,58 @@ defmodule Flezha.Operator.Plugins do
   end
 
   @doc """
-  Runtime add: the SDK is already up, so bring the plugin up immediately. The
-  boot path goes through `prepare/2` + `activate/1` instead.
+  Bring one binding to what its plugin's entry says, on a running operator: a
+  bind, the convergence loop's `start_plugin`, and the walk an enable or a
+  disable makes over the operators bound to a plugin. It subscribes a binding
+  the table does not hold, re-activates one that holds no upstream resources
+  yet, replaces one recorded not started, and records a binding that cannot
+  come up here as not started. The boot path goes through `prepare/2` +
+  `bring_up/1` instead.
   """
-  @spec subscribe(Overwatch.t(), term(), Plugin.t()) ::
+  @spec subscribe(Overwatch.t(), term(), Plugin.t(), Plugin.t() | :none | :read) ::
           {:ok, Overwatch.t()} | {:error, term(), Overwatch.t()}
-  def subscribe(%Overwatch{} = state, plugin_id, %Plugin{} = plugin) do
-    # Idempotent on a plugin already on the table, because that is exactly the
-    # state a `start_plugin` heal finds: the subscription succeeded and only the
-    # upstream acquisition failed, leaving it `:prepared`. Re-subscribing would
-    # be refused as a duplicate id and the plugin could never be healed, so
-    # re-ACTIVATING is the retry. An already-`:running` plugin is skipped by
-    # `bulk_activate/2`, so the same call is a no-op for one that needs nothing.
-    if Table.phase(state.extensions, plugin_id) == :unknown do
-      case Table.bulk_subscribe(state.extensions, [{plugin_id, plugin}]) do
-        {:ok, table} -> activated(%Overwatch{state | extensions: table}, plugin_id)
-        {:error, {_id, reason}} -> {:error, reason, state}
-      end
-    else
-      activated(state, plugin_id)
+  def subscribe(%Overwatch{} = state, plugin_id, %Plugin{} = binding, entry \\ :read) do
+    case {PluginManager.resolve(state.namespace, binding, entry),
+          Table.phase(state.extensions, plugin_id)} do
+      {{:not_started, reason}, _phase} ->
+        {:ok, not_started(state, plugin_id, binding, reason)}
+
+      {{:ok, plugin}, phase}
+      when phase == :unknown or (is_tuple(phase) and elem(phase, 0) == :not_started) ->
+        table = Table.unsubscribe(state.extensions, plugin_id, :idle)
+
+        case Table.bulk_subscribe(table, [{plugin_id, plugin}]) do
+          {:ok, table} -> activated(%Overwatch{state | extensions: table}, plugin_id)
+          {:error, {_id, reason}} -> {:error, reason, state}
+        end
+
+      # Subscribed and not up is exactly what a `start_plugin` heal finds:
+      # re-ACTIVATING is the retry, and a running plugin is skipped.
+      {{:ok, _plugin}, _phase} ->
+        activated(state, plugin_id)
     end
+  end
+
+  @doc """
+  Apply a changed plugin entry to one binding: in place through the
+  provider's `reconfigure/2` when every changed option is live, by taking the
+  binding down and up again otherwise.
+  """
+  @spec update(Overwatch.t(), term(), Plugin.t(), :live | :restart, Plugin.t()) ::
+          {:ok, Overwatch.t()} | {:error, term(), Overwatch.t()}
+  def update(%Overwatch{} = state, plugin_id, %Plugin{} = binding, :live, entry) do
+    with {:ok, plugin} <- PluginManager.resolve(state.namespace, binding, entry),
+         {:ok, table} <- Table.reconfigure(state.extensions, plugin_id, plugin) do
+      {:ok, %Overwatch{state | extensions: table}}
+    else
+      {:not_started, reason} -> {:ok, not_started(state, plugin_id, binding, reason)}
+      {:error, reason} -> {:error, reason, state}
+    end
+  end
+
+  def update(%Overwatch{} = state, plugin_id, %Plugin{} = binding, :restart, entry) do
+    table = Table.unsubscribe(state.extensions, plugin_id, :idle)
+    subscribe(%Overwatch{state | extensions: table}, plugin_id, binding, entry)
   end
 
   @doc """
@@ -250,22 +319,12 @@ defmodule Flezha.Operator.Plugins do
   def env(%Overwatch{} = state), do: %{effectively_once: state.effectively_once}
 
   @doc """
-  Drop the `PluginManager` registrations a teardown released and answer the
-  table it left. `Extension.Table` is a data structure and issues no effects,
-  so it reports the ids it dropped and the Overwatch that owns it casts.
-  """
-  @spec unregister({Table.t(), [binary()]}) :: Table.t()
-  def unregister({table, plugin_ids}) do
-    Enum.each(plugin_ids, &PluginManager.unregister_plugin/1)
-    table
-  end
-
-  @doc """
-  A provider committed durable state of its own (the websocket provider's
-  applied subscription set). It lands in two places for two restart kinds: the
-  extension table, which `attempt_restart/3` re-runs `init_provider/1` from, and
-  the durable plugin manifest, which a controller restart re-applies plugins
-  from.
+  A provider committed durable state of its own (a file reader's offset, the
+  websocket provider's applied subscription set). It lands in two places for
+  two restart kinds: the extension table, which `attempt_restart/3` re-runs
+  `init_provider/1` from, and the durable record a restart brings the plugin up
+  from — the binding for a plugin this table runs, the plugin's own entry for a
+  shared one, whose copy hands its value here.
 
   The durable half writes the hub's declared set and its registry row through
   one seam, and carries a retry ladder, so it runs in a task — the Overwatch
@@ -273,8 +332,12 @@ defmodule Flezha.Operator.Plugins do
   """
   @spec persist_opt(Overwatch.t(), term(), term(), term()) :: Overwatch.t()
   def persist_opt(%Overwatch{} = state, plugin_id, key, value) do
+    shared? = Map.has_key?(Table.workers(state.extensions, plugin_id), :shared)
+
     Task.start(fn ->
-      PluginManager.persist_plugin_opt(state.namespace, state.id, plugin_id, key, value)
+      if shared?,
+        do: PluginManager.persist_plugin_opt(state.namespace, plugin_id, key, value),
+        else: PluginManager.persist_binding_opt(state.namespace, state.id, plugin_id, key, value)
     end)
 
     %{state | extensions: Table.put_plugin_opt(state.extensions, plugin_id, key, value)}
@@ -288,7 +351,7 @@ defmodule Flezha.Operator.Plugins do
   ones MUST NOT run it and uses the inline values as-is.
 
   This is also the path for in-place restart plugin restoration: the
-  `operator.opts[:plugins]` list of the cspec the operator was started with is
+  `operator.opts[:bindings]` list of the cspec the operator was started with is
   re-subscribed by `prepare/2`, and a restart-driven start builds that cspec
   from the hub's declared set. That is
   independent of the per-Cell state restore, which rehydrates SDK-side

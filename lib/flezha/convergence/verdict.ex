@@ -399,18 +399,26 @@ defmodule Flezha.Convergence.Verdict do
   defp reason_word(%__MODULE__{state: state}) when state in [:healthy, :unknown, :suspended],
     do: nil
 
-  defp reason_word(%__MODULE__{subject: {:plugin, _}, state: :degraded}), do: "plugin_unhealthy"
+  defp reason_word(%__MODULE__{subject: {:plugin, _}, state: :degraded, reason: reason}),
+    do: plugin_word(reason)
+
   defp reason_word(%__MODULE__{state: :parked}), do: "parked"
   defp reason_word(%__MODULE__{state: :failed}), do: "dead_runner"
   defp reason_word(%__MODULE__{state: :unbound}), do: "operators_unbound"
 
   defp reason_word(%__MODULE__{state: :degraded, reason: reason}) do
     case reason do
-      {:plugin_unhealthy, _id, _why} -> "plugin_unhealthy"
+      {:plugin_unhealthy, _id, why} -> plugin_word(why)
       {:wedged, _layer} -> "data_plane_wedged"
       _ -> "output_stalled"
     end
   end
+
+  # An operator that cannot keep up with a shared plugin is lagging; anything
+  # else wrong with a plugin is the plugin's health.
+  defp plugin_word({:plugin_unhealthy, {:plugin_lagging, _count}}), do: "plugin_lagging"
+  defp plugin_word({:unhealthy, {:plugin_lagging, _count}}), do: "plugin_lagging"
+  defp plugin_word(_why), do: "plugin_unhealthy"
 
   defp past_grace?(facts) do
     ms = Map.get(facts, :unmet_intent_ms)

@@ -48,6 +48,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
   alias Flezha.Shutdown.Coordinator
   alias Flezha.State.{Commands, TestHelpers, WalWriter, Watchdog, WriterRegistry}
   alias Flezha.Transport.LivenessCounters
+  alias FlezhaTest.Fixtures.OperatorFixture
   alias ProcessHub.Service.ProcessRegistry
 
   setup :set_mimic_global_until_exit
@@ -454,7 +455,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
       id: id,
       factory_id: Keyword.get(opts, :factory, "do_nothing"),
       init_values: %{},
-      opts: [plugins: Keyword.get(opts, :plugins, [])]
+      opts: [bindings: OperatorFixture.bindings(namespace, id, Keyword.get(opts, :plugins, []))]
     }
 
     assert {:ok, _} = OperatorManager.start_operator(namespace, builder)

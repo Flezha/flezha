@@ -405,7 +405,7 @@ defmodule FlezhaTest.Operator.PartitionGroupRescaleTest do
   alias Flezha.Operator.PartitionGroup
   alias Flezha.Partition
   alias Flezha.Plugin
-  alias Flezha.Plugin.Extension.Table
+  alias Flezha.Service.HubManager
   alias Flezha.Service.OperatorManager
   alias Flezha.Service.PluginManager
   alias Flezha.State.InputLog
@@ -427,7 +427,7 @@ defmodule FlezhaTest.Operator.PartitionGroupRescaleTest do
     registry =
       FakeStartRegistry.install(seed: seed(:flow), runners: ["r1", "r2", "r3", "r4", "r5"])
 
-    stub(PluginManager, :disable_operators, fn _ns, ids ->
+    stub(PluginManager, :unbind_all, fn _ns, ids ->
       for id <- ids, do: send(parent, {:sources_off, id})
       :ok
     end)
@@ -448,7 +448,7 @@ defmodule FlezhaTest.Operator.PartitionGroupRescaleTest do
         id: Partition.member_id(@group, index),
         factory_id: @factory,
         run: kind,
-        opts: [plugins: []] ++ Partition.member_opts(@group, index, 3, range)
+        opts: [bindings: []] ++ Partition.member_opts(@group, index, 3, range)
       }
     end
   end
@@ -560,33 +560,35 @@ defmodule FlezhaTest.Operator.PartitionGroupRescaleTest do
       assert Enum.all?(started, &(&1.factory_id == @factory))
     end
 
-    test "members are re-minted from plugins attached after the start, not just --plugins" do
+    test "members are re-minted from bindings made after the start, not just --plugins" do
       # The shape every start script here produces: `flz operator start` with no
-      # --plugins, then `flz plugin enable <group>`. Those plugins never reach
-      # builder.opts, so reading only there rescales into members with no plugins
-      # at all — healthy, fully covering the key space, producing nothing.
-      plugin = %Plugin{
+      # --plugins, then `flz plugin bind <name> --operator_id <group>`. Those
+      # bindings never reach builder.opts, so reading only there rescales into
+      # members with no plugins at all — healthy, covering the key space,
+      # producing nothing.
+      binding = %Plugin{
         id: "ohlc_exchange_ws#p0",
-        provider: :operator_websocket,
+        provider: Flezha.Plugin.Provider.File.Sink,
         operator_id: "ohlc#p0",
-        opts: %{uri: "wss://example/v2"}
+        opts: %{partition_index: 0}
       }
 
-      table = %{Table.new(%{}) | plugins: %{plugin.id => plugin}}
-      FakeStartRegistry.put_live_extensions(@group <> "#p0", table)
+      stub(HubManager, :operator_bindings, fn @namespace, _member ->
+        {:ok, [{binding.id, binding}]}
+      end)
 
       assert {:ok, _} = PartitionGroup.rescale(@namespace, @group, 2)
 
       started = FakeStartRegistry.started() |> Enum.sort_by(& &1.id)
 
       assert Enum.map(started, fn m ->
-               m.opts |> Keyword.fetch!(:plugins) |> Enum.map(& &1.id)
+               m.opts |> Keyword.fetch!(:bindings) |> Enum.map(& &1.id)
              end) == [["ohlc_exchange_ws#p0"], ["ohlc_exchange_ws#p1"]]
 
-      # The member's own partition identity rides along in each plugin's opts.
+      # The member's own partition identity rides along in each binding's opts.
       assert Enum.all?(started, fn m ->
-               [plugin] = Keyword.fetch!(m.opts, :plugins)
-               plugin.operator_id == m.id and is_integer(plugin.opts.key_group_from)
+               [binding] = Keyword.fetch!(m.opts, :bindings)
+               binding.operator_id == m.id and is_integer(binding.opts.key_group_from)
              end)
     end
 

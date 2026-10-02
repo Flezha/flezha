@@ -30,7 +30,9 @@ defmodule Flezha.Plugin.ProviderBehaviour do
 
     `feeds` is the one fact the module cannot be read for: whether the provider's
     own worker injects payloads into the operator. It is declared, because a
-    callback list cannot say it — see `channel_jobs/2`.
+    callback list cannot say it — see `channel_jobs/2`. `shareable` is the other:
+    whether one running copy can serve several bound operators, which a file
+    reader with one offset or a server on one port cannot.
     """
 
     @type worker :: %{
@@ -47,7 +49,8 @@ defmodule Flezha.Plugin.ProviderBehaviour do
             extensions: [atom()],
             own: [atom()],
             worker: worker() | nil,
-            feeds: boolean()
+            feeds: boolean(),
+            shareable: boolean()
           }
 
     defstruct [
@@ -58,7 +61,8 @@ defmodule Flezha.Plugin.ProviderBehaviour do
       options: [],
       extensions: [],
       own: [],
-      feeds: false
+      feeds: false,
+      shareable: false
     ]
 
     @doc "The rows a user can write: everything but the internal ones."
@@ -73,6 +77,19 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     @spec transient_options(t()) :: [atom()]
     def transient_options(%__MODULE__{options: options}),
       do: for({name, row} <- options, Keyword.get(row, :transient, false), do: name)
+
+    @doc """
+    The hooks on which the provider acts on records passing through an
+    operator, of those it defines: what any binding of a plugin may hook it on.
+    """
+    @spec io_hooks(t()) :: [atom()]
+    def io_hooks(%__MODULE__{extensions: extensions}),
+      do: Enum.filter(extensions, &(&1 in Flezha.Plugin.ProviderBehaviour.io_callbacks()))
+
+    @doc "The rows a running plugin applies in place through `reconfigure/2`."
+    @spec live_options(t()) :: [atom()]
+    def live_options(%__MODULE__{options: options}),
+      do: for({name, row} <- options, Keyword.get(row, :live, false), do: name)
   end
 
   @typedoc "Health verdict for a running provider instance."
@@ -161,6 +178,10 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   configuration does not show — the websocket provider's applied subscription
   set, the outcome of its last reconcile, its last error. Default `nil`, so a
   provider stays silent for the instances it does not apply to.
+
+  A report with `connected: false` says the upstream is not open yet: the new
+  copy of a `single` plugin waits for it to clear before it replaces the old
+  one, so the old connection stays open until the new one is.
   """
   @callback inspect_state(opts :: map()) :: map() | nil
 
@@ -185,6 +206,12 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   @callback on_terminate(ctx :: struct(), opts :: map()) :: term()
   @doc "A part or a dead-letter notice, for listeners only: no sink implements it."
   @callback on_preview(ctx :: struct(), opts :: map()) :: term()
+
+  @doc """
+  Apply changed `live:` options to the running plugin, given its running
+  options and the new ones. Required of a provider that declares a live option.
+  """
+  @callback reconfigure(old :: map(), new :: map()) :: :ok | {:error, term()}
 
   @lifecycle_callbacks [
     init_provider: 1,
@@ -220,7 +247,8 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     on_message: 2,
     on_snapshot: 2,
     on_terminate: 2,
-    on_preview: 2
+    on_preview: 2,
+    reconfigure: 2
   ]
 
   @doc "The lifecycle callbacks a provider may override, as `{name, arity}`."

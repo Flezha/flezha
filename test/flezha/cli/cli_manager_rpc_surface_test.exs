@@ -24,7 +24,9 @@ defmodule Flezha.Service.CliManagerRpcSurfaceTest do
     "one_arg" => {2, 2, ""},
     "bare" => {1, 1, ""},
     "scoped_verb" => {2, 1, ""},
-    "quota_verb" => {3, 1, ""}
+    "quota_verb" => {3, 1, ""},
+    "named" => {3, 1, ""},
+    "with_settings" => {4, 1, ""}
   }
 
   # `rpc::run` forwards its name to `rpc::expression`: the seam's own plumbing,

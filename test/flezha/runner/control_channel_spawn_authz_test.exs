@@ -179,8 +179,8 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
 
     for {verb, args} <- [
           {"Operator.stop", ~s(["o1"])},
-          {"PluginManager.enable", ~s(["p1", {"id": "p1"}])},
-          {"PluginManager.disable", ~s(["p1"])}
+          {"PluginManager.enable", ~s(["p1", {"provider": "operator_stdout"}])},
+          {"PluginManager.disable", ~s(["p1", {}])}
         ] do
       assert {:error, %Flezha.Error{code: "authz.role_insufficient"}} =
                Admin.call(@ns, verb, args),

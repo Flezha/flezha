@@ -116,7 +116,10 @@ The system SHALL expose an optional `handle_message` callback on the Rust and Ja
 
 ### Requirement: Handler plugins survive operator migration
 
-The system SHALL migrate `:on_message` hooks along with the operator via the existing ProcessHub handover path. `Flezha.Plugin.Extension.Table.rehydrate/2` MUST re-establish the hook set on the destination node so that, after migration, previously registered handlers remain reachable under the same key and continue to route requests identically.
+The system SHALL migrate `:on_message` hooks along with the operator via the existing
+ProcessHub handover path. The destination Overwatch SHALL bring up the operator's declared
+bindings, so that, after migration, previously registered handlers remain reachable under the
+same key and continue to route requests identically.
 
 #### Scenario: Handler remains registered after migration
 - **WHEN** an operator with an `:on_message` hook serving `key: :k` is migrated to a new node

@@ -169,7 +169,7 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
             call("Operator.start", [%{id: "app_plugin_target", factory_id: "do_nothing"}]),
             call("PluginManager.enable", ["app_sink", plugin]),
             call("PluginManager.list", []),
-            call("PluginManager.disable", ["app_sink"])
+            call("PluginManager.disable", ["app_sink", %{}])
           ],
           secrets
         )
@@ -179,6 +179,35 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
       assert {"PluginManager.list", "ok", plugins} = list
       assert plugins =~ "app_sink"
       assert {"PluginManager.disable", "ok", _disabled} = disable
+    end
+
+    test "it enables a plugin by name, binds two operators and unbinds one", %{secrets: secrets} do
+      bind = &call("PluginManager.bind", ["app_feed", %{operator_id: &1, hooks: ["on_output"]}])
+
+      {port, _runner_id} =
+        drill(
+          @ns,
+          [
+            call("Operator.start", [%{id: "app_bound_a", factory_id: "do_nothing"}]),
+            call("Operator.start", [%{id: "app_bound_b", factory_id: "do_nothing"}]),
+            call("PluginManager.enable", ["app_feed", %{provider: "operator_stdout"}]),
+            bind.("app_bound_a"),
+            bind.("app_bound_b"),
+            call("PluginManager.unbind", ["app_feed", %{operator_id: "app_bound_a"}]),
+            call("PluginManager.list", []),
+            call("PluginManager.disable", ["app_feed", %{}])
+          ],
+          secrets
+        )
+
+      assert [_a, _b, enable, bind_a, bind_b, unbind, list, disable] = answers(port, 8)
+
+      for answer <- [enable, bind_a, bind_b, unbind, disable],
+          do: assert({_verb, "ok", _value} = answer)
+
+      assert {"PluginManager.list", "ok", plugins} = list
+      [feed] = for %{"name" => "app_feed"} = plugin <- Jason.decode!(plugins), do: plugin
+      assert feed["operators"] == ["app_bound_b"]
     end
   end
 

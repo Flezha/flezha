@@ -72,4 +72,19 @@ Delivered to 'prices#p0'.
 Without it, either verb fails with `call.target_unkeyed`, naming the members,
 and exits 2.
 
+## Plugins
+
+A plugin has a name in its namespace, and operators are bound to it:
+
+| Verb | What it does |
+|---|---|
+| `flz plugin enable <name> <provider> [--single]` | enables the plugin; with `--operator_id` it binds that operator in the same command |
+| `flz plugin bind <name> --operator_id <op>` | binds an operator, with its own `--hook` and `--channel` |
+| `flz plugin unbind <name> --operator_id <op>` | takes the binding away; the plugin stays enabled |
+| `flz plugin update <name>` | changes the plugin's options, in place when they are live |
+| `flz plugin disable <name>` | stops the plugin for every operator bound to it |
+| `flz plugin list` | the plugins enabled in the namespace, their operators and controllers |
+
+[`sources_and_sinks.md`](sources_and_sinks.md) walks through them.
+
 TODO: not written yet.

@@ -13,6 +13,9 @@ durability trade-offs, and how broker clients are shared.
 
 The plugin:
 
+- Can be shared: every operator bound to one plugin publishes through one producer per
+  controller, or one in the whole cluster with `--single`. Each member of a partitioned
+  operator runs a producer of its own.
 - Retries every transient broker error — `:no_broker`, `:not_leader_for_partition`,
   `:network_exception`, `:request_timed_out`, `:not_enough_replicas`,
   `:not_enough_replicas_after_append`, `:replica_not_available`, `:leader_not_available`,

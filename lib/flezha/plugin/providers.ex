@@ -79,18 +79,22 @@ defmodule Flezha.Plugin.Providers do
   def reset_installed(), do: :persistent_term.put(@installed_key, %{})
 
   @doc """
-  The worker families to supervise: one per provider row that declares a worker. Read by the application's supervision tree, so a provider that gains a
-  worker gains its supervision from the same declaration.
+  The worker families to supervise: one per provider row that declares a worker,
+  and the shared plugins' copies. Read by the application's supervision tree, so
+  a provider that gains a worker gains its supervision from the same declaration.
 
   Sorted, because a supervision tree's child order is part of what the boot
   contract pins and a map's iteration order is not stable across compilations.
   """
   @spec worker_families() :: [module()]
   def worker_families() do
-    for {_id, module} <- Enum.sort(all()),
-        Code.ensure_loaded?(module),
-        module.__provider__().worker,
-        uniq: true,
-        do: WorkerSup.family(module)
+    providers =
+      for {_id, module} <- Enum.sort(all()),
+          Code.ensure_loaded?(module),
+          module.__provider__().worker,
+          uniq: true,
+          do: WorkerSup.family(module)
+
+    providers ++ [WorkerSup.family(Flezha.Plugin.Shared)]
   end
 end

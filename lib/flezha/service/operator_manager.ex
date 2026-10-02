@@ -27,16 +27,17 @@ defmodule Flezha.Service.OperatorManager do
   defdelegate assign_runner(arg1, arg2, arg3), to: Placement
   defdelegate await_runner(arg1, arg2, arg3, arg4, arg5 \\ fn _ -> true end), to: Placement
   defdelegate pick_runner(arg1, arg2), to: Placement
-  defdelegate redeclare_plugins(arg1, arg2), to: Init
+  defdelegate redeclare(arg1, arg2), to: Init
   defdelegate runner_registered?(arg1), to: Placement
 
   # How many ids a start without one draws before it is refused.
   @id_draws 3
 
+  # The hub's rows of operators: a plugin entry's row is keyed `{:plugin, name}`.
   def operator_registry(namespace) do
     case HubManager.get_registry(namespace) do
       {:ok, registry} ->
-        registry
+        Map.filter(registry, fn {id, _row} -> is_binary(id) end)
 
       {:error, reason} ->
         {:error, reason}

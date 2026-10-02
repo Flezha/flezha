@@ -26,6 +26,7 @@ defmodule Flezha.Service.Listener.Relay do
 
   alias Flezha.Config
   alias Flezha.Config.Durations
+  alias Flezha.Process.Backlog
   alias Flezha.Process.Watch
   alias Flezha.Service.PluginManager
 
@@ -56,15 +57,12 @@ defmodule Flezha.Service.Listener.Relay do
     {:ok,
      Map.merge(args, %{
        watched: watch,
-       queue: :queue.new(),
-       bytes: 0,
-       frames: 0,
+       backlog:
+         Backlog.new(Config.get(:listener_pending_bytes), Config.get(:listener_pending_frames)),
        asked: false,
        ended: false,
        released: false,
-       reading: nil,
-       max_bytes: Config.get(:listener_pending_bytes),
-       max_frames: Config.get(:listener_pending_frames)
+       reading: nil
      })}
   end
 
@@ -114,62 +112,26 @@ defmodule Flezha.Service.Listener.Relay do
 
   defp hold(state, {kind, payload, _metadata} = event) do
     size = if is_binary(payload), do: byte_size(payload), else: 0
-    state = make_room(state, size)
+    {backlog, _dropped} = Backlog.make_room(state.backlog, size, &part?/1)
+    state = %{state | backlog: backlog}
 
     cond do
-      fits?(state, size) ->
-        queued = %{state | queue: :queue.in({event, size}, state.queue)}
-        hand(%{queued | bytes: state.bytes + size, frames: state.frames + 1})
-
-      kind == :part ->
-        state
-
-      true ->
-        overrun(state)
+      Backlog.fits?(backlog, size) -> hand(%{state | backlog: Backlog.push(backlog, event, size)})
+      kind == :part -> state
+      true -> overrun(state)
     end
   end
 
-  defp fits?(state, size),
-    do: state.frames + 1 <= state.max_frames and state.bytes + size <= state.max_bytes
-
-  # Held parts go oldest first until `size` fits, or none is left.
-  defp make_room(state, size) do
-    if fits?(state, size) do
-      state
-    else
-      {dropped, kept} = drop_oldest_part(:queue.to_list(state.queue))
-
-      case dropped do
-        nil ->
-          state
-
-        dropped_size ->
-          make_room(
-            %{
-              state
-              | queue: :queue.from_list(kept),
-                bytes: state.bytes - dropped_size,
-                frames: state.frames - 1
-            },
-            size
-          )
-      end
-    end
-  end
-
-  defp drop_oldest_part(held) do
-    case Enum.split_while(held, fn {{kind, _, _}, _size} -> kind != :part end) do
-      {_all, []} -> {nil, held}
-      {before, [{_part, size} | rest]} -> {size, before ++ rest}
-    end
-  end
+  # Held parts go oldest first to make room.
+  defp part?({kind, _payload, _metadata}), do: kind == :part
+  defp part?(_end), do: false
 
   defp overrun(state) do
     error =
       Flezha.Error.new("listener.overrun",
         operator: state.operator_id,
-        bytes: state.max_bytes,
-        frames: state.max_frames
+        bytes: state.backlog.max_bytes,
+        frames: state.backlog.max_frames
       )
 
     finish_now(state, {:error, error})
@@ -178,17 +140,17 @@ defmodule Flezha.Service.Listener.Relay do
   defp hand(%{asked: false} = state), do: state
 
   defp hand(state) do
-    case :queue.out(state.queue) do
+    case Backlog.out(state.backlog) do
       {:empty, _} ->
         state
 
-      {{:value, {{:end, outcome}, _size}}, _rest} ->
+      {{:end, outcome}, _rest} ->
         send(state.caller, {:listener_end, self(), outcome})
-        %{state | queue: :queue.new(), asked: false}
+        %{state | backlog: Backlog.clear(state.backlog), asked: false}
 
-      {{:value, {event, size}}, rest} ->
+      {event, rest} ->
         send(state.caller, {:listener_event, self(), event})
-        %{state | queue: rest, bytes: state.bytes - size, frames: state.frames - 1, asked: false}
+        %{state | backlog: rest, asked: false}
     end
   end
 
@@ -197,14 +159,12 @@ defmodule Flezha.Service.Listener.Relay do
   defp finish_now(%{ended: true} = state, _outcome), do: state
 
   defp finish_now(state, outcome),
-    do: finish(%{state | queue: :queue.new(), bytes: 0, frames: 0}, outcome)
+    do: finish(%{state | backlog: Backlog.clear(state.backlog)}, outcome)
 
   defp finish(%{ended: true} = state, _outcome), do: state
 
-  defp finish(state, outcome) do
-    ended = %{state | ended: true, queue: :queue.in({{:end, outcome}, 0}, state.queue)}
-    hand(ended)
-  end
+  defp finish(state, outcome),
+    do: hand(%{state | ended: true, backlog: Backlog.push(state.backlog, {:end, outcome}, 0)})
 
   defp check_release(state) do
     case {PluginManager.attachment(state.namespace, state.operator_id, state.plugin_id),

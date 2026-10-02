@@ -191,11 +191,19 @@ const CASES: &[(&[&str], Want)] = &[
         &["state", "list", "MarketOperator", "--output", "json"],
         Rpc(r#"Flezha.Service.CliManager.state_list("MarketOperator", [output: "json"])"#),
     ),
-    // `flz plugin list` — the format flag renders; `--installed` chooses the
-    // collection. Neither may do the other's job.
+    // `flz plugin list` — the format flag renders; `--installed` and
+    // `--providers` choose the collection. Neither may do the other's job.
     (
         &["plugin", "list"],
-        Rpc("Flezha.Service.CliManager.list_plugins([])"),
+        Rpc(r#"Flezha.Service.CliManager.list_enabled_plugins("", [])"#),
+    ),
+    (
+        &["plugin", "list", "--namespace", "n", "--json"],
+        Rpc(r#"Flezha.Service.CliManager.list_enabled_plugins("n", [output: "json"])"#),
+    ),
+    (
+        &["plugin", "list", "--providers"],
+        Rpc("Flezha.Service.CliManager.list_providers([])"),
     ),
     (
         &["plugin", "list", "--installed"],
@@ -251,10 +259,49 @@ const CASES: &[(&[&str], Want)] = &[
     ),
     // The provider registry has no JSON rendering, so asking for one is
     // refused rather than answered with a different query.
-    (&["plugin", "list", "--json"], Refused("--installed")),
+    (&["plugin", "list", "--providers", "--json"], Refused("--installed")),
     (
-        &["plugin", "list", "--output", "json"],
+        &["plugin", "list", "--providers", "--output", "json"],
         Refused("--installed"),
+    ),
+    // The verbs that name a plugin carry its plain options on as one
+    // document; `bind` and `update` carry its settings beside them.
+    (
+        &[
+            "plugin",
+            "bind",
+            "trades",
+            "--operator_id",
+            "a",
+            "--hook=on_output",
+            "--channel",
+            "ticks",
+        ],
+        Rpc(
+            r#"Flezha.Service.CliManager.bind_plugin("trades", "{\"hooks\":[{\"name\":\"on_output\",\"opts\":{}}]}", "{\"operator_id\": \"a\", \"channel\": \"ticks\", \"namespace\": \"default\"}", [])"#,
+        ),
+    ),
+    (
+        &["plugin", "unbind", "trades", "--operator_id", "a", "-n", "n"],
+        Rpc(
+            r#"Flezha.Service.CliManager.unbind_plugin("trades", "{\"operator_id\": \"a\", \"namespace\": \"n\"}", [])"#,
+        ),
+    ),
+    (
+        &["plugin", "update", "trades", "Xsubscription_items=[\"a\"]"],
+        Rpc(
+            r#"Flezha.Service.CliManager.update_plugin("trades", "{\"subscription_items\": [\"a\"]}", "{\"namespace\": \"default\"}", [])"#,
+        ),
+    ),
+    (
+        &["plugin", "disable", "trades"],
+        Rpc(r#"Flezha.Service.CliManager.disable_plugin("trades", "{\"namespace\": \"default\"}", [])"#),
+    ),
+    (
+        &["plugin", "enable", "trades", "operator_websocket", "--single"],
+        Rpc(
+            r#"Flezha.Service.CliManager.enable_plugin("trades", "operator_websocket", "{}", "{\"namespace\": \"default\", \"single\": \"true\"}", [])"#,
+        ),
     ),
     // `flz boot await` takes one option, and it is one option in all four of
     // its spellings (KI-169). The wait is 90 s so a reader that quietly fell
@@ -644,8 +691,8 @@ const CASES: &[(&[&str], Want)] = &[
         Refused("(operator.channel_without_text)"),
     ),
     (
-        &["schedule", "add", "digest", "--cron", "0 8 * * *", "--tz", "Etc/UTC", "--factory", "f", "-n", "prod", "--init-values", r#"{"a":1}"#, "-p", r#"[{"id":"p","provider":"x","hooks":["on_output"]}]"#, "--token", "t"],
-        Rpc(r#"Flezha.Service.CliManager.schedule_add("digest", [cron: "0 8 * * *", tz: "Etc/UTC", factory: "f", namespace: "prod", init_values: "{\"a\":1}", plugins: "[{\"hooks\":[\"on_output\"],\"id\":\"p\",\"provider\":\"x\"}]", token: "t"])"#),
+        &["schedule", "add", "digest", "--cron", "0 8 * * *", "--tz", "Etc/UTC", "--factory", "f", "-n", "prod", "--init-values", r#"{"a":1}"#, "-p", r#"[{"name":"p","provider":"x","hooks":["on_output"]}]"#, "--token", "t"],
+        Rpc(r#"Flezha.Service.CliManager.schedule_add("digest", [cron: "0 8 * * *", tz: "Etc/UTC", factory: "f", namespace: "prod", init_values: "{\"a\":1}", plugins: "[{\"hooks\":[\"on_output\"],\"name\":\"p\",\"provider\":\"x\"}]", token: "t"])"#),
     ),
 ];
 

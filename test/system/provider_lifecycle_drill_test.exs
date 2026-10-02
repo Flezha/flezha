@@ -202,8 +202,10 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     assert Table.running?(table, plugin_id)
     assert Table.workers(table, plugin_id) == %{}
 
-    assert {:ok, _} = PluginManager.disable(plugin_id, %{source: :internal})
-    refute Table.subscribed?(plugin_table(ctx), plugin_id)
+    assert {:ok, _} =
+             PluginManager.disable(plugin_id, [namespace: ctx.namespace], %{source: :internal})
+
+    refute Table.running?(plugin_table(ctx), plugin_id)
   end
 
   test "every declared worker is started at activation and stopped at disable", ctx do
@@ -269,7 +271,12 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
                Provider.Websocket.worker_specs(stored)
 
       assert {disabled, _printed} =
-               ExUnit.CaptureIO.with_io(fn -> CliManager.disable_plugin(plugin_id, []) end)
+               ExUnit.CaptureIO.with_io(fn ->
+                 CliManager.disable_plugin(
+                   plugin_id,
+                   Jason.encode!(%{"namespace" => ctx.namespace})
+                 )
+               end)
 
       assert disabled in [:ok, {:ok, :disabled}]
     end
@@ -281,8 +288,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     builder = %Flezha.Operator.Builder{
       id: id,
       factory_id: "do_nothing",
-      init_values: %{},
-      opts: [plugins: []]
+      init_values: %{}
     }
 
     {:ok, _} = OperatorManager.start_operator(namespace, builder)
@@ -324,15 +330,17 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     assert_worker_shape(id, provider, plugin_id, table)
     assert_info_block(ctx, plugin_id)
 
-    assert_declared_restart(id, provider, plugin_id, table)
+    assert_declared_restart(id, provider, plugin_id)
     assert_stamped(provider, plugin_id, opts)
 
     seen = phase_events(events, plugin_id)
     assert :prepared in seen, "provider `#{id}` emitted no :prepared event"
     assert :running in seen, "provider `#{id}` emitted no :running event"
 
-    assert CliManager.disable_plugin(plugin_id, []) in [:ok, {:ok, :disabled}],
-           "provider `#{id}` refused a real disable"
+    disabled =
+      CliManager.disable_plugin(plugin_id, Jason.encode!(%{"namespace" => ctx.namespace}))
+
+    assert disabled in [:ok, {:ok, :disabled}], "provider `#{id}` refused a real disable"
 
     if worker = provider.__provider__().worker do
       family = WorkerSup.family(provider)
@@ -341,7 +349,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
              "provider `#{id}` left a #{worker.restart} worker registered after disable"
     end
 
-    refute Table.subscribed?(plugin_table(ctx), plugin_id)
+    refute Table.running?(plugin_table(ctx), plugin_id)
   end
 
   # The declared restart value, driven, in OTP's own terms: a killed
@@ -349,20 +357,20 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   # plugin back; a `:transient` or `:permanent` one is restarted by its own
   # supervisor under the same key. A source has nothing to keep and a sink has a
   # queue, which is why the value is the provider's and not the shape's.
-  defp assert_declared_restart(id, provider, plugin_id, table) do
+  defp assert_declared_restart(id, provider, plugin_id) do
     case provider.__provider__().worker do
       nil ->
         :ok
 
       %{restart: :temporary} ->
-        kill_worker(table, plugin_id)
+        kill_worker(provider, plugin_id)
 
         refute wait_until(fn -> alive_worker?(provider, plugin_id) end, 500),
                "provider `#{id}` declares restart :temporary and its supervisor brought the " <>
                  "worker back anyway"
 
       %{restart: restart} ->
-        kill_worker(table, plugin_id)
+        kill_worker(provider, plugin_id)
 
         assert wait_until(fn -> alive_worker?(provider, plugin_id) end, 5_000),
                "provider `#{id}` declares restart #{inspect(restart)} and its supervisor did " <>
@@ -385,8 +393,11 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
 
   defp assert_stamped(_provider, _plugin_id, _opts), do: :ok
 
-  defp kill_worker(table, plugin_id) do
-    pid = Table.owned_pid(table, plugin_id)
+  # The provider's own worker, through its family: a shared plugin's table
+  # tracks the copy that holds it, and the declared restart is the worker's.
+  defp kill_worker(provider, plugin_id) do
+    [key | _] = keys_for(WorkerSup.family(provider), plugin_id)
+    pid = WorkerSup.worker_pid(provider, key)
     ref = Process.monitor(pid)
     Process.exit(pid, :kill)
     assert_receive {:DOWN, ^ref, :process, ^pid, _}, 5_000
@@ -414,8 +425,9 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   # key its declaration names; one that declares none holds nothing.
   defp assert_worker_shape(id, provider, plugin_id, table) do
     case provider.__provider__().worker do
+      # A shared plugin's table tracks the copy it joined, and nothing else.
       nil ->
-        assert Table.workers(table, plugin_id) == %{},
+        assert Map.delete(Table.workers(table, plugin_id), :shared) == %{},
                "provider `#{id}` declares no worker and the table tracks one"
 
       worker ->

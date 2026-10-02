@@ -20,11 +20,10 @@
 #   Flezha.AuthZ.TokenStore.verify/1
 #   Flezha.AuthZ.enforcement_posture/0
 #
-# Two public functions on the modules below are NOT on this surface, because
-# they take no context and no consumer calls them:
+# One public function on the modules below is NOT on this surface, because it
+# takes no context and no consumer calls it:
 # `Flezha.Service.Controller.local_recovery_snapshot/1` is the remote half of
-# one fan-out, and `Flezha.Service.PluginManager.target_namespace/1` is the
-# scope resolver the CLI shares with the published half of that module.
+# one fan-out.
 Flezha.Service.AuditLog.list_files/1
 Flezha.Service.AuditLog.read/2
 Flezha.Service.AuditLog.rotate/1
@@ -83,9 +82,11 @@ Flezha.Service.Operator.registry/2
 Flezha.Service.Operator.send/5
 Flezha.Service.Operator.start/3
 Flezha.Service.Operator.stop/3
-Flezha.Service.PluginManager.disable/2
+Flezha.Service.PluginManager.bind/3
+Flezha.Service.PluginManager.disable/3
 Flezha.Service.PluginManager.enable/3
 Flezha.Service.PluginManager.list/1
+Flezha.Service.PluginManager.unbind/3
 Flezha.Service.Schedule.add/2
 Flezha.Service.Schedule.assert_entry/2
 Flezha.Service.Schedule.list/1

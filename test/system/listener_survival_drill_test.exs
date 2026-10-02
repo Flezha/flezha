@@ -24,8 +24,10 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
 
   alias Flezha.Operator.{Builder, PartitionGroup}
   alias Flezha.Partition
+  alias Flezha.Plugin.Extension.Table
   alias Flezha.SDK.KeyGroup
   alias Flezha.Service.{CliManager, HubManager, Listener, OperatorManager, PluginManager}
+  alias FlezhaTest.Fixtures.OperatorFixture
   alias FlezhaTest.Helper.{FleetStateHelper, NodeTestHelper, TierE2EHarness}
 
   @moduletag reference_runtime: true
@@ -232,13 +234,14 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
       assert {:ok, _} = PluginManager.enable_plugin("moved_sink_c", sink)
       move_off_this_node(ctx)
       assert wait_until(fn -> hosted_on?(ns, id, peer) and bound?(ns, id) end, 90_000)
+      assert wait_until(fn -> running_plugins(ns, id) != [] end, 30_000)
 
       assert {:ok, "plugin disabled"} =
-               :erpc.call(c_node, PluginManager, :disable_plugin_group, ["moved_sink_c"], 30_000)
+               :erpc.call(c_node, PluginManager, :disable_plugin, [ns, "moved_sink_c"], 30_000)
 
-      assert wait_until(fn -> plugin_ids(ns, id) == [] end, 30_000)
+      assert wait_until(fn -> running_plugins(ns, id) == [] end, 30_000)
       after_ticks(3)
-      assert plugin_ids(ns, id) == []
+      assert running_plugins(ns, id) == []
     end
 
     test "a file sink enabled through A on an operator moved to B is disabled through A",
@@ -252,11 +255,12 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
       assert {:ok, _} = PluginManager.enable_plugin("moved_sink", sink)
       move_off_this_node(ctx)
       assert wait_until(fn -> hosted_on?(ns, id, peer) and bound?(ns, id) end, 90_000)
+      assert wait_until(fn -> running_plugins(ns, id) != [] end, 30_000)
 
-      assert {:ok, "plugin disabled"} = PluginManager.disable_plugin_group("moved_sink")
-      assert wait_until(fn -> plugin_ids(ns, id) == [] end, 30_000)
+      assert {:ok, "plugin disabled"} = PluginManager.disable_plugin(ns, "moved_sink")
+      assert wait_until(fn -> running_plugins(ns, id) == [] end, 30_000)
       after_ticks(3)
-      assert plugin_ids(ns, id) == []
+      assert running_plugins(ns, id) == []
     end
   end
 
@@ -292,9 +296,10 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
     stop_listening(listener, ns, rescaled)
   end
 
-  defp plugin_ids(ns, id) do
-    case HubManager.operator_plugins(ns, id) do
-      {:ok, plugins} -> Enum.map(plugins, &elem(&1, 0))
+  # A disable stops every running copy and leaves the binding in place.
+  defp running_plugins(ns, id) do
+    case OperatorManager.get_overwatch_state(ns, id) do
+      {:ok, %{extensions: table}} -> Table.running_ids(table)
       _ -> []
     end
   end
@@ -327,7 +332,8 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
 
   defp start!(ns, factory, kind, plugins \\ []) do
     id = unique(factory)
-    builder = %Builder{id: id, factory_id: factory, run: kind, opts: [plugins: plugins]}
+    bindings = OperatorFixture.bindings(ns, id, plugins)
+    builder = %Builder{id: id, factory_id: factory, run: kind, opts: [bindings: bindings]}
     assert {:ok, _} = OperatorManager.start_operator(ns, builder)
     id
   end

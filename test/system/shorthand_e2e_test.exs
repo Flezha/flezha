@@ -37,6 +37,7 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
   alias Flezha.Payloader
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperatorManager
+  alias FlezhaTest.Fixtures.OperatorFixture
   alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag timeout: 300_000
@@ -101,7 +102,7 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
              OperatorManager.start_operator(ctx.namespace, %Builder{
                id: operator_id,
                factory_id: "sugar_steps",
-               opts: [plugins: [sink(ctx.namespace, operator_id)]]
+               opts: [bindings: sink(ctx.namespace, operator_id)]
              })
 
     # The instance waits for its message; the send on `order` is what runs the
@@ -152,7 +153,7 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
              OperatorManager.start_operator(namespace, %Builder{
                id: operator_id,
                factory_id: factory,
-               opts: [plugins: [sink(namespace, operator_id)]]
+               opts: [bindings: sink(namespace, operator_id)]
              })
 
     operator_id
@@ -193,13 +194,13 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
   end
 
   defp sink(namespace, operator_id) do
-    %Flezha.Plugin{
-      id: "shorthand_sink_#{operator_id}",
-      namespace: namespace,
-      operator_id: operator_id,
-      provider: Flezha.Plugin.Provider.BeamMsgForward,
-      opts: %{recv_pid: self(), include_metadata: true},
-      hooks: [{:on_output, []}]
-    }
+    OperatorFixture.bindings(namespace, operator_id, [
+      %Flezha.Plugin{
+        id: "shorthand_sink",
+        provider: Flezha.Plugin.Provider.BeamMsgForward,
+        opts: %{recv_pid: self(), include_metadata: true},
+        hooks: [{:on_output, []}]
+      }
+    ])
   end
 end

@@ -15,6 +15,7 @@ defmodule Flezha.Operator.Handover do
 
   alias Flezha.Config
   alias Flezha.Operator.Calls
+  alias Flezha.Operator.Lifecycle
   alias Flezha.Operator.Overwatch
   alias Flezha.Operator.Plugins
   alias Flezha.Plugin.Extension.Table
@@ -48,7 +49,6 @@ defmodule Flezha.Operator.Handover do
       namespace: state.namespace,
       factory_id: state.factory_id,
       init_values: state.init_values,
-      plugins: Table.serializable_plugins(state.extensions),
       calls: Calls.export(state.calls)
     }
 
@@ -94,13 +94,23 @@ defmodule Flezha.Operator.Handover do
       end
     end
 
-    # Tear down existing, then rehydrate; bring up so providers reconnect.
-    table = Plugins.unregister(Table.teardown_all(state.extensions))
-    rehydrated = Table.rehydrate(table, Map.get(handover_state, :plugins, []))
+    # The bindings come up from the operator's declared entry, resolved on this
+    # controller: what it can run here may differ from what the old one could.
+    # A provider that fails to reconnect stays `:prepared`; the convergence loop
+    # diffs it as missing and heals it under backoff.
+    fresh = %Overwatch{state | extensions: Table.teardown_all(state.extensions)}
 
-    # A provider that fails to reconnect on the migrated side stays `:prepared`;
-    # the convergence loop diffs it as missing and heals it under backoff.
-    {brought_up, _failed} = Plugins.bring_up(%Overwatch{state | extensions: rehydrated})
+    prepared =
+      case Plugins.prepare(fresh, Lifecycle.declared_bindings(fresh, state.builder)) do
+        {:ok, prepared} ->
+          prepared
+
+        {:error, reason} ->
+          Logger.warning("[handover] #{state.id} arrived without its plugins: #{inspect(reason)}")
+          fresh
+      end
+
+    {brought_up, _failed} = Plugins.bring_up(prepared)
 
     %Overwatch{
       state

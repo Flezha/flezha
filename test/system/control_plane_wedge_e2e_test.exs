@@ -17,6 +17,7 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
   alias Flezha.Operator.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperatorManager
+  alias FlezhaTest.Fixtures.OperatorFixture
 
   @factory "wedge_probe"
   @heartbeat_ms 300
@@ -85,12 +86,12 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
       boot_runner(namespace, unique_id_path("wedge_e2e"), [env: heartbeat_env()] ++ opts)
 
     assert {:ok, %{runner_id: ^runner_id}} =
-             OperatorManager.start_operator(namespace, builder(operator_id, self()))
+             OperatorManager.start_operator(namespace, builder(namespace, operator_id, self()))
 
     {operator_id, port, runner_id}
   end
 
-  defp builder(operator_id, recv_pid) do
+  defp builder(namespace, operator_id, recv_pid) do
     sink = %Flezha.Plugin{
       id: "wedge_sink",
       namespace: nil,
@@ -104,7 +105,7 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
       id: operator_id,
       factory_id: @factory,
       init_values: %{},
-      opts: [plugins: [sink]]
+      opts: [bindings: OperatorFixture.bindings(namespace, operator_id, [sink])]
     }
   end
 

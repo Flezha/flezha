@@ -32,6 +32,7 @@ defmodule FlezhaTest.System.WireRefusalDrillTest do
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.StreamPool
   alias Flezha.Service.OperatorManager
+  alias FlezhaTest.Fixtures.OperatorFixture
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.TierE2EHarness
 
@@ -54,7 +55,7 @@ defmodule FlezhaTest.System.WireRefusalDrillTest do
     operator_id = "wr_eof_#{System.unique_integer([:positive])}"
 
     assert {:ok, %{runner_id: ^runner_id}} =
-             OperatorManager.start_operator(namespace, builder(operator_id, self()))
+             OperatorManager.start_operator(namespace, builder(namespace, operator_id, self()))
 
     assert produced?(operator_id, namespace, "alive", 60_000)
 
@@ -77,7 +78,7 @@ defmodule FlezhaTest.System.WireRefusalDrillTest do
     operator_id = "wr_exit_#{System.unique_integer([:positive])}"
 
     assert {:ok, %{runner_id: ^runner_id}} =
-             OperatorManager.start_operator(namespace, builder(operator_id, self()))
+             OperatorManager.start_operator(namespace, builder(namespace, operator_id, self()))
 
     assert produced?(operator_id, namespace, "alive", 60_000)
 
@@ -108,7 +109,7 @@ defmodule FlezhaTest.System.WireRefusalDrillTest do
     operator_id = "wr_sever_#{System.unique_integer([:positive])}"
 
     assert {:ok, %{runner_id: ^runner_id}} =
-             OperatorManager.start_operator(namespace, builder(operator_id, self()))
+             OperatorManager.start_operator(namespace, builder(namespace, operator_id, self()))
 
     assert produced?(operator_id, namespace, "before", 60_000)
 
@@ -139,7 +140,7 @@ defmodule FlezhaTest.System.WireRefusalDrillTest do
     {port, runner_id}
   end
 
-  defp builder(operator_id, recv_pid) do
+  defp builder(namespace, operator_id, recv_pid) do
     sink = %Flezha.Plugin{
       id: "wire_refusal_sink",
       namespace: nil,
@@ -149,7 +150,12 @@ defmodule FlezhaTest.System.WireRefusalDrillTest do
       hooks: [{:on_output, []}]
     }
 
-    %Builder{id: operator_id, factory_id: @factory, init_values: %{}, opts: [plugins: [sink]]}
+    %Builder{
+      id: operator_id,
+      factory_id: @factory,
+      init_values: %{},
+      opts: [bindings: OperatorFixture.bindings(namespace, operator_id, [sink])]
+    }
   end
 
   # Feeds one input until its own output comes back, so "the wire works" is

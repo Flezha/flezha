@@ -21,6 +21,7 @@ defmodule FlezhaTest.System.RemoteFlowE2ETest do
   alias Flezha.State.DurabilityTier.Backend.LocalPath
   alias Flezha.State.DurabilityTier.Manifest
   alias Flezha.State.{InputLog, Paths}
+  alias FlezhaTest.Fixtures.OperatorFixture
 
   @moduletag timeout: 300_000
 
@@ -47,7 +48,7 @@ defmodule FlezhaTest.System.RemoteFlowE2ETest do
       id: operator_id,
       factory_id: "remote_tier_store",
       init_values: %{},
-      opts: [plugins: [sink]]
+      opts: [bindings: OperatorFixture.bindings(namespace, operator_id, [sink])]
     }
 
     assert {:ok, %{runner_id: ^exec_a}} = OperatorManager.start_operator(namespace, builder)

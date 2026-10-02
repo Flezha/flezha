@@ -273,7 +273,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
     #{name} Plugin Help
 
     USAGE:
-        flz plugin enable <plugin_id> #{provider_id} [OPTIONS]
+        flz plugin enable <name> #{provider_id} [OPTIONS]
     """ <>
       param_block("REQUIRED", required) <>
       param_block("OPTIONAL", optional) <>

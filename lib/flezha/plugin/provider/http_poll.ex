@@ -28,6 +28,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
 
   use ProviderBehaviour,
     feeds: true,
+    shareable: true,
     options: [
       url: [type: :string, required: true, doc: "The resource to GET each interval"],
       # One of the two is required and a row can only say so of itself, so each

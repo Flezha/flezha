@@ -54,10 +54,10 @@ defmodule Flezha.Service.Operator do
     {:ok, HubManager.operator_rows(namespace)}
   end
 
-  @doc "The plugins declared by each operator in `namespace`."
+  @doc "The plugin bindings each operator in `namespace` declares."
   @spec operator_plugins(String.t(), caller_context()) :: {:ok, [map()]} | {:error, term()}
   verb operator_plugins(namespace, caller_context), verb: :operator_info do
-    {:ok, HubManager.operator_plugins(namespace)}
+    {:ok, HubManager.operator_bindings(namespace)}
   end
 
   @doc "The namespace's hub registry, as the hub reports it."

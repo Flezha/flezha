@@ -131,8 +131,8 @@ because every start resolves through one claim, `ProcessHub.Service.Distributor.
 `DistributedSupervisor`'s `{:already_started, pid}`. A start that loses the claim answers
 `:duplicate` after verifying the winner is live and does nothing to it. The CLI renders that
 as success — `flz operator start` against a live instance exits 0 as a no-op, `--partitions N`
-over an existing group starts only the missing members, `flz plugin enable` on an attached
-plugin reports `already_enabled` — so re-running a cold-start script is the supported heal
+over an existing group starts only the missing members, `flz plugin enable` of an enabled
+plugin with the same provider reports `already_enabled` — so re-running a cold-start script is the supported heal
 after a warm restart. A refused claim with **no** live winner (a stale registry row) stays a
 loud error. Boot is held by `Flezha.Convergence.RecoveryGate` until hubs are `:normal`; later
 a round reporting `started > 0` triggers one convergence tick that adopts what it started.

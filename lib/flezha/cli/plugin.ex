@@ -1,8 +1,8 @@
 defmodule Flezha.Service.Cli.Plugin do
   @moduledoc """
-  `flz plugin`: enable, disable, help and the provider list, the installed
-  package list, and the entry the verbs that place packages run in a VM of their
-  own.
+  `flz plugin`: enable, bind, unbind, update, disable, the enabled plugins and
+  the provider list, help, the installed package list, and the entry the verbs
+  that place packages run in a VM of their own.
   """
 
   alias Flezha.Cluster.Directory
@@ -15,47 +15,155 @@ defmodule Flezha.Service.Cli.Plugin do
   alias Flezha.Service.Cli.Context
   alias Flezha.Service.PluginManager
 
-  # The plain options an enable reads. The verb is open, so every other plain
-  # word a caller types arrives in the same document.
-  @read_options ["namespace", "operator_id"]
+  # The plain options each verb reads. The verbs are open, so every other plain
+  # word a caller types arrives in the same document and is refused.
+  @read_options %{
+    enable: ["namespace", "operator_id", "channel", "single"],
+    bind: ["namespace", "operator_id", "channel"],
+    unbind: ["namespace", "operator_id"],
+    update: ["namespace"],
+    disable: ["namespace"]
+  }
 
   @doc """
   The row a `plugin enable` is judged by: the namespace in the caller's
   options, with the decoded provider, flags and options the body needs. A plain
   option the enable does not read is refused before anything is written.
   """
-  def enable_row([_plugin_id, provider_id, plugin_flags_json, opts_json | _]) do
+  def enable_row([_name, provider_id, plugin_flags_json, opts_json | _]) do
     with {:ok, provider_mod} <- get_plugin_provider_mod(provider_id),
-         opts = Context.json!(opts_json, "plugin options"),
-         :ok <- refuse_unread_options(opts) do
-      plugin_flags = Context.json!(plugin_flags_json, "plugin settings")
+         {:ok, row} <- row(:enable, plugin_flags_json, opts_json),
+         do: {:ok, Map.put(row, :provider_mod, provider_mod)}
+  end
 
+  @doc "The row a `plugin bind` is judged by."
+  def bind_row([_name, plugin_flags_json, opts_json | _]),
+    do: row(:bind, plugin_flags_json, opts_json)
+
+  @doc "The row a `plugin update` is judged by."
+  def update_row([_name, plugin_flags_json, opts_json | _]),
+    do: row(:update, plugin_flags_json, opts_json)
+
+  @doc "The row a `plugin unbind` is judged by."
+  def unbind_row([_name, opts_json | _]), do: row(:unbind, "{}", opts_json)
+
+  @doc "The row a `plugin disable` is judged by."
+  def disable_row([_name, opts_json | _]), do: row(:disable, "{}", opts_json)
+
+  defp row(verb, plugin_flags_json, opts_json) do
+    opts = Context.json!(opts_json, "plugin options")
+
+    with :ok <- refuse_unread_options(opts, Map.fetch!(@read_options, verb)) do
       {:ok,
        %{
          namespace: Map.get(opts, "namespace", "default"),
-         provider_mod: provider_mod,
-         plugin_flags: plugin_flags,
+         plugin_flags: Context.json!(plugin_flags_json, "plugin settings"),
          opts: opts
        }}
     end
   end
 
-  @doc "The row a `plugin disable` is judged by: the namespace the plugin is enabled in."
-  def plugin_row([plugin_id | _]),
-    do: {:ok, %{namespace: PluginManager.target_namespace(plugin_id)}}
-
-  @doc "Enables plugin."
-  def enable_plugin(plugin_id, provider_id, _plugin_flags_json, _opts_json, %{row: row}) do
-    with {:ok, plugin} <- plugin(plugin_id, row),
-         {:ok, outcome} <- PluginManager.enable_plugin(plugin_id, plugin) do
-      IO.puts(enabled_message(plugin_id, outcome))
+  @doc """
+  Enable a plugin by name, and with `--operator_id` bind it in the same
+  command. A bind that fails leaves the plugin enabled, and the enable's line
+  says so before the refusal.
+  """
+  def enable_plugin(name, provider_id, _plugin_flags_json, _opts_json, %{row: row}) do
+    with {:ok, hooks, provider_opts} <- read_settings(row.plugin_flags),
+         :ok <- refuse_hooks_without_operator(hooks, row),
+         entry = %Plugin{
+           id: name,
+           provider: row.provider_mod,
+           namespace: row.namespace,
+           opts: provider_opts,
+           single: Map.get(row.opts, "single") == "true"
+         },
+         {:ok, outcome} <- PluginManager.enable_plugin(name, entry) do
+      IO.puts(enabled_message(name, outcome))
       warn_lacking(row.namespace, provider_id)
+      if Map.has_key?(row.opts, "operator_id"), do: bind(name, row, hooks), else: :ok
     end
   end
 
+  # A hook says what a plugin sends to an operator, so it belongs to a binding.
+  defp refuse_hooks_without_operator([_ | _], %{opts: opts} = row)
+       when not is_map_key(opts, "operator_id"),
+       do: {:error, {:plugin_target_missing, row.namespace, nil}}
+
+  defp refuse_hooks_without_operator(_hooks, _row), do: :ok
+
+  @doc "Bind an operator to an enabled plugin."
+  def bind_plugin(name, _plugin_flags_json, _opts_json, %{row: row}) do
+    with {:ok, hooks, provider_opts} <- read_settings(row.plugin_flags),
+         :ok <- refuse_settings(provider_opts),
+         do: bind(name, row, hooks)
+  end
+
+  defp bind(name, %{opts: opts} = row, hooks) do
+    with {:ok, operator_id} <- operator_of(row) do
+      case PluginManager.bind_plugin(row.namespace, name, operator_id,
+             hooks: hooks,
+             channel: Map.get(opts, "channel")
+           ) do
+        :ok -> IO.puts("Plugin #{name} bound to #{operator_id}.")
+        :already_bound -> IO.puts("Plugin #{name} is already bound to #{operator_id}.")
+        {:error, _} = refused -> refused
+      end
+    end
+  end
+
+  @doc "Unbind an operator from a plugin, which stays enabled."
+  def unbind_plugin(name, _opts_json, %{row: row}) do
+    with {:ok, operator_id} <- operator_of(row),
+         :ok <- PluginManager.unbind_plugin(row.namespace, name, operator_id),
+         do: IO.puts("Plugin #{name} unbound from #{operator_id}; it stays enabled.")
+  end
+
+  @doc """
+  Change a plugin's options: in place when every changed option is live,
+  otherwise by restarting every running copy, with a warning naming the
+  operators bound to it.
+  """
+  def update_plugin(name, _plugin_flags_json, _opts_json, %{row: row}) do
+    with {:ok, [], provider_opts} <- read_settings(row.plugin_flags),
+         {:ok, %{applied: applied, operators: operators}} <-
+           PluginManager.update_plugin(row.namespace, name, provider_opts) do
+      case {applied, operators} do
+        {:unchanged, _} ->
+          IO.puts("Plugin #{name} is unchanged.")
+
+        {:live, _} ->
+          IO.puts("Plugin #{name} updated in place.")
+
+        {:restarted, []} ->
+          IO.puts("Plugin #{name} updated; its running copies restarted.")
+
+        {:restarted, operators} ->
+          IO.puts("Plugin #{name} updated; its running copies restarted.")
+          IO.puts("warning: restarted under #{Enum.join(operators, ", ")}")
+      end
+    else
+      {:ok, [_ | _], _opts} -> {:error, {:unread_plugin_options, ["--hook"]}}
+      {:error, _} = refused -> refused
+    end
+  end
+
+  defp operator_of(%{opts: %{"operator_id" => operator_id}}) when operator_id != "",
+    do: {:ok, operator_id}
+
+  defp operator_of(row), do: {:error, {:plugin_target_missing, row.namespace, nil}}
+
+  # A bind names a plugin and how one operator is bound to it; the plugin's
+  # own settings are the enable's and the update's.
+  defp refuse_settings(provider_opts) when provider_opts == %{}, do: :ok
+
+  defp refuse_settings(provider_opts),
+    do: {:error, {:unread_plugin_options, Enum.map(Map.keys(provider_opts), &"X#{&1}")}}
+
   # A provider comes from a package installed per controller, so another
-  # controller holding the namespace's hub may lack it. The enable proceeds; an
-  # operator placed there parks naming the provider.
+  # controller holding the namespace's hub may lack it. The enable proceeds;
+  # the plugin does not run there, and an operator bound to it there runs
+  # without it.
   defp warn_lacking(namespace, provider_id) do
     case lacking(Directory.hub_nodes(namespace) -- [node()], provider_id) do
       [] ->
@@ -64,8 +172,8 @@ defmodule Flezha.Service.Cli.Plugin do
       lacking ->
         IO.puts(
           "warning: #{Enum.map_join(lacking, ", ", &to_string/1)} hold namespace " <>
-            "'#{namespace}' and lack provider '#{provider_id}' or did not answer; an " <>
-            "operator placed there parks"
+            "'#{namespace}' and lack provider '#{provider_id}' or did not answer; the " <>
+            "plugin will not run there, and an operator bound to it there runs without it"
         )
     end
   end
@@ -85,27 +193,12 @@ defmodule Flezha.Service.Cli.Plugin do
     for {peer, answer} <- Enum.zip(peers, answers), not match?({:ok, {:ok, _}}, answer), do: peer
   end
 
-  defp plugin(plugin_id, row) do
-    with {:ok, hooks, provider_opts} <- read_settings(row.plugin_flags) do
-      {:ok,
-       %Plugin{
-         id: plugin_id,
-         provider: row.provider_mod,
-         namespace: row.namespace,
-         operator_id:
-           Map.get(row.plugin_flags, "operator_id") || Map.get(row.opts, "operator_id"),
-         opts: provider_opts,
-         hooks: hooks
-       }}
-    end
-  end
-
-  defp enabled_message(plugin_id, :already_enabled) do
-    "Plugin #{plugin_id} is already enabled; the existing instance was left " <>
+  defp enabled_message(name, :already_enabled) do
+    "Plugin #{name} is already enabled; the existing plugin was left " <>
       "untouched (options were not compared)."
   end
 
-  defp enabled_message(plugin_id, _msg), do: "Plugin #{plugin_id} enabled successfully."
+  defp enabled_message(name, _msg), do: "Plugin #{name} enabled."
 
   @doc """
   The settings document read as the plugin's hooks and its provider options.
@@ -128,15 +221,12 @@ defmodule Flezha.Service.Cli.Plugin do
   defp read_hooks([]), do: {:ok, []}
   defp read_hooks(written), do: Plugin.hooks(written)
 
-  # Dropping a word the caller typed would enable a plugin with less than was
-  # written and still report success.
-  defp refuse_unread_options(opts) do
-    case opts |> Map.drop(@read_options) |> Map.keys() |> Enum.sort() do
-      [] ->
-        :ok
-
-      unread ->
-        {:error, {:unread_plugin_options, Enum.map(unread, &"--#{&1}")}}
+  # Dropping a word the caller typed would act with less than was written and
+  # still report success.
+  defp refuse_unread_options(opts, read) do
+    case opts |> Map.drop(read) |> Map.keys() |> Enum.sort() do
+      [] -> :ok
+      unread -> {:error, {:unread_plugin_options, Enum.map(unread, &"--#{&1}")}}
     end
   end
 
@@ -148,13 +238,31 @@ defmodule Flezha.Service.Cli.Plugin do
     end
   end
 
+  @doc "Disable a plugin: every running copy stops, every binding stays."
+  def disable_plugin(name, _opts_json, %{row: row}) do
+    with {:ok, _msg} <- PluginManager.disable_plugin(row.namespace, name),
+         do: IO.puts("Plugin #{name} disabled.")
+  end
+
   @doc """
-  Disables a plugin — or, when the id was fanned out over a partition group,
-  every `#pK` instance of it.
+  The plugins enabled in `namespace`: each one's provider, whether it is
+  `single`, its bound operators, and the controllers it runs on or `idle`.
   """
-  def disable_plugin(plugin_id, _call) do
-    with {:ok, msg} <- PluginManager.disable_plugin_group(plugin_id),
-         do: IO.puts("Plugin #{plugin_id} disabled successfully (#{msg}).")
+  def list_enabled_plugins(namespace, %{opts: opts}) do
+    rows = PluginManager.plugins(Flezha.AuthZ.Namespace.or_default(namespace))
+
+    case Context.format(opts) do
+      "json" -> IO.puts(Jason.encode!(rows))
+      _ when rows == [] -> IO.puts("No plugins enabled.")
+      _ -> Enum.each(rows, &IO.puts(enabled_line(&1)))
+    end
+  end
+
+  defp enabled_line(row) do
+    single = if row.single, do: " single", else: ""
+    where = if row.controllers == [], do: "idle", else: Enum.join(row.controllers, ", ")
+    bound = if row.operators == [], do: "none", else: Enum.join(row.operators, ", ")
+    "#{row.name}  #{row.provider}#{single}  bound: #{bound}  runs on: #{where}"
   end
 
   @doc """
@@ -276,7 +384,7 @@ defmodule Flezha.Service.Cli.Plugin do
   end
 
   @doc "List all available plugin providers."
-  def list_plugins(_call) do
+  def list_providers(_call) do
     enabled_plugins = Providers.all()
 
     IO.puts("Available Plugin Providers:")

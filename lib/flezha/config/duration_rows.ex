@@ -142,6 +142,12 @@ defmodule Flezha.Config.DurationRows do
     {:convergence_unmet_intent_grace_ms, :ms, 120_000,
      key: true, env: "FLEZHA_CONVERGENCE_UNMET_INTENT_GRACE_MS"},
     {:plugin_stable_uptime_ms, :ms, 60_000, key: true},
+    # How long a shared plugin whose last operator went down or moved away
+    # waits for one to come back before it stops.
+    {:plugin_idle_stop_ms, :ms, 60_000, key: true, env: "FLEZHA_PLUGIN_IDLE_STOP_MS"},
+    # How often a retiring copy of a `single` plugin asks its successor whether
+    # its upstream is open.
+    {:plugin_successor_poll_ms, :ms, 50, key: true},
 
     # ---- plugins -----------------------------------------------------------
     # Headroom above the Overwatch call for provider health probes: each
@@ -153,16 +159,16 @@ defmodule Flezha.Config.DurationRows do
     {:kafka_linger_ms, :ms, 5_000, []},
     {:kafka_worker_call_ms, :ms, 5_000, []},
     {:plugin_call_timeout_ms, :ms, 2_000, []},
-    # Strictly inside `plugin_service_call_ms` and strictly outside
-    # `plugin_call_timeout_ms`: an inner bound equal to the outer one is no
-    # bound at all — both give up at the same instant.
+    # Strictly inside `route_call_timeout_ms`, which bounds a plugin verb run
+    # on another controller, and strictly outside `plugin_call_timeout_ms`: an
+    # inner bound equal to the outer one is no bound at all — both give up at
+    # the same instant.
     {:plugin_disable_fanout_ms, :ms, 3_000, []},
     # One plugin package download, whatever its redirects.
     {:plugin_fetch_ms, :ms, 60_000, []},
     # How long an enable waits for the namespace's other controllers to say
     # whether they hold the provider.
     {:plugin_peer_check_ms, :ms, 2_000, []},
-    {:plugin_service_call_ms, :ms, 5_000, []},
     # How long a listener's relay waits after its plugin was released before
     # it asks the registry what the release was, and between asks: a move or a
     # restart brings the plugin's worker back well inside it.

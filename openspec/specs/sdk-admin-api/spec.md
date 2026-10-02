@@ -5,7 +5,7 @@ TBD - created by archiving change let-an-application-administer-its-namespace. U
 ## Requirements
 ### Requirement: An application administers its own namespace from runner code
 
-The SDK SHALL offer, on the runner object rather than on a tasklet context, a surface by which ordinary application code administers the namespace its connection proved. The surface SHALL cover starting, stopping and sending to an operator, enabling and disabling a plugin, and reading operators, plugins and cell state. It SHALL require no tasklet to be running and SHALL require the application to hold no credential of its own beyond what its connection already presented. Starting SHALL take the same specification `flz operator start` takes: the factory, and an id only when the application chooses one.
+The SDK SHALL offer, on the runner object rather than on a tasklet context, a surface by which ordinary application code administers the namespace its connection proved. The surface SHALL cover starting, stopping and sending to an operator, enabling and disabling a plugin by name, binding a plugin to an operator and unbinding it, and reading operators, plugins and cell state. It SHALL require no tasklet to be running and SHALL require the application to hold no credential of its own beyond what its connection already presented. Starting SHALL take the same specification `flz operator start` takes: the factory, and an id only when the application chooses one. Enabling SHALL take the same specification `flz plugin enable` takes: the name, the provider and its options, and an operator only when the application binds in the same call.
 
 #### Scenario: An application starts an operator it implements
 
@@ -30,6 +30,13 @@ The SDK SHALL offer, on the runner object rather than on a tasklet context, a su
   arbitrarily long time without user intervention
 - **THEN** no credential held by the application SHALL have lapsed, and the call
   SHALL be judged exactly as it would have been on the first day
+
+#### Scenario: An application shares a plugin between two operators
+
+- **WHEN** application code enables a plugin by name and binds it to two operators
+  it started
+- **THEN** both operators SHALL be bound to the one plugin, and unbinding one SHALL
+  leave the other bound and the plugin enabled
 
 ### Requirement: The act is judged and recorded like any other user act
 

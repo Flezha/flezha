@@ -78,6 +78,8 @@ defmodule FlezhaTest.SdkConformance.GateTest do
     Operator.list_operators
     Operator.cell_state
     PluginManager.enable
+    PluginManager.bind
+    PluginManager.unbind
     PluginManager.disable
     PluginManager.list
   )
@@ -98,8 +100,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   # definition or a use would take, never prose.
   @retired_steps_names [
     {"a `tasklets` body", ~r/\b(?:fn|def|void)\s+tasklets\s*\(/},
-    {"a kind class",
-     ~r/\b(?:Unbounded|Bounded)Operator\b|\b(?:unbounded|bounded)_operator\b/},
+    {"a kind class", ~r/\b(?:Unbounded|Bounded)Operator\b|\b(?:unbounded|bounded)_operator\b/},
     {"a class-level retry knob",
      ~r/\b(?:retry_attempts|retryAttempts|barrier_retry_attempts|barrierRetryAttempts)\b|\bfn retry_backoff\(|\bretryBackoff\(/},
     {"`ZeroRetryBackoff`", ~r/\bZeroRetryBackoff\b/}

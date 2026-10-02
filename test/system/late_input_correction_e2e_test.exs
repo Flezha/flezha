@@ -27,6 +27,7 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
   alias Flezha.Operator.ClassRegistry
   alias Flezha.Payloader
   alias Flezha.Service.OperatorManager
+  alias FlezhaTest.Fixtures.OperatorFixture
 
   @moduletag timeout: 300_000
 
@@ -59,7 +60,7 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
       id: operator_id,
       factory_id: @factory,
       init_values: %{},
-      opts: [plugins: [sink]]
+      opts: [bindings: OperatorFixture.bindings(namespace, operator_id, [sink])]
     }
 
     assert {:ok, _info} = OperatorManager.start_operator(namespace, builder)

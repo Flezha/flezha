@@ -14,6 +14,12 @@ defmodule Flezha.Plugin do
   package manifest and direct construction produce.
   `Flezha.Plugin.Extension.Table.canonicalise/2` reduces all of them to
   `{atom, keyword}` with typed values, which is what every later reader sees.
+
+  The struct has two readings. A plugin ENTRY is a named plugin in a namespace:
+  its provider, its options and `single`, with no operator and no hooks. A
+  BINDING is that plugin on one operator: the hooks, and the options this
+  operator writes over the entry's (its channel, a non-shareable plugin's
+  committed position). `resolve/2` lays a binding over its entry.
   """
 
   alias Flezha.Plugin.ProviderBehaviour.Options
@@ -28,7 +34,8 @@ defmodule Flezha.Plugin do
           opts: map(),
           hooks: [hook()],
           namespace: atom() | binary() | nil,
-          operator_id: binary() | nil
+          operator_id: binary() | nil,
+          single: boolean()
         }
 
   @enforce_keys [:id, :provider]
@@ -38,7 +45,8 @@ defmodule Flezha.Plugin do
     opts: %{},
     hooks: [],
     namespace: nil,
-    operator_id: nil
+    operator_id: nil,
+    single: false
   ]
 
   @doc """
@@ -72,7 +80,7 @@ defmodule Flezha.Plugin do
     end
   end
 
-  @fields [:id, :provider, :opts, :hooks, :namespace, :operator_id]
+  @fields [:id, :provider, :opts, :hooks, :namespace, :operator_id, :single]
 
   defp required_fields(fields) do
     case {Enum.reject([:id, :provider], &Keyword.has_key?(fields, &1)),
@@ -196,11 +204,45 @@ defmodule Flezha.Plugin do
     }
   end
 
-  defp base_id(plugin_id) do
+  @doc """
+  The plugin name a binding id names: the id itself, or the id a partition
+  member's binding carries with its `#pK` taken off.
+  """
+  @spec base_id(binary()) :: binary()
+  def base_id(plugin_id) do
     case Flezha.Partition.split_member_suffix(plugin_id) do
       {base, _index} -> base
       :error -> plugin_id
     end
+  end
+
+  @doc "The partition group a member's id names, or the id itself for an operator that is none."
+  @spec group_of(binary()) :: binary()
+  def group_of(operator_id), do: base_id(operator_id)
+
+  # The options that name the channel a plugin is attached to. A binding that
+  # names one replaces all three of the entry's, so the two never meet as two
+  # spellings of one channel.
+  @channel_opts [:channel, :channel_in, :channel_out]
+
+  @doc """
+  `binding` laid over its plugin `entry`: the entry's provider and options, the
+  binding's id, operator and hooks, and the binding's own options written over
+  the entry's.
+  """
+  @spec resolve(t(), t()) :: t()
+  def resolve(%__MODULE__{} = binding, %__MODULE__{} = entry) do
+    entry_opts =
+      if Enum.any?(@channel_opts, &Map.has_key?(binding.opts, &1)),
+        do: Map.drop(entry.opts, @channel_opts),
+        else: entry.opts
+
+    %__MODULE__{
+      binding
+      | provider: entry.provider,
+        single: entry.single,
+        opts: Map.merge(entry_opts, binding.opts)
+    }
   end
 
   @doc """

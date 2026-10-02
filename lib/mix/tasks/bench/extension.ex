@@ -35,7 +35,9 @@ defmodule Mix.Tasks.Bench.Extension do
   defmodule BenchProvider do
     @moduledoc false
     alias Flezha.Plugin.Extension.Ctx
+    use Flezha.Plugin.ProviderBehaviour
 
+    @impl true
     def on_input(%Ctx.IO{} = ctx, _opts), do: {:ok, ctx}
   end
 
@@ -61,6 +63,7 @@ defmodule Mix.Tasks.Bench.Extension do
     # exercises Extension.run/3 and needs no live processes.
     Mix.Task.run("loadpaths")
     Mix.Task.run("compile")
+    {:ok, _} = Application.ensure_all_started(:telemetry)
 
     catalog =
       Host.build_catalog(
@@ -110,8 +113,6 @@ defmodule Mix.Tasks.Bench.Extension do
 
     {:ok, table} =
       Table.bulk_subscribe(Table.new(catalog), [{"kafka-bench", kafka_plugin(worker)}])
-
-    {:ok, _} = Application.ensure_all_started(:telemetry)
 
     host = spawn(fn -> chain_host_loop(table, ctx) end)
     {total, send_us, final_qlen} = drive_host(host)

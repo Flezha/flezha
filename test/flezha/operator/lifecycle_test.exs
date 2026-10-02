@@ -28,17 +28,22 @@ defmodule FlezhaTest.Operator.OverwatchRetryTest do
   alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
-  import ExUnit.CaptureLog
   import FlezhaTest.Helper.MessageTestHelper, only: [become_loop: 0]
 
   # async: false: writes Application env; the live controller and its fleet; node-global tables.
 
   use FlezhaTest.Case, fixtures: [:env], async: false
+  use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   @namespace "default"
   @factory "store_input"
 
+  setup :set_mimic_global_until_exit
+
   setup do
+    # Each operator starts bound to a plugin these tests build whole.
+    stub(Flezha.Service.PluginManager, :resolve, fn _ns, plugin, _entry -> {:ok, plugin} end)
     test_pid = self()
     ets = :ets.new(:overwatch_retry_test, [:public, :set])
 
@@ -87,7 +92,7 @@ defmodule FlezhaTest.Operator.OverwatchRetryTest do
     operator = %Builder{
       id: "ping_success_operator",
       factory_id: @factory,
-      opts: [plugins: [plugin]]
+      opts: [bindings: [plugin]]
     }
 
     assert {:ok, _} = OperatorManager.start_operator(@namespace, operator)
@@ -159,7 +164,7 @@ defmodule FlezhaTest.Operator.OverwatchRetryTest do
       hooks: [{:on_input, [position: 0]}]
     }
 
-    operator = %Builder{id: "unpark_operator", factory_id: @factory, opts: [plugins: [plugin]]}
+    operator = %Builder{id: "unpark_operator", factory_id: @factory, opts: [bindings: [plugin]]}
 
     {:ok, pid} = Overwatch.start_link({@namespace, "stale_ce", operator})
 
@@ -240,7 +245,7 @@ defmodule FlezhaTest.Operator.OverwatchRetryTest do
     operator = %Builder{
       id: "cascade_operator",
       factory_id: @factory,
-      opts: [plugins: [plugin]]
+      opts: [bindings: [plugin]]
     }
 
     baseline = :erlang.memory(:processes)
@@ -264,7 +269,9 @@ defmodule FlezhaTest.Operator.OverwatchRetryTest do
   describe "a park is reported, not only logged" do
     test "a park caused by a plugin names the plugin that caused it" do
       id = "park-plugin-#{System.unique_integer([:positive])}"
-      reason = {:plugin_prepare_failed, "orphan", {:module_not_loaded, MyOrg.Uninstalled}}
+
+      reason =
+        {:plugin_prepare_failed, "orphan", {:provider_refused, "pkg", "orphan_provider", :bad}}
 
       MessageTestHelper.forward_telemetry(
         [:flezha, :operator, :parked],
@@ -274,9 +281,7 @@ defmodule FlezhaTest.Operator.OverwatchRetryTest do
 
       state = %Overwatch{id: id, namespace: @namespace}
 
-      {parked, log} = with_log(fn -> Lifecycle.park(state, reason) end)
-      assert %Overwatch{init_error: ^reason} = parked
-      assert log =~ "operator #{id} parked: plugin orphan"
+      assert %Overwatch{init_error: ^reason} = Lifecycle.park(state, reason)
 
       assert_receive {:parked, %{count: 1}, meta}
       assert meta.namespace == @namespace

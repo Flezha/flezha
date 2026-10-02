@@ -45,7 +45,7 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
     # The runtime half of an enable/disable. The stub has no extension table;
     # answering `:ok` is what lets a test drive the durable half of
     # `PluginManager.enable_plugin/2` without a bound runner.
-    def handle_call({:plugin_subscribe, _id, _plugin}, _from, state),
+    def handle_call({:plugin_subscribe, _id, _binding, _entry}, _from, state),
       do: {:reply, :ok, state}
 
     def handle_call({:plugin_unsubscribe, _id}, _from, state), do: {:reply, :ok, state}
@@ -202,9 +202,9 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
   end
 
   @doc """
-  The plugin list a restored operator was started with. An Overwatch builds its
-  extension table from exactly this (`Flezha.Operator.Lifecycle.complete_init/4`
-  hands `operator.opts[:plugins]` to `Plugins.prepare/2`), and `StubChild`
+  The bindings a restored operator was started with. An Overwatch builds its
+  extension table from exactly these (`Flezha.Operator.Lifecycle.complete_init/4`
+  hands `operator.opts[:bindings]` to `Plugins.prepare/2`), and `StubChild`
   stands in for it, so the stub is asked what it was handed.
   """
   def started_plugins(hub_id, operator_id) do
@@ -219,7 +219,7 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
         {_ns, _runner, operator} -> operator
       end)
 
-    Keyword.get(operator.opts, :plugins, [])
+    Keyword.get(operator.opts, :bindings, [])
   end
 
   @doc "The node `operator_id`'s registry row names a live pid on, awaited up to `timeout_ms`."

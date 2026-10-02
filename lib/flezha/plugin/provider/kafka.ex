@@ -56,6 +56,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
 
     use ProviderBehaviour,
       name: "kafka",
+      shareable: true,
       options: [
         hosts: [
           type: :any,
@@ -165,7 +166,11 @@ defmodule Flezha.Plugin.Provider.Kafka do
 
     @impl true
     def init_provider(opts) do
-      plugin_id = opts.plugin_id || "default-#{System.unique_integer([:positive])}"
+      # The plugin's own name where a host gives one, so a shared copy and the
+      # operators bound to it name one producer.
+      plugin_id =
+        opts.plugin_id || opts[:source_plugin_id] ||
+          "default-#{System.unique_integer([:positive])}"
 
       with {:ok, hosts} <- parse_hosts(opts.hosts),
            :ok <- validate_window(opts) do

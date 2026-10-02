@@ -72,7 +72,8 @@ defmodule Flezha.Service.HubManager.Placement do
   away from. The loop's next tick reads the row beside the binding and
   re-publishes the binding when they differ; nothing is decided here.
   """
-  def hook_registry_written(hub_id, %{child_id: operator_id} = hook_data) do
+  def hook_registry_written(hub_id, %{child_id: operator_id} = hook_data)
+      when is_binary(operator_id) do
     local = node()
     namespace = Identificator.namespace_from_hub(hub_id)
     DurabilityTier.ship_cspec(hub_id)
@@ -86,6 +87,9 @@ defmodule Flezha.Service.HubManager.Placement do
     end)
   end
 
+  # A plugin child has no binding for the loop to read.
+  def hook_registry_written(hub_id, _plugin_child), do: DurabilityTier.ship_cspec(hub_id)
+
   @doc "The owning runner recorded on `operator_id`'s durable row, or `nil`."
   def operator_runner_tag(namespace, operator_id) do
     Rows.with_live_hub(namespace, nil, fn hub_id ->
@@ -96,8 +100,10 @@ defmodule Flezha.Service.HubManager.Placement do
     end)
   end
 
+  # A plugin child is the plugin's home and has no runner to assign.
   def alter_child_data(_hub_id, %{child_spec: cs} = child_data) do
     case start_args(cs) do
+      {:ok, {_namespace, _runner, %Flezha.Plugin{}}} -> child_data
       {:ok, parsed} -> place_child(child_data, cs, parsed)
       :error -> unparsable_child(child_data, cs)
     end

@@ -3,8 +3,9 @@
 For users who put an operator behind HTTP: a client sends a request, the operator's graph
 decides the answer, and the same connection can instead carry a stream of another
 operator's parts and outputs as server-sent events. `FlezhaHttp.Provider` (provider id
-`http_server`) is a plugin package, `flezha_http`, built outside this repository in
-`Flezha/flezha_http_plugin`, whose README covers building and testing it. This page is its
+`http_server`) is a plugin package, `flezha_http`, built in its own repository,
+`Flezha/flezha_http_plugin`, which this repository carries as the submodule
+`plugins/flezha_http_plugin`; its README covers building and testing it. This page is its
 contract.
 
 ## Contract
@@ -13,6 +14,7 @@ contract.
 | --- | --- |
 | Package | `flezha_http`, built on Bandit and Plug, installed with `flz plugin install` and loaded at the next boot (see [installation.md](installation.md)) |
 | Hooks | `:on_terminate`: the server drives itself; a plugin spec must name one hook |
+| Shared | no: a second operator bound to it is refused (`plugin.not_shareable`) |
 | Server | HTTP/1.1 only, on `bind` and `port`, started when the plugin activates and stopped when it is disabled or its operator stops |
 | Request | one outside call of the operator the plugin is enabled on, on its entry channel, with a JSON request envelope as the input |
 | Answer | the operator's `response()` output, a JSON answer envelope: a plain response, or a stream |
@@ -42,7 +44,7 @@ Or declared at start (`flz operator start <factory> --id gateway --plugins <file
 ```json
 [
   {
-    "id": "web",
+    "name": "web",
     "provider": "http_server",
     "opts": {"port": "8080", "channel": "http", "pass_headers": "x-api-key"},
     "hooks": ["on_terminate"]

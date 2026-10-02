@@ -56,6 +56,31 @@ defmodule FlezhaTest.Fixtures.OperatorFixture do
     OperatorManager.stop_operator(namespace, operator_id)
   end
 
+  @doc """
+  The bindings an operator starting in `namespace` carries for `plugins`: each
+  plugin is enabled as `<id>_<operator_id>`, one plugin per operator as a
+  test's sink is (disabled again when the test ends), and bound, as
+  `flz operator start --plugins` does. For `opts: [bindings: ...]`.
+  """
+  def bindings(namespace, operator_id, plugins) do
+    plugins =
+      Enum.map(plugins, fn plugin ->
+        %{
+          plugin
+          | id: "#{plugin.id}_#{operator_id}",
+            namespace: namespace,
+            operator_id: operator_id
+        }
+      end)
+
+    Enum.each(plugins, fn plugin ->
+      ExUnit.Callbacks.on_exit(fn -> PluginManager.disable_plugin(namespace, plugin.id) end)
+    end)
+
+    {:ok, bindings} = PluginManager.start_bindings(namespace, plugins)
+    bindings
+  end
+
   def attach_output_msg(
         {:ok, %{operator_id: cid}} = start_res,
         namespace \\ @default_namespace

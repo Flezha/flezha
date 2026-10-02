@@ -17,9 +17,10 @@ defmodule Flezha.Plugin.Extension.Table.Entry do
   A plugin's lifecycle phase. `nil` until it enters the table, so entering is a
   transition like any other; `:prepared` is validated and holding nothing;
   `:running` is activated with its declared worker up; `{:down, reason}` is a
-  subscriber whose worker died, which the convergence loop restarts.
+  subscriber whose worker died, which the convergence loop restarts;
+  `{:not_started, reason}` is a binding that could not come up here at all.
   """
-  @type phase() :: nil | :prepared | :running | {:down, term()}
+  @type phase() :: nil | :prepared | :running | {:down, term()} | {:not_started, term()}
 
   @type t() :: %__MODULE__{
           provider: module() | nil,

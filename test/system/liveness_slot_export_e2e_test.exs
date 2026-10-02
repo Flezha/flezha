@@ -33,6 +33,7 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperatorManager
   alias Flezha.Transport.LivenessCounters
+  alias FlezhaTest.Fixtures.OperatorFixture
 
   @factory "wedge_probe"
   @heartbeat_ms 200
@@ -149,7 +150,7 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
       )
 
     assert {:ok, %{runner_id: ^runner_id}} =
-             OperatorManager.start_operator(namespace, builder(operator_id, self()))
+             OperatorManager.start_operator(namespace, builder(namespace, operator_id, self()))
 
     assert produces?(operator_id, namespace, "one", "ok:one", 60_000),
            "the operator never produced, so nothing counted"
@@ -269,7 +270,7 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
     end
   end
 
-  defp builder(operator_id, recv_pid) do
+  defp builder(namespace, operator_id, recv_pid) do
     sink = %Flezha.Plugin{
       id: "liveness_sink",
       namespace: nil,
@@ -283,7 +284,7 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
       id: operator_id,
       factory_id: @factory,
       init_values: %{},
-      opts: [plugins: [sink]]
+      opts: [bindings: OperatorFixture.bindings(namespace, operator_id, [sink])]
     }
   end
 end

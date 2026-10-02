@@ -13,13 +13,12 @@ it on the same Erlang release or one of the two after it, and on the same Elixir
 later one, with a warning when the Elixir minors differ. So the package is built in the
 controller image's builder stage, which has the same toolchain.
 
-> Get the Flezha repository and the HTTP plugin's, side by side, then build the builder
-> image from the Flezha checkout.
+> Get the Flezha repository with its submodules, the HTTP plugin's among them, then build
+> the builder image from the checkout.
 > {: .step}
 
 ```sh
-$ git clone https://github.com/flezha/flezha
-$ git clone https://github.com/flezha/flezha_http_plugin
+$ git clone --recurse-submodules https://github.com/flezha/flezha
 $ cd flezha
 $ docker build --target plugin-builder -t flezha/plugin-builder:0.1.0 -f docker/prod/Dockerfile.controller .
 ```
@@ -28,8 +27,7 @@ $ docker build --target plugin-builder -t flezha/plugin-builder:0.1.0 -f docker/
 > {: .step}
 
 ```sh
-$ cd ../flezha_http_plugin
-$ docker run --rm -v "$PWD/..:/src" -w /src/flezha_http_plugin flezha/plugin-builder:0.1.0 sh -c 'mix deps.get && mix flezha.plugin.package'
+$ docker run --rm -v "$PWD:/src" -w /src/plugins/flezha_http_plugin flezha/plugin-builder:0.1.0 sh -c 'mix deps.get && mix flezha.plugin.package'
 ```
 
 ```output
@@ -37,12 +35,12 @@ $ docker run --rm -v "$PWD/..:/src" -w /src/flezha_http_plugin flezha/plugin-bui
 ==> flezha_http
 Compiling 6 files (.ex)
 Generated flezha_http app
-Wrote /src/flezha_http_plugin/_build/flezha_http-0.1.0.fpz
+Wrote /src/plugins/flezha_http_plugin/_build/flezha_http-0.1.0.fpz
 ```
 
-The folder holding both checkouts is mounted, because the plugin builds against the
-Flezha checkout beside it. The package holds the plugin and the libraries it needs that
-the controller does not ship, Bandit and Plug among them.
+The whole checkout is mounted, because the plugin builds against the Flezha checkout it is
+a submodule of. The package holds the plugin and the libraries it needs that the
+controller does not ship, Bandit and Plug among them.
 
 ## Rebuild the controller's image
 
@@ -142,6 +140,14 @@ def on_output(%Ctx.IO{message: payload} = ctx, opts) do
   {:ok, ctx}
 end
 ```
+
+This provider writes one file per plugin, so it cannot be shared. A provider whose
+one worker can serve every operator bound to its plugin declares
+`shareable: true` on the `use`, and each controller then runs one copy for all of them.
+An option row with `live: true` can be changed on a running plugin by
+`flz plugin update`; the provider then implements `reconfigure/2`, which the
+controller calls with the old and the new options, and a module that declares a live
+option without it does not compile.
 
 `Flezha.Plugin.ProviderBehaviour` documents the provider contract. It is packaged and
 installed as the HTTP plugin was, from its own folder, and then enabled on an operator

@@ -14,6 +14,7 @@ operators, plain inserts for everything else. See
 | --- | --- |
 | Plugin type | `:io_binding` |
 | Hooks | `:on_input`, `:on_output` |
+| Shared | no: a second operator bound to it is refused (`plugin.not_shareable`) |
 | Downstream | one PostgreSQL database, over a pool the plugin owns |
 | Delivery | the committed transaction IS the confirmation; it answers the outbox hold each guaranteed record carries |
 | Overflow | delay, never loss: an enqueue past `queue_max` parks until a flush frees space |

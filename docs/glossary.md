@@ -138,12 +138,14 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **Plugin** — a `%Flezha.Plugin{}` binding a **provider** module to one or more **hooks** on a
   host such as the Overwatch (`:on_input`, `:on_output`, `:on_message`, ...); its provider is
   first-party or comes from a **plugin package** (`.fpz`, placed by `flz plugin install` and
-  loaded when the controller starts), and it is attached per operator
-  (`flz plugin enable|disable`). See [`plugins/lifecycle.md`](plugins/lifecycle.md) and
+  loaded when the controller starts), and it is enabled once by name in a namespace
+  (`flz plugin enable|disable`) and **bound** to each operator it serves (`flz plugin
+  bind|unbind`). A provider declared `shareable` runs one copy per controller for every bound
+  operator, or one in the cluster with `--single`. See
   [`plugins/installation.md`](plugins/installation.md).
 - **Hook**: a named point at which the platform calls a plugin, named by the provider callback it
   runs: `on_input`, `on_output`, `on_interval`, `on_message`, `on_snapshot`, `on_terminate`, and
-  `on_operator_init` at operator start only. Chosen with `--hook=<name>` on `flz plugin enable`,
+  `on_operator_init` at operator start only. Chosen with `--hook=<name>` on `flz plugin enable` or `bind`,
   with its options written `--<name>.<key>=<value>`, or under `"hooks"` in a plugin spec and
   `hooks:` in a package manifest. `on_interval` needs `interval_ms`; there is no default. A
   plugin with no hooks still feeds its operator through its provider's own worker: hooks decide
@@ -155,7 +157,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   other at-least-once. See [`plugins/operator_forward.md`](plugins/operator_forward.md).
 - **`:on_message`** — the synchronous request/reply hook (`OperatorMessage` /
   `OperatorMessageResponse` on the control channel, `flz operator send`), as opposed to data
-  flow into the input stream. See [`plugins/message_handlers.md`](plugins/message_handlers.md).
+  flow into the input stream.
 - **First-party source plugins** — `HttpPoll` feeds an entry channel from a URL, injecting the
   body only when its SHA-256 changes plus one seed per (re)start, so consumers must be idempotent
   ([`plugins/http_poll.md`](plugins/http_poll.md)); `Websocket` re-subscribes a live socket

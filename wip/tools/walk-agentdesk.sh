@@ -22,7 +22,7 @@
 # It needs the controller image flezha/flezha:0.1.0, built here from this tree
 # when absent (FLEZHA_WALK_REBUILD=1 builds it again), and the SDK installed the
 # way the project's README says for a checkout. `plugins` also needs the HTTP
-# plugin's checkout beside this one (FLEZHA_HTTP_PLUGIN_DIR).
+# plugin's submodule checked out at plugins/flezha_http_plugin.
 #
 # Every step's command and output go to $OUT/<page>/<nn>-<step>.txt, so an
 # output block in a guide is copied from a capture rather than typed. `flz` in
@@ -37,7 +37,7 @@ ROOT=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 OUT=${WALK_OUT:-$ROOT/wip/tools/.cache/walk/agentdesk-$SDK}
 DESK=${WALK_DESK:-$ROOT/sdk/$SDK/examples/agentdesk}
 STAGES=${WALK_STAGES:-}
-PLUGIN_SRC=${FLEZHA_HTTP_PLUGIN_DIR:-$ROOT/../flezha_http_plugin}
+PLUGIN_SRC=$ROOT/plugins/flezha_http_plugin
 SCRATCH=$ROOT/wip/tools/.cache/agentdesk-src
 IMAGE=flezha/flezha:0.1.0
 BUILDER=flezha/plugin-builder:0.1.0
@@ -137,17 +137,15 @@ streamed() {
 }
 
 plugins() {
-  [ -d "$PLUGIN_SRC" ] || { echo "walk: no HTTP plugin checkout at $PLUGIN_SRC" >&2; exit 1; }
+  [ -f "$PLUGIN_SRC/mix.exs" ] || { echo "walk: the HTTP plugin submodule is not checked out at $PLUGIN_SRC" >&2; exit 1; }
   clean_scratch
-  mkdir -p "$SCRATCH/flezha" "$SCRATCH/flezha_http_plugin"
+  mkdir -p "$SCRATCH/flezha"
   git -C "$ROOT" ls-files --recurse-submodules -z | rsync -a --from0 --files-from=- "$ROOT/" "$SCRATCH/flezha/"
-  git -C "$PLUGIN_SRC" ls-files -z | rsync -a --from0 --files-from=- "$PLUGIN_SRC/" "$SCRATCH/flezha_http_plugin/"
   cd "$SCRATCH/flezha" || exit 1
   step builder "docker build --target plugin-builder -t $BUILDER -f docker/prod/Dockerfile.controller ."
-  cd "$SCRATCH/flezha_http_plugin" || exit 1
-  step package "docker run --rm -v \"\$PWD/..:/src\" -w /src/flezha_http_plugin $BUILDER sh -c 'mix deps.get && mix flezha.plugin.package'"
+  step package "docker run --rm -v \"\$PWD:/src\" -w /src/plugins/flezha_http_plugin $BUILDER sh -c 'mix deps.get && mix flezha.plugin.package'"
   cd "$DESK" || exit 1
-  cp "$SCRATCH/flezha_http_plugin/_build/flezha_http-0.1.0.fpz" controller/plugins/
+  cp "$SCRATCH/flezha/plugins/flezha_http_plugin/_build/flezha_http-0.1.0.fpz" controller/plugins/
   step up "docker compose up -d --build --wait controller"
   step plugin-list "flz plugin list --installed"
   runner_up

@@ -307,9 +307,7 @@ defmodule Flezha.Operator.Migration do
   @spec durable_steps?(Overwatch.t(), map()) :: boolean()
   def durable_steps?(%Overwatch{} = state, operator) do
     Builder.journals?(state.builder) and
-      PersistenceResolver.keeps_state?(
-        Keyword.get(operator.opts, :operator_class, operator.id)
-      )
+      PersistenceResolver.keeps_state?(Keyword.get(operator.opts, :operator_class, operator.id))
   end
 
   @doc """
@@ -429,9 +427,13 @@ defmodule Flezha.Operator.Migration do
     end
   end
 
+  # A deliberate stop removed the operator's declared entry before it
+  # terminated: a shared plugin it was the last one on stops at once. A move or
+  # a restart leaves the entry, and the plugin waits out its idle stop.
   defp plugin_table_step({state, reason}, _budget) do
     unless is_nil(state.runner_id), do: Plugins.fire_on_terminate(state, reason)
-    _ = Plugins.unregister(Table.teardown_all(state.extensions))
+    declared? = Enum.any?(HubManager.declared_operators(state.namespace), &(&1.id == state.id))
+    _ = Table.teardown_all(state.extensions, if(declared?, do: :idle, else: :now))
     :ok
   end
 

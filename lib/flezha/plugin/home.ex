@@ -1,0 +1,125 @@
+defmodule Flezha.Plugin.Home do
+  @moduledoc """
+  A named plugin's hub child: the process the namespace hub places for the
+  `{:plugin, name}` entry of its declared set, so a plugin is recorded, placed,
+  restored and stopped exactly as an operator is.
+
+  A plugin without `single` runs nothing here: its copies run where its
+  operators run (`Flezha.Plugin.Shared`). A `single` plugin's one copy runs
+  beside this home: started with it, stopped after the idle stop while no
+  operator joins it, and started again by the next one that does. On a move
+  the hub starts the new home, and with it the new copy, before it hands the
+  subscribed operators over, and the old copy stops once the new one runs, so
+  the new connection opens before the old one closes.
+  """
+
+  use GenServer
+  use ProcessHub.Strategy.Migration.HotSwap
+
+  alias Flezha.Config.Durations
+  alias Flezha.Identificator
+  alias Flezha.Plugin
+  alias Flezha.Plugin.Shared
+  alias Flezha.Process.Cspec
+
+  @doc """
+  Run `fun` inside the home of the plugin `name`, one call at a time: a bind of
+  a plugin that cannot be shared checks who holds it and writes its binding
+  there, so two binds cannot both find it free.
+  """
+  @spec serialized(binary(), binary(), (-> result)) :: result | {:error, term()}
+        when result: term()
+  def serialized(namespace, name, fun) do
+    case ProcessHub.child_lookup(Identificator.hub(namespace), {:plugin, name}) do
+      {_spec, [{_node, home} | _]} ->
+        GenServer.call(home, {:serialized, fun}, Durations.get(:route_call_timeout_ms))
+
+      _none ->
+        {:error, {:plugin_not_found, name}}
+    end
+  catch
+    :exit, reason -> {:error, {:unreachable, reason}}
+  end
+
+  # The copy is linked: one that stopped because its last operator left is
+  # started again by the next one that joins; one that died takes its home
+  # along, and the hub starts it again.
+  @impl true
+  def handle_info({:EXIT, copy, :normal}, %{copy: copy} = state),
+    do: {:noreply, %{state | copy: nil}}
+
+  def handle_info({:EXIT, copy, reason}, %{copy: copy} = state), do: {:stop, reason, state}
+  def handle_info(_other, state), do: {:noreply, state}
+
+  @spec start_link({binary(), Plugin.t()}) :: GenServer.on_start()
+  def start_link({namespace, %Plugin{} = entry}),
+    do: GenServer.start_link(__MODULE__, {namespace, entry})
+
+  @impl true
+  def init({namespace, %Plugin{id: name, single: single} = entry}) do
+    Process.flag(:trap_exit, true)
+    state = %{namespace: namespace, name: name, copy: nil}
+
+    case single && start_copy(state, entry) do
+      {:ok, state} -> {:ok, state}
+      {:error, reason} -> {:stop, reason}
+      false -> {:ok, state}
+    end
+  end
+
+  @impl true
+  def handle_call(:copy, _from, %{copy: copy} = state) when is_pid(copy),
+    do: {:reply, {:ok, copy}, state}
+
+  def handle_call(:copy, _from, state) do
+    with {:ok, entry} <- current_entry(state),
+         {:ok, state} <- start_copy(state, entry) do
+      {:reply, {:ok, state.copy}, state}
+    else
+      {:error, _} = refused -> {:reply, refused, state}
+    end
+  end
+
+  def handle_call({:serialized, fun}, _from, state), do: {:reply, fun.(), state}
+
+  # The entry as the hub's row holds it now: an update and a committed value
+  # rewrite the row, never this process's start argument.
+  defp current_entry(%{namespace: namespace, name: name}) do
+    with {cspec, _nodes} <- ProcessHub.child_lookup(Identificator.hub(namespace), {:plugin, name}),
+         {:ok, {_namespace, %Plugin{} = entry}} <- Cspec.start_arg(cspec) do
+      {:ok, entry}
+    else
+      _unreadable -> {:error, {:plugin_not_running, name}}
+    end
+  end
+
+  defp start_copy(%{namespace: namespace} = state, %Plugin{} = entry) do
+    case Shared.start_link(%{
+           namespace: namespace,
+           plugin: Shared.entry(%Plugin{entry | namespace: namespace})
+         }) do
+      {:ok, copy} -> {:ok, %{state | copy: copy}}
+      {:error, _} = refused -> refused
+    end
+  end
+
+  @impl true
+  def prepare_handover_state(%{copy: nil}), do: []
+  def prepare_handover_state(%{copy: copy}), do: Shared.subscribers(copy)
+
+  @impl true
+  def alter_handover_state(%{copy: nil} = state, _subscribers), do: state
+
+  def alter_handover_state(%{copy: copy} = state, subscribers) do
+    Shared.adopt(copy, subscribers)
+    state
+  end
+
+  @impl true
+  def terminate(_reason, %{copy: nil}), do: :ok
+
+  def terminate(_reason, %{copy: copy}) do
+    Process.unlink(copy)
+    Shared.retire(copy)
+  end
+end

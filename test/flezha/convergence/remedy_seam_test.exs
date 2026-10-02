@@ -386,8 +386,9 @@ defmodule Flezha.Convergence.RemedySeamTest do
     end
   end
 
-  # A plugin table is torn down by the process step alone, and a handover
-  # rebuilds one (not a teardown). Durable state is deleted through the one
+  # A plugin table is torn down by the process step alone, a handover
+  # rebuilds one (not a teardown), and a shared plugin's copy tears down the
+  # table it owns when it stops or restarts. Durable state is deleted through the one
   # guard in `Paths`; the hub registry directory is the hub step's own.
   #
   # Scoped to the controller tree: `lib/mix/` is the bench harness, which
@@ -397,7 +398,8 @@ defmodule Flezha.Convergence.RemedySeamTest do
   @teardown_allowed %{
     {Flezha.Plugin.Extension.Table, :teardown_all} => [
       "lib/flezha/operator/migration.ex",
-      "lib/flezha/operator/handover.ex"
+      "lib/flezha/operator/handover.ex",
+      "lib/flezha/plugin/shared.ex"
     ],
     {File, :rm_rf} => [
       "lib/flezha/state/paths.ex",

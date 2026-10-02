@@ -10,7 +10,7 @@ durability tier survives total disk loss.
 
 Every durable operator start SHALL be declared through the hub's declared-children set (`durable: true` at the single start authority), user-issued, scheduled, and tasklet-requested alike, and every deliberate stop or steps completion SHALL remove the entry through the hub stop path. Flezha SHALL NOT maintain any intent store of its own, and no flezha code path outside the start/stop authority SHALL mutate declared intent.
 
-Plugin mutations are declared intent by the same reasoning and SHALL be written to the declared set, through that same start authority, so a restart rebuilds an operator with the plugins it was last known to have. The declared set is written at start and at stop and has no update path of its own; that update is the start authority's to make, and no other flezha code path SHALL make it. A plugin mutation against an operator with no declared entry SHALL be refused rather than declare one, so it can never resurrect an operator a stop removed for good.
+A plugin is declared intent by the same reasoning: an enabled plugin SHALL be its own entry in its namespace's declared set, keyed `{:plugin, name}`, written by the start authority at enable and at `flz plugin update`, and removed by the hub stop path at disable. An operator's bindings to plugins SHALL be written to the operator's own entry through that same start authority, so a restart rebuilds an operator with the bindings it was last known to have. The declared set is written at start and at stop and has no update path of its own; that update is the start authority's to make, and no other flezha code path SHALL make it. A binding mutation against an operator with no declared entry SHALL be refused rather than declare one, so it can never resurrect an operator a stop removed for good. Every reader of the declared set that means operators SHALL skip plugin entries.
 
 #### Scenario: Runtime loss does not lose intent
 
@@ -35,15 +35,20 @@ Plugin mutations are declared intent by the same reasoning and SHALL be written 
   a whole-cluster cold start mid-lifetime restores it and a cold start after
   completion does not
 
-#### Scenario: A plugin mutation reaches the declared set through the start authority
+#### Scenario: A binding reaches the declared set through the start authority
 
-- **WHEN** `flz plugin enable` succeeds on a running operator
-- **THEN** the operator's declared entry carries the plugin, the entry is replaced in place with nothing started or stopped, and the write was issued by the start authority rather than by the plugin manager
+- **WHEN** `flz plugin bind` succeeds on a running operator
+- **THEN** the operator's declared entry carries the binding, the entry is replaced in place with nothing started or stopped, and the write was issued by the start authority rather than by the plugin manager
 
-#### Scenario: A plugin mutation never declares an undeclared operator
+#### Scenario: A binding never declares an undeclared operator
 
-- **WHEN** a plugin mutation names an operator that has no declared entry
+- **WHEN** a bind names an operator that has no declared entry
 - **THEN** it is refused naming that reason, and no entry is created
+
+#### Scenario: A plugin is its own entry
+
+- **WHEN** `flz plugin enable trades websocket --namespace n` succeeds and then `flz plugin disable trades --namespace n` runs
+- **THEN** the declared set of `n` holds `{:plugin, "trades"}` between the two and not after, and `declared_operators/2` lists neither
 
 ### Requirement: Convergence re-derives runtime state from the declared set
 

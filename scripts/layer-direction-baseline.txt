@@ -47,7 +47,6 @@ lib/flezha/operator/overwatch.ex -> Flezha.State.Paths
 lib/flezha/operator/overwatch.ex -> Flezha.State.PersistenceResolver
 lib/flezha/operator/partition_group.ex -> Flezha.AuthZ.Quotas
 lib/flezha/operator/partition_group.ex -> Flezha.Dlq
-lib/flezha/operator/partition_group.ex -> Flezha.Plugin.Extension.Table
 lib/flezha/operator/partition_group.ex -> Flezha.Plugin.SpecDecoder
 lib/flezha/operator/partition_group.ex -> Flezha.Service.HubManager
 lib/flezha/operator/partition_group.ex -> Flezha.Service.OperatorManager
@@ -112,7 +111,6 @@ lib/flezha/service/hub_manager/lifecycle.ex -> Flezha.Boot.RecoveryHooks
 lib/flezha/service/hub_manager/lifecycle.ex -> Flezha.Shutdown.Coordinator
 lib/flezha/service/hub_manager/lifecycle.ex -> Flezha.Shutdown.Step
 lib/flezha/service/operator_manager/teardown.ex -> Flezha.Shutdown.Step
-lib/flezha/service/plugin_manager.ex -> Flezha.Shutdown.Step
 lib/flezha/shutdown.ex -> (no directory owns it)
 lib/flezha/state/persistence_resolver.ex -> Flezha.AuthZ.NamespaceStore
 lib/flezha/state/recovery.ex -> Flezha.Service.HubManager

@@ -51,6 +51,7 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
     {Flezha.Service.OperativeManager, :get_operative_pid, 2} => :withdrawn,
     {Flezha.Service.OperativeManager, :get_overwatch_state, 2} => :moved,
     {Flezha.Service.PluginHelper, :enable_io_listener, 4} => :withdrawn,
+    {Flezha.Service.PluginManager, :get_plugins, 0} => :withdrawn,
     {Flezha.State.PersistenceResolver, :workflow_completed_retention_hours, 1} => :withdrawn,
     {Flezha.State.ProcInbox, :last_offset, 1} => :moved,
     {Flezha.State.ProcInbox, :undelivered, 1} => :moved,
@@ -58,6 +59,7 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
     {Flezha.State.ProcJournal, :consumed_offset, 1} => :moved,
     {Flezha.State.ProcJournal, :read, 1} => :moved,
     {Flezha.State.Registry, :operative_classes, 0} => :withdrawn,
+    {Flezha, :disable_plugin, 1} => :withdrawn,
     {Flezha, :list_operatives, 1} => :withdrawn,
     {Flezha, :start_operative, 2} => :withdrawn,
     {Flezha, :stop_operative, 2} => :withdrawn

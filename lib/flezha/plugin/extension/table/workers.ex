@@ -9,6 +9,10 @@ defmodule Flezha.Plugin.Extension.Table.Workers do
 
   It takes the table as a plain map with an `:entries` and a `:monitors` field
   and never names `Extension.Table`, so the dependency runs one way.
+
+  A shareable plugin on a table built with `shared:` is a subscriber: what
+  backs it is the shared copy it joins (`join/3`), tracked like a worker under
+  the key `:shared`, so its death reaches the table as a worker's would.
   """
 
   alias Flezha.Plugin.Extension.Table.Entry
@@ -88,6 +92,44 @@ defmodule Flezha.Plugin.Extension.Table.Workers do
 
     _ = WorkerSup.stop_worker(family, key)
     table
+  end
+
+  @doc "Whether `provider`'s plugins on `table` are subscribers of a shared copy."
+  @spec subscriber?(map(), module()) :: boolean()
+  def subscriber?(%{shared: nil}, _provider), do: false
+  def subscriber?(%{shared: _shared}, provider), do: provider.__provider__().shareable
+
+  @doc """
+  Join the shared copy of `plugin` on this controller (or the cluster's one for
+  a `single` plugin), starting it when none runs, and track it.
+  """
+  @spec join(map(), binary(), Flezha.Plugin.t()) :: {map(), :ok | {:error, term()}}
+  def join(table, plugin_id, plugin) do
+    case table.shared.join(plugin, table.host_pid) do
+      {:ok, copy} -> {track(table, plugin_id, :shared, copy), :ok}
+      {:error, _} = refused -> {table, refused}
+    end
+  end
+
+  @doc """
+  Leave the shared copy `plugin_id` joined, `:now` or `:idle`, and forget it.
+  """
+  @spec leave(map(), binary(), :now | :idle) :: map()
+  def leave(table, plugin_id, how) do
+    entry = entry(table, plugin_id)
+
+    case Entry.worker(entry, :shared) do
+      nil ->
+        table
+
+      {copy, ref} ->
+        Health.safe_demonitor(ref)
+        table.shared.leave(copy, table.host_pid, how)
+
+        table
+        |> put_entry(plugin_id, Entry.drop_worker(entry, :shared))
+        |> Map.update!(:monitors, &Map.delete(&1, ref))
+    end
   end
 
   @doc "Record a worker the host started, under a fresh monitor."

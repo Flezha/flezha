@@ -753,7 +753,12 @@ defmodule FlezhaTest.Handover do
         factory_id: factory_id,
         run: :steps,
         init_values: %{},
-        opts: [plugins: [StepsResumeHarness.forward_sink("out", collector)]]
+        opts: [
+          bindings:
+            OperatorFixture.bindings(@temp_namespace, id, [
+              StepsResumeHarness.forward_sink("out", collector)
+            ])
+        ]
       }
 
       {:ok, _info} = OperatorManager.start_operator(@temp_namespace, builder)

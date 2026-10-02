@@ -25,6 +25,7 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperatorManager
   alias Flezha.State.InputLog
+  alias FlezhaTest.Fixtures.OperatorFixture
 
   @moduletag timeout: 300_000
 
@@ -57,7 +58,7 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
       id: operator_id,
       factory_id: @factory,
       init_values: %{},
-      opts: [plugins: [sink]]
+      opts: [bindings: OperatorFixture.bindings(namespace, operator_id, [sink])]
     }
 
     assert {:ok, info} = OperatorManager.start_operator(namespace, builder)
@@ -162,7 +163,7 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
       id: operator_id,
       factory_id: "tier_chain",
       init_values: %{},
-      opts: [plugins: [sink]]
+      opts: [bindings: OperatorFixture.bindings(namespace, operator_id, [sink])]
     }
 
     assert {:ok, _info} = OperatorManager.start_operator(namespace, builder)
