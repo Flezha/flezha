@@ -449,6 +449,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
       assert Enum.sort(feeding) == [
                "operator_file_source",
                "operator_http_poll",
+               "operator_postgres_poll",
                "operator_websocket"
              ]
     end

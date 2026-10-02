@@ -409,8 +409,8 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
 
   # The providers whose `init_provider/1` refuses the minimal map: a forward must
   # not target its own operator, a poll's request must fit inside its own
-  # interval, and a poll and a file source must name the entry channel they
-  # inject on.
+  # interval, a poll and a file source must name the entry channel they
+  # inject on, and a table poll reads names that are identifiers.
   defp extra_opts(Flezha.Plugin.Provider.OperatorForward),
     do: %{target_operator_id: "drill-target"}
 
@@ -418,6 +418,9 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
     do: %{interval_ms: 60_000, timeout_ms: 1_000, channel: "drill-channel"}
 
   defp extra_opts(Flezha.Plugin.Provider.File.Source), do: %{channel: "drill-channel"}
+
+  defp extra_opts(Flezha.Plugin.Provider.PostgresPoll),
+    do: %{channel: "drill-channel", table: "drill_table", id_column: "id"}
 
   defp extra_opts(_provider), do: %{}
 
@@ -432,6 +435,7 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
       Flezha.Plugin.Provider.File.Sink -> "docs/plugins/file.md"
       Flezha.Plugin.Provider.HookWebhook -> "docs/plugins/hook_webhook.md"
       Flezha.Plugin.Provider.HttpPush -> "docs/plugins/http_push.md"
+      Flezha.Plugin.Provider.PostgresPoll -> "docs/plugins/postgres_poll.md"
       _ -> nil
     end
   end

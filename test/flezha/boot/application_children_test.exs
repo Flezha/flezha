@@ -52,6 +52,7 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
     Flezha.Plugin.Provider.HttpPush.WorkerSup,
     Flezha.Plugin.Provider.Kafka.Producer.WorkerSup,
     Flezha.Plugin.Provider.Postgres.WorkerSup,
+    Flezha.Plugin.Provider.PostgresPoll.WorkerSup,
     Flezha.Plugin.Provider.Websocket.WorkerSup,
     # The running copies of shareable plugins, one per plugin on this controller.
     Flezha.Plugin.Shared.WorkerSup,

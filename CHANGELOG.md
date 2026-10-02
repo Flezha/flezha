@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Added: a Postgres table read by polling, and a literal Postgres password that works
+
+The new provider `operator_postgres_poll` reads the new rows of one table, and with a
+`timestamp_column` its changed rows too, every `interval_ms`, oldest first, and injects each
+row as one JSON object with an `flz.msg_id` of the plugin, the table and the row's cursor
+([`docs/plugins/postgres_poll.md`](docs/plugins/postgres_poll.md)). It needs no replication
+rights: the plugin builds the query from validated, quoted names and runs every read in a
+read-only transaction. The cursor is committed to the binding after every batch when the
+operator's input is durable, so a row read again after a restart is absorbed, and otherwise
+once the reader catches up and at most every `commit_interval_ms`. It is not shareable and
+refuses a partitioned operator. The Postgres sink connects with a literal `password` again:
+it used to send the redacted placeholder, so only `password_env` could log in. Both providers
+now share their connection options, which lists the sink's `ssl` beside the other connection
+rows.
+
 ### Changed: a shared source hands each record straight to its operators
 
 A shareable source plugin (`operator_websocket`, `operator_http_poll`) still runs once per

@@ -100,6 +100,11 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :plugin, :file_source, :shipped] => {:flezha_file_source, :injected, :metric},
     [:flezha, :plugin, :file_source, :truncated] => {:flezha_file_source, :truncated, :event},
     [:flezha, :plugin, :file_source, :failed] => {:flezha_file_source, :failed, :event},
+    # The Postgres poll source: rows delivered are a count; a failure and the
+    # moment it caught up are read one at a time.
+    [:flezha, :plugin, :postgres_poll, :shipped] => {:flezha_postgres_poll, :injected, :metric},
+    [:flezha, :plugin, :postgres_poll, :failed] => {:flezha_postgres_poll, :failed, :event},
+    [:flezha, :plugin, :postgres_poll, :caught_up] => {:flezha_postgres_poll, :caught_up, :event},
     [:flezha, :plugin, :file_sink, :shipped] => {:flezha_file_sink, :flushed, :metric},
     [:flezha, :plugin, :file_sink, :refused] => {:flezha_file_sink, :refused, :event},
     [:flezha, :plugin, :file_sink, :failed] => {:flezha_file_sink, :failed, :event},

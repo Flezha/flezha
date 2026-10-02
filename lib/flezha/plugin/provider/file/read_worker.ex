@@ -130,7 +130,7 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
     {next, state} = step(state)
 
     %{state | last_settled_at: now()}
-    |> commit_when_due(next)
+    |> Host.commit_position(:offset, next)
     |> schedule(next)
   end
 
@@ -196,7 +196,7 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
     )
 
     emit(:truncated, %{offset: state.offset}, labels(state))
-    commit(%{state | offset: 0, buffer: "", identity: identity})
+    Host.commit_position(%{state | offset: 0, buffer: "", identity: identity}, :offset, :rewound)
   end
 
   defp missing(%{missing: true} = state), do: state
@@ -326,30 +326,6 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
     )
 
     %{state | consecutive_failures: failures, last_error: reason}
-  end
-
-  # ---------- the committed offset ----------
-
-  # Once the reader has caught up, stopped or must wait, or once
-  # `commit_interval_ms` has passed while it has not: one registry write per
-  # batch of deliveries rather than per line.
-  defp commit_when_due(%{offset: offset, committed: offset} = state, _next), do: state
-
-  defp commit_when_due(state, :more) do
-    if now() - state.committed_at >= state.commit_interval_ms, do: commit(state), else: state
-  end
-
-  defp commit_when_due(state, _next), do: commit(state)
-
-  defp commit(state) do
-    Host.persist_opt(
-      state.overwatcher_pid,
-      Map.get(state, :source_plugin_id),
-      :offset,
-      state.offset
-    )
-
-    %{state | committed: state.offset, committed_at: now()}
   end
 
   defp labels(state),

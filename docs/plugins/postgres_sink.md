@@ -26,12 +26,13 @@ operators, plain inserts for everything else. See
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `database` | string | &mdash; | yes | Database name |
-| `username` | string | &mdash; | yes | Role the sink connects as |
+| `username` | string | &mdash; | yes | Role the plugin connects as |
 | `password` | string | &mdash; | no | Password, redacted once the plugin is prepared |
 | `password_env` | string | &mdash; | no | Environment variable holding the password instead |
-| `plugin_id` | string | &mdash; | no | Plugin id; defaults to a generated one |
 | `hostname` | string | `"localhost"` | no | Database host |
 | `port` | int | `5432` | no | TCP port |
+| `ssl` | bool | `false` | no | TLS to the server |
+| `plugin_id` | string | &mdash; | no | Plugin id; defaults to a generated one |
 | `pool_size` | int | `2` | no | Connections in the sink's pool |
 | `linger_ms` | int | `25` | no | How long a batch waits to fill |
 | `max_batch` | int | `500` | no | Records in one flush transaction |
@@ -39,17 +40,18 @@ operators, plain inserts for everything else. See
 | `retry_backoff_ms` | int | `250` | no | First delay after a failed flush |
 | `retry_max_backoff_ms` | int | `5000` | no | Ceiling for that delay |
 | `unhealthy_after_ms` | int | `30000` | no | Age of the last commit past which a backed-up sink is unhealthy |
-| `ssl` | bool | `false` | no | TLS to the server |
 | `auto_create` | bool | `false` | no | Create the target tables when missing |
 <!-- provider-options:end -->
 
 Every other key is refused at enable rather than ignored, so a config asking for
 something the sink does not offer fails loudly instead of reading as accepted.
 
-The password is read once, inside the connection closure: it never lands in the
-worker's state, the supervisor's child arguments, a log line or a telemetry
-label. Prefer `password_env`, which names an environment variable, because an
-inline password cannot survive a restart from the redacted stored options.
+The password is resolved inside the connection closure at every connect: it never
+lands in the worker's state, the supervisor's child arguments, a log line or a
+telemetry label, and the prepared options carry `**redacted**` in its place. Prefer
+`password_env`, which names an environment variable: an inline `password` is still
+part of the plugin's stored options. The connection options are the ones the
+[Postgres poll source](postgres_poll.md) takes too.
 
 ## Schema
 

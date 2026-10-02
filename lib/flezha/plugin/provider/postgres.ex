@@ -13,40 +13,46 @@ defmodule Flezha.Plugin.Provider.Postgres do
   """
 
   alias Flezha.Plugin.Extension.Ctx
+  alias Flezha.Plugin.Provider.Postgres.Connection
   alias Flezha.Plugin.Provider.Postgres.SinkWorker
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.State.Outbox
 
   use ProviderBehaviour,
-    options: [
-      database: [type: :string, required: true, doc: "Database name"],
-      username: [type: :string, required: true, doc: "Role the sink connects as"],
-      password: [type: :string, doc: "Password, redacted once the plugin is prepared"],
-      password_env: [type: :string, doc: "Environment variable holding the password instead"],
-      plugin_id: [type: :string, doc: "Plugin id; defaults to a generated one"],
-      hostname: [type: :string, default: "localhost", doc: "Database host"],
-      port: [type: :int, default: 5432, min: 1, max: 65_535, doc: "TCP port"],
-      pool_size: [type: :int, default: 2, min: 1, doc: "Connections in the sink's pool"],
-      linger_ms: [type: :int, default: 25, min: 1, doc: "How long a batch waits to fill"],
-      max_batch: [type: :int, default: 500, min: 1, doc: "Records in one flush transaction"],
-      queue_max: [type: :int, default: 10_000, min: 1, doc: "Records held before enqueue blocks"],
-      retry_backoff_ms: [
-        type: :int,
-        default: 250,
-        min: 1,
-        doc: "First delay after a failed flush"
-      ],
-      retry_max_backoff_ms: [type: :int, default: 5_000, min: 1, doc: "Ceiling for that delay"],
-      unhealthy_after_ms: [
-        type: :int,
-        default: 30_000,
-        min: 1,
-        doc: "Age of the last commit past which a backed-up sink is unhealthy"
-      ],
-      ssl: [type: :bool, default: false, doc: "TLS to the server"],
-      auto_create: [type: :bool, default: false, doc: "Create the target tables when missing"]
-    ],
+    options:
+      Connection.rows() ++
+        [
+          plugin_id: [type: :string, doc: "Plugin id; defaults to a generated one"],
+          pool_size: [type: :int, default: 2, min: 1, doc: "Connections in the sink's pool"],
+          linger_ms: [type: :int, default: 25, min: 1, doc: "How long a batch waits to fill"],
+          max_batch: [type: :int, default: 500, min: 1, doc: "Records in one flush transaction"],
+          queue_max: [
+            type: :int,
+            default: 10_000,
+            min: 1,
+            doc: "Records held before enqueue blocks"
+          ],
+          retry_backoff_ms: [
+            type: :int,
+            default: 250,
+            min: 1,
+            doc: "First delay after a failed flush"
+          ],
+          retry_max_backoff_ms: [
+            type: :int,
+            default: 5_000,
+            min: 1,
+            doc: "Ceiling for that delay"
+          ],
+          unhealthy_after_ms: [
+            type: :int,
+            default: 30_000,
+            min: 1,
+            doc: "Age of the last commit past which a backed-up sink is unhealthy"
+          ],
+          auto_create: [type: :bool, default: false, doc: "Create the target tables when missing"]
+        ],
     worker: [module: SinkWorker, restart: :permanent]
 
   @impl true
@@ -56,13 +62,13 @@ defmodule Flezha.Plugin.Provider.Postgres do
     {:ok,
      opts
      |> Map.put(:plugin_id, plugin_id)
-     |> redact_password()}
+     |> Connection.prepare()}
   end
 
   @doc """
   One sink worker per plugin, taking the connection the options describe. The
-  password travels only inside the `configure` closure: it never lands in the
-  worker state, the supervisor's child args, logs or telemetry.
+  password travels only inside the `configure` closure
+  (`Flezha.Plugin.Provider.Postgres.Connection`).
   """
   @impl true
   def worker_specs(opts) do
@@ -70,12 +76,8 @@ defmodule Flezha.Plugin.Provider.Postgres do
       {key(opts),
        %{
          plugin_id: opts.plugin_id,
-         conn_opts: conn_opts(opts),
-         conn_label: %{
-           hostname: opts.hostname,
-           port: opts.port,
-           database: opts.database
-         },
+         conn_opts: Connection.conn_opts(opts, pool_size: opts.pool_size),
+         conn_label: Connection.label(opts),
          linger_ms: opts.linger_ms,
          max_batch: opts.max_batch,
          queue_max: opts.queue_max,
@@ -136,39 +138,6 @@ defmodule Flezha.Plugin.Provider.Postgres do
 
   defp stalled?(%{last_commit_age_ms: nil}, _threshold), do: true
   defp stalled?(%{last_commit_age_ms: age}, threshold), do: age > threshold
-
-  defp conn_opts(opts) do
-    password_fun = password_fun(opts)
-
-    [
-      hostname: opts.hostname,
-      port: opts.port,
-      database: opts.database,
-      username: opts.username,
-      ssl: opts.ssl,
-      pool_size: opts.pool_size,
-      configure: fn conn_opts ->
-        case password_fun.() do
-          nil -> conn_opts
-          password -> Keyword.put(conn_opts, :password, password)
-        end
-      end
-    ]
-  end
-
-  defp password_fun(opts) do
-    case {Map.get(opts, :password), Map.get(opts, :password_env)} do
-      {password, _} when is_binary(password) and password != "" -> fn -> password end
-      {_, env} when is_binary(env) and env != "" -> fn -> System.get_env(env) end
-      _ -> fn -> nil end
-    end
-  end
-
-  defp redact_password(%{password: password} = opts)
-       when is_binary(password) and password != "",
-       do: Map.put(opts, :password, "**redacted**")
-
-  defp redact_password(opts), do: opts
 
   # The key this provider's one worker is registered under, named once and read
   # by both the declaration and the dispatch path.

@@ -25,6 +25,7 @@ defmodule Flezha.Plugin.Providers do
   @first_party %{
     "operator_kafka_producer" => Provider.Kafka.Producer,
     "operator_postgres" => Provider.Postgres,
+    "operator_postgres_poll" => Provider.PostgresPoll,
     "operator_websocket" => Provider.Websocket,
     "operator_http_poll" => Provider.HttpPoll,
     "operator_http_push" => Provider.HttpPush,

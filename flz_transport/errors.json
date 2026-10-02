@@ -3215,7 +3215,7 @@
   },
   "internal": [
     "already_exist", "already_exists", "already_loaded", "already_present", "already_started", "awake", "bad_header_size",
-    "bad_marker_body", "bad_payload", "call_not_relearned", "chmod", "claim_held", "client_not_running", "corrupt_index",
+    "bad_marker_body", "bad_payload", "call_not_relearned", "chmod", "claim_held", "client_not_running", "column_missing", "corrupt_index",
     "crc_mismatch", "delivery_crashed", "delivery_failed", "dispatch_timeout", "dlq_entry_missing",
     "durability_tier_disabled", "durability_tier_not_running", "einval", "enoent", "exception",
     "exit", "fetch_crashed", "gap", "http", "http_status", "id_taken", "input_log_unavailable",
@@ -3239,7 +3239,7 @@
     "service_account_path_missing", "shipper_unavailable", "short_entry", "short_read",
     "sink_start_failed", "spki_decode_failed", "split_state_key", "stale_writer", "start_crashed",
     "start_operator_failed", "startup_failed", "stream_unbound", "struct_build_failed",
-    "subject_decode_failed", "superseded", "symlink", "task_exit", "too_long", "too_many_links",
+    "subject_decode_failed", "superseded", "symlink", "table_missing", "task_exit", "too_long", "too_many_links",
     "too_short", "topic_already_exists", "trusted_keys_empty", "unavailable", "unbound",
     "undisabled", "unexpected_start_result", "unknown_discovery_handler", "unknown_entry_type",
     "unknown_file", "unknown_hub", "unknown_key", "unknown_stream_type", "unknown_topic_or_partition",

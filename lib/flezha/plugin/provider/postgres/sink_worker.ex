@@ -15,6 +15,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   """
 
   alias Flezha.Config.Backoff
+  alias Flezha.Plugin.Provider.Postgres.Connection
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.State.Outbox
 
@@ -146,7 +147,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
 
           {:error, reason} ->
             log_failure(state, "schema create failed", reason)
-            %{state | last_error: sanitize_error(reason)}
+            %{state | last_error: Connection.sanitize_error(reason)}
         end
       else
         check_tables(state)
@@ -248,7 +249,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
         %{
           state
           | consecutive_failures: failures,
-            last_error: sanitize_error(reason),
+            last_error: Connection.sanitize_error(reason),
             missing_tables: missing_tables_from(reason) || state.missing_tables
         }
         |> arm_timer(:retry, backoff, :retry_flush)
@@ -368,7 +369,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
           %{state | missing_tables: nil}
         else
           Logger.error(
-            "[postgres-sink] #{conn_desc(state)} missing tables #{inspect(missing)} " <>
+            "[postgres-sink] #{Connection.describe(state.conn_label)} missing tables #{inspect(missing)} " <>
               "and auto_create is false — create them or enable auto_create"
           )
 
@@ -377,7 +378,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
 
       {:error, reason} ->
         log_failure(state, "table check failed", reason)
-        %{state | last_error: sanitize_error(reason)}
+        %{state | last_error: Connection.sanitize_error(reason)}
     end
   end
 
@@ -391,18 +392,10 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   # ---------- credential-safe logging ----------
 
   defp log_failure(state, what, reason) do
-    Logger.warning("[postgres-sink] #{conn_desc(state)} #{what}: #{sanitize_error(reason)}")
+    Logger.warning(
+      "[postgres-sink] #{Connection.describe(state.conn_label)} #{what}: #{Connection.sanitize_error(reason)}"
+    )
   end
-
-  defp conn_desc(%{conn_label: %{hostname: h, port: p, database: d}}), do: "#{h}:#{p}/#{d}"
-
-  # Only well-known message fields ever reach logs/health — never the
-  # connection opts, which would carry password material.
-  defp sanitize_error(%Postgrex.Error{postgres: %{code: code, message: m}}), do: "#{code}: #{m}"
-  defp sanitize_error(%DBConnection.ConnectionError{message: m}), do: m
-  defp sanitize_error(%{__exception__: true} = e), do: "#{e.__struct__}: #{Exception.message(e)}"
-  defp sanitize_error({:missing_tables, tables}), do: "missing tables #{inspect(tables)}"
-  defp sanitize_error(other), do: inspect(other)
 
   defp commit_age_ms(%{last_commit_ms: nil}), do: nil
 

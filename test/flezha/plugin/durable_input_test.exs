@@ -3,13 +3,16 @@ defmodule FlezhaTest.Plugin.DurableInputTest do
   "A source SHALL be told whether its operator's input is durable": the host
   option `durable_input` a plugin's activated options carry, from the
   operator's journal, over whatever the plugin's stored options said, and
-  false on a shared copy, which answers every injection itself.
+  false on a shared copy, which answers every injection itself; and the
+  commit cadence a pull source moves its position by, which that option
+  decides (`Flezha.Plugin.Host.commit_position/3`).
   """
 
   use ExUnit.Case, async: true
 
   alias Flezha.Operator.Overwatch
   alias Flezha.Plugin
+  alias Flezha.Plugin.Host
   alias Flezha.Plugin.Shared
   alias FlezhaTest.Helper.OverwatchHost
 
@@ -71,5 +74,49 @@ defmodule FlezhaTest.Plugin.DurableInputTest do
 
     assert_receive {:activated, opts}
     assert opts.durable_input == false
+  end
+
+  describe "Host.commit_position/3" do
+    # A pull source's state, its position moved past what it committed; the
+    # test process stands in for the host, so a commit is a cast it receives.
+    defp source(extra) do
+      Map.merge(
+        %{
+          offset: 5,
+          committed: 1,
+          committed_at: :erlang.monotonic_time(:millisecond),
+          commit_interval_ms: 60_000,
+          overwatcher_pid: self(),
+          source_plugin_id: "src"
+        },
+        extra
+      )
+    end
+
+    test "a source reading on commits after every batch only when its input is durable" do
+      plain = source(%{durable_input: false})
+      assert Host.commit_position(plain, :offset, :more) == plain
+      refute_received {:"$gen_cast", {:plugin_opt_persist, _, _, _}}
+
+      durable = Host.commit_position(source(%{durable_input: true}), :offset, :more)
+      assert durable.committed == 5
+      assert_received {:"$gen_cast", {:plugin_opt_persist, "src", :offset, 5}}
+    end
+
+    test "a plain source reading on commits once commit_interval_ms has passed" do
+      due = source(%{committed_at: :erlang.monotonic_time(:millisecond) - 60_000})
+
+      assert Host.commit_position(due, :offset, :more).committed == 5
+      assert_received {:"$gen_cast", {:plugin_opt_persist, "src", :offset, 5}}
+    end
+
+    test "a source that stops reading commits at once, and an unmoved position is not written again" do
+      caught_up = Host.commit_position(source(%{}), :offset, :caught_up)
+      assert caught_up.committed == 5
+      assert_received {:"$gen_cast", {:plugin_opt_persist, "src", :offset, 5}}
+
+      assert Host.commit_position(caught_up, :offset, :stopped) == caught_up
+      refute_received {:"$gen_cast", {:plugin_opt_persist, _, _, _}}
+    end
   end
 end

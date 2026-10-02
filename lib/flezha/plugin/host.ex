@@ -222,6 +222,37 @@ defmodule Flezha.Plugin.Host do
   def persist_opt(_host, _plugin_id, _key, _value), do: :ok
 
   @doc """
+  Commit a pull source's position, the `key` of its worker's `state`, through
+  `persist_opt/4` once it is due, answering the state with `committed` and
+  `committed_at` moved. `next` is what the source does next: `:more` while it
+  reads without waiting, anything else once it has caught up, failed or stopped.
+
+  A position the operator journaled (`durable_input`) is due at once, because a
+  record read again after a restart is absorbed while the input log holds it.
+  Otherwise it is due once the source stops reading without waiting, and every
+  `commit_interval_ms` while it does not: one registry write per run of
+  deliveries rather than per record.
+  """
+  @spec commit_position(map(), atom(), atom()) :: map()
+  def commit_position(state, key, next) do
+    position = Map.fetch!(state, key)
+    now = :erlang.monotonic_time(:millisecond)
+
+    cond do
+      position == state.committed ->
+        state
+
+      next == :more and Map.get(state, :durable_input) != true and
+          now - state.committed_at < state.commit_interval_ms ->
+        state
+
+      true ->
+        persist_opt(state.overwatcher_pid, Map.get(state, :source_plugin_id), key, position)
+        %{state | committed: position, committed_at: now}
+    end
+  end
+
+  @doc """
   The extension table a host operator holds: shareable plugins on it are served
   by their shared copy on this controller (`Flezha.Plugin.Shared`). A partition
   group's member runs every plugin it holds itself, because each member asks
