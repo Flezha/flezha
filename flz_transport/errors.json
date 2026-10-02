@@ -1654,9 +1654,9 @@
     },
     "plugin.runtime_mismatch": {
       "class": "conflict",
-      "message": "the package was built on OTP {package_otp}, Elixir {package_elixir} and Flezha {package_flezha}; this controller runs OTP {otp}, Elixir {elixir} and Flezha {flezha}",
+      "message": "{why}; the package was built on OTP {package_otp}, Elixir {package_elixir} and Flezha {package_flezha}; this controller runs OTP {otp}, Elixir {elixir} and Flezha {flezha}",
       "hint": "package it again in flezha/plugin-builder:{flezha}",
-      "details": ["package_otp", "package_elixir", "package_flezha", "otp", "elixir", "flezha"],
+      "details": ["rule", "why", "package_otp", "package_elixir", "package_flezha", "otp", "elixir", "flezha"],
       "reasons": [
         {"tag": "runtime_mismatch", "args": ["runtimes"]}
       ]

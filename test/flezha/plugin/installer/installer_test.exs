@@ -39,9 +39,34 @@ defmodule Flezha.Plugin.InstallerTest do
     test "places a local archive as <id>.fpz in an empty root, with no controller tree",
          %{root: root, example: example} do
       assert {:ok, placed} = Installer.install(example)
-      assert placed == %{id: "flezha_example_plugin", version: "0.1.0", signed: false, root: root}
+
+      assert placed == %{
+               id: "flezha_example_plugin",
+               version: "0.1.0",
+               signed: false,
+               root: root,
+               warning: nil
+             }
+
       assert File.read!(Path.join(root, "flezha_example_plugin.fpz")) == File.read!(example)
       assert staging_empty?(root)
+    end
+
+    test "a package built on an older Elixir minor is placed with a warning naming both versions",
+         %{example: example, tmp: tmp} do
+      {:ok, %Version{major: major, minor: minor}} = Version.parse(System.version())
+      built = "#{major}.#{minor - 1}.4"
+
+      older =
+        PluginPackage.rewrite(example, Path.join(tmp, "older.fpz"), [
+          {:manifest, &put_in(&1.built_with.elixir, built)}
+        ])
+
+      assert {:ok, %{warning: warning}} = Installer.install(older)
+
+      assert warning =~
+               "plugin package flezha_example_plugin was built on Elixir #{built} " <>
+                 "and loads on Elixir #{System.version()};"
     end
 
     test "replaces every archive declaring the same id", %{root: root, example: example, tmp: tmp} do

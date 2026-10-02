@@ -192,7 +192,8 @@ defmodule Flezha.Service.Cli.Plugin do
     signed = if done.signed, do: "signed", else: "unsigned"
 
     "Installed #{done.id} #{done.version} (#{signed}) into #{done.root}.\n" <>
-      "Restart the controller to load it."
+      "Restart the controller to load it." <>
+      if(done.warning, do: "\nwarning: #{done.warning}", else: "")
   end
 
   defp placed("uninstall", done, _text),

@@ -149,7 +149,8 @@ defmodule Flezha.Plugin.Installer.Loader do
       status: :refused,
       error: nil,
       dir: dir,
-      apps: []
+      apps: [],
+      warning: nil
     }
 
     case Package.verify(archive, dir) do
@@ -161,6 +162,7 @@ defmodule Flezha.Plugin.Installer.Loader do
             signed: verified.signed,
             providers: verified.manifest.providers,
             apps: verified.apps,
+            warning: verified.warning,
             status: :verified
         }
 
@@ -384,6 +386,8 @@ defmodule Flezha.Plugin.Installer.Loader do
   defp log_loaded(package) do
     unless package.signed,
       do: Logger.warning("plugin package #{package.id} #{package.version} is unsigned")
+
+    if package.warning, do: Logger.warning(package.warning)
 
     Logger.info(
       "plugin package #{package.id} #{package.version} loaded, providers: " <>

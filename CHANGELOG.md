@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed: a plugin package outlives an Erlang or Elixir upgrade
+
+A package built on OTP `N` now loads on OTP `N`, `N+1` and `N+2`, and one built on any older
+or equal Elixir `1.x` loads too, with one warning naming both versions, logged at boot and
+printed by `flz plugin install`, when the Elixir minors differ. From Flezha 1.0 a package
+loads on any later version of the same major; before 1.0 the rule is unchanged. A refusal is
+still `plugin.runtime_mismatch`, its `rule` detail and the first words of its message naming
+the rule that failed.
+
 ### Changed: the guides teach one operator
 
 The guides, the glossary and the architecture, resilience and SDK pages describe one operator

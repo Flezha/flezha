@@ -597,18 +597,55 @@ With `--sign <path>` naming an Ed25519 private key in PEM form, the task SHALL w
 
 ### Requirement: A package SHALL load only on the runtime line it was built with
 
-A package SHALL be accepted, at install and at boot, only when the running release's OTP
-release equals the manifest's `built_with.otp`, its Elixir `major.minor` equals
-`built_with.elixir`'s, and its Flezha version satisfies `~> <built_with.flezha>`. The
-comparison SHALL be made against the running release, never against a constant. The
-operating system and the processor architecture SHALL NOT be recorded or compared.
+A package SHALL be accepted, at install and at boot, only when all three hold against the
+running release:
+
+- **OTP:** the running OTP release is the manifest's `built_with.otp` or one of the two
+  releases after it;
+- **Elixir:** the running Elixir has the same major as `built_with.elixir` and a
+  `major.minor` not older than its;
+- **Flezha:** the running Flezha is not older than `built_with.flezha` and, when that
+  version's major is `0`, has the same minor, and otherwise has the same major.
+
+A package accepted on an Elixir whose minor differs from `built_with.elixir`'s SHALL be loaded
+and SHALL produce one warning naming the package and both Elixir versions, logged at boot and
+printed by `flz plugin install`. A refusal SHALL be `plugin.runtime_mismatch` with a `rule`
+detail naming the rule that failed. The comparison SHALL be made against the running release,
+never against a constant. The operating system and the processor architecture SHALL NOT be
+recorded or compared.
 
 #### Scenario: A package built on another OTP is refused
 
 - **GIVEN** a package whose `built_with.otp` is `"29"` and a controller running on OTP 28
 - **WHEN** it is installed, or the controller boots with it in the plugin root
 - **THEN** it SHALL be refused with `plugin.runtime_mismatch`, the details naming both
-  runtimes, and the hint naming the builder that matches the controller
+  runtimes and the rule `otp_newer`, and the hint naming the builder that matches the
+  controller
+
+#### Scenario: A package built two OTP releases back loads
+
+- **GIVEN** a package whose `built_with.otp` is `"27"` and a controller running on OTP 29
+- **WHEN** the controller boots
+- **THEN** the package SHALL load
+
+#### Scenario: A package built three OTP releases back is refused
+
+- **GIVEN** a package whose `built_with.otp` is `"26"` and a controller running on OTP 29
+- **WHEN** it is installed
+- **THEN** it SHALL be refused with `plugin.runtime_mismatch` and the rule `otp_too_old`
+
+#### Scenario: A package built on an older Elixir minor loads with a warning
+
+- **GIVEN** a package built on Elixir `1.19.4` and a controller running Elixir `1.20.2`
+- **WHEN** the controller boots
+- **THEN** the package SHALL load and the log SHALL hold one warning naming the package,
+  `1.19.4` and `1.20.2`
+
+#### Scenario: A package built on a newer Elixir is refused
+
+- **GIVEN** a package built on Elixir `1.21.0` and a controller running Elixir `1.20.2`
+- **WHEN** it is installed
+- **THEN** it SHALL be refused with `plugin.runtime_mismatch` and the rule `elixir_newer`
 
 #### Scenario: A package built for an older patch of the same Flezha line loads
 
@@ -616,6 +653,18 @@ operating system and the processor architecture SHALL NOT be recorded or compare
   the same OTP release and Elixir minor
 - **WHEN** the controller boots
 - **THEN** the package SHALL load
+
+#### Scenario: Before 1.0 a Flezha minor needs a rebuild
+
+- **GIVEN** a package built with Flezha `0.1.0` and a controller running Flezha `0.2.0`
+- **WHEN** it is installed
+- **THEN** it SHALL be refused with `plugin.runtime_mismatch` and the rule `flezha_line`
+
+#### Scenario: From 1.0 a Flezha major holds
+
+- **GIVEN** a package built with Flezha `1.2.0`
+- **WHEN** it is checked against Flezha `1.5.1`, and then against `2.0.0`
+- **THEN** the first SHALL be accepted and the second refused with the rule `flezha_line`
 
 ### Requirement: A VM SHALL hold one version of each library
 

@@ -10,9 +10,12 @@ defmodule Flezha.Plugin.Installer.LoaderTest do
 
   @moduletag :capture_log
 
+  import ExUnit.CaptureLog
+
   alias Flezha.Plugin.Installer.Loader
   alias Flezha.Plugin.Providers
   alias Flezha.TestHelpers.PluginPackage
+  alias FlezhaTest.Helper.NodeTestHelper
 
   setup %{tmp: tmp} do
     root = Path.join(tmp, "plugins")
@@ -72,6 +75,25 @@ defmodule Flezha.Plugin.Installer.LoaderTest do
   test "a package built on another runtime is refused", ctx do
     archive = edited(ctx, "otp.fpz", [{:manifest, &put_in(&1.built_with.otp, "0")}])
     assert refused_code(PluginPackage.load!(ctx.root, [archive])) == "plugin.runtime_mismatch"
+  end
+
+  test "a package built on an older Elixir minor loads, logging one warning naming both versions",
+       ctx do
+    running = System.version()
+    {:ok, %Version{major: major, minor: minor}} = Version.parse(running)
+    built = "#{major}.#{minor - 1}.4"
+    archive = edited(ctx, "elixir.fpz", [{:manifest, &put_in(&1.built_with.elixir, built)}])
+    on_exit(NodeTestHelper.override_log_level(:warning))
+
+    log =
+      capture_log([level: :warning], fn ->
+        assert [%{status: :loaded}] = PluginPackage.load!(ctx.root, [archive])
+      end)
+
+    warning =
+      ~r/plugin package flezha_example_plugin was built on Elixir (\S+) and loads on Elixir (\S+);/
+
+    assert [[_, ^built, ^running]] = Regex.scan(warning, log)
   end
 
   test "a bundled library at another version than the release's is refused, naming the release",

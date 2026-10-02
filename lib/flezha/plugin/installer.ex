@@ -26,7 +26,13 @@ defmodule Flezha.Plugin.Installer do
   @list_variable "FLEZHA_PLUGINS"
   @max_redirects 5
 
-  @type placed :: %{id: binary(), version: binary(), signed: boolean(), root: Path.t()}
+  @type placed :: %{
+          id: binary(),
+          version: binary(),
+          signed: boolean(),
+          root: Path.t(),
+          warning: binary() | nil
+        }
 
   @doc """
   Place the package at `source`, a local path or an `https://` URL, as
@@ -226,7 +232,13 @@ defmodule Flezha.Plugin.Installer do
             not MapSet.member?(keep, path),
             do: File.rm!(path)
 
-        %{id: id, version: candidate.manifest.version, signed: candidate.signed, root: root()}
+        %{
+          id: id,
+          version: candidate.manifest.version,
+          signed: candidate.signed,
+          root: root(),
+          warning: candidate.warning
+        }
       end
 
     placed

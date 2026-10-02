@@ -37,13 +37,15 @@ defmodule Flezha.Plugin.Installer.Package do
           manifest: Manifest.t(),
           apps: [app()],
           signed: boolean(),
-          digest: binary()
+          digest: binary(),
+          warning: binary() | nil
         }
 
   @doc """
   Extract `archive` into `dir` and check it whole: entries, layout, checksums,
-  signature policy, manifest and the runtime line it was built on. `opts`
-  carries `:max_package_bytes`, `:require_signature` and `:trusted_keys`, the
+  signature policy, manifest and the runtime line it was built on, with the
+  warning a package built on an older Elixir minor loads with. `opts` carries
+  `:max_package_bytes`, `:require_signature` and `:trusted_keys`, the
   configuration's by default.
   """
   @spec verify(Path.t(), Path.t(), keyword()) :: {:ok, verified()} | {:error, term()}
@@ -59,8 +61,31 @@ defmodule Flezha.Plugin.Installer.Package do
            ),
          {:ok, manifest} <- Manifest.read(dir),
          {:ok, apps} <- check_contents(dir, manifest),
-         :ok <- Manifest.check_runtime(manifest, Manifest.runtime()) do
-      {:ok, %{manifest: manifest, apps: apps, signed: signed, digest: digest(archive)}}
+         {:ok, warning} <- runtime_warning(manifest) do
+      {:ok,
+       %{
+         manifest: manifest,
+         apps: apps,
+         signed: signed,
+         digest: digest(archive),
+         warning: warning
+       }}
+    end
+  end
+
+  defp runtime_warning(manifest) do
+    case Manifest.check_runtime(manifest, Manifest.runtime()) do
+      :ok ->
+        {:ok, nil}
+
+      {:ok, {:elixir_minor, built, running}} ->
+        {:ok,
+         "plugin package #{manifest.id} was built on Elixir #{built} and loads on Elixir " <>
+           "#{running}; a call it makes into an Elixir internal changed between them fails " <>
+           "only when it runs, so package it again on Elixir #{running}"}
+
+      error ->
+        error
     end
   end
 

@@ -29,6 +29,16 @@ defmodule Flezha.Plugin.Installer.Manifest do
 
   @required [:id, :version, :built_with, :apps, :providers]
 
+  @rules %{
+    "otp_newer" => "a package built on a newer OTP release than the controller's does not load",
+    "otp_too_old" => "a package loads on the OTP release it was built on and the two after it",
+    "elixir_newer" => "a package built on a newer Elixir than the controller's does not load",
+    "elixir_major" => "a package loads only on the Elixir major it was built on",
+    "flezha_line" =>
+      "a package loads on the Flezha version it was built for and later ones of its minor " <>
+        "before 1.0, of its major from 1.0"
+  }
+
   @doc "Read and parse the `manifest.exs` of the package extracted in `dir`."
   @spec read(Path.t()) :: {:ok, term()} | {:error, term()}
   def read(dir), do: dir |> Path.join("manifest.exs") |> File.read!() |> parse()
@@ -78,25 +88,38 @@ defmodule Flezha.Plugin.Installer.Manifest do
   def validate(_manifest, _apps), do: invalid(:manifest_not_a_map, %{})
 
   @doc """
-  The package's `built_with` against `runtime`: the same OTP release, the same
-  Elixir `major.minor`, and a Flezha version satisfying `~> built_with.flezha`.
+  The package's `built_with` against `runtime`, the running release's:
+
+    * OTP: the running release is the package's or one of the two after it;
+    * Elixir: the same major and a `major.minor` not older than the package's.
+      A package built on an older minor is accepted with a note naming both
+      versions: a call into an Elixir internal the later minor changed fails
+      only when it runs;
+    * Flezha: not older than the package's, and of the same minor while the
+      package's major is `0`, of the same major from `1.0`.
+
+  A refusal's details name the `rule` it broke and the sentence stating it.
   """
-  @spec check_runtime(t(), map()) :: :ok | {:error, term()}
+  @spec check_runtime(t(), map()) ::
+          :ok | {:ok, {:elixir_minor, binary(), binary()}} | {:error, term()}
   def check_runtime(%{built_with: built}, runtime) do
-    if built.otp == runtime.otp and minor(built.elixir) == minor(runtime.elixir) and
-         Version.match?(runtime.flezha, "~> " <> built.flezha) do
-      :ok
-    else
-      {:error,
-       {:runtime_mismatch,
-        %{
-          package_otp: built.otp,
-          package_elixir: built.elixir,
-          package_flezha: built.flezha,
-          otp: runtime.otp,
-          elixir: runtime.elixir,
-          flezha: runtime.flezha
-        }}}
+    case runtime_line(built, runtime) do
+      rule when is_binary(rule) ->
+        {:error,
+         {:runtime_mismatch,
+          %{
+            rule: rule,
+            why: Map.fetch!(@rules, rule),
+            package_otp: built.otp,
+            package_elixir: built.elixir,
+            package_flezha: built.flezha,
+            otp: runtime.otp,
+            elixir: runtime.elixir,
+            flezha: runtime.flezha
+          }}}
+
+      accepted ->
+        accepted
     end
   end
 
@@ -165,6 +188,32 @@ defmodule Flezha.Plugin.Installer.Manifest do
 
   defp providers(providers, _plugin_app),
     do: invalid(:invalid_field, %{field: :providers, value: providers})
+
+  # The rule the package breaks, or what accepts it.
+  defp runtime_line(built, runtime) do
+    {built_otp, running_otp} = {String.to_integer(built.otp), String.to_integer(runtime.otp)}
+    {built_elixir, running_elixir} = {minor(built.elixir), minor(runtime.elixir)}
+
+    cond do
+      built_otp > running_otp -> "otp_newer"
+      running_otp > built_otp + 2 -> "otp_too_old"
+      elem(built_elixir, 0) != elem(running_elixir, 0) -> "elixir_major"
+      built_elixir > running_elixir -> "elixir_newer"
+      not Version.match?(runtime.flezha, flezha_requirement(built.flezha)) -> "flezha_line"
+      built_elixir < running_elixir -> {:ok, {:elixir_minor, built.elixir, runtime.elixir}}
+      true -> :ok
+    end
+  end
+
+  defp flezha_requirement(built) do
+    next =
+      case Version.parse!(built) do
+        %Version{major: 0, minor: minor} -> "0.#{minor + 1}.0"
+        %Version{major: major} -> "#{major + 1}.0.0"
+      end
+
+    ">= #{built} and < #{next}"
+  end
 
   defp minor(version) do
     {:ok, %Version{major: major, minor: minor}} = Version.parse(version)

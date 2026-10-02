@@ -355,7 +355,7 @@ SDK raises or returns its one error type carrying them.
 | `plugin.provider_refused` | invalid | 2 | provider '{provider}' of package '{plugin}' refused its options: {reason} |  |
 | `plugin.provider_unavailable` | unavailable | 7 | provider {provider} belongs to package '{plugin}', which is {status} on this controller | `flz plugin list --installed` |
 | `plugin.registry_unavailable` | unavailable | 7 | the operator registry of the plugin's namespace did not answer; try again |  |
-| `plugin.runtime_mismatch` | conflict | 6 | the package was built on OTP {package_otp}, Elixir {package_elixir} and Flezha {package_flezha}; this controller runs OTP {otp}, Elixir {elixir} and Flezha {flezha} | `package it again in flezha/plugin-builder:{flezha}` |
+| `plugin.runtime_mismatch` | conflict | 6 | {why}; the package was built on OTP {package_otp}, Elixir {package_elixir} and Flezha {package_flezha}; this controller runs OTP {otp}, Elixir {elixir} and Flezha {flezha} | `package it again in flezha/plugin-builder:{flezha}` |
 | `plugin.service_failed` | internal | 1 | the plugin service failed; the controller's log names the cause |  |
 | `plugin.service_unavailable` | unavailable | 7 | the plugin service did not answer; try again |  |
 | `plugin.signature_invalid` | denied | 4 | the package signature does not verify against any trusted key |  |

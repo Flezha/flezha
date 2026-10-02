@@ -30,7 +30,11 @@ defmodule Flezha.Service.Cli.PluginPackagesTest do
   test "the installed list: one line per package in text, the rows in JSON" do
     text = capture_io(fn -> CliPlugin.list_installed_plugins(%{opts: []}) end)
     assert text =~ "flezha_example_plugin 0.1.0  loaded  providers: example_stamp"
-    assert text =~ "flz_refused 0.1.0  refused  the package was built on OTP 0"
+
+    assert text =~
+             "flz_refused 0.1.0  refused  a package loads on the OTP release it was built on " <>
+               "and the two after it; the package was built on OTP 0"
+
     assert text =~ "(plugin.runtime_mismatch)"
 
     json = capture_io(fn -> CliPlugin.list_installed_plugins(%{opts: [output: "json"]}) end)

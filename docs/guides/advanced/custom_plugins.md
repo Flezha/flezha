@@ -8,9 +8,10 @@ like.
 
 ## Build the package
 
-A package records the Erlang and Elixir versions it was built with, and a controller
-loads only a package built on its own. So the package is built in the controller image's
-builder stage, which has the same toolchain.
+A package records the Erlang and Elixir versions it was built with. A controller loads
+it on the same Erlang release or one of the two after it, and on the same Elixir 1.x or a
+later one, with a warning when the Elixir minors differ. So the package is built in the
+controller image's builder stage, which has the same toolchain.
 
 > Get the Flezha repository and the HTTP plugin's, side by side, then build the builder
 > image from the Flezha checkout.

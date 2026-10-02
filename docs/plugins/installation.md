@@ -77,10 +77,18 @@ nothing:
   a plugin's processes are its providers' declared workers;
 - a `:flezha_providers` entry that is not a provider module of the plugin application.
 
-A controller loads a package only on the runtime line it was built on: the same OTP
-release, the same Elixir `major.minor`, and a Flezha version matching `~>` the one the
-package was built against. Build it with the controller's toolchain. For the Docker image,
-that is the `plugin-builder` target of the controller's Dockerfile:
+A controller loads a package only on the runtime line it was built on:
+
+- **OTP:** the release the package was built on or one of the two after it;
+- **Elixir:** the same major, at the package's minor or a later one. A package built on an
+  older minor loads with one warning naming both versions, logged at boot and printed by
+  `flz plugin install`: code compiled there can call an Elixir internal a later minor
+  changed, which fails only when that line runs;
+- **Flezha:** the version the package was built for or a later one, of the same minor
+  before 1.0 and of the same major from 1.0.
+
+Build it with the controller's toolchain. For the Docker image, that is the
+`plugin-builder` target of the controller's Dockerfile:
 
 ```bash
 docker build --target plugin-builder -t flezha/plugin-builder:0.1.0 \
@@ -213,7 +221,7 @@ restart that loads the package.
 | `plugin.signature_invalid` | denied | a signature no trusted key verifies |
 | `plugin.signature_required` | denied | no signature, with `FLEZHA_PLUGIN_REQUIRE_SIGNATURE=true` |
 | `plugin.trust_store_empty` | invalid | signatures required and no trusted key configured |
-| `plugin.runtime_mismatch` | conflict | built on another OTP, Elixir or Flezha line |
+| `plugin.runtime_mismatch` | conflict | built outside the controller's OTP, Elixir or Flezha line; `details.rule` names which: `otp_newer`, `otp_too_old`, `elixir_newer`, `elixir_major` or `flezha_line` |
 | `plugin.library_conflict` | conflict | a bundled library at another version than the one the release or an earlier package holds |
 | `plugin.module_conflict` | conflict | a module the release or an earlier package already holds |
 | `plugin.provider_conflict` | conflict | a provider id that is already a row |
