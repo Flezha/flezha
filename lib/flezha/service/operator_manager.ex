@@ -79,7 +79,8 @@ defmodule Flezha.Service.OperatorManager do
 
         nodes ->
           target = Placement.pick_runner(nodes, operator_id)
-          route_call(target, fun, [namespace, operator_id, [routed: true]], &{:error, &1})
+          opts = Keyword.put(opts, :routed, true)
+          route_call(target, fun, [namespace, operator_id, opts], &{:error, &1})
       end
     end
   end
@@ -153,7 +154,7 @@ defmodule Flezha.Service.OperatorManager do
 
   def start_operator(namespace, operator, opts) do
     if Keyword.get(opts, :routed, false) or locally_startable?(namespace, operator.factory_id) do
-      do_start_operator(namespace, operator, Keyword.get(opts, :generated, false))
+      do_start_operator(namespace, operator, opts)
     else
       route_start(namespace, operator, opts)
     end
@@ -222,13 +223,15 @@ defmodule Flezha.Service.OperatorManager do
         route_call(
           target,
           :start_operator,
-          [namespace, operator, [routed: true, generated: Keyword.get(opts, :generated, false)]],
+          [namespace, operator, Keyword.put(opts, :routed, true)],
           &{:error, &1}
         )
     end
   end
 
-  defp do_start_operator(namespace, operator, generated?) do
+  defp do_start_operator(namespace, operator, opts) do
+    generated? = Keyword.get(opts, :generated, false)
+
     with :ok <- Admission.check_not_shutting_down(namespace),
          :ok <- Admission.check_generated_id_free(namespace, operator.id, generated?),
          :ok <- Admission.validate_operator(namespace, operator),
@@ -238,7 +241,7 @@ defmodule Flezha.Service.OperatorManager do
          :ok <- Admission.check_cell_quota(namespace, operator),
          :ok <- Admission.check_disk_quota(namespace),
          :ok <- Paths.claim_namespace(operator.id, namespace) do
-      case Init.init_operator(&exist?/2, namespace, operator) do
+      case Init.init_operator(&exist?/2, namespace, operator, Keyword.get(opts, :announce, true)) do
         {:ok, _} = ok ->
           _ = Quotas.record_allocation(namespace, :max_operators, 1)
           seg_count = Admission.cell_count(operator)
@@ -332,15 +335,17 @@ defmodule Flezha.Service.OperatorManager do
   `OperatorCompleted`. `preserve_state: true` keeps the files for a rescale to
   move and `:sealed` also seals a steps operator's journal at its latest committed
   iteration; either closes the writers on the node the operator ran on.
+  `reason: :completed` names a completion to the stop's announcement, and
+  `announce: false` a stop that is not one (a rescale's), as for a start.
   """
   @spec stop_operator(String.t(), String.t(), keyword()) :: :ok | {:error, term()}
   def stop_operator(namespace, operator_id, opts \\ []) do
     on_hub_member(namespace, operator_id, opts, :stop_operator, fn ->
-      do_stop_operator(namespace, operator_id, Keyword.get(opts, :preserve_state, false))
+      do_stop_operator(namespace, operator_id, opts)
     end)
   end
 
-  defp do_stop_operator(namespace, operator_id, preserve_state?) do
+  defp do_stop_operator(namespace, operator_id, opts) do
     with_operator_pid(namespace, operator_id, fn operator_pid ->
       # Read the binding and the cell count before the stop tears the
       # operator down — the operator is gone afterwards, the flush needs its
@@ -353,7 +358,9 @@ defmodule Flezha.Service.OperatorManager do
         operator_id: operator_id,
         node: node(operator_pid),
         runner_id: runner_id,
-        preserve_state?: preserve_state?,
+        preserve_state?: Keyword.get(opts, :preserve_state, false),
+        announce: Keyword.get(opts, :announce, true),
+        reason: Keyword.get(opts, :reason, :stopped),
         cell_count: cell_count
       }
 

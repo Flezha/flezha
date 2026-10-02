@@ -41,6 +41,7 @@ defmodule Flezha.Convergence.Probe.Readers do
         factory_id: Map.get(obs, :factory_id),
         live_runners: live_runners(ctx, ns),
         registry_tag: Map.get(obs, :registry_tag),
+        node: node_of(obs),
         observed?: observed != nil
       }
       |> fact(ref)
@@ -120,7 +121,8 @@ defmodule Flezha.Convergence.Probe.Readers do
           running?: MapSet.member?(running, plugin_id),
           subscribed?: MapSet.member?(subscribed, plugin_id),
           down: Map.get(down, plugin_id),
-          probe: Map.get(health, plugin_id, :unprobed)
+          probe: Map.get(health, plugin_id, :unprobed),
+          node: node_of(observed)
         },
         {:plugin, {ns, rid, plugin_id}}
       )
@@ -332,4 +334,8 @@ defmodule Flezha.Convergence.Probe.Readers do
   end
 
   defp fact(observed, subject), do: Fact.new(subject, observed)
+
+  # The node an observed operator runs on, which its plugins share.
+  defp node_of(%{pid: pid}) when is_pid(pid), do: node(pid)
+  defp node_of(_observed), do: nil
 end

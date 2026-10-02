@@ -1,6 +1,6 @@
 defmodule Flezha.Plugin.Provider.Postgres do
   @moduledoc """
-  Transactional PostgreSQL sink (`:io_binding`): per flush batch, ONE database
+  Transactional PostgreSQL sink (an operator plugin): per flush batch, ONE database
   transaction upserts every record into `flezha_records` (keyed by `flz.key`)
   and advances the per-Cell `flezha_sink_progress` watermark row.
 

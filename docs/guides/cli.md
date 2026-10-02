@@ -78,12 +78,12 @@ A plugin has a name in its namespace, and operators are bound to it:
 
 | Verb | What it does |
 |---|---|
-| `flz plugin enable <name> <provider> [--single]` | enables the plugin; with `--operator_id` it binds that operator in the same command |
+| `flz plugin enable <name> <provider> [--single]` | enables the plugin; with `--operator_id` it binds that operator in the same command. A controller plugin takes its hooks here, one `--hook` each, and no operator |
 | `flz plugin bind <name> --operator_id <op>` | binds an operator, with its own `--hook` and `--channel` |
 | `flz plugin unbind <name> --operator_id <op>` | takes the binding away; the plugin stays enabled |
-| `flz plugin update <name>` | changes the plugin's options, in place when they are live |
+| `flz plugin update <name>` | changes the plugin's options, in place when they are live; `--hook` replaces a controller plugin's hooks |
 | `flz plugin disable <name>` | stops the plugin for every operator bound to it |
-| `flz plugin list` | the plugins enabled in the namespace, their operators and controllers |
+| `flz plugin list` | the plugins enabled in the namespace, their operators and controllers, and a controller plugin's hooks and the controllers it lags on |
 
 [`sources_and_sinks.md`](sources_and_sinks.md) walks through them.
 

@@ -142,7 +142,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
     Task.start(fn ->
       drain_owed_outputs(runner_id, operator_id)
 
-      case OperatorManager.stop_operator(namespace, operator_id) do
+      case OperatorManager.stop_operator(namespace, operator_id, reason: :completed) do
         :ok ->
           :ok
 

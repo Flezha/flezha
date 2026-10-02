@@ -51,7 +51,8 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
     end
 
     @impl true
-    def handle_call(:registry_runner_set, _from, state), do: {:reply, {:ok, "runner-1"}, state}
+    def handle_call({:registry_runner_set, _announce?}, _from, state),
+      do: {:reply, {:ok, "runner-1"}, state}
 
     def handle_call(:get_overwatch_state, _from, state),
       do:

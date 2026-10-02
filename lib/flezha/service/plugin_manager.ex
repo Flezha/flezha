@@ -76,20 +76,27 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
-  # The entry is the plugin without an operator or hooks, its options checked
-  # against the provider's declaration as any binding of it may hook it: an
-  # enable names no operator, so the provider's own preparation runs where a
-  # binding brings the plugin up.
+  # An operator plugin's entry is the plugin without an operator or hooks, its
+  # options checked against the provider's declaration as any binding of it may
+  # hook it: an enable names no operator, so the provider's own preparation runs
+  # where a binding brings the plugin up. A controller plugin's keeps its hooks.
   defp entry_of(%Plugin{provider: provider, opts: opts} = plugin) do
+    plugin = %Plugin{plugin | opts: opts || %{}}
+
+    with {:ok, entry} <- checked_entry(plugin, Plugin.controller?(plugin)),
+         do: {:ok, Plugin.strip_transient(entry)}
+  rescue
+    UndefinedFunctionError -> {:error, not_loaded(provider)}
+  end
+
+  defp checked_entry(plugin, true), do: Shared.checked_entry(plugin)
+
+  defp checked_entry(%Plugin{provider: provider} = plugin, false) do
     bindable = %{subscribed_extensions: Decl.io_hooks(provider.__provider__())}
 
     with :ok <- refuse_init_hook(plugin),
-         {:ok, _normalised} <- Options.normalise_opts(provider, Map.merge(opts || %{}, bindable)) do
-      {:ok,
-       Plugin.strip_transient(%Plugin{plugin | operator_id: nil, hooks: [], opts: opts || %{}})}
-    end
-  rescue
-    UndefinedFunctionError -> {:error, not_loaded(provider)}
+         {:ok, _normalised} <- Options.normalise_opts(provider, Map.merge(plugin.opts, bindable)),
+         do: {:ok, %Plugin{plugin | operator_id: nil, hooks: []}}
   end
 
   defp refuse_init_hook(%Plugin{hooks: hooks}) do
@@ -121,6 +128,8 @@ defmodule Flezha.Service.PluginManager do
     case Init.start_declared(namespace, spec, %{}, {:plugin, name}) do
       %ProcessHub.StartResult{started: [{_, [_ | _]} | _]} ->
         await_entry(namespace, name, 0)
+        # A controller plugin's home answers once it has placed its copies.
+        if Plugin.controller?(entry), do: Home.serialized(namespace, name, fn -> :ok end)
         _ = reconverge(namespace, name, &Overwatch.plugin_subscribe(&1, &2, &3, entry))
         {:ok, :enabled}
 
@@ -256,7 +265,8 @@ defmodule Flezha.Service.PluginManager do
 
   # A group id names no operator — it names N of them, each bound under its
   # `#pK` id with its partition options.
-  defp targets(namespace, operator_id) do
+  @doc false
+  def targets(namespace, operator_id) do
     case PartitionGroup.members(namespace, operator_id) do
       [] -> [{operator_id, nil}]
       members -> Enum.map(members, &{&1.id, &1.partition})
@@ -270,6 +280,9 @@ defmodule Flezha.Service.PluginManager do
 
   defp refuse_binding(%Plugin{id: name} = entry, binding, targets) do
     cond do
+      Plugin.controller?(entry) ->
+        {:error, {:plugin_not_bindable, name}}
+
       entry.single and Enum.any?(binding.hooks, &(elem(&1, 0) == :on_output)) ->
         {:error, {:plugin_single_sink, name}}
 
@@ -440,21 +453,28 @@ defmodule Flezha.Service.PluginManager do
   ## Update
 
   @doc """
-  Change `name`'s options. When every changed option is declared live, each
-  running copy applies them in place; otherwise each restarts, and an update
-  that changes none is `:unchanged`. Answers how it was applied and the
-  operators bound to it.
+  Change `name`'s options, and a controller plugin's hooks when `hooks` names
+  any. When every changed option is declared live, each running copy applies
+  them in place; otherwise each restarts, and an update that changes none is
+  `:unchanged`. Answers how it was applied and the operators bound to it.
   """
-  @spec update_plugin(binary(), binary(), map()) ::
+  @spec update_plugin(binary(), binary(), map(), [Plugin.hook()]) ::
           {:ok, %{applied: :live | :restarted | :unchanged, operators: [binary()]}}
           | {:error, term()}
-  def update_plugin(namespace, name, opts),
-    do: on_hub_node(namespace, :update_here, [namespace, name, opts], {:plugin_not_found, name})
+  def update_plugin(namespace, name, opts, hooks \\ []),
+    do:
+      on_hub_node(
+        namespace,
+        :update_here,
+        [namespace, name, opts, hooks],
+        {:plugin_not_found, name}
+      )
 
   @doc false
-  def update_here(namespace, name, opts) do
+  def update_here(namespace, name, opts, hooks) do
     with {:ok, %Plugin{} = old} <- fetch_entry(namespace, name),
-         {:ok, new} <- entry_of(%Plugin{old | opts: Map.merge(old.opts, opts)}) do
+         {:ok, hooks} <- updated_hooks(old, hooks),
+         {:ok, new} <- entry_of(%Plugin{old | opts: Map.merge(old.opts, opts), hooks: hooks}) do
       case change(old, new) do
         :none -> {:ok, %{applied: :unchanged, operators: bound_operators(namespace, name)}}
         mode -> apply_update(namespace, name, new, mode)
@@ -472,12 +492,25 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
+  # An operator plugin's hooks are its bindings'.
+  defp updated_hooks(%Plugin{hooks: hooks}, []), do: {:ok, hooks}
+
+  defp updated_hooks(%Plugin{} = entry, hooks) do
+    if Plugin.controller?(entry),
+      do: {:ok, hooks},
+      else: {:error, {:unread_plugin_options, ["--hook"]}}
+  end
+
+  # A copy takes changed hooks only by a restart.
   defp change(%Plugin{provider: provider} = old, new) do
     live = Decl.live_options(provider.__provider__())
+    changed = for {key, value} <- new.opts, Map.get(old.opts, key) != value, do: key
 
-    case for {key, value} <- new.opts, Map.get(old.opts, key) != value, do: key do
-      [] -> :none
-      changed -> if Enum.all?(changed, &(&1 in live)), do: :live, else: :restart
+    cond do
+      new.hooks != old.hooks -> :restart
+      changed == [] -> :none
+      Enum.all?(changed, &(&1 in live)) -> :live
+      true -> :restart
     end
   end
 
@@ -521,61 +554,12 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
-  @doc """
-  Whether `operator_id` (or a member of the group it names) is still bound to
-  `name`: `:attached` while any target carries the binding, `:detached` when
-  the targets are registered without it, `:operator_ended` when none is
-  registered or declared, and `:unknown` when the rows cannot be read.
-  """
-  @spec attachment(binary(), binary(), binary()) ::
-          :attached | :detached | :operator_ended | :unknown
-  def attachment(namespace, operator_id, name) do
-    with {:error, _unreadable} <-
-           on_hub_node(namespace, :attachment_here, [namespace, operator_id, name], :unknown),
-         do: :unknown
-  end
-
-  @doc false
-  def attachment_here(namespace, operator_id, name) do
-    declared = MapSet.new(HubManager.declared_operators(namespace), & &1.id)
-
-    namespace
-    |> targets(operator_id)
-    |> Enum.map(fn {member_id, _} -> row_attachment(namespace, member_id, name, declared) end)
-    |> Enum.reduce(&stronger_attachment/2)
-  end
-
-  # A declared operator with no row is between two homes, a move or a rescale
-  # away from one, and not ended.
-  defp row_attachment(namespace, operator_id, name, declared) do
-    case HubManager.operator_bindings(namespace, operator_id) do
-      {:ok, bindings} ->
-        if Enum.any?(bindings, &(Plugin.base_id(elem(&1, 0)) == name)),
-          do: :attached,
-          else: :detached
-
-      {:error, {:operator_not_found, _, _}} ->
-        if declared?(declared, operator_id), do: :unknown, else: :operator_ended
-
-      {:error, _hub_down} ->
-        :unknown
-    end
-  end
-
-  defp declared?(declared, operator_id) do
-    MapSet.member?(declared, operator_id) or
-      Enum.any?(declared, &(Plugin.group_of(&1) == operator_id))
-  end
-
-  # One member still carrying the row is enough to go on.
-  defp stronger_attachment(a, b),
-    do: Enum.find([:attached, :unknown, :detached, :operator_ended], &(&1 in [a, b]))
-
   ## Reading
 
   @doc """
   Every plugin enabled in `namespace`: its name, its provider, whether it is
-  `single`, the operators bound to it, and the controllers it runs on.
+  `single`, the operators bound to it, and the controllers it runs on; for a
+  controller plugin, its hooks and the controllers whose copy lags.
   """
   @spec plugins(binary()) :: [map()]
   def plugins(namespace) do
@@ -592,7 +576,9 @@ defmodule Flezha.Service.PluginManager do
         provider: provider_name(entry.provider),
         single: entry.single,
         operators: bound |> bound_to(name) |> operators_of() |> Enum.sort(),
-        controllers: Directory.plugin_nodes(namespace, name) |> Enum.sort()
+        controllers: Directory.plugin_nodes(namespace, name) |> Enum.sort(),
+        hooks: Enum.map(entry.hooks, &to_string(elem(&1, 0))),
+        lagging: if(Plugin.controller?(entry), do: Shared.lagging_on(namespace, name), else: [])
       }
     end
   end
@@ -708,21 +694,25 @@ defmodule Flezha.Service.PluginManager do
 
   # A namespace's records are written and read on a node that hosts its hub:
   # this one when it does, otherwise one that does, under a bound. With no hub
-  # anywhere nothing is enabled or bound there, which `none` says.
-  defp on_hub_node(namespace, function, args, none) do
+  # anywhere nothing is enabled or bound there, which `none` says. `function`
+  # is this module's, or a `{module, function}` reading the same records.
+  @doc false
+  def on_hub_node(namespace, function, args, none) do
+    {module, function} = if is_atom(function), do: {__MODULE__, function}, else: function
+
     case Directory.hub_nodes(namespace) do
       [] ->
         {:error, none}
 
       hub_nodes ->
         if node() in hub_nodes,
-          do: apply(__MODULE__, function, args),
-          else: remote(hd(hub_nodes), function, args)
+          do: apply(module, function, args),
+          else: remote(hd(hub_nodes), module, function, args)
     end
   end
 
-  defp remote(hub_node, function, args) do
-    :erpc.call(hub_node, __MODULE__, function, args, Durations.get(:route_call_timeout_ms))
+  defp remote(hub_node, module, function, args) do
+    :erpc.call(hub_node, module, function, args, Durations.get(:route_call_timeout_ms))
   catch
     _kind, _reason -> {:error, :registry_unavailable}
   end

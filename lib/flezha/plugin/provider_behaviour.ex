@@ -3,8 +3,11 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   The plugin provider contract, and the shared helpers every provider uses to
   honour it.
 
-  A provider is ONE declaration. `use ProviderBehaviour, options: rows, worker:
-  spec` names every option the provider takes — type, default, whether it is
+  A provider is ONE declaration, of an operator plugin (`type: :operator`, the
+  default), which acts on the records passing through the operators it is bound
+  to, or of a controller plugin (`type: :controller`), which is bound to none
+  and is told what happened in its namespace. `use ProviderBehaviour, options:
+  rows, worker: spec` names every option the provider takes — type, default, whether it is
   required, its bounds, its documentation — and, for a provider that runs a
   long-lived process, the worker module and its restart value. From the rows
   the `use` derives `defstruct`, `@enforce_keys`, `build/1`, `help/1`,
@@ -111,7 +114,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
 
   alias Flezha.Config.Durations
 
-  @callback plugin_type() :: :io_binding
+  @callback plugin_type() :: :operator | :controller
   @callback build(map()) :: {:ok, struct()} | {:error, term()}
   @callback help(provider_id :: String.t()) :: String.t()
   @callback provider_info() :: map()
@@ -208,6 +211,18 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   @callback on_preview(ctx :: struct(), opts :: map()) :: term()
 
   @doc """
+  Controller hooks: something happened in the plugin's namespace. Each takes the
+  event `Flezha.Observability.HookSink` built (a map with `hook`, `namespace`,
+  `controller`, `at`, `text` and the hook's own fields) and returns quickly; a
+  provider that does slow I/O hands the event to its own worker.
+  """
+  @callback on_operator_started(event :: map(), opts :: map()) :: term()
+  @callback on_operator_stopped(event :: map(), opts :: map()) :: term()
+  @callback on_operator_failed(event :: map(), opts :: map()) :: term()
+  @callback on_dead_letter(event :: map(), opts :: map()) :: term()
+  @callback on_plugin_unhealthy(event :: map(), opts :: map()) :: term()
+
+  @doc """
   Apply changed `live:` options to the running plugin, given its running
   options and the new ones. Required of a provider that declares a live option.
   """
@@ -233,6 +248,14 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     :on_preview
   ]
 
+  @controller_callbacks [
+    :on_operator_started,
+    :on_operator_stopped,
+    :on_operator_failed,
+    :on_dead_letter,
+    :on_plugin_unhealthy
+  ]
+
   @optional_callbacks [
     init_provider: 1,
     activate: 1,
@@ -248,6 +271,11 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     on_snapshot: 2,
     on_terminate: 2,
     on_preview: 2,
+    on_operator_started: 2,
+    on_operator_stopped: 2,
+    on_operator_failed: 2,
+    on_dead_letter: 2,
+    on_plugin_unhealthy: 2,
     reconfigure: 2
   ]
 
@@ -255,9 +283,13 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   @spec lifecycle_callbacks() :: keyword(arity())
   def lifecycle_callbacks(), do: @lifecycle_callbacks
 
-  @doc "The dispatch callbacks a hook can name."
+  @doc "The dispatch callbacks an operator plugin's hook can name."
   @spec extension_callbacks() :: [atom()]
   def extension_callbacks(), do: @extension_callbacks
+
+  @doc "The hooks a controller plugin can take: what happened in its namespace."
+  @spec controller_callbacks() :: [atom()]
+  def controller_callbacks(), do: @controller_callbacks
 
   # The two that carry a payload through the chain, both taking a `Ctx.IO`.
   @io_callbacks [:on_input, :on_output]

@@ -230,7 +230,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
     test "an unknown extension name is refused without being interned" do
       name = "on_never_declared_#{System.unique_integer([:positive])}"
 
-      assert {:error, {:unknown_hook, ^name}} =
+      assert {:error, {:unknown_hook, ^name, _allowed}} =
                Table.canonicalise(@catalog, %Plugin{
                  id: "c",
                  provider: MsgEcho,
@@ -297,7 +297,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
     test "unknown extension rejected at subscribe" do
       table = Table.new(@catalog)
 
-      assert {:error, {_id, {:unknown_hook, :nope}}} =
+      assert {:error, {_id, {:unknown_hook, :nope, _allowed}}} =
                subscribe(table, "x", %Plugin{
                  id: "x",
                  provider: FoldA,

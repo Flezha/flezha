@@ -49,7 +49,7 @@ ways is refused when the plugin is enabled, rather than resolved by precedence.
 
 | | |
 |---|---|
-| Plugin type | `:io_binding` |
+| Plugin type | `:operator` |
 | Shared | yes: one connection per controller for every operator bound to the plugin, or one in the whole cluster with `--single`; every operator gets every frame. Each member of a partitioned operator runs a connection of its own, for its own share (below) |
 | Source | one `http://` or `https://` URL, `GET` only, redirects not followed — or a literal `subscription_items` list |
 | Source response | `{"version": <integer>, "items": [<string>, …]}` |

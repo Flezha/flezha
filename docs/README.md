@@ -94,6 +94,7 @@ answer "what are the options"; a guide answers "what do I type".
 | [`file.md`](plugins/file.md) | A file, or an object in an S3 bucket, as an operator input and as its output |
 | [`websocket_subscription.md`](plugins/websocket_subscription.md) | Changing a live socket's subscription set without reconnecting |
 | [`operator_forward.md`](plugins/operator_forward.md) | One operator's output into another's input |
+| [`hook_webhook.md`](plugins/hook_webhook.md) | What happens in a namespace, POSTed as JSON to a URL: the first controller plugin |
 | [`http_server.md`](plugins/http_server.md) | An operator behind HTTP, and another operator's events as server-sent events (the `flezha_http` package) |
 
 ## operations

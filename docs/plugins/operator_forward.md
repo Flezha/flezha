@@ -16,7 +16,7 @@ cross-hop delivery guarantee itself is specified in
 
 | | |
 |---|---|
-| Plugin type | `:io_binding` |
+| Plugin type | `:operator` |
 | Hooks | `:on_output` (feed a downstream operator), `:on_input` (pass-through tap) |
 | Shared | no: a second operator bound to it is refused (`plugin.not_shareable`) |
 | Destination | an operator in the **same namespace** |

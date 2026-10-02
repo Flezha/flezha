@@ -38,7 +38,9 @@ defmodule Flezha.Plugin.Providers do
     # reply_to, ref}` envelope to the SDK-side operator. Attach at operator
     # start with a hook keyed on the handler key, e.g.
     # `["on_message", {"key": "fetch_init_state"}]`.
-    "operator_message_forward" => Provider.MessageForward
+    "operator_message_forward" => Provider.MessageForward,
+    # The first-party controller plugin: every hook event, POSTed as JSON.
+    "hook_webhook" => Provider.HookWebhook
   }
 
   @doc "Every provider id to its module, first-party rows and installed ones."

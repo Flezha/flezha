@@ -119,7 +119,7 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
     %{operator_id: op, runner_b: runner_b} = ctx
 
     OperatorManager
-    |> stub(:stop_operator, fn @ns, id ->
+    |> stub(:stop_operator, fn @ns, id, _opts ->
       send(test_pid, {:stop_operator_called, id})
       :ok
     end)

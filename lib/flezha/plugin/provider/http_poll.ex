@@ -1,6 +1,6 @@
 defmodule Flezha.Plugin.Provider.HttpPoll do
   @moduledoc """
-  Generic HTTP polling input source (`:io_binding`): the member of the source
+  Generic HTTP polling input source (an operator plugin): the member of the source
   set whose upstream is a slowly-changing HTTP resource rather than a socket.
 
   It GETs `:url` every `:interval_ms` and injects the body on `:channel` as an

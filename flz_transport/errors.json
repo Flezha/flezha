@@ -1472,6 +1472,15 @@
         {"tag": "native_code", "args": ["entry"]}
       ]
     },
+    "plugin.not_bindable": {
+      "class": "invalid",
+      "message": "plugin '{plugin}' is a controller plugin, which is bound to no operator",
+      "hint": "flz plugin update <name> --hook <hook>",
+      "details": ["plugin"],
+      "reasons": [
+        {"tag": "plugin_not_bindable", "args": ["plugin"]}
+      ]
+    },
     "plugin.not_found": {
       "class": "not_found",
       "message": "plugin '{plugin}' is not enabled",
@@ -1803,11 +1812,11 @@
     },
     "plugin.unknown_hook": {
       "class": "not_found",
-      "message": "no hook is named '{hook}'",
+      "message": "no hook is named '{hook}'; this plugin takes {allowed}",
       "hint": "flz plugin help <provider_id>",
-      "details": ["hook"],
+      "details": ["hook", "allowed"],
       "reasons": [
-        {"tag": "unknown_hook", "args": ["hook"]}
+        {"tag": "unknown_hook", "args": ["hook", "allowed"]}
       ]
     },
     "plugin.unknown_hook_option": {
@@ -1995,7 +2004,8 @@
         {"tag": "control_channel_exit"},
         {"tag": "no_control_channel"},
         {"tag": "no_connection_available"},
-        {"tag": "control_channel_not_running"}
+        {"tag": "control_channel_not_running"},
+        {"tag": "dead_runner"}
       ]
     },
     "runner.quic_addresses_invalid": {

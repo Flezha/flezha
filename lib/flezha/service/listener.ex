@@ -24,6 +24,7 @@ defmodule Flezha.Service.Listener do
   alias Flezha.Identificator
   alias Flezha.Plugin
   alias Flezha.Plugin.Provider.MonitoredIOForward
+  alias Flezha.Service.HubManager
   alias Flezha.Service.Listener.Relay
   alias Flezha.Service.PluginManager
 
@@ -74,7 +75,7 @@ defmodule Flezha.Service.Listener do
     # A target neither registered nor declared is refused on one read, with
     # nothing to detach: the enable and the detach would each wait out a hub
     # that has not settled before saying so.
-    if PluginManager.attachment(namespace, operator_id, target.plugin_id) == :operator_ended,
+    if attachment(namespace, operator_id, target.plugin_id) == :operator_ended,
       do: refused({:operator_not_found, namespace, operator_id}),
       else: attached(target, opts, handler)
   end
@@ -187,4 +188,58 @@ defmodule Flezha.Service.Listener do
   defp wait(%{deadline: deadline, idle_ms: idle}), do: min(max(deadline - now(), 0), idle)
 
   defp now, do: System.monotonic_time(:millisecond)
+
+  ## The listener's plugin
+
+  @doc """
+  Whether `operator_id` (or a member of the group it names) is still bound to
+  `name`: `:attached` while any target carries the binding, `:detached` when
+  the targets are registered without it, `:operator_ended` when none is
+  registered or declared, and `:unknown` when the rows cannot be read.
+  """
+  @spec attachment(binary(), binary(), binary()) ::
+          :attached | :detached | :operator_ended | :unknown
+  def attachment(namespace, operator_id, name) do
+    args = [namespace, operator_id, name]
+
+    with {:error, _unreadable} <-
+           PluginManager.on_hub_node(namespace, {__MODULE__, :attachment_here}, args, :unknown),
+         do: :unknown
+  end
+
+  @doc false
+  def attachment_here(namespace, operator_id, name) do
+    declared = MapSet.new(HubManager.declared_operators(namespace), & &1.id)
+
+    namespace
+    |> PluginManager.targets(operator_id)
+    |> Enum.map(fn {member_id, _} -> row_attachment(namespace, member_id, name, declared) end)
+    |> Enum.reduce(&stronger_attachment/2)
+  end
+
+  # A declared operator with no row is between two homes, a move or a rescale
+  # away from one, and not ended.
+  defp row_attachment(namespace, operator_id, name, declared) do
+    case HubManager.operator_bindings(namespace, operator_id) do
+      {:ok, bindings} ->
+        if Enum.any?(bindings, &(Plugin.base_id(elem(&1, 0)) == name)),
+          do: :attached,
+          else: :detached
+
+      {:error, {:operator_not_found, _, _}} ->
+        if declared?(declared, operator_id), do: :unknown, else: :operator_ended
+
+      {:error, _hub_down} ->
+        :unknown
+    end
+  end
+
+  defp declared?(declared, operator_id) do
+    MapSet.member?(declared, operator_id) or
+      Enum.any?(declared, &(Plugin.group_of(&1) == operator_id))
+  end
+
+  # One member still carrying the row is enough to go on.
+  defp stronger_attachment(a, b),
+    do: Enum.find([:attached, :unknown, :detached, :operator_ended], &(&1 in [a, b]))
 end

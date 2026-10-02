@@ -79,7 +79,10 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
     end
 
     test "every row answers a declaration, and every on_*/2 it defines is a real extension" do
-      known = MapSet.new(ProviderBehaviour.extension_callbacks())
+      known =
+        MapSet.new(
+          ProviderBehaviour.extension_callbacks() ++ ProviderBehaviour.controller_callbacks()
+        )
 
       for {id, provider} <- Providers.all() do
         assert %ProviderBehaviour.Decl{module: ^provider} = decl = provider.__provider__(),
@@ -304,7 +307,7 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
     start_supervised!({WorkerSup, name: WorkerSup.family(wrapper)}, id: wrapper)
 
     events = attach_phase_events()
-    table = Table.new(@catalog)
+    table = Table.new(catalog(provider))
     plugin = plugin_for(wrapper, provider, row_id)
 
     assert {:ok, table} = Table.bulk_subscribe(table, [{row_id, plugin}]),
@@ -352,6 +355,13 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
            "provider `#{id}` reached :running without emitting the event"
 
     _ = Table.teardown_all(table)
+  end
+
+  # A controller plugin's hooks are the controller catalogue's.
+  defp catalog(provider) do
+    if provider.plugin_type() == :controller,
+      do: Flezha.Plugin.Shared.__extensions_catalog__(),
+      else: @catalog
   end
 
   defp plugin_for(wrapper, provider, row_id) do
@@ -420,6 +430,7 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
       Flezha.Plugin.Provider.OperatorForward -> "docs/plugins/operator_forward.md"
       Flezha.Plugin.Provider.File.Source -> "docs/plugins/file.md"
       Flezha.Plugin.Provider.File.Sink -> "docs/plugins/file.md"
+      Flezha.Plugin.Provider.HookWebhook -> "docs/plugins/hook_webhook.md"
       _ -> nil
     end
   end
@@ -579,6 +590,7 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
         @moduledoc false
 
         use Flezha.Plugin.ProviderBehaviour,
+          type: unquote(decl.type),
           options: unquote(Macro.escape(decl.options)),
           feeds: unquote(decl.feeds),
           worker: [

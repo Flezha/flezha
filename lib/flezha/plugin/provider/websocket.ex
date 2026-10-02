@@ -1,6 +1,6 @@
 defmodule Flezha.Plugin.Provider.Websocket do
   @moduledoc """
-  First-party Websocket provider (`:io_binding`). Its declared worker is a Fresh
+  First-party Websocket provider (an operator plugin). Its declared worker is a Fresh
   connection the table starts at activation; inbound frames reach the operator
   through the host's one inject.
 

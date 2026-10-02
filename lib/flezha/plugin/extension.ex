@@ -35,9 +35,14 @@ defmodule Flezha.Plugin.Extension do
         end
 
       :error ->
-        {:error, {:unknown_hook, name}}
+        unknown_hook(table, name)
     end
   end
+
+  @doc "The refusal of a hook `table`'s catalog does not declare, naming the hooks it does."
+  @spec unknown_hook(Table.t(), term()) :: {:error, {:unknown_hook, term(), binary()}}
+  def unknown_hook(%Table{} = table, name),
+    do: Table.Subscription.unknown_hook(table.catalog, name)
 
   @doc """
   Whether any running plugin has a hook on `name`. A caller on a hot path asks

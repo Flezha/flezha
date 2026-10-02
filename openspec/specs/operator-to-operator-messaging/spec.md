@@ -5,25 +5,26 @@ TBD - created by archiving change operator-to-operator-messaging. Update Purpose
 ## Requirements
 ### Requirement: First-party operator-forward plugin provider
 
-The system SHALL provide a first-party `:io_binding` plugin provider,
+The system SHALL provide a first-party operator plugin provider,
 `Flezha.Plugin.Provider.OperatorForward`, whose delivery destination is another operator in
-the same namespace rather than an external endpoint. The provider SHALL be enabled and disabled
-per operator through `Flezha.Service.PluginManager` using the same `%Flezha.Plugin{}`
-hook mechanism as every other `:io_binding` provider, and SHALL support the hooks
-`:on_output` and `:on_input`. The provider SHALL declare no new hooks.
+the same namespace rather than an external endpoint. The provider SHALL be enabled by name,
+bound to one operator and unbound or disabled through `Flezha.Service.PluginManager` using the
+same `%Flezha.Plugin{}` hook mechanism as every other operator plugin, SHALL declare itself
+not shareable, and SHALL support the hooks `:on_output` and `:on_input`. The provider SHALL
+declare no new hooks.
 
 Required opts: `:target_operator_id`. Optional opts: `:queue_max`, `:retry_backoff_ms`,
 `:retry_max_backoff_ms`, `:plugin_id`.
 
 #### Scenario: Enabling the provider on an operator
 - **WHEN** a `%Flezha.Plugin{}` whose provider is `Flezha.Plugin.Provider.OperatorForward` and
-  whose opts contain a `:target_operator_id` naming a different operator has the hook
-  `{:on_output, _}` on an operator
-- **THEN** the enable call SHALL succeed and subsequent output from that operator SHALL be
+  whose opts contain a `:target_operator_id` naming a different operator is bound with the
+  hook `{:on_output, _}` to an operator
+- **THEN** the bind SHALL succeed and subsequent output from that operator SHALL be
   delivered to the target operator's input stream
 
 #### Scenario: Disabling the provider stops delivery
-- **WHEN** an enabled operator-forward plugin is disabled via `PluginManager.disable_plugin/2`
+- **WHEN** an enabled operator-forward plugin is unbound from its operator, or disabled
 - **THEN** no further output from the source operator SHALL be delivered to the target, and the
   provider's worker SHALL be stopped
 

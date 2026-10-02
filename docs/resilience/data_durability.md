@@ -492,6 +492,9 @@ ordinary input path (fresh output identity — it journals as a new input); a fa
 re-parks with `generation` incremented; `drop` is audited. Retention bounds the store by age
 AND size (30 d / 4 GiB, more restrictive wins); a retention deletion is genuine loss and is
 loud: `[:flezha, :dlq, :retention_dropped]`, exported as `dlq_dropped_by_retention_total`.
+Every new entry also executes `[:flezha, :dlq, :dead_lettered]`, which names the entry
+rather than counting it and reaches only controller plugins
+([`hook_webhook.md`](../plugins/hook_webhook.md)), never an exporter.
 
 **Steps operators.** A steps operator Cell runs the same first rung: retried in place,
 non-retryable errors skipping the ladder (see

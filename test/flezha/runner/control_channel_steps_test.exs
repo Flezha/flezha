@@ -6,7 +6,7 @@ defmodule FlezhaTest.Runner.ControlChannelOperatorCompletedTest do
   A task-kind unit emits `OperatorCompleted` when its run-once function returns.
   The controller decodes it off the `"control_command"` payload_id (same
   envelope as `RunnerShutdownNotification`) and
-  drives deregister-on-completion via `OperatorManager.stop_operator/2`. A
+  drives deregister-on-completion via `OperatorManager.stop_operator/3`. A
   terminal failure (`status = "error"`) is torn down identically and
   surfaced via `[:flezha, :steps, :failed]` telemetry — no retry.
   """
@@ -52,7 +52,7 @@ defmodule FlezhaTest.Runner.ControlChannelOperatorCompletedTest do
     test_pid = self()
 
     OperatorManager
-    |> stub(:stop_operator, fn @namespace, operator_id ->
+    |> stub(:stop_operator, fn @namespace, operator_id, [reason: :completed] ->
       send(test_pid, {:stop_operator_called, operator_id})
       :ok
     end)
@@ -77,7 +77,7 @@ defmodule FlezhaTest.Runner.ControlChannelOperatorCompletedTest do
     test_pid = self()
 
     OperatorManager
-    |> stub(:stop_operator, fn @namespace, operator_id ->
+    |> stub(:stop_operator, fn @namespace, operator_id, [reason: :completed] ->
       send(test_pid, {:stop_operator_called, operator_id})
       :ok
     end)
@@ -103,7 +103,7 @@ defmodule FlezhaTest.Runner.ControlChannelOperatorCompletedTest do
     test_pid = self()
 
     OperatorManager
-    |> stub(:stop_operator, fn @namespace, operator_id ->
+    |> stub(:stop_operator, fn @namespace, operator_id, [reason: :completed] ->
       send(test_pid, {:stop_operator_called, operator_id})
       :ok
     end)
@@ -139,7 +139,7 @@ defmodule FlezhaTest.Runner.ControlChannelOperatorCompletedTest do
     end)
 
     OperatorManager
-    |> stub(:stop_operator, fn @namespace, operator_id ->
+    |> stub(:stop_operator, fn @namespace, operator_id, [reason: :completed] ->
       send(test_pid, {:stop_operator_called, operator_id})
       :ok
     end)
@@ -162,7 +162,7 @@ defmodule FlezhaTest.Runner.ControlChannelOperatorCompletedTest do
     test_pid = self()
 
     OperatorManager
-    |> stub(:stop_operator, fn @namespace, operator_id ->
+    |> stub(:stop_operator, fn @namespace, operator_id, [reason: :completed] ->
       send(test_pid, {:stop_operator_called, operator_id})
       :ok
     end)

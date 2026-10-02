@@ -169,7 +169,9 @@ defmodule Flezha.Operator.PartitionGroup do
     with :ok <- check_converge_identity(members, partitions, operator.id),
          :ok <- check_partitionable(namespace, operator, partitions, length(members)),
          {:ok, started, skipped} <-
-           run_member_starts(namespace, operator, missing, partitions, plugins_fun, :skip) do
+           run_member_starts(namespace, operator, missing, partitions, plugins_fun,
+             on_duplicate: :skip
+           ) do
       {:ok,
        %{
          group: operator.id,
@@ -198,7 +200,9 @@ defmodule Flezha.Operator.PartitionGroup do
     end
   end
 
-  defp start_members(namespace, operator, ranges, plugins_fun) do
+  # A rescale's members are the group it moved, not operators started or
+  # stopped: it starts them, as it stops them, with `announce: false`.
+  defp start_members(namespace, operator, ranges, plugins_fun, start_opts \\ []) do
     with {:ok, started, _skipped} <-
            run_member_starts(
              namespace,
@@ -206,7 +210,7 @@ defmodule Flezha.Operator.PartitionGroup do
              Enum.with_index(ranges),
              length(ranges),
              plugins_fun,
-             :refuse
+             [on_duplicate: :refuse] ++ start_opts
            ) do
       {:ok, %{group: operator.id, members: started}}
     end
@@ -214,13 +218,18 @@ defmodule Flezha.Operator.PartitionGroup do
 
   # The one member-start loop. Every member starts at once — a group comes up
   # in one member's time, not N — and the lowest failing index names the error.
-  # `:refuse` is the fresh-group policy — a taken id is a failure that rolls
-  # back this run's starts; `:skip` is converge's — a member racing into
-  # existence is by id-shape a member of this same group.
-  defp run_member_starts(namespace, operator, indexed_ranges, count, plugins_fun, on_duplicate) do
+  # `on_duplicate: :refuse` is the fresh-group policy — a taken id is a failure
+  # that rolls back this run's starts; `:skip` is converge's — a member racing
+  # into existence is by id-shape a member of this same group. `announce:`
+  # reaches each member's start.
+  defp run_member_starts(namespace, operator, indexed_ranges, count, plugins_fun, policy) do
+    on_duplicate = Keyword.fetch!(policy, :on_duplicate)
+    start_opts = Keyword.take(policy, [:announce])
+
     outcomes =
       Flezha.Parallel.map(indexed_ranges, fn {range, index} ->
-        {index, start_member(namespace, operator, index, count, range, plugins_fun)}
+        member = start_member(namespace, operator, {index, count, range}, plugins_fun, start_opts)
+        {index, member}
       end)
 
     started = for {_index, {:ok, member_id}} <- outcomes, do: member_id
@@ -244,7 +253,7 @@ defmodule Flezha.Operator.PartitionGroup do
 
   defp member_failure(_outcome, _on_duplicate), do: nil
 
-  defp start_member(namespace, operator, index, count, range, plugins_fun) do
+  defp start_member(namespace, operator, {index, count, range}, plugins_fun, start_opts) do
     member_id = Partition.member_id(operator.id, index)
     partition_opts = Partition.member_opts(operator.id, index, count, range)
 
@@ -255,7 +264,7 @@ defmodule Flezha.Operator.PartitionGroup do
           opts: member_opts(operator.opts, partition_opts, plugins)
       }
 
-      case OperatorManager.start_operator(namespace, member) do
+      case OperatorManager.start_operator(namespace, member, start_opts) do
         {:ok, _} -> {:ok, member_id}
         :duplicate -> {:duplicate, member_id}
         {:error, reason} -> {:error, reason}
@@ -330,7 +339,7 @@ defmodule Flezha.Operator.PartitionGroup do
          :ok <- stop_members(namespace, members, sealed),
          :ok <- apply_moves(cell_moves ++ instance_moves(members)),
          {:ok, started} <-
-           start_members(namespace, template, Partition.ranges(target), plugins) do
+           start_members(namespace, template, Partition.ranges(target), plugins, announce: false) do
       vacated = cleanup_vacated(leaving)
 
       {:ok,
@@ -532,7 +541,7 @@ defmodule Flezha.Operator.PartitionGroup do
   defp stop_members(namespace, members, sealed) do
     Enum.each(members, fn %{id: id} ->
       keep = if id in sealed, do: :sealed, else: true
-      OperatorManager.stop_operator(namespace, id, preserve_state: keep)
+      OperatorManager.stop_operator(namespace, id, preserve_state: keep, announce: false)
     end)
 
     await_ids_released(

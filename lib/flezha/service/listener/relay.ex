@@ -28,7 +28,7 @@ defmodule Flezha.Service.Listener.Relay do
   alias Flezha.Config.Durations
   alias Flezha.Process.Backlog
   alias Flezha.Process.Watch
-  alias Flezha.Service.PluginManager
+  alias Flezha.Service.Listener
 
   @spec start_link(map()) :: GenServer.on_start()
   def start_link(args), do: GenServer.start_link(__MODULE__, args)
@@ -167,8 +167,7 @@ defmodule Flezha.Service.Listener.Relay do
     do: hand(%{state | ended: true, backlog: Backlog.push(state.backlog, {:end, outcome}, 0)})
 
   defp check_release(state) do
-    case {PluginManager.attachment(state.namespace, state.operator_id, state.plugin_id),
-          state.reading} do
+    case {Listener.attachment(state.namespace, state.operator_id, state.plugin_id), state.reading} do
       {:operator_ended, :operator_ended} -> finish(state, {:ok, :operator_ended})
       {:detached, :detached} -> finish(state, {:error, detached(state)})
       {reading, _} -> recheck(%{state | reading: reading})

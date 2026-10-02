@@ -53,7 +53,7 @@ defmodule Flezha.Operator.Plugins do
         Extension.run(state.extensions, name, struct(ctx_module, Map.merge(identity, fields)))
 
       :error ->
-        {:error, {:unknown_hook, name}}
+        Extension.unknown_hook(state.extensions, name)
     end
   end
 

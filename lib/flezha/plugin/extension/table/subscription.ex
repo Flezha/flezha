@@ -112,16 +112,24 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
   defp resolve_extension(catalog, name) when is_atom(name) and not is_nil(name) do
     case Map.fetch(catalog, name) do
       {:ok, %{kind: kind}} -> {:ok, name, kind}
-      :error -> {:error, {:unknown_hook, name}}
+      :error -> unknown_hook(catalog, name)
     end
   end
 
   defp resolve_extension(catalog, name) do
     case Enum.find(catalog, fn {known, _entry} -> same_name?(known, name) end) do
       {known, %{kind: kind}} -> {:ok, known, kind}
-      nil -> {:error, {:unknown_hook, name}}
+      nil -> unknown_hook(catalog, name)
     end
   end
+
+  @doc """
+  The refusal for a hook `catalog` does not hold, naming the hooks it does, so an
+  operator hook on a controller plugin, or the reverse, says which it may name.
+  """
+  @spec unknown_hook(map(), term()) :: {:error, {:unknown_hook, term(), binary()}}
+  def unknown_hook(catalog, name),
+    do: {:error, {:unknown_hook, name, catalog |> Map.keys() |> Enum.sort() |> Enum.join(", ")}}
 
   defp canonicalise_sub_opts(kind, sub_opts) do
     declared = Map.fetch!(@sub_opt_types, kind)

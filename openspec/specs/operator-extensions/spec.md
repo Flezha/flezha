@@ -1045,10 +1045,11 @@ An empty hook list is a supported state everywhere below the CLI:
 canonicalisation folds it to an empty canonical list, the io-bound predicate
 answers false for it, and no sink is built.
 
-The inbound half of an `:io_binding` provider does not depend on any hook. A
+The inbound half of an operator plugin does not depend on any hook. A
 provider's declared worker holds the connection and injects what arrives
 through the host's one inject, so a plugin with no hooks still feeds its
-operator. The hook list governs only what the plugin sends.
+operator. The hook list governs only what the plugin sends. A controller plugin
+with no hooks receives nothing.
 
 #### Scenario: An enable naming no hook has no hooks
 - **WHEN** `flz plugin enable p operator_websocket --operator_id op --Xuri=ws://host/in` is issued with no `--hook`
@@ -1247,4 +1248,30 @@ provider SHALL declare `false`.
 
 - **WHEN** a provider declares an option `live: true` and does not define `reconfigure/2`
 - **THEN** its module SHALL fail to compile with a message naming the option
+
+### Requirement: A provider SHALL declare whether it is an operator plugin or a controller plugin
+
+`use Flezha.Plugin.ProviderBehaviour` SHALL take `type: :operator` (the default) or
+`type: :controller`; no other value SHALL compile. A controller provider SHALL define none of
+the operator hook callbacks (`on_operator_init/2`, `on_input/2`, `on_output/2`,
+`on_interval/2`, `on_message/2`, `on_snapshot/2`, `on_terminate/2`, `on_preview/2`) and an
+operator provider none of the controller hook callbacks (`on_operator_started/2`,
+`on_operator_stopped/2`, `on_operator_failed/2`, `on_dead_letter/2`,
+`on_plugin_unhealthy/2`); a module that does SHALL fail to compile naming the callback.
+`flz plugin help <provider>` SHALL print the type as `operator` or `controller`.
+
+#### Scenario: Every first-party operator provider
+
+- **WHEN** the `plugin_type/0` of every first-party provider but `hook_webhook` is read
+- **THEN** each SHALL answer `:operator`, and `hook_webhook`'s SHALL answer `:controller`
+
+#### Scenario: A controller provider with an operator hook
+
+- **WHEN** a module declaring `type: :controller` defines `on_output/2`
+- **THEN** it SHALL fail to compile with a message naming `on_output/2`
+
+#### Scenario: The old type is gone
+
+- **WHEN** a module declares `type: :io_binding`
+- **THEN** it SHALL fail to compile naming the two allowed types
 

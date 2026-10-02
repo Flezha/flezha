@@ -1,6 +1,6 @@
 defmodule Flezha.Plugin.Provider.OperatorForward do
   @moduledoc """
-  Operator-to-operator delivery (`:io_binding`): the sink whose destination
+  Operator-to-operator delivery (an operator plugin): the sink whose destination
   is another operator in the same namespace rather than an external endpoint.
 
   The callback enqueues and returns; a per-`{plugin_id, target}` worker does

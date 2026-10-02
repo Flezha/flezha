@@ -246,6 +246,24 @@ defmodule Flezha.Plugin do
   end
 
   @doc """
+  `opts` (a plugin's options, or a worker state holding them) without its
+  request headers, the one option a provider documents for a secret, for a log
+  or a crash report.
+  """
+  @spec redact(map()) :: map()
+  def redact(%{headers: _} = opts), do: %{opts | headers: :redacted}
+  def redact(opts), do: opts
+
+  @doc """
+  Whether this is a controller plugin: one its provider declares `type:
+  :controller`, which is bound to no operator and hears its namespace's hooks.
+  A provider this controller did not load cannot say, and answers false.
+  """
+  @spec controller?(t()) :: boolean()
+  def controller?(%__MODULE__{provider: provider}),
+    do: Code.ensure_loaded?(provider) and provider.__provider__().type == :controller
+
+  @doc """
   This plugin with only the options a user may write.
 
   A running plugin's opts carry what `init_provider/1` derived at start (the

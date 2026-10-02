@@ -11,11 +11,18 @@ defmodule Flezha.Plugin.Home do
   the hub starts the new home, and with it the new copy, before it hands the
   subscribed operators over, and the old copy stops once the new one runs, so
   the new connection opens before the old one closes.
+
+  A controller plugin has no operator to start its copies, so the home of one
+  without `single` places them: when it starts, and on every join or leave in
+  its namespace's hub group, it runs a copy on each controller holding the hub
+  (one that lacks the provider runs none) and stops the copy where the hub
+  left.
   """
 
   use GenServer
   use ProcessHub.Strategy.Migration.HotSwap
 
+  alias Flezha.Cluster.Directory
   alias Flezha.Config.Durations
   alias Flezha.Identificator
   alias Flezha.Plugin
@@ -49,6 +56,11 @@ defmodule Flezha.Plugin.Home do
     do: {:noreply, %{state | copy: nil}}
 
   def handle_info({:EXIT, copy, reason}, %{copy: copy} = state), do: {:stop, reason, state}
+
+  def handle_info({ref, change, _group, _hubs}, %{hubs: ref} = state)
+      when change in [:join, :leave],
+      do: {:noreply, place(state)}
+
   def handle_info(_other, state), do: {:noreply, state}
 
   @spec start_link({binary(), Plugin.t()}) :: GenServer.on_start()
@@ -58,13 +70,54 @@ defmodule Flezha.Plugin.Home do
   @impl true
   def init({namespace, %Plugin{id: name, single: single} = entry}) do
     Process.flag(:trap_exit, true)
-    state = %{namespace: namespace, name: name, copy: nil}
+    state = %{namespace: namespace, name: name, copy: nil, entry: entry, hubs: nil}
 
     case single && start_copy(state, entry) do
-      {:ok, state} -> {:ok, state}
+      {:ok, state} -> started(state)
       {:error, reason} -> {:stop, reason}
-      false -> {:ok, state}
+      false -> started(state)
     end
+  end
+
+  defp started(%{entry: entry} = state),
+    do:
+      if(Plugin.controller?(entry) and not entry.single,
+        do: {:ok, state, {:continue, :place}},
+        else: {:ok, state}
+      )
+
+  @impl true
+  def handle_continue(:place, %{namespace: namespace} = state) do
+    {ref, _hubs} = Directory.monitor_hubs(namespace)
+    {:noreply, place(%{state | hubs: ref})}
+  end
+
+  defp place(%{namespace: namespace, name: name} = state) do
+    %Plugin{} =
+      entry =
+      case current_entry(state) do
+        {:ok, entry} -> entry
+        {:error, _unreadable} -> state.entry
+      end
+
+    entry = %Plugin{entry | namespace: namespace}
+
+    hubs = Directory.hub_nodes(namespace)
+
+    _ =
+      :erpc.multicall(
+        hubs,
+        Shared,
+        :place,
+        [entry, self()],
+        Durations.get(:plugin_call_timeout_ms)
+      )
+
+    for copy <- Directory.plugin_hosts(namespace, name),
+        node(copy) not in hubs,
+        do: Shared.stop(copy)
+
+    state
   end
 
   @impl true

@@ -7,7 +7,7 @@ effectively-once tier (`Flezha.Plugin.Provider.Postgres`).
 ## Requirements
 ### Requirement: PostgreSQL sink plugin with transactional upsert + watermark
 
-The controller SHALL provide a `postgres` `io_binding` sink plugin
+The controller SHALL provide a `postgres` operator sink plugin
 (`Flezha.Plugin.Provider.Postgres`, backed by `postgrex`) that, per flush batch,
 executes ONE database transaction containing (a) an upsert of every record keyed
 by `flz.key` and (b) an upsert of the per-Cell progress row

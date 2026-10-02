@@ -40,8 +40,10 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
     {Flezha.Transport.Server, :uds},
     Flezha.Plugin.Provider.Kafka.WorkerRegistry,
     Flezha.Service.Calls,
+    Flezha.Observability.HookSink,
     # One worker family per provider that declares a worker, from the provider
     # table, in its order.
+    Flezha.Plugin.Provider.HookWebhook.WorkerSup,
     Flezha.Plugin.Provider.MonitoredIOForward.WorkerSup,
     Flezha.Plugin.Provider.File.Sink.WorkerSup,
     Flezha.Plugin.Provider.File.Source.WorkerSup,

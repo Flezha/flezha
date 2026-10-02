@@ -149,6 +149,41 @@ An option row with `live: true` can be changed on a running plugin by
 controller calls with the old and the new options, and a module that declares a live
 option without it does not compile.
 
+### A controller plugin
+
+`example_stamp` is an operator plugin: it acts on the records passing through the
+operators bound to it, which is the default `type: :operator`. A controller plugin
+declares `use Flezha.Plugin.ProviderBehaviour, type: :controller` and is bound to no
+operator. It is told what happened in its namespace through five hooks, each a callback
+taking the event and the plugin's options, and defines only those: a module defining a
+hook of the other type does not compile.
+
+| Hook | Its own fields |
+| --- | --- |
+| `on_operator_started` | `operator`, `factory` |
+| `on_operator_stopped` | `operator`, `reason` (`:stopped` or `:completed`) |
+| `on_operator_failed` | `operator`, `error` |
+| `on_dead_letter` | `operator`, `entry`, `channel`, `error` |
+| `on_plugin_unhealthy` | `plugin`, `operator`, `error` |
+
+Every event also carries `hook`, `namespace`, `controller`, `at` and a one-line `text`,
+and never a record's data. [`hook_webhook.md`](../../plugins/hook_webhook.md) says when
+each hook fires. The plugin is enabled with its hooks, one `--hook` each, as that
+first-party controller plugin is:
+
+```sh
+flz plugin enable alerts hook_webhook --Xurl=https://hooks.example.test/x \
+  --hook on_operator_failed --hook on_dead_letter
+```
+
+It runs on every controller that holds its namespace and hears what happens there, or
+once in the cluster with `--single`, and it runs until it is disabled. A hook runs in a
+process of its own and should return quickly; a provider that does slow I/O hands the
+event to its own worker, as `hook_webhook` does. Delivery is best effort and bounded: a
+copy that falls behind drops its oldest events (`FLEZHA_PLUGIN_BACKLOG_FRAMES`), an event
+waiting on a controller that stops is lost, and so is one that happens in the first
+moments after the enable; while a `single` copy moves, an event can arrive twice.
+
 `Flezha.Plugin.ProviderBehaviour` documents the provider contract. It is packaged and
 installed as the HTTP plugin was, from its own folder, and then enabled on an operator
 like any plugin, as [`sources_and_sinks.md`](../sources_and_sinks.md) showed. What a

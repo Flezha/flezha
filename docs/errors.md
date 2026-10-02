@@ -334,6 +334,7 @@ SDK raises or returns its one error type carrying them.
 | `plugin.load_failed` | internal | 1 | the package could not be loaded: {what} failed ({reason}) |  |
 | `plugin.module_conflict` | conflict | 6 | the package's module {module} is already held by {holder} |  |
 | `plugin.native_code` | invalid | 2 | the package carries native code ({entry}); a plugin package holds only BEAM code |  |
+| `plugin.not_bindable` | invalid | 2 | plugin '{plugin}' is a controller plugin, which is bound to no operator | `flz plugin update <name> --hook <hook>` |
 | `plugin.not_bound` | not_found | 5 | operator '{operator}' is not bound to plugin '{plugin}' | `flz plugin list` |
 | `plugin.not_found` | not_found | 5 | plugin '{plugin}' is not enabled | `flz plugin list` |
 | `plugin.not_installed` | not_found | 5 | plugin '{plugin}' is not installed | `flz plugin list --installed` |
@@ -373,7 +374,7 @@ SDK raises or returns its one error type carrying them.
 | `plugin.template_missing_placeholder` | invalid | 2 | option '{option}' must contain the {placeholder} placeholder |  |
 | `plugin.timeout_not_below_interval` | invalid | 2 | timeout_ms {timeout_ms} must be below interval_ms {interval_ms}, so that a poll cannot outlast its own interval |  |
 | `plugin.trust_store_empty` | invalid | 2 | signed packages are required and no trusted key is configured, so no package can be verified | `set FLEZHA_PLUGIN_TRUSTED_KEYS to the public keys packages are signed with` |
-| `plugin.unknown_hook` | not_found | 5 | no hook is named '{hook}' | `flz plugin help <provider_id>` |
+| `plugin.unknown_hook` | not_found | 5 | no hook is named '{hook}'; this plugin takes {allowed} | `flz plugin help <provider_id>` |
 | `plugin.unknown_hook_option` | invalid | 2 | a {kind} hook has no option '{option}' |  |
 | `plugin.unknown_options` | invalid | 2 | a {provider} plugin has no option {options} | `flz plugin help <provider_id>` |
 | `plugin.unknown_provider` | not_found | 5 | no plugin provider is named '{provider}' | `flz plugin list --installed` |

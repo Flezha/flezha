@@ -15,9 +15,11 @@ defmodule Flezha.Service.CliManager.ListenTest do
   import ExUnit.CaptureIO
   import FlezhaTest.Helper.MimicGlobal
 
+  alias Flezha.Cluster.Directory
+  alias Flezha.Operator.PartitionGroup
   alias Flezha.Plugin
   alias Flezha.Plugin.Provider.MonitoredIOForward
-  alias Flezha.Service.{CliManager, OperatorManager, PluginManager}
+  alias Flezha.Service.{CliManager, HubManager, OperatorManager, PluginManager}
 
   setup :set_mimic_global_until_exit
 
@@ -38,7 +40,10 @@ defmodule Flezha.Service.CliManager.ListenTest do
     end)
 
     # The operator is registered: the listener's existence read lets it attach.
-    stub(PluginManager, :attachment, fn _ns, _op, _id -> :detached end)
+    stub(Directory, :hub_nodes, fn _ns -> [node()] end)
+    stub(PartitionGroup, :members, fn _ns, _op -> [] end)
+    stub(HubManager, :declared_operators, fn _ns -> [] end)
+    stub(HubManager, :operator_bindings, fn _ns, _op -> {:ok, []} end)
 
     stub(OperatorManager, :send_io_confirming, fn _op, _ns, _message, _metadata ->
       send(test, {:call, :deliver, nil})

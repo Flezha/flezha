@@ -100,6 +100,16 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :plugin, :file_sink, :shipped] => {:flezha_file_sink, :flushed, :metric},
     [:flezha, :plugin, :file_sink, :refused] => {:flezha_file_sink, :refused, :event},
     [:flezha, :plugin, :file_sink, :failed] => {:flezha_file_sink, :failed, :event},
+    # What controller plugins hear and nothing else does: a deliberate start, a
+    # stop or completion, a new dead letter (`Flezha.Observability.HookSink`).
+    [:flezha, :operator, :started] => {:flezha_hooks, :on_operator_started, :event},
+    [:flezha, :operator, :stopped] => {:flezha_hooks, :on_operator_stopped, :event},
+    [:flezha, :dlq, :dead_lettered] => {:flezha_hooks, :on_dead_letter, :event},
+    # The webhook controller plugin: an event sent and one dropped are counts,
+    # a failed attempt that will be retried is read one at a time.
+    [:flezha, :plugin, :hook_webhook, :sent] => {:flezha_hook_webhook, :sent, :metric},
+    [:flezha, :plugin, :hook_webhook, :failed] => {:flezha_hook_webhook, :failed, :event},
+    [:flezha, :plugin, :hook_webhook, :dropped] => {:flezha_hook_webhook, :dropped, :metric},
     # A plain output a binding that is not started could not take, counted.
     [:flezha, :plugin, :not_started, :dropped] => {:flezha_plugin_not_started, :dropped, :metric},
     # The kafka producer's family, under the same derived prefix as every other

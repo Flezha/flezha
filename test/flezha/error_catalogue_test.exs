@@ -74,6 +74,25 @@ defmodule Flezha.ErrorCatalogueTest do
     assert twice == [], inspect(twice, pretty: true)
   end
 
+  test "an unknown hook is refused in the one catalogued shape wherever it is named" do
+    catalog = Flezha.Operator.Overwatch.__extensions_catalog__()
+    table = Flezha.Plugin.Extension.Table.new(catalog)
+
+    {:error, at_dispatch} = Flezha.Plugin.Extension.run(table, :on_nothing, %{})
+
+    {:error, at_subscribe} =
+      Flezha.Plugin.Extension.Table.canonicalise(catalog, %Flezha.Plugin{
+        id: "p",
+        provider: nil,
+        hooks: [{"on_nothing", []}]
+      })
+
+    for reason <- [at_dispatch, at_subscribe] do
+      assert Flezha.Error.catalogued?(reason, nil), "#{inspect(reason)} has no code"
+      assert Flezha.Error.from_reason(reason, nil).code == "plugin.unknown_hook"
+    end
+  end
+
   test "docs/errors.md is the fresh generation of the catalogue" do
     assert File.read!("docs/errors.md") == Mix.Tasks.Flezha.ErrorsDoc.render(),
            "docs/errors.md is stale: run `mix flezha.errors_doc`"

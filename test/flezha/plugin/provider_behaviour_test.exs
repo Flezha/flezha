@@ -207,6 +207,52 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     end
   end
 
+  describe "a provider is an operator plugin or a controller plugin" do
+    test "every first-party provider but hook_webhook is an operator plugin" do
+      types =
+        for {_id, provider} <- Flezha.Plugin.Providers.first_party(),
+            do: {provider.__provider__().name, provider.plugin_type()}
+
+      assert {"hook_webhook", :controller} in types
+      assert Enum.all?(types, fn {name, type} -> name == "hook_webhook" or type == :operator end)
+    end
+
+    test "a controller provider defining an operator hook does not compile, naming it" do
+      source = """
+      defmodule Flezha.ProviderBehaviourTest.ControllerOutput#{System.unique_integer([:positive])} do
+        use Flezha.Plugin.ProviderBehaviour, type: :controller
+        def on_output(ctx, _opts), do: {:ok, ctx}
+      end
+      """
+
+      error = assert_raise CompileError, fn -> Code.compile_string(source) end
+      assert Exception.message(error) =~ "on_output/2"
+    end
+
+    test "an operator provider defining a controller hook does not compile, naming it" do
+      source = """
+      defmodule Flezha.ProviderBehaviourTest.OperatorDeadLetter#{System.unique_integer([:positive])} do
+        use Flezha.Plugin.ProviderBehaviour
+        def on_dead_letter(_event, _opts), do: :ok
+      end
+      """
+
+      error = assert_raise CompileError, fn -> Code.compile_string(source) end
+      assert Exception.message(error) =~ "on_dead_letter/2"
+    end
+
+    test "the old type is gone, and the refusal names the two types" do
+      source = """
+      defmodule Flezha.ProviderBehaviourTest.OldType#{System.unique_integer([:positive])} do
+        use Flezha.Plugin.ProviderBehaviour, type: :io_binding
+      end
+      """
+
+      error = assert_raise CompileError, fn -> Code.compile_string(source) end
+      assert Exception.message(error) =~ ":operator or :controller"
+    end
+  end
+
   describe "the shared conversion helpers are total" do
     test "parse_int/2 refuses a shape it cannot parse instead of raising" do
       for value <- [nil, :nope, %{}, [1]] do

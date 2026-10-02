@@ -193,27 +193,56 @@ defmodule Flezha.Convergence.Verdict do
   @doc """
   Execute `[:flezha, :health, :verdict]` for every subject whose state changed
   between two tick maps. Steady state emits nothing — a transition is the
-  event, and a record that holds is what `/healthz` is for.
+  event, and a record that holds is what `/healthz` is for. Each names the
+  state it left (`nil` for a subject not judged before) and the node its
+  subject runs on, so a reader on every controller can take only its own.
   """
   @spec emit_transitions(%{term() => t()}, %{term() => t()}) :: :ok
   def emit_transitions(previous, current) do
     Enum.each(current, fn {subject, %__MODULE__{} = record} ->
       case Map.get(previous, subject) do
         %__MODULE__{state: same} when same == record.state -> :ok
-        _ -> execute_transition(record)
+        before -> execute_transition(record, before && before.state)
       end
     end)
   end
 
-  defp execute_transition(%__MODULE__{subject: {kind, id}} = record) do
+  defp execute_transition(%__MODULE__{subject: {kind, id}} = record, previous) do
     :telemetry.execute(
       @event,
       %{count: 1},
-      %{kind: kind, id: id, state: record.state, reason: record.reason}
+      %{
+        kind: kind,
+        id: id,
+        state: record.state,
+        previous: previous,
+        reason: record.reason,
+        node: Map.get(record.facts, :node)
+      }
     )
   catch
     _, _ -> :ok
   end
+
+  @doc """
+  What a transition from `previous` (`nil` for a subject not judged before) to
+  `state` tells a controller plugin: `:operator_failed` when an operator reads
+  parked or failed, `:operator_recovered` when it reads healthy, degraded or
+  suspended again, `:plugin_unhealthy` when a plugin turns from healthy to
+  degraded, and `nil` for every other change. An operator read `:unknown` or
+  `:unbound` between two failed reads, as an un-park's rebind leaves it, has
+  neither failed again nor recovered, so a reader that remembers the failure it
+  announced announces it once.
+  """
+  @spec turn(kind(), state() | nil, state()) ::
+          :operator_failed | :operator_recovered | :plugin_unhealthy | nil
+  def turn(:operator, _previous, state) when state in [:parked, :failed], do: :operator_failed
+
+  def turn(:operator, _previous, state) when state in [:healthy, :degraded, :suspended],
+    do: :operator_recovered
+
+  def turn(:plugin, :healthy, :degraded), do: :plugin_unhealthy
+  def turn(_kind, _previous, _state), do: nil
 
   @doc """
   The counts every operations surface reports, derived from the records so no

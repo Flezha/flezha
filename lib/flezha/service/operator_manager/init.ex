@@ -245,7 +245,7 @@ defmodule Flezha.Service.OperatorManager.Init do
     error -> {:error, {:declared_mutate_failed, error}}
   end
 
-  def init_operator(exist?, namespace, operator) do
+  def init_operator(exist?, namespace, operator, announce? \\ true) do
     child_spec = %{
       id: operator.id,
       start: {Flezha.Operator.Overwatch, :start_link, [{namespace, operator}]},
@@ -253,7 +253,7 @@ defmodule Flezha.Service.OperatorManager.Init do
     }
 
     result = start_declared(namespace, child_spec, start_metadata(operator), operator.id)
-    finalize_init_operator(exist?, namespace, operator, result)
+    finalize_init_operator(exist?, namespace, operator, result, announce?)
   end
 
   @doc """
@@ -321,12 +321,12 @@ defmodule Flezha.Service.OperatorManager.Init do
 
   defp no_response?(_result), do: false
 
-  defp finalize_init_operator(exist?, namespace, operator, result) do
+  defp finalize_init_operator(exist?, namespace, operator, result, announce?) do
     case result do
       %ProcessHub.StartResult{} ->
         case Enum.find(result.started || [], fn {cid, _} -> cid == operator.id end) do
           {_cid, [{operator_node, pid}]} ->
-            bind_started(namespace, operator, operator_node, pid)
+            bind_started(namespace, operator, {operator_node, pid}, announce?)
 
           _ ->
             refuse_start(exist?, namespace, operator, result)
@@ -337,7 +337,7 @@ defmodule Flezha.Service.OperatorManager.Init do
     end
   end
 
-  defp bind_started(namespace, operator, operator_node, pid) do
+  defp bind_started(namespace, operator, {operator_node, pid}, announce?) do
     # ProcessHub reports `started` as soon as `start_link/1`
     # returns; the operator's `handle_continue(:bind_runner, …)`
     # surfaces a plugin-chain failure via the `init_error` field
@@ -362,7 +362,10 @@ defmodule Flezha.Service.OperatorManager.Init do
         {:error, start_failure(operator.id, {:operator_exited, reason})}
     end
 
-    case SafeCall.bounded(pid, :registry_runner_set, Durations.get(:overwatch_call_timeout_ms),
+    case SafeCall.bounded(
+           pid,
+           {:registry_runner_set, announce?},
+           Durations.get(:overwatch_call_timeout_ms),
            on_error: on_exit
          ) do
       {:ok, runner_id} ->

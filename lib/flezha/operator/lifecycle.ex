@@ -450,6 +450,29 @@ defmodule Flezha.Operator.Lifecycle do
     end
   end
 
+  @doc """
+  The deliberate start's read of the binding it brought up
+  (`{:registry_runner_set, announce?}`, which only `Init.bind_started/4` asks,
+  never a restart, a move or a wake): the runner is written to the operator's
+  row and, unless the start is a rescale's (`announce?` false), the start is
+  announced here, on the operator's own controller, to the controller plugins
+  that hear it.
+  """
+  @spec started(Overwatch.t(), boolean()) :: :ok
+  def started(%Overwatch{} = state, announce?) do
+    HubManager.operator_set_runner(state.namespace, state.id, state.runner_id)
+
+    if announce? do
+      :telemetry.execute([:flezha, :operator, :started], %{count: 1}, %{
+        namespace: to_string(state.namespace),
+        operator: state.id,
+        factory: state.factory_id
+      })
+    end
+
+    :ok
+  end
+
   # Transition the Overwatch into the parked-error state: store the failure
   # reason and stay alive (no `:stop`, no supervisor restart).
   #

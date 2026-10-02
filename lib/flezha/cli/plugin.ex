@@ -66,11 +66,11 @@ defmodule Flezha.Service.Cli.Plugin do
   @doc """
   Enable a plugin by name, and with `--operator_id` bind it in the same
   command. A bind that fails leaves the plugin enabled, and the enable's line
-  says so before the refusal.
+  says so before the refusal. A controller plugin's hooks are its own, and it
+  is bound to no operator.
   """
   def enable_plugin(name, provider_id, _plugin_flags_json, _opts_json, %{row: row}) do
     with {:ok, hooks, provider_opts} <- read_settings(row.plugin_flags),
-         :ok <- refuse_hooks_without_operator(hooks, row),
          entry = %Plugin{
            id: name,
            provider: row.provider_mod,
@@ -78,19 +78,31 @@ defmodule Flezha.Service.Cli.Plugin do
            opts: provider_opts,
            single: Map.get(row.opts, "single") == "true"
          },
+         {:ok, entry} <- with_hooks(entry, hooks, row),
          {:ok, outcome} <- PluginManager.enable_plugin(name, entry) do
       IO.puts(enabled_message(name, outcome))
       warn_lacking(row.namespace, provider_id)
-      if Map.has_key?(row.opts, "operator_id"), do: bind(name, row, hooks), else: :ok
+
+      if entry.operator_id == nil and Map.has_key?(row.opts, "operator_id"),
+        do: bind(name, row, hooks),
+        else: :ok
     end
   end
 
-  # A hook says what a plugin sends to an operator, so it belongs to a binding.
-  defp refuse_hooks_without_operator([_ | _], %{opts: opts} = row)
-       when not is_map_key(opts, "operator_id"),
-       do: {:error, {:plugin_target_missing, row.namespace, nil}}
+  # An operator plugin's hooks say what it sends to an operator, so they belong
+  # to a binding.
+  defp with_hooks(%Plugin{} = entry, hooks, %{opts: opts} = row) do
+    cond do
+      Plugin.controller?(entry) ->
+        {:ok, %Plugin{entry | hooks: hooks, operator_id: Map.get(opts, "operator_id")}}
 
-  defp refuse_hooks_without_operator(_hooks, _row), do: :ok
+      hooks != [] and not is_map_key(opts, "operator_id") ->
+        {:error, {:plugin_target_missing, row.namespace, nil}}
+
+      true ->
+        {:ok, entry}
+    end
+  end
 
   @doc "Bind an operator to an enabled plugin."
   def bind_plugin(name, _plugin_flags_json, _opts_json, %{row: row}) do
@@ -120,14 +132,14 @@ defmodule Flezha.Service.Cli.Plugin do
   end
 
   @doc """
-  Change a plugin's options: in place when every changed option is live,
-  otherwise by restarting every running copy, with a warning naming the
-  operators bound to it.
+  Change a plugin's options, and a controller plugin's hooks: in place when
+  every changed option is live, otherwise by restarting every running copy,
+  with a warning naming the operators bound to it.
   """
   def update_plugin(name, _plugin_flags_json, _opts_json, %{row: row}) do
-    with {:ok, [], provider_opts} <- read_settings(row.plugin_flags),
+    with {:ok, hooks, provider_opts} <- read_settings(row.plugin_flags),
          {:ok, %{applied: applied, operators: operators}} <-
-           PluginManager.update_plugin(row.namespace, name, provider_opts) do
+           PluginManager.update_plugin(row.namespace, name, provider_opts, hooks) do
       case {applied, operators} do
         {:unchanged, _} ->
           IO.puts("Plugin #{name} is unchanged.")
@@ -142,9 +154,6 @@ defmodule Flezha.Service.Cli.Plugin do
           IO.puts("Plugin #{name} updated; its running copies restarted.")
           IO.puts("warning: restarted under #{Enum.join(operators, ", ")}")
       end
-    else
-      {:ok, [_ | _], _opts} -> {:error, {:unread_plugin_options, ["--hook"]}}
-      {:error, _} = refused -> refused
     end
   end
 
@@ -262,7 +271,15 @@ defmodule Flezha.Service.Cli.Plugin do
     single = if row.single, do: " single", else: ""
     where = if row.controllers == [], do: "idle", else: Enum.join(row.controllers, ", ")
     bound = if row.operators == [], do: "none", else: Enum.join(row.operators, ", ")
-    "#{row.name}  #{row.provider}#{single}  bound: #{bound}  runs on: #{where}"
+    "#{row.name}  #{row.provider}#{single}  bound: #{bound}  runs on: #{where}" <> hooks(row)
+  end
+
+  # A controller plugin's own hooks, and where its copy falls behind.
+  defp hooks(%{hooks: []}), do: ""
+
+  defp hooks(%{hooks: hooks, lagging: lagging}) do
+    behind = if lagging == [], do: "", else: "  lagging on: #{Enum.join(lagging, ", ")}"
+    "  hooks: #{Enum.join(hooks, ", ")}" <> behind
   end
 
   @doc """
@@ -361,6 +378,7 @@ defmodule Flezha.Service.Cli.Plugin do
         try do
           help_text = provider_mod.help(provider_id)
           IO.puts(help_text)
+          IO.puts("Type: #{provider_mod.plugin_type()}")
           IO.puts("")
           print_supported_hooks(provider_mod)
         rescue

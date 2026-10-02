@@ -15,10 +15,28 @@ defmodule Flezha.Plugin.Shared do
   deliberate, after `plugin_idle_stop_ms` when the operator went down or moved,
   unless one joins first. Every copy is a member of the plugin's directory
   group, which is how a disable, an update and `flz plugin list` find it.
+
+  A controller plugin's copy is the same host with no operator: its table holds
+  the controller catalogue declared here, each hook of which takes the event
+  `Flezha.Observability.HookSink` hands over; it listens by joining its hooks'
+  directory groups, and it never stops idle. Its home places it
+  (`Flezha.Plugin.Home`).
+  Its waiting events are one forwarder's backlog, which hands it one at a time;
+  the copy runs each hook's chain in a task and answers when the chain returns,
+  so a callback that blocks holds back only its own plugin.
   """
 
   use GenServer
   use Flezha.Process.Timer, keys: [:idle_stop, :retired, :restart, :successor]
+
+  use Flezha.Plugin.Host,
+    extensions: [
+      {:on_operator_started, :fanout, Flezha.Plugin.Shared},
+      {:on_operator_stopped, :fanout, Flezha.Plugin.Shared},
+      {:on_operator_failed, :fanout, Flezha.Plugin.Shared},
+      {:on_dead_letter, :fanout, Flezha.Plugin.Shared},
+      {:on_plugin_unhealthy, :fanout, Flezha.Plugin.Shared}
+    ]
 
   require Logger
 
@@ -27,10 +45,13 @@ defmodule Flezha.Plugin.Shared do
   alias Flezha.Identificator
   alias Flezha.Operator.Overwatch
   alias Flezha.Plugin
+  alias Flezha.Plugin.Extension
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Extension.Table.Health
+  alias Flezha.Plugin.Extension.Table.Subscription
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour.Decl
+  alias Flezha.Plugin.ProviderBehaviour.Options
   alias Flezha.Plugin.Shared.Forwarder
   alias Flezha.Process.Watch
 
@@ -39,12 +60,20 @@ defmodule Flezha.Plugin.Shared do
   # Its subscribers read the reason as "join the copy that runs now".
   @retired {:shutdown, :retired}
 
+  @task_sup Flezha.Operator.MessageHandlerTaskSup
+
   defstruct [
     :namespace,
     :name,
     :plugin,
     :table,
     :retiring,
+    # A controller plugin's forwarder, the task running its hook now, and the
+    # home that placed it.
+    :hooks,
+    :hook_task,
+    :home,
+    hook_groups: MapSet.new(),
     subscribers: %{},
     watch: Watch.new(),
     dropped: %{},
@@ -96,12 +125,51 @@ defmodule Flezha.Plugin.Shared do
     end
   end
 
-  defp locate(%Plugin{namespace: namespace, id: name} = plugin) do
+  # A controller plugin's copy is restarted when it fails: nothing joins it to
+  # start it again.
+  defp locate(%Plugin{namespace: namespace, id: name} = plugin, home \\ nil) do
     WorkerSup.ensure_worker(
       WorkerSup.family(__MODULE__),
       {to_string(namespace), name},
-      {__MODULE__, %{namespace: to_string(namespace), plugin: entry(plugin)}}
+      {__MODULE__, %{namespace: to_string(namespace), plugin: entry(plugin), home: home}},
+      &Process.alive?/1,
+      if(Plugin.controller?(plugin), do: :transient, else: :temporary)
     )
+  end
+
+  @doc """
+  A controller plugin's entry with its hooks canonical and checked against the
+  catalogue and its provider, and its options against its declaration and its
+  provider's preparation, which does no I/O. A controller plugin is never bound
+  to an operator.
+  """
+  @spec checked_entry(Plugin.t()) :: {:ok, Plugin.t()} | {:error, term()}
+  def checked_entry(%Plugin{id: name, operator_id: operator_id}) when operator_id != nil,
+    do: {:error, {:plugin_not_bindable, name}}
+
+  def checked_entry(%Plugin{provider: provider} = plugin) do
+    table = Table.new(__extensions_catalog__())
+
+    with {:ok, plugin} <- Table.canonicalise(table.catalog, plugin),
+         :ok <- Subscription.validate_subscriptions(table, plugin),
+         {:ok, opts} <- Options.normalise_opts(provider, plugin.opts),
+         prepared when elem(prepared, 0) == :ok <- provider.init_provider(opts),
+         do: {:ok, plugin}
+  end
+
+  @doc """
+  Run the copy of the controller plugin `entry` on this controller for its
+  `home`, unless this controller lacks its provider. The copy stops when the
+  home that placed it last stops: a disable stops the home, and a home that
+  starts again, or elsewhere, places its copies again.
+  """
+  @spec place(Plugin.t(), pid()) :: :ok
+  def place(%Plugin{} = entry, home) do
+    with true <- Plugin.controller?(entry),
+         {:ok, copy} <- locate(entry, home),
+         do: GenServer.cast(copy, {:home, home})
+
+    :ok
   end
 
   defp home_copy(namespace, name) do
@@ -113,12 +181,17 @@ defmodule Flezha.Plugin.Shared do
 
   # What a copy runs: the plugin with only the options a user writes, no
   # operator, and every hook it can be bound on, so it holds what any binding
-  # needs (a websocket's outbound half). It keeps the channel it was started
-  # with, which a provider may require; `fan_out/3` takes that stamp off again
-  # and each forwarder stamps its own operator's.
+  # needs (a websocket's outbound half); a controller plugin's hooks are its
+  # entry's own. It keeps the channel it was started with, which a provider may
+  # require; `fan_out/3` takes that stamp off again and each forwarder stamps
+  # its own operator's.
   @doc false
   def entry(%Plugin{provider: provider} = plugin) do
-    hooks = for hook <- Decl.io_hooks(provider.__provider__()), do: {hook, []}
+    hooks =
+      if Plugin.controller?(plugin),
+        do: plugin.hooks,
+        else: for(hook <- Decl.io_hooks(provider.__provider__()), do: {hook, []})
+
     %Plugin{Plugin.declared_opts_only(plugin) | operator_id: nil, hooks: hooks}
   end
 
@@ -133,7 +206,7 @@ defmodule Flezha.Plugin.Shared do
   @doc """
   The copy's health for `overwatch`: `plugin_lagging` while its forwarder has
   dropped records within the last probe window, the provider's own verdict
-  otherwise.
+  otherwise. A controller plugin's copy answers for itself, as `copy`.
   """
   @spec health(pid(), pid()) :: Flezha.Plugin.ProviderBehaviour.probe_result()
   def health(copy, overwatch) do
@@ -141,6 +214,14 @@ defmodule Flezha.Plugin.Shared do
       {:error, {:unreachable, reason}} -> {:fail_open, {:shared_copy_unreachable, reason}}
       verdict -> verdict
     end
+  end
+
+  @doc "The controllers whose copy of the controller plugin `name` lags."
+  @spec lagging_on(binary(), binary()) :: [node()]
+  def lagging_on(namespace, name) do
+    for copy <- Directory.plugin_hosts(namespace, name),
+        match?({:unhealthy, {:plugin_lagging, _}}, health(copy, copy)),
+        do: node(copy)
   end
 
   @doc "Apply a changed entry: in place when `mode` is `:live`, by a restart otherwise."
@@ -195,19 +276,61 @@ defmodule Flezha.Plugin.Shared do
   ## Server
 
   @impl true
-  def init(%{namespace: namespace, plugin: %Plugin{id: name} = plugin}) do
+  def init(%{namespace: namespace, plugin: %Plugin{id: name} = plugin} = args) do
     Process.flag(:trap_exit, true)
-    table = Table.new(Overwatch.__extensions_catalog__())
+    table = Table.new(catalog(plugin))
 
     with {:ok, table} <- Table.bulk_subscribe(table, [{name, plugin}]),
          {table, []} <- Table.bulk_activate(table) do
       Directory.join_plugin(self(), namespace, name)
       state = %__MODULE__{namespace: namespace, name: name, plugin: plugin, table: table}
-      {:ok, idle_if_empty(state)}
+      {:ok, state |> watch_home(args[:home]) |> listen_for_hooks() |> idle_if_empty()}
     else
       {:error, {_id, reason}} -> {:stop, reason}
       {table, [{_id, reason}]} -> {:stop, teardown(table, reason)}
     end
+  end
+
+  defp catalog(plugin) do
+    if Plugin.controller?(plugin),
+      do: __extensions_catalog__(),
+      else: Overwatch.__extensions_catalog__()
+  end
+
+  # A copy without `single` hears its own controller, the one `single` copy
+  # every controller. Listening again after a restart follows changed hooks.
+  defp listen_for_hooks(%{plugin: plugin} = state) do
+    if Plugin.controller?(plugin) do
+      reach = if plugin.single, do: :anywhere, else: :here
+
+      groups =
+        MapSet.new(plugin.hooks, fn {hook, _} ->
+          Directory.hook_group(reach, state.namespace, hook)
+        end)
+
+      %{
+        state
+        | hooks: state.hooks || hook_forwarder(),
+          hook_groups: Directory.sync_membership(groups, state.hook_groups)
+      }
+    else
+      state
+    end
+  end
+
+  # Watching only the home that placed the copy last, which may be a new one
+  # after a move.
+  defp watch_home(%{home: home} = state, home), do: state
+  defp watch_home(state, nil), do: state
+
+  defp watch_home(state, home) do
+    watch = if state.home, do: Watch.unwatch(state.watch, state.home, :home), else: state.watch
+    %{state | home: home, watch: Watch.watch(watch, home, :home)}
+  end
+
+  defp hook_forwarder do
+    {:ok, forwarder} = Forwarder.start_link(%{target: self(), deliver: :hook})
+    forwarder
   end
 
   defp teardown(table, reason) do
@@ -229,7 +352,7 @@ defmodule Flezha.Plugin.Shared do
         {:reply, :ok, put_in(state.subscribers[overwatch], %{sub | channel: channel})}
 
       nil ->
-        {:ok, forwarder} = Forwarder.start_link(%{overwatch: overwatch, channel: channel})
+        {:ok, forwarder} = Forwarder.start_link(%{target: overwatch, channel: channel})
         state = %{state | watch: Watch.watch(state.watch, overwatch, :subscriber)}
 
         {:reply, :ok,
@@ -243,6 +366,21 @@ defmodule Flezha.Plugin.Shared do
   end
 
   def handle_call(:connecting?, _from, state), do: {:reply, connecting?(state), state}
+
+  # The forwarder's next hook event: run in a task, answered when its chain
+  # returns, so the forwarder sends the one after.
+  def handle_call({:hook, %{hook: hook} = event}, from, %{table: table} = state) do
+    {:ok, task} =
+      Task.Supervisor.start_child(@task_sup, fn ->
+        try do
+          Extension.run(table, hook, event)
+        after
+          GenServer.reply(from, :ok)
+        end
+      end)
+
+    {:noreply, %{state | hook_task: task}}
+  end
 
   def handle_call(:subscribers, _from, state),
     do: {:reply, Enum.map(state.subscribers, fn {ow, sub} -> {ow, sub.channel} end), state}
@@ -259,6 +397,8 @@ defmodule Flezha.Plugin.Shared do
     fan_out(state, message, metadata)
     {:noreply, state}
   end
+
+  def handle_cast({:home, home}, state), do: {:noreply, watch_home(state, home)}
 
   def handle_cast({:leave, overwatch, how}, state) do
     case Map.pop(state.subscribers, overwatch) do
@@ -316,6 +456,9 @@ defmodule Flezha.Plugin.Shared do
   @impl true
   def handle_info({:DOWN, ref, :process, pid, reason}, state) do
     case Watch.down(state.watch, ref) do
+      {[:home], watch} ->
+        {:stop, :normal, %{state | watch: watch}}
+
       {tags, watch} when is_list(tags) ->
         {sub, rest} = Map.pop(state.subscribers, pid)
         left(%{state | subscribers: rest, watch: watch}, pid, sub, :idle)
@@ -349,6 +492,14 @@ defmodule Flezha.Plugin.Shared do
 
   def handle_info(:restart, state), do: {:noreply, restart(timer_fired(state, :restart))}
 
+  def handle_info({:hook, event}, %{hooks: forwarder} = state) when is_pid(forwarder) do
+    Forwarder.push(forwarder, event, %{})
+    {:noreply, state}
+  end
+
+  def handle_info({:EXIT, forwarder, reason}, %{hooks: forwarder} = state),
+    do: {:stop, reason, state}
+
   def handle_info({:EXIT, forwarder, reason}, state) do
     case Enum.find(state.subscribers, fn {_ow, sub} -> sub.forwarder == forwarder end) do
       {overwatch, _sub} ->
@@ -364,8 +515,28 @@ defmodule Flezha.Plugin.Shared do
 
   def handle_info(_other, state), do: {:noreply, state}
 
+  # A crash report shows the plugin without its secrets, and the table, which
+  # holds every copy of its options, by the plugins it holds.
+  @impl true
+  def format_status(status) do
+    Map.update(status, :state, nil, fn
+      %__MODULE__{plugin: %Plugin{} = plugin, table: table} = state ->
+        %{
+          state
+          | plugin: %Plugin{plugin | opts: Plugin.redact(plugin.opts)},
+            table: Table.subscribed_ids(table)
+        }
+
+      other ->
+        other
+    end)
+  end
+
+  # A hook still running, or waiting, goes with its plugin.
   @impl true
   def terminate(_reason, state) do
+    if state.hooks, do: Forwarder.stop(state.hooks)
+    if state.hook_task, do: Task.Supervisor.terminate_child(@task_sup, state.hook_task)
     Table.teardown_all(state.table, :now)
     :ok
   end
@@ -405,7 +576,7 @@ defmodule Flezha.Plugin.Shared do
     end
   end
 
-  defp idle_if_empty(%{subscribers: subscribers} = state) when subscribers == %{} do
+  defp idle_if_empty(%{hooks: nil, subscribers: subscribers} = state) when subscribers == %{} do
     if timer_armed?(state, :idle_stop),
       do: state,
       else: arm_timer(state, :idle_stop, Durations.get(:plugin_idle_stop_ms), :idle_stop)
@@ -455,12 +626,17 @@ defmodule Flezha.Plugin.Shared do
 
     with {:ok, table} <- Table.bulk_subscribe(table, [{state.name, state.plugin}]),
          {table, []} <- Table.bulk_activate(table) do
-      %{state | table: table}
+      listen_for_hooks(%{state | table: table})
     else
-      failed ->
-        Logger.warning("[Plugin.Shared] #{state.name} did not restart: #{inspect(failed)}")
-        restart_later(%{state | table: table})
+      {:error, {_id, reason}} -> restart_failed(state, table, reason)
+      {_table, [{_id, reason} | _]} -> restart_failed(state, table, reason)
     end
+  end
+
+  # The refusal alone: the table carries the plugin's options, a token among them.
+  defp restart_failed(state, table, reason) do
+    Logger.warning("[Plugin.Shared] #{state.name} did not restart: #{inspect(reason)}")
+    restart_later(%{state | table: table})
   end
 
   defp restart_later(state),

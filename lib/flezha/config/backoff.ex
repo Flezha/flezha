@@ -80,6 +80,7 @@ defmodule Flezha.Config.Backoff do
 
     # ---- plugins and sinks -------------------------------------------------
     {:otlp_post, rungs: [250, 500, 1_000, 2_000, 4_000], reset: :per_call, give_up: 5},
+    {:hook_webhook_post, rungs: [1_000, 5_000], reset: :per_call},
     {:durability_ship, base: 500, cap: 30_000, reset: :on_success},
     {:postgres_flush, base: 250, cap: 5_000, reset: :on_success},
     {:file_flush, base: 250, cap: 5_000, reset: :on_success},

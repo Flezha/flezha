@@ -42,6 +42,9 @@ defmodule Mix.Tasks.Bench do
       responses drained) before the measured phase, so one-time runner
       cold-start — class loading, JIT, lazy codec init — stays out of the
       numbers (default: 10, `0` disables).
+    * `--hook-url` - Enable the `hook_webhook` controller plugin, with every
+      hook, against this URL in the bench namespace before the operators
+      start, so the run carries the hook path's cost.
 
   ## Comparing SDKs
 
@@ -77,7 +80,8 @@ defmodule Mix.Tasks.Bench do
     runtime: :string,
     shape: :string,
     pool_sizes: :string,
-    warmup: :integer
+    warmup: :integer,
+    hook_url: :string
   ]
 
   @aliases [
@@ -98,6 +102,7 @@ defmodule Mix.Tasks.Bench do
     {num_operators, messages_per_operator} = dimensions_for_shape(shape, opts)
 
     Process.put(:bench_runtime, runtime)
+    Process.put(:bench_hook_url, opts[:hook_url])
 
     open_report(runtime, shape, pool_sizes, warmup, {num_operators, messages_per_operator})
 
@@ -304,6 +309,7 @@ defmodule Mix.Tasks.Bench do
     factory = factory_for_shape(shape)
     IO.puts("Starting #{num_operators} operators (factory=#{factory})...")
 
+    enable_hooks(namespace, Process.get(:bench_hook_url))
     {creation_us, operator_infos} = start_operators(namespace, factory, num_operators)
     plugin_setup_us = enable_forwarders(namespace, operator_infos)
     warmup_us = warmup_pass(operator_infos, shape, warmup)
@@ -378,6 +384,21 @@ defmodule Mix.Tasks.Bench do
     end
 
     {elapsed, infos}
+  end
+
+  defp enable_hooks(_namespace, nil), do: :ok
+
+  defp enable_hooks(namespace, url) do
+    hooks = for hook <- Flezha.Plugin.ProviderBehaviour.controller_callbacks(), do: {hook, []}
+
+    {:ok, _} =
+      PluginManager.enable_plugin("bench_hooks", %Flezha.Plugin{
+        id: "bench_hooks",
+        namespace: namespace,
+        provider: Flezha.Plugin.Provider.HookWebhook,
+        opts: %{url: url},
+        hooks: hooks
+      })
   end
 
   defp enable_forwarders(namespace, operator_infos) do

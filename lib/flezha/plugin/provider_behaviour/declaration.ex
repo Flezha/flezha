@@ -16,6 +16,10 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
 
   @lifecycle_callbacks ProviderBehaviour.lifecycle_callbacks()
   @extension_callbacks ProviderBehaviour.extension_callbacks()
+  @controller_callbacks ProviderBehaviour.controller_callbacks()
+
+  # Each type's hooks; a provider that defines the other type's is refused.
+  @type_hooks %{operator: @extension_callbacks, controller: @controller_callbacks}
 
   @doc """
   Write the declaration into the provider: the attributes that hold it, the
@@ -42,7 +46,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
     contract = ProviderBehaviour
     options = Keyword.get(opts, :options, [])
     worker = Keyword.get(opts, :worker)
-    type = Keyword.get(opts, :type, :io_binding)
+    type = Keyword.get(opts, :type, :operator)
     name = Keyword.get(opts, :name)
     feeds = Keyword.get(opts, :feeds, false)
     shareable = Keyword.get(opts, :shareable, false)
@@ -193,6 +197,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
     rows = Module.get_attribute(env.module, :__provider_options__) || []
     validate_rows!(env, rows)
     require_reconfigure!(env, rows)
+    validate_type!(env, Module.get_attribute(env.module, :__provider_type__))
 
     [decl(env.module), strict_build(), fall_through()]
   end
@@ -201,7 +206,12 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
   # the same source a run-time export probe reads and one the host can trust
   # without asking the code loader.
   defp decl(module) do
-    extensions = Enum.filter(@extension_callbacks, &Module.defines?(module, {&1, 2}))
+    extensions =
+      Enum.filter(
+        @extension_callbacks ++ @controller_callbacks,
+        &Module.defines?(module, {&1, 2})
+      )
+
     own = module |> Module.get_attribute(:__provider_own__, []) |> Enum.uniq() |> Enum.sort()
 
     quote do
@@ -288,6 +298,18 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
           do: raise_row!(env, "live option(s) #{inspect(live)} need a reconfigure/2")
     end
   end
+
+  defp validate_type!(env, type) when is_map_key(@type_hooks, type) do
+    other = for {other, hooks} <- @type_hooks, other != type, hook <- hooks, do: hook
+
+    case Enum.find(other, &Module.defines?(env.module, {&1, 2})) do
+      nil -> :ok
+      hook -> raise_row!(env, "a #{type} plugin cannot define #{hook}/2")
+    end
+  end
+
+  defp validate_type!(env, type),
+    do: raise_row!(env, "type #{inspect(type)} must be :operator or :controller")
 
   defp refuse_row_key!(_env, _name, []), do: :ok
 

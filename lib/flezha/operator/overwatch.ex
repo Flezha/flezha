@@ -402,12 +402,12 @@ defmodule Flezha.Operator.Overwatch do
   # handle_call
   # ---------------------------------------------------------------
 
-  def handle_call(:registry_runner_set, _from, %__MODULE__{init_error: nil} = state) do
-    HubManager.operator_set_runner(state.namespace, state.id, state.runner_id)
+  def handle_call({:registry_runner_set, announce?}, _from, %__MODULE__{init_error: nil} = state) do
+    Lifecycle.started(state, announce?)
     {:reply, {:ok, state.runner_id}, state}
   end
 
-  def handle_call(:registry_runner_set, _from, %__MODULE__{init_error: reason} = state) do
+  def handle_call({:registry_runner_set, _}, _from, %__MODULE__{init_error: reason} = state) do
     {:reply, {:error, reason}, state}
   end
 

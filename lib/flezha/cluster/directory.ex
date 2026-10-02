@@ -80,9 +80,54 @@ defmodule Flezha.Cluster.Directory do
   now, or `nil` when the directory is not running.
   """
   @spec monitor_plugin(String.t() | atom(), String.t()) :: {reference(), [pid()]} | nil
-  def monitor_plugin(namespace, name) do
-    if scope_up?(), do: :pg.monitor(@scope, plugin_group(namespace, name))
+  def monitor_plugin(namespace, name), do: monitor(plugin_group(namespace, name))
+
+  @doc "Watch the hubs of `namespace`, as `monitor_plugin/2` watches a plugin's copies."
+  @spec monitor_hubs(String.t() | atom()) :: {reference(), [pid()]} | nil
+  def monitor_hubs(namespace), do: monitor({:hub, to_string(namespace)})
+
+  defp monitor(group), do: if(scope_up?(), do: :pg.monitor(@scope, group))
+
+  @doc """
+  The group a controller plugin's copy joins to hear `hook` in `namespace`:
+  `:here` for a copy that hears its own controller, `:anywhere` for the one
+  `single` copy, which hears every controller.
+  """
+  @spec hook_group(:here | :anywhere, String.t(), atom()) :: tuple()
+  def hook_group(reach, namespace, hook), do: {:hooks, reach, to_string(namespace), hook}
+
+  @doc "Whether `group` is one `hook_group/3` names."
+  @spec hook_group?(term()) :: boolean()
+  def hook_group?(group), do: match?({:hooks, _reach, _namespace, _hook}, group)
+
+  @doc "The copies an event of `hook` in `namespace` that happened on this node goes to."
+  @spec hook_targets(String.t(), atom()) :: [pid()]
+  def hook_targets(namespace, hook) do
+    if scope_up?(),
+      do:
+        :pg.get_local_members(@scope, hook_group(:here, namespace, hook)) ++
+          :pg.get_members(@scope, hook_group(:anywhere, namespace, hook)),
+      else: []
   end
+
+  @doc "Whether any copy hears a hook event that happens on this node."
+  @spec hooks_wanted?() :: boolean()
+  def hooks_wanted?() do
+    scope_up?() and
+      Enum.any?(:pg.which_groups(@scope), fn
+        {:hooks, :here, _, _} = group -> :pg.get_local_members(@scope, group) != []
+        {:hooks, :anywhere, _, _} = group -> :pg.get_members(@scope, group) != []
+        _other -> false
+      end)
+  end
+
+  @doc """
+  Watch every group, answering the reference `{ref, :join | :leave, group,
+  pids}` messages carry and the groups now, or `nil` when the directory is not
+  running.
+  """
+  @spec monitor_scope() :: {reference(), map()} | nil
+  def monitor_scope(), do: if(scope_up?(), do: :pg.monitor_scope(@scope))
 
   @doc "Nodes running a copy of the plugin `name` of `namespace`."
   def plugin_nodes(namespace, name), do: nodes_of(plugin_group(namespace, name))

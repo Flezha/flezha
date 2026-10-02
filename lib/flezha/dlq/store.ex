@@ -339,6 +339,14 @@ defmodule Flezha.Dlq.Store do
       generation: record["generation"]
     })
 
+    # A re-park of a replayed entry is not a new dead letter, and is not told.
+    :telemetry.execute([:flezha, :dlq, :dead_lettered], %{count: 1}, %{
+      operator: rc,
+      entry: ref(rc, sh, id),
+      channel: record["channel"],
+      error: record["error"]
+    })
+
     dir_changed(rc, sh)
     {:ok, ref(rc, sh, id)}
   rescue

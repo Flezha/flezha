@@ -20,8 +20,9 @@ defmodule Flezha.Service.OperatorManager.Teardown do
   @typedoc """
   The `:operator` walk's target: the operator, the node its Overwatch ran
   on, the runner it is bound to (or `nil`), whether its state stays on disk (a
-  rescale moving it, `:sealed` for a steps operator survivor), and the Cell count its
-  start allocated.
+  rescale moving it, `:sealed` for a steps operator survivor), whether controller
+  plugins are told of the stop and why it stops (`:stopped` or `:completed`),
+  and the Cell count its start allocated.
   """
   @type target :: %{
           namespace: binary(),
@@ -29,6 +30,8 @@ defmodule Flezha.Service.OperatorManager.Teardown do
           node: node(),
           runner_id: binary() | nil,
           preserve_state?: boolean() | :sealed,
+          announce: boolean(),
+          reason: :stopped | :completed,
           cell_count: non_neg_integer()
         }
 
@@ -39,6 +42,7 @@ defmodule Flezha.Service.OperatorManager.Teardown do
       %{scope: :operator, order: 20, name: :hub_stop, run: &hub_stop_step/2},
       %{scope: :operator, order: 30, name: :state_dir, run: &state_dir_step/2},
       %{scope: :operator, order: 40, name: :quota, run: &quota_step/2},
+      %{scope: :operator, order: 50, name: :announce, run: &announce_step/2},
       %{scope: :namespace, order: 10, name: :operators, run: &operators_step/2}
     ]
   end
@@ -114,6 +118,18 @@ defmodule Flezha.Service.OperatorManager.Teardown do
 
     :ok
   end
+
+  # Once every step before it ran: a deliberate stop or a completion is told to
+  # controller plugins.
+  defp announce_step(%{announce: true} = target, _budget) do
+    :telemetry.execute([:flezha, :operator, :stopped], %{count: 1}, %{
+      namespace: target.namespace,
+      operator: target.operator_id,
+      reason: target.reason
+    })
+  end
+
+  defp announce_step(_not_told, _budget), do: :ok
 
   defp operators_step(%{namespace: namespace}, budget), do: stop_all(namespace, budget)
 

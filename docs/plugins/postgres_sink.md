@@ -1,6 +1,6 @@
 # Postgres sink
 
-Transactional PostgreSQL sink (`:io_binding`). Per flush batch, ONE database
+Transactional PostgreSQL sink (an operator plugin). Per flush batch, ONE database
 transaction upserts every record into `flezha_records`, keyed by `flz.key`, and
 advances the per-Cell `flezha_sink_progress` watermark row. That single
 transaction is the guarantee: effectively-once into the database for tier
@@ -12,7 +12,7 @@ operators, plain inserts for everything else. See
 
 | | |
 | --- | --- |
-| Plugin type | `:io_binding` |
+| Plugin type | `:operator` |
 | Hooks | `:on_input`, `:on_output` |
 | Shared | no: a second operator bound to it is refused (`plugin.not_shareable`) |
 | Downstream | one PostgreSQL database, over a pool the plugin owns |

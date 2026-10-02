@@ -109,7 +109,7 @@ What each direction does differently is under
 
 | | |
 | --- | --- |
-| Plugin type | `:io_binding` |
+| Plugin type | `:operator` |
 | Hooks | `:on_terminate`: the reader drives itself; the hook is there because a plugin spec must name at least one |
 | Shared | no: a second operator bound to it is refused (`plugin.not_shareable`) |
 | Upstream | one file inside the root folder, or one object under an S3 root, polled every `poll_interval_ms` |
@@ -263,7 +263,7 @@ health are the file's.
 
 | | |
 | --- | --- |
-| Plugin type | `:io_binding` |
+| Plugin type | `:operator` |
 | Hooks | `:on_input`, `:on_output` |
 | Shared | no: a second operator bound to it is refused (`plugin.not_shareable`) |
 | Downstream | one file inside the root folder, appended to; under `commit: rename`, a directory of parts, or under an S3 root a key prefix of parts |

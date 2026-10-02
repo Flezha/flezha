@@ -22,6 +22,7 @@ defmodule Flezha.Service.PluginManagerTest do
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Service.HubManager
+  alias Flezha.Service.Listener
   alias Flezha.Service.OperatorManager
   alias Flezha.Service.OperatorManager.Teardown
   alias Flezha.Service.PluginManager
@@ -182,7 +183,7 @@ defmodule Flezha.Service.PluginManagerTest do
     test "an unknown hook name is refused without being interned", %{store: store} do
       name = "on_never_enabled_#{System.unique_integer([:positive])}"
 
-      assert {:error, {:unknown_hook, ^name}} =
+      assert {:error, {:unknown_hook, ^name, _allowed}} =
                PluginManager.bind_plugin(@namespace, "typo_name", @operator_id,
                  hooks: [{name, %{}}]
                )
@@ -323,7 +324,7 @@ defmodule Flezha.Service.PluginManagerTest do
 
     test "a released binding reads as ended only once its operator is declared no more" do
       Mimic.stub(HubManager, :declared_operators, fn @namespace -> [] end)
-      assert PluginManager.attachment(@namespace, "gone_op", "l") == :operator_ended
+      assert Listener.attachment(@namespace, "gone_op", "l") == :operator_ended
 
       # Between two homes: declared, with no row yet, for an operator or a
       # group whose members a rescale is restarting.
@@ -331,8 +332,8 @@ defmodule Flezha.Service.PluginManagerTest do
         [%{id: "gone_op", factory_id: nil}, %{id: "grp#p0", factory_id: nil}]
       end)
 
-      assert PluginManager.attachment(@namespace, "gone_op", "l") == :unknown
-      assert PluginManager.attachment(@namespace, "grp", "l") == :unknown
+      assert Listener.attachment(@namespace, "gone_op", "l") == :unknown
+      assert Listener.attachment(@namespace, "grp", "l") == :unknown
     end
   end
 

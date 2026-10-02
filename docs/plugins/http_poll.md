@@ -12,7 +12,7 @@ telemetry and limits.
 
 | | |
 | --- | --- |
-| Plugin type | `:io_binding` |
+| Plugin type | `:operator` |
 | Hooks | `:on_terminate`: the poller drives itself; the hook is there because a plugin spec must name at least one |
 | Shared | yes: one poller per controller for every operator bound to the plugin, or one in the whole cluster with `--single`. Each member of a partitioned operator runs a poller of its own |
 | Upstream | one `http://` or `https://` URL, `GET` only, redirects not followed |

@@ -27,7 +27,7 @@ defmodule Flezha.Plugin.Provider.File do
 
   defmodule Source do
     @moduledoc """
-    A file, or an S3 object, read onto an entry channel (`:io_binding`), one
+    A file, or an S3 object, read onto an entry channel (an operator plugin), one
     line per frame, followed as it grows.
 
     Each line is injected through the operator's confirming ingest, and the
@@ -193,7 +193,7 @@ defmodule Flezha.Plugin.Provider.File do
 
   defmodule Sink do
     @moduledoc """
-    Records written to a file (`:io_binding`), one line per record: the
+    Records written to a file (an operator plugin), one line per record: the
     message bytes and a newline, nothing else.
 
     Records are batched, written in one call and made durable with a data sync

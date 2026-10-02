@@ -22,6 +22,10 @@ defmodule Flezha.Observability.Bus do
   @sinks :flezha_observability_sinks
   @system_source :observability_registry
 
+  # Sources only a sink naming them hears: the controller hooks are plugin
+  # notices, not telemetry, and a catch-all sink must not record them.
+  @private_sources [:flezha_hooks]
+
   @doc """
   Emit a signal. Always returns `:ok`. Never raises.
   """
@@ -111,7 +115,7 @@ defmodule Flezha.Observability.Bus do
   defp kind_match?(list, k) when is_list(list), do: k in list
   defp kind_match?(_, _), do: false
 
-  defp source_match?(:any, _), do: true
+  defp source_match?(:any, s), do: s not in @private_sources
   defp source_match?(list, s) when is_list(list), do: s in list
   defp source_match?(_, _), do: false
 

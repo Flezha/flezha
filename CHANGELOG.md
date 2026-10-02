@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Added: controller plugins, told what happens in a namespace (breaking for `type: :io_binding`)
+
+A provider is now an operator plugin (`type: :operator`, the default and every existing
+provider) or a controller plugin (`type: :controller`); `type: :io_binding` no longer
+compiles. A controller plugin is bound to no operator: `flz plugin enable <name> <provider>
+--hook <hook> ...` stores its hooks, `flz plugin update` may change them, and `flz plugin
+bind` of it is refused with `plugin.not_bindable`. It runs on every controller that holds
+its namespace, each copy hearing its own controller, or once with `--single`, until it is
+disabled. Five hooks tell it what happened: `on_operator_started`, `on_operator_stopped`,
+`on_operator_failed`, `on_dead_letter` and `on_plugin_unhealthy`, each carrying the
+namespace, the operator, the controller and a one-line `text`, and never a record's data.
+Delivery is best effort, from a queue bounded by the plugin backlog settings; a copy that
+falls behind drops its oldest events and `flz plugin list` shows where it lags. The first
+one, `hook_webhook`, POSTs each event as JSON to a URL
+([`docs/plugins/hook_webhook.md`](docs/plugins/hook_webhook.md)). `plugin.unknown_hook` now
+names the hooks a plugin may take. A new DLQ entry also executes
+`[:flezha, :dlq, :dead_lettered]`.
+
+### Fixed: a stop forwarded to another controller keeps its options
+
+An operator stop that a controller forwarded to one holding the namespace's hub dropped its
+options, so a partition rescale's stop there deleted the member's state instead of keeping
+it for the member that takes it over. The forward now carries them.
+
 ### Changed: a plugin has a name and operators are bound to it
 
 A plugin is enabled once, by name, in its namespace, with no operator, and operators are
