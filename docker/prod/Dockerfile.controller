@@ -72,7 +72,6 @@ COPY sdk/elixir/mix.exs ./sdk/elixir/
 COPY sdk/elixir/test_app/mix.exs ./sdk/elixir/test_app/
 
 RUN --mount=type=cache,target=/root/.hex \
-    --mount=type=cache,target=/root/.mix \
     (mix local.hex --force || mix archive.install github hexpm/hex branch latest --force) \
     && (mix local.rebar --force \
         || (curl -fsSL -o /usr/local/bin/rebar3 https://github.com/erlang/rebar3/releases/latest/download/rebar3 \
@@ -102,7 +101,6 @@ COPY --from=rust-build /artifacts/flz_nif.so ./priv/native/flz_nif.so
 COPY --from=rust-build /artifacts/flz         ./target/release/flz
 
 RUN --mount=type=cache,target=/root/.hex \
-    --mount=type=cache,target=/root/.mix \
     ERL_FLAGS="+JMsingle true" mix compile \
     && mix release --overwrite
 
