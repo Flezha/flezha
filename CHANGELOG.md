@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Changed: the guides teach one operator
+
+The guides, the glossary and the architecture, resilience and SDK pages describe one operator
+whose class says how it runs (`run: flow`, the default, or `steps`) and where its work is kept
+(`durable: false | local | remote`), instead of two kinds. `what_is_flezha.md` opens with "One
+operator, two ways to run it", Part 1 says when an idle operator sleeps, Part 2's workflow page
+explains why the order executor runs in steps and every tab declares its loop shape and failure
+mode, and `durability.md` shows the durability ladder as one table. Part 3's code pages carry
+Java and Elixir; their other language tabs say the page is not yet written for that language. The words bounded and unbounded are kept for input data, as the new
+glossary entry says.
+
 ### Added: an operator inside an operator
 
 `into` takes an operator class as well as a tasklet, in every SDK. A flow class is inlined into

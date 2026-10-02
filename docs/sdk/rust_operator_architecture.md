@@ -59,14 +59,13 @@ live deployment, passes the full conformance run in CI and is permanently suppor
 - **Runner** — the poll-worker pool that drains mailboxes, one per process
   (`FlezhaRunner::start()`); see "Worker pool" below.
 
-### Operator kinds (controller side)
+### How an operator runs (controller side)
 
-Every operator carries a **kind** (`:flow` or `:steps`), the one its
+Every operator carries a **run** (`:flow` or `:steps`), the one its
 class declares and its runner announces with the factory id, resolved at start
-and frozen. No behaviour is attached to the kind: what an instance can do
-follows from what its class declares (the persistence switch, the sleep
-setting, the tier) and from its own state. `flz state get` on an instance of
-either kind whose class declares persistence off answers
+and frozen. What an instance can do follows from its class's settings tree (`run`,
+`durable` with its `sleep_after`) and from its own state. `flz state get` on an
+instance of either run whose class keeps nothing (`durable: false`) answers
 `{:error, :persistence_off}`.
 
 ### The `:steps` kind
@@ -580,7 +579,7 @@ path**, whatever the channel says: a correction's answer may not depend on
 arrival timing, and a dropped member would leave the slice open, short, and
 folded anyway — a wrong answer with nothing reported.
 
-Declaring a dropping policy on a class that also declares `effectively_once()`
+Declaring a dropping policy on a class that also declares `exactly: effectively_once`
 is **refused at build time** (`TopologyIssue::DroppingPolicyUnderEffectivelyOnce`,
 and its C-ABI twin at declare time): a shed input's offset is still advanced
 past by the tier's watermark, so the loss is permanent under a contract that

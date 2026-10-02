@@ -269,9 +269,9 @@ Promotion needs a thread in `poll`, so a due entry with every worker inside user
 starvation and reads as such: the starvation wait's deadline considers the nearest due entry,
 which is how a host that grows threads gets one there in time to promote the firing.
 
-## A steps stage
+## A stepped stage
 
-A steps stage runs the way a flow cell does: its items are routed into its cells'
+A stepped stage runs the way a flow cell does: its items are routed into its cells'
 mailboxes and the poll core hands them out as ordinary work, under the cap and the fairness
 rules above. What is the steps operator's own is a small pass sheet on the instance, advanced by
 events on the threads that bring them; no core thread belongs to an instance.

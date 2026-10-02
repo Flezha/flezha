@@ -20,7 +20,8 @@
 # desk; `up` only says when it is not there yet. A failure stops whatever `up`
 # had started. Every setting lands in $RUN/vars.sh; `source` it in any shell that runs `flz`
 # or a runner. The controller comes up with authorization on and no admin
-# claimed: claiming one is the guides' first step. The exchange takes its
+# claimed: claiming one is the guides' first step. FLEZHA_AUTHZ_ENABLED=false
+# set for `up` starts it with authorization off instead, as Part 1 runs it. The exchange takes its
 # manual commands (`/pause`, `/resume`, `/jump ...`) written to $RUN/exchange.in.
 #
 # The owner's release in _build/prod/rel and its app_data are never touched,
@@ -99,8 +100,14 @@ EOF
   # shellcheck disable=SC1091
   source "$RUN/vars.sh"
 
-  controller
-  wait_for 30 "the bootstrap token" test -f "$RUN/ctl/app_data/auth/bootstrap.token"
+  # Part 1 runs with authorization off: no admin to claim, so no bootstrap token.
+  if [ "${FLEZHA_AUTHZ_ENABLED:-true}" = false ]; then
+    echo "export FLEZHA_AUTHZ_ENABLED=false" >>"$RUN/vars.sh"
+    controller
+  else
+    controller
+    wait_for 30 "the bootstrap token" test -f "$RUN/ctl/app_data/auth/bootstrap.token"
+  fi
 
   FLEZHA_TESTNET_MANUAL=1 start exchange "$TESTNET" node dist/index.js
   wait_for 30 "the demo exchange" bash -c "echo >/dev/tcp/127.0.0.1/$FLEZHA_TESTNET_WS_PORT"

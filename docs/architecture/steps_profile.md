@@ -1,6 +1,8 @@
-# The steps profile
+# Running in steps
 
-A steps operator is a job with a beginning and an end: an ETL run, a payment saga, an AI chat
+What `run: steps` adds to an operator. A class that sets it is a **steps operator**: a job with a
+beginning and an end, and the rest of its settings tree says how (`each` for the loop shape,
+`on_failure` for what a step that fails for good undoes, `durable` for where its work is kept): an ETL run, a payment saga, an AI chat
 session. It authors the same tasklets, channels, and cells a flow operator does — the
 same per-cell state engine — but it schedules them **topologically**, commits its progress at
 every step boundary, can **undo** what it did, and can wait for input for hours while costing
@@ -253,7 +255,7 @@ The retry ladder is strictly **pre-commit**. A journaled tasklet is never retrie
 ladder resumes as an ordinary uncommitted-tasklet re-run with the attempt counter reset. A
 panic stays retryable, because the author never got the chance to classify it.
 
-This is the steps profile's equivalent of the flow operator's dead-letter queue:
+This is the steps operator's equivalent of the flow operator's dead-letter queue:
 abort-and-compensate is the escape. Two cases park instead: a message the entry channel cannot
 read, and a failed turn of a `per_input` keep-progress loop, whose message the controller parks
 under the `_turn` slot on the iteration's dead-lettered commit before the turn is undone and the

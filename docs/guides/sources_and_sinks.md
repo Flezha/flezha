@@ -206,6 +206,7 @@ Operator: my_echo
   Group ID: default
   Uptime (ms): 7249
   Default Input Type: 2
+  Waiting callers: 0
   Plugins:
     - reader: Flezha.Plugin.Provider.File.Source
         path: /opt/flezha/app_data/files/echo-in.txt

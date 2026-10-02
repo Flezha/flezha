@@ -145,7 +145,7 @@ the value and the type.
 | `FLEZHA_STATE_DIR` | `app_data/state` (`:test` derives a root per run) | the state root. Like every variable here it fills its key once, at boot, in `config/runtime.exs`; `Flezha.State.Paths.state_root/0` then reads `:state_root` and resolves it to an absolute path. Setting the variable in a live BEAM changes nothing. A relative value still resolves against the directory the controller was started from, which the boot and `flz controller status` both name |
 | `FLEZHA_COMPACT_AFTER_BYTES` | `8388608` | `:default_compact_after_bytes` |
 | `FLEZHA_COMPACT_AFTER_AGE_MS` | `300000` (`0` in test) | `:compact_after_age_ms`; `0` disables the age trigger |
-| `FLEZHA_INPUT_LOG_HOLD_WINDOW_MS` | `0` | `:input_log_hold_window_ms` — a floor; a declared `correction_window` raises its own hold above it |
+| `FLEZHA_INPUT_LOG_HOLD_WINDOW_MS` | `0` | `:input_log_hold_window_ms`, a floor; a declared `correction_ms` raises its own hold above it |
 | `FLEZHA_CREDIT_FLOW_CONTROL` | `true` | `:credit_flow_control_enabled` |
 | `FLEZHA_RETENTION_CHECK_INTERVAL_MS` | `60000` | `:time_travel_retention_check_interval_ms` (not in test) |
 | `FLEZHA_STEPS_RETENTION_HOURS` | `72` | `:default_operator_completed_retention_hours` (not in test); how long the record and state of a finished instance are kept, a completed flow instance's as well as a steps one's |

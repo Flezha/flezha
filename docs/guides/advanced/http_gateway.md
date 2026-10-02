@@ -1,7 +1,7 @@
 # An HTTP gateway
 
-So far only the CLI reached a session. On this page agentdesk gets an HTTP side: an
-unbounded operator, `gateway`, carries the HTTP plugin that
+So far only the CLI reached a session. On this page agentdesk gets an HTTP side: a
+second operator, `gateway`, carries the HTTP plugin that
 [`custom_plugins.md`](custom_plugins.md) installed, and a browser follows a session's
 answers as they are written, over server-sent events.
 
@@ -88,13 +88,94 @@ public final class Watch implements Tasklet<Request, Void, Http> {
 }
 ```
 
+### Rust
+
+TODO: this page is not yet written for Rust.
+
+### Node
+
+TODO: this page is not yet written for Node.
+
+### Python
+
+TODO: this page is not yet written for Python.
+
+### Ruby
+
+TODO: this page is not yet written for Ruby.
+
+### PHP
+
+TODO: this page is not yet written for PHP.
+
+### Elixir
+
+```elixir
+# lib/agentdesk/request.ex: one HTTP request, as the plugin hands it to the gateway.
+defmodule Agentdesk.Request do
+  defstruct [:method, :path, :body]
+
+  @route ~r"^/sessions/([a-z][a-z0-9_-]{0,63})/(messages|events)$"
+
+  # The envelope carries more than the gateway reads.
+  def decode(json) do
+    case Jason.decode(json) do
+      {:ok, %{"method" => method, "path" => path} = envelope} ->
+        {:ok, %__MODULE__{method: method, path: path, body: envelope["body"]}}
+
+      _other ->
+        {:error, "not a request envelope"}
+    end
+  end
+
+  def listens?(request), do: is?(request, "GET", "events")
+
+  def user(request), do: route(request, 1)
+
+  defp is?(request, verb, what), do: request.method == verb and route(request, 2) == what
+
+  # "" when the path is not a route.
+  defp route(request, part) do
+    case Regex.run(@route, request.path) do
+      nil -> ""
+      groups -> Enum.at(groups, part)
+    end
+  end
+end
+```
+
+`messages` is the route of [`operator_calls.md`](operator_calls.md).
+
+```elixir
+# lib/agentdesk/watch.ex: a session's events, or 404.
+defmodule Agentdesk.Watch do
+  use Flezha.SDK.Tasklet, name: "watch"
+
+  alias Agentdesk.Request
+
+  @impl true
+  def run(request, state, ctx) do
+    emit(
+      ctx,
+      if Request.listens?(request) do
+        %{stream: Request.user(request)}
+      else
+        %{status: 404, body: "no such route"}
+      end
+    )
+
+    {:ok, state}
+  end
+end
+```
+
 <!-- tabs-close -->
 
 ## The gateway
 
 The gateway is one chain: each request, on the entry channel `http`, goes to `watch`, and
-`watch`'s answer to the `response()` end. It runs for as long as the desk does, so it is an
-unbounded operator.
+`watch`'s answer to the `response()` end. It runs for as long as the desk does, one request
+after another, so it runs in flow, the default, and declares nothing.
 
 > Write the gateway's operator, and register its factory in the runner.
 > {: .step}
@@ -127,6 +208,52 @@ In `Main`, after the `agent` factory:
                 .registerFactory(GatewayOperator.class)
 ```
 
+### Rust
+
+TODO: this page is not yet written for Rust.
+
+### Node
+
+TODO: this page is not yet written for Node.
+
+### Python
+
+TODO: this page is not yet written for Python.
+
+### Ruby
+
+TODO: this page is not yet written for Ruby.
+
+### PHP
+
+TODO: this page is not yet written for PHP.
+
+### Elixir
+
+```elixir
+# lib/agentdesk/gateway_operator.ex: answers every request.
+defmodule Agentdesk.GatewayOperator do
+  use Flezha.SDK.Operator, factory_id: "gateway"
+
+  alias Agentdesk.{Request, Watch}
+
+  @impl true
+  def channels(c) do
+    c
+    |> input_with("http", &Request.decode/1)
+    |> into(Watch)
+    # a stream, or 404
+    |> response()
+  end
+end
+```
+
+In `Agentdesk.Application`, beside the `agent` module:
+
+```elixir
+       operators: [Agentdesk.AgentOperator, Agentdesk.GatewayOperator],
+```
+
 <!-- tabs-close -->
 
 > Build the runner again and replace its container.
@@ -138,6 +265,32 @@ In `Main`, after the `agent` factory:
 
 ```sh
 $ mvn -q package
+```
+
+### Rust
+
+TODO: this page is not yet written for Rust.
+
+### Node
+
+TODO: this page is not yet written for Node.
+
+### Python
+
+TODO: this page is not yet written for Python.
+
+### Ruby
+
+TODO: this page is not yet written for Ruby.
+
+### PHP
+
+TODO: this page is not yet written for PHP.
+
+### Elixir
+
+```sh
+$ MIX_ENV=prod mix release
 ```
 
 <!-- tabs-close -->

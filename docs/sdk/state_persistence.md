@@ -2,7 +2,7 @@
 
 For operator authors and SDK implementers: how a Tasklet's per-Cell state becomes
 durable in the Rust, Java and Elixir SDKs — the shared model (State, Change, snapshot +
-change-log restore, compaction, the persistence toggle, payload ids, the record header), then
+change-log restore, compaction, the `durable` setting, payload ids, the record header), then
 each SDK's authoring surface and test harness. The controller's on-disk layout, fsync
 batching, retention and the `flz state` CLI are in
 [`../internals/state_persistence.md`](../internals/state_persistence.md); frame layouts in
@@ -49,13 +49,13 @@ each registered Cell's buffer, coalesces, stamps the 16-byte header and ships th
 Rust pushes typed Changes into the buffer directly; Java has no flusher of its own — its
 Kryo-encoded change bytes ride the activation result into the core, so a long invocation (a
 GC pause included) delays its records: the durability bound is a guideline, not a hard cap.
-With persistence off the drain still runs (buffer emptied, seq advanced) but nothing is sent.
+With `durable: false` the drain still runs (buffer emptied, seq advanced) but nothing is sent.
 The Elixir SDK has no flusher: its Cell process ships each dispatch's records itself, at
 the end of the dispatch and before the dispatch's outputs, and advances the seq silently when
-the class's persistence is off. Under the effectively-once tier it ships one effect record in
+the class keeps nothing (`durable: false`). Under the effectively-once tier it ships one effect record in
 their place, carrying the outputs rather than preceding them.
 
-### Persistence toggle
+### Where the work is kept: `durable`
 
 One setting per class, `durable`, for a flow operator and a steps operator alike, frozen on
 the instance at start (a change applies on the next stop + start). The runner announces it

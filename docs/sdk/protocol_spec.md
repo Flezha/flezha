@@ -1292,7 +1292,7 @@ ack-lost re-send never duplicates an entry.
 
 Runner → controller, late-input correction. A Cell saw an input whose
 extracted event time is behind its event-time high-water but inside the
-declared `correction_window`; only the runner can know that, so detection is
+declared `correction_ms`; only the runner can know that, so detection is
 the runner's half and orchestration the controller's. Same outer frame as
 `park_payload` (zero header, postcard body); the Cell identity rides the
 envelope:

@@ -17,7 +17,7 @@ and the user playbook. Operator *placement* recovery is
    controller batches the fsync, ~5 ms).
 2. **Output** — what an operator emits. Output is routed **through the controller** (the
    `:on_output` plugin chain → Kafka / Postgres / HTTP / another operator). It is
-   **at-least-once** by default; an operator that declares `effectively_once()` gets the
+   **at-least-once** by default; a flow class that declares `exactly: effectively_once` gets the
    **effectively-once tier** below.
 
 The core invariant: **on a graceful stop no state is lost; on a hard kill a small best-effort
@@ -60,7 +60,7 @@ re-attaches its full plugin set and the convergence loop re-adds anything missin
 | **Input sent to a suspended / crashed / migrating steps instance** (durable) | **No loss** | n/a | Appended to the instance's durable input log (`input.log`) before forwarding, delivered on rehydrate; a suspended instance is woken by the append. |
 | **Input sent to a sleeping flow instance** (its class keeps its work and sleeps) | **No loss** | n/a | Appended to the instance's input log before forwarding; the append wakes it, its Cells are restored before the log's tail is re-forwarded, and the message is folded once, also when the controller restarts while the instance is awake. |
 | **Controller redeploy while an instance of either run is suspended** | **No loss** | n/a | Suspension is durable state (the park record in the class directory + input log + snapshots): the instance is rediscovered from disk, stays evicted, and rehydrates on the next input or its wake deadline. |
-| **Steps operator runner SIGKILL** (persistence opted out) | **Full: re-runs from the top** | At-least-once | No WAL; the operator re-runs from the top on its next message and the messages waiting in its memory are lost. Idempotent by author contract, or don't opt out. |
+| **Steps operator runner SIGKILL** (`durable: false`) | **Full: re-runs from the top** | At-least-once | No WAL; the operator re-runs from the top on its next message and the messages waiting in its memory are lost. Idempotent by author contract, or keep the work (`local`). |
 | **Failed turn of a `per_input` keep-progress session** (durable) | **No loss**: the turn's message is parked | The turn's committed outputs stay out; its `compensate` hooks undo them | The message is parked in the DLQ before the iteration is journaled `dead_lettered`; the turn is undone and the next message runs. A crash after the record re-runs the owed undo; a crash before it re-runs the turn and parks it at most once. |
 | **Steps operator SIGKILL mid-compensation** (durable) | Compensation resumes | n/a | Compensation-intent / -done markers ride the restore; the respawn finishes the outstanding undo hooks and skips the done ones. |
 | **Elixir operator process dies** (killed, or any crash outside a clean stop) | Whatever its class keeps after any rebind | Whatever its class keeps after any rebind | The runner drops the instance and reports `OperatorExited`; the controller parks it and the convergence loop rebinds it, restoring its Cells before the input log's tail above the floor is re-forwarded. A durable steps run resumes from its journal. |
@@ -146,7 +146,7 @@ more into the guarantee: **the controller's send buffer**, which still discards 
 when a runner stops reading (`flz_nif/src/driver/mod.rs`, `StreamState::offer`). The
 backpressure chain is complete inside the runner and breaks at its last hop.
 
-### Effectively-once tier (opt-in, `effectively_once()` on the channel builder)
+### Effectively-once tier (opt-in, `exactly: effectively_once` in the class's run)
 
 The built-in composition *at-least-once delivery + deterministic key + idempotent sink =
 effectively-once*. Every plugin-bound channel must be `.keyed()` (refused at build time
@@ -322,7 +322,7 @@ durable. The commit path, crash-resume and journal layout are in
 - **Compensation rides the same path.** A `compensate` hook's output is a newer record of the
   compensating Cell, named by the `compensated` entry and released once that entry is durable;
   its seq is above the forward output's, so an undo never collides with it.
-- **Persistence off.** An opted-out class writes no record and no journal; its outputs go
+- **Kept in memory (`durable: false`).** Such a class writes no record and no journal; its outputs go
   straight to the wire with channel, key and metadata, as a tier-off flow operator's do.
 
 **Guarantee.** Never lost, never leaked before commit, and **at-least-once with stable keys** on
@@ -520,10 +520,17 @@ offset; only the *order* was ever wrong.
 ### Declaring it
 
 ```rust
-fn channels(c: &ChannelBuilder) {
-    c.effectively_once();
-    c.correction_window(600_000);                      // repair up to 10 minutes of past
-    c.beyond_window_policy(BeyondWindowPolicy::Drop);  // optional; default ProcessAsArrival
+fn settings() -> OperatorSettings {
+    OperatorSettings {
+        run: Run::Flow {
+            exactly: Exactly::EffectivelyOnce {
+                ack: AckGranularity::PerInput,
+                correction_ms: Some(600_000),               // repair up to 10 minutes of past
+                beyond_window: BeyondWindowPolicy::Drop,    // optional; default ProcessAsArrival
+            },
+        },
+        ..OperatorSettings::default()
+    }
 }
 ```
 
@@ -532,7 +539,7 @@ SDK build time:
 
 | Prerequisite | Why |
 | --- | --- |
-| `effectively_once()` | append-before-forward is what puts the late input in the log |
+| `exactly: effectively_once` | append-before-forward is what puts the late input in the log |
 | an event-time clock | nothing else yields a time to order a replayed slice by |
 | every plugin channel `.keyed()` | a bumped epoch overwrites *by key*; an append channel would duplicate (already implied by the tier) |
 
@@ -611,7 +618,7 @@ What a lost disk costs depends on the class's `durable` level and on its commit 
 input under `ack: per_input` or `at_least_once`, a checkpoint under `ack: checkpoint`, a stage of
 a steps instance.
 
-| Level | Input | Checkpoint | Stage |
+| `durable` | Flow, an input | Flow, a checkpoint | Steps, a stage |
 | --- | --- | --- | --- |
 | `false` (memory) | everything, on any crash | not declarable: the tier needs a disk | everything: the run starts over |
 | `local` | the work since the last ship, at most the RPO target | the work since the last ship, at most the RPO target | the work since the last ship, at most the RPO target |
@@ -657,7 +664,7 @@ commit point waits, also when another controller has taken the lineage. `flz con
   on a connected peer that never answers.
 - **Make sinks idempotent where exactly-once matters.** Declare the channel `.keyed()` so
   re-emits carry identical `flz.key` / `flz.seq` stamps to upsert on, or opt the operator into
-  `effectively_once()` — the Kafka and Postgres plugins conform out of the box.
+  `exactly: effectively_once`; the Kafka and Postgres plugins conform out of the box.
 - **Never treat the on-disk registry as the live source of truth** in code or ops; it is
   what the orphan reconcile replays on a cold start.
 - **Steps operators are durable and at-least-once by default.** Author each tasklet and
@@ -678,7 +685,7 @@ commit point waits, also when another controller has taken the lineage. `flz con
   whose runner has not reconnected is held unbound and bound when it does; that is the design,
   not a fault.
 - Assuming output is exactly-once: it is at-least-once by default. Dedup downstream or opt into
-  the `effectively_once()` tier.
+  the `exactly: effectively_once` tier.
 
 ## See also
 

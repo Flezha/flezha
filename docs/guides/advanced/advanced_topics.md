@@ -27,12 +27,9 @@ flowchart LR
 > | Language | You need |
 > |---|---|
 > | Java | Java 21 and Maven |
-> | Rust | Rust with Cargo |
-> | Node | Node 20 or later with npm |
-> | Python | Python 3.11 or later with pip |
-> | Ruby | Ruby 3.3 or later with Bundler |
-> | PHP | PHP 8.4 or later with `ext-ffi`, and Composer |
 > | Elixir | Elixir 1.17 or later with Erlang/OTP |
+>
+>   Part 3 is not yet written for Rust, Node, Python, Ruby or PHP.
 >
 > - **A Kubernetes cluster, such as k3s, and `kubectl`**, for
 >   [`kubernetes_deployment.md`](kubernetes_deployment.md).
@@ -40,7 +37,7 @@ flowchart LR
 
 | # | Page | What you do |
 |---|---|---|
-| 1 | [`sessions.md`](sessions.md) | Run agentdesk in Docker Compose, one session per conversation as a bounded operator, send it turns with the CLI, and watch an idle one sleep |
+| 1 | [`sessions.md`](sessions.md) | Run agentdesk in Docker Compose, one session per conversation, an operator that runs in steps, send it turns with the CLI, and watch an idle one sleep |
 | 2 | [`rewinding_a_turn.md`](rewinding_a_turn.md) | Take turns back with an undo, and let a failed turn fail alone |
 | 3 | [`streamed_answers.md`](streamed_answers.md) | Send the answer token by token as parts, and watch it with `flz operator listen` |
 | 4 | [`custom_plugins.md`](custom_plugins.md) | Install the HTTP plugin by rebuilding the controller's image, and see a plugin of your own |

@@ -88,8 +88,8 @@ flowchart LR
     classDef leaf fill:#dcfce7,stroke:#166534,color:#111
 ```
 
-- **Operator** — the unit you start and stop. It has a **kind**, frozen at start:
-  `flow` (default) or `steps`. An operator may be started with `--partitions N`,
+- **Operator**: the unit you start and stop. Its class's `run` setting, frozen for each
+  instance at start, says how it runs: `flow` (default) or `steps`. An operator may be started with `--partitions N`,
   which materializes it as N ordinary instances (`<id>#p0..#p{N-1}`) splitting the key space
   by key group — see [`stream_profile.md`](stream_profile.md#partitioned-operators); a
   steps operator must loop `per_input`.
@@ -231,11 +231,11 @@ operators additionally commit step progress to a task journal (6). Outputs reach
 after that record is durable (7). On a crash, the controller restores the cell's state and
 the steps operator's step position (R).
 
-## One kernel, two profiles
+## One kernel, two ways to run
 
 ```mermaid
 flowchart TB
-    subgraph PROF["PROFILES — two ways to use it"]
+    subgraph PROF["RUN: two ways to run an operator"]
         UNB["FLOW<br/>endless stream, no barrier, low latency<br/>change-by-change durability<br/>per-cell local recovery<br/>effectively-once tier is opt-in"]:::exec
         BND["STEPS<br/>tasklet tree with a barrier per tasklet<br/>task-boundary journal naming each stage's records<br/>saga compensation<br/>durable loop and suspension"]:::exec
     end
@@ -260,7 +260,7 @@ flowchart TB
 
 The WAL and the snapshot mechanism are **shared** — a steps operator's cells persist
 exactly like a flow operator's, and a durable steps operator's input goes through the same input
-log a flow operator on the effectively-once tier uses. What is bounded-specific is the task journal and
+log a flow operator on the effectively-once tier uses. What is steps-specific is the task journal and
 saga compensation.
 
 ---
@@ -279,7 +279,7 @@ record is durable. See [`kernel.md`](kernel.md#the-atomic-effect-record).
 
 **3. The durable input log is opt-in.** Default is at-least-once: no input-log file, no
 outbox, no gating, byte-identical to a build that never heard of the tier. With
-`effectively_once()` declared, every source is normalised into one offset-addressable durable
+`exactly: effectively_once` declared, every source is normalised into one offset-addressable durable
 log and each cell recovers from its own consumed offset.
 
 **4. Output identity, and the epoch rule.** Replay-stable output identity is
@@ -414,9 +414,9 @@ sequenceDiagram
     Note over OW: convergence sees an unbound operator and binds it
     OW->>EX: Ping (proves the reply path is intact)
     Note over OW: record this runner's stable identity as the operator's owner, before the start
-    OW->>EX: AddOperator {operator_id, factory_id, kind, init_values, resume_cell_count,<br/>partition_index · partition_count · key_group_from · key_group_to — partition members only}
+    OW->>EX: AddOperator {operator_id, factory_id, run, init_values, resume_cell_count,<br/>partition_index · partition_count · key_group_from · key_group_to, partition members only}
     EX-->>OW: AddOperatorResponse {metadata}
-    Note over OW: decode_declarations — the ONE seam where the SDK declares capability:<br/>effectively_once · ack_granularity · correction_window_ms<br/>compensable_tasks · leaf_tasks · compact_after_bytes<br/>keyed (only when false) · durable (remote)
+    Note over OW: decode_declarations: the ONE seam where the SDK declares capability:<br/>exactly · ack · correction_ms<br/>compensable_tasks · leaf_tasks · compact_after_bytes<br/>keyed (only when false) · durable (remote)
     OW->>EX: RestoreInitState per persisted cell (snapshot + WAL tail)
     Note over OW,EX: only now does input flow
 ```
@@ -564,7 +564,7 @@ The full scenario matrix and the user playbook are in
 
 ## Where to go next
 
-- The durable substrate every profile shares → [`kernel.md`](kernel.md)
+- The durable substrate both ways of running share → [`kernel.md`](kernel.md)
 - Streaming workloads → [`stream_profile.md`](stream_profile.md)
 - Jobs, sagas, and agent sessions → [`steps_profile.md`](steps_profile.md)
 - Inside a runner, and writing a new SDK → [`runner.md`](runner.md)

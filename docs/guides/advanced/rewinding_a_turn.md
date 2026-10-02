@@ -56,6 +56,45 @@ In `Reply`, a second change beside `Said`, and the undo after `run`:
     }
 ```
 
+### Rust
+
+TODO: this page is not yet written for Rust.
+
+### Node
+
+TODO: this page is not yet written for Node.
+
+### Python
+
+TODO: this page is not yet written for Python.
+
+### Ruby
+
+TODO: this page is not yet written for Ruby.
+
+### PHP
+
+TODO: this page is not yet written for PHP.
+
+### Elixir
+
+In `Agentdesk.Reply`, a second change beside `said`, and the undo after `run/3`:
+
+```elixir
+  defchange unsaid(conversation) do
+    %{conversation | messages: Enum.drop(conversation.messages, -1)}
+  end
+```
+
+```elixir
+  # The undo, when a turn is taken back: the conversation forgets its message.
+  @impl true
+  def compensate(_answers, conversation, ctx) do
+    IO.puts(~s([undo] forgot "#{List.last(conversation.messages)}"))
+    {:ok, unsaid(conversation, ctx)}
+  end
+```
+
 <!-- tabs-close -->
 
 ## A turn that fails
@@ -84,6 +123,35 @@ In `AgentOperator`, `run` gains its failure mode:
     }
 ```
 
+### Rust
+
+TODO: this page is not yet written for Rust.
+
+### Node
+
+TODO: this page is not yet written for Node.
+
+### Python
+
+TODO: this page is not yet written for Python.
+
+### Ruby
+
+TODO: this page is not yet written for Ruby.
+
+### PHP
+
+TODO: this page is not yet written for PHP.
+
+### Elixir
+
+In `Agentdesk.AgentOperator`:
+
+```elixir
+    # one turn per message; a failed turn fails alone
+    run: {:steps, each: :per_input, on_failure: :keep_progress},
+```
+
 <!-- tabs-close -->
 
 > Build the runner again and replace its container.
@@ -95,6 +163,32 @@ In `AgentOperator`, `run` gains its failure mode:
 
 ```sh
 $ mvn -q package
+```
+
+### Rust
+
+TODO: this page is not yet written for Rust.
+
+### Node
+
+TODO: this page is not yet written for Node.
+
+### Python
+
+TODO: this page is not yet written for Python.
+
+### Ruby
+
+TODO: this page is not yet written for Ruby.
+
+### PHP
+
+TODO: this page is not yet written for PHP.
+
+### Elixir
+
+```sh
+$ MIX_ENV=prod mix release
 ```
 
 <!-- tabs-close -->

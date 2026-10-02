@@ -50,27 +50,20 @@ source "$ROOT/wip/tools/walk-steps.sh"
 flz() { docker compose exec controller bin/flz "$@"; }
 export -f flz
 
-# The project's build, which the runner's image copies.
+# The project's build, which the runner's image copies: the local build where
+# the image takes the same output, else what the image's Dockerfile copies.
 build_desk() {
   case "$SDK" in
-    java) echo "mvn -q package" ;;
+    java | node | php) example_build "$SDK" ;;
     rust) echo "cargo build --release --offline" ;; # --offline: the checkout's .cargo/config.toml, per the README
-    php) echo "composer install --no-interaction --quiet" ;; # the checkout's SDK, through the COMPOSER_HOME below
     python) echo "python3 -m pip install --quiet --upgrade --target vendor ../../dist/flezha-0.1.0-*.whl" ;; # the checkout's wheel, per the README
     ruby) echo "mkdir -p vendor/cache && cp ../../pkg/flezha-0.1.0-*.gem vendor/cache/ && bundle cache --quiet" ;; # the checkout's gem, per the README
-    node) echo "npm install --no-save --install-links --silent ../.. && mkdir -p node_modules/@flezha/sdk/native && cp ../../native/flz_core_ffi.node node_modules/@flezha/sdk/native/" ;; # the checkout's package and addon, per the README
     elixir) echo "mix deps.get && MIX_ENV=prod mix release --quiet" ;; # the checkout's package by path, per the README
     *) echo "walk: no build command for $SDK yet; add it here" >&2; exit 1 ;;
   esac
 }
 
-# The PHP SDK is not on Packagist: the README's path repository, in a
-# COMPOSER_HOME of the walk's own so the user's global configuration is untouched.
-if [ "$SDK" = php ]; then
-  export COMPOSER_HOME=$ROOT/wip/tools/.cache/composer-php
-  composer config --global repositories.flezha-sdk \
-    "{\"type\": \"path\", \"url\": \"$ROOT/sdk/php\", \"options\": {\"symlink\": false, \"versions\": {\"flezha/sdk\": \"0.1.0\"}}}"
-fi
+[ "$SDK" = php ] && php_checkout
 
 phase() { # operator id, phase, seconds: waits until `flz operator info` shows it in that phase
   until_ok "$3" "flz operator info $1 --namespace agents | awk '/^Operator: $1\$/{f=1} f && /Phase:/{print \$2; exit}' | grep -qx $2"
@@ -188,6 +181,14 @@ calls() {
   logs runner
 }
 
+# Not a page: holds the desk up, the gateway serving, until $OUT/browser.done
+# appears (ten minutes at most), so a browser can follow a session's stream on
+# localhost:8080. Run it after `gateway`.
+browser() {
+  until_ok 600 "[ -f $OUT/browser.done ]"
+  rm -f "$OUT/browser.done"
+}
+
 # Waits until no operator of agents is moving: none failed, recovering, parked or unbound.
 settled() { until_ok "${1:-120}" "flz operator list --namespace agents | awk 'NR>4 && \$2 !~ /^(healthy|suspended)\$/ {bad=1} END {exit bad}'"; }
 
@@ -229,7 +230,9 @@ once() {
   logs runner controller
 }
 
-# Page 11 runs on a private k3s in a Docker container. The page's reader uses
+# Page 11 runs on a private k3s in a Docker container, whose kubelet evicts only
+# below 1 % free disk: a nearly full development disk would otherwise taint the
+# node with disk pressure and leave the pod pending. The page's reader uses
 # their own cluster; the walk must never reach any other, so every kubectl here
 # goes through a guard that refuses a kubeconfig not pointing at 127.0.0.1.
 K3S=agentdesk-walk-k3s-$SDK
@@ -246,7 +249,8 @@ export -f kubectl
 
 k3s_up() {
   docker run -d --name "$K3S" --privileged --tmpfs /run --tmpfs /var/run -p 127.0.0.1::6443 \
-    rancher/k3s:v1.31.4-k3s1 server --disable=traefik --disable=metrics-server >"$OUT/$page/k3s.log" 2>&1 || exit 1
+    rancher/k3s:v1.31.4-k3s1 server --disable=traefik --disable=metrics-server \
+    --kubelet-arg=eviction-hard=imagefs.available\<1%,nodefs.available\<1% >"$OUT/$page/k3s.log" 2>&1 || exit 1
   mkdir -p "$K3S_DIR"
   export KUBECONFIG=$K3S_DIR/kubeconfig
   until_ok 120 "docker exec $K3S test -s /etc/rancher/k3s/k3s.yaml"

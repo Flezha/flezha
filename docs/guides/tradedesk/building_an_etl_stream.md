@@ -5,8 +5,8 @@ load: a pipeline that takes data from one place, changes it into what you need,
 and delivers it somewhere else. Here it takes trades from the exchange, works out
 which prices are worth buying at, and sends those out.
 
-We build it with an unbounded operator, because trades never stop coming, so the
-pipeline should never stop either. An unbounded operator is exactly that: you
+It runs in flow, the default, because trades never stop coming, so the
+pipeline should never stop either. An operator that runs in flow is exactly that: you
 start it once, and it keeps running until you stop it. Each trade is handled the
 moment it arrives, and each result goes out right away. Each symbol's trades
 are handled one at a time, in the order they arrived, so a price is always
@@ -705,8 +705,8 @@ order, and it emits a line saying so. For the other prices it does nothing. The
 further a price is above its average, the more it buys: 10 for each percent, so
 a price 2.3 % above buys 23, and one 12 % above buys 120.
 
-The order is a workflow, `order_executor`, built as a bounded operator: the kind
-for work that runs a set of steps and then ends, such as placing one order. The
+The order is a workflow, `order_executor`, which runs in steps: the way to run
+work that is a set of steps and then ends, such as placing one order. The
 tasklet starts one `order_executor` for every buy, and hands it the order as its
 first input: the symbol, and how many to buy.
 [`building_a_workflow.md`](building_a_workflow.md) builds that workflow.
@@ -745,7 +745,7 @@ public final class BuyAboveAverage implements Tasklet<Move, Void, String> {
 
 `Tasklet<Move, Void, String>`: it takes the move, keeps no state, because it
 remembers nothing, and emits a line. It does two things per input through the
-context: it starts a bounded operator and it emits. `spawnSteps` sends the
+context: it starts an operator that runs in steps and it emits. `spawnSteps` sends the
 order as JSON, and `order_executor` decodes it back into an `OrderTicket`, the
 order it takes, declared in [`building_a_workflow.md`](building_a_workflow.md).
 
@@ -788,7 +788,7 @@ impl Tasklet for BuyAboveAverage {
 
 It takes the move and emits a line, and writes no `type State`, because it
 remembers nothing. It does two things per input through the context: it starts
-a bounded operator and it emits. `spawn_steps` takes the order's bytes, so
+an operator that runs in steps and it emits. `spawn_steps` takes the order's bytes, so
 the ticket is written as JSON with `serde_json`, and `order_executor` decodes it
 back into an `OrderTicket`, the order it takes, declared in
 [`building_a_workflow.md`](building_a_workflow.md). The handle it returns
@@ -826,7 +826,7 @@ export const BuyAboveAverage = defineTasklet({
 
 It takes the move and emits a line, and writes no `initState`, because it
 remembers nothing. It does two things per input through the context: it starts
-a bounded operator and it emits. `spawnSteps` sends the order, a plain
+an operator that runs in steps and it emits. `spawnSteps` sends the order, a plain
 object, as JSON, and `order_executor` reads it back as the object its first
 step takes, declared in [`building_a_workflow.md`](building_a_workflow.md). The
 handle it returns reports whether the order started; the desk does not read it.
@@ -857,8 +857,8 @@ class BuyAboveAverage:
 ```
 
 `Ctx[None, str]`: it keeps no state, because it remembers nothing, and emits a
-line. It does two things per input through the context: it starts a bounded
-operator and it emits. `spawn_steps` sends the order, a dict, as JSON, and
+line. It does two things per input through the context: it starts an operator that
+runs in steps and it emits. `spawn_steps` sends the order, a dict, as JSON, and
 `order_executor` reads it back as the `OrderTicket` its first step takes,
 declared in [`building_a_workflow.md`](building_a_workflow.md). The handle it
 returns reports whether the order started; the desk does not read it, and never
@@ -892,7 +892,7 @@ end
 
 It takes the move and emits a line, and writes no `init_state`, because it
 remembers nothing. It does two things per input through the context: it starts
-a bounded operator and it emits. `spawn_steps` sends the order, a Hash, as
+an operator that runs in steps and it emits. `spawn_steps` sends the order, a Hash, as
 JSON, and `order_executor` reads it back as the Hash its first step takes,
 declared in [`building_a_workflow.md`](building_a_workflow.md). The handle it
 returns reports whether the order started; the desk does not read it.
@@ -932,7 +932,7 @@ final class BuyAboveAverage extends Tasklet
 
 It takes the move and emits a line, and writes no `initState`, because it
 remembers nothing. It does two things per input through the context: it starts
-a bounded operator and it emits. `spawnSteps` sends the order, an array, as
+an operator that runs in steps and it emits. `spawnSteps` sends the order, an array, as
 JSON, and `order_executor` reads it back as the array its first step takes,
 declared in [`building_a_workflow.md`](building_a_workflow.md). The handle it
 returns reports whether the order started; the desk does not read it.
@@ -955,7 +955,7 @@ defmodule Tradedesk.BuyAboveAverage do
       # A stronger move buys more.
       quantity = round(percent * @units_per_percent)
 
-      # One bounded operator per order.
+      # One steps operator per order.
       spawn_steps(ctx, "order_executor", %{symbol: symbol, quantity: quantity})
 
       emit(
@@ -976,7 +976,7 @@ It takes the move and emits a line, and has no `state` block, because it
 remembers nothing. The move arrives as the map `track_prices` emitted, with
 atom keys: a value that goes from one tasklet to the next on the same runner
 stays an Elixir term. It does two things per input through the context:
-`spawn_steps/3` starts a bounded operator, and `emit/2` sends the line.
+`spawn_steps/3` starts an operator that runs in steps, and `emit/2` sends the line.
 `spawn_steps/3` sends the order, a map, as JSON, and `order_executor` decodes
 it into the `OrderTicket` its first step takes, declared in
 [`building_a_workflow.md`](building_a_workflow.md). `spawn_steps/3` answers
@@ -1433,4 +1433,4 @@ connects once its child has started. The namespace is the first argument after
 
 The desk starts an order for every buy, and the order has nothing to run yet.
 [`building_a_workflow.md`](building_a_workflow.md) writes `order_executor`, the
-bounded operator that places it.
+operator that places it, in steps.

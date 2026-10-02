@@ -9,12 +9,13 @@
 # named, all of them run; a page picks up what the pages before it left, so
 # after a failure the rest can run on their own, and each stays well inside a
 # ten-minute run. `orders` is the desk README's "start an order by hand", and
-# the three `durability-` pages are durability.md's halves.
+# the three `durability-` pages are durability.md's halves. The desk is built
+# and run from this checkout as its README says (`example_build` and
+# `example_run` in walk-steps.sh), so the SDK's artifacts must be current.
 #
 # Every step's command and output go to $OUT/<page>/<nn>-<step>.txt, and the
 # desk runner's own output to $OUT/runner.log, so an output block in a guide is
-# copied from a capture rather than typed. Only the runner command differs per
-# SDK: `runner_cmd` below.
+# copied from a capture rather than typed.
 set -uo pipefail
 
 SDK=${1:?usage: walk-tradedesk.sh <sdk> [page...]}
@@ -30,23 +31,11 @@ NS=trading
 source "$RUN/vars.sh"
 mkdir -p "$OUT"
 
-# The desk's build, then the command that runs its runner in $DESK.
-build_desk() {
-  case "$SDK" in
-    elixir) (cd "$DESK" && mix deps.get && mix compile) >"$OUT/build.log" 2>&1 ;;
-    *) echo "walk: no build and runner command for $SDK yet; add them here" >&2; exit 1 ;;
-  esac
-}
-runner_cmd() {
-  case "$SDK" in
-    elixir) echo "mix run --no-halt" ;;
-  esac
-}
-
 page=""
 n=0
 # shellcheck source=walk-steps.sh
 source "$ROOT/wip/tools/walk-steps.sh"
+[ "$SDK" = php ] && php_checkout >/dev/null
 runner_log_mark() { { wc -l <"$RUN/logs/desk.log"; } 2>/dev/null || echo 0; }
 runner_log_since() {
   mkdir -p "$OUT/$page"
@@ -55,7 +44,7 @@ runner_log_since() {
 
 key() { grep -o 'flzt_[a-z0-9]*' "$OUT/authorization/02-token-issue.txt" | head -1; }
 start_runner() {
-  "$ENV" start desk "$DESK" env FLEZHA_NAMESPACE_SECRET="$(key)" $(runner_cmd)
+  "$ENV" start desk "$DESK" env FLEZHA_NAMESPACE_SECRET="$(key)" bash -c "exec $(example_run "$SDK" tradedesk)"
   until_ok 90 "flz runner list --namespace $NS | grep -q ${NS}_"
 }
 healthy() { # seconds, partitions
@@ -84,7 +73,7 @@ namespaces() {
 }
 
 partitioning() {
-  build_desk
+  build_example "$DESK"
   local mark
   mark=$(runner_log_mark)
   start_runner
@@ -203,7 +192,8 @@ durability-undo() {
   mark=$(runner_log_mark)
   echo /resume >"$RUN/exchange.in"
   echo "/jump EUR/USD 12" >"$RUN/exchange.in"
-  until_ok 90 "tail -n +$((mark + 1)) $RUN/logs/desk.log | grep -q '\[undo\] released'"
+  # The order is tried on its retry ladder first; a Python runner takes minutes.
+  until_ok 240 "tail -n +$((mark + 1)) $RUN/logs/desk.log | grep -q '\[undo\] released'"
   runner_log_since "$mark" undo
   cp "$RUN/logs/exchange.log" "$OUT/$page/exchange.log"
 }

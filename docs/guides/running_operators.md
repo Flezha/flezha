@@ -63,21 +63,26 @@ flowchart TB
     end
 ```
 
-## The two kinds
+## Two ways to run
 
-An operator's **kind** is fixed when you start it, and it decides when the
-thing is over.
+How an operator runs is part of its code, its class, and is fixed for each
+instance when you start it. It decides when the thing is over.
 
-**Unbounded operators are always on.** An endless input, no completion, recovery
-per cell. `echo` is one, and everything below uses this kind. It runs until
-you stop it.
+**By default an operator runs in flow.** An endless input, each message handled
+as it arrives, recovery per cell. `echo` declares nothing, so it runs this way,
+and everything below uses it. It runs until you stop it.
 
-**Bounded operators terminate.** A graph of tasklets, each committing
+**A class can run in steps instead.** A graph of tasklets, each committing
 behind its own barrier before the tasklets it feeds run, ending by itself on
 chain completion, when a
 tasklet calls `ctx.complete`, or at `max_duration`.
 Stopping one by hand ends it early; it is not how one is meant to finish.
-[`building_a_workflow.md`](tradedesk/building_a_workflow.md) is the kind's own guide.
+[`building_a_workflow.md`](tradedesk/building_a_workflow.md) is its own guide.
+
+An idle operator that runs in steps sleeps after six hours unless its class says
+otherwise: it leaves its runner, and wakes with its state when its next message
+arrives. One that runs in flow, as `echo` does, never sleeps unless its class
+says so.
 
 ## Start one
 
@@ -214,7 +219,7 @@ you press Ctrl-C, when your terminal closes, or when the operator ends.
 
 ## Stopping it, later
 
-`echo` is an unbounded operator, so nothing ends it but you. **Leave it running for
+`echo` runs in flow, so nothing ends it but you. **Leave it running for
 now:** the next guide attaches plugins to it, and
 [`stop_everything.md`](stop_everything.md) stops it at the end of Part 1. The
 command is:

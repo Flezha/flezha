@@ -4,9 +4,9 @@ On this page agentdesk runs for the first time: a controller and a runner in Doc
 containers, and one session per conversation. You send a session messages from the CLI,
 leave it idle until it sleeps, and wake it again.
 
-A conversation has a beginning, it has turns, and it remembers what was said. A bounded
-operator gives it all three, the kind [`building_a_workflow.md`](../tradedesk/building_a_workflow.md)
-introduced: each conversation is an instance of its own, with its own state. Where an order
+A conversation has a beginning, it has turns, and it remembers what was said. An operator
+that runs in steps gives it all three, as [`building_a_workflow.md`](../tradedesk/building_a_workflow.md)
+showed: each conversation is an instance of its own, with its own state. Where an order
 ran its steps once, a session runs them once per message, for as long as it lasts. Each run
 is a **turn**.
 
@@ -58,9 +58,64 @@ for a model's client: it answers every message with one canned sentence, so noth
 the example is needed. Its third argument receives each token as it is written, which
 [`streamed_answers.md`](streamed_answers.md) uses; for now the tokens are dropped.
 
+### Rust
+
+TODO: this page is not yet written for Rust.
+
+### Node
+
+TODO: this page is not yet written for Node.
+
+### Python
+
+TODO: this page is not yet written for Python.
+
+### Ruby
+
+TODO: this page is not yet written for Ruby.
+
+### PHP
+
+TODO: this page is not yet written for PHP.
+
+### Elixir
+
+The whole example:
+[`sdk/elixir/examples/agentdesk`](https://github.com/flezha/flezha_elixir_sdk/tree/main/examples/agentdesk).
+
+```elixir
+# lib/agentdesk/reply.ex: answers a message with the demo model, and keeps the conversation.
+defmodule Agentdesk.Reply do
+  use Flezha.SDK.Tasklet, name: "reply"
+
+  alias Agentdesk.DemoModel
+
+  # What the session remembers.
+  state do
+    field(:messages, :list, default: [])
+  end
+
+  defchange said(conversation, message) do
+    %{conversation | messages: conversation.messages ++ [message]}
+  end
+
+  @impl true
+  def run(message, conversation, ctx) do
+    with {:ok, answer} <- DemoModel.answer(conversation.messages, message, fn _part -> :ok end) do
+      emit(ctx, answer)
+      {:ok, said(conversation, ctx, message)}
+    end
+  end
+end
+```
+
+`DemoModel.answer/3` stands in for a model's client. Its third argument receives each token as
+it is written, which [`streamed_answers.md`](streamed_answers.md) uses; for now the tokens are
+dropped.
+
 <!-- tabs-close -->
 
-## A session is a bounded operator
+## A session runs in steps
 
 The operator is called `agent`, and each session is an instance of it, named after its
 user. A message arrives on the entry channel `turn`, `reply` answers it, and the
@@ -105,6 +160,54 @@ public final class AgentOperator implements Operator {
 order did. `durable()` keeps each session on the controller and lets an idle one sleep after
 ten seconds, which [An idle session sleeps](#an-idle-session-sleeps) shows.
 
+### Rust
+
+TODO: this page is not yet written for Rust.
+
+### Node
+
+TODO: this page is not yet written for Node.
+
+### Python
+
+TODO: this page is not yet written for Python.
+
+### Ruby
+
+TODO: this page is not yet written for Ruby.
+
+### PHP
+
+TODO: this page is not yet written for PHP.
+
+### Elixir
+
+```elixir
+# lib/agentdesk/agent_operator.ex: one conversation, one turn per message.
+defmodule Agentdesk.AgentOperator do
+  use Flezha.SDK.Operator,
+    factory_id: "agent",
+    # one turn per message
+    run: {:steps, each: :per_input},
+    # an idle session sleeps after 10 s
+    durable: {:local, sleep_after: 10_000}
+
+  alias Agentdesk.Reply
+
+  @impl true
+  def channels(c) do
+    c
+    |> input("turn")
+    |> into(Reply)
+    # to whoever called
+    |> response()
+  end
+end
+```
+
+`each: :per_input` runs the chain once per message. `durable` keeps each session on the
+controller and lets an idle one sleep after ten seconds.
+
 <!-- tabs-close -->
 
 ## The runner
@@ -141,6 +244,55 @@ FROM eclipse-temurin:21-jre
 COPY target/agentdesk.jar /agentdesk/agentdesk.jar
 USER 1000
 ENTRYPOINT ["java", "-jar", "/agentdesk/agentdesk.jar"]
+```
+
+### Rust
+
+TODO: this page is not yet written for Rust.
+
+### Node
+
+TODO: this page is not yet written for Node.
+
+### Python
+
+TODO: this page is not yet written for Python.
+
+### Ruby
+
+TODO: this page is not yet written for Ruby.
+
+### PHP
+
+TODO: this page is not yet written for PHP.
+
+### Elixir
+
+```elixir
+# lib/agentdesk/application.ex: the runner.
+defmodule Agentdesk.Application do
+  use Application
+
+  @impl true
+  def start(_type, _args) do
+    children = [
+      # `:uds` because this node is not the controller's.
+      {Flezha.SDK, namespace: "agents", operators: [Agentdesk.AgentOperator], transport: :uds}
+    ]
+
+    Supervisor.start_link(children, strategy: :one_for_one)
+  end
+end
+```
+
+```dockerfile
+# The runner's image: the release `MIX_ENV=prod mix release` builds, on a Debian 13 runtime.
+FROM debian:trixie-slim
+COPY _build/prod/rel/agentdesk /agentdesk
+# The runner is not an Erlang cluster node, and writes its temporary files where it may.
+ENV LANG=C.UTF-8 RELEASE_DISTRIBUTION=none RELEASE_TMP=/tmp
+USER 1000
+ENTRYPOINT ["/agentdesk/bin/agentdesk", "start"]
 ```
 
 <!-- tabs-close -->
@@ -212,6 +364,33 @@ volumes:
 
 ```sh
 $ mvn -q package
+```
+
+### Rust
+
+TODO: this page is not yet written for Rust.
+
+### Node
+
+TODO: this page is not yet written for Node.
+
+### Python
+
+TODO: this page is not yet written for Python.
+
+### Ruby
+
+TODO: this page is not yet written for Ruby.
+
+### PHP
+
+TODO: this page is not yet written for PHP.
+
+### Elixir
+
+```sh
+$ mix deps.get
+$ MIX_ENV=prod mix release
 ```
 
 <!-- tabs-close -->

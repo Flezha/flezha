@@ -43,15 +43,28 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   idle for its class's `sleep_after` (unless the class says otherwise, never for a flow class and
   six hours for a steps class; `false` never sleeps) ships `IterPark`, is evicted from its runner (`suspended`) and wakes on its next message
   with its Cells restored. A class kept in memory (`durable: false`) has nothing to sleep on.
-- **Flow operator** — an operator whose `run` is `flow`, the default: its commit point is an
-  input, or a checkpoint, with per-Cell recovery and no barrier. It runs until it is stopped, a
-  tasklet calls `ctx.complete(result)` or its `max_duration_ms` elapses.
-- **Steps operator** — an operator whose `run` is `steps`: a DAG of tasklets, each run once its
-  producers have committed and committed behind a barrier as soon as its cells finish, with an
-  inbox, saga compensation, a durable loop (`each`: `once`, `per_input`, `chained`) and
-  suspension. It ends on chain completion, a tasklet's `ctx.complete(result)`, a loop that runs
-  out of work, `max_duration_ms` or `flz operator stop`; a `per_input` loop may never end. See
-  [`architecture/steps_profile.md`](architecture/steps_profile.md).
+- **Run: flow / steps**: how an operator runs, the `run` setting of its class. `flow`, the
+  default: each input is handled as it arrives, its commit point is an input, or a checkpoint,
+  with per-Cell recovery and no barrier, and `exactly` chooses `at_least_once` (the default) or
+  `effectively_once`. It runs until it is stopped, a tasklet calls `ctx.complete(result)` or its
+  `max_duration_ms` elapses. `steps`: a DAG of tasklets, each run once its producers have
+  committed and committed behind a barrier as soon as its cells finish; see **Steps**. A class
+  that runs in flow is a **flow operator**, one that runs in steps a **steps operator**.
+- **Durable: memory / disk / remote**: where an operator keeps its work, the `durable` setting
+  of its class. `false`: in memory only, and a crash starts the work over. `local`, the default:
+  on the controller's disk, and a crash resumes from it. `remote`: in the remote copy as well,
+  each commit point acknowledged only once the copy holds it (see **Synchronous durability**).
+  `local` and `remote` carry `sleep_after` (see **Sleeping**).
+- **Steps**: what `run: steps` adds to an operator: each tasklet's committed work is a
+  **stage** on disk before the next runs, one run of the DAG is a **pass**, the **task journal**
+  records them, a stage that cannot succeed **undoes** the stages before it through their
+  `compensate` hooks (`on_failure`: `undo_all`, the default, or `keep_progress`), and
+  `flz operator rewind` takes passes back. `each` is the loop shape: `once` (the default),
+  `per_input` or `chained`. It ends on chain completion, a tasklet's `ctx.complete(result)`, a
+  loop that runs out of work, `max_duration_ms` or `flz operator stop`; a `per_input` loop may
+  never end. See [`architecture/steps_profile.md`](architecture/steps_profile.md).
+- **Bounded / unbounded (input)**: plain words for a finite and an endless input, as Flink
+  uses them: a file against a live feed. Not a property of an operator.
 - **Tasklet** — a typed stage inside an operator, declaring `Input`, `Output`, `State`,
   `Change` and `Clock` types. A tasklet has exactly one output channel, is wired to the others by
   channels, and lives as long as its operator: it is fed, never called and returned from.
@@ -216,7 +229,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   failed turn of a `per_input` keep-progress loop, and otherwise aborts and compensates. Once an
   input's entry is durable, the operator's listeners see a notice carrying `input.dead_lettered`.
   See [`resilience/data_durability.md`](resilience/data_durability.md).
-- **Late-input correction** — a declared `correction_window()` lets an event behind the event-time
+- **Late-input correction**: a declared `correction_ms` under `exactly: effectively_once` lets an event behind the event-time
   high-water mark rewind the cell to a baseline, replay the retained slice in event-time order
   and republish under a bumped epoch. Requires the tier, an event-time clock and keyed plugin
   channels; the window raises the input-log hold window and the snapshot age floor to meet itself.

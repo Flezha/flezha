@@ -5,22 +5,23 @@ of steps that run in a fixed order, from the first to the last. Here the work
 is one order: put the money aside, place the order with the exchange, then
 confirm the fill and book the order.
 
-We build it with a bounded operator, because an order has a start and an end.
-Once it is filled or refused, there is nothing left to do. A bounded operator is
-exactly that: you start it with the work it should do, it runs its steps, and
-it stops by itself after the last one. Every order gets one of its own, so a
-hundred orders are a hundred small runs that never get in each other's way.
+The operator runs in steps, for three reasons. An order has a start and an
+end: once it is filled or refused, there is nothing left to do, and the
+instance stops by itself after its last step. Each finished step is on disk
+before the next one starts. And a step that cannot succeed undoes the ones
+before it. Every order gets an instance of its own, so a hundred orders are a
+hundred small runs that never get in each other's way.
 
 Each step is written down the moment it finishes. If the runner crashes in the
 middle of an order, the order carries on from the step it had reached, and the
 steps before it do not run again, so the money is not put aside twice. If a
 step fails for good, the steps that already ran are undone, last one first: the
 order is cancelled, and the money is released. Half an order is worse than
-none, and a bounded operator makes sure the desk never keeps one.
+none, and running in steps makes sure the desk never keeps one.
 
-## The desk's bounded operator
+## The desk's workflow
 
-The desk's bounded operator is called `order_executor`, and one instance of it is
+The desk's workflow is called `order_executor`, and one instance of it is
 one order. [`building_an_etl_stream.md`](building_an_etl_stream.md) starts one
 for every buy, and you can start one by hand.
 
@@ -1275,9 +1276,11 @@ which is the order's answer. None of the channels between the steps has a
 name either, so each is named after the step that feeds it, and that is the
 name you see in the journal and in an error.
 
-An instance runs its steps once, on the first message it gets, and then it is
-over; a second message to it is never read. That is the default, and all an
-order needs.
+The class declares that it runs in steps, and how. `each` is the loop shape:
+`once`, on the first message the instance gets, after which it is over and a
+second message is never read. `on_failure` is what a step that fails for good
+does: `undo_all` undoes every step that finished. Both are the defaults, and all
+an order needs; the class writes them out so it says what it does.
 
 > Write the operator.
 > {: .step}
@@ -1300,7 +1303,7 @@ public final class OrderExecutorOperator implements Operator {
 
     @Override
     public Run run() {
-        return Run.steps();
+        return new Run.Steps(Each.ONCE, OnFailure.UNDO_ALL);
     }
 
     @Override
@@ -1379,7 +1382,7 @@ import { ReserveFunds } from './reserve_funds.mjs';
 
 export default defineOperator({
   factoryId: 'order_executor',
-  steps: {},
+  steps: { each: 'once', onFailure: 'undo_all' },
   channels: (c) => {
     c.input('order')
       .into(ReserveFunds) // step one
@@ -1402,7 +1405,7 @@ is a function that gets the same edge.
 
 ```python
 # order_executor.py: the steps operator. One instance is one order.
-@flezha.operator("order_executor", run="steps")
+@flezha.operator("order_executor", run={"steps": {"each": "once", "on_failure": "undo_all"}})
 def order_executor(c: flezha.Channels) -> None:
     (
         c.input("order")
@@ -1428,7 +1431,7 @@ order. The four classes it names in `into` are the four steps themselves:
 # order_executor_operator.rb: the steps operator. One instance is one order.
 class OrderExecutorOperator < Flezha::Operator
   factory_id "order_executor"
-  run :steps
+  run steps: { each: :once, on_failure: :undo_all }
 
   channels do |c|
     c.input("order")
@@ -1453,7 +1456,7 @@ same edge.
 
 ```php
 // src/OrderExecutorOperator.php: the steps operator. One instance is one order.
-#[Operator(factoryId: 'order_executor', run: ['steps' => ['each' => 'per_input']])]
+#[Operator(factoryId: 'order_executor', run: ['steps' => ['each' => 'per_input', 'on_failure' => 'undo_all']])]
 final class OrderExecutorOperator extends \Flezha\Operator
 {
     public static function channels(Builder $c): void
@@ -1476,8 +1479,8 @@ in the ETL stream sends when it starts an order. The four classes it names in
 `ConfirmFill` and `RecordOrder`. Each arm of `branch` is a closure that gets the
 same edge.
 
-`run: ['steps' => ['each' => 'per_input']]` is where the PHP desk departs from
-the default above: the instance stays after its steps have run, until
+`'each' => 'per_input'` is where the PHP desk departs from the loop shape
+above: the instance stays after its steps have run, until
 `confirm_fill`'s timer calls `$ctx->complete`. A default instance would end
 with its last step, and its pending timer with it. A second message to an
 instance would run the steps again, and nothing sends one.
@@ -1487,7 +1490,9 @@ instance would run the steps again, and nothing sends one.
 ```elixir
 # lib/tradedesk/order_executor.ex: the steps operator. One instance is one order.
 defmodule Tradedesk.OrderExecutor do
-  use Flezha.SDK.Operator, factory_id: "order_executor", run: :steps
+  use Flezha.SDK.Operator,
+    factory_id: "order_executor",
+    run: {:steps, each: :once, on_failure: :undo_all}
 
   defmodule OrderTicket do
     defstruct [:symbol, :quantity]
@@ -1528,8 +1533,8 @@ The four modules it names in `into` are the four steps themselves:
 
 One runner registers both of the desk's factories. Registering `order_executor`
 starts no order: it tells the controller this runner can run orders, and each
-one is started from the factory later, one per buy. A bounded operator's factory
-is registered the same way as an unbounded one's.
+one is started from the factory later, one per buy. A class that runs in steps
+registers its factory the same way as one that runs in flow.
 
 > Register the `order_executor` factory on the runner too, before `start()`.
 > {: .step}
@@ -1656,8 +1661,8 @@ defmodule Tradedesk.Application do
 end
 ```
 
-`operators:` takes both kinds: the kind is read from each module's `use`,
-never named by the list.
+`operators:` takes a module that runs in flow and one that runs in steps
+alike: how each runs is read from its `use`, never named by the list.
 
 <!-- tabs-close -->
 

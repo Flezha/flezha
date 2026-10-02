@@ -124,7 +124,7 @@ outside the effectively-once tier as a `format_id = 3` record under the
 ordinary `cell_state_change` payload-id (body: postcard `Vec<TimerOp>`);
 inside the tier as `EffectRecordBody.timers`.
 
-Under `effectively_once()` one firing writes ONE effect record carrying the
+Under `exactly: effectively_once` one firing writes ONE effect record carrying the
 Changes `on_timer` applied, the values it emitted and the fired timer's
 removal, so a crash between "fired" and "durable" replays the whole thing.
 That record's `consumed_offset` is absent — a firing consumes no input

@@ -41,6 +41,43 @@ A real model's client would be called here instead, handing each token it stream
 `part` the same way. [`java_sdk.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/java_sdk.md#tasklets)
 has the details of parts.
 
+### Rust
+
+TODO: this page is not yet written for Rust.
+
+### Node
+
+TODO: this page is not yet written for Node.
+
+### Python
+
+TODO: this page is not yet written for Python.
+
+### Ruby
+
+TODO: this page is not yet written for Ruby.
+
+### PHP
+
+TODO: this page is not yet written for PHP.
+
+### Elixir
+
+In `run/3`, hand the model a function that sends each token as a part:
+
+```elixir
+    with {:ok, answer} <- DemoModel.answer(conversation.messages, message, &part(ctx, &1)) do
+```
+
+`DemoModel.answer/3` calls it once per token, while it writes:
+
+```elixir
+      for {token, i} <- Enum.with_index(tokens, 1) do
+        part.(%Answer{text: token, tokens: i})
+        Process.sleep(@per_token_ms)
+      end
+```
+
 <!-- tabs-close -->
 
 ## A sink for the parts
@@ -91,6 +128,58 @@ In `AgentOperator.channels`:
                 .response();                             // to whoever called
 ```
 
+### Rust
+
+TODO: this page is not yet written for Rust.
+
+### Node
+
+TODO: this page is not yet written for Node.
+
+### Python
+
+TODO: this page is not yet written for Python.
+
+### Ruby
+
+TODO: this page is not yet written for Ruby.
+
+### PHP
+
+TODO: this page is not yet written for PHP.
+
+### Elixir
+
+```elixir
+# lib/agentdesk/deliver.ex: hands the finished answer to the caller.
+defmodule Agentdesk.Deliver do
+  use Flezha.SDK.Tasklet, name: "deliver"
+
+  @impl true
+  def run(answer, state, ctx) do
+    emit(ctx, answer)
+    {:ok, state}
+  end
+
+  # The undo, when a turn is taken back: an answer already given has nothing to take back.
+  @impl true
+  def compensate(_answers, state, _ctx), do: {:ok, state}
+end
+```
+
+In `channels/1`:
+
+```elixir
+    c
+    |> input("turn")
+    |> into(Reply)
+    # to whoever listens
+    |> sink("answer")
+    |> into(Deliver)
+    # to whoever called
+    |> response()
+```
+
 <!-- tabs-close -->
 
 > Build the runner again and replace its container.
@@ -102,6 +191,32 @@ In `AgentOperator.channels`:
 
 ```sh
 $ mvn -q package
+```
+
+### Rust
+
+TODO: this page is not yet written for Rust.
+
+### Node
+
+TODO: this page is not yet written for Node.
+
+### Python
+
+TODO: this page is not yet written for Python.
+
+### Ruby
+
+TODO: this page is not yet written for Ruby.
+
+### PHP
+
+TODO: this page is not yet written for PHP.
+
+### Elixir
+
+```sh
+$ MIX_ENV=prod mix release
 ```
 
 <!-- tabs-close -->

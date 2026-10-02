@@ -43,7 +43,7 @@ record reports only through telemetry (below), and a synchronous `enqueue/4` cal
 
 ## Effectively-once records
 
-Records from an `effectively_once()` operator carry the outbox identity stamps
+Records from an `exactly: effectively_once` operator carry the outbox identity stamps
 `flz.cell`, `flz.seq` (`<record WAL seq>.<emit ordinal>`) and `flz.epoch`. For them the
 plugin uses `flz.key` (the emitting Cell's key, or `emit_keyed`'s) as the Kafka message
 key — stable partitioning across replays, latest-value semantics on compacted topics — and

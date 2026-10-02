@@ -1,12 +1,12 @@
 # Flezha documentation
 
 Start with [`architecture/`](architecture/README.md) — the durable-compute kernel, the two
-operator profiles and the runner model. Everything else is grouped by who reads it.
+ways an operator runs, flow and steps, and the runner model. Everything else is grouped by who reads it.
 
 | Directory | For | What is in it |
 | --- | --- | --- |
 | [`guides/`](#guides) | someone deploying Flezha for the first time | End-to-end walkthroughs: build, start, connect, run |
-| [`architecture/`](architecture/README.md) | everyone | The conceptual model: kernel, stream profile, steps profile, runner |
+| [`architecture/`](architecture/README.md) | everyone | The conceptual model: kernel, flow, steps, runner |
 | [`api/`](api/README.md) | authors of a program that drives the controller | The published consumer surface, its three guards, and the manifest that keeps a consumer's calls resolving |
 | [`sdk/`](#sdk) | operator authors, SDK implementers | Authoring contract, per-SDK surfaces, wire protocol, the shared poll core |
 | [`plugins/`](#plugins) | plugin authors and users | The plugin system and every first-party plugin |

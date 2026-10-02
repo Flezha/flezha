@@ -9,7 +9,7 @@ the guarantee needs, then kill the runner in the middle of a message and count.
 
 ## The sessions already have it
 
-`agent` is a bounded operator that keeps its state, and such an operator writes every
+`agent` runs in steps and keeps its work (`durable: local`, the default), and such an operator writes every
 message to its input log on the controller's disk before the turn runs, and writes the
 end of each turn to its journal. A turn runs to its end once. A crash before the end runs
 it again from the log, and the answer leaves only once the turn's end is written.
@@ -88,8 +88,39 @@ In `GatewayOperator`, after `factoryId`:
 ```java
     @Override
     public Run run() {
-        return new Run.Flow(new Exactly.EffectivelyOnce()); // each request and answer on disk before it runs
+        return new Run.Flow(new Exactly.EffectivelyOnce());
     }
+```
+
+### Rust
+
+TODO: this page is not yet written for Rust.
+
+### Node
+
+TODO: this page is not yet written for Node.
+
+### Python
+
+TODO: this page is not yet written for Python.
+
+### Ruby
+
+TODO: this page is not yet written for Ruby.
+
+### PHP
+
+TODO: this page is not yet written for PHP.
+
+### Elixir
+
+In `Agentdesk.GatewayOperator`'s `use`:
+
+```elixir
+  use Flezha.SDK.Operator,
+    factory_id: "gateway",
+    # each request and answer on disk before it runs
+    run: {:flow, exactly: :effectively_once}
 ```
 
 <!-- tabs-close -->
@@ -103,6 +134,32 @@ In `GatewayOperator`, after `factoryId`:
 
 ```sh
 $ mvn -q package
+```
+
+### Rust
+
+TODO: this page is not yet written for Rust.
+
+### Node
+
+TODO: this page is not yet written for Node.
+
+### Python
+
+TODO: this page is not yet written for Python.
+
+### Ruby
+
+TODO: this page is not yet written for Ruby.
+
+### PHP
+
+TODO: this page is not yet written for PHP.
+
+### Elixir
+
+```sh
+$ MIX_ENV=prod mix release
 ```
 
 <!-- tabs-close -->
@@ -211,8 +268,8 @@ $ flz state inbox gateway --namespace agents
 
 ## What it requires
 
-- **An input log on each end** of whatever crosses between operators: a bounded operator
-  that keeps its state has one, an unbounded operator declares the guarantee.
+- **An input log on each end** of whatever crosses between operators: an operator that runs
+  in steps and keeps its work has one, an operator that runs in flow declares the guarantee.
   [`calls.md`](../../sdk/calls.md#guarantees) has the table for calls.
 - **Tasklets that give the same result for the same input.** A message replayed after a
   crash runs its tasklet again, so a tasklet reads the time from `ctx.now()`, which a

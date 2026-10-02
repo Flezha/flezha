@@ -216,8 +216,8 @@ tasklet the graph routes messages into.
 
 The echo has one tasklet, but an operator can chain as many as it needs, the
 output of one feeding the next, and split or join the path between them. An
-unbounded operator does that for as long as it runs, and a bounded one runs its tasklets as
-the steps of a job that ends.
+operator that runs in flow does that for as long as it runs, and one that runs in steps runs
+its tasklets as the steps of a job that ends.
 [`building_an_etl_stream.md`](tradedesk/building_an_etl_stream.md#several-tasklets-in-one-operator) and
 [`building_a_workflow.md`](tradedesk/building_a_workflow.md#several-tasklets-step-by-step) show
 both.
@@ -368,7 +368,7 @@ public static void main(String[] args) throws Exception {
 
 `start()` connects and hands back the runner, and `awaitTermination()` blocks
 until shutdown, which is either a SIGTERM or a `close()` from another thread, `run()` does both in one call. `registerFactory` is the same call
-for the bounded kind.
+for a class that runs in steps.
 
 > #### Concurrency in Java {: .info}
 >
@@ -471,8 +471,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 until shutdown, a SIGTERM or Ctrl-C; `run()` does both in one call. The runner is
 bound to a name first because a chained temporary would be dropped, and shut
 down, at the end of its statement. Every call answers a `Result`, so a refusal
-leaves `main` through `?`. `register_factory` is the same call for the bounded operator
-kind.
+leaves `main` through `?`. `register_factory` is the same call for a class that runs
+in steps.
 
 > #### Concurrency in Rust {: .info}
 >
@@ -565,8 +565,8 @@ imported value, because every dispatch loop imports the module itself. Registeri
 therefore imports it, which is why it is awaited. A relative specifier resolves
 against the working directory. `run()` resolves once the
 runner is connected and serving, and the process keeps running until a SIGTERM
-or until its standard input closes. `registerFactory` is the same call for the
-bounded kind.
+or until its standard input closes. `registerFactory` is the same call for a
+class that runs in steps.
 
 > #### Concurrency in Node {: .info}
 >
@@ -727,7 +727,7 @@ runner.await_termination
 `boot` connects and starts serving, and `await_termination` blocks until
 shutdown and then drains; `run` is the two in one call. Classes are registered
 explicitly: nothing is autoloaded, and what runs is what you named.
-`register_factory` is the same call for the bounded kind.
+`register_factory` is the same call for a class that runs in steps.
 
 > #### Concurrency in Ruby {: .info}
 >
@@ -823,7 +823,7 @@ $runner->awaitTermination();
 `start()` connects, and `awaitTermination()` is where this process serves: PHP has
 no threads, so under the default executor nothing is processed until the wait
 begins. `run()` does both in one call, and `registerFactory` is the same call for
-the bounded kind.
+a class that runs in steps.
 
 > #### Concurrency in PHP {: .info}
 >

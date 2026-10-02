@@ -42,17 +42,26 @@ flowchart LR
   sink takes what it sends out. They ship with Flezha and attach with one
   command.
 
-## Two kinds of operator
+## One operator, two ways to run it
 
-- **A stream never ends.** An unbounded operator runs until you stop it:
-  events, clicks or log lines keep arriving, and each one is handled as it
-  comes. Any ETL pipeline is one.
-- **A job finishes.** A bounded operator does one piece of work with a start and
-  an end, as steps in a fixed order: one payment, or a nightly import that
-  `flz schedule` starts on a timetable. A failed step is retried, and a step that
-  cannot succeed undoes the ones before it.
+- **By default an operator handles each message as it arrives.** Events, clicks
+  or log lines keep coming, each one is handled on its own, state is kept per
+  key, and after a crash the operator resumes from its disk. Any ETL pipeline
+  runs this way, until you stop it.
+- **Steps are turned on when work must go in order.** One payment, or a nightly
+  import that `flz schedule` starts on a timetable: each finished step is on disk
+  before the next one starts, a failed step is retried, and a step that cannot
+  succeed undoes the ones before it. Such an operator ends when its steps are
+  done.
 
-Both scale the same way. One operator's code can run as thousands of
+Where an operator keeps its work is a setting too, `durable`:
+
+- **In memory only:** the fastest, and a crash starts the work over.
+- **On the controller's disk**, the default: a crash resumes where it stopped.
+- **In a remote copy as well:** a finished piece of work counts as done only once
+  the copy holds it, so losing the controller's disk loses nothing.
+
+Both ways scale the same way. One operator's code can run as thousands of
 independent instances, each with its own state, spread over as many machines as
 you give it.
 
@@ -78,7 +87,7 @@ rebuild. Part 2 builds one in
 
 ### Workflows and long-running jobs
 
-A bounded operator runs work in steps, one after another or side by side. Each
+An operator that runs in steps does its work one step after another or side by side. Each
 finished step is on disk before the next one starts, so a crash in the middle
 resumes at the step it reached instead of starting over. A failed step is
 retried on a ladder you declare, and a step that cannot succeed undoes the ones

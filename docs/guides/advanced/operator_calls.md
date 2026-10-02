@@ -42,6 +42,38 @@ In `AgentOperator.channels`, after the `turn` chain:
 `into(Reply.class)` names the tasklet the `turn` chain already feeds, so both channels reach
 the same `reply`, with the same conversation.
 
+### Rust
+
+TODO: this page is not yet written for Rust.
+
+### Node
+
+TODO: this page is not yet written for Node.
+
+### Python
+
+TODO: this page is not yet written for Python.
+
+### Ruby
+
+TODO: this page is not yet written for Ruby.
+
+### PHP
+
+TODO: this page is not yet written for PHP.
+
+### Elixir
+
+In `channels/1`, after the `turn` chain; a message is a map with `"user"` and `"text"`:
+
+```elixir
+    # from the gateway
+    c
+    |> input_with("message", &Jason.decode/1)
+    |> map(& &1["text"])
+    |> into(Reply)
+```
+
 <!-- tabs-close -->
 
 ## The route
@@ -66,6 +98,39 @@ In `Request`, beside `listens`:
 ```
 
 The body is the plugin's text of the request body, absent when it is not valid UTF-8.
+
+### Rust
+
+TODO: this page is not yet written for Rust.
+
+### Node
+
+TODO: this page is not yet written for Node.
+
+### Python
+
+TODO: this page is not yet written for Python.
+
+### Ruby
+
+TODO: this page is not yet written for Ruby.
+
+### PHP
+
+TODO: this page is not yet written for PHP.
+
+### Elixir
+
+In `Agentdesk.Request`, beside `listens?/1`:
+
+```elixir
+  def sends?(request), do: is?(request, "POST", "messages")
+```
+
+```elixir
+  # The session is named after the user.
+  def message(request), do: %{user: user(request), text: request.body || ""}
+```
 
 <!-- tabs-close -->
 
@@ -160,6 +225,114 @@ public final class Admit implements Tasklet<Verdict, Void, Http> {
 }
 ```
 
+### Rust
+
+TODO: this page is not yet written for Rust.
+
+### Node
+
+TODO: this page is not yet written for Node.
+
+### Python
+
+TODO: this page is not yet written for Python.
+
+### Ruby
+
+TODO: this page is not yet written for Ruby.
+
+### PHP
+
+TODO: this page is not yet written for PHP.
+
+### Elixir
+
+```elixir
+defmodule Agentdesk.Budget do
+  @moduledoc """
+  Keeps the tokens a user's answers used today, and admits a message while they
+  are under the day's budget. One cell per user.
+
+  What reaches a user's cell is a message to admit, or the tokens an answer
+  used; what it hands on is a verdict: the message, and the tokens the user had
+  spent when it arrived.
+  """
+  use Flezha.SDK.Tasklet, name: "budget"
+
+  alias Flezha.SDK.Response
+
+  @daily_tokens 40
+
+  def daily_tokens, do: @daily_tokens
+
+  def admitted?(verdict), do: verdict.spent < @daily_tokens
+
+  # The tokens an answer used; a failed turn used none.
+  def used(%Response{request: request, result: result}) do
+    %{user: Jason.decode!(request)["user"], tokens: tokens(result)}
+  end
+
+  defp tokens({:ok, answer}), do: answer["tokens"]
+  defp tokens({:error, _error}), do: 0
+
+  # What each user's cell remembers.
+  state do
+    field(:day, :string, default: "")
+    field(:tokens, :integer, default: 0)
+  end
+
+  defchange counted(spent, day, tokens) do
+    %{spent | day: day, tokens: on(spent, day) + tokens}
+  end
+
+  # The tokens an answer used.
+  @impl true
+  def run(%{tokens: tokens}, spent, ctx), do: {:ok, counted(spent, ctx, today(ctx), tokens)}
+
+  # A message to admit.
+  def run(message, spent, ctx) do
+    emit(ctx, %{message: message, spent: on(spent, today(ctx))})
+    {:ok, spent}
+  end
+
+  defp today(ctx), do: ctx |> now() |> DateTime.from_unix!(:millisecond) |> Date.to_iso8601()
+
+  defp on(%{day: day, tokens: tokens}, day), do: tokens
+  defp on(_spent, _today), do: 0
+end
+```
+
+```elixir
+defmodule Agentdesk.Admit do
+  @moduledoc """
+  Answers a message 202 when it goes on to the session, and 429 when its user is
+  over the budget.
+  """
+  use Flezha.SDK.Tasklet, name: "admit"
+
+  alias Agentdesk.Budget
+
+  @impl true
+  def run(verdict, state, ctx) do
+    user = verdict.message.user
+
+    emit(
+      ctx,
+      if Budget.admitted?(verdict) do
+        %{status: 202, body: "sent to #{user}"}
+      else
+        %{
+          status: 429,
+          body: "#{user} has used #{verdict.spent} of today's #{Budget.daily_tokens()} tokens"
+        }
+      end
+    )
+
+    {:ok, state}
+  end
+end
+```
+
 <!-- tabs-close -->
 
 ## The call
@@ -209,6 +382,79 @@ public final class GatewayOperator implements Operator {
 }
 ```
 
+### Rust
+
+TODO: this page is not yet written for Rust.
+
+### Node
+
+TODO: this page is not yet written for Node.
+
+### Python
+
+TODO: this page is not yet written for Python.
+
+### Ruby
+
+TODO: this page is not yet written for Ruby.
+
+### PHP
+
+TODO: this page is not yet written for PHP.
+
+### Elixir
+
+```elixir
+# lib/agentdesk/gateway_operator.ex: answers every request, and calls the session a message is for.
+defmodule Agentdesk.GatewayOperator do
+  use Flezha.SDK.Operator, factory_id: "gateway"
+
+  alias Agentdesk.{Admit, Budget, Request, Watch}
+
+  @deadline_ms 60_000
+
+  @impl true
+  def channels(c) do
+    http = input_with(c, "http", &Request.decode/1)
+
+    http
+    |> filter(&(not Request.sends?(&1)))
+    |> into(Watch)
+    # a stream, or 404
+    |> response()
+
+    verdicts =
+      http
+      |> filter(&Request.sends?/1)
+      |> map(&Request.message/1)
+      # one cell per user
+      |> key_by(& &1.user)
+      |> into(Budget)
+
+    verdicts
+    |> into(Admit)
+    # 202, or 429 over the budget
+    |> response()
+
+    verdicts
+    |> filter(&Budget.admitted?/1)
+    |> map(& &1.message)
+    # the user's session
+    |> key_by(& &1.user)
+    |> call(
+      factory: "agent",
+      channel: "message",
+      deadline_ms: @deadline_ms,
+      decode: &Jason.decode/1
+    )
+    |> map(&Budget.used/1)
+    |> key_by(& &1.user)
+    # the tokens the answer used
+    |> into(Budget)
+  end
+end
+```
+
 <!-- tabs-close -->
 
 - **`call` after `keyBy`** reaches the instance of `agent` whose id is the key, the user, and
@@ -232,6 +478,32 @@ public final class GatewayOperator implements Operator {
 
 ```sh
 $ mvn -q package
+```
+
+### Rust
+
+TODO: this page is not yet written for Rust.
+
+### Node
+
+TODO: this page is not yet written for Node.
+
+### Python
+
+TODO: this page is not yet written for Python.
+
+### Ruby
+
+TODO: this page is not yet written for Ruby.
+
+### PHP
+
+TODO: this page is not yet written for PHP.
+
+### Elixir
+
+```sh
+$ MIX_ENV=prod mix release
 ```
 
 <!-- tabs-close -->

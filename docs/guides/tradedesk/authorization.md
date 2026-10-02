@@ -114,12 +114,12 @@ namespace. Only `admin@_system` reaches across namespaces.
 | `ops` | everything `app` may, plus the rest of the operator lifecycle: the dead-letter queue, rewind, replay, rescale, schedules |
 | `admin` | everything `ops` may, plus tokens, roles, namespaces and quotas, and stopping the controller |
 | `runner` | connect a runner, and nothing else |
-| `spawner` | what a runner needs so that a tasklet can start a bounded operator: start and send, in its own namespace |
+| `spawner` | what a runner needs so that a tasklet can start an operator that runs in steps: start and send, in its own namespace |
 | `stopper` | what a runner needs to stop its own operators |
 
 The key makes the runner `runner@trading`, which holds only `runner`.
 [`building_a_workflow.md`](building_a_workflow.md) binds `spawner` to it as well, when
-the unbounded operator starts its first bounded operator.
+the stream starts its first order.
 [`../../operations/authn_authz.md`](../../operations/authn_authz.md) has every
 verb and the role that grants it.
 

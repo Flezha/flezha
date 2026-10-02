@@ -1,6 +1,6 @@
 # Steps Operator
 
-The mechanism-level and user-level reference for the steps operator kind: what the
+The mechanism-level and user-level reference for an operator whose class sets `run: steps`: what the
 controller and the shared runner core do at each tasklet barrier, iteration boundary, park,
 rewind and crash, and the knobs, files, CLI verbs and telemetry a user has — for users
 and for contributors to `flz_core/src/steps/` and `lib/flezha/operator/`. The concepts (the
@@ -20,7 +20,7 @@ repeated here; [`data_durability.md`](data_durability.md) says what is lost when
   instance until that commit is acknowledged, then enters its children's mailboxes. A node runs
   once every producer feeding it in this pass has committed, a join with every producer's
   items. Sibling stages run and commit independently. Where a stage runs:
-  [`../architecture/runner.md`](../architecture/runner.md#a-steps-stage).
+  [`../architecture/runner.md`](../architecture/runner.md#a-stepped-stage).
 - **Done.** The operator is `ok` when every leaf tasklet has committed. The SDK declares its
   leaf set (`leaf_tasks`) and compensable set (`compensable_tasks`) in the `AddOperator` response
   metadata, so the controller derives the same fact from the journal. A join with one committed
@@ -218,7 +218,7 @@ The entry sits under the operator's `_turn` slot with the entry channel, the inp
 the exact bytes, so `flz dlq replay` sends it back to the session as a new message. A crash
 anywhere in this resumes it: after the `dead_lettered` record the rebind runs the undo still owed
 and waits for input; before it, the turn runs again and the bind removes an entry above the
-instance's floor, so the message is parked at most once. A class that opted out of persistence
+instance's floor, so the message is parked at most once. A class kept in memory (`durable: false`)
 parks the turn without its bytes and undoes it in memory.
 
 It shows up as `Failed turns: <count> (last: iteration <n>)` in `flz operator info`, a
@@ -315,7 +315,7 @@ and hooks are idempotent.
 A class is durable by default and opts out with `durable: false`, the setting a flow class
 carries too; the runner announces it (`durable = "memory"` in the `AddOperator` response) and
 the controller resolves it in `PersistenceResolver.keeps_state?/1` (user override
-available). Opted out, the
+available). Kept in memory, the
 per-Cell flush drains and discards (no WAL, snapshot, journal or handshake); a crash re-runs
 from the top, a live Cell read answers `{:error, :persistence_off}`, and the class cannot sleep.
 
@@ -403,7 +403,7 @@ instance's own state:
 
 | Behaviour | Decided by |
 | --- | --- |
-| per-Cell WAL, bind-time restore, live Cell reads (`flz state get`) | the class's persistence switch |
+| per-Cell WAL, bind-time restore, live Cell reads (`flz state get`) | the class's `durable` setting |
 | sleeping when idle, and the durable input a sleeping flow operator keeps | the class's sleep setting |
 | point-in-time queries and history retention (`flz state at`, `time_travel_retention_hours`) | nothing: a steps operator Cell keeps history like a flow operator Cell, then finished-job retention reclaims the directory |
 | dynamic Cells and their destructive idle eviction | nothing: a steps operator evicts only between passes and never within a rollback's reach, and the controller deletes the evicted Cell's state |
@@ -444,10 +444,10 @@ mapping) run on the worker that produced the value, as on a flow operator.
 ## Operations notes
 
 - **Crash-resume is at-least-once.** A non-idempotent fire-and-forget job can double-act on
-  resume: write it idempotently, or opt out of durability so a crash re-runs from a clean slate.
+  resume: write it idempotently, or keep the work in memory (`durable: false`) so a crash re-runs from a clean slate.
 - **Stop runners gracefully** ([`../operations/graceful_shutdown.md`](../operations/graceful_shutdown.md)):
   a graceful stop lets a running instance migrate; a SIGKILL forces crash-resume.
-- **Retention grows disk for many small jobs.** Opt out for fire-and-forget, or lower
+- **Retention grows disk for many small jobs.** Keep fire-and-forget work in memory (`durable: false`), or lower
   `FLEZHA_STEPS_RETENTION_HOURS`. Steps operator is not the high-throughput path.
 - **A sleeper costs a bind to stop.** Stopping a suspended steps operator restores it onto a runner
   first, so it can end `cancelled` exactly as it would awake; with no runner it is removed hard.

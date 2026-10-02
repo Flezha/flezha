@@ -1,8 +1,8 @@
 # The durable-compute kernel
 
-The kernel is the substrate both profiles share: how a state change becomes durable, how an
+The kernel is the substrate both ways of running share: how a state change becomes durable, how an
 output gets an identity, how back-pressure is applied, who is allowed to write, and how the
-system knows work is flowing. Everything here is profile-agnostic — a flow operator and
+system knows work is flowing. Everything here is the same however an operator runs: a flow operator and
 a steps operator persist a cell through exactly the same machinery.
 
 - [The write path](#the-write-path)
@@ -433,7 +433,7 @@ batch and advances a per-cell progress row in **one transaction**, both guarded 
 seq)` monotonicity, so a re-drive or a stale epoch is a byte-exact no-op. The **Kafka** producer
 uses `flz.key` as the message key and carries the durable identity as a dedup header.
 
-The tier is opt-in per operator (`effectively_once()` on the channel builder), and it forces
+The tier is opt-in per operator (`exactly: effectively_once` in the class's run), and it forces
 every plugin-bound channel to be `.keyed()` — an unkeyed output has nothing for a sink to dedup
 on, so declaring the tier over one is refused at build time.
 

@@ -410,13 +410,21 @@ its step's state, which survives a crash. The booking stays, because
 
 ## Where it is kept
 
-The controller keeps everything on its own disk, under `app_data/` in the folder
-it was started in: each namespace's state and write-ahead log under
-`app_data/state/<namespace>/`, and namespaces, tokens and keys under
-`app_data/auth/`.
+How far an operator's work is kept is its class's `durable` setting. The desk's
+two classes do not set it, so both keep their work on the controller's disk,
+under `app_data/` in the folder the controller was started in.
 
-That is enough while the disk survives. To survive losing it, set
-`FLEZHA_DURABILITY_BACKEND` and the controller also ships a copy elsewhere:
+| `durable` | Where the work is kept | After a crash | After the controller's disk is lost |
+|---|---|---|---|
+| `false` | the runner's memory only | the work starts over | lost |
+| `local`, the default | the controller's disk | carries on | lost, unless a copy was shipped |
+| `remote` | the controller's disk and a remote copy; each finished step or input counts as done only once the copy holds it | carries on | carries on from the copy |
+
+A class that runs in flow also says how often a value may reach a sink, with
+`exactly`: `at_least_once`, the default, can send a value twice after a crash,
+and `effectively_once` sends it once.
+
+The remote copy goes where `FLEZHA_DURABILITY_BACKEND` says:
 
 | Backend | Where the copy goes |
 |---|---|
@@ -425,10 +433,10 @@ That is enough while the disk survives. To survive losing it, set
 | `s3` | a bucket on Amazon S3 or any S3-compatible store |
 | `local_path` | a folder that outlives the controller's disk, such as a network mount |
 
-The local disk gets every change within a few milliseconds. The copy follows in
-the background: a workflow's after every finished step, a stream's at least
-every 30 seconds (`FLEZHA_DURABILITY_SHIP_INTERVAL_MS`). A controller that
-starts on an empty disk fetches the copy and carries on from it.
+With a backend set, a `local` class's copy follows in the background: a
+workflow's after every finished step, a stream's at least every 30 seconds
+(`FLEZHA_DURABILITY_SHIP_INTERVAL_MS`). A controller that starts on an empty
+disk fetches the copy and carries on from it.
 [`configuration.md`](../../configuration.md#state-wal-and-durability) lists the
 settings.
 
