@@ -804,8 +804,9 @@ reason. A package SHALL NOT add codes to the error catalogue at boot.
 #### Scenario: A package provider's catalogued refusal keeps its code
 
 - **GIVEN** a loaded package whose provider's `init_provider/1` refuses with a tagged reason
-  that the error catalogue maps by its tag, as the HTTP plugin's
-  `{:http_partitioned_host, %{operator: member}}` maps to `http.partitioned_host`
+  that the error catalogue maps by its tag, as
+  `{:partitioned_host, %{provider: name, operator: member}}` maps to
+  `plugin.partitioned_host`
 - **WHEN** its provider is enabled on an operator, and separately declared by an operator
   that is then started
 - **THEN** the enable SHALL fail with the catalogue's code for that tag, not
@@ -928,4 +929,33 @@ without it. The enable SHALL proceed. No placement constraint SHALL be derived f
 - **WHEN** `flz plugin enable s example_stamp --namespace n` runs against the first
 - **THEN** the enable SHALL succeed and SHALL print a warning naming the second controller
   and saying the plugin will not run there
+
+### Requirement: A package SHALL carry the settings of the libraries it bundles
+
+`mix flezha.plugin.package` SHALL write the plugin project's configuration of every library
+application it bundles, as the `MIX_ENV` the task runs in loads it, into the `env` of that
+application's `.app` in the archive, over the library's own defaults, written as Mix writes
+an `.app` so that a value beyond ASCII reads back unchanged, before the checksums are
+computed. A setting an `.app` file cannot hold (a function other than `&Mod.fun/arity`, a pid
+or a reference) SHALL fail the task naming the application and the key. The plugin application's own configuration and the configuration of any
+application the controller ships SHALL NOT be written. At load, a bundled library SHALL read
+these settings as its defaults.
+
+#### Scenario: A library configured by the plugin project
+
+- **GIVEN** a plugin project whose `config/config.exs` sets `config :stamp_lib, prefix: ">>"`
+  and which bundles `stamp_lib`
+- **WHEN** it is packaged, installed and the controller boots
+- **THEN** `Application.get_env(:stamp_lib, :prefix)` on the controller SHALL answer `">>"`
+
+#### Scenario: A function in a library setting
+
+- **WHEN** the plugin project configures a bundled library with an anonymous function
+- **THEN** the package task SHALL fail naming the library and the key
+
+#### Scenario: A shipped library is not reconfigured
+
+- **WHEN** the plugin project configures `:jason`, which the controller ships
+- **THEN** the archive SHALL hold no `.app` for `jason`, and the controller's `jason` settings
+  SHALL be unchanged after boot
 

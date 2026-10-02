@@ -20,10 +20,19 @@ defmodule Mix.Tasks.Flezha.Plugin.Package do
         [env: [flezha_providers: %{"my_provider" => MyPlugin.Provider}]]
       end
 
+  The project's configuration of each library it bundles, as the `MIX_ENV` the
+  task runs in loads it (build with `MIX_ENV=prod`), is written into that
+  library's `.app`, which is where the library reads its defaults on the
+  controller. The plugin application's own configuration is not written, a
+  library the release ships keeps the controller's settings, and every setting
+  written is public to whoever holds the package.
+
   The task refuses, writing nothing, a library the release ships resolved at
   another version than Flezha's own `mix.lock`, native code, an application
-  depending on Flezha that declares an application callback, and a provider
-  entry that does not name a provider module of the plugin application.
+  depending on Flezha that declares an application callback, a provider entry
+  that does not name a provider module of the plugin application, and a library
+  setting an `.app` file cannot hold (a function other than `&Mod.fun/arity`, a
+  pid or a reference).
 
   ## Options
 
@@ -67,7 +76,7 @@ defmodule Mix.Tasks.Flezha.Plugin.Package do
     File.rm_rf!(stage)
 
     try do
-      Enum.each(bundled, &copy_app(&1, stage))
+      Enum.each(bundled, &copy_app(&1, stage, plugin))
       File.write!(Path.join(stage, "manifest.exs"), Manifest.render(manifest))
       ok!(Package.check_contents(stage, manifest))
       checksums = Checksums.write(stage)
@@ -171,8 +180,9 @@ defmodule Mix.Tasks.Flezha.Plugin.Package do
   end
 
   # `lib/<app>-<vsn>/ebin` and `priv/` as Mix built them, `priv/` followed
-  # through the link Mix makes to the project's own.
-  defp copy_app(app, stage) do
+  # through the link Mix makes to the project's own, and a library's `.app`
+  # carrying the project's configuration of it.
+  defp copy_app(app, stage, plugin) do
     source = to_string(:code.lib_dir(app))
     target = Path.join([stage, "lib", "#{app}-#{Application.spec(app, :vsn)}"])
     ebin = Path.join(target, "ebin")
@@ -182,10 +192,47 @@ defmodule Mix.Tasks.Flezha.Plugin.Package do
         Path.extname(file) in [".beam", ".app"],
         do: File.cp!(Path.join([source, "ebin", file]), Path.join(ebin, file))
 
+    if app != plugin, do: write_env!(app, Path.join(ebin, "#{app}.app"))
+
     priv = Path.join(source, "priv")
 
     if File.dir?(priv),
       do: File.cp_r!(priv, Path.join(target, "priv"), dereference_symlinks: true)
+  end
+
+  # A library reads its defaults from its `.app`, and nothing else of the
+  # project's configuration reaches the controller, so the loaded environment
+  # (the library's defaults under the project's settings) is written there.
+  defp write_env!(app, path) do
+    env = Enum.sort(Application.get_all_env(app))
+
+    for {key, value} <- env, {:error, _term, reason} <- [Mix.Utils.consultable(value)] do
+      Mix.raise(
+        "the setting #{inspect(key)} of #{inspect(app)} cannot be written to its .app, " <>
+          "where a package carries a library's settings: #{reason}"
+      )
+    end
+
+    update_app(path, app, fn props ->
+      if env == Enum.sort(Keyword.get(props, :env, [])),
+        do: props,
+        else: Keyword.put(props, :env, env)
+    end)
+  end
+
+  @doc false
+  # Pass the properties of the `.app` file at `path`, which describes `app`,
+  # through `fun`, and write the file again, as Mix writes one, when they changed.
+  @spec update_app(Path.t(), atom(), (keyword() -> keyword())) :: :ok
+  def update_app(path, app, fun) do
+    {:ok, [{:application, ^app, props}]} = :file.consult(String.to_charlist(path))
+
+    with changed when changed != props <- fun.(props) do
+      {:ok, contents} = Mix.Utils.consultable({:application, app, changed})
+      File.write!(path, IO.chardata_to_string([contents, ".\n"]))
+    end
+
+    :ok
   end
 
   defp sign!(stage, checksums, key) do

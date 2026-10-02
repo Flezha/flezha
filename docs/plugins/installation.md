@@ -75,7 +75,18 @@ nothing:
 - native code;
 - an application that depends on `flezha` and declares an application callback (`mod`):
   a plugin's processes are its providers' declared workers;
-- a `:flezha_providers` entry that is not a provider module of the plugin application.
+- a `:flezha_providers` entry that is not a provider module of the plugin application;
+- a setting of a bundled library that an `.app` file cannot hold (a function other than
+  `&Mod.fun/arity`, a pid or a reference), naming the library and the key.
+
+The project's `config/*.exs` settings of each library it bundles, as the `MIX_ENV` the task
+runs in loads them (so build with `MIX_ENV=prod`), are written into that library's `.app`
+in the archive, where the library reads its defaults on the controller:
+`config :stamp_lib, prefix: ">>"` in the example makes `stamp_lib` render `>>[stamped]`.
+A library the release ships keeps the controller's settings, and the plugin application's
+own settings are not written. Anyone holding the package can read these settings, so a
+secret belongs in a provider option that reads it from the environment, never in
+`config/*.exs`.
 
 A controller loads a package only on the runtime line it was built on:
 
@@ -297,14 +308,17 @@ plugin root is the opt-in.
 - No native code: NIFs and port programs are refused.
 - An application that depends on `flezha` cannot have an application callback; long-lived
   processes are a provider's declared workers, which the controller supervises.
-- A plugin's `config/*.exs` does not travel. A provider is configured by its `--X` options
-  at enable, and a library reads only the defaults in its `.app`.
+- A plugin's `config/*.exs` reaches only the libraries the package bundles: a library reads
+  the settings the package was built with. A provider is configured by its `--X` options at
+  enable, and a library the release ships cannot be reconfigured.
 - One version of each library per controller: two packages bundling one library must
   agree on its version.
 - A protocol the release consolidated is consolidated again with a package's
   implementations; a protocol a package defines itself stays unconsolidated.
-- A package's own telemetry events reach handlers attached to them but are not exported by
-  the observability bridge.
+- A package's events are exported under its provider's name: the observability bridge
+  maps every provider's `shipped`, `retried`, `overflowed` and `failed` and the verbs it
+  declares with `telemetry:`, sourced `flezha_<provider name>`. A verb a provider emits
+  without declaring it reaches handlers attached to it and no exporter.
 
 A plugin root left by the earlier source installer (an `installed/` tree, an
 `installed_plugins.dets` file) is ignored: only `*.fpz` files are read. Those leftovers may

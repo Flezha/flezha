@@ -754,4 +754,22 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
                "every provider event goes through ProviderBehaviour.emit/3"
     end
   end
+
+  describe "refuse_partitioned/2" do
+    test "a group member's options are refused, naming the provider and the member" do
+      opts = %{partition_index: 0, partition_count: 2, source_operator_id: "pg#p0"}
+
+      assert {:error, reason} = ProviderBehaviour.refuse_partitioned(opts, StdOut)
+      assert reason == {:partitioned_host, %{provider: "std_out", operator: "pg#p0"}}
+
+      assert %Flezha.Error{
+               code: "plugin.partitioned_host",
+               details: %{"provider" => "std_out", "operator" => "pg#p0"}
+             } = Flezha.Error.from_reason(reason, nil)
+    end
+
+    test "an operator outside any group passes" do
+      assert ProviderBehaviour.refuse_partitioned(%{source_operator_id: "op"}, StdOut) == :ok
+    end
+  end
 end

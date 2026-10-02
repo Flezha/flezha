@@ -35,7 +35,9 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     own worker injects payloads into the operator. It is declared, because a
     callback list cannot say it — see `channel_jobs/2`. `shareable` is the other:
     whether one running copy can serve several bound operators, which a file
-    reader with one offset or a server on one port cannot.
+    reader with one offset or a server on one port cannot. `telemetry` names the
+    verbs a provider emits beyond the shared vocabulary, each a metric or an
+    event, which the telemetry bridge exports under the provider's name.
     """
 
     @type worker :: %{
@@ -52,6 +54,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
             extensions: [atom()],
             own: [atom()],
             worker: worker() | nil,
+            telemetry: [{atom(), :metric | :event}],
             feeds: boolean(),
             shareable: boolean()
           }
@@ -64,6 +67,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
       options: [],
       extensions: [],
       own: [],
+      telemetry: [],
       feeds: false,
       shareable: false
     ]
@@ -411,6 +415,20 @@ defmodule Flezha.Plugin.ProviderBehaviour do
       else: {:error, {:entry_channel_required, provider.__provider__().name}}
   end
 
+  @doc """
+  Refuse a plugin of `provider`, a source that cannot tell which member of a
+  partition group a record's key belongs to, on a group member: its options
+  carry the partition identity every member's plugins are given.
+  """
+  @spec refuse_partitioned(map(), module()) :: :ok | {:error, {:partitioned_host, map()}}
+  def refuse_partitioned(%{partition_count: count} = opts, provider) when not is_nil(count),
+    do:
+      {:error,
+       {:partitioned_host,
+        %{provider: provider.__provider__().name, operator: opts[:source_operator_id]}}}
+
+  def refuse_partitioned(_opts, _provider), do: :ok
+
   # A polling source's derived idle window, in polling intervals. Three, because
   # a poll that outlives its own interval stretches the cadence rather than
   # stacking, so a single slow cycle plus the poll after it must both land inside
@@ -669,6 +687,9 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     :source_operator_id,
     :source_plugin_id,
     :effectively_once,
+    # Whether the operator journals its input (`Replay.floor_reporter/1`), which
+    # decides how often a source moves its upstream position.
+    :durable_input,
     :owned_pid,
     # Which of its provider's callbacks this plugin actually has hooks on.
     # A provider that costs nothing until it is bound needs it: the declaration

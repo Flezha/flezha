@@ -59,8 +59,8 @@ defmodule Flezha.Plugin.Extension.Table do
             # The module serving shareable plugins on this controller, or nil
             # for a table that runs every plugin it holds itself.
             shared: nil,
-            # Operator-level facts resolved at bind time (currently
-            # `:effectively_once`), merged into every provider's opts at
+            # Operator-level facts resolved at bind time
+            # (`Operator.Plugins.env/1`), merged into every provider's opts at
             # activation, including plugin-heal re-activations.
             activation_env: %{}
 
@@ -236,8 +236,8 @@ defmodule Flezha.Plugin.Extension.Table do
     end
   end
 
-  # Operator-level facts resolved at bind time (currently `:effectively_once`)
-  # are merged last, so stored opts cannot spoof them.
+  # Operator-level facts resolved at bind time (`Operator.Plugins.env/1`) are
+  # merged last, so stored opts cannot spoof them.
   defp start_and_activate(table, plugin_id, provider, opts) do
     opts = Map.merge(opts || %{}, table.activation_env)
 

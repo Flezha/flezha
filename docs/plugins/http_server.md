@@ -18,7 +18,7 @@ contract.
 | Server | HTTP/1.1 only, on `bind` and `port`, started when the plugin activates and stopped when it is disabled or its operator stops |
 | Request | one outside call of the operator the plugin is enabled on, on its entry channel, with a JSON request envelope as the input |
 | Answer | the operator's `response()` output, a JSON answer envelope: a plain response, or a stream |
-| Host | an operator of either kind; a member of a partition group is refused (`http.partitioned_host`) |
+| Host | an operator of either kind; a member of a partition group is refused (`plugin.partitioned_host`) |
 
 ## Install and enable
 

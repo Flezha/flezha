@@ -387,7 +387,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
       "drill"
     ])
 
-    assert wait_until(fn -> File.read(path) == {:ok, "[stamped] drill\n"} end, 5_000),
+    assert wait_until(fn -> File.read(path) == {:ok, ">>[stamped] drill\n"} end, 5_000),
            "the example package's worker wrote no stamped line to #{path}"
   end
 

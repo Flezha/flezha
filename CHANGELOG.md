@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Added: what a connector package needs from the core (breaking for `http.partitioned_host`)
+
+Every plugin's options now carry `durable_input`, true when its operator journals its input
+(a durable steps operator, or a flow operator with `effectively_once` or that sleeps), set by
+the controller over anything stored. `Flezha.Plugin.Host.inject_many/4` hands a batch to the
+operator and answers one verdict per record, in order, with up to
+`FLEZHA_PLUGIN_INGEST_WINDOW` (64) records waiting at once; `send_io_confirming_many/5` runs
+on it and now answers `{:error, {:unreachable, :timeout}}` per record its deadline cut
+instead of exiting. `mix flezha.plugin.package` writes the project's configuration of each
+library it bundles into that library's `.app`, so the library reads it on the controller,
+and refuses a setting an `.app` cannot hold. A package's provider events are exported under
+the provider's name, its shared verbs and the ones it declares with `telemetry:`.
+`ProviderBehaviour.refuse_partitioned/2` gives every source that cannot route by key one
+refusal on a partition group member, `plugin.partitioned_host`, which replaces the HTTP
+server plugin's `http.partitioned_host`.
+
 ### Added: controller plugins, told what happens in a namespace (breaking for `type: :io_binding`)
 
 A provider is now an operator plugin (`type: :operator`, the default and every existing

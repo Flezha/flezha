@@ -14,9 +14,11 @@ defmodule Flezha.Plugin.Host do
   active-mask fast path in `Flezha.Plugin.Extension.Table`.
 
   It is also where a source hands the host a record: `inject/4` is the one call
-  every producer makes, and the mode says what the producer needs back.
+  every producer makes, and the mode says what the producer needs back;
+  `inject_many/4` hands over a batch and waits once.
   """
 
+  alias Flezha.Config
   alias Flezha.Operator.Calls
 
   @valid_kinds [:fold, :transform, :fanout, :request, :timer]
@@ -59,11 +61,7 @@ defmodule Flezha.Plugin.Host do
   end
 
   def inject(overwatch, message, metadata, :verdict, timeout) do
-    case GenServer.call(overwatch, {:ingest, message, metadata}, timeout) do
-      :ok -> :ok
-      {:ok, _} -> :ok
-      {:error, reason} -> {:error, reason}
-    end
+    verdict(GenServer.call(overwatch, {:ingest, message, metadata}, timeout))
   catch
     # The exit carries the call, and the call carries the payload, which a
     # verdict is logged and reported with and must never repeat.
@@ -82,6 +80,84 @@ defmodule Flezha.Plugin.Host do
   # resolves or authorizes it again.
   def inject(overwatch, message, metadata, :call, deadline_ms),
     do: Calls.call(overwatch, message, metadata, deadline_ms, inspect(overwatch))
+
+  defp verdict({:ok, _}), do: :ok
+  defp verdict(other), do: other
+
+  @doc """
+  Hand a batch of records to the host operator. With `:verdict` up to
+  `plugin_ingest_window` records are in flight at once, the next sent as each
+  answer arrives, and the answer is one `inject/5` verdict per record, in the
+  records' order, `{:error, {:unreachable, :timeout}}` for each one the operator
+  had not answered by `timeout`: a source that confirms a fetched batch waits
+  once, and the batch shares the operator's journal syncs. With
+  `:fire_and_forget` every record is cast and the answer is `:ok`.
+  """
+  @spec inject_many(GenServer.server(), [{binary(), map()}], :verdict, timeout()) ::
+          [:ok | {:error, term()}]
+  @spec inject_many(GenServer.server(), [{binary(), map()}], :fire_and_forget, timeout()) :: :ok
+  def inject_many(overwatch, records, :verdict, timeout) do
+    overwatch
+    |> ingest_window(records, timeout, Config.get(:plugin_ingest_window))
+    |> Enum.map(&verdict/1)
+  end
+
+  def inject_many(overwatch, records, :fire_and_forget, _timeout),
+    do:
+      Enum.each(records, fn {message, md} -> inject(overwatch, message, md, :fire_and_forget) end)
+
+  @doc """
+  The `{:ingest, …}` request of every record, with at most `window` in flight,
+  answering each record's raw reply in the records' order. The operator runs
+  its ingest path once per record, in order; only the caller's round trips
+  overlap. A host that went away answers `{:error, {:unreachable, reason}}`,
+  and a record unanswered at `timeout` after the call began answers
+  `{:error, {:unreachable, :timeout}}`, as `inject/5` does; the requests still
+  open then are abandoned, so no late reply reaches the caller.
+  """
+  @spec ingest_window(GenServer.server(), [{binary(), map()}], timeout(), pos_integer()) ::
+          [term()]
+  def ingest_window(overwatch, records, timeout, window) do
+    deadline =
+      if timeout == :infinity,
+        do: :infinity,
+        else: {:abs, System.monotonic_time(:millisecond) + timeout}
+
+    overwatch
+    |> pipeline(Enum.with_index(records), deadline, window, :gen_server.reqids_new(), %{})
+    |> Enum.sort()
+    |> Enum.map(&elem(&1, 1))
+  end
+
+  # Fill the window, then take one reply per free slot. `answers` is keyed by
+  # record index, so the order replies are handed out in cannot matter.
+  defp pipeline(overwatch, pending, deadline, window, reqids, answers) do
+    cond do
+      pending != [] and :gen_server.reqids_size(reqids) < window ->
+        [{{message, metadata}, index} | rest] = pending
+        reqids = :gen_server.send_request(overwatch, {:ingest, message, metadata}, index, reqids)
+        pipeline(overwatch, rest, deadline, window, reqids, answers)
+
+      :gen_server.reqids_size(reqids) == 0 ->
+        answers
+
+      true ->
+        case :gen_server.receive_response(reqids, deadline, true) do
+          {{:reply, reply}, index, reqids} ->
+            pipeline(overwatch, pending, deadline, window, reqids, Map.put(answers, index, reply))
+
+          {{:error, {reason, _server}}, index, reqids} ->
+            answers = Map.put(answers, index, {:error, {:unreachable, reason}})
+            pipeline(overwatch, pending, deadline, window, reqids, answers)
+
+          # Both the unsent records and the open requests carry their index last.
+          :timeout ->
+            for {_, index} <- pending ++ :gen_server.reqids_to_list(reqids),
+                into: answers,
+                do: {index, {:error, {:unreachable, :timeout}}}
+        end
+    end
+  end
 
   @doc """
   Commit a value a provider's worker holds of its own onto the plugin's options,

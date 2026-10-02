@@ -176,7 +176,6 @@ SDK raises or returns its one error type carrying them.
 | `http.busy` | unavailable | 7 | operator '{operator}' already has {max_waiting} requests waiting for an answer; try again |  |
 | `http.length_required` | invalid | 2 | a request body must carry a content-length: a body sent without one is refused before it is read |  |
 | `http.listen_failed` | unavailable | 7 | the HTTP server of operator '{operator}' cannot listen on {address} port {port}: {reason} |  |
-| `http.partitioned_host` | invalid | 2 | the HTTP server cannot be enabled on '{operator}', a member of a partition group: one port serves one operator |  |
 | `http.streams_full` | unavailable | 7 | operator '{operator}' already has {max_streams} streams open; try again |  |
 
 ### input
@@ -349,6 +348,7 @@ SDK raises or returns its one error type carrying them.
 | `plugin.options_required` | invalid | 2 | a {provider} plugin needs the option {options} | `flz plugin help <provider_id>` |
 | `plugin.package_invalid` | invalid | 2 | the plugin package is refused: {problem} | `package it again with mix flezha.plugin.package` |
 | `plugin.partition_placeholder_unfilled` | invalid | 2 | option '{option}' carries {placeholder}, but this plugin has no partition identity; the placeholder is filled only on a partitioned start |  |
+| `plugin.partitioned_host` | invalid | 2 | a {provider} plugin cannot be enabled on '{operator}', a member of a partition group: it cannot tell which member a record's key belongs to | `enable it on an operator that is not partitioned` |
 | `plugin.prepare_failed` | invalid | 2 | plugin '{plugin}' was refused while its operator started, so the operator did not start |  |
 | `plugin.protocol_consolidation_failed` | internal | 1 | protocol {protocol} could not be consolidated again with the package's implementations |  |
 | `plugin.provider_bad_answer` | internal | 1 | the plugin's provider answered with a value it may not return |  |

@@ -50,6 +50,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
     name = Keyword.get(opts, :name)
     feeds = Keyword.get(opts, :feeds, false)
     shareable = Keyword.get(opts, :shareable, false)
+    telemetry = Keyword.get(opts, :telemetry, [])
 
     quote do
       @behaviour unquote(contract)
@@ -61,6 +62,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
       @__provider_name__ unquote(name) || unquote(Options).provider_name(__MODULE__)
       @__provider_feeds__ unquote(feeds)
       @__provider_shareable__ unquote(shareable)
+      @__provider_telemetry__ unquote(telemetry)
     end
   end
 
@@ -198,6 +200,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
     validate_rows!(env, rows)
     require_reconfigure!(env, rows)
     validate_type!(env, Module.get_attribute(env.module, :__provider_type__))
+    validate_telemetry!(env, Module.get_attribute(env.module, :__provider_telemetry__))
 
     [decl(env.module), strict_build(), fall_through()]
   end
@@ -226,6 +229,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
           extensions: unquote(extensions),
           own: unquote(own),
           worker: @__provider_worker__,
+          telemetry: @__provider_telemetry__,
           feeds: @__provider_feeds__,
           shareable: @__provider_shareable__
         }
@@ -310,6 +314,22 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
 
   defp validate_type!(env, type),
     do: raise_row!(env, "type #{inspect(type)} must be :operator or :controller")
+
+  # An own verb that repeats a shared one would be a second account of the same
+  # fact under a kind the vocabulary already fixes.
+  defp validate_telemetry!(env, verbs) when is_list(verbs) do
+    Enum.each(verbs, fn
+      {verb, kind} when is_atom(verb) and kind in [:metric, :event] ->
+        if verb in ProviderBehaviour.verbs(),
+          do: raise_row!(env, "telemetry verb #{inspect(verb)} is one of the shared verbs")
+
+      other ->
+        raise_row!(env, "telemetry entry #{inspect(other)} is not `verb: :metric | :event`")
+    end)
+  end
+
+  defp validate_telemetry!(env, other),
+    do: raise_row!(env, "telemetry #{inspect(other)} is not a keyword list")
 
   defp refuse_row_key!(_env, _name, []), do: :ok
 

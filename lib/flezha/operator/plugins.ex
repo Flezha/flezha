@@ -17,6 +17,7 @@ defmodule Flezha.Operator.Plugins do
   """
 
   alias Flezha.Operator.Overwatch
+  alias Flezha.Operator.Replay
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension
   alias Flezha.Plugin.Extension.Ctx
@@ -312,11 +313,16 @@ defmodule Flezha.Operator.Plugins do
   end
 
   @doc """
-  Operator-level facts providers need at activation (the tier drives the
-  source adapters' blocking-ingest mode).
+  Operator-level facts providers need at activation: the tier, which drives the
+  source adapters' blocking-ingest mode, and whether the operator journals its
+  input, which decides how often a source moves its upstream position.
   """
   @spec env(Overwatch.t()) :: map()
-  def env(%Overwatch{} = state), do: %{effectively_once: state.effectively_once}
+  def env(%Overwatch{} = state),
+    do: %{
+      effectively_once: state.effectively_once,
+      durable_input: Replay.floor_reporter(state) != nil
+    }
 
   @doc """
   A provider committed durable state of its own (a file reader's offset, the

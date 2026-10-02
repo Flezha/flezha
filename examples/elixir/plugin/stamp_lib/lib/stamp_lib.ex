@@ -1,17 +1,24 @@
 defmodule StampLib.Stamp do
   @moduledoc false
-  defstruct [:text]
+  defstruct [:prefix, :text]
 end
 
 defimpl String.Chars, for: StampLib.Stamp do
-  def to_string(%{text: text}), do: "[#{text}]"
+  def to_string(%{prefix: prefix, text: text}), do: "#{prefix}[#{text}]"
 end
 
 defmodule StampLib do
-  @moduledoc "Renders the stamp read from `priv/stamp.txt` when the application started."
+  @moduledoc """
+  Renders the stamp read from `priv/stamp.txt` when the application started,
+  after the `prefix` the library is configured with.
+  """
 
   @doc "The stamp, as a struct that renders through `String.Chars`."
-  def stamp, do: %StampLib.Stamp{text: Agent.get(__MODULE__, & &1)}
+  def stamp,
+    do: %StampLib.Stamp{
+      prefix: Application.fetch_env!(:stamp_lib, :prefix),
+      text: Agent.get(__MODULE__, & &1)
+    }
 end
 
 defmodule StampLib.Application do

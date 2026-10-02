@@ -520,14 +520,6 @@
         {"tag": "http_listen_failed", "args": ["details"]}
       ]
     },
-    "http.partitioned_host": {
-      "class": "invalid",
-      "message": "the HTTP server cannot be enabled on '{operator}', a member of a partition group: one port serves one operator",
-      "details": ["operator"],
-      "reasons": [
-        {"tag": "http_partitioned_host", "args": ["details"]}
-      ]
-    },
     "http.streams_full": {
       "class": "unavailable",
       "message": "operator '{operator}' already has {max_streams} streams open; try again",
@@ -1600,6 +1592,15 @@
       "details": ["option", "placeholder"],
       "reasons": [
         {"tag": "partition_placeholder_unfilled", "args": ["option", "placeholder"]}
+      ]
+    },
+    "plugin.partitioned_host": {
+      "class": "invalid",
+      "message": "a {provider} plugin cannot be enabled on '{operator}', a member of a partition group: it cannot tell which member a record's key belongs to",
+      "hint": "enable it on an operator that is not partitioned",
+      "details": ["provider", "operator"],
+      "reasons": [
+        {"tag": "partitioned_host", "args": ["details"]}
       ]
     },
     "plugin.prepare_failed": {

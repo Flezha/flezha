@@ -310,6 +310,9 @@ defmodule Flezha.Config.Keys do
      key: true, env: "FLEZHA_PLUGIN_BACKLOG_BYTES"},
     {:plugin_backlog_frames, :positive_int, 4_096,
      key: true, env: "FLEZHA_PLUGIN_BACKLOG_FRAMES"},
+    # The ingest requests one source batch keeps in flight to its operator
+    # (`Host.inject_many/4`), so a large fetch is not one mailbox flood.
+    {:plugin_ingest_window, :positive_int, 64, key: true, env: "FLEZHA_PLUGIN_INGEST_WINDOW"},
     {:record_log_cut_after_bytes, :int, 65_536, key: true},
     # Per-operator-class user overrides: a map from class to value, read
     # ahead of the SDK's own declaration and of the global default below it.

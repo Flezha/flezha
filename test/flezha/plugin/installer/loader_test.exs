@@ -56,8 +56,10 @@ defmodule Flezha.Plugin.Installer.LoaderTest do
     assert to_string(:code.priv_dir(:stamp_lib)) =~
              Path.join([root, ".loaded", "flezha_example_plugin"])
 
+    # The package carries the plugin project's configuration of its library.
+    assert Application.get_env(:stamp_lib, :prefix) == ">>"
     stamp = apply(StampLib, :stamp, [])
-    assert to_string(stamp) == "[stamped]"
+    assert to_string(stamp) == ">>[stamped]"
     assert to_string(:a) == "a" and to_string(1) == "1"
   end
 
@@ -278,7 +280,7 @@ defmodule Flezha.Plugin.Installer.LoaderTest do
     assert {:provider_refused, "flezha_example_plugin", "example_stamp", ":closed"} =
              Loader.refusal(:provider_refused, FlezhaExamplePlugin.Stamp, :closed)
 
-    partitioned = {:http_partitioned_host, %{operator: "pg#p0"}}
+    partitioned = {:partitioned_host, %{provider: "example_stamp", operator: "pg#p0"}}
 
     assert Loader.refusal(:provider_refused, FlezhaExamplePlugin.Stamp, partitioned) ==
              partitioned

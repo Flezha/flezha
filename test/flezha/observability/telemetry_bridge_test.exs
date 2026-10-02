@@ -374,6 +374,126 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     assert dropped.metadata[:operator_class] == "ObsOperator"
   end
 
+  defmodule AcmeSink do
+    @moduledoc false
+    use Flezha.Plugin.ProviderBehaviour, name: "acme_sink", telemetry: [rebalanced: :event]
+  end
+
+  # A provider compiled against a core whose declaration had no `telemetry`
+  # field, as a package built on an earlier patch release is.
+  defmodule OldSink do
+    @moduledoc false
+    def __provider__,
+      do: AcmeSink.__provider__() |> Map.delete(:telemetry) |> Map.put(:name, "old_sink")
+  end
+
+  describe "the half derived from the provider table" do
+    # A package's provider is a row before the bridge starts, as the boot loader
+    # adds it; the bridge is restarted here to read the row the same way.
+    setup do
+      :ok = Flezha.Plugin.Providers.add("acme_sink", AcmeSink)
+      restart_bridge()
+
+      on_exit(fn ->
+        Flezha.Plugin.Providers.reset_installed()
+        restart_bridge()
+      end)
+
+      sink = :"obs_tbridge_provider_sink_#{:erlang.unique_integer([:positive])}"
+
+      {:ok, _pid} =
+        Registry.register_sink(%{
+          name: sink,
+          module: Counting,
+          config: %{
+            counter_ref: :counters.new(1, [:atomics]),
+            parent: self(),
+            sources: [:flezha_acme_sink, :flezha_http_poll]
+          }
+        })
+
+      on_exit(fn -> Registry.unregister_sink(sink) end)
+      drain_mailbox()
+      :ok
+    end
+
+    test "a package provider's declared verbs are exported under its name" do
+      :telemetry.execute([:flezha, :plugin, :acme_sink, :shipped], %{count: 2}, %{})
+      :telemetry.execute([:flezha, :plugin, :acme_sink, :rebalanced], %{}, %{topic: "t"})
+
+      shipped = receive_until(&(&1.source == :flezha_acme_sink and &1.name == :shipped), 500)
+      assert shipped.kind == :metric
+      assert shipped.measurements[:count] == 2
+
+      rebalanced =
+        receive_until(&(&1.source == :flezha_acme_sink and &1.name == :rebalanced), 500)
+
+      assert rebalanced.kind == :event
+      assert rebalanced.metadata[:topic] == "t"
+      refute inspect(TelemetryBridge.mapping()) =~ "acme_sink"
+    end
+
+    test "each derived event has a handler of its own carrying only its line" do
+      [handler] = :telemetry.list_handlers([:flezha, :plugin, :acme_sink, :shipped])
+      assert handler.config == {:flezha_acme_sink, :shipped, :metric}
+
+      [bridge] = :telemetry.list_handlers([:flezha, :state, :wal, :backpressure])
+      assert bridge.id == TelemetryBridge.handler_id()
+      assert bridge.config == nil
+    end
+
+    test "an own verb the provider does not declare is not exported" do
+      :telemetry.execute([:flezha, :plugin, :acme_sink, :undeclared], %{}, %{})
+      refute receive_until(&(&1.source == :flezha_acme_sink), 200)
+    end
+
+    test "a first-party hand-kept line wins over the derived one" do
+      :telemetry.execute([:flezha, :plugin, :http_poll, :shipped], %{count: 1}, %{})
+
+      assert %Signal{kind: :metric} =
+               receive_until(&(&1.source == :flezha_http_poll and &1.name == :injected), 500)
+
+      refute receive_until(&(&1.source == :flezha_http_poll and &1.name == :shipped), 100)
+    end
+  end
+
+  test "a core with no package derives nothing: no source for a first-party provider" do
+    Flezha.Plugin.Providers.reset_installed()
+    restart_bridge()
+
+    assert TelemetryBridge.provider_mapping() == %{}
+    assert Registry.lookup_source(:flezha_std_out) == :error
+    assert Registry.lookup_source(:flezha_producer) == :error
+  end
+
+  test "a package provider declared before `telemetry:` existed still starts the bridge" do
+    :ok = Flezha.Plugin.Providers.add("old_sink", OldSink)
+
+    on_exit(fn ->
+      Flezha.Plugin.Providers.reset_installed()
+      restart_bridge()
+    end)
+
+    restart_bridge()
+    assert [_handler] = :telemetry.list_handlers([:flezha, :plugin, :old_sink, :shipped])
+  end
+
+  test "an own verb that repeats the vocabulary fails the provider's compilation" do
+    source = """
+    defmodule FlezhaTest.RepeatsShipped do
+      use Flezha.Plugin.ProviderBehaviour, telemetry: [shipped: :metric]
+    end
+    """
+
+    assert_raise CompileError, ~r/telemetry verb :shipped/, fn -> Code.compile_string(source) end
+  end
+
+  defp restart_bridge() do
+    sup = Flezha.Observability.Supervisor
+    :ok = Supervisor.terminate_child(sup, TelemetryBridge)
+    {:ok, _pid} = Supervisor.restart_child(sup, TelemetryBridge)
+  end
+
   defp receive_until(_pred, timeout) when timeout <= 0, do: nil
 
   defp receive_until(pred, timeout) do

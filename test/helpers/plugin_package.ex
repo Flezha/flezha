@@ -43,6 +43,9 @@ defmodule Flezha.TestHelpers.PluginPackage do
   @spec package(Path.t(), [binary()], Path.t()) :: {non_neg_integer(), binary(), Path.t() | nil}
   def package(dir, args \\ [], build_root \\ Path.expand("_build")) do
     output = Path.join(System.tmp_dir!(), "flz_pkg_#{System.unique_integer([:positive])}")
+    # The integer repeats across test runs, and an archive an earlier run left
+    # there would read as this run's.
+    File.rm_rf!(output)
 
     {out, status} =
       System.cmd("mix", ["flezha.plugin.package", "--output", output | args],
@@ -98,11 +101,8 @@ defmodule Flezha.TestHelpers.PluginPackage do
     File.write!(Path.join(dir, "manifest.exs"), Manifest.render(fun.(manifest)))
   end
 
-  defp edit(dir, {:app, app, fun}) do
-    path = app_file(dir, app)
-    {:ok, [{:application, ^app, props}]} = :file.consult(String.to_charlist(path))
-    File.write!(path, :io_lib.format(~c"~p.~n", [{:application, app, fun.(props)}]))
-  end
+  defp edit(dir, {:app, app, fun}),
+    do: Mix.Tasks.Flezha.Plugin.Package.update_app(app_file(dir, app), app, fun)
 
   defp edit(dir, {:put, path, bytes}) do
     full = Path.join(dir, path)

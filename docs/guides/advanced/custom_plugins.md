@@ -118,6 +118,14 @@ defp deps do
 end
 ```
 
+Its `config/config.exs` sets the library's one setting, `config :stamp_lib, prefix: ">>"`,
+and the package carries it in the library's `.app`, so each line starts `>>[stamped]`. The
+package task writes the configuration of the `MIX_ENV` it runs in, so build with
+`MIX_ENV=prod`; the plugin application's own settings are not written.
+Only the libraries a package bundles are configured this way, and anyone holding the
+package can read their settings: a secret goes in a provider option that reads it from
+the environment.
+
 It has no `mod`: a plugin's processes are its providers' declared workers, which the
 controller supervises. The provider declares its options and its worker, checks its
 options, and handles each output payload:
@@ -148,6 +156,37 @@ An option row with `live: true` can be changed on a running plugin by
 `flz plugin update`; the provider then implements `reconfigure/2`, which the
 controller calls with the old and the new options, and a module that declares a live
 option without it does not compile.
+
+### A source
+
+A provider whose worker hands records to the operator declares `feeds: true` and calls
+`Flezha.Plugin.Host.inject/5` with the operator its options name (`opts.overwatcher_pid`).
+A source that reads from a system with a position, such as an offset, a cursor or an
+acknowledgement, fetches a batch and hands it over with `Host.inject_many/4` in `:verdict`
+mode: up to `FLEZHA_PLUGIN_INGEST_WINDOW` records wait for their verdicts at once, and the
+answer is one verdict per record, in order, `{:error, {:unreachable, :timeout}}` for any the
+operator had not answered in time. It
+moves the upstream position only past records whose verdict is `:ok`, and waits for each
+batch, which keeps its memory bounded. How often it moves the position follows the
+operator, which the plugin's options tell it:
+
+| The operator | Its plugins' options | A verdict `:ok` means | The source moves its position |
+| --- | --- | --- | --- |
+| a flow operator without `effectively_once` that does not sleep | `durable_input: false` | the operator took the record | every few seconds |
+| a durable steps operator, or a flow operator that sleeps | `durable_input: true` | the record is in the operator's input log | after every confirmed batch |
+| a flow operator with `effectively_once` | `durable_input: true`, `effectively_once: true` | the record is in the operator's input log | after every confirmed batch; a sink that honours `effectively_once` writes each output once |
+
+Both are set by the controller when the plugin starts, over anything its stored options
+say. A source that cannot tell which member of a partition group a record's key belongs to,
+as a consumer or a table reader cannot, refuses a group member from `init_provider/1` with
+`ProviderBehaviour.refuse_partitioned(opts, __MODULE__)`, whose code is
+`plugin.partitioned_host`.
+
+A provider reports what it did with `ProviderBehaviour.emit/4`: `shipped`, `retried`,
+`overflowed` and `failed` mean the same for every provider, and a verb of its own is
+declared on the `use`, `telemetry: [rebalanced: :event]`, as a `:metric` or an `:event`.
+The controller exports both under the provider's name, sourced `flezha_<name>`; a verb it
+does not declare reaches only handlers attached to it.
 
 ### A controller plugin
 
@@ -187,8 +226,8 @@ moments after the enable; while a `single` copy moves, an event can arrive twice
 `Flezha.Plugin.ProviderBehaviour` documents the provider contract. It is packaged and
 installed as the HTTP plugin was, from its own folder, and then enabled on an operator
 like any plugin, as [`sources_and_sinks.md`](../sources_and_sinks.md) showed. What a
-package cannot do in this version, such as carry native code or its own `config/*.exs`,
-is listed in [`installation.md`](../../plugins/installation.md#limits).
+package cannot do in this version, such as carry native code or configure a library the
+controller ships, is listed in [`installation.md`](../../plugins/installation.md#limits).
 
 ## Next
 

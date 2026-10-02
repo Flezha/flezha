@@ -102,21 +102,22 @@ refused by a cap since it started. This SHALL hold for a host operator of either
 ### Requirement: The plugin SHALL refuse a partitioned host operator
 
 The provider's `init_provider/1` SHALL refuse a plugin whose options carry a partition
-identity with the code `http.partitioned_host`, naming the member. `flz plugin enable` on a
+identity with the core's `Flezha.Plugin.ProviderBehaviour.refuse_partitioned/2`, whose code is
+`plugin.partitioned_host`, naming the provider and the member. `flz plugin enable` on a
 partition group SHALL therefore fail on every member with that code and leave no plugin row,
 and a group started with the plugin in its declared set SHALL NOT start: its start SHALL be
-refused on the existing plugin-prepare failure, whose reason names `http_partitioned_host`,
+refused on the existing plugin-prepare failure, whose reason names `partitioned_host`,
 and no member SHALL remain. This SHALL hold for a group of either operator kind.
 
 #### Scenario: Enabling on a group is refused
 
 - **WHEN** `flz plugin enable` attaches `http_server` to a two-member partition group
-- **THEN** it SHALL fail with `http.partitioned_host` for both members, and neither member SHALL carry the plugin
+- **THEN** it SHALL fail with `plugin.partitioned_host` for both members, and neither member SHALL carry the plugin
 
 #### Scenario: A group declaring the plugin does not start
 
 - **WHEN** a two-member partition group is started with `http_server` in its `--plugins`
-- **THEN** the start SHALL fail naming `http_partitioned_host`, and no member of the group SHALL run
+- **THEN** the start SHALL fail naming `partitioned_host`, and no member of the group SHALL run
 
 ### Requirement: Every request SHALL become one outside call carrying a request envelope
 
@@ -255,7 +256,7 @@ Every failure the plugin answers SHALL carry the body `{"error": {"code", "class
 attach's, a stream's end) SHALL reach the client with its code, its class, its catalogue
 message filled only from the details naming the operator, the namespace, the channel, the
 attempts and the call's bounds, and no hint; the author's error text, a dead-letter entry and
-an exit reason SHALL NOT reach the client. The eight `http.*` codes SHALL be entries of the
+an exit reason SHALL NOT reach the client. The seven `http.*` codes SHALL be entries of the
 one error catalogue.
 
 #### Scenario: A host that does not answer in time
@@ -282,7 +283,7 @@ one error catalogue.
 #### Scenario: The plugin's codes are catalogued
 
 - **WHEN** the error catalogue is read
-- **THEN** it SHALL hold `http.body_too_large`, `http.body_timeout`, `http.length_required`, `http.busy`, `http.streams_full`, `http.answer_invalid`, `http.partitioned_host` and `http.listen_failed`, each with its class, message and details
+- **THEN** it SHALL hold `http.body_too_large`, `http.body_timeout`, `http.length_required`, `http.busy`, `http.streams_full`, `http.answer_invalid` and `http.listen_failed`, each with its class, message and details
 
 ### Requirement: A stream answer SHALL stream the named operator of the host's namespace over SSE
 

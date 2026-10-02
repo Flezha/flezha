@@ -1275,3 +1275,112 @@ operator provider none of the controller hook callbacks (`on_operator_started/2`
 - **WHEN** a module declares `type: :io_binding`
 - **THEN** it SHALL fail to compile naming the two allowed types
 
+### Requirement: A source SHALL be told whether its operator's input is durable
+
+Every provider's options SHALL carry the host option `durable_input` once its plugin is
+activated, true exactly when the operator journals its input (a durable steps operator, or a
+flow operator with `effectively_once` or that sleeps), merged over the stored options so a
+stored option cannot set it. A shared copy of a shareable plugin answers each injection
+itself, so its options SHALL carry `durable_input: false`. A source that moves an upstream position (an offset, a cursor, an acknowledgement)
+SHALL move it only past records whose verdict was `:ok`, after every confirmed batch when
+`durable_input` is true.
+
+#### Scenario: A flow operator with effectively-once
+
+- **WHEN** a plugin is brought up on a flow operator whose class sets `effectively_once`
+- **THEN** its options SHALL carry `durable_input: true`
+
+#### Scenario: A plain flow operator on local disk
+
+- **WHEN** a plugin is brought up on a flow operator with `durable: local`, no
+  `effectively_once` and no `sleep_after`
+- **THEN** its options SHALL carry `durable_input: false`
+
+#### Scenario: A stored option cannot claim durability
+
+- **WHEN** a plugin is enabled with the option `durable_input` set to true on a plain flow
+  operator
+- **THEN** the stored value SHALL be overwritten by the operator's setting, as
+  `effectively_once` is, and the activated options SHALL carry `durable_input: false`
+
+#### Scenario: A shared copy
+
+- **WHEN** a shareable plugin's shared copy activates it
+- **THEN** its options SHALL carry `durable_input: false`
+
+### Requirement: A source SHALL be able to hand over a batch and wait once
+
+`Flezha.Plugin.Host.inject_many/4` SHALL take an operator, a list of `{message, metadata}`, a
+mode (`:verdict` or `:fire_and_forget`) and a timeout. With `:verdict` it SHALL keep up to
+`plugin_ingest_window` records waiting for their verdicts at once, sending the next as each
+answer arrives, and SHALL answer one verdict per record in the records' order,
+`{:error, {:unreachable, :timeout}}` for each record unanswered at the deadline, the shape
+`inject/5` answers a timeout with. The operator SHALL ingest the records in the order given. With `:fire_and_forget` it SHALL hand every record over without
+waiting and answer `:ok`.
+
+#### Scenario: A batch confirmed with one wait
+
+- **GIVEN** a flow operator with `effectively_once`
+- **WHEN** a source calls `inject_many/4` with 500 records in `:verdict` mode
+- **THEN** it SHALL answer 500 verdicts in order, the input log SHALL hold the 500 records in
+  that order, and the number of log syncs SHALL be lower than 500
+
+#### Scenario: A duplicate in the batch
+
+- **GIVEN** an operator that journals its input
+- **WHEN** two records of one batch carry the same `flz.msg_id`
+- **THEN** both verdicts SHALL be `:ok` and the operator SHALL receive the message once
+
+#### Scenario: A deadline cuts the batch
+
+- **WHEN** the operator has not answered every record of a batch by the deadline
+- **THEN** every answered record SHALL keep its verdict, every other record SHALL answer
+  `{:error, {:unreachable, :timeout}}`, and no reply SHALL reach the source after the call
+  returns
+
+#### Scenario: A batch larger than the window
+
+- **GIVEN** `plugin_ingest_window` set to 4
+- **WHEN** a source calls `inject_many/4` with 20 records in `:verdict` mode
+- **THEN** at most 4 of them SHALL wait for a verdict at any moment, and the 20 verdicts
+  SHALL answer in order
+
+### Requirement: A provider MAY declare telemetry verbs of its own
+
+`use Flezha.Plugin.ProviderBehaviour` SHALL accept `telemetry: [verb: :metric | :event]`, the
+verbs a provider emits beyond the declared vocabulary, and `__provider__/0` SHALL answer them.
+A declaration whose own verb repeats a vocabulary verb, or whose kind is neither `:metric` nor
+`:event`, SHALL fail the provider's compilation naming the verb. An own verb a provider emits
+without declaring it SHALL reach handlers attached to its event and no exporter; a first-party
+provider's emitted verbs SHALL stay judged by the telemetry bridge's tree walk.
+
+#### Scenario: An own verb
+
+- **WHEN** a provider declares `telemetry: [rebalanced: :event]` and emits `:rebalanced`
+- **THEN** the bridge SHALL map it as an event
+
+#### Scenario: An own verb that repeats the vocabulary
+
+- **WHEN** a provider declares `telemetry: [shipped: :metric]`
+- **THEN** its compilation SHALL fail naming `shipped`
+
+### Requirement: A source that cannot route by key SHALL refuse a partitioned operator one way
+
+`Flezha.Plugin.ProviderBehaviour.refuse_partitioned/2` SHALL answer, given a plugin's
+options and its provider, an error carrying the provider's name and the member when the options
+carry the partition options a group member's plugin is given, and `:ok` otherwise, and that
+error SHALL render as `plugin.partitioned_host`. A source that cannot tell which member a
+record's key belongs to SHALL call it from `init_provider/1`, so the refusal comes when the
+plugin is brought up on the member, at bind.
+
+#### Scenario: A table reader on a partitioned operator
+
+- **WHEN** a source calling `refuse_partitioned/2` is enabled on a member of a partition group
+- **THEN** the enable SHALL be refused with `plugin.partitioned_host` naming the provider and
+  the member
+
+#### Scenario: An operator that is not partitioned
+
+- **WHEN** the same source is enabled on an operator outside any partition group
+- **THEN** `refuse_partitioned/2` SHALL answer `:ok`
+

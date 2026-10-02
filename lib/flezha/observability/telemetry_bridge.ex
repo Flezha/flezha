@@ -3,12 +3,14 @@ defmodule Flezha.Observability.TelemetryBridge do
   Single dispatching `:telemetry` handler that lifts existing
   `[:flezha, ...]` telemetry events onto the observability bus.
 
-  No producer call-site is rewritten. The mapping is two halves: the hand-kept
-  lifecycle half in `@mapping`, and a half DERIVED from the convergence loop's
-  detector table — every event a detector entry declares is bridged by that
-  declaration, so a new detector needs no edit here. Where both halves name one
-  event the hand-kept line wins, because its source, name and kind are a
-  deliberate choice a derivation cannot know.
+  No producer call-site is rewritten. The mapping has three halves: the
+  hand-kept lifecycle half in `@mapping`; a half DERIVED from the convergence
+  loop's detector table, so every event a detector entry declares is bridged by
+  that declaration and a new detector needs no edit here; and a half derived at
+  start from the providers packages installed (`provider_mapping/0`), so a
+  package's events are exported under its provider's name with no edit here.
+  Where halves name one event the hand-kept line wins, because its source, name
+  and kind are a deliberate choice a derivation cannot know.
 
   Every `[:flezha, …]` event NAME the tree writes must be a key of the merged
   mapping or a member of `unexported/0`, which carries the reason it reaches no
@@ -30,6 +32,7 @@ defmodule Flezha.Observability.TelemetryBridge do
 
   alias Flezha.Convergence.Probe.Table
   alias Flezha.Observability.{Bus, Counters, Registry, Signal}
+  alias Flezha.Plugin.{ProviderBehaviour, Providers}
 
   @handler_id :flezha_observability_telemetry_bridge
 
@@ -272,6 +275,10 @@ defmodule Flezha.Observability.TelemetryBridge do
 
   @all_mapping Map.merge(@derived, @mapping)
 
+  # The shared provider verbs: a failure is read one at a time, the rest are counts.
+  @verb_kinds for verb <- ProviderBehaviour.verbs(),
+                  do: {verb, if(verb == :failed, do: :event, else: :metric)}
+
   # ---------- Public API ----------
 
   def start_link(opts \\ []) do
@@ -279,15 +286,38 @@ defmodule Flezha.Observability.TelemetryBridge do
   end
 
   @doc """
-  The bridged source atoms. Pre-registered with the Registry on
+  The bridged source atoms of `mapping`. Pre-registered with the Registry on
   bridge start so `Bus` can enforce cardinality budgets against them.
   """
-  @spec bridged_sources() :: [{atom(), [Signal.kind()]}]
-  def bridged_sources() do
-    mapping()
+  @spec bridged_sources(map()) :: [{atom(), [Signal.kind()]}]
+  def bridged_sources(mapping) do
+    mapping
     |> Map.values()
     |> Enum.group_by(fn {source, _name, _kind} -> source end, fn {_s, _n, k} -> k end)
     |> Enum.map(fn {source, kinds} -> {source, Enum.uniq(kinds)} end)
+  end
+
+  @doc """
+  The half derived from the provider table as it stands, for the providers a
+  package installed: each one's shared verbs and its own declared ones under
+  `[:flezha, :plugin, <name>, verb]`, `name` being the one its declaration
+  answers and `ProviderBehaviour.emit/4` writes, sourced `flezha_<name>`, less
+  every event `mapping/0` already names. A first-party provider's events are
+  hand-kept lines, which the suite judges against what the tree writes. Read
+  once at bridge start, which a package's provider row precedes.
+  """
+  @spec provider_mapping() :: %{[atom()] => {atom(), atom(), Signal.kind()}}
+  def provider_mapping() do
+    for {_id, module} <- Providers.installed(),
+        Code.ensure_loaded?(module),
+        decl = module.__provider__(),
+        # A package built before `telemetry:` existed declares no own verbs.
+        {verb, kind} <- @verb_kinds ++ Map.get(decl, :telemetry, []),
+        # A name from code a verified package ships, never input.
+        event = ProviderBehaviour.event(String.to_atom(decl.name), verb),
+        not Map.has_key?(@all_mapping, event),
+        into: %{},
+        do: {event, {:"flezha_#{decl.name}", verb, kind}}
   end
 
   @doc false
@@ -329,10 +359,12 @@ defmodule Flezha.Observability.TelemetryBridge do
 
   # ---------- :telemetry handler entry point ----------
 
+  # `line` is `nil` for the one handler of the compiled mapping, and the
+  # event's own line for a provider-derived event, which has a handler each.
   @doc false
-  def handle_event(event, measurements, metadata, _config) do
+  def handle_event(event, measurements, metadata, line) do
     try do
-      do_handle_event(event, measurements, metadata)
+      do_handle_event(event, measurements, metadata, line)
     rescue
       e -> handle_error(event, e, __STACKTRACE__)
     catch
@@ -342,9 +374,9 @@ defmodule Flezha.Observability.TelemetryBridge do
     :ok
   end
 
-  defp do_handle_event(event, measurements, metadata) do
-    case Map.fetch(@all_mapping, event) do
-      {:ok, {source, name, kind}} ->
+  defp do_handle_event(event, measurements, metadata, line) do
+    case line || Map.get(@all_mapping, event) do
+      {source, name, kind} ->
         signal =
           Signal.new(%{
             kind: kind,
@@ -356,7 +388,7 @@ defmodule Flezha.Observability.TelemetryBridge do
 
         Bus.emit(signal)
 
-      :error ->
+      nil ->
         :ok
     end
   end
@@ -380,9 +412,12 @@ defmodule Flezha.Observability.TelemetryBridge do
   def init(_opts) do
     Process.flag(:trap_exit, true)
 
+    providers = provider_mapping()
+    all = Map.merge(providers, @all_mapping)
+
     # Pre-register the bridged sources so the Bus + Registry track
     # them (cardinality budget, source-status, etc.).
-    Enum.each(bridged_sources(), fn {source, kinds} ->
+    Enum.each(bridged_sources(all), fn {source, kinds} ->
       _ =
         Registry.register_source(%{
           name: source,
@@ -391,17 +426,21 @@ defmodule Flezha.Observability.TelemetryBridge do
         })
     end)
 
-    events = Map.keys(@all_mapping)
-
     :ok =
-      :telemetry.attach_many(@handler_id, events, &__MODULE__.handle_event/4, nil)
+      :telemetry.attach_many(@handler_id, Map.keys(@all_mapping), &__MODULE__.handle_event/4, nil)
 
-    {:ok, %{}}
+    # A handler's config is copied out of telemetry's table on every execute of
+    # its events, so each provider-derived event carries only its own line.
+    for {event, line} <- providers,
+        do: :ok = :telemetry.attach({@handler_id, event}, event, &__MODULE__.handle_event/4, line)
+
+    {:ok, %{provider_events: Map.keys(providers)}}
   end
 
   @impl true
-  def terminate(_reason, _state) do
+  def terminate(_reason, state) do
     _ = :telemetry.detach(@handler_id)
+    Enum.each(state.provider_events, &:telemetry.detach({@handler_id, &1}))
     :ok
   end
 end

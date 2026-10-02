@@ -45,7 +45,11 @@ defmodule Flezha.Plugin.Providers do
 
   @doc "Every provider id to its module, first-party rows and installed ones."
   @spec all() :: %{binary() => module()}
-  def all(), do: Map.merge(@first_party, :persistent_term.get(@installed_key, %{}))
+  def all(), do: Map.merge(@first_party, installed())
+
+  @doc "The rows plugin packages added at this boot."
+  @spec installed() :: %{binary() => module()}
+  def installed(), do: :persistent_term.get(@installed_key, %{})
 
   @doc "The rows the release itself provides."
   @spec first_party() :: %{binary() => module()}
@@ -63,8 +67,7 @@ defmodule Flezha.Plugin.Providers do
         {:error, {:provider_id_taken, provider_id, holder}}
 
       :error ->
-        installed = :persistent_term.get(@installed_key, %{})
-        :persistent_term.put(@installed_key, Map.put(installed, provider_id, module))
+        :persistent_term.put(@installed_key, Map.put(installed(), provider_id, module))
     end
   end
 

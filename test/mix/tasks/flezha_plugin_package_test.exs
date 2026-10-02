@@ -33,6 +33,36 @@ defmodule Mix.Tasks.Flezha.Plugin.PackageTest do
     {:ok, verified} = Package.verify(archive, Path.join(tmp, "x"), @opts)
     assert verified.manifest.built_with == Manifest.runtime()
     assert verified.manifest.providers == %{"example_stamp" => FlezhaExamplePlugin.Stamp}
+
+    # The project's configuration of its library travels in the library's `.app`;
+    # the plugin application's own `.app` is the one Mix built.
+    assert app_env(Path.join(tmp, "x"), :stamp_lib) == [prefix: ">>"]
+
+    assert app_env(Path.join(tmp, "x"), :flezha_example_plugin) == [
+             flezha_providers: %{"example_stamp" => FlezhaExamplePlugin.Stamp}
+           ]
+  end
+
+  test "a library setting an .app cannot hold fails the task, naming it", %{tmp: tmp} do
+    dir = copy_project(tmp, "fun", & &1)
+    configure(dir, "config :stamp_lib, render: fn text -> text end")
+
+    {status, out, archive} = PluginPackage.package(dir)
+    assert status != 0
+    assert out =~ ":stamp_lib"
+    assert out =~ ":render"
+    assert archive == nil
+  end
+
+  test "a library setting beyond ASCII is written so the .app reads back", %{tmp: tmp} do
+    path = Path.join(tmp, "stamp_lib.app")
+    File.write!(path, ~s|{application,stamp_lib,[{vsn,"0.1.0"},{env,[]}]}.\n|)
+
+    put = &Keyword.put(&1, :env, greeting: "café", mark: :"→")
+    assert :ok = Mix.Tasks.Flezha.Plugin.Package.update_app(path, :stamp_lib, put)
+
+    assert {:ok, [{:application, :stamp_lib, props}]} = :file.consult(String.to_charlist(path))
+    assert props[:env] == [greeting: "café", mark: :"→"]
   end
 
   test "--sign writes a signature the matching public key verifies", %{tmp: tmp} do
@@ -128,6 +158,17 @@ defmodule Mix.Tasks.Flezha.Plugin.PackageTest do
     assert out =~ "priv/x.so"
     assert out =~ "plugin.native_code"
     assert archive == nil
+  end
+
+  defp app_env(dir, app) do
+    [path] = Path.wildcard(Path.join([dir, "lib", "#{app}-*", "ebin", "#{app}.app"]))
+    {:ok, [{:application, ^app, props}]} = :file.consult(String.to_charlist(path))
+    Enum.sort(props[:env])
+  end
+
+  defp configure(dir, line) do
+    config = Path.join([dir, "config", "config.exs"])
+    File.write!(config, File.read!(config) <> "\n" <> line <> "\n")
   end
 
   # The example project as a project of its own: absolute paths to this checkout's

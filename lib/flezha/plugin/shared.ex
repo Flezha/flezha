@@ -62,6 +62,10 @@ defmodule Flezha.Plugin.Shared do
 
   @task_sup Flezha.Operator.MessageHandlerTaskSup
 
+  # The copy answers each record a worker hands it at once (`fan_out/3`), so
+  # nothing a source confirms against has reached any operator's journal.
+  @activation_env %{durable_input: false}
+
   defstruct [
     :namespace,
     :name,
@@ -281,7 +285,7 @@ defmodule Flezha.Plugin.Shared do
     table = Table.new(catalog(plugin))
 
     with {:ok, table} <- Table.bulk_subscribe(table, [{name, plugin}]),
-         {table, []} <- Table.bulk_activate(table) do
+         {table, []} <- Table.bulk_activate(table, @activation_env) do
       Directory.join_plugin(self(), namespace, name)
       state = %__MODULE__{namespace: namespace, name: name, plugin: plugin, table: table}
       {:ok, state |> watch_home(args[:home]) |> listen_for_hooks() |> idle_if_empty()}
@@ -625,7 +629,7 @@ defmodule Flezha.Plugin.Shared do
     table = Table.teardown_all(state.table, :now)
 
     with {:ok, table} <- Table.bulk_subscribe(table, [{state.name, state.plugin}]),
-         {table, []} <- Table.bulk_activate(table) do
+         {table, []} <- Table.bulk_activate(table, @activation_env) do
       listen_for_hooks(%{state | table: table})
     else
       {:error, {_id, reason}} -> restart_failed(state, table, reason)

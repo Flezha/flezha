@@ -15,6 +15,7 @@ defmodule FlezhaTest.Operator.IngestTest do
 
   alias Flezha.Operator.Overwatch
   alias Flezha.Plugin.Extension.Table
+  alias Flezha.Plugin.Host, as: PluginHost
   alias Flezha.Service.OperatorManager
   alias Flezha.State.{InputLog, Supervisor, TestHelpers}
   alias Flezha.Transport.LivenessCounters
@@ -190,6 +191,30 @@ defmodule FlezhaTest.Operator.IngestTest do
              )
   end
 
+  # Stand-in operator that answers the first `answered` ingests and holds every
+  # later one until it is told to `:release` them.
+  defmodule HoldingStub do
+    use GenServer
+    def start_link(answered), do: GenServer.start_link(__MODULE__, answered)
+    def init(answered), do: {:ok, %{left: answered, held: [], cast: []}}
+
+    def handle_call({:ingest, _message, _md}, _from, %{left: left} = state) when left > 0,
+      do: {:reply, {:ok, :absorbed}, %{state | left: left - 1}}
+
+    def handle_call({:ingest, _message, _md}, from, state),
+      do: {:noreply, %{state | held: [from | state.held]}}
+
+    def handle_call(:release, _from, state) do
+      Enum.each(state.held, &GenServer.reply(&1, :ok))
+      {:reply, :ok, %{state | held: []}}
+    end
+
+    def handle_call(:cast, _from, state), do: {:reply, Enum.reverse(state.cast), state}
+
+    def handle_cast({:io_in, message, _md}, state),
+      do: {:noreply, %{state | cast: [message | state.cast]}}
+  end
+
   describe "send_io_confirming_many/5" do
     # Stand-in operator: answers `{:ingest, ..}` like an Overwatch, records
     # the order it saw inputs in and the deepest queue it ever had — the queue
@@ -261,6 +286,116 @@ defmodule FlezhaTest.Operator.IngestTest do
                  "default",
                  [{"a", %{}}, {"b", %{}}]
                )
+    end
+
+    test "inputs the deadline cut answer an unreachable timeout each, rather than an exit" do
+      {:ok, stub} = HoldingStub.start_link(0)
+      stub(Flezha.Service.HubManager, :get_pid, fn _ns, _id -> {:ok, stub} end)
+
+      assert [{:error, {:unreachable, :timeout}}, {:error, {:unreachable, :timeout}}] =
+               OperatorManager.send_io_confirming_many(
+                 "target",
+                 "default",
+                 [{"a", %{}}, {"b", %{}}],
+                 50,
+                 1
+               )
+    end
+  end
+
+  describe "Host.inject_many/4" do
+    test "a deadline answers what came back and a timeout for the rest, and nothing after" do
+      {:ok, stub} = HoldingStub.start_link(1)
+      records = for m <- ["a", "b", "c"], do: {m, %{}}
+
+      assert [:ok, {:error, {:unreachable, :timeout}}, {:error, {:unreachable, :timeout}}] =
+               PluginHost.inject_many(stub, records, :verdict, 100)
+
+      # The two held replies are sent now; the abandoned requests drop them.
+      assert :ok = GenServer.call(stub, :release)
+      refute_receive _, 100
+    end
+
+    test "a batch keeps at most the ingest window in flight" do
+      on_exit(TestHelpers.override_env(:plugin_ingest_window, 4))
+      {:ok, stub} = __MODULE__.IngestStub.start_link(:ok)
+      records = for i <- 1..20, do: {"m#{i}", %{}}
+
+      assert PluginHost.inject_many(stub, records, :verdict, 5_000) == List.duplicate(:ok, 20)
+      {seen, max_queued} = GenServer.call(stub, :report)
+      assert seen == Enum.map(records, &elem(&1, 0))
+      assert max_queued >= 1, "requests never overlapped"
+      assert max_queued <= 3, "more than the window was in flight"
+    end
+
+    test "an operator it cannot reach answers unreachable for every record" do
+      {pid, ref} = spawn_monitor(fn -> :ok end)
+      assert_receive {:DOWN, ^ref, :process, ^pid, _}
+
+      assert [{:error, {:unreachable, :noproc}}, {:error, {:unreachable, :noproc}}] =
+               PluginHost.inject_many(pid, [{"a", %{}}, {"b", %{}}], :verdict, 1_000)
+    end
+
+    test "fire-and-forget hands every record over in order and answers :ok" do
+      {:ok, stub} = HoldingStub.start_link(0)
+      records = for m <- ["a", "b", "c"], do: {m, %{}}
+
+      assert :ok = PluginHost.inject_many(stub, records, :fire_and_forget, 0)
+      assert GenServer.call(stub, :cast) == ["a", "b", "c"]
+    end
+  end
+
+  describe "Host.inject_many/4 on an operator that journals its input" do
+    setup :set_mimic_global_until_exit
+
+    setup do
+      FlezhaTest.Case.install([:state_tree])
+    end
+
+    test "500 records answer 500 ordered verdicts and share the log's syncs" do
+      inst = instance_id()
+      state = state(inst, effectively_once: true, channel: fake_channel(:ok))
+      {:ok, host} = start_supervised({Host, state})
+
+      # The first record opens the log, so its syncs can be traced from the next.
+      assert [:ok] = PluginHost.inject_many(host, [{"m0", %{}}], :verdict, 5_000)
+      {:ok, log} = Supervisor.find_or_start({inst, :input_log})
+      :erlang.trace(log, true, [:receive])
+
+      records = for i <- 1..500, do: {"m#{i}", %{}}
+      verdicts = PluginHost.inject_many(host, records, :verdict, 30_000)
+      :erlang.trace(log, false, [:receive])
+
+      assert verdicts == List.duplicate(:ok, 500)
+
+      assert Enum.map(InputLog.undelivered(inst), &elem(&1, 1)) ==
+               ["m0" | Enum.map(records, &elem(&1, 0))]
+
+      syncs = count_syncs(log, 0)
+      assert syncs > 0 and syncs < 500, "the batch took #{syncs} log syncs for 500 records"
+    end
+
+    test "a duplicate msg id in one batch reaches the operator once" do
+      inst = instance_id()
+      state = state(inst, durable_steps: true, channel: fake_channel(:ok))
+      {:ok, host} = start_supervised({Host, state})
+      twice = %{"flz.msg_id" => "m-twice"}
+
+      assert [:ok, :ok] =
+               PluginHost.inject_many(host, [{"x", twice}, {"x", twice}], :verdict, 5_000)
+
+      assert_receive {:channel_got, ^inst, {"x", _metadata}}
+      refute_receive {:channel_got, _, _}, 100
+    end
+  end
+
+  defp count_syncs(log, count) do
+    receive do
+      {:trace, ^log, :receive, {:"$gen_cast", :fsync}} -> count_syncs(log, count + 1)
+      {:trace, ^log, :receive, {:"$gen_call", _from, :fsync}} -> count_syncs(log, count + 1)
+      {:trace, ^log, :receive, _other} -> count_syncs(log, count)
+    after
+      0 -> count
     end
   end
 
