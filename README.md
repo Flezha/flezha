@@ -96,7 +96,7 @@ kernel, the two operator profiles, and the diagrams. Vocabulary:
 - Opt-in effectively-once delivery — durable input log, atomic effect record, fsync-gated outbox ([`docs/architecture/kernel.md`](docs/architecture/kernel.md))
 - Steps operators — a tasklet tree with saga compensation, a durable loop, and suspension ([`docs/architecture/steps_profile.md`](docs/architecture/steps_profile.md))
 - Installable plugin subsystem ([`docs/plugins/installation.md`](docs/plugins/installation.md))
-- First-party Kafka producer with retries, idempotence, batching, and bounded queueing ([`docs/plugins/kafka_producer.md`](docs/plugins/kafka_producer.md))
+- A Kafka producer, as a plugin package, with key partitioning, retries, idempotence, batching, and bounded queueing ([`docs/plugins/kafka_producer.md`](docs/plugins/kafka_producer.md))
 - Transactional Postgres sink — upsert + progress watermark in one transaction ([`docs/resilience/data_durability.md`](docs/resilience/data_durability.md))
 
 ## Image size and supported architectures

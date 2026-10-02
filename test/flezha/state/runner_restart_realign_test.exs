@@ -3,11 +3,11 @@ defmodule Flezha.State.RunnerRestartRealignTest do
   §16 — Per-Cell WAL realignment on runner restart.
 
   Reproduces the production durability defect: after a runner pod restarts
-  and rebuilds its state from Kafka, it reconnects under a NEW runner id and
+  and rebuilds its state from its input log, it reconnects under a NEW runner id and
   resumes emitting Changes from a fresh (lower) seq base. The controller's
   `WalWriter` — still alive across the restart, with `last_persisted_seq` at the
   pre-restart high-water mark — drops every incoming Change as a duplicate
-  (`seq <= last_persisted_seq`), so the WAL freezes forever while Kafka keeps
+  (`seq <= last_persisted_seq`), so the WAL freezes forever while its sink keeps
   producing: `dedup_drops_total` climbs, no `seq_gap` fires (the seq regressed,
   it did not jump), and the Watchdog's `output_stall` resync cannot help because
   it would push the controller's stale snapshot back onto the freshly-rebuilt
@@ -69,7 +69,7 @@ defmodule Flezha.State.RunnerRestartRealignTest do
     assert Snapshot.latest_snapshot(ctx.cell_id) != nil
 
     # The runner pod restarts: a NEW runner id reconnects and, after its
-    # Kafka rebuild, resumes from a fresh low seq base (1, 2, 3...).
+    # rebuild, resumes from a fresh low seq base (1, 2, 3...).
     new = start_channel("exec_new")
     feed(new, ctx, 0..2)
 

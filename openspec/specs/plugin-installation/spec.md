@@ -217,7 +217,7 @@ modules to load. A package SHALL never replace a module of the release.
 
 #### Scenario: Installed module shadows built-in rejected
 
-- **WHEN** a package's plugin application lists `Flezha.Plugin.Provider.Kafka`
+- **WHEN** a package's plugin application lists `Flezha.Plugin.Provider.HttpPush`
 - **THEN** the package SHALL be refused with `plugin.module_conflict` naming the module and
   the release as its holder, and the release's module SHALL be the one loaded
 

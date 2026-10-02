@@ -221,7 +221,6 @@ this page that is not here.
 | `:interop` | `nightly-e2e.yml` | no | two SDK runtimes in one run, and a namespace no other tier is using |
 | `:multi_node` | `nightly-e2e.yml` | no | a peer BEAM this tier boots and stops mid-suite |
 | `:testnet` | a person | no | `mix test.setup`, then a free port `Flezha.Testnet.ws_port/0` derives |
-| `:kafka_integration` | a person | no | a reachable Kafka broker |
 | `:postgres_integration` | a person | no | the `postgres` compose service |
 | `:s3_integration` | a person | no | the `minio` compose service and `S3_INTEGRATION=1` |
 | `:memory_drift` | a person | no | `MIX_RUN_MEMORY_DRIFT=1` and the time the harness takes |

@@ -85,8 +85,6 @@ defmodule Flezha.Config.Backoff do
     {:durability_ship, base: 500, cap: 30_000, reset: :on_success},
     {:postgres_flush, base: 250, cap: 5_000, reset: :on_success},
     {:file_flush, base: 250, cap: 5_000, reset: :on_success},
-    {:kafka_produce, base: 100, cap: 5_000, jitter: true, reset: :per_call},
-    {:kafka_force_replace, base: 2_000, cap: 2_000, reset: :per_call},
     {:forward_deliver, base: 250, cap: 5_000, reset: :on_success},
     {:ws_reconnect, base: 250, cap: 30_000, factor: 1.5, reset: :on_success},
     {:ws_sink_ack, base: 1_000, cap: 30_000, reset: :on_success, give_up: 6}

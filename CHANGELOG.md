@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Changed: the Kafka producer is a plugin package (breaking)
+
+The Kafka producer has left the controller for the plugin package `flezha_kafka`, built from
+`plugins/flezha_kafka_plugin`, and the release no longer carries `kafka_ex`. Install the
+package and enable `kafka_producer` where `operator_kafka_producer` was; a plugin enabled
+under the old id is not converted ([`docs/plugins/kafka_producer.md`](docs/plugins/kafka_producer.md)).
+Without a `partition`, a record now goes to the partition Kafka's Java client chooses for its
+key (`partitioner: murmur2`), an unkeyed effectively-once record to the partition its
+`flezha.dedup_key` hashes to, and any other unkeyed record to a sticky partition that moves
+after each batch; every operator bound to one plugin casts to one worker per topic, which keeps a
+queue, window and producer session per partition. `compression: gzip` compresses batches
+(`snappy`, `lz4` and `zstd` are refused), the record of a guaranteed or effectively-once output
+carries its identity as `flz.key`, `flz.cell`, `flz.seq` and `flz.epoch` headers beside
+`flezha.dedup_key` (a plain output's carries none), a
+`headers` option adds static ones, and `idempotent` now defaults to `true`. `stats/1` reports
+each partition under `partitions` and `stats/3` is gone. The core gains
+`Flezha.State.Outbox.dedup_key/1`, which the HTTP sender's `idempotency-key` now uses; the
+unused `FLEZHA_TESTNET_KAFKA_PORT` is removed. The dev broker also listens on
+`localhost:19092` for processes on the host.
+
 ### Added: a Postgres table read by polling, and a literal Postgres password that works
 
 The new provider `operator_postgres_poll` reads the new rows of one table, and with a

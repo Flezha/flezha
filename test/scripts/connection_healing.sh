@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runner <-> agent connection-healing smoke test.
 #
-# Boots the dev compose stack (agent + Kafka + Rust compute engine), captures
+# Boots the dev compose stack (agent + Rust compute engine), captures
 # the agent-minted runner_id for the rust runner, then exercises the
 # two restart paths the connection-healing change covers:
 #
@@ -16,9 +16,9 @@
 # this change, the agent would still see the runner connect, but data
 # streams would silently drop on the agent side.
 #
-# Kafka offset verification is intentionally NOT performed by this script:
-# wiring an output operator + Kafka producer plugin into the dev compose
-# default bootstrap is out of scope for the connection-healing change.
+# Output delivery is intentionally NOT verified by this script: wiring an
+# output operator and a sink plugin into the dev compose default bootstrap is
+# out of scope for the connection-healing change.
 #
 # Usage:
 #   test/scripts/connection_healing.sh        # full cycle, ~5 min on a primed

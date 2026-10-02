@@ -6,7 +6,7 @@ defmodule Flezha.Plugin.Provider.HttpSend do
   Two ways in. `call/2` answers once its payload is sent or given up, which is
   what a controller hook that waits wants. `push/4` returns once the payload is
   queued: the queue is bounded by payloads and bytes (`Flezha.Process.Backlog`)
-  and its `queue_overflow` policy is the Kafka producer's. Under
+  and its `queue_overflow` policy is one of the three every sink names. Under
   `:drop_nothing` the worker raises a full flag, an `:atomics` cell published as
   its registry value, so a dispatcher reads it with the lookup it needs anyway
   and waits, in a call, only while the queue is full.
@@ -39,7 +39,6 @@ defmodule Flezha.Plugin.Provider.HttpSend do
   alias Flezha.Http.Client
   alias Flezha.Plugin
   alias Flezha.Plugin.Provider.HttpSend.Connection
-  alias Flezha.Plugin.Provider.Kafka.ProducerWorker.Wire
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Process.Backlog
   alias Flezha.State.Outbox
@@ -379,9 +378,9 @@ defmodule Flezha.Plugin.Provider.HttpSend do
           value not in [nil, ""],
           do: {header, encode(to_string(value))}
 
-    case Wire.record_identity(entry.metadata) do
-      {_key, nil} -> stamps
-      {_key, durable} -> stamps ++ [{"idempotency-key", encode(durable)}]
+    case Outbox.dedup_key(entry.metadata) do
+      nil -> stamps
+      durable -> stamps ++ [{"idempotency-key", encode(durable)}]
     end
   end
 

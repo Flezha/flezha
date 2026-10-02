@@ -20,7 +20,7 @@ note() { printf '\033[1;34m[auto-restore-e2e]\033[0m %s\n' "$*"; }
 
 step_up() {
   note "starting controller + runner"
-  $DC up -d controller kafka
+  $DC up -d controller
   sleep 5
 }
 
@@ -33,7 +33,8 @@ step_register() {
   for operator in "${OPERATORS[@]}"; do
     note "registering $operator"
     $DC exec -T controller flz operator start "$operator" rust_factory --namespace prod
-    $DC exec -T controller flz plugin enable "${operator}_kafka" operator_kafka_producer "$operator" --namespace prod \
+    $DC exec -T controller flz plugin enable "${operator}_sink" operator_file_sink "$operator" --namespace prod \
+      --hook=on_output --Xpath="${operator}.ndjson" \
       || true
   done
 }

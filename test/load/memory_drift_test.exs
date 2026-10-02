@@ -1,10 +1,10 @@
 defmodule Flezha.Load.MemoryDriftTest do
   @moduledoc """
   Long-running load harness that measures Controller BEAM memory
-  growth under realistic WebSocket + Kafka traffic. Drives an operator
-  with a configurable WS source (synthetic testnet or a live exchange feed)
-  and, optionally, a Kafka producer plugin on `:on_input` so each
-  inbound frame is also published.
+  growth under realistic WebSocket traffic. Drives an operator with a
+  configurable WS source (synthetic testnet or a live exchange feed). A
+  workload that also publishes each frame through a sink of a plugin package
+  runs from that package.
 
   Outputs:
 
@@ -35,8 +35,6 @@ defmodule Flezha.Load.MemoryDriftTest do
       (default 30).
     * `FLEZHA_MEMORY_REPORT_INTERVAL_MS` — in-process sampling cadence
       (default 10_000).
-    * `MEMORY_DRIFT_WORKLOAD` — `ws` | `kafka` | `combined`
-      (default `combined`).
     * `MEMORY_DRIFT_WS_SOURCE` — `testnet` | `live`
       (default `testnet`).
     * `MEMORY_DRIFT_WS_INTERVAL_MS` — testnet echo interval in ms
@@ -45,10 +43,6 @@ defmodule Flezha.Load.MemoryDriftTest do
       feed's endpoint and subscribe message; both required with `live`.
     * `MEMORY_DRIFT_PAYLOAD` — override the testnet echo body (must
       be ≥ 64 B to exercise the refc-binary path).
-    * `MEMORY_DRIFT_KAFKA_HOST` / `MEMORY_DRIFT_KAFKA_PORT` — broker
-      address for the Kafka producer plugin (default `localhost:9092`).
-    * `MEMORY_DRIFT_KAFKA_TOPIC` — destination topic
-      (default `memory_drift_test`).
   """
 
   # async: false: the live controller and its fleet; registered singletons; node-global tables.
@@ -80,11 +74,7 @@ defmodule Flezha.Load.MemoryDriftTest do
   @namespace "default"
   @operator_id "memory_drift_load"
   @ws_plugin_id "memory_drift_ws"
-  @kafka_plugin_id "memory_drift_kafka"
   @operator_factory "do_nothing"
-
-  @kafka_host System.get_env("MEMORY_DRIFT_KAFKA_HOST", "localhost")
-  @kafka_port String.to_integer(System.get_env("MEMORY_DRIFT_KAFKA_PORT", "9092"))
 
   setup_all do
     File.mkdir_p!(@artifact_dir)
@@ -97,19 +87,16 @@ defmodule Flezha.Load.MemoryDriftTest do
     sample_interval_ms = int_env("FLEZHA_MEMORY_REPORT_INTERVAL_MS", 10_000)
     snapshot_interval_min = int_env("MEMORY_DRIFT_SNAPSHOT_MIN", 30)
     ws_interval_ms = int_env("MEMORY_DRIFT_WS_INTERVAL_MS", 3)
-    workload = String.downcase(System.get_env("MEMORY_DRIFT_WORKLOAD", "combined"))
     ws_source = String.downcase(System.get_env("MEMORY_DRIFT_WS_SOURCE", "testnet"))
 
     IO.puts(
       "[memory_drift] duration=#{duration_min}m sample=#{sample_interval_ms}ms " <>
         "snapshot=#{snapshot_interval_min}m ws_interval=#{ws_interval_ms}ms " <>
-        "workload=#{workload} ws_source=#{ws_source}"
+        "ws_source=#{ws_source}"
     )
 
     if ws_source == "testnet", do: wait_for_ws_endpoint!()
-    if workload in ["combined", "kafka"], do: assert_kafka_reachable!()
-
-    start_load_operator!(workload, ws_source)
+    start_load_operator!(ws_source)
     on_exit(&stop_load_operator/0)
 
     ensure_reporter_started(sample_interval_ms)
@@ -169,26 +156,6 @@ defmodule Flezha.Load.MemoryDriftTest do
     :ok
   end
 
-  defp assert_kafka_reachable! do
-    case :gen_tcp.connect(
-           String.to_charlist(@kafka_host),
-           @kafka_port,
-           [:binary, active: false],
-           1_000
-         ) do
-      {:ok, sock} ->
-        :gen_tcp.close(sock)
-        :ok
-
-      {:error, reason} ->
-        flunk(
-          "Kafka broker #{@kafka_host}:#{@kafka_port} not reachable " <>
-            "(#{inspect(reason)}). Either bring up a broker or set " <>
-            "MEMORY_DRIFT_WORKLOAD=ws to skip the Kafka path."
-        )
-    end
-  end
-
   defp ensure_reporter_started(sample_interval_ms) do
     # When `FLEZHA_MEMORY_REPORT_INTERVAL_MS` is set, `Flezha.Application`
     # already supervises the reporter at boot — reuse it. Otherwise start
@@ -209,18 +176,13 @@ defmodule Flezha.Load.MemoryDriftTest do
 
   ## ----- operator + plugin wiring ---------------------------------------------
 
-  defp start_load_operator!(workload, ws_source) do
+  defp start_load_operator!(ws_source) do
     operator = %Flezha.Operator.Builder{id: @operator_id, factory_id: @operator_factory}
     {:ok, _} = OperatorManager.start_operator(@namespace, operator)
 
-    if workload in ["ws", "combined"], do: enable_ws_plugin!(ws_source)
-    if workload in ["kafka", "combined"], do: enable_kafka_plugin!()
+    enable_ws_plugin!(ws_source)
 
-    IO.puts(
-      "[memory_drift] load operator '#{@operator_id}' up; " <>
-        "ws=#{workload in ["ws", "combined"]} (source=#{ws_source}) " <>
-        "kafka=#{workload in ["kafka", "combined"]}"
-    )
+    IO.puts("[memory_drift] load operator '#{@operator_id}' up; ws source=#{ws_source}")
   end
 
   defp enable_ws_plugin!(ws_source) do
@@ -242,35 +204,6 @@ defmodule Flezha.Load.MemoryDriftTest do
     IO.puts("[memory_drift] WS plugin '#{@ws_plugin_id}' → #{uri}")
   end
 
-  defp enable_kafka_plugin! do
-    topic = System.get_env("MEMORY_DRIFT_KAFKA_TOPIC", "memory_drift_test")
-
-    {:ok, "plugin enabled"} =
-      PluginManager.enable_plugin(@kafka_plugin_id, %Plugin{
-        id: @kafka_plugin_id,
-        namespace: @namespace,
-        operator_id: @operator_id,
-        provider: Flezha.Plugin.Provider.Kafka.Producer,
-        opts: %{
-          hosts: [{@kafka_host, @kafka_port}],
-          topic: topic,
-          cell: 0,
-          linger_ms: 10,
-          queue_max: 10_000,
-          # Dev brokers default to RF=1; the plugin default of 2 would
-          # fail topic auto-creation on a single-broker cluster.
-          auto_create_replication_factor: 1,
-          auto_create_cells: 1,
-          required_acks: -1,
-          idempotent: true,
-          delivery_timeout_ms: 30_000
-        },
-        hooks: [{:on_input, []}]
-      })
-
-    IO.puts("[memory_drift] Kafka producer plugin '#{@kafka_plugin_id}' → topic=#{topic}")
-  end
-
   defp ws_endpoint("live") do
     {System.fetch_env!("MEMORY_DRIFT_WS_URI"), System.fetch_env!("MEMORY_DRIFT_WS_SUBSCRIBE")}
   end
@@ -283,7 +216,7 @@ defmodule Flezha.Load.MemoryDriftTest do
   end
 
   defp stop_load_operator do
-    for plugin_id <- [@ws_plugin_id, @kafka_plugin_id] do
+    for plugin_id <- [@ws_plugin_id] do
       try do
         _ = PluginManager.disable_plugin(@namespace, plugin_id)
       catch

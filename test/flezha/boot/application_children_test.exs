@@ -38,7 +38,6 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
     Flezha.AuthZ.Supervisor,
     Flezha.Service.HubManager.Starter,
     {Flezha.Transport.Server, :uds},
-    Flezha.Plugin.Provider.Kafka.WorkerRegistry,
     Flezha.Service.Calls,
     Flezha.Observability.HookSink,
     # One worker family per provider that declares a worker, from the provider
@@ -50,7 +49,6 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
     Flezha.Plugin.Provider.OperatorForward.WorkerSup,
     Flezha.Plugin.Provider.HttpPoll.WorkerSup,
     Flezha.Plugin.Provider.HttpPush.WorkerSup,
-    Flezha.Plugin.Provider.Kafka.Producer.WorkerSup,
     Flezha.Plugin.Provider.Postgres.WorkerSup,
     Flezha.Plugin.Provider.PostgresPoll.WorkerSup,
     Flezha.Plugin.Provider.Websocket.WorkerSup,

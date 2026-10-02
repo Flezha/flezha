@@ -49,12 +49,10 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
   # reads a predicate.
   @phase_seam ["lib/flezha/plugin/extension/table.ex"]
 
-  # The two modules design §4 names as NOT this lifecycle: the shared broker
-  # client registry keys connections rather than plugins, and the supervisor
-  # takes its own name. Both read keyword opts that are not provider options.
+  # The module design §4 names as NOT this lifecycle: the supervisor takes its
+  # own name, from keyword opts that are not provider options.
   @not_the_lifecycle [
-    "lib/flezha/plugin/provider/worker_sup.ex",
-    "lib/flezha/plugin/provider/kafka/worker_registry.ex"
+    "lib/flezha/plugin/provider/worker_sup.ex"
   ]
 
   # What stands in a table for a binding that could not come up: no user
@@ -426,7 +424,6 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
 
   defp page_for(provider) do
     case provider do
-      Flezha.Plugin.Provider.Kafka.Producer -> "docs/plugins/kafka_producer.md"
       Flezha.Plugin.Provider.Postgres -> "docs/plugins/postgres_sink.md"
       Flezha.Plugin.Provider.HttpPoll -> "docs/plugins/http_poll.md"
       Flezha.Plugin.Provider.Websocket -> "docs/plugins/websocket_subscription.md"

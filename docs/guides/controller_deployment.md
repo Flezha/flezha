@@ -235,22 +235,8 @@ end
 
 ```elixir
 # config/config.exs
-config :kafka_ex, disable_default_worker: true, kafka_version: "kayrock"
 config :flezha, healthz_enabled: true
 ```
-
-The `:kafka_ex` line is **required, not optional**. Flezha depends on kafka_ex
-unconditionally, and kafka_ex starts a default worker when its application
-starts. With no brokers configured that worker raises and takes your whole boot
-with it:
-
-```
-** (Mix) Could not start application kafka_ex: KafkaEx.start(:normal, []) returned an error:
-   ** (Protocol.UndefinedError) protocol Enumerable not implemented for Atom
-```
-
-Flezha disables that worker in its own `config/config.exs`, which your
-application does not inherit.
 
 **`FLEZHA_*` environment variables do nothing here.** They are read by flezha's
 own `config/runtime.exs`, and a dependency's config files are never evaluated.

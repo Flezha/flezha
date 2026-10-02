@@ -21,7 +21,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
   alias Flezha.Plugin.Provider.BeamMsgForward
   alias Flezha.Plugin.Provider.Filter
   alias Flezha.Plugin.Provider.HttpPoll
-  alias Flezha.Plugin.Provider.Kafka
+  alias Flezha.Plugin.Provider.HttpPush
   alias Flezha.Plugin.Provider.OperatorForward
   alias Flezha.Plugin.Provider.Postgres
   alias Flezha.Plugin.Provider.StdOut
@@ -39,8 +39,8 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
 
   describe "build/1 refuses an unconvertible value instead of raising" do
     test "a bad integer option on a provider with required fields is a refusal" do
-      assert {:error, {:invalid_option_value, :linger_ms, "zz"}} =
-               Kafka.Producer.build(%{"hosts" => "h:1", "topic" => "t", "linger_ms" => "zz"})
+      assert {:error, {:invalid_option_value, :timeout_ms, "zz"}} =
+               HttpPush.build(%{"url" => "http://h/x", "timeout_ms" => "zz"})
     end
 
     test "the same holds for a boolean option" do
@@ -186,7 +186,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
             provider.__provider__().shareable,
             do: provider.__provider__().name
 
-      assert Enum.sort(shareable) == ["http_poll", "http_push", "kafka", "std_out", "websocket"]
+      assert Enum.sort(shareable) == ["http_poll", "http_push", "std_out", "websocket"]
     end
 
     test "the websocket's subscription items are its one live option" do
@@ -413,8 +413,8 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
 
   describe "the refusals build/1 already made are untouched" do
     test "a missing required field still names the field, through the one builder" do
-      assert {:error, {:options_required, "kafka", [:hosts, :topic]}} =
-               Kafka.Producer.build(%{"linger_ms" => "10"})
+      assert {:error, {:options_required, "http_push", [:url]}} =
+               HttpPush.build(%{"timeout_ms" => "10"})
     end
 
     test "an unknown option is still refused ahead of any conversion" do
@@ -423,8 +423,8 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     end
 
     test "a convertible map still builds" do
-      assert {:ok, %Kafka.Producer{linger_ms: 25}} =
-               Kafka.Producer.build(%{"hosts" => "h:1", "topic" => "t", "linger_ms" => "25"})
+      assert {:ok, %HttpPush{timeout_ms: 25}} =
+               HttpPush.build(%{"url" => "http://h/x", "timeout_ms" => "25"})
     end
   end
 
@@ -455,10 +455,10 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     end
 
     test "it cannot be inferred from the callback list" do
-      # The Kafka producer subscribes to `on_input` and feeds nothing: it
+      # The HTTP sink subscribes to `on_input` and feeds nothing: it
       # publishes what the operator ingested.
-      assert :on_input in Kafka.Producer.__provider__().extensions
-      refute Kafka.Producer.__provider__().feeds
+      assert :on_input in HttpPush.__provider__().extensions
+      refute HttpPush.__provider__().feeds
     end
 
     test "the jobs a plugin's channel can name are the declaration and the hooks" do
@@ -466,8 +466,8 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
 
       assert ProviderBehaviour.channel_jobs(Websocket.__provider__(), chain) == [:in, :out]
       assert ProviderBehaviour.channel_jobs(Websocket.__provider__(), %{}) == [:in]
-      assert ProviderBehaviour.channel_jobs(Kafka.Producer.__provider__(), chain) == [:out]
-      assert ProviderBehaviour.channel_jobs(Kafka.Producer.__provider__(), %{}) == []
+      assert ProviderBehaviour.channel_jobs(HttpPush.__provider__(), chain) == [:out]
+      assert ProviderBehaviour.channel_jobs(HttpPush.__provider__(), %{}) == []
     end
   end
 
@@ -476,7 +476,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
 
     defp poll_opts(extra), do: Map.merge(%{url: "https://example.invalid/c"}, extra)
 
-    defp kafka_opts(extra), do: Map.merge(%{hosts: [{"h", 1}], topic: "t"}, extra)
+    defp push_opts(extra), do: Map.merge(%{url: "http://h/x"}, extra)
 
     test "`channel` fills the half the plugin has, and only that half" do
       assert {:ok, %{entry_channel: "cfg", filter_channel: nil}} =
@@ -484,8 +484,8 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
 
       assert {:ok, %{entry_channel: nil, filter_channel: ["out"]}} =
                normalised(
-                 Kafka.Producer,
-                 kafka_opts(%{channel: "out", subscribed_extensions: [:on_input]})
+                 HttpPush,
+                 push_opts(%{channel: "out", subscribed_extensions: [:on_input]})
                )
     end
 
@@ -516,8 +516,8 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
       assert {:error, {:unknown_options, "http_poll", ["channel_out"]}} =
                normalised(HttpPoll, poll_opts(%{channel_out: "x"}))
 
-      assert {:error, {:unknown_options, "kafka", ["channel_in"]}} =
-               normalised(Kafka.Producer, kafka_opts(%{channel_in: "x"}))
+      assert {:error, {:unknown_options, "http_push", ["channel_in"]}} =
+               normalised(HttpPush, push_opts(%{channel_in: "x"}))
     end
 
     test "a spelling for a job the plugin was not wired for is refused" do
@@ -526,8 +526,8 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     end
 
     test "`channel` on a plugin doing neither job is refused" do
-      assert {:error, {:channel_unused, "kafka", :channel, :either}} =
-               normalised(Kafka.Producer, kafka_opts(%{channel: "x"}))
+      assert {:error, {:channel_unused, "http_push", :channel, :either}} =
+               normalised(HttpPush, push_opts(%{channel: "x"}))
     end
 
     test "an empty name is refused for every spelling" do
@@ -566,11 +566,11 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
   describe "a channel filter names a set" do
     defp names_row(value), do: ProviderOptions.convert_row(:channel_out, value, @names_rows)
 
-    defp kafka_out(channel),
+    defp push_out(channel),
       do:
         normalised(
-          Kafka.Producer,
-          kafka_opts(Map.put(channel, :subscribed_extensions, [:on_input]))
+          HttpPush,
+          push_opts(Map.put(channel, :subscribed_extensions, [:on_input]))
         )
 
     test "one name is a set of one, and several are the set they spell" do
@@ -619,10 +619,10 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     end
 
     test "a plugin that only acts on the chain filters several through `channel`" do
-      assert {:ok, %{filter_channel: ["alerts", "audit"]}} = kafka_out(%{channel: "alerts,audit"})
+      assert {:ok, %{filter_channel: ["alerts", "audit"]}} = push_out(%{channel: "alerts,audit"})
 
       assert {:ok, %{filter_channel: ["alerts", "audit"]}} =
-               kafka_out(%{channel_out: "alerts,audit"})
+               push_out(%{channel_out: "alerts,audit"})
     end
 
     test "the entry side takes one name, whichever spelling names it" do
@@ -647,8 +647,8 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     end
 
     test "resolving an already-resolved set answers the same thing" do
-      assert {:ok, once} = kafka_out(%{channel_out: "alerts,audit"})
-      assert {:ok, twice} = normalised(Kafka.Producer, once)
+      assert {:ok, once} = push_out(%{channel_out: "alerts,audit"})
+      assert {:ok, twice} = normalised(HttpPush, once)
 
       assert twice.filter_channel == ["alerts", "audit"]
       keys = [:channel, :channel_out, :filter_channel]
@@ -724,12 +724,13 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
   # which is what the retired `[:flezha, :ws, …]` root was.
   describe "the provider event vocabulary" do
     test "the prefix is derived from the provider id, and the verb is appended" do
-      assert ProviderBehaviour.event(:kafka, :shipped) == [:flezha, :plugin, :kafka, :shipped]
+      assert ProviderBehaviour.event(:http_push, :shipped) ==
+               [:flezha, :plugin, :http_push, :shipped]
 
       # A provider id is carried as a string by the declaration, and names the
       # same event either way.
-      assert ProviderBehaviour.event("kafka", :shipped) ==
-               ProviderBehaviour.event(:kafka, :shipped)
+      assert ProviderBehaviour.event("http_push", :shipped) ==
+               ProviderBehaviour.event(:http_push, :shipped)
     end
 
     test "the four shared verbs are declared once" do
@@ -738,8 +739,8 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     end
 
     test "a provider-specific fact keeps its own verb under the same prefix" do
-      assert ProviderBehaviour.event(:kafka, :topic_created) ==
-               [:flezha, :plugin, :kafka, :topic_created]
+      assert ProviderBehaviour.event(:postgres_poll, :caught_up) ==
+               [:flezha, :plugin, :postgres_poll, :caught_up]
     end
 
     test "no provider builds an event name of its own" do

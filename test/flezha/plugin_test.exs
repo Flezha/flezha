@@ -25,7 +25,7 @@ defmodule Flezha.PluginTest do
       # contract.
       plugin =
         Plugin.new(
-          id: "kafka_p1_trades",
+          id: "sink_p1_trades",
           provider: __MODULE__.NoopProvider,
           opts: %{topic: "p1.trades.v1", cell: 0},
           hooks: [{:on_output, []}],

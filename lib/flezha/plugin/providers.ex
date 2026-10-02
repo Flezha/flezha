@@ -23,7 +23,6 @@ defmodule Flezha.Plugin.Providers do
   @installed_key {__MODULE__, :installed}
 
   @first_party %{
-    "operator_kafka_producer" => Provider.Kafka.Producer,
     "operator_postgres" => Provider.Postgres,
     "operator_postgres_poll" => Provider.PostgresPoll,
     "operator_websocket" => Provider.Websocket,

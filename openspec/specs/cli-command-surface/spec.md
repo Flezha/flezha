@@ -84,7 +84,7 @@ key does not begin with `X` SHALL remain a positional argument.
 
 #### Scenario: The documented invocation carries its settings
 
-- **WHEN** `flz plugin enable operator_kafka_producer my_provider Xhosts=kafka:9092 Xtopic=my_topic` is run
+- **WHEN** `flz plugin enable kafka_producer my_provider Xhosts=kafka:9092 Xtopic=my_topic` is run
 - **THEN** the enable request SHALL carry the settings `hosts` and `topic` with the
   values the user typed, identically to the `--Xhosts=` / `--Xtopic=` spelling
 

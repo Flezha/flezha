@@ -116,16 +116,16 @@ defmodule Flezha.Plugin.Installer.LoaderTest do
   end
 
   test "a module the release holds is refused and stays the release's", ctx do
-    kafka = Flezha.Plugin.Provider.Kafka
-    before = :code.which(kafka)
+    held = Flezha.Plugin.Provider.HttpPush
+    before = :code.which(held)
 
     archive =
-      edited(ctx, "kafka.fpz", [{:beam, :stamp_lib, kafka, PluginPackage.beam(kafka)}])
+      edited(ctx, "http_push.fpz", [{:beam, :stamp_lib, held, PluginPackage.beam(held)}])
 
     assert [%{error: error}] = PluginPackage.load!(ctx.root, [archive])
     assert error.code == "plugin.module_conflict"
     assert error.details["holder"] == "the release"
-    assert :code.which(kafka) == before
+    assert :code.which(held) == before
   end
 
   test "a provider id that is already a row is refused, and the row stays first-party", ctx do

@@ -482,7 +482,7 @@ defmodule FlezhaTest.Operator.OverwatchPluginSubscribeTest do
   it's never invoked, the operator produces no data.
 
   Bug observed in prod: WS plugins logged `init_provider prepared` and then
-  silence — Kafka topics stayed empty because no `activate/1` ever fired.
+  silence — the sinks stayed empty because no `activate/1` ever fired.
   """
 
   alias Flezha.Operator.Overwatch

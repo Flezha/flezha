@@ -17,12 +17,10 @@ defmodule FlezhaTest.Plugin.SharedTest do
   alias Flezha.Plugin.Host
   alias Flezha.Plugin.Provider.BeamMsgForward
   alias Flezha.Plugin.Provider.HttpPoll
-  alias Flezha.Plugin.Provider.Kafka
   alias Flezha.Plugin.Provider.Websocket
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.Shared
   alias Flezha.Plugin.Extension.Table
-  alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperatorManager
@@ -317,25 +315,6 @@ defmodule FlezhaTest.Plugin.SharedTest do
 
     assert Table.running?(table(a), "poll") and Table.running?(table(b), "poll")
     assert [_one] = Directory.plugin_hosts(@namespace, "poll")
-  end
-
-  test "a Kafka producer's copy and the operators bound to it name one worker" do
-    worker_key = fn operator_id ->
-      opts = %{
-        hosts: "localhost:9092",
-        topic: "alerts",
-        source_plugin_id: "alerts",
-        source_operator_id: operator_id,
-        subscribed_extensions: [:on_output]
-      }
-
-      {:ok, normalised} = ProviderOptions.normalise_opts(Kafka.Producer, opts)
-      {:ok, prepared} = Kafka.Producer.init_provider(normalised)
-      [{key, _spec}] = Kafka.Producer.worker_specs(prepared)
-      key
-    end
-
-    assert worker_key.(nil) == worker_key.("op_a")
   end
 
   test "an operator bound with an output hook finds the outbound half on the shared connection",

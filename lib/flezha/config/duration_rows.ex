@@ -156,8 +156,6 @@ defmodule Flezha.Config.DurationRows do
     {:health_probe_budget_ms, :ms, nil, derived: {:factor, :provider_probe_timeout_ms, 3}},
     {:http_listener_idle_ms, :ms, 5_000, []},
     {:http_poll_min_interval_ms, :ms, 1_000, []},
-    {:kafka_linger_ms, :ms, 5_000, []},
-    {:kafka_worker_call_ms, :ms, 5_000, []},
     {:plugin_call_timeout_ms, :ms, 2_000, []},
     # Strictly inside `route_call_timeout_ms`, which bounds a plugin verb run
     # on another controller, and strictly outside `plugin_call_timeout_ms`: an

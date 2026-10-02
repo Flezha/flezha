@@ -148,30 +148,6 @@ The system SHALL place all subscriber-owned runtime state — monitor refs for s
 - **WHEN** the loop plans across ticks
 - **THEN** the crashing plugin's `{restart_plugin, {id, plugin_id}}` key walks the table while the sibling's key is untouched, and the sibling's start is never delayed by the crash
 
-### Requirement: Built-in Kafka producer extension conforms to the kafka-producer-plugin contract
-
-The first-party `Flezha.Plugin.Provider.Kafka.Producer` SHALL implement the full `kafka-producer-plugin` capability. Specifically: retries with bounded backoff, idempotent producer semantics, batching with `:linger_ms`, bounded queue with `:queue_overflow`, single shared worker per cluster, active metadata refresh on errors, auto-create topic on first publish, and `:telemetry` events for every state transition.
-
-A Produce attempt that ultimately fails after exhausting `:delivery_timeout_ms` SHALL return `{:error, {:delivery_failed, last_reason}}` to the chain. A passthrough of any raw `:no_broker | :not_leader_for_partition | :unknown_topic_or_partition | :network_exception | :request_timed_out | :not_enough_replicas` to the chain SHALL be considered a regression and rejected at code review.
-
-#### Scenario: No raw transient errors surface to the chain
-- **GIVEN** the production-grade Kafka producer extension is loaded
-- **WHEN** any test or integration scenario induces a 60-second window of `:not_leader_for_partition` responses
-- **THEN** the chain caller (`Flezha.Plugin.Extension.run/3`) SHALL never observe `{:error, :not_leader_for_partition}` for any message that ultimately succeeds
-- **AND** SHALL never observe `{:error, :no_broker}` either
-- **AND** for messages that genuinely fail, the chain SHALL receive `{:error, {:delivery_failed, _}}` only after the configured timeout
-
-#### Scenario: Default behaviour is "just works" for the common case
-- **GIVEN** a downstream consumer enables an `operator_kafka_producer` with no parameter overrides beyond `:hosts` and `:topic`
-- **WHEN** the consumer publishes a stream of messages through `:on_output` to a non-existent topic
-- **THEN** the topic SHALL be auto-created on first publish (default `:auto_create_topic = true`)
-- **AND** messages SHALL be batched with default `:linger_ms = 10` ms
-- **AND** retries SHALL handle transient broker unavailability with default `:retries = 5`
-- **AND** durability defaults SHALL be `acks=-1` with idempotence enabled
-- **AND** no custom configuration is required for the producer to operate correctly under normal cluster conditions including rolling broker restarts and KRaft leader elections
-</content>
-</invoke>
-
 ### Requirement: Two-phase plugin lifecycle gated on SDK readiness
 
 The system SHALL support a two-phase plugin lifecycle for operator-host plugins: `prepared` (the GenServer/struct is registered, config is validated, no upstream resources are acquired) and `running` (upstream connections opened, subscribe handshakes issued, input emission permitted). The transition from `prepared` to `running` SHALL be driven by `Flezha.Plugin.Extension.Table.bulk_activate/1`, invoked by the operator host ONLY after `start_operator_sdk/2` returns `{:ok, _}` (i.e. the SDK-side operator is bound and ready to accept input).
@@ -1235,8 +1211,8 @@ row SHALL take `live:` (default `false`); both SHALL be part of the provider's `
 the extension table and the plugin manager from the declaration only. A provider with a live
 option SHALL implement `reconfigure/2`; a declaration with a live option and no
 `reconfigure/2` SHALL fail to compile. The first-party providers `websocket`, `http_poll`,
-`http_push`, `stdout` and `kafka_producer` SHALL declare `shareable: true`; every other
-first-party provider SHALL declare `false`.
+`http_push` and `stdout` SHALL declare `shareable: true`; every other first-party provider
+SHALL declare `false`. The Kafka package's `kafka_producer` SHALL declare `true`.
 
 #### Scenario: The declaration answers sharing
 
@@ -1383,4 +1359,28 @@ plugin is brought up on the member, at bind.
 
 - **WHEN** the same source is enabled on an operator outside any partition group
 - **THEN** `refuse_partitioned/2` SHALL answer `:ok`
+
+### Requirement: The Kafka producer package conforms to the kafka-producer-plugin contract
+
+The Kafka plugin package's `FlezhaKafka.Producer` (provider id `kafka_producer`) SHALL implement the full `kafka-producer-plugin` capability. Specifically: retries with bounded backoff, idempotent producer semantics, batching with `:linger_ms`, bounded queue with `:queue_overflow`, shared broker clients per cluster, active metadata refresh on errors, auto-create topic on first publish, and `:telemetry` events for every state transition.
+
+A Produce attempt that ultimately fails after exhausting `:delivery_timeout_ms` SHALL return `{:error, {:delivery_failed, last_reason}}` to the chain. A passthrough of any raw `:no_broker | :not_leader_for_partition | :unknown_topic_or_partition | :network_exception | :request_timed_out | :not_enough_replicas` to the chain SHALL be considered a regression and rejected at code review.
+
+#### Scenario: No raw transient errors surface to the chain
+- **GIVEN** the production-grade Kafka producer extension is loaded
+- **WHEN** any test or integration scenario induces a 60-second window of `:not_leader_for_partition` responses
+- **THEN** the chain caller (`Flezha.Plugin.Extension.run/3`) SHALL never observe `{:error, :not_leader_for_partition}` for any message that ultimately succeeds
+- **AND** SHALL never observe `{:error, :no_broker}` either
+- **AND** for messages that genuinely fail, the chain SHALL receive `{:error, {:delivery_failed, _}}` only after the configured timeout
+
+#### Scenario: Default behaviour is "just works" for the common case
+- **GIVEN** a downstream consumer enables a `kafka_producer` with no parameter overrides beyond `:hosts` and `:topic`
+- **WHEN** the consumer publishes a stream of messages through `:on_output` to a non-existent topic
+- **THEN** the topic SHALL be auto-created on first publish (default `:auto_create_topic = true`)
+- **AND** messages SHALL be batched with default `:linger_ms = 10` ms
+- **AND** retries SHALL handle transient broker unavailability with default `:retries = 5`
+- **AND** durability defaults SHALL be `acks=-1` with idempotence enabled
+- **AND** no custom configuration is required for the producer to operate correctly under normal cluster conditions including rolling broker restarts and KRaft leader elections
+</content>
+</invoke>
 

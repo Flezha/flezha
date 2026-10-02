@@ -5,7 +5,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
 
   The table is `Flezha.Plugin.Providers.all()`, so a provider added to the
   system is driven here by name or fails the drill. Each row names its upstream:
-  a scripted broker client for Kafka, a TCP origin for the poller, a websocket
+  a TCP origin for the poller, a websocket
   fixture for the socket, a second operator for the forward, the test process
   for the two message forwards, nothing for the transforms. A test asserts every
   row HAS a fixture, so a new provider cannot escape the drill by being absent
@@ -73,8 +73,6 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
       Provider.File.Sink => {:file, %{path: "drill_sink.ndjson"}},
       Provider.Websocket => {:websocket, %{uri: ctx.ws_uri, idle_timeout_ms: 0}},
       Provider.OperatorForward => {:second_operator, %{target_operator_id: ctx.target_id}},
-      Provider.Kafka.Producer =>
-        {:scripted_broker, %{hosts: [{"127.0.0.1", 9092}], topic: "drill", idempotent: false}},
       Provider.Postgres =>
         {:database, %{database: "flezha_test", username: "postgres", auto_create: true}},
       # The example plugin package, loaded in setup: a package's row is driven
@@ -89,10 +87,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   @deferred %{
     Provider.Postgres =>
       "needs the database `effectively_once_postgres_e2e_test` uses, which this tier does not " <>
-        "boot; the sink's own lifecycle is proved against a fake worker by the conformance drill",
-    Provider.Kafka.Producer =>
-      "needs a broker; `kafka/integration_test` drives the real one and the conformance drill " <>
-        "proves the lifecycle against `WorkerRegistry`'s starter seam"
+        "boot; the sink's own lifecycle is proved against a fake worker by the conformance drill"
   }
 
   setup_all do

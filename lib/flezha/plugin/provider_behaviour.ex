@@ -392,8 +392,8 @@ defmodule Flezha.Plugin.ProviderBehaviour do
 
   The two are independent and neither implies the other. A hook on
   `on_input` means "act on a payload entering the operator", never "inject
-  one": the Kafka producer hooked on `on_input` publishes what the operator
-  ingested and feeds nothing. So feeding is a provider DECLARATION and acting on
+  one": an HTTP sink hooked on `on_input` sends what the operator ingested and
+  feeds nothing. So feeding is a provider DECLARATION and acting on
   the chain is read from the host-injected `:subscribed_extensions`, which is
   what `io_bound?/1` answers — the `:out` half, and the one read of that list.
   """
@@ -759,8 +759,8 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   that subscribes to the family, and the divergence is invisible until someone
   greps for it.
 
-      emit("kafka", :shipped, %{count: 1}, labels)
-      #=> [:flezha, :plugin, :kafka, :shipped]
+      emit("http_push", :shipped, %{count: 1}, labels)
+      #=> [:flezha, :plugin, :http_push, :shipped]
 
   `shipped | retried | failed | overflowed` are the four facts every provider
   reports, declared once here so one dashboard reads them all. A fact that

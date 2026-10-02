@@ -597,7 +597,6 @@ defmodule Flezha.Config.Keys do
     {:control_socket, :path, nil, runtimes: [:harness], env: "FLEZHA_CONTROL_SOCKET"},
     {:testnet_config, :path, nil, runtimes: [:harness], env: "FLEZHA_TESTNET_CONFIG"},
     {:testnet_enabled_env, :bool, nil, env: "FLEZHA_TESTNET_ENABLED", runtimes: [:harness]},
-    {:testnet_kafka_port, :int, nil, runtimes: [:harness], env: "FLEZHA_TESTNET_KAFKA_PORT"},
     {:harness_paths, :string, nil, runtimes: [:harness], env: "FLEZHA_HARNESS_PATHS"},
     {:harness_wait_socket, :string, nil, runtimes: [:harness], env: "FLEZHA_HARNESS_WAIT_SOCKET"},
     {:e2e_runtime, :string, "rust", runtimes: [:harness], env: "FLEZHA_E2E_RUNTIME"},

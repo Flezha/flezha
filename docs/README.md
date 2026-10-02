@@ -89,7 +89,7 @@ answer "what are the options"; a guide answers "what do I type".
 | Doc | Covers |
 | --- | --- |
 | [`installation.md`](plugins/installation.md) | Plugin packages: building, installing, loading at boot, statuses, errors, signing |
-| [`kafka_producer.md`](plugins/kafka_producer.md) | The Kafka producer sink: idempotence, batching, the in-flight window |
+| [`kafka_producer.md`](plugins/kafka_producer.md) | The Kafka producer sink, a plugin package: partitioning, idempotence, batching, the in-flight window |
 | [`http_poll.md`](plugins/http_poll.md) | An HTTP resource as an operator input |
 | [`http_push.md`](plugins/http_push.md) | Each output sent as one HTTP request, a guaranteed one held until a 2xx |
 | [`postgres_poll.md`](plugins/postgres_poll.md) | The new, and optionally the changed, rows of a Postgres table as an operator input |

@@ -267,7 +267,7 @@ defmodule Mix.Tasks.Bench.Fleet do
   """
   def preload_code do
     modules =
-      for app <- [:flezha, :process_hub, :kafka_ex, :kayrock],
+      for app <- [:flezha, :process_hub],
           module <- Application.spec(app, :modules) || [],
           do: module
 

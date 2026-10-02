@@ -380,7 +380,7 @@ defmodule Flezha.Convergence.DiffTest do
           {:ns, "r"} => %{
             bound_runner: "e",
             pid: self(),
-            running_plugins: ["ws_in", "kafka_out"]
+            running_plugins: ["ws_in", "http_out"]
           }
         },
         stalled_operators: MapSet.new()

@@ -221,8 +221,8 @@ defmodule Flezha.Schedule.JobTest do
       end)
 
       spec =
-        ~s([{"name":"reports","provider":"operator_kafka_producer",) <>
-          ~s("hooks":["on_output"],"opts":{"topic":"ai.reports.v1"}}])
+        ~s([{"name":"reports","provider":"operator_http_push",) <>
+          ~s("hooks":["on_output"],"opts":{"url":"http://127.0.0.1:9/reports"}}])
 
       pid = start_supervised!({Job, Helper.quiet_entry(%{plugins: spec})})
       send(pid, {:fire, ~U[2026-07-27 08:01:00Z]})
@@ -231,11 +231,11 @@ defmodule Flezha.Schedule.JobTest do
       assert plugin.id == "reports"
       assert plugin.operator_id == "job@2026-07-27T08:01:00Z"
       assert plugin.namespace == "default"
-      assert plugin.provider == Flezha.Plugin.Provider.Kafka.Producer
+      assert plugin.provider == Flezha.Plugin.Provider.HttpPush
       # The decoded form is the boundary shape; `Extension.Table.canonicalise/2`
       # resolves the name against the host catalog at bind time.
       assert plugin.hooks == [{"on_output", []}]
-      assert plugin.opts == %{topic: "ai.reports.v1"}
+      assert plugin.opts == %{url: "http://127.0.0.1:9/reports"}
 
       assert_receive {:spawned, builder}, 2_000
       assert [%{id: "reports"}] = builder.opts[:bindings]

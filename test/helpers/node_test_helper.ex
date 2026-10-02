@@ -81,7 +81,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     :erpc.call(node_name, :application, :set_env, [:flezha, :env, :test])
 
     # The peer runs on the host's configuration for each of these.
-    for app <- [:flezha, :kafka_ex, :logger], do: copy_env(node_name, app)
+    for app <- [:flezha, :logger], do: copy_env(node_name, app)
 
     # Disable the testnet for the peer node.
     :erpc.call(node_name, Application, :put_env, [:flezha, :testnet_enabled, false])

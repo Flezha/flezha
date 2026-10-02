@@ -122,18 +122,6 @@ defmodule FlezhaTest.Tiers do
       self_skip: false
     },
     %{
-      tag: :kafka_integration,
-      runs_in: :manual,
-      workflow: nil,
-      reason: "a Kafka broker, which no CI job stands up",
-      within: nil,
-      excluded: true,
-      needs: "a reachable Kafka broker",
-      transports: [:uds],
-      doc: "The test tiers",
-      self_skip: false
-    },
-    %{
       tag: :postgres_integration,
       runs_in: :manual,
       workflow: nil,

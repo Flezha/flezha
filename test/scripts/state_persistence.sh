@@ -66,8 +66,8 @@
 #                          the operator before assertions (default 8)
 #
 # Keeping it honest:
-#   This script is NOT wired into CI — it needs a Docker daemon, a Kafka
-#   broker and a full in-container toolchain build, none of which the
+#   This script is NOT wired into CI — it needs a Docker daemon and a
+#   full in-container toolchain build, none of which the
 #   `elixir`/`naming`/`docker` workflows carry. Run it by hand when you
 #   touch `lib/flezha/state/`, the plugin-attach CLI, or this script.
 
@@ -87,7 +87,7 @@ INPUT_WAIT_S="${INPUT_WAIT_S:-8}"
 FACTORY_ID="${FACTORY_ID:-store_input}"
 OPERATOR_ID="${FLEZHA_PERSISTENCE_OPERATOR:-sp_test_operator}"
 PLUGIN_WS_ID="sp_test_ws"
-PLUGIN_KAFKA_ID="sp_test_kafka"
+PLUGIN_SINK_ID="sp_test_sink"
 
 PROJECT="${PROJECT:-flezha_state_persistence}"
 
@@ -125,8 +125,7 @@ dump_rust_logs() {
 }
 
 # `docker/dev/docker-compose.yml` pins hardcoded container_name values
-# (flezha_controller_dev, flezha_zookeeper, flezha_kafka, flezha_kafka_ui,
-# flezha_rust_runner). Those names are global on the Docker daemon —
+# (the controller, the broker stack and the rust runner). Those names are global on the Docker daemon —
 # `docker compose down` only removes containers labelled with this
 # script's project name, so a leftover from a previous interrupted run
 # (or from a parallel project name) collides on `up` with
@@ -315,9 +314,8 @@ wait_for_any_ce_id() {
 
 # Poll a `flz` read command until its output contains `needle`. Every runtime
 # assertion below is this shape: what the CLI reports is updated
-# asynchronously w.r.t. the RPC that requested the change (the kafka producer
-# only appears once its first broker handshake against kafka:9092 lands), so a
-# single read is a race, and a failure has to show what the command actually
+# asynchronously w.r.t. the RPC that requested the change, so a single read is
+# a race, and a failure has to show what the command actually
 # said.
 #
 # The output is CAPTURED and the SAME text is both matched and dumped. The
@@ -365,7 +363,7 @@ clean_stale_sockets
 clean_persisted_state
 docker network inspect flezha_network >/dev/null 2>&1 \
   || docker network create flezha_network >/dev/null
-"${COMPOSE[@]}" up -d controller kafka rust
+"${COMPOSE[@]}" up -d controller rust
 
 start_beam
 
@@ -420,12 +418,11 @@ flz plugin enable "${PLUGIN_WS_ID}" operator_websocket \
   --Xuri="ws://localhost:4500" \
   --Xpost_connect='{"payload":{"type":"text","message":"{\"event_type\":\"subscribe\",\"event_data\":{\"default_message\":\"hello world\",\"interval\":500}}"}}'
 
-note "enabling kafka producer plugin ${PLUGIN_KAFKA_ID}"
-flz plugin enable "${PLUGIN_KAFKA_ID}" operator_kafka_producer \
+note "enabling file sink plugin ${PLUGIN_SINK_ID}"
+flz plugin enable "${PLUGIN_SINK_ID}" operator_file_sink \
   --operator_id="${OPERATOR_ID}" \
   --hook=on_output \
-  --Xhosts=kafka:9092 \
-  --Xtopic="${OPERATOR_ID}.test.v1"
+  --Xpath="${OPERATOR_ID}.test.ndjson"
 
 # Let the WS plugin drive inputs into the operator so apply_change runs
 # and the WAL/outbox actually grow before we make the assertions.
@@ -461,7 +458,7 @@ printf '  %s\n' "${WAL_FILES[@]}"
 
 note "PASS: per-Cell state persistence is engaged"
 note "  operator='${OPERATOR_ID}' (factory='${FACTORY_ID}') in namespace '${DEMO_NAMESPACE}'"
-note "  plugins enabled=${PLUGIN_WS_ID},${PLUGIN_KAFKA_ID} (presence asserted for ${PLUGIN_WS_ID})"
+note "  plugins enabled=${PLUGIN_WS_ID},${PLUGIN_SINK_ID} (presence asserted for ${PLUGIN_WS_ID})"
 note ""
 note "Scope notes:"
 note "  * This script verifies the data-plane WAL is being written under the"

@@ -144,7 +144,7 @@ When either condition is exceeded and a slot of the in-flight window is free, th
 
 ### Requirement: Bounded outbound queue with configurable overflow strategy
 
-Each `(worker, topic, partition)` triple SHALL maintain its own bounded outbound queue. When the queue has reached `:queue_max` (default 10 000) items, the producer SHALL apply the configured `:queue_overflow` strategy:
+Each partition lane of a producer worker SHALL maintain its own bounded outbound queue. When the queue has reached `:queue_max` (default 10 000) items, the producer SHALL apply the configured `:queue_overflow` strategy:
 
 - `:drop_nothing` (default): synchronously block the chain caller until queue space is available, with a hard timeout of `:queue_block_timeout_ms` (default 5000); if the timeout fires, return `{:error, {:queue_full, :timeout}}`.
 - `:drop_oldest`: pop the head of the queue, push the new message at the tail. Increment the per-`(topic, partition)` `dropped_total` counter.
@@ -155,7 +155,7 @@ The default SHALL be `:drop_nothing` for every record, whether or not it serves 
 The `dropped_total` counter SHALL be exposed via:
 
 - `:telemetry` event `[:flezha, :plugin, :kafka, :overflowed]` per drop event.
-- A function `Flezha.Plugin.Provider.Kafka.Producer.stats(plugin_id) :: %{dropped_total: integer, queue_depth: integer, ...}` for synchronous read.
+- A function `FlezhaKafka.Producer.stats(plugin_id) :: %{dropped_total: integer, queue_depth: integer, ...}` for synchronous read.
 
 Telemetry alone SHALL NOT satisfy this requirement: `stats/1` is the synchronous surface a runner polls, and a drop that is invisible there is indistinguishable from no drop at all.
 
@@ -167,7 +167,7 @@ Telemetry alone SHALL NOT satisfy this requirement: `stats/1` is the synchronous
 
 #### Scenario: `stats/1` reports drops
 - **GIVEN** a producer with `:queue_overflow = :drop_oldest` that has discarded 100 messages
-- **WHEN** a runner calls `Flezha.Plugin.Provider.Kafka.Producer.stats(plugin_id)`
+- **WHEN** a runner calls `FlezhaKafka.Producer.stats(plugin_id)`
 - **THEN** the returned map SHALL include a `:dropped_total` key equal to 100
 - **AND** the map SHALL also include `:queue_depth`
 
@@ -194,22 +194,22 @@ Telemetry alone SHALL NOT satisfy this requirement: `stats/1` is the synchronous
 
 ### Requirement: Producer holds at most one shared `KafkaEx.New.Client` worker pid per canonical connection identity
 
-The producer plugin SHALL acquire its `KafkaEx.New.Client` worker pid through `Flezha.Plugin.Provider.Kafka.WorkerRegistry` (the shared, refcounted registry). The registry SHALL key entries on the canonical tuple `{sorted_hosts, phash2(ssl_options), auth fingerprint, lane}`, where `lane` is the provider's `partition mod schedulers_online`: a client encodes each request in its own process, so one client per cluster would serialise every partition's encoding behind one core. Sharing is therefore per scheduler per cluster — two plugin instances with the same broker target whose partitions fall in the same lane reuse the same worker, and a cluster's connection count is bounded by the node's cores, never by its plugin or partition count. The registry SHALL monitor the worker process; on DOWN it SHALL clear the entry AND proactively deliver a typed `{:kafka_worker_dead, {key, token}, reason}` message to every caller pid that still holds a live token against the dead entry. The next `acquire/2` for the same identity SHALL start a fresh worker. The registry SHALL expose a `swap(ref, server \\ __MODULE__) :: {:ok, pid(), ref()} | {:error, term()}` API that performs an in-place re-acquire for an existing caller without double-counting refcount or triggering the linger-stop machinery, intended for callers handling the death-notification message.
+The producer plugin SHALL acquire its `KafkaEx.New.Client` worker pid through `FlezhaKafka.WorkerRegistry` (the shared, refcounted registry). The registry SHALL key entries on the canonical tuple `{sorted_hosts, phash2(ssl_options), auth fingerprint, lane}`, where `lane` is the hash of the producer worker's key (namespace, plugin, topic) `mod schedulers_online`: a client encodes each request in its own process, so one client per cluster would serialise every producer's encoding behind one core. Sharing is therefore per scheduler per cluster — two producer workers with the same broker target whose keys fall in the same lane reuse the same worker, and a cluster's connection count is bounded by the node's cores, never by its plugin, topic or partition count. The registry SHALL monitor the worker process; on DOWN it SHALL clear the entry AND proactively deliver a typed `{:kafka_worker_dead, {key, token}, reason}` message to every caller pid that still holds a live token against the dead entry. The next `acquire/2` for the same identity SHALL start a fresh worker. The registry SHALL expose a `swap(ref, server \\ __MODULE__) :: {:ok, pid(), ref()} | {:error, term()}` API that performs an in-place re-acquire for an existing caller without double-counting refcount or triggering the linger-stop machinery, intended for callers handling the death-notification message.
 
 Linger: a worker with refs = 0 SHALL be stopped after a configurable `:linger_ms` (default 5000 ms) to absorb plugin-restart churn. The linger timer SHALL be cancelled on the next `acquire/2`.
 
 The `release/2` token returned by `acquire/2` SHALL be opaque to callers — they pass it back unchanged. A token issued against a now-dead entry SHALL no-op on `release/2`.
 
 #### Scenario: Two plugins same identity share a worker
-- **GIVEN** plugin A and plugin B configured with the same `:hosts`, `:ssl_options`, `:auth`, producing to partitions in the same lane
+- **GIVEN** plugin A and plugin B configured with the same `:hosts`, `:ssl_options`, `:auth`, whose worker keys fall in the same lane
 - **WHEN** both call `WorkerRegistry.acquire/2` at boot
 - **THEN** both SHALL receive the same `worker_pid`
 - **AND** the registry entry SHALL show `refs: 2`
 
-#### Scenario: A cluster's partitions spread over one client per scheduler
-- **GIVEN** a node with 8 schedulers and one plugin producing to 16 partitions of one cluster
-- **WHEN** its per-partition workers acquire their clients
-- **THEN** partitions `p` and `p + 8` share a client and the cluster has at most 8 clients, however many plugins or partitions target it
+#### Scenario: A cluster's producers spread over one client per scheduler
+- **GIVEN** a node with 8 schedulers and 16 producer workers on one cluster
+- **WHEN** the workers acquire their clients
+- **THEN** the cluster has at most 8 clients, however many plugins, topics or partitions target it
 
 #### Scenario: Worker death notifies every active token holder
 - **GIVEN** plugins A, B, and C have each acquired tokens against the same canonical identity
@@ -237,15 +237,15 @@ The `release/2` token returned by `acquire/2` SHALL be opaque to callers — the
 
 When the `KafkaEx.New.Client` worker pid referenced by `state.worker_pid` terminates for any reason (including upstream `Kayrock` parse errors, broker connection loss returning `:einval`, OS-suspend/wake leaving the socket half-dead, or an explicit `KafkaEx.stop_worker/1`), the producer SHALL continue to drain `state.queue`, the in-flight window, and `state.blocked` against a freshly-acquired worker for the same canonical connection identity, **without losing any record that was already admitted to those structures** and **without emitting any `[:flezha, :plugin, :kafka, :failed]` telemetry for records the new worker has not yet positively rejected**.
 
-The producer SHALL learn of the worker's death through a typed `{:kafka_worker_dead, ref, reason}` message delivered by `Flezha.Plugin.Provider.Kafka.WorkerRegistry` to every caller pid that holds a live token against the dying entry (see the `Modified` requirement on the registry below). The producer SHALL NOT rely on the linked-process `:EXIT` signal to drive recovery, although it SHALL match a defensive `handle_info({:EXIT, _pid, _reason}, state)` clause that logs at `:debug` and returns `{:noreply, state}` so any future linked-process addition cannot regress the producer with `FunctionClauseError`.
+The producer SHALL learn of the worker's death through a typed `{:kafka_worker_dead, ref, reason}` message delivered by `FlezhaKafka.WorkerRegistry` to every caller pid that holds a live token against the dying entry (see the `Modified` requirement on the registry below). The producer SHALL NOT rely on the linked-process `:EXIT` signal to drive recovery, although it SHALL match a defensive `handle_info({:EXIT, _pid, _reason}, state)` clause that logs at `:debug` and returns `{:noreply, state}` so any future linked-process addition cannot regress the producer with `FunctionClauseError`.
 
 On receiving `{:kafka_worker_dead, registry_ref, reason}` whose `registry_ref` matches `state.registry_ref`, the producer SHALL:
 
-1. Cancel `state.linger_timer` and `state.retry_timer` if either is set (`Process.cancel_timer/1`), so no stale `:flush_batch` or `:retry_batch` fires between the swap and the next `maybe_kick_batch/1`.
-2. Move every in-flight batch back to the head of `state.queue`, oldest first and in order, each with its `attempt` field incremented by 1 and `last_error` set to `{:worker_died, reason}`. The records of an in-flight batch SHALL NOT be replied to or marked failed.
+1. In every partition lane, cancel the lane's `linger_timer` and `retry_timer` if either is set (`Process.cancel_timer/1`), so no stale `:flush_batch` or `:retry_batch` fires between the swap and the next `maybe_kick_batch/1`.
+2. In every partition lane, move every in-flight batch back to the head of the lane's `queue`, oldest first and in order, each with its `attempt` field incremented by 1 and `last_error` set to `{:worker_died, reason}`. The records of an in-flight batch SHALL NOT be replied to or marked failed.
 3. Call `WorkerRegistry.swap(state.registry_ref)` to obtain a fresh `{:ok, new_pid, new_ref}` for the same identity. On `{:error, reason}` (the broker is genuinely unreachable), schedule a retry of the swap using the existing `retry_backoff_ms(state, attempt)` curve and leave the queue untouched.
-4. On successful swap, set `state.worker_pid = new_pid`, `state.registry_ref = new_ref`, `state.producer_id = nil`, `state.producer_epoch = nil`, `state.sequence = 0`, empty the in-flight window, and re-enter `handle_continue(:maybe_init_producer_id, state)` so the next batch acquires a fresh idempotent producer-id against the new worker.
-5. Emit exactly one `[:flezha, :plugin, :kafka, :worker_swapped]` telemetry event with measurements `%{queue_depth: state.queue_size, in_flight_records: prior_in_flight_size, queue_bytes: state.queue_bytes}` — `prior_in_flight_size` counting the records of every batch that was in the window — and metadata `%{plugin_id, topic, partition, reason, producer_id_before, producer_id_after, old_worker_pid, new_worker_pid}`.
+4. On successful swap, set `state.worker_pid = new_pid`, `state.registry_ref = new_ref`, and in every lane `producer_id = nil`, `producer_epoch = nil`, `sequence = 0` and an empty in-flight window, and re-enter `handle_continue(:maybe_init_producer_id, state)` so the next batch acquires a fresh idempotent producer-id against the new worker.
+5. Emit exactly one `[:flezha, :plugin, :kafka, :worker_swapped]` telemetry event per worker with measurements `%{queue_depth, in_flight_records: prior_in_flight_size, queue_bytes}` summed over its lanes — `prior_in_flight_size` counting the records of every batch that was in a window — and metadata `%{plugin_id, topic, partition, reason, producer_id_before, producer_id_after, old_worker_pid, new_worker_pid}`, where `partition` is the fixed partition or `nil` and the producer ids are a fixed-partition lane's or `nil`.
 
 `state.blocked` callers SHALL remain blocked across the swap. Their existing `:block_timeout` timers continue to fire normally; a swap is not a `:queue_full` condition.
 
@@ -264,7 +264,7 @@ The producer-id rotation introduced by step 4 SHALL be bounded by the existing `
 #### Scenario: Upstream Kayrock parse error does not crash the producer
 - **GIVEN** the same producer setup as above
 - **WHEN** the KafkaEx worker crashes with `(RuntimeError) Parse error during %Kayrock.Metadata.V5.Request{...} response deserializer` (the exact upstream failure observed in production at 05:25:15) and is restarted by its supervisor
-- **THEN** the producer SHALL NOT crash with `FunctionClauseError no function clause matching in Flezha.Plugin.Provider.Kafka.ProducerWorker.handle_info/2`
+- **THEN** the producer SHALL NOT crash with `FunctionClauseError no function clause matching in FlezhaKafka.ProducerWorker.handle_info/2`
 - **AND** the producer's `state.queue`, the in-flight window, and `state.blocked` SHALL be observably preserved across the swap (verified via `:sys.get_state/1` snapshots taken before the crash injection and after the swap completes)
 - **AND** no records SHALL be silently dropped between the crash and the swap (verified by comparing the topic end-offset delta to the number of records admitted during the window)
 
@@ -338,7 +338,7 @@ Events SHALL be emitted via `:telemetry.execute` (asynchronous fire-and-forget) 
 
 The Kafka producer plugin's transform-subscriber callbacks (`on_input/2`, `on_output/2`) SHALL return to their caller in O(1) wall-clock time relative to broker latency, queue depth, and in-flight batch state. "O(1) relative to broker latency" means: the callback's runtime SHALL NOT include any synchronous wait on a broker round-trip, on `KafkaEx` reply timing, or on the producer worker's batch flush schedule.
 
-The callback SHALL be implemented as a `GenServer.cast` to the per-(plugin_id, topic, partition) worker, returning immediately after admission. Admission SHALL apply the configured `:queue_overflow` strategy (per the existing "Bounded outbound queue with configurable overflow strategy" requirement). The synchronous `enqueue/4` API is retained for tests, ad-hoc tooling, and explicit-flush call sites; chain-facing callbacks SHALL NOT use it.
+The callback SHALL be implemented as a `GenServer.cast` to the plugin's one worker per `(namespace, plugin_id, topic)`, returning immediately after admission; the worker routes the record to its partition lane. Admission SHALL apply the configured `:queue_overflow` strategy (per the existing "Bounded outbound queue with configurable overflow strategy" requirement). The synchronous `enqueue/4` API is retained for tests, ad-hoc tooling, and explicit-flush call sites; chain-facing callbacks SHALL NOT use it.
 
 Under `:drop_nothing` — the default — a cast-admitted record that finds the queue full SHALL wait inside the worker for room instead of being dropped; the chain caller is never blocked, because the record, not the caller, is what waits. Room SHALL be made only by a drained batch, never by evicting an admitted record. A synchronous `enqueue/4` caller additionally waits out its own `:queue_block_timeout_ms`.
 
@@ -395,7 +395,7 @@ Sync-admitted records (`enqueue/4`) continue to receive `{:error, {:permanent, r
 
 ### Requirement: Admission order is preserved across sync and cast modes
 
-The bounded outbound queue SHALL be FIFO regardless of admission primitive. Records admitted via `cast_enqueue/3` and `enqueue/4` against the same `(plugin_id, topic, partition)` worker SHALL be drained in the order they were admitted, preserving Kafka's per-partition ordering guarantee.
+The bounded outbound queue SHALL be FIFO regardless of admission primitive. Records admitted via `cast_enqueue/3` and `enqueue/4` to the same worker and routed to the same partition SHALL be drained in the order they were admitted, preserving Kafka's per-partition ordering guarantee.
 
 #### Scenario: Interleaved sync + async admissions preserve order
 - **WHEN** a chain admits records `A` (cast), `B` (cast), `C` (cast) and a test admits records `X` (call), `Y` (call) interleaved as `A, X, B, Y, C`
@@ -591,7 +591,7 @@ A non-policy value SHALL NOT be coerced, defaulted or carried into the worker. C
 - **GIVEN** a plugin configured with `queue_overflow` set to `:drop_odlest`
 - **WHEN** the plugin is enabled
 - **THEN** `init_provider/1` SHALL return `{:error, message}` where the message names `queue_overflow` and the offered value
-- **AND** no producer worker SHALL be registered for that `(plugin, topic, partition)`
+- **AND** no producer worker SHALL be registered for that `(namespace, plugin, topic)`
 
 #### Scenario: A misspelled policy in its string form is refused the same way
 
@@ -644,4 +644,139 @@ A `%KafkaEx.Auth.Config{}` supplied directly, and an absent `:auth`, SHALL be ac
 - **WHEN** the plugin is enabled
 - **THEN** the resolved auth configuration SHALL be the one the broker client receives
 - **AND** the password SHALL still be redacted in the returned and persisted opts
+
+### Requirement: The Kafka producer SHALL be a plugin package built outside the core
+
+The Kafka producer SHALL be the provider `kafka_producer` of the plugin package `flezha_kafka`,
+built from the repository `flezha_kafka_plugin` with `mix flezha.plugin.package` and loaded by
+a controller at boot. The package SHALL carry no native code and SHALL bundle `kafka_ex`,
+`kayrock`, `varint` and `connection`; the controller release SHALL ship `crc32cer` and SHALL NOT ship
+`kafka_ex`. The package SHALL configure `kafka_ex` to start no default worker. The core SHALL
+hold no module, configuration row or provider table row of the Kafka producer.
+
+#### Scenario: The archive holds the client and not the checksum library
+
+- **WHEN** the package is built
+- **THEN** its archive's `lib/` SHALL hold `flezha_kafka`, `kafka_ex`, `kayrock`, `varint` and
+  `connection`, and SHALL NOT hold `crc32cer`, `flezha`, `telemetry` or `jason`
+
+#### Scenario: A controller without the package
+
+- **WHEN** `flz plugin enable out kafka_producer --hosts kafka:9092 --topic t` runs on a
+  controller without the package
+- **THEN** it SHALL be refused naming the unknown provider, and `rg -n 'kafka_ex' mix.exs`
+  in the core SHALL find nothing
+
+#### Scenario: Installed, it produces
+
+- **GIVEN** a release with the package installed and a broker on the dev stack
+- **WHEN** an operator bound to a `kafka_producer` plugin emits 100 outputs
+- **THEN** the topic SHALL hold 100 records, and no default `kafka_ex` worker SHALL have been
+  started at boot
+
+### Requirement: Records SHALL be partitioned by key as Kafka's Java client does
+
+The producer SHALL choose each record's partition this way. Without a `partition` option and
+with `partitioner: murmur2` (the default), a record with a Kafka key (its output's `flz.key`,
+else `flezha.dedup_key`, else `kafka_msg_key`) SHALL be sent to partition `(murmur2(key) & 0x7FFFFFFF) mod n`, where
+`n` is the topic's partition count and `murmur2` is the function of Kafka's Java
+`DefaultPartitioner`. A record with no key but a durable identity SHALL be sent to the
+partition its `flezha.dedup_key` hashes to by the same formula, so a redrive of it lands where
+it did; a record with neither SHALL be sent to the current sticky partition. With
+`partitioner: sticky` a record with a durable identity SHALL be placed the same way and every
+other record SHALL be sent to the current sticky partition, which SHALL change to another
+partition after each batch is sent. With `partition` set, every record SHALL be sent to that
+partition. Order SHALL be kept per partition; unkeyed records keep no order among themselves.
+
+The choice SHALL be made inside the producer's worker, never in the operator's hook: the hook
+SHALL hold the output and cast it to the plugin's one worker per `(namespace, plugin, topic)`
+and do nothing else, and that worker SHALL keep one lane per partition, each with its own
+bounded queue, in-flight window and idempotent producer session. The partition count SHALL be
+read from topic metadata when the worker starts and again after a metadata refresh, a topic
+creation or a client swap; a topic the broker does not know counts `auto_create_partitions`
+when `auto_create_topic` is on and one otherwise. Records a lane holds for a partition the
+topic turns out not to have SHALL be routed again by the count read. A partition that keeps
+failing SHALL make the worker unhealthy whatever its other partitions do. While the count cannot be read, records
+SHALL wait in the worker under the queue's bound and overflow rule, and the read SHALL be
+retried on the produce backoff.
+
+#### Scenario: The Java client's choice
+
+- **GIVEN** a topic with 12 partitions
+- **WHEN** outputs with the keys of the Java client's published `murmur2` test vectors are
+  produced
+- **THEN** each SHALL land on the partition the Java client computes for its key
+
+#### Scenario: One key, one partition, in order
+
+- **WHEN** 50 outputs with key `EUR-USD` are produced
+- **THEN** all 50 SHALL be on one partition in emit order
+
+#### Scenario: A fixed partition
+
+- **WHEN** a plugin with `partition: 3` produces outputs with different keys
+- **THEN** every record SHALL be on partition 3
+
+#### Scenario: Records without a key spread over batches
+
+- **GIVEN** a topic with 4 partitions and a plugin with `partitioner: sticky`
+- **WHEN** outputs are produced over several batches
+- **THEN** each batch SHALL go to one partition, and the next batch to another
+
+#### Scenario: A redriven unkeyed record keeps its partition
+
+- **WHEN** an effectively-once output with no key is produced, and then redriven
+- **THEN** both SHALL be on the partition its `flezha.dedup_key` hashes to
+
+#### Scenario: The hook routes nothing
+
+- **WHEN** an operator's `on_output` hook hands an output to the producer
+- **THEN** it SHALL hold the output and cast it to the plugin's one worker for the topic, and
+  SHALL choose no partition and start no worker
+
+### Requirement: A batch MAY be compressed without native code
+
+The producer SHALL accept `compression` `none` (the default) or `gzip`, and SHALL compress
+each record batch with it. `snappy`, `lz4` and `zstd` SHALL be refused at enable with
+`plugin.option_invalid` naming `compression`: the client library encodes the first two only
+with native libraries the package cannot carry, and `zstd` only with a native library or a
+call to OTP's `zstd` module that the controller's OTP refuses.
+
+#### Scenario: Gzip on the wire
+
+- **WHEN** a plugin with `compression: gzip` produces 100 outputs
+- **THEN** a consumer SHALL read the 100 records, and the record batches on the broker SHALL
+  carry the gzip codec
+
+#### Scenario: Snappy is refused
+
+- **WHEN** a plugin is enabled with `compression: snappy`
+- **THEN** the enable SHALL be refused with `plugin.option_invalid` naming `compression`
+
+### Requirement: A held output's record SHALL carry its identity as headers
+
+A held output's record SHALL carry the headers `flz.key`, `flz.cell`, `flz.seq` and
+`flz.epoch` for each identity field its output's metadata holds; a held output is one the
+outbox holds, a delivery-guaranteed or `effectively_once` one. A plain output's record SHALL
+carry no `flz.` header: nothing downstream deduplicates it, and the headers cost produce
+throughput. A record SHALL carry the header `flezha.dedup_key` where it is written today, and
+every record SHALL carry every entry of the plugin's `headers` option. A `headers` entry whose
+name starts with `flz.` or equals `flezha.dedup_key` SHALL be refused at enable with
+`plugin.headers_invalid`.
+
+#### Scenario: A guaranteed output's headers
+
+- **GIVEN** an operator with `effectively_once` and a plugin with `headers` `{"source":
+  "flezha"}`
+- **WHEN** it emits an output with key `k`
+- **THEN** the record SHALL carry `flz.key` `k`, `flz.cell`, `flz.seq`, `flz.epoch`,
+  `flezha.dedup_key` and `source` `flezha`
+
+#### Scenario: A plain output's headers
+
+- **GIVEN** an at-least-once operator with no delivery guarantee on a keyed channel and a
+  plugin with `headers` `{"source": "flezha"}`
+- **WHEN** it emits an output with key `k`
+- **THEN** the record's Kafka key SHALL be `k`
+- **AND** its only header SHALL be `source` `flezha`
 

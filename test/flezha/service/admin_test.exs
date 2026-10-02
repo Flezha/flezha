@@ -208,7 +208,7 @@ defmodule Flezha.Service.AdminTest do
         Admin.call(
           @ns,
           "PluginManager.enable",
-          ~s(["p1", {"provider": "Elixir.Flezha.Plugin.Providers.Kafka.Producer",
+          ~s(["p1", {"provider": "Elixir.Flezha.Plugin.Provider.HttpPush",
                      "operator_id": "o1", "namespace": "#{@other}"}])
         )
 

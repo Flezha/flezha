@@ -64,8 +64,6 @@ defmodule Flezha.Process.SeamTest do
     [
       # the ref is returned to the caller as its subscription handle
       "lib/flezha/observability/audit_log/writer.ex",
-      # the ref rides `{:kafka_worker_dead, ref, reason}` to every caller
-      "lib/flezha/plugin/provider/kafka/worker_registry.ex",
       # one monitor for one owner; no map, nothing to book
       "lib/flezha/plugin/installer.ex",
       "lib/flezha/service/hub_manager/lifecycle.ex",
@@ -105,11 +103,7 @@ defmodule Flezha.Process.SeamTest do
       "lib/flezha/runner/control_channel/commits.ex",
       # a table of per-subscription timers across plugins, keyed by ref so the
       # host's `:DOWN` can find the record the timer belongs to
-      "lib/flezha/plugin/extension/table/subscription.ex",
-      # per-key linger timers whose refs the swap protocol names to callers
-      "lib/flezha/plugin/provider/kafka/worker_registry.ex",
-      # per-batch dispatch deadlines carried inside each in-flight batch
-      "lib/flezha/plugin/provider/kafka/producer_worker.ex"
+      "lib/flezha/plugin/extension/table/subscription.ex"
     ]
   end
 

@@ -125,16 +125,6 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :plugin, :http_push, :retried] => {:flezha_http_push, :retried, :metric},
     [:flezha, :plugin, :http_push, :failed] => {:flezha_http_push, :failed, :event},
     [:flezha, :plugin, :http_push, :overflowed] => {:flezha_http_push, :overflowed, :metric},
-    # The kafka producer's family, under the same derived prefix as every other
-    # provider. Counts are metrics; a failure, a topic creation and a worker
-    # swap are events a user reads one at a time.
-    [:flezha, :plugin, :kafka, :shipped] => {:flezha_kafka, :shipped, :metric},
-    [:flezha, :plugin, :kafka, :retried] => {:flezha_kafka, :retried, :metric},
-    [:flezha, :plugin, :kafka, :overflowed] => {:flezha_kafka, :overflowed, :metric},
-    [:flezha, :plugin, :kafka, :failed] => {:flezha_kafka, :failed, :event},
-    [:flezha, :plugin, :kafka, :metadata_refresh] => {:flezha_kafka, :metadata_refresh, :metric},
-    [:flezha, :plugin, :kafka, :topic_created] => {:flezha_kafka, :topic_created, :event},
-    [:flezha, :plugin, :kafka, :worker_swapped] => {:flezha_kafka, :worker_swapped, :event},
     # The plugin lifecycle's one event: every phase a plugin enters or leaves,
     # from the table's one transition function.
     [:flezha, :plugin, :phase] => {:flezha_plugin, :phase, :event},

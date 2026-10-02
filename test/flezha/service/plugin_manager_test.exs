@@ -109,11 +109,11 @@ defmodule Flezha.Service.PluginManagerTest do
   describe "bind_plugin/4 writes the binding first" do
     test "the binding reaches the cspec and the operator", %{store: store} do
       assert :ok =
-               PluginManager.bind_plugin(@namespace, "kafka", @operator_id,
+               PluginManager.bind_plugin(@namespace, "sink", @operator_id,
                  hooks: [{:on_output, []}]
                )
 
-      assert [{"kafka", %Plugin{} = binding}] = read_bindings(store)
+      assert [{"sink", %Plugin{} = binding}] = read_bindings(store)
       assert binding.provider == NoopProvider
       assert binding.hooks == [{:on_output, []}]
     end
@@ -208,9 +208,9 @@ defmodule Flezha.Service.PluginManagerTest do
         {:ok,
          %Plugin{
            id: name,
-           provider: Flezha.Plugin.Provider.Kafka.Producer,
+           provider: Flezha.Plugin.Provider.HttpPush,
            namespace: @namespace,
-           opts: %{brokers: "localhost:9092", topic: "t"}
+           opts: %{url: "http://127.0.0.1:9/t"}
          }}
       end)
 
@@ -218,7 +218,7 @@ defmodule Flezha.Service.PluginManagerTest do
 
       plugin = %Plugin{
         id: "k",
-        provider: Flezha.Plugin.Provider.Kafka.Producer,
+        provider: Flezha.Plugin.Provider.HttpPush,
         hooks: [{:on_preview, []}]
       }
 
@@ -232,7 +232,7 @@ defmodule Flezha.Service.PluginManagerTest do
       send(overwatch, {:reject_next, {:error, {:missing_callback, :on_preview}}})
 
       assert {:error, {:missing_callback, :on_preview}} =
-               PluginManager.bind_plugin(@namespace, "kafka_preview", @operator_id,
+               PluginManager.bind_plugin(@namespace, "sink_preview", @operator_id,
                  hooks: [{:on_preview, []}]
                )
 

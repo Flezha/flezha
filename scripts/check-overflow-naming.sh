@@ -80,16 +80,15 @@ ALLOWED = [
     ("docs/refactor/STATE.md", re.compile(r"`[^`\n]*:block[^`\n]*`")),
 ]
 
-# Inside the Kafka producer's own files, a bare `:block` / `"block"` names the
-# queue-overflow policy and nothing else: the parking mechanism there is spelled
-# `queue_block_timeout_ms`, `blocked` and `:block_timeout`, none of which is a
-# bare `:block` atom. Scoping the broad shape to those paths reaches the prose,
-# the scenario titles and the function clauses that carry no `:queue_overflow`
-# on their own line — the shapes a repo-wide pattern cannot claim, because
-# elsewhere `:block` is the observability bus's own policy.
+# Inside the Kafka producer's page and spec, a bare `:block` / `"block"` names
+# the queue-overflow policy and nothing else: the parking mechanism there is
+# spelled `queue_block_timeout_ms`, `blocked` and `:block_timeout`, none of which
+# is a bare `:block` atom. Scoping the broad shape to those paths reaches the
+# prose and the scenario titles that carry no `:queue_overflow` on their own
+# line — the shapes a repo-wide pattern cannot claim, because elsewhere `:block`
+# is the observability bus's own policy. The producer's code is the plugin
+# package's.
 KAFKA_SCOPE = (
-    "lib/flezha/plugin/provider/kafka",
-    "test/flezha/plugin/kafka",
     "docs/plugins/kafka_producer.md",
     "openspec/specs/kafka-producer-plugin/",
 )

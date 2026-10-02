@@ -639,7 +639,7 @@ On a channel with a plugin sink the dispatcher serializes the value once
 `sink_named_with(name, serializer)` supply a `Fn(&T) -> Vec<u8>`), builds a frame with `payloader::build_from_binary`
 carrying `channel = <channel name>` in the metadata, and writes it on the
 `FlezhaStream` the originating input arrived on. The controller's plugin
-layer (for example `Flezha.Plugin.Provider.Kafka` with its `:channel` option)
+layer (for example the Kafka plugin package's producer with its `:channel` option)
 gates on `metadata["channel"]`.
 
 `ctx.emit_with_meta::<C>(value, meta)` appends user metadata to the plugin

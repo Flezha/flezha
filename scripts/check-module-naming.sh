@@ -9,7 +9,6 @@
 #   Flezha.SDK.Backoff                            -> Flezha.SDK.Jitter
 #   Flezha.Service.Parser                         -> Flezha.Service.Identificator
 #   Flezha.Plugin.Provider.Metrics                -> Flezha.State.Metrics
-#   Flezha.Plugin.Provider.Kafka.Telemetry        -> Flezha.Plugin.Provider.Kafka
 #   Flezha.Plugin.Provider.OperatorForward.Telemetry
 #                                                 -> Flezha.Plugin.Provider.OperatorForward
 #   Flezha.Observability.OtpBackend.Source
@@ -49,7 +48,6 @@ RETIRED = (
     "Flezha.SDK.Backoff",
     "Flezha.Service.Parser",
     "Flezha.Plugin.Provider.Metrics",
-    "Flezha.Plugin.Provider.Kafka.Telemetry",
     "Flezha.Plugin.Provider.OperatorForward.Telemetry",
     "Flezha.Observability.OtpBackend.Source",
     "Flezha.Convergence.Backoff",

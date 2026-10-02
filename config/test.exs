@@ -38,9 +38,3 @@ config :logger,
 # global, so every concurrently running test's warnings would reach the console
 # with it. The handler's own level is what the console is actually judged by.
 config :logger, :default_handler, level: :error
-
-config :kafka_ex,
-  brokers: [
-    {"kafka", 9092}
-  ],
-  disable_default_worker: true

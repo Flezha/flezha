@@ -42,8 +42,6 @@ defmodule Flezha.Convergence.VerdictSeamTest do
     # facts in another sense
     "lib/flezha/runner/control_channel/requests.ex" =>
       "`:failed`/`:parked` are steps EVENT segments",
-    "lib/flezha/plugin/provider/kafka/producer_worker.ex" =>
-      "`:failed` is an event segment; `:unknown` means the last produce reason was not recorded",
     "lib/flezha/plugin/provider/http_poll/poll_worker.ex" =>
       "`:failed` is an event segment; `:suspended` is a poll outcome journaled for wake",
     "lib/flezha/cli/state.ex" =>

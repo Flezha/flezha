@@ -49,9 +49,9 @@ WORKDIR /app
 
 # protobuf-compiler is needed by `use Protox` in lib/flezha/runner/
 # commands_proto.ex, which shells out to protoc at compile time.
-# git is needed by mix.exs's kafka_ex github: dep.
-# cmake is needed by crc32cer (kafka_ex transitive dep), whose NIF
-# Makefile shells out to cmake.
+# git is needed by mix.exs's github: deps.
+# cmake is needed by crc32cer, the checksum NIF the release ships for the
+# Kafka plugin package, whose Makefile shells out to cmake.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \

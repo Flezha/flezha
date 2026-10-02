@@ -360,8 +360,8 @@ defmodule Flezha.State.Outbox do
   @doc """
   The reserved output-identity metadata stamped on every durable output as it
   reaches the `:on_output` plugin chain — the ONE definition of the contract a
-  conforming sink deduplicates on (`Flezha.Plugin.Provider.Postgres`,
-  `Flezha.Plugin.Provider.Kafka`).
+  conforming sink deduplicates on (`Flezha.Plugin.Provider.Postgres`, and a
+  package's producer that writes it as a record header).
 
   The one durable outbox mints it, for a flow operator Cell under the
   effectively-once tier and a durable steps operator Cell alike
@@ -433,6 +433,19 @@ defmodule Flezha.State.Outbox do
       :none
     end
   end
+
+  @doc """
+  The durable identity of an effectively-once output, `<flz.cell>/<flz.seq>/<flz.epoch>`,
+  or `nil` for an output the tier did not stamp. A re-driven output carries the same
+  one, so a sink hands it on as the key a receiver deduplicates on: the HTTP
+  sender's `idempotency-key`, and the `flezha.dedup_key` record header of a
+  package's producer.
+  """
+  @spec dedup_key(map()) :: binary() | nil
+  def dedup_key(%{"flz.epoch" => epoch, "flz.cell" => cell, "flz.seq" => seq}),
+    do: "#{cell}/#{seq}/#{epoch}"
+
+  def dedup_key(_metadata), do: nil
 
   defp parse_epoch(epoch) when is_integer(epoch), do: epoch
 

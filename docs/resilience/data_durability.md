@@ -208,7 +208,7 @@ guarantee.
   `queue_max`, 10 000) — delayed, never dropped. The schema is user-owned by default
   (`auto_create: false` fails `health/1` naming the missing tables); a commit stall past
   `unhealthy_after_ms` (30 000) escalates on the plugin-health → convergence path. Unstamped
-  records become plain inserts. The **Kafka** producer (`operator_kafka_producer`) uses
+  records become plain inserts. The **Kafka** producer (`kafka_producer`, from the Kafka plugin package) uses
   `flz.key` as the message key and carries the durable identity in the `flezha.dedup_key`
   header; see [`../plugins/kafka_producer.md`](../plugins/kafka_producer.md).
 - **The websocket sink is not a conforming sink, and does not claim to be.** A plugin bound as

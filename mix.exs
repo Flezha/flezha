@@ -401,9 +401,11 @@ defmodule Flezha.MixProject do
       # branch commit: the previous pin was rewritten away upstream and no
       # ref reached it any more, so a fresh clone could not resolve deps.
       {:fresh, github: "josevalim/fresh", ref: "d8159bf148df51a15d91c432bf2120ff56d384a0"},
-      {:kafka_ex, github: "alfetahe/kafka_ex", ref: "0764363353dc2ffc9996bdc8af11b9fe00561a57"},
+      # The Kafka record format's checksum, a native library: the Kafka plugin
+      # package needs it and may not carry native code, so the release ships it.
+      {:crc32cer, "1.1.4"},
       # Compiled in unconditionally; active only when the Postgres sink
-      # plugin is configured (same posture as :kafka_ex).
+      # plugin is configured.
       {:postgrex, "~> 0.22"},
       {:protox, "~> 2.0"},
       {:mimic, "~> 1.11"},

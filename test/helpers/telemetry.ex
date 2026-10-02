@@ -7,8 +7,8 @@ defmodule FlezhaTest.Helper.Telemetry do
   copy differing only in the shape of the message it sent. This is that
   mechanism once.
 
-      Telemetry.capture([:flezha, :plugin, :kafka, :shipped])
-      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :shipped], meas, meta}
+      Telemetry.capture([:flezha, :plugin, :http_push, :shipped])
+      assert_receive {:telemetry, [:flezha, :plugin, :http_push, :shipped], meas, meta}
 
   `capture/2` takes one event or a list of them. `:as` shapes the message the
   test receives — it is given the event, the measurements and the metadata —

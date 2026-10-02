@@ -31,7 +31,7 @@ REJOIN_TIMEOUT_S="${REJOIN_TIMEOUT_S:-300}"
 DEMO_NAMESPACE="${FLEZHA_DEMO_NAMESPACE:-default}"
 PROCESSOR_ID="${FLEZHA_PERSISTENCE_PROCESSOR:-pp_test_operator}"
 PLUGIN_WS_ID="pp_test_ws"
-PLUGIN_KAFKA_ID="pp_test_kafka"
+PLUGIN_SINK_ID="pp_test_sink"
 
 PROJECT="${PROJECT:-flezha_plugin_persistence}"
 
@@ -123,15 +123,14 @@ flz plugin enable "${PLUGIN_WS_ID}" operator_websocket \
   --operator_id="${PROCESSOR_ID}" \
   --Xuri="ws://localhost:4500"
 
-note "enabling kafka producer plugin ${PLUGIN_KAFKA_ID}"
-flz plugin enable "${PLUGIN_KAFKA_ID}" operator_kafka_producer \
+note "enabling file sink plugin ${PLUGIN_SINK_ID}"
+flz plugin enable "${PLUGIN_SINK_ID}" operator_file_sink \
   --operator_id="${PROCESSOR_ID}" \
   --hook=on_output \
-  --Xhosts=kafka:9092 \
-  --Xtopic="${PROCESSOR_ID}.test.v1"
+  --Xpath="${PROCESSOR_ID}.test.ndjson"
 
 assert_plugin_listed "${PLUGIN_WS_ID}" "baseline"
-assert_plugin_listed "${PLUGIN_KAFKA_ID}" "baseline"
+assert_plugin_listed "${PLUGIN_SINK_ID}" "baseline"
 
 note "restarting rust compute engine container"
 "${COMPOSE[@]}" restart rust
@@ -144,6 +143,6 @@ note "after rust restart, fresh runner_id: ${NEW_CE_ID}"
 sleep 5
 
 assert_plugin_listed "${PLUGIN_WS_ID}" "post-restart"
-assert_plugin_listed "${PLUGIN_KAFKA_ID}" "post-restart"
+assert_plugin_listed "${PLUGIN_SINK_ID}" "post-restart"
 
 note "PASS: both plugins survived the runner restart without re-issue"

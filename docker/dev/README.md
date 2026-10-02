@@ -160,7 +160,10 @@ _build/dev/rel/flezha/bin/flz plugin enable test_plugin_ws operator_websocket \
       --Xpost_connect='{"payload":{"type":"text","message":"{\"event_type\":\"subscribe\",\"event_data\":{\"default_message\":\"hello world\",\"interval\":1000}}"}}'
 
 
-_build/dev/rel/flezha/bin/flz plugin enable test_plugin_kafka operator_kafka_producer \
+# The Kafka producer is the Kafka plugin package's (plugins/flezha_kafka_plugin):
+# install it first. Inside the compose network the broker is kafka:9092; from the
+# host it is localhost:19092.
+_build/dev/rel/flezha/bin/flz plugin enable test_plugin_kafka kafka_producer \
   --operator_id=my_operator \
   --hook=on_output \
   --Xhosts=kafka:9092 \

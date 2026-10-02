@@ -32,7 +32,6 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
   alias Flezha.Config.Durations
   alias Flezha.Observability.Export.OtlpClient
   alias Flezha.Plugin.Extension.Ctx
-  alias Flezha.Plugin.Provider.Kafka.ProducerWorker
   alias Flezha.Plugin.Provider.Websocket
   alias Flezha.SDK.Channels
   alias Flezha.SDK.Knob
@@ -42,15 +41,10 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
   alias FlezhaTest.Helper.ProviderPrepare
   alias FlezhaTest.Helper.SdkOperatorHarness
   alias FlezhaTest.Helper.WebsocketServer
-  alias FlezhaTest.Kafka.ProducerFakes
 
   setup :set_mimic_global_until_exit
 
   @moduletag timeout: 300_000
-
-  # The Kafka worker's own knobs — the row's bound is a per-plugin setting.
-  @kafka_base_ms 5
-  @kafka_cap_ms 40
 
   # The rows whose wait is one fixed cadence armed inside a private path. Each
   # names the suite that drives the behaviour arming it; the value itself is
@@ -59,8 +53,6 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
     park_resend: "test/flezha/sdk/effectively_once_test.exs — a park is resent until acked",
     hub_retry: "test/flezha/schedule/hub_test.exs — the schedule hub retries its start",
     port_restart: "no suite drives the crash-loop path",
-    kafka_force_replace:
-      "test/flezha/plugin/kafka_test.exs — a wedged client is replaced once per window",
     postgres_flush:
       "test/flezha/plugin/provider/postgres_sink_test.exs — a failing flush retries on its timer",
     file_flush:
@@ -119,8 +111,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
           :cluster_reconnect,
           :sdk_retry,
           :ws_reconnect,
-          :ws_sink_ack,
-          :kafka_produce
+          :ws_sink_ack
         ] do
       @key key
       test "#{key}" do
@@ -142,8 +133,8 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
         end
 
         # And the ladder advances rather than repeating one rung: which
-        # counter a site keeps is its own (a Kafka batch announces the attempt
-        # it is about to make), so the drill asserts the walk, not the index.
+        # counter a site keeps is its own, so the drill asserts the walk, not
+        # the index.
         seen = waits |> Enum.map(& &1.attempt) |> Enum.uniq()
 
         assert length(seen) >= 2, "#{@key}: the ladder did not advance: #{inspect(seen)}"
@@ -189,11 +180,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
       # A socket that answers every upgrade with 429.
       ws_reconnect: {&ws_reconnect_device/0, 3, []},
       # A socket whose peer takes every frame and acknowledges none.
-      ws_sink_ack: {&ws_sink_ack_device/0, 2, []},
-      # A broker send that always fails.
-      # Four waits: the worker announces the attempt it is about to make and
-      # arms the one it is on, so a walk of two rungs shows as four events.
-      kafka_produce: {&kafka_device/0, 4, [base: @kafka_base_ms, cap: @kafka_cap_ms]}
+      ws_sink_ack: {&ws_sink_ack_device/0, 2, []}
     }
   end
 
@@ -338,22 +325,6 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
     ProviderPrepare.stop_on_exit(Websocket, client)
     {:ok, _ctx} = Websocket.on_output(%Ctx.IO{message: "drill"}, opts)
     server
-  end
-
-  defp kafka_device() do
-    # A broker that refuses every send: the worker retries on its own timer,
-    # and each retry arms the row.
-    {worker, _script} =
-      ProducerFakes.start_worker(
-        retry_backoff_ms: @kafka_base_ms,
-        retry_max_backoff_ms: @kafka_cap_ms,
-        delivery_timeout_ms: 5_000,
-        retries: 100,
-        script: List.duplicate({:return, {:error, :no_broker}}, 200)
-      )
-
-    ProducerWorker.enqueue(worker, "v", %{})
-    :ok
   end
 
   # ---------- observation ----------
