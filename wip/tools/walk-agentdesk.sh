@@ -303,7 +303,7 @@ cd "$DESK" || exit 1
 mkdir -p "$OUT"
 if [ "${FLEZHA_WALK_REBUILD:-0}" = 1 ] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   echo "building $IMAGE"
-  (cd "$ROOT" && timeout 2400 docker build -f docker/prod/Dockerfile.controller -t "$IMAGE" .) >"$OUT/image.log" 2>&1 ||
+  (cd "$ROOT" && timeout 1200 docker build -f docker/prod/Dockerfile.controller -t "$IMAGE" .) >"$OUT/image.log" 2>&1 ||
     { echo "walk: the controller image did not build, see $OUT/image.log" >&2; exit 1; }
 fi
 trap down EXIT
