@@ -373,10 +373,11 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
     test "delete_cell_state removes a steps Cell's state, as a stream's", %{pid: pid} do
       class = "bnd_del_#{System.unique_integer([:positive])}"
       ClassRegistry.put(class, :steps)
+
       on_exit(fn ->
-      ClassRegistry.delete(class)
-      File.rm_rf!(Paths.class_dir(class))
-    end)
+        ClassRegistry.delete(class)
+        File.rm_rf!(Paths.class_dir(class))
+      end)
 
       seg = {class, "task", "seg"}
       wal = Paths.wal_path(seg)
@@ -608,6 +609,22 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
     assert_receive {:"$gen_cast",
                     {:dead_lettered, %{token: nil, offset: 4, tasklet: "task", attempts: 3}}},
                    2_000
+  end
+
+  test "a frame that does not decode is reported once per session and kind" do
+    session = "undecodable_#{System.unique_integer([:positive])}"
+    state = %{runner_id: session, identity: session}
+    on_exit(NodeTestHelper.override_log_level(:warning))
+    on_exit(fn -> Flezha.Runner.FleetManager.Marks.forget_identity(session) end)
+
+    log =
+      ExUnit.CaptureLog.capture_log([level: :warning], fn ->
+        for _ <- 1..3, do: StreamChannel.Records.handle_cell_state_change(state, "garbage")
+        StreamChannel.Records.handle_delete_cell_state(state, "garbage")
+      end)
+
+    assert [_, _] = String.split(log, "cell_state_change decode failed")
+    assert log =~ "delete_cell_state decode failed"
   end
 
   # The stream's last frame was `ms` ago: the liveness window lapses without

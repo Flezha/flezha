@@ -68,6 +68,10 @@ and the fields of its hook:
 | `on_dead_letter` | a record was newly dead-lettered | `operator`, `entry` (the DLQ entry, as `flz dlq show` takes it), `channel`, `error` |
 | `on_plugin_unhealthy` | a plugin bound to an operator turned from healthy to unhealthy | `plugin`, `operator`, `error` |
 
+A start and a stop are also the operator's own observability events, `operator_started` and
+`operator_stopped` of source `flezha_operator` beside `operator_exited`, so `flz observe tail
+flezha_operator` and the exporters show them with no plugin enabled.
+
 No event carries a record's data: a dead letter names its entry, which `flz dlq show` reads
 with an `ops` token. An `error` the error catalogue does not hold, such as a provider's own
 health reason, is `internal.uncatalogued`.

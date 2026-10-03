@@ -108,10 +108,12 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :plugin, :file_sink, :shipped] => {:flezha_file_sink, :flushed, :metric},
     [:flezha, :plugin, :file_sink, :refused] => {:flezha_file_sink, :refused, :event},
     [:flezha, :plugin, :file_sink, :failed] => {:flezha_file_sink, :failed, :event},
-    # What controller plugins hear and nothing else does: a deliberate start, a
-    # stop or completion, a new dead letter (`Flezha.Observability.HookSink`).
-    [:flezha, :operator, :started] => {:flezha_hooks, :on_operator_started, :event},
-    [:flezha, :operator, :stopped] => {:flezha_hooks, :on_operator_stopped, :event},
+    # A deliberate start, and a stop or completion: read by every sink, the
+    # hook sink among them, which names this source.
+    [:flezha, :operator, :started] => {:flezha_operator, :operator_started, :event},
+    [:flezha, :operator, :stopped] => {:flezha_operator, :operator_stopped, :event},
+    # What controller plugins hear and nothing else does: a new dead letter
+    # (`Flezha.Observability.HookSink`).
     [:flezha, :dlq, :dead_lettered] => {:flezha_hooks, :on_dead_letter, :event},
     # The two HTTP senders (`Flezha.Plugin.Provider.HttpSend`): a request sent,
     # retried or overflowed is a count; one given up is read one at a time. The

@@ -29,8 +29,6 @@ defmodule Flezha.Operator.Ingest do
   alias Flezha.State.InputLog
   alias Flezha.Transport.LivenessCounters
 
-  require Logger
-
   @typedoc """
   What the journal answers with, and the only thing a caller may forward.
 
@@ -495,14 +493,8 @@ defmodule Flezha.Operator.Ingest do
     nil
   end
 
-  defp journaled(%Overwatch{} = state, _payload, {:error, reason}) do
-    Logger.error(
-      "[Overwatch] durable input append failed for #{state.id}: #{inspect(reason)} — " <>
-        "input NOT forwarded (append-before-forward)"
-    )
-
-    :refused
-  end
+  # The log refuses only once it refused its own file, which it reported then.
+  defp journaled(%Overwatch{}, _payload, {:error, _refusal}), do: :refused
 
   # A journaled payload's forward and the reply it owed, once the log answered.
   # A suspended instance forwards nothing: the payload waits in the log for the

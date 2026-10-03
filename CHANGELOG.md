@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Changed: an operator's start and stop reach every sink, and fewer repeated log lines
+
+A deliberate start and a stop or completion are now ordinary observability events,
+`operator_started` and `operator_stopped` of source `flezha_operator` beside
+`operator_exited`, so the ring buffer, `flz observe tail`, PubSub and the exporters see them;
+controller plugins still hear each once, from the same event. A fact the controller already
+records once is no longer logged again: an append refused by an input log that refused its
+file, a durability claim another node took over, a plugin subscriber that ended normally or
+began a restart. A failure that repeats on every record is logged once: a plugin hook that
+fails on every record, once until its chain changes; a stream frame that does not decode or
+whose Cell's writer will not start, once per runner session; a credit overrun or shed, as
+one anomaly event per episode with every frame still counted. The websocket source no
+longer builds a debug line every thousand frames.
+
 ### Added: Postgres change capture, as a plugin package
 
 The new package `flezha_postgres_cdc`, built from `plugins/flezha_postgres_cdc_plugin`, brings

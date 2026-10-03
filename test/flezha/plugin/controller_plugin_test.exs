@@ -239,6 +239,28 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
                      5_000
     end
 
+    test "a start and a stop reach the event stream and each hook once" do
+      {:ok, _} = notify(["on_operator_started", "on_operator_stopped"])
+      since = System.monotonic_time(:microsecond)
+      op = start_operator("streamed_op")
+      :ok = OperatorManager.stop_operator(@namespace, op)
+
+      assert_receive {:hook, %{hook: :on_operator_started, operator: ^op}, _}, 5_000
+      assert_receive {:hook, %{hook: :on_operator_stopped, operator: ^op}, _}, 5_000
+      refute_receive {:hook, %{operator: ^op}, _}, 300
+
+      streamed = fn ->
+        for %{name: name, metadata: %{operator: ^op}} <-
+              RingBufferSink.query(:flezha_operator, since),
+            do: name
+      end
+
+      assert NodeTestHelper.wait_until(
+               fn -> Enum.sort(streamed.()) == [:operator_started, :operator_stopped] end,
+               2_000
+             )
+    end
+
     test "a park retried over several ticks is one failure, naming the park's code" do
       {:ok, _} = start_supervised({Loop, tick_ms: 60_000})
       {:ok, _} = notify(["on_operator_failed"])

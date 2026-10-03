@@ -61,7 +61,14 @@ defmodule Flezha.Plugin.Extension.Table.Chain do
   defp rebuild_chain(table, name) do
     %{kind: kind} = Map.fetch!(table.catalog, name)
     entries = Map.get(table.subs, name, [])
-    ordered = Enum.sort_by(entries, & &1.position)
+    # Each subscriber's failure latch lives as long as this chain, which every
+    # subscriber change rebuilds: a subscriber failing on every record is
+    # logged once per chain, not once per record.
+    ordered =
+      entries
+      |> Enum.sort_by(& &1.position)
+      |> Enum.map(&Map.put(&1, :failure_logged, :atomics.new(1, [])))
+
     fun = compile_chain(kind, name, ordered)
     %{table | chains: Map.put(table.chains, name, fun)}
   end
@@ -84,19 +91,19 @@ defmodule Flezha.Plugin.Extension.Table.Chain do
               {:halt, {:skip, reason}}
 
             {:error, reason} ->
-              Logger.error(
+              log_first_failure(entry, fn ->
                 "[Extension.Table] transform subscriber #{entry.plugin_id} returned error: " <>
                   "#{inspect(reason)}"
-              )
+              end)
 
               {:cont, {:ok, current_ctx}}
           end
         catch
           kind, reason ->
-            Logger.error(
+            log_first_failure(entry, fn ->
               "[Extension.Table] transform subscriber #{entry.plugin_id} raised " <>
                 "#{inspect(kind)}: #{inspect(reason)}"
-            )
+            end)
 
             {:cont, {:ok, current_ctx}}
         end
@@ -111,15 +118,19 @@ defmodule Flezha.Plugin.Extension.Table.Chain do
           apply(entry.provider, name, [ctx, entry.provider_opts])
         catch
           kind, reason ->
-            Logger.error(
+            log_first_failure(entry, fn ->
               "[Extension.Table] fanout subscriber #{entry.plugin_id} raised " <>
                 "#{inspect(kind)}: #{inspect(reason)}"
-            )
+            end)
         end
       end)
 
       :ok
     end
+  end
+
+  defp log_first_failure(%{failure_logged: latch}, message) do
+    if :atomics.compare_exchange(latch, 1, 0, 1) == :ok, do: Logger.error(message)
   end
 
   defp fold_step(name, entry, {:ok, acc_ctx}) do

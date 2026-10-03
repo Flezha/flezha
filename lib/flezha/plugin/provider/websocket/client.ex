@@ -287,14 +287,6 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
     counter = state.frames_seen + 1
     is_data? = data_frame?(type, message, state.ignore_pattern)
 
-    if rem(counter, 1000) == 0 do
-      sample = String.slice(message, 0, 120)
-
-      Logger.debug(
-        "[Plugin.Provider.Websocket] frames_seen=#{counter} plugin_id=#{inspect(state.plugin_id)} last_msg_size=#{byte_size(message)} sample=#{inspect(sample)}"
-      )
-    end
-
     state = %{state | frames_seen: counter, last_frame_at: now}
     state = if is_data?, do: %{state | last_data_frame_at: now}, else: state
 

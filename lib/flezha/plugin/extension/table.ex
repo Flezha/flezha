@@ -549,7 +549,6 @@ defmodule Flezha.Plugin.Extension.Table do
 
         case {key, reason} do
           {_key, :normal} ->
-            Logger.info("[Extension.Table] subscriber #{plugin_id} terminated normally")
             {:ok, do_unsubscribe(table, plugin_id, plugin, :idle)}
 
           # A shared copy that handed over or died: the subscriber joins the
@@ -582,7 +581,6 @@ defmodule Flezha.Plugin.Extension.Table do
   """
   @spec attempt_restart(t(), binary(), Plugin.t()) :: {:ok, t()} | {:error, term(), t()}
   def attempt_restart(%__MODULE__{} = table, plugin_id, %Plugin{} = declared) do
-    Logger.info("[Extension.Table] attempt_restart begin plugin_id=#{plugin_id}")
     %Plugin{} = held = Map.get(table.plugins, plugin_id, declared)
     plugin = %Plugin{held | id: plugin_id}
     table = release_workers(table, plugin_id, plugin, :idle)

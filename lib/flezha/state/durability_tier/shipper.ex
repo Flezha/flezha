@@ -20,8 +20,6 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   use GenServer
   use Flezha.Process.Timer, keys: [:sweep, :gc]
 
-  require Logger
-
   alias Flezha.Config.Durations
   alias Flezha.Config.Backoff
   alias Flezha.SDK.SafeCall
@@ -536,11 +534,6 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   # Nothing local is touched: the node that lost the claim is usually the one
   # that still has the only other copy.
   defp supersede(state, ref, holder) do
-    Logger.info(
-      "[durability] #{inspect(ref)} is now shipped by #{inspect(holder)}; this node stopped. " <>
-        "Its local state is untouched."
-    )
-
     emit(:claim_superseded, %{}, ref, %{holder: inspect(holder)})
     record_superseded(ref, holder)
     state

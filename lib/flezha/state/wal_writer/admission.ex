@@ -74,26 +74,28 @@ defmodule Flezha.State.WalWriter.Admission do
   # declares once; `append_async` clears it on any successful append.
   def shed(state, seq, runner_id) do
     Metrics.add(state.metrics, :wal_shed_total, 1)
-    {rc, sh, pk} = state.cell_id
-
-    # A conformant credit-speaking sender can never reach the hard bound
-    # (the stream ledger refuses the overrun first) — a shed here is a
-    # protocol anomaly, not back-pressure.
-    if state.credit_active? do
-      :telemetry.execute(
-        [:flezha, :state, :credit_anomaly],
-        %{count: 1},
-        %{kind: :shed, operator: rc, tasklet: sh, key: pk, runner: runner_id}
-      )
-    end
 
     if state.shedding? do
       state
     else
+      report_credit_shed(state, runner_id)
       emit_seq_gap(state.cell_id, state.last_persisted_seq + 1, seq)
       %{open_gap(state, runner_id, :shed) | shedding?: true}
     end
   end
+
+  # A conformant credit-speaking sender can never reach the hard bound (the
+  # stream ledger refuses the overrun first): a shed here is a protocol
+  # anomaly, not back-pressure.
+  defp report_credit_shed(%{credit_active?: true, cell_id: {rc, sh, pk}}, runner_id) do
+    :telemetry.execute(
+      [:flezha, :state, :credit_anomaly],
+      %{count: 1},
+      %{kind: :shed, operator: rc, tasklet: sh, key: pk, runner: runner_id}
+    )
+  end
+
+  defp report_credit_shed(_state, _runner_id), do: :ok
 
   # ---------- Backpressure ----------
 

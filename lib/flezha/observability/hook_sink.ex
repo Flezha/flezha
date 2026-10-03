@@ -12,10 +12,12 @@ defmodule Flezha.Observability.HookSink do
   `on_dead_letter`, and `plugin`, `operator` and `error` for
   `on_plugin_unhealthy`. No event carries an operator's data.
 
-  Two signals carry them. Start, stop and dead letter are telemetry events the
-  bridge lifts as source `:flezha_hooks` and emits to the sinks naming that
-  source only (`Flezha.Observability.Bus.emit_named/1`), never to a `sources:
-  :any` one. The two failures are the convergence judge's transitions
+  Three signals carry them. Start and stop are the operator's own events,
+  `operator_started` and `operator_stopped` of source `:flezha_operator`, which
+  every sink reads. A dead letter is a telemetry event the bridge lifts as source
+  `:flezha_hooks` and emits to the sinks naming that source only
+  (`Flezha.Observability.Bus.emit_named/1`), never to a `sources: :any` one. The
+  two failures are the convergence judge's transitions
   (`[:flezha, :health, :verdict]`), which already fire once per health change:
   every controller judges every operator, so this sink takes only those of
   subjects on its own node, and it announces an operator's failure once, until
@@ -50,7 +52,7 @@ defmodule Flezha.Observability.HookSink do
   def config_schema(), do: %{}
 
   @impl Flezha.Observability.Sink
-  def filter(), do: %{kinds: [:event], sources: [@source, :flezha_health]}
+  def filter(), do: %{kinds: [:event], sources: [@source, :flezha_health, :flezha_operator]}
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(_opts \\ []), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -120,24 +122,24 @@ defmodule Flezha.Observability.HookSink do
            state
          )
 
-  defp read(%Signal{source: @source, name: :on_operator_stopped, metadata: f} = signal, state),
-    do:
-      {hook_event(signal),
-       %{state | failed: MapSet.delete(state.failed, {f.namespace, f.operator})}}
+  defp read(%Signal{source: :flezha_operator, name: :operator_started, metadata: f}, state),
+    do: {event(:on_operator_started, f), state}
 
-  defp read(%Signal{source: @source} = signal, state), do: {hook_event(signal), state}
-  defp read(_signal, state), do: {nil, state}
+  defp read(%Signal{source: :flezha_operator, name: :operator_stopped, metadata: f}, state),
+    do:
+      {event(:on_operator_stopped, f),
+       %{state | failed: MapSet.delete(state.failed, {f.namespace, f.operator})}}
 
   # The DLQ store names the operator's class; its namespace is read here, where
   # a copy listens, and not on every park.
-  defp hook_event(%Signal{name: :on_dead_letter, metadata: fields}),
+  defp read(%Signal{source: @source, name: :on_dead_letter, metadata: fields}, state),
     do:
-      event(
-        :on_dead_letter,
-        Map.put_new_lazy(fields, :namespace, fn -> Paths.namespace_of_class(fields.operator) end)
-      )
+      {event(
+         :on_dead_letter,
+         Map.put_new_lazy(fields, :namespace, fn -> Paths.namespace_of_class(fields.operator) end)
+       ), state}
 
-  defp hook_event(%Signal{name: hook, metadata: fields}), do: event(hook, fields)
+  defp read(_signal, state), do: {nil, state}
 
   defp turned(:operator_failed, %{id: {namespace, operator} = id} = transition, state) do
     if MapSet.member?(state.failed, id) do

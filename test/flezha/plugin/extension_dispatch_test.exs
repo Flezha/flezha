@@ -322,13 +322,18 @@ defmodule FlezhaTest.Plugin.ExtensionDispatchTest do
 
       log =
         capture_log(fn ->
-          assert {:ok, %Ctx.IO{message: "HI"}} = Extension.run(table, :on_input, ctx)
+          for _ <- 1..3,
+              do: assert({:ok, %Ctx.IO{message: "HI"}} = Extension.run(table, :on_input, ctx))
         end)
 
-      # The chain logs the subscriber error (intentional — runners rely
-      # on it during incident triage) and we assert it lands without
-      # spilling into the suite's stdout.
-      assert log =~ "transform subscriber"
+      # The chain logs the subscriber error once, however many records it
+      # fails on, until a subscriber change rebuilds the chain.
+      assert [_, _] = String.split(log, "transform subscriber err returned error")
+
+      table = Table.unsubscribe(table, "u")
+
+      assert capture_log(fn -> Extension.run(table, :on_input, ctx) end) =~
+               "transform subscriber err returned error"
     end
   end
 

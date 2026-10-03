@@ -17,7 +17,7 @@ defmodule FlezhaTest.Operator.IngestTest do
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Host, as: PluginHost
   alias Flezha.Service.OperatorManager
-  alias Flezha.State.{InputLog, Supervisor, TestHelpers}
+  alias Flezha.State.{InputLog, Paths, Supervisor, TestHelpers}
   alias Flezha.Transport.LivenessCounters
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.OverwatchHost, as: Host
@@ -85,14 +85,6 @@ defmodule FlezhaTest.Operator.IngestTest do
       FlezhaTest.Case.install([:state_tree])
     end
 
-    # A writer that refuses every append.
-    defmodule RefusingWriter do
-      use GenServer
-      def start_link(_), do: GenServer.start_link(__MODULE__, nil)
-      def init(nil), do: {:ok, nil}
-      def handle_call(_append, _from, state), do: {:reply, {:error, :enospc}, state}
-    end
-
     test "a suspended target confirms {:ok, :suspended} once the append is durable, and wakes" do
       inst = instance_id()
       test_pid = self()
@@ -125,24 +117,27 @@ defmodule FlezhaTest.Operator.IngestTest do
       refute_received {:channel_got, _, _}
     end
 
-    test "a durable-log refusal reports refused so the sender retries" do
+    test "a durable-log refusal reports refused so the sender retries, logged once by the log" do
       inst = instance_id()
-      {:ok, writer} = start_supervised(RefusingWriter)
-      stub(Supervisor, :find_or_start, fn {^inst, :input_log} -> {:ok, writer} end)
+      for i <- 0..2, do: {:ok, _} = InputLog.append(inst, "m#{i}", %{})
+      TestHelpers.close_input_log(inst)
+      path = Paths.input_log_path(inst)
+      [_first, second, _third] = TestHelpers.record_offsets(path)
+      TestHelpers.corrupt_record_body(path, second)
 
       state = state(inst, durable_steps: true, channel: fake_channel(:ok))
       {:ok, host} = start_supervised({Host, state})
 
       log =
         ExUnit.CaptureLog.capture_log(fn ->
-          assert {:error, :refused} = GenServer.call(host, {:ingest, "doomed", %{}})
+          for _ <- 1..3,
+              do: assert({:error, :refused} = GenServer.call(host, {:ingest, "doomed", %{}}))
         end)
 
-      # append-before-forward: the refusal is loud, and names why nothing moved.
-      assert log =~ "durable input append failed for #{inst}"
-      assert log =~ ":enospc"
-      assert log =~ "input NOT forwarded"
-
+      # append-before-forward: nothing moved, and the refusal is told once, by
+      # the log that refused its file, however many inputs it then refuses.
+      assert [_, _] = String.split(log, "durable record refused (crc_mismatch)")
+      assert log =~ path
       refute_received {:channel_got, _, _}
     end
 

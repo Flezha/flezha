@@ -253,6 +253,11 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
       Application.put_env(:flezha, :credit_window_bytes, %{ctx.class => 200})
       become_loop()
 
+      anomaly =
+        :telemetry_test.attach_event_handlers(self(), [[:flezha, :state, :credit_anomaly]])
+
+      on_exit(fn -> :telemetry.detach(anomaly) end)
+
       establish_credit(ctx)
 
       f1 = state_change_frame(ctx.class, "k1", 1, String.duplicate("a", 150))
@@ -267,6 +272,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
       writer = writer_pid({ctx.class, "op1", "k1"})
       await(fn -> WalWriter.last_persisted_seq(writer) == 1 end)
       assert counters_row(ctx.runner_id, ctx.name).credit_overrun_total == 1
+      assert_receive {[:flezha, :state, :credit_anomaly], ^anomaly, _, %{kind: :overrun}}, 2_000
 
       # The shed left a gap; the next admitted frame drives the existing
       # resync repair. Mint credit first so f3 is admitted.

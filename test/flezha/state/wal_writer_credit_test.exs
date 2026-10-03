@@ -139,6 +139,18 @@ defmodule Flezha.State.WalWriterCreditTest do
     assert total == 20 * 10
   end
 
+  test "a credit-speaking shed flood is one anomaly event", %{pid: pid} do
+    handler = :telemetry_test.attach_event_handlers(self(), [[:flezha, :state, :credit_anomaly]])
+    on_exit(fn -> :telemetry.detach(handler) end)
+
+    state = %{:sys.get_state(pid) | credit_active?: true, shedding?: false}
+    state = Enum.reduce(1..3, state, &WalWriter.Admission.shed(&2, &1, "exec-1"))
+
+    assert state.shedding?
+    assert_received {[:flezha, :state, :credit_anomaly], ^handler, _, %{kind: :shed}}
+    refute_received {[:flezha, :state, :credit_anomaly], ^handler, _, _}
+  end
+
   describe "CellMailboxStatus suppression (2.4)" do
     setup do
       # Tiny watermarks read at writer init.

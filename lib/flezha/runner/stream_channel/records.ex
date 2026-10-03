@@ -249,9 +249,21 @@ defmodule Flezha.Runner.StreamChannel.Records do
           else: state
 
       {:error, reason} ->
-        Logger.warning("[stream] cell_state_change decode failed: #{inspect(reason)}")
+        undecodable(state, "cell_state_change", reason)
         state
     end
+  end
+
+  defp undecodable(state, payload_id, reason) do
+    report_once(state, {:undecodable, payload_id}, :warning, fn ->
+      "[stream] #{payload_id} decode failed: #{inspect(reason)}"
+    end)
+  end
+
+  # A frame refused one way is refused alike every time a runner sends it again,
+  # so it is reported once per session and subject.
+  defp report_once(state, subject, level, message) do
+    if Marks.first_refusal?(state.runner_id, subject), do: Logger.log(level, message)
   end
 
   defp append_to_cell(state, cell_id, rc, record, frame_bytes) do
@@ -260,10 +272,10 @@ defmodule Flezha.Runner.StreamChannel.Records do
         admit_and_append(state, pid, rc, record, frame_bytes)
 
       {:error, reason} ->
-        Logger.error(
+        report_once(state, {:writer_start_failed, cell_id}, :error, fn ->
           "[stream] cell_state_change WalWriter start failed " <>
             "cell=#{inspect(cell_id)}: #{inspect(reason)}"
-        )
+        end)
 
         state
     end
@@ -308,7 +320,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
         :refused
 
       {:error, reason} ->
-        Logger.warning("[stream] processed_prefix decode failed: #{inspect(reason)}")
+        undecodable(state, "processed_prefix", reason)
         :refused
     end
   end
@@ -514,18 +526,18 @@ defmodule Flezha.Runner.StreamChannel.Records do
 
   defp credit_verdict(_outcome, _session), do: :credit_nack
 
-  # Overrun observability: counter always, anomaly event always, warning once
-  # per episode (`pre.overrun?` is the pre-admit flag).
+  # Overrun observability: the counter always, the anomaly event and the
+  # warning once per episode (`pre.overrun?` is the pre-admit flag).
   def report_overrun(state, pre, size) do
     LivenessCounters.bump_channel(state.liveness_ref, :credit_overrun_total)
 
-    :telemetry.execute(
-      [:flezha, :state, :credit_anomaly],
-      %{count: 1, un_fsynced: CreditLedger.outstanding(pre), frame_bytes: size},
-      %{kind: :overrun, runner: state.runner_id, session: pre.session}
-    )
-
     unless pre.overrun? do
+      :telemetry.execute(
+        [:flezha, :state, :credit_anomaly],
+        %{count: 1, un_fsynced: CreditLedger.outstanding(pre), frame_bytes: size},
+        %{kind: :overrun, runner: state.runner_id, session: pre.session}
+      )
+
       Logger.warning(
         "[stream_channel] credit overrun: runner=#{state.runner_id} " <>
           "session=#{pre.session} level=#{CreditLedger.level(pre)} frame=#{size} " <>
@@ -565,7 +577,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
           do: spawn(fn -> write_snapshot(cell_id, seq, header, body) end)
 
       {:error, reason} ->
-        Logger.warning("[stream] cell_state_snapshot decode failed: #{inspect(reason)}")
+        undecodable(state, "cell_state_snapshot", reason)
     end
   end
 
@@ -582,7 +594,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
           do: spawn(fn -> write_compensation_marker(cell_id, kind) end)
 
       {:error, reason} ->
-        Logger.warning("[stream] #{payload_id} decode failed: #{inspect(reason)}")
+        undecodable(state, payload_id, reason)
     end
   end
 
@@ -607,7 +619,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
         if admit(state, rc, :delete_cell_state), do: delete_cell(cell_id)
 
       {:error, reason} ->
-        Logger.warning("[stream] delete_cell_state decode failed: #{inspect(reason)}")
+        undecodable(state, "delete_cell_state", reason)
     end
   end
 
