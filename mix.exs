@@ -4,6 +4,7 @@ defmodule Flezha.MixProject do
   def project do
     [
       app: :flezha,
+      name: "Flezha",
       version: "0.1.0",
       elixir: "~> 1.17",
       description: "Distributed stateful operators — durable flow and steps compute",
@@ -121,6 +122,9 @@ defmodule Flezha.MixProject do
   defp guide_styles(:html) do
     """
     <style>
+      body.dark .sidebar-projectImage img {
+        content: url("assets/flezha-badger-white.svg");
+      }
       .content-inner blockquote:has(> p.step) {
         margin: var(--baseLineHeight) 0 0.5rem;
         padding: 0.7rem 1rem;
@@ -180,6 +184,9 @@ defmodule Flezha.MixProject do
   defp docs do
     [
       main: "what_is_flezha",
+      logo: "docs/assets/flezha-badger-dark.svg",
+      favicon: "docs/assets/flezha-favicon-badger-32.png",
+      assets: %{"docs/assets" => "assets"},
       extras: [
         "docs/guides/what_is_flezha.md",
         "docs/guides/try_it.md",
