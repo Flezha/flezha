@@ -133,6 +133,10 @@ identical key, header and partition:
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `hosts` | any | &mdash; | yes | `{host, port}` list, or a comma-separated string |
+| `auth` | any | &mdash; | no | SASL configuration, as a `KafkaEx.Auth.Config` or a map |
+| `sasl_password_env` | string | &mdash; | no | Environment variable holding the SASL password, preferred over an inline one |
+| `use_ssl` | bool | &mdash; | no | TLS to the brokers |
+| `ssl_options` | any | &mdash; | no | Erlang `:ssl` options for that connection |
 | `topic` | string | &mdash; | yes | Destination topic |
 | `plugin_id` | string | &mdash; | no | Plugin id; defaults to a generated one |
 | `channel` | names | &mdash; | no | The channel this plugin is attached to: only records naming it are produced. Several names, comma-separated, produce them all |
@@ -160,10 +164,6 @@ identical key, header and partition:
 | `metadata_refresh_timeout_ms` | int | `5000` | no | Budget for one broker metadata refresh |
 | `request_timeout_ms` | int | `10000` | no | Budget the broker is asked to honour for one produce request |
 | `dispatch_timeout_ms` | int | `10000` | no | Budget for one in-flight batch before it is treated as lost |
-| `auth` | any | &mdash; | no | SASL configuration, as a `KafkaEx.Auth.Config` or a map |
-| `sasl_password_env` | string | &mdash; | no | Environment variable holding the SASL password, preferred over an inline one |
-| `use_ssl` | bool | &mdash; | no | TLS to the brokers |
-| `ssl_options` | any | &mdash; | no | Erlang `:ssl` options for that connection |
 | `metadata_update_interval` | int | &mdash; | no | How often the shared broker client refreshes metadata |
 <!-- provider-options:end -->
 
@@ -361,6 +361,12 @@ the convergence loop. A single batch failing with a reason that means the client
 working broker connection (`:no_broker`, `:broker_not_available`, `:network_exception`,
 `:leader_not_available`, `:closed`, `:correlation_mismatch`) forces a client replacement
 immediately, throttled to one per 2 s.
+
+The package sets the `kafka_ex` library's `sync_timeout`, which bounds every request its
+client makes, to 5 s: the consumer's group join needs it
+([`kafka_consumer.md`](kafka_consumer.md#the-client-timeout)). While a broker is away the
+worker can wait that long on its client, so a `stats/1` answer can come up to 5 s late; no
+record is lost.
 
 ## Durability trade-offs
 

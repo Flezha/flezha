@@ -218,6 +218,7 @@ defmodule Flezha.MixProject do
         "docs/plugins/http_push.md",
         "docs/plugins/websocket_subscription.md",
         "docs/plugins/kafka_producer.md",
+        "docs/plugins/kafka_consumer.md",
         "docs/plugins/postgres_sink.md",
         "docs/plugins/postgres_poll.md",
         "docs/plugins/operator_forward.md",

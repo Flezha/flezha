@@ -785,6 +785,7 @@ there is no second list to keep in step, and this page does not carry one.
 | Provider name | Options |
 |---|---|
 | `kafka_producer` (the Kafka plugin package) | [`plugins/kafka_producer.md`](plugins/kafka_producer.md) |
+| `kafka_consumer` (the Kafka plugin package) | [`plugins/kafka_consumer.md`](plugins/kafka_consumer.md) |
 | `operator_postgres` | [`plugins/postgres_sink.md`](plugins/postgres_sink.md) |
 | `operator_postgres_poll` | [`plugins/postgres_poll.md`](plugins/postgres_poll.md) |
 | `operator_http_poll` | [`plugins/http_poll.md`](plugins/http_poll.md) |

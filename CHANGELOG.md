@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Added: a Kafka consumer in the Kafka package
+
+The package `flezha_kafka` gains the provider `kafka_consumer`, which joins the consumer
+group `group_id` for its `topics` and injects every record of the partitions Kafka assigns
+it as one input, its value as the payload and its topic, partition, offset, timestamp, key
+and headers as `kafka.*` metadata, with an `flz.msg_id` of the plugin, the topic, the
+partition and the offset ([`docs/plugins/kafka_consumer.md`](docs/plugins/kafka_consumer.md)).
+Each fetched batch waits for the operator's verdicts; its offsets are committed at once when
+the operator's input is durable, so a record fetched again is absorbed, and every
+`commit_interval_ms` when it is not. A refused batch commits nothing and is fetched again.
+Several operators bound to consumers of one group split the partitions; a partitioned
+operator is refused. The lag per partition, each rebalance, a broker or group that is away
+and a run of refused batches are reported. The producer and the consumer now share one set
+of connection options, and the package raises the client library's request timeout
+(`sync_timeout`) to 5 s, which a group's join needs; while a broker is away the producer's
+stats can answer that much later.
+
 ### Changed: the Kafka producer is a plugin package (breaking)
 
 The Kafka producer has left the controller for the plugin package `flezha_kafka`, built from
