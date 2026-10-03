@@ -12,7 +12,7 @@ bounded, and every failure is an HTTP status with the error model's document.
 
 The HTTP server SHALL be the plugin application `flezha_http`, a Mix project in the
 repository `Flezha/flezha_http_plugin`, which the Flezha repository carries as the git
-submodule `plugins/flezha_http_plugin` on its `dev` branch, so the package depends on the core
+submodule `plugins/flezha_http_plugin` on its `main` branch, so the package depends on the core
 by the relative path `../..`.
 It SHALL declare exactly one provider, `http_server`, in its `flezha_providers` application
 environment, SHALL declare no application callback, and SHALL depend on `flezha`, Bandit and
