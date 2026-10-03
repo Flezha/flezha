@@ -41,3 +41,7 @@
 	path = plugins/flezha_rabbitmq_plugin
 	url = git@github.com:Flezha/flezha_rabbitmq_plugin.git
 	branch = dev
+[submodule "plugins/flezha_postgres_cdc_plugin"]
+	path = plugins/flezha_postgres_cdc_plugin
+	url = git@github.com:Flezha/flezha_postgres_cdc_plugin.git
+	branch = dev

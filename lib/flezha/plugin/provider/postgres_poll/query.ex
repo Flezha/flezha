@@ -42,20 +42,30 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Query do
   """
   @spec validate_names(map()) :: :ok | {:error, {:invalid_option_value, atom(), term()}}
   def validate_names(opts) do
-    checks = [
+    check_names([
       {:table, opts.table, table_names(opts.table)},
       {:id_column, opts.id_column, [opts.id_column]},
       {:timestamp_column, opts.timestamp_column, List.wrap(opts.timestamp_column)},
       {:columns, opts.columns, List.wrap(opts.columns)}
-    ]
+    ])
+  end
 
+  @doc """
+  Refuse the first `{field, value, names}` of `checks` whose names are not all
+  identifiers, naming the field and the value as written.
+  """
+  @spec check_names([{atom(), term(), list()}]) ::
+          :ok | {:error, {:invalid_option_value, atom(), term()}}
+  def check_names(checks) do
     case Enum.find(checks, fn {_field, _value, names} -> not Enum.all?(names, &identifier?/1) end) do
       nil -> :ok
       {field, value, _names} -> {:error, {:invalid_option_value, field, value}}
     end
   end
 
-  defp table_names(table) when is_binary(table) do
+  @doc "The names in a table written `name` or `schema.name`; a `nil` in place of any other."
+  @spec table_names(binary()) :: [binary() | nil]
+  def table_names(table) when is_binary(table) do
     case String.split(table, ".") do
       [_name] = names -> names
       [_schema, _name] = names -> names
@@ -126,6 +136,13 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Query do
     end
   end
 
+  @doc """
+  Each column of the catalog's rows for one table, in column order, with the
+  kind its value is read and written as.
+  """
+  @spec kinds([list()]) :: [{binary(), term()}]
+  def kinds(rows), do: for([_schema, _table, name, _type | kind] <- rows, do: {name, kind(kind)})
+
   defp kind([_typtype, _typname, true, element]), do: {:array, base_kind(element)}
   defp kind(["b", typname, false, _element]), do: base_kind(typname)
   defp kind(_other), do: :text
@@ -142,10 +159,10 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Query do
   defp queries(plan, schema, table, cursor) do
     # The cursor columns are named through the alias `r`, so ORDER BY reads the
     # table's column, never a selected column of the same name.
-    from = "#{quote_name(schema)}.#{quote_name(table)} r"
+    from = "#{relation(schema, table)} r"
     names = Enum.map(cursor, &elem(&1, 0))
     order = Enum.join(names, ", ")
-    select = Enum.map_join(plan.columns, ", ", &select/1) <> ", " <> texts(names)
+    select = select_list(plan.columns) <> ", " <> texts(names)
     not_null = Enum.map_join(names, " AND ", &"#{&1} IS NOT NULL")
     n = length(cursor)
     delay? = n == 2
@@ -168,6 +185,13 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Query do
   defp delay([ts, _id], at), do: " AND #{ts} < now() - $#{at}::bigint * interval '1 millisecond'"
   defp delay([_id], _at), do: ""
 
+  @doc """
+  The select list reading `columns` as their kinds say: a type with no decoded
+  form as its text, every other as it is.
+  """
+  @spec select_list([{binary(), term()}]) :: binary()
+  def select_list(columns), do: Enum.map_join(columns, ", ", &select/1)
+
   defp select({name, :text}), do: "#{quote_name(name)}::text"
   defp select({name, {:array, :text}}), do: "#{quote_name(name)}::text[]"
   defp select({name, _kind}), do: quote_name(name)
@@ -180,7 +204,12 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Query do
     |> Enum.map_join(", ", fn {{_name, type}, i} -> "($#{i}::text)::#{type}" end)
   end
 
-  defp quote_name(name), do: ~s("#{name}")
+  @doc """
+  A name as an identifier in a statement: quoted, so its case is kept, and any
+  `"` in it doubled, so a name the catalog answered cannot end the identifier.
+  """
+  @spec quote_name(binary()) :: binary()
+  def quote_name(name), do: ~s(") <> String.replace(name, ~s("), ~s("")) <> ~s(")
 
   # ---------- one read ----------
 
@@ -217,14 +246,38 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Query do
   end
 
   defp catalog!(conn, spec) do
-    case plan(spec, run!(conn, @catalog, [relation(spec.table)]).rows) do
-      {:ok, plan} -> plan
+    {schema, table} = split_table(spec.table)
+
+    with {:ok, %{rows: rows}} <- catalog(conn, schema, table),
+         {:ok, plan} <- plan(spec, rows) do
+      plan
+    else
       {:error, reason} -> DBConnection.rollback(conn, reason)
     end
   end
 
-  # The table as `to_regclass` reads it: quoted, so its case is kept.
-  defp relation(table), do: table |> String.split(".") |> Enum.map_join(".", &quote_name/1)
+  @doc """
+  The catalog's rows for `table` in `schema` (`nil`: the search path): one per
+  column, in column order, as `plan/2` and `kinds/1` read them; none for a
+  missing table.
+  """
+  @spec catalog(DBConnection.conn(), binary() | nil, binary()) ::
+          {:ok, Postgrex.Result.t()} | {:error, term()}
+  def catalog(conn, schema, table), do: Postgrex.query(conn, @catalog, [relation(schema, table)])
+
+  @doc "A table as `to_regclass` and a statement read it, each name quoted."
+  @spec relation(binary() | nil, binary()) :: binary()
+  def relation(nil, table), do: quote_name(table)
+  def relation(schema, table), do: quote_name(schema) <> "." <> quote_name(table)
+
+  @doc "A table written `name` or `schema.name`, as `{schema or nil, name}`."
+  @spec split_table(binary()) :: {binary() | nil, binary()}
+  def split_table(table) do
+    case table_names(table) do
+      [name] -> {nil, name}
+      [schema, name] -> {schema, name}
+    end
+  end
 
   defp start(_conn, _plan, "beginning"), do: nil
 

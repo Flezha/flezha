@@ -183,3 +183,9 @@ The `rabbitmq` service is the broker the RabbitMQ plugin package
 (`plugins/flezha_rabbitmq_plugin`) is tested against: AMQP on `localhost:5672`, the
 management UI and API on `http://localhost:15672/` (user `guest`, password `guest`).
 Start it alone with `docker compose -f docker/dev/docker-compose.yml up -d rabbitmq`.
+
+# Postgres change capture:
+The `postgres-cdc` service is the database the Postgres change capture plugin package
+(`plugins/flezha_postgres_cdc_plugin`) is tested against: `localhost:5434`, database
+`flezha_test`, user `flezha`, password `flezha_test`, with `wal_level=logical`.
+Start it alone with `docker compose -f docker/dev/docker-compose.yml up -d postgres-cdc`.

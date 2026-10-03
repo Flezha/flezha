@@ -1906,6 +1906,54 @@
         {"tag": "declared_mutate_failed", "args": ["reason"]}
       ]
     },
+    "postgres_cdc.publication_missing": {
+      "class": "not_found",
+      "message": "the publication '{publication}' does not exist, and the plugin names no tables to create it from",
+      "details": ["publication"],
+      "reasons": [
+        {"tag": "postgres_cdc_publication_missing", "args": ["details"]}
+      ]
+    },
+    "postgres_cdc.replica_identity_missing": {
+      "class": "invalid",
+      "message": "the published table {table} has no usable replica identity: give it a primary key or set REPLICA IDENTITY FULL",
+      "details": ["table"],
+      "reasons": [
+        {"tag": "postgres_cdc_replica_identity_missing", "args": ["details"]}
+      ]
+    },
+    "postgres_cdc.replication_failed": {
+      "class": "unavailable",
+      "message": "the plugin cannot read changes from {where}: {reason}",
+      "details": ["where", "reason"],
+      "reasons": [
+        {"tag": "postgres_cdc_replication_failed", "args": ["details"]}
+      ]
+    },
+    "postgres_cdc.server_too_old": {
+      "class": "invalid",
+      "message": "the database server is version {version}; change capture needs 14 or newer",
+      "details": ["version"],
+      "reasons": [
+        {"tag": "postgres_cdc_server_too_old", "args": ["details"]}
+      ]
+    },
+    "postgres_cdc.slot_lag": {
+      "class": "unavailable",
+      "message": "the replication slot {slot} holds back {lag_bytes} bytes of write-ahead log, past max_lag_bytes {max_lag_bytes}",
+      "details": ["slot", "lag_bytes", "max_lag_bytes"],
+      "reasons": [
+        {"tag": "postgres_cdc_slot_lag", "args": ["details"]}
+      ]
+    },
+    "postgres_cdc.wal_level_not_logical": {
+      "class": "invalid",
+      "message": "the database server's wal_level is {wal_level}; change capture needs logical",
+      "details": ["wal_level"],
+      "reasons": [
+        {"tag": "postgres_cdc_wal_level_not_logical", "args": ["details"]}
+      ]
+    },
     "quota.exceeded": {
       "class": "conflict",
       "message": "the namespace's {kind} quota is reached ({current} of {limit})",

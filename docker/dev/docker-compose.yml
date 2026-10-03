@@ -125,6 +125,27 @@ services:
     networks:
       - flezha_network
 
+  # Database for the Postgres change capture package's integration tests
+  # (POSTGRES_CDC_INTEGRATION=1 mix test --include postgres_cdc_integration)
+  # and its end-to-end run: logical replication on, host port 5434.
+  postgres-cdc:
+    image: postgres:16.15
+    container_name: flezha_postgres_cdc
+    command: postgres -c wal_level=logical -c max_replication_slots=10 -c max_wal_senders=10
+    environment:
+      POSTGRES_USER: flezha
+      POSTGRES_PASSWORD: flezha_test
+      POSTGRES_DB: flezha_test
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flezha -d flezha_test"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - flezha_network
+
   # Broker for the RabbitMQ plugin package's integration tests
   # (RABBITMQ_INTEGRATION=1 mix test --include rabbitmq_integration) and its
   # end-to-end run: AMQP on 5672, the management API on 15672. Erlang

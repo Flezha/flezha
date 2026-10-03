@@ -392,6 +392,17 @@ SDK raises or returns its one error type carrying them.
 | `plugin.window_needs_idempotence` | invalid | 2 | max_in_flight {max_in_flight} needs idempotent set to true: only the broker's per-partition sequence check keeps a retry inside the window ordered |  |
 | `plugin.write_failed` | internal | 1 | the plugin could not be recorded on its operator; the controller's log names the cause |  |
 
+### postgres_cdc
+
+| Code | Class | Exit | Message | Hint |
+|---|---|---|---|---|
+| `postgres_cdc.publication_missing` | not_found | 5 | the publication '{publication}' does not exist, and the plugin names no tables to create it from |  |
+| `postgres_cdc.replica_identity_missing` | invalid | 2 | the published table {table} has no usable replica identity: give it a primary key or set REPLICA IDENTITY FULL |  |
+| `postgres_cdc.replication_failed` | unavailable | 7 | the plugin cannot read changes from {where}: {reason} |  |
+| `postgres_cdc.server_too_old` | invalid | 2 | the database server is version {version}; change capture needs 14 or newer |  |
+| `postgres_cdc.slot_lag` | unavailable | 7 | the replication slot {slot} holds back {lag_bytes} bytes of write-ahead log, past max_lag_bytes {max_lag_bytes} |  |
+| `postgres_cdc.wal_level_not_logical` | invalid | 2 | the database server's wal_level is {wal_level}; change capture needs logical |  |
+
 ### quota
 
 | Code | Class | Exit | Message | Hint |

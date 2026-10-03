@@ -395,6 +395,7 @@ name, a provider, an operator and its options.
 | [`rabbitmq.md`](../plugins/rabbitmq.md) | a RabbitMQ queue as an input, a RabbitMQ exchange as an output |
 | [`postgres_sink.md`](../plugins/postgres_sink.md) | Postgres as an output |
 | [`postgres_poll.md`](../plugins/postgres_poll.md) | a Postgres table as an input, read by polling |
+| [`postgres_cdc.md`](../plugins/postgres_cdc.md) | every row change of Postgres tables as an input, read from the write-ahead log |
 | [`operator_forward.md`](../plugins/operator_forward.md) | one operator's output into another's input |
 
 ## Next

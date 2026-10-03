@@ -203,6 +203,25 @@ defmodule Flezha.Plugin.Provider.PostgresPollTest do
                  ~s|ORDER BY r."updated_at", r."id" LIMIT $4|
     end
 
+    test "a name the catalog answers is quoted whole: a quote doubled, a dot kept" do
+      evil = ~s|x", pg_read_file('/etc/passwd') AS "y|
+
+      rows = [
+        ["sales", "or.ders", "id", "bigint", "b", "int8", false, nil],
+        ["sales", "or.ders", evil, "uuid", "b", "uuid", false, nil]
+      ]
+
+      {:ok, plan} = Query.plan(spec(%{table: "sales.orders"}), rows)
+
+      assert plan.first ==
+               ~s|SELECT "id", "x"", pg_read_file('/etc/passwd') AS ""y"::text, r."id"::text | <>
+                 ~s|FROM "sales"."or.ders" r WHERE r."id" IS NOT NULL ORDER BY r."id" LIMIT $1|
+
+      assert Query.relation(nil, ~s|a"b|) == ~s|"a""b"|
+      assert Query.split_table("sales.orders") == {"sales", "orders"}
+      assert Query.split_table("orders") == {nil, "orders"}
+    end
+
     test "a missing table and a missing column are named" do
       assert Query.plan(spec(%{table: "nope"}), []) == {:error, {:table_missing, "nope"}}
 

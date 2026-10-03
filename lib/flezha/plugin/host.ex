@@ -238,19 +238,28 @@ defmodule Flezha.Plugin.Host do
     position = Map.fetch!(state, key)
     now = :erlang.monotonic_time(:millisecond)
 
-    cond do
-      position == state.committed ->
-        state
-
-      next == :more and Map.get(state, :durable_input) != true and
-          now - state.committed_at < state.commit_interval_ms ->
-        state
-
-      true ->
-        persist_opt(state.overwatcher_pid, Map.get(state, :source_plugin_id), key, position)
-        %{state | committed: position, committed_at: now}
+    if position_due?(state, position, next, now) do
+      persist_opt(state.overwatcher_pid, Map.get(state, :source_plugin_id), key, position)
+      %{state | committed: position, committed_at: now}
+    else
+      state
     end
   end
+
+  @doc """
+  Whether a source's `position` is due to be confirmed at `now`, by the rule
+  `commit_position/3` commits by: it differs from `state.committed`, and the
+  operator journaled it (`durable_input`), or the source stops reading without
+  waiting (`next` other than `:more`), or `commit_interval_ms` has passed since
+  `state.committed_at`. A source that confirms upstream rather than through
+  `persist_opt/4` asks the same question.
+  """
+  @spec position_due?(map(), term(), atom(), integer()) :: boolean()
+  def position_due?(state, position, next, now),
+    do:
+      position != state.committed and
+        (next != :more or Map.get(state, :durable_input) == true or
+           now - state.committed_at >= state.commit_interval_ms)
 
   @doc """
   The extension table a host operator holds: shareable plugins on it are served

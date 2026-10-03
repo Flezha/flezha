@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added: Postgres change capture, as a plugin package
+
+The new package `flezha_postgres_cdc`, built from `plugins/flezha_postgres_cdc_plugin`, brings
+the provider `postgres_cdc` ([`docs/plugins/postgres_cdc.md`](docs/plugins/postgres_cdc.md)).
+It reads a publication's row changes from Postgres's write-ahead log through a logical
+replication slot and injects one JSON event per insert, update, delete and truncate, in commit
+order, after a first copy of the published tables taken in the slot's own snapshot, so the
+copy and the stream meet with nothing missed or doubled. Each event carries an `flz.msg_id`
+that a re-stream repeats, and the read position is confirmed to Postgres after every accepted
+transaction when the operator's input is durable, every `commit_interval_ms` when it is not.
+The plugin checks the server before it creates anything, reports the log its slot holds back,
+and keeps the slot when it is disabled. The dev compose file gains a `postgres-cdc` service,
+and six error codes join the catalogue.
+
 ### Added: RabbitMQ in both directions, as a plugin package
 
 The new package `flezha_rabbitmq`, built from `plugins/flezha_rabbitmq_plugin`, brings two
