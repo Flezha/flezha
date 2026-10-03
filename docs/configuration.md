@@ -786,6 +786,7 @@ there is no second list to keep in step, and this page does not carry one.
 |---|---|
 | `kafka_producer` (the Kafka plugin package) | [`plugins/kafka_producer.md`](plugins/kafka_producer.md) |
 | `kafka_consumer` (the Kafka plugin package) | [`plugins/kafka_consumer.md`](plugins/kafka_consumer.md) |
+| `rabbitmq_consumer`, `rabbitmq_producer` (the RabbitMQ plugin package) | [`plugins/rabbitmq.md`](plugins/rabbitmq.md) |
 | `operator_postgres` | [`plugins/postgres_sink.md`](plugins/postgres_sink.md) |
 | `operator_postgres_poll` | [`plugins/postgres_poll.md`](plugins/postgres_poll.md) |
 | `operator_http_poll` | [`plugins/http_poll.md`](plugins/http_poll.md) |

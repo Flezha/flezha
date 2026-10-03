@@ -392,6 +392,7 @@ name, a provider, an operator and its options.
 | [`websocket_subscription.md`](../plugins/websocket_subscription.md) | a live socket, both directions |
 | [`kafka_producer.md`](../plugins/kafka_producer.md) | Kafka as an output |
 | [`kafka_consumer.md`](../plugins/kafka_consumer.md) | Kafka topics as an input, read by a consumer group |
+| [`rabbitmq.md`](../plugins/rabbitmq.md) | a RabbitMQ queue as an input, a RabbitMQ exchange as an output |
 | [`postgres_sink.md`](../plugins/postgres_sink.md) | Postgres as an output |
 | [`postgres_poll.md`](../plugins/postgres_poll.md) | a Postgres table as an input, read by polling |
 | [`operator_forward.md`](../plugins/operator_forward.md) | one operator's output into another's input |

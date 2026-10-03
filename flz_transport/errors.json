@@ -1915,6 +1915,32 @@
         {"tag": "quota_exceeded", "args": ["kind", "usage"]}
       ]
     },
+    "rabbitmq.channel_closed": {
+      "class": "unavailable",
+      "message": "the RabbitMQ broker closed the plugin's channel with {code}: {text}",
+      "details": ["code", "text"],
+      "reasons": [
+        {"tag": "rabbitmq_channel_closed", "args": ["details"]}
+      ]
+    },
+    "rabbitmq.connection_failed": {
+      "class": "unavailable",
+      "message": "the plugin has no connection to the RabbitMQ broker at {host}: {reason}",
+      "details": ["host", "reason"],
+      "reasons": [
+        {"tag": "rabbitmq_connection_failed", "args": ["details"]}
+      ]
+    },
+    "rabbitmq.exhausted": {
+      "class": "unavailable",
+      "message": "the output was not confirmed by the RabbitMQ broker: {reason}",
+      "details": ["reason"]
+    },
+    "rabbitmq.unroutable": {
+      "class": "invalid",
+      "message": "the RabbitMQ broker returned the output: exchange '{exchange}' routes key '{routing_key}' to no queue",
+      "details": ["exchange", "routing_key"]
+    },
     "reset.confirmation_required": {
       "class": "invalid",
       "message": "flz reset printed its plan and cleared nothing: pass --yes to apply it, or --dry-run to preview without an error",

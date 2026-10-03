@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Added: RabbitMQ in both directions, as a plugin package
+
+The new package `flezha_rabbitmq`, built from `plugins/flezha_rabbitmq_plugin`, brings two
+providers ([`docs/plugins/rabbitmq.md`](docs/plugins/rabbitmq.md)). `rabbitmq_consumer`
+consumes one queue with a prefetch window and hands its messages to the operator in batches;
+a message is acknowledged only after the operator took it (after the input log holds it when
+the operator's input is durable), a refused one goes back to the queue, and its `message_id`
+becomes an `flz.msg_id` prefixed with the plugin id. Several operators on one queue are
+competing consumers; a partitioned operator is refused. `rabbitmq_producer` publishes each
+output to an exchange, routed by a static key or the output's `flz.key`, with its identity
+as headers; a delivery-guaranteed output carries a stable `message_id` and is held until the
+broker confirms it, published again after a refusal or a lost connection, and parked as
+`rabbitmq.exhausted` or, with `mandatory`, `rabbitmq.unroutable`. Every operator bound to one
+producer on a controller shares one connection. Both reconnect after a broker restart and
+report unhealthy meanwhile. The dev compose file gains a `rabbitmq` service.
+
+### Changed: one overflow policy for every sink queue
+
+What a full queue does under `queue_overflow` is now decided in one place,
+`Flezha.Process.Backlog.admit/5`, for `operator_http_push`, the Kafka producer and the
+RabbitMQ producer. Neither existing sink behaves differently.
+
 ### Added: a Kafka consumer in the Kafka package
 
 The package `flezha_kafka` gains the provider `kafka_consumer`, which joins the consumer

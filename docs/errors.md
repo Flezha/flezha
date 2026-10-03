@@ -398,6 +398,15 @@ SDK raises or returns its one error type carrying them.
 |---|---|---|---|---|
 | `quota.exceeded` | conflict | 6 | the namespace's {kind} quota is reached ({current} of {limit}) | `flz namespace show` |
 
+### rabbitmq
+
+| Code | Class | Exit | Message | Hint |
+|---|---|---|---|---|
+| `rabbitmq.channel_closed` | unavailable | 7 | the RabbitMQ broker closed the plugin's channel with {code}: {text} |  |
+| `rabbitmq.connection_failed` | unavailable | 7 | the plugin has no connection to the RabbitMQ broker at {host}: {reason} |  |
+| `rabbitmq.exhausted` | unavailable | 7 | the output was not confirmed by the RabbitMQ broker: {reason} |  |
+| `rabbitmq.unroutable` | invalid | 2 | the RabbitMQ broker returned the output: exchange '{exchange}' routes key '{routing_key}' to no queue |  |
+
 ### reset
 
 | Code | Class | Exit | Message | Hint |

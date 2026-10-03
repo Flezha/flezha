@@ -70,7 +70,13 @@ defmodule Flezha.Plugin.Provider.Postgres.Connection do
     ] ++ extra
   end
 
-  defp password_fun(opts) do
+  @doc """
+  The password of prepared `opts` as a closure, resolved when it is called: the
+  held secret, else `password_env` read then, else `nil`. A provider that
+  connects to something other than Postgres takes its password this way too.
+  """
+  @spec password_fun(map()) :: (-> binary() | nil)
+  def password_fun(opts) do
     case {Map.get(opts, :password_secret), Map.get(opts, :password_env)} do
       {secret, _} when is_function(secret, 0) -> secret
       {_, env} when is_binary(env) and env != "" -> fn -> System.get_env(env) end

@@ -238,7 +238,8 @@ defmodule Flezha.Plugin.Provider.HttpSend do
     case List.keytake(state.waiters, from, 0) do
       {{^from, entry}, waiters} ->
         GenServer.reply(from, :ok)
-        {:noreply, overflow(%{state | waiters: waiters}, entry)}
+        state = overflow(%{state | waiters: waiters}, [entry])
+        {:noreply, put_backlog(state, state.backlog)}
 
       nil ->
         {:noreply, state}
@@ -257,7 +258,7 @@ defmodule Flezha.Plugin.Provider.HttpSend do
   @impl true
   def terminate(_reason, state) do
     Enum.each(state.idle ++ Map.keys(state.busy), &Connection.stop/1)
-    queued = queued(state.backlog, []) ++ Enum.map(state.waiters, &elem(&1, 1))
+    queued = Backlog.to_list(state.backlog) ++ Enum.map(state.waiters, &elem(&1, 1))
 
     Enum.each(
       queued ++ Map.values(state.busy),
@@ -271,13 +272,6 @@ defmodule Flezha.Plugin.Provider.HttpSend do
   def format_status(status),
     do: Map.update(status, :state, nil, &%{&1 | conf: Plugin.redact(&1.conf)})
 
-  defp queued(backlog, acc) do
-    case Backlog.out(backlog) do
-      {:empty, _} -> Enum.reverse(acc)
-      {entry, rest} -> queued(rest, [entry | acc])
-    end
-  end
-
   ## Admission
 
   defp entry(body, metadata, from),
@@ -286,49 +280,45 @@ defmodule Flezha.Plugin.Provider.HttpSend do
   defp enqueue(state, entry),
     do: put_backlog(state, Backlog.push(state.backlog, entry, byte_size(entry.body)))
 
-  # A cast that was on its way when the queue filled is admitted past the bound
-  # under `:drop_nothing`: the flag stops the next one.
-  defp admit(%{conf: %{queue_overflow: :drop_nothing}} = state, entry),
-    do: enqueue(state, entry)
-
-  defp admit(%{conf: %{queue_overflow: :drop_newest}} = state, entry) do
-    if Backlog.fits?(state.backlog, byte_size(entry.body)),
-      do: enqueue(state, entry),
-      else: overflow(state, entry)
-  end
-
-  defp admit(%{conf: %{queue_overflow: :drop_oldest}} = state, entry) do
+  # `:drop_oldest` drops plain payloads first and a guaranteed one only once no
+  # plain one is left. A cast that was on its way when the queue filled is
+  # admitted past the bound under `:drop_nothing`: the flag stops the next one.
+  defp admit(state, entry) do
     size = byte_size(entry.body)
+    policy = state.conf.queue_overflow
 
-    {backlog, dropped} =
-      Backlog.make_room(state.backlog, size, &(not Outbox.guaranteed?(&1.metadata)))
+    case Backlog.admit(state.backlog, entry, size, policy, &(not Outbox.guaranteed?(&1.metadata))) do
+      {:full, _backlog} ->
+        enqueue(state, entry)
 
-    state = count_overflow(%{state | backlog: backlog}, dropped)
+      {:refused, %{frames: held} = backlog, plain} when policy == :drop_oldest and held > 0 ->
+        {verdict, backlog, dropped} = Backlog.admit(backlog, entry, size, policy)
+        admitted(state, verdict, backlog, plain ++ dropped, entry)
 
-    cond do
-      Backlog.fits?(backlog, size) -> enqueue(state, entry)
-      backlog.frames == 0 -> overflow(state, entry)
-      true -> state |> drop_oldest_held() |> admit(entry)
+      {verdict, backlog, dropped} ->
+        admitted(state, verdict, backlog, dropped, entry)
     end
   end
 
-  defp drop_oldest_held(state) do
-    {oldest, backlog} = Backlog.out(state.backlog)
-    overflow(%{state | backlog: backlog}, oldest)
-  end
+  defp admitted(state, :queued, backlog, dropped, _entry),
+    do: state |> overflow(dropped) |> put_backlog(backlog)
 
-  defp overflow(state, entry) do
-    if Outbox.guaranteed?(entry.metadata),
-      do: park(state, entry, {"http_push.exhausted", %{reason: :queue_full}})
+  defp admitted(state, :refused, backlog, dropped, entry),
+    do: state |> overflow(dropped ++ [entry]) |> put_backlog(backlog)
 
-    count_overflow(state, 1)
-  end
+  defp overflow(state, entries) do
+    for entry <- entries,
+        Outbox.guaranteed?(entry.metadata),
+        do: park(state, entry, {"http_push.exhausted", %{reason: :queue_full}})
 
-  defp count_overflow(state, 0), do: state
+    case length(entries) do
+      0 ->
+        state
 
-  defp count_overflow(state, n) do
-    emit(state, :overflowed, n, %{policy: state.conf.queue_overflow})
-    put_backlog(%{state | overflowed: state.overflowed + n}, state.backlog)
+      n ->
+        emit(state, :overflowed, n, %{policy: state.conf.queue_overflow})
+        %{state | overflowed: state.overflowed + n}
+    end
   end
 
   defp full?(%Backlog{} = b), do: b.frames >= b.max_frames or b.bytes >= b.max_bytes

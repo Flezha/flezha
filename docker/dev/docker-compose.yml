@@ -125,6 +125,25 @@ services:
     networks:
       - flezha_network
 
+  # Broker for the RabbitMQ plugin package's integration tests
+  # (RABBITMQ_INTEGRATION=1 mix test --include rabbitmq_integration) and its
+  # end-to-end run: AMQP on 5672, the management API on 15672. Erlang
+  # distribution (4369, 25672) stays unpublished: the host runs its own epmd.
+  rabbitmq:
+    image: rabbitmq:4.3.6-management
+    container_name: flezha_rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 10s
+      timeout: 10s
+      retries: 6
+      start_period: 20s
+    networks:
+      - flezha_network
+
   # S3-compatible target for the remote durability tier's S3 backend
   # (S3_INTEGRATION=1 mix test --include s3_integration). The bucket is
   # created by the test, so nothing here needs an init container.

@@ -41,13 +41,11 @@ defmodule Flezha.Plugin.Shared.Forwarder do
 
   @impl true
   def handle_cast({:push, event}, state) do
-    size = :erlang.external_size(event)
-    {backlog, dropped} = Backlog.make_room(state.backlog, size, fn _held -> true end)
-
     {backlog, dropped} =
-      if Backlog.fits?(backlog, size),
-        do: {Backlog.push(backlog, event, size), dropped},
-        else: {backlog, dropped + 1}
+      case Backlog.admit(state.backlog, event, :erlang.external_size(event), :drop_oldest) do
+        {:queued, backlog, dropped} -> {backlog, length(dropped)}
+        {:refused, backlog, dropped} -> {backlog, length(dropped) + 1}
+      end
 
     if dropped > 0, do: GenServer.cast(state.copy, {:dropped, dropped})
     {:noreply, inject_next(%{state | backlog: backlog})}

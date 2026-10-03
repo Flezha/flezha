@@ -177,3 +177,9 @@ _build/dev/rel/flezha/bin/flz operator listen my_operator
 
 # Kafka UI:
 Kafka UI can be seen on: `http://localhost:8080/`
+
+# RabbitMQ:
+The `rabbitmq` service is the broker the RabbitMQ plugin package
+(`plugins/flezha_rabbitmq_plugin`) is tested against: AMQP on `localhost:5672`, the
+management UI and API on `http://localhost:15672/` (user `guest`, password `guest`).
+Start it alone with `docker compose -f docker/dev/docker-compose.yml up -d rabbitmq`.
