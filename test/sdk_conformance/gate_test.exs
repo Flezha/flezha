@@ -620,6 +620,29 @@ defmodule FlezhaTest.SdkConformance.GateTest do
       end
     end
 
+    # The Elixir SDK compiles from these members, so it tracks a copy of each
+    # that a standalone clone and its Hex package compile against.
+    test "the Elixir SDK's tracked members equal the core's" do
+      {listed, 0} = System.cmd("git", ["-C", "sdk/elixir", "ls-files", "contract"])
+      copies = String.split(listed, "\n", trim: true)
+
+      assert copies != [],
+             "sdk/elixir tracks no contract/ copies; its standalone build needs them"
+
+      stale =
+        Enum.reject(copies, fn copy ->
+          File.read!(Path.join("sdk/elixir", copy)) ==
+            File.read!(String.replace_prefix(copy, "contract/", ""))
+        end)
+
+      if stale != [] do
+        fail(
+          "sdk/elixir's tracked contract copies differ from the core's: #{inspect(stale)}. " <>
+            "Copy the core's files over them, or a clone of the SDK compiles a stale catalogue"
+        )
+      end
+    end
+
     defp contract_members, do: Enum.map(contract_rows(), &elem(&1, 0))
 
     defp contract_rows do
