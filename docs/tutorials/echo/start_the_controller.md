@@ -14,32 +14,31 @@ application.
 
 ### Binaries
 
-Build a release from your checkout of the repository:
+Download the release and unpack it:
 
 ```sh
-$ make build-release
+$ curl -fLO https://github.com/flezha/flezha/releases/download/v0.1.0-alpha.1/flezha-0.1.0-linux-x86_64.tar.gz
+$ tar -xzf flezha-0.1.0-linux-x86_64.tar.gz
 ```
 
-That writes `_build/prod/rel/flezha/`, with `bin/flz`, the CLI. The release
-carries its own Erlang runtime. Put its `bin` on your path, in every terminal
-you use:
+That gives you a `flezha/` directory, with `bin/flz`, the CLI. The release
+carries its own Erlang runtime, so nothing else needs installing. It is built
+for Linux x86_64; on another platform,
+[build it from source](../../topics/advanced/building_from_source.md). Every
+`./bin/flz` command in the tutorials runs from that directory, in whichever
+terminal you use, so go there and start the controller:
 
 ```sh
-$ cd _build/prod/rel/flezha
-$ export PATH="$PWD/bin:$PATH"
-```
-
-Start the controller from that directory, every time:
-
-```sh
-$ FLEZHA_AUTHZ_ENABLED=false flz controller start
+$ cd flezha
+$ FLEZHA_AUTHZ_ENABLED=false ./bin/flz controller start
 ```
 
 It runs in the foreground of this terminal. Leave it open, and run everything
-after this from a second terminal. Check that it is ready:
+after this from a second terminal, in the `flezha` directory. Check that it is
+ready:
 
 ```sh
-$ flz boot await
+$ ./bin/flz boot await
 ```
 
 ```output
@@ -49,7 +48,7 @@ boot await: ready
 And that a runner can reach it, which needs no credential:
 
 ```sh
-$ flz runner check
+$ ./bin/flz runner check
 ```
 
 ```output

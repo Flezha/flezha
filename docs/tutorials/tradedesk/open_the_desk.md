@@ -18,7 +18,7 @@ A controller with authorization on and no admin writes a one-time token to
 > {: .step}
 
 ```sh
-$ flz auth bootstrap "$(cat app_data/auth/bootstrap.token)"
+$ ./bin/flz auth bootstrap "$(cat app_data/auth/bootstrap.token)"
 ```
 
 ```output
@@ -40,9 +40,9 @@ $ export FLEZHA_TOKEN=flzt_fwn2ctvoleymwb4blf55ybn7baw6qns44iballspqtxethhlqjhq
 > {: .step}
 
 ```sh
-$ flz namespace create trading
-$ flz token issue runner@trading trading runner --ttl never
-$ flz role bind runner@trading spawner trading
+$ ./bin/flz namespace create trading
+$ ./bin/flz token issue runner@trading trading runner --ttl never
+$ ./bin/flz role bind runner@trading spawner trading
 ```
 
 ```output
@@ -253,10 +253,11 @@ $ FLEZHA_NAMESPACE_SECRET=flzt_3j5bftycxn43ivwoxbd2peghazjgtnru5bxqgshvfqcft7lrd
 
 <!-- tabs-close -->
 
-From another terminal, with `FLEZHA_TOKEN` set, check that it joined `trading`:
+From another terminal in the `flezha` directory, with `FLEZHA_TOKEN` set, check
+that it joined `trading`:
 
 ```sh
-$ flz runner list --namespace trading
+$ ./bin/flz runner list --namespace trading
 ```
 
 ```output

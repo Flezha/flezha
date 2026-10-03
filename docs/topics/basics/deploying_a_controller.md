@@ -40,42 +40,35 @@ The four ways give you the same controller:
 
 ### Binaries
 
-**Get the release.** Download links are not published yet. Build one from a
-checkout instead:
+**Get the release.** Download the archive for Linux x86_64 and unpack it:
 
 ```sh
-$ make build-release
-```
-
-That writes `_build/prod/rel/flezha/`, holding `bin/flz` (the CLI) and
-`bin/flzvm` (the release script the CLI calls). The release carries its own
-Erlang runtime, so the machine it runs on needs no Elixir and no Erlang. It is
-the same artifact the production image runs. A downloaded archive is the same
-directory, unpacked:
-
-```sh
+$ curl -fLO https://github.com/flezha/flezha/releases/download/v0.1.0-alpha.1/flezha-0.1.0-linux-x86_64.tar.gz
 $ tar -xzf flezha-0.1.0-linux-x86_64.tar.gz
 $ cd flezha
-$ export PATH="$PWD/bin:$PATH"
 ```
 
-Put that `bin` on your path, in each shell or in your shell profile, or
-symlink `bin/flz` somewhere already on it. To pack a release of your own,
-`tar -czf <name>.tar.gz --exclude='flezha/tmp' --exclude='flezha/app_data' -C _build/prod/rel flezha`:
-a plain `tar` of the directory carries the logs and the node cookie of every
-local run.
+The `flezha/` directory holds `bin/flz` (the CLI) and `bin/flzvm` (the release
+script the CLI calls). The release carries its own Erlang runtime, so the
+machine it runs on needs no Elixir and no Erlang. It is the same artifact the
+production image runs. The release page lists its checksum in
+`SHA256SUMS.txt`. On another platform, or with changes of your own,
+[build it from source](../advanced/building_from_source.md).
+
+The commands below call it as `flz`; [CLI](cli.md) shows how
+to put it on your path.
 
 **Start the controller from the same directory every time**, or set
 `FLEZHA_STATE_DIR` to an absolute path. The state root is relative to the
 working directory and the minted cookie is relative to the release root, so
 starting from somewhere else opens two different trees.
 
-> #### State inside a build directory {: .warning}
+> #### State inside the release directory {: .warning}
 >
-> Running from `_build/prod/rel/flezha` puts `app_data/` inside build output.
-> `make clean` deletes it, and with it the controller's durable state and its
-> cookie. For anything you want to keep, point `FLEZHA_STATE_DIR` at an
-> absolute path outside the build.
+> Started from the release directory, the controller keeps its durable state
+> and its cookie in `app_data/` beside `bin/`. Deleting the directory to put a
+> newer release in its place deletes them too. For anything you want to keep,
+> point `FLEZHA_STATE_DIR` at an absolute path outside it.
 
 **Start it:**
 
@@ -284,13 +277,13 @@ A daemon writes nothing to your terminal:
 | everything the controller logs | `FLEZHA_LOG_PATH`, default `logs/flezha.log` |
 | the boot, and anything printed before the logger is up | `$RELEASE_TMP/log/`, default `<release>/tmp/log/` |
 
-The second is inside the build output, so a rebuild can take it with it.
-Point `RELEASE_TMP` somewhere durable on a machine you care about.
+The second is inside the release directory, so replacing the release takes it
+with it. Point `RELEASE_TMP` somewhere durable on a machine you care about.
 
 ## Tune the VM
 
 The release ships its own VM flags in
-`_build/prod/rel/flezha/releases/<vsn>/vm.args`, and on bare metal that file
+`flezha/releases/<vsn>/vm.args`, and on bare metal that file
 is yours to edit. For one node or one experiment, `ERL_FLAGS` is less trouble
 and wins over the file:
 
@@ -442,7 +435,7 @@ Before an admin is claimed, or when the controller is wedged, the release
 script stops it with the cookie alone:
 
 ```sh
-$ _build/prod/rel/flezha/bin/flzvm stop
+$ flzvm stop
 ```
 
 A clean stop removes the socket directory's contents. A controller that died

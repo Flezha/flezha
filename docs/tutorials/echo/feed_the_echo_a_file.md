@@ -18,7 +18,7 @@ started in.
 > {: .step}
 
 ```sh
-$ flz plugin enable writer operator_file_sink \
+$ ./bin/flz plugin enable writer operator_file_sink \
   --operator_id=my_echo \
   --hook=on_output \
   --Xpath=echo-out.txt
@@ -29,7 +29,7 @@ $ flz plugin enable writer operator_file_sink \
 plugin's own setting. Send a message, and a moment later it is in the file:
 
 ```sh
-$ flz operator send my_echo --text hello
+$ ./bin/flz operator send my_echo --text hello
 ```
 
 ```output
@@ -49,7 +49,7 @@ echo: hello
 > {: .step}
 
 ```sh
-$ flz plugin enable reader operator_file_source \
+$ ./bin/flz plugin enable reader operator_file_source \
   --operator_id=my_echo \
   --Xpath=echo-in.txt \
   --Xchannel_in=in
@@ -78,7 +78,7 @@ resumes from where it stopped after a restart or a move.
 files and their health:
 
 ```sh
-$ flz operator info
+$ ./bin/flz operator info
 ```
 
 ```output

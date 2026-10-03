@@ -7,12 +7,12 @@ a name and state of its own.
 [Running operators](../../topics/basics/running_operators.md) covers starting,
 watching and stopping operators in full, from `flz` and from your own code.
 
-> From a third terminal, start an operator from the `echo` factory and name it
-> `my_echo`. The controller and your runner have to be running.
+> From a third terminal, in the `flezha` directory, start an operator from the
+> `echo` factory and name it `my_echo`. The controller and your runner have to be running.
 > {: .step}
 
 ```sh
-$ flz operator start echo --id my_echo
+$ ./bin/flz operator start echo --id my_echo
 ```
 
 ```output
@@ -24,7 +24,7 @@ chose, and every later command finds the operator by it. List the operators to
 see which runner it is bound to:
 
 ```sh
-$ flz operator list
+$ ./bin/flz operator list
 ```
 
 ```output
@@ -44,7 +44,7 @@ factory id is spelled differently in the code and on the command line.
 > {: .step}
 
 ```sh
-$ flz operator send my_echo --text 'hello world' --await 2000
+$ ./bin/flz operator send my_echo --text 'hello world' --await 2000
 ```
 
 ```output
@@ -55,11 +55,11 @@ out	echo: hello world
 The first line says the controller accepted the message. The second is the
 output: the channel, `out`, a tab, and what the tasklet emitted.
 
-To watch an operator's output from another terminal for as long as you like,
-listen to it:
+To watch an operator's output from another terminal in the `flezha` directory,
+for as long as you like, listen to it:
 
 ```sh
-$ flz operator listen my_echo
+$ ./bin/flz operator listen my_echo
 ```
 
 It prints each message the operator sends out, for 30 seconds by default.

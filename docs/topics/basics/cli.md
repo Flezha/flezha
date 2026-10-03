@@ -1,9 +1,19 @@
-# The `flz` command line
+# CLI
 
 `flz` is the tool a controller is operated with: starting and stopping it,
 starting operators and sending them messages, managing namespaces, tokens and
 plugins, and reading state. Each of its commands is a verb of one group, such
 as `flz operator start` or `flz namespace create`.
+
+The topic pages call it as `flz`. With a release unpacked from the
+[archive](deploying_a_controller.md), put its `bin` on your path first, from
+the release directory, in each shell or in your shell profile:
+
+```sh
+$ export PATH="$PWD/bin:$PATH"
+```
+
+The tutorials call it as `./bin/flz` from the release directory instead.
 
 Three things about it are worth knowing before anything else:
 

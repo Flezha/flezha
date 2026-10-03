@@ -403,11 +403,11 @@ If the controller runs in Docker, set
 `FLEZHA_SOCKET_FILES_PATH=/tmp/flz_sock` in front of the command, the folder
 the controller's socket is mounted on.
 
-The runner keeps that terminal. Leave it running. From another terminal, check
-that it connected:
+The runner keeps that terminal. Leave it running. From another terminal, in the
+`flezha` directory, check that it connected:
 
 ```sh
-$ flz runner list
+$ ./bin/flz runner list
 ```
 
 ```output

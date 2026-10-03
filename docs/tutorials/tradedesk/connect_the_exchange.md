@@ -29,7 +29,7 @@ Testnet webSocket server is listening on ws://localhost:4500
 > {: .step}
 
 ```sh
-$ flz plugin enable exchange operator_websocket \
+$ ./bin/flz plugin enable exchange operator_websocket \
   --operator_id=trade_watcher --namespace trading \
   --Xuri=ws://localhost:4500/ \
   --Xchannel=trades \
@@ -70,7 +70,7 @@ an order is booked, and the runner's terminal shows it:
 > {: .step}
 
 ```sh
-$ flz plugin enable signals operator_file_sink \
+$ ./bin/flz plugin enable signals operator_file_sink \
   --operator_id=trade_watcher --namespace trading \
   --hook=on_output \
   --Xpath=signals.txt \

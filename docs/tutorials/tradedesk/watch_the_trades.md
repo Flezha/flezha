@@ -195,7 +195,7 @@ end
 > {: .step}
 
 ```sh
-$ flz operator start trade_watcher --id trade_watcher --partitions 2 --namespace trading
+$ ./bin/flz operator start trade_watcher --id trade_watcher --partitions 2 --namespace trading
 ```
 
 ```output
@@ -212,9 +212,9 @@ the same one. [Partitioning](../../topics/advanced/partitioning.md) covers how.
 > {: .step}
 
 ```sh
-$ flz operator send 'trade_watcher#p0' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "EUR/USD", "price": 1.0850, "ord_type": "market"}]}'
-$ flz operator send 'trade_watcher#p0' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "EUR/USD", "price": 1.0853, "ord_type": "market"}]}'
-$ flz operator send 'trade_watcher#p0' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "EUR/USD", "price": 1.1100, "ord_type": "market"}]}' --await 3000
+$ ./bin/flz operator send 'trade_watcher#p0' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "EUR/USD", "price": 1.0850, "ord_type": "market"}]}'
+$ ./bin/flz operator send 'trade_watcher#p0' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "EUR/USD", "price": 1.0853, "ord_type": "market"}]}'
+$ ./bin/flz operator send 'trade_watcher#p0' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "EUR/USD", "price": 1.1100, "ord_type": "market"}]}' --await 3000
 ```
 
 ```output
@@ -236,13 +236,13 @@ booked:
 > {: .step}
 
 ```sh
-$ flz operator send 'trade_watcher#p1' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "GBP/USD", "price": 1.3400, "ord_type": "market"}]}'
+$ ./bin/flz operator send 'trade_watcher#p1' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "GBP/USD", "price": 1.3400, "ord_type": "market"}]}'
 ```
 
 Read every symbol's window, from every partition:
 
 ```sh
-$ flz state get trade_watcher/track_prices --namespace trading
+$ ./bin/flz state get trade_watcher/track_prices --namespace trading
 ```
 
 ```output
@@ -255,7 +255,7 @@ state get trade_watcher/track_prices:
 > {: .step}
 
 ```sh
-$ flz operator scale trade_watcher 3 --namespace trading
+$ ./bin/flz operator scale trade_watcher 3 --namespace trading
 ```
 
 ```output
@@ -270,7 +270,7 @@ The two cells whose symbols now belong to another partition moved there with
 their state. EUR/USD's window came along:
 
 ```sh
-$ flz state get trade_watcher/track_prices/EUR/USD --namespace trading
+$ ./bin/flz state get trade_watcher/track_prices/EUR/USD --namespace trading
 ```
 
 ```output

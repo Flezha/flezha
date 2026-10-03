@@ -201,7 +201,7 @@ end
 > {: .step}
 
 ```sh
-$ flz operator start order_executor --id order_1 --namespace trading --text '{"symbol": "EUR/USD", "quantity": 10}' --channel order
+$ ./bin/flz operator start order_executor --id order_1 --namespace trading --text '{"symbol": "EUR/USD", "quantity": 10}' --channel order
 ```
 
 ```output
@@ -211,7 +211,7 @@ Started order_1
 `confirm_fill` waits ten seconds for the exchange. Read the journal after that:
 
 ```sh
-$ flz state journal order_1 --namespace trading
+$ ./bin/flz state journal order_1 --namespace trading
 ```
 
 ```output

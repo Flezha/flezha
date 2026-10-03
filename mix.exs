@@ -213,6 +213,7 @@ defmodule Flezha.MixProject do
         "docs/tutorials/agentdesk/run_a_cluster.md",
         "docs/tutorials/agentdesk/kill_the_runner.md",
         "docs/tutorials/agentdesk/run_on_kubernetes.md",
+        "docs/topics/basics/cli.md",
         "docs/topics/basics/building_blocks.md",
         "docs/topics/basics/configuring_an_operator.md",
         "docs/topics/basics/streams.md",
@@ -226,7 +227,6 @@ defmodule Flezha.MixProject do
         "docs/topics/basics/namespaces.md",
         "docs/topics/basics/authorization.md",
         "docs/topics/basics/durability.md",
-        "docs/topics/basics/cli.md",
         "docs/topics/advanced/partitioning.md",
         "docs/topics/advanced/merged_inputs.md",
         "docs/topics/advanced/timers.md",
@@ -241,6 +241,7 @@ defmodule Flezha.MixProject do
         "docs/topics/advanced/clustering.md",
         "docs/topics/advanced/effectively_once.md",
         "docs/topics/advanced/kubernetes.md",
+        "docs/topics/advanced/building_from_source.md",
         "docs/configuration.md",
         "docs/errors.md",
         "docs/plugins/file.md",
@@ -272,6 +273,7 @@ defmodule Flezha.MixProject do
         "Tutorial 2: The tradedesk": ~r"docs/tutorials/tradedesk/",
         "Tutorial 3: The agentdesk": ~r"docs/tutorials/agentdesk/",
         "The basics": [
+          "docs/topics/basics/cli.md",
           "docs/topics/basics/building_blocks.md",
           "docs/topics/basics/configuring_an_operator.md",
           "docs/topics/basics/streams.md",
@@ -284,8 +286,7 @@ defmodule Flezha.MixProject do
           "docs/topics/basics/plugins.md",
           "docs/topics/basics/namespaces.md",
           "docs/topics/basics/authorization.md",
-          "docs/topics/basics/durability.md",
-          "docs/topics/basics/cli.md"
+          "docs/topics/basics/durability.md"
         ],
         "Advanced topics": [
           "docs/topics/advanced/partitioning.md",
@@ -301,7 +302,8 @@ defmodule Flezha.MixProject do
           "docs/topics/advanced/writing_a_plugin.md",
           "docs/topics/advanced/clustering.md",
           "docs/topics/advanced/effectively_once.md",
-          "docs/topics/advanced/kubernetes.md"
+          "docs/topics/advanced/kubernetes.md",
+          "docs/topics/advanced/building_from_source.md"
         ],
         "Plugin catalogue": ~r"docs/plugins/",
         Reference: ~r"docs/(configuration|errors|troubleshooting/|publishing/maturity)"

@@ -11,7 +11,7 @@ and why.
 > {: .step}
 
 ```sh
-$ flz state get trade_watcher/track_prices --namespace trading
+$ ./bin/flz state get trade_watcher/track_prices --namespace trading
 ```
 
 ```output
@@ -28,7 +28,7 @@ While the runner is gone its partitions show `failed`; a few seconds after the
 restart they are `healthy` again:
 
 ```sh
-$ flz operator info trade_watcher --namespace trading
+$ ./bin/flz operator info trade_watcher --namespace trading
 ```
 
 ```output
@@ -44,7 +44,7 @@ Partition group: trade_watcher (3/3)
 > {: .step}
 
 ```sh
-$ flz runner list --namespace trading
+$ ./bin/flz runner list --namespace trading
 ```
 
 ```output
@@ -68,7 +68,7 @@ After either restart, `flz state get` prints the same windows as before.
 > {: .step}
 
 ```sh
-$ flz operator start order_executor --id order_2 --namespace trading --text '{"symbol": "EUR/USD", "quantity": 10}' --channel order
+$ ./bin/flz operator start order_executor --id order_2 --namespace trading --text '{"symbol": "EUR/USD", "quantity": 10}' --channel order
 ```
 
 About ten seconds after the restart, `flz state journal order_2 --namespace
@@ -101,11 +101,11 @@ dead-letter queue, so the messages behind it are not held up.
 > {: .step}
 
 ```sh
-$ flz operator send 'trade_watcher#p1' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "EUR/USD", "price": "one euro", "ord_type": "market"}]}'
+$ ./bin/flz operator send 'trade_watcher#p1' --namespace trading --channel trades --text '{"channel": "trade", "data": [{"symbol": "EUR/USD", "price": "one euro", "ord_type": "market"}]}'
 ```
 
 ```sh
-$ flz dlq list 'trade_watcher#p1' --namespace trading
+$ ./bin/flz dlq list 'trade_watcher#p1' --namespace trading
 ```
 
 <!-- tabs-open -->
@@ -186,7 +186,7 @@ dropped but not replayed.
 > {: .step}
 
 ```sh
-$ flz dlq drop '<entry>' --namespace trading
+$ ./bin/flz dlq drop '<entry>' --namespace trading
 ```
 
 ```output

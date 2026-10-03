@@ -8,9 +8,9 @@ tradedesk tutorial, which starts a controller of its own with authorization on.
 > {: .step}
 
 ```sh
-$ flz plugin disable writer
-$ flz plugin disable reader
-$ flz operator stop my_echo
+$ ./bin/flz plugin disable writer
+$ ./bin/flz plugin disable reader
+$ ./bin/flz operator stop my_echo
 ```
 
 These are the only steps that forget anything. The controller keeps enabled
@@ -28,7 +28,7 @@ on its own the next time the controller and a runner start.
 ### Binaries
 
 ```sh
-$ flz controller stop
+$ ./bin/flz controller stop
 ```
 
 ```output
