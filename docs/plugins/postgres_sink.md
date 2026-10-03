@@ -1,26 +1,21 @@
 # Postgres sink
 
-Transactional PostgreSQL sink (an operator plugin). Per flush batch, ONE database
-transaction upserts every record into `flezha_records`, keyed by `flz.key`, and
-advances the per-Cell `flezha_sink_progress` watermark row. That single
-transaction is the guarantee: effectively-once into the database for tier
-operators, plain inserts for everything else. See
-[`../resilience/data_durability.md`](../resilience/data_durability.md),
-"Delivery semantics".
-
-## Contract
+The Postgres sink writes what an operator emits into a PostgreSQL database, in
+transactions. Per flush batch, one database transaction upserts every record into
+`flezha_records`, keyed by `flz.key`, and advances the per-cell `flezha_sink_progress`
+watermark row. That single transaction is the guarantee: effectively-once into the
+database for an effectively-once operator, plain inserts for every other one. Its provider
+id is `operator_postgres`.
 
 | | |
 | --- | --- |
-| Plugin type | `:operator` |
-| Hooks | `:on_input`, `:on_output` |
-| Shared | no: a second operator bound to it is refused (`plugin.not_shareable`) |
-| Downstream | one PostgreSQL database, over a pool the plugin owns |
-| Delivery | the committed transaction IS the confirmation; it answers the outbox hold each guaranteed record carries |
-| Overflow | delay, never loss: an enqueue past `queue_max` parks until a flush frees space |
-| Failure posture | an unreachable database delays the flush; nothing is dropped |
+| Type | operator plugin |
+| Ships | built in |
+| Shareable | no: a second operator bound to it is refused (`plugin.not_shareable`) |
+| Partitioned operators | allowed: each member runs its own copy |
+| Durability | the committed transaction confirms each delivery-guaranteed output; with `effectively_once` each output is written once |
 
-## Parameters
+## Options
 
 <!-- provider-options:begin -->
 | Option | Type | Default | Required | Description |
@@ -42,6 +37,27 @@ operators, plain inserts for everything else. See
 | `unhealthy_after_ms` | int | `30000` | no | Age of the last commit past which a backed-up sink is unhealthy |
 | `auto_create` | bool | `false` | no | Create the target tables when missing |
 <!-- provider-options:end -->
+
+## Example
+
+```sh
+$ flz plugin enable store operator_postgres --operator_id=orders --hook=on_output \
+  --Xdatabase=flezha --Xusername=flezha --Xpassword_env=PGPASSWORD --Xauto_create=true
+```
+
+## Contract
+
+| | |
+| --- | --- |
+| Hooks | `:on_input`, `:on_output` |
+| Downstream | one PostgreSQL database, over a pool the plugin owns |
+| Delivery | the committed transaction IS the confirmation; it answers the outbox hold each guaranteed record carries |
+| Overflow | delay, never loss: an enqueue past `queue_max` parks until a flush frees space |
+| Failure posture | an unreachable database delays the flush; nothing is dropped |
+
+Delivery semantics in general are in [`durability.md`](../topics/basics/durability.md).
+
+## Options in detail
 
 Every other key is refused at enable rather than ignored, so a config asking for
 something the sink does not offer fails loudly instead of reading as accepted.
@@ -88,5 +104,10 @@ escalates.
 The sink worker is this provider's declared worker: the extension table starts it
 at activation, under the provider's own family, keyed by `plugin_id`, with
 `restart: :permanent`. A `:prepared` plugin holds no connection and no process,
-so a sink on an operator whose SDK side never binds costs nothing. See
-[`lifecycle.md`](lifecycle.md).
+so a sink on an operator whose SDK side never binds costs nothing.
+
+## See also
+
+- [`postgres_poll.md`](postgres_poll.md) and [`postgres_cdc.md`](postgres_cdc.md): Postgres as an input
+- [`plugins.md`](../topics/basics/plugins.md): the plugin model
+- [`effectively_once.md`](../topics/advanced/effectively_once.md): writing each output once

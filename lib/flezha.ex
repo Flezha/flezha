@@ -8,7 +8,7 @@ defmodule Flezha do
   in Rust, Java, and others. It supports clustered operators with hot-swap
   migration and a single auto-restore-on-boot mechanism — ProcessHub's
   durable registry persists operator specs, and per-Cell WAL/snapshot
-  files persist progress (see `docs/operations/auto_restore_on_boot.md` and
+  files persist progress (see `docs/topics/basics/running_operators.md` and
   `docs/internals/state_persistence.md`).
   """
 

@@ -73,7 +73,7 @@ On a host where the image-supplied ownership does not apply (userns-remap),
 start a harness service with `FLEZHA_CONTAINER_USER=0:0`: the script then
 chowns only the mountpoints whose top-level owner is wrong and drops
 privileges with `setpriv`. It never uses `su` — see
-[graceful shutdown](../../docs/operations/graceful_shutdown.md).
+[graceful shutdown](../../docs/topics/basics/deploying_a_controller.md).
 
 ## Build and push the toolchain image
 

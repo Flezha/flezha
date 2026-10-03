@@ -1,61 +1,19 @@
 # HTTP server plugin
 
-For users who put an operator behind HTTP: a client sends a request, the operator's graph
-decides the answer, and the same connection can instead carry a stream of another
-operator's parts and outputs as server-sent events. `FlezhaHttp.Provider` (provider id
-`http_server`) is a plugin package, `flezha_http`, built in its own repository,
-`Flezha/flezha_http_plugin`, which this repository carries as the submodule
-`plugins/flezha_http_plugin`; its README covers building and testing it. This page is its
-contract.
-
-## Contract
+The HTTP server plugin puts an operator behind HTTP: a client sends a request, the
+operator's graph decides the answer, and the same connection can instead carry a stream of
+another operator's parts and outputs as server-sent events. `FlezhaHttp.Provider` is its
+provider, under the provider id `http_server`, in a plugin package built in its own
+repository, `Flezha/flezha_http_plugin`, which this repository carries as the submodule
+`plugins/flezha_http_plugin`; its README covers building and testing it.
 
 | | |
 | --- | --- |
-| Package | `flezha_http`, built on Bandit and Plug, installed with `flz plugin install` and loaded at the next boot (see [installation.md](installation.md)) |
-| Hooks | `:on_terminate`: the server drives itself; a plugin spec must name one hook |
-| Shared | no: a second operator bound to it is refused (`plugin.not_shareable`) |
-| Server | HTTP/1.1 only, on `bind` and `port`, started when the plugin activates and stopped when it is disabled or its operator stops |
-| Request | one outside call of the operator the plugin is enabled on, on its entry channel, with a JSON request envelope as the input |
-| Answer | the operator's `response()` output, a JSON answer envelope: a plain response, or a stream |
-| Host | an operator of either kind; a member of a partition group is refused (`plugin.partitioned_host`) |
-
-## Install and enable
-
-```
-flz plugin install flezha_http-0.1.0.fpz
-flz controller stop && flz controller start    # the package loads at boot
-flz plugin list --installed                    # flezha_http 0.1.0  loaded  providers: http_server
-```
-
-On a running operator whose entry channel is `http`:
-
-```
-flz plugin enable web http_server \
-  --operator_id=gateway \
-  --hook=on_terminate \
-  --Xport=8080 \
-  --Xchannel=http \
-  --Xpass_headers=x-api-key
-```
-
-Or declared at start (`flz operator start <factory> --id gateway --plugins <file>`):
-
-```json
-[
-  {
-    "name": "web",
-    "provider": "http_server",
-    "opts": {"port": "8080", "channel": "http", "pass_headers": "x-api-key"},
-    "hooks": ["on_terminate"]
-  }
-]
-```
-
-A port that cannot be bound fails the activation with `http.listen_failed`, naming the
-address, the port and the reason. `flz operator info gateway` shows, under the plugin, the
-address it listens on, the requests waiting for an answer, the streams open and the
-requests a cap refused since the server started.
+| Type | operator plugin |
+| Ships | package `flezha_http` |
+| Shareable | no: a second operator bound to it is refused (`plugin.not_shareable`) |
+| Partitioned operators | refused (`plugin.partitioned_host`): a group behind one port needs a router by key |
+| Durability | a request is one outside call of the operator, answered when the operator answers; the plugin retries nothing, and the operator's own settings decide what its input survives |
 
 ## Options
 
@@ -75,6 +33,60 @@ requests a cap refused since the server started.
 | `heartbeat_ms` | int | `15000` | no | How long a quiet stream waits before it writes a comment line, 1000 to 300000 |
 | `stream_wait_ms` | int | `5000` | no | How long a stream waits for the operator it names to exist, up to 60000; 0 answers 404 at once |
 <!-- provider-options:end -->
+
+## Example
+
+On a running operator whose entry channel is `http`:
+
+```sh
+$ flz plugin enable web http_server \
+  --operator_id=gateway \
+  --Xport=8080 \
+  --Xchannel=http \
+  --Xpass_headers=x-api-key
+```
+
+## Contract
+
+| | |
+| --- | --- |
+| Package | `flezha_http`, built on Bandit and Plug, installed with `flz plugin install` and loaded at the next boot (see [installing_plugins.md](../topics/advanced/installing_plugins.md)) |
+| Hooks | none needed: the server drives itself, so a binding names no hook (the provider also defines `:on_terminate`) |
+| Server | HTTP/1.1 only, on `bind` and `port`, started when the plugin activates and stopped when it is disabled or its operator stops |
+| Request | one outside call of the operator the plugin is enabled on, on its entry channel, with a JSON request envelope as the input |
+| Answer | the operator's `response()` output, a JSON answer envelope: a plain response, or a stream |
+| Host | any operator, in flow or in steps; a member of a partition group is refused (`plugin.partitioned_host`) |
+
+## Install and enable
+
+```sh
+$ flz plugin install flezha_http-0.1.0.fpz
+$ flz controller stop && flz controller start
+$ flz plugin list --installed
+```
+
+```output
+flezha_http 0.1.0  loaded  providers: http_server
+```
+
+The package loads at boot. Once it is loaded, the plugin can also be declared at start
+(`flz operator start <factory> --id gateway --plugins <file>`):
+
+```json
+[
+  {
+    "name": "web",
+    "provider": "http_server",
+    "opts": {"port": "8080", "channel": "http", "pass_headers": "x-api-key"},
+    "hooks": ["on_terminate"]
+  }
+]
+```
+
+A port that cannot be bound fails the activation with `http.listen_failed`, naming the
+address, the port and the reason. `flz operator info gateway` shows, under the plugin, the
+address it listens on, the requests waiting for an answer, the streams open and the
+requests a cap refused since the server started.
 
 ## The request envelope
 
@@ -248,9 +260,16 @@ events.addEventListener("ended", () => events.close());
 
 - An operator carrying the plugin must not declare a `sleep_after`: an instance found
   asleep when a controller boots has no plugins until something wakes it, and its only
-  input is the port that is not bound (KB-593).
+  input is the port that is not bound.
 - A member of a partition group is refused: a group behind one port needs a router by key.
 - There is no drain: stopping the plugin closes every connection at once.
 - No TLS in the plugin and no WebSocket yet; `Idempotency-Key` is not deduplicated (pass it
   and deduplicate in the operator's keyed state).
 - The plugin's counters are shown by `flz operator info` only, not exported as metrics.
+
+## See also
+
+- [streamed_answers.md](../topics/advanced/streamed_answers.md): parts and server-sent events
+- [operator_calls.md](../topics/advanced/operator_calls.md): outside calls and the `response()` answer
+- [installing_plugins.md](../topics/advanced/installing_plugins.md): installing a plugin package
+- [plugins.md](../topics/basics/plugins.md): the plugin model

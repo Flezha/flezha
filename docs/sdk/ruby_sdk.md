@@ -286,7 +286,7 @@ does: `retry_max` and `retry_backoff_ms` on the channel (3 attempts, 50 ms base
 by default), so `retry_max(1)` is fail-fast.
 
 A steps tasklet registers timers as a flow tasklet does, and a firing
-runs as a pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-steps-operator));
+runs as a pass of its own ([`../topics/advanced/timers.md`](../topics/advanced/timers.md));
 only inside a `compensate` hook do `ctx.timer_after`, `ctx.timer_at_event_time`
 and `ctx.cancel_timer` raise a `Flezha::Error` with the code `runtime.timers_unavailable`. A `ctx.spawn_steps`
 naming a flow factory resolves its handle to a `Flezha::Error` with the code `operator.factory_not_steps`.
@@ -314,10 +314,10 @@ beside a callable on one channel, is refused when the class is declared, naming
 the class and the channel.
 
 `.response` ends a channel on the answer to an outside call instead of a sink,
-and takes the sink's `encode:` and `codec:`: [`calls.md`](calls.md).
+and takes the sink's `encode:` and `codec:`: [`../topics/advanced/operator_calls.md`](../topics/advanced/operator_calls.md).
 `.call("pricing", deadline_ms: 500)` or `.call(factory: "agent", deadline_ms: ..., create: false, codec: ...)`
 ends a chain on a call to another operator and answers an edge of `Flezha::Response`s:
-[`calls.md`](calls.md#operator-calls-call).
+[`../topics/advanced/operator_calls.md`](../topics/advanced/operator_calls.md).
 
 Ruby's integers survive JSON at any width. A `Float` that is `NaN` or infinite,
 or a `String` that is not valid UTF-8, cannot be sent as JSON and fails the emit
@@ -412,7 +412,7 @@ snapshots, no dead-letter queue. Durability, effectively-once delivery, plugins,
 placement and migration, the dead-letter queue, observability export, authz and
 multi-runner scale need a controller; a declaration asking for one of those is
 refused at startup, naming it. Walk-through:
-[`../quickstart.md`](../quickstart.md).
+[`../topics/basics/local_mode.md`](../topics/basics/local_mode.md).
 
 ## Parallelism, as arithmetic
 

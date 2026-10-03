@@ -36,7 +36,7 @@ delivery); durability, plugins, placement and migration, the dead-letter queue,
 observability export, authz and multi-runner scale need a controller. It ships
 in every SDK.
 
-**[`docs/quickstart.md`](docs/quickstart.md)** walks through it in five
+**[`docs/topics/basics/local_mode.md`](docs/topics/basics/local_mode.md)** walks through it in five
 minutes.
 
 ## ETL pipelines
@@ -48,8 +48,8 @@ tomorrow with no rebuild.
 
 | Stage | What carries it |
 | --- | --- |
-| Extract | A file read line by line, resuming from its last committed offset ([`file.md`](docs/plugins/file.md)); an HTTP resource, injected only when it changes ([`http_poll.md`](docs/plugins/http_poll.md)); a WebSocket feed ([`websocket_subscription.md`](docs/plugins/websocket_subscription.md)); another operator's output ([`operator_forward.md`](docs/plugins/operator_forward.md)); or a plugin of your own ([`installation.md`](docs/plugins/installation.md)) |
-| Transform | `map`, `filter`, `flat_map` and `key_by` declared on the edges ([`stream_transforms.md`](docs/sdk/stream_transforms.md)); tasklets with durable per-key state for aggregation and deduplication; joins and enrichment by merging channels ([`multi_input_tasklets.md`](docs/sdk/multi_input_tasklets.md)); windows and timeouts from per-key timers ([`cell_timers.md`](docs/sdk/cell_timers.md)) |
+| Extract | A file read line by line, resuming from its last committed offset ([`file.md`](docs/plugins/file.md)); an HTTP resource, injected only when it changes ([`http_poll.md`](docs/plugins/http_poll.md)); a WebSocket feed ([`websocket_subscription.md`](docs/plugins/websocket_subscription.md)); another operator's output ([`operator_forward.md`](docs/plugins/operator_forward.md)); or a plugin of your own ([`docs/topics/advanced/installing_plugins.md`](docs/topics/advanced/installing_plugins.md)) |
+| Transform | `map`, `filter`, `flat_map` and `key_by` declared on the edges ([`docs/topics/basics/streams.md`](docs/topics/basics/streams.md)); tasklets with durable per-key state for aggregation and deduplication; joins and enrichment by merging channels ([`docs/topics/advanced/merged_inputs.md`](docs/topics/advanced/merged_inputs.md)); windows and timeouts from per-key timers ([`docs/topics/advanced/timers.md`](docs/topics/advanced/timers.md)) |
 | Load | Postgres, each batch writing its rows and its progress watermark in one transaction ([`postgres_sink.md`](docs/plugins/postgres_sink.md)); Kafka, with retries, batching and an idempotent producer ([`kafka_producer.md`](docs/plugins/kafka_producer.md)); a file; or the next operator |
 
 What a pipeline usually has to build around itself is already there:
@@ -57,19 +57,19 @@ What a pipeline usually has to build around itself is already there:
 - **A crash resumes instead of starting over.** Per-key state is journaled and
   snapshotted on the controller, and an operator picks up where it stopped
   after a runner crash or a controller restart
-  ([`auto_restore_on_boot.md`](docs/operations/auto_restore_on_boot.md)).
+  ([`docs/topics/basics/running_operators.md`](docs/topics/basics/running_operators.md)).
 - **A bad record neither stops the stream nor vanishes.** It is retried, then
   parked in a dead-letter queue; `flz dlq list` shows it and `flz dlq replay`
   sends it back through the normal input path
-  ([`data_durability.md`](docs/resilience/data_durability.md#dead-letter-queue-poison-payloads-park-never-drop)).
+  ([`docs/topics/basics/durability.md`](docs/topics/basics/durability.md)).
 - **Effectively-once when you need it.** Delivery is at-least-once by default.
   Opt a channel into effectively-once and a Postgres load commits each record
   once, retries included
-  ([`data_durability.md`](docs/resilience/data_durability.md#delivery-semantics-at-least-once-default-effectively-once-tier)).
+  ([`docs/topics/basics/durability.md`](docs/topics/basics/durability.md)).
 - **Late data corrects the past.** With late-input correction declared on top of
   effectively-once, a record that arrives late rewinds its key and replays the
   input in event-time order, and a keyed sink overwrites the stale rows
-  ([`data_durability.md`](docs/resilience/data_durability.md#late-input-correction-fix-the-past-and-the-sinks-fix-themselves)).
+  ([`docs/topics/basics/durability.md`](docs/topics/basics/durability.md)).
 - **Batch jobs as well as streams.** A steps operator is a run with a start
   and an end: it commits progress at every step, retries a failing step before
   it aborts, and can undo finished steps with saga compensation
@@ -77,7 +77,7 @@ What a pipeline usually has to build around itself is already there:
   `flz schedule` starts one on a cron schedule, with no external scheduler.
 - **Scale by key.** `--partitions N` splits one flow operator, or a
   per-input steps operator, into N instances across its key space
-  ([`partitioned_operators.md`](docs/sdk/partitioned_operators.md)).
+  ([`docs/topics/advanced/partitioning.md`](docs/topics/advanced/partitioning.md)).
 
 ## Reading further
 
@@ -88,16 +88,16 @@ kernel, the two operator profiles, and the diagrams. Vocabulary:
 
 ## Features
 - ETL pipelines, run continuously or as scheduled batch jobs ([ETL pipelines](#etl-pipelines))
-- Run a whole graph in process, with no controller ([`docs/quickstart.md`](docs/quickstart.md))
+- Run a whole graph in process, with no controller ([`docs/topics/basics/local_mode.md`](docs/topics/basics/local_mode.md))
 - Clustered, hot-swap-migratable operators
 - SDK runtimes for Rust, Java, and others over a UDS transport, the default and stable, or over
   QUIC, which is [experimental: quic](docs/publishing/maturity.md#quic)
 - Per-Cell durable state — WAL + snapshot, crash-resume, point-in-time query ([`docs/internals/state_persistence.md`](docs/internals/state_persistence.md))
 - Opt-in effectively-once delivery — durable input log, atomic effect record, fsync-gated outbox ([`docs/architecture/kernel.md`](docs/architecture/kernel.md))
 - Steps operators — a tasklet tree with saga compensation, a durable loop, and suspension ([`docs/architecture/steps_profile.md`](docs/architecture/steps_profile.md))
-- Installable plugin subsystem ([`docs/plugins/installation.md`](docs/plugins/installation.md))
+- Installable plugin subsystem ([`docs/topics/advanced/installing_plugins.md`](docs/topics/advanced/installing_plugins.md))
 - A Kafka producer, as a plugin package, with key partitioning, retries, idempotence, batching, and bounded queueing ([`docs/plugins/kafka_producer.md`](docs/plugins/kafka_producer.md))
-- Transactional Postgres sink — upsert + progress watermark in one transaction ([`docs/resilience/data_durability.md`](docs/resilience/data_durability.md))
+- Transactional Postgres sink — upsert + progress watermark in one transaction ([`docs/topics/basics/durability.md`](docs/topics/basics/durability.md))
 
 ## Image size and supported architectures
 
@@ -192,7 +192,7 @@ finalise) on SIGTERM, `Application.prep_stop/1` and `flz controller stop`, in
 release, `mix run --no-halt` and `iex -S mix` modes. Triggers per run mode, the
 two env knobs and their defaults, the orchestrator grace-period pairing rule,
 telemetry, exit-code semantics and the third-SIGTERM escape hatch:
-[`docs/operations/graceful_shutdown.md`](docs/operations/graceful_shutdown.md).
+[`docs/topics/basics/deploying_a_controller.md`](docs/topics/basics/deploying_a_controller.md).
 
 ## Wiping runtime data
 
@@ -200,7 +200,7 @@ telemetry, exit-code semantics and the third-SIGTERM escape hatch:
 starts from a clean slate, and clears nothing while the Controller is up. Which
 directories are in scope (the socket directory is resolved, not fixed), the
 flags, the exit codes and the user recipes for docker-compose, k8s and CI:
-[`docs/operations/reset.md`](docs/operations/reset.md).
+[`docs/topics/basics/running_operators.md`](docs/topics/basics/running_operators.md).
 
 ## Code style
 
@@ -290,13 +290,13 @@ _build/dev/rel/flezha/bin/flz operator stop my_operator
 ### Installable plugins
 ```bash
 # Full lifecycle reference (install / upgrade / uninstall / enable / disable)
-# lives in docs/plugins/installation.md — including package layout, manifest
+# lives in docs/topics/advanced/installing_plugins.md — including package layout, manifest
 # schema, checksum generation, and Ed25519 signing.
 _build/dev/rel/flezha/bin/flz plugin install /path/to/my_plugin-1.0.0.fpz
 _build/dev/rel/flezha/bin/flz plugin enable my_plugin
 ```
 
-See [`docs/plugins/installation.md`](docs/plugins/installation.md) for the
+See [`docs/topics/advanced/installing_plugins.md`](docs/topics/advanced/installing_plugins.md) for the
 full authoring guide and [`examples/plugins/hello_world/`](examples/plugins/hello_world/)
 for a minimal copy-paste starting point.
 
@@ -361,7 +361,7 @@ progress and is shipped back to the SDK when the Cell's stream reattaches.
 What is written where, the boot reconcile, the `flz boot status` and
 `flz boot await` surface, the `FLEZHA_AUTO_RESTORE_ENABLED` kill-switch and the
 safety matrix per scenario — including the one tolerated data-loss case:
-[`docs/operations/auto_restore_on_boot.md`](docs/operations/auto_restore_on_boot.md).
+[`docs/topics/basics/running_operators.md`](docs/topics/basics/running_operators.md).
 
 ### Development
 Run the application inside the docker containers.
@@ -411,7 +411,7 @@ warranty of any kind; liability is disclaimed to the extent the licenses allow
 (MPL-2.0 §6–7, Apache-2.0 §7–8). It is not certified for any regulated use.
 Every durability and delivery default is documented in
 [`docs/configuration.md`](docs/configuration.md) and
-[`docs/resilience/data_durability.md`](docs/resilience/data_durability.md) —
+[`docs/topics/basics/durability.md`](docs/topics/basics/durability.md) —
 read them before trusting the system with data.
 
 **Name.** "Flezha" names this project and its releases. The licenses grant no

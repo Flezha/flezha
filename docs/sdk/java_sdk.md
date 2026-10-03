@@ -310,10 +310,10 @@ entry decodes by its declared type, so the short form takes no `codec` element.
 
 `.response()` ends a channel on the answer to an outside call instead of a sink,
 and `.response(Function<T, byte[]>)` takes a serializer as `.sink` does:
-[`calls.md`](calls.md). `.call(CallTarget.id("pricing"), Answer.class, deadlineMs)`
+[`../topics/advanced/operator_calls.md`](../topics/advanced/operator_calls.md). `.call(CallTarget.id("pricing"), Answer.class, deadlineMs)`
 (or `CallTarget.factory("agent").create(false)` after a `keyBy`) ends a tasklet's
 output chain on a call to another operator and answers an `EntryChannel` of
-`Response<Req, Answer>`: [`calls.md`](calls.md#operator-calls-call).
+`Response<Req, Answer>`: [`../topics/advanced/operator_calls.md`](../topics/advanced/operator_calls.md).
 
 `id` must be written: the factory id is an address a user types, and a
 class rename must not move it. The written `id` also names the tasklet, so a
@@ -339,7 +339,7 @@ refused as `topology.retry_max_zero`. A steps class has no `exactly`: a durable
 one already commits stage by stage.
 
 A tasklet of a steps operator registers timers as a flow tasklet does, and a
-firing runs as a pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-steps-operator));
+firing runs as a pass of its own ([`../topics/advanced/timers.md`](../topics/advanced/timers.md));
 only a `compensate` hook's context carries no timer session, and there every
 timer call throws a `FlezhaException` with the code `runtime.timers_unavailable`.
 A `spawnSteps` naming a flow factory reads `operator.factory_not_steps`. A flow

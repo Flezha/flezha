@@ -1,12 +1,12 @@
 # Steps Operator
 
-The mechanism-level and user-level reference for an operator whose class sets `run: steps`: what the
-controller and the shared runner core do at each tasklet barrier, iteration boundary, park,
-rewind and crash, and the knobs, files, CLI verbs and telemetry a user has — for users
-and for contributors to `flz_core/src/steps/` and `lib/flezha/operator/`. The concepts (the
-graph, the journal layout, the barrier, the outbox, loop modes, suspension, rewind) are described
-once in [`../architecture/steps_profile.md`](../architecture/steps_profile.md) and not
-repeated here; [`data_durability.md`](data_durability.md) says what is lost when.
+The mechanism reference for an operator whose class sets `run: steps`: what the controller and
+the shared runner core do at each tasklet barrier, iteration boundary, park, rewind and crash,
+for contributors to `flz_core/src/steps/` and `lib/flezha/operator/`. What a user configures,
+sees and runs is in [`../topics/basics/workflows.md`](../topics/basics/workflows.md). The
+concepts (the graph, the journal layout, the barrier, the outbox, loop modes, suspension, rewind)
+are described once in [`../architecture/steps_profile.md`](../architecture/steps_profile.md) and
+not repeated here; [`../topics/basics/durability.md`](../topics/basics/durability.md) says what is lost when.
 
 ## Structure: a DAG of tasklets, parallel cells
 
@@ -30,7 +30,7 @@ repeated here; [`data_durability.md`](data_durability.md) says what is lost when
 
 An instance is spawned with `init_values` as its tasklets' initial state, as a flow operator is,
 from the CLI (`flz operator start`), a schedule (`flz schedule`) or a running tasklet
-(`ctx.spawn_steps`, [`../sdk/tasklet_requested_spawn.md`](../sdk/tasklet_requested_spawn.md)),
+(`ctx.spawn_steps`, [`../topics/advanced/spawning_from_a_tasklet.md`](../topics/advanced/spawning_from_a_tasklet.md)),
 takes its input as messages on its entry channels (the first may ride the start:
 `flz operator start --text`, a schedule's stored `--text`, a spawn's payload) and terminates
 on the first of: chain quiescence (every leaf committed); a tasklet's
@@ -115,17 +115,7 @@ releasing the message as an iteration commit releases its input, **before**
 fails leaves the instance bound and logged. The Overwatch and the registry entry stay, and the
 Overwatch **hibernates** (`:hibernate` on both suspension entries, releasing its bind-time heap).
 A flow operator that sleeps takes the same path at iteration `0`
-([`data_durability.md`](data_durability.md#sleeping-instances)).
-
-| Surface | While suspended |
-| --- | --- |
-| `flz operator info` | phase `suspended` |
-| convergence loop | skipped (`suspended?`), plugin diff included — its plugins left with the runner and the rehydrating bind replays them |
-| namespace hub | outlives its runner: `HubManager.stop_hub_if_vacant/1` stops a hub only with no operator registered, so a parked fleet survives its sole runner dying |
-| `flz state get` | refused — no live Cell |
-| `flz operator stop` | wakes it onto a runner with the stop carried: `StepsStop` follows the bind, and it ends `cancelled` with its record and directory kept, as it would stopped awake. With no runner to wake on, the hard removal |
-| input-silence sweep | never flags it: the sweep skips a class whose park record exists |
-| removing its factory from the runner | the SDK's live-instance check cannot see a suspended instance, so the removal succeeds and the later rehydrate fails placement until a runner re-defines the factory; `FleetManager` warns `dropped factory ... that still has controller-known operators` on the `UpdateFactories` frame. A blocking policy is deferred |
+([`../topics/basics/durability.md`](../topics/basics/durability.md)).
 
 **Rehydrate = bind.** A new input-log append, the wake deadline, a crash and a migration all go
 through `Lifecycle.complete_init/5`: respawn on any live runner, `AddOperator.task_journal`
@@ -160,7 +150,7 @@ steps operator Cell, since its baseline is a committed iteration across every Ce
 its effect records carry no consumed offset; `flz operator rewind` is a loop's way back.
 
 A steps tasklet's Cell timers fire as passes of their own
-([`cell_timers.md`](../sdk/cell_timers.md#timers-in-a-steps-operator)). A served firing leaves its
+([`../topics/advanced/timers.md`](../topics/advanced/timers.md)). A served firing leaves its
 Cell's pending set when the stage that ran it commits, and the root's `TaskCommit` names the
 firing, so a resume knows the pass it opened: a crash before that commit fires the restored
 timer again into a fresh pass, and a crash after it drops the restored timer and resumes the
@@ -172,11 +162,6 @@ A failing item inside a **structured** tasklet is retried in place on the poll c
 per-item ladder, the one every flow cell climbs, while what its finished siblings emitted
 waits on the instance for the stage's commit. The policy is the tasklet's input edge's, as on
 a flow operator; a steps class declares none of its own.
-
-| Knob | On the edge | Default |
-| --- | --- | --- |
-| total attempts, first run included | `retry_max(n)` / `retryMax(n)` | 3; `1` is fail-fast, `0` is refused (`topology.retry_max_zero`) |
-| backoff base | `retry_backoff_ms(ms)` / `retryBackoffMs(ms)` | 50 ms; attempt `n` waits `base × 2^(n-1)` ±50 % jitter, capped at 5 s (`RETRY_BACKOFF_MAX_MS`) |
 
 - `TaskletError::non_retryable(..)` skips the ladder; every other error — a panic included,
   which the author never got to classify — is retryable. Where a flow operator parks an exhausted
@@ -196,7 +181,7 @@ a flow operator; a steps class declares none of its own.
 
 An exhausted ladder fails the stage where a flow operator would park the item: no commit, nothing
 leaked, compensation, status `error`. Abort-and-compensate is the escape where a flow operator
-would [park the payload](data_durability.md#dead-letter-queue-poison-payloads-park-never-drop), with
+would [park the payload](../topics/basics/durability.md), with
 one exception: a failed turn of a keep-progress session.
 
 ## A failed turn of a keep-progress session
@@ -220,11 +205,6 @@ anywhere in this resumes it: after the `dead_lettered` record the rebind runs th
 and waits for input; before it, the turn runs again and the bind removes an entry above the
 instance's floor, so the message is parked at most once. A class kept in memory (`durable: false`)
 parks the turn without its bytes and undoes it in memory.
-
-It shows up as `Failed turns: <count> (last: iteration <n>)` in `flz operator info`, a
-`dead_lettered` row in `flz state journal`, the `flezha_steps_turns_dead_lettered_total`
-metric and a warning line. A rewind counts the iteration as committed and undoes none of it twice,
-and leaves the entry alone.
 
 Everything else still ends the session: all-or-nothing, a `once` or `chained` loop, a pass a timer
 opened, a commit the controller refuses, a stop and `max_duration`.
@@ -334,7 +314,7 @@ that releases the stage's outputs into its children.
 | append | `Commits` | once every named record is durable, `TaskJournal.append_async/4`, `sync: :batched`: the reply is deferred until the `FsyncBatcher` tick, a prefix cut or a clean close syncs the batch; the worker's request collection is the set of acks owed and it never waits on a writer |
 | identity | journal writer | the 16-byte header `[epoch u32][type u8][task_idx u16][iter u32]` is the dedup key: a re-sent barrier is answered from the existing entry, never journaled twice |
 | ack | written by the channel | `TaskCommitResponse` under the request's `reference_id`; a non-empty `error` (write failure, `{:oversized_handoff, size, max}`, `record_not_durable`) terminates the run |
-| sync remote | a task, before the ack | `durable: remote` (`durable = "remote"` in the declaration) has `DurabilityTier.commit_sync/1` ship the journal suffix to the [remote tier](data_durability.md) first — RPO 0, as for a flow class's inputs |
+| sync remote | a task, before the ack | `durable: remote` (`durable = "remote"` in the declaration) has `DurabilityTier.commit_sync/1` ship the journal suffix to the [remote tier](../topics/basics/durability.md) first — RPO 0, as for a flow class's inputs |
 | release | after the ack, on the worker | `WalWriter.commit_records/3` for each named range: the Cell's writer releases those records' outputs to the plugin chain and drops a held entry of that Cell below the range (an attempt that never committed) |
 
 Each send arms a deadline of `FLEZHA_STEPS_ACK_TIMEOUT_MS` (default 30 000) on the poll core's
@@ -349,7 +329,7 @@ references. Every released output carries the identity a flow operator's does: `
 does not move), `channel`, `flz.key` when the channel is keyed, and the author's metadata. An
 undo output is a newer record of the compensating Cell, so its seq sorts above the forward
 output's. An opted-out class sends its outputs straight to the wire with the same channel, key
-and metadata. Flush contract: [`data_durability.md`](data_durability.md#steps-operators-one-record-released-at-the-stage-commit).
+and metadata. Flush contract: [`../topics/basics/durability.md`](../topics/basics/durability.md).
 
 **Crash-resume.** Journal state rides `AddOperator.task_journal` on the bind — not a per-Cell
 restore, because a class whose tasklets hold no per-Cell state receives no
@@ -391,11 +371,6 @@ has passed. During the window `flz operator info <id>` reports phase `finished` 
 result and finish time, and the convergence loop does not read the retained state as an intent
 mismatch. An opted-out class leaves no state to retain; its record is best-effort.
 
-| Knob | Default |
-| --- | --- |
-| `:default_operator_completed_retention_hours`, env `FLEZHA_STEPS_RETENTION_HOURS` | 72 |
-| `:operator_completed_retention_hours` — `%{<class> => hours}` per-class override | none |
-
 ## What decides each behaviour
 
 No behaviour is attached to a kind. Each follows from what the class declares or from the
@@ -416,53 +391,20 @@ An instance holds no thread. Its run is a small pass sheet on the instance (iter
 in flight and done, held outputs, completion, phase) under one lock, advanced by whichever
 thread brings the next event: a worker settling a stage's last item, the control-channel reader
 bringing a commit ack or a stop, the data-channel reader bringing a message, a poller promoting a
-deadline. None of them waits and none runs author code while it holds the lock. Measured on
-8 cores / 32 GiB, release build, with the standing probe:
+deadline. None of them waits and none runs author code while it holds the lock.
 
-```text
-FLEZHA_SCALE_SHAPE=step FLEZHA_SCALE_N=10000 \
-  cargo bench -p flezha_runner --features bench-internals,testing \
-    --bench steps_scaling
-```
+## Proof
 
-| 10 000 instances | blocked mid-step (`step`) | waiting for a message (`idle`) |
-| --- | --- | --- |
-| resident per instance | ~61 KiB | ~61 KiB |
-| threads per instance | 0 (the workers running the steps are the pool's) | 0 |
-| CPU while blocked | 0 % | 0 % |
-| start / teardown | 0.35 s / 0.06 s | 0.35 s / 0.03 s |
-| an unrelated instance's p99 beside them | 0.8x its unloaded latency | 0.9x |
-
-**Size a runner by what its turns hold, not by instances.** A waiting instance costs its heap
-and nothing else. A turn blocked on a slow call holds the SDK worker running it — a pool thread
-in Rust, a virtual thread in Java — and one in-flight slot: `FLEZHA_MAX_INFLIGHT_ACTIVATIONS`
-(default 1 024) bounds how many cells are handed out at once, for both kinds, so a runner meant
-to hold more blocked turns than that raises it with its worker pool. `max_duration()` is an entry
-on the deferred-wake list, not a thread. Edge transforms (`map`/`filter`/`flat_map`/merge
-mapping) run on the worker that produced the value, as on a flow operator.
-
-## Operations notes
-
-- **Crash-resume is at-least-once.** A non-idempotent fire-and-forget job can double-act on
-  resume: write it idempotently, or keep the work in memory (`durable: false`) so a crash re-runs from a clean slate.
-- **Stop runners gracefully** ([`../operations/graceful_shutdown.md`](../operations/graceful_shutdown.md)):
-  a graceful stop lets a running instance migrate; a SIGKILL forces crash-resume.
-- **Retention grows disk for many small jobs.** Keep fire-and-forget work in memory (`durable: false`), or lower
-  `FLEZHA_STEPS_RETENTION_HOURS`. Steps operator is not the high-throughput path.
-- **A sleeper costs a bind to stop.** Stopping a suspended steps operator restores it onto a runner
-  first, so it can end `cancelled` exactly as it would awake; with no runner it is removed hard.
-- **History grows with the retention window.** A steps operator Cell keeps point-in-time history for
-  `time_travel_retention_hours`; set it to `0` for a class that wants only its latest snapshot.
-- **Proof:** `test/system/steps_crash_resume_e2e_test.exs` and
-  `test/system/steps_control_flow_e2e_test.exs` — SIGKILL mid-run and mid-compensation, the
-  fan-in diamond, the outbox re-drive, cell retry, park and rehydrate, stopping a sleeper,
-  rewind; `test/system/sleep_after_e2e_test.exs` for a sleeping flow operator and the persistence
-  switch; on every SDK runtime, UDS and QUIC.
+`test/system/steps_crash_resume_e2e_test.exs` and `test/system/steps_control_flow_e2e_test.exs`:
+SIGKILL mid-run and mid-compensation, the fan-in diamond, the outbox re-drive, cell retry, park
+and rehydrate, stopping a sleeper, rewind; `test/system/sleep_after_e2e_test.exs` for a sleeping
+flow operator and the persistence switch; on every SDK runtime, UDS and QUIC.
 
 ## See also
 
+- [`../topics/basics/workflows.md`](../topics/basics/workflows.md): the user's view: settings, undo, retries, sleeping, retention
 - [`../architecture/steps_profile.md`](../architecture/steps_profile.md) — the concepts and the wire table
-- [`data_durability.md`](data_durability.md) — the scenario matrix, the durable input log and the outbox
+- [`../topics/basics/durability.md`](../topics/basics/durability.md) — the scenario matrix, the durable input log and the outbox
 - [`../internals/state_persistence.md`](../internals/state_persistence.md) — the WAL substrate, `FsyncBatcher`, retention
 - [`../sdk/protocol_spec.md`](../sdk/protocol_spec.md) — field-level `TaskCommit` / `IterCommit` / `IterPark`
-- [`data_durability.md`](data_durability.md) — `sync_remote`
+- [`../topics/basics/durability.md`](../topics/basics/durability.md) — `sync_remote`

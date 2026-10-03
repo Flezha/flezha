@@ -376,7 +376,7 @@ Local mode ships in every SDK. The four that reach the kernel through the C ABI
 rather than the JNI glue bind the same six entry points and drive their own poll
 loop, which is what runs the tasklets; a host with one thread drives that loop
 from `runUntilIdle` rather than parking in the core. User-facing walk-through:
-[`../quickstart.md`](../quickstart.md).
+[`../topics/basics/local_mode.md`](../topics/basics/local_mode.md).
 
 ## One change, every SDK
 
@@ -522,7 +522,7 @@ SDK.
 
 ## Where to go next
 
-- Running a graph with no controller → [`../quickstart.md`](../quickstart.md)
+- Running a graph with no controller → [`../topics/basics/local_mode.md`](../topics/basics/local_mode.md)
 - The poll boundary in mechanism detail → [`../sdk/poll_core.md`](../sdk/poll_core.md)
 - Authoring an operator → [`../sdk/rust_operator_architecture.md`](../sdk/rust_operator_architecture.md)
 - Proving an SDK still works → [`../sdk/conformance.md`](../sdk/conformance.md)

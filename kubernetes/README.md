@@ -201,8 +201,7 @@ A DaemonSet is one pod per node by construction, so every controller here has th
 node's `/var/lib/flezha` to itself and none of the co-location variables need
 per-instance values. Running several controllers on one machine is a bare-metal and
 Docker arrangement; the variable set each instance must own is in
-[`../docs/operations/deployment/bare_metal.md` § Several controllers on one
-machine](../docs/operations/deployment/bare_metal.md). A second pod landing on a node — a
+[Several controllers on one machine](../docs/topics/basics/deploying_a_controller.md#several-controllers-on-one-machine). A second pod landing on a node — a
 mis-scaled Deployment beside the DaemonSet, or two DaemonSets sharing one `hostPath`
 — refuses to boot rather than sharing the state root, naming the process that holds
 it.
@@ -256,7 +255,7 @@ Every entry is a path inside the container or an `https://` URL the pods can rea
 verified against the operating system's CA store. Nothing is published before
 go-live, so serve the archive from a host of your own, or mount it: a ConfigMap
 holding the archive under `binaryData`, mounted read-only at `/pkgs`, is named as
-`/pkgs/<file>.fpz#sha256=<hex>`. `docs/plugins/installation.md` covers building a
+`/pkgs/<file>.fpz#sha256=<hex>`. `docs/topics/advanced/installing_plugins.md` covers building a
 package with the `plugin-builder` image, statuses, errors and signing.
 
 ## Logs

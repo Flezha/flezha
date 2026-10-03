@@ -38,7 +38,7 @@ up empty and waits for SDK clients to reissue `AddOperator` and
 
 Set `FLEZHA_AUTO_RESTORE_ENABLED=false` to disable the boot-time replay while
 still persisting registry mutations. See
-[`../docs/operations/auto_restore_on_boot.md`](../docs/operations/auto_restore_on_boot.md)
+[`../docs/topics/basics/running_operators.md`](../docs/topics/basics/running_operators.md)
 for the recovery contract and its one tolerated loss, and
 [`../docs/internals/state_persistence.md`](../docs/internals/state_persistence.md)
 for the on-disk layout.

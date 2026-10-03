@@ -50,9 +50,9 @@ the path and the limit. That is a controller-side refusal, not something
 **A connect can be refused after it succeeds.** Reaching the socket is not the
 same as being admitted. With authorization enforced the controller also judges
 the namespace the runner claims, and refuses with a reason of its own:
-[`../operations/authn_authz.md`](../operations/authn_authz.md).
+[`../topics/basics/authorization.md`](../topics/basics/authorization.md).
 
 ## See also
 
-- [`../guides/runner_deployment.md`](../guides/runner_deployment.md) - reaching
+- [`../topics/basics/connecting_a_runner.md`](../topics/basics/connecting_a_runner.md) - reaching
   the controller in the first place, per deployment shape

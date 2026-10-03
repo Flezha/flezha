@@ -232,7 +232,7 @@ channel that feeds a tasklet, three attempts from a 50 ms base when neither is
 written, and `retryMax(1)` fails fast.
 
 A steps tasklet registers timers as a flow tasklet does, and a firing
-runs as a pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-steps-operator));
+runs as a pass of its own ([`../topics/advanced/timers.md`](../topics/advanced/timers.md));
 only inside a `compensate` hook do `timerAfter`, `timerAtEventTime` and
 `cancelTimer` throw naming `runtime.timers_unavailable`.
 
@@ -370,10 +370,10 @@ no MessagePack library, so the enum has no MessagePack case.
 
 `->response()` ends a channel on the answer to an outside call instead of a
 sink, and takes the sink's arguments, `?callable $encode` and
-`?ChannelCodec $codec`: [`calls.md`](calls.md). `->call(target: 'pricing', deadlineMs: 500)`
+`?ChannelCodec $codec`: [`../topics/advanced/operator_calls.md`](../topics/advanced/operator_calls.md). `->call(target: 'pricing', deadlineMs: 500)`
 or `->call(factory: 'agent', deadlineMs: ..., create: false, codec: ...)` ends a chain on a
 call to another operator and answers an edge of readonly `Flezha\Response` values:
-[`calls.md`](calls.md#operator-calls-call).
+[`../topics/advanced/operator_calls.md`](../topics/advanced/operator_calls.md).
 
 A JSON integer outside PHP's 64-bit range decodes as a `float`. `NAN`, `INF`, a
 string that is not valid UTF-8 or an object that is not `Codable` has no JSON
@@ -479,7 +479,7 @@ snapshots, no dead-letter queue. Durability, effectively-once delivery, plugins,
 placement and migration, the dead-letter queue, observability export, authz and
 multi-runner scale need a controller; a declaration asking for one of those is
 refused at startup, naming it. Walk-through:
-[`../quickstart.md`](../quickstart.md).
+[`../topics/basics/local_mode.md`](../topics/basics/local_mode.md).
 
 ## Sizing, as arithmetic
 

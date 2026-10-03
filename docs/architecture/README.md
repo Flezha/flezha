@@ -558,7 +558,7 @@ the user's concern there. The effectively-once tier is what closes them.
 | Controller dies with its disk, remote tier enabled | `durable: remote`: nothing acknowledged; otherwise ≤ one checkpoint / ship interval | effectively-once — replays absorbed by sink dedup |
 
 The full scenario matrix and the user playbook are in
-[`../resilience/data_durability.md`](../resilience/data_durability.md).
+[`../topics/basics/durability.md`](../topics/basics/durability.md).
 
 ---
 

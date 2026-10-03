@@ -100,7 +100,7 @@ QUIC deployment proves its namespace with the credential of §5 step 2, exactly 
 UDS does. The runner principal (`runner@<namespace>`, role `runner`) is minted
 controller-side from the namespace the connection PROVED, never from the value
 the frame claimed
-([`../operations/authn_authz.md`](../operations/authn_authz.md)). QUIC sends a
+([`../topics/basics/authorization.md`](../topics/basics/authorization.md)). QUIC sends a
 keep-alive every 5 s, declares the connection dead after
 `FLEZHA_CONTROL_IDLE_TIMEOUT_MS` (default 45 s) of silence — the UDS watchdog's
 window (§5) — and uses an 8 MiB per-stream receive window.
@@ -680,7 +680,7 @@ channel (absent/undecodable ⇒ every default):
 
 `partition_index` / `partition_count` / `key_group_from` / `key_group_to`
 carry one member of a partitioned operator over 256 key groups
-([`partitioned_operators.md`](partitioned_operators.md)). With
+([`../topics/advanced/partitioning.md`](../topics/advanced/partitioning.md)). With
 `partition_count < 2` the instance owns the whole space; otherwise the runner
 checks that each computed Cell key hashes into
 `[key_group_from, key_group_to]` and parks a miss with an error naming the
@@ -910,7 +910,7 @@ start against the `operator_start` row, which records it, and a delivery as
 `operator.send`, recorded only when refused because it happens once per event.
 With authorization enforced, an unbound principal is `runner`, and a start or a
 delivery answers `refused`. See
-[`tasklet_requested_spawn.md`](tasklet_requested_spawn.md).
+[`../topics/advanced/spawning_from_a_tasklet.md`](../topics/advanced/spawning_from_a_tasklet.md).
 
 ### SpawnStepsResponse
 
@@ -941,6 +941,9 @@ row declares, so naming another namespace is unexpressible rather than
 validated. What the caller may reach follows from the role its
 `runner@<namespace>` principal is bound to, which the controller reads on every
 call. Unbound, that is `runner`, and every administration verb is refused.
+
+The hosts that share `flz_core` reach it through one verb-keyed C ABI entry,
+`flz_core_admin_call`; the Elixir SDK re-expresses the same frame over its own core.
 
 ### AdminResponse
 
@@ -1168,7 +1171,7 @@ The controller stores, truncates and re-ships every `format_id` identically
 and decodes only `format_id = 2`. A **timer-ops record** (`format_id = 3`)
 carries a postcard `Vec<TimerOp>` mutating the Cell's pending-timer set; the
 controller never decodes it — the pending set is SDK-owned state
-([`cell_timers.md`](cell_timers.md)). On restore the kernel validates the
+([`../topics/advanced/timers.md`](../topics/advanced/timers.md)). On restore the kernel validates the
 header for every host it serves — and the Elixir SDK's own fold does the same
 — and refuses a mismatch by name, the language before anything else:
 `RestoreError::LangMismatch` (one SDK reading another's header),
@@ -1852,7 +1855,7 @@ effectively-once tier and for a durable steps operator alike, and `(flz.cell, fl
 conforming sink deduplicates on (the Kafka producer uses `flz.key` as the
 record key and ships `<cell>/<outbox_seq>/<epoch>` in its
 `flezha.dedup_key` header; the Postgres sink guards on `(epoch, seq)`). See
-[`../resilience/data_durability.md`](../resilience/data_durability.md).
+[`../topics/basics/durability.md`](../topics/basics/durability.md).
 
 ## See also
 

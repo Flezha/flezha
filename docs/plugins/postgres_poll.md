@@ -1,47 +1,21 @@
 # Postgres poll source
 
-For users who want the new, and optionally the changed, rows of one Postgres table delivered
-onto an operator's entry channel, with no replication rights: it works on a managed database
-and on a read replica. `Flezha.Plugin.Provider.PostgresPoll` (provider id
-`operator_postgres_poll`) reads the table past its cursor every `interval_ms`, oldest first,
-and injects each row as one JSON object. This page covers the contract, parameters, the two
-cursor modes and what they ask of the writer, the row encoding, delivery, health, telemetry
-and limits.
-
-## Contract
+The Postgres poll source delivers the new, and optionally the changed, rows of one Postgres
+table onto an operator's entry channel, with no replication rights: it works on a managed
+database and on a read replica. It reads the table past its cursor every `interval_ms`,
+oldest first, and injects each row as one JSON object.
+`Flezha.Plugin.Provider.PostgresPoll` is its provider, under the provider id
+`operator_postgres_poll`.
 
 | | |
 | --- | --- |
-| Plugin type | `:operator` |
-| Hooks | `:on_terminate`: the reader drives itself; the hook is there because a plugin spec must name at least one |
-| Shared | no: one cursor per binding, so a second operator bound to it is refused (`plugin.not_shareable`), and a member of a partition group is refused (`plugin.partitioned_host`), because a row's key decides which member must take it |
-| Upstream | one table or view, read by a role that may `SELECT` it, on one connection the plugin owns |
-| Injection | one row as one JSON object, on the entry channel `:channel` (or `:channel_in`) names, with `flz.msg_id` set |
-| Delivery | each batch waits for the operator's verdicts, and the cursor moves only past the rows it took; a refused row is read again |
-| Failure posture | inject nothing, keep the cursor, read again after `interval_ms`, count toward health |
+| Type | operator plugin |
+| Ships | built in |
+| Shareable | no: one cursor per binding, so a second operator bound to it is refused (`plugin.not_shareable`) |
+| Partitioned operators | refused (`plugin.partitioned_host`): a row's key decides which member must take it |
+| Durability | each batch waits for the operator's verdicts and the cursor moves only past the rows it took; with durable input the cursor is committed after every batch, otherwise when the reader catches up and at most every `commit_interval_ms` |
 
-```json
-[
-  {
-    "name": "orders-in",
-    "provider": "operator_postgres_poll",
-    "opts": {
-      "hostname": "db.internal",
-      "database": "shop",
-      "username": "flezha_reader",
-      "password_env": "SHOP_DB_PASSWORD",
-      "table": "sales.orders",
-      "id_column": "id",
-      "timestamp_column": "updated_at",
-      "timestamp_delay_ms": "5000",
-      "channel": "orders"
-    },
-    "hooks": ["on_terminate"]
-  }
-]
-```
-
-## Parameters
+## Options
 
 <!-- provider-options:begin -->
 | Option | Type | Default | Required | Description |
@@ -69,6 +43,51 @@ and limits.
 | `failure_threshold` | int | `3` | no | Consecutive failed reads or refused rows before the plugin reports unhealthy |
 | `idle_after_ms` | int | `0` | no | Age of the last settled read past which the source is idle; 0 derives it from `interval_ms` |
 <!-- provider-options:end -->
+
+## Example
+
+```sh
+$ flz plugin enable orders-in operator_postgres_poll --operator_id=orders \
+  --Xhostname=db.internal --Xdatabase=shop --Xusername=flezha_reader \
+  --Xpassword_env=SHOP_DB_PASSWORD --Xtable=sales.orders --Xid_column=id \
+  --Xtimestamp_column=updated_at --Xtimestamp_delay_ms=5000 --Xchannel=orders
+```
+
+## Contract
+
+| | |
+| --- | --- |
+| Hooks | none needed: the reader drives itself, so a binding names no hook (the provider also defines `:on_terminate`) |
+| Shared | no: one cursor per binding, so a second operator bound to it is refused (`plugin.not_shareable`), and a member of a partition group is refused (`plugin.partitioned_host`), because a row's key decides which member must take it |
+| Upstream | one table or view, read by a role that may `SELECT` it, on one connection the plugin owns |
+| Injection | one row as one JSON object, on the entry channel `:channel` (or `:channel_in`) names, with `flz.msg_id` set |
+| Delivery | each batch waits for the operator's verdicts, and the cursor moves only past the rows it took; a refused row is read again |
+| Failure posture | inject nothing, keep the cursor, read again after `interval_ms`, count toward health |
+
+As a plugin spec at operator start (`flz operator start --plugins`):
+
+```json
+[
+  {
+    "name": "orders-in",
+    "provider": "operator_postgres_poll",
+    "opts": {
+      "hostname": "db.internal",
+      "database": "shop",
+      "username": "flezha_reader",
+      "password_env": "SHOP_DB_PASSWORD",
+      "table": "sales.orders",
+      "id_column": "id",
+      "timestamp_column": "updated_at",
+      "timestamp_delay_ms": "5000",
+      "channel": "orders"
+    },
+    "hooks": ["on_terminate"]
+  }
+]
+```
+
+## Options in detail
 
 `table`, `id_column`, `timestamp_column` and every entry of `columns` must match
 `^[A-Za-z_][A-Za-z0-9_$]{0,62}$`, `table` with one optional `schema.` in front. Anything else
@@ -220,4 +239,4 @@ would cost more than the read.
 
 - [postgres_sink.md](postgres_sink.md): the Postgres sink, which shares the connection options
 - [file.md](file.md): the file source, whose cursor and commit cadence this reader follows
-- [../guides/sources_and_sinks.md](../guides/sources_and_sinks.md): every source and sink
+- [plugins.md](../topics/basics/plugins.md): the plugin model and every source and sink

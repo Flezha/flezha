@@ -1,29 +1,54 @@
 # Operator-forward plugin
 
-For users composing work across operators, and for plugin authors who need
-a sink of this shape. `Flezha.Plugin.Provider.OperatorForward` (provider id
-`operator_forward`) is the member of the sink set whose destination is another
-operator in the same namespace rather than an external endpoint. It is a
-configuration change on the source operator only: the payload arrives on the
-target's ordinary input stream, and the target cannot tell a peer from a source
-adapter. This doc covers the contract, parameters, refusals, partitioned
-targets, the worker model, the verdicts it acts on, telemetry and health. The
-cross-hop delivery guarantee itself is specified in
-[`../resilience/data_durability.md`](../resilience/data_durability.md)
-"Operator to operator" and is not repeated here.
+The operator-forward plugin sends one operator's outputs into another operator's input, in
+the same namespace. It is a configuration change on the source operator only: the payload
+arrives on the target's ordinary input stream, and the target cannot tell a peer from a
+source plugin. It is the sink whose destination is another operator rather than an
+external endpoint, and the shape to copy for a plugin author who needs a sink like it.
+`Flezha.Plugin.Provider.OperatorForward` is its provider, under the provider id
+`operator_forward`. The cross-hop delivery guarantee itself is specified in
+[`durability.md`](../topics/basics/durability.md) and is not repeated here.
+
+| | |
+| --- | --- |
+| Type | operator plugin |
+| Ships | built in |
+| Shareable | no: a second operator bound to it is refused (`plugin.not_shareable`) |
+| Partitioned operators | allowed: each member of a partitioned source runs its own copy, and a partitioned target is routed per message by key |
+| Durability | derived from the source's outbox: a delivery-guaranteed output is confirmed only when the target's ingest confirms; never dropped |
+
+## Options
+
+<!-- provider-options:begin -->
+| Option | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `target_operator_id` | string | &mdash; | yes | The operator in this namespace the payload is delivered to |
+| `plugin_id` | string | &mdash; | no | Plugin id; defaults to `<source>-><target>` |
+| `queue_max` | int | `10000` | no | Records held per target member |
+| `retry_backoff_ms` | int | `250` | no | First delay after a refusal |
+| `retry_max_backoff_ms` | int | `5000` | no | Ceiling for that delay |
+| `call_timeout_ms` | int | `5000` | no | Budget for one confirming call |
+<!-- provider-options:end -->
+
+## Example
+
+```sh
+$ flz plugin enable 'coder->critic' operator_forward --operator_id=coder \
+  --hook=on_output --Xtarget_operator_id=critic
+```
 
 ## Contract
 
 | | |
 |---|---|
-| Plugin type | `:operator` |
 | Hooks | `:on_output` (feed a downstream operator), `:on_input` (pass-through tap) |
-| Shared | no: a second operator bound to it is refused (`plugin.not_shareable`) |
 | Destination | an operator in the **same namespace** |
 | Delivery | asynchronous; the callback enqueues and returns |
 | Retry | until the target confirms, capped exponential backoff |
-| Loss posture | delay, never drop — no delivery deadline |
-| Guarantee | derived from the source's outbox, never configured — there is no ack-mode option |
+| Loss posture | delay, never drop: no delivery deadline |
+| Guarantee | derived from the source's outbox, never configured: there is no ack-mode option |
+
+From Elixir inside the controller, the same enable and bind:
 
 ```elixir
 Flezha.Service.PluginManager.enable_plugin(
@@ -44,18 +69,7 @@ unmodified; the plugin never rewrites metadata. A delivery-guaranteed output is
 taken under an outbox hold when it is enqueued and confirmed when the target's
 ingest confirms, which is what lets the source's outbox cursor wait on the hop.
 
-## Parameters
-
-<!-- provider-options:begin -->
-| Option | Type | Default | Required | Description |
-| --- | --- | --- | --- | --- |
-| `target_operator_id` | string | &mdash; | yes | The operator in this namespace the payload is delivered to |
-| `plugin_id` | string | &mdash; | no | Plugin id; defaults to `<source>-><target>` |
-| `queue_max` | int | `10000` | no | Records held per target member |
-| `retry_backoff_ms` | int | `250` | no | First delay after a refusal |
-| `retry_max_backoff_ms` | int | `5000` | no | Ceiling for that delay |
-| `call_timeout_ms` | int | `5000` | no | Budget for one confirming call |
-<!-- provider-options:end -->
+## Options in detail
 
 Unknown options are rejected by `build/1` rather than ignored, so a config
 asking for a delivery mode this provider deliberately does not offer fails
@@ -68,7 +82,7 @@ loudly instead of reading as accepted.
 | `:target_operator_id` missing | error naming the option; no worker started |
 | target equals the source operator | error identifying the self-target |
 | target resolves in a **different** namespace | error naming the namespace boundary |
-| target does not resolve anywhere | **accepted** — it may not be started yet, and the worker retries |
+| target does not resolve anywhere | **accepted**: it may not be started yet, and the worker retries |
 
 Longer cycles (`A → B → A`) are deliberately not refused: an orchestrator and
 its critics feeding each other terminate by operator logic, and topology alone
@@ -106,7 +120,7 @@ it to re-run `init_provider/1`, so nothing keeps routing by the old ranges:
 - a vanished member hands its queue back before its worker stops, and each
   payload is re-routed to whoever owns its key now. The hand-over runs while
   the plugin is being re-prepared, so no emit can be routed in between and a
-  re-homed payload lands ahead of anything emitted afterwards — per-key order
+  re-homed payload lands ahead of anything emitted afterwards: per-key order
   survives the rescale;
 - a payload whose key belongs to no member after the rescale is parked, as above.
 
@@ -142,8 +156,8 @@ Overwatch.
 
 The worker delivers through
 `Flezha.Service.OperatorManager.send_io_confirming/5`, which runs the target's
-single pre-delivery ingest path — the `:on_input` hook chain, then the
-input journal — and answers what happened.
+single pre-delivery ingest path (the `:on_input` hook chain, then the
+input journal) and answers what happened.
 
 | Verdict | Meaning | Worker action |
 |---|---|---|
@@ -158,7 +172,7 @@ A call that exits (timeout, dead target) or a delivery process that dies
 without reporting is retryable too (`{:unreachable, _}`,
 `{:delivery_crashed, _}`). The verdicts and the ingest entry points they belong
 to are specified in
-[`rust_operator_architecture.md`](../sdk/rust_operator_architecture.md)
+[`rust_operator_architecture.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/rust_operator_architecture.md)
 "Ingest entry points".
 
 "Filtered" and "duplicate" are successes because the receiver has decided the
@@ -174,12 +188,12 @@ that needs the payload held uses the confirming path.
 |---|---|---|
 | Shape | synchronous request/reply | asynchronous data flow |
 | Destination | an `on_message/2` handler on the target's Overwatch | the operator's **input stream** |
-| Durability | none — the reply is the result | the target's durable input log |
+| Durability | none: the reply is the result | the target's durable input log |
 | Caller | any process that can reach the Overwatch | the source operator's output |
 
 Reach for `:on_message` to **query** an operator; reach for this plugin to
 **feed** one with work that belongs in its input stream and must survive a
-restart of either end. See [`message_handlers.md`](message_handlers.md).
+restart of either end.
 
 ## Telemetry
 
@@ -197,28 +211,27 @@ parsing log lines.
 
 ## Health
 
-The provider is healthy while its worker — every worker, for a partitioned
-target — is alive. A delivery failure is not unhealthiness: an unreachable peer
+The provider is healthy while its worker (every worker, for a partitioned
+target) is alive. A delivery failure is not unhealthiness: an unreachable peer
 is retried, and convergence is already healing it. The first deferred delivery
 of a run logs a warning with the reason and the backoff.
 
-Disabling the plugin stops the worker for good — it is a `:transient` child,
+Disabling the plugin stops the worker for good: it is a `:transient` child,
 so the host's `:shutdown` of the owned pid is final rather than a restart. A
 re-prepared plugin (Overwatch restart) reuses its live worker, so
 queued-but-undelivered payloads survive it.
 
 ## Implementation notes
 
-The worker is built from the seams every queue-holding provider shares —
+The worker is built from the seams every queue-holding provider shares:
 `WorkerSup` for supervision, `ProviderBehaviour.park_or_reply/2` /
 `release_waiters/1` for the overflow policy, and the `:forward_deliver` row of
-`Flezha.Config.Backoff` for the ladder. See [`lifecycle.md`](lifecycle.md) "Shared helpers for queue-holding
-workers" before writing another sink of this shape; its two rules (never
-deliver from the worker's own `handle_call`, and pick `restart` deliberately)
-are both load-bearing here.
+`Flezha.Config.Backoff` for the ladder. Two rules are load-bearing for a sink of this
+shape: never deliver from the worker's own `handle_call`, and pick `restart` deliberately.
 
 ## See also
 
-- [`../resilience/data_durability.md`](../resilience/data_durability.md) — the cross-hop guarantee and what survives a controller restart
-- [`message_handlers.md`](message_handlers.md) — the synchronous alternative
-- [`../sdk/partitioned_operators.md`](../sdk/partitioned_operators.md) — key groups and rescale
+- [`durability.md`](../topics/basics/durability.md): the cross-hop guarantee and what survives a controller restart
+- [`operator_calls.md`](../topics/advanced/operator_calls.md): asking an operator and waiting for its answer
+- [`partitioning.md`](../topics/advanced/partitioning.md): key groups and rescale
+- [`plugins.md`](../topics/basics/plugins.md): the plugin model

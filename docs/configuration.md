@@ -66,7 +66,7 @@ states only which subtrees exist and what reset does with them. `flz reset`
 reports every row, the `never` row as kept, and reads none of these knobs but the
 ladder's: it clears `<app_data root>/dlq`, not a directory `FLEZHA_DLQ_DIR`
 moved it to. `--all` sets every flag in the table, so it also removes every
-credential and erases the audit trail; see [`operations/reset.md`](operations/reset.md)
+credential and erases the audit trail; see [`topics/basics/running_operators.md`](topics/basics/running_operators.md)
 for the window until the fresh bootstrap token is claimed.
 Two rows are not subdirectories of the data root. `sockets` is resolved by
 the ladder described under
@@ -370,7 +370,7 @@ default.
 | `-env ERL_FULLSWEEP_AFTER` | A memory-drift remedy chosen against a measured series, not a default. See [`operations/memory_drift.md`](operations/memory_drift.md) |
 
 The measurement protocol and the numbers behind every verdict here are in
-[`operations/benchmarking.md`](operations/benchmarking.md).
+[`operations/benchmarking.md`](https://github.com/flezha/flezha/blob/main/docs/operations/benchmarking.md).
 
 ### Build-time and image variables
 
@@ -441,8 +441,7 @@ user named. It is not *prepared* unconditionally, though — a controller
 probes the directory it resolved before clearing it, and refuses to start when
 a live peer answers there, naming the path and this variable. A socket nobody
 answers is a controller that died hard and is cleared as normal. See
-[`operations/deployment/bare_metal.md` § Several controllers on one
-machine](operations/deployment/bare_metal.md). A **runner** takes
+[Several controllers on one machine](topics/basics/deploying_a_controller.md#several-controllers-on-one-machine). A **runner** takes
 the first holding a live control socket, and when two candidates hold one and
 no variable says which is meant, it **refuses to connect and names both** rather
 than attaching to a controller the user did not choose. Every path is
@@ -471,7 +470,7 @@ deep checkout.
 
 `flz runner check` runs this resolution and its probe from a shell, with no
 runner code and no running controller; see
-[`operations/deployment/bare_metal.md`](operations/deployment/bare_metal.md).
+[`topics/basics/deploying_a_controller.md`](topics/basics/deploying_a_controller.md).
 
 ### `FLEZHA_DROP_NOTHING_NONPARKING` — read this before you set it
 
@@ -717,7 +716,7 @@ Declared in code and shipped to the controller at registration: the class
 settings on the operator, the channel options on the graph its `channels`
 builds, the tasklet options on each tasklet. Rust names first, Java in
 parentheses; each SDK spells the tree in its own idiom
-([`sdk/authoring_contract.md`](sdk/authoring_contract.md)).
+([`sdk/authoring_contract.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/authoring_contract.md)).
 
 ### Class settings
 
@@ -744,7 +743,7 @@ closes on whichever comes first of `every` inputs or `max_delay_ms`, so you add
 up to `max_delay_ms` of median output latency and buy one WAL append per
 interval instead of one per invocation. Leave it undeclared for the
 latency-optimal setting; declare a small delay when throughput near the ceiling
-matters more. How the numbers trade: [`operations/benchmarking.md`](operations/benchmarking.md).
+matters more. How the numbers trade: [`operations/benchmarking.md`](https://github.com/flezha/flezha/blob/main/docs/operations/benchmarking.md).
 
 ### Channel and edge options
 
@@ -804,9 +803,9 @@ capability the provider does not offer fails loudly.
 
 ## See also
 
-- [`operations/deployment/README.md`](operations/deployment/README.md) — the variables a deploy cannot omit, and how to run a node
-- [`resilience/data_durability.md`](resilience/data_durability.md) — what the durability knobs mean for correctness
-- [`architecture/kernel.md`](architecture/kernel.md) — where the WAL, outbox and fsync knobs sit in the data path
-- [`operations/authn_authz.md`](operations/authn_authz.md) — the posture behind the authz keys
+- [`topics/basics/deploying_a_controller.md`](topics/basics/deploying_a_controller.md) — the variables a deploy cannot omit, and how to run a node
+- [`topics/basics/durability.md`](topics/basics/durability.md) — what the durability knobs mean for correctness
+- [`architecture/kernel.md`](https://github.com/flezha/flezha/blob/main/docs/architecture/kernel.md) — where the WAL, outbox and fsync knobs sit in the data path
+- [`topics/basics/authorization.md`](topics/basics/authorization.md) — the posture behind the authz keys
 - [`plugins/kafka_producer.md`](plugins/kafka_producer.md) — the Kafka producer's options in depth
-- [`operations/benchmarking.md`](operations/benchmarking.md) — measuring the effect of a change to any of these
+- [`operations/benchmarking.md`](https://github.com/flezha/flezha/blob/main/docs/operations/benchmarking.md) — measuring the effect of a change to any of these

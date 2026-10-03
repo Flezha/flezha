@@ -1,34 +1,79 @@
 # Websocket subscription source and output binding
 
-For users running `Flezha.Plugin.Provider.Websocket` (provider id
-`operator_websocket`) who need to change what a live socket is subscribed to
-without tearing it down. By default the plugin subscribes with a static
+The websocket plugin holds one websocket connection open for an operator: it injects every
+frame it receives into the operator's input, can change what the socket is subscribed to
+without tearing it down, and can send the operator's outputs back out on the same socket.
+`Flezha.Plugin.Provider.Websocket` is its provider, under the provider id
+`operator_websocket`.
+
+| | |
+| --- | --- |
+| Type | operator plugin |
+| Ships | built in |
+| Shareable | yes: one connection per controller for every operator bound to it, or one in the cluster with `--single` |
+| Partitioned operators | allowed: each member runs a connection of its own and subscribes only its share of the items |
+| Durability | an operator whose input is durable runs a connection of its own, which waits for it to confirm each frame; the output hop is at most once, or at least once with `sink_ack_mode: "required"`, never effectively once |
+
+## Options
+
+<!-- provider-options:begin -->
+| Option | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `uri` | string | &mdash; | yes | The websocket endpoint to connect to |
+| `plugin_id` | string | &mdash; | no | Plugin id; defaults to the id it was enabled under |
+| `ignore_pattern` | string | &mdash; | no | Substring marking a frame as a heartbeat rather than data |
+| `post_connect` | json | `%{}` | no | Frame sent once the socket opens |
+| `ws_opts` | json | `[]` | no | Options passed to the socket library |
+| `payload_metadata` | json | `%{}` | no | Metadata merged into every injection |
+| `idle_timeout_ms` | int | `30000` | no | Silence on the connection before it is reopened; 0 disables |
+| `resubscribe_after_ms` | int | `0` | no | Silence of DATA frames before the subscription is reasserted; 0 disables |
+| `subscription_url` | string | &mdash; | no | Endpoint the desired item set is polled from |
+| `subscription_items` | list | &mdash; | no | Literal desired item set, instead of polling one; changed in place by flz plugin update |
+| `subscription_interval_ms` | int | `30000` | no | How often the item source is polled |
+| `subscription_headers` | json | `%{}` | no | Headers for the item source poll |
+| `subscribe_template` | string | &mdash; | no | Frame template carrying the items to subscribe |
+| `unsubscribe_template` | string | &mdash; | no | Frame template carrying the items to drop |
+| `subscription_ack_mode` | enum | `"required"` | no | `"none"` commits a delta on successful send instead of on the server's ack |
+| `channel` | names | &mdash; | no | The channel this plugin is attached to: inbound frames are injected on it and only outputs naming it are sent. One name, since it names the entry channel too |
+| `channel_in` | names | &mdash; | no | Entry channel inbound frames are injected on, for a plugin whose two names differ. One name |
+| `channel_out` | names | &mdash; | no | Send only outputs whose metadata channel matches, for a plugin whose two names differ. Several names, comma-separated, select them all |
+| `sink_frame_type` | enum | `"text"` | no | Websocket frame type an output is sent as |
+| `sink_template` | string | &mdash; | no | Frame template carrying the output; {{payload}} required, {{req_id}}/{{cell}}/{{seq}} available |
+| `sink_queue_max` | int | `10000` | no | Outbound frames held while the socket is down before the caller blocks |
+| `sink_ack_mode` | enum | `"none"` | no | `"required"` answers the outbox hold on the upstream's ack instead of at handoff |
+<!-- provider-options:end -->
+
+## Example
+
+```sh
+$ flz plugin enable prices-in operator_websocket \
+  --operator_id=prices \
+  --Xuri=wss://feed.example/stream
+```
+
+## Static, converging and sending
+
+By default the plugin subscribes with a static
 `post_connect` payload fixed at enable time; changing it means a disable and an
 enable, which drops every other stream on that connection and spends the
 upstream's reconnect budget. A plugin that sets `subscription_url` (or a
 literal `subscription_items` list) instead *converges*: it polls the desired
 set, diffs it against what it has applied, and sends subscribe/unsubscribe
-frames for the difference on the connection it already holds. This doc covers
-the source contract, the templates, the reconcile and commit rules, both
-watchdog tiers, durability, parameters, the partitioned-member share,
+frames for the difference on the connection it already holds. The rest of this page
+covers the source contract, the templates, the reconcile and commit rules, both
+watchdog tiers, durability, the partitioned-member share,
 observability and limits.
 
 The same plugin can also SEND. With an `on_output` (or `on_input`) hook it
 ships each dispatched payload upstream as a frame on the connection it already
-holds — one socket, both directions, no second connection. That half is
+holds: one socket, both directions, no second connection. That half is
 ["Sending output on the same socket"](#sending-output-on-the-same-socket).
 
 A plugin with no source configured is the plain static provider: no poll
 timer, no applied set, and no subscription state on the per-frame path. A
 plugin with neither an `on_input` nor an `on_output` hook allocates no outbound
-queue and awaits no acknowledgement, and that is what an enable naming no
-`--hook` declares:
-
-```bash
-flz plugin enable prices-in operator_websocket \
-  --operator_id=prices \
-  --Xuri=wss://feed.example/stream
-```
+queue and awaits no acknowledgement, and that is what a binding naming no
+`--hook` declares, as in the example above.
 
 The socket is held by the provider's own worker, which starts whether or not
 the plugin has hooks, so this plugin injects every frame it receives into the
@@ -42,21 +87,20 @@ one: `--Xchannel trades` makes every inbound frame an entry frame on `trades`.
 `--Xchannel_in trades` says the same thing in one direction only, and is what a
 plugin that also sends writes (see below). `payload_metadata` remains the
 general label bag merged into every injection, and its own `"channel"` key still
-selects the entry channel when no option names one — naming the channel both
+selects the entry channel when no option names one; naming the channel both
 ways is refused when the plugin is enabled, rather than resolved by precedence.
 
 ## Contract
 
 | | |
 |---|---|
-| Plugin type | `:operator` |
 | Shared | yes: one connection per controller for every operator bound to the plugin, or one in the whole cluster with `--single`; the connection hands every frame straight to every operator, and a slow one falls behind alone, in its own queue. An operator whose input is durable (effectively-once, sleeping or durable steps) runs a connection of its own, which waits for it to confirm each frame. Each member of a partitioned operator runs a connection of its own, for its own share (below) |
-| Source | one `http://` or `https://` URL, `GET` only, redirects not followed — or a literal `subscription_items` list |
+| Source | one `http://` or `https://` URL, `GET` only, redirects not followed; or a literal `subscription_items` list |
 | Source response | `{"version": <integer>, "items": [<string>, …]}` |
-| Item strings | opaque — never parsed, validated or interpreted |
+| Item strings | opaque: never parsed, validated or interpreted |
 | Frames | user-supplied templates, rendered per delta |
 | Commit | only on a successful acknowledgement (or on send in ack-free mode) |
-| Retry | re-derive on the next cycle — there is no retry state |
+| Retry | re-derive on the next cycle: there is no retry state |
 | Durability | the applied set is persisted to the plugin cspec after every commit |
 | Failure posture | a failed poll is *no information*: never an unsubscribe |
 
@@ -138,14 +182,14 @@ The plugin runs a two-tier watchdog whether or not a source is configured:
 
 | Tier | Knob | Trigger | Action |
 |---|---|---|---|
-| connection liveness | `idle_timeout_ms` (default `30000`; `0` disables) | no frame of any kind — data, heartbeat, ping/pong — for the window | the connection process exits `{:shutdown, :idle_timeout}` and the host restarts the plugin through its retry path; emits `[:flezha, :plugin, :websocket, :idle_reconnect]` |
+| connection liveness | `idle_timeout_ms` (default `30000`; `0` disables) | no frame of any kind (data, heartbeat, ping/pong) for the window | the connection process exits `{:shutdown, :idle_timeout}` and the host restarts the plugin through its retry path; emits `[:flezha, :plugin, :websocket, :idle_reconnect]` |
 | data liveness | `resubscribe_after_ms` (default `0` = off) | socket alive but no non-`ignore_pattern` data frame for the window | re-sends the subscription on the existing connection, at most once per window; emits `[:flezha, :plugin, :websocket, :resubscribe]` |
 
 Connect and the data-liveness re-subscribe send the same thing: the rendered
 `subscribe_template` over the current **applied** set when a source is
 configured, the `post_connect` payload when one is not. A re-assertion carries
-the reserved `req_id` `0`, outside the in-flight space, so its acknowledgement
-— however late — can never be mistaken for a pending delta's. Connect also runs
+the reserved `req_id` `0`, outside the in-flight space, so its acknowledgement,
+however late, can never be mistaken for a pending delta's. Connect also runs
 a reconcile, which is what lets a literal `subscription_items` source subscribe
 with no poll to wait for.
 
@@ -155,8 +199,8 @@ chain running.
 
 ## Durability
 
-The applied set is written to the plugin cspec after every successful commit —
-the same registry row the enable lives in — so three restarts resume with what
+The applied set is written to the plugin cspec after every successful commit,
+the same registry row the enable lives in, so three restarts resume with what
 the socket was actually subscribed to:
 
 | Restart | Restored from |
@@ -176,8 +220,8 @@ array is a real instruction and unsubscribes everything.
 Give the plugin an `on_output` (or `on_input`) hook and every dispatched
 payload it sees is sent as one frame on the connection it already holds:
 
-```
-flz plugin enable prices operator_websocket \
+```sh
+$ flz plugin enable prices operator_websocket \
   --operator_id prices \
   --Xuri wss://feed.example/stream \
   --Xchannel_out prices \
@@ -194,7 +238,7 @@ the first two and leaves the third alone. This **selects** outputs; it does not
 merge channels. Each frame still carries the channel its record named, so the
 far end can tell the two apart. Whitespace around a name is trimmed, so
 `alerts, audit` names the same two channels as `alerts,audit`. An empty segment
-— `alerts,,audit`, `alerts,` — is refused when the plugin is enabled, and a
+(`alerts,,audit`, `alerts,`) is refused when the plugin is enabled, and a
 channel whose name contains a comma, or a leading or trailing space, is not
 reachable from this flag.
 
@@ -206,7 +250,7 @@ refused when the plugin is enabled, saying so.
 `channel` names the channel this plugin is attached to in BOTH directions:
 inbound frames are injected on it AND only outputs naming it are sent. Within
 one operator an entry channel and an output channel never share a name, so a
-plugin that both receives and sends names two channels and writes the pair —
+plugin that both receives and sends names two channels and writes the pair:
 `--Xchannel_in requests --Xchannel_out responses`. Writing `channel` together
 with either is refused.
 
@@ -216,7 +260,7 @@ placeholders:
 
 | Placeholder | Replaced by |
 |---|---|
-| `{{payload}}` | the dispatched payload — **required** in any template |
+| `{{payload}}` | the dispatched payload: **required** in any template |
 | `{{req_id}}` | the correlation id, under `sink_ack_mode: "required"` |
 | `{{cell}}` | the output's `flz.cell` stamp |
 | `{{seq}}` | the output's `flz.seq` stamp |
@@ -234,7 +278,7 @@ overwrite, so the destination cannot participate in the guarantee.
 | `"required"` | when an inbound frame echoes the correlation id | **at-least-once**: an unanswered frame is re-sent rather than assumed delivered |
 
 **Deduplication is the consumer's.** Under `"required"` a repeat is a normal
-event, so that mode requires a `sink_template` carrying `{{req_id}}` — the
+event, so that mode requires a `sink_template` carrying `{{req_id}}`: the
 correlation the upstream echoes, exactly as it acknowledges a subscription
 delta. Put `{{cell}}` and `{{seq}}` in the same template and a consumer that
 tracks the last sequence it has applied per cell discards what it already
@@ -248,7 +292,7 @@ websocket view is the standard topology, so this is a warning and not a refusal.
 ### While the socket is down
 
 Outbound frames are held in a queue bounded by `sink_queue_max` (default
-`10000`) and flushed on connect, after the subscription frames — a server that
+`10000`) and flushed on connect, after the subscription frames: a server that
 requires a subscribe handshake sees it first. Nothing is dropped:
 
 - at the bound, the enqueueing caller is **parked** until the queue drains, so
@@ -266,41 +310,14 @@ injected input by calling the Overwatch without a deadline, and the Overwatch
 is the process that runs the output chain: a synchronous send in the other
 direction would close that cycle and hang the operator permanently.
 
-## Parameters
-
-<!-- provider-options:begin -->
-| Option | Type | Default | Required | Description |
-| --- | --- | --- | --- | --- |
-| `uri` | string | &mdash; | yes | The websocket endpoint to connect to |
-| `plugin_id` | string | &mdash; | no | Plugin id; defaults to the id it was enabled under |
-| `ignore_pattern` | string | &mdash; | no | Substring marking a frame as a heartbeat rather than data |
-| `post_connect` | json | `%{}` | no | Frame sent once the socket opens |
-| `ws_opts` | json | `[]` | no | Options passed to the socket library |
-| `payload_metadata` | json | `%{}` | no | Metadata merged into every injection |
-| `idle_timeout_ms` | int | `30000` | no | Silence on the connection before it is reopened; 0 disables |
-| `resubscribe_after_ms` | int | `0` | no | Silence of DATA frames before the subscription is reasserted; 0 disables |
-| `subscription_url` | string | &mdash; | no | Endpoint the desired item set is polled from |
-| `subscription_items` | list | &mdash; | no | Literal desired item set, instead of polling one; changed in place by flz plugin update |
-| `subscription_interval_ms` | int | `30000` | no | How often the item source is polled |
-| `subscription_headers` | json | `%{}` | no | Headers for the item source poll |
-| `subscribe_template` | string | &mdash; | no | Frame template carrying the items to subscribe |
-| `unsubscribe_template` | string | &mdash; | no | Frame template carrying the items to drop |
-| `subscription_ack_mode` | enum | `"required"` | no | `"none"` commits a delta on successful send instead of on the server's ack |
-| `channel` | names | &mdash; | no | The channel this plugin is attached to: inbound frames are injected on it and only outputs naming it are sent. One name, since it names the entry channel too |
-| `channel_in` | names | &mdash; | no | Entry channel inbound frames are injected on, for a plugin whose two names differ. One name |
-| `channel_out` | names | &mdash; | no | Send only outputs whose metadata channel matches, for a plugin whose two names differ. Several names, comma-separated, select them all |
-| `sink_frame_type` | enum | `"text"` | no | Websocket frame type an output is sent as |
-| `sink_template` | string | &mdash; | no | Frame template carrying the output; {{payload}} required, {{req_id}}/{{cell}}/{{seq}} available |
-| `sink_queue_max` | int | `10000` | no | Outbound frames held while the socket is down before the caller blocks |
-| `sink_ack_mode` | enum | `"none"` | no | `"required"` answers the outbox hold on the upstream's ack instead of at handoff |
-<!-- provider-options:end -->
+## Options in detail
 
 ### Refusals at enable time
 
 Each of these fails the enable and opens no connection:
 
 - a `subscription_url` whose scheme is not `http`/`https`, or that has no host
-- a `subscription_url` embedding credentials — headers are the place for a secret
+- a `subscription_url` embedding credentials: headers are the place for a secret
 - `subscription_interval_ms` below the 1000 ms floor
 - a source without **both** templates: a set that can only grow is not a
   reconcile loop, and discovering the gap at the first removal on a live socket
@@ -308,18 +325,18 @@ Each of these fails the enable and opens no connection:
 - a template with no `{{items}}` placeholder
 - malformed `subscription_headers`
 - an unrecognised `subscription_ack_mode`
-- both `subscription_url` and `subscription_items` — a source is polled or literal
+- both `subscription_url` and `subscription_items`: a source is polled or literal
 - a `subscription_items` value that is not a list of non-empty strings
 - a `sink_template` with no `{{payload}}` placeholder
-- `sink_ack_mode: "required"` without a `sink_template` carrying `{{req_id}}` —
+- `sink_ack_mode: "required"` without a `sink_template` carrying `{{req_id}}`:
   a frame the upstream cannot correlate cannot be acknowledged
 - an unrecognised `sink_frame_type` or `sink_ack_mode`
 - any unrecognised option
 
 ## A partitioned member subscribes to its share only
 
-When the plugin's opts carry a partition identity — injected by a partitioned
-start's or group enable's plugin fan-out, never written by hand — the desired
+When the plugin's opts carry a partition identity (injected by a partitioned
+start's or group enable's plugin fan-out, never written by hand) the desired
 set is filtered, between decode and reconcile, to items whose key group falls
 in the member's range:
 
@@ -336,8 +353,8 @@ an opaque boot frame and is never filtered.
 
 The item string must equal what the operator's `key_by` extracts. That is the
 one convention partitioning rests on, and the SDK turns a violation into a park
-before any state for that key is created — see
-[`partitioned_operators.md`](../sdk/partitioned_operators.md).
+before any state for that key is created: see
+[`partitioning.md`](../topics/advanced/partitioning.md).
 
 ## Observability
 
@@ -383,7 +400,7 @@ mode; the acks that follow show as the absence of `:retried` and `:failed`.
 | `[:flezha, :plugin, :websocket, :overflowed]` | `%{queued: integer()}` | `%{plugin_id: binary()}` |
 
 `:reconcile` fires only on a cycle that sent at least one frame, so a steady
-source is silent and a flapping one is loud — a source that flaps is a defect
+source is silent and a flapping one is loud: a source that flaps is a defect
 in the source.
 
 ## Limits
@@ -397,7 +414,7 @@ in the source.
   reconcile resumes when the source returns.
 - **The output hop is never effectively-once**, in either mode. See the
   delivery-semantics table above and
-  [`../resilience/data_durability.md`](../resilience/data_durability.md).
+  [`durability.md`](../topics/basics/durability.md).
 - **The plugin sends; it does not serve.** It ships on the connection it opened
   outbound. Accepting inbound websocket connections and fanning outputs to
   subscribers is a different capability and is not offered.
@@ -408,6 +425,6 @@ in the source.
 
 ## See also
 
-- [`http_poll.md`](http_poll.md) — the other `HttpFetch` consumer
-- [`lifecycle.md`](lifecycle.md) — `init_provider/1` vs `activate/1`, host-injected identity
-- [`../sdk/partitioned_operators.md`](../sdk/partitioned_operators.md) — key groups and the `key_by` contract
+- [`http_poll.md`](http_poll.md): the other `HttpFetch` consumer
+- [`partitioning.md`](../topics/advanced/partitioning.md): key groups and the `key_by` contract
+- [`plugins.md`](../topics/basics/plugins.md): the plugin model, sharing and `--single`

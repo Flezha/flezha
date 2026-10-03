@@ -195,7 +195,7 @@ on the channel that feeds a tasklet (3 attempts from a 50 ms base by default),
 and `retryMax(1)` fails fast.
 
 **A steps tasklet's timers work as a flow tasklet's.** A firing runs as a
-pass of its own ([`cell_timers.md`](cell_timers.md#timers-in-a-steps-operator)); only
+pass of its own ([`../topics/advanced/timers.md`](../topics/advanced/timers.md)); only
 inside a `compensate` hook do `timerAfter`, `timerAtEventTime` and
 `cancelTimer` throw an error beginning `runtime.timers_unavailable`.
 
@@ -410,10 +410,10 @@ is declared, as is a codec given beside a function on one channel, naming the
 operator and the channel.
 
 `.response()` ends a channel on the answer to an outside call instead of a sink,
-and takes the sink's arguments, an encoder or `{ codec }`: [`calls.md`](calls.md).
+and takes the sink's arguments, an encoder or `{ codec }`: [`../topics/advanced/operator_calls.md`](../topics/advanced/operator_calls.md).
 `.call("pricing", { deadlineMs, codec })` or `.call({ factory: "agent", create: false }, { deadlineMs })`
 ends a chain on a call to another operator and answers a stream of `Response`s:
-[`calls.md`](calls.md#operator-calls-call).
+[`../topics/advanced/operator_calls.md`](../topics/advanced/operator_calls.md).
 
 A JSON number is a double, so an integer above 2^53 loses precision on the way
 in and out. A `bigint`, `undefined` or a function has no JSON form and fails
@@ -474,7 +474,7 @@ snapshots, no dead-letter queue. Durability, effectively-once delivery, plugins,
 placement and migration, the dead-letter queue, observability export, authz and
 multi-runner scale need a controller; a declaration asking for one of those is
 refused at startup, naming it. Walk-through:
-[`../quickstart.md`](../quickstart.md).
+[`../topics/basics/local_mode.md`](../topics/basics/local_mode.md).
 
 ## Testing a tasklet
 

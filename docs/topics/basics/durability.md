@@ -1,0 +1,526 @@
+# Durability
+
+Flezha writes down every change a tasklet makes to its state, and every step a
+workflow finishes, on the controller's disk as it happens. When a runner or the
+controller comes back after a stop or a crash, each operator carries on from
+where it was, and nothing in the operator's code saves or loads anything. This
+page says what is kept, where, what a crash can still cost, and how to run a
+deployment so that a planned action loses nothing.
+
+Two things can be lost: an operator's **state**, and its **output**. The live
+copy of the state is in the cells on the operator's runner; it is copied to a
+log per cell on the controller, in batches about every 5 ms. Output is routed
+through the controller to its sinks (Kafka, Postgres, HTTP, another operator).
+The core rule: **a graceful stop loses no state; a hard kill can lose the last
+few milliseconds of changes that were not yet on the controller's disk.**
+
+## Durability levels
+
+How far an operator's work is kept is its class's `durable` setting
+([`configuring_an_operator.md`](configuring_an_operator.md)). A class that runs
+in flow also has a duplicate rule, `exactly`, which says how often a value may
+reach a sink:
+
+| `durable` | Where the work is kept | After a runner or controller crash | After the controller's disk is lost | Flow, `exactly: at_least_once` (default) | Flow, `exactly: effectively_once` |
+| --- | --- | --- | --- | --- | --- |
+| `false` | the runner's memory only | the work starts over | lost | a value can reach a sink again | refused: the tier needs a disk (`topology.effectively_once_without_persistence`) |
+| `local` (default) | the controller's disk | carries on | lost, unless a copy was shipped | a value sent just before a crash can reach a sink again | once at a conforming sink: outputs wait until the change behind them is on disk |
+| `remote` | the controller's disk, and a remote copy that each commit point waits for | carries on | carries on from the copy | as for `local` | as for `local`, and nothing acknowledged is lost with the disk |
+
+A workflow has no duplicate rule to choose: its outputs are released only when
+the step that made them commits, and a durable workflow's steps write the same
+atomic record the effectively-once tier writes.
+
+**A commit point** is where a piece of work counts as done: one input for a
+flow class (`ack: per_input`, or `at_least_once`), one checkpoint for a flow
+class with `ack: checkpoint`, one finished step for a workflow. What losing the
+controller's disk costs depends on the level and the commit point:
+
+| `durable` | Flow, an input | Flow, a checkpoint | Steps, a stage |
+| --- | --- | --- | --- |
+| `false` | everything, on any crash | not declarable: the tier needs a disk | everything: the run starts over |
+| `local` | the work since the last ship, at most the RPO target | the work since the last ship, at most the RPO target | the work since the last ship, at most the RPO target |
+| `remote` | nothing acknowledged | nothing acknowledged; the open interval replays | nothing acknowledged |
+
+Without a remote backend (`FLEZHA_DURABILITY_BACKEND=none`, the default) there
+is no ship, so at `local` the disk is the only copy.
+
+## What happens in each situation
+
+| Situation | State | Output | Why |
+| --- | --- | --- | --- |
+| a runner stops gracefully (SIGTERM, rolling deploy) | no loss | at-least-once | the runner sends each operator's final state and waits for the controller's acknowledgement before it exits |
+| one runner killed under load | the last few changes may be lost | at-least-once | no drain; the operator rebinds and restores from the controller's log, which may lag the last changes |
+| every runner killed at once | the last few changes may be lost | at-least-once | the same restore, with no live copy anywhere |
+| a runner runs out of memory, its container or node dies | the last few changes may be lost | at-least-once | as a kill: no drain runs |
+| a controller restarts gracefully, with a live peer | no loss | at-least-once | the new instance syncs the registry from the peer; runners stay connected |
+| the only controller restarts | no loss | at-least-once | the first recovery round replays the operator list from disk; `/healthz` says `recovering` until operators are bound ([`running_operators.md`](running_operators.md#after-a-controller-restart)) |
+| the whole cluster starts cold | recovered from the durable registry | none in flight | disk is the only record |
+| an operator moves to a controller with no copy of its log, runner alive | no loss | at-least-once | with the remote tier the copy is fetched; without it, the runner is asked for a full snapshot, which becomes the new baseline |
+| a node rejoins a live cluster | synced from peers; its own copy is kept | none in flight | nothing is missing, so nothing starts |
+| a Kafka broker is down, runners alive | no loss | buffered, resumes | the producer reconnects and drains |
+| sustained overload: changes outpace disk syncs | no loss | at-least-once | a runner may have 16 MiB of unsynced changes in flight; past that it waits, it does not drop. A shed emits `[:flezha, :state, :credit_anomaly]` |
+| a workflow's runner is killed (durable) | no loss of a committed step; the step in flight runs again | released only after its step commits | it resumes at the first step not committed ([`workflows.md`](workflows.md#crashes-and-resuming)) |
+| a looping workflow's runner is killed (durable) | no loss of a committed step | released only after its step commits | it resumes after the last committed iteration; unconsumed input is still in its input log |
+| input sent to a sleeping, crashed or moving durable workflow | no loss | none yet | written to the instance's input log before it is forwarded, delivered on wake |
+| input sent to a sleeping flow instance | no loss | none yet | written to its input log first; the instance wakes, its cells are restored, and the message is handled once, also across a controller restart |
+| the controller redeploys while an instance sleeps | no loss | none in flight | sleeping is durable; the instance stays asleep and wakes on its next input or timer |
+| a workflow kept in memory (`durable: false`) is killed | everything: it re-runs from the top | at-least-once | no log; messages waiting in memory are lost |
+| a failed turn of a `keep_progress` session (durable) | no loss: the turn's message is parked | the turn's outputs stay out; its undos run | the message is parked before the iteration is recorded as dead-lettered; a crash parks it at most once |
+| a workflow killed in the middle of an undo (durable) | the undo resumes | none | done undos are skipped, the rest run |
+| an Elixir operator process dies outside a clean stop | as its class keeps it after a rebind | as its class keeps it | the controller rebinds it, restoring its cells before re-forwarding its input log |
+| an Elixir cell dies with unfinished input | no loss of input that has an offset | at-least-once, or once on the tier | the operator ends and is rebound; every input the cell held runs again. An instance that dies on every bind is retried on its backoff |
+| a poison message, failing every attempt | no loss | the cell continues | it is parked in the dead-letter queue before the cell moves on ([below](#the-dead-letter-queue)) |
+
+### Why output can get ahead of state
+
+Output and state changes travel separately, and by default the controller
+sends output on before the matching state change is synced to disk. So after a
+hard kill, output can outlive the state that produced it (a sink holds
+`total=135` while the log holds `128`), and the restored operator comes back
+slightly behind. A planned stop drains to zero loss; an operator that needs the
+gap closed declares `exactly: effectively_once`.
+
+**The sync window.** The controller syncs each cell's log to disk once per tick
+(`:agent_fsync_interval_ms`, 5 ms by default, running only while a log has
+unsynced records). Records written in the last tick can be lost on a hard
+kill; a lower interval narrows the window and costs I/O. Syncing per record is
+not supported for cell logs.
+
+**A damaged record is refused, not repaired.** A log is cut short only where it
+is provably a torn tail, as a crash in the middle of a write leaves, and that
+repair is reported. A record whose checksum fails with complete records after
+it is not a torn tail: the bytes are left as they are, the log is not served,
+the refusal is reported once at `error` with a
+`[:flezha, :state, :record_frame, :refused]` event naming the file, the last
+good sequence number and the byte offset, and the cell's restore is refused, so
+the operator stays unbound rather than running on part of its history. Recovery
+is your decision, with the bytes in hand: fetch from the remote tier, take a
+peer's copy, or inspect the file.
+
+## Delivery
+
+### At least once, by default
+
+Output leaves as it is produced, and nothing remembers what was delivered, so
+a replay after a crash can send a value again. A channel declared `keyed()`
+stamps each plugin-bound output with `flz.cell`, `flz.seq`
+(`<change_seq>.<emit_ordinal>`) and `flz.key` (the cell's key, or the key given
+to `ctx.emit_keyed(key, value)`). The stamps come only from inputs that replay
+the same way, so a replay sends identical stamps, and a consumer that upserts
+on `flz.key` absorbs duplicates exactly. That holds only if `run`, `apply_to`
+and `compensate` read no clock, random value or outside system: use
+`ctx.now()` and `ctx.stableId()` ([`state.md`](state.md#rules-for-state-and-changes)).
+
+Two limits: `flz.seq` is not an exact dedup handle for append-only sinks (two
+invocations that change no state can share one), and there is no `flz.epoch`
+at this level. A conforming sink reads a keyed record without an epoch as epoch
+`0` and orders by `flz.seq`; a sequence that goes backwards, from a cell that
+cold-started without a baseline, is refused rather than guessed.
+
+**Nothing is dropped by default.** `DropNothing` is each channel's default
+overflow policy: a full mailbox slows the producer instead. On a channel
+between tasklets the producing cell waits until its value is taken; on an
+entry channel the reader stalls and the back-pressure reaches the controller;
+a plugin-bound channel has no mailbox to fill, and declaring a policy there
+does not compile. The Kafka producer's queue also drops nothing by default. A
+class that prefers to shed declares `on_full(DropNewest)` or `DropOldest`. One
+window is not closed: the controller's send buffer to a runner discards the
+newest frame when the runner stops reading.
+
+Without an input log, a restore keeps the input queued in a cell's mailbox,
+since that queue is its only copy. On the effectively-once tier, and for a
+class that sleeps, the restore discards it, because the input log re-forwards
+it.
+
+### Effectively once
+
+`exactly: effectively_once` combines at-least-once delivery, a deterministic
+key and an idempotent sink into effectively-once delivery. Each plugin-bound
+channel must be `keyed()`, which registration checks. The tier works the same
+in every SDK.
+
+- **Each input is written to the operator's input log before it is forwarded**,
+  stamped `flz.offset`, and forwarded once the log has synced it. A repeat of a
+  `flz.msg_id` the log still holds is absorbed; a message without an id is
+  always appended. The log is trimmed only below the instance's floor, the
+  prefix of inputs every cell has processed durably; a floor that does not move
+  past the size threshold emits `[:flezha, :state, :input_log_frozen_watermark]`.
+- **One atomic record per invocation**: state changes, outputs, the consumed
+  offset, a dead-letter entry and event time are written together, in one
+  sync, never partly and never merged away.
+- **A value handed to the next tasklet is kept in its producer's record**, so
+  a value lost with the consumer's mailbox in a crash is delivered again, and a
+  consumer that already took it drops it.
+- **Outputs reach the sinks only once their record is on disk**, stamped
+  `flz.cell`, `flz.seq`, `flz.epoch` and `flz.key`: enough for exact dedup.
+  After a restart, every record past the cell's flushed cursor is sent again,
+  in order, under the same identity: never lost, never applied twice at a
+  conforming sink.
+- **The cursor moves on the sink's confirmation**, not on dispatch: a Kafka
+  produce acknowledged, a Postgres transaction committed, a forward confirmed.
+  A batch whose retries run out is parked in the dead-letter queue, and only
+  then may the cursor pass it. A delivery whose confirmation is lost is sent
+  again after `:outbox_resettle_ms` (60 s); at most `:outbox_inflight_max`
+  (1 000) are in flight per cell. Unconfirmed output shows as
+  `outbox_unconfirmed_ms` in the cell's stall status, and reaches the
+  convergence loop as the `outbox_flat` verdict.
+- **The source slows down rather than the log growing without bound.** Each
+  operator has a source credit window (`:source_credit_window_bytes`, 16 MiB by
+  default); at zero, the source waits (a WebSocket source stops reading).
+- **Classes without the tier pay nothing for it.** Under the tier, a slow or
+  unreachable sink backs output up on disk, not in memory.
+
+**Conforming sinks.** The Postgres sink upserts each batch into
+`flezha_records` (keyed by `flz.key`) and advances its progress row in one
+transaction, guarded by `(epoch, seq)`, so repeats and stale epochs do nothing;
+an unreachable database delays the flush (callers wait past `queue_max`,
+10 000), and the schema is yours to create (`auto_create: false` fails health
+naming the missing tables). The Kafka producer uses `flz.key` as the message
+key and carries the identity in the `flezha.dedup_key` header
+([`../../plugins/kafka_producer.md`](../../plugins/kafka_producer.md)).
+**The WebSocket sink is not a conforming sink**: with `sink_ack_mode: "none"`
+(the default) it is at-most-once past the socket, with `"required"`
+at-least-once; it can carry `flz.cell` and `flz.seq` in the frame for the
+consumer to dedup ([`../../plugins/websocket_subscription.md`](../../plugins/websocket_subscription.md)).
+
+**Checkpoints.** An operator that folds many inputs into one coherent result
+declares `ack: checkpoint` and calls `ctx.checkpoint()` where its state is
+coherent. The consumed offset then moves only at a checkpoint, with the
+interval's changes in one record. Emits still flush as they happen, unless
+`outputs: at_checkpoint` holds them for the checkpoint record, which needs
+`max_delay_ms` so a quiet cell does not hold an output for ever. `every: n`
+closes the interval after `n` inputs. A parked input closes the interval, so a
+replay starts after the poison. Recovery restores the last checkpoint and
+replays the inputs after it. The interval sizes the input log's retention, the
+work after a crash and how often source credit comes back: an operator that
+never checkpoints stops trimming its log and eventually stalls its own source.
+More, with a worked example: [`../advanced/effectively_once.md`](../advanced/effectively_once.md).
+
+### Late input: correcting the past
+
+On the tier, an operator with an event-time clock can declare `correction_ms`.
+An input that arrives late, behind the cell's event-time high-water but inside
+the window, is not run on arrival. Instead the cell is rewound to a baseline
+before it, and the inputs since are replayed in event-time order (ties by
+offset); outputs are re-sent under a bumped epoch, so a keyed sink overwrites
+the stale rows. Requests for one cell merge into the one replay that reaches
+furthest back. Prerequisites, each refused at build time when missing: the
+tier, an event-time clock, and keyed plugin channels.
+
+The input log and compaction keep at least the window, so a correction always
+has its inputs and a baseline; a floor raised for it is logged once and
+emitted as `[:flezha, :correction, :retention_derived]`. A crash during a
+correction needs nothing: the correction simply runs again. An input later
+than the window follows `beyond_window`: `process_as_arrival` (the default) or
+`drop`; neither moves the high-water back. A correction overwrites the keys it
+sends again but does not retract keys it no longer sends; treat the sink as
+append-with-overwrite. A downstream operator sees corrected outputs as ordinary
+keyed updates.
+
+`flz operator replay <operator/tasklet/key> --from <seq|timestamp>` runs the
+same rewind from a point you choose, such as after deploying a fix. A point
+older than retention is refused with `outside_retention`, naming the earliest
+point available.
+
+### Workflows: released at the step's commit
+
+A durable workflow's step does not let its output escape before the step is
+durable. Each item writes one record (its state changes and its outputs); the
+controller records the step as committed only once each record the step named
+is on disk; and the outputs are released after that. A step that failed, was
+interrupted and re-run, or was rewound releases nothing. Each released output
+carries `flz.cell`, `flz.seq`, `flz.epoch`, its channel and `flz.key` when the
+channel is keyed; `emit_keyed` and metadata work in a step too. A crash re-send
+keeps every stamp, so a dedup sink absorbs it; a rewind leaves `flz.epoch` and
+its re-run's outputs sort above the old ones, so an `(epoch, seq)`-guarded sink
+overwrites. An undo's output is a newer record too. A workflow kept in memory
+sends outputs straight on.
+
+The guarantee: never lost, never released before commit, and at-least-once
+with stable keys in the window between a sink's confirmation and the cursor's
+write. Inspect a step's records with `flz state journal <operator/instance>`
+and what a cell still owes with `flz state outbox <operator/tasklet/key>`
+(`outbox_lag`, `held_for_stage`).
+
+A durable workflow's input goes through the same input log: written before it
+is forwarded, delivered again after a crash, and a repeated `flz.msg_id` is
+absorbed, so an at-least-once sender cannot cause a duplicate turn. A rewind
+never re-delivers a consumed message. Its appends use the same 16 MiB source
+credit, so a sender waits until the instance commits an iteration. Inspect the
+log with `flz state inbox <operator/instance>`.
+
+### Sleeping instances
+
+A class kept on disk can sleep when idle (`sleep_after`; never by default for a
+flow class, six hours for a workflow). A sleeping flow instance writes each
+input to its input log before forwarding it, one append per message, so a
+flow class that never sleeps pays nothing for it. A message sent to a sleeping
+instance wakes it and is delivered once, across a controller restart too. A
+user's stop wakes a sleeping workflow to end `cancelled`; a sleeping flow
+instance's stop removes it.
+
+### Operator to operator
+
+The `operator_forward` plugin delivers one operator's output into another's
+input with no extra configuration; the guarantee follows from the source:
+
+| Source operator | Across the hop |
+| --- | --- |
+| a flow operator on the effectively-once tier | effectively once |
+| a durable workflow | effectively once |
+| a plain flow operator | at least once, without dedup |
+
+Forwarding into a partition group routes by `hash(flz.key)`; a message without
+`flz.key` is parked in the source's dead-letter queue with
+`partitioned target requires keyed emit`. Items in flight survive a controller
+restart for the first two sources; a plain flow operator retries only while its
+plugin worker lives ([`../../plugins/operator_forward.md`](../../plugins/operator_forward.md)).
+
+### Timers
+
+A timer's registration, cancellation and firing are records in the cell's own
+log, so pending timers come back with the cell:
+
+| Crash point | Outcome |
+| --- | --- |
+| before the registration is on disk | the timer was never owed |
+| after the registration, before firing | pending; fires when due |
+| after firing | it does not fire again |
+| in the middle of a firing, before its record is on disk (tier) | the whole firing repeats |
+
+Without the tier a firing is at-least-once, like an input; a firing that runs
+out of attempts is parked, and its removal is durable either way, so a poison
+timer parks once ([`../advanced/timers.md`](../advanced/timers.md)).
+
+## The dead-letter queue
+
+A message that fails however often it is tried is not discarded. It is tried
+up to the channel's `retry_max` (3 attempts by default, with growing waits), or
+parked at once on a non-retryable error, and then written to the controller's
+dead-letter queue (`app_data/dlq/<operator_class>/<tasklet_id>/`) before the
+cell moves on, so the messages behind it are not held up. Some messages park
+with no attempt at all: an unroutable forward into a partition group, a key
+outside the member's range, and a message naming a channel that is not an entry
+channel of the operator (parked after one attempt, with an error naming the
+entry channels the operator has).
+
+On the effectively-once tier the park is part of the invocation's atomic
+record, so a crash cannot move the offset while losing the park.
+
+In the tradedesk example, a trade whose price is not a number lands there. In
+Java and Rust the typed `Trade` cannot be decoded, so the entry channel refuses
+it (cell `_entry`); in the other SDKs `track_prices` refuses the price itself:
+
+```sh
+$ flz dlq list 'trade_watcher#p1' --namespace trading
+```
+
+```output
+ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
+trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trades      1    8s        TypeError: the price is not a number: "one euro"
+```
+
+```sh
+$ flz dlq show '<entry>' --namespace trading
+```
+
+```output
+...
+attempts          3
+status            "parked"
+payload            {"channel": "trade", "data": [{"symbol": "EUR/USD", "price": "one euro", "ord_type": "market"}]}
+```
+
+| Command | What it does |
+| --- | --- |
+| `flz dlq list [<operator>]` | the entries parked, with cell, channel, generation, age and error |
+| `flz dlq show <entry>` | one entry, with its payload |
+| `flz dlq replay <entry>` | sends it through the ordinary input path again, as a new input; a replay that fails again re-parks with `generation` one higher |
+| `flz dlq drop <entry>` | removes it, audited |
+
+The four verbs need the `ops` role, since an entry holds the failed record
+verbatim. A verb naming an operator is judged in that operator's namespace; one
+naming none reads every namespace and is judged in `_system`. An Elixir entry
+whose tasklet was handed a decoded map rather than bytes can be dropped but not
+replayed. A partition group cannot be rescaled while its dead-letter queue
+holds entries ([`../advanced/partitioning.md`](../advanced/partitioning.md)).
+
+Retention bounds the queue by age and size, 30 days or 4 GiB, whichever is
+stricter. A retention deletion is real loss, and loud:
+`[:flezha, :dlq, :retention_dropped]`, exported as
+`dlq_dropped_by_retention_total`. Each new entry also emits
+`[:flezha, :dlq, :dead_lettered]`, naming the entry, which reaches controller
+plugins only ([`../../plugins/hook_webhook.md`](../../plugins/hook_webhook.md)).
+
+**In a workflow** a failing step is retried the same way, but when the
+attempts run out the workflow fails and is undone instead of parking. Two cases
+park: a message the entry channel cannot read, and a failed turn of a
+`keep_progress` session, parked under the `_turn` slot (keyed
+`_turn@<offset>`) before the iteration is recorded; `flz dlq replay` sends it
+back as a new message, and a replay to a session that has ended is refused
+([`workflows.md`](workflows.md#undoing-undo_all-and-keep_progress)).
+
+## Example: a crash in the middle of an order
+
+In the tradedesk example, `order_executor` records each step in its journal
+when the step finishes, and `confirm_fill` waits ten seconds for the demo
+exchange. Read the journal during that wait:
+
+```sh
+$ flz operator start order_executor --id order_1 --namespace trading --text '{"symbol": "EUR/USD", "quantity": 10}' --channel order
+$ flz state journal order_1 --namespace trading
+```
+
+```output
+task-journal for instance order_1:
+
+  seq=0 task_committed task_idx=0 iter=0 epoch=0
+    ran: order_1/reserve_funds/ record=0
+    ...
+  seq=1 task_committed task_idx=1 iter=0 epoch=0
+    ran: order_1/place_order/ record=0
+    ...
+  seq=2 task_committed task_idx=3 iter=0 epoch=0
+    ran: order_1/record_order/
+    ...
+
+  leaves: 2,3  complete: false
+```
+
+Three steps are committed. A runner killed now and started again runs only
+`confirm_fill`; the journal then ends with it and `complete: true`:
+
+```output
+...
+  seq=3 task_committed task_idx=2 iter=0 epoch=0
+    ran: order_1/confirm_fill/
+    handoff: 0 item(s), 0 byte(s)
+    completes the instance: result 57 byte(s)
+
+
+  leaves: 2,3  complete: true
+```
+
+The money is not reserved twice and the order is not booked twice. The PHP
+example's `confirm_fill` waits on a timer set for a fixed moment, so after a
+crash it finishes at the original deadline, or at once if the runner is back
+later than that.
+
+An order too big for the exchange fails at `confirm_fill`, is tried three
+times, and is undone, last step first. Each undo reads its id from its step's
+state, which survives a crash, and the booking stays because `record_order`
+has no `compensate`:
+
+```output
+[book] EUR/USD 136 as ord-be4f7a593756acada0924d10da8d31c6
+[flezha] tasklet confirm_fill attempt 1/3 failed (retrying in 63 ms): the exchange fills at most 100 a time, and this is 136
+[flezha] tasklet confirm_fill attempt 2/3 failed (retrying in 66 ms): the exchange fills at most 100 a time, and this is 136
+[undo] cancelled ord-be4f7a593756acada0924d10da8d31c6
+[undo] released res-935e21608cc9ea9844b537d8c0c97517
+```
+
+The Elixir SDK logs the attempts at the `debug` level.
+
+## Surviving the loss of a disk: the remote tier
+
+Everything above is local. A controller that dies with its disk takes its
+operators' state, and the record that they exist, with it; moving state
+between controllers is a one-time pull when an operator moves, not
+replication. Unset, `FLEZHA_DURABILITY_BACKEND` is `none` and a production
+controller warns on every boot; `none` set explicitly is the same as a build
+without the tier, reported as `durability: local_only`.
+
+| Backend | Where the copy goes |
+| --- | --- |
+| `none` | nowhere; the local disk is the only copy (the default) |
+| `postgres` | a table in a PostgreSQL database (`FLEZHA_DURABILITY_PG_*`) |
+| `s3` | a bucket on S3 or an S3-compatible store (`FLEZHA_DURABILITY_S3_*`) |
+| `local_path` | a folder that outlives the controller's disk, such as a network mount (`FLEZHA_DURABILITY_PATH`) |
+
+A backend selected without its settings refuses the boot, naming the missing
+option ([`../../configuration.md`](../../configuration.md#state-wal-and-durability)).
+
+With a backend, immutable copies (snapshots, log bundles, journal suffixes, the
+input log, the registry, parked dead-letter records, the authorization and
+schedule stores) are shipped at boundaries that exist anyway (a checkpoint,
+a compaction, a workflow step, a park or a drop) plus a backstop timer,
+`FLEZHA_DURABILITY_SHIP_INTERVAL_MS`, 30 s. The manifest is written last, so a
+half-finished upload is invisible to recovery. A controller that starts on an
+empty disk fetches the copy and carries on from it. When an operator moves back
+to a controller that kept an older copy, the newer copy (by owner epoch, then
+highest sequence number; a tie goes to the incoming one) replaces it whole; a
+replacement that does not land whole leaves the local copy as it was.
+
+**At `local`**, shipping is in the background and never delays an
+acknowledgement; a failing backend delays nothing. What degrades is the
+guarantee, loudly: a lag past `rpo_target_ms` (120 s) emits
+`[:flezha, :state, :rpo_exceeded]`, shown by `flz controller status` and
+`/healthz` (`degraded, reason: durability_rpo_exceeded`).
+
+**At `remote`**, each commit point waits for its ship before it is
+acknowledged: a workflow's step is acknowledged once the manifest naming it is
+written; a flow cell holds its acknowledgement, the runner's credit and its
+outputs until a ship of the cell and its input log lands, one ship in flight
+per cell, covering every input synced meanwhile. Under `ack: checkpoint` only
+the interval's close waits, so prefer it for a `remote` flow class, which
+otherwise pays a remote write per synced batch. A controller restored from the
+copy resumes each cell after the last input it acknowledged. A backend outage
+stalls only `remote` classes, and the RPO alarm fires; `local` classes on the
+same controller carry on. `flz controller status` prints each running class's
+level as `durability_levels`, and each remote commit's wait is
+`[:flezha, :state, :remote_commit]`. One window is still open: after a cell's
+log writer restarts, until its first ship lands, an input can be confirmed
+whose record is on local disk but not yet shipped.
+
+## How to avoid loss
+
+- **Stop runners gracefully, not with a kill.** Send SIGTERM and set the
+  orchestrator's grace period (`terminationGracePeriodSeconds`,
+  `stop_grace_period`) longer than the drain (2 s per operator, in parallel,
+  with a 10 s cap on writing out state). Roll one node at a time, so a peer is
+  always live.
+- **The runner must receive SIGTERM itself.** Run it as PID 1 (an exec-form
+  `CMD` or entrypoint, or `setpriv` / `gosu` dropping privileges by `exec`). A
+  wrapper that forks the runner and kills it on SIGTERM, such as `su`
+  ("Session terminated, killing shell"), turns a graceful stop into a hard kill.
+- **Restart controllers correctly.** With several, bring the new one up before
+  stopping the old one. A sole controller just restarts: the first recovery
+  round replays the operator list once `FLEZHA_PROCESS_HUB_CLUSTER_SETTLE_MS`
+  (2 000) has passed, and `FLEZHA_PROCESS_HUB_RECONCILE_GRACE_MS` (45 000)
+  only caps the wait on a peer that never answers. `/healthz` reads
+  `recovering` until then, and until replayed operators are bound again; an
+  operator whose runner has not reconnected waits unbound. That is the design,
+  not a fault.
+- **Make sinks idempotent where duplicates matter.** Declare channels
+  `keyed()` so a re-sent output carries the same `flz.key` and `flz.seq` to
+  upsert on, or use `exactly: effectively_once`; the Kafka and Postgres plugins
+  conform out of the box.
+- **Write workflow steps and undos to be repeated**, or keep a fire-and-forget
+  job in memory so it re-runs from a clean slate.
+- **Do not treat the on-disk registry as the live truth.** It is what a cold
+  start replays.
+- **Set a durability backend** when the state must survive losing a disk; a
+  second controller is capacity, not a backup
+  ([`deploying_a_controller.md`](deploying_a_controller.md#several-controllers-on-one-machine)).
+
+## Limits and gotchas
+
+- **Output is at-least-once by default.** Deduplicate downstream, or use the
+  effectively-once tier.
+- **A hard kill can lose the last milliseconds** of state changes and resend
+  their outputs.
+- **`durable: false` loses everything on a crash.**
+- **The dead-letter queue has retention**: 30 days or 4 GiB.
+- **The WebSocket sink is not exactly-once** under any setting.
+
+## See also
+
+- [`configuring_an_operator.md`](configuring_an_operator.md): `durable`, `exactly` and `sleep_after`.
+- [`state.md`](state.md): how state is recorded and restored.
+- [`workflows.md`](workflows.md): steps, undo and crash-resume.
+- [`running_operators.md`](running_operators.md#after-a-controller-restart): what comes back after a restart.
+- [`deploying_a_controller.md`](deploying_a_controller.md): the variables a deployment sets, graceful shutdown.
+- [`../advanced/effectively_once.md`](../advanced/effectively_once.md), [`../advanced/timers.md`](../advanced/timers.md), [`../advanced/partitioning.md`](../advanced/partitioning.md).
+- [`../../configuration.md`](../../configuration.md#state-wal-and-durability): the durability settings.
+- Tutorial: [`crash_the_desk.md`](../../tutorials/tradedesk/crash_the_desk.md) crashes the tradedesk on purpose.

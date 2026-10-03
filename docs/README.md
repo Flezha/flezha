@@ -1,17 +1,24 @@
 # Flezha documentation
 
-Start with [`architecture/`](architecture/README.md) — the durable-compute kernel, the two
-ways an operator runs, flow and steps, and the runner model. Everything else is grouped by who reads it.
+New to Flezha: start with [What is Flezha](getting_started/what_is_flezha.md), then
+[Try it](getting_started/try_it.md). The user documentation comes in four sections,
+in reading order; everything after them is grouped by who reads it.
+
+| Section | What it is |
+| --- | --- |
+| [Getting started](#getting-started) | What Flezha is, and one echo running in Docker |
+| [Tutorials](#tutorials) | Three example applications, run page by page: what to type and what you should see |
+| [The basics](#the-basics) | One page per subject a deployment needs, each readable on its own |
+| [Advanced topics](#advanced-topics) | One page per subject beyond the basics, each readable on its own |
 
 | Directory | For | What is in it |
 | --- | --- | --- |
-| [`guides/`](#guides) | someone deploying Flezha for the first time | End-to-end walkthroughs: build, start, connect, run |
 | [`architecture/`](architecture/README.md) | everyone | The conceptual model: kernel, flow, steps, runner |
 | [`api/`](api/README.md) | authors of a program that drives the controller | The published consumer surface, its three guards, and the manifest that keeps a consumer's calls resolving |
 | [`sdk/`](#sdk) | operator authors, SDK implementers | Authoring contract, per-SDK surfaces, wire protocol, the shared poll core |
 | [`plugins/`](#plugins) | plugin authors and users | The plugin system and every first-party plugin |
-| [`operations/`](#operations) | users | Deploying, configuring, securing, observing and recovering a controller |
-| [`resilience/`](#resilience) | everyone | What survives what — the guarantee-level docs |
+| [`operations/`](#operations) | users, contributors | Observability, the audit log, schedules, memory and benchmarking |
+| [`resilience/`](#resilience) | contributors | The mechanism behind the guarantees |
 | [`internals/`](#internals) | controller contributors | How the controller is built |
 | [`runbooks/`](#runbooks) | users, contributors | Step-by-step tasklets for one-off operations |
 | [`troubleshooting/`](#troubleshooting) | users | A symptom, what it means, and the fix |
@@ -24,40 +31,62 @@ held to, in every language it carries).
 
 reproduces it and the output that command gave.
 
-## guides
-
-A guide walks one path from start to finish. The reference docs it points at
-answer "what are the options"; a guide answers "what do I type".
+## Getting started
 
 | Doc | Covers |
 | --- | --- |
-| [`what_is_flezha.md`](guides/what_is_flezha.md) | **Start here.** What Flezha is, its pieces, and what it is for |
-| [`try_it.md`](guides/try_it.md) | One echo running in Docker, and running an operator without a controller |
-| [`guides.md`](guides/guides.md) | How to follow a guide, and what each of the three parts builds |
-| [`first_steps.md`](guides/first_steps.md) | Part 1. What it builds, what you need, and its pages |
-| [`controller_deployment.md`](guides/controller_deployment.md) | Part 1. Running one controller: the Docker image, the release binaries, or your own Elixir application |
-| [`runner_deployment.md`](guides/runner_deployment.md) | Part 1. Reaching the controller, and your own runner registering an operator factory |
-| [`running_operators.md`](guides/running_operators.md) | Part 1. Starting an operator, watching it, stopping it, and what survives a restart |
-| [`sources_and_sinks.md`](guides/sources_and_sinks.md) | Part 1. Attaching a real input and a real output with the file plugin, and how a plugin is enabled and disabled |
-| [`cli.md`](guides/cli.md) | Reference. `flz` itself: reaching a controller, output formats, identity for a gated verb |
-| [`going_further.md`](guides/tradedesk/going_further.md) | Part 2. The tradedesk it builds, what you need, and its pages |
-| [`authorization.md`](guides/tradedesk/authorization.md) | Part 2. Claiming the admin, tokens, the runner's key and roles |
-| [`namespaces.md`](guides/tradedesk/namespaces.md) | Part 2. A namespace of your own, joining it from a runner, and quotas |
-| [`building_an_etl_stream.md`](guides/tradedesk/building_an_etl_stream.md) | Part 2. An ETL stream, built as a flow operator: chained tasklets, transforms and state |
-| [`building_a_workflow.md`](guides/tradedesk/building_a_workflow.md) | Part 2. A workflow, built as a steps operator: steps, retries and compensation |
-| [`partitioning.md`](guides/tradedesk/partitioning.md) | Part 2. Partitions, keys and scaling |
-| [`plugins.md`](guides/tradedesk/plugins.md) | Part 2. The plugin system and the plugins that ship |
-| [`durability.md`](guides/tradedesk/durability.md) | Part 2. What survives a crash |
-| [`advanced_topics.md`](guides/advanced/advanced_topics.md) | Part 3. What it builds, what you need, and its pages |
-| [`sessions.md`](guides/advanced/sessions.md) | Part 3. The agentdesk in Docker Compose: one session per steps operator, turns sent and answered, an idle session asleep |
-| [`rewinding_a_turn.md`](guides/advanced/rewinding_a_turn.md) | Part 3. Taking turns back, and a failed turn that leaves the session running |
-| [`streamed_answers.md`](guides/advanced/streamed_answers.md) | Part 3. An answer sent token by token while the turn runs |
-| [`custom_plugins.md`](guides/advanced/custom_plugins.md) | Part 3. Installing a plugin by rebuilding the controller image, and writing your own |
-| [`http_gateway.md`](guides/advanced/http_gateway.md) | Part 3. A gateway that serves HTTP, and streams a session's answer to a browser |
-| [`operator_calls.md`](guides/advanced/operator_calls.md) | Part 3. The gateway calls the sessions, and keeps each user's daily token budget from their answers |
-| [`clustering.md`](guides/advanced/clustering.md) | Part 3. Several controllers, and stopping one |
-| [`effectively_once.md`](guides/advanced/effectively_once.md) | Part 3. The delivery guarantee and its cost |
-| [`kubernetes_deployment.md`](guides/advanced/kubernetes_deployment.md) | Part 3. The same images on k3s |
+| [`getting_started/what_is_flezha.md`](getting_started/what_is_flezha.md) | **Start here.** What Flezha is, its pieces, and what it is for |
+| [`getting_started/try_it.md`](getting_started/try_it.md) | One echo running in Docker |
+
+## Tutorials
+
+A tutorial runs one example application from start to finish. Its pages say what to
+type and what you should see; the topic pages say how each piece works.
+
+| Doc | Covers |
+| --- | --- |
+| [`tutorials.md`](tutorials/tutorials.md) | How to follow a tutorial, and what each one builds |
+| [`echo/first_steps.md`](tutorials/echo/first_steps.md) | The echo: a controller, your own runner, an operator, a file on each side |
+| [`tradedesk/tradedesk.md`](tutorials/tradedesk/tradedesk.md) | The tradedesk: an ETL stream and a workflow on a demo exchange, partitions, plugins, crashes |
+| [`agentdesk/agentdesk.md`](tutorials/agentdesk/agentdesk.md) | The agentdesk: sessions behind HTTP, calls, a cluster, Kubernetes |
+
+## The basics
+
+| Doc | Covers |
+| --- | --- |
+| [`building_blocks.md`](topics/basics/building_blocks.md) | Tasklets, operators and runners, and the seven SDKs on one engine |
+| [`configuring_an_operator.md`](topics/basics/configuring_an_operator.md) | The settings tree: how an operator runs, where its work is kept, as an ETL stream and as a workflow |
+| [`streams.md`](topics/basics/streams.md) | A graph of tasklets: channels, edges, transforms and keys |
+| [`workflows.md`](topics/basics/workflows.md) | Steps, retries, undo, and one instance per input |
+| [`state.md`](topics/basics/state.md) | State per cell, the changes that record it, and its restore |
+| [`local_mode.md`](topics/basics/local_mode.md) | An operator run in your own process, with no controller |
+| [`deploying_a_controller.md`](topics/basics/deploying_a_controller.md) | The release, the Docker image, an Elixir application; shutdown and its grace periods |
+| [`connecting_a_runner.md`](topics/basics/connecting_a_runner.md) | How a runner reaches its controller, and how to run one |
+| [`topics/basics/running_operators.md`](topics/basics/running_operators.md) | Starting, watching and stopping operators, from `flz` and from code; what a restart brings back |
+| [`topics/basics/plugins.md`](topics/basics/plugins.md) | The plugin model: enabled by name, operators bound, sharing, hooks |
+| [`topics/basics/namespaces.md`](topics/basics/namespaces.md) | Namespaces, joining one from a runner, quotas, and administering one from code |
+| [`topics/basics/authorization.md`](topics/basics/authorization.md) | The admin, tokens, roles, certificates and recovery |
+| [`topics/basics/durability.md`](topics/basics/durability.md) | What survives what, and the durability levels |
+| [`topics/basics/cli.md`](topics/basics/cli.md) | `flz` itself: reaching a controller, output formats, identity |
+
+## Advanced topics
+
+| Doc | Covers |
+| --- | --- |
+| [`topics/advanced/partitioning.md`](topics/advanced/partitioning.md) | One logical operator in N partitions: key groups, sources, rescale |
+| [`merged_inputs.md`](topics/advanced/merged_inputs.md) | A tasklet fed by several channels |
+| [`topics/advanced/timers.md`](topics/advanced/timers.md) | Per-cell processing-time and event-time timers |
+| [`spawning_from_a_tasklet.md`](topics/advanced/spawning_from_a_tasklet.md) | A running tasklet starts or feeds a steps instance |
+| [`topics/advanced/operator_calls.md`](topics/advanced/operator_calls.md) | Calling an operator and waiting for its answer |
+| [`topics/advanced/sessions.md`](topics/advanced/sessions.md) | A session per user: steps, one pass per message, sleeping when idle |
+| [`topics/advanced/rewinding_a_turn.md`](topics/advanced/rewinding_a_turn.md) | Taking iterations back, and a failed turn that fails alone |
+| [`topics/advanced/streamed_answers.md`](topics/advanced/streamed_answers.md) | An answer sent in parts while the turn runs |
+| [`installing_plugins.md`](topics/advanced/installing_plugins.md) | Plugin packages: installing, loading at boot, versions, signing |
+| [`hooks.md`](topics/advanced/hooks.md) | Hooks and controller plugins |
+| [`writing_a_plugin.md`](topics/advanced/writing_a_plugin.md) | Writing and packaging a plugin of your own |
+| [`topics/advanced/clustering.md`](topics/advanced/clustering.md) | Several controllers as one cluster, and stopping one |
+| [`topics/advanced/effectively_once.md`](topics/advanced/effectively_once.md) | The delivery guarantee, what it requires and what it costs |
+| [`kubernetes.md`](topics/advanced/kubernetes.md) | Running controllers and runners on Kubernetes |
 
 ## sdk
 
@@ -66,7 +95,7 @@ answer "what are the options"; a guide answers "what do I type".
 | [`authoring_contract.md`](sdk/authoring_contract.md) | The three authoring tiers, signature → type inference, state → Change derivation, cell mode, the cross-SDK reference operator |
 | [`naming_conventions.md`](sdk/naming_conventions.md) | The numbered naming rules every SDK surface follows |
 | [`rust_operator_architecture.md`](sdk/rust_operator_architecture.md) | The Rust SDK's dispatch pipeline: channels, tasklets, cells, mailboxes, backpressure, plugin egress |
-| [`state_persistence.md`](sdk/state_persistence.md) | Per-Cell state, Change, snapshot/WAL restore and compaction — Rust and Java surfaces |
+| [`state_persistence.md`](sdk/state_persistence.md) | For SDK implementers: how per-cell state becomes durable in the SDKs |
 | [`elixir_sdk.md`](sdk/elixir_sdk.md) | The Elixir SDK: in-node native mode and the standalone runner |
 | [`java_sdk.md`](sdk/java_sdk.md) | The Java SDK: scope, how its artifacts are built, how it is tested |
 | [`node_sdk.md`](sdk/node_sdk.md) | The Node SDK (`@flezha/sdk`): supported versions, dispatch configuration, what must never block the event loop |
@@ -74,13 +103,11 @@ answer "what are the options"; a guide answers "what do I type".
 | [`ruby_sdk.md`](sdk/ruby_sdk.md) | The Ruby SDK (the `flezha` gem): supported versions, the threading host, parallelism, the runner image |
 | [`php_sdk.md`](sdk/php_sdk.md) | The PHP SDK over `ext-ffi`: supported versions, sizing, the executor seam, accepted limits |
 | [`conformance.md`](sdk/conformance.md) | The cross-SDK conformance suite: manifests, capabilities, the gate, adding an SDK |
-| [`stream_transforms.md`](sdk/stream_transforms.md) | Edge transforms and `key_by` keying |
-| [`multi_input_tasklets.md`](sdk/multi_input_tasklets.md) | Merged subscriptions: what a merge promises |
-| [`cell_timers.md`](sdk/cell_timers.md) | Per-Cell processing-time and event-time timers |
-| [`tasklet_requested_spawn.md`](sdk/tasklet_requested_spawn.md) | `ctx.spawn_steps`: a running tasklet asks for a worker |
-| [`full_form_tasklets.md`](sdk/full_form_tasklets.md) | A tasklet written in full, and what only that form declares |
-| [`admin.md`](sdk/admin.md) | The surface an application administers its own namespace with, and the role that grants it |
-| [`partitioned_operators.md`](sdk/partitioned_operators.md) | One logical operator, N instances: key groups, sources, rescale |
+| [`stream_transforms.md`](sdk/stream_transforms.md) | Implementation notes for edge transforms: where the code lives |
+| [`multi_input_tasklets.md`](sdk/multi_input_tasklets.md) | Implementation notes for merged inputs: replay, where the code lives |
+| [`cell_timers.md`](sdk/cell_timers.md) | Implementation notes for timers: folded state, where the code lives |
+| [`partitioned_operators.md`](sdk/partitioned_operators.md) | Implementation notes for partitioning: the key-group hash and its vectors |
+| [`calls.md`](sdk/calls.md) | Implementation notes for calls: the Response envelope |
 | [`protocol_spec.md`](sdk/protocol_spec.md) | The wire protocol: transports, framing, commands, lifecycle, data plane |
 | [`poll_core.md`](sdk/poll_core.md) | The shared `flz_core` kernel and its C ABI |
 
@@ -88,7 +115,6 @@ answer "what are the options"; a guide answers "what do I type".
 
 | Doc | Covers |
 | --- | --- |
-| [`installation.md`](plugins/installation.md) | Plugin packages: building, installing, loading at boot, statuses, errors, signing |
 | [`kafka_producer.md`](plugins/kafka_producer.md) | The Kafka producer sink, a plugin package: partitioning, idempotence, batching, the in-flight window |
 | [`kafka_consumer.md`](plugins/kafka_consumer.md) | The Kafka consumer source in the same package: a consumer group's share of topics, commits by input durability, lag |
 | [`rabbitmq.md`](plugins/rabbitmq.md) | The RabbitMQ consumer source and producer sink, a plugin package: acknowledgement by input durability, message ids, publisher confirms, reconnects |
@@ -106,26 +132,19 @@ answer "what are the options"; a guide answers "what do I type".
 
 | Doc | Covers |
 | --- | --- |
-| [`deployment/README.md`](operations/deployment/README.md) | Docker dev loop, production image, Kubernetes |
-| [`authn_authz.md`](operations/authn_authz.md) | Cookie and certificates, bootstrap, tokens, roles, namespaces, recovery |
 | [`audit_log.md`](operations/audit_log.md) | The durable JSONL audit log: layout, fsync, rotation, CLI |
 | [`observability.md`](operations/observability.md) | Signals, sources, sinks, `flz observe`, Prometheus and OTLP export |
-| [`graceful_shutdown.md`](operations/graceful_shutdown.md) | Quiesce → drain → finalise, orchestrator grace periods, `flz controller stop` |
-| [`auto_restore_on_boot.md`](operations/auto_restore_on_boot.md) | How a controller restores its operators after any restart |
-| [`reset.md`](operations/reset.md) | `flz reset`: wiping runtime data |
 | [`schedules.md`](operations/schedules.md) | `flz schedule`: cron-driven operator spawns |
 | [`memory_drift.md`](operations/memory_drift.md) | Localising controller memory growth |
 | [`benchmarking.md`](operations/benchmarking.md) | `mix bench`, shapes, recorded floors, CI gates |
-| [`erlang_vm_tuning.md`](operations/erlang_vm_tuning.md) | Scheduler, memory and IO settings for a controller under load |
-| [`elixir_applications.md`](operations/elixir_applications.md) | Flezha inside an Elixir application of your own |
 
 ## resilience
 
 | Doc | Covers |
 | --- | --- |
 | [`overview.md`](resilience/overview.md) | The map of every self-healing mechanism and the durability guarantee summary |
-| [`data_durability.md`](resilience/data_durability.md) | What can be lost, when, and how to avoid it — delivery semantics, DLQ, late-input correction |
-| [`steps_operator.md`](resilience/steps_operator.md) | Steps operator structure, lifecycle, durable loop, retry, rewind, saga, crash-resume |
+| [`data_durability.md`](resilience/data_durability.md) | The mechanism of the guarantees: a frame's guarantee class, the effectively-once tier's parts, the input floor |
+| [`steps_operator.md`](resilience/steps_operator.md) | The mechanism of an operator that runs in steps: barriers, the durable loop, crash-resume |
 
 ## internals
 

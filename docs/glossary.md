@@ -4,7 +4,7 @@ The vocabulary every other document assumes, for operator authors, users and con
 In one sentence: **a Controller orchestrates Operators across Runners; each Operator contains
 Tasklets; each Tasklet contains Cells.** A runner hosts operators; an operator is the unit you
 start. Entries are short and point at the document that
-owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins.
+owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/flezha/blob/main/docs/architecture/README.md) wins.
 
 ## Roles
 
@@ -14,7 +14,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **Runner** — the SDK process (Rust, Java, Node, Ruby, PHP, Python or Elixir) where user code runs. It dials the
   controller, never the reverse, and is disposable because every state change is mirrored to the
   controller. A process holds one **runner slot**, claimed at `start()` by compare-and-set.
-  See [`architecture/runner.md`](architecture/runner.md).
+  See [`architecture/runner.md`](https://github.com/flezha/flezha/blob/main/docs/architecture/runner.md).
 - **Stable identity vs session token** — the SDK persists a **stable identity**
   (`FLEZHA_RUNNER_ID_PATH`, default `/var/lib/flezha-runner/id`) that survives restarts; the
   controller mints a **session token** per connection (`AssignRunnerId`) and routes on it, while an
@@ -28,7 +28,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   A request landing on the wrong node is forwarded once, so every node is a valid entry point.
 - **Native transport** — the in-node `:native` mode of the Elixir SDK: pid-backed
   `Flezha.SDK.LocalStream` handles and `{:flz_data, ...}` messages instead of a socket. A
-  standalone Elixir runner speaks the binary protocol over UDS/QUIC. See [`sdk/elixir_sdk.md`](sdk/elixir_sdk.md).
+  standalone Elixir runner speaks the binary protocol over UDS/QUIC. See [`sdk/elixir_sdk.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/elixir_sdk.md).
 - **Source adapter / sink adapter** — where input comes from and where output goes. Both are
   plugins at the edge (a websocket, an HTTP endpoint, Kafka, Postgres), never core components.
 
@@ -62,7 +62,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   `flz operator rewind` takes passes back. `each` is the loop shape: `once` (the default),
   `per_input` or `chained`. It ends on chain completion, a tasklet's `ctx.complete(result)`, a
   loop that runs out of work, `max_duration_ms` or `flz operator stop`; a `per_input` loop may
-  never end. See [`architecture/steps_profile.md`](architecture/steps_profile.md).
+  never end. See [`architecture/steps_profile.md`](https://github.com/flezha/flezha/blob/main/docs/architecture/steps_profile.md).
 - **Bounded / unbounded (input)**: plain words for a finite and an endless input, as Flink
   uses them: a file against a live feed. Not a property of an operator.
 - **Tasklet** — a typed stage inside an operator, declaring `Input`, `Output`, `State`,
@@ -82,12 +82,12 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   the wiring, never declared.
 - **Response end**: `response()`, a plugin end that turns each output of its channel into the
   answer to the outside call whose input caused it; no plugin, listener or sink sees that output.
-  A channel carries one plugin end, a sink or a response. See [`sdk/calls.md`](sdk/calls.md).
+  A channel carries one plugin end, a sink or a response. See [`topics/advanced/operator_calls.md`](topics/advanced/operator_calls.md).
 - **Part**: a preview of the output an invocation is producing, sent from inside `run` with
   `ctx.part(value)` (`part(ctx, value)` in Elixir) and delivered at once to the operator's
   listeners, and to nothing else. It carries its channel, a number from `0` within its attempt
   and the attempt; it is never durable, may be dropped, and never reaches a sink or a waiting
-  caller. The output is the answer. See [`sdk/protocol_spec.md`](sdk/protocol_spec.md#data-stream-payload-id-output_part).
+  caller. The output is the answer. See [`sdk/protocol_spec.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/protocol_spec.md#data-stream-payload-id-output_part).
 - **Listener**: a reader of an operator's frames, `flz operator listen` or a plugin through
   `Flezha.Service.Listener.listen/4`: its outputs, its parts and its dead-letter notices (or,
   with `--input`, its inputs). Bounded by `listener_pending_bytes` and
@@ -96,33 +96,33 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **Call**: one input an outside caller (`flz operator call`, `Flezha.Service.Operator.call/6`
   or a feeding plugin) sends to an operator, waiting up to a deadline for the first answer a
   response end produces from it; or one request an operator's `call(...)` end sends to another
-  operator, whose outcome comes back as a Response. See [`sdk/calls.md`](sdk/calls.md).
+  operator, whose outcome comes back as a Response. See [`topics/advanced/operator_calls.md`](topics/advanced/operator_calls.md).
 - **Call token**: `flz.reply_to`, the input metadata key the controller mints for each call
   and the runner core carries to every output the input causes. Nothing else can set it, and
-  no tasklet sees it. See [`sdk/calls.md`](sdk/calls.md#the-call-token).
+  no tasklet sees it. See [`topics/advanced/operator_calls.md`](topics/advanced/operator_calls.md).
 - **Response**: the outcome of one operator call as the caller receives it: an ordinary input
   carrying the request, the answer or the error that ended the call (a timeout being
   `call.timeout`), the instance that answered and whether the call started it. See
-  [`sdk/calls.md`](sdk/calls.md#the-response).
+  [`topics/advanced/operator_calls.md`](topics/advanced/operator_calls.md).
 - **Response channel**: the entry channel a `call(...)` end answers, named after the calling
   channel with `.response`; every Response of that end arrives on it, and it may feed any
   tasklet, the calling one included.
 - **Edge transform** — a `map` / `filter` / `flat_map` on a stream handle between two `.into`
   calls; everything before the closing `.into` fuses into one closure on that consumer edge and
-  costs no tasklet, cell, mailbox or hop. See [`sdk/stream_transforms.md`](sdk/stream_transforms.md).
+  costs no tasklet, cell, mailbox or hop. See [`topics/basics/streams.md`](topics/basics/streams.md).
 - **Edge keying (`key_by`)** — the cell key function, declared on the consumer edge rather than
   on the tasklet. A tasklet reached by a keyed edge is dynamic-mode; discard inputs with
   `filter`, never with a keyless return.
 - **Merge** — two or more channels subscribed to one tasklet, each with a pure mapping into its
   sum-type `Input`. Per-source FIFO is kept, nothing is ordered across sources, and mappings run
-  identically on live delivery and replay. See [`sdk/multi_input_tasklets.md`](sdk/multi_input_tasklets.md).
+  identically on live delivery and replay. See [`topics/advanced/merged_inputs.md`](topics/advanced/merged_inputs.md).
 - **`route_latest`** — delivers an operator-wide document to each keyed cell on that key's own
   traffic, never as a remembered-set fan-out.
 - **Partition** — one member of a partitioned operator, a flow operator or a `per_input` steps operator: an
   ordinary instance `<id>#pK` with its own Overwatch, registry row, binding, input log, state tree,
   plugins and DLQ identity, and for a steps operator its own journal and pass sheet.
   `flz operator start <factory> --id <id> --partitions N` starts N; `flz operator scale <group> M`
-  rescales. See [`sdk/partitioned_operators.md`](sdk/partitioned_operators.md).
+  rescales. See [`topics/advanced/partitioning.md`](topics/advanced/partitioning.md).
 - **Key group** — one of 256 buckets a routing key hashes into, `fnv1a128(key) mod 256`
   (`flz_core/src/util.rs`, identical in every SDK). A partition owns a contiguous range carried on
   `AddOperator`; the SDK **key-group guard** parks the first frame whose key falls outside it.
@@ -134,7 +134,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   the deferred-wake list (the BEAM's timer service in the Elixir SDK). `on_timer` receives the
   scheduled timestamp; the pending set is folded
   state, so a crash-resume owes exactly the timers it owed. In a steps operator a firing opens a pass
-  at the tasklet that set it. See [`sdk/cell_timers.md`](sdk/cell_timers.md).
+  at the tasklet that set it. See [`topics/advanced/timers.md`](topics/advanced/timers.md).
 - **Plugin** — a `%Flezha.Plugin{}` binding a **provider** module to one or more **hooks** on a
   host such as the Overwatch (`:on_input`, `:on_output`, `:on_message`, ...); its provider is
   first-party or comes from a **plugin package** (`.fpz`, placed by `flz plugin install` and
@@ -142,7 +142,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   (`flz plugin enable|disable`) and **bound** to each operator it serves (`flz plugin
   bind|unbind`). A provider declared `shareable` runs one copy per controller for every bound
   operator, or one in the cluster with `--single`. See
-  [`plugins/installation.md`](plugins/installation.md).
+  [`topics/advanced/installing_plugins.md`](topics/advanced/installing_plugins.md).
 - **Hook**: a named point at which the platform calls a plugin, named by the provider callback it
   runs: `on_input`, `on_output`, `on_interval`, `on_message`, `on_snapshot`, `on_terminate`, and
   `on_operator_init` at operator start only. Chosen with `--hook=<name>` on `flz plugin enable` or `bind`,
@@ -173,7 +173,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 ## Durability vocabulary
 
 - **WAL** — the per-cell append-only change log of framed, CRC-protected records, owned by one
-  `Flezha.State.WalWriter`; the input log and the task journal share the record format. See [`architecture/kernel.md`](architecture/kernel.md).
+  `Flezha.State.WalWriter`; the input log and the task journal share the record format. See [`architecture/kernel.md`](https://github.com/flezha/flezha/blob/main/docs/architecture/kernel.md).
 - **Snapshot / compaction** — on WAL size or age the controller asks the runner for a full state
   snapshot (`CompactCell`) and truncates the log beneath it; a restore (`RestoreInitState`)
   ships the latest snapshot plus the whole WAL tail.
@@ -230,7 +230,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   `flz dlq list|show|replay|drop`; a steps operator parks only an unreadable message and a
   failed turn of a `per_input` keep-progress loop, and otherwise aborts and compensates. Once an
   input's entry is durable, the operator's listeners see a notice carrying `input.dead_lettered`.
-  See [`resilience/data_durability.md`](resilience/data_durability.md).
+  See [`topics/basics/durability.md`](topics/basics/durability.md).
 - **Late-input correction**: a declared `correction_ms` under `exactly: effectively_once` lets an event behind the event-time
   high-water mark rewind the cell to a baseline, replay the retained slice in event-time order
   and republish under a bumped epoch. Requires the tier, an event-time clock and keyed plugin
@@ -238,13 +238,13 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **Live read vs time-travel read** — `flz state get <operator/tasklet[/cell_key]>` asks the
   runner holding the cell for its in-memory value (possibly ahead of what is durable, stamped
   with its `change_seq`) and refuses when nothing holds it; `flz state at <operator/tasklet/
-  cell_key> <seq|timestamp>` answers from the controller's WAL. See [`internals/state_persistence.md`](internals/state_persistence.md).
+  cell_key> <seq|timestamp>` answers from the controller's WAL. See [`internals/state_persistence.md`](https://github.com/flezha/flezha/blob/main/docs/internals/state_persistence.md).
 - **Remote durability tier** — shipping durable artifacts to Postgres or S3 so a controller that
   dies with its disk is recoverable (`Flezha.State.DurabilityTier`); a production boot must choose
   a backend (`FLEZHA_DURABILITY_BACKEND`; `none` is local-only); local files stay authoritative
   unless another controller shipped a newer copy.
   An **artifact** is one immutable shipped blob; the per-reference **manifest** naming a cut's
-  artifacts is written last, so a torn upload is invisible. See [`resilience/data_durability.md`](resilience/data_durability.md).
+  artifacts is written last, so a torn upload is invisible. See [`topics/basics/durability.md`](topics/basics/durability.md).
 - **Synchronous durability** — a class declaring `durable: remote` has each commit point's
   acknowledgement gated on the remote ship (RPO 0): a steps stage barrier, a flow input, or a
   flow checkpoint under `ack: checkpoint`. An instance is refused its start without a durability
@@ -303,7 +303,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **Rewind** — `flz operator rewind <instance> --to-iteration N` appends a `rewound` marker at
   epoch + 1, compensates the tasklets above N in reverse and resumes waiting. It is
   undo-and-continue: inputs are not replayed, and a tasklet that wrote plugin output without a
-  `compensate` hook refuses it. See [`resilience/steps_operator.md`](resilience/steps_operator.md).
+  `compensate` hook refuses it. See [`resilience/steps_operator.md`](https://github.com/flezha/flezha/blob/main/docs/resilience/steps_operator.md).
 
 ## Runner internals
 
@@ -312,7 +312,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   records, the retry→park ladder, timers, credit, routing and steps runs. Rust consumes
   it as a crate; Java, Node, Ruby and Python through compiled veneers over the C ABI
   (`flz_core_ffi`); PHP through that same ABI directly, with `ext-ffi` and no veneer of its own. The Elixir SDK is
-  its own core and inherits nothing from it. See [`sdk/poll_core.md`](sdk/poll_core.md).
+  its own core and inherits nothing from it. See [`sdk/poll_core.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/poll_core.md).
 - **Host class** — an operator class declared through the C ABI as data
   (`flz_core_declare_class`, JSON, unknown fields refused); its user code runs host-side and is
   reached only through activations. Java, Node, Ruby, PHP and Python classes are host classes; typed
@@ -345,7 +345,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **Control channel vs data streams** — a runner session holds one **control channel**
   (`Flezha.Runner.ControlChannel`: commands, commits, `control_ping`) and N pairs of **data
   streams** (`Flezha.Runner.StreamChannel`: primary `0x01` carries input to the runner, secondary
-  `0x02` carries state changes, outputs and the data heartbeat back). See [`sdk/protocol_spec.md`](sdk/protocol_spec.md).
+  `0x02` carries state changes, outputs and the data heartbeat back). See [`sdk/protocol_spec.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/protocol_spec.md).
 
 - **Served group** — a factory a controller declares to a namespace's hub because its own fleet
   can run it. An operator's group is its factory id, and the hub places the operator among the
@@ -409,7 +409,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   SET of roles in ONE namespace, an action being allowed when any of them grants it;
   a **token** is a scoped credential (`flz token issue|revoke|list`) presented as
   `--token` or `FLEZHA_TOKEN`, carrying one role and judged by that role alone. See
-  [`operations/authn_authz.md`](operations/authn_authz.md).
+  [`topics/basics/authorization.md`](topics/basics/authorization.md).
 - **Transport-bound principal** — identity minted from the authenticated connection, never from a
   caller-supplied value: the verified token for CLI callers, `runner@<namespace>` for runner
   connections (role `runner` until a user binds it, to `spawner` and `stopper` for
@@ -434,8 +434,8 @@ ProcessHub's internal ring-node "operator" is ProcessHub's own word and is not t
 
 ## See also
 
-- [`architecture/README.md`](architecture/README.md) — roles, the workload model, the eight kernel invariants.
-- [`sdk/rust_operator_architecture.md`](sdk/rust_operator_architecture.md) — Operator/Tasklet/Cell authoring.
-- [`sdk/protocol_spec.md`](sdk/protocol_spec.md) — the wire protocol between Runners and the Controller.
+- [`architecture/README.md`](https://github.com/flezha/flezha/blob/main/docs/architecture/README.md) — roles, the workload model, the eight kernel invariants.
+- [`sdk/rust_operator_architecture.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/rust_operator_architecture.md) — Operator/Tasklet/Cell authoring.
+- [`sdk/protocol_spec.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/protocol_spec.md) — the wire protocol between Runners and the Controller.
 - [`internals/process_hub.md`](internals/process_hub.md) — ProcessHub picks a node, the node picks a Runner.
 - [`resilience/overview.md`](resilience/overview.md) — what survives what.

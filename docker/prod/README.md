@@ -46,7 +46,7 @@ release stage and the builder:
 The image's CMD is `/usr/local/bin/controller-entrypoint.sh` (under tini). The
 script starts `bin/flzvm start`, waits for the controller to bind its control
 socket, traps SIGTERM/SIGINT to run `flz controller stop`, then `wait`s. All
-behaviour is configured via env vars — see `docs/operations/deployment/variables.md` for
+behaviour is configured via env vars — see `docs/topics/basics/deploying_a_controller.md` for
 the contract. The controller recovers its operators and plugins from
 ProcessHub's durable registry and the per-Cell WAL; the image ships no
 snapshot hook.
@@ -182,4 +182,4 @@ Three ways to give a container its packages:
 - **Bake a derived image**: `FROM flezha/flezha:<version>` and `COPY *.fpz
   /flezha/app_data/plugins/`, run with no volume over that directory.
 
-`docs/plugins/installation.md` covers statuses, errors and signing.
+`docs/topics/advanced/installing_plugins.md` covers statuses, errors and signing.

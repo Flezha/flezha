@@ -83,7 +83,7 @@ tasklet is held until the instance ends, under keep-progress only the running pa
 are. A `task_committed` entry counts its cells in 16 bits, so one pass of one tasklet runs at
 most 65 535 cells, below the `max_cells` default of 100 000; a class that keys more than that
 per pass declares a smaller cap. A `per_input` steps operator whose entry edge is keyed may be
-[partitioned](../sdk/partitioned_operators.md#a-per-input-steps-operator-as-a-group) into N instances
+[partitioned](../topics/advanced/partitioning.md) into N instances
 that each end, compensate and commit on their own; a `once` or `chained` one is refused.
 
 The `(operator_class, tasklet_id, cell_key)` identity is the same one a flow operator

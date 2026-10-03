@@ -1,33 +1,20 @@
 # HTTP push plugin
 
-For users who send an operator's outputs to an HTTP endpoint: a REST API, a webhook
-receiver, any service that takes a request per record.
-`Flezha.Plugin.Provider.HttpPush` (provider id `operator_http_push`) hooks `on_output`, or
-`on_input` for what the operator ingested, and sends each payload as one request. This page
-covers the contract, the parameters, the request, delivery, the queue, the answers, health
-and telemetry.
-
-## Contract
+The HTTP push plugin sends an operator's outputs to an HTTP endpoint: a REST API, a webhook
+receiver, or any service that takes a request per record. It hooks `on_output`, or
+`on_input` for what the operator ingested, and sends each payload as one request.
+`Flezha.Plugin.Provider.HttpPush` is its provider, under the provider id
+`operator_http_push`.
 
 | | |
 | --- | --- |
-| Hooks | `on_output`, `on_input` |
-| Request | `POST` (or `PUT`) to `url`, the payload as the body unchanged, `content_type` as its `content-type`, the configured `headers` and the output's identity headers |
-| Connections | `max_in_flight` (default 1), each kept open between requests; with one, payloads are sent in the order they were dispatched |
-| Shared | every operator bound to the plugin on a controller sends through one worker, one queue and its connections; each member of a partitioned operator has its own |
-| Plain output | queued and sent; dropped and counted once its retries are spent |
-| Guaranteed output | held in the outbox until a 2xx; parked as a dead letter when it is refused or its retries run out |
-| Redirects | never followed |
+| Type | operator plugin |
+| Ships | built in |
+| Shareable | yes: every operator bound to it on a controller sends through one worker, one queue and its connections |
+| Partitioned operators | allowed: each member has its own copy |
+| Durability | a delivery-guaranteed output stays in the outbox until a 2xx; a plain output is dropped and counted once its retries are spent |
 
-```sh
-flz plugin enable orders_out operator_http_push \
-  --Xurl=https://api.example.test/orders \
-  --Xheaders='{"authorization": "Bearer <token>"}' \
-  --Xcontent_type=application/json --Xchannel=orders
-flz plugin bind orders_out --operator_id orders --hook on_output
-```
-
-## Parameters
+## Options
 
 <!-- provider-options:begin -->
 | Option | Type | Default | Required | Description |
@@ -50,6 +37,30 @@ flz plugin bind orders_out --operator_id orders --hook on_output
 | `queue_block_timeout_ms` | int | `5000` | no | How long a dispatch waits on a full queue before the payload overflows |
 | `failure_threshold` | int | `3` | no | Consecutive failed requests before the plugin reports unhealthy |
 <!-- provider-options:end -->
+
+## Example
+
+```sh
+$ flz plugin enable orders_out operator_http_push \
+  --Xurl=https://api.example.test/orders \
+  --Xheaders='{"authorization": "Bearer <token>"}' \
+  --Xcontent_type=application/json --Xchannel=orders
+$ flz plugin bind orders_out --operator_id orders --hook on_output
+```
+
+## Contract
+
+| | |
+| --- | --- |
+| Hooks | `on_output`, `on_input` |
+| Request | `POST` (or `PUT`) to `url`, the payload as the body unchanged, `content_type` as its `content-type`, the configured `headers` and the output's identity headers |
+| Connections | `max_in_flight` (default 1), each kept open between requests; with one, payloads are sent in the order they were dispatched |
+| Shared | every operator bound to the plugin on a controller sends through one worker, one queue and its connections; each member of a partitioned operator has its own |
+| Plain output | queued and sent; dropped and counted once its retries are spent |
+| Guaranteed output | held in the outbox until a 2xx; parked as a dead letter when it is refused or its retries run out |
+| Redirects | never followed |
+
+## Checks at enable
 
 The options are checked when the plugin is enabled and no connection is opened then. `url`
 follows the HTTP poll plugin's rules: credentials in it are `plugin.url_has_credentials`, no
@@ -154,3 +165,9 @@ may go.
 
 One URL per plugin and one request per payload: no batching, no body template, no request
 signing, no HTTP/2. Enable a second plugin for a second endpoint.
+
+## See also
+
+- [`hook_webhook.md`](hook_webhook.md): hook events to an HTTP endpoint
+- [`plugins.md`](../topics/basics/plugins.md): the plugin model
+- [`durability.md`](../topics/basics/durability.md): guaranteed outputs and the outbox

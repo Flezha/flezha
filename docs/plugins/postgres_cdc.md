@@ -1,23 +1,64 @@
 # Postgres change capture
 
-For users who want every inserted, updated and deleted row of Postgres tables delivered onto an
-operator's entry channel, in commit order, after a first copy of the rows already there. The
-provider lives in its own plugin package, `flezha_postgres_cdc`: `FlezhaPostgresCdc`
-(provider id `postgres_cdc`). It reads the database's write-ahead log through a logical
-replication slot with Postgres's built-in `pgoutput` format. This page covers installing the
-package, preparing the database, the event, the first copy, acknowledgement, the slot and its
-lag, health, telemetry and limits. To read a table by polling instead, which sees no deletes,
+The Postgres change capture plugin delivers every inserted, updated and deleted row of
+Postgres tables onto an operator's entry channel, in commit order, after a first copy of the
+rows already there. It reads the database's write-ahead log through a logical replication
+slot with Postgres's built-in `pgoutput` format. `FlezhaPostgresCdc` is its provider, under
+the provider id `postgres_cdc`. To read a table by polling instead, which sees no deletes,
 see [postgres_poll.md](postgres_poll.md).
+
+| | |
+| --- | --- |
+| Type | operator plugin |
+| Ships | package `flezha_postgres_cdc` |
+| Shareable | no: one slot per binding, so a second operator bound to it is refused (`plugin.not_shareable`) |
+| Partitioned operators | refused (`plugin.partitioned_host`) |
+| Durability | each hand-over waits for the operator's verdicts; the position confirmed to Postgres moves after every accepted transaction with durable input, otherwise at most every `commit_interval_ms` |
+
+## Options
+
+<!-- provider-options:begin postgres_cdc -->
+| Option | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `database` | string | &mdash; | yes | Database name |
+| `username` | string | &mdash; | yes | Role the plugin connects as |
+| `password` | string | &mdash; | no | Password, redacted once the plugin is prepared |
+| `password_env` | string | &mdash; | no | Environment variable holding the password instead |
+| `hostname` | string | `"localhost"` | no | Database host |
+| `port` | int | `5432` | no | TCP port |
+| `ssl` | bool | `false` | no | TLS to the server |
+| `channel` | names | &mdash; | no | The channel this plugin is attached to: the entry channel every change is injected on, and one name. Required, unless `channel_in` names it |
+| `channel_in` | names | &mdash; | no | Entry channel every change is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
+| `plugin_id` | string | &mdash; | no | Plugin id; defaults to the id it was enabled under |
+| `slot` | string | &mdash; | yes | The replication slot, one per binding: lower-case letters, digits and underscores, at most 58; the first copy reads through a temporary `<slot>_copy` |
+| `publication` | string | &mdash; | yes | The publication to read |
+| `tables` | names | &mdash; | no | With it, the publication is created `FOR TABLE` these, `name` or `schema.name`, when it does not exist |
+| `snapshot` | enum | `"initial"` | no | `initial` copies the published tables before streaming; `never` only streams |
+| `snapshot_batch` | int | `1000` | no | Rows per fetch of the copy |
+| `batch_size` | int | `500` | no | Most changes of one transaction handed over at once |
+| `commit_interval_ms` | int | `5000` | no | Longest the read position waits to be confirmed while changes stream, unless the operator's input is durable |
+| `max_lag_bytes` | int | `1073741824` | no | Write-ahead log the slot may hold back before the plugin reports unhealthy |
+| `lag_check_ms` | int | `30000` | no | How often the slot's lag is read |
+| `failure_threshold` | int | `3` | no | Refused hand-overs in a row before the plugin reports unhealthy |
+<!-- provider-options:end -->
+
+## Example
+
+```sh
+$ flz plugin enable rates-cdc postgres_cdc --operator_id=pricer \
+  --Xhostname=db --Xdatabase=market --Xusername=cdc --Xpassword_env=CDC_PASSWORD \
+  --Xslot=rates_cdc --Xpublication=rates_pub --Xchannel=rates
+```
 
 ## Installing
 
 Build the archive from the package (its README: `mix flezha.plugin.package`), then install
 it and restart the controller, or name it in `FLEZHA_PLUGINS`:
 
-```
-flz plugin install flezha_postgres_cdc-0.1.0.fpz
-flz controller stop && flz controller start
-flz plugin list --installed
+```sh
+$ flz plugin install flezha_postgres_cdc-0.1.0.fpz
+$ flz controller stop && flz controller start
+$ flz plugin list --installed
 ```
 
 The package bundles no library: it uses the Postgres driver and connection options the
@@ -56,17 +97,18 @@ publication until the check passes. It checks again along its backoff curve.
 
 | | |
 | --- | --- |
-| Plugin type | `:operator` |
-| Hooks | `:on_terminate`: the plugin drives itself; the hook is there because a plugin spec must name at least one |
+| Hooks | none needed: the plugin drives itself, so a binding names no hook (the provider also defines `:on_terminate`) |
 | Shared | no: one slot per binding, so a second operator bound to it is refused (`plugin.not_shareable`), and a member of a partition group is refused (`plugin.partitioned_host`) |
 | Upstream | one publication, read through one logical replication slot |
 | Injection | one row change as one input, a JSON object, on the entry channel `:channel` (or `:channel_in`) names |
 | Delivery | each hand-over waits for the operator's verdicts; the read position moves only past changes the operator took |
 
-```
-flz plugin enable rates-cdc postgres_cdc Xhostname=db Xdatabase=market Xusername=cdc \
+Enabled and bound in two commands, with the settings written without their dashes:
+
+```sh
+$ flz plugin enable rates-cdc postgres_cdc Xhostname=db Xdatabase=market Xusername=cdc \
   Xpassword_env=CDC_PASSWORD Xslot=rates_cdc Xpublication=rates_pub Xchannel=rates
-flz plugin bind rates-cdc --operator_id pricer --hook=on_terminate
+$ flz plugin bind rates-cdc --operator_id pricer --hook=on_terminate
 ```
 
 A literal `password` is redacted once the plugin is prepared and held in memory only;
@@ -75,32 +117,7 @@ label, `flz plugin list` or `flz operator info`. The replication connection keep
 password in its own process, which is marked sensitive, so no process inspection or crash
 report shows it.
 
-## Parameters
-
-<!-- provider-options:begin postgres_cdc -->
-| Option | Type | Default | Required | Description |
-| --- | --- | --- | --- | --- |
-| `database` | string | &mdash; | yes | Database name |
-| `username` | string | &mdash; | yes | Role the plugin connects as |
-| `password` | string | &mdash; | no | Password, redacted once the plugin is prepared |
-| `password_env` | string | &mdash; | no | Environment variable holding the password instead |
-| `hostname` | string | `"localhost"` | no | Database host |
-| `port` | int | `5432` | no | TCP port |
-| `ssl` | bool | `false` | no | TLS to the server |
-| `channel` | names | &mdash; | no | The channel this plugin is attached to: the entry channel every change is injected on, and one name. Required, unless `channel_in` names it |
-| `channel_in` | names | &mdash; | no | Entry channel every change is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
-| `plugin_id` | string | &mdash; | no | Plugin id; defaults to the id it was enabled under |
-| `slot` | string | &mdash; | yes | The replication slot, one per binding: lower-case letters, digits and underscores, at most 58; the first copy reads through a temporary `<slot>_copy` |
-| `publication` | string | &mdash; | yes | The publication to read |
-| `tables` | names | &mdash; | no | With it, the publication is created `FOR TABLE` these, `name` or `schema.name`, when it does not exist |
-| `snapshot` | enum | `"initial"` | no | `initial` copies the published tables before streaming; `never` only streams |
-| `snapshot_batch` | int | `1000` | no | Rows per fetch of the copy |
-| `batch_size` | int | `500` | no | Most changes of one transaction handed over at once |
-| `commit_interval_ms` | int | `5000` | no | Longest the read position waits to be confirmed while changes stream, unless the operator's input is durable |
-| `max_lag_bytes` | int | `1073741824` | no | Write-ahead log the slot may hold back before the plugin reports unhealthy |
-| `lag_check_ms` | int | `30000` | no | How often the slot's lag is read |
-| `failure_threshold` | int | `3` | no | Refused hand-overs in a row before the plugin reports unhealthy |
-<!-- provider-options:end -->
+## Options in detail
 
 `publication` and each `tables` entry are identifiers, quoted when they reach a statement, so
 their case is kept.
@@ -248,4 +265,4 @@ lag read; and `snapshot_done` (an event, `%{count: rows}`) when the first copy e
 - [postgres_poll.md](postgres_poll.md): reading a table by polling, whose JSON mapping this plugin shares
 - [postgres_sink.md](postgres_sink.md): Postgres as an output
 - [kafka_consumer.md](kafka_consumer.md) and [rabbitmq.md](rabbitmq.md): the other source packages
-- [../guides/sources_and_sinks.md](../guides/sources_and_sinks.md): every source and sink
+- [plugins.md](../topics/basics/plugins.md): the plugin model and every source and sink

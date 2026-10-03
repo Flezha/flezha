@@ -1,60 +1,10 @@
 # Building
 
 Every target below runs as `make <target>` from the project root. `build` is the
-first target in the Makefile, so a bare `make` does the same as `make build`.
+first target in the Makefile, so a bare `make` does the same as `make build`. How to
+build and run a controller is on [Deploying a controller](../../topics/basics/deploying_a_controller.md).
 
-## Examples
-
-Build after cloning, and after most edits:
-
-```bash
-make build
-```
-
-The Rust workspace first (the NIF, the `flz` CLI, the SDK and the test
-runners), then `mix deps.get` and `mix compile`. Debug profile.
-
-Build a production release:
-
-```bash
-make build-release
-```
-
-Output is `_build/prod/rel/flezha/`, holding two binaries: `bin/flzvm` is the
-controller and `bin/flz` is the CLI, copied in from `target/release/flz`. The
-release carries its own ERTS, so it runs on a machine with no Elixir installed,
-and it is the same artifact the production image runs. Cargo has to run first
-because the release step copies the CLI out of `target/release/`, which is why
-this is one target rather than two commands.
-
-Rebuild only the NIF, when nothing but Rust changed:
-
-```bash
-make nif
-```
-
-Run the suite:
-
-```bash
-make test                            # mix test
-SKIP_JAVA=1 make stabilize-test-check # the fuller gate, without the Maven step
-```
-
-Build the production image. The variable goes **before** `make`; with no
-`VERSION` the tag expands to `flezha/flezha:` and docker refuses it:
-
-```bash
-VERSION=0.1.0 make docker-build
-```
-
-Start over. This deletes `_build` and `deps` and runs `cargo clean`, so the next
-build is a full one and will not be quick:
-
-```bash
-make clean
-```
-
-## Makefile reference
+## Targets
 
 | Target | Does |
 |---|---|

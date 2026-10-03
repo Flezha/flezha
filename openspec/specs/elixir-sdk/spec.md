@@ -1088,7 +1088,7 @@ If the Elixir SDK discards no queued input on restore, it SHALL still declare th
 
 The Elixir SDK SHALL let a tasklet request spawn-or-deliver of a steps instance in its
 own namespace with one call, under the contract the other SDKs implement
-(`docs/sdk/tasklet_requested_spawn.md`). `Flezha.SDK.Ctx.spawn_steps/4` SHALL take a steps factory id, a binary
+(`docs/topics/advanced/spawning_from_a_tasklet.md`). `Flezha.SDK.Ctx.spawn_steps/4` SHALL take a steps factory id, a binary
 payload and a keyword list of options defaulting to `[]`, whose keys are `id:` (an instance id)
 and `if_running:` (`:deliver` or `:error`, `:deliver` when an `id:` is given without it). The call
 SHALL send `SpawnStepsRequest` on the runner's control plane, with an empty instance id when no

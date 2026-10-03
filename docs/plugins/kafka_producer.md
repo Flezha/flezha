@@ -1,27 +1,94 @@
 # Kafka producer plugin
 
-For users attaching the Kafka producer and for anyone consuming what it writes.
-`FlezhaKafka.Producer` (provider id `kafka_producer`) is a plugin package, `flezha_kafka`,
-built in its own repository, `Flezha/flezha_kafka_plugin`, which this repository carries as
-the submodule `plugins/flezha_kafka_plugin`; its README covers building and testing it. The
-controller release does not carry Kafka: a controller produces to Kafka once the package is
-installed. The plugin hooks `:on_input` or `:on_output` and publishes chain messages to a
-Kafka topic, choosing each record's partition by its key, with retries, linger batching,
-gzip compression, a bounded in-process queue per partition, an idempotent producer session
-per partition and a window of in-flight requests. This page is the contract: what is
-retried, how records are keyed, partitioned and headed, every parameter and default, the
-overflow and confirmation semantics, telemetry, stats and health, the durability
-trade-offs, and how broker clients are shared.
+The Kafka producer plugin publishes what an operator ingests or emits to a Kafka topic. It
+hooks `:on_input` or `:on_output` and publishes chain messages to the topic, choosing each
+record's partition by its key, with retries, linger batching, gzip compression, a bounded
+in-process queue per partition, an idempotent producer session per partition and a window
+of in-flight requests. `FlezhaKafka.Producer` is its provider, under the provider id
+`kafka_producer`. This page is for users attaching the producer and for anyone consuming
+what it writes: what is retried, how records are keyed, partitioned and headed, every
+option and default, the overflow and confirmation semantics, telemetry, stats and health,
+the durability trade-offs, and how broker clients are shared.
+
+| | |
+| --- | --- |
+| Type | operator plugin |
+| Ships | package `flezha_kafka` |
+| Shareable | yes: every operator bound to it publishes through one producer per controller, or one in the cluster with `--single` |
+| Partitioned operators | allowed: each member runs a producer of its own |
+| Durability | a delivery-guaranteed output is confirmed when its batch is acked and parked when it is given up; an effectively-once operator's records carry a `flezha.dedup_key` header |
+
+## Options
+
+<!-- provider-options:begin -->
+| Option | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `hosts` | any | &mdash; | yes | `{host, port}` list, or a comma-separated string |
+| `auth` | any | &mdash; | no | SASL configuration, as a `KafkaEx.Auth.Config` or a map |
+| `sasl_password_env` | string | &mdash; | no | Environment variable holding the SASL password, preferred over an inline one |
+| `use_ssl` | bool | &mdash; | no | TLS to the brokers |
+| `ssl_options` | any | &mdash; | no | Erlang `:ssl` options for that connection |
+| `topic` | string | &mdash; | yes | Destination topic |
+| `plugin_id` | string | &mdash; | no | Plugin id; defaults to a generated one |
+| `channel` | names | &mdash; | no | The channel this plugin is attached to: only records naming it are produced. Several names, comma-separated, produce them all |
+| `channel_out` | names | &mdash; | no | Produce only records whose metadata channel matches; the explicit spelling. Several names, comma-separated, produce them all |
+| `partition` | int | &mdash; | no | A fixed destination partition for every record; unset, `partitioner` chooses |
+| `partitioner` | enum | `:murmur2` | no | Without `partition`: `murmur2` sends a keyed record where Kafka's Java client would and an unkeyed one to the sticky partition; `sticky` sends every record to the sticky partition, which moves after each batch |
+| `compression` | enum | `:none` | no | Batch compression; `snappy`, `lz4` and `zstd` are refused, the client library encodes them only with native code |
+| `headers` | json | `%{}` | no | Static record headers, a JSON object of strings; names starting `flz.` and `flezha.dedup_key` are refused |
+| `required_acks` | int | `-1` | no | Broker acks; -1 is acks=all |
+| `retries` | int | `5` | no | Attempts per batch before parking it |
+| `retry_backoff_ms` | int | `100` | no | First delay between retries |
+| `retry_max_backoff_ms` | int | `5000` | no | Ceiling for that delay |
+| `delivery_timeout_ms` | int | `30000` | no | Total budget for one batch before it is parked |
+| `linger_ms` | int | `10` | no | How long a batch waits to fill |
+| `max_batch_bytes` | int | `1048576` | no | Largest batch produced |
+| `queue_max` | int | `10000` | no | Records held before the policy applies |
+| `queue_overflow` | enum | `:drop_nothing` | no | What a full queue does: block, drop the oldest, or drop the newest |
+| `queue_block_timeout_ms` | int | `5000` | no | How long an enqueue parks on a full queue before it is refused |
+| `idempotent` | bool | `true` | no | Use the broker's idempotent producer session |
+| `max_in_flight` | int | &mdash; | no | Batches in flight; derived as 5 with `idempotent`, else 1 |
+| `auto_create_topic` | bool | `true` | no | Create the topic when missing |
+| `auto_create_partitions` | int | `1` | no | Partitions for that topic |
+| `auto_create_replication_factor` | int | `2` | no | Replication factor for that topic |
+| `topic_configs` | list | `[]` | no | `{name, value}` pairs for that topic |
+| `metadata_refresh_timeout_ms` | int | `5000` | no | Budget for one broker metadata refresh |
+| `request_timeout_ms` | int | `10000` | no | Budget the broker is asked to honour for one produce request |
+| `dispatch_timeout_ms` | int | `10000` | no | Budget for one in-flight batch before it is treated as lost |
+| `metadata_update_interval` | int | &mdash; | no | How often the shared broker client refreshes metadata |
+<!-- provider-options:end -->
+
+## Example
+
+```sh
+$ flz plugin enable trades-producer kafka_producer \
+  --operator_id=trades \
+  --hook=on_output \
+  --Xhosts=kafka:9092 \
+  --Xtopic=trades \
+  --Xqueue_max=20000 \
+  --Xlinger_ms=20 \
+  --Xqueue_overflow=drop_oldest
+```
+
+The hook is what makes this a producer: `--hook=on_output` publishes what the
+operator emits, and `--hook=on_input` publishes what it ingests instead. An
+enable that names no hook publishes nothing.
 
 ## Installing
+
+The package `flezha_kafka` is built in its own repository, `Flezha/flezha_kafka_plugin`,
+which this repository carries as the submodule `plugins/flezha_kafka_plugin`; its README
+covers building and testing it. The controller release does not carry Kafka: a controller
+produces to Kafka once the package is installed.
 
 Build the archive from the package (its README: `mix flezha.plugin.package`), then install
 it and restart the controller, or name it in `FLEZHA_PLUGINS`:
 
-```
-flz plugin install flezha_kafka-0.1.0.fpz
-flz controller stop && flz controller start
-flz plugin list --installed
+```sh
+$ flz plugin install flezha_kafka-0.1.0.fpz
+$ flz controller stop && flz controller start
+$ flz plugin list --installed
 ```
 
 The package bundles the `kafka_ex` client and starts none of that library's own workers; the
@@ -37,10 +104,10 @@ The plugin:
 - Can be shared: every operator bound to one plugin publishes through one producer per
   controller, or one in the whole cluster with `--single`. Each member of a partitioned
   operator runs a producer of its own.
-- Retries every transient broker error — `:no_broker`, `:not_leader_for_partition`,
+- Retries every transient broker error (`:no_broker`, `:not_leader_for_partition`,
   `:network_exception`, `:request_timed_out`, `:not_enough_replicas`,
   `:not_enough_replicas_after_append`, `:replica_not_available`, `:leader_not_available`,
-  `:broker_not_available`, `:closed`, `:correlation_mismatch` — until the batch is acked
+  `:broker_not_available`, `:closed`, `:correlation_mismatch`) until the batch is acked
   or its `:retries` / `:delivery_timeout_ms` budget is spent.
 - Forces a metadata refresh before retrying `:not_leader_for_partition`, `:no_broker` and
   `:unknown_topic_or_partition`; on `:unknown_topic_or_partition` with
@@ -52,7 +119,7 @@ The plugin:
 - Cuts a batch at `:linger_ms` or `:max_batch_bytes`, whichever comes first, and only into
   a free slot of the `:max_in_flight` window; a batch that fails retriably halts new sends
   and is resent with everything behind it, in order, under its original sequence numbers.
-- Caps buffering at `:queue_max` records and applies `:queue_overflow` when full —
+- Caps buffering at `:queue_max` records and applies `:queue_overflow` when full:
   `:drop_nothing` by default, so nothing is dropped unless a user chose a drop mode.
 - Under `:idempotent = true`, the default, uses Produce v5 with per-partition sequence numbers, acks a
   `:duplicate_sequence_number` as delivered, and on a fence
@@ -70,7 +137,7 @@ record reports only through telemetry (below), and a synchronous `enqueue/4` cal
 Records from an `exactly: effectively_once` operator carry the outbox identity stamps
 `flz.cell`, `flz.seq` (`<record WAL seq>.<emit ordinal>`) and `flz.epoch`. For them the
 plugin uses `flz.key` (the emitting Cell's key, or `emit_keyed`'s) as the Kafka message
-key — stable partitioning across replays, latest-value semantics on compacted topics — and
+key (stable partitioning across replays, latest-value semantics on compacted topics) and
 writes the full identity as the record header
 `flezha.dedup_key = <flz.cell>/<outbox seq>/<epoch>` (e.g. `MarketOperator/s1/k1/42.0/1`).
 Records without the stamps use `flz.key`, else a caller-stamped `flezha.dedup_key`, else
@@ -81,10 +148,10 @@ Records without the stamps use `flz.key`, else a caller-stamped `flezha.dedup_ke
 With `partition` set, every record goes to that partition. Without it, the producer chooses:
 
 - `partitioner: murmur2` (the default): a record with a message key goes to
-  `(murmur2(key) & 0x7FFFFFFF) mod n`, `n` the topic's partition count — the partition
+  `(murmur2(key) & 0x7FFFFFFF) mod n`, `n` the topic's partition count: the partition
   Kafka's Java client chooses for the same key, so Flezha's records co-partition with other
-  producers' and consumers'. A record with no key but a durable identity — an
-  effectively-once output — goes to the partition its `flezha.dedup_key` hashes to the same
+  producers' and consumers'. A record with no key but a durable identity (an
+  effectively-once output) goes to the partition its `flezha.dedup_key` hashes to the same
   way, so a redrive lands where the original did. A record with neither goes to the sticky
   partition.
 - `partitioner: sticky`: a record with a durable identity is placed the same way; every other
@@ -127,45 +194,7 @@ identical key, header and partition:
   consumption means deduplicating on the `flezha.dedup_key` header, which is unique per
   logical output and identical across re-drives.
 
-## Parameters
-
-<!-- provider-options:begin -->
-| Option | Type | Default | Required | Description |
-| --- | --- | --- | --- | --- |
-| `hosts` | any | &mdash; | yes | `{host, port}` list, or a comma-separated string |
-| `auth` | any | &mdash; | no | SASL configuration, as a `KafkaEx.Auth.Config` or a map |
-| `sasl_password_env` | string | &mdash; | no | Environment variable holding the SASL password, preferred over an inline one |
-| `use_ssl` | bool | &mdash; | no | TLS to the brokers |
-| `ssl_options` | any | &mdash; | no | Erlang `:ssl` options for that connection |
-| `topic` | string | &mdash; | yes | Destination topic |
-| `plugin_id` | string | &mdash; | no | Plugin id; defaults to a generated one |
-| `channel` | names | &mdash; | no | The channel this plugin is attached to: only records naming it are produced. Several names, comma-separated, produce them all |
-| `channel_out` | names | &mdash; | no | Produce only records whose metadata channel matches; the explicit spelling. Several names, comma-separated, produce them all |
-| `partition` | int | &mdash; | no | A fixed destination partition for every record; unset, `partitioner` chooses |
-| `partitioner` | enum | `:murmur2` | no | Without `partition`: `murmur2` sends a keyed record where Kafka's Java client would and an unkeyed one to the sticky partition; `sticky` sends every record to the sticky partition, which moves after each batch |
-| `compression` | enum | `:none` | no | Batch compression; `snappy`, `lz4` and `zstd` are refused, the client library encodes them only with native code |
-| `headers` | json | `%{}` | no | Static record headers, a JSON object of strings; names starting `flz.` and `flezha.dedup_key` are refused |
-| `required_acks` | int | `-1` | no | Broker acks; -1 is acks=all |
-| `retries` | int | `5` | no | Attempts per batch before parking it |
-| `retry_backoff_ms` | int | `100` | no | First delay between retries |
-| `retry_max_backoff_ms` | int | `5000` | no | Ceiling for that delay |
-| `delivery_timeout_ms` | int | `30000` | no | Total budget for one batch before it is parked |
-| `linger_ms` | int | `10` | no | How long a batch waits to fill |
-| `max_batch_bytes` | int | `1048576` | no | Largest batch produced |
-| `queue_max` | int | `10000` | no | Records held before the policy applies |
-| `queue_overflow` | enum | `:drop_nothing` | no | What a full queue does: block, drop the oldest, or drop the newest |
-| `queue_block_timeout_ms` | int | `5000` | no | How long an enqueue parks on a full queue before it is refused |
-| `idempotent` | bool | `true` | no | Use the broker's idempotent producer session |
-| `max_in_flight` | int | &mdash; | no | Batches in flight; derived as 5 with `idempotent`, else 1 |
-| `auto_create_topic` | bool | `true` | no | Create the topic when missing |
-| `auto_create_partitions` | int | `1` | no | Partitions for that topic |
-| `auto_create_replication_factor` | int | `2` | no | Replication factor for that topic |
-| `topic_configs` | list | `[]` | no | `{name, value}` pairs for that topic |
-| `metadata_refresh_timeout_ms` | int | `5000` | no | Budget for one broker metadata refresh |
-| `request_timeout_ms` | int | `10000` | no | Budget the broker is asked to honour for one produce request |
-| `dispatch_timeout_ms` | int | `10000` | no | Budget for one in-flight batch before it is treated as lost |
-| `metadata_update_interval` | int | &mdash; | no | How often the shared broker client refreshes metadata |
-<!-- provider-options:end -->
+## Options in detail
 
 `channel` names the channel this plugin is attached to; the producer only acts on the
 records passing through the operator, so on it that means "produce only records whose
@@ -179,8 +208,8 @@ Either spelling takes several names, comma-separated, and produces the records o
 them: `--Xchannel alerts,audit` on an operator that also produces `metrics` produces the
 first two and leaves the third to pass through the chain untouched.
 
-```
-flz plugin enable alerts kafka_producer \
+```sh
+$ flz plugin enable alerts kafka_producer \
   --operator_id=op1 \
   --hook=on_output \
   --Xhosts=broker-1:9092 \
@@ -206,9 +235,9 @@ Passwords are redacted in the persisted and returned opts.
 
 ### Sizing `:queue_max`
 
-`queue_max = expected rate × longest outage in seconds × headroom` — 50 msg/s absorbing a
+`queue_max = expected rate × longest outage in seconds × headroom`: 50 msg/s absorbing a
 60 s leader election with 2× headroom is 6 000. A batch leaves the queue when it is sent,
-so the window holds up to `:max_in_flight × :max_batch_bytes` beyond the queue — 5 MiB per
+so the window holds up to `:max_in_flight × :max_batch_bytes` beyond the queue: 5 MiB per
 partition at the defaults. Each partition the worker produces to has a queue of its own.
 
 Under the default `:drop_nothing`, `queue_max` bounds the queue and not the worker: a record
@@ -228,17 +257,17 @@ order without idempotence, so a wider window without `:idempotent` is refused.
 
 ### `:queue_overflow`
 
-- **`:drop_nothing`** (default) — back-pressure instead of loss. A sync `enqueue/4` caller waits
+- **`:drop_nothing`** (default): back-pressure instead of loss. A sync `enqueue/4` caller waits
   out `:queue_block_timeout_ms`; a chain-dispatched record waits for room without blocking
   the process that enqueued it, so the pressure lands on the outbox flush that produced
   it rather than on ingest.
-- **`:drop_oldest`** — keeps recency: the oldest queued record is evicted. Suits market
+- **`:drop_oldest`**: keeps recency: the oldest queued record is evicted. Suits market
   data where stale prices are useless.
-- **`:drop_newest`** — keeps order: new arrivals are rejected until space frees. Suits
+- **`:drop_newest`**: keeps order: new arrivals are rejected until space frees. Suits
   audit streams where the prefix matters.
 
-Any other value is refused at preparation — `{:error, "Invalid value for queue_overflow: …"}`
-naming the offered value — so a misspelled policy is a plugin that does not enable rather
+Any other value is refused at preparation (`{:error, "Invalid value for queue_overflow: …"}`
+naming the offered value) so a misspelled policy is a plugin that does not enable rather
 than one that serves until its queue fills.
 
 Every drop is counted in `stats/1`'s `dropped_total` and emits
@@ -270,7 +299,7 @@ topic and return. The bounded queue, not the host's mailbox, is the back-pressur
 
 A chain-admitted record that ultimately fails emits one
 `[:flezha, :plugin, :kafka, :failed]` per record with `caller: :async`. Telemetry
-is the channel by which users observe permanent failures of chain-admitted records —
+is the channel by which users observe permanent failures of chain-admitted records:
 not logs, not the chain return value:
 
 ```elixir
@@ -377,7 +406,7 @@ record is lost.
   replication loses the message. For derived, regenerable streams.
 - `:required_acks = 0` is fire-and-forget. Only for data that is cheap to replay.
 - Producer-id rotation (a worker restart or a client swap) may duplicate the whole in-flight
-  window — up to `:max_in_flight` batches. `:max_in_flight = 1` restores a one-batch bound.
+  window: up to `:max_in_flight` batches. `:max_in_flight = 1` restores a one-batch bound.
 - The fast-but-lossy profile is an explicit choice:
   `%{required_acks: 1, idempotent: false, retries: 0}`.
 
@@ -400,26 +429,10 @@ carries its `#pK` suffix, runs its own. Within it each partition keeps its own q
 producer id and sequence counter. A worker restart rewinds every partition's in-flight
 window to the head of its queue; the duplicate bound is the window, as above.
 
-## CLI
-
-```bash
-flz plugin enable trades-producer kafka_producer \
-  --operator_id=trades \
-  --hook=on_output \
-  --Xhosts=kafka:9092 \
-  --Xtopic=trades \
-  --Xqueue_max=20000 \
-  --Xlinger_ms=20 \
-  --Xqueue_overflow=drop_oldest
-```
-
-The hook is what makes this a producer: `--hook=on_output` publishes what the
-operator emits, and `--hook=on_input` publishes what it ingests instead. An
-enable that names no hook publishes nothing.
-
 ## See also
 
-- [../resilience/data_durability.md](../resilience/data_durability.md) — the outbox, confirmation and the effectively-once tier
-- [lifecycle.md](lifecycle.md) — how the producer's worker fits the provider lifecycle
-- [installation.md](installation.md) — installing a plugin package
-- [../configuration.md](../configuration.md) — plugin options as a configuration layer
+- [durability.md](../topics/basics/durability.md): the outbox, confirmation and the effectively-once tier
+- [effectively_once.md](../topics/advanced/effectively_once.md): writing each output once
+- [installing_plugins.md](../topics/advanced/installing_plugins.md): installing a plugin package
+- [kafka_consumer.md](kafka_consumer.md): reading Kafka topics
+- [../configuration.md](../configuration.md): plugin options as a configuration layer

@@ -146,14 +146,14 @@ requires an id for it.
 
 ### Requirement: The documentation SHALL state the retry danger of a start without an id
 
-`docs/guides/running_operators.md`, the `flz operator start` help screen and `docs/sdk/admin.md` SHALL
+`docs/topics/basics/running_operators.md`, the `flz operator start` help screen and `docs/topics/basics/namespaces.md` SHALL
 state, next to the start call, that a start without an id retried after a lost reply starts a second operator, that a second
 flow operator runs until it is stopped, and that passing an id prevents it. The dangers of a spawn without an
 id are documented by the spawn capability.
 
 #### Scenario: The CLI and administration pages state the retry danger
 
-- **WHEN** a reader opens `docs/guides/running_operators.md`, `flz operator start --help` or `docs/sdk/admin.md`
+- **WHEN** a reader opens `docs/topics/basics/running_operators.md`, `flz operator start --help` or `docs/topics/basics/namespaces.md`
 - **THEN** each SHALL state that a retried start without an id starts a second operator and that
   passing an id prevents it
 

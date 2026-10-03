@@ -62,7 +62,7 @@ SURFACE = (
     "sdk/php/src/LocalOperator.php",
     "sdk/php/src/SinkOutput.php",
     "sdk/php/examples/E07_LocalMode.php",
-    "docs/quickstart.md",
+    "docs/topics/basics/local_mode.md",
 )
 
 TESTING = r"[Tt]est|TEST|[Tt]esting|TESTING|[Hh]arness|HARNESS|[Mm]ock|MOCK|[Ff]ake|FAKE|[Ss]tub|STUB|[Dd]ummy|DUMMY|[Ss]ample|SAMPLE"

@@ -1,12 +1,68 @@
 # File plugin
 
-For users who want a file as an operator's input, to replay a log or load an
-export, or as its output, to watch what an operator emits land somewhere `tail` can
-read. `Flezha.Plugin.Provider.File` is one family with two provider ids:
-`operator_file_source` (`File.Source`) reads a file onto an entry channel, one line
-per frame, and `operator_file_sink` (`File.Sink`) writes one line per record. This
-page covers the root folder both share, then each direction: its contract, parameters,
-delivery, failure semantics and health, then telemetry and limits.
+The file plugin makes a file an operator's input, to replay a log or load an export, or its
+output, to watch what an operator emits land somewhere `tail` can read.
+`Flezha.Plugin.Provider.File` is one family with two provider ids: `operator_file_source`
+(`File.Source`) reads a file onto an entry channel, one line per frame, and
+`operator_file_sink` (`File.Sink`) writes one line per record. This page covers the root
+folder both share, then each direction: its contract, options, delivery, failure semantics
+and health, then telemetry and limits.
+
+| | `operator_file_source` | `operator_file_sink` |
+| --- | --- | --- |
+| Type | operator plugin | operator plugin |
+| Ships | built in | built in |
+| Shareable | no: a second operator bound to it is refused (`plugin.not_shareable`) | no: a second operator bound to it is refused (`plugin.not_shareable`) |
+| Partitioned operators | not refused: each member runs a reader of its own over the same file | allowed: each member runs a writer of its own; give each a file of its own |
+| Durability | at least once: the offset moves only once the operator took the line; a crash can deliver up to `commit_interval_ms` of lines again and never skips one | a delivery-guaranteed record is confirmed once its batch is synced (`commit: append`), or once its part is committed (`commit: rename`, written once) |
+
+## Options
+
+### `operator_file_source`
+
+<!-- provider-options:begin file_source -->
+| Option | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `path` | string | &mdash; | yes | The file to read: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, an object under its prefix |
+| `channel` | names | &mdash; | no | The channel this plugin is attached to: the entry channel every line is injected on, and one name. Required, unless `channel_in` names it |
+| `channel_in` | names | &mdash; | no | Entry channel every line is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
+| `plugin_id` | string | &mdash; | no | Plugin id; defaults to the id the plugin is enabled under |
+| `start_at` | enum | `"beginning"` | no | Where a reader with no committed offset starts: byte 0, or the size of the file when it is first opened |
+| `poll_interval_ms` | int | `1000` | no | Milliseconds between looks for new bytes |
+| `max_line_bytes` | int | `1048576` | no | Longest line accepted; a longer one stops the reader at the offset it starts at |
+| `read_chunk_bytes` | int | `65536` | no | Bytes read at a time, and never more than one read ahead of the last delivered line |
+| `commit_interval_ms` | int | `1000` | no | Longest a delivered line's offset waits to be committed while the reader has not caught up; what a crash can re-deliver |
+| `failure_threshold` | int | `3` | no | Consecutive failed reads or refused ingests before the plugin reports unhealthy |
+| `idle_after_ms` | int | `0` | no | Age of the last settled poll past which the reader is idle; 0 derives it from `poll_interval_ms` |
+<!-- provider-options:end -->
+
+### `operator_file_sink`
+
+<!-- provider-options:begin file_sink -->
+| Option | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `path` | string | &mdash; | yes | The file to append to, or under `commit: rename` the directory parts are committed into: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, the key prefix parts are committed under |
+| `channel_out` | names | &mdash; | no | Write only records whose metadata channel matches. Several names, comma-separated, write them all |
+| `plugin_id` | string | &mdash; | no | Plugin id; defaults to the id the plugin is enabled under |
+| `commit` | enum | `"append"` | no | The file layout. `append` grows one file in place, and a batch synced just before a crash is appended again after it; `rename` commits immutable parts into a directory, and writes a record the outbox guarantees once. Under an s3:// root only `rename` |
+| `roll_after_ms` | int | `10000` | no | Under `rename`, the longest a part stays open, and so the longest a guaranteed record waits for its confirmation |
+| `roll_bytes` | int | `67108864` | no | Under `rename`, the size at which a part is committed before `roll_after_ms`. Under an s3:// root the open part is held in memory, and at most 5368709120 |
+| `linger_ms` | int | `25` | no | How long a batch waits to fill |
+| `max_batch` | int | `500` | no | Records in one write |
+| `queue_max` | int | `10000` | no | Records held before enqueue blocks |
+| `retry_backoff_ms` | int | `250` | no | First delay after a failed write |
+| `retry_max_backoff_ms` | int | `5000` | no | Ceiling for that delay |
+| `unhealthy_after_ms` | int | `30000` | no | Age of the last durable write past which a backed-up sink is unhealthy |
+<!-- provider-options:end -->
+
+## Example
+
+```sh
+$ flz plugin enable reader operator_file_source --operator_id=op1 \
+  --Xpath=events.ndjson --Xchannel_in=events
+$ flz plugin enable writer operator_file_sink --operator_id=op1 --hook=on_output \
+  --Xpath=out/alerts.ndjson --Xchannel_out=alerts
+```
 
 ## The root folder
 
@@ -109,8 +165,7 @@ What each direction does differently is under
 
 | | |
 | --- | --- |
-| Plugin type | `:operator` |
-| Hooks | `:on_terminate`: the reader drives itself; the hook is there because a plugin spec must name at least one |
+| Hooks | none needed: the reader drives itself, so a binding names no hook (the provider also defines `:on_terminate`) |
 | Shared | no: a second operator bound to it is refused (`plugin.not_shareable`) |
 | Upstream | one file inside the root folder, or one object under an S3 root, polled every `poll_interval_ms` |
 | Injection | each line, without its newline, on the entry channel `channel` or `channel_in` names |
@@ -119,8 +174,8 @@ What each direction does differently is under
 | Guarantee | at-least-once: a crash can re-deliver lines confirmed since the last commit, and never skips one |
 | Failure posture | stop at a line it cannot deliver; keep polling a missing file |
 
-```bash
-flz plugin enable reader operator_file_source \
+```sh
+$ flz plugin enable reader operator_file_source \
   --operator_id=op1 \
   --Xpath=events.ndjson \
   --Xchannel_in=events
@@ -143,24 +198,6 @@ As a plugin spec at operator start (`flz operator start --plugins`):
 explicit spelling of the same name; one of the two is required, and writing both is
 refused. Either takes exactly one name. `channel_out` is not a parameter here: the
 reader never acts on the records passing through the operator.
-
-### Parameters
-
-<!-- provider-options:begin file_source -->
-| Option | Type | Default | Required | Description |
-| --- | --- | --- | --- | --- |
-| `path` | string | &mdash; | yes | The file to read: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, an object under its prefix |
-| `channel` | names | &mdash; | no | The channel this plugin is attached to: the entry channel every line is injected on, and one name. Required, unless `channel_in` names it |
-| `channel_in` | names | &mdash; | no | Entry channel every line is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
-| `plugin_id` | string | &mdash; | no | Plugin id; defaults to the id the plugin is enabled under |
-| `start_at` | enum | `"beginning"` | no | Where a reader with no committed offset starts: byte 0, or the size of the file when it is first opened |
-| `poll_interval_ms` | int | `1000` | no | Milliseconds between looks for new bytes |
-| `max_line_bytes` | int | `1048576` | no | Longest line accepted; a longer one stops the reader at the offset it starts at |
-| `read_chunk_bytes` | int | `65536` | no | Bytes read at a time, and never more than one read ahead of the last delivered line |
-| `commit_interval_ms` | int | `1000` | no | Longest a delivered line's offset waits to be committed while the reader has not caught up; what a crash can re-deliver |
-| `failure_threshold` | int | `3` | no | Consecutive failed reads or refused ingests before the plugin reports unhealthy |
-| `idle_after_ms` | int | `0` | no | Age of the last settled poll past which the reader is idle; 0 derives it from `poll_interval_ms` |
-<!-- provider-options:end -->
 
 **One of `channel` and `channel_in` is required.** The Required column speaks of one
 row at a time, so it reads `no` for both.
@@ -263,7 +300,6 @@ health are the file's.
 
 | | |
 | --- | --- |
-| Plugin type | `:operator` |
 | Hooks | `:on_input`, `:on_output` |
 | Shared | no: a second operator bound to it is refused (`plugin.not_shareable`) |
 | Downstream | one file inside the root folder, appended to; under `commit: rename`, a directory of parts, or under an S3 root a key prefix of parts |
@@ -272,8 +308,8 @@ health are the file's.
 | Overflow | delay, never loss: an enqueue past `queue_max` parks until a flush frees space |
 | Failure posture | a failed write is cut back and retried under the backoff ladder; nothing is dropped |
 
-```bash
-flz plugin enable writer operator_file_sink \
+```sh
+$ flz plugin enable writer operator_file_sink \
   --operator_id=op1 \
   --hook=on_output \
   --Xpath=out/alerts.ndjson \
@@ -283,25 +319,6 @@ flz plugin enable writer operator_file_sink \
 `channel_out` restricts the sink to records whose metadata channel matches; absent, it
 writes every record its hook hands it. Several names, comma-separated, write them
 all. `channel` and `channel_in` are not parameters here: the sink feeds nothing.
-
-### Parameters
-
-<!-- provider-options:begin file_sink -->
-| Option | Type | Default | Required | Description |
-| --- | --- | --- | --- | --- |
-| `path` | string | &mdash; | yes | The file to append to, or under `commit: rename` the directory parts are committed into: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, the key prefix parts are committed under |
-| `channel_out` | names | &mdash; | no | Write only records whose metadata channel matches. Several names, comma-separated, write them all |
-| `plugin_id` | string | &mdash; | no | Plugin id; defaults to the id the plugin is enabled under |
-| `commit` | enum | `"append"` | no | The file layout. `append` grows one file in place, and a batch synced just before a crash is appended again after it; `rename` commits immutable parts into a directory, and writes a record the outbox guarantees once. Under an s3:// root only `rename` |
-| `roll_after_ms` | int | `10000` | no | Under `rename`, the longest a part stays open, and so the longest a guaranteed record waits for its confirmation |
-| `roll_bytes` | int | `67108864` | no | Under `rename`, the size at which a part is committed before `roll_after_ms`. Under an s3:// root the open part is held in memory, and at most 5368709120 |
-| `linger_ms` | int | `25` | no | How long a batch waits to fill |
-| `max_batch` | int | `500` | no | Records in one write |
-| `queue_max` | int | `10000` | no | Records held before enqueue blocks |
-| `retry_backoff_ms` | int | `250` | no | First delay after a failed write |
-| `retry_max_backoff_ms` | int | `5000` | no | Ceiling for that delay |
-| `unhealthy_after_ms` | int | `30000` | no | Age of the last durable write past which a backed-up sink is unhealthy |
-<!-- provider-options:end -->
 
 ### One record, one line
 
@@ -471,3 +488,4 @@ under source `:flezha_file_source`, and the sink's as `flushed` under
 - [http_poll.md](http_poll.md): the smallest source provider, which the reader follows
 - [postgres_sink.md](postgres_sink.md): the batching sink the writer follows
 - [../configuration.md](../configuration.md): `FLEZHA_FILE_PLUGIN_ROOT` among every other knob
+- [plugins.md](../topics/basics/plugins.md): the plugin model

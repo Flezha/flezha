@@ -1,34 +1,20 @@
 # Webhook plugin
 
-For users who want to hear about what happens in a namespace somewhere else: a chat
-channel, an alerting tool, any service that takes an HTTP POST.
-`Flezha.Plugin.Provider.HookWebhook` (provider id `hook_webhook`) is a controller plugin:
-it is bound to no operator, and it sends every hook event it is enabled for as one JSON
-object to a URL. This page covers the contract, the parameters, the request, the event
-fields, retries, delivery and telemetry.
-
-## Contract
+The webhook plugin tells another service what happens in a namespace: a chat channel, an
+alerting tool, or any service that takes an HTTP POST. It is a controller plugin, so no
+operator is bound to it: it sends every hook event it is enabled for as one JSON object to
+a URL. `Flezha.Plugin.Provider.HookWebhook` is its provider, under the provider id
+`hook_webhook`.
 
 | | |
 | --- | --- |
-| Plugin type | `:controller` |
-| Hooks | `on_operator_started`, `on_operator_stopped`, `on_operator_failed`, `on_dead_letter`, `on_plugin_unhealthy`, each named with `--hook` |
-| Runs | one copy on every controller that holds the namespace, each sending what happened on its own controller; one copy in the cluster with `--single` |
-| Request | `POST` to `url`, the event as a JSON object, `content-type: application/json`, one connection kept open, events in the order they happened on the controller |
-| Retries | a 429, a 5xx, a timeout or a transport error, after 1 s and then 5 s, up to `retries` |
-| Delivery | best effort: an event is a notice, not a record |
+| Type | controller plugin |
+| Ships | built in |
+| Shareable | no: it is bound to no operator; one copy runs on each controller of its namespace, or one in the cluster with `--single` |
+| Partitioned operators | not applicable |
+| Durability | none: best effort, an event is a notice, not a record |
 
-```sh
-flz plugin enable alerts hook_webhook \
-  --Xurl=https://hooks.example.test/services/T000/B000/XXXX \
-  --hook on_operator_failed --hook on_dead_letter --namespace prod
-```
-
-`flz plugin list --namespace prod` shows the plugin with its hooks and the controllers it
-runs on. `flz plugin update alerts --hook on_operator_started --namespace prod` replaces its
-hooks; `flz plugin bind` of it is refused with `plugin.not_bindable`.
-
-## Parameters
+## Options
 
 <!-- provider-options:begin -->
 | Option | Type | Default | Required | Description |
@@ -38,6 +24,30 @@ hooks; `flz plugin bind` of it is refused with `plugin.not_bindable`.
 | `timeout_ms` | int | `5000` | no | Budget for one request |
 | `retries` | int | `2` | no | Retries of a 429, a 5xx, a timeout or a transport error, after 1 s and then 5 s |
 <!-- provider-options:end -->
+
+## Example
+
+```sh
+$ flz plugin enable alerts hook_webhook \
+  --Xurl=https://hooks.example.test/services/T000/B000/XXXX \
+  --hook on_operator_failed --hook on_dead_letter --namespace prod
+```
+
+`flz plugin list --namespace prod` shows the plugin with its hooks and the controllers it
+runs on. `flz plugin update alerts --hook on_operator_started --namespace prod` replaces its
+hooks; `flz plugin bind` of it is refused with `plugin.not_bindable`.
+
+## Contract
+
+| | |
+| --- | --- |
+| Hooks | `on_operator_started`, `on_operator_stopped`, `on_operator_failed`, `on_dead_letter`, `on_plugin_unhealthy`, each named with `--hook` |
+| Runs | one copy on every controller that holds the namespace, each sending what happened on its own controller; one copy in the cluster with `--single` |
+| Request | `POST` to `url`, the event as a JSON object, `content-type: application/json`, one connection kept open, events in the order they happened on the controller |
+| Retries | a 429, a 5xx, a timeout or a transport error, after 1 s and then 5 s, up to `retries` |
+| Delivery | best effort: an event is a notice, not a record |
+
+## Checks at enable
 
 The options are checked when the plugin is enabled, with the HTTP poll plugin's URL rules,
 and no connection is opened then: a URL with credentials is `plugin.url_has_credentials`,
@@ -126,3 +136,9 @@ names every provider reports; the plugin sends through the worker the HTTP push 
 
 One URL per plugin, one request per event: no batching, no request signing. Enable a second
 plugin for a second receiver.
+
+## See also
+
+- [`hooks.md`](../topics/advanced/hooks.md): hooks and controller plugins
+- [`plugins.md`](../topics/basics/plugins.md): the plugin model
+- [`writing_a_plugin.md`](../topics/advanced/writing_a_plugin.md): a controller plugin of your own

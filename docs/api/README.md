@@ -23,7 +23,7 @@ Every published function binds one row of `Flezha.AuthZ.Verbs` — the same row
 the `flz` verb for that effect binds — and `Flezha.AuthZ.Verb.run/5` applies it
 in one order: identity, scope, policy, act, audit. The row names the action the
 policy judges, the rule that resolves its namespace, and the audit it leaves;
-`docs/operations/authn_authz.md` carries the whole table. A published function
+`docs/topics/basics/authorization.md` carries the whole table. A published function
 that took a caller context and bound no row would fail
 `test/flezha/authz/verbs_test.exs`, so there is no ungoverned function on this
 surface: a read the policy calls public (`run_known?/2`, `parse_cron/2`, the

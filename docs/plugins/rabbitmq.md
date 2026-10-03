@@ -1,22 +1,107 @@
 # RabbitMQ plugins
 
-For users who want messages of a RabbitMQ queue delivered onto an operator's entry channel,
-or an operator's outputs published to a RabbitMQ exchange. Both providers live in the
-RabbitMQ plugin package, `flezha_rabbitmq`: `FlezhaRabbitmq.Consumer` (provider id
-`rabbitmq_consumer`) and `FlezhaRabbitmq.Producer` (provider id `rabbitmq_producer`). This
-page covers installing the package, the connection both share, the consumer's
-acknowledgements and message ids, the producer's routing, headers and confirms, recovery,
-topology declaration, health, telemetry and limits.
+The RabbitMQ plugins deliver the messages of a RabbitMQ queue onto an operator's entry
+channel, and publish an operator's outputs to a RabbitMQ exchange. Both providers live in
+the RabbitMQ plugin package: `FlezhaRabbitmq.Consumer` under the provider id
+`rabbitmq_consumer`, and `FlezhaRabbitmq.Producer` under the provider id
+`rabbitmq_producer`. This page covers installing the package, the connection both share,
+the consumer's acknowledgements and message ids, the producer's routing, headers and
+confirms, recovery, topology declaration, health, telemetry and limits.
+
+| | `rabbitmq_consumer` | `rabbitmq_producer` |
+| --- | --- | --- |
+| Type | operator plugin | operator plugin |
+| Ships | package `flezha_rabbitmq` | package `flezha_rabbitmq` |
+| Shareable | no: one consumer per binding (`plugin.not_shareable`) | yes: every operator bound to it on a controller publishes through one worker and one connection |
+| Partitioned operators | refused (`plugin.partitioned_host`) | allowed: each member runs its own copy |
+| Durability | a delivery is acknowledged only after the operator took it; with durable input `flz.msg_id` absorbs a redelivery | a delivery-guaranteed output is held until the broker confirms it; a plain one is not awaited |
+
+## Options
+
+### Consumer
+
+<!-- provider-options:begin rabbitmq_consumer -->
+| Option | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `host` | string | `"localhost"` | no | Broker host |
+| `port` | int | &mdash; | no | AMQP port; 5672, or 5671 with `ssl` |
+| `virtual_host` | string | `"/"` | no | Virtual host |
+| `username` | string | `"guest"` | no | User the plugin connects as |
+| `password` | string | &mdash; | no | Password, redacted once the plugin is prepared |
+| `password_env` | string | &mdash; | no | Environment variable holding the password instead |
+| `ssl` | bool | `false` | no | TLS to the broker, verifying it against the system's CA store |
+| `ssl_options` | any | &mdash; | no | Erlang `:ssl` options, passed through |
+| `heartbeat_s` | int | `30` | no | AMQP heartbeat; 0 turns it off |
+| `reconnect_backoff_ms` | int | `500` | no | First wait before connecting again after a loss |
+| `reconnect_max_backoff_ms` | int | `30000` | no | Ceiling for that wait |
+| `queue` | string | &mdash; | yes | The queue to consume |
+| `channel` | names | &mdash; | no | The channel this plugin is attached to: the entry channel every message is injected on, and one name. Required, unless `channel_in` names it |
+| `channel_in` | names | &mdash; | no | Entry channel every message is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
+| `plugin_id` | string | &mdash; | no | Plugin id; defaults to the id it was enabled under |
+| `prefetch` | int | `200` | no | Deliveries the broker sends before the first of them is acknowledged |
+| `batch_ms` | int | `10` | no | Longest a delivery waits for others before its batch goes to the operator |
+| `msg_id_header` | string | &mdash; | no | A header whose value is the message's id, in place of its `message_id` |
+| `declare` | bool | `false` | no | Declare `queue` durable when it does not exist |
+| `bind_exchange` | string | &mdash; | no | With `declare`: an exchange the queue is bound to |
+| `routing_keys` | names | &mdash; | no | With `bind_exchange`: the binding keys, comma-separated; one empty key when unset |
+| `failure_threshold` | int | `3` | no | Refused batches in a row before the plugin reports unhealthy |
+<!-- provider-options:end -->
+
+### Producer
+
+<!-- provider-options:begin rabbitmq_producer -->
+| Option | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `host` | string | `"localhost"` | no | Broker host |
+| `port` | int | &mdash; | no | AMQP port; 5672, or 5671 with `ssl` |
+| `virtual_host` | string | `"/"` | no | Virtual host |
+| `username` | string | `"guest"` | no | User the plugin connects as |
+| `password` | string | &mdash; | no | Password, redacted once the plugin is prepared |
+| `password_env` | string | &mdash; | no | Environment variable holding the password instead |
+| `ssl` | bool | `false` | no | TLS to the broker, verifying it against the system's CA store |
+| `ssl_options` | any | &mdash; | no | Erlang `:ssl` options, passed through |
+| `heartbeat_s` | int | `30` | no | AMQP heartbeat; 0 turns it off |
+| `reconnect_backoff_ms` | int | `500` | no | First wait before connecting again after a loss |
+| `reconnect_max_backoff_ms` | int | `30000` | no | Ceiling for that wait |
+| `exchange` | string | `""` | no | The exchange each payload is published to; the default exchange when empty |
+| `routing_key` | string | `""` | no | The routing key of every payload, unless `routing_key_from` names another |
+| `routing_key_from` | enum | &mdash; | no | `flz_key`: each output's own `flz.key` is its routing key |
+| `persistent` | bool | `true` | no | Delivery mode 2: the broker writes it to disk |
+| `mandatory` | bool | `false` | no | The broker returns a payload no queue is bound for; a guaranteed one is parked |
+| `headers` | json | `%{}` | no | Static message headers, a JSON object; names starting `flz.` are refused |
+| `content_type` | string | &mdash; | no | The message's `content_type` property |
+| `declare_exchange` | bool | `false` | no | Declare `exchange` durable when it does not exist |
+| `exchange_type` | enum | `"direct"` | no | With `declare_exchange`: the exchange's type |
+| `channel` | names | &mdash; | no | The channel this plugin is attached to: only payloads naming it are published. Several names, comma-separated, publish them all |
+| `channel_out` | names | &mdash; | no | Publish only payloads whose metadata channel matches; the explicit spelling |
+| `plugin_id` | string | &mdash; | no | Plugin id; defaults to the id it was enabled under |
+| `retries` | int | `5` | no | Publishes again of a guaranteed output the broker refused or a lost connection left unconfirmed |
+| `retry_backoff_ms` | int | `250` | no | First delay between retries |
+| `retry_max_backoff_ms` | int | `10000` | no | Ceiling for that delay |
+| `queue_max` | int | `10000` | no | Payloads waiting while the connection is down |
+| `queue_max_bytes` | int | `67108864` | no | Payload bytes waiting while the connection is down |
+| `queue_overflow` | enum | `:drop_oldest` | no | What a full queue does with a plain output: keep it past the bound, drop the oldest plain one, or drop the newest; a guaranteed one always waits |
+<!-- provider-options:end -->
+
+## Example
+
+```sh
+$ flz plugin enable rates-in rabbitmq_consumer --operator_id=pricer \
+  --Xhost=broker --Xqueue=rates --Xchannel=rates --Xpassword_env=RABBITMQ_PASSWORD
+$ flz plugin enable rates-out rabbitmq_producer --operator_id=pricer --hook=on_output \
+  --Xhost=broker --Xexchange=rates --Xrouting_key_from=flz_key \
+  --Xpassword_env=RABBITMQ_PASSWORD
+```
 
 ## Installing
 
 Build the archive from the package (its README: `mix flezha.plugin.package`), then install
 it and restart the controller, or name it in `FLEZHA_PLUGINS`:
 
-```
-flz plugin install flezha_rabbitmq-0.1.0.fpz
-flz controller stop && flz controller start
-flz plugin list --installed
+```sh
+$ flz plugin install flezha_rabbitmq-0.1.0.fpz
+$ flz controller stop && flz controller start
+$ flz plugin list --installed
 ```
 
 The package bundles the `amqp` client and what it needs that the release does not ship
@@ -45,50 +130,22 @@ then resumes consuming or publishing without the plugin being enabled again.
 
 | | |
 | --- | --- |
-| Plugin type | `:operator` |
-| Hooks | `:on_terminate`: the consumer drives itself; the hook is there because a plugin spec must name at least one |
+| Hooks | none needed: the consumer drives itself, so a binding names no hook (the provider also defines `:on_terminate`) |
 | Shared | no: one consumer per binding, so a second operator bound to it is refused (`plugin.not_shareable`), and a member of a partition group is refused (`plugin.partitioned_host`) |
 | Upstream | one queue, with a prefetch window |
 | Injection | one message as one input, its body as the payload, on the entry channel `:channel` (or `:channel_in`) names |
 | Delivery | each batch waits for the operator's verdicts; a delivery is acknowledged only after the operator took it |
 
-```
-flz plugin enable rates-in rabbitmq_consumer Xhost=broker Xqueue=rates Xchannel=rates \
+Enabled and bound in two commands, with the settings written without their dashes:
+
+```sh
+$ flz plugin enable rates-in rabbitmq_consumer Xhost=broker Xqueue=rates Xchannel=rates \
   Xpassword_env=RABBITMQ_PASSWORD
-flz plugin bind rates-in --operator_id pricer --hook=on_terminate
+$ flz plugin bind rates-in --operator_id pricer --hook=on_terminate
 ```
 
 Several operators bound to consumers of one queue are competing consumers, as RabbitMQ
 intends: each message reaches one of them.
-
-### Consumer parameters
-
-<!-- provider-options:begin rabbitmq_consumer -->
-| Option | Type | Default | Required | Description |
-| --- | --- | --- | --- | --- |
-| `host` | string | `"localhost"` | no | Broker host |
-| `port` | int | &mdash; | no | AMQP port; 5672, or 5671 with `ssl` |
-| `virtual_host` | string | `"/"` | no | Virtual host |
-| `username` | string | `"guest"` | no | User the plugin connects as |
-| `password` | string | &mdash; | no | Password, redacted once the plugin is prepared |
-| `password_env` | string | &mdash; | no | Environment variable holding the password instead |
-| `ssl` | bool | `false` | no | TLS to the broker, verifying it against the system's CA store |
-| `ssl_options` | any | &mdash; | no | Erlang `:ssl` options, passed through |
-| `heartbeat_s` | int | `30` | no | AMQP heartbeat; 0 turns it off |
-| `reconnect_backoff_ms` | int | `500` | no | First wait before connecting again after a loss |
-| `reconnect_max_backoff_ms` | int | `30000` | no | Ceiling for that wait |
-| `queue` | string | &mdash; | yes | The queue to consume |
-| `channel` | names | &mdash; | no | The channel this plugin is attached to: the entry channel every message is injected on, and one name. Required, unless `channel_in` names it |
-| `channel_in` | names | &mdash; | no | Entry channel every message is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
-| `plugin_id` | string | &mdash; | no | Plugin id; defaults to the id it was enabled under |
-| `prefetch` | int | `200` | no | Deliveries the broker sends before the first of them is acknowledged |
-| `batch_ms` | int | `10` | no | Longest a delivery waits for others before its batch goes to the operator |
-| `msg_id_header` | string | &mdash; | no | A header whose value is the message's id, in place of its `message_id` |
-| `declare` | bool | `false` | no | Declare `queue` durable when it does not exist |
-| `bind_exchange` | string | &mdash; | no | With `declare`: an exchange the queue is bound to |
-| `routing_keys` | names | &mdash; | no | With `bind_exchange`: the binding keys, comma-separated; one empty key when unset |
-| `failure_threshold` | int | `3` | no | Refused batches in a row before the plugin reports unhealthy |
-<!-- provider-options:end -->
 
 ### A message as an input
 
@@ -132,57 +189,20 @@ them again.
 
 | | |
 | --- | --- |
-| Plugin type | `:operator` |
 | Hooks | `:on_output` or `:on_input` |
 | Shared | yes: every operator bound to one plugin on a controller publishes through one worker and one connection |
 | Downstream | one exchange |
 | Delivery | a guaranteed output is held until the broker confirms it; a plain one is published without the operator waiting |
 
-```
-flz plugin enable rates-out rabbitmq_producer Xhost=broker Xexchange=rates \
+```sh
+$ flz plugin enable rates-out rabbitmq_producer Xhost=broker Xexchange=rates \
   Xrouting_key_from=flz_key Xpassword_env=RABBITMQ_PASSWORD
-flz plugin bind rates-out --operator_id pricer --hook=on_output
+$ flz plugin bind rates-out --operator_id pricer --hook=on_output
 ```
 
 The hook holds a delivery-guaranteed output in the outbox and hands it to the plugin's
 worker; nothing else runs per output. The worker builds each message, publishes it on a
 channel in confirm mode and settles it.
-
-### Producer parameters
-
-<!-- provider-options:begin rabbitmq_producer -->
-| Option | Type | Default | Required | Description |
-| --- | --- | --- | --- | --- |
-| `host` | string | `"localhost"` | no | Broker host |
-| `port` | int | &mdash; | no | AMQP port; 5672, or 5671 with `ssl` |
-| `virtual_host` | string | `"/"` | no | Virtual host |
-| `username` | string | `"guest"` | no | User the plugin connects as |
-| `password` | string | &mdash; | no | Password, redacted once the plugin is prepared |
-| `password_env` | string | &mdash; | no | Environment variable holding the password instead |
-| `ssl` | bool | `false` | no | TLS to the broker, verifying it against the system's CA store |
-| `ssl_options` | any | &mdash; | no | Erlang `:ssl` options, passed through |
-| `heartbeat_s` | int | `30` | no | AMQP heartbeat; 0 turns it off |
-| `reconnect_backoff_ms` | int | `500` | no | First wait before connecting again after a loss |
-| `reconnect_max_backoff_ms` | int | `30000` | no | Ceiling for that wait |
-| `exchange` | string | `""` | no | The exchange each payload is published to; the default exchange when empty |
-| `routing_key` | string | `""` | no | The routing key of every payload, unless `routing_key_from` names another |
-| `routing_key_from` | enum | &mdash; | no | `flz_key`: each output's own `flz.key` is its routing key |
-| `persistent` | bool | `true` | no | Delivery mode 2: the broker writes it to disk |
-| `mandatory` | bool | `false` | no | The broker returns a payload no queue is bound for; a guaranteed one is parked |
-| `headers` | json | `%{}` | no | Static message headers, a JSON object; names starting `flz.` are refused |
-| `content_type` | string | &mdash; | no | The message's `content_type` property |
-| `declare_exchange` | bool | `false` | no | Declare `exchange` durable when it does not exist |
-| `exchange_type` | enum | `"direct"` | no | With `declare_exchange`: the exchange's type |
-| `channel` | names | &mdash; | no | The channel this plugin is attached to: only payloads naming it are published. Several names, comma-separated, publish them all |
-| `channel_out` | names | &mdash; | no | Publish only payloads whose metadata channel matches; the explicit spelling |
-| `plugin_id` | string | &mdash; | no | Plugin id; defaults to the id it was enabled under |
-| `retries` | int | `5` | no | Publishes again of a guaranteed output the broker refused or a lost connection left unconfirmed |
-| `retry_backoff_ms` | int | `250` | no | First delay between retries |
-| `retry_max_backoff_ms` | int | `10000` | no | Ceiling for that delay |
-| `queue_max` | int | `10000` | no | Payloads waiting while the connection is down |
-| `queue_max_bytes` | int | `67108864` | no | Payload bytes waiting while the connection is down |
-| `queue_overflow` | enum | `:drop_oldest` | no | What a full queue does with a plain output: keep it past the bound, drop the oldest plain one, or drop the newest; a guaranteed one always waits |
-<!-- provider-options:end -->
 
 ### Routing and headers
 
@@ -255,4 +275,4 @@ verbs every provider shares, and `reconnected` (an event) on both. The consumer 
 
 - [kafka_consumer.md](kafka_consumer.md) and [kafka_producer.md](kafka_producer.md): the Kafka package, laid out the same way
 - [http_push.md](http_push.md): the HTTP sink, whose queue rows the producer shares
-- [../guides/sources_and_sinks.md](../guides/sources_and_sinks.md): every source and sink
+- [plugins.md](../topics/basics/plugins.md): the plugin model

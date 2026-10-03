@@ -1,50 +1,21 @@
 # Kafka consumer plugin
 
-For users who want the records of Kafka topics delivered onto an operator's entry channel.
-`FlezhaKafka.Consumer` (provider id `kafka_consumer`) lives in the Kafka plugin package,
-`flezha_kafka`, beside the producer ([`kafka_producer.md`](kafka_producer.md), which also
-covers installing the package). It joins the consumer group `group_id` for its `topics`,
-injects every record of the partitions assigned to it as one input, and commits the
-group's offsets to Kafka as the operator's input durability says. This page covers the
-contract, parameters, the input a record becomes, delivery and commits, scaling with a
-group, rebalances, health, lag, telemetry and limits.
-
-## Contract
+The Kafka consumer plugin delivers the records of Kafka topics onto an operator's entry
+channel. It joins the consumer group `group_id` for its `topics`, injects every record of
+the partitions assigned to it as one input, and commits the group's offsets to Kafka as the
+operator's input durability says. `FlezhaKafka.Consumer` is its provider, under the
+provider id `kafka_consumer`, in the Kafka plugin package beside the producer
+([`kafka_producer.md`](kafka_producer.md), which also covers installing the package).
 
 | | |
 | --- | --- |
-| Plugin type | `:operator` |
-| Hooks | `:on_terminate`: the consumer drives itself; the hook is there because a plugin spec must name at least one |
-| Shared | no: one group member per binding, so a second operator bound to it is refused (`plugin.not_shareable`), and a member of a partition group is refused (`plugin.partitioned_host`), because Kafka partitions are not Flezha key groups |
-| Upstream | the topics' partitions Kafka assigns to this member of `group_id` |
-| Injection | one record as one input, its value as the payload, on the entry channel `:channel` (or `:channel_in`) names, with `flz.msg_id` set |
-| Delivery | each fetched batch waits for the operator's verdicts; a batch with a refusal commits nothing and is fetched again |
-| Failure posture | a group that exits is started again after `lag_interval_ms`; a refused batch is fetched again from the last committed offset |
+| Type | operator plugin |
+| Ships | package `flezha_kafka` |
+| Shareable | no: one group member per binding, so a second operator bound to it is refused (`plugin.not_shareable`) |
+| Partitioned operators | refused (`plugin.partitioned_host`): Kafka partitions are not Flezha key groups |
+| Durability | each fetched batch waits for the operator's verdicts; offsets are committed after every confirmed batch for durable input, otherwise at most every `commit_interval_ms` |
 
-```json
-[
-  {
-    "name": "trades-in",
-    "provider": "kafka_consumer",
-    "opts": {
-      "hosts": "kafka1:9092,kafka2:9092",
-      "topics": "trades",
-      "group_id": "pricing",
-      "start_at": "beginning",
-      "channel": "trades"
-    },
-    "hooks": ["on_terminate"]
-  }
-]
-```
-
-```
-flz plugin enable trades-in kafka_consumer Xhosts=kafka1:9092 Xtopics=trades \
-  Xgroup_id=pricing Xchannel=trades Xstart_at=beginning
-flz plugin bind trades-in --operator_id pricer --hook=on_terminate
-```
-
-## Parameters
+## Options
 
 <!-- provider-options:begin -->
 | Option | Type | Default | Required | Description |
@@ -67,6 +38,54 @@ flz plugin bind trades-in --operator_id pricer --hook=on_terminate
 | `failure_threshold` | int | `3` | no | Refused batches in a row before the plugin reports unhealthy |
 | `idle_after_ms` | int | `0` | no | Age of the last settled lag read past which the source is idle; 0 derives it from `lag_interval_ms` |
 <!-- provider-options:end -->
+
+## Example
+
+```sh
+$ flz plugin enable trades-in kafka_consumer --operator_id=pricer \
+  --Xhosts=kafka1:9092 --Xtopics=trades --Xgroup_id=pricing \
+  --Xchannel=trades --Xstart_at=beginning
+```
+
+## Contract
+
+| | |
+| --- | --- |
+| Hooks | none needed: the consumer drives itself, so a binding names no hook (the provider also defines `:on_terminate`) |
+| Shared | no: one group member per binding, so a second operator bound to it is refused (`plugin.not_shareable`), and a member of a partition group is refused (`plugin.partitioned_host`), because Kafka partitions are not Flezha key groups |
+| Upstream | the topics' partitions Kafka assigns to this member of `group_id` |
+| Injection | one record as one input, its value as the payload, on the entry channel `:channel` (or `:channel_in`) names, with `flz.msg_id` set |
+| Delivery | each fetched batch waits for the operator's verdicts; a batch with a refusal commits nothing and is fetched again |
+| Failure posture | a group that exits is started again after `lag_interval_ms`; a refused batch is fetched again from the last committed offset |
+
+As a plugin spec at operator start (`flz operator start --plugins`):
+
+```json
+[
+  {
+    "name": "trades-in",
+    "provider": "kafka_consumer",
+    "opts": {
+      "hosts": "kafka1:9092,kafka2:9092",
+      "topics": "trades",
+      "group_id": "pricing",
+      "start_at": "beginning",
+      "channel": "trades"
+    },
+    "hooks": ["on_terminate"]
+  }
+]
+```
+
+Enabled and bound in two commands, with the settings written without their dashes:
+
+```sh
+$ flz plugin enable trades-in kafka_consumer Xhosts=kafka1:9092 Xtopics=trades \
+  Xgroup_id=pricing Xchannel=trades Xstart_at=beginning
+$ flz plugin bind trades-in --operator_id pricer --hook=on_terminate
+```
+
+## Options in detail
 
 `hosts`, `auth`, `sasl_password_env`, `use_ssl` and `ssl_options` are the producer's, from
 one connection module both providers use: a credential is held in memory, the prepared
@@ -202,4 +221,4 @@ producer's worker can answer a stats call up to 5 s late, and loses nothing.
 
 - [kafka_producer.md](kafka_producer.md): the producer, its connection options and installing the package
 - [postgres_poll.md](postgres_poll.md): the Postgres poll source, whose health verdicts this one shares
-- [../guides/sources_and_sinks.md](../guides/sources_and_sinks.md): every source and sink
+- [plugins.md](../topics/basics/plugins.md): the plugin model and every source and sink
