@@ -275,6 +275,9 @@ defmodule Flezha.SDK.DurableInputFloorTest do
       pid = hold(op, 1)
       push(op, "x=1", 2)
       push(op, "x=2", 3)
+      # Answered behind both routes: the Cell is full and x=2 is dropped
+      # before the hold ends, not taken once x=1 has run.
+      assert ^pid = cell!(op, "small_store")
 
       send(pid, :release)
       assert :ok = marker_reaching(3)
