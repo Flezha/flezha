@@ -35,6 +35,7 @@ defmodule Flezha.MixProject do
   # on later pages. Tabs switch without ExDoc's click, which focuses the tab and
   # would scroll to it; the scroll correction keeps the clicked tab in place
   # while tabsets above it change height.
+  # Links that leave the docs open in a new tab.
   defp guide_scripts(:html) do
     """
     <script defer src="https://cdn.jsdelivr.net/npm/mermaid@10.2.3/dist/mermaid.min.js"></script>
@@ -106,6 +107,15 @@ defmodule Flezha.MixProject do
           if (label) selectTab(label);
         }));
       }
+    </script>
+    <script>
+      window.addEventListener("exdoc:loaded", () => {
+        for (const link of document.querySelectorAll("a[href^='http']")) {
+          if (link.host === location.host) continue;
+          link.target = "_blank";
+          link.relList.add("noopener", "noreferrer");
+        }
+      });
     </script>
     """
   end
