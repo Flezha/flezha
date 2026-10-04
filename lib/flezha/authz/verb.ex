@@ -322,13 +322,15 @@ defmodule Flezha.AuthZ.Verb do
 
   # The description a catalogue entry carries: the first sentence of the
   # function's `@doc`, read while it compiles, because a release strips the
-  # docs chunks.
-  def first_sentence({_line, doc}) when is_binary(doc) do
+  # docs chunks. A full stop after an abbreviation does not end the sentence.
+  def first_sentence({_line, doc}), do: first_sentence(doc)
+
+  def first_sentence(doc) when is_binary(doc) do
     doc
     |> String.split(~r/\n\s*\n/, parts: 2)
     |> hd()
     |> String.replace(~r/\s+/, " ")
-    |> String.split(~r/(?<=\.)\s/, parts: 2)
+    |> String.split(~r/(?<=[.!?])(?<!\be\.g\.|\bi\.e\.|\betc\.|\bvs\.)\s/, parts: 2)
     |> hd()
     |> String.trim()
   end

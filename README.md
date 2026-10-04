@@ -112,7 +112,8 @@ runtime for AI services.
   with a token of its own ([`docs/plugins/http_api.md`](docs/plugins/http_api.md)).
   Every error carries a stable code and a hint for the next step
   ([`docs/errors.md`](docs/errors.md)), every `flz` command can answer in JSON, the
-  documentation ships an `llms.txt` index, and local mode tries a change in seconds.
+  documentation ships an `llms.txt` map to its pages in Markdown, and local mode tries a
+  change in seconds.
 - **For AI services.** Each conversation runs as its own session with its own
   state; answers stream while they are written, a turn can be taken back, and a
   crash does not end the conversation. Your code calls the model SDK or agent

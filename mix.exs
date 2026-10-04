@@ -411,6 +411,15 @@ defmodule Flezha.MixProject do
     end
   end
 
+  # The map is rewritten where ExDoc wrote `llms.txt`, which `-o` moves and `-f`
+  # can leave unwritten.
+  defp docs_and_assistant_map(args) do
+    case Enum.find(Mix.Task.run("docs", args), &(Path.basename(&1) == "llms.txt")) do
+      nil -> :ok
+      llms -> Mix.Task.run("flezha.llms", [Path.dirname(llms)])
+    end
+  end
+
   # The testnet is a git submodule, so a clone made without
   # `--recurse-submodules` leaves its directory empty.
   defp testnet_checked_out(_args) do
@@ -422,8 +431,9 @@ defmodule Flezha.MixProject do
   # Aliases are invoked via `mix <alias>`.
   defp aliases do
     [
-      # The docs, with the code block lexers `register_highlighters/1` names.
-      docs: [&register_highlighters/1, "docs"],
+      # The docs, with the code block lexers `register_highlighters/1` names,
+      # then the map for AI assistants over ExDoc's `llms.txt`.
+      docs: [&register_highlighters/1, &docs_and_assistant_map/1],
       # Build the WebSocket testnet bundle that several `mix test` cases
       # reach for over WS (`flezha_test.exs` "websocket plugin connection
       # start", "beam msg forward plugin connection start", "operator flow
