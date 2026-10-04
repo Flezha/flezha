@@ -29,7 +29,7 @@ flowchart LR
 
 - **A runner connects into exactly one namespace** and serves operators only
   there. A runner process serves one namespace; serving two means two
-  processes ([`connecting_a_runner.md`](connecting_a_runner.md#one-runner-one-namespace)).
+  processes ([`connecting_a_runner.md`](../deploying/connecting_a_runner.md#one-runner-one-namespace)).
 - **An operator id is unique within its namespace**, not across them.
 - **Each namespace has a hub of its own**: the process that decides which
   runner each operator runs on, and moves it when that runner goes away.
@@ -339,8 +339,8 @@ Each SDK spells these as methods on its admin handle:
 | PHP | `$runner->admin()` | `$admin->startOperator('order_worker', id: 'orders')` |
 | Elixir | `Flezha.SDK.Admin` | `Admin.start_operator(runner, "order_worker", id: "orders")` |
 
-The echo examples carry these calls commented out
-([`running_operators.md`](running_operators.md#from-application-code)).
+[`running_operators.md`](running_operators.md#from-application-code) shows
+them in the echo runner of each SDK.
 
 The id is optional in each SDK: without one, the controller generates one from
 the factory id, such as `order_worker-k7m2qzxw4pd3fn2a`. Each start answers the
@@ -387,6 +387,6 @@ runner disconnecting, and shows in `flz operator list`.
 
 - [`authorization.md`](authorization.md): tokens, roles and runner credentials.
 - [`running_operators.md`](running_operators.md): starting and stopping operators.
-- [`connecting_a_runner.md`](connecting_a_runner.md): one runner, one namespace.
+- [`connecting_a_runner.md`](../deploying/connecting_a_runner.md): one runner, one namespace.
 - [`access_commands.md`](../cli/access_commands.md): `flz namespace` and `flz role`.
 - Tutorial: [`open_the_desk.md`](../../tutorials/tradedesk/open_the_desk.md) creates `trading`.

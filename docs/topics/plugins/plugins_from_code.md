@@ -4,21 +4,21 @@ Enabling, binding, unbinding and disabling are on the SDK's admin handle, so an
 application can attach the plugins its own namespace needs. The calls carry what the
 command line carries: the plugin's name, its provider and the provider's own options under
 `opts` at enable, then the operator and the hooks that `--hook=on_output` spells at bind.
-Every echo example carries these lines commented out right after the operator's start,
-ready to uncomment:
+Here the echo runner enables a file sink named `writer` and binds `my_echo` to it, once
+the runner has started:
 
 <!-- tabs-open -->
 
 ### Java
 
 ```java
-// Main.java: the echo runner, with the admin calls commented out
-// Admin admin = runner.admin();
-// ObjectNode opts = JsonNodeFactory.instance.objectNode().put("path", "echo-out.txt");
-// admin.enablePlugin("writer", PluginSpec.of("operator_file_sink").opts(opts));
-// ArrayNode hooks = JsonNodeFactory.instance.arrayNode();
-// hooks.addArray().add("on_output").addObject();
-// admin.bindPlugin("writer", "my_echo", hooks, null);
+// Main.java: the echo runner's plugin calls
+Admin admin = runner.admin();
+ObjectNode opts = JsonNodeFactory.instance.objectNode().put("path", "echo-out.txt");
+admin.enablePlugin("writer", PluginSpec.of("operator_file_sink").opts(opts));
+ArrayNode hooks = JsonNodeFactory.instance.arrayNode();
+hooks.addArray().add("on_output").addObject();
+admin.bindPlugin("writer", "my_echo", hooks, null);
 ```
 
 [Full file](https://github.com/flezha/flezha_java_sdk/blob/main/examples/echo/src/main/java/com/flezha/examples/echo/Main.java)
@@ -26,14 +26,14 @@ ready to uncomment:
 ### Rust
 
 ```rust
-// main.rs: the echo runner, with the admin calls commented out
-// let admin = runner.admin();
-// admin.enable_plugin(
-//     "writer",
-//     &flezha_runner::PluginSpec::new("operator_file_sink")
-//         .opts(serde_json::json!({ "path": "echo-out.txt" })),
-// )?;
-// admin.bind_plugin("writer", "my_echo", serde_json::json!([["on_output", {}]]), "")?;
+// main.rs: the echo runner's plugin calls
+let admin = runner.admin();
+admin.enable_plugin(
+    "writer",
+    &flezha_runner::PluginSpec::new("operator_file_sink")
+        .opts(serde_json::json!({ "path": "echo-out.txt" })),
+)?;
+admin.bind_plugin("writer", "my_echo", serde_json::json!([["on_output", {}]]), "")?;
 ```
 
 [Full file](https://github.com/flezha/flezha_rust_sdk/blob/main/examples/echo/src/main.rs)
@@ -41,10 +41,10 @@ ready to uncomment:
 ### Node
 
 ```javascript
-// runner.mjs: the echo runner, with the admin calls commented out
-// const admin = runner.admin();
-// await admin.enablePlugin('writer', 'operator_file_sink', { opts: { path: 'echo-out.txt' } });
-// await admin.bindPlugin('writer', 'my_echo', { hooks: [['on_output', {}]] });
+// runner.mjs: the echo runner's plugin calls
+const admin = runner.admin();
+await admin.enablePlugin('writer', 'operator_file_sink', { opts: { path: 'echo-out.txt' } });
+await admin.bindPlugin('writer', 'my_echo', { hooks: [['on_output', {}]] });
 ```
 
 [Full file](https://github.com/flezha/flezha_node_sdk/blob/main/examples/echo/runner.mjs)
@@ -52,10 +52,10 @@ ready to uncomment:
 ### Python
 
 ```python
-# runner.py: the echo runner, with the admin calls commented out
-# admin = runner.admin()
-# admin.enable_plugin("writer", "operator_file_sink", opts={"path": "echo-out.txt"})
-# admin.bind_plugin("writer", "my_echo", hooks=[["on_output", {}]])
+# runner.py: the echo runner's plugin calls
+admin = runner.admin()
+admin.enable_plugin("writer", "operator_file_sink", opts={"path": "echo-out.txt"})
+admin.bind_plugin("writer", "my_echo", hooks=[["on_output", {}]])
 ```
 
 [Full file](https://github.com/flezha/flezha_python_sdk/blob/main/examples/echo/runner.py)
@@ -63,10 +63,10 @@ ready to uncomment:
 ### Ruby
 
 ```ruby
-# runner.rb: the echo runner, with the admin calls commented out
-# admin = runner.admin
-# admin.enable_plugin("writer", "operator_file_sink", opts: { "path" => "echo-out.txt" })
-# admin.bind_plugin("writer", "my_echo", hooks: [["on_output", {}]])
+# runner.rb: the echo runner's plugin calls
+admin = runner.admin
+admin.enable_plugin("writer", "operator_file_sink", opts: { "path" => "echo-out.txt" })
+admin.bind_plugin("writer", "my_echo", hooks: [["on_output", {}]])
 ```
 
 [Full file](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/echo/runner.rb)
@@ -74,10 +74,10 @@ ready to uncomment:
 ### PHP
 
 ```php
-// runner.php: the echo runner, with the admin calls commented out
-// $admin = $runner->admin();
-// $admin->enablePlugin('writer', 'operator_file_sink', ['path' => 'echo-out.txt']);
-// $admin->bindPlugin('writer', 'my_echo', hooks: [['on_output', new stdClass()]]);
+// runner.php: the echo runner's plugin calls
+$admin = $runner->admin();
+$admin->enablePlugin('writer', 'operator_file_sink', ['path' => 'echo-out.txt']);
+$admin->bindPlugin('writer', 'my_echo', hooks: [['on_output', new stdClass()]]);
 ```
 
 [Full file](https://github.com/flezha/flezha_php_sdk/blob/main/examples/echo/runner.php)
@@ -85,15 +85,15 @@ ready to uncomment:
 ### Elixir
 
 ```elixir
-# application.ex: the echo application, with the admin calls commented out
-# alias Flezha.SDK.Admin
-# runner = Flezha.SDK.RunnerServer
-# {:ok, _} =
-#   Admin.enable_plugin(runner, "writer", "operator_file_sink",
-#     opts: %{"path" => "echo-out.txt"}
-#   )
-#
-# {:ok, _} = Admin.bind_plugin(runner, "writer", "my_echo", hooks: [["on_output", %{}]])
+# application.ex: the echo application's plugin calls
+alias Flezha.SDK.Admin
+runner = Flezha.SDK.RunnerServer
+{:ok, _} =
+  Admin.enable_plugin(runner, "writer", "operator_file_sink",
+    opts: %{"path" => "echo-out.txt"}
+  )
+
+{:ok, _} = Admin.bind_plugin(runner, "writer", "my_echo", hooks: [["on_output", %{}]])
 ```
 
 [Full file](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/echo/lib/echo/application.ex)
