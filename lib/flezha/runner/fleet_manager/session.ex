@@ -521,31 +521,20 @@ defmodule Flezha.Runner.FleetManager.Session do
   defp handshake_end_level(:timeout), do: :warning
   defp handshake_end_level(_teardown), do: :info
 
-  # On-demand hub creation takes the same cluster gate every hub-creating path
-  # takes: a runner connecting during the boot window must not create a
-  # singleton hub before the node has joined the cluster. A hub that did not
-  # start is refused with the start's own error, since the next step could
-  # only report it as missing; one a concurrent connect started is this
-  # runner's hub too.
+  # A hub that did not start is refused with the start's own error, since the
+  # next step could only report it as missing.
   defp ensure_hub(namespace, runner_id) do
-    if !HubManager.hub_alive?(namespace) do
-      _ = HubManager.await_cluster_gate()
+    case HubManager.ensure_hub(namespace) do
+      :ok ->
+        :ok
 
-      case HubManager.start_hub(namespace) do
-        {:error, {:already_started, _pid}} ->
-          :ok
-
-        {:error, reason} ->
-          refuse(
-            runner_id,
-            namespace,
-            "could not start its hub (#{inspect(reason)})",
-            {:hub_unavailable, namespace, reason}
-          )
-
-        _started ->
-          :ok
-      end
+      {:error, reason} ->
+        refuse(
+          runner_id,
+          namespace,
+          "could not start its hub (#{inspect(reason)})",
+          {:hub_unavailable, namespace, reason}
+        )
     end
   end
 

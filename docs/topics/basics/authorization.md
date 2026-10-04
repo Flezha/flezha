@@ -107,7 +107,11 @@ The positionals are `<principal> <namespace> <role>`. `--ttl` is in seconds,
 86 400 (one day) by default, or `never`. `flz token list` shows the caller's
 namespace (`admin@_system` sees each one). `revoke` takes at least 8
 characters of the id and takes effect on the next call. Each gated verb takes
-`--token <t>` or reads `FLEZHA_TOKEN`.
+`--token <t>` or reads `FLEZHA_TOKEN`. The HTTP API takes the same token as
+`Authorization: Bearer <t>` ([http_api.md](../../plugins/http_api.md)).
+
+A token is checked by the controller that answers it, against that controller's
+own store, so in a cluster it works on the controller it was issued on.
 
 An option is read wherever it is written: `flz operator stop --token t op1`
 and `flz operator stop op1 --token t` are the same request. Two verbs are
@@ -457,10 +461,10 @@ then the default.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `FLEZHA_AUTHZ_ENABLED` | on in a release | `1`, `true`, `yes` or `on` enables it; any other value is the explicit opt-out, warned on every boot |
+| `FLEZHA_AUTHZ_ENABLED` | `false`, on in a release | `1`, `true`, `yes` or `on` enables it; any other value is the explicit opt-out, warned on every boot |
 | `FLEZHA_AUTHZ_DIR` | `app_data/auth` | where the stores live |
 | `FLEZHA_AUTHZ_BOOTSTRAP_TOKEN_PATH` | `<auth_dir>/bootstrap.token` | the one-time token file |
-| `FLEZHA_AUTHZ_TOKEN_EXPIRY_WARNING_MS` | 86 400 000 | how far ahead of its expiry a token emits `:token_expiring` |
+| `FLEZHA_AUTHZ_TOKEN_EXPIRY_WARNING_MS` | 86400000 | how far ahead of its expiry a token emits `:token_expiring` |
 | `:token_ttl_default_seconds` (application env) | 86 400 | lifetime of the admin token a claim mints |
 | `:token_expiry_check_interval_ms` (application env) | 300 000 | how often expiring tokens are looked for |
 | `:namespaces` (application env) | none | per-namespace quota overrides |

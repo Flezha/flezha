@@ -108,19 +108,17 @@ applications step by step.
 Flezha works with AI from both sides: as a tool AI assistants can drive, and as a
 runtime for AI services.
 
-- **For AI assistants.** Every error carries a stable code and a hint for the next
-  step ([`docs/errors.md`](docs/errors.md)), every `flz` command can answer in JSON,
-  the documentation ships an `llms.txt` index, and local mode tries a change in
-  seconds.
+- **For AI assistants.** An assistant can operate a running controller over MCP
+  with a token of its own ([`docs/plugins/http_api.md`](docs/plugins/http_api.md)).
+  Every error carries a stable code and a hint for the next step
+  ([`docs/errors.md`](docs/errors.md)), every `flz` command can answer in JSON, the
+  documentation ships an `llms.txt` index, and local mode tries a change in seconds.
 - **For AI services.** Each conversation runs as its own session with its own
   state; answers stream while they are written, a turn can be taken back, and a
   crash does not end the conversation. Your code calls the model SDK or agent
   framework you already use. [The agentdesk tutorial](docs/tutorials/agentdesk/agentdesk.md)
   builds one.
 
-<!-- TODO: Flezha MCP server, so an AI assistant can inspect and operate a running
-deployment through MCP: list namespaces, operators and runners, read state, send
-messages and calls, read and replay dead letters, and get coded errors back. -->
 <!-- TODO: an AGENTS.md template for projects built on Flezha, pointing an AI
 assistant at the documentation, llms.txt, the error reference and the CLI's JSON
 output. -->

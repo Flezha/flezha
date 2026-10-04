@@ -376,6 +376,48 @@ defmodule Flezha.Service.AdminTest do
     end
   end
 
+  describe "an HTTP caller" do
+    # The context the HTTP surface builds from a verified token.
+    defp http_context(role), do: %{source: :http, principal: "alice", namespace: @ns, role: role}
+
+    # Fails when: a `:given` caller over HTTP reaches a verb kept off the
+    # network, or a stream that holds its request for as long as it runs.
+    test "reaches no operation that is not remote or that streams" do
+      unreachable =
+        Enum.filter(Flezha.Service.catalogue(), &(not &1.remote or &1.stream == true))
+
+      assert Enum.any?(unreachable, &(&1.name == "Controller.stop"))
+
+      for entry <- unreachable do
+        assert {:error, %Flezha.Error{code: "admin.unknown_function"}} =
+                 Admin.call(entry.name, "[]", http_context(:viewer), :given)
+      end
+    end
+
+    test "is offered only the remote operations its role grants" do
+      offered = Admin.catalogue(http_context(:viewer))
+
+      assert offered != []
+      assert Enum.all?(offered, &(&1.remote and &1.stream != true))
+      assert Enum.all?(offered, &(&1.action == :public or Policy.grants?(:viewer, &1.action)))
+      refute Enum.any?(offered, &(&1.name == "Operator.start"))
+      assert Enum.any?(Admin.catalogue(http_context(:app)), &(&1.name == "Operator.start"))
+      assert Admin.catalogue(%{source: :http}) == []
+    end
+
+    test "a start is recorded naming the principal and the source http" do
+      boundary = System.monotonic_time(:microsecond)
+      args = Jason.encode!([@ns, %{id: "o1", factory_id: "f1"}])
+      _ = Admin.call("Operator.start", args, http_context(:app), :given)
+      TestSinks.settle(RingBufferSink)
+
+      assert [record] = RingBufferSink.query(:operator_service, boundary)
+      assert record.metadata.principal == "alice"
+      assert record.metadata.caller_source == :http
+      assert record.metadata.action == :"operator.start"
+    end
+  end
+
   defp denied?(answer),
     do: match?({:error, %Flezha.Error{code: "authz.role_insufficient"}}, answer)
 end

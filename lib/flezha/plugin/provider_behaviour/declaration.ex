@@ -30,6 +30,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
   the operator. It defaults to false and only the providers whose worker calls
   `Flezha.Plugin.Host.inject/4` write it. `shareable: true` declares that one
   running copy can serve several bound operators; it defaults to false.
+  `namespace: name` declares the one namespace the provider may be enabled in.
   """
   defmacro __using__(opts) do
     [
@@ -51,6 +52,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
     feeds = Keyword.get(opts, :feeds, false)
     shareable = Keyword.get(opts, :shareable, false)
     telemetry = Keyword.get(opts, :telemetry, [])
+    namespace = Keyword.get(opts, :namespace)
 
     quote do
       @behaviour unquote(contract)
@@ -63,6 +65,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
       @__provider_feeds__ unquote(feeds)
       @__provider_shareable__ unquote(shareable)
       @__provider_telemetry__ unquote(telemetry)
+      @__provider_namespace__ unquote(namespace)
     end
   end
 
@@ -231,7 +234,8 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
           worker: @__provider_worker__,
           telemetry: @__provider_telemetry__,
           feeds: @__provider_feeds__,
-          shareable: @__provider_shareable__
+          shareable: @__provider_shareable__,
+          namespace: @__provider_namespace__
         }
       end
     end

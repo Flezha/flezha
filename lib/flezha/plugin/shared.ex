@@ -151,7 +151,8 @@ defmodule Flezha.Plugin.Shared do
   A controller plugin's entry with its hooks canonical and checked against the
   catalogue and its provider, and its options against its declaration and its
   provider's preparation, which does no I/O. A controller plugin is never bound
-  to an operator.
+  to an operator, and names a hook unless its provider runs a worker and takes
+  no hook at all.
   """
   @spec checked_entry(Plugin.t()) :: {:ok, Plugin.t()} | {:error, term()}
   def checked_entry(%Plugin{id: name, operator_id: operator_id}) when operator_id != nil,
@@ -160,12 +161,22 @@ defmodule Flezha.Plugin.Shared do
   def checked_entry(%Plugin{provider: provider} = plugin) do
     table = Table.new(__extensions_catalog__())
 
-    with {:ok, plugin} <- Table.canonicalise(table.catalog, plugin),
+    with :ok <- hooked(plugin),
+         {:ok, plugin} <- Table.canonicalise(table.catalog, plugin),
          :ok <- Subscription.validate_subscriptions(table, plugin),
          {:ok, opts} <- Options.normalise_opts(provider, plugin.opts),
          prepared when elem(prepared, 0) == :ok <- provider.init_provider(opts),
          do: {:ok, plugin}
   end
+
+  defp hooked(%Plugin{hooks: [], provider: provider}) do
+    case provider.__provider__() do
+      %{worker: worker, extensions: []} when worker != nil -> :ok
+      _hooks_or_no_worker -> {:error, {:invalid_hook, :empty}}
+    end
+  end
+
+  defp hooked(%Plugin{}), do: :ok
 
   @doc """
   Run the copy of the controller plugin `entry` on this controller for its

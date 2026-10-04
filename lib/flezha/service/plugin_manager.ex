@@ -59,9 +59,24 @@ defmodule Flezha.Service.PluginManager do
     plugin = %Plugin{plugin | id: name, namespace: namespace}
 
     with {:ok, entry} <- entry_of(plugin),
+         :ok <- hub_for(plugin),
          {:ok, enabled} <-
            on_hub_node(namespace, :declare_entry, [entry], :registry_unavailable) do
       bind_after_enable(plugin, enabled, channel)
+    end
+  end
+
+  # A provider bound to one namespace may be bound to one no runner serves
+  # (`_system`, which no runner can join), whose hub is reclaimed as vacant
+  # once nothing is declared in it: this node starts the hub its entry is
+  # written to. Every other enable needs a hub its runners brought up.
+  defp hub_for(%Plugin{provider: provider, namespace: namespace}) do
+    with %{namespace: ^namespace} <- provider.__provider__(),
+         [] <- Directory.hub_nodes(namespace),
+         {:error, _reason} <- HubManager.ensure_hub(namespace) do
+      {:error, :registry_unavailable}
+    else
+      _hub -> :ok
     end
   end
 
@@ -87,10 +102,21 @@ defmodule Flezha.Service.PluginManager do
   defp entry_of(%Plugin{provider: provider, opts: opts} = plugin) do
     plugin = %Plugin{plugin | opts: opts || %{}}
 
-    with {:ok, entry} <- checked_entry(plugin, Plugin.controller?(plugin)),
+    with :ok <- in_namespace(plugin),
+         {:ok, entry} <- checked_entry(plugin, Plugin.controller?(plugin)),
          do: {:ok, Plugin.strip_transient(entry)}
   rescue
     UndefinedFunctionError -> {:error, not_loaded(provider)}
+  end
+
+  defp in_namespace(%Plugin{provider: provider, namespace: namespace}) do
+    case provider.__provider__() do
+      %{namespace: only, name: name} when only not in [nil, namespace] ->
+        {:error, {:plugin_namespace_refused, name, only}}
+
+      _any ->
+        :ok
+    end
   end
 
   defp checked_entry(plugin, true), do: Shared.checked_entry(plugin)

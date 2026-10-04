@@ -13,6 +13,7 @@ defmodule Flezha.Service do
   """
 
   alias Flezha.AuthZ.Verbs
+  alias Flezha.Observability.Signal
 
   @modules [
     Flezha.Service.AuditLog,
@@ -37,7 +38,8 @@ defmodule Flezha.Service do
           args: [arg()],
           doc: String.t() | nil,
           stream: boolean(),
-          remote: boolean()
+          remote: boolean(),
+          audited: boolean()
         }
 
   @doc "The modules of the published consumer surface."
@@ -70,6 +72,34 @@ defmodule Flezha.Service do
     end
   end
 
+  @doc """
+  `entry` in the catalogue's JSON form: what `flz` embeds and what a remote
+  surface lists.
+  """
+  @spec describe(entry()) :: Jason.OrderedObject.t()
+  def describe(entry) do
+    Jason.OrderedObject.new(
+      name: entry.name,
+      doc: entry.doc,
+      action: Atom.to_string(entry.action),
+      remote: entry.remote,
+      stream: entry.stream,
+      args: Enum.map(entry.args, &describe_argument/1)
+    )
+  end
+
+  defp describe_argument({name, row}) do
+    Jason.OrderedObject.new(
+      [name: Atom.to_string(name), type: Atom.to_string(row[:type]), required: row[:required]] ++
+        for(
+          key <- [:default, :values, :min, :max],
+          Keyword.has_key?(row, key),
+          do: {key, Signal.metadata_json(row[key])}
+        ) ++
+        [doc: row[:doc]]
+    )
+  end
+
   # A function with defaulted arguments binds once per arity; it is one
   # operation, described by its longest form.
   defp entries(module) do
@@ -88,7 +118,8 @@ defmodule Flezha.Service do
         args: Enum.map(described[:args] || [], &required/1),
         doc: described[:doc],
         stream: described[:stream],
-        remote: row.remote
+        remote: row.remote,
+        audited: row.audit != :none
       }
     end)
   end

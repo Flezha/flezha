@@ -85,8 +85,11 @@ In a plugin spec (`--plugins` at an operator's start) a hook is a name, a
 A controller plugin is bound to no operator. It runs on every controller that holds its
 namespace and has its provider, from its enable until it is disabled, and it never stops
 for want of operators; with `--single` it runs one copy in the whole cluster, moved like a
-`single` operator plugin. It is told what happens in its own namespace, and only there,
-through five hooks:
+`single` operator plugin. A provider may take no hook at all and run only its worker,
+as the [HTTP API](../../plugins/http_api.md) does; it is enabled with none. A provider
+may also be bound to one namespace (`http_api` to `_system`), and an enable in any other
+is refused (`plugin.namespace_refused`). It is told what happens in its own namespace,
+and only there, through five hooks:
 
 | Hook | When | Its own fields |
 | --- | --- | --- |

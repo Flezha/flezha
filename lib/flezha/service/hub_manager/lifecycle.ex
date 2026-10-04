@@ -48,6 +48,27 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   def await_cluster_gate(), do: Orchestrator.await_cluster_ready()
 
   @doc """
+  Start `namespace`'s hub on this node unless one is alive here, behind the
+  cluster gate every hub-creating path takes: a hub created during the boot
+  window must not be a singleton before the node has joined the cluster. One a
+  concurrent caller started counts as started.
+  """
+  @spec ensure_hub(binary()) :: :ok | {:error, term()}
+  def ensure_hub(namespace) do
+    if Rows.hub_alive?(namespace) do
+      :ok
+    else
+      _ = await_cluster_gate()
+
+      case HubManager.start_hub(namespace) do
+        {:error, {:already_started, _pid}} -> :ok
+        {:error, reason} -> {:error, reason}
+        _started -> :ok
+      end
+    end
+  end
+
+  @doc """
   One attempt at starting a hub, for the owners that keep retrying one. `:ok`
   once it is up; on any other answer `@start_failed` is emitted naming the
   target and the reason, the failure is logged, and `:error` comes back.

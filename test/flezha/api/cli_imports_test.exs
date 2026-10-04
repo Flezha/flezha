@@ -12,7 +12,10 @@ defmodule Flezha.Api.CliImportsTest do
   # what a caller context is built from: a verified token, and the node's own
   # bounds for how long the CLI waits on a caller.
   @allowed_modules [Flezha.Service.Admin, Flezha.Service, Flezha.Error]
-  @allowed_calls [{Flezha.AuthZ.TokenStore, :verify, 1}, {Flezha.Config.Durations, :get, 1}]
+  @allowed_calls [
+    {Flezha.Service.CallerContext, :from_token, 2},
+    {Flezha.Config.Durations, :get, 1}
+  ]
 
   # Encoding the JSON a renderer prints is part of rendering.
   @allowed_apps [:elixir, :stdlib, :kernel, :erts, :jason]

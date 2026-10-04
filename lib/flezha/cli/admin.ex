@@ -21,9 +21,10 @@ defmodule Flezha.Service.Admin do
 
   `{:proven, namespace}` is a runner connection: the namespace slot the
   operation's row declares is filled from the connection, so the caller has no
-  slot to write one into, and an operation whose row is not `remote`, or one
-  that streams, is not reachable. `:given` is a caller whose namespace is an ordinary argument,
-  judged by the row's scope.
+  slot to write one into. `:given` is a caller whose namespace is an ordinary
+  argument, judged by the row's scope. An operation whose row is not `remote`,
+  or one that streams, is not reachable by a caller over the network
+  (`Flezha.Service.CallerContext.networked?/1`).
 
   ## The wire form
 
@@ -42,6 +43,7 @@ defmodule Flezha.Service.Admin do
   code.
   """
 
+  alias Flezha.AuthZ.Policy
   alias Flezha.Observability.Signal
   alias Flezha.Plugin.ProviderBehaviour.Options
   alias Flezha.Service.CallerContext
@@ -56,7 +58,7 @@ defmodule Flezha.Service.Admin do
   @spec run(String.t(), String.t() | [term()], CallerContext.t(), placement()) ::
           {:ok, term()} | {:error, Flezha.Error.t()}
   def run(name, args, caller_context, placement) when is_binary(name) do
-    with {:ok, entry} <- resolve(name, placement),
+    with {:ok, entry} <- resolve(name, caller_context),
          {:ok, written} <- decode_args(args),
          {:ok, positional} <- positional(entry, written, placement) do
       apply_entry(entry, positional ++ [caller_context])
@@ -94,25 +96,43 @@ defmodule Flezha.Service.Admin do
   defp answer({:ok, value, more}), do: {:ok, [value, more]}
   defp answer(other), do: {:ok, other}
 
+  @doc """
+  The operations `caller_context` reaches through `call/4` and whose action
+  its role grants, for a surface that lists them. The namespace is still
+  judged at each call.
+  """
+  @spec catalogue(CallerContext.t()) :: [Flezha.Service.entry()]
+  def catalogue(%{role: role} = caller_context) when role != nil do
+    for entry <- Flezha.Service.catalogue(),
+        reachable?(entry, caller_context),
+        entry.action == :public or Policy.grants?(role, entry.action),
+        do: entry
+  end
+
+  def catalogue(_caller_context), do: []
+
   # ---------- resolving a name ----------
 
-  defp resolve(name, placement) do
+  defp resolve(name, caller_context) do
     case Flezha.Service.lookup(name) do
-      {:ok, %{remote: false}} when elem(placement, 0) == :proven ->
-        refused("admin.unknown_function", function: name)
-
-      # A runner connection gets one reply per request: a stream would hold
-      # its task, and whatever it attached, for as long as the stream runs.
-      {:ok, %{stream: true}} when elem(placement, 0) == :proven ->
-        refused("admin.unknown_function", function: name)
-
       {:ok, entry} ->
-        {:ok, entry}
+        if reachable?(entry, caller_context),
+          do: {:ok, entry},
+          else: refused("admin.unknown_function", function: name)
 
       :error ->
         refused("admin.unknown_function", function: name)
     end
   end
+
+  # An operation that is not `remote` stays off the network. Nor does a
+  # stream reach it: a networked caller gets one reply per request, and a
+  # stream would hold its task, and whatever it attached, for as long as it
+  # runs.
+  defp reachable?(%{remote: true, stream: stream}, _caller_context) when stream != true,
+    do: true
+
+  defp reachable?(_entry, caller_context), do: not CallerContext.networked?(caller_context)
 
   # ---------- arguments ----------
 

@@ -400,7 +400,7 @@ its child about two seconds later, whatever the timeouts say.
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED` | `true` | `1`, `true`, `yes` or `on` (any case) is true; anything else turns graceful shutdown off |
-| `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` | 60 000 | bounds the whole sequence |
+| `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` | 60000 | bounds the whole sequence |
 
 **Operators that defer their move.** When any move is planned (a node joining,
 a rebind, a drain), each operator is asked whether it may move now, and

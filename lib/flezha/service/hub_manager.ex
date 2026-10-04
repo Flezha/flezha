@@ -25,6 +25,7 @@ defmodule Flezha.Service.HubManager do
   defdelegate attempt_start(arg1, arg2), to: Lifecycle
   defdelegate auto_recovery_config(), to: Lifecycle
   defdelegate await_cluster_gate(), to: Lifecycle
+  defdelegate ensure_hub(arg1), to: Lifecycle
   defdelegate consent_settings(), to: Lifecycle
   defdelegate cspec_partition(arg1), to: Rows
   defdelegate declared_operators(arg1, arg2 \\ []), to: Rows

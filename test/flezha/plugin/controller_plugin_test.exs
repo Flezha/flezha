@@ -35,6 +35,35 @@ defmodule FlezhaTest.HookStartOnly do
   def on_operator_started(_event, _opts), do: :ok
 end
 
+defmodule FlezhaTest.WorkerOnly do
+  @moduledoc false
+  # A controller plugin whose provider runs a worker and defines no hook; the
+  # worker tells `recv_pid` it runs.
+  use GenServer
+
+  use Flezha.Plugin.ProviderBehaviour,
+    type: :controller,
+    options: [recv_pid: [type: :pid, required: true, doc: "told when the worker runs"]],
+    worker: [module: __MODULE__, restart: :transient]
+
+  def start_link(%{name: name} = opts), do: GenServer.start_link(__MODULE__, opts, name: name)
+
+  @impl GenServer
+  def init(opts) do
+    send(opts.recv_pid, {:worker_up, self()})
+    {:ok, nil}
+  end
+end
+
+defmodule FlezhaTest.VacantOnly do
+  @moduledoc false
+  use Flezha.Plugin.ProviderBehaviour,
+    type: :controller,
+    namespace: "controller_plugin_vacant",
+    options: [recv_pid: [type: :pid, required: true, doc: "told when the worker runs"]],
+    worker: [module: FlezhaTest.WorkerOnly, restart: :transient]
+end
+
 defmodule FlezhaTest.Plugin.ControllerPluginTest do
   @moduledoc """
   A controller plugin on one controller: enabled with its hooks and no
@@ -55,13 +84,17 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
   alias Flezha.Observability.Registry
   alias Flezha.Observability.RingBufferSink
   alias Flezha.Plugin
+  alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Runner.FleetManager
+  alias Flezha.Service.HubManager
   alias Flezha.Service.OperatorManager
   alias Flezha.Service.PluginManager
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Fixtures.OperatorFixture
   alias FlezhaTest.HookRecorder
   alias FlezhaTest.HookStartOnly
+  alias FlezhaTest.VacantOnly
+  alias FlezhaTest.WorkerOnly
   alias FlezhaTest.SickProvider
   alias FlezhaTest.Helper.HookCopy
   alias FlezhaTest.Helper.NodeTestHelper
@@ -71,6 +104,8 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
 
   setup_all do
     TestHelpers.reset_all_cells()
+    start_supervised!({WorkerSup, name: WorkerSup.family(WorkerOnly)}, id: :worker_only)
+    start_supervised!({WorkerSup, name: WorkerSup.family(VacantOnly)}, id: :vacant_only)
     runner_id = NodeTestHelper.start_runner(@namespace)
 
     on_exit(fn ->
@@ -86,7 +121,11 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
 
     on_exit(fn ->
       OperatorManager.stop_all_operators(@namespace)
-      Enum.each(["notify", "partial", "ill"], &PluginManager.disable_plugin(@namespace, &1))
+
+      Enum.each(
+        ["notify", "partial", "ill", "worker"],
+        &PluginManager.disable_plugin(@namespace, &1)
+      )
     end)
 
     :ok
@@ -133,6 +172,86 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
       assert error.code == "plugin.unknown_hook"
       assert error.message =~ "on_operator_started"
       refute error.message =~ "on_input"
+    end
+
+    test "a provider with a worker is enabled with no hook and its worker runs until disabled" do
+      assert {:ok, _} =
+               PluginManager.enable_plugin("worker", %Plugin{
+                 id: "worker",
+                 provider: WorkerOnly,
+                 namespace: @namespace,
+                 opts: %{recv_pid: self()}
+               })
+
+      assert_receive {:worker_up, worker}, 5_000
+      ref = Process.monitor(worker)
+      {:ok, _} = PluginManager.disable_plugin(@namespace, "worker")
+      assert_receive {:DOWN, ^ref, :process, ^worker, _}, 5_000
+    end
+
+    test "a provider bound to a namespace no runner serves gets its hub from the enable" do
+      vacant = "controller_plugin_vacant"
+
+      on_exit(fn ->
+        PluginManager.disable_plugin(vacant, "worker")
+        HubManager.stop_hub(vacant)
+      end)
+
+      enable = fn provider ->
+        PluginManager.enable_plugin("worker", %Plugin{
+          id: "worker",
+          provider: provider,
+          namespace: vacant,
+          opts: %{recv_pid: self()}
+        })
+      end
+
+      assert Directory.hub_nodes(vacant) == []
+      assert {:error, :registry_unavailable} = enable.(WorkerOnly)
+      assert Directory.hub_nodes(vacant) == []
+
+      assert {:ok, _} = enable.(VacantOnly)
+      assert_receive {:worker_up, _worker}, 5_000
+      assert Directory.hub_nodes(vacant) == [node()]
+    end
+
+    test "a provider with no worker and no hook is plugin.hooks_missing" do
+      assert {:error, reason} =
+               PluginManager.enable_plugin("notify", %Plugin{
+                 id: "notify",
+                 provider: HookRecorder,
+                 namespace: @namespace,
+                 opts: %{recv_pid: self()}
+               })
+
+      assert code(reason).code == "plugin.hooks_missing"
+    end
+
+    test "a provider with a worker that takes hooks still needs one" do
+      assert {:error, reason} =
+               PluginManager.enable_plugin("notify", %Plugin{
+                 id: "notify",
+                 provider: Flezha.Plugin.Provider.HookWebhook,
+                 namespace: @namespace,
+                 opts: %{url: "https://hooks.test/x"}
+               })
+
+      assert code(reason).code == "plugin.hooks_missing"
+    end
+
+    test "a provider bound to one namespace is refused elsewhere, naming it" do
+      assert {:error, reason} =
+               PluginManager.enable_plugin("worker", %Plugin{
+                 id: "worker",
+                 provider: VacantOnly,
+                 namespace: @namespace,
+                 opts: %{recv_pid: self()}
+               })
+
+      error = code(reason)
+      assert error.code == "plugin.namespace_refused"
+      assert error.details["namespace"] == "controller_plugin_vacant"
+      assert Directory.plugin_hosts(@namespace, "worker") == []
     end
 
     test "a hook its provider does not define is plugin.hook_not_implemented" do

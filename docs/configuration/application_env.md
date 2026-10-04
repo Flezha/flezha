@@ -113,7 +113,7 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:control_liveness_window_ms` / `:control_liveness_interval_ms` | `45_000` / `15_000` | `lib/flezha/runner/control_channel.ex` |
 | `:io_stream_liveness_interval_ms` / `:io_stream_liveness_threshold_ms` | `10_000` / `30_000` | `lib/flezha/runner/stream_channel.ex` |
 | `:graceful_shutdown_enabled` | `true` | `lib/flezha/application.ex`, `lib/flezha/shutdown/coordinator.ex`, `lib/flezha/shutdown/signal_handler.ex` |
-| `:graceful_shutdown_timeout_ms` | `60_000` | `lib/flezha/shutdown/coordinator.ex`, `lib/flezha/cli/cli_manager.ex` |
+| `:graceful_shutdown_timeout_ms` | `60_000` | `lib/flezha/shutdown/coordinator.ex`, `lib/flezha/cli/controller_service.ex` |
 | `:convergence_health_enabled` | `true` | `lib/flezha/application.ex` |
 | `:convergence_tick_ms` | `5_000` | `lib/flezha/convergence/loop.ex`, `lib/flezha/healthz/server.ex` |
 | `:convergence_output_stall_grace_ms` | `60_000` | `lib/flezha/convergence/loop.ex` |
@@ -169,7 +169,7 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:file_plugin_root` | `"app_data/files"` | `lib/flezha/plugin/provider/file.ex`, which resolves every file plugin path inside it and creates only the default folder |
 | `:dlq[:dir]` | `"app_data/dlq"` | `lib/flezha/dlq/store.ex` |
 | `:dlq[:retention_seconds]` / `[:max_total_bytes]` / `[:retention_check_interval_ms]` | `30 * 86_400` / `4_294_967_296` / `3_600_000` | `lib/flezha/dlq/store.ex` |
-| `:dlq[:replay_grace_ms]` | `5_000` | `lib/flezha/cli/cli_manager.ex` — how long `flz dlq replay` waits for a re-park |
+| `:dlq[:replay_grace_ms]` | `5_000` | `lib/flezha/dlq/dlq.ex` — how long `flz dlq replay` waits for a re-park |
 | `:schedules[:dir]` / `[:misfire_grace_ms]` | `"app_data/schedules"` / `120_000` | `lib/flezha/schedule/store.ex`, `lib/flezha/schedule/job.ex` |
 | `:schedules[:application_managed]` | `true` (`false` in test) | `lib/flezha/application.ex` |
 

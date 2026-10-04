@@ -85,6 +85,7 @@ about operator plugins.
 | [Postgres poll](../../plugins/postgres_poll.md) | `operator_postgres_poll` | a table as an input, read by polling | operator | built in | no | refused |
 | [Webhook](../../plugins/hook_webhook.md) | `hook_webhook` | hook events to an HTTP endpoint | controller | built in | no | not applicable |
 | [HTTP server](../../plugins/http_server.md) | `http_server` | an operator behind HTTP | operator | package `flezha_http` | no | refused |
+| [HTTP API](../../plugins/http_api.md) | `http_api` | the controller's operations over HTTP, as MCP tools and plain JSON | controller | package `flezha_http` | no | not applicable |
 | [Kafka producer](../../plugins/kafka_producer.md) | `kafka_producer` | a Kafka topic as an output | operator | package `flezha_kafka` | yes | allowed |
 | [Kafka consumer](../../plugins/kafka_consumer.md) | `kafka_consumer` | Kafka topics as an input, read by a consumer group | operator | package `flezha_kafka` | no | refused |
 | [RabbitMQ](../../plugins/rabbitmq.md) | `rabbitmq_consumer`, `rabbitmq_producer` | a queue as an input, an exchange as an output | operator | package `flezha_rabbitmq` | consumer no, producer yes | consumer refused, producer allowed |

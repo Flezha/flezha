@@ -38,6 +38,8 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     reader with one offset or a server on one port cannot. `telemetry` names the
     verbs a provider emits beyond the shared vocabulary, each a metric or an
     event, which the telemetry bridge exports under the provider's name.
+    `namespace` is the one namespace the provider may be enabled in, or nil for
+    any.
     """
 
     @type worker :: %{
@@ -56,7 +58,8 @@ defmodule Flezha.Plugin.ProviderBehaviour do
             worker: worker() | nil,
             telemetry: [{atom(), :metric | :event}],
             feeds: boolean(),
-            shareable: boolean()
+            shareable: boolean(),
+            namespace: binary() | nil
           }
 
     defstruct [
@@ -64,6 +67,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
       :name,
       :type,
       :worker,
+      :namespace,
       options: [],
       extensions: [],
       own: [],

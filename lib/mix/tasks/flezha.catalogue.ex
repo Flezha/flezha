@@ -13,8 +13,6 @@ defmodule Mix.Tasks.Flezha.Catalogue do
 
   use Mix.Task
 
-  alias Flezha.Observability.Signal
-
   @path "cli/catalogue.json"
 
   @impl Mix.Task
@@ -31,30 +29,7 @@ defmodule Mix.Tasks.Flezha.Catalogue do
   @doc "The file, as the compiled declarations describe the catalogue."
   @spec render() :: String.t()
   def render do
-    operations = Enum.map(Flezha.Service.catalogue(), &operation/1)
+    operations = Enum.map(Flezha.Service.catalogue(), &Flezha.Service.describe/1)
     Jason.encode!(Jason.OrderedObject.new(operations: operations), pretty: true) <> "\n"
-  end
-
-  defp operation(entry) do
-    Jason.OrderedObject.new(
-      name: entry.name,
-      doc: entry.doc,
-      action: Atom.to_string(entry.action),
-      remote: entry.remote,
-      stream: entry.stream,
-      args: Enum.map(entry.args, &argument/1)
-    )
-  end
-
-  defp argument({name, row}) do
-    Jason.OrderedObject.new(
-      [name: Atom.to_string(name), type: Atom.to_string(row[:type]), required: row[:required]] ++
-        for(
-          key <- [:default, :values, :min, :max],
-          Keyword.has_key?(row, key),
-          do: {key, Signal.metadata_json(row[key])}
-        ) ++
-        [doc: row[:doc]]
-    )
   end
 end

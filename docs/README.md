@@ -153,6 +153,7 @@ type and what you should see; the topic pages say how each piece works.
 | [`operator_forward.md`](plugins/operator_forward.md) | One operator's output into another's input |
 | [`hook_webhook.md`](plugins/hook_webhook.md) | What happens in a namespace, POSTed as JSON to a URL: the first controller plugin |
 | [`http_server.md`](plugins/http_server.md) | An operator behind HTTP, and another operator's events as server-sent events (the `flezha_http` package) |
+| [`http_api.md`](plugins/http_api.md) | The controller's operations over HTTP, as MCP tools for AI assistants and as plain JSON, for a token's principal (the `flezha_http` package) |
 
 ## operations
 

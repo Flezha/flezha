@@ -66,6 +66,7 @@ ignored, so a typo fails loudly. JSON values and quoting are covered in
 | `rabbitmq_producer` | package `flezha_rabbitmq` | Publishes an operator's outputs to a RabbitMQ exchange. | [rabbitmq](../plugins/rabbitmq.md#options) |
 | `postgres_cdc` | package `flezha_postgres_cdc` | Delivers every row change of Postgres tables, read from the write-ahead log. | [postgres_cdc](../plugins/postgres_cdc.md#options) |
 | `http_server` | package `flezha_http` | Puts an operator behind HTTP and streams outputs as server-sent events. | [http_server](../plugins/http_server.md#options) |
+| `http_api` | package `flezha_http` | Serves the controller's operations over HTTP, as MCP tools and plain JSON; a controller plugin. | [http_api](../plugins/http_api.md#options) |
 
 The release also carries providers Flezha uses for its own mechanisms and tests.
 They have no page; `flz plugin help <provider>` lists their options.

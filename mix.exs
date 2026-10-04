@@ -299,6 +299,7 @@ defmodule Flezha.MixProject do
         "docs/plugins/postgres_poll.md",
         "docs/plugins/hook_webhook.md",
         "docs/plugins/http_server.md",
+        "docs/plugins/http_api.md",
         "docs/plugins/kafka_consumer.md",
         "docs/plugins/kafka_producer.md",
         "docs/plugins/rabbitmq.md",

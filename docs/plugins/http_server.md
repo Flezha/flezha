@@ -66,7 +66,7 @@ $ flz plugin list --installed
 ```
 
 ```output
-flezha_http 0.1.0  loaded  providers: http_server
+flezha_http 0.1.0  loaded  providers: http_api, http_server
 ```
 
 The package loads at boot. Once it is loaded, the plugin can also be declared at start

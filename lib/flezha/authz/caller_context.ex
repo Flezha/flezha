@@ -9,9 +9,30 @@ defmodule Flezha.Service.CallerContext do
   and applied by `Flezha.AuthZ.Verb`.
   """
 
-  @valid_sources [:cli, :ui, :sdk, :internal]
+  alias Flezha.AuthZ.TokenStore
+
+  @valid_sources [:cli, :ui, :sdk, :http, :internal]
+
+  # The sources that reach the controller over the network: a runner
+  # connection and HTTP. The others run on the controller's own distribution.
+  @networked_sources [:sdk, :http]
 
   @type t :: Flezha.AuthZ.caller_context()
+
+  @doc """
+  The context of a caller from `source` whose identity is the verified `token`:
+  its principal, namespace and role, and nothing the caller wrote itself.
+  """
+  @spec from_token(atom(), binary()) :: {:ok, t()} | {:error, Flezha.Error.t()}
+  def from_token(source, token) do
+    with {:ok, %{principal: principal, namespace: namespace, role: role}} <-
+           TokenStore.verify(token),
+         do: {:ok, %{source: source, principal: principal, namespace: namespace, role: role}}
+  end
+
+  @doc "Whether the caller reaches the controller over the network rather than its own node."
+  @spec networked?(t()) :: boolean()
+  def networked?(caller_context), do: Map.get(caller_context, :source) in @networked_sources
 
   @spec validate(t()) :: :ok | {:error, :invalid_caller_context}
   def validate(%{source: src}) when src in @valid_sources, do: :ok

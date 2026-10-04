@@ -7,8 +7,8 @@ defmodule Flezha.Service.Cli.Context do
   failure reaches the caller through `render!/2`, in `Flezha.Error`'s words.
   """
 
-  alias Flezha.AuthZ.TokenStore
   alias Flezha.Config.Durations
+  alias Flezha.Service.CallerContext
 
   def label_or(nil, default), do: default
   def label_or(value, _default), do: to_string(value)
@@ -36,15 +36,9 @@ defmodule Flezha.Service.Cli.Context do
   end
 
   defp bind_token_identity(base, token) do
-    case TokenStore.verify(token) do
-      {:ok, %{principal: principal, namespace: namespace, role: role}} ->
-        base
-        |> Map.put(:principal, principal)
-        |> Map.put(:namespace, namespace)
-        |> Map.put(:role, role)
-
-      {:error, _reason} ->
-        base
+    case CallerContext.from_token(:cli, token) do
+      {:ok, identity} -> Map.merge(base, identity)
+      {:error, _reason} -> base
     end
   end
 

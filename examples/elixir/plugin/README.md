@@ -17,5 +17,5 @@ MIX_ENV=prod mix flezha.plugin.package
 ```
 
 The archive is written to `_build/flezha_example_plugin-0.1.0.fpz`. The guide
-`docs/topics/advanced/writing_a_plugin.md` installs a package by rebuilding a controller's
-image, and `docs/topics/advanced/installing_plugins.md` covers the other ways.
+`docs/topics/plugins/writing_a_plugin.md` installs a package by rebuilding a controller's
+image, and `docs/topics/plugins/installing_plugins.md` covers the other ways.

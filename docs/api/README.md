@@ -21,9 +21,10 @@ Both are read-only. `consumers/published.txt` names them.
 
 Every published function binds one row of `Flezha.AuthZ.Verbs`, and
 `Flezha.AuthZ.Verb.run/5` applies it in one order: identity, scope, policy, act,
-audit. No surface binds a row of its own: `flz` and a runner's `AdminRequest`
-reach the function through one door, `Flezha.Service.Admin`, so one request is
-judged once, by the function's own row. The row names the action the
+audit. No surface binds a row of its own: `flz`, a runner's `AdminRequest` and
+the HTTP API ([`docs/plugins/http_api.md`](../plugins/http_api.md)) reach the
+function through one door, `Flezha.Service.Admin`, so one request is judged once,
+by the function's own row. The row names the action the
 policy judges, the rule that resolves its namespace, and the audit it leaves;
 `docs/topics/basics/authorization.md` carries the whole table. A published function
 that took a caller context and bound no row would fail
@@ -41,7 +42,8 @@ is judged in.
 Where a function binds its row it also describes itself: its arguments before the
 context (`args:`, in the vocabulary plugin options use), whether it streams
 (`stream: true`), and the first sentence of its `@doc`. Its row says whether it may
-be reached over the network (`remote`). `Flezha.Service.catalogue/0` builds the
+be reached over the network (`remote`): a runner connection and the HTTP API reach
+neither an operation that is not `remote` nor one that streams. `Flezha.Service.catalogue/0` builds the
 catalogue from those declarations; the door resolves an operation's name
 (`"Dlq.list"`) through it and converts the JSON arguments by its rows.
 `mix flezha.catalogue` writes the copy `flz` embeds, `cli/catalogue.json`, which

@@ -13,6 +13,11 @@ or `plugin.hook_not_implemented`. `flz plugin bind` of a controller plugin, and 
 one naming `--operator_id`, SHALL be refused with `plugin.not_bindable`. `flz plugin update`
 SHALL be able to change its hooks.
 
+A controller plugin whose provider runs a worker and implements no controller hook MAY be
+enabled with no hook; any other controller plugin SHALL still be refused with
+`plugin.hooks_missing` when it names no hook. A provider MAY declare the one namespace it may be enabled in, and an enable in any
+other namespace SHALL be refused with a code naming the namespace.
+
 #### Scenario: Enabling a controller plugin
 
 - **WHEN** `flz plugin enable notify hook_webhook --Xurl=https://hooks.test/x --hook on_operator_failed --namespace n` runs
@@ -30,6 +35,18 @@ SHALL be able to change its hooks.
 - **GIVEN** `notify` enabled as a controller plugin in `n`
 - **WHEN** `flz plugin bind notify --operator_id a --namespace n` runs
 - **THEN** it SHALL be refused with `plugin.not_bindable`
+
+#### Scenario: A worker-only controller plugin
+
+- **WHEN** a controller plugin whose provider declares a worker and implements no controller
+  hook is enabled in its namespace with no `--hook`
+- **THEN** the enable SHALL succeed and the worker SHALL run on every controller holding the
+  namespace
+
+#### Scenario: A provider bound to one namespace
+
+- **WHEN** a provider that declares `_system` as its namespace is enabled in `n`
+- **THEN** the enable SHALL be refused with a code naming `_system`
 
 ### Requirement: A controller plugin SHALL run on every controller of its namespace, or once
 
