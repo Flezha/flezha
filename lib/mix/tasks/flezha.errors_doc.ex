@@ -111,11 +111,11 @@ defmodule Mix.Tasks.Flezha.ErrorsDoc do
     ]
   end
 
-  # A table cell: a pipe would end it, and `<key>` would read as HTML.
+  # A table cell: a pipe would end it, and `<key>` would read as HTML. ExDoc
+  # prints an entity such as `&lt;` as text, so a placeholder goes in a code span.
   defp escape(text) do
     text
     |> String.replace("|", "\\|")
-    |> String.replace("<", "&lt;")
-    |> String.replace(">", "&gt;")
+    |> String.replace(~r/[^\s,']*<[^>\s]+>[^\s,']*/, "`\\0`")
   end
 end

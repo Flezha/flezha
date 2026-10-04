@@ -23,10 +23,10 @@ and health, then telemetry and limits.
 <!-- provider-options:begin file_source -->
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `path` | string | &mdash; | yes | The file to read: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, an object under its prefix |
-| `channel` | names | &mdash; | no | The channel this plugin is attached to: the entry channel every line is injected on, and one name. Required, unless `channel_in` names it |
-| `channel_in` | names | &mdash; | no | Entry channel every line is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
-| `plugin_id` | string | &mdash; | no | Plugin id; defaults to the id the plugin is enabled under |
+| `path` | string | none | yes | The file to read: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, an object under its prefix |
+| `channel` | names | none | no | The channel this plugin is attached to: the entry channel every line is injected on, and one name. Required, unless `channel_in` names it |
+| `channel_in` | names | none | no | Entry channel every line is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
+| `plugin_id` | string | none | no | Plugin id; defaults to the id the plugin is enabled under |
 | `start_at` | enum | `"beginning"` | no | Where a reader with no committed offset starts: byte 0, or the size of the file when it is first opened |
 | `poll_interval_ms` | int | `1000` | no | Milliseconds between looks for new bytes |
 | `max_line_bytes` | int | `1048576` | no | Longest line accepted; a longer one stops the reader at the offset it starts at |
@@ -41,9 +41,9 @@ and health, then telemetry and limits.
 <!-- provider-options:begin file_sink -->
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `path` | string | &mdash; | yes | The file to append to, or under `commit: rename` the directory parts are committed into: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, the key prefix parts are committed under |
-| `channel_out` | names | &mdash; | no | Write only records whose metadata channel matches. Several names, comma-separated, write them all |
-| `plugin_id` | string | &mdash; | no | Plugin id; defaults to the id the plugin is enabled under |
+| `path` | string | none | yes | The file to append to, or under `commit: rename` the directory parts are committed into: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, the key prefix parts are committed under |
+| `channel_out` | names | none | no | Write only records whose metadata channel matches. Several names, comma-separated, write them all |
+| `plugin_id` | string | none | no | Plugin id; defaults to the id the plugin is enabled under |
 | `commit` | enum | `"append"` | no | The file layout. `append` grows one file in place, and a batch synced just before a crash is appended again after it; `rename` commits immutable parts into a directory, and writes a record the outbox guarantees once. Under an s3:// root only `rename` |
 | `roll_after_ms` | int | `10000` | no | Under `rename`, the longest a part stays open, and so the longest a guaranteed record waits for its confirmation |
 | `roll_bytes` | int | `67108864` | no | Under `rename`, the size at which a part is committed before `roll_after_ms`. Under an s3:// root the open part is held in memory, and at most 5368709120 |

@@ -19,12 +19,12 @@ receiver, or any service that takes a request per record. It hooks `on_output`, 
 <!-- provider-options:begin -->
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `url` | string | &mdash; | yes | Where each payload is sent: http or https, with a host and no credentials |
+| `url` | string | none | yes | Where each payload is sent: http or https, with a host and no credentials |
 | `method` | enum | `"POST"` | no | `POST` or `PUT` |
 | `headers` | json | `%{}` | no | Request headers, as a JSON object; never logged |
 | `content_type` | string | `"application/octet-stream"` | no | The request's `content-type` |
-| `channel` | names | &mdash; | no | The channel this plugin is attached to: only payloads naming it are sent. Several names, comma-separated, send them all |
-| `channel_out` | names | &mdash; | no | Send only payloads whose metadata channel matches; the explicit spelling |
+| `channel` | names | none | no | The channel this plugin is attached to: only payloads naming it are sent. Several names, comma-separated, send them all |
+| `channel_out` | names | none | no | Send only payloads whose metadata channel matches; the explicit spelling |
 | `timeout_ms` | int | `10000` | no | Budget for one request, connect to last byte |
 | `max_in_flight` | int | `1` | no | Requests outstanding at once, one connection each; above 1 order is not kept |
 | `retries` | int | `5` | no | Retries of a 408, a 429, a 5xx, a timeout or a transport error |

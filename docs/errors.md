@@ -193,7 +193,7 @@ SDK raises or returns its one error type carrying them.
 
 | Code | Class | Exit | Message | Hint |
 |---|---|---|---|---|
-| `dlq.bad_entry_ref` | invalid | 2 | '{entry}' is not an entry reference; write it as &lt;operator&gt;/&lt;tasklet&gt;/&lt;entry-id&gt; | `flz dlq list` |
+| `dlq.bad_entry_ref` | invalid | 2 | '{entry}' is not an entry reference; write it as `<operator>/<tasklet>/<entry-id>` | `flz dlq list` |
 | `dlq.not_found` | not_found | 5 | no parked entry '{entry}' | `flz dlq list` |
 | `dlq.payload_not_replayable` | conflict | 6 | entry '{entry}' carries no payload bytes (an input between tasklets), so it cannot be replayed; show it or drop it | `flz dlq drop {entry}` |
 
@@ -422,7 +422,7 @@ SDK raises or returns its one error type carrying them.
 | `plugin.unknown_hook_option` | invalid | 2 | a {kind} hook has no option '{option}' |  |
 | `plugin.unknown_options` | invalid | 2 | a {provider} plugin has no option {options} | `flz plugin help <provider_id>` |
 | `plugin.unknown_provider` | not_found | 5 | no plugin provider is named '{provider}' | `flz plugin list --installed` |
-| `plugin.unread_options` | invalid | 2 | flz plugin enable does not read {options}; provider settings are written --X&lt;key&gt;=&lt;value&gt;, and hooks --hook=&lt;name&gt; | `flz plugin help <provider>` |
+| `plugin.unread_options` | invalid | 2 | flz plugin enable does not read {options}; provider settings are written `--X<key>=<value>`, and hooks `--hook=<name>` | `flz plugin help <provider>` |
 | `plugin.url_has_credentials` | invalid | 2 | option '{option}' must not embed credentials; put a secret in '{headers_option}' |  |
 | `plugin.url_scheme_unsupported` | invalid | 2 | option '{option}' must be an http or https URL, got {url} |  |
 | `plugin.url_without_host` | invalid | 2 | option '{option}' names {url}, which has no host |  |
@@ -566,7 +566,7 @@ SDK raises or returns its one error type carrying them.
 | `schedule.cron_required` | invalid | 2 | a schedule needs a cron expression |  |
 | `schedule.factory_required` | invalid | 2 | a schedule needs the factory it starts |  |
 | `schedule.init_values_not_object` | invalid | 2 | a schedule's init values must be a JSON object |  |
-| `schedule.invalid_name` | invalid | 2 | schedule name '{schedule}' must match [A-Za-z0-9][A-Za-z0-9_-]* and be at most {max} bytes, so that each firing's '&lt;name&gt;@&lt;slot&gt;' fits an operator id |  |
+| `schedule.invalid_name` | invalid | 2 | schedule name '{schedule}' must match [A-Za-z0-9][A-Za-z0-9_-]* and be at most {max} bytes, so that each firing's '`<name>@<slot>`' fits an operator id |  |
 | `schedule.invalid_timezone` | invalid | 2 | '{timezone}' is not an IANA time zone |  |
 | `schedule.name_required` | invalid | 2 | a schedule needs a name |  |
 | `schedule.not_found` | not_found | 5 | schedule '{schedule}' does not exist | `flz schedule list` |
@@ -593,8 +593,8 @@ SDK raises or returns its one error type carrying them.
 |---|---|---|---|---|
 | `state.apply_failed` | invalid | 2 | the state could not be applied: {reason} |  |
 | `state.apply_not_supported` | unavailable | 7 | this runner does not apply state to a live operator |  |
-| `state.bad_cell_path` | invalid | 2 | '{path}' is not a Cell path; write it as &lt;operator&gt;/&lt;tasklet&gt;/&lt;cell_key&gt; |  |
-| `state.bad_live_path` | invalid | 2 | '{path}' is not a live state path; write it as &lt;operator&gt;/&lt;tasklet&gt;[/&lt;cell_key&gt;] |  |
+| `state.bad_cell_path` | invalid | 2 | '{path}' is not a Cell path; write it as `<operator>/<tasklet>/<cell_key>` |  |
+| `state.bad_live_path` | invalid | 2 | '{path}' is not a live state path; write it as `<operator>/<tasklet>[/<cell_key>]` |  |
 | `state.cell_busy` | unavailable | 7 | Cell '{cell}' is inside an activation older than {seconds}s |  |
 | `state.cell_evicted` | not_found | 5 | Cell '{cell_key}' of tasklet '{tasklet}' was idle-evicted; eviction is destructive, so there is no durable value to serve | `flz state at <operator>/{tasklet}/{cell_key} <seq\|ts>` |
 | `state.cell_key_without_tasklet` | invalid | 2 | a Cell key is unique only within its tasklet, so name the tasklet as well |  |

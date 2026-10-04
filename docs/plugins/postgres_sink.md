@@ -20,14 +20,14 @@ id is `operator_postgres`.
 <!-- provider-options:begin -->
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `database` | string | &mdash; | yes | Database name |
-| `username` | string | &mdash; | yes | Role the plugin connects as |
-| `password` | string | &mdash; | no | Password, redacted once the plugin is prepared |
-| `password_env` | string | &mdash; | no | Environment variable holding the password instead |
+| `database` | string | none | yes | Database name |
+| `username` | string | none | yes | Role the plugin connects as |
+| `password` | string | none | no | Password, redacted once the plugin is prepared |
+| `password_env` | string | none | no | Environment variable holding the password instead |
 | `hostname` | string | `"localhost"` | no | Database host |
 | `port` | int | `5432` | no | TCP port |
 | `ssl` | bool | `false` | no | TLS to the server |
-| `plugin_id` | string | &mdash; | no | Plugin id; defaults to a generated one |
+| `plugin_id` | string | none | no | Plugin id; defaults to a generated one |
 | `pool_size` | int | `2` | no | Connections in the sink's pool |
 | `linger_ms` | int | `25` | no | How long a batch waits to fill |
 | `max_batch` | int | `500` | no | Records in one flush transaction |

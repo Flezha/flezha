@@ -20,16 +20,16 @@ provider id `kafka_consumer`, in the Kafka plugin package beside the producer
 <!-- provider-options:begin -->
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `hosts` | any | &mdash; | yes | `{host, port}` list, or a comma-separated string |
-| `auth` | any | &mdash; | no | SASL configuration, as a `KafkaEx.Auth.Config` or a map |
-| `sasl_password_env` | string | &mdash; | no | Environment variable holding the SASL password, preferred over an inline one |
-| `use_ssl` | bool | &mdash; | no | TLS to the brokers |
-| `ssl_options` | any | &mdash; | no | Erlang `:ssl` options for that connection |
-| `topics` | names | &mdash; | yes | The topics to consume, comma-separated |
-| `group_id` | string | &mdash; | yes | The consumer group |
-| `channel` | names | &mdash; | no | The channel this plugin is attached to: the entry channel every record is injected on, and one name. Required, unless `channel_in` names it |
-| `channel_in` | names | &mdash; | no | Entry channel every record is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
-| `plugin_id` | string | &mdash; | no | Plugin id; defaults to the id it was enabled under |
+| `hosts` | any | none | yes | `{host, port}` list, or a comma-separated string |
+| `auth` | any | none | no | SASL configuration, as a `KafkaEx.Auth.Config` or a map |
+| `sasl_password_env` | string | none | no | Environment variable holding the SASL password, preferred over an inline one |
+| `use_ssl` | bool | none | no | TLS to the brokers |
+| `ssl_options` | any | none | no | Erlang `:ssl` options for that connection |
+| `topics` | names | none | yes | The topics to consume, comma-separated |
+| `group_id` | string | none | yes | The consumer group |
+| `channel` | names | none | no | The channel this plugin is attached to: the entry channel every record is injected on, and one name. Required, unless `channel_in` names it |
+| `channel_in` | names | none | no | Entry channel every record is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
+| `plugin_id` | string | none | no | Plugin id; defaults to the id it was enabled under |
 | `start_at` | enum | `"end"` | no | Where a group with no committed offset starts: the earliest record, or the next one written |
 | `max_bytes` | int | `1048576` | no | Bytes one fetch takes from one partition |
 | `max_wait_ms` | int | `500` | no | How long a fetch waits for records; below the client's 5 s request timeout |

@@ -22,8 +22,8 @@ external endpoint, and the shape to copy for a plugin author who needs a sink li
 <!-- provider-options:begin -->
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `target_operator_id` | string | &mdash; | yes | The operator in this namespace the payload is delivered to |
-| `plugin_id` | string | &mdash; | no | Plugin id; defaults to `<source>-><target>` |
+| `target_operator_id` | string | none | yes | The operator in this namespace the payload is delivered to |
+| `plugin_id` | string | none | no | Plugin id; defaults to `<source>-><target>` |
 | `queue_max` | int | `10000` | no | Records held per target member |
 | `retry_backoff_ms` | int | `250` | no | First delay after a refusal |
 | `retry_max_backoff_ms` | int | `5000` | no | Ceiling for that delay |

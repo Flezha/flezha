@@ -20,19 +20,19 @@ see [postgres_poll.md](postgres_poll.md).
 <!-- provider-options:begin postgres_cdc -->
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `database` | string | &mdash; | yes | Database name |
-| `username` | string | &mdash; | yes | Role the plugin connects as |
-| `password` | string | &mdash; | no | Password, redacted once the plugin is prepared |
-| `password_env` | string | &mdash; | no | Environment variable holding the password instead |
+| `database` | string | none | yes | Database name |
+| `username` | string | none | yes | Role the plugin connects as |
+| `password` | string | none | no | Password, redacted once the plugin is prepared |
+| `password_env` | string | none | no | Environment variable holding the password instead |
 | `hostname` | string | `"localhost"` | no | Database host |
 | `port` | int | `5432` | no | TCP port |
 | `ssl` | bool | `false` | no | TLS to the server |
-| `channel` | names | &mdash; | no | The channel this plugin is attached to: the entry channel every change is injected on, and one name. Required, unless `channel_in` names it |
-| `channel_in` | names | &mdash; | no | Entry channel every change is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
-| `plugin_id` | string | &mdash; | no | Plugin id; defaults to the id it was enabled under |
-| `slot` | string | &mdash; | yes | The replication slot, one per binding: lower-case letters, digits and underscores, at most 58; the first copy reads through a temporary `<slot>_copy` |
-| `publication` | string | &mdash; | yes | The publication to read |
-| `tables` | names | &mdash; | no | With it, the publication is created `FOR TABLE` these, `name` or `schema.name`, when it does not exist |
+| `channel` | names | none | no | The channel this plugin is attached to: the entry channel every change is injected on, and one name. Required, unless `channel_in` names it |
+| `channel_in` | names | none | no | Entry channel every change is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
+| `plugin_id` | string | none | no | Plugin id; defaults to the id it was enabled under |
+| `slot` | string | none | yes | The replication slot, one per binding: lower-case letters, digits and underscores, at most 58; the first copy reads through a temporary `<slot>_copy` |
+| `publication` | string | none | yes | The publication to read |
+| `tables` | names | none | no | With it, the publication is created `FOR TABLE` these, `name` or `schema.name`, when it does not exist |
 | `snapshot` | enum | `"initial"` | no | `initial` copies the published tables before streaming; `never` only streams |
 | `snapshot_batch` | int | `1000` | no | Rows per fetch of the copy |
 | `batch_size` | int | `500` | no | Most changes of one transaction handed over at once |

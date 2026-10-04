@@ -20,10 +20,10 @@ repository, `Flezha/flezha_http_plugin`, which this repository carries as the su
 <!-- provider-options:begin -->
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `port` | int | &mdash; | yes | The TCP port the server listens on, 1 to 65535 |
+| `port` | int | none | yes | The TCP port the server listens on, 1 to 65535 |
 | `bind` | string | `"127.0.0.1"` | no | The address it listens on: an IPv4 or IPv6 literal, never a name |
-| `channel` | names | &mdash; | no | The entry channel every request is injected on, one name. Required, unless `channel_in` names it |
-| `channel_in` | names | &mdash; | no | The explicit spelling of `channel`. Required, unless `channel` names it |
+| `channel` | names | none | no | The entry channel every request is injected on, one name. Required, unless `channel_in` names it |
+| `channel_in` | names | none | no | The explicit spelling of `channel`. Required, unless `channel` names it |
 | `deadline_ms` | int | `30000` | no | How long a request waits for the operator's answer, 100 to 600000 |
 | `max_body_bytes` | int | `1048576` | no | The largest request body accepted, up to 16777216; a larger one is answered 413 |
 | `max_waiting` | int | `1000` | no | Requests waiting for an answer at once, up to 100000; one more is answered 503 |

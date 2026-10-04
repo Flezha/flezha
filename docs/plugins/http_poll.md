@@ -20,10 +20,10 @@ changed. Authors can read it as the smallest two-phase source provider.
 <!-- provider-options:begin -->
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `url` | string | &mdash; | yes | The resource to GET each interval |
-| `channel` | names | &mdash; | no | The channel this plugin is attached to: the entry channel the body is injected on, and one name. Required, unless `channel_in` names it |
-| `channel_in` | names | &mdash; | no | Entry channel the body is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
-| `plugin_id` | string | &mdash; | no | Plugin id; defaults to the id it was enabled under |
+| `url` | string | none | yes | The resource to GET each interval |
+| `channel` | names | none | no | The channel this plugin is attached to: the entry channel the body is injected on, and one name. Required, unless `channel_in` names it |
+| `channel_in` | names | none | no | Entry channel the body is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
+| `plugin_id` | string | none | no | Plugin id; defaults to the id it was enabled under |
 | `headers` | json | `%{}` | no | Request headers, as a JSON object |
 | `interval_ms` | int | `60000` | no | Milliseconds between polls |
 | `timeout_ms` | int | `10000` | no | Budget for one request |

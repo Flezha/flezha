@@ -20,20 +20,20 @@ oldest first, and injects each row as one JSON object.
 <!-- provider-options:begin -->
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `database` | string | &mdash; | yes | Database name |
-| `username` | string | &mdash; | yes | Role the plugin connects as |
-| `password` | string | &mdash; | no | Password, redacted once the plugin is prepared |
-| `password_env` | string | &mdash; | no | Environment variable holding the password instead |
+| `database` | string | none | yes | Database name |
+| `username` | string | none | yes | Role the plugin connects as |
+| `password` | string | none | no | Password, redacted once the plugin is prepared |
+| `password_env` | string | none | no | Environment variable holding the password instead |
 | `hostname` | string | `"localhost"` | no | Database host |
 | `port` | int | `5432` | no | TCP port |
 | `ssl` | bool | `false` | no | TLS to the server |
-| `channel` | names | &mdash; | no | The channel this plugin is attached to: the entry channel every row is injected on, and one name. Required, unless `channel_in` names it |
-| `channel_in` | names | &mdash; | no | Entry channel every row is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
-| `plugin_id` | string | &mdash; | no | Plugin id; defaults to the id it was enabled under |
-| `table` | string | &mdash; | yes | The table to read: `name` or `schema.name`, case-sensitive |
-| `id_column` | string | &mdash; | yes | A column that is unique and grows with new rows |
-| `timestamp_column` | string | &mdash; | no | A column the writer sets on insert and on update; updated rows come again |
-| `columns` | names | &mdash; | no | The columns to read, comma-separated; every column when unset |
+| `channel` | names | none | no | The channel this plugin is attached to: the entry channel every row is injected on, and one name. Required, unless `channel_in` names it |
+| `channel_in` | names | none | no | Entry channel every row is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
+| `plugin_id` | string | none | no | Plugin id; defaults to the id it was enabled under |
+| `table` | string | none | yes | The table to read: `name` or `schema.name`, case-sensitive |
+| `id_column` | string | none | yes | A column that is unique and grows with new rows |
+| `timestamp_column` | string | none | no | A column the writer sets on insert and on update; updated rows come again |
+| `columns` | names | none | no | The columns to read, comma-separated; every column when unset |
 | `start_at` | enum | `"beginning"` | no | Where a binding with no committed cursor starts: the first row, or after the rows present when it first reads |
 | `batch_size` | int | `500` | no | Rows in one read |
 | `interval_ms` | int | `1000` | no | Pause between reads once caught up, and after a failed read |

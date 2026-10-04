@@ -23,16 +23,16 @@ the durability trade-offs, and how broker clients are shared.
 <!-- provider-options:begin -->
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `hosts` | any | &mdash; | yes | `{host, port}` list, or a comma-separated string |
-| `auth` | any | &mdash; | no | SASL configuration, as a `KafkaEx.Auth.Config` or a map |
-| `sasl_password_env` | string | &mdash; | no | Environment variable holding the SASL password, preferred over an inline one |
-| `use_ssl` | bool | &mdash; | no | TLS to the brokers |
-| `ssl_options` | any | &mdash; | no | Erlang `:ssl` options for that connection |
-| `topic` | string | &mdash; | yes | Destination topic |
-| `plugin_id` | string | &mdash; | no | Plugin id; defaults to a generated one |
-| `channel` | names | &mdash; | no | The channel this plugin is attached to: only records naming it are produced. Several names, comma-separated, produce them all |
-| `channel_out` | names | &mdash; | no | Produce only records whose metadata channel matches; the explicit spelling. Several names, comma-separated, produce them all |
-| `partition` | int | &mdash; | no | A fixed destination partition for every record; unset, `partitioner` chooses |
+| `hosts` | any | none | yes | `{host, port}` list, or a comma-separated string |
+| `auth` | any | none | no | SASL configuration, as a `KafkaEx.Auth.Config` or a map |
+| `sasl_password_env` | string | none | no | Environment variable holding the SASL password, preferred over an inline one |
+| `use_ssl` | bool | none | no | TLS to the brokers |
+| `ssl_options` | any | none | no | Erlang `:ssl` options for that connection |
+| `topic` | string | none | yes | Destination topic |
+| `plugin_id` | string | none | no | Plugin id; defaults to a generated one |
+| `channel` | names | none | no | The channel this plugin is attached to: only records naming it are produced. Several names, comma-separated, produce them all |
+| `channel_out` | names | none | no | Produce only records whose metadata channel matches; the explicit spelling. Several names, comma-separated, produce them all |
+| `partition` | int | none | no | A fixed destination partition for every record; unset, `partitioner` chooses |
 | `partitioner` | enum | `:murmur2` | no | Without `partition`: `murmur2` sends a keyed record where Kafka's Java client would and an unkeyed one to the sticky partition; `sticky` sends every record to the sticky partition, which moves after each batch |
 | `compression` | enum | `:none` | no | Batch compression; `snappy`, `lz4` and `zstd` are refused, the client library encodes them only with native code |
 | `headers` | json | `%{}` | no | Static record headers, a JSON object of strings; names starting `flz.` and `flezha.dedup_key` are refused |
@@ -47,7 +47,7 @@ the durability trade-offs, and how broker clients are shared.
 | `queue_overflow` | enum | `:drop_nothing` | no | What a full queue does: block, drop the oldest, or drop the newest |
 | `queue_block_timeout_ms` | int | `5000` | no | How long an enqueue parks on a full queue before it is refused |
 | `idempotent` | bool | `true` | no | Use the broker's idempotent producer session |
-| `max_in_flight` | int | &mdash; | no | Batches in flight; derived as 5 with `idempotent`, else 1 |
+| `max_in_flight` | int | none | no | Batches in flight; derived as 5 with `idempotent`, else 1 |
 | `auto_create_topic` | bool | `true` | no | Create the topic when missing |
 | `auto_create_partitions` | int | `1` | no | Partitions for that topic |
 | `auto_create_replication_factor` | int | `2` | no | Replication factor for that topic |
@@ -55,7 +55,7 @@ the durability trade-offs, and how broker clients are shared.
 | `metadata_refresh_timeout_ms` | int | `5000` | no | Budget for one broker metadata refresh |
 | `request_timeout_ms` | int | `10000` | no | Budget the broker is asked to honour for one produce request |
 | `dispatch_timeout_ms` | int | `10000` | no | Budget for one in-flight batch before it is treated as lost |
-| `metadata_update_interval` | int | &mdash; | no | How often the shared broker client refreshes metadata |
+| `metadata_update_interval` | int | none | no | How often the shared broker client refreshes metadata |
 <!-- provider-options:end -->
 
 ## Example

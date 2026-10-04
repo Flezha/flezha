@@ -341,7 +341,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
     ]
   end
 
-  defp render_default(nil), do: "&mdash;"
+  defp render_default(nil), do: "none"
   defp render_default(value), do: "`#{inspect(value)}`"
 
   @doc """
