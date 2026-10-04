@@ -33,12 +33,12 @@ defmodule Mix.Tasks.Flezha.ErrorsDoc do
       |> Enum.sort_by(&elem(&1, 0))
 
     IO.iodata_to_binary([
-      header(exits),
+      header(exits, families),
       Enum.map(families, fn {family, codes} -> family_section(family, codes, exits) end)
     ])
   end
 
-  defp header(exits) do
+  defp header(exits, families) do
     classes =
       exits
       |> Enum.sort_by(&elem(&1, 1))
@@ -56,6 +56,7 @@ defmodule Mix.Tasks.Flezha.ErrorsDoc do
       "| `message` | One plain sentence naming what it is about. |\n",
       "| `details` | An object carrying the facts the message names. |\n",
       "| `hint` | The next command to run, or `null`. |\n\n",
+      contents(families),
       "## Classes and exit codes\n\n",
       "A `flz` verb exits with the code of its failure's class. Success is 0.\n\n",
       "| Class | Exit code | Meaning |\n|---|---|---|\n",
@@ -72,6 +73,17 @@ defmodule Mix.Tasks.Flezha.ErrorsDoc do
       "The consumer API answers `{:error, %Flezha.Error{}}` with the same five fields, and each\n",
       "SDK raises or returns its one error type carrying them.\n\n",
       "## Codes\n"
+    ]
+  end
+
+  defp contents(families) do
+    [
+      "**Contents**\n\n",
+      "1. [Classes and exit codes](#classes-and-exit-codes)\n",
+      "2. [Forms](#forms)\n",
+      "3. [Codes](#codes)\n",
+      Enum.map(families, fn {family, _codes} -> "   1. [#{family}](##{family})\n" end),
+      "\n"
     ]
   end
 

@@ -14,6 +14,44 @@ SDK. A program acts on the `code` and the `class`.
 | `details` | An object carrying the facts the message names. |
 | `hint` | The next command to run, or `null`. |
 
+**Contents**
+
+1. [Classes and exit codes](#classes-and-exit-codes)
+2. [Forms](#forms)
+3. [Codes](#codes)
+   1. [admin](#admin)
+   1. [audit](#audit)
+   1. [authz](#authz)
+   1. [boot](#boot)
+   1. [call](#call)
+   1. [cli](#cli)
+   1. [commit](#commit)
+   1. [controller](#controller)
+   1. [dlq](#dlq)
+   1. [durability](#durability)
+   1. [http](#http)
+   1. [http_push](#http_push)
+   1. [input](#input)
+   1. [internal](#internal)
+   1. [listener](#listener)
+   1. [namespace](#namespace)
+   1. [observability](#observability)
+   1. [operator](#operator)
+   1. [part](#part)
+   1. [plugin](#plugin)
+   1. [postgres_cdc](#postgres_cdc)
+   1. [quota](#quota)
+   1. [rabbitmq](#rabbitmq)
+   1. [reset](#reset)
+   1. [runner](#runner)
+   1. [runtime](#runtime)
+   1. [schedule](#schedule)
+   1. [shutdown](#shutdown)
+   1. [spawn](#spawn)
+   1. [state](#state)
+   1. [topology](#topology)
+   1. [usage](#usage)
+
 ## Classes and exit codes
 
 A `flz` verb exits with the code of its failure's class. Success is 0.

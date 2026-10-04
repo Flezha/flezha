@@ -13,7 +13,42 @@ a count that is zero, negative or not a number. Every other type — a duration,
 an address, a member of an enumeration — refuses the boot naming the variable,
 the value and the type.
 
+**Contents**
+
+1. [Transport and TLS](#transport-and-tls)
+2. [Cluster and nodes](#cluster-and-nodes)
+3. [State, WAL and durability](#state-wal-and-durability)
+4. [Runner and operator lifecycle](#runner-and-operator-lifecycle)
+5. [Resilience and convergence](#resilience-and-convergence)
+6. [Observability and audit](#observability-and-audit)
+7. [Security](#security)
+8. [Plugins, DLQ and schedules](#plugins-dlq-and-schedules)
+9. [Build-time and image variables](#build-time-and-image-variables)
+
 ## Transport and TLS
+
+Runners talk to the controller over one of two transports. The default, Unix
+domain sockets (`uds`), needs nothing set when the runners run on the
+controller's machine: both sides find the socket directory on their own, by the
+[socket-directory ladder](files_and_sockets.md#the-socket-directory-ladder).
+QUIC lets runners on other machines connect over the network; it is
+[experimental: quic](../publishing/maturity.md#quic), and on its first start the controller generates the self-signed
+certificates it needs under `app_data/certs`.
+
+Most deployments set nothing here. The settings you are likely to touch:
+
+- `FLEZHA_SOCKET_FILES_PATH`, to fix where the sockets live, for example when
+  the controller and the runners run as different users;
+- `FLEZHA_TRANSPORT=quic` and `FLEZHA_QUIC_LISTEN_ADDRESS`, to accept runners
+  from other machines;
+- the `*_CERT_PATH` and `*_KEY_PATH` variables, to use your own certificates
+  instead of the generated ones.
+
+```sh
+$ FLEZHA_SOCKET_FILES_PATH=/srv/flezha/sockets ./bin/flz controller start
+```
+
+Every variable of the area:
 
 | Variable | Default | Sets / notes |
 |---|---|---|
