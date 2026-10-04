@@ -29,12 +29,14 @@ public final class OrderExecutorOperator implements Operator {
 
     @Override
     public Run run() {
-        return new Run.Steps(Each.ONCE, OnFailure.UNDO_ALL);
+        return new Run.Steps(
+                Each.ONCE,                               // one instance per order; each step runs once
+                OnFailure.UNDO_ALL);                     // a failed step undoes the finished ones
     }
 
     @Override
     public void channels(@Nonnull ChannelBuilder c) {
-        c.input(OrderTicket.class, "order")
+        c.input(OrderTicket.class, "order")                                // the order to carry out
                 .into(ReserveFunds.class)                                  // step one
                 .into(PlaceOrder.class)                                    // step two, once step one is done
                 .branch(
@@ -64,7 +66,7 @@ impl Operator for OrderExecutorOperator {
     }
 
     fn channels(c: &ChannelBuilder) {
-        c.input::<OrderTicket>("order")
+        c.input::<OrderTicket>("order") // the order to carry out
             .into::<ReserveFunds>() // step one
             .into::<PlaceOrder>() // step two, once step one is done
             .branch([
@@ -79,6 +81,8 @@ impl Operator for OrderExecutorOperator {
 
     fn settings() -> OperatorSettings {
         OperatorSettings {
+            // one instance per order; each step runs once
+            // a failed step undoes the finished ones
             run: Run::Steps { each: Each::Once, on_failure: OnFailure::UndoAll },
             ..OperatorSettings::default()
         }
@@ -94,9 +98,11 @@ impl Operator for OrderExecutorOperator {
 // order_executor_operator.mjs: the workflow: one instance is one order
 export default defineOperator({
   factoryId: 'order_executor',
+  // one instance per order; each step runs once
+  // a failed step undoes the finished ones
   steps: { each: 'once', onFailure: 'undo_all' },
   channels: (c) => {
-    c.input('order')
+    c.input('order') // the order to carry out
       .into(ReserveFunds) // step one
       .into(PlaceOrder) // step two, once step one is done
       .branch([
@@ -113,10 +119,12 @@ export default defineOperator({
 
 ```python
 # order_executor.py: the workflow: one instance is one order
+# one instance per order; each step runs once
+# a failed step undoes the finished ones
 @flezha.operator("order_executor", run={"steps": {"each": "once", "on_failure": "undo_all"}})
 def order_executor(c: flezha.Channels) -> None:
     (
-        c.input("order")
+        c.input("order")  # the order to carry out
         .into(ReserveFunds)  # step one
         .into(PlaceOrder)  # step two, once step one is done
         .branch(
@@ -134,10 +142,12 @@ def order_executor(c: flezha.Channels) -> None:
 # order_executor_operator.rb: the workflow: one instance is one order
 class OrderExecutorOperator < Flezha::Operator
   factory_id "order_executor"
+  # one instance per order; each step runs once
+  # a failed step undoes the finished ones
   run steps: { each: :once, on_failure: :undo_all }
 
   channels do |c|
-    c.input("order")
+    c.input("order")                                         # the order to carry out
      .into(ReserveFunds)                                     # step one
      .into(PlaceOrder)                                       # step two, once step one is done
      .branch(
@@ -154,12 +164,14 @@ end
 
 ```php
 // src/OrderExecutorOperator.php: the workflow: one instance is one order
+// one instance per order; it stays until confirm_fill completes it
+// a failed step undoes the finished ones
 #[Operator(factoryId: 'order_executor', run: ['steps' => ['each' => 'per_input', 'on_failure' => 'undo_all']])]
 final class OrderExecutorOperator extends \Flezha\Operator
 {
     public static function channels(Builder $c): void
     {
-        $c->input('order')
+        $c->input('order')                                            // the order to carry out
             ->into(ReserveFunds::class)                               // step one
             ->into(PlaceOrder::class)                                 // step two, once step one is done
             ->branch(
@@ -179,14 +191,20 @@ final class OrderExecutorOperator extends \Flezha\Operator
 defmodule Tradedesk.OrderExecutor do
   use Flezha.SDK.Operator,
     factory_id: "order_executor",
+    # one instance per order; each step runs once
+    # a failed step undoes the finished ones
     run: {:steps, each: :once, on_failure: :undo_all}
 
   @impl true
   def channels(c) do
     c
+    # the order to carry out
     |> input_with("order", &OrderTicket.decode/1)
+    # step one
     |> into(Tradedesk.ReserveFunds)
+    # step two, once step one is done
     |> into(Tradedesk.PlaceOrder)
+    # two arms, side by side
     |> branch([&into(&1, Tradedesk.ConfirmFill), &into(&1, Tradedesk.RecordOrder)])
   end
 end

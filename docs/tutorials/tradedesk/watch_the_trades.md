@@ -30,14 +30,14 @@ public final class TradeWatcherOperator implements Operator {
 
     @Override
     public void channels(@Nonnull ChannelBuilder c) {
-        c.input(TradeMessage.class, "trades")
+        c.input(TradeMessage.class, "trades")                        // JSON from the exchange
                 .filter(message -> "trade".equals(message.channel())) // trade messages only
                 .flatMap(Trade.class, TradeMessage::data)            // a message into its trades
                 .filter(trade -> "market".equals(trade.ord_type()))  // market orders only
                 .keyBy(Trade::symbol)                                // one cell per symbol
                 .into(TrackPrices.class)
-                .into(BuyAboveAverage.class)
-                .sink("signals");
+                .into(BuyAboveAverage.class)                         // fed by the tasklet above
+                .sink("signals");                                    // out to the file plugin
     }
 }
 ```
@@ -64,14 +64,14 @@ impl Operator for TradeWatcherOperator {
     }
 
     fn channels(c: &ChannelBuilder) {
-        c.input::<TradeMessage>("trades")
+        c.input::<TradeMessage>("trades") // JSON from the exchange
             .filter(|message| message.channel == "trade") // trade messages only
             .flat_map(|message| message.data) // a message into its trades
             .filter(|trade| trade.ord_type == "market") // market orders only
             .key_by(|trade| trade.symbol.clone()) // one cell per symbol
             .into::<TrackPrices>()
-            .into::<BuyAboveAverage>()
-            .sink_named("signals");
+            .into::<BuyAboveAverage>() // fed by the tasklet above
+            .sink_named("signals"); // out to the file plugin
     }
 }
 ```
@@ -85,14 +85,14 @@ impl Operator for TradeWatcherOperator {
 export default defineOperator({
   factoryId: 'trade_watcher',
   channels: (c) => {
-    c.input('trades')
+    c.input('trades') // JSON from the exchange
       .filter((message) => message.channel === 'trade') // trade messages only
       .flatMap((message) => message.data) // a message into its trades
       .filter((trade) => trade.ord_type === 'market') // market orders only
       .keyBy((trade) => trade.symbol) // one cell per symbol
       .into(TrackPrices)
-      .into(BuyAboveAverage)
-      .sink('signals');
+      .into(BuyAboveAverage) // fed by the tasklet above
+      .sink('signals'); // out to the file plugin
   },
 });
 ```
@@ -106,14 +106,14 @@ export default defineOperator({
 @flezha.operator("trade_watcher")
 def trade_watcher(c: flezha.Channels) -> None:
     (
-        c.input("trades")
+        c.input("trades")  # JSON from the exchange
         .filter(lambda message: message.get("channel") == "trade")  # trade messages only
         .flat_map(lambda message: message["data"])  # a message into its trades
         .filter(lambda trade: trade["ord_type"] == "market")  # market orders only
         .key_by(lambda trade: trade["symbol"])  # one cell per symbol
         .into(TrackPrices)
-        .into(BuyAboveAverage)
-        .sink("signals")
+        .into(BuyAboveAverage)  # fed by the tasklet above
+        .sink("signals")  # out to the file plugin
     )
 ```
 
@@ -127,14 +127,14 @@ class TradeWatcherOperator < Flezha::Operator
   factory_id "trade_watcher"
 
   channels do |c|
-    c.input("trades")
+    c.input("trades")                                        # JSON from the exchange
      .filter { |message| message[:channel] == "trade" }      # trade messages only
      .flat_map { |message| message[:data] }                  # a message into its trades
      .filter { |trade| trade[:ord_type] == "market" }        # market orders only
      .key_by { |trade| trade[:symbol] }                      # one cell per symbol
      .into(TrackPrices)
-     .into(BuyAboveAverage)
-     .sink("signals")
+     .into(BuyAboveAverage)                                  # fed by the tasklet above
+     .sink("signals")                                        # out to the file plugin
   end
 end
 ```
@@ -150,14 +150,14 @@ final class TradeWatcherOperator extends \Flezha\Operator
 {
     public static function channels(Builder $c): void
     {
-        $c->input('trades')
+        $c->input('trades')                                                            // JSON from the exchange
             ->filter(fn (array $message) => ($message['channel'] ?? null) === 'trade') // trade messages only
             ->flatMap(fn (array $message) => $message['data'])                         // a message into its trades
             ->filter(fn (array $trade) => $trade['ord_type'] === 'market')             // market orders only
             ->keyBy(fn (array $trade) => $trade['symbol'])                             // one cell per symbol
             ->into(TrackPrices::class)
-            ->into(BuyAboveAverage::class)
-            ->sink('signals');
+            ->into(BuyAboveAverage::class)                                             // fed by the tasklet above
+            ->sink('signals');                                                         // out to the file plugin
     }
 }
 ```
@@ -174,13 +174,20 @@ defmodule Tradedesk.TradeWatcher do
   @impl true
   def channels(c) do
     c
+    # JSON from the exchange
     |> input_with("trades", &Jason.decode/1)
+    # trade messages only
     |> filter(&(&1["channel"] == "trade"))
+    # a message into its trades
     |> flat_map(& &1["data"])
+    # market orders only
     |> filter(&(&1["ord_type"] == "market"))
+    # one cell per symbol
     |> key_by(& &1["symbol"])
     |> into(Tradedesk.TrackPrices)
+    # fed by the tasklet above
     |> into(Tradedesk.BuyAboveAverage)
+    # out to the file plugin
     |> sink("signals")
   end
 end

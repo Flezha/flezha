@@ -17,9 +17,11 @@ once the turn's step is done, and `deliver` hands it to the caller.
 public final class Deliver implements Tasklet<Answer, Void, Answer> {
     @Override
     public void run(Answer answer, Ctx<Void, Answer> ctx) throws TaskletException {
+        // The whole answer, to whoever called.
         ctx.emit(answer);
     }
 
+    // The undo, when a turn is taken back: an answer already given has nothing to take back.
     @Override
     public void compensate(List<Answer> sent, Ctx<Void, Answer> ctx) {}
 }
@@ -56,10 +58,12 @@ defmodule Agentdesk.Deliver do
 
   @impl true
   def run(answer, state, ctx) do
+    # The whole answer, to whoever called.
     emit(ctx, answer)
     {:ok, state}
   end
 
+  # The undo, when a turn is taken back: an answer already given has nothing to take back.
   @impl true
   def compensate(_answers, state, _ctx), do: {:ok, state}
 end

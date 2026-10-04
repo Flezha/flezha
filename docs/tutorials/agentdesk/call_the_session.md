@@ -60,7 +60,9 @@ public final class Budget implements Tasklet<Budget.Event, Budget.Spent, Budget.
     public void run(Event event, Ctx<Spent, Verdict> ctx) throws TaskletException {
         String today = LocalDate.ofInstant(Instant.ofEpochMilli(ctx.now()), ZoneOffset.UTC).toString();
         switch (event) {
+            // A message to admit: hand on its verdict.
             case Sent sent -> ctx.emit(new Verdict(sent.message(), ctx.state().on(today)));
+            // The tokens an answer used: count them.
             case Used used -> ctx.change(new Counted(today, used.tokens()));
         }
     }
@@ -102,6 +104,7 @@ defmodule Agentdesk.Budget do
 
   def admitted?(verdict), do: verdict.spent < @daily_tokens
 
+  # The tokens an answer used; a failed turn used none.
   def used(%Response{request: request, result: result}) do
     %{user: Jason.decode!(request)["user"], tokens: tokens(result)}
   end
@@ -109,6 +112,7 @@ defmodule Agentdesk.Budget do
   defp tokens({:ok, answer}), do: answer["tokens"]
   defp tokens({:error, _error}), do: 0
 
+  # What each user's cell remembers.
   state do
     field(:day, :string, default: "")
     field(:tokens, :integer, default: 0)
@@ -118,9 +122,11 @@ defmodule Agentdesk.Budget do
     %{spent | day: day, tokens: on(spent, day) + tokens}
   end
 
+  # The tokens an answer used: count them.
   @impl true
   def run(%{tokens: tokens}, spent, ctx), do: {:ok, counted(spent, ctx, today(ctx), tokens)}
 
+  # A message to admit: hand on its verdict.
   def run(message, spent, ctx) do
     emit(ctx, %{message: message, spent: on(spent, today(ctx))})
     {:ok, spent}

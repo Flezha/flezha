@@ -22,28 +22,36 @@ public final class GatewayOperator implements Operator {
 
     @Override
     public Run run() {
+        // each request and answer on disk before it runs
         return new Run.Flow(new Exactly.EffectivelyOnce());
     }
 
     @Override
     public void channels(ChannelBuilder c) {
+        // every request arrives on "http"; kept as a handle to split it
         EntryChannel<Request> http = c.input(Request.class, "http");
+        // route 1: GET .../events gets the session's stream
         http.filter(request -> !request.sends())
                 .into(Watch.class)
                 .response();                                 // a stream, or 404
+        // route 2: POST .../messages is checked against the user's budget
         Stream<Verdict> verdicts = http.filter(Request::sends)
                 .map(Event.class, request -> new Sent(request.message()))
                 .keyBy(Event::user)                          // one cell per user
                 .into(Budget.class);
+        // a verdict: the message plus its user's tokens today; used twice
+        // use 1: answer the POST
         verdicts.into(Admit.class)
                 .response();                                 // 202, or 429 over the budget
+        // use 2: pass an admitted message on to the user's session
         verdicts.filter(Verdict::admitted)
                 .map(Message.class, Verdict::message)
                 .keyBy(Message::user)                        // the user's session
+                // call the "agent" operator; its answer comes back here
                 .call(CallTarget.factory("agent").channel("message"), Answer.class, DEADLINE_MS)
-                .map(Event.class, Used::of)
+                .map(Event.class, Used::of)                  // the session's answer, as tokens used
                 .keyBy(Event::user)
-                .into(Budget.class);                         // the tokens the answer used
+                .into(Budget.class);                         // back into the same budget
     }
 }
 ```
@@ -77,42 +85,56 @@ TODO: this page is not yet written for PHP.
 defmodule Agentdesk.GatewayOperator do
   use Flezha.SDK.Operator,
     factory_id: "gateway",
+    # each request and answer on disk before it runs
     run: {:flow, exactly: :effectively_once}
 
   @deadline_ms 60_000
 
   @impl true
   def channels(c) do
+    # every request arrives on "http"; kept as a handle to split it
     http = input_with(c, "http", &Request.decode/1)
 
+    # route 1: GET .../events gets the session's stream
     http
     |> filter(&(not Request.sends?(&1)))
     |> into(Watch)
+    # a stream, or 404
     |> response()
 
+    # route 2: POST .../messages is checked against the user's budget
     verdicts =
       http
       |> filter(&Request.sends?/1)
       |> map(&Request.message/1)
+      # one cell per user
       |> key_by(& &1.user)
       |> into(Budget)
 
+    # a verdict: the message plus its user's tokens today; used twice
+    # use 1: answer the POST
     verdicts
     |> into(Admit)
+    # 202, or 429 over the budget
     |> response()
 
+    # use 2: pass an admitted message on to the user's session
     verdicts
     |> filter(&Budget.admitted?/1)
     |> map(& &1.message)
+    # the user's session
     |> key_by(& &1.user)
+    # call the "agent" operator; its answer comes back here
     |> call(
       factory: "agent",
       channel: "message",
       deadline_ms: @deadline_ms,
       decode: &Jason.decode/1
     )
+    # the session's answer, as tokens used
     |> map(&Budget.used/1)
     |> key_by(& &1.user)
+    # back into the same budget
     |> into(Budget)
   end
 end

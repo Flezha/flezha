@@ -38,12 +38,14 @@ public final class EchoOperator implements Operator {
     @Override
     @Nonnull
     public String factoryId() {
-        return "echo";
+        return "echo";                       // the name `flz operator start` takes
     }
 
     @Override
     public void channels(@Nonnull ChannelBuilder c) {
-        c.input(String.class, "in").into(Echo.class).sink("out");
+        c.input(String.class, "in")          // messages arrive on the entry channel "in"
+                .into(Echo.class)            // each one runs through the echo tasklet
+                .sink("out");                // the result leaves on "out", for a plugin to pick up
     }
 }
 ```
@@ -55,8 +57,8 @@ public final class EchoOperator implements Operator {
 public final class Main {
     public static void main(String[] args) throws Exception {
         FlezhaRunner runner = Flezha.createRunner(args.length > 0 ? args[0] : "default")
-                .registerFactory(EchoOperator.class)
-                .start();
+                .registerFactory(EchoOperator.class)     // the operators this runner serves
+                .start();                                // connects to the controller
 
         runner.awaitTermination();
     }
@@ -76,13 +78,14 @@ In your clone: `sdk/rust/examples/echo` ([on GitHub](https://github.com/flezha/f
 #[derive(Default)]
 pub struct Echo;
 
+// state is saved under this name, so choose it once
 #[tasklet(name = "echo")]
 impl Tasklet for Echo {
     type Input = String;
     type Output = String;
 
     fn run(&mut self, input: String, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
-        ctx.emit(format!("echo: {input}"))
+        ctx.emit(format!("echo: {input}")) // where it goes is the operator's business
     }
 }
 ```
@@ -95,11 +98,13 @@ pub struct EchoOperator;
 
 impl Operator for EchoOperator {
     fn factory_id() -> &'static str {
-        "echo"
+        "echo" // the name `flz operator start` takes
     }
 
     fn channels(c: &ChannelBuilder) {
-        c.input::<String>("in").into::<Echo>().sink_named("out");
+        c.input::<String>("in") // messages arrive on the entry channel "in"
+            .into::<Echo>() // each one runs through the echo tasklet
+            .sink_named("out"); // the result leaves on "out", for a plugin to pick up
     }
 }
 ```
@@ -114,6 +119,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| "default".to_string());
 
     let runner = Flezha::create_runner(namespace)?;
+    // connects to the controller and serves these operators
     runner.register_factory(operator::EchoOperator)?.start()?;
 
     runner.await_termination()?;
@@ -130,8 +136,8 @@ In your clone: `sdk/node/examples/echo` ([on GitHub](https://github.com/flezha/f
 ```javascript
 // echo_tasklet.mjs: the tasklet
 export const EchoTasklet = defineTasklet({
-  name: 'echo',
-  run: (input, ctx) => ctx.emit(`echo: ${input}`),
+  name: 'echo', // state is saved under this name, so choose it once
+  run: (input, ctx) => ctx.emit(`echo: ${input}`), // where it goes is the operator's business
 });
 ```
 
@@ -140,9 +146,11 @@ export const EchoTasklet = defineTasklet({
 ```javascript
 // echo_operator.mjs: the operator
 export default defineOperator({
-  factoryId: 'echo',
+  factoryId: 'echo', // the name `flz operator start` takes
   channels: (c) => {
-    c.input('in', { codec: 'text' }).into(EchoTasklet).sink('out');
+    c.input('in', { codec: 'text' }) // messages arrive on the entry channel "in"
+      .into(EchoTasklet) // each one runs through the echo tasklet
+      .sink('out'); // the result leaves on "out", for a plugin to pick up
   },
 });
 ```
@@ -154,9 +162,9 @@ export default defineOperator({
 const namespace = process.argv[2] ?? 'default';
 
 const runner = createRunner(namespace);
-await runner.registerFactory('./echo_operator.mjs');
+await runner.registerFactory('./echo_operator.mjs'); // the operators this runner serves
 
-await runner.run();
+await runner.run(); // connects to the controller
 ```
 
 [`runner.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/echo/runner.mjs)
@@ -167,19 +175,23 @@ In your clone: `sdk/python/examples/echo` ([on GitHub](https://github.com/flezha
 
 ```python
 # echo_tasklet.py: the tasklet
-@flezha.tasklet(name="echo")  # the durable identity: state is filed under it
+@flezha.tasklet(name="echo")  # state is saved under this name, so choose it once
 class Echo:
     def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
-        ctx.emit(f"echo: {value}")
+        ctx.emit(f"echo: {value}")  # where it goes is the operator's business
 ```
 
 [`echo_tasklet.py`](https://github.com/flezha/flezha_python_sdk/blob/main/examples/echo/echo_tasklet.py)
 
 ```python
 # echo_operator.py: the operator
-@flezha.operator("echo")  # the stable identity `flz operator start` takes
+@flezha.operator("echo")  # the name `flz operator start` takes
 def echo_operator(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(Echo).sink("out")
+    (
+        c.input("in", codec="text")  # messages arrive on the entry channel "in"
+        .into(Echo)  # each one runs through the echo tasklet
+        .sink("out")  # the result leaves on "out", for a plugin to pick up
+    )
 ```
 
 [`echo_operator.py`](https://github.com/flezha/flezha_python_sdk/blob/main/examples/echo/echo_operator.py)
@@ -190,9 +202,10 @@ def main() -> None:
     namespace = sys.argv[1] if len(sys.argv) > 1 else "default"
     flezha.configure_logging("info")
 
+    # the operators this runner serves
     runner = flezha.create_runner(namespace).register_factory(echo_operator)
 
-    runner.start()
+    runner.start()  # connects to the controller
 
     runner.await_termination()
 
@@ -209,9 +222,9 @@ In your clone: `sdk/ruby/examples/echo` ([on GitHub](https://github.com/flezha/f
 ```ruby
 # echo_tasklet.rb: the tasklet
 class EchoTasklet < Flezha::Tasklet
-  tasklet_name "echo" # the durable identity: state is filed under it
+  tasklet_name "echo" # state is saved under this name, so choose it once
 
-  def run(input, ctx) = ctx.emit("echo: #{input}")
+  def run(input, ctx) = ctx.emit("echo: #{input}") # where it goes is the operator's business
 end
 ```
 
@@ -220,12 +233,12 @@ end
 ```ruby
 # echo_operator.rb: the operator
 class EchoOperator < Flezha::Operator
-  factory_id "echo"
+  factory_id "echo" # the name `flz operator start` takes
 
   channels do |c|
-    c.input("in", codec: :text)
-     .into(EchoTasklet)
-     .sink("out")
+    c.input("in", codec: :text) # messages arrive on the entry channel "in"
+     .into(EchoTasklet)          # each one runs through the echo tasklet
+     .sink("out")                # the result leaves on "out", for a plugin to pick up
   end
 end
 ```
@@ -236,9 +249,10 @@ end
 # runner.rb: the runner
 namespace = ARGV[0] || "default"
 
+# the operators this runner serves
 runner = Flezha.create_runner(namespace).register_factory(EchoOperator)
 
-runner.boot
+runner.boot # connects to the controller
 
 runner.await_termination
 ```
@@ -251,12 +265,12 @@ In your clone: `sdk/php/examples/echo` ([on GitHub](https://github.com/flezha/fl
 
 ```php
 // src/EchoTasklet.php: the tasklet
-#[Task(name: 'echo')]
+#[Task(name: 'echo')] // state is saved under this name, so choose it once
 final class EchoTasklet extends Tasklet
 {
     public function run(mixed $input, Ctx $ctx): void
     {
-        $ctx->emit('echo: ' . $input);
+        $ctx->emit('echo: ' . $input); // where it goes is the operator's business
     }
 }
 ```
@@ -265,14 +279,14 @@ final class EchoTasklet extends Tasklet
 
 ```php
 // src/EchoOperator.php: the operator
-#[Operator(factoryId: 'echo')]
+#[Operator(factoryId: 'echo')] // the name `flz operator start` takes
 final class EchoOperator extends \Flezha\Operator
 {
     public static function channels(Builder $c): void
     {
-        $c->input('in', codec: ChannelCodec::Text)
-            ->into(EchoTasklet::class)
-            ->sink('out');
+        $c->input('in', codec: ChannelCodec::Text) // messages arrive on the entry channel "in"
+            ->into(EchoTasklet::class)             // each one runs through the echo tasklet
+            ->sink('out');                         // the result leaves on "out", for a plugin to pick up
     }
 }
 ```
@@ -282,8 +296,8 @@ final class EchoOperator extends \Flezha\Operator
 ```php
 // runner.php: the runner
 $runner = Flezha::createRunner($argv[1] ?? 'default')
-    ->registerFactory(EchoOperator::class)
-    ->start();
+    ->registerFactory(EchoOperator::class) // the operators this runner serves
+    ->start();                             // connects to the controller
 
 $runner->awaitTermination();
 ```
@@ -297,10 +311,12 @@ In your clone: `sdk/elixir/examples/echo` ([on GitHub](https://github.com/flezha
 ```elixir
 # lib/echo/tasklet.ex: the tasklet
 defmodule Echo.Tasklet do
+  # state is saved under this name, so choose it once
   use Flezha.SDK.Tasklet, name: "echo"
 
   @impl true
   def run(input, state, ctx) do
+    # where it goes is the operator's business
     emit(ctx, "echo: " <> input)
     {:ok, state}
   end
@@ -312,11 +328,18 @@ end
 ```elixir
 # lib/echo/operator.ex: the operator
 defmodule Echo.Operator do
+  # the name `flz operator start` takes
   use Flezha.SDK.Operator, factory_id: "echo"
 
   @impl true
   def channels(c) do
-    c |> input("in") |> into(Echo.Tasklet) |> sink("out")
+    c
+    # messages arrive on the entry channel "in"
+    |> input("in")
+    # each one runs through the echo tasklet
+    |> into(Echo.Tasklet)
+    # the result leaves on "out", for a plugin to pick up
+    |> sink("out")
   end
 end
 ```
@@ -333,6 +356,7 @@ defmodule Echo.Application do
     namespace = List.first(System.argv(), "default")
 
     children = [
+      # connects to the controller and serves these operators
       {Flezha.SDK, namespace: namespace, operators: [Echo.Operator], transport: :uds}
     ]
 

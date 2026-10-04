@@ -35,12 +35,12 @@ public final class AgentOperator implements Operator {
 
     @Override
     public void channels(ChannelBuilder c) {
-        c.input(String.class, "turn")
+        c.input(String.class, "turn")                    // entry 1: `flz operator call`
                 .into(Reply.class)
-                .sink("answer")                          // to whoever listens
+                .sink("answer")                          // to whoever listens; the chain goes on
                 .into(Deliver.class)
                 .response();                             // to whoever called
-        c.input(Message.class, "message")                // from the gateway
+        c.input(Message.class, "message")                // entry 2: the gateway, into the same Reply
                 .map(String.class, Message::text)
                 .into(Reply.class);
     }
@@ -76,18 +76,24 @@ TODO: this page is not yet written for PHP.
 defmodule Agentdesk.AgentOperator do
   use Flezha.SDK.Operator,
     factory_id: "agent",
+    # one turn per message; a failed turn fails alone
     run: {:steps, each: :per_input, on_failure: :keep_progress},
+    # an idle session sleeps after 10 s
     durable: {:local, sleep_after: 10_000}
 
   @impl true
   def channels(c) do
     c
+    # entry 1: `flz operator call`
     |> input("turn")
     |> into(Reply)
+    # to whoever listens; the chain goes on
     |> sink("answer")
     |> into(Deliver)
+    # to whoever called
     |> response()
 
+    # entry 2: the gateway, into the same Reply
     c
     |> input_with("message", &Jason.decode/1)
     |> map(& &1["text"])

@@ -40,10 +40,12 @@ public final class Reply implements Tasklet<String, Reply.Conversation, Reply.An
 
     @Override
     public void run(String message, Ctx<Conversation, Answer> ctx) throws TaskletException {
+        // Each piece streams out as it is made; then the whole answer.
         ctx.emit(DemoModel.answer(ctx.state().messages, message, ctx::part));
         ctx.change(new Said(message));
     }
 
+    // The undo, when a turn is taken back: the conversation forgets its message.
     @Override
     public void compensate(List<Answer> sent, Ctx<Conversation, Answer> ctx) {
         System.out.println("[undo] forgot \"" + ctx.state().messages.getLast() + "\"");
@@ -81,6 +83,7 @@ TODO: this page is not yet written for PHP.
 defmodule Agentdesk.Reply do
   use Flezha.SDK.Tasklet, name: "reply"
 
+  # What the session remembers.
   state do
     field(:messages, :list, default: [])
   end
@@ -95,12 +98,14 @@ defmodule Agentdesk.Reply do
 
   @impl true
   def run(message, conversation, ctx) do
+    # Each piece streams out as it is made; then the whole answer.
     with {:ok, answer} <- DemoModel.answer(conversation.messages, message, &part(ctx, &1)) do
       emit(ctx, answer)
       {:ok, said(conversation, ctx, message)}
     end
   end
 
+  # The undo, when a turn is taken back: the conversation forgets its message.
   @impl true
   def compensate(_answers, conversation, ctx) do
     IO.puts(~s([undo] forgot "#{List.last(conversation.messages)}"))
