@@ -144,8 +144,10 @@ defmodule Flezha.MixProject do
   # the lower half of the command's block, so the command's copy button copies
   # the command alone. ExDoc highlights an `output` fence in the page's
   # language, so it is left uncoloured.
-  # A table wider than the page shows its scrollbar and a shadow on each side
-  # it can scroll to; a cover drawn with the content hides the shadow at an end.
+  # A table is as wide as its content, up to the page; a wider one scrolls with
+  # a scrollbar styled so it stays visible, since an overlay scrollbar hides.
+  # Chromium ignores `::-webkit-scrollbar` on an element that sets
+  # `scrollbar-color`, so the standard properties are for Firefox alone.
   defp guide_styles(:html) do
     """
     <style>
@@ -203,12 +205,28 @@ defmodule Flezha.MixProject do
         display: none;
       }
       .content-inner table {
-        scrollbar-color: var(--codeScrollThumb) var(--codeScrollBackground);
-        background:
-          linear-gradient(to right, var(--background) 40%, transparent) left / 3rem 100% no-repeat local,
-          linear-gradient(to left, var(--background) 40%, transparent) right / 3rem 100% no-repeat local,
-          radial-gradient(farthest-side at 0 50%, hsl(from var(--textBody) h s l / 55%), transparent) left / 1.25rem 100% no-repeat scroll,
-          radial-gradient(farthest-side at 100% 50%, hsl(from var(--textBody) h s l / 55%), transparent) right / 1.25rem 100% no-repeat scroll;
+        width: fit-content;
+        max-width: 100%;
+      }
+      .content-inner table::-webkit-scrollbar {
+        height: 12px;
+      }
+      .content-inner table::-webkit-scrollbar-track {
+        background: var(--codeScrollBackground);
+        border-radius: 6px;
+      }
+      .content-inner table::-webkit-scrollbar-thumb {
+        background: var(--codeScrollThumb);
+        border-radius: 6px;
+      }
+      .content-inner table::-webkit-scrollbar-thumb:hover {
+        background: var(--textBody);
+      }
+      @supports not selector(::-webkit-scrollbar) {
+        .content-inner table {
+          scrollbar-width: auto;
+          scrollbar-color: var(--codeScrollThumb) var(--codeScrollBackground);
+        }
       }
     </style>
     """
