@@ -234,11 +234,11 @@ defmodule Flezha.SDK.SocketRoundtripTest do
     {:ok, ns: ns, handle: handle}
   end
 
-  test "a standalone UDS runner's admin call is answered", %{ns: ns, handle: handle} do
+  test "a standalone UDS runner's control call is answered", %{ns: ns, handle: handle} do
     assert NodeTestHelper.wait_until(fn -> FleetManager.active_runners(ns) != [] end, 15_000),
            "runner never connected over UDS"
 
-    assert {:ok, []} = Flezha.SDK.Admin.list_operators(handle)
+    assert {:ok, []} = Flezha.SDK.Control.list_operators(handle)
   end
 
   test "a standalone UDS runner starts an operator with and without an id, answered by id and outcome",
@@ -250,23 +250,23 @@ defmodule Flezha.SDK.SocketRoundtripTest do
     named = "socket_admin_#{System.unique_integer([:positive])}"
 
     assert {:ok, %{id: generated, outcome: :started} = unnamed} =
-             Flezha.SDK.Admin.start_operator(handle, factory)
+             Flezha.SDK.Control.start_operator(handle, factory)
 
     assert Map.keys(unnamed) |> Enum.sort() == [:id, :outcome]
     assert generated =~ ~r/\Asdk_socket_\w*-[a-z2-7]{16}\z/
 
     assert {:ok, %{id: ^named, outcome: :started}} =
-             Flezha.SDK.Admin.start_operator(handle, factory, id: named)
+             Flezha.SDK.Control.start_operator(handle, factory, id: named)
 
     assert {:ok, %{id: ^named, outcome: :already_running}} =
-             Flezha.SDK.Admin.start_operator(handle, factory, id: named)
+             Flezha.SDK.Control.start_operator(handle, factory, id: named)
 
-    assert {:ok, ids} = Flezha.SDK.Admin.list_operators(handle)
+    assert {:ok, ids} = Flezha.SDK.Control.list_operators(handle)
     assert generated in ids
     assert named in ids
 
     assert {:error, %Flezha.SDK.Error{code: "operator.factory_unknown"} = refusal} =
-             Flezha.SDK.Admin.start_operator(handle, "no_such_factory")
+             Flezha.SDK.Control.start_operator(handle, "no_such_factory")
 
     refute refusal.message =~ "@", "the refusal names no node"
   end
@@ -294,6 +294,29 @@ defmodule Flezha.SDK.SocketRoundtripTest do
     })
 
     assert_receive {:sdk_socket_ran, "over-the-wire"}, 10_000
+  end
+
+  test "a standalone UDS runner lists what it holds and takes a local send without the controller",
+       %{ns: ns, handle: handle} do
+    assert NodeTestHelper.wait_until(fn -> FleetManager.active_runners(ns) != [] end, 15_000),
+           "runner never connected over UDS"
+
+    operator_id = "socket_local_#{System.unique_integer([:positive])}"
+
+    assert {:ok, %{id: ^operator_id}} =
+             Flezha.SDK.Control.start_operator(handle, ProbeOp.factory_id(), id: operator_id)
+
+    assert NodeTestHelper.wait_until(
+             fn -> match?({:ok, [_ | _]}, Flezha.SDK.operators(handle)) end,
+             10_000
+           )
+
+    assert {:ok, [^operator_id]} = Flezha.SDK.operators(handle)
+    assert {:ok, nil} = Flezha.SDK.send(handle, operator_id, "in-process", "in", local: true)
+    assert_receive {:sdk_socket_ran, "in-process"}, 10_000
+
+    assert {:error, %Flezha.SDK.Error{code: "runtime.operator_not_local"}} =
+             Flezha.SDK.send(handle, "#{operator_id}-elsewhere", "x", "in", local: true)
   end
 end
 

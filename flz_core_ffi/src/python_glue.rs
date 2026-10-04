@@ -598,6 +598,38 @@ impl Core {
         Ok(py.detach(move || veneer::admin_call(ctx, &verb, &args))?)
     }
 
+    /// Send one message, through the controller or locally, answering as
+    /// JSON: the verdict, or ``null`` for a local send. Blocking: the
+    /// controller's answer takes a round trip, and a local send parks while
+    /// the consumer's mailbox is full.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (operator, channel, message, msg_id, key, local))]
+    fn send_message(
+        &self,
+        py: Python<'_>,
+        operator: &str,
+        channel: &str,
+        message: &[u8],
+        msg_id: Option<&str>,
+        key: Option<&str>,
+        local: bool,
+    ) -> PyResult<String> {
+        let ctx = self.ptr()?;
+        let operator = veneer::c_string("operator", operator)?;
+        let channel = veneer::c_string("entry channel", channel)?;
+        let msg_id = veneer::c_string("message id", msg_id.unwrap_or_default())?;
+        let key = veneer::c_string("key", key.unwrap_or_default())?;
+        let message = message.to_vec();
+        Ok(py.detach(move || {
+            veneer::send_message(ctx, &operator, &channel, &message, &msg_id, &key, local)
+        })?)
+    }
+
+    /// The ids of the operator instances bound on this runner.
+    fn operators(&self) -> PyResult<Vec<String>> {
+        Ok(veneer::operators(self.ptr()?)?)
+    }
+
     /// The context's last recorded error, or `None`.
     fn last_error(&self) -> Option<String> {
         if self.freed.load(Ordering::Acquire) {
@@ -687,6 +719,8 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("Core.spawn_result", "flz_core_spawn_result"),
     ("Core.part", "flz_core_part"),
     ("Core.admin_call", "flz_core_admin_call"),
+    ("Core.send_message", "flz_core_send_message"),
+    ("Core.operators", "flz_core_operators"),
     ("monotonic_nanos", "flz_core_monotonic_nanos"),
     ("Core.last_error", "flz_core_last_error"),
     ("free_threaded", "flz_core_schema_version"),

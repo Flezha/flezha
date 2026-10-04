@@ -1,9 +1,7 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 
 use crossbeam::channel::Sender;
-
-use crate::operator::instance::OperatorInstance;
 
 /// The coordinator's message channel, installed once by `coordinator::start`.
 static RECONNECT_TRIGGER: OnceLock<Mutex<Sender<RunnerMessage>>> = OnceLock::new();
@@ -80,7 +78,6 @@ pub fn env_test_guard() -> std::sync::MutexGuard<'static, ()> {
 /// traffic never comes here.
 pub enum RunnerMessage {
     HandleCommandAction(String, Vec<u8>, HashMap<String, String>),
-    ReturnOperators,
     /// Drive a reconnect; the reason is one of `control_stream_broken |
     /// read_error | write_error | keepalive_timeout | controller_requested |
     /// broken_pipe_flood`.
@@ -134,10 +131,9 @@ pub enum ClientResponseMessage {
     RunnerIdConfirmation,
     /// The controller refused the starting runner's connect.
     ConnectRefused(flz_transport::errors::FlezhaError),
-    ReturnOperators(HashMap<String, Arc<OperatorInstance>>),
     /// `Err(n)`: `n` live instances exist and the class stays defined.
     RemoveFactoryResult(Result<(), usize>),
 }
 
-pub use crate::coordinator::{live_instance, start, RunnerNode};
+pub use crate::coordinator::{bound, live_instance, start, BoundOperators, RunnerNode};
 pub use crate::routing::OperatorDispatchHandle;

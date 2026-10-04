@@ -223,30 +223,36 @@ impl LocalRun {
                 .any(|slot| !slot.mailbox.is_empty() || slot.mailbox.is_inflight())
     }
 
-    /// The declared channel of that kind; the refusal names the channel and
-    /// the operator, because a name nothing matches is otherwise a value
-    /// that vanishes. The lookup is the topology's own, shared with the
-    /// dispatch path so a feed and a frame off the wire cannot disagree about
-    /// what a name means.
     fn channel_of_kind(&self, channel: &str, kind: ChannelKind) -> Result<(), Error> {
-        let topology = &self.instance.topology;
-        match topology.channel_of_kind(channel, kind) {
-            ChannelLookup::Found(..) => Ok(()),
-            ChannelLookup::WrongKind(declared) => {
-                Err(Error::Routing(Code::ChannelWrongKind.with([
-                    ("operator", self.instance.instance_id.as_ref().into()),
-                    ("channel", channel.into()),
-                    ("declared", declared.as_str().into()),
-                    ("kind", kind.as_str().into()),
-                ])))
-            }
-            ChannelLookup::Undeclared => Err(Error::Routing(Code::ChannelUndeclared.with([
-                ("operator", self.instance.instance_id.as_ref().into()),
-                ("channel", channel.into()),
-                ("kind", kind.as_str().into()),
-                ("channels", topology.declared_names(kind).into()),
-            ]))),
-        }
+        declared_channel(&self.instance, channel, kind)
+    }
+}
+
+/// `instance`'s declared channel of that kind; the refusal names the channel
+/// and the operator, because a name nothing matches is otherwise a value that
+/// vanishes. The lookup is the topology's own, shared with the dispatch path
+/// so an in-process input and a frame off the wire cannot disagree about what
+/// a name means.
+pub(crate) fn declared_channel(
+    instance: &OperatorInstance,
+    channel: &str,
+    kind: ChannelKind,
+) -> Result<(), Error> {
+    let topology = &instance.topology;
+    match topology.channel_of_kind(channel, kind) {
+        ChannelLookup::Found(..) => Ok(()),
+        ChannelLookup::WrongKind(declared) => Err(Error::Routing(Code::ChannelWrongKind.with([
+            ("operator", instance.instance_id.as_ref().into()),
+            ("channel", channel.into()),
+            ("declared", declared.as_str().into()),
+            ("kind", kind.as_str().into()),
+        ]))),
+        ChannelLookup::Undeclared => Err(Error::Routing(Code::ChannelUndeclared.with([
+            ("operator", instance.instance_id.as_ref().into()),
+            ("channel", channel.into()),
+            ("kind", kind.as_str().into()),
+            ("channels", topology.declared_names(kind).into()),
+        ]))),
     }
 }
 

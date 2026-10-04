@@ -67,6 +67,7 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [Timers](timers.md): Some work is triggered by time rather than by input: a session that closes after 30 seconds of quiet, an idle buffer that flushes, a join that gives up waiting, a window that closes.
 - [Spawning from a tasklet](spawning_from_a_tasklet.md): A running tasklet can start a steps operator with one call: `ctx.spawn_steps`.
 - [Operator calls](operator_calls.md): A call sends one input to an operator and gets one answer back: the output that a `response()` end of the operator's graph produced from that input, or one coded error saying why none came.
+- [Sending from runner code](sending_from_runner_code.md): Application code in a runner process often holds a source of its own: a Kafka consumer, a queue client, a poll loop.
 - [Sessions](sessions.md): A session is an operator instance that lives for as long as a conversation does: it has a beginning, it takes one message after another, and it remembers what was said.
 - [Rewinding a turn](rewinding_a_turn.md): A conversation sometimes has to go back.
 - [Streamed answers](streamed_answers.md): A model writes its answer a token at a time, and a long answer takes a while.
@@ -107,7 +108,7 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [Plugins](plugins.md): A plugin connects an operator to something outside Flezha: a file, a websocket, an HTTP endpoint, Kafka, a database.
 - [Where a plugin runs](where_plugins_run.md): An operator plugin runs at the edge of the operators bound to it.
 - [Enabling and binding](enabling_and_binding.md): `flz plugin` enables a plugin by name and binds operators to it.
-- [Plugins from your own code](plugins_from_code.md): Enabling, binding, unbinding and disabling are on the SDK's admin handle, so an application can attach the plugins its own namespace needs.
+- [Plugins from your own code](plugins_from_code.md): Enabling, binding, unbinding and disabling are on the SDK's `control()` handle, so an application can attach the plugins its own namespace needs.
 - [Plugin examples](plugin_examples.md): Two setups from the tutorials: the echo's file plugins, and the tradedesk's live feed into a partitioned operator.
 - [Installing plugins](installing_plugins.md): A plugin that does not ship with the controller comes as a plugin package: a `.fpz` file carrying compiled code, the plugin's own application and every library it needs that the controller release does not ship.
 - [Hooks](hooks.md): A hook is a moment at which the controller calls a plugin.

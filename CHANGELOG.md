@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Added: `runner.send`, with a message id, a partition key or `local`
+
+Application code on a runner sends to an operator with `runner.send` (`send_to` in Ruby,
+`Flezha.SDK.send/5` in Elixir), through the controller as before
+([`docs/topics/advanced/sending_from_runner_code.md`](docs/topics/advanced/sending_from_runner_code.md)).
+A message id is stamped as `flz.msg_id`, so an operator with an input log absorbs a repeat;
+`flz operator send --msg-id` does the same, and an id that is not text is refused
+(`usage.not_text`). A partition key reaches the member that owns it.
+The `local` option hands the message to an operator bound on the same runner without the
+controller: it is on no disk and lost on a crash, and refused with the new
+`runtime.operator_not_local` for an operator the runner does not hold. Every runner lists the
+operators bound on it by instance id.
+
+**Breaking:** `runner.admin()` is now `runner.control()` in every SDK, with no alias (Java
+`com.flezha.sdk.control.Control`, Elixir `Flezha.SDK.Control`), and its `send` is gone. The
+`admin.*` error codes are now `control.*`. Python's `operators()` answers instance ids rather
+than factory ids, and Java's `getOperators()` and Rust's `operators()` answer a list of ids.
+
 ### Added: `flz mcp`, an MCP server for AI assistants
 
 An AI coding assistant adds Flezha with one command, `claude mcp add flezha -- <release>/bin/flz

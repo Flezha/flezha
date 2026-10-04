@@ -8,11 +8,13 @@
 //!
 //! Every SDK over this kernel reaches the surface here rather than through a
 //! shape of its own: `sdk/rust` calls it directly and `flz_core_ffi` exposes
-//! it as the one C ABI entry the other five hosts share.
+//! it as the one C ABI entry the other five hosts share. The runner's [`send`]
+//! is here for the same reason: its options and refusals are written once.
 
 use std::time::Duration;
 
 use flz_transport::errors::{ErrorModel, FlezhaError};
+use serde_json::{json, Map, Value};
 
 use crate::error::Code;
 use crate::pb;
@@ -41,9 +43,9 @@ impl ErrorModel for AdminError {
     fn to_error(&self) -> FlezhaError {
         match self {
             AdminError::Refused(error) => error.clone(),
-            AdminError::Unavailable => Code::AdminNoControlPlane.with([]),
+            AdminError::Unavailable => Code::ControlNoControlPlane.with([]),
             AdminError::Unanswered => {
-                Code::AdminTimeout.with([("seconds", ADMIN_TIMEOUT.as_secs().into())])
+                Code::ControlTimeout.with([("seconds", ADMIN_TIMEOUT.as_secs().into())])
             }
         }
     }
@@ -75,5 +77,101 @@ pub fn call(verb: &str, args: &str) -> Result<String, AdminError> {
             crate::shutdown::drop_pending_ack(&reference_id);
             Err(AdminError::Unanswered)
         }
+    }
+}
+
+/// Send `message` to the entry channel `channel` of `operator`, answering as
+/// JSON. Through the controller's `Operator.send` by default, answering its
+/// verdict; `msg_id` and `key` ride as its named fields. With `local`, in
+/// process to an operator bound on this runner
+/// ([`crate::runner::BoundOperators::send`]), answering `null`; an id or a key
+/// beside it is refused before anything is sent, since only the controller
+/// reads them.
+pub fn send(
+    operator: &str,
+    message: &[u8],
+    channel: &str,
+    msg_id: Option<&str>,
+    key: Option<&str>,
+    local: bool,
+) -> Result<String, AdminError> {
+    let given = [("msg_id", msg_id), ("key", key)];
+    if local {
+        if let Some((other, _)) = given.iter().find(|(_, value)| value.is_some()) {
+            return Err(AdminError::Refused(
+                Code::OptionsConflict
+                    .with([("option", "local".into()), ("other", (*other).into())]),
+            ));
+        }
+        crate::runner::bound()
+            .send(operator, channel, message.to_vec())
+            .map_err(|e| AdminError::Refused(e.to_error()))?;
+        return Ok("null".to_string());
+    }
+    let message = std::str::from_utf8(message).map_err(|_| {
+        AdminError::Refused(Code::ArgumentNotUtf8.with([("argument", "message".into())]))
+    })?;
+    call(
+        "Operator.send",
+        &send_args(operator, message, channel, &given),
+    )
+}
+
+/// `Operator.send`'s arguments: the named fields ride only when one is given,
+/// so a send without them is the request it always was.
+fn send_args(
+    operator: &str,
+    message: &str,
+    channel: &str,
+    given: &[(&str, Option<&str>)],
+) -> String {
+    let mut args = vec![json!(operator), json!(message), json!(channel)];
+    let fields: Map<String, Value> = given
+        .iter()
+        .filter_map(|(name, value)| value.map(|v| (name.to_string(), json!(v))))
+        .collect();
+    if !fields.is_empty() {
+        args.push(Value::Object(fields));
+    }
+    Value::Array(args).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_send_names_its_fields_only_when_given() {
+        assert_eq!(
+            send_args("orders", "x", "in", &[("msg_id", None), ("key", None)]),
+            r#"["orders","x","in"]"#
+        );
+        assert_eq!(
+            send_args(
+                "orders",
+                "x",
+                "in",
+                &[("msg_id", Some("o/0/41")), ("key", Some("EURUSD"))]
+            ),
+            r#"["orders","x","in",{"key":"EURUSD","msg_id":"o/0/41"}]"#
+        );
+    }
+
+    #[test]
+    fn a_local_send_is_refused_for_an_id_a_key_or_an_operator_held_elsewhere() {
+        let code =
+            |result: Result<String, AdminError>| result.expect_err("refused").to_error().code;
+        assert_eq!(
+            code(send("orders", b"x", "in", Some("m-1"), None, true)),
+            "usage.options_conflict"
+        );
+        assert_eq!(
+            code(send("orders", b"x", "in", None, Some("EURUSD"), true)),
+            "usage.options_conflict"
+        );
+        assert_eq!(
+            code(send("elsewhere", b"x", "in", None, None, true)),
+            "runtime.operator_not_local"
+        );
     }
 }

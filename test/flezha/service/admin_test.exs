@@ -175,7 +175,7 @@ defmodule Flezha.Service.AdminTest do
       assert denied?(door("Namespace.set_quotas", ~s([{"max_operators": 1}])))
 
       # Deleting a namespace is not reachable over a connection at all.
-      assert {:error, %Flezha.Error{code: "admin.unknown_function"}} =
+      assert {:error, %Flezha.Error{code: "control.unknown_function"}} =
                door("Namespace.delete", "[]")
     end
   end
@@ -191,7 +191,7 @@ defmodule Flezha.Service.AdminTest do
       # arguments after the namespace, so naming one is an argument too many.
       assert {:ok, _json} = door("Operator.list_operators", "[]")
 
-      assert {:error, %Flezha.Error{code: "admin.wrong_arity"}} =
+      assert {:error, %Flezha.Error{code: "control.wrong_arity"}} =
                door("Operator.list_operators", ~s(["#{@other}"]))
     end
 
@@ -273,7 +273,7 @@ defmodule Flezha.Service.AdminTest do
     end
 
     test "the terminal's own entry is not a door, though it lives under the prefix" do
-      assert {:error, %Flezha.Error{code: "admin.unknown_function"}} =
+      assert {:error, %Flezha.Error{code: "control.unknown_function"}} =
                door("Cli.call", ~s(["Operator.stop", "[]", []]))
     end
 
@@ -291,7 +291,7 @@ defmodule Flezha.Service.AdminTest do
     # attached long after the one reply it can receive.
     test "an operation that streams is not reachable from a runner connection" do
       for {name, args} <- [{"Operator.listen", ~s(["o1"])}, {"Observability.tail", ~s(["x"])}] do
-        assert {:error, %Flezha.Error{code: "admin.unknown_function"}} = door(name, args)
+        assert {:error, %Flezha.Error{code: "control.unknown_function"}} = door(name, args)
       end
     end
 
@@ -389,7 +389,7 @@ defmodule Flezha.Service.AdminTest do
       assert Enum.any?(unreachable, &(&1.name == "Controller.stop"))
 
       for entry <- unreachable do
-        assert {:error, %Flezha.Error{code: "admin.unknown_function"}} =
+        assert {:error, %Flezha.Error{code: "control.unknown_function"}} =
                  Admin.call(entry.name, "[]", http_context(:viewer), :given)
       end
     end

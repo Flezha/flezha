@@ -116,6 +116,7 @@ codes! {
     UnknownActivationToken => "runtime.unknown_activation_token",
     PrepareUnknownChannel => "runtime.prepare_unknown_channel",
     OperatorNotFound => "runtime.operator_not_found",
+    OperatorNotLocal => "runtime.operator_not_local",
     OperatorMessageUnsupported => "runtime.operator_message_unsupported",
     UnreadableReply => "runtime.unreadable_reply",
     MaxCellsReached => "runtime.max_cells_reached",
@@ -154,8 +155,9 @@ codes! {
 
     SpawnTimeout => "spawn.timeout",
     SpawnUnavailable => "spawn.unavailable",
-    AdminNoControlPlane => "admin.no_control_plane",
-    AdminTimeout => "admin.timeout",
+    OptionsConflict => "usage.options_conflict",
+    ControlNoControlPlane => "control.no_control_plane",
+    ControlTimeout => "control.timeout",
 }
 
 impl Code {

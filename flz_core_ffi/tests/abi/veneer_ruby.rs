@@ -45,7 +45,8 @@ fn the_native_surface_is_the_declared_one() {
             "wait_starvation",
             "complete",
             "spawn_result",
-            "admin_call"
+            "admin_call",
+            "send_message"
         ]
     );
     for (name, abi) in NATIVE_SURFACE {

@@ -127,7 +127,7 @@ mod tests {
             ),
             (
                 Error::from(flz_core::admin::AdminError::Unanswered),
-                "admin.timeout",
+                "control.timeout",
             ),
             (
                 Error::SchemaMismatch { shim: 2, core: 3 },

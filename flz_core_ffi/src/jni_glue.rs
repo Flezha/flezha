@@ -471,6 +471,52 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_adminCall<'l>(
     string_or_throw(&mut env, result.map(Some))
 }
 
+/// Send one message, through the controller or locally, answering as JSON:
+/// the verdict, or `null` for a local send. An empty id or key is none.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_sendMessage<'l>(
+    mut env: JNIEnv<'l>,
+    _class: JClass,
+    ctx: jlong,
+    operator: JString,
+    channel: JString,
+    message: JByteArray,
+    msg_id: JString,
+    key: JString,
+    local: jboolean,
+) -> jstring {
+    let ctx = ctx_of(ctx);
+    let answer = (|| {
+        let operator = c_string(&mut env, "operator", &operator)?;
+        let channel = c_string(&mut env, "entry channel", &channel)?;
+        let msg_id = c_string(&mut env, "message id", &msg_id)?;
+        let key = c_string(&mut env, "key", &key)?;
+        let message = bytes_of(&mut env, "message", &message)?;
+        veneer::send_message(
+            ctx,
+            &operator,
+            &channel,
+            &message,
+            &msg_id,
+            &key,
+            local != 0,
+        )
+    })();
+    string_or_throw(&mut env, answer.map(Some))
+}
+
+/// The ids of the operator instances bound on this runner, as a JSON array.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_operators<'l>(
+    mut env: JNIEnv<'l>,
+    _class: JClass,
+    ctx: jlong,
+) -> jstring {
+    let ids = veneer::operators(ctx_of(ctx)).map(|ids| Some(serde_json::json!(ids).to_string()));
+    string_or_throw(&mut env, ids)
+}
+
 /// The core's monotonic clock in nanoseconds.
 #[no_mangle]
 pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_monotonicNanos(

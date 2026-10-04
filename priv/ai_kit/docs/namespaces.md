@@ -288,10 +288,10 @@ start while its entry stands.
 
 ## Administering from application code
 
-A connected runner can administer the namespace its connection proved: start,
-stop and feed operators, enable and disable plugins, and read what is running.
-No tasklet has to run, and the application holds no credential beyond the one
-its connection already presented.
+A connected runner can administer the namespace its connection proved: start
+and stop operators, enable and disable plugins, read what is running, and send
+to its operators. No tasklet has to run, and the application holds no credential
+beyond the one its connection already presented.
 
 | | |
 | --- | --- |
@@ -318,7 +318,7 @@ that start workflows) reaches only the start and the send below; adding
 | --- | --- | --- |
 | start an operator | `Operator.start` | the spec `flz operator start` takes: `factory_id`, and optionally `id`, `init_values`, `opts`. The run is the factory's, so a written `kind` is refused. Answers `{"id": ..., "outcome": "started" \| "already_running"}` |
 | stop an operator | `Operator.stop` | `operator_id` |
-| send to an operator | `Operator.send` | `operator_id`, `message`, `channel` (`""` for none) |
+| send to an operator | `Operator.send`, reached as `runner.send` ([`sending_from_runner_code.md`](../advanced/sending_from_runner_code.md)) | `operator_id`, `message`, `channel` (`""` for none), and optionally `msg_id` and `key` |
 | enable a plugin | `PluginManager.enable` | the plugin's `name`, then `provider`, `opts` and optionally `single`; with `operator_id` and `hooks` it also binds that operator |
 | bind an operator to a plugin | `PluginManager.bind` | `name`, then `operator_id` and optionally `hooks` and `channel` |
 | unbind an operator | `PluginManager.unbind` | `name`, then `operator_id` |
@@ -327,17 +327,18 @@ that start workflows) reaches only the start and the send below; adding
 | list plugins | `PluginManager.list` | none; the plugins enabled in the namespace |
 | read cell state | `Operator.cell_state` | `operator_id`, `cell_key` |
 
-Each SDK spells these as methods on its admin handle:
+Each SDK spells these as methods on its `control()` handle, except the send,
+which is on the runner itself:
 
 | SDK | Reached as | A start reads |
 | --- | --- | --- |
-| Rust | `runner.admin()` | `admin.start_operator(&OperatorSpec::new("order_worker").id("orders"))` |
-| Java | `runner.admin()` | `admin.startOperator(OperatorSpec.of("order_worker").id("orders"))` |
-| Node | `runner.admin()` | `await admin.startOperator('order_worker', { id: 'orders' })` |
-| Python | `runner.admin()` | `admin.start_operator("order_worker", id="orders")` |
-| Ruby | `runner.admin` | `admin.start_operator("order_worker", id: "orders")` |
-| PHP | `$runner->admin()` | `$admin->startOperator('order_worker', id: 'orders')` |
-| Elixir | `Flezha.SDK.Admin` | `Admin.start_operator(runner, "order_worker", id: "orders")` |
+| Rust | `runner.control()` | `control.start_operator(&OperatorSpec::new("order_worker").id("orders"))` |
+| Java | `runner.control()` | `control.startOperator(OperatorSpec.of("order_worker").id("orders"))` |
+| Node | `runner.control()` | `await control.startOperator('order_worker', { id: 'orders' })` |
+| Python | `runner.control()` | `control.start_operator("order_worker", id="orders")` |
+| Ruby | `runner.control` | `control.start_operator("order_worker", id: "orders")` |
+| PHP | `$runner->control()` | `$control->startOperator('order_worker', id: 'orders')` |
+| Elixir | `Flezha.SDK.Control` | `Control.start_operator(runner, "order_worker", id: "orders")` |
 
 [`running_operators.md`](running_operators.md#from-application-code) shows
 them in the echo runner of each SDK.

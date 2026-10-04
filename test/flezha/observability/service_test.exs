@@ -199,10 +199,10 @@ defmodule Flezha.Service.ObservabilityTest do
 
       # The first refusal loads what refusing needs; a word it had minted would
       # be served the second time.
-      assert {:error, %Flezha.Error{code: "admin.unknown_parameter"}} = refuse.()
+      assert {:error, %Flezha.Error{code: "control.unknown_parameter"}} = refuse.()
       before = :erlang.system_info(:atom_count)
 
-      assert {:error, %Flezha.Error{code: "admin.unknown_parameter", details: details}} =
+      assert {:error, %Flezha.Error{code: "control.unknown_parameter", details: details}} =
                refuse.()
 
       assert details["parameter"] == "obs_door_never_an_atom_7f3a"

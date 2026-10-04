@@ -533,6 +533,40 @@ fn admin_call(verb: String, args: String) -> Result<String, Error> {
     without_gvl(move || veneer::admin_call(ctx, &verb, &args)).map_err(refused)
 }
 
+/// Send one message, through the controller or locally, answering as JSON:
+/// the verdict, or `null` for a local send. Blocking: the controller's answer
+/// takes a round trip, and a local send parks while the consumer's mailbox is
+/// full.
+fn send_message(
+    operator: String,
+    channel: String,
+    message: RString,
+    msg_id: Option<String>,
+    key: Option<String>,
+    local: bool,
+) -> Result<String, Error> {
+    let ruby = ruby();
+    let ctx = context(&ruby)?;
+    let refused = |r| raise(&ruby, r);
+    let operator = veneer::c_string("operator", &operator).map_err(refused)?;
+    let channel = veneer::c_string("entry channel", &channel).map_err(refused)?;
+    let msg_id =
+        veneer::c_string("message id", msg_id.as_deref().unwrap_or_default()).map_err(refused)?;
+    let key = veneer::c_string("key", key.as_deref().unwrap_or_default()).map_err(refused)?;
+    let message = read_bytes(&ruby, "message", message.as_value())?;
+    without_gvl(move || {
+        veneer::send_message(ctx, &operator, &channel, &message, &msg_id, &key, local)
+    })
+    .map_err(refused)
+}
+
+/// The ids of the operator instances bound on this runner.
+fn operators() -> Result<Vec<String>, Error> {
+    let ruby = ruby();
+    let ctx = context(&ruby)?;
+    veneer::operators(ctx).map_err(|r| raise(&ruby, r))
+}
+
 /// The core's monotonic clock in nanoseconds.
 fn monotonic_nanos() -> u64 {
     crate::flz_core_monotonic_nanos()
@@ -603,6 +637,8 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("spawn_result", "flz_core_spawn_result"),
     ("part", "flz_core_part"),
     ("admin_call", "flz_core_admin_call"),
+    ("send_message", "flz_core_send_message"),
+    ("operators", "flz_core_operators"),
     ("monotonic_nanos", "flz_core_monotonic_nanos"),
     ("last_error", "flz_core_last_error"),
     ("native_surface", "flz_core_schema_version"),
@@ -639,6 +675,8 @@ pub fn init(ruby: &Ruby) -> Result<(), Error> {
     native.define_module_function("spawn_result", function!(spawn_result, 2))?;
     native.define_module_function("part", function!(part, 3))?;
     native.define_module_function("admin_call", function!(admin_call, 2))?;
+    native.define_module_function("send_message", function!(send_message, 6))?;
+    native.define_module_function("operators", function!(operators, 0))?;
     native.define_module_function("monotonic_nanos", function!(monotonic_nanos, 0))?;
     native.define_module_function("last_error", function!(last_error, 0))?;
     native.define_module_function("native_surface", function!(native_surface, 0))?;

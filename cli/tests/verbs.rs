@@ -115,6 +115,12 @@ const CASES: &[(&[&str], &str)] = &[
         r#"Flezha.Service.Cli.call("Operator.send", "[\"default\",\"prices\",\"x\",\"\",{\"key\":\"EURUSD\"}]", [])"#,
     ),
     (
+        &[
+            "operator", "send", "orders", "--msg-id", "a1", "--text", "x",
+        ],
+        r#"Flezha.Service.Cli.call("Operator.send", "[\"default\",\"orders\",\"x\",\"\",{\"msg_id\":\"a1\"}]", [])"#,
+    ),
+    (
         &["audit", "read", "--source", "x\"y", "f.log"],
         r#"Flezha.Service.Cli.call("AuditLog.read", "[{\"file\":\"f.log\",\"source\":\"x\\\"y\"}]", [])"#,
     ),

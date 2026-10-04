@@ -26,6 +26,7 @@ fn the_native_surface_is_the_declared_one() {
             "complete",
             "spawnWait",
             "adminCall",
+            "sendMessage",
             "stopHost"
         ]
     );

@@ -232,9 +232,10 @@ package com.flezha.examples.echo;
 
 import com.flezha.sdk.Flezha;
 import com.flezha.sdk.FlezhaRunner;
-import com.flezha.sdk.admin.Admin;
-import com.flezha.sdk.admin.OperatorSpec;
-import com.flezha.sdk.admin.PluginSpec;
+import com.flezha.sdk.SendOpts;
+import com.flezha.sdk.control.Control;
+import com.flezha.sdk.control.OperatorSpec;
+import com.flezha.sdk.control.PluginSpec;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -249,27 +250,28 @@ public final class Main {
 
     public static void main(String[] args) throws Exception {
         // run() is start() followed by awaitTermination(). Splitting them keeps the handle,
-        // which is the only way to reach admin(), and still blocks until shutdown.
+        // which is the only way to reach control() and send(), and still blocks until shutdown.
         FlezhaRunner runner = Flezha.createRunner(args.length > 0 ? args[0] : "default")
                 .registerFactory(EchoOperator.class)     // the operators this runner serves
                 .start();                                // connects to the controller
 
-        // Everything `flz operator` and `flz plugin` do is also a method here. Uncomment to
-        // drive this namespace from the application instead of from a terminal:
+        // Everything `flz operator` and `flz plugin` do is also a method of control(), and
+        // send() hands a message to an operator. Uncomment to drive this namespace from the
+        // application instead of from a terminal:
         //
-        // Admin admin = runner.admin();
-        // admin.startOperator(OperatorSpec.of("echo").id("my_echo"));
+        // Control control = runner.control();
+        // control.startOperator(OperatorSpec.of("echo").id("my_echo"));
         //
         // ObjectNode opts = JsonNodeFactory.instance.objectNode().put("path", "echo-out.txt");
-        // admin.enablePlugin("writer", PluginSpec.of("operator_file_sink").opts(opts));
+        // control.enablePlugin("writer", PluginSpec.of("operator_file_sink").opts(opts));
         // ArrayNode hooks = JsonNodeFactory.instance.arrayNode();
         // hooks.addArray().add("on_output").addObject();
-        // admin.bindPlugin("writer", "my_echo", hooks, null);
+        // control.bindPlugin("writer", "my_echo", hooks, null);
         //
-        // admin.send("my_echo", "hello world", "in");
+        // runner.send("my_echo", "hello world", "in", SendOpts.of().msgId("hello-1"));
         //
-        // docs/sdk/admin.md has the whole surface. An enforced controller refuses all of it until
-        // `flz role bind runner@default app default`.
+        // docs/topics/advanced/sending_from_runner_code.md covers sending. An enforced controller
+        // refuses all of it until `flz role bind runner@default app default`.
 
         runner.awaitTermination();
     }

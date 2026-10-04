@@ -155,7 +155,7 @@ controller's machine for those ([cli.md](../topics/cli/cli.md)).
 - **Dead letters of a namespace are listed by operator.** Listing every operator's is a
   `_system` read, so a namespace token passes the operator: `dlq_list` with
   `operator_class`.
-- **A call past `deadline_ms` answers `admin.timeout`.** The operation itself carries on.
+- **A call past `deadline_ms` answers `control.timeout`.** The operation itself carries on.
 - **Tool lists are kept for a minute.** A client may keep the tool list it read for 60
   seconds, so a role changed since shows within the minute. Every call is still judged
   by the role the token holds now.

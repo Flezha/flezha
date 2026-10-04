@@ -16,13 +16,15 @@ defmodule FlezhaTest.Operator.IngestTest do
   alias Flezha.Operator.Overwatch
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Host, as: PluginHost
-  alias Flezha.Service.OperatorManager
+  alias Flezha.Service.{Operator, OperatorManager}
   alias Flezha.State.{InputLog, Paths, Supervisor, TestHelpers}
   alias Flezha.Transport.LivenessCounters
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.OverwatchHost, as: Host
 
   import Host, only: [state: 1, state: 2]
+
+  @ui %{source: :ui, principal: "console@_system"}
 
   defp instance_id(), do: "confirm_#{System.unique_integer([:positive])}"
 
@@ -114,6 +116,21 @@ defmodule FlezhaTest.Operator.IngestTest do
       assert_receive {:channel_got, ^inst, {"again", %{"flz.offset" => "0"}}}
 
       assert {:ok, :absorbed} = GenServer.call(host, {:ingest, "again", sent_once})
+      refute_received {:channel_got, _, _}
+    end
+
+    test "Operator.send stamps opts[:msg_id], so a repeat the log holds is absorbed" do
+      inst = instance_id()
+      state = state(inst, durable_steps: true, channel: fake_channel(:ok))
+      {:ok, host} = start_supervised({Host, state})
+      stub(Flezha.Service.HubManager, :hub_alive?, fn _namespace -> true end)
+      stub(Flezha.Service.HubManager, :get_pid, fn "default", ^inst -> {:ok, host} end)
+      send_it = fn -> Operator.send("default", inst, "o-41", "", [msg_id: "orders/0/41"], @ui) end
+
+      assert {:ok, %{to: ^inst, verdict: :delivered}} = send_it.()
+      assert_receive {:channel_got, ^inst, {"o-41", %{"flz.msg_id" => "orders/0/41"}}}
+
+      assert {:ok, %{to: ^inst, verdict: :absorbed}} = send_it.()
       refute_received {:channel_got, _, _}
     end
 

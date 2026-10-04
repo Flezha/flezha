@@ -16,7 +16,7 @@ publish = false
 
 [dependencies]
 flezha_runner = "0.1.0"
-# The admin calls commented out in main.rs take their fields as JSON.
+# The control calls commented out in main.rs take their fields as JSON.
 serde_json = "1"
 
 # Its own workspace, so the Flezha repository's workspace around this folder
@@ -119,29 +119,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| "default".to_string());
 
     // `run()` is `start()` followed by `await_termination()`. Splitting them
-    // leaves room for the admin calls below, and still blocks until shutdown.
+    // leaves room for the calls below, and still blocks until shutdown.
     // The runner is bound to a name because a chained temporary would be
     // dropped, and shut down, at the end of the statement.
     let runner = Flezha::create_runner(namespace)?;
     // connects to the controller and serves these operators
     runner.register_factory(operator::EchoOperator)?.start()?;
 
-    // Everything `flz operator` and `flz plugin` do is also a method here.
-    // Uncomment to drive this namespace from the application instead of from a
-    // terminal:
+    // Everything `flz operator` and `flz plugin` do is also a method of
+    // `control()`, and `send` hands a message to an operator. Uncomment to
+    // drive this namespace from the application instead of from a terminal:
     //
-    // let admin = runner.admin();
-    // admin.start_operator(&flezha_runner::OperatorSpec::new("echo").id("my_echo"))?;
-    // admin.enable_plugin(
+    // let control = runner.control();
+    // control.start_operator(&flezha_runner::OperatorSpec::new("echo").id("my_echo"))?;
+    // control.enable_plugin(
     //     "writer",
     //     &flezha_runner::PluginSpec::new("operator_file_sink")
     //         .opts(serde_json::json!({ "path": "echo-out.txt" })),
     // )?;
-    // admin.bind_plugin("writer", "my_echo", serde_json::json!([["on_output", {}]]), "")?;
-    // admin.send("my_echo", "hello world", "in")?;
+    // control.bind_plugin("writer", "my_echo", serde_json::json!([["on_output", {}]]), "")?;
+    // let opts = flezha_runner::SendOpts::new().msg_id("hello-1");
+    // runner.send("my_echo", "hello world", "in", &opts)?;
     //
-    // docs/sdk/admin.md has the whole surface. An enforced controller refuses
-    // all of it until `flz role bind runner@default app default`.
+    // docs/topics/advanced/sending_from_runner_code.md covers sending. An
+    // enforced controller refuses all of it until
+    // `flz role bind runner@default app default`.
 
     runner.await_termination()?;
     Ok(())

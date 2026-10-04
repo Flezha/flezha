@@ -32,6 +32,8 @@ pub const BLOCKING_ENTRY_POINTS: &[&str] = &[
     // host may make that one on any thread.
     "flz_core_spawn_result",
     "flz_core_admin_call",
+    // For the controller's answer, or while a local consumer's mailbox is full.
+    "flz_core_send_message",
     // A local run parks the caller in all three: `feed` while the consumer's
     // mailbox is full, and the other two by their own budget. The host's poll
     // loop is what drains them, so a host that parked its only dispatch thread
@@ -390,4 +392,49 @@ pub fn admin_call(ctx: CtxPtr, verb: &CStr, args: &CStr) -> Result<String, Refus
     );
     verdict(ctx, status)?;
     Ok(result.unwrap_or_default())
+}
+
+/// Send `message` to the entry channel `channel` of `operator`, answering as
+/// JSON: the controller's verdict, or `null` for a local send. An empty
+/// `msg_id` or `key` is none.
+pub fn send_message(
+    ctx: CtxPtr,
+    operator: &CStr,
+    channel: &CStr,
+    message: &[u8],
+    msg_id: &CStr,
+    key: &CStr,
+    local: bool,
+) -> Result<String, Refusal> {
+    let (status, answer) = with_buffer(
+        &[FLZ_OK],
+        |out, out_len| unsafe {
+            crate::flz_core_send_message(
+                ctx.get(),
+                operator.as_ptr(),
+                channel.as_ptr(),
+                message.as_ptr(),
+                message.len(),
+                msg_id.as_ptr(),
+                key.as_ptr(),
+                i32::from(local),
+                out,
+                out_len,
+            )
+        },
+        |bytes| String::from_utf8_lossy(bytes).into_owned(),
+    );
+    verdict(ctx, status)?;
+    Ok(answer.unwrap_or_default())
+}
+
+/// The ids of the operator instances bound on this process's runner.
+pub fn operators(ctx: CtxPtr) -> Result<Vec<String>, Refusal> {
+    let (status, ids) = with_buffer(
+        &[FLZ_OK],
+        |out, out_len| unsafe { crate::flz_core_operators(ctx.get(), out, out_len) },
+        |bytes| serde_json::from_slice::<Vec<String>>(bytes).unwrap_or_default(),
+    );
+    verdict(ctx, status)?;
+    Ok(ids.unwrap_or_default())
 }

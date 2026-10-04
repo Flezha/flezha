@@ -197,8 +197,9 @@ everything down so the next start is empty, go in reverse order:
 
 ## From application code
 
-Every verb above is also a method on the runner, so an application can start
-and stop its own operators without anyone typing `flz`. The calls run as the
+Every verb above is also a method of the runner's `control()` handle, and the
+send is a method of the runner itself, so an application can start, stop and
+feed its own operators without anyone typing `flz`. The calls run as the
 identity the runner's connection proved, so nothing holds a credential and
 nothing expires; with authorization on, the namespace must first be bound to a
 role that allows them ([`namespaces.md`](namespaces.md#administering-from-application-code)).
@@ -209,37 +210,38 @@ Here the echo runner starts `my_echo` and sends it a message:
 ### Java
 
 ```java
-// Main.java: the runner's admin calls
-Admin admin = runner.admin();
-admin.startOperator(OperatorSpec.of("echo").id("my_echo"));
-admin.send("my_echo", "hello world", "in");
+// Main.java: the runner's control and send calls
+Control control = runner.control();
+control.startOperator(OperatorSpec.of("echo").id("my_echo"));
+runner.send("my_echo", "hello world", "in", SendOpts.of().msgId("hello-1"));
 ```
 
 Full file: [`Main.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/echo/src/main/java/com/flezha/examples/echo/Main.java).
 Use `start()` rather than `run()`: `run()` is `start()` followed by
-`awaitTermination()` and does not hand the runner back, so the admin calls go
+`awaitTermination()` and does not hand the runner back, so the calls go
 between the two.
 
 ### Rust
 
 ```rust
-// src/main.rs: the runner's admin calls
-let admin = runner.admin();
-admin.start_operator(&flezha_runner::OperatorSpec::new("echo").id("my_echo"))?;
-admin.send("my_echo", "hello world", "in")?;
+// src/main.rs: the runner's control and send calls
+let control = runner.control();
+control.start_operator(&flezha_runner::OperatorSpec::new("echo").id("my_echo"))?;
+let opts = flezha_runner::SendOpts::new().msg_id("hello-1");
+runner.send("my_echo", "hello world", "in", &opts)?;
 ```
 
 Full file: [`src/main.rs`](https://github.com/flezha/flezha_rust_sdk/blob/main/examples/echo/src/main.rs).
 Each call answers the controller's own result as a `serde_json::Value`, and a
-refusal as an `AdminError`.
+refusal as a `ControlError`.
 
 ### Node
 
 ```javascript
-// runner.mjs: the runner's admin calls
-const admin = runner.admin();
-await admin.startOperator('echo', { id: 'my_echo' });
-await admin.send('my_echo', 'hello world', 'in');
+// runner.mjs: the runner's control and send calls
+const control = runner.control();
+await control.startOperator('echo', { id: 'my_echo' });
+await runner.send('my_echo', 'hello world', 'in', { msgId: 'hello-1' });
 ```
 
 Full file: [`runner.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/echo/runner.mjs).
@@ -249,10 +251,10 @@ after it. Each call is a promise of the controller's result.
 ### Python
 
 ```python
-# runner.py: the runner's admin calls
-admin = runner.admin()
-admin.start_operator("echo", id="my_echo")
-admin.send("my_echo", "hello world", "in")
+# runner.py: the runner's control and send calls
+control = runner.control()
+control.start_operator("echo", id="my_echo")
+runner.send("my_echo", "hello world", "in", msg_id="hello-1")
 ```
 
 Full file: [`runner.py`](https://github.com/flezha/flezha_python_sdk/blob/main/examples/echo/runner.py).
@@ -261,10 +263,10 @@ Each call blocks for the controller's answer.
 ### Ruby
 
 ```ruby
-# runner.rb: the runner's admin calls
-admin = runner.admin
-admin.start_operator("echo", id: "my_echo")
-admin.send_to("my_echo", "hello world", channel: "in")
+# runner.rb: the runner's control and send calls
+control = runner.control
+control.start_operator("echo", id: "my_echo")
+runner.send_to("my_echo", "hello world", "in", msg_id: "hello-1")
 ```
 
 Full file: [`runner.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/echo/runner.rb).
@@ -275,10 +277,10 @@ object already has.
 ### PHP
 
 ```php
-// runner.php: the runner's admin calls
-$admin = $runner->admin();
-$admin->startOperator('echo', id: 'my_echo');
-$admin->send('my_echo', 'hello world', 'in');
+// runner.php: the runner's control and send calls
+$control = $runner->control();
+$control->startOperator('echo', id: 'my_echo');
+$runner->send('my_echo', 'hello world', 'in', msgId: 'hello-1');
 ```
 
 Full file: [`runner.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/echo/runner.php).
@@ -288,11 +290,11 @@ processed once `awaitTermination()` starts serving.
 ### Elixir
 
 ```elixir
-# lib/echo/application.ex: the runner's admin calls
-alias Flezha.SDK.Admin
+# lib/echo/application.ex: the runner's control and send calls
+alias Flezha.SDK.Control
 runner = Flezha.SDK.RunnerServer
-{:ok, %{id: "my_echo"}} = Admin.start_operator(runner, "echo", id: "my_echo")
-{:ok, _} = Admin.send_to(runner, "my_echo", "hello world", "in")
+{:ok, %{id: "my_echo"}} = Control.start_operator(runner, "echo", id: "my_echo")
+{:ok, _} = Flezha.SDK.send(runner, "my_echo", "hello world", "in", msg_id: "hello-1")
 ```
 
 Full file: [`lib/echo/application.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/echo/lib/echo/application.ex).
@@ -307,6 +309,10 @@ its answer was lost starts a second operator, and a second flow operator runs
 until it is stopped. Pass an id when a start may be retried. An operator
 started this way is the cluster's, not the connection's: it survives the
 runner disconnecting, shows in `flz operator list`, and can be stopped there.
+On an operator with an input log, the message id `hello-1` makes a repeat of
+the send absorbed rather than handled twice;
+[`sending_from_runner_code.md`](../advanced/sending_from_runner_code.md) covers
+the send's options.
 
 ## After a controller restart
 
@@ -585,7 +591,7 @@ reset a whole cluster (run it on each node), or purge a remote backend.
 
 - [`building_blocks.md`](building_blocks.md): factories and operators.
 - [`configuring_an_operator.md`](configuring_an_operator.md): what the class decides, and what a start may not.
-- [`namespaces.md`](namespaces.md): namespaces, quotas and the admin surface from code.
+- [`namespaces.md`](namespaces.md): namespaces, quotas and the `control()` surface from code.
 - [`deploying_a_controller.md`](../deploying/deploying_a_controller.md#graceful-shutdown): stopping a controller.
 - [`durability.md`](durability.md): what survives a crash, and the remote tier.
 - [`cli.md`](../cli/cli.md): the whole `flz` command line.

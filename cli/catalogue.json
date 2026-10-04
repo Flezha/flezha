@@ -1158,7 +1158,7 @@
           "type": "keyword",
           "required": false,
           "default": [],
-          "doc": "`key`, for a partition group."
+          "doc": "`key`, for a partition group, and `msg_id`, the message's id."
         }
       ]
     },

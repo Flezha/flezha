@@ -108,6 +108,13 @@ impl OperatorRegistry {
         self.inner.contains_key(instance_id)
     }
 
+    /// Every live instance's id, both kinds, sorted.
+    pub fn ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self.inner.iter().map(|r| r.key().clone()).collect();
+        ids.sort_unstable();
+        ids
+    }
+
     /// The flow instances. A durable steps operator is suspended through its
     /// journal and resumed at its stage, never re-seeded from a shipped state
     /// document, so the graceful-shutdown walk leaves it out.

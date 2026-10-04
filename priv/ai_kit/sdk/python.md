@@ -155,21 +155,21 @@ def main() -> None:
     runner = flezha.create_runner(namespace).register_factory(echo_operator)
 
     # `run()` is `start()` followed by `await_termination()`. Splitting them
-    # leaves room for the admin calls below, and still blocks until shutdown.
+    # leaves room for the calls below, and still blocks until shutdown.
     runner.start()  # connects to the controller
 
-    # Everything `flz operator` and `flz plugin` do is also a method here.
-    # Uncomment to drive this namespace from the application instead of from a
-    # terminal:
+    # Everything `flz operator` and `flz plugin` do is also a method of
+    # `control()`, and `send` hands a message to an operator. Uncomment to drive
+    # this namespace from the application instead of from a terminal:
     #
-    # admin = runner.admin()
-    # admin.start_operator("echo", id="my_echo")
-    # admin.enable_plugin("writer", "operator_file_sink", opts={"path": "echo-out.txt"})
-    # admin.bind_plugin("writer", "my_echo", hooks=[["on_output", {}]])
-    # admin.send("my_echo", "hello world", "in")
+    # control = runner.control()
+    # control.start_operator("echo", id="my_echo")
+    # control.enable_plugin("writer", "operator_file_sink", opts={"path": "echo-out.txt"})
+    # control.bind_plugin("writer", "my_echo", hooks=[["on_output", {}]])
+    # runner.send("my_echo", "hello world", "in", msg_id="hello-1")
     #
-    # docs/sdk/admin.md has the whole surface. An enforced controller refuses all
-    # of it until `flz role bind runner@default app default`.
+    # docs/topics/advanced/sending_from_runner_code.md covers sending. An enforced
+    # controller refuses all of it until `flz role bind runner@default app default`.
 
     # Blocks until shutdown: a SIGTERM, or standard input closing.
     runner.await_termination()

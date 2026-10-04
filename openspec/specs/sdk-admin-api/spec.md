@@ -5,7 +5,7 @@ TBD - created by archiving change let-an-application-administer-its-namespace. U
 ## Requirements
 ### Requirement: An application administers its own namespace from runner code
 
-The SDK SHALL offer, on the runner object rather than on a tasklet context, a surface by which ordinary application code administers the namespace its connection proved. The surface SHALL cover starting, stopping and sending to an operator, enabling and disabling a plugin by name, binding a plugin to an operator and unbinding it, and reading operators, plugins and cell state. It SHALL require no tasklet to be running and SHALL require the application to hold no credential of its own beyond what its connection already presented. Starting SHALL take the same specification `flz operator start` takes: the factory, and an id only when the application chooses one. Enabling SHALL take the same specification `flz plugin enable` takes: the name, the provider and its options, and an operator only when the application binds in the same call.
+The SDK SHALL offer, on the runner object rather than on a tasklet context, a surface reached as `control()` (`control` in Ruby, `$runner->control()` in PHP, `Flezha.SDK.Control` in Elixir) by which ordinary application code administers the namespace its connection proved. The surface SHALL cover starting and stopping an operator, enabling and disabling a plugin by name, binding a plugin to an operator and unbinding it, and reading operators, plugins and cell state. It SHALL not carry sending to an operator, which is on the runner object itself, and no SDK SHALL offer the surface under its former name `admin`. It SHALL require no tasklet to be running and SHALL require the application to hold no credential of its own beyond what its connection already presented. Starting SHALL take the same specification `flz operator start` takes: the factory, and an id only when the application chooses one. Enabling SHALL take the same specification `flz plugin enable` takes: the name, the provider and its options, and an operator only when the application binds in the same call.
 
 #### Scenario: An application starts an operator it implements
 
@@ -37,6 +37,12 @@ The SDK SHALL offer, on the runner object rather than on a tasklet context, a su
   it started
 - **THEN** both operators SHALL be bound to the one plugin, and unbinding one SHALL
   leave the other bound and the plugin enabled
+
+#### Scenario: The surface is reached as control
+
+- **WHEN** application code asks a started runner for `control()` and starts an operator
+  through it
+- **THEN** the operator SHALL start, and the runner SHALL offer no `admin()`
 
 ### Requirement: The act is judged and recorded like any other user act
 

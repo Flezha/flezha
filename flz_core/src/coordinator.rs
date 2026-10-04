@@ -16,47 +16,114 @@ use flz_transport::transport::FlezhaStream;
 use prost::Message;
 use tracing::warn;
 
+use crate::channel::ChannelKind;
+use crate::error::{Code, Error};
 use crate::operator::instance::OperatorInstance;
 use crate::operator::registry::{get_class as get_operator_class, OperatorRegistry};
 use crate::pb::command_request::Command;
-use crate::pb::{OperatorCompleted as PbOperatorCompleted, CommandRequest};
+use crate::pb::{CommandRequest, OperatorCompleted as PbOperatorCompleted};
 use crate::routing::OperatorDispatchHandle;
 use crate::runner::{ClientResponseMessage, RunnerMessage, RunnerStatus};
 use crate::shutdown::ShutdownBridge;
 use crate::util::nonce_suffix;
 use crate::{command, control_unit};
 
+/// Each data pair's secondary by pair key: the stream an operator's outputs ride.
+pub type IoStreams = Arc<RwLock<HashMap<u32, Arc<FlezhaStream>>>>;
+
 pub struct RunnerNode {
     runner_id: String,
     _namespace: String,
     operator_registry: Arc<OperatorRegistry>,
-    shared_io_streams: Arc<RwLock<HashMap<u32, FlezhaStream>>>,
+    shared_io_streams: IoStreams,
     quic_client: Option<Arc<QuicClient>>,
     connect_answered: ConnectAnswered,
     status: RunnerStatus,
 }
 
-/// The newest RunnerNode's registry, for harnesses that drive its instances.
-#[doc(hidden)]
-pub static LIVE_REGISTRY: std::sync::Mutex<Option<Arc<OperatorRegistry>>> =
-    std::sync::Mutex::new(None);
+/// What application code reaches of a runner without its coordinator: the
+/// operators bound on it, and a send to one of them that enters where a frame
+/// off the wire enters.
+#[derive(Clone)]
+pub struct BoundOperators {
+    registry: Arc<OperatorRegistry>,
+    io_streams: IoStreams,
+}
+
+static LIVE: Mutex<Option<BoundOperators>> = Mutex::new(None);
+
+/// The newest RunnerNode's bound operators; none before any runner is built.
+pub fn bound() -> BoundOperators {
+    LIVE.lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+        .unwrap_or_else(|| BoundOperators {
+            registry: Arc::new(OperatorRegistry::new()),
+            io_streams: Arc::default(),
+        })
+}
 
 /// A live instance by id on the newest runner, for harnesses.
 #[doc(hidden)]
 pub fn live_instance(instance_id: &str) -> Option<Arc<OperatorInstance>> {
-    LIVE_REGISTRY
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .as_ref()
-        .and_then(|r| r.get(instance_id))
+    bound().registry.get(instance_id)
+}
+
+impl BoundOperators {
+    /// The ids of the operator instances bound now, a partition member by its
+    /// member id, sorted.
+    pub fn ids(&self) -> Vec<String> {
+        self.registry.ids()
+    }
+
+    /// Hand `payload` to `operator`'s entry channel `channel` in this process,
+    /// through the dispatch a stream reader makes, with no frame to the
+    /// controller. The input carries no offset, so no input log holds it.
+    /// Blocks while the consumer's mailbox is full, as a reader does.
+    pub fn send(&self, operator: &str, channel: &str, payload: Vec<u8>) -> Result<(), Error> {
+        let not_local =
+            || Error::Routing(Code::OperatorNotLocal.with([("operator", operator.into())]));
+        let instance = self.registry.get(operator).ok_or_else(not_local)?;
+        crate::local::declared_channel(&instance, channel, ChannelKind::Entry)?;
+        let stream = self.stream_of(operator).ok_or_else(not_local)?;
+        let metadata = HashMap::from([("channel".to_string(), channel.to_string())]);
+        self.dispatch_handle()
+            .dispatch(operator, payload, &metadata, stream);
+        Ok(())
+    }
+
+    /// The stream readers' handle onto these operators, for harnesses.
+    #[doc(hidden)]
+    pub fn dispatch_handle(&self) -> OperatorDispatchHandle {
+        OperatorDispatchHandle {
+            registry: Arc::clone(&self.registry),
+        }
+    }
+
+    /// The secondary of the pair whose index the controller picks for
+    /// `operator` (`Flezha.Operator.Lifecycle.attach_channel/2`: the sum of the
+    /// id's code points modulo the pair count), so a local input's outputs
+    /// usually share a stream with the operator's other outputs. The controller
+    /// numbers pairs in arrival order, which matches the runner's keys when they
+    /// connect in turn; when they do not, only output order across the two
+    /// paths is affected.
+    fn stream_of(&self, operator: &str) -> Option<Arc<FlezhaStream>> {
+        let streams = self.io_streams.read().unwrap_or_else(|p| p.into_inner());
+        let count = u64::try_from(streams.len()).ok().filter(|n| *n > 0)?;
+        let sum: u64 = operator.chars().map(u64::from).sum();
+        let key = u32::try_from(sum % count).ok()?;
+        streams.get(&key).map(Arc::clone)
+    }
 }
 
 impl RunnerNode {
     pub fn new(namespace: String) -> RunnerNode {
         let operator_registry = Arc::new(OperatorRegistry::new());
-        *LIVE_REGISTRY.lock().unwrap_or_else(|p| p.into_inner()) =
-            Some(Arc::clone(&operator_registry));
-        let shared_io_streams = Arc::new(RwLock::new(HashMap::new()));
+        let shared_io_streams: IoStreams = Arc::new(RwLock::new(HashMap::new()));
+        *LIVE.lock().unwrap_or_else(|p| p.into_inner()) = Some(BoundOperators {
+            registry: Arc::clone(&operator_registry),
+            io_streams: Arc::clone(&shared_io_streams),
+        });
 
         RunnerNode {
             runner_id: "undefined".to_string(),
@@ -153,12 +220,16 @@ impl RunnerNode {
         self._namespace.clone()
     }
 
-    pub fn get_operators(&self) -> HashMap<String, Arc<OperatorInstance>> {
-        self.operator_registry.snapshot_stream()
+    pub fn get_io_streams(&self) -> IoStreams {
+        Arc::clone(&self.shared_io_streams)
     }
 
-    pub fn get_io_streams(&self) -> Arc<RwLock<HashMap<u32, FlezhaStream>>> {
-        Arc::clone(&self.shared_io_streams)
+    /// This runner's bound operators, as application code reaches them.
+    pub fn bound(&self) -> BoundOperators {
+        BoundOperators {
+            registry: Arc::clone(&self.operator_registry),
+            io_streams: Arc::clone(&self.shared_io_streams),
+        }
     }
 
     pub fn get_runner_id(&self) -> String {
@@ -294,9 +365,6 @@ impl Coordinator {
                     &message,
                 );
             }
-            RunnerMessage::ReturnOperators => {
-                return_operators(&self.runner, self.ctx_arc.clone());
-            }
             RunnerMessage::Reconnect(reason) => self.reconnect(reason),
             // A failed keepalive write means the control stream died; the
             // reader loop detects the same and drives reconnect.
@@ -408,7 +476,7 @@ fn framed_request(reference_id: String, command: Command) -> Vec<u8> {
 
 /// One heartbeat tick; a heartbeat that reached nothing feeds the flood
 /// ladder, the only signal an idle Operator ever gives it.
-fn heartbeat_tick(io_streams: &RwLock<HashMap<u32, FlezhaStream>>) {
+fn heartbeat_tick(io_streams: &RwLock<HashMap<u32, Arc<FlezhaStream>>>) {
     if !send_data_heartbeat(io_streams) {
         crate::state_sink::note_transport_failure();
     }
@@ -417,7 +485,7 @@ fn heartbeat_tick(io_streams: &RwLock<HashMap<u32, FlezhaStream>>) {
 /// A body-less heartbeat on every secondary stream; whether it reached one.
 /// Reaching none means the controller will flag `output_stall`, so the
 /// caller drives its own recovery rather than wait for a `ConnectSocket`.
-fn send_data_heartbeat(io_streams: &RwLock<HashMap<u32, FlezhaStream>>) -> bool {
+fn send_data_heartbeat(io_streams: &RwLock<HashMap<u32, Arc<FlezhaStream>>>) -> bool {
     // A refused frame is a tick that reached nothing, which is the answer this
     // function already has for that; a heartbeat is owed no delivery, so the
     // tick is skipped rather than held.
@@ -509,17 +577,6 @@ fn heartbeat_metadata() -> HashMap<String, String> {
     .chain(crate::part::counters())
     .map(|(key, value)| (key.to_string(), value.to_string()))
     .collect()
-}
-
-fn return_operators(runner: &RunnerNode, ctx_arc: Arc<Mutex<Sender<ClientResponseMessage>>>) {
-    let operators = runner.get_operators();
-    // A closed client channel means the owning handle is gone mid-request;
-    // dropping the reply is the only sane outcome — never panic the
-    // coordinator.
-    let _ = ctx_arc
-        .lock()
-        .unwrap()
-        .send(ClientResponseMessage::ReturnOperators(operators));
 }
 
 /// Re-open the control stream keeping the registry, the data streams and the

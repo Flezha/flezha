@@ -21,6 +21,7 @@ const FROM: OptSpec = OptSpec::text("--from", "-f", "<seq|timestamp>").required(
 const INPUT: OptSpec = OptSpec::switch("--input", "--input");
 const AWAIT: OptSpec = OptSpec::number("--await", "--await", "<ms>");
 const KEY: OptSpec = OptSpec::text("--key", "--key", "<key>");
+const MSG_ID: OptSpec = OptSpec::text("--msg-id", "--msg-id", "<id>");
 /// `call`'s deadline: no short spelling, since `-t` is `--text`.
 const CALL_TIMEOUT: OptSpec = OptSpec::number("--timeout", "--timeout", "<ms>");
 const CALL_TIMEOUT_DEFAULT_MS: u64 = 30_000;
@@ -69,7 +70,7 @@ pub(crate) const TABLE: Command = Command {
             .screen(help::OPERATOR_LISTEN),
         Verb::new("send", handle_send)
             .taking(OPERATOR_ID)
-            .reading(&[PAYLOAD, CHANNEL, KEY, AWAIT, NAMESPACE]),
+            .reading(&[PAYLOAD, CHANNEL, KEY, MSG_ID, AWAIT, NAMESPACE]),
         Verb::new("call", handle_call)
             .taking(OPERATOR_ID)
             .reading(&[PAYLOAD, CHANNEL, KEY, CALL_TIMEOUT, NAMESPACE])
@@ -207,17 +208,21 @@ fn handle_stop(read: &Reading) {
 }
 
 /// `flz operator send <operator_id> --text <payload> [--channel <ch>]
-/// [--key <k>] [--await <ms>]`: inject a payload into an operator's input
-/// stream (the SDK-facing `send_io` route). Blocks for the confirming verdict
-/// so a parked or absent target is reported rather than silently dropped.
-/// `--await` rides the options list only when written.
+/// [--key <k>] [--msg-id <id>] [--await <ms>]`: inject a payload into an
+/// operator's input stream (the SDK-facing `send_io` route). Blocks for the
+/// confirming verdict so a parked or absent target is reported rather than
+/// silently dropped. `--msg-id` and `--await` ride only when written.
 fn handle_send(read: &Reading) {
     let opts: Vec<Opt> = read
         .opt(AWAIT.long)
         .map(|ms| vec![("await_ms", ms.to_string())])
         .unwrap_or_default();
 
-    rpc::door("Operator.send", &input(read, key_fields(read)), &opts, read);
+    let mut fields = key_fields(read);
+    if let Some(id) = read.opt(MSG_ID.long) {
+        fields.insert("msg_id".into(), Value::from(id));
+    }
+    rpc::door("Operator.send", &input(read, fields), &opts, read);
 }
 
 /// `flz operator call <operator_id> --text <payload> [--channel <ch>]

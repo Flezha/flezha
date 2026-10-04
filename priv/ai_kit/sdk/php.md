@@ -126,26 +126,26 @@ use Flezha\Examples\Echo\EchoOperator;
 use Flezha\Flezha;
 
 // `run()` is `start()` followed by `awaitTermination()`. Splitting them leaves
-// room for the admin calls below, and still blocks until shutdown.
+// room for the calls below, and still blocks until shutdown.
 $runner = Flezha::createRunner($argv[1] ?? 'default')
     ->registerFactory(EchoOperator::class) // the operators this runner serves
     ->start();                             // connects to the controller
 
-// Everything `flz operator` and `flz plugin` do is also a method here.
-// Uncomment to drive this namespace from the application instead of from a
-// terminal:
+// Everything `flz operator` and `flz plugin` do is also a method of
+// `control()`, and `send()` hands a message to an operator. Uncomment to drive
+// this namespace from the application instead of from a terminal:
 //
-// $admin = $runner->admin();
-// $admin->startOperator('echo', id: 'my_echo');
-// $admin->enablePlugin('writer', 'operator_file_sink', ['path' => 'echo-out.txt']);
-// $admin->bindPlugin('writer', 'my_echo', hooks: [['on_output', new stdClass()]]);
-// $admin->send('my_echo', 'hello world', 'in');
+// $control = $runner->control();
+// $control->startOperator('echo', id: 'my_echo');
+// $control->enablePlugin('writer', 'operator_file_sink', ['path' => 'echo-out.txt']);
+// $control->bindPlugin('writer', 'my_echo', hooks: [['on_output', new stdClass()]]);
+// $runner->send('my_echo', 'hello world', 'in', msgId: 'hello-1');
 //
 // PHP has no threads: the message is processed once `awaitTermination()` below
 // starts serving.
 //
-// docs/sdk/admin.md has the whole surface. An enforced controller refuses all
-// of it until `flz role bind runner@default app default`.
+// docs/topics/advanced/sending_from_runner_code.md covers sending. An enforced
+// controller refuses all of it until `flz role bind runner@default app default`.
 
 $runner->awaitTermination();
 ````

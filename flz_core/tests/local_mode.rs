@@ -2,7 +2,8 @@
 //! declared, a `LocalRun` feeds it, and a poll/complete loop answers every
 //! activation the way a host SDK's poll loop does. The core supplies no host
 //! loop, deliberately — each SDK plugs its own in unchanged — so a kernel
-//! test has to be one.
+//! test has to be one. A runner's local send enters through the same dispatch
+//! and is driven by the same host here.
 //!
 //! An integration test, not a unit one, because a poll loop takes work off
 //! the process-wide `PollCore`: its own binary is what keeps it from
@@ -12,16 +13,19 @@ use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use flz_core::host;
 use flz_core::local::{self, LocalRun, SinkOutput};
+use flz_core::operator::instance::KeyGroupRange;
 use flz_core::poll_core::{self, Polled};
+use flz_core::runner::RunnerNode;
 use flz_core::schema::{
     Activation, ActivationKind, ActivationOutcome, ItemEffect, Output, OutputTarget, PrepareAnswer,
     TimerKind, TimerOp, Verdict, WorkError, WorkItem,
 };
 use flz_core::ErrorModel;
+use flz_transport::service::payloader;
 use flz_transport::transport::FlezhaStream;
 
 /// One run at a time: the poll core, the class registry and the global state
@@ -267,6 +271,61 @@ fn a_two_tasklet_graph_runs_with_no_controller() {
         .map(|registry| registry.cells.len())
         .sum();
     assert_eq!(dynamic_cells, 2, "one Cell per resolved key");
+}
+
+/// A runner's local send: application code hands a value to an operator
+/// bound on this runner with no frame to the controller, and the output it
+/// causes leaves on the operator's data stream as any output does.
+#[test]
+fn a_local_send_on_a_runner_is_handled_and_its_output_rides_the_data_stream() {
+    let _serialized = one_run();
+    declare(TWO_STEP);
+    flz_core::state_sink::install_global_sink(Arc::new(|_payload_id: &str, _frame: &[u8]| Ok(())));
+    let _host = Host::spawn(two_step_answer);
+    let node = RunnerNode::new("local-send".to_string());
+    node.start_operator(
+        "local_two_step".to_string(),
+        "orders".to_string(),
+        KeyGroupRange::UNPARTITIONED,
+        Default::default(),
+    )
+    .expect("the operator binds");
+    let written = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
+    let into = Arc::clone(&written);
+    let stream = FlezhaStream::Local(Arc::new(move |frame: &[u8]| {
+        into.lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(frame.to_vec());
+        Ok(())
+    }));
+    node.get_io_streams()
+        .write()
+        .unwrap()
+        .insert(0, Arc::new(stream));
+
+    let bound = flz_core::runner::bound();
+    assert_eq!(bound.ids(), vec!["orders"]);
+    bound
+        .send("orders", "lines", b"a1".to_vec())
+        .expect("an entry channel takes a local send");
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let released = loop {
+        let frames = written.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        let outputs: Vec<(String, Vec<u8>)> = frames
+            .iter()
+            .filter_map(|frame| payloader::extract_payload(frame.as_slice()).ok())
+            .filter_map(|(_id, payload, metadata)| {
+                Some((metadata.get("channel")?.clone(), payload))
+            })
+            .collect();
+        if !outputs.is_empty() || Instant::now() > deadline {
+            break outputs;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert_eq!(released, vec![("totals".to_string(), b"a1".to_vec())]);
+    assert!(node.stop_operator("orders"));
 }
 
 #[test]

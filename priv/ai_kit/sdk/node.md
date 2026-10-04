@@ -166,16 +166,16 @@ await runner.registerFactory('./echo_operator.mjs'); // the operators this runne
 // running until a SIGTERM, or until standard input closes.
 await runner.run(); // connects to the controller
 
-// Everything `flz operator` and `flz plugin` do is also a method here.
-// Uncomment to drive this namespace from the application instead of from a
-// terminal:
+// Everything `flz operator` and `flz plugin` do is also a method of
+// `control()`, and `send` hands a message to an operator. Uncomment to drive
+// this namespace from the application instead of from a terminal:
 //
-// const admin = runner.admin();
-// await admin.startOperator('echo', { id: 'my_echo' });
-// await admin.enablePlugin('writer', 'operator_file_sink', { opts: { path: 'echo-out.txt' } });
-// await admin.bindPlugin('writer', 'my_echo', { hooks: [['on_output', {}]] });
-// await admin.send('my_echo', 'hello world', 'in');
+// const control = runner.control();
+// await control.startOperator('echo', { id: 'my_echo' });
+// await control.enablePlugin('writer', 'operator_file_sink', { opts: { path: 'echo-out.txt' } });
+// await control.bindPlugin('writer', 'my_echo', { hooks: [['on_output', {}]] });
+// await runner.send('my_echo', 'hello world', 'in', { msgId: 'hello-1' });
 //
-// docs/sdk/admin.md has the whole surface. An enforced controller refuses all
-// of it until `flz role bind runner@default app default`.
+// docs/topics/advanced/sending_from_runner_code.md covers sending. An enforced
+// controller refuses all of it until `flz role bind runner@default app default`.
 ````

@@ -255,7 +255,9 @@ defmodule Flezha.Service.Operator do
   silently dropped.
 
   `channel` names the input channel; `""` is none. `opts[:key]` names the
-  member of a partition group that takes it. The answer names the operator that
+  member of a partition group that takes it, and `opts[:msg_id]` is the
+  message's id, stamped as `flz.msg_id` so an operator whose input log still
+  holds that id absorbs the repeat. The answer names the operator that
   took it and the operator's own verdict: `:delivered`, `:absorbed` for a
   duplicate, or `:suspended` for one journaled until the instance wakes.
   """
@@ -268,17 +270,18 @@ defmodule Flezha.Service.Operator do
       operator_id: @operator_id,
       message: @message,
       channel: @channel,
-      opts: [type: :keyword, default: [], doc: "`key`, for a partition group."]
+      opts: [
+        type: :keyword,
+        default: [],
+        doc: "`key`, for a partition group, and `msg_id`, the message's id."
+      ]
     ] do
     namespace = Namespace.or_default(namespace)
 
-    with {:ok, member} <- OperatorManager.resolve_member(namespace, operator_id, opts[:key]) do
+    with {:ok, metadata} <- with_msg_id(OperatorManager.channel_metadata(channel), opts[:msg_id]),
+         {:ok, member} <- OperatorManager.resolve_member(namespace, operator_id, opts[:key]) do
       member
-      |> OperatorManager.send_io_confirming(
-        namespace,
-        message,
-        OperatorManager.channel_metadata(channel)
-      )
+      |> OperatorManager.send_io_confirming(namespace, message, metadata)
       |> delivered(member)
     end
   end
@@ -481,6 +484,14 @@ defmodule Flezha.Service.Operator do
   # A member that did not stop, named with its own refusal.
   defp member_failure({id, {:error, reason}}),
     do: "#{id} (#{Flezha.Error.from_reason(reason, :"operator.stop").message})"
+
+  defp with_msg_id(metadata, nil), do: {:ok, metadata}
+
+  defp with_msg_id(metadata, id) when is_binary(id),
+    do: {:ok, Map.put(metadata, "flz.msg_id", id)}
+
+  defp with_msg_id(_metadata, id),
+    do: {:error, Flezha.Error.new("usage.not_text", option: "msg_id", value: inspect(id))}
 
   defp delivered(:ok, member), do: {:ok, %{to: member, verdict: :delivered}}
   defp delivered({:ok, verdict}, member), do: {:ok, %{to: member, verdict: verdict}}

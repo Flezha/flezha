@@ -129,11 +129,11 @@ fn connect_pairs(
     mut open_pair: impl FnMut(u32) -> Result<OpenedPair, String>,
 ) -> Result<(), String> {
     let mut stream_pairs: Vec<(FlezhaStream, Arc<FlezhaStream>)> = Vec::new();
-    let mut fresh: Vec<(u32, FlezhaStream)> = Vec::new();
+    let mut fresh: Vec<(u32, Arc<FlezhaStream>)> = Vec::new();
 
     for key in 0..cmd.sockets_count {
         let (primary, secondary, stored) = open_pair(key)?;
-        fresh.push((key, stored));
+        fresh.push((key, Arc::new(stored)));
         stream_pairs.push((primary, Arc::new(secondary)));
     }
 
@@ -373,7 +373,7 @@ mod tests {
             .get_io_streams()
             .write()
             .unwrap()
-            .insert(7, FlezhaStream::Quic(previous));
+            .insert(7, Arc::new(FlezhaStream::Quic(previous)));
 
         connect_quic(&ConnectSocket { sockets_count: 2 }, &mut runner)
             .expect_err("the fourth stream is refused");

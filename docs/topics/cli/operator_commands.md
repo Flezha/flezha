@@ -45,6 +45,7 @@ EXAMPLES:
     flz operator send orchestrator --text '{"task":"refactor"}'
     flz operator send my_echo --text 'hello world' --await 2000
     flz operator send prices --key EURUSD --text x
+    flz operator send orders --text x --msg-id orders/0/41
     flz operator call echo --text hello
     flz operator listen my_echo --duration-ms 10000
     flz operator rewind chat-1 --to-iteration 3
@@ -62,7 +63,7 @@ flz operator stop <operator_id> [--namespace | -n <namespace>]
 flz operator state <operator_id> [--namespace | -n <namespace>]
 flz operator list [--namespace | -n <namespace>]
 flz operator info [--namespace | -n <namespace>]
-flz operator send <operator_id> --text | -t <payload> [--channel | -c <ch>] [--key <key>] [--await <ms>] [--namespace | -n <namespace>]
+flz operator send <operator_id> --text | -t <payload> [--channel | -c <ch>] [--key <key>] [--msg-id <id>] [--await <ms>] [--namespace | -n <namespace>]
 flz operator scale <group> <partitions> [--namespace | -n <namespace>] [--timeout | -t <ms>]
 flz operator rewind <operator_id> --to-iteration <N> [--namespace | -n <namespace>]
 flz operator replay <operator/tasklet/key> --from | -f <seq|timestamp> [--namespace | -n <namespace>]
@@ -163,6 +164,18 @@ $ flz operator send my_echo --text 'hello world' --await 2000
 ```output
 Delivered to 'my_echo'.
 out	echo: hello world
+```
+
+`--msg-id` gives the message an id. An operator with an input log (effectively
+once, durable steps, a class that sleeps) absorbs a repeat of an id it still
+holds, so a script that may run twice sends each message once:
+
+```sh
+$ flz operator send orders --text x --msg-id orders/0/41
+```
+
+```output
+Absorbed (duplicate) by 'orders'.
 ```
 
 ```sh

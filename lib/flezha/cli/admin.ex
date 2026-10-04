@@ -35,11 +35,11 @@ defmodule Flezha.Service.Admin do
   converted by the argument row its operation declares (`Flezha.Service`); an
   argument left off the end takes its row's default. A word that names no atom
   this node knows, as a value or as the key of named fields, is refused with
-  `admin.unknown_parameter`, never minted.
+  `control.unknown_parameter`, never minted.
 
   `call/4` answers the published function's value as JSON, and a failure as
   its `%Flezha.Error{}`; `run/4` answers the value itself, for a surface that
-  renders terms. A request the door cannot place is refused with an `admin.*`
+  renders terms. A request the door cannot place is refused with a `control.*`
   code.
   """
 
@@ -124,10 +124,10 @@ defmodule Flezha.Service.Admin do
       {:ok, entry} ->
         if reachable?(entry, caller_context),
           do: {:ok, entry},
-          else: refused("admin.unknown_function", function: name)
+          else: refused("control.unknown_function", function: name)
 
       :error ->
-        refused("admin.unknown_function", function: name)
+        refused("control.unknown_function", function: name)
     end
   end
 
@@ -147,8 +147,8 @@ defmodule Flezha.Service.Admin do
   defp decode_args(args_json) when is_binary(args_json) do
     case Jason.decode(args_json) do
       {:ok, args} when is_list(args) -> {:ok, args}
-      {:ok, _other} -> refused("admin.args_not_array", [])
-      {:error, reason} -> refused("admin.invalid_args_json", reason: Exception.message(reason))
+      {:ok, _other} -> refused("control.args_not_array", [])
+      {:error, reason} -> refused("control.invalid_args_json", reason: Exception.message(reason))
     end
   end
 
@@ -177,7 +177,7 @@ defmodule Flezha.Service.Admin do
     missing = Enum.drop(entry.args, length(written))
 
     if length(written) > length(entry.args) or Enum.any?(missing, &required?/1),
-      do: refused("admin.wrong_arity", function: entry.name),
+      do: refused("control.wrong_arity", function: entry.name),
       else: {:ok, written ++ Enum.map(missing, fn {_name, row} -> row[:default] end)}
   end
 
@@ -205,7 +205,7 @@ defmodule Flezha.Service.Admin do
 
       {{:error, {:invalid_option_value, _field, word}}, type}
       when type in [:atom, :keyword] and is_binary(word) ->
-        refused("admin.unknown_parameter", parameter: word)
+        refused("control.unknown_parameter", parameter: word)
 
       {{:error, {:invalid_option_value, _field, word}}, :enum} ->
         refused("usage.unknown_word", noun: name, value: word, allowed: row[:values])

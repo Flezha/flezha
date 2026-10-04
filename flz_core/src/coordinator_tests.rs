@@ -84,7 +84,7 @@ fn heartbeat_reaching_no_stream_arms_the_reconnect_ladder() {
 
     // The signature of a dead secondary: the stream map is empty, so every
     // heartbeat write is a no-op over zero streams.
-    let empty: RwLock<HashMap<u32, FlezhaStream>> = RwLock::new(HashMap::new());
+    let empty: RwLock<HashMap<u32, Arc<FlezhaStream>>> = RwLock::new(HashMap::new());
     heartbeat_tick(&empty);
     heartbeat_tick(&empty);
     heartbeat_tick(&empty);
@@ -118,4 +118,40 @@ fn a_stopped_steps_leaves_no_cell_with_the_flusher() {
     assert!(node.stop_operator(&id));
 
     assert!(!flusher.holds_class(&id), "its Cell left with it");
+}
+
+/// A local send reaches only what this runner holds: an operator bound
+/// elsewhere, a channel the operator does not declare and one that is not an
+/// entry channel are each refused by code, and nothing is dispatched.
+#[test]
+fn a_local_send_is_refused_for_what_this_runner_cannot_take() {
+    let factory = format!("local_send_{}", std::process::id());
+    crate::test_support::host_class::instance_of(&factory, &["in"], &[], &[1], false);
+    let mut node = RunnerNode::new("test-ns".to_string());
+    let id = format!("{factory}-1");
+    let errors = crate::test_support::host_class::bind(&mut node, &factory, &id, "", 0);
+    assert!(errors.is_empty(), "{errors:?}");
+    let bound = node.bound();
+
+    assert_eq!(bound.ids(), vec![id.clone()]);
+    let code =
+        |result: Result<(), crate::Error>| crate::ErrorModel::code(&result.expect_err("refused"));
+    assert_eq!(
+        code(bound.send("elsewhere", "in", b"x".to_vec())),
+        "runtime.operator_not_local"
+    );
+    assert_eq!(
+        code(bound.send(&id, "nope", b"x".to_vec())),
+        "runtime.channel_undeclared"
+    );
+    assert_eq!(
+        code(bound.send(&id, "out", b"x".to_vec())),
+        "runtime.channel_wrong_kind"
+    );
+
+    assert!(node.stop_operator(&id));
+    assert!(
+        bound.ids().is_empty(),
+        "an unbound operator is no longer listed"
+    );
 }

@@ -222,6 +222,41 @@ defmodule Flezha.Service.OperatorCallTest do
       assert_received {:sent, "prices#p1", "x"}
     end
 
+    test "a message id rides beside the key as flz.msg_id", %{owned_by_p1: key} do
+      test_pid = self()
+
+      stub(OperatorManager, :send_io_confirming, fn id, _namespace, _message, metadata ->
+        send(test_pid, {:sent_with, id, metadata})
+        {:ok, :absorbed}
+      end)
+
+      {_outcome, out, ""} =
+        CliCapture.run(fn ->
+          Cli.call(
+            "Operator.send",
+            Jason.encode!(["default", "prices", "x", "in", %{key: key, msg_id: "fx/0/7"}]),
+            []
+          )
+        end)
+
+      assert out =~ "Absorbed (duplicate)"
+      assert_received {:sent_with, "prices#p1", %{"channel" => "in", "flz.msg_id" => "fx/0/7"}}
+    end
+
+    test "a message id that is not text is refused before anything is sent" do
+      {_outcome, _out, err} =
+        CliCapture.run(fn ->
+          Cli.call(
+            "Operator.send",
+            Jason.encode!(["default", "echo", "x", "", %{msg_id: 41}]),
+            []
+          )
+        end)
+
+      assert err =~ "(usage.not_text)"
+      refute_received {:sent, _, _}
+    end
+
     test "a group without a key names its members and is never 'not found'" do
       {_outcome, _out, err} =
         CliCapture.run(fn ->

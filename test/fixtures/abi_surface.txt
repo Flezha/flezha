@@ -29,9 +29,11 @@ flz_core_local_run_until_idle
 flz_core_local_start
 flz_core_local_stop
 flz_core_monotonic_nanos
+flz_core_operators
 flz_core_part
 flz_core_poll
 flz_core_schema_version
+flz_core_send_message
 flz_core_set_log_callback
 flz_core_shutdown
 flz_core_spawn_request

@@ -528,6 +528,38 @@ pub fn admin_call<'a>(env: &'a Env, verb: String, args: String) -> Result<Object
     })
 }
 
+/// Send one message, through the controller or locally, answering as JSON:
+/// the verdict, or `null` for a local send. Asynchronous: the controller's
+/// answer takes a round trip, and a local send parks while the consumer's
+/// mailbox is full, which drains only when a handler runs on an event loop.
+#[napi(ts_return_type = "Promise<string>")]
+pub fn send_message<'a>(
+    env: &'a Env,
+    operator: String,
+    channel: String,
+    message: Buffer,
+    msg_id: Option<String>,
+    key: Option<String>,
+    local: bool,
+) -> Result<Object<'a>> {
+    let operator = veneer::c_string("operator", &operator)?;
+    let channel = veneer::c_string("entry channel", &channel)?;
+    let msg_id = veneer::c_string("message id", msg_id.as_deref().unwrap_or_default())?;
+    let key = veneer::c_string("key", key.as_deref().unwrap_or_default())?;
+    let message = message.to_vec();
+    off_loop(env, context()?, move |ctx| {
+        Ok(veneer::send_message(
+            ctx, &operator, &channel, &message, &msg_id, &key, local,
+        )?)
+    })
+}
+
+/// The ids of the operator instances bound on this runner.
+#[napi]
+pub fn operators() -> Result<Vec<String>> {
+    Ok(veneer::operators(context()?)?)
+}
+
 /// The core's monotonic clock in nanoseconds.
 #[napi]
 pub fn monotonic_nanos() -> BigInt {
@@ -620,6 +652,8 @@ pub fn native_surface() -> Vec<JsNativeExport> {
         host("spawnTryResult", Some("flz_core_spawn_result"), false),
         veneer("spawnWait", "flz_core_spawn_result"),
         veneer("adminCall", "flz_core_admin_call"),
+        veneer("sendMessage", "flz_core_send_message"),
+        veneer("operators", "flz_core_operators"),
         veneer("monotonicNanos", "flz_core_monotonic_nanos"),
         veneer("lastError", "flz_core_last_error"),
         host("setLogCallback", None, false),

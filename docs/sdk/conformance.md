@@ -118,7 +118,13 @@ The vocabulary is one list in `FlezhaTest.Helper.NodeTestHelper.capabilities/0`:
 `runner_lifecycle`, `connect_discovery`, `graph_builder`, `liveness`,
 `pool_wedge`, `retry_ladder`, `state_persistence`, `effectively_once`,
 `cell_timers`, `correction_window`, `keyed_channels`, `steps`,
-`dynamic_cell`, `partitioned`, `schema_evolution`, `shorthand`.
+`dynamic_cell`, `partitioned`, `schema_evolution`, `shorthand`,
+`call_response`, `operator_call`, `parts`, `local_send`.
+
+`local_send` is the one capability an SDK defers today: PHP's runner serves on
+the thread its application code runs on, so the test app cannot send from its
+own code while it serves, which is what the drill (`FLEZHA_LOCAL_SEND_SCRIPT`)
+needs.
 
 A capability can carry no fixtures at all, where the scenarios that prove it
 need none of their own. Carrying fixtures and being required are independent:
@@ -324,8 +330,8 @@ every fixture id a file drives belongs to a capability that file declares; every
 `nightly-e2e.yml`; every `docs` page exists and names its manifest. A
 vocabulary entry no module or test is tagged for fails the gate by name.
 
-It also holds the administration surface to one declared set. Every SDK spells
-the same verb names over one shared entry point (see [`admin.md`](admin.md)),
+It also holds the `control()` surface to one declared set. Every SDK spells
+the same verb names over one shared entry point (see [`namespaces.md`](../topics/basics/namespaces.md#administering-from-application-code)),
 and nothing else compares them: the gate names the set once and measures each
 SDK's own wrapper against it, and refuses a wrapper that names a verb it will
 not call or a refusal reason of its own. Reachability is the controller's

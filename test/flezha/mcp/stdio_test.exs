@@ -79,7 +79,7 @@ defmodule Flezha.Mcp.StdioTest do
       answer = result(offline(rpc("tools/call", call)))
 
       assert answer["isError"]
-      assert answer["structuredContent"]["error"]["code"] == "admin.unknown_parameter"
+      assert answer["structuredContent"]["error"]["code"] == "control.unknown_parameter"
     end
 
     test "a line that is not JSON is answered under a null id" do

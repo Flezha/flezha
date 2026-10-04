@@ -19,13 +19,13 @@ SDK. A program acts on the `code` and the `class`.
 1. [Classes and exit codes](#classes-and-exit-codes)
 2. [Forms](#forms)
 3. [Codes](#codes)
-   1. [admin](#admin)
    1. [audit](#audit)
    1. [authz](#authz)
    1. [boot](#boot)
    1. [call](#call)
    1. [cli](#cli)
    1. [commit](#commit)
+   1. [control](#control)
    1. [controller](#controller)
    1. [dlq](#dlq)
    1. [durability](#durability)
@@ -86,19 +86,6 @@ The consumer API answers `{:error, %Flezha.Error{}}` with the same five fields, 
 SDK raises or returns its one error type carrying them.
 
 ## Codes
-
-### admin
-
-| Code | Class | Exit | Message | Hint |
-|---|---|---|---|---|
-| `admin.args_not_array` | invalid | 2 | the arguments must be a JSON array |  |
-| `admin.invalid_args_json` | invalid | 2 | the arguments are not valid JSON: {reason} |  |
-| `admin.no_control_plane` | unavailable | 7 | there is no control plane to administer over: the runner is closed or has no controller |  |
-| `admin.timeout` | unavailable | 7 | the controller did not answer the administration call within {seconds}s |  |
-| `admin.unknown_function` | not_found | 5 | no published function is named '{function}' |  |
-| `admin.unknown_parameter` | invalid | 2 | unknown parameter '{parameter}' |  |
-| `admin.unreadable_answer` | internal | 1 | the controller's answer to '{verb}' could not be read |  |
-| `admin.wrong_arity` | invalid | 2 | '{function}' takes no argument list of this length |  |
 
 ### audit
 
@@ -178,6 +165,19 @@ SDK raises or returns its one error type carrying them.
 | `commit.oversized_handoff` | invalid | 2 | a tasklet's handoff of {size} bytes is over the {max}-byte limit |  |
 | `commit.record_not_durable` | unavailable | 7 | the record at seq {seq} of Cell '{cell}' did not become durable in time |  |
 | `commit.turn_not_parked` | unavailable | 7 | the failed turn could not be parked in the dead-letter queue: {reason} |  |
+
+### control
+
+| Code | Class | Exit | Message | Hint |
+|---|---|---|---|---|
+| `control.args_not_array` | invalid | 2 | the arguments must be a JSON array |  |
+| `control.invalid_args_json` | invalid | 2 | the arguments are not valid JSON: {reason} |  |
+| `control.no_control_plane` | unavailable | 7 | there is no control plane to administer over: the runner is closed or has no controller |  |
+| `control.timeout` | unavailable | 7 | the controller did not answer the administration call within {seconds}s |  |
+| `control.unknown_function` | not_found | 5 | no published function is named '{function}' |  |
+| `control.unknown_parameter` | invalid | 2 | unknown parameter '{parameter}' |  |
+| `control.unreadable_answer` | internal | 1 | the controller's answer to '{verb}' could not be read |  |
+| `control.wrong_arity` | invalid | 2 | '{function}' takes no argument list of this length |  |
 
 ### controller
 
@@ -543,6 +543,7 @@ SDK raises or returns its one error type carrying them.
 | `runtime.operator_busy` | unavailable | 7 | operator '{operator}' did not answer in time; try again |  |
 | `runtime.operator_message_unsupported` | unavailable | 7 | operator '{operator}' does not handle direct messages |  |
 | `runtime.operator_not_found` | not_found | 5 | no instance of operator '{operator}' runs on this runner |  |
+| `runtime.operator_not_local` | not_found | 5 | operator '{operator}' is not bound on this runner | `send without the local option, through the controller` |
 | `runtime.operator_type_in_use` | conflict | 6 | factory '{factory_id}' has {live_instances} live operator instance(s); stop them before removing the type |  |
 | `runtime.plugin_serializer_panicked` | internal | 1 | the plugin serializer of channel '{channel}' panicked: {reason} |  |
 | `runtime.prepare_unknown_channel` | invalid | 2 | the prepare answer names a channel the operator does not declare |  |
@@ -736,6 +737,7 @@ SDK raises or returns its one error type carrying them.
 | `usage.missing_argument` | invalid | 2 | the command is missing an argument | `{usage}` |
 | `usage.negative` | invalid | 2 | {option} must be zero or more, got {value} |  |
 | `usage.not_positive` | invalid | 2 | {option} must be a whole number of one or more, got {value} |  |
+| `usage.not_text` | invalid | 2 | {option} must be text, not {value} |  |
 | `usage.option_required` | invalid | 2 | {option} is required | `{usage}` |
 | `usage.option_requires_value` | invalid | 2 | {option} requires a value |  |
 | `usage.option_takes_no_value` | invalid | 2 | {option} takes no value |  |

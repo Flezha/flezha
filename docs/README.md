@@ -65,7 +65,7 @@ type and what you should see; the topic pages say how each piece works.
 | [`topics/plugins/plugins.md`](topics/plugins/plugins.md) | The plugin model: installed, enabled by name, operators bound; the plugins that ship |
 | [`where_plugins_run.md`](topics/plugins/where_plugins_run.md) | Shared and single copies, partitioned operators, when a copy stops, durability |
 | [`enabling_and_binding.md`](topics/plugins/enabling_and_binding.md) | The `flz plugin` commands, their flags, hooks, updates, seeing what runs |
-| [`plugins_from_code.md`](topics/plugins/plugins_from_code.md) | Enabling and binding plugins from an SDK's admin handle |
+| [`plugins_from_code.md`](topics/plugins/plugins_from_code.md) | Enabling and binding plugins from an SDK's `control()` handle |
 | [`plugin_examples.md`](topics/plugins/plugin_examples.md) | The echo's file plugins and the tradedesk's live feed; limits and gotchas |
 | [`topics/basics/namespaces.md`](topics/basics/namespaces.md) | Namespaces, joining one from a runner, quotas, and administering one from code |
 | [`topics/basics/authorization.md`](topics/basics/authorization.md) | The admin, tokens, roles, certificates and recovery |
@@ -76,6 +76,7 @@ type and what you should see; the topic pages say how each piece works.
 | [`topics/advanced/timers.md`](topics/advanced/timers.md) | Per-cell processing-time and event-time timers |
 | [`spawning_from_a_tasklet.md`](topics/advanced/spawning_from_a_tasklet.md) | A running tasklet starts or feeds a steps instance |
 | [`topics/advanced/operator_calls.md`](topics/advanced/operator_calls.md) | Calling an operator and waiting for its answer |
+| [`topics/advanced/sending_from_runner_code.md`](topics/advanced/sending_from_runner_code.md) | Sending to an operator from a runner's own code, through the controller or locally |
 | [`topics/advanced/sessions.md`](topics/advanced/sessions.md) | A session per user: steps, one pass per message, sleeping when idle |
 | [`topics/advanced/rewinding_a_turn.md`](topics/advanced/rewinding_a_turn.md) | Taking iterations back, and a failed turn that fails alone |
 | [`topics/advanced/streamed_answers.md`](topics/advanced/streamed_answers.md) | An answer sent in parts while the turn runs |

@@ -307,7 +307,8 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     :shorthand,
     :call_response,
     :operator_call,
-    :parts
+    :parts,
+    :local_send
   ]
 
   # The surface every SDK carries; a manifest cannot defer these, and every

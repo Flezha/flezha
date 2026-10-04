@@ -63,6 +63,7 @@ fn c_abi_full_scenario() {
     a_live_read_answers_with_the_host_json(ctx, &controller);
     a_keyed_dynamic_route_crosses_for_its_key(ctx, &controller, &stream);
     a_steps_tasklet_completes_through_the_abi(ctx, &controller);
+    a_local_send_reaches_a_bound_operator(ctx, &controller);
     crate::shutdown::shutdown_ships_state_then_wakes_the_poller(ctx, &controller);
 
     unsafe { flz_core_context_free(ctx) };
@@ -648,16 +649,12 @@ fn declares_the_dynamic_class(ctx: *mut FlzContext, controller: &Controller) {
 fn a_steps_tasklet_completes_through_the_abi(ctx: *mut FlzContext, controller: &Controller) {
     declares_the_steps_class(ctx, controller);
     // A steps operator's input is a message on its entry channel, as a flow operator's is.
-    let registry = flz_core::coordinator::LIVE_REGISTRY
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .clone()
-        .expect("a runner registry is live");
+    let bound = flz_core::runner::bound();
     assert!(
-        registry.contains("wf-1"),
+        bound.ids().contains(&"wf-1".to_string()),
         "AddOperator built the steps operator"
     );
-    flz_core::runner::OperatorDispatchHandle { registry }.dispatch(
+    bound.dispatch_handle().dispatch(
         "wf-1",
         b"seed".to_vec(),
         &Default::default(),
@@ -726,4 +723,97 @@ fn declares_the_steps_class(ctx: *mut FlzContext, controller: &Controller) {
         }),
     );
     controller.await_success("AddOperator steps response", "ref-add-wf");
+}
+
+/// Application code on the runner lists what is bound here and hands a value
+/// to one of them with no frame to the controller. The pair set is connected
+/// first, as the controller connects it before any bind: its secondary is
+/// where the operator's outputs ride.
+fn a_local_send_reaches_a_bound_operator(ctx: *mut FlzContext, controller: &Controller) {
+    use flz_transport::utility::socket_dir as sockets;
+    use std::os::unix::net::UnixListener;
+
+    let runner_id = "abi-local-send";
+    let bind = |half: &str| {
+        let dir = socket_dir();
+        let path = sockets::stream_socket_path_in(&dir, runner_id, half).expect("a path");
+        UnixListener::bind(path).expect("the data socket binds")
+    };
+    let (primary, secondary) = (bind("primary"), bind("secondary"));
+    controller.send(
+        "ref-assign",
+        flz_core::pb::command_request::Command::AssignRunnerId(flz_core::pb::AssignRunnerId {
+            runner_id: runner_id.to_string(),
+        }),
+    );
+    controller.await_success("AssignRunnerId", "ref-assign");
+    controller.send(
+        "ref-connect",
+        flz_core::pb::command_request::Command::ConnectSocket(flz_core::pb::ConnectSocket {
+            sockets_count: 1,
+        }),
+    );
+    controller.await_success("ConnectSocket", "ref-connect");
+    let _held = (primary.accept().unwrap(), secondary.accept().unwrap());
+
+    let (mut buf, mut len) = (std::ptr::null_mut(), 0usize);
+    assert_eq!(
+        unsafe { flz_core_operators(ctx, &mut buf, &mut len) },
+        FLZ_OK
+    );
+    let ids: Vec<String> =
+        serde_json::from_slice(unsafe { std::slice::from_raw_parts(buf, len) }).unwrap();
+    unsafe { flz_core_buf_free(buf, len) };
+    assert!(ids.contains(&"abi_probe".to_string()), "{ids:?}");
+
+    let send = |operator: &str, channel: &str, msg_id: &str| {
+        let (operator, channel, msg_id, key) = (
+            CString::new(operator).unwrap(),
+            CString::new(channel).unwrap(),
+            CString::new(msg_id).unwrap(),
+            CString::new("").unwrap(),
+        );
+        let message = b"from-app";
+        let (mut out, mut out_len) = (std::ptr::null_mut(), 0usize);
+        let status = unsafe {
+            flz_core_send_message(
+                ctx,
+                operator.as_ptr(),
+                channel.as_ptr(),
+                message.as_ptr(),
+                message.len(),
+                msg_id.as_ptr(),
+                key.as_ptr(),
+                1,
+                &mut out,
+                &mut out_len,
+            )
+        };
+        if status == FLZ_OK {
+            let answer = unsafe { std::slice::from_raw_parts(out, out_len) }.to_vec();
+            unsafe { flz_core_buf_free(out, out_len) };
+            assert_eq!(answer, b"null", "a local send answers null");
+        }
+        status
+    };
+    assert_eq!(send("ghost", "in", ""), FLZ_ERR);
+    assert_eq!(last_document(ctx).code, "runtime.operator_not_local");
+    assert_eq!(send("abi_probe", "nope", ""), FLZ_ERR);
+    assert_eq!(last_document(ctx).code, "runtime.channel_undeclared");
+    assert_eq!(send("abi_probe", "in", "m-1"), FLZ_ERR);
+    assert_eq!(last_document(ctx).code, "usage.options_conflict");
+
+    assert_eq!(send("abi_probe", "in", ""), FLZ_OK);
+    let (status, act) = abi_poll(ctx, 5_000);
+    assert_eq!(status, FLZ_POLL_ACTIVATION, "the local input hands out");
+    let act = act.unwrap();
+    assert_eq!(act.target.operator, "abi_probe");
+    assert_eq!(work_payloads(&act), vec![b"from-app".to_vec()]);
+    abi_complete(
+        ctx,
+        &schema::ActivationResult {
+            token: act.token,
+            outcome: schema::ActivationOutcome::Work(vec![ok_effect(None, Vec::new())]),
+        },
+    );
 }

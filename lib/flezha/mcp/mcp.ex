@@ -320,7 +320,7 @@ defmodule Flezha.Mcp do
            {:ok, positional} <- positional(entry.args, arguments),
            do: door.(entry.name, positional)
          ) do
-      {:error, %Error{code: "admin.unknown_function"}} -> unknown_tool(id, tool_name(entry.name))
+      {:error, %Error{code: "control.unknown_function"}} -> unknown_tool(id, tool_name(entry.name))
       answer -> tool_result(id, answer)
     end
   end
@@ -351,7 +351,7 @@ defmodule Flezha.Mcp do
 
     case Map.keys(arguments) -- names do
       [] -> {:ok, Enum.map(names, &Map.get(arguments, &1))}
-      [unknown | _] -> {:error, Error.new("admin.unknown_parameter", parameter: unknown)}
+      [unknown | _] -> {:error, Error.new("control.unknown_parameter", parameter: unknown)}
     end
   end
 

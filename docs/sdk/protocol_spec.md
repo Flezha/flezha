@@ -942,10 +942,12 @@ validated. What the caller may reach follows from the role its
 `runner@<namespace>` principal is bound to, which the controller reads on every
 call. Unbound, that is `runner`, and every administration verb is refused. An
 operation the catalogue marks as not `remote`, or as streaming, is refused as
-`admin.unknown_function`: a request gets one reply, so a stream has nowhere to go.
+`control.unknown_function`: a request gets one reply, so a stream has nowhere to go.
 
 The hosts that share `flz_core` reach it through one verb-keyed C ABI entry,
-`flz_core_admin_call`; the Elixir SDK re-expresses the same frame over its own core.
+`flz_core_admin_call`; the Elixir SDK re-expresses the same frame over its own core. A runner's send rides the same frame: `flz_core_send_message` makes the
+`Operator.send` request, or, local, hands the message to an operator bound on
+that runner and sends no frame at all.
 
 ### AdminResponse
 

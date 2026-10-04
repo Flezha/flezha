@@ -23,6 +23,7 @@ EXAMPLES:
     flz operator send orchestrator --text '{"task":"refactor"}'
     flz operator send my_echo --text 'hello world' --await 2000
     flz operator send prices --key EURUSD --text x
+    flz operator send orders --text x --msg-id orders/0/41
     flz operator call echo --text hello
     flz operator listen my_echo --duration-ms 10000
     flz operator rewind chat-1 --to-iteration 3

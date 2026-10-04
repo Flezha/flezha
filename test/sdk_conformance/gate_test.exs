@@ -74,7 +74,6 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   @admin_verbs ~w(
     Operator.start
     Operator.stop
-    Operator.send
     Operator.list_operators
     Operator.cell_state
     PluginManager.enable
@@ -85,13 +84,13 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   )
 
   @admin_surfaces %{
-    rust: "sdk/rust/src/admin.rs",
-    java: "sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/admin/Admin.java",
-    node: "sdk/node/src/admin.ts",
-    python: "sdk/python/src/flezha/admin.py",
-    ruby: "sdk/ruby/lib/flezha/admin.rb",
-    php: "sdk/php/src/Admin.php",
-    elixir: "sdk/elixir/lib/flezha/sdk/admin.ex"
+    rust: "sdk/rust/src/control.rs",
+    java: "sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/control/Control.java",
+    node: "sdk/node/src/control.ts",
+    python: "sdk/python/src/flezha/control.py",
+    ruby: "sdk/ruby/lib/flezha/control.rb",
+    php: "sdk/php/src/Control.php",
+    elixir: "sdk/elixir/lib/flezha/sdk/control.ex"
   }
 
   # Names the steps operator authoring surface retired: a steps operator declares its graph
