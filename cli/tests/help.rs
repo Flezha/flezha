@@ -43,6 +43,7 @@ const SCREENS: &[(&str, &[&str])] = &[
     ("operator-call", &["operator", "call", "--help"]),
     ("plugin", &["plugin", "help"]),
     ("reset", &["reset", "help"]),
+    ("mcp", &["mcp", "--help"]),
     ("role", &["role", "help"]),
     ("runner", &["runner", "help"]),
     ("schedule", &["schedule", "help"]),

@@ -108,8 +108,12 @@ applications step by step.
 Flezha works with AI from both sides: as a tool AI assistants can drive, and as a
 runtime for AI services.
 
-- **For AI assistants.** An assistant can operate a running controller over MCP
-  with a token of its own ([`docs/plugins/http_api.md`](docs/plugins/http_api.md)).
+- **For AI assistants.** `flz mcp` is an MCP server an assistant adds with one
+  command: it gives the assistant the working rules and the current SDK form for its
+  language before any controller runs, and then the controller's operations with a
+  token of its own ([`docs/topics/working_with_ai_assistants.md`](docs/topics/working_with_ai_assistants.md)).
+  A controller on another machine serves the same over HTTP
+  ([`docs/plugins/http_api.md`](docs/plugins/http_api.md)).
   Every error carries a stable code and a hint for the next step
   ([`docs/errors.md`](docs/errors.md)), every `flz` command can answer in JSON, the
   documentation ships an `llms.txt` map to its pages in Markdown, and local mode tries a
@@ -120,11 +124,6 @@ runtime for AI services.
   framework you already use. [The agentdesk tutorial](docs/tutorials/agentdesk/agentdesk.md)
   builds one.
 
-<!-- TODO: an AGENTS.md template for projects built on Flezha, pointing an AI
-assistant at the documentation, llms.txt, the error reference and the CLI's JSON
-output. -->
-<!-- TODO: a Claude Code skill or plugin that knows the flz CLI and each SDK's
-current form, so an assistant writes and runs Flezha code without guessing. -->
 <!-- TODO: AI plugins, for example a model-call plugin (one place for provider keys,
 retries, rate limits and token accounting) and a vector-store source and sink.
 Decide which ones, then specify each in OpenSpec. -->

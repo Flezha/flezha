@@ -51,7 +51,7 @@ defmodule Flezha.AuthZ do
   @source :platform_authz
 
   @type caller_context :: %{
-          required(:source) => :cli | :ui | :sdk | :http | :internal,
+          required(:source) => :cli | :ui | :sdk | :http | :mcp | :internal,
           optional(:principal) => Principal.t(),
           optional(:namespace) => binary() | nil,
           optional(:role) => atom() | nil,

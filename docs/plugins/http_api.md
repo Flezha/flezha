@@ -106,10 +106,15 @@ $ claude mcp list
 flezha: http://127.0.0.1:8765/mcp (HTTP) - ✔ Connected
 ```
 
-Each tool is one operation, named after it in snake case: `operator_start`,
+Each operation is a tool, named after it in snake case: `operator_start`,
 `operator_send`, `dlq_list`, `dlq_replay`. A failed call comes back as a tool error
 carrying the error object, so the model reads its `code` and `hint` and can correct
-itself. Any other MCP client connects the same way: the URL and the header.
+itself. Beside them are the four tools that need no controller, `flezha_guide`,
+`flezha_sdk_example`, `flezha_error` and `flezha_docs`. Any other MCP client connects
+the same way: the URL and the header.
+
+On the controller's own machine an assistant can use `flz mcp` instead, with no plugin
+to enable ([`working_with_ai_assistants.md`](../topics/working_with_ai_assistants.md)).
 
 ## Plain JSON
 

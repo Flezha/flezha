@@ -405,6 +405,21 @@ defmodule Flezha.Service.AdminTest do
       assert Admin.catalogue(%{source: :http}) == []
     end
 
+    test "with authorization open, a caller with no role is offered every operation it reaches" do
+      prev = Application.get_env(:flezha, :authn_authz, [])
+      Application.put_env(:flezha, :authn_authz, Keyword.put(prev, :enabled, false))
+
+      try do
+        offered = Admin.catalogue(%{source: :mcp})
+
+        assert offered == Admin.reachable(%{source: :mcp})
+        assert Enum.any?(offered, &(&1.name == "Operator.start"))
+        refute Enum.any?(offered, &(&1.name == "Controller.stop"))
+      after
+        Application.put_env(:flezha, :authn_authz, prev)
+      end
+    end
+
     test "a start is recorded naming the principal and the source http" do
       boundary = System.monotonic_time(:microsecond)
       args = Jason.encode!([@ns, %{id: "o1", factory_id: "f1"}])

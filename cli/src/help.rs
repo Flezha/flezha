@@ -239,6 +239,7 @@ COMMANDS:
     boot           Boot/recovery status, await, and legacy snapshot import
     state          Per-Cell state queries (time-travel, retention, list)
     reset          Clear Controller durable runtime data on disk (controller must be stopped)
+    mcp            Serve Flezha to an AI assistant over MCP, on stdin and stdout
     observe        Observability foundation inspection (sources, sinks, tail)
     audit          Durable audit log inspection (list, read, tail, stats, rotate)
     dlq            Dead-letter queue: inspect, replay, or drop parked payloads
@@ -273,6 +274,22 @@ EXAMPLES:
     flz namespace list --output json
     flz boot status
     flz boot await --timeout 60"#;
+
+pub(crate) const MCP: Help = r#"flz mcp - Serve Flezha to an AI assistant over MCP, on stdin and stdout
+
+USAGE:
+    flz mcp [--token <token>]
+
+An AI assistant starts this command and speaks MCP with it; it is not run by
+hand. Four tools need no controller: flezha_guide, flezha_sdk_example,
+flezha_error and flezha_docs. Once a controller answers, the operations an HTTP
+caller may reach are tools too, called as the token's principal (--token or
+FLEZHA_TOKEN). Stopping the controller, issuing tokens and resetting are never
+offered.
+
+EXAMPLES:
+    claude mcp add flezha -- /path/to/release/bin/flz mcp
+    claude mcp add flezha -e FLEZHA_TOKEN=<token> -- /path/to/release/bin/flz mcp"#;
 
 pub(crate) const NAMESPACE: Help = r#"flz namespace - Namespace management commands
 

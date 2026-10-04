@@ -95,6 +95,8 @@ COPY lib ./lib
 COPY sdk/elixir ./sdk/elixir
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md ./
 COPY LICENSES ./LICENSES
+# What `flz mcp`'s knowledge tools serve.
+COPY priv/ai_kit ./priv/ai_kit
 
 RUN mkdir -p priv/native target/release
 COPY --from=rust-build /artifacts/flz_nif.so ./priv/native/flz_nif.so

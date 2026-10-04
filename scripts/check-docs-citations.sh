@@ -392,8 +392,10 @@ def check(rel, line):
             + check_rust_variants(line))
 
 
+# `priv/ai_kit/` holds generated copies of pages and SDK examples the gate
+# reads where they are written; their relative links resolve there, not here.
 def in_scope(rel):
-    return (not rel.startswith("openspec/changes/")
+    return (not rel.startswith(("openspec/changes/", "priv/ai_kit/"))
             and os.path.basename(rel) != "CHANGELOG.md")
 
 

@@ -138,6 +138,7 @@ LAYERS = {
     "shutdown": 6,
     "cli": 6,  # the operations surface, carved out of service/
     "http": 6,
+    "mcp": 6,  # the MCP surface `flz mcp` and the HTTP API both serve
     "healthz": 6,
 }
 

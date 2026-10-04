@@ -61,6 +61,7 @@ type and what you should see; the topic pages say how each piece works.
 | [`state.md`](topics/basics/state.md) | State per cell, the changes that record it, and its restore |
 | [`local_mode.md`](topics/basics/local_mode.md) | An operator run in your own process, with no controller |
 | [`topics/basics/running_operators.md`](topics/basics/running_operators.md) | Starting, watching and stopping operators, from `flz` and from code; what a restart brings back |
+| [`working_with_ai_assistants.md`](topics/working_with_ai_assistants.md) | `flz mcp`: an AI assistant gets the rules, the current SDK form and the operations |
 | [`topics/plugins/plugins.md`](topics/plugins/plugins.md) | The plugin model: installed, enabled by name, operators bound; the plugins that ship |
 | [`where_plugins_run.md`](topics/plugins/where_plugins_run.md) | Shared and single copies, partitioned operators, when a copy stops, durability |
 | [`enabling_and_binding.md`](topics/plugins/enabling_and_binding.md) | The `flz plugin` commands, their flags, hooks, updates, seeing what runs |

@@ -279,6 +279,7 @@ defmodule Flezha.MixProject do
         "docs/topics/basics/state.md",
         "docs/topics/basics/local_mode.md",
         "docs/topics/basics/running_operators.md",
+        "docs/topics/working_with_ai_assistants.md",
         "docs/topics/basics/namespaces.md",
         "docs/topics/basics/authorization.md",
         "docs/topics/basics/durability.md",
@@ -361,6 +362,7 @@ defmodule Flezha.MixProject do
           "docs/topics/basics/state.md",
           "docs/topics/basics/local_mode.md",
           "docs/topics/basics/running_operators.md",
+          "docs/topics/working_with_ai_assistants.md",
           "docs/topics/basics/namespaces.md",
           "docs/topics/basics/authorization.md",
           "docs/topics/basics/durability.md",
@@ -430,11 +432,14 @@ defmodule Flezha.MixProject do
   end
 
   # The map is rewritten where ExDoc wrote `llms.txt`, which `-o` moves and `-f`
-  # can leave unwritten.
+  # can leave unwritten, and `flz mcp`'s copy of it and its pages follows.
   defp docs_and_assistant_map(args) do
     case Enum.find(Mix.Task.run("docs", args), &(Path.basename(&1) == "llms.txt")) do
-      nil -> :ok
-      llms -> Mix.Task.run("flezha.llms", [Path.dirname(llms)])
+      nil ->
+        :ok
+
+      llms ->
+        for task <- ~w(flezha.llms flezha.ai_kit), do: Mix.Task.run(task, [Path.dirname(llms)])
     end
   end
 
@@ -450,7 +455,7 @@ defmodule Flezha.MixProject do
   defp aliases do
     [
       # The docs, with the code block lexers `register_highlighters/1` names,
-      # then the map for AI assistants over ExDoc's `llms.txt`.
+      # then the map for AI assistants over ExDoc's `llms.txt` and `priv/ai_kit`.
       docs: [&register_highlighters/1, &docs_and_assistant_map/1],
       # Build the WebSocket testnet bundle that several `mix test` cases
       # reach for over WS (`flezha_test.exs` "websocket plugin connection

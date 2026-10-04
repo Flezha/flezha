@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added: `flz mcp`, an MCP server for AI assistants
+
+An AI coding assistant adds Flezha with one command, `claude mcp add flezha -- <release>/bin/flz
+mcp` or its client's equivalent ([`docs/topics/working_with_ai_assistants.md`](docs/topics/working_with_ai_assistants.md)).
+Before any controller runs it serves four tools from the installed release: the working rules
+with a map of the guide pages, the current echo example of each SDK, an error code's meaning,
+and one guide page. Once a controller answers, the operations an HTTP caller may reach are
+tools too, called as the token's principal; stopping the controller, issuing tokens and
+resetting never are. The MCP code is now one core module that the HTTP API's `POST /mcp`
+shares, so it serves the same four tools. A value `flz` sends to the controller is no longer
+interpolated: a message holding `#{...}` reaches the operator as that text.
+
 ### Changed: an operator's start and stop reach every sink, and fewer repeated log lines
 
 A deliberate start and a stop or completion are now ordinary observability events,

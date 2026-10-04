@@ -177,6 +177,7 @@ one line.
 | [`flz audit`](access_commands.md#flz-audit) | Reads the record of who did what. | [`authorization.md`](../basics/authorization.md#the-audit-trail) |
 | [`flz observe`](controller_commands.md#flz-observe) | Lists the controller's sources of metrics and events, and streams their signals live. | [`hooks.md`](../plugins/hooks.md#controller-plugins-and-their-hooks) |
 | [`flz reset`](controller_commands.md#flz-reset) | Deletes the controller's data on disk, so its next start is empty. | [`running_operators.md`](../basics/running_operators.md#start-from-a-clean-slate-flz-reset) |
+| [`flz mcp`](../working_with_ai_assistants.md) | Serves Flezha to an AI assistant over MCP; the assistant starts it, not you. | [`working_with_ai_assistants.md`](../working_with_ai_assistants.md) |
 
 Which role each verb needs is in
 [`authorization.md`](../basics/authorization.md#which-role-each-verb-needs).

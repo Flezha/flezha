@@ -49,6 +49,12 @@ on the command line.
 | --- | --- |
 | `flz reset [--dry-run] [--yes] [--include-...]` | Deletes a stopped controller's data on disk |
 
+## [`flz mcp`](../working_with_ai_assistants.md)
+
+| Command | What it does |
+| --- | --- |
+| `flz mcp` | Serves Flezha to an AI assistant over MCP, on stdin and stdout |
+
 ## [`flz operator`](operator_commands.md#flz-operator)
 
 | Command | What it does |

@@ -119,7 +119,9 @@ Every remote, non-streaming catalogue entry the token's role grants SHALL be one
   required and no other property allowed;
 - its `readOnlyHint` SHALL be true only for an operation whose row writes no audit record.
 
-A tool SHALL be listed only when the token's role grants its row's action.
+A tool SHALL be listed only when the token's role grants its row's action. Beside the
+operation tools, the four knowledge tools of the `ai-assistant-kit` capability SHALL be
+listed for every token, and the server's `instructions` SHALL carry the working rules.
 
 #### Scenario: The schema follows the rows
 
@@ -132,6 +134,12 @@ A tool SHALL be listed only when the token's role grants its row's action.
 
 - **WHEN** a namespace `viewer` token sends `tools/list`
 - **THEN** no tool whose action the viewer role does not grant SHALL be listed
+
+#### Scenario: The knowledge tools are served over HTTP
+
+- **WHEN** a namespace `viewer` token sends `tools/list` to `POST /mcp`
+- **THEN** `flezha_guide`, `flezha_sdk_example`, `flezha_error` and `flezha_docs` SHALL be
+  listed
 
 ### Requirement: A Flezha failure SHALL reach the model as a tool error with its code and hint
 

@@ -95,7 +95,7 @@ pub(crate) fn eval(module: &str, fun: &str, positional: &[String], read: &Readin
     ));
     let expression = format!("{}.{}({})", module, fun, parts.join(", "));
 
-    verdict(flzvm().arg("eval").arg(expression).status());
+    settle(child("eval", &expression, Out::Inherit));
 }
 
 /// What `elixir --rpc-eval` says, with exit 1, whenever it could not reach the
@@ -129,8 +129,8 @@ pub(crate) fn unreachable() -> ! {
 /// What one `flzvm rpc` answered: its status, and whether it said the node
 /// could not be reached.
 pub(crate) struct Answer {
-    status: ExitStatus,
-    unreachable: bool,
+    pub(crate) status: ExitStatus,
+    pub(crate) unreachable: bool,
 }
 
 /// Where a call's stdout goes: through, or line by line through a filter that
@@ -141,8 +141,14 @@ pub(crate) enum Out<'a> {
 }
 
 pub(crate) fn call(expression: &str, out: Out) -> io::Result<Answer> {
+    child("rpc", expression, out)
+}
+
+/// `call`, with the `flzvm` command named: `rpc` evaluates on the controller,
+/// `eval` in a VM of its own.
+pub(crate) fn child(command: &str, expression: &str, out: Out) -> io::Result<Answer> {
     let mut child = flzvm()
-        .arg("rpc")
+        .arg(command)
         .arg(expression)
         .stdout(match out {
             Out::Inherit => Stdio::inherit(),
@@ -315,9 +321,26 @@ fn exe_suffix() -> String {
 
 /// `value` as an Elixir string literal. A JSON string is one, and escapes a
 /// backslash as well as a quote — the one renderer for every argument that
-/// can carry JSON or free text, so no call site invents its own.
+/// can carry JSON or free text, so no call site invents its own. An Elixir
+/// string also interpolates `#{`, so that is escaped too: a value is never
+/// code the controller runs. The line separators and bidirectional controls
+/// Elixir refuses raw in a literal are written as `\uXXXX`.
 pub(crate) fn text(value: &str) -> String {
-    serde_json::Value::String(value.to_string()).to_string()
+    let json = serde_json::Value::String(value.to_string()).to_string();
+    let mut literal = String::with_capacity(json.len());
+
+    for c in json.chars() {
+        match c {
+            '\u{85}'
+            | '\u{2028}'
+            | '\u{2029}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2066}'..='\u{2069}' => literal.push_str(&format!("\\u{:04X}", c as u32)),
+            c => literal.push(c),
+        }
+    }
+
+    literal.replace("#{", "\\#{")
 }
 
 /// The options list every request ends with: `opts` in the order given, then
@@ -325,7 +348,7 @@ pub(crate) fn text(value: &str) -> String {
 /// token when there is one — `[]` when it carries none of them. The token is
 /// the walk's answer: the `--token` flag wherever it was written, else the
 /// environment variable its declaration names.
-fn keyword_opts_fragment(opts: &[Opt], token: Option<&str>, json: bool) -> String {
+pub(crate) fn keyword_opts_fragment(opts: &[Opt], token: Option<&str>, json: bool) -> String {
     let mut entries: Vec<String> = opts
         .iter()
         .map(|(key, value)| format!("{}: {}", key, value))
@@ -414,6 +437,24 @@ mod tests {
         assert_eq!(
             door_call("Dlq.list", &[Value::Null], &[], None, false),
             r#"Flezha.Service.Cli.call("Dlq.list", "[null]", [])"#
+        );
+    }
+
+    /// A value is data on the controller, never code: `#{` stays text, and a
+    /// backslash before it stays a backslash.
+    #[test]
+    fn a_value_never_interpolates() {
+        assert_eq!(text("a#{1+1}b"), r#""a\#{1+1}b""#);
+        assert_eq!(text(r"\#{x}"), r#""\\\#{x}""#);
+        assert_eq!(text("# {x} #"), r##""# {x} #""##);
+    }
+
+    /// Elixir refuses these raw in a string literal, so they are escaped.
+    #[test]
+    fn a_separator_or_bidi_control_is_escaped() {
+        assert_eq!(
+            text("a\u{2028}b\u{85}c\u{202E}d\u{2069}"),
+            r#""a\u2028b\u0085c\u202Ed\u2069""#
         );
     }
 

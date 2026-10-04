@@ -7,6 +7,7 @@ mod controller;
 mod dispatch;
 mod dlq;
 mod help;
+mod mcp;
 mod namespace;
 mod observe;
 mod operator;
@@ -26,8 +27,8 @@ use dispatch::{Command, Missing, Verb};
 
 /// `flz` itself is a command table like the sixteen below it: same bare-invocation
 /// rule, same help spellings, same refusal. Fifteen of its rows are tables of
-/// their own; `reset` and `help`, which prints the catalogue under `--json`,
-/// are the verbs the top level runs itself.
+/// their own; `reset`, `mcp` and `help`, which prints the catalogue under
+/// `--json`, are the verbs the top level runs itself.
 const FLZ: Command = Command {
     path: "flz",
     help: help::FLZ,
@@ -45,6 +46,7 @@ const FLZ: Command = Command {
             .refusing(reset::CONFLICTS)
             .strict()
             .screen(help::RESET),
+        Verb::new("mcp", mcp::serve).strict().screen(help::MCP),
         Verb::table("observe", &observe::TABLE),
         Verb::table("audit", &audit::TABLE),
         Verb::table("dlq", &dlq::TABLE),

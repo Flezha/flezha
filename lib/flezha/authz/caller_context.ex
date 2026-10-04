@@ -11,11 +11,13 @@ defmodule Flezha.Service.CallerContext do
 
   alias Flezha.AuthZ.TokenStore
 
-  @valid_sources [:cli, :ui, :sdk, :http, :internal]
+  @valid_sources [:cli, :ui, :sdk, :http, :mcp, :internal]
 
-  # The sources that reach the controller over the network: a runner
-  # connection and HTTP. The others run on the controller's own distribution.
-  @networked_sources [:sdk, :http]
+  # The sources held to what the network may reach: a runner connection, HTTP,
+  # and an AI assistant through `flz mcp`, which rides the controller's own
+  # distribution but must reach no more than one over HTTP. The others run on
+  # that distribution with the operator's full reach.
+  @networked_sources [:sdk, :http, :mcp]
 
   @type t :: Flezha.AuthZ.caller_context()
 
@@ -30,7 +32,7 @@ defmodule Flezha.Service.CallerContext do
          do: {:ok, %{source: source, principal: principal, namespace: namespace, role: role}}
   end
 
-  @doc "Whether the caller reaches the controller over the network rather than its own node."
+  @doc "Whether the caller is held to what the network may reach: remote operations that do not stream."
   @spec networked?(t()) :: boolean()
   def networked?(caller_context), do: Map.get(caller_context, :source) in @networked_sources
 

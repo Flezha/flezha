@@ -34,6 +34,7 @@ SDK. A program acts on the `code` and the `class`.
    1. [input](#input)
    1. [internal](#internal)
    1. [listener](#listener)
+   1. [mcp](#mcp)
    1. [namespace](#namespace)
    1. [observability](#observability)
    1. [operator](#operator)
@@ -242,6 +243,14 @@ SDK raises or returns its one error type carrying them.
 |---|---|---|---|---|
 | `listener.detached` | conflict | 6 | the listener on operator '{operator}' was disabled by another caller |  |
 | `listener.overrun` | unavailable | 7 | the listener on operator '{operator}' fell more than {bytes} bytes or {frames} frames behind and was ended | `flz operator listen {operator} again, or raise FLEZHA_LISTENER_PENDING_BYTES` |
+
+### mcp
+
+| Code | Class | Exit | Message | Hint |
+|---|---|---|---|---|
+| `mcp.unknown_code` | not_found | 5 | no error code is named '{requested}' | `call flezha_docs with page errors for every code` |
+| `mcp.unknown_language` | invalid | 2 | there is no SDK example for the language '{language}' | `use one of: {languages}` |
+| `mcp.unknown_page` | not_found | 5 | no guide page is named '{page}' | `call flezha_guide for the pages it lists` |
 
 ### namespace
 

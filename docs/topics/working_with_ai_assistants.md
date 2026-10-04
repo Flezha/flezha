@@ -1,0 +1,141 @@
+# Working with AI assistants
+
+An AI coding assistant such as Claude Code, Cursor or Codex can build on Flezha
+with `flz mcp`, an MCP server that ships in every release. The assistant starts
+it and talks to it over stdin and stdout. It tells the assistant how to work
+with Flezha, hands it the current SDK form for its language, and, once a
+controller runs, lets it operate that controller as the token you give it.
+Nothing is copied into your project.
+
+**Contents**
+
+1. [Add it to Claude Code](#add-it-to-claude-code)
+2. [Add it to another client](#add-it-to-another-client)
+3. [What the assistant gets](#what-the-assistant-gets)
+4. [Which token to give it](#which-token-to-give-it)
+5. [A controller on another machine](#a-controller-on-another-machine)
+6. [For a tool that ignores MCP instructions](#for-a-tool-that-ignores-mcp-instructions)
+7. [Limits](#limits)
+
+## Add it to Claude Code
+
+From the release folder:
+
+```sh
+$ claude mcp add --scope user flezha -- "$PWD/bin/flz" mcp
+$ claude mcp list
+```
+
+```output
+Added stdio MCP server flezha with command: /opt/flezha/bin/flz mcp to user config
+File modified: /home/you/.claude.json
+flezha: /opt/flezha/bin/flz mcp - ✔ Connected
+```
+
+`--scope user` makes it available in every project. The path must be absolute,
+because the assistant starts the server from your project's folder.
+
+With authorization off, as in the [tutorials](../tutorials/tutorials.md), that
+is all. With it on, which is a release's default, add it with a token of its own
+([below](#which-token-to-give-it)) instead, removing the first one if you added
+it:
+
+```sh
+$ claude mcp remove --scope user flezha
+$ claude mcp add --scope user flezha -e FLEZHA_TOKEN=$FLEZHA_TOKEN -- "$PWD/bin/flz" mcp
+```
+
+`flz mcp` reaches the controller the way `flz` does, so the shell that starts
+the assistant needs nothing else: the same machine, the same cookie and node
+name ([cli.md](cli/cli.md)).
+
+## Add it to another client
+
+Every MCP client that starts a stdio server takes the same three things: the
+command, the argument `mcp`, and the token in the environment. Claude Code
+writes them like this; another client names the same three in its own MCP
+configuration:
+
+```json
+{
+  "mcpServers": {
+    "flezha": {
+      "command": "/opt/flezha/bin/flz",
+      "args": ["mcp"],
+      "env": { "FLEZHA_TOKEN": "flzt_..." }
+    }
+  }
+}
+```
+
+## What the assistant gets
+
+Four tools need no controller and answer from the installed release, so they
+always match the version you run:
+
+| Tool | Answers |
+| --- | --- |
+| `flezha_guide` | The working rules and a map of every guide page |
+| `flezha_sdk_example` | The echo example for one language: the current SDK form |
+| `flezha_error` | What an error code means, and the hint for the next step |
+| `flezha_docs` | One guide page, by the name the map gives it |
+
+The rules also go in the server's instructions, which most clients show the
+model before it does anything: read the SDK example before writing SDK code, try
+an operator in [local mode](basics/local_mode.md) first, act on an error's
+`code` and `hint`.
+
+Once a controller answers, each operation the token's role allows is a tool as
+well: `operator_list`, `operator_start`, `operator_send`, `dlq_list`,
+`dlq_replay` and the rest, the same set the [HTTP API](../plugins/http_api.md)
+serves. A failed call comes back with its [error](../errors.md) code and hint,
+so the assistant can correct itself. Before a controller runs, every operation
+an assistant could reach is listed, whatever the token, and a call answers
+`controller.unreachable` with the command that starts one; the next call after
+it starts reaches it, with no restart.
+
+## Which token to give it
+
+Give the assistant its own token, in one namespace, with the narrowest role that
+does its job, issued as the HTTP API page shows
+([a token for an assistant](../plugins/http_api.md#a-token-for-an-assistant)):
+`flz mcp` takes the same token, in `FLEZHA_TOKEN` or `--token`. Never give it an
+`admin@_system` token.
+
+Whatever the token, the assistant cannot stop the controller, issue or revoke
+tokens, bind roles or delete a namespace: those are not tools. Once the admin
+is claimed, an assistant with no token gets the four knowledge tools and every
+operation is refused with `authz.principal_not_bound`; one whose token does not
+verify gets the token's own error, such as `authz.token_expired`.
+
+## A controller on another machine
+
+`flz mcp` reaches a controller over Erlang distribution, as `flz` does. For a
+controller the assistant's machine cannot reach that way, enable the
+[HTTP API plugin](../plugins/http_api.md) on the controller and connect the
+assistant to its `/mcp` address with a bearer token. It serves the same tools,
+the four knowledge tools included.
+
+## For a tool that ignores MCP instructions
+
+A client that does not pass a server's instructions to the model can still be
+pointed at them. Add this to the `AGENTS.md`, `CLAUDE.md` or rules file your tool
+reads:
+
+```markdown
+## Flezha
+
+This project runs on Flezha. Before changing Flezha code, call the `flezha_guide`
+tool of the `flezha` MCP server and follow its rules. Call `flezha_sdk_example`
+for this project's language before writing SDK code.
+```
+
+## Limits
+
+- **Each message starts a short VM.** A call takes about a quarter of a second
+  with a controller, and about twice that without one.
+- **No streaming operations.** `flz operator listen` and `flz observe tail` are
+  not tools, as over HTTP.
+- **A message up to about 120 KiB.** A larger one is refused before it is sent.
+- **The token is read when the assistant starts the server.** After issuing a new
+  one, restart the assistant's session.

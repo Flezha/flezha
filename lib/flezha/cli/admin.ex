@@ -43,6 +43,7 @@ defmodule Flezha.Service.Admin do
   code.
   """
 
+  alias Flezha.AuthZ
   alias Flezha.AuthZ.Policy
   alias Flezha.Observability.Signal
   alias Flezha.Plugin.ProviderBehaviour.Options
@@ -98,18 +99,23 @@ defmodule Flezha.Service.Admin do
 
   @doc """
   The operations `caller_context` reaches through `call/4` and whose action
-  its role grants, for a surface that lists them. The namespace is still
-  judged at each call.
+  its role grants, for a surface that lists them: every one it reaches while
+  authorization is open, none for a caller with no role while it is not. The
+  namespace is still judged at each call.
   """
   @spec catalogue(CallerContext.t()) :: [Flezha.Service.entry()]
-  def catalogue(%{role: role} = caller_context) when role != nil do
-    for entry <- Flezha.Service.catalogue(),
-        reachable?(entry, caller_context),
-        entry.action == :public or Policy.grants?(role, entry.action),
-        do: entry
-  end
+  def catalogue(caller_context),
+    do: Enum.filter(reachable(caller_context), &granted?(&1, caller_context))
 
-  def catalogue(_caller_context), do: []
+  @doc "The operations `caller_context` reaches through `call/4`, whatever its role."
+  @spec reachable(CallerContext.t()) :: [Flezha.Service.entry()]
+  def reachable(caller_context),
+    do: Enum.filter(Flezha.Service.catalogue(), &reachable?(&1, caller_context))
+
+  defp granted?(entry, %{role: role}) when role != nil,
+    do: entry.action == :public or Policy.grants?(role, entry.action)
+
+  defp granted?(_entry, _caller_context), do: AuthZ.enforcement_posture() == :open
 
   # ---------- resolving a name ----------
 

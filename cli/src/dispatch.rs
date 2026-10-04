@@ -84,10 +84,10 @@ impl Verb {
     }
 
     /// Refuse a word this row does not declare: an option it does not read, or
-    /// a plain word no positional takes. Five verbs do: two block the caller
-    /// for as long as their options say, one deletes state, and two start
+    /// a plain word no positional takes. Six verbs do: two block the caller
+    /// for as long as their options say, one deletes state, two start
     /// operators, which a misspelled option would start without the setting
-    /// it meant.
+    /// it meant, and `flz mcp`, which a program starts and nobody watches.
     pub(crate) const fn strict(mut self) -> Self {
         self.strict = true;
         self

@@ -1,0 +1,138 @@
+# Flezha
+
+> Distributed stateful operators — durable flow and steps compute
+
+This map lists every guide page and the published API. Read it whole, then open
+only the pages a task needs: each link is that page's full Markdown, next to this file.
+
+## Start here
+
+- [What is Flezha](what_is_flezha.md)
+- [Local mode](local_mode.md)
+- [CLI](cli.md)
+- [Errors](errors.md)
+
+## Getting started
+
+- [What is Flezha](what_is_flezha.md): Flezha is a durable, distributed runtime for stateless and stateful data processing.
+- [Try it](try_it.md): Before you build anything, see Flezha work: a controller, a runner that can run an `echo` operator, and a message that goes in and comes back.
+- [Tutorials](tutorials.md): Each tutorial runs one small example application, page by page, so if you follow the steps you have a working toy at the end.
+
+## Tutorial 1: The echo
+
+- [The echo](first_steps.md): This tutorial builds the smallest complete Flezha deployment by hand: a controller, a runner of your own that serves an `echo` operator, and a file on each side of it.
+- [Start the controller](start_the_controller.md): On this page you start one controller and leave it running for the rest of the tutorial.
+- [Write the echo runner](write_the_echo_runner.md): On this page you get the echo runner in your language and start it.
+- [Run the echo](run_the_echo.md): On this page you start an operator from the `echo` factory your runner registered, send it a message and watch what comes out.
+- [Feed the echo a file](feed_the_echo_a_file.md): On this page you attach a file to each side of `my_echo`: lines added to one file go in, and their echoes land in another.
+- [Stop everything](stop_everything.md): On this page you stop what this tutorial started, in reverse order: the plugins, the operator, the runner, then the controller.
+
+## Tutorial 2: The tradedesk
+
+- [The tradedesk](tradedesk.md): This tutorial runs `tradedesk`, a toy trader, and uses it to show what a deployment needs beyond the echo: authorization, a namespace of its own, state, partitions, plugins, and recovery from a crash.
+- [Open the desk](open_the_desk.md): On this page you start a controller with authorization on, claim its admin, give the desk a namespace of its own with a key for its runner, and connect the runner.
+- [Watch the trades](watch_the_trades.md): On this page you start the desk's ETL stream, `trade_watcher`, in two partitions, send it trades by hand, read the prices it keeps, and scale it to three partitions while it runs.
+- [Connect the exchange](connect_the_exchange.md): On this page you start the demo exchange, feed its live trades into `trade_watcher` with the WebSocket plugin, and write the buy signals to a file.
+- [Place orders](place_orders.md): On this page you look at the desk's workflow, `order_executor`: you start an order by hand, read the journal of its steps, and make an order fail so that its finished steps are undone.
+- [Crash the desk](crash_the_desk.md): On this page you stop and crash the runner and the controller while the desk works, and see that nothing it kept is lost: the price windows, an order in the middle of its steps, and a message that cannot be read.
+
+## Tutorial 3: The agentdesk
+
+- [The agentdesk](agentdesk.md): This tutorial runs `agentdesk`, a chat in which every conversation is a session of its own, and many run at once.
+- [Start a session](start_a_session.md): On this page you build the runner, start the agentdesk in Docker Compose, talk to two sessions, and watch an idle one sleep and wake on another runner.
+- [Take a turn back](take_a_turn_back.md): On this page you rewind Anna's session to an earlier turn, and send a message that fails without ending the session.
+- [Stream an answer](stream_an_answer.md): On this page you watch Anna's answer arrive token by token while the turn runs.
+- [Add your own plugin](add_your_own_plugin.md): On this page you build the HTTP plugin's package and install it by rebuilding the controller's image.
+- [Serve HTTP](serve_http.md): On this page you start the gateway, an operator that runs in flow behind the HTTP plugin, and stream Anna's answer to an HTTP client.
+- [Call the session](call_the_session.md): On this page you send messages to sessions over HTTP.
+- [Run a cluster](run_a_cluster.md): On this page you add a second controller and its runner, stop them as if their machine went down, and see their sessions carry on on the first.
+- [Kill the runner](kill_the_runner.md): On this page you kill the runner while a message goes through the gateway, and see that its tokens are counted once.
+- [Run on Kubernetes](run_on_kubernetes.md): On this page you run the same images on k3s: one pod holding a controller and its runner, from `k8s/agentdesk.yaml` in the agentdesk folder.
+
+## Topics
+
+- [Building blocks](building_blocks.md): Code that runs on Flezha is made of three pieces: tasklets, operators and runners.
+- [Configuring an operator](configuring_an_operator.md): An operator is configured by one settings tree, declared in its class.
+- [Streams](streams.md): A stream is an operator that runs in flow, the default run: you start it once, and it handles each message the moment it arrives, for as long as it runs.
+- [Workflows](workflows.md): A workflow is a piece of work made of steps that run in a fixed order: reserve the money, place the order, confirm the fill.
+- [State](state.md): A tasklet can remember things between messages: a running total, a window of recent prices, the id of a reservation it may have to release.
+- [Local mode](local_mode.md): Local mode runs an operator inside your own process, with no controller, no Docker and no socket.
+- [Running operators](running_operators.md): A runner that registered a factory runs nothing yet.
+- [Working with AI assistants](working_with_ai_assistants.md): An AI coding assistant such as Claude Code, Cursor or Codex can build on Flezha with `flz mcp`, an MCP server that ships in every release.
+- [Namespaces](namespaces.md): A namespace is a separate room inside one Flezha deployment.
+- [Authorization](authorization.md): Authorization decides who may do what.
+- [Durability](durability.md): Flezha writes down every change a tasklet makes to its state, and every step a workflow finishes, on the controller's disk as it happens.
+- [Partitioning](partitioning.md): An operator started the usual way is one instance: all of its keys and all of their cells run on one runner, and that runner's machine is the limit.
+- [Merged inputs](merged_inputs.md): A tasklet takes one type of input, and `into` connects it to one channel.
+- [Timers](timers.md): Some work is triggered by time rather than by input: a session that closes after 30 seconds of quiet, an idle buffer that flushes, a join that gives up waiting, a window that closes.
+- [Spawning from a tasklet](spawning_from_a_tasklet.md): A running tasklet can start a steps operator with one call: `ctx.spawn_steps`.
+- [Operator calls](operator_calls.md): A call sends one input to an operator and gets one answer back: the output that a `response()` end of the operator's graph produced from that input, or one coded error saying why none came.
+- [Sessions](sessions.md): A session is an operator instance that lives for as long as a conversation does: it has a beginning, it takes one message after another, and it remembers what was said.
+- [Rewinding a turn](rewinding_a_turn.md): A conversation sometimes has to go back.
+- [Streamed answers](streamed_answers.md): A model writes its answer a token at a time, and a long answer takes a while.
+- [Effectively once](effectively_once.md): A message that is lost is a question nobody answers.
+- [Feature maturity](maturity.md): This record says which parts of Flezha are not yet settled.
+
+## Deploying
+
+- [Deploying a controller](deploying_a_controller.md): The controller is the part of Flezha that decides and remembers.
+- [Docker](docker.md): The image `flezha/flezha` holds the same release as the binaries, on Debian, and runs it as the user `flezha` (uid 1000).
+- [Building from source](building_from_source.md): The [release archive](deploying_a_controller.md) is built for Linux x86_64.
+- [Connecting a runner](connecting_a_runner.md): A runner is a program of your own that runs your operators.
+- [Clustering](clustering.md): One controller can carry a whole application, but it is then a single machine to lose.
+- [Kubernetes](kubernetes.md): A controller and its runners run on Kubernetes as they run in Docker or Docker Compose: the same images, the same settings as environment variables, and a shared folder for the Unix sockets the runner reaches the controller through.
+
+## The CLI
+
+- [CLI](cli.md): `flz` is the tool a controller is operated with: starting and stopping it, starting operators and sending them messages, managing namespaces, tokens and plugins, and reading state.
+- [Controller commands](controller_commands.md): The groups that look after the controller itself: starting and stopping it, checking that it is up, the runners connected to it, its signals, and clearing its data.
+- [Operator commands](operator_commands.md): The groups that work with operators: starting and stopping them, sending them input, reading their state, the inputs they gave up on, and the workflows started on a schedule.
+- [Plugin commands](plugin_commands.md): `flz plugin` installs plugin packages, enables plugins and connects operators to them.
+- [Access commands](access_commands.md): The groups that decide who may do what: namespaces and their quotas, the first admin, tokens, roles, and the audit trail that records each action.
+- [Command reference](command_reference.md): Every `flz` verb in one line, by group.
+
+## Configuration
+
+- [Configuration overview](configuration.md): Flezha starts with no configuration.
+- [Controller environment variables](environment_variables.md): Every variable the controller node reads, grouped by area.
+- [Application env keys](application_env.md): Read via `Flezha.Config.get/1` by row name; `Read in` names the module that reads the key.
+- [Operator settings](operator_settings.md): What an operator declares in its own code.
+- [Plugin options](plugin_options.md): A plugin's options are its own settings: the URL it polls, the topic it publishes to, the file it writes.
+- [Runner environment variables](runner_environment.md): Read by the runner process, not the controller node, so they are set where the runner runs.
+- [Erlang VM arguments](vm_arguments.md): The VM the node runs in is configured before the application starts, so none of these can be a row of `lib/flezha/config/keys.ex` and `config/runtime.exs` never sees one.
+- [Files and sockets](files_and_sockets.md)
+
+## Plugins
+
+- [Plugins](plugins.md): A plugin connects an operator to something outside Flezha: a file, a websocket, an HTTP endpoint, Kafka, a database.
+- [Where a plugin runs](where_plugins_run.md): An operator plugin runs at the edge of the operators bound to it.
+- [Enabling and binding](enabling_and_binding.md): `flz plugin` enables a plugin by name and binds operators to it.
+- [Plugins from your own code](plugins_from_code.md): Enabling, binding, unbinding and disabling are on the SDK's admin handle, so an application can attach the plugins its own namespace needs.
+- [Plugin examples](plugin_examples.md): Two setups from the tutorials: the echo's file plugins, and the tradedesk's live feed into a partitioned operator.
+- [Installing plugins](installing_plugins.md): A plugin that does not ship with the controller comes as a plugin package: a `.fpz` file carrying compiled code, the plugin's own application and every library it needs that the controller release does not ship.
+- [Hooks](hooks.md): A hook is a moment at which the controller calls a plugin.
+- [Writing a plugin](writing_a_plugin.md): A plugin of your own is an ordinary Elixir Mix project: it depends on `flezha` and on the libraries it needs, names its providers in its application environment, and is built into a plugin package (`.fpz`) that a controller loads when it starts.
+
+## Plugin catalogue
+
+- [File plugin](file.md): The file plugin makes a file an operator's input, to replay a log or load an export, or its output, to watch what an operator emits land somewhere `tail` can read.
+- [HTTP poll plugin](http_poll.md): The HTTP poll plugin delivers a slowly-changing HTTP resource (runtime configuration, reference data, external state) onto an operator's entry channel.
+- [HTTP push plugin](http_push.md): The HTTP push plugin sends an operator's outputs to an HTTP endpoint: a REST API, a webhook receiver, or any service that takes a request per record.
+- [Websocket subscription source and output binding](websocket_subscription.md): The websocket plugin holds one websocket connection open for an operator: it injects every frame it receives into the operator's input, can change what the socket is subscribed to without tearing it down, and can send the operator's outputs back out on the same socket.
+- [Operator-forward plugin](operator_forward.md): The operator-forward plugin sends one operator's outputs into another operator's input, in the same namespace.
+- [Postgres sink](postgres_sink.md): The Postgres sink writes what an operator emits into a PostgreSQL database, in transactions.
+- [Postgres poll source](postgres_poll.md): The Postgres poll source delivers the new, and optionally the changed, rows of one Postgres table onto an operator's entry channel, with no replication rights: it works on a managed database and on a read replica.
+- [Webhook plugin](hook_webhook.md): The webhook plugin tells another service what happens in a namespace: a chat channel, an alerting tool, or any service that takes an HTTP POST.
+- [HTTP server plugin](http_server.md): The HTTP server plugin puts an operator behind HTTP: a client sends a request, the operator's graph decides the answer, and the same connection can instead carry a stream of another operator's parts and outputs as server-sent events.
+- [HTTP API plugin](http_api.md): The HTTP API plugin lets AI tools and scripts operate a controller from another process or machine.
+- [Kafka consumer plugin](kafka_consumer.md): The Kafka consumer plugin delivers the records of Kafka topics onto an operator's entry channel.
+- [Kafka producer plugin](kafka_producer.md): The Kafka producer plugin publishes what an operator ingests or emits to a Kafka topic.
+- [RabbitMQ plugins](rabbitmq.md): The RabbitMQ plugins deliver the messages of a RabbitMQ queue onto an operator's entry channel, and publish an operator's outputs to a RabbitMQ exchange.
+- [Postgres change capture](postgres_cdc.md): The Postgres change capture plugin delivers every inserted, updated and deleted row of Postgres tables onto an operator's entry channel, in commit order, after a first copy of the rows already there.
+
+## Reference
+
+- [Errors](errors.md): Every failure Flezha reports carries one shape, on every surface: the `flz` CLI, the published consumer API, the SDK administration door, spawn, a runner connect and every SDK.
+- [A controller will not start, or will not stop](controller_will_not_start.md)
+- [A runner cannot connect](runner_cannot_connect.md): `flz runner check` runs exactly the probe a runner runs.
+
