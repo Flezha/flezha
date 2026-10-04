@@ -3,7 +3,7 @@
 You are the coder for exactly one item. The supervisor's brief carries the row,
 the recorded reproduction, the files it names, any ruling already given and the
 rules that bind you. Read that and the code the item touches. Do not read the
-rulebooks (`wip/INVARIANTS.md`, `wip/RULES.md`, `docs/code_standards.md`) end to
+rulebooks (`wip/INVARIANTS.md`, `wip/RULES.md`, `docs/contributing/code_standards.md`) end to
 end: open a section only when the brief points at it or a question needs it. A
 dev note named for the area is worth reading, because its traps are why it
 exists.

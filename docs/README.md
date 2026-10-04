@@ -2,7 +2,7 @@
 
 New to Flezha: start with [What is Flezha](getting_started/what_is_flezha.md), then
 [Try it](getting_started/try_it.md). The user documentation comes in four sections,
-in reading order; everything after them is grouped by who reads it.
+in reading order, and a fifth is for contributors; everything after them is grouped by who reads it.
 
 | Section | What it is |
 | --- | --- |
@@ -10,6 +10,7 @@ in reading order; everything after them is grouped by who reads it.
 | [Tutorials](#tutorials) | Three example applications, run page by page: what to type and what you should see |
 | [The basics](#the-basics) | One page per subject a deployment needs, each readable on its own |
 | [Advanced topics](#advanced-topics) | One page per subject beyond the basics, each readable on its own |
+| [Contributing](#contributing) | The rules a contribution follows, the build, the tests and the release |
 
 | Directory | For | What is in it |
 | --- | --- | --- |
@@ -24,11 +25,9 @@ in reading order; everything after them is grouped by who reads it.
 | [`troubleshooting/`](#troubleshooting) | users | A symptom, what it means, and the fix |
 | [`publishing/`](#publishing) | the maintainer before the first public release; every user after it | The decisions publishing makes irreversible, which of them block a release, and which parts are not yet settled |
 
-Three references sit at the top level: [`glossary.md`](glossary.md) (vocabulary),
+Two references sit at the top level: [`glossary.md`](glossary.md) (vocabulary) and
 [`configuration.md`](configuration.md) (every knob, by layer, one page per layer
-under `configuration/`) and
-[`code_standards.md`](code_standards.md) (the rules a change to this repository is
-held to, in every language it carries).
+under `configuration/`).
 
 reproduces it and the output that command gave.
 
@@ -88,6 +87,16 @@ type and what you should see; the topic pages say how each piece works.
 | [`topics/advanced/clustering.md`](topics/advanced/clustering.md) | Several controllers as one cluster, and stopping one |
 | [`topics/advanced/effectively_once.md`](topics/advanced/effectively_once.md) | The delivery guarantee, what it requires and what it costs |
 | [`kubernetes.md`](topics/advanced/kubernetes.md) | Running controllers and runners on Kubernetes |
+
+## Contributing
+
+| Doc | Covers |
+| --- | --- |
+| [`contributing/contributing.md`](contributing/contributing.md) | The rules a contribution follows: the CLA, a pull request, commit messages, review |
+| [`contributing/setting_up.md`](contributing/setting_up.md) | The tools, the clone, the build, and the development containers |
+| [`contributing/testing.md`](contributing/testing.md) | The test suites, one SDK at a time, and CI on your own machine |
+| [`contributing/code_standards.md`](contributing/code_standards.md) | The rules a change is held to, the formatters and the gates |
+| [`contributing/releasing.md`](contributing/releasing.md) | The release artifacts and how they are built |
 
 ## sdk
 

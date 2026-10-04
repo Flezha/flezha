@@ -1,5 +1,5 @@
 # Credo in measuring mode: `mix credo --strict` counts and nothing ratchets the
-# count. The ceilings a change is held to are docs/code_standards.md.
+# count. The ceilings a change is held to are docs/contributing/code_standards.md.
 %{
   configs: [
     %{

@@ -3,17 +3,11 @@
 The rules a change to this repository is held to, in every language it carries:
 Elixir, Rust, Java, and the Node, Python, Ruby and PHP SDKs.
 
-They are written here rather than measured by a tool. There used to be a script
-that ratcheted them against a recorded snapshot, but the snapshot lived in an
-untracked directory on one laptop, so on any other checkout the instrument could
-only ever be green by being ignored, and for weeks it was. A rule a person or a
-model can read and apply is worth more than a check nobody runs. What the tool
-also gave up with it is drift: a sentence can say "no file over 800 lines", and
-only a recorded snapshot could have said "this area had 7 near-duplicate blocks
-and now has 13". That trade was made deliberately.
-
-Some of these rules do have gates, and where one exists it is named below. A
-gate is the enforcement; this page is the rule.
+Most of them are written here to be read and applied, not measured by a tool.
+Some have gates, and where one exists it is named below. A gate is the
+enforcement; this page is the rule. [The formatters](#the-formatters) and
+[the gates](#the-gates) at the end say what CI checks and how to run the same
+checks yourself.
 
 ## Ceilings
 
@@ -127,3 +121,54 @@ delivery.
 
 Production lines added and removed are read from `git diff --numstat`, split by
 hand into production and test paths. There is no tool that does the split.
+
+## The formatters
+
+Each language has one formatter, and CI fails a pull request whose code it would
+change:
+
+```sh
+$ scripts/format-apply.sh --check    # report what is unformatted, change nothing
+$ scripts/format-apply.sh            # format it (also `make fmt`)
+```
+
+Rust is formatted by a pinned nightly `rustfmt`, configured in `rustfmt.toml`,
+and Elixir by `mix format`, configured in `.formatter.exs`. The script names the
+nightly it uses. Each SDK other than Rust and Elixir is formatted in its own
+repository. A formatter that is not installed drops its language from the
+report and nothing else. The commits that only reformatted code are listed in
+`.git-blame-ignore-revs`, so `git blame` skips them.
+
+## The gates
+
+Every check CI runs besides the tests is a gate, and every gate is a row in
+`scripts/naming_gate.py`. CI calls the same runner, so what you run is what CI
+runs:
+
+```sh
+$ python3 scripts/naming_gate.py --list            # every gate and its command
+$ python3 scripts/naming_gate.py --run @naming     # the naming and structure gates
+$ python3 scripts/naming_gate.py --run @format     # formatters, license headers, notices
+$ python3 scripts/naming_gate.py --run <id>        # one gate
+```
+
+The runner reports every gate and ends on one of three non-zero statuses when
+something is wrong:
+
+| Status | Means |
+|---|---|
+| 1 | A gate found something in the source |
+| 2 | A tool a gate needs is not installed |
+| 3 | A tool ran and did not finish, or a gate reached no verdict |
+
+Only 1 says anything about your code. On 2 and 3 the gate has checked nothing,
+so neither is a pass. CI fails on all three.
+
+One gate needs a word of its own. `check-layer-direction.sh` holds the
+controller to its dependency order: a file under `lib/flezha/` may not name a
+module whose file lives in a higher layer. A module's layer is the directory its
+file is in, not its name, so moving a file into the directory that owns its
+feature is how an entry is fixed. `scripts/layer-direction-baseline.txt` lists
+what the tree held when the gate was added, and the list may only shrink. A new
+directory under `lib/flezha/` has to be ranked in the script before code goes
+into it, or the gate exits 3.

@@ -85,7 +85,7 @@ near-identical old one is a defect, not a delivery.
 
 `git diff --numstat` measures it, split by hand into production and test paths.
 The ceilings a change is held to (no file over 800 lines, no function over 50,
-no new dependency cycle) are in `docs/code_standards.md`, along with the rules
+no new dependency cycle) are in `docs/contributing/code_standards.md`, along with the rules
 for writing a check that enforces one.
 
 ## What one item costs

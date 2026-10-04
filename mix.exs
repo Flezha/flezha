@@ -276,7 +276,12 @@ defmodule Flezha.MixProject do
         "docs/plugins/postgres_cdc.md",
         "docs/troubleshooting/controller_will_not_start.md",
         "docs/troubleshooting/runner_cannot_connect.md",
-        "docs/publishing/maturity.md"
+        "docs/publishing/maturity.md",
+        "docs/contributing/contributing.md",
+        "docs/contributing/setting_up.md",
+        "docs/contributing/testing.md",
+        "docs/contributing/code_standards.md",
+        "docs/contributing/releasing.md"
       ],
       before_closing_head_tag: &guide_styles/1,
       before_closing_body_tag: &guide_scripts/1,
@@ -333,7 +338,8 @@ defmodule Flezha.MixProject do
           "docs/configuration/files_and_sockets.md"
         ],
         "Plugin catalogue": ~r"docs/plugins/",
-        Reference: ~r"docs/(errors|troubleshooting/|publishing/maturity)"
+        Reference: ~r"docs/(errors|troubleshooting/|publishing/maturity)",
+        Contributing: ~r"docs/contributing/"
       ]
     ]
   end
