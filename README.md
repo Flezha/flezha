@@ -79,6 +79,68 @@ What a pipeline usually has to build around itself is already there:
   per-input steps operator, into N instances across its key space
   ([`docs/topics/advanced/partitioning.md`](docs/topics/advanced/partitioning.md)).
 
+## Flezha and AI
+
+Flezha is built to work with AI from both sides: AI coding tools can drive it and
+build on it, and it can run the services AI applications are made of.
+
+### For AI tools working with Flezha
+
+- **Errors a program can act on.** Every failure has one shape on every surface,
+  the `flz` CLI, the consumer API and every SDK: a stable `code`, a `class`, a
+  one-sentence `message`, the `details` it names and a `hint` with the next command
+  to run. The `flz` exit code follows the class, so a tool can tell "fix the
+  arguments" from "retry later" without reading the text. Every code is listed in
+  [`docs/errors.md`](docs/errors.md).
+- **JSON from every command.** Each `flz` verb takes `--json`, and a failure is then
+  one line of JSON ([`docs/topics/basics/cli.md`](docs/topics/basics/cli.md)).
+- **Documentation for language models.** The generated documentation carries an
+  `llms.txt` index and a Markdown copy of every page next to the HTML one.
+- **Fast feedback.** Local mode runs your processing graph inside your own process,
+  with no controller, so a change can be tried in seconds
+  ([`docs/topics/basics/local_mode.md`](docs/topics/basics/local_mode.md)). A graph
+  that cannot work is refused when the runner starts, with an error code that names
+  why.
+
+<!-- TODO: Flezha MCP server, so an AI assistant can inspect and operate a running
+deployment through MCP: list namespaces, operators and runners, read state, send
+messages and calls, read and replay dead letters, and get coded errors back. -->
+<!-- TODO: an AGENTS.md template for projects built on Flezha, pointing an AI
+assistant at the documentation, llms.txt, the error reference and the CLI's JSON
+output. -->
+<!-- TODO: a Claude Code skill or plugin that knows the flz CLI and each SDK's
+current form, so an assistant writes and runs Flezha code without guessing. -->
+
+### For AI services running on Flezha
+
+Flezha has no AI framework of its own. The code it runs is ordinary code in your
+language, so it calls whichever model SDK or agent framework you already use. What
+Flezha adds is everything around that code:
+
+- **One session per conversation.** Each conversation runs as its own instance with
+  its own state, many run at once, and one that nobody is talking to sleeps
+  ([`docs/topics/advanced/sessions.md`](docs/topics/advanced/sessions.md)).
+- **Answers as they are written.** A reply can be streamed to the reader while the
+  model is still producing it
+  ([`docs/topics/advanced/streamed_answers.md`](docs/topics/advanced/streamed_answers.md)).
+- **Turns taken back.** A conversation can go back to an earlier turn, and a failed
+  turn can fail alone without losing the conversation
+  ([`docs/topics/advanced/rewinding_a_turn.md`](docs/topics/advanced/rewinding_a_turn.md)).
+- **Behind HTTP, or called by another service.** The HTTP server plugin puts a
+  session behind an endpoint, and a call waits for its answer
+  ([`docs/plugins/http_server.md`](docs/plugins/http_server.md),
+  [`docs/topics/advanced/operator_calls.md`](docs/topics/advanced/operator_calls.md)).
+- **A crash does not end the conversation.** A session keeps a journal, so when its
+  runner dies mid-turn the conversation carries on from where it stopped, and with
+  effectively-once delivery the turn's effects are counted once.
+
+[The agentdesk tutorial](docs/tutorials/agentdesk/agentdesk.md) builds all of this,
+with a demo model standing in for a real one.
+
+<!-- TODO: AI plugins, for example a model-call plugin (one place for provider keys,
+retries, rate limits and token accounting) and a vector-store source and sink.
+Decide which ones, then specify each in OpenSpec. -->
+
 ## Reading further
 
 [`docs/architecture/`](docs/architecture/README.md) — the durable-compute
