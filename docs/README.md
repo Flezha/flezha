@@ -1,15 +1,14 @@
 # Flezha documentation
 
 New to Flezha: start with [What is Flezha](getting_started/what_is_flezha.md), then
-[Try it](getting_started/try_it.md). The user documentation comes in four sections,
-in reading order, and a fifth is for contributors; everything after them is grouped by who reads it.
+[Try it](getting_started/try_it.md). The user documentation comes in three sections,
+in reading order, and a fourth is for contributors; everything after them is grouped by who reads it.
 
 | Section | What it is |
 | --- | --- |
 | [Getting started](#getting-started) | What Flezha is, and one echo running in Docker |
 | [Tutorials](#tutorials) | Three example applications, run page by page: what to type and what you should see |
-| [The basics](#the-basics) | One page per subject a deployment needs, each readable on its own |
-| [Advanced topics](#advanced-topics) | One page per subject beyond the basics, each readable on its own |
+| [Topics](#topics) | One page per subject, each readable on its own |
 | [Contributing](#contributing) | The rules a contribution follows, the build, the tests and the release |
 
 | Directory | For | What is in it |
@@ -50,7 +49,7 @@ type and what you should see; the topic pages say how each piece works.
 | [`tradedesk/tradedesk.md`](tutorials/tradedesk/tradedesk.md) | The tradedesk: an ETL stream and a workflow on a demo exchange, partitions, plugins, crashes |
 | [`agentdesk/agentdesk.md`](tutorials/agentdesk/agentdesk.md) | The agentdesk: sessions behind HTTP, calls, a cluster, Kubernetes |
 
-## The basics
+## Topics
 
 | Doc | Covers |
 | --- | --- |
@@ -68,11 +67,6 @@ type and what you should see; the topic pages say how each piece works.
 | [`topics/basics/authorization.md`](topics/basics/authorization.md) | The admin, tokens, roles, certificates and recovery |
 | [`topics/basics/durability.md`](topics/basics/durability.md) | What survives what, and the durability levels |
 | [`topics/cli/cli.md`](topics/cli/cli.md) | `flz` itself: reaching a controller, output formats, identity |
-
-## Advanced topics
-
-| Doc | Covers |
-| --- | --- |
 | [`topics/advanced/partitioning.md`](topics/advanced/partitioning.md) | One logical operator in N partitions: key groups, sources, rescale |
 | [`merged_inputs.md`](topics/advanced/merged_inputs.md) | A tasklet fed by several channels |
 | [`topics/advanced/timers.md`](topics/advanced/timers.md) | Per-cell processing-time and event-time timers |

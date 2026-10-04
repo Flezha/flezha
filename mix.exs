@@ -200,6 +200,7 @@ defmodule Flezha.MixProject do
       extras: [
         "docs/getting_started/what_is_flezha.md",
         "docs/getting_started/try_it.md",
+        "docs/topics/advanced/building_from_source.md",
         "docs/tutorials/tutorials.md",
         "docs/tutorials/echo/first_steps.md",
         "docs/tutorials/echo/start_the_controller.md",
@@ -256,7 +257,6 @@ defmodule Flezha.MixProject do
         "docs/topics/advanced/clustering.md",
         "docs/topics/advanced/effectively_once.md",
         "docs/topics/advanced/kubernetes.md",
-        "docs/topics/advanced/building_from_source.md",
         "docs/errors.md",
         "docs/configuration.md",
         "docs/configuration/environment_variables.md",
@@ -294,12 +294,13 @@ defmodule Flezha.MixProject do
         "Getting started": [
           "docs/getting_started/what_is_flezha.md",
           "docs/getting_started/try_it.md",
+          "docs/topics/advanced/building_from_source.md",
           "docs/tutorials/tutorials.md"
         ],
         "Tutorial 1: The echo": ~r"docs/tutorials/echo/",
         "Tutorial 2: The tradedesk": ~r"docs/tutorials/tradedesk/",
         "Tutorial 3: The agentdesk": ~r"docs/tutorials/agentdesk/",
-        "The basics": [
+        Topics: [
           "docs/topics/basics/building_blocks.md",
           "docs/topics/basics/configuring_an_operator.md",
           "docs/topics/basics/streams.md",
@@ -312,9 +313,7 @@ defmodule Flezha.MixProject do
           "docs/topics/basics/plugins.md",
           "docs/topics/basics/namespaces.md",
           "docs/topics/basics/authorization.md",
-          "docs/topics/basics/durability.md"
-        ],
-        "Advanced topics": [
+          "docs/topics/basics/durability.md",
           "docs/topics/advanced/partitioning.md",
           "docs/topics/advanced/merged_inputs.md",
           "docs/topics/advanced/timers.md",
@@ -329,7 +328,7 @@ defmodule Flezha.MixProject do
           "docs/topics/advanced/clustering.md",
           "docs/topics/advanced/effectively_once.md",
           "docs/topics/advanced/kubernetes.md",
-          "docs/topics/advanced/building_from_source.md"
+          "docs/publishing/maturity.md"
         ],
         "The CLI": [
           "docs/topics/cli/cli.md",
@@ -350,7 +349,7 @@ defmodule Flezha.MixProject do
           "docs/configuration/files_and_sockets.md"
         ],
         "Plugin catalogue": ~r"docs/plugins/",
-        Reference: ~r"docs/(errors|troubleshooting/|publishing/maturity)",
+        Reference: ~r"docs/(errors|troubleshooting/)",
         Contributing: ~r"docs/contributing/"
       ]
     ]

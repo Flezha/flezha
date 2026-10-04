@@ -8,8 +8,7 @@ before it.
 
 A tutorial page shows what to do and what you should see. What a piece of
 Flezha is and how it works is on its topic page, which every tutorial links at
-the first mention: [The basics](../topics/basics/building_blocks.md) and the
-advanced topics.
+the first mention: the [topics](../topics/basics/building_blocks.md).
 
 ## How to follow a tutorial
 
