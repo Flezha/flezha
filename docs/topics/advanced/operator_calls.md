@@ -111,7 +111,7 @@ flz operator call <operator_id> --text <payload> [--channel <ch>] [--key <k>] [-
 
 It prints the answer's payload and a newline on stdout and exits 0. `--timeout` defaults to 30000
 and has no short spelling, because `-t` is `--text`. A failure is written on stderr with its code
-and exits by its class (see [the CLI](../basics/cli.md)):
+and exits by its class (see [the CLI](../cli/cli.md)):
 
 ```sh
 $ flz operator call echo --text hello

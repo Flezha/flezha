@@ -45,7 +45,7 @@ ids, tokens and times will differ.
 
 ## Also useful
 
-- [CLI](../topics/basics/cli.md): `flz` itself, how it reaches a controller and
+- [CLI](../topics/cli/cli.md): `flz` itself, how it reaches a controller and
   its output formats.
 - [Troubleshooting](../troubleshooting/runner_cannot_connect.md): from a symptom
   to its fix.

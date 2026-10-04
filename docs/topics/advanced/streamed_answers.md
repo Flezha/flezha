@@ -496,6 +496,6 @@ the few lines that show a growing answer.
 - [http_server.md](../../plugins/http_server.md): the HTTP plugin's options, envelopes,
   statuses, streams, security and deployment.
 - [installing_plugins.md](installing_plugins.md), [plugins.md](../basics/plugins.md).
-- [cli.md](../basics/cli.md) for `flz operator listen`.
+- [`operator_commands.md`](../cli/operator_commands.md#flz-operator) for `flz operator listen`.
 - Tutorials: [stream_an_answer.md](../../tutorials/agentdesk/stream_an_answer.md),
   [serve_http.md](../../tutorials/agentdesk/serve_http.md).

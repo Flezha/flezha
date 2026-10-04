@@ -504,7 +504,7 @@ again with the older `flz`; one holding a single role behaves as before.
 - [`namespaces.md`](namespaces.md): the boundary each token lives in, quotas, and administering from code.
 - [`deploying_a_controller.md`](deploying_a_controller.md): the variables a deployment sets.
 - [`connecting_a_runner.md`](connecting_a_runner.md): the socket and QUIC transports.
-- [`cli.md`](cli.md): `flz auth`, `flz token`, `flz role`.
+- [`access_commands.md`](../cli/access_commands.md): `flz auth`, `flz token`, `flz role`.
 - [`../../errors.md`](../../errors.md): every `authz.*` code.
 - [Controller environment variables](../../configuration/environment_variables.md#security): every security variable.
 - Tutorial: [`open_the_desk.md`](../../tutorials/tradedesk/open_the_desk.md) claims the admin and gives the runner its key.

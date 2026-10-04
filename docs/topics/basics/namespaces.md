@@ -388,5 +388,5 @@ runner disconnecting, and shows in `flz operator list`.
 - [`authorization.md`](authorization.md): tokens, roles and runner credentials.
 - [`running_operators.md`](running_operators.md): starting and stopping operators.
 - [`connecting_a_runner.md`](connecting_a_runner.md): one runner, one namespace.
-- [`cli.md`](cli.md): `flz namespace` and `flz role`.
+- [`access_commands.md`](../cli/access_commands.md): `flz namespace` and `flz role`.
 - Tutorial: [`open_the_desk.md`](../../tutorials/tradedesk/open_the_desk.md) creates `trading`.

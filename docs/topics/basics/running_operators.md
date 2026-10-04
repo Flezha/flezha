@@ -595,6 +595,6 @@ reset a whole cluster (run it on each node), or purge a remote backend.
 - [`namespaces.md`](namespaces.md): namespaces, quotas and the admin surface from code.
 - [`deploying_a_controller.md`](deploying_a_controller.md#graceful-shutdown): stopping a controller.
 - [`durability.md`](durability.md): what survives a crash, and the remote tier.
-- [`cli.md`](cli.md): the whole `flz` command line.
+- [`cli.md`](../cli/cli.md): the whole `flz` command line.
 - [`../advanced/partitioning.md`](../advanced/partitioning.md), [`../advanced/operator_calls.md`](../advanced/operator_calls.md).
 - Tutorials: [`run_the_echo.md`](../../tutorials/echo/run_the_echo.md) and [`stop_everything.md`](../../tutorials/echo/stop_everything.md).

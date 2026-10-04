@@ -55,7 +55,7 @@ production image runs. The release page lists its checksum in
 `SHA256SUMS.txt`. On another platform, or with changes of your own,
 [build it from source](../advanced/building_from_source.md).
 
-The commands below call it as `flz`; [CLI](cli.md) shows how
+The commands below call it as `flz`; [CLI](../cli/cli.md) shows how
 to put it on your path.
 
 **Start the controller from the same directory every time**, or set

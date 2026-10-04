@@ -223,7 +223,12 @@ defmodule Flezha.MixProject do
         "docs/tutorials/agentdesk/run_a_cluster.md",
         "docs/tutorials/agentdesk/kill_the_runner.md",
         "docs/tutorials/agentdesk/run_on_kubernetes.md",
-        "docs/topics/basics/cli.md",
+        "docs/topics/cli/cli.md",
+        "docs/topics/cli/controller_commands.md",
+        "docs/topics/cli/operator_commands.md",
+        "docs/topics/cli/plugin_commands.md",
+        "docs/topics/cli/access_commands.md",
+        "docs/topics/cli/command_reference.md",
         "docs/topics/basics/building_blocks.md",
         "docs/topics/basics/configuring_an_operator.md",
         "docs/topics/basics/streams.md",
@@ -295,7 +300,6 @@ defmodule Flezha.MixProject do
         "Tutorial 2: The tradedesk": ~r"docs/tutorials/tradedesk/",
         "Tutorial 3: The agentdesk": ~r"docs/tutorials/agentdesk/",
         "The basics": [
-          "docs/topics/basics/cli.md",
           "docs/topics/basics/building_blocks.md",
           "docs/topics/basics/configuring_an_operator.md",
           "docs/topics/basics/streams.md",
@@ -326,6 +330,14 @@ defmodule Flezha.MixProject do
           "docs/topics/advanced/effectively_once.md",
           "docs/topics/advanced/kubernetes.md",
           "docs/topics/advanced/building_from_source.md"
+        ],
+        "The CLI": [
+          "docs/topics/cli/cli.md",
+          "docs/topics/cli/controller_commands.md",
+          "docs/topics/cli/operator_commands.md",
+          "docs/topics/cli/plugin_commands.md",
+          "docs/topics/cli/access_commands.md",
+          "docs/topics/cli/command_reference.md"
         ],
         Configuration: [
           "docs/configuration.md",

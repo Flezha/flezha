@@ -266,5 +266,5 @@ $ flz operator call anna --namespace agents --text 'Are you still there?'
 - [operator_calls.md](operator_calls.md): send a session a message from another operator.
 - [workflows.md](../basics/workflows.md), [configuring_an_operator.md](../basics/configuring_an_operator.md),
   [state.md](../basics/state.md), [durability.md](../basics/durability.md).
-- [cli.md](../basics/cli.md) for `flz operator start`, `call` and `info`.
+- [`operator_commands.md`](../cli/operator_commands.md#flz-operator) for `flz operator start`, `call` and `info`.
 - Tutorial: [start_a_session.md](../../tutorials/agentdesk/start_a_session.md).

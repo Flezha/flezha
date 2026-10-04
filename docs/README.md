@@ -67,7 +67,7 @@ type and what you should see; the topic pages say how each piece works.
 | [`topics/basics/namespaces.md`](topics/basics/namespaces.md) | Namespaces, joining one from a runner, quotas, and administering one from code |
 | [`topics/basics/authorization.md`](topics/basics/authorization.md) | The admin, tokens, roles, certificates and recovery |
 | [`topics/basics/durability.md`](topics/basics/durability.md) | What survives what, and the durability levels |
-| [`topics/basics/cli.md`](topics/basics/cli.md) | `flz` itself: reaching a controller, output formats, identity |
+| [`topics/cli/cli.md`](topics/cli/cli.md) | `flz` itself: reaching a controller, output formats, identity |
 
 ## Advanced topics
 

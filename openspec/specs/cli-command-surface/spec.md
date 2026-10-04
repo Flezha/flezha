@@ -560,7 +560,7 @@ user.
 beside `--token` and `--help`, so that no verb refuses them as unknown. On a verb whose
 answer is data, they SHALL select the answer's form as today. On every verb, they SHALL
 select the form of a failure. An acting verb's success output SHALL stay text under
-`--json`, and `docs/topics/basics/cli.md` SHALL say so. When `flz` refuses the command line itself,
+`--json`, and `docs/topics/cli/cli.md` SHALL say so. When `flz` refuses the command line itself,
 it SHALL honour a `--json` or `--output json` written anywhere in it.
 
 #### Scenario: An acting verb takes --json

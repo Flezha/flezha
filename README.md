@@ -93,7 +93,7 @@ build on it, and it can run the services AI applications are made of.
   arguments" from "retry later" without reading the text. Every code is listed in
   [`docs/errors.md`](docs/errors.md).
 - **JSON from every command.** Each `flz` verb takes `--json`, and a failure is then
-  one line of JSON ([`docs/topics/basics/cli.md`](docs/topics/basics/cli.md)).
+  one line of JSON ([`docs/topics/cli/cli.md`](docs/topics/cli/cli.md)).
 - **Documentation for language models.** The generated documentation carries an
   `llms.txt` index and a Markdown copy of every page next to the HTML one.
 - **Fast feedback.** Local mode runs your processing graph inside your own process,

@@ -335,7 +335,7 @@ state get anna/reply:
 
 `change_seq` counts the changes the cell has recorded. A cell of an instance
 that sleeps, or of a class kept in memory, cannot be read this way. The other
-`flz state` commands, such as a point-in-time read, are in [`cli.md`](cli.md).
+`flz state` commands, such as a point-in-time read, are in [`operator_commands.md`](../cli/operator_commands.md#flz-state).
 
 ## Per-tasklet settings
 
