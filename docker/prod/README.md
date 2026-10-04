@@ -41,50 +41,11 @@ release stage and the builder:
   release bundles its own ERTS — there is no system Elixir or Erlang in
   the runtime image, and `:wx` / `:observer` are not packaged.
 
-## Default runtime contract
+## Running the image
 
-The image's CMD is `/usr/local/bin/controller-entrypoint.sh` (under tini). The
-script starts `bin/flzvm start`, waits for the controller to bind its control
-socket, traps SIGTERM/SIGINT to run `flz controller stop`, then `wait`s. All
-behaviour is configured via env vars — see `docs/topics/basics/deploying_a_controller.md` for
-the contract. The controller recovers its operators and plugins from
-ProcessHub's durable registry and the per-Cell WAL; the image ships no
-snapshot hook.
-
-A HEALTHCHECK is declared on the controller's own readiness verdict:
-`flz boot await --timeout 0`, one evaluation that exits zero only when the
-boot sequence has completed, every namespace hub has left the recovery state
-machine and the durable registry has been reloaded. The entrypoint waits for
-`${FLEZHA_SOCKET_FILES_PATH}/runner_control_channel.sock` first, but only as
-the transport being bound: it is what makes the readiness RPC possible, not
-readiness itself.
-
-Attach a shell against a running container via the release's dist-node
-entry points:
-
-```bash
-docker exec <container>     bin/flzvm rpc 'IO.puts("ok")'
-docker exec -it <container> bin/flzvm remote
-```
-
-### Retuning the Erlang VM
-
-The release ships its own `vm.args`, which the image bakes in at
-`/flezha/releases/<vsn>/vm.args`. You do not have to rebuild to change it:
-`ERL_FLAGS` is added after that file and wins any flag both set.
-
-```bash
-docker run -e ERL_FLAGS="+S 4:4" flezha/flezha:latest
-```
-
-A flag the VM does not accept refuses the boot and prints the reason, so a typo
-here restarts the container rather than being quietly ignored. To replace the
-file wholesale instead, which is the route where the container root filesystem
-is read only, mount one and point `RELEASE_VM_ARGS` at it. `ELIXIR_ERL_OPTIONS`
-is not a third route: it is placed before the args file, so it cannot override a
-flag the release sets. What the release ships, and which flags are worth
-setting, are in
-[`docs/configuration/vm_arguments.md`](../../docs/configuration/vm_arguments.md).
+What the container does when it starts and stops, what to mount, Compose, `flz` in
+the container, and VM flags:
+[`docs/topics/deploying/docker.md`](../../docs/topics/deploying/docker.md).
 
 ## Image size budget
 
@@ -131,15 +92,6 @@ mounts (fast incremental Rust/Elixir) and `--pull` to refresh base images. Pass
 `NO_CACHE=1 scripts/publish-image.sh` to force a clean rebuild when bumping the
 base image or toolchain.
 
-## Run Docker Image
-
-```bash
-docker run -d \
-  --name flezha_container \
-  -e FLEZHA_MAX_RECONNECTS=3 \
-  flezha/flezha:latest
-```
-
 ## Export Docker Image
 
 ```bash
@@ -148,13 +100,6 @@ docker save -o flezha-latest.tar flezha/flezha:latest
 
 # Export specific version
 docker save -o flezha-0.1.0.tar flezha/flezha:0.1.0
-```
-
-## Docker Compose Deployment
-
-```bash
-# Start production containers
-docker compose -f docker/prod/docker-compose.yml up -d
 ```
 
 ## Plugins
@@ -182,4 +127,4 @@ Three ways to give a container its packages:
 - **Bake a derived image**: `FROM flezha/flezha:<version>` and `COPY *.fpz
   /flezha/app_data/plugins/`, run with no volume over that directory.
 
-`docs/topics/advanced/installing_plugins.md` covers statuses, errors and signing.
+[`docs/topics/plugins/installing_plugins.md`](../../docs/topics/plugins/installing_plugins.md) covers statuses, errors and signing.

@@ -5,7 +5,7 @@ a program of your own: it connects to the controller, registers the operator
 factories it can serve, and runs what the controller places on it. The echo has
 the three pieces every runner has: a tasklet, an operator and the runner itself.
 [Building blocks](../../topics/basics/building_blocks.md) explains each one, and
-[Connecting a runner](../../topics/basics/connecting_a_runner.md) covers how a
+[Connecting a runner](../../topics/deploying/connecting_a_runner.md) covers how a
 runner finds its controller.
 
 The three files, in your language. The tasklet emits `echo: ` plus what it

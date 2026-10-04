@@ -402,7 +402,7 @@ directory, so only the controller's own user can reach it: getting into that
 directory is the authentication. A runner run by another user gets
 `access denied`, and its diagnosis names the directory's owner and mode next
 to the caller's. The boundary can be widened to exactly one named group with
-`FLEZHA_SOCKET_DIR_GROUP=<group>` ([`connecting_a_runner.md`](connecting_a_runner.md#where-the-controller-runs)),
+`FLEZHA_SOCKET_DIR_GROUP=<group>` ([`connecting_a_runner.md`](../deploying/connecting_a_runner.md#where-the-controller-runs)),
 a deliberate loosening that is logged on every boot; the alternative, running
 the runner as the controller's user, is a broader grant.
 
@@ -496,14 +496,14 @@ again with the older `flz`; one holding a single role behaves as before.
 - **Removing a binding does not revoke a token.** Revoke the token too.
 - **An embedded controller is open by default**: a library host must set
   `config :flezha, authn_authz: [enabled: true]`
-  ([`deploying_a_controller.md`](deploying_a_controller.md)).
+  ([`deploying_a_controller.md`](../deploying/deploying_a_controller.md)).
 - **A minted cookie is one node's alone.** A cluster sets `RELEASE_COOKIE`.
 
 ## See also
 
 - [`namespaces.md`](namespaces.md): the boundary each token lives in, quotas, and administering from code.
-- [`deploying_a_controller.md`](deploying_a_controller.md): the variables a deployment sets.
-- [`connecting_a_runner.md`](connecting_a_runner.md): the socket and QUIC transports.
+- [`deploying_a_controller.md`](../deploying/deploying_a_controller.md): the variables a deployment sets.
+- [`connecting_a_runner.md`](../deploying/connecting_a_runner.md): the socket and QUIC transports.
 - [`access_commands.md`](../cli/access_commands.md): `flz auth`, `flz token`, `flz role`.
 - [`../../errors.md`](../../errors.md): every `authz.*` code.
 - [Controller environment variables](../../configuration/environment_variables.md#security): every security variable.

@@ -46,7 +46,7 @@ $ docker stop flezha-controller
 `flz controller stop` drains the controller and writes its last changes before
 it exits, so nothing is lost; a kill costs at most the last few milliseconds,
 recovered on the next start.
-[Deploying a controller](../../topics/basics/deploying_a_controller.md) covers
+[Deploying a controller](../../topics/deploying/deploying_a_controller.md) covers
 shutdown in full, and [Running operators](../../topics/basics/running_operators.md)
 what comes back after a restart.
 

@@ -230,7 +230,7 @@ Every controller service in `docker/prod/docker-compose.yml`, `docker/dev/docker
 - `stop_signal: SIGTERM` — explicit; matches docker's default but documents intent.
 - `stop_grace_period: 75s` — long enough for `Flezha.Shutdown.Coordinator`'s 60 s drain budget plus 15 s headroom for finalise and BEAM exit.
 
-Users changing `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` MUST update `stop_grace_period` to `(timeout_ms / 1000) + 15s` in lockstep. The pairing is documented in `docs/topics/basics/deploying_a_controller.md`.
+Users changing `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` MUST update `stop_grace_period` to `(timeout_ms / 1000) + 15s` in lockstep. The pairing is documented in `docs/topics/deploying/deploying_a_controller.md`.
 
 #### Scenario: `docker compose stop` lets the BEAM drain without SIGKILL
 

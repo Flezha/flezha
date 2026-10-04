@@ -23,7 +23,7 @@ every record of it that has to survive a crash, belongs to the controller:
 
 Each machine that runs runners runs a controller, and the runners attach to
 it through a local socket ([`connecting_a_runner.md`](connecting_a_runner.md)).
-Several controllers form one cluster ([`../advanced/clustering.md`](../advanced/clustering.md)).
+Several controllers form one cluster ([`clustering.md`](clustering.md)).
 
 ## Ways to run it
 
@@ -33,7 +33,7 @@ The four ways give you the same controller:
 | --- | --- |
 | Binaries (a release) | you deploy to a machine and want no container runtime |
 | Docker | you want one command and no toolchain on the host |
-| Kubernetes | you run a cluster: one controller per node, as a DaemonSet ([`../advanced/kubernetes.md`](../advanced/kubernetes.md)) |
+| Kubernetes | you run a cluster: one controller per node, as a DaemonSet ([`kubernetes.md`](kubernetes.md)) |
 | Inside an Elixir application | your own Elixir application should be the controller |
 
 <!-- tabs-open -->
@@ -53,7 +53,7 @@ script the CLI calls). The release carries its own Erlang runtime, so the
 machine it runs on needs no Elixir and no Erlang. It is the same artifact the
 production image runs. The release page lists its checksum in
 `SHA256SUMS.txt`. On another platform, or with changes of your own,
-[build it from source](../advanced/building_from_source.md).
+[build it from source](building_from_source.md).
 
 The commands below call it as `flz`; [CLI](../cli/cli.md) shows how
 to put it on your path.
@@ -131,7 +131,7 @@ The reference manifests are in
 [`kubernetes/`](https://github.com/flezha/flezha/tree/main/kubernetes):
 `make k8s-apply` applies the six manifests in dependency order, and
 `make k8s-delete` deletes the DaemonSet and ConfigMap. The walk-through is
-[`../advanced/kubernetes.md`](../advanced/kubernetes.md).
+[`kubernetes.md`](kubernetes.md).
 
 ### Inside an Elixir application
 
@@ -200,7 +200,7 @@ holds something. If it comes back on a controller that had state, you are
 almost certainly starting from a different directory, and the data is still in
 the old one; `flz controller status` answers the same question at any time.
 Without a durability backend the boot also warns that this disk holds the only
-copy ([`durability.md`](durability.md)).
+copy ([`durability.md`](../basics/durability.md)).
 
 ## Check that it is up
 
@@ -256,7 +256,7 @@ which defaults it took. A real deployment sets these:
 
 | Variable | Why it matters |
 | --- | --- |
-| `FLEZHA_DURABILITY_BACKEND` | Unset, it is `none`, and every boot warns that this node's disk holds the only copy of its durable state. Setting `none` explicitly is the opt-out, reported as `durability: local_only` on `/healthz`. `postgres`, `s3` and `local_path` enable the remote tier and need their `FLEZHA_DURABILITY_PG_*`, `FLEZHA_DURABILITY_S3_*` or `FLEZHA_DURABILITY_PATH` settings; a backend selected without one refuses the boot, naming the option. Any other spelling resolves to `none` and warns ([`durability.md`](durability.md)). |
+| `FLEZHA_DURABILITY_BACKEND` | Unset, it is `none`, and every boot warns that this node's disk holds the only copy of its durable state. Setting `none` explicitly is the opt-out, reported as `durability: local_only` on `/healthz`. `postgres`, `s3` and `local_path` enable the remote tier and need their `FLEZHA_DURABILITY_PG_*`, `FLEZHA_DURABILITY_S3_*` or `FLEZHA_DURABILITY_PATH` settings; a backend selected without one refuses the boot, naming the option. Any other spelling resolves to `none` and warns ([`durability.md`](../basics/durability.md)). |
 | `RELEASE_COOKIE` | Unset, the first start mints a random node-local cookie, keeps it `0600` at `${FLEZHA_STATE_DIR}/cookie` (moved with `FLEZHA_COOKIE_FILE`) and reuses it. That is enough for one node. **A cluster has to set it**: two nodes connect only under one cookie you gave them both. Where the release can neither read nor mint one, it starts with `RELEASE_DISTRIBUTION=none`, and every `flz` verb then fails, because the CLI reaches the node over distribution. |
 | `FLEZHA_SOCKET_FILES_PATH` | The directory runners attach through; share it with every runner container on the node. The container entrypoint waits for `<path>/runner_control_channel.sock` before it asks for readiness. At most 60 bytes, or the controller refuses to boot. |
 | `FLEZHA_NODE_NAME`, `FLEZHA_NODE_HOST` | Form the node name `<name>@<host>` the CLI reaches. They default to the release name and `127.0.0.1`; in Kubernetes the host is the pod IP. |
@@ -264,7 +264,7 @@ which defaults it took. A real deployment sets these:
 | `FLEZHA_HEALTHZ_ENABLED` | `/healthz` is off by default; an orchestrator probe needs it on (`FLEZHA_HEALTHZ_PORT` 9569, `FLEZHA_HEALTHZ_BIND` `0.0.0.0`). |
 | `FLEZHA_CLUSTER_DISCOVERY` | `manual_discovery` by default; `k8s_pod_discovery` in Kubernetes. |
 | `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` | 60 000 by default, paired with the orchestrator's grace period ([below](#graceful-shutdown)). |
-| `FLEZHA_AUTHZ_ENABLED`, `FLEZHA_TRANSPORT_AUTH`, `FLEZHA_DIST_TLS_OPTFILE`, `FLEZHA_CA_CERT_PATH`, `FLEZHA_SERVER_CERT_PATH`, `FLEZHA_SERVER_KEY_PATH`, `FLEZHA_QUIC_CLIENT_CA` | Authorization is enforced by default in a release and peer authentication is required by default; turning either off warns on every boot. The TLS material must persist across restarts ([`authorization.md`](authorization.md)). |
+| `FLEZHA_AUTHZ_ENABLED`, `FLEZHA_TRANSPORT_AUTH`, `FLEZHA_DIST_TLS_OPTFILE`, `FLEZHA_CA_CERT_PATH`, `FLEZHA_SERVER_CERT_PATH`, `FLEZHA_SERVER_KEY_PATH`, `FLEZHA_QUIC_CLIENT_CA` | Authorization is enforced by default in a release and peer authentication is required by default; turning either off warns on every boot. The TLS material must persist across restarts ([`authorization.md`](../basics/authorization.md)). |
 
 Every variable is in [Controller environment variables](../../configuration/environment_variables.md).
 
@@ -342,7 +342,7 @@ that controller owns. Clear a relocated tree by path, with the controller down.
 > with its disk answers nothing and the one adopting its work starts cold. A
 > controller that dies with its disk takes its operators' state, and the record
 > of their existence, with it. The remote durability tier is what survives
-> that ([`durability.md`](durability.md)). Two controllers believed to cover
+> that ([`durability.md`](../basics/durability.md)). Two controllers believed to cover
 > each other are worse off than one controller with the tier on.
 
 ## Graceful shutdown
@@ -358,7 +358,7 @@ three phases:
    middle of critical work can defer its move (below); whatever still defers at
    the deadline is moved by force. With no peer to move to, nothing moves, and
    the next boot restores the operators from disk
-   ([`running_operators.md`](running_operators.md#after-a-controller-restart)).
+   ([`running_operators.md`](../basics/running_operators.md#after-a-controller-restart)).
 3. **Finalise.** The audit log is closed, pending disk writes are flushed and
    the transports stop; each step is bounded to 5 s, and a failure is logged,
    not fatal.
@@ -477,7 +477,7 @@ each phase boundary also logs a `[shutdown] ...` line:
 - **The CLI cannot reach an embedded controller**: there is no `flzvm` beside
   it.
 - **One disk is one copy.** Without a durability backend, losing the disk
-  loses the state ([`durability.md`](durability.md)).
+  loses the state ([`durability.md`](../basics/durability.md)).
 - **Every boot refusal**, what it means and its fix, plus a controller that
   will not stop:
   [`../../troubleshooting/controller_will_not_start.md`](../../troubleshooting/controller_will_not_start.md).
@@ -485,9 +485,9 @@ each phase boundary also logs a `[shutdown] ...` line:
 ## See also
 
 - [`connecting_a_runner.md`](connecting_a_runner.md): runners attaching to the controller.
-- [`authorization.md`](authorization.md): claiming an admin, tokens, TLS.
-- [`durability.md`](durability.md): the remote durability tier.
-- [`running_operators.md`](running_operators.md): what the controller restores at boot, and `flz reset`.
-- [`../advanced/clustering.md`](../advanced/clustering.md), [`../advanced/kubernetes.md`](../advanced/kubernetes.md).
+- [`authorization.md`](../basics/authorization.md): claiming an admin, tokens, TLS.
+- [`durability.md`](../basics/durability.md): the remote durability tier.
+- [`running_operators.md`](../basics/running_operators.md): what the controller restores at boot, and `flz reset`.
+- [`clustering.md`](clustering.md), [`kubernetes.md`](kubernetes.md).
 - [`../../configuration.md`](../../configuration.md): every variable and application key.
 - Tutorial: [`start_the_controller.md`](../../tutorials/echo/start_the_controller.md).

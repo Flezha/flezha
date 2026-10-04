@@ -1,14 +1,15 @@
 # Flezha documentation
 
 New to Flezha: start with [What is Flezha](getting_started/what_is_flezha.md), then
-[Try it](getting_started/try_it.md). The user documentation comes in three sections,
-in reading order, and a fourth is for contributors; everything after them is grouped by who reads it.
+[Try it](getting_started/try_it.md). The user documentation comes in four sections,
+in reading order, and a fifth is for contributors; everything after them is grouped by who reads it.
 
 | Section | What it is |
 | --- | --- |
 | [Getting started](#getting-started) | What Flezha is, and one echo running in Docker |
 | [Tutorials](#tutorials) | Three example applications, run page by page: what to type and what you should see |
 | [Topics](#topics) | One page per subject, each readable on its own |
+| [Deploying](#deploying) | Running controllers and runners: the release, Docker, a build of your own, a cluster, Kubernetes |
 | [Contributing](#contributing) | The rules a contribution follows, the build, the tests and the release |
 
 | Directory | For | What is in it |
@@ -59,8 +60,6 @@ type and what you should see; the topic pages say how each piece works.
 | [`workflows.md`](topics/basics/workflows.md) | Steps, retries, undo, and one instance per input |
 | [`state.md`](topics/basics/state.md) | State per cell, the changes that record it, and its restore |
 | [`local_mode.md`](topics/basics/local_mode.md) | An operator run in your own process, with no controller |
-| [`deploying_a_controller.md`](topics/basics/deploying_a_controller.md) | The release, the Docker image, an Elixir application; shutdown and its grace periods |
-| [`connecting_a_runner.md`](topics/basics/connecting_a_runner.md) | How a runner reaches its controller, and how to run one |
 | [`topics/basics/running_operators.md`](topics/basics/running_operators.md) | Starting, watching and stopping operators, from `flz` and from code; what a restart brings back |
 | [`topics/plugins/plugins.md`](topics/plugins/plugins.md) | The plugin model: installed, enabled by name, operators bound; the plugins that ship |
 | [`where_plugins_run.md`](topics/plugins/where_plugins_run.md) | Shared and single copies, partitioned operators, when a copy stops, durability |
@@ -82,9 +81,18 @@ type and what you should see; the topic pages say how each piece works.
 | [`installing_plugins.md`](topics/plugins/installing_plugins.md) | Plugin packages: installing, loading at boot, versions, signing |
 | [`hooks.md`](topics/plugins/hooks.md) | Hooks and controller plugins |
 | [`writing_a_plugin.md`](topics/plugins/writing_a_plugin.md) | Writing and packaging a plugin of your own |
-| [`topics/advanced/clustering.md`](topics/advanced/clustering.md) | Several controllers as one cluster, and stopping one |
 | [`topics/advanced/effectively_once.md`](topics/advanced/effectively_once.md) | The delivery guarantee, what it requires and what it costs |
-| [`kubernetes.md`](topics/advanced/kubernetes.md) | Running controllers and runners on Kubernetes |
+
+## Deploying
+
+| Doc | Covers |
+| --- | --- |
+| [`deploying_a_controller.md`](topics/deploying/deploying_a_controller.md) | The release, the Docker image, an Elixir application; shutdown and its grace periods |
+| [`docker.md`](topics/deploying/docker.md) | The container's start and stop, what to mount, a controller and a runner in Compose, `flz` in the container |
+| [`building_from_source.md`](topics/deploying/building_from_source.md) | A release built from a checkout, and the `make` targets |
+| [`connecting_a_runner.md`](topics/deploying/connecting_a_runner.md) | How a runner reaches its controller, and how to run one |
+| [`clustering.md`](topics/deploying/clustering.md) | Several controllers as one cluster, and stopping one |
+| [`kubernetes.md`](topics/deploying/kubernetes.md) | Running controllers and runners on Kubernetes |
 
 ## Contributing
 

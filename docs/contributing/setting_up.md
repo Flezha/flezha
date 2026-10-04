@@ -3,7 +3,7 @@
 This page gets a checkout of the repository built and ready for the tests,
 either on your machine or inside the development containers. To build a
 release of the controller instead, see
-[Building from source](../topics/advanced/building_from_source.md).
+[Building from source](../topics/deploying/building_from_source.md).
 
 ## What you need
 
@@ -41,7 +41,7 @@ $ mix test.setup
 with a message when it is missing.
 
 Every `make` target is listed in
-[Building from source](../topics/advanced/building_from_source.md#make-targets).
+[Building from source](../topics/deploying/building_from_source.md#make-targets).
 
 ### The native library for Java
 

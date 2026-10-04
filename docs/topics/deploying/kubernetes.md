@@ -328,9 +328,9 @@ in short:
 
 ## See also
 
-- [deploying_a_controller.md](../basics/deploying_a_controller.md): images, settings and
+- [deploying_a_controller.md](deploying_a_controller.md): images, settings and
   graceful shutdown.
-- [connecting_a_runner.md](../basics/connecting_a_runner.md): how a runner reaches its
+- [connecting_a_runner.md](connecting_a_runner.md): how a runner reaches its
   controller.
 - [clustering.md](clustering.md), [installing_plugins.md](../plugins/installing_plugins.md).
 - [configuration.md](../../configuration/environment_variables.md#cluster-and-nodes): the Kubernetes discovery

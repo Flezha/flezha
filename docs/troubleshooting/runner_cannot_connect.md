@@ -54,5 +54,5 @@ the namespace the runner claims, and refuses with a reason of its own:
 
 ## See also
 
-- [`../topics/basics/connecting_a_runner.md`](../topics/basics/connecting_a_runner.md) - reaching
+- [`../topics/deploying/connecting_a_runner.md`](../topics/deploying/connecting_a_runner.md) - reaching
   the controller in the first place, per deployment shape

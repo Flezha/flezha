@@ -502,7 +502,7 @@ whose record is on local disk but not yet shipped.
   start replays.
 - **Set a durability backend** when the state must survive losing a disk; a
   second controller is capacity, not a backup
-  ([`deploying_a_controller.md`](deploying_a_controller.md#several-controllers-on-one-machine)).
+  ([`deploying_a_controller.md`](../deploying/deploying_a_controller.md#several-controllers-on-one-machine)).
 
 ## Limits and gotchas
 
@@ -520,7 +520,7 @@ whose record is on local disk but not yet shipped.
 - [`state.md`](state.md): how state is recorded and restored.
 - [`workflows.md`](workflows.md): steps, undo and crash-resume.
 - [`running_operators.md`](running_operators.md#after-a-controller-restart): what comes back after a restart.
-- [`deploying_a_controller.md`](deploying_a_controller.md): the variables a deployment sets, graceful shutdown.
+- [`deploying_a_controller.md`](../deploying/deploying_a_controller.md): the variables a deployment sets, graceful shutdown.
 - [`../advanced/effectively_once.md`](../advanced/effectively_once.md), [`../advanced/timers.md`](../advanced/timers.md), [`../advanced/partitioning.md`](../advanced/partitioning.md).
 - [Controller environment variables](../../configuration/environment_variables.md#state-wal-and-durability): the durability settings.
 - Tutorial: [`crash_the_desk.md`](../../tutorials/tradedesk/crash_the_desk.md) crashes the tradedesk on purpose.

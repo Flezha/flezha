@@ -202,7 +202,7 @@ A DaemonSet is one pod per node by construction, so every controller here has th
 node's `/var/lib/flezha` to itself and none of the co-location variables need
 per-instance values. Running several controllers on one machine is a bare-metal and
 Docker arrangement; the variable set each instance must own is in
-[Several controllers on one machine](../docs/topics/basics/deploying_a_controller.md#several-controllers-on-one-machine). A second pod landing on a node — a
+[Several controllers on one machine](../docs/topics/deploying/deploying_a_controller.md#several-controllers-on-one-machine). A second pod landing on a node — a
 mis-scaled Deployment beside the DaemonSet, or two DaemonSets sharing one `hostPath`
 — refuses to boot rather than sharing the state root, naming the process that holds
 it.

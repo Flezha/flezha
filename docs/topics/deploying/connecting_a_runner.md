@@ -37,13 +37,13 @@ flowchart TB
 ```
 
 Dotted lines are Unix domain sockets, which stay on one machine. The solid
-line is the controllers clustering ([`../advanced/clustering.md`](../advanced/clustering.md)).
+line is the controllers clustering ([`clustering.md`](clustering.md)).
 
 **QUIC is the other transport, and it is [experimental: quic](../../publishing/maturity.md#quic).**
 It lets a runner cross a machine boundary: `FLEZHA_TRANSPORT=quic` plus
 `FLEZHA_QUIC_ADDRESSES`, a comma separated list of names or addresses, port
 4433 by default. It needs certificates on both ends
-([`authorization.md`](authorization.md)) and is far less exercised than the
+([`authorization.md`](../basics/authorization.md)) and is far less exercised than the
 socket. Prefer the socket.
 
 Each entry of `FLEZHA_QUIC_ADDRESSES` is a name or a literal address with an
@@ -167,7 +167,7 @@ runner's data socket address has to fit beside it.
 ### Kubernetes
 
 One controller per node, as a DaemonSet, with the runners on each node
-attached to it: [`../advanced/kubernetes.md`](../advanced/kubernetes.md).
+attached to it: [`kubernetes.md`](kubernetes.md).
 
 ### Elixir application
 
@@ -210,7 +210,7 @@ Three things matter when a supervisor runs it:
   open, and so does `stdin_open: true` in a compose file.
 
 Each runner takes the namespace it serves when it starts
-([`namespaces.md`](namespaces.md)). In the example runners it is the first
+([`namespaces.md`](../basics/namespaces.md)). In the example runners it is the first
 argument, `default` when omitted. One way to start each language's echo
 runner, from its example folder:
 
@@ -329,14 +329,14 @@ onto it again.
 - **Different users need a shared group** (`FLEZHA_SOCKET_DIR_GROUP`); the
   directory is not opened wider than `0750`.
 - **A runner that connects runs nothing yet.** Operators are started
-  separately ([`running_operators.md`](running_operators.md)).
+  separately ([`running_operators.md`](../basics/running_operators.md)).
 
 ## See also
 
-- [`building_blocks.md`](building_blocks.md): what a runner is, and the code that registers its factories.
+- [`building_blocks.md`](../basics/building_blocks.md): what a runner is, and the code that registers its factories.
 - [`deploying_a_controller.md`](deploying_a_controller.md): the controller the runner attaches to.
-- [`namespaces.md`](namespaces.md): the namespace a runner serves.
-- [`../advanced/kubernetes.md`](../advanced/kubernetes.md), [`../advanced/clustering.md`](../advanced/clustering.md).
+- [`namespaces.md`](../basics/namespaces.md): the namespace a runner serves.
+- [`kubernetes.md`](kubernetes.md), [`clustering.md`](clustering.md).
 - [Files and sockets](../../configuration/files_and_sockets.md#the-socket-directory-ladder): the socket-directory settings.
 - [`../../troubleshooting/runner_cannot_connect.md`](../../troubleshooting/runner_cannot_connect.md).
 - Tutorial: [`write_the_echo_runner.md`](../../tutorials/echo/write_the_echo_runner.md) starts the echo runner.

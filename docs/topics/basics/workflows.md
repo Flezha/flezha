@@ -777,7 +777,7 @@ its worker pool. `max_duration_ms` costs no thread either.
   crash starts it over from a clean slate.
 - **Stop runners gracefully.** A graceful stop lets a running instance move to
   another runner; a SIGKILL forces a crash-resume
-  ([`deploying_a_controller.md`](deploying_a_controller.md#graceful-shutdown)).
+  ([`deploying_a_controller.md`](../deploying/deploying_a_controller.md#graceful-shutdown)).
 - **A sleeping instance costs a wake to stop**, as the table above says.
 - **A `compensate` hook has no timers**: a rollback is not a place to arm one
   ([`../advanced/timers.md`](../advanced/timers.md)).

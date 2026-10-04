@@ -6,7 +6,7 @@ plugins, and reading state. Each of its commands is a verb of one group, such
 as `flz operator start` or `flz namespace create`.
 
 `flz` is the file `bin/flz` in the release directory, the `flezha/` directory
-the [archive](../basics/deploying_a_controller.md) unpacks to. It always runs by that
+the [archive](../deploying/deploying_a_controller.md) unpacks to. It always runs by that
 path, as `./bin/flz` from the release directory. To type only `flz`, as these
 pages do, put that `bin` on your path, in each shell or in your shell profile:
 
@@ -22,7 +22,7 @@ else installed. What is in it, and what matters to you:
 | Path | What it is |
 | --- | --- |
 | `bin/flz` | the CLI |
-| `releases/<version>/vm.args` | the VM's flags, yours to edit ([Tune the VM](../basics/deploying_a_controller.md#tune-the-vm)) |
+| `releases/<version>/vm.args` | the VM's flags, yours to edit ([Tune the VM](../deploying/deploying_a_controller.md#tune-the-vm)) |
 | `app_data/` | the controller's durable state and its cookie, created in the directory the controller starts from |
 | `logs/flezha.log` | everything the controller logs, also in the directory it starts from |
 | `tmp/log/` | the boot, and anything printed before the logger is up |
@@ -53,7 +53,7 @@ controller started with `RELEASE_COOKIE` set needs the same value exported
 where `flz` runs. A verb that cannot reach the controller reports it
 unreachable (exit 3). `flz runner check` is the exception: it tests the runner
 socket and needs neither a controller nor a cookie
-([`connecting_a_runner.md`](../basics/connecting_a_runner.md)).
+([`connecting_a_runner.md`](../deploying/connecting_a_runner.md)).
 
 ## Options and help
 
@@ -161,10 +161,10 @@ one line.
 
 | Group | What it does | Explained in |
 | --- | --- | --- |
-| [`flz controller`](controller_commands.md#flz-controller) | Starts and stops the controller, and shows its settings and memory use. | [`deploying_a_controller.md`](../basics/deploying_a_controller.md), [graceful shutdown](../basics/deploying_a_controller.md#graceful-shutdown), tutorial [Start the controller](../../tutorials/echo/start_the_controller.md) |
-| [`flz boot`](controller_commands.md#flz-boot) | Says whether the controller has finished starting, or waits until it has. | [`deploying_a_controller.md`](../basics/deploying_a_controller.md#check-that-it-is-up), [after a restart](../basics/running_operators.md#after-a-controller-restart) |
-| [`flz cluster`](controller_commands.md#flz-cluster) | Shows the controllers of a cluster, which one leads, and how their operators are doing. | [`clustering.md`](../advanced/clustering.md), tutorial [Run a cluster](../../tutorials/agentdesk/run_a_cluster.md) |
-| [`flz runner`](controller_commands.md#flz-runner) | Lists the runners connected to a namespace, and checks that a runner on this machine can reach the controller. | [`connecting_a_runner.md`](../basics/connecting_a_runner.md), [check that it connected](../basics/connecting_a_runner.md#check-that-it-connected) |
+| [`flz controller`](controller_commands.md#flz-controller) | Starts and stops the controller, and shows its settings and memory use. | [`deploying_a_controller.md`](../deploying/deploying_a_controller.md), [graceful shutdown](../deploying/deploying_a_controller.md#graceful-shutdown), tutorial [Start the controller](../../tutorials/echo/start_the_controller.md) |
+| [`flz boot`](controller_commands.md#flz-boot) | Says whether the controller has finished starting, or waits until it has. | [`deploying_a_controller.md`](../deploying/deploying_a_controller.md#check-that-it-is-up), [after a restart](../basics/running_operators.md#after-a-controller-restart) |
+| [`flz cluster`](controller_commands.md#flz-cluster) | Shows the controllers of a cluster, which one leads, and how their operators are doing. | [`clustering.md`](../deploying/clustering.md), tutorial [Run a cluster](../../tutorials/agentdesk/run_a_cluster.md) |
+| [`flz runner`](controller_commands.md#flz-runner) | Lists the runners connected to a namespace, and checks that a runner on this machine can reach the controller. | [`connecting_a_runner.md`](../deploying/connecting_a_runner.md), [check that it connected](../deploying/connecting_a_runner.md#check-that-it-connected) |
 | [`flz operator`](operator_commands.md#flz-operator) | Starts and stops operators, sends them input, and shows what they answer and emit. | [`running_operators.md`](../basics/running_operators.md), [`workflows.md`](../basics/workflows.md), [`partitioning.md`](../advanced/partitioning.md), [`operator_calls.md`](../advanced/operator_calls.md), [`rewinding_a_turn.md`](../advanced/rewinding_a_turn.md), tutorial [Run the echo](../../tutorials/echo/run_the_echo.md) |
 | [`flz namespace`](access_commands.md#flz-namespace) | Creates and deletes namespaces, the separate areas operators and runners work in, and sets their quotas. | [`namespaces.md`](../basics/namespaces.md) |
 | [`flz plugin`](plugin_commands.md#flz-plugin) | Installs plugin packages, enables plugins and connects operators to them. | [`plugins.md`](../plugins/plugins.md), [`hooks.md`](../plugins/hooks.md), [`installing_plugins.md`](../plugins/installing_plugins.md), tutorial [Feed the echo a file](../../tutorials/echo/feed_the_echo_a_file.md) |

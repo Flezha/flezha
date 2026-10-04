@@ -2,7 +2,7 @@
 
 On this page you start one controller and leave it running for the rest of the
 tutorial. The controller places operators on runners, keeps their state durable
-and answers `flz`; [Deploying a controller](../../topics/basics/deploying_a_controller.md)
+and answers `flz`; [Deploying a controller](../../topics/deploying/deploying_a_controller.md)
 covers it in full, including Kubernetes and running it inside an Elixir
 application.
 
@@ -24,7 +24,7 @@ $ tar -xzf flezha-0.1.0-linux-x86_64.tar.gz
 That gives you a `flezha/` directory, with `bin/flz`, the CLI. The release
 carries its own Erlang runtime, so nothing else needs installing. It is built
 for Linux x86_64; on another platform,
-[build it from source](../../topics/advanced/building_from_source.md). Every
+[build it from source](../../topics/deploying/building_from_source.md). Every
 `./bin/flz` command in the tutorials runs from that directory, in whichever
 terminal you use, so go there and start the controller:
 

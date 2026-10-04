@@ -259,7 +259,7 @@ $ flz state inbox gateway --namespace agents
   plugin must be `.keyed()`, so the sink can drop a record it has already written. Requests
   and calls need no key.
 - **The controller's disk.** The logs are on it. A durability backend
-  ([clustering.md](clustering.md)) is what carries them past losing that disk, a little behind
+  ([clustering.md](../deploying/clustering.md)) is what carries them past losing that disk, a little behind
   unless the operator is at `durable: remote`.
 
 ## What it costs
@@ -289,6 +289,6 @@ leaves, for each kind of operator.
   at each.
 - [configuring_an_operator.md](../basics/configuring_an_operator.md): the settings tree.
 - [operator_calls.md](operator_calls.md): guarantees of calls.
-- [clustering.md](clustering.md): the copy in a durability backend.
+- [clustering.md](../deploying/clustering.md): the copy in a durability backend.
 - [errors.md](../../errors.md): the `topology.*` refusals.
 - Tutorial: [call_the_session.md](../../tutorials/agentdesk/call_the_session.md).

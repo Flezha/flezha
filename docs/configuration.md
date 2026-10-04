@@ -68,13 +68,13 @@ $ docker run -d --name flezha-controller \
   flezha/flezha:0.1.0
 ```
 
-On [Kubernetes](topics/advanced/kubernetes.md) the same variables go in the
+On [Kubernetes](topics/deploying/kubernetes.md) the same variables go in the
 ConfigMap the pod reads. A change takes effect at the next start. Every
 variable is in [Controller environment variables](configuration/environment_variables.md).
 
 ## Setting application env
 
-When Flezha runs [inside your own Elixir application](topics/basics/deploying_a_controller.md#inside-an-elixir-application),
+When Flezha runs [inside your own Elixir application](topics/deploying/deploying_a_controller.md#inside-an-elixir-application),
 the `FLEZHA_*` variables are not read. Set the same settings as keys of the
 `:flezha` application:
 
@@ -193,7 +193,7 @@ hold one.
 
 ## See also
 
-- [`topics/basics/deploying_a_controller.md`](topics/basics/deploying_a_controller.md): the variables a deploy cannot omit, and how to run a node
+- [`topics/deploying/deploying_a_controller.md`](topics/deploying/deploying_a_controller.md): the variables a deploy cannot omit, and how to run a node
 - [`topics/basics/configuring_an_operator.md`](topics/basics/configuring_an_operator.md): choosing an operator's settings
 - [`topics/basics/durability.md`](topics/basics/durability.md): what the durability knobs mean for correctness
 - [`topics/basics/authorization.md`](topics/basics/authorization.md): the posture behind the authz keys

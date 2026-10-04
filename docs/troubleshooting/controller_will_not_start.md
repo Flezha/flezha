@@ -98,10 +98,10 @@ in any of them.
 
 Two controllers on one machine is supported, and needs four things separated:
 `FLEZHA_NODE_NAME`, `FLEZHA_SOCKET_FILES_PATH`, `FLEZHA_STATE_DIR` and
-`FLEZHA_PROCESS_HUB_REGISTRY_ROOT`. `docs/topics/basics/deploying_a_controller.md`
+`FLEZHA_PROCESS_HUB_REGISTRY_ROOT`. `docs/topics/deploying/deploying_a_controller.md`
 has the full list.
 
 ## See also
 
 - [`runner_cannot_connect.md`](runner_cannot_connect.md) - the runner side
-- [`../topics/basics/deploying_a_controller.md`](../topics/basics/deploying_a_controller.md) - starting one
+- [`../topics/deploying/deploying_a_controller.md`](../topics/deploying/deploying_a_controller.md) - starting one

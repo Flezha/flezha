@@ -171,7 +171,7 @@ controller that has the package.
 - **Kubernetes:** the reference ConfigMap puts `FLEZHA_PLUGIN_ROOT` on the recovery volume
   and declares `FLEZHA_PLUGINS`; a change is a `kubectl rollout restart`.
   [`kubernetes/README.md`](https://github.com/flezha/flezha/blob/main/kubernetes/README.md) has the steps, and
-  [`kubernetes.md`](../advanced/kubernetes.md) the deployment.
+  [`kubernetes.md`](../deploying/kubernetes.md) the deployment.
 
 ### Signed packages
 
@@ -310,6 +310,6 @@ the package, the provider and the package's own text in `details`. The full cata
 
 - [`plugins.md`](plugins.md): enabling and binding a plugin once its package is loaded
 - [`writing_a_plugin.md`](writing_a_plugin.md): building a package of your own
-- [`kubernetes.md`](../advanced/kubernetes.md) and [`clustering.md`](../advanced/clustering.md): several controllers
+- [`kubernetes.md`](../deploying/kubernetes.md) and [`clustering.md`](../deploying/clustering.md): several controllers
 - [`../../configuration.md`](../../configuration.md) and [`../../errors.md`](../../errors.md)
 - Tutorial: [`add_your_own_plugin.md`](../../tutorials/agentdesk/add_your_own_plugin.md)

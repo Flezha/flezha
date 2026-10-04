@@ -12,7 +12,7 @@ metadata:
     app.kubernetes.io/component: controller
 data:
   # A prod release refuses to boot with this unset. `none` is local-only;
-  # see docs/topics/basics/deploying_a_controller.md before changing it.
+  # see docs/topics/deploying/deploying_a_controller.md before changing it.
   FLEZHA_DURABILITY_BACKEND: "none"
   FLEZHA_TRANSPORT: "uds"
   FLEZHA_CLUSTER_DISCOVERY: "k8s_pod_discovery"

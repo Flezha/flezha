@@ -115,7 +115,7 @@ deployment grows.
 A runner belongs to one namespace, the tenant it serves
 ([`namespaces.md`](namespaces.md)). If its connection drops, it reconnects on
 its own. How it reaches the controller and how to run it as a service is
-[`connecting_a_runner.md`](connecting_a_runner.md).
+[`connecting_a_runner.md`](../deploying/connecting_a_runner.md).
 
 ## Seven SDKs, one engine
 
@@ -676,7 +676,7 @@ the same Elixir code either way.
 - **A runner does not start operators.** Until something starts an operator,
   a runner with registered factories runs nothing.
 - **One runner per process, one namespace per runner**
-  ([`connecting_a_runner.md`](connecting_a_runner.md#one-runner-one-namespace)).
+  ([`connecting_a_runner.md`](../deploying/connecting_a_runner.md#one-runner-one-namespace)).
 - **The full form of a tasklet** (implementing `Tasklet` directly, a change
   written by hand, a clock other than the wall clock, a configuration type,
   `onTimer`) has no page of its own yet; [`state.md`](state.md) and
@@ -686,7 +686,7 @@ the same Elixir code either way.
 
 - [`configuring_an_operator.md`](configuring_an_operator.md): the settings tree every operator carries.
 - [`streams.md`](streams.md) and [`workflows.md`](workflows.md): the two ways an operator runs.
-- [`connecting_a_runner.md`](connecting_a_runner.md): reaching the controller, running a runner as a service.
+- [`connecting_a_runner.md`](../deploying/connecting_a_runner.md): reaching the controller, running a runner as a service.
 - [`running_operators.md`](running_operators.md): starting operators from a factory.
 - [`../../glossary.md`](https://github.com/flezha/flezha/blob/main/docs/glossary.md): every term in one place.
 - [`../../sdk/authoring_contract.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/authoring_contract.md): what every SDK guarantees.

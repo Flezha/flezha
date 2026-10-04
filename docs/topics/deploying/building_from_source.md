@@ -1,6 +1,6 @@
 # Building from source
 
-The [release archive](../basics/deploying_a_controller.md) is built for Linux
+The [release archive](deploying_a_controller.md) is built for Linux
 x86_64. Build a release yourself on any other platform, or to run a controller
 with changes of your own.
 
@@ -27,7 +27,7 @@ That writes `_build/prod/rel/flezha/`, the same directory the release archive
 unpacks to: `bin/flz`, the CLI, and `bin/flzvm`, the release script the CLI
 calls. The release carries its own Erlang runtime, so the machine it runs on
 needs no Elixir and no Erlang, but it runs only on the platform it was built
-on. From here, [Deploying a controller](../basics/deploying_a_controller.md)
+on. From here, [Deploying a controller](deploying_a_controller.md)
 applies as it does to a downloaded release.
 
 > #### State inside a build directory {: .warning}

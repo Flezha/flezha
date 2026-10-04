@@ -477,7 +477,7 @@ sub-key, not the pair, or the guard above refuses the first record.
 - [State](../basics/state.md): what a moved cell carries
 - [Plugins](../plugins/plugins.md): sharing, and which plugins refuse a group member
 - [Operator calls](operator_calls.md): calling a group by key
-- [Clustering](clustering.md): several controllers
+- [Clustering](../deploying/clustering.md): several controllers
 - [`websocket_subscription`](../../plugins/websocket_subscription.md),
   [`http_poll`](../../plugins/http_poll.md),
   [`operator_forward`](../../plugins/operator_forward.md)

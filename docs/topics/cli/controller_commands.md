@@ -13,7 +13,7 @@ How `flz` reaches the controller, its options and its exit codes are on the
 
 ## `flz controller`
 
-Starts and stops the controller, and shows its settings and memory use. Explained in [`deploying_a_controller.md`](../basics/deploying_a_controller.md), [graceful shutdown](../basics/deploying_a_controller.md#graceful-shutdown), tutorial [Start the controller](../../tutorials/echo/start_the_controller.md).
+Starts and stops the controller, and shows its settings and memory use. Explained in [`deploying_a_controller.md`](../deploying/deploying_a_controller.md), [graceful shutdown](../deploying/deploying_a_controller.md#graceful-shutdown), tutorial [Start the controller](../../tutorials/echo/start_the_controller.md).
 
 ```sh
 $ flz controller help
@@ -104,7 +104,7 @@ Stopping flezha controller...
 
 ## `flz boot`
 
-Says whether the controller has finished starting, or waits until it has. Explained in [`deploying_a_controller.md`](../basics/deploying_a_controller.md#check-that-it-is-up), [after a restart](../basics/running_operators.md#after-a-controller-restart).
+Says whether the controller has finished starting, or waits until it has. Explained in [`deploying_a_controller.md`](../deploying/deploying_a_controller.md#check-that-it-is-up), [after a restart](../basics/running_operators.md#after-a-controller-restart).
 
 ```sh
 $ flz boot help
@@ -158,7 +158,7 @@ _system                            normal           0
 
 ## `flz cluster`
 
-Shows the controllers of a cluster, which one leads, and how their operators are doing. Explained in [`clustering.md`](../advanced/clustering.md), tutorial [Run a cluster](../../tutorials/agentdesk/run_a_cluster.md).
+Shows the controllers of a cluster, which one leads, and how their operators are doing. Explained in [`clustering.md`](../deploying/clustering.md), tutorial [Run a cluster](../../tutorials/agentdesk/run_a_cluster.md).
 
 ```sh
 $ flz cluster help
@@ -202,11 +202,11 @@ Cluster status for namespace 'default':
   Operator health: degraded=1
 ```
 
-[`clustering.md`](../advanced/clustering.md#example) shows two controllers.
+[`clustering.md`](../deploying/clustering.md#example) shows two controllers.
 
 ## `flz runner`
 
-Lists the runners connected to a namespace, and checks that a runner on this machine can reach the controller. Explained in [`connecting_a_runner.md`](../basics/connecting_a_runner.md), [check that it connected](../basics/connecting_a_runner.md#check-that-it-connected).
+Lists the runners connected to a namespace, and checks that a runner on this machine can reach the controller. Explained in [`connecting_a_runner.md`](../deploying/connecting_a_runner.md), [check that it connected](../deploying/connecting_a_runner.md#check-that-it-connected).
 
 ```sh
 $ flz runner help

@@ -74,7 +74,7 @@ flowchart LR
 
 - A **controller** is the brain. It keeps the durable state, decides which
   runner runs what, heals what breaks, and answers the `flz` command line.
-  Several controllers can run as [one cluster](../topics/advanced/clustering.md):
+  Several controllers can run as [one cluster](../topics/deploying/clustering.md):
   they share the operators between them, and a controller that is stopped
   hands its operators to the others before it exits.
 - A **runner** is a process of yours, in any of the seven languages, that runs

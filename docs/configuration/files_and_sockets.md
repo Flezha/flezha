@@ -63,7 +63,7 @@ user named. It is not *prepared* unconditionally, though — a controller
 probes the directory it resolved before clearing it, and refuses to start when
 a live peer answers there, naming the path and this variable. A socket nobody
 answers is a controller that died hard and is cleared as normal. See
-[Several controllers on one machine](../topics/basics/deploying_a_controller.md#several-controllers-on-one-machine). A **runner** takes
+[Several controllers on one machine](../topics/deploying/deploying_a_controller.md#several-controllers-on-one-machine). A **runner** takes
 the first holding a live control socket, and when two candidates hold one and
 no variable says which is meant, it **refuses to connect and names both** rather
 than attaching to a controller the user did not choose. Every path is
@@ -92,4 +92,4 @@ deep checkout.
 
 `flz runner check` runs this resolution and its probe from a shell, with no
 runner code and no running controller; see
-[`topics/basics/deploying_a_controller.md`](../topics/basics/deploying_a_controller.md).
+[`../topics/deploying/deploying_a_controller.md`](../topics/deploying/deploying_a_controller.md).

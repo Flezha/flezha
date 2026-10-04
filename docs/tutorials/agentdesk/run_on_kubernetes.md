@@ -2,7 +2,7 @@
 
 On this page you run the same images on k3s: one pod holding a controller and
 its runner, from `k8s/agentdesk.yaml` in the agentdesk folder.
-[Kubernetes](../../topics/advanced/kubernetes.md) covers the manifests in full.
+[Kubernetes](../../topics/deploying/kubernetes.md) covers the manifests in full.
 
 > Build the two images under fixed names, from the agentdesk folder, and import them into k3s. The HTTP plugin's package is still in `controller/plugins/`.
 > {: .step}

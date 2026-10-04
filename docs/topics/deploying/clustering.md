@@ -34,7 +34,7 @@ flowchart LR
   exits. The graceful-shutdown timeout bounds that (`FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`,
   60000 by default), and the orchestrator must give the process longer than that before it
   kills it: the timeout plus 15 seconds, 75 seconds by default.
-  [deploying_a_controller.md](../basics/deploying_a_controller.md) has the pairing rule.
+  [deploying_a_controller.md](deploying_a_controller.md) has the pairing rule.
 - **The state copy.** A durability backend (PostgreSQL, S3 or a path that outlives the node's
   disk) holds a copy of each controller's state, which an operator that moves is restored
   from. For an operator at `durable: local` the copy is made in the background, every
@@ -263,10 +263,10 @@ $ flz operator call anna --namespace agents --text 'Are you still there?'
 
 ## See also
 
-- [deploying_a_controller.md](../basics/deploying_a_controller.md): settings, graceful
+- [deploying_a_controller.md](deploying_a_controller.md): settings, graceful
   shutdown and the grace-period pairing.
 - [durability.md](../basics/durability.md): durability levels and backends.
 - [kubernetes.md](kubernetes.md): controllers on Kubernetes.
-- [effectively_once.md](effectively_once.md): what a crash may repeat.
+- [effectively_once.md](../advanced/effectively_once.md): what a crash may repeat.
 - [configuration.md](../../configuration/environment_variables.md#cluster-and-nodes).
 - Tutorial: [run_a_cluster.md](../../tutorials/agentdesk/run_a_cluster.md).
