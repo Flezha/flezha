@@ -2,7 +2,7 @@
 
 New to Flezha: start with [What is Flezha](getting_started/what_is_flezha.md), then
 [Try it](getting_started/try_it.md). The user documentation comes in four sections,
-in reading order, and a fifth is for contributors; everything after them is grouped by who reads it.
+in reading order, then a section on how Flezha is built and one for contributors; everything after them is grouped by who reads it.
 
 | Section | What it is |
 | --- | --- |
@@ -10,11 +10,11 @@ in reading order, and a fifth is for contributors; everything after them is grou
 | [Tutorials](#tutorials) | Three example applications, run page by page: what to type and what you should see |
 | [Topics](#topics) | One page per subject, each readable on its own |
 | [Deploying](#deploying) | Running controllers and runners: the release, Docker, a build of your own, a cluster, Kubernetes |
+| [Architecture](#architecture) | How Flezha is built: the controller, the kernel, flow and steps, the runner |
 | [Contributing](#contributing) | The rules a contribution follows, the build, the tests and the release |
 
 | Directory | For | What is in it |
 | --- | --- | --- |
-| [`architecture/`](architecture/README.md) | everyone | The conceptual model: kernel, flow, steps, runner |
 | [`api/`](api/README.md) | authors of a program that drives the controller | The published consumer surface, its three guards, and the manifest that keeps a consumer's calls resolving |
 | [`sdk/`](#sdk) | operator authors, SDK implementers | Authoring contract, per-SDK surfaces, wire protocol, the shared poll core |
 | [`plugins/`](#plugins) | plugin authors and users | The plugin system and every first-party plugin |
@@ -93,6 +93,16 @@ type and what you should see; the topic pages say how each piece works.
 | [`connecting_a_runner.md`](topics/deploying/connecting_a_runner.md) | How a runner reaches its controller, and how to run one |
 | [`clustering.md`](topics/deploying/clustering.md) | Several controllers as one cluster, and stopping one |
 | [`kubernetes.md`](topics/deploying/kubernetes.md) | Running controllers and runners on Kubernetes |
+
+## Architecture
+
+| Doc | Covers |
+| --- | --- |
+| [`overview.md`](architecture/overview.md) | The roles, the workload model, the kernel invariants, the failure model |
+| [`kernel.md`](architecture/kernel.md) | The durable substrate under every operator: the write path, snapshots, delivery, flow control, fencing, health |
+| [`flow_profile.md`](architecture/flow_profile.md) | An operator that runs in flow: per-cell recovery, checkpoints, late input, partitions |
+| [`steps_profile.md`](architecture/steps_profile.md) | An operator that runs in steps: stages, the task journal, undo, loops, sleeping, rewind |
+| [`runner.md`](architecture/runner.md) | Inside a runner: the shared Rust kernel and the host SDK |
 
 ## Contributing
 

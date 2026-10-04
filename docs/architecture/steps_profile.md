@@ -1,500 +1,468 @@
 # Running in steps
 
-What `run: steps` adds to an operator. A class that sets it is a **steps operator**: a job with a
-beginning and an end, and the rest of its settings tree says how (`each` for the loop shape,
-`on_failure` for what a step that fails for good undoes, `durable` for where its work is kept): an ETL run, a payment saga, an AI chat
-session. It authors the same tasklets, channels, and cells a flow operator does — the
-same per-cell state engine — but it schedules them **topologically**, commits its progress at
-every step boundary, can **undo** what it did, and can wait for input for hours while costing
-nothing.
+This page describes what `run: steps` adds to an operator. A class that sets it is a **steps
+operator**: a job with a beginning and an end, such as an ETL run, a payment saga or an AI chat
+session. The rest of its settings tree says how it runs: `each` for the shape of its loop,
+`on_failure` for what a step that fails for good undoes, and `durable` for where its work is
+kept ([configuring an operator](../topics/basics/configuring_an_operator.md)).
 
-- [Structure: a graph of tasklets](#structure-a-graph-of-tasklets)
-- [The task journal](#the-task-journal)
-- [Happy path: the stage barrier](#happy-path-the-stage-barrier)
-- [One outbox](#one-outbox)
-- [Retry, then abort](#retry-then-abort)
-- [Saga compensation](#saga-compensation)
-- [The durable loop](#the-durable-loop)
-- [Suspension](#suspension)
-- [Rewind](#rewind)
+A steps operator uses the same tasklets, channels and cells as a flow operator, and the same
+[kernel](kernel.md) underneath. What changes is the schedule: it runs its tasklets in graph
+order, writes its progress to a journal at every step, can undo what it did, and can wait for
+input for hours while holding nothing on a runner. The page is for contributors and for users
+who want the mechanism behind the topic page
+[`workflows.md`](../topics/basics/workflows.md).
 
----
+**Contents**
 
-## Structure: a graph of tasklets
+1. [A graph of tasklets](#a-graph-of-tasklets)
+2. [The task journal](#the-task-journal)
+3. [The stage commit](#the-stage-commit)
+4. [One outbox](#one-outbox)
+5. [Retry, then abort](#retry-then-abort)
+6. [Undo](#undo)
+7. [The durable loop](#the-durable-loop)
+8. [Sleeping](#sleeping)
+9. [Rewind](#rewind)
+10. [Messages on the wire](#messages-on-the-wire)
+11. [Commands](#commands)
+12. [Host languages](#host-languages)
+13. [Limits and gotchas](#limits-and-gotchas)
+14. [See also](#see-also)
 
-A tasklet has a single `Output` type, and therefore exactly one output channel. An **edge** is
-*(that channel, one of its consumers)* — so a fan-out is simply one channel declaring several
-consumers, and a fan-in (a join) is one tasklet consuming several channels.
+## A graph of tasklets
+
+A tasklet has one output type, and so one output channel. An **edge** is that channel plus one of
+its consumers. A fan-out is one channel with several consumers; a fan-in (a join) is one tasklet
+that consumes several channels.
 
 ```mermaid
-flowchart TB
-    IN(["entry channel"]):::src
-    A["Extract"]:::exec
-    B["Enrich"]:::exec
-    C["Archive"]:::exec
-    D["Reconcile"]:::exec
-    P1["📤 sink"]:::sink
-
-    IN --> A
-    A -->|"channel &#34;records&#34;<br/>ONE channel, TWO consumers"| B
-    A -->|"the same channel"| C
-    B -->|"fan-in — Reconcile ACCUMULATES<br/>both producers' output"| D
+flowchart LR
+    IN(["entry channel"]) --> A["extract"]
+    A -->|"records"| B["enrich"]
+    A -->|"records"| C["archive"]
+    B --> D["reconcile"]
     C --> D
-    D --> P1
-
-    CYC["❌ a cycle — a tasklet's output<br/>reaching its own input — is REFUSED"]:::risk
-    D -.-> CYC
-    CYC -.-> A
-
-    classDef exec fill:#dcfce7,stroke:#166534,color:#111
-    classDef sink fill:#fed7aa,stroke:#9a3412,color:#111
-    classDef src fill:#ede9fe,stroke:#6b21a8,color:#111
-    classDef risk fill:#fee2e2,stroke:#991b1b,color:#111
+    D --> S(["sink"])
 ```
 
-Routing is **per channel**: a downstream tasklet receives exactly the values released on the
-channels it consumes. A join is explicit — two streams wiring the same consumer — and the join
-tasklet **accumulates** every producer's contribution rather than overwriting one with the
-other. Branches stay independent mid-flight; where they must meet, they meet at a join.
-Registration refuses anything that is not a DAG rooted at the entry channels, naming the
-offending node:
+A tasklet receives exactly the values sent on the channels it consumes. A join collects every
+producer's values rather than letting one overwrite another. Branches run independently until
+they meet at a join.
+
+The runner checks the graph when it registers the operator and refuses anything that is not a
+graph without cycles, rooted at the entry channels, naming the offending tasklet:
 
 | Shape | Refusal |
 | --- | --- |
 | a tasklet's output can reach its own input (a cycle) | `topology.cycle` |
-| one tasklet produces two output channels | `topology.multiple_output_channels` |
-| a tasklet is unreachable from any entry channel | `Disconnected` |
-| a handoff-chained loop over a branching chain | `topology.branching_chained_loop` |
+| a tasklet produces on two output channels | `topology.multiple_output_channels` |
+| a tasklet no entry channel reaches | `topology.unreachable_tasklet` |
+| no entry channel, or no tasklets | `topology.no_entry_channel`, `topology.no_tasklets` |
+| a `chained` loop over a chain that branches | `topology.branching_chained_loop` |
+| a `chained` loop whose last tasklet hands nothing on | `topology.chained_loop_terminal_without_handoff` |
 
-An entry channel may feed several tasklets, and a class may declare several entry channels:
-each roots its own chain, the tasklets reachable from its consumers, and a message runs only
-the chain of the channel it arrived on. A join where two chains meet waits only for the
-producers of the chain that runs, live and on a crash-resume.
+A class may declare several entry channels, and one entry channel may feed several tasklets.
+Each entry channel roots its own chain, and a message runs only the chain of the channel it
+arrived on. A join where two chains meet waits only for the producers of the chain that is
+running, both live and after a crash.
 
-Within one tasklet, cells run in parallel exactly as in stream: single, static or dynamic
-cell mode, per-cell state, per-cell WAL. A tasklet reached by a `key_by` edge gets one cell
-per key, minted by routing the moment a stage's item is addressed to it and capped by
-`max_cells` as a flow operator's is (a new key past the cap is dropped and counted in
-`inputs_dropped_capped_total`). A stage is done when every cell it addressed has drained,
-and its commit names each of those cells once. An idle keyed cell is evicted by its
-`cell_idle_ttl()` only between passes, and never while a rollback of the declared
-`on_failure` could still reach it: under all-or-nothing every cell that ran a compensable
-tasklet is held until the instance ends, under keep-progress only the running pass's cells
-are. A `task_committed` entry counts its cells in 16 bits, so one pass of one tasklet runs at
-most 65 535 cells, below the `max_cells` default of 100 000; a class that keys more than that
-per pass declares a smaller cap. A `per_input` steps operator whose entry edge is keyed may be
-[partitioned](../topics/advanced/partitioning.md) into N instances
-that each end, compensate and commit on their own; a `once` or `chained` one is refused.
+Inside one tasklet, cells work in parallel exactly as in a flow operator: one cell, or one per
+key, each with its own state and WAL. A tasklet reached by a keyed edge gets a cell per key,
+created when a stage first routes an item to that key and capped by `max_cells` (100 000 by
+default); a new key past the cap is dropped and counted in `inputs_dropped_capped_total`. A
+stage is done when every cell it sent work to has finished, and its commit names each of those
+cells once.
 
-The `(operator_class, tasklet_id, cell_key)` identity is the same one a flow operator
-uses. A steps operator genuinely has tasklets and cells; there are no synthetic
-placeholders.
+An idle keyed cell is removed after its `cell_idle_ttl()` only between passes, and never while
+the class's `on_failure` could still need it: under `undo_all` every cell that ran a tasklet
+with an undo is kept until the instance ends, under `keep_progress` only the running pass's
+cells are. A stage entry counts its cells in 16 bits, so one pass of one tasklet runs at most
+65 535 cells; a class that keys more than that per pass declares a smaller `max_cells`.
+
+A `per_input` steps operator whose entry edge is keyed can be
+[partitioned](../topics/advanced/partitioning.md) into N instances that each end, undo and
+commit on their own. A `once` or `chained` one cannot.
+
+Cells are named `(operator class, tasklet, cell key)`, the same as in a flow operator.
 
 ## The task journal
 
-Steps durability is a per-instance append-only journal on the same WAL substrate a cell
-uses, under a reserved identity so it never surfaces as a phantom cell.
+A durable steps instance writes its progress to its own append-only journal, in the same framed
+format as a cell's WAL ([the record format](kernel.md#the-record-format)), under a reserved
+identity so it never appears as a cell.
 
-```
+```text
 <state_root>/<namespace>/<instance_id>/<instance_id>/task.journal
 
-record header (16 B): [epoch u32 BE][zero]
+record header (16 B): [epoch u32 BE][type u8][task_idx u16 BE][iter u32 BE][zero]
 record body:          [type u8][task_idx u16 BE][iter u32 BE][payload]
 ```
 
+The header carries the entry's identity next to the epoch, which is how the writer refuses a
+commit the runner sent twice.
+
 | Type | Entry | Carries |
 | --- | --- | --- |
-| 1 | `task_committed` | `cells_ran`, the handoff batch, and the tasklet's completion if it asked to end the instance |
-| 3 | `iter_committed` | the input-log offset the iteration consumed (or none, for a carry-fed pass), its terminal handoff, and its completion |
+| 1 | `task_committed` | `cells_ran`, the values handed to the next tasklets, the tasklet's completion if it ended the instance, and what triggered the stage |
+| 3 | `iter_committed` | the input-log offset the iteration consumed (none for a pass fed by the previous one), its entry channel, its final hand-off, its completion, and any failed turns |
 | 5 | `compensated` | an undo ran: `cells_ran` naming the undo records |
-| 6 | `rewound` | a marker: everything above this iteration is un-committed |
+| 6 | `rewound` | a marker: every iteration above this one is no longer committed |
+| 7 | `input_released` | an input consumed without an iteration commit (one parked unread) |
+| 8 | `dead_lettered` | a failed `per_input` turn, parked in the dead-letter queue |
 
-`cells_ran` names, for each Cell the stage ran, its identity, the range of effect records it
-wrote in the stage (`first_seq..seq`, both absent when it wrote none) and the plugin channels
-those records wrote on. The journal holds markers only: no Cell state and no plugin output,
-which live in the Cells' own effect records.
+`cells_ran` names, for each cell the stage ran, the range of effect records it wrote in the stage
+(`first_seq..seq`, both absent when it wrote none) and the plugin channels those records wrote
+on. The journal holds markers only. Cell state and plugin output live in the cells' own effect
+records.
 
-Types 2 and 4 are unused: delivery is tracked by each Cell writer's flush cursor, and where an
-instance sleeps is not the journal's (see [Suspension](#suspension)).
-The journal is **append-only**. `rewound` does not truncate it — one fold applies the markers,
-and every reader (what is committed, what is owed, what is compensated, where the loop is) runs
-over that fold. The epoch lives in the record header and stays `0` until a rewind bumps it.
+Types 2 and 4 are unused. The journal is **append-only**: `rewound` does not cut it. One fold
+over the file applies the markers, and every question (what is committed, what is owed, what is
+undone, where the loop is) is answered from that fold. The epoch stays 0 until a rewind raises
+it. The journal is `Flezha.State.TaskJournal`.
 
-## Happy path: the stage barrier
+## The stage commit
 
 ```mermaid
 sequenceDiagram
-    participant CTRL as 🧠 Controller
-    participant EX as ⚙️ Runner (steps operator)
-    participant SINK as 📤 Sink
+    participant C as controller
+    participant R as runner
+    participant K as sink
 
-    CTRL->>EX: start, then the first message enters the root tasklet's chain
-    EX->>EX: the root's cells run in parallel
-    Note over EX: BARRIER — the root's last item settled
-    EX->>CTRL: TaskCommit {task_idx, cells_ran, handoff}
-    CTRL->>CTRL: wait until every record cells_ran names is durable
-    CTRL->>CTRL: 💾 journal task_committed: append + fsync
-    CTRL-->>EX: TaskCommitResponse (durable)
-    CTRL->>SINK: release the named records' outputs, stamped (cell, record seq, epoch)
-    Note over EX: only NOW do the root's outputs reach B and C
-
-    EX->>EX: B's cells and C's cells run TOGETHER on the pool
-    Note over EX: C finishes first — its own barrier
-    EX->>CTRL: TaskCommit C
-    CTRL-->>EX: ack, then release C's records
-    Note over EX: B finishes — its own barrier
-    EX->>CTRL: TaskCommit B
-    CTRL-->>EX: ack, then release B's records
-    Note over CTRL: every LEAF tasklet committed → the operator is done.<br/>The controller derives the same fact from the journal —<br/>the SDK declared its leaf set at bind.
+    C->>R: start, and the first message enters the root tasklet
+    R->>R: the root's cells run
+    R->>C: TaskCommit (tasklet, cells_ran, hand-off)
+    C->>C: wait until every named record is durable
+    C->>C: append task_committed, fsync
+    C-->>R: TaskCommitResponse
+    C->>K: release the named records' outputs
+    Note over R: only now do B and C receive the root's values
+    R->>R: B and C run side by side
+    R->>C: TaskCommit C
+    R->>C: TaskCommit B
+    Note over C: every leaf committed: the instance is done
 ```
 
-Each tasklet is its own unit: it commits when its own last item settles, whether or not a
-sibling is still running, and its outputs reach its children only once that commit is
-acknowledged. A child with several producers (a join) runs once every one of them has
-committed. Siblings are therefore never committed *atomically*, and in no fixed order. A
-sibling that fails after the one beside it committed compensates the committed one exactly as a
-deeper failure would; a tasklet still running when the pass fails is recorded as having run,
-so it is compensated, but it is **not committed**, because committing would release outputs that
-must immediately be undone.
+Each tasklet is its own unit. It commits when its own last item finishes, whether or not a
+sibling is still running, and its values reach the next tasklets only once that commit is
+acknowledged. A tasklet with several producers (a join) runs once every one of them has
+committed. Siblings are therefore never committed together, and in no fixed order. A sibling
+that fails after the one beside it committed has the committed one undone, as a deeper failure
+would. A tasklet still running when the pass fails is recorded as having run, so it is undone,
+but it is **not committed**, because committing would release outputs that must be undone at
+once.
 
-Nothing waits for an ack: it is an event that releases the tasklet's outputs. One not received
-within 30 s is re-sent under the same identity, up to three sends; a refusal or the last
-timeout is terminal and drives compensation — a step whose durability the controller will not
-confirm has not happened.
+The runner does not block on the acknowledgement; its arrival releases the tasklet's values. One
+not received within 30 s (`FLEZHA_STEPS_ACK_TIMEOUT_MS`) is sent again under the same identity,
+up to three sends in all. A refusal or the last timeout fails the stage and starts the undo: a
+step whose durability the controller will not confirm has not happened.
 
-A class declaring `durable: remote` raises that bar one notch: the controller ships the
-journal suffix to the [remote durability tier](kernel.md#the-remote-durability-tier) and awaits
-the backend ack *before* replying — so the commit survives losing the controller's disk (RPO 0),
-at the cost of one remote round-trip per barrier. The runner already waits for that ack before
-the tasklet's children run; nothing else changes.
+A class with `durable: remote` raises the bar one step: the controller ships the journal entry
+to the [remote tier](kernel.md#the-remote-tier) and waits for the backend before it answers,
+so the commit survives losing the controller's disk, at the cost of one remote round trip per
+stage.
 
-**On a crash, a committed tasklet is not re-run.** The journal carries its handoff, so the
-resumed instance skips it and seeds its children from the durable batch. Without the journal —
-an opted-out class — the chain re-runs from the top over the restored cell state, which is
-why a tasklet body is required to be idempotent.
+**After a crash, a committed tasklet does not run again.** The journal holds its hand-off, so
+the resumed instance skips it and feeds its children from the journal. A class with
+`durable: false` keeps no journal; its chain runs again from the top over the restored cell
+state, which is why a tasklet must be safe to run twice.
 
 ## One outbox
 
-Inside a structured tasklet, `ctx.emit` writes into the Cell's effect record, exactly as an
-flow Cell on the effectively-once tier does: one `cell_effect_record` per invocation holding
-the state changes and the plugin outputs (channel, key, metadata, payload). The record is
-durable before the stage marker; its outputs wait for the marker.
+In a durable steps operator, `ctx.emit` writes into the cell's effect record, as a flow cell
+does under `exactly: effectively_once`: one record per invocation, holding the state changes
+and the plugin outputs ([the effect record](kernel.md#the-effect-record)). The record is on
+disk before the stage commit; its outputs wait for the commit.
 
 ```mermaid
 sequenceDiagram
-    participant EX as ⚙️ Runner (tasklet B)
-    participant CTRL as 🧠 Controller
-    participant SINK as 📤 Sink
+    participant R as runner
+    participant C as controller
+    participant K as sink
 
-    Note over EX: each of B's items settles into ONE effect record, sent at once
-    CTRL->>CTRL: 💾 the Cell's writer syncs the record and HOLDS its outputs
-    Note over EX: BARRIER: B's last item settled
-    EX->>CTRL: TaskCommit: the cells that ran with their record ranges, the handoff
-    CTRL->>CTRL: wait until every named record is durable
-    CTRL->>CTRL: 💾 ONE journal entry, ONE fsync, then the ack
-    Note over CTRL: DURABLE POINT: only now may the named records' outputs leave
-    CTRL->>SINK: each Cell's writer releases its range, stamped flz.cell · flz.seq = record_seq.ordinal · flz.epoch · flz.key
-    Note over CTRL,SINK: a crash BEFORE the flush: the writer re-queues the record above its cursor,<br/>the journal still names it, the re-drive carries IDENTICAL identity, the sink dedups
+    R->>C: each item's effect record
+    C->>C: the cell's writer syncs it and holds its outputs
+    R->>C: TaskCommit naming the records
+    C->>C: one journal entry, one fsync, then the acknowledgement
+    C->>K: each cell's writer releases its range
 ```
 
-The Cell writer's outbox is the only outbox, for both kinds: the same cursor, confirmation
-tally, resettle and restart re-drive. What differs is the commit unit. A flow Cell's record
-is committed by its own fsync; a steps operator Cell's is committed by the stage marker that names it.
-A record no marker will name (a failing stage, a stage a crash interrupted and re-ran, an
-iteration a rewind unwound) is dropped from the queue without reaching a sink, so a failed
-stage leaks nothing. A crash between the commit and the flush costs nothing but a duplicate the
-sink absorbs.
+The cell writer's outbox is the only outbox, for flow and steps alike: the same cursor,
+confirmations and restart re-send ([the outbox](kernel.md#the-outbox)). Only the commit point
+differs. A flow cell's record is committed by its own fsync; a steps cell's record is committed
+by the stage entry that names it. A record no entry will name (a failed stage, a stage a crash
+interrupted and ran again, an iteration a rewind removed) is dropped without reaching a sink,
+so a failed stage leaks nothing. A crash between the commit and the release costs only a
+duplicate the sink absorbs, since the re-sent output carries the same identity.
 
-An **opted-out** class, or one running without a controller (a unit test, a bench), writes no
-record: emits go straight to the wire as they happen, with their channel, key and metadata.
+A class with `durable: false`, or one running without a controller (a unit test, a benchmark),
+writes no record: outputs go out as they are produced.
 
-A steps output carries `flz.key` when its channel is keyed, as a flow operator's does. The rewind
-guard still requires a `compensate` hook for every unwound tasklet that wrote plugin output: a
-rewind re-runs nothing over the unwound inputs, so no later output overwrites the original by
-its key, and the hook is the only undo the engine can guarantee.
+A steps output carries `flz.key` when its channel is keyed, as in flow.
 
 ## Retry, then abort
 
-A failing item gets a ladder before it takes the whole tasklet down with it.
+A failing item gets a few more tries before it takes the tasklet down:
 
 ```mermaid
 flowchart TB
-    B["Tasklet B"]:::exec
-    K1["Cell k1 — ok, its outputs held for the commit"]:::exec
-    K2["Cell k2 — an item FAILS"]:::exec
-    K3["Cell k3 — ok, its outputs held for the commit"]:::exec
-    RT{"attempts left?<br/>3 total, exponential backoff<br/>+ jitter, capped at 5 s"}:::ctrl
-    NR{"classified<br/>non-retryable?"}:::ctrl
-    OK["k2 succeeds → B's last item settles → COMMIT + flush"]:::exec
-    FAIL["the tasklet does NOT commit<br/>no marker names its records: nothing leaked"]:::ctrl
-    ABORT["ABORT → compensate the previously committed tasklets<br/>(B itself needs no undo — it never committed)"]:::sink
-
-    B --> K1
-    B --> K2
-    B --> K3
-    K2 --> NR
-    NR -->|"yes — skip the ladder"| FAIL
-    NR -->|"no"| RT
-    RT -->|"retry — the failed item and the ones behind it"| K2
-    RT -->|"succeeded"| OK
-    RT -->|"exhausted"| FAIL
-    FAIL --> ABORT
-
-    classDef ctrl fill:#dbeafe,stroke:#1e40af,color:#111
-    classDef exec fill:#dcfce7,stroke:#166534,color:#111
-    classDef sink fill:#fed7aa,stroke:#9a3412,color:#111
+    F["an item fails in cell k2"] --> N{"marked non-retryable?"}
+    N -->|"yes"| X["the tasklet does not commit"]
+    N -->|"no"| A{"attempts left?"}
+    A -->|"yes, after a backoff"| R["run k2's failed item again"]
+    R --> F
+    A -->|"no"| X
+    X --> U["abort: undo the committed tasklets"]
 ```
 
-Only the failed item and the items queued behind it on its cell re-run; an item that already
-settled, and every sibling cell, is never re-executed. A failed attempt's outputs are dropped
-rather than double-emitted. The ladder is the one every flow cell climbs, and its backoff is
-an entry on the deferred-wake list rather than a sleep, so a stop, a `max_duration` or a
-sibling's failure disarms it at once.
+Only the failed item and the items queued behind it in its cell run again. An item that already
+finished, and every other cell, is not run again, and a failed attempt's outputs are dropped. By
+default a channel allows three attempts in all, with exponential backoff and jitter capped at
+5 s; the channel's retry policy can change the count. The backoff is a deferred wake rather than
+a sleep, so a stop, a `max_duration` or a sibling's failure cancels it at once. A panic counts as
+retryable, because the author had no chance to classify it.
 
-The retry ladder is strictly **pre-commit**. A journaled tasklet is never retried; a crash mid-
-ladder resumes as an ordinary uncommitted-tasklet re-run with the attempt counter reset. A
-panic stays retryable, because the author never got the chance to classify it.
+Retries happen only **before** the commit. A committed tasklet is never retried. Attempt counts
+are kept in memory, so a crash in the middle of the retries resumes as an ordinary uncommitted
+tasklet with the count reset.
 
-This is the steps operator's equivalent of the flow operator's dead-letter queue:
-abort-and-compensate is the escape. Two cases park instead: a message the entry channel cannot
-read, and a failed turn of a `per_input` keep-progress loop, whose message the controller parks
-under the `_turn` slot on the iteration's dead-lettered commit before the turn is undone and the
-loop takes its next message (see
-[`../resilience/steps_operator.md`](../resilience/steps_operator.md#a-failed-turn-of-a-keep-progress-session)).
+A steps operator's answer to a failure that will not go away is abort and undo, where a flow
+operator parks the payload in the dead-letter queue. Two cases park here too: a message the entry
+channel cannot read, and a failed turn of a `per_input` loop with `on_failure: keep_progress`.
+That turn's message is parked under the `_turn` slot with a `dead_lettered` journal entry, the
+turn is undone, and the loop takes its next message.
 
-## Saga compensation
+## Undo
 
-An abnormal exit unwinds what already committed, in reverse.
+When a pass fails for good, the controller undoes what already committed, in reverse:
 
 ```mermaid
 sequenceDiagram
-    participant CTRL as 🧠 Controller
-    participant EX as ⚙️ Runner
-    participant SINK as 📤 Sink
+    participant C as controller
+    participant R as runner
+    participant K as sink
 
-    Note over CTRL: A committed. B and C committed (siblings under A).
-    EX->>CTRL: D fails permanently
-    Note over CTRL: D never committed — there is nothing of D's to undo
-
-    Note over CTRL,EX: SAGA — reverse-topological: descendants before ancestors
-    CTRL->>EX: compensate C (per cell, in parallel)
-    EX->>CTRL: 💾 compensated, naming C's undo record
-    CTRL->>SINK: C's undo effects (a newer record of C's Cell: its seq sorts above the forward output)
-    CTRL->>EX: compensate B
-    EX->>CTRL: 💾 compensated
-    CTRL->>SINK: B's undo effects
-    CTRL->>EX: compensate A (the parent — LAST)
-    EX->>CTRL: 💾 compensated
-    CTRL->>SINK: A's undo effects
-    Note over CTRL: terminal — aborted.<br/>A crash mid-saga resumes and skips what is already marked compensated.
+    Note over C: A, then B and C under it, committed
+    R->>C: D fails for good
+    Note over C: D never committed: nothing of D's to undo
+    C->>R: undo C (each cell in parallel)
+    R->>C: compensated, naming C's undo record
+    C->>K: C's undo outputs
+    C->>R: undo B
+    R->>C: compensated
+    C->>R: undo A, the parent, last
+    R->>C: compensated
+    Note over C: aborted. A crash here resumes and skips what is already undone.
 ```
 
-Reverse-topological order is not computed — it is **emergent**. The graph is numbered
-breadth-first, so a producer's index is always below its consumers', completion order is
-therefore topological, and the compensation planner simply reverses it.
+The reverse order is not computed separately. The graph is numbered in topological order, so a
+producer's number is always below its consumers', commits arrive in topological order, and the
+undo plan reverses them.
 
-Two rules govern what gets undone:
+What is undone depends on `on_failure`:
 
-- **`UndoAll`** (the default) unwinds the in-flight iteration *and* every committed one.
-- **`KeepProgress`** unwinds only the in-flight iteration — completed iterations stand.
+- **`undo_all`** (the default) undoes the running iteration and every committed one.
+- **`keep_progress`** undoes only the running iteration; finished iterations stand.
 
-A tasklet with no `compensate` hook is skipped. A failing hook is logged and the rest of the
-plan still runs — a saga is best-effort by contract, and stopping halfway would leave strictly
-more inconsistency than continuing.
+A tasklet with no `compensate` hook is skipped. A failing hook is logged and the rest of the plan
+still runs: stopping half way would leave more inconsistency than going on.
 
-**The undo record is journaled before the done marker.** A crash between the two re-runs the
-(idempotent) hook rather than losing its undo output — the safe side of that trade.
+**The undo record is journaled before the done marker.** A crash between the two runs the hook
+again rather than losing its undo output, so a hook must be safe to run twice.
 
-> **A journal-rebuilt tasklet's outputs are empty on resume.** A tasklet's collected
-> inter-tasklet output was never durable, so after a crash the compensation hook receives an
-> empty output list. A durable compensable tasklet must therefore keep its **undo handle in
-> cell state**, which *is* restored. That is the at-least-once author contract.
+> **After a crash, a tasklet's values are not available to its undo hook.** Values passed between
+> tasklets were never durable, so a hook run after a crash receives an empty list. A durable
+> tasklet with an undo keeps what it needs to undo (an order id, say) **in its cell state**,
+> which is restored.
 
-Cell state is unwound by the `compensate` hooks, not by truncating the state WAL. A hookless
-tasklet leaves its state change in place.
+The cell's state is reversed by the `compensate` hook, not by cutting its WAL. A tasklet without
+a hook keeps its state change.
 
 ## The durable loop
 
-An operator may run its graph more than once.
+An operator can run its graph more than once. `each` decides how:
 
-| Mode | Behaviour |
+| `each` | Behaviour |
 | --- | --- |
-| `Once` (default) | one pass over the first message, then terminate; a second message is never read |
-| `PerInput` | one iteration per message: the chat / agent turn |
-| `Chained` | the first pass over the first message; iteration N+1 is seeded by iteration N's terminal output into the chain that message started; it converges when the batch comes back empty |
+| `once` (default) | one pass over the first message, then the instance ends; a second message is never read |
+| `per_input` | one iteration per message: a chat or agent turn |
+| `chained` | the first pass over the first message; iteration N+1 is fed by iteration N's final output, on the chain that message started; it ends when that output comes back empty |
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Iter1
-    Iter1 --> Commit1: the turn completes
-    Commit1 --> Iter2: wait for input (suspended — zero runner resources)
-    Iter2 --> Commit2
-    Commit2 --> Iter3: wait
-    Iter3 --> Commit3
-    Commit3 --> [*]: ctx.complete / max_duration / stop
-
-    Commit3 --> Rewind: flz operator rewind --to-iteration 2
-    Rewind --> Iter3: compensate iterations above 2 in reverse,<br/>bump the epoch, resume waiting
-
-    note right of Commit2
-        a crash resumes from the last COMMITTED
-        iteration — never from the top of the loop
-    end note
+    [*] --> Iteration1
+    Iteration1 --> Committed1: the turn completes
+    Committed1 --> Iteration2: wait for input, maybe asleep
+    Iteration2 --> Committed2
+    Committed2 --> [*]: complete, max_duration or stop
+    Committed2 --> Iteration2: rewind, then wait again
 ```
 
-An **iteration boundary** is a bigger commit point than a tasklet boundary. One iteration
-contains many tasklet commits; the iteration boundary is where durable suspension, the
-keep-progress rollback unit, and rewind all attach.
+An iteration contains many stage commits, and its boundary is where sleeping, the
+`keep_progress` rollback and rewind attach. A crash resumes from the last committed iteration,
+not from the top of the loop.
 
-At every boundary the SDK ships `IterCommit`, the controller journals **one** `iter_committed`
-entry carrying the terminal handoff and the consumed input-log offset, acks, and only then does
-its post-ack cleanup: the release of the consumed input and the journal cut. The boundary takes
-no snapshot and flushes nothing: each stage's outputs left at its own marker, and the
-Watchdog's size and age compaction triggers serve a steps operator's Cells as they serve a flow operator's.
-A failure in that cleanup costs work, not correctness.
+At each boundary the runner sends `IterCommit`. The controller journals **one**
+`iter_committed` entry with the final hand-off and the consumed input-log offset, answers, and
+only then releases the consumed input in the log and asks for the journal to be cut. The
+boundary takes no snapshot and releases no outputs: each stage's outputs left at its own commit,
+and the watchdog's size and age triggers compact a steps operator's cells as they do a flow
+operator's. A failure in that clean-up costs work, not correctness.
 
-**The durable input log.** A steps operator's input is journaled to the same per-instance
-input log the effectively-once tier uses, before it is forwarded, and stamped `flz.offset`. A
-duplicate (a repeat of a `flz.msg_id` the log still retains; a message without an id is never a
-duplicate) is absorbed and never delivered twice. A failed append is not forwarded. Each
-iteration commit reports its offset into the log's watermark, which is the instance's floor:
-the log's retention reclaims what lies below it, and every bind re-forwards what lies above it.
+**The input log.** A durable steps operator's input is written to the same per-instance input
+log the effectively-once tier uses, before it is forwarded, and stamped `flz.offset`
+([the write path](kernel.md#the-write-path)). A repeat of a `flz.msg_id` the log still holds is
+absorbed and never delivered twice; a message without an id is never a duplicate. A failed append
+is not forwarded. Each iteration commit raises the instance's floor in its log: the log drops
+what is below it, and every bind re-sends what is above it.
 
-## Suspension
+## Sleeping
 
-A loop waiting for input should cost nothing. Between iterations, a steps operator whose
-class sleeps (`durable` `local` or `remote`, with the six-hour default `sleep_after` unless the
-class says otherwise) is **evicted from its runner entirely** once it has waited its class's
-`sleep_after`; the Overwatch and the registry entry stay, so a new message still has somewhere
-to land, but the runner holds zero resources for it. A flow operator whose class sleeps does
-the same, at iteration `0`.
+A loop that waits for input should cost nothing. A steps instance whose class sleeps
+(`durable: local` or `remote`, with `sleep_after` six hours by default) is **removed from its
+runner** once it has waited that long between iterations. Its Overwatch (the controller process
+that owns the instance) and its registry entry stay, so a new message still has somewhere to
+land. A flow instance whose class sets `sleep_after` sleeps the same way, at iteration 0.
 
 ```mermaid
 sequenceDiagram
-    participant USER as User
-    participant CTRL as 🧠 Controller (the durable front)
-    participant EX1 as ⚙️ Runner (old)
-    participant EX2 as ⚙️ Runner (new)
+    participant U as user
+    participant C as controller
+    participant R1 as old runner
+    participant R2 as new runner
 
-    Note over EX1: iteration N committed, nothing is waiting, the idle window elapses
-    EX1->>CTRL: IterPark {iter N, earliest pending timer}
-    CTRL->>CTRL: 💾 park record (wake deadline = that timer) in the class directory, durable FIRST
-    CTRL->>EX1: RemOperator — evict
-    Note over CTRL,EX1: the runner now holds NOTHING for this operator.<br/>The Overwatch and the registry entry remain.
-
-    Note over CTRL: hours pass. The controller may even redeploy:<br/>the wake timer is re-armed from the park record at boot.
-
-    USER->>CTRL: a new message
-    CTRL->>CTRL: 💾 append to the input log (offset + id dedup) — before forwarding
-    CTRL->>EX2: rehydrate — bind, carrying the journal state, then restore the cells
-    CTRL->>EX2: re-forward the log's records above the floor
-    EX2->>EX2: iteration N+1
-    Note over CTRL,EX2: the wake deadline is the same bind with no message:<br/>the restored Cell re-arms its timer and the firing opens the pass
+    Note over R1: iteration N committed, the wait elapsed
+    R1->>C: IterPark (iteration N, earliest pending timer)
+    C->>C: write the park record, durable first
+    C->>R1: RemOperator
+    Note over C: hours pass, and a controller restart re-arms the wake timer from the record
+    U->>C: a new message
+    C->>C: append to the input log
+    C->>R2: bind with the journal state, restore the cells
+    C->>R2: re-send the log above the floor
+    R2->>R2: iteration N+1
 ```
 
-Rehydration is **the ordinary bind path**. Crash-resume, migration, and un-park all converge on
-it, so there is one code path and one set of bugs. The journal rides that bind
-(`AddOperator.task_journal`) rather than a per-Cell restore, because it is instance-scoped: an
-operator whose tasklets hold no per-Cell state has nothing to restore, and would otherwise
-rehydrate at iteration 0 every time. The wake deadline is the instance's earliest
-pending processing-time Cell timer; when it elapses the controller rehydrates the instance and
-appends nothing, so the restored Cell re-arms the timer and its firing opens the pass. A message
-and the deadline racing collapse into one rehydration, since a rehydrate of a bound instance is a
-no-op.
+Waking is **the ordinary bind**. Crash recovery, moving to another runner and waking all take
+the same path. The journal state rides in the bind (`AddOperator.task_journal`) rather than in a
+cell restore, because it belongs to the instance: an operator whose tasklets keep no state has
+no cell to restore, and would otherwise wake at iteration 0 every time.
 
-The park record is a per-instance fact beside the class's declarations, written before the
-eviction and cleared by the bind that wakes the instance, before the runner is told to start it.
-At boot, an instance with a park record **and** nothing undelivered enters suspended without ever
-binding; undelivered input outranks the park. Only a journaling instance, whose pass in flight is
-not a state document, waits for its sleep to migrate; a sleeping instance of either kind
-consents at once. Stopping a sleeping steps operator wakes it with the stop carried, so it ends
-`cancelled` exactly as it would awake.
+The wake deadline is the instance's earliest pending processing-time timer. When it passes, the
+controller binds the instance without a message; the restored cell re-arms its timer, and the
+timer firing starts the pass. A message and the deadline arriving together cause one wake, since
+waking an instance that is already bound does nothing.
+
+The park record is written before the instance is removed from the runner, and cleared by the
+bind that wakes it. At boot, an instance with a park record and no waiting input starts asleep,
+without binding; waiting input, or a deadline already passed, wakes it. A sleeping instance holds
+no pass in flight, so it is ready to move to another runner at once. Stopping a sleeping steps
+operator wakes it with the stop, so it ends `cancelled` as it would awake. The code is
+`Flezha.Operator.Migration`.
 
 ## Rewind
 
-Take a loop back to a committed iteration, and undo everything above it.
+A rewind takes a loop back to a committed iteration and undoes everything above it:
 
-```
-flz operator rewind <instance> --to-iteration N
+```sh
+$ flz operator rewind <instance> --to-iteration N
 ```
 
-Rewind is a **marker**, not a truncation. The journal stays append-only.
+A rewind is a **marker**, not a cut; the journal stays append-only.
 
 ```mermaid
 sequenceDiagram
-    participant OP as User
-    participant CTRL as 🧠 Controller
-    participant EX as ⚙️ Runner
-    participant SINK as 📤 Sink
+    participant U as user
+    participant C as controller
+    participant R as runner
+    participant K as sink
 
-    OP->>CTRL: rewind --to-iteration 2
-    CTRL->>CTRL: guard: is iteration 2 committed?<br/>does every unwound task that wrote plugin output declare compensate?
-    CTRL->>CTRL: 💾 append rewound(2) at epoch + 1 — the first non-zero epoch anything writes
-    Note over CTRL: the fold now PURGES iterations above 2.<br/>The rebind drops their records' outputs not yet handed to a sink.
-    CTRL->>EX: evict, then rehydrate (unconditionally — the loop must come back to run the undo)
-    CTRL->>EX: journal state, including the DERIVED rewind_undo list
-    EX->>EX: compensate the unwound tasklets in reverse — forced UndoAll
-    EX->>CTRL: 💾 one compensated entry per tasklet — even an EMPTY one for a hookless task
-    CTRL->>SINK: the undo effects, released at each compensated entry
-    Note over EX: the loop resumes WAITING. The NEXT message becomes iteration 3.
+    U->>C: rewind --to-iteration 2
+    C->>C: check: is 2 committed, and does every unwound tasklet that wrote plugin output have an undo?
+    C->>C: append rewound(2) at epoch + 1
+    C->>R: remove, then bind again, with the list of tasklets to undo
+    R->>R: undo them in reverse, as undo_all
+    R->>C: one compensated entry per tasklet, empty for one without a hook
+    C->>K: the undo outputs
+    Note over R: the loop waits, and the next message becomes iteration 3
 ```
 
-The undo list is **derived, not marked**: it is the tasklets committed before the marker at an
-iteration above the target, minus those that already have a `compensated` entry appended *after
-their own commit*. That "after its own commit" test is what keeps a re-run distinguishable from
-the original it replaced, and what makes a second rewind work. There is no done-marker and no
-completeness oracle — a crash mid-rewind resumes with exactly the outstanding work.
+The list of tasklets to undo is **derived, not stored**: the tasklets committed in iterations
+above the target, minus those with a `compensated` entry written after their own commit. That
+"after its own commit" test tells a re-run apart from the original it replaced, and makes a
+second rewind work. A crash in the middle of a rewind resumes with exactly the work still
+outstanding. When the instance binds again, outputs of the removed iterations that had not yet
+reached a sink are dropped.
 
-**The guard runs before anything durable changes.** A tasklet that wrote plugin output but
-declares no `compensate` hook cannot be unwound: a rewind re-runs nothing over the unwound
-inputs, so no later output overwrites the original by its key. The rewind is refused, naming the
-channel, which the guard reads from the stage entries' `cells_ran`, never from the Cell WALs.
+**The check runs before anything durable changes.** A tasklet that wrote plugin output and has no
+`compensate` hook cannot be rewound: a rewind runs nothing again over the removed inputs, so no
+later output replaces the original by its key, and the hook is the only undo the engine can
+offer. The rewind is refused, naming the channel, which the check reads from the stage entries'
+`cells_ran`, not from the cell WALs.
 
 > **A rewind does not replay inputs.** Every iteration commit raises the instance's floor in its
-> input log and a rewind never lowers it, so a committed turn's message is not delivered again
-> even while the log still retains it. Rewind is **undo-and-continue**: the loop resumes
-> waiting, and the next message becomes iteration N+1.
+> input log and a rewind never lowers it, so a committed turn's message is not delivered again,
+> even while the log still holds it. The loop waits, and the next message becomes iteration N+1.
 
-Cell state is unwound by the `compensate` hooks, exactly as in a saga — not by truncating the
-state WAL.
+The rewind raises only the journal's epoch, which keys the re-run's commits; cell epochs do not
+move ([the epoch rule](kernel.md#the-epoch-rule)). User view:
+[rewinding a turn](../topics/advanced/rewinding_a_turn.md).
 
----
-
-## The wire
+## Messages on the wire
 
 | Message | Tag | Direction |
 | --- | --- | --- |
-| `TaskCommit` | 28 | SDK → controller, at every tasklet boundary |
-| `TaskCommitResponse` | 29 | controller → SDK, after the journal fsync |
-| `IterCommit` | 30 | SDK → controller, at every iteration boundary |
-| `IterCommitResponse` | 31 | controller → SDK, after the journal fsync |
-| `IterPark` | 32 | SDK → controller, on suspension, for either kind (fire and forget) |
+| `TaskCommit` | 28 | runner to controller, at each stage |
+| `TaskCommitResponse` | 29 | controller to runner, after the journal fsync |
+| `IterCommit` | 30 | runner to controller, at each iteration |
+| `IterCommitResponse` | 31 | controller to runner, after the journal fsync |
+| `IterPark` | 32 | runner to controller, when an instance goes to sleep, flow or steps (no answer) |
 
-Field-level detail: [`protocol_spec.md`](../sdk/protocol_spec.md).
+Field-level detail: [`protocol_spec.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/protocol_spec.md).
 
-## Operations surface
+## Commands
 
-```
-flz state journal <operator/instance>    # every journal entry, and whether the graph is complete
-flz state inbox   <operator/instance>    # the durable input log (either kind), and how far it is consumed
-flz operator info                        # phase: running | suspended
-flz operator rewind <instance> --to-iteration N
+```sh
+$ flz state journal <operator/instance>   # every journal entry, and whether the graph is complete
+$ flz state inbox <operator/instance>     # the input log, flow or steps, and how far it is consumed
+$ flz operator info                       # each operator's phase, suspended while asleep
+$ flz operator rewind <instance> --to-iteration N
 ```
 
 ## Host languages
 
-Everything on this page is host-language-neutral. The shared runner core owns the pass: a small
-sheet on each instance (the iteration, the tasklets in flight and done, the outputs held for
-their commit, the completion) advanced by events on the thread that brings each one — a worker
-settling a tasklet's last item, the control-channel reader bringing a commit ack or a stop, the
-data-channel reader bringing a message, a poller promoting a deadline. It owns the task journal
-handshake, the stage's record ranges, the compensation plan, the loop, suspension and rewind. A host
-SDK supplies the tasklet bodies and the threads that run them: a stage's items are ordinary cell
-work, handed out under poll exactly as a flow operator's are. Rust runs an item on a pool worker, Java
-on a virtual thread; neither owns the chain's position, so there is no per-host resume or
-compensation semantics to compare.
+Nothing on this page depends on the language. In Rust, Java, Node, Python, Ruby and PHP the
+shared runner core, `flz_core`, owns the pass: a small record per instance (the iteration, the
+tasklets running and done, the outputs held for their commit, the completion) moved forward by
+events on whichever thread brings them. A worker finishing a tasklet's last item, the control
+channel bringing an acknowledgement or a stop, the data channel bringing a message and a poller
+reaching a deadline all advance it. The core owns the journal exchange, the stage's record
+ranges, the undo plan, the loop, sleeping and rewind. The SDK supplies the tasklet bodies and the
+threads that run them: Rust runs an item on a pool worker, Java on a virtual thread. Neither owns
+the chain's position, so those six SDKs share one resume and undo behaviour.
 
-Details of that split: [`poll_core.md`](../sdk/poll_core.md).
+The Elixir SDK does not use `flz_core`. It has its own steps driver in Elixir
+(`sdk/elixir/lib/flezha/sdk/steps/driver.ex`), speaking the same messages to the controller.
+Details of the split: [`poll_core.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/poll_core.md)
+and [`runner.md`](runner.md).
 
-Mechanism-level detail for everything on this page:
-[`../resilience/steps_operator.md`](../resilience/steps_operator.md).
+## Limits and gotchas
+
+- **A tasklet must be safe to run twice.** An uncommitted tasklet runs again after a crash, and a
+  class with `durable: false` runs its whole chain again.
+- **An undo hook sees no values after a crash.** Keep what the undo needs in cell state.
+- **A tasklet that writes plugin output needs a `compensate` hook to be rewound.** Without one the
+  rewind is refused.
+- **A rewind does not replay inputs.** It undoes and carries on.
+- **One pass of one tasklet runs at most 65 535 cells.**
+- **Only a `per_input` operator with a keyed entry edge can be partitioned.**
+
+## See also
+
+- [`kernel.md`](kernel.md): the WAL, the effect record, the outbox and the epoch rule this page builds on.
+- [`flow_profile.md`](flow_profile.md): the other way an operator runs.
+- [`overview.md`](overview.md): the controller, the runners and how they connect.
+- [`../topics/basics/workflows.md`](../topics/basics/workflows.md): steps, undo and crash recovery from the user's side.
+- [`../topics/basics/configuring_an_operator.md`](../topics/basics/configuring_an_operator.md): `each`, `on_failure`, `durable` and `sleep_after`.
+- [`../topics/advanced/sessions.md`](../topics/advanced/sessions.md), [`../topics/advanced/rewinding_a_turn.md`](../topics/advanced/rewinding_a_turn.md), [`../topics/advanced/partitioning.md`](../topics/advanced/partitioning.md).
+- [`steps_operator.md`](https://github.com/flezha/flezha/blob/main/docs/resilience/steps_operator.md): the mechanism in more depth.

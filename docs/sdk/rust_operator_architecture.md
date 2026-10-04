@@ -775,5 +775,5 @@ port: [`state_persistence.md`](state_persistence.md).
 - [`authoring_contract.md`](authoring_contract.md) — the cross-SDK authoring contract
 - [`poll_core.md`](poll_core.md) — the kernel boundary the SDK is hosted on
 - [`state_persistence.md`](state_persistence.md) — `Change`, WAL wire format, restore
-- [`../architecture/stream_profile.md`](../architecture/stream_profile.md) — the stream profile end to end
+- [`../architecture/flow_profile.md`](../architecture/flow_profile.md): a flow operator end to end
 - [`../internals/overwatch_lifecycle.md`](../internals/overwatch_lifecycle.md) — the controller-side Overwatch that starts and feeds an instance

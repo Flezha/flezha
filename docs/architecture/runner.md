@@ -1,531 +1,445 @@
-# Inside a runner — the shared kernel and the host SDK
+# Inside a runner
 
-The controller's view of a runner is one box: a process that dials in, accepts operators, and
-ships back state changes and outputs. This page opens that box.
+To the controller, a runner is one box: a process that dials in, accepts
+operators, and sends back state changes and outputs. This page opens that
+box. It is for contributors working on an SDK or on the shared kernel, and
+for anyone who wants to know why the seven SDKs behave the same.
 
-A runner is **two layers, not one**. Transport, ordering, durability, retries, timers, credit,
-routing and a steps operator's pass live in a single Rust kernel, `flz_core`. The host language SDK
-— Rust, Java, and whatever comes next — brings the authoring surface a user writes against and
-the threads that run their code. The seam between them is one poll loop.
+A runner has **two layers**. Transport, ordering, durability, retries,
+timers, credit, routing and a steps operator's progress live in one Rust
+kernel, `flz_core`. The SDK for each language brings the surface you write
+your code against and the threads that run it. Between them sits one poll
+loop. Six SDKs (Rust, Java, Node, Python, Ruby, PHP) share `flz_core`; the
+Elixir SDK has its own core, written in Elixir. What the
+[kernel](kernel.md), [flow](flow_profile.md) and [steps](steps_profile.md)
+pages describe works the same in every SDK because, for the six, it sits
+below that loop.
 
-Everything on the [kernel](kernel.md), [stream](stream_profile.md) and
-[steps operator](steps_profile.md) pages is the same regardless of which host SDK is running, and
-that is precisely because those mechanisms sit below this seam.
+**Contents**
 
-Mechanism-level detail: [`poll_core.md`](../sdk/poll_core.md). The authoring surface
-itself: [`rust_operator_architecture.md`](../sdk/rust_operator_architecture.md).
-
----
+1. [The split](#the-split)
+2. [The poll loop](#the-poll-loop)
+3. [What crosses the boundary](#what-crosses-the-boundary)
+4. [The core decides, the SDK brings the threads](#the-core-decides-the-sdk-brings-the-threads)
+5. [Per-cell exclusivity](#per-cell-exclusivity)
+6. [Retries without a sleeping thread](#retries-without-a-sleeping-thread)
+7. [A stage of a steps operator](#a-stage-of-a-steps-operator)
+8. [The C ABI](#the-c-abi)
+9. [What stays per language](#what-stays-per-language)
+10. [Running the graph without a controller](#running-the-graph-without-a-controller)
+11. [One change, every SDK](#one-change-every-sdk)
+12. [Limits and gotchas](#limits-and-gotchas)
+13. [See also](#see-also)
 
 ## The split
 
 ```mermaid
 flowchart TB
-    subgraph HOST["⚙️ HOST SDK — per language, ~3–5k lines"]
-        direction TB
-        AUTH["Authoring surface<br/>Tasklet traits · the graph DSL · State and channel codecs"]:::exec
-        THREADS["Threads<br/>whatever the runtime does best"]:::exec
-        TEST["Idiomatic errors · test harness"]:::exec
+    subgraph HOST["SDK, one per language"]
+        AUTH["what you write against: tasklets, the graph, state and channel codecs"]
+        THREADS["the threads that run your code"]
+        TEST["errors in the language's own style, the test harness"]
     end
-
-    subgraph CORE["🧠 flz_core — ONE Rust kernel, every host"]
-        direction TB
-        C1["transport · framing · control commands"]:::ctrl
-        C2["per-cell ordering + exclusivity · mailboxes"]:::ctrl
-        C3["durability: effect records · flusher · restore · compaction"]:::ctrl
-        C4["retry→park ladder · deferred wakes · timers · credit"]:::ctrl
-        C5["routing · edge keys · the key-group guard · the steps operator pass sheet"]:::ctrl
+    subgraph CORE["flz_core, one Rust kernel"]
+        C1["transport, framing, control commands"]
+        C2["per-cell order and exclusivity, mailboxes"]
+        C3["durability: effect records, flushing, restore, compaction"]
+        C4["retries and parking, timers, credit"]
+        C5["routing, keys, the key-group check, steps progress"]
     end
-
-    CTRL["🧠 Controller"]:::ctrl
-
-    AUTH -.->|"declares a class once<br/>(JSON, deny_unknown_fields)"| CORE
-    THREADS <-->|"THE SEAM<br/>poll · complete"| CORE
-    CORE <-->|"the wire — unchanged by any of this"| CTRL
-
-    classDef ctrl fill:#dbeafe,stroke:#1e40af,color:#111
-    classDef exec fill:#dcfce7,stroke:#166534,color:#111
+    CTRL["controller"]
+    AUTH -.->|"declares each class once, as JSON"| CORE
+    THREADS <-->|"poll and complete"| CORE
+    CORE <-->|"the wire"| CTRL
 ```
 
-**The core never calls into host code and never owns a host thread** (an FFI log callback is
-the one exception). That is what lets Python keep asyncio, Go keep goroutines and Java keep JVM
-threads without any of them negotiating with the other.
+**The core never calls into SDK code and never owns an SDK thread.** The one
+exception is an optional log callback (`flz_core_set_log_callback`). That is
+what lets Python keep asyncio and Java keep JVM threads without either
+negotiating with the other.
 
-The Rust SDK is the first host and consumes the same kernel as a crate — the dogfood rule that
-keeps the boundary from eroding, since a capability reachable in the crate API but not through
-the C ABI is a defect rather than a backlog item.
+The Rust SDK uses the kernel as a crate. The other five reach it through the
+C ABI in `flz_core_ffi`. A capability the crate reaches but the C ABI does not
+counts as a defect, which keeps the boundary from wearing away.
 
 ## The poll loop
 
-Three calls. That is the entire invocation surface.
+A host thread asks the core for work, runs it, and hands back the result.
+The calls are `poll`, `complete`, and `abandon` for a batch the host never ran.
 
 ```mermaid
 sequenceDiagram
-    participant W as ⚙️ Host thread
-    participant CORE as 🧠 flz_core
-    participant USER as ⚙️ User code
+    participant W as SDK thread
+    participant CORE as flz_core
+    participant USER as your code
 
-    loop forever, until shutdown
-        W->>CORE: poll(timeout) — BLOCKS inside the core
-        Note over CORE: pick the next activation:<br/>respect per-cell exclusivity,<br/>the jobs-underway cap, and the deferred-wake list
-        CORE-->>W: Activation (or: timed out / shutting down)
-        W->>USER: run it — host threads, host semantics
-        USER-->>W: changes · outputs · verdict
+    loop until shutdown
+        W->>CORE: poll(timeout), which blocks inside the core
+        Note over CORE: pick the next activation: one cell at a time,<br/>under the in-flight cap, due wakes first
+        CORE-->>W: an activation (or timed out, or shutting down)
+        W->>USER: run it
+        USER-->>W: changes, outputs, verdict
         W->>CORE: complete(result)
-        Note over CORE: build the effect record, route the outputs,<br/>drive the ladder, release the cell
+        Note over CORE: build the effect record, route the outputs,<br/>retry or park on failure, release the cell
     end
 ```
 
-Two properties are worth stating outright, because the next SDK author depends on both:
+Two properties matter to anyone writing an SDK:
 
-- **Completing from a different thread than the one that polled is expected**, not merely
-  tolerated. It is what lets a host fetch on one thread and run on another.
-- **Bring your own fetch threads.** `poll` blocks *inside the core*, so borrowing a shared
-  runtime pool for it (libuv's threadpool, a framework's request executor) starves everything
-  else that pool serves.
+- **Completing on a different thread from the one that polled is expected.**
+  It is what lets a host fetch on one thread and run on another.
+- **Bring your own fetch threads.** `poll` blocks inside the core, so running
+  it on a shared pool (libuv's threadpool, a framework's request executor)
+  starves everything else that pool serves.
 
-## What crosses the seam
+## What crosses the boundary
 
-An **Activation** always targets exactly one cell.
+An **activation** always targets exactly one cell. The types are listed in
+`ActivationKind` (`flz_core/src/schema.rs`):
 
-```mermaid
-flowchart LR
-    POLL(["poll() hands out<br/>ONE activation"]):::ctrl
+| Activation | What the SDK does with it |
+| --- | --- |
+| `Work` | run an ordered batch of the cell's inputs (each with its payload, metadata, consumed offset, replay flag and the clock's current value) and timer firings |
+| `RestoreFold` | fold persisted changes into a live state |
+| `SnapshotRequest` | encode the state for compaction |
+| `LiveStateRead` | return the state as JSON for a live read |
+| `ApplyState`, `MigrationSerialize` | install a state, or serialize one for a move |
+| `KeyRequest` | compute keys (and event times) for entry payloads bound for a keyed edge, in one batch |
+| `CompensateRun` | run a steps operator's undo over the outputs a cell recorded |
 
-    subgraph WORK["Work — the ordinary case"]
-        direction TB
-        W1["an ordered per-cell batch of Inputs<br/>payload · metadata · consumed_offset · replay flag · core-evaluated now"]:::exec
-        W2["Timer firings<br/>validated against the pending set at assembly —<br/>a stale entry fires nothing"]:::exec
-    end
+A stage of a steps operator arrives as ordinary `Work`. Control commands the
+SDK need not see, such as a `Ping`, never produce an activation.
 
-    subgraph CMD["Host-participating commands — 5 of 19"]
-        direction TB
-        M1["RestoreFold — fold my own change bodies"]:::exec
-        M2["SnapshotRequest · LiveStateRead"]:::exec
-        M3["ApplyState · MigrationSerialize"]:::exec
-    end
+The SDK answers with one effect per item: the state changes as bytes it
+encoded itself, the outputs (to an edge or a plugin, with an optional key),
+the consumed offset, the event time, timer changes, a checkpoint flag, a
+dead-letter entry if it parked, and a verdict (`ok`, retryable or
+non-retryable). The change bytes are **opaque to the core**: postcard from
+Rust, Kryo from Java, MessagePack from Node, Ruby and Python, JSON from PHP.
+The controller stores them without decoding them either.
 
-    KR["KeyRequest — batched keying for unkeyed<br/>entry payloads bound for a keyed edge"]:::exec
-    BS["Steps step — one per cell of the stage<br/>(or CompensateRun for an undo)"]:::exec
-
-    POLL --> WORK
-    POLL --> CMD
-    POLL --> KR
-    POLL --> BS
-
-    RES(["complete() answers with, per item:<br/>host-encoded change bytes (core-opaque) · outputs (edge｜plugin, bytes, key?)<br/>consumed_offset · timer ops · checkpoint flag<br/>verdict: ok ｜ retryable ｜ non_retryable"]):::store
-
-    WORK --> RES
-    CMD --> RES
-    KR --> RES
-    BS --> RES
-
-    classDef ctrl fill:#dbeafe,stroke:#1e40af,color:#111
-    classDef exec fill:#dcfce7,stroke:#166534,color:#111
-    classDef store fill:#e5e7eb,stroke:#374151,color:#111
-```
-
-The other 14 control commands never surface — a `Ping` generates no activation. The change
-bytes in a result are **opaque to the core**: postcard from a Rust host, Kryo from a Java one.
-That is the same property that lets the controller store them without decoding.
-
-The [key-group guard](stream_profile.md#partitioned-operators) also lives below the seam:
-`AddOperator` carries a partition member's owned range, and a computed cell key that hashes
-outside it takes the park exit on the first frame — so every host gets the mis-route refusal
-without writing a line of it.
+The [key-group check](flow_profile.md#partitioned-operators) also lives below
+the boundary. `AddOperator` carries a partition member's key-group range, and
+a computed cell key outside it is parked on the first frame, so every SDK on
+the core gets the check without writing it.
 
 ## The core decides, the SDK brings the threads
 
-This is the governing rule of the boundary.
+This is the rule the boundary is built on.
 
-**The core decides what runs and how much of it.** It picks the next activation, holds
-per-cell ordering and exclusivity, owns the retry ladder and durability, and caps how many
-work activations may be underway at once. The cap is enforced at handout: at the ceiling `poll`
-blocks as if nothing were ready, and the completion that drops below it releases the next one.
+**The core decides what runs and how much of it.** It picks the next
+activation, keeps per-cell order and exclusivity, owns the retries and
+durability, and caps how many work activations may be in flight at once
+(`FLEZHA_MAX_INFLIGHT_ACTIVATIONS`, 1024 by default). At the cap, `poll`
+blocks as if nothing were ready, and the completion that drops below it
+releases the next one.
 
-**The SDK brings the threads.** The count is a servicing detail, not a limit on concurrency —
-that limit is the core's one number. The two shipped hosts differ completely, and neither knows
-about the other:
+**The SDK brings the threads.** How many it runs is a detail of how it
+serves the core, not a limit on concurrency; that limit is the core's cap.
+The Rust and Java SDKs do it differently:
 
-```mermaid
-flowchart TB
-    subgraph RUST["⚙️ Rust — no cheap blocking, so it GROWS the pool"]
-        direction TB
-        RB["base pool — FLEZHA_WORKER_POOL_SIZE<br/>default: available parallelism"]:::exec
-        RS["1 supervisor thread<br/>parked in the core's starvation wait"]:::exec
-        RG["grown workers, up to FLEZHA_WORKER_POOL_MAX (10× base)<br/>retire after a 30 s idle streak"]:::exec
-        RS -->|"starvation observed → spawn one more"| RG
-        RG -.->|"a workload that never starves<br/>observes exactly the base pool"| RB
-    end
+| | Rust | Java |
+| --- | --- | --- |
+| Threads that call `poll` | a base pool of `FLEZHA_WORKER_POOL_SIZE` workers, by default the machine's parallelism | `FLEZHA_WORKER_POOL_SIZE` platform fetcher threads, 2 by default |
+| Who runs your code | the worker that polled | one virtual thread per activation, which also completes it |
+| When work starves | a supervisor parked in the core's starvation wait adds one worker per observation, up to `FLEZHA_WORKER_POOL_MAX` (10 × the base); extra workers retire after 30 s idle | the same supervisor adds fetchers, up to `FLEZHA_WORKER_POOL_MAX` (10 × the count) |
 
-    subgraph JAVA["⚙️ Java — hands the activation off instead"]
-        direction TB
-        JF["2 platform fetcher threads (FLEZHA_WORKER_POOL_SIZE)<br/>loop: poll → decode → hand off → poll"]:::exec
-        JV["one VIRTUAL thread per activation<br/>runs the dispatch and completes it"]:::exec
-        JF -->|"hand off"| JV
-        JN["waiting costs a stack, so starvation<br/>cannot arise — Java never calls wait_starvation"]:::prot
-        JV -.-> JN
-    end
+The Java fetchers stay platform threads because `poll` blocks in native code,
+and a native frame pins a virtual thread's carrier.
 
-    CAP{{"the core's cap — FLEZHA_MAX_INFLIGHT_ACTIVATIONS, default 1024<br/>THIS is the concurrency limit, in both hosts"}}:::ctrl
-    RUST --> CAP
-    JAVA --> CAP
+**Starvation means stuck, not busy.** Queued work counts as starved only
+after a 100 ms dwell during which **no thread entered `poll` at all**
+(`flz_core/src/poll_core/starvation.rs`). A busy runner enters `poll` once per
+batch, microseconds apart, so it never trips; only a runner whose every thread
+is inside user code shows no entry for that long. Starvation is a blocking wait
+a host thread may park in, never a callback, so the core still calls no SDK
+code, and a host that cannot starve never calls it.
 
-    classDef ctrl fill:#dbeafe,stroke:#1e40af,color:#111
-    classDef exec fill:#dcfce7,stroke:#166534,color:#111
-    classDef prot fill:#dcfce7,stroke:#166534,color:#111
-```
-
-**The fetchers stay platform threads.** `poll` blocks in native code and a native frame pins
-its carrier, so virtual fetchers would pin two carriers permanently.
-
-**Starvation means *stuck*, not *busy*.** Queued work counts only once it has sat for a 100 ms
-dwell during which **no thread entered `poll` at all**. A saturated runner enters `poll` once
-per batch — microseconds apart — so it never trips; only a runner whose every thread is inside
-user code shows no entry for the window. Answering saturation with more threads would add
-contention to a runner that is merely working.
-
-Starvation is exposed as a blocking wait a host thread may park in, never as a callback: the
-core calls no host code, and a host that cannot starve simply never calls it.
-
-**Direct activations are exempt from the cap** — restore folds, snapshot requests and the other
-command crossings answer a caller already blocked on a rendezvous, so holding one behind capped
-cell work would deadlock that caller; a steps operator's undo rides the same queue and holds its
-cell's gate until it is answered. They are also what a queued direct activation with no thread
-inside `poll` reports as starvation: a blocked caller must be able to buy a thread. A
-steps operator's stage work is not among them: it is ordinary cell work, capped like a flow operator's.
+**Direct activations are not capped.** Restore folds, snapshot requests and
+the other command activations answer a caller that is already waiting, so
+holding one behind capped cell work could deadlock that caller. A steps
+operator's undo goes through the same queue. A steps operator's stage work is
+ordinary cell work, capped like a flow operator's.
 
 ## Per-cell exclusivity
 
-The core never hands out two activations for the same cell concurrently. This is the
-single-active-drainer gate, expressed at the boundary — and it is why user code needs no locks
-around its own State.
+The core never hands out two activations for the same cell at once. That is
+why your code needs no locks around its own state.
 
 ```mermaid
 sequenceDiagram
-    participant T1 as ⚙️ Thread 1
-    participant T2 as ⚙️ Thread 2
-    participant CORE as 🧠 flz_core
+    participant T1 as thread 1
+    participant T2 as thread 2
+    participant CORE as flz_core
 
     T1->>CORE: poll()
-    CORE-->>T1: Work — cell "BTC", inputs [1,2]
+    CORE-->>T1: Work for cell BTC/USD, inputs 1 and 2
     T2->>CORE: poll()
-    Note over CORE: "BTC" has an outstanding activation —<br/>it is not a candidate, no matter how much it has queued
-    CORE-->>T2: Work — cell "ETH", inputs [7]
-    Note over T1,T2: different cells run in parallel, always
-    T1->>CORE: complete("BTC")
-    Note over CORE: only NOW is "BTC" a candidate again,<br/>its inputs are delivered in enqueue order across activations
+    Note over CORE: BTC/USD has an activation out,<br/>so it is skipped however much is queued
+    CORE-->>T2: Work for cell ETH/USD, input 7
+    T1->>CORE: complete(BTC/USD)
+    Note over CORE: BTC/USD can be picked again,<br/>and its inputs keep their order across activations
 ```
 
-Batch assembly owns the rest of the ordering contract: the consumed-floor skip, replay-slice
-buffering and event-time-ordered flush, and late-input admission.
+Different cells run in parallel. Batch assembly
+(`flz_core/src/poll_core/assembly.rs`) owns the rest of the order: skipping
+inputs a cell already consumed, holding a replayed slice until its end marker
+and sorting it by event time, and admitting late inputs.
 
-**Event-time-clocked classes get one admitted input per activation.** Chained timer
-registrations land only at completion, so wider batches would make due-firing interleave depend
-on batch timing — and a correction replay must fold firings at the same positions the live run
-did. Wall and logical clocks batch freely.
+**A class with an event-time clock gets one new input per activation.** A
+timer registered while handling an input takes effect only at completion, so
+wider batches would make the order of due firings depend on batch timing, and
+a correction replay must fire timers at the same points the live run did.
+Wall-clock and logical clocks batch freely.
 
-## The ladder, and the list that owns no thread
+## Retries without a sleeping thread
 
-A completion verdict drives the escape ladder. Nothing about it blocks a thread.
+The verdict in a completion decides what happens next, and none of it blocks a
+thread:
 
-```mermaid
-flowchart TB
-    C(["complete(result)"]):::ctrl
-    V{"verdict?"}:::ctrl
-    OK["ok → effect record, outputs routed, cell released"]:::prot
-    RE["retryable_error"]:::risk
-    NR["non_retryable_error<br/>— or a failing final attempt"]:::risk
+- **ok**: the effect record is built, the outputs are routed, the cell is
+  released.
+- **retryable**: the item goes on the core's deferred-wake list with a backoff
+  of `base × 2^(n-1)`, ±50% jitter, capped at 5 s. When it comes due, the same
+  item is handed out again at the head of the cell's queue, with the rest of
+  the batch behind it.
+- **non-retryable**, or a failed last attempt: the payload is parked through
+  the dead-letter path ([`flow_profile.md`](flow_profile.md#the-dead-letter-queue)),
+  and a park closes an open checkpoint interval.
 
-    DW[("the deferred-wake list<br/>ONE ordered list · owns NO thread<br/>retry backoffs + processing-time timer deadlines")]:::store
-    PARK["park the payload through the DLQ path<br/>— and a park CLOSES the checkpoint interval"]:::prot
-    HEAD["re-hand the SAME item at the head of the line;<br/>the unprocessed batch tail waits behind it"]:::exec
+The **deferred-wake list** (`flz_core/src/poll_core/wake.rs`) is one ordered
+list of retry backoffs, processing-time timer deadlines, checkpoint interval
+closes, push retries and instance deadlines. It owns no thread: entries are
+promoted by whichever thread next enters or wakes inside `poll`.
 
-    C --> V
-    V -->|ok| OK
-    V --> RE
-    V --> NR
-    RE -->|"base × 2^(n-1) ±50% jitter, capped"| DW
-    DW -->|"promoted by whichever thread<br/>next enters or wakes inside poll"| HEAD
-    NR --> PARK
+Reporting a failure returns the completing thread at once. The cell stays
+reserved across the backoff, since nothing else could run it then anyway.
+That matters when a shared dependency goes down: a backoff that slept the
+completing worker would put every worker to sleep and stop work that would
+have succeeded. Shutdown does not wait on it either.
 
-    classDef ctrl fill:#dbeafe,stroke:#1e40af,color:#111
-    classDef exec fill:#dcfce7,stroke:#166534,color:#111
-    classDef store fill:#e5e7eb,stroke:#374151,color:#111
-    classDef risk fill:#fee2e2,stroke:#991b1b,color:#111
-    classDef prot fill:#dcfce7,stroke:#166534,color:#111
-```
+Promotion needs a thread in `poll`, so a due entry with every worker inside
+user code is starvation and is reported as such. The starvation wait's
+deadline takes the nearest due entry into account, which is how a host that
+grows threads gets one there in time.
 
-**The backoff blocks no thread.** Reporting the failure returns the completing thread
-immediately; the cell's exclusivity gates stay held across the window — nothing else could
-drain it during a backoff anyway — and the release-then-reclaim runs when the delay comes due.
+## A stage of a steps operator
 
-That matters under correlated failure: with workers sized to the CPU count, a backoff that
-slept the completing worker would, when a shared dependency goes down, put **every** worker to
-sleep and stop work that would have succeeded. Shutdown is not delayed either — there is no
-sleep left to run out.
-
-Promotion needs a thread in `poll`, so a due entry with every worker inside user code *is*
-starvation and reads as such: the starvation wait's deadline considers the nearest due entry,
-which is how a host that grows threads gets one there in time to promote the firing.
-
-## A stepped stage
-
-A stepped stage runs the way a flow cell does: its items are routed into its cells'
-mailboxes and the poll core hands them out as ordinary work, under the cap and the fairness
-rules above. What is the steps operator's own is a small pass sheet on the instance, advanced by
-events on the threads that bring them; no core thread belongs to an instance.
+A stage runs the way a flow cell does: its items go into its cells' mailboxes
+and the poll core hands them out as ordinary work, under the same cap. What is
+the steps operator's own is a small record of progress on the instance in the
+core, moved forward by events on the threads that bring them; no core thread
+belongs to an instance.
 
 ```mermaid
 sequenceDiagram
-    participant R as 🧠 Routing + pass sheet (in the core)
-    participant CORE as 🧠 poll queue
-    participant W as ⚙️ Host thread
-    participant CTRL as 🧠 Controller
+    participant R as routing and progress (in the core)
+    participant CORE as poll queue
+    participant W as SDK thread
+    participant CTRL as controller
 
-    Note over R: a message, or a committed producer's outputs
+    Note over R: a message, or the outputs of a committed stage
     R->>CORE: items into the stage's cell mailboxes
     W->>CORE: poll()
-    CORE-->>W: Work batch for one cell
-    W->>W: run the tasklet body
-    W->>CORE: complete — changes, outputs, verdict
-    W->>CTRL: the Cell's effect record (state changes + plugin outputs), sent at once
-    Note over W: edge outputs held on the sheet; at the stage's last item
-    W->>CTRL: TaskCommit {cells_ran, handoff}
-    CTRL-->>R: ack, on the control-channel reader
-    Note over R: the held outputs enter the children's mailboxes
+    CORE-->>W: Work for one cell
+    W->>W: run the tasklet
+    W->>CORE: complete: changes, outputs, verdict
+    Note over CORE: the cell's effect record goes to the controller at once,<br/>and outputs to the next stage are held
+    CORE->>CTRL: TaskCommit at the stage's last item
+    CTRL-->>R: acknowledgement
+    Note over R: the held outputs enter the next stage's mailboxes
 ```
 
-A stage therefore costs exactly the SDK threads that run its items, and nothing waits: the
-commit ack, a retry's backoff, `max_duration` and the park are events or entries on the
-deferred-wake list. Barriers, the task journal, loop modes, suspension and rewind are
-described in [`steps_profile.md`](steps_profile.md); what an instance costs at population
-is measured in
-[`../resilience/steps_operator.md`](../resilience/steps_operator.md#how-many-instances-a-runner-holds).
+A stage costs only the SDK threads that run its items, and nothing waits: the
+commit acknowledgement, a retry's backoff, `max_duration_ms` and a park are
+events or entries on the deferred-wake list. Barriers, the task journal, loop
+modes, suspension and rewind are in [`steps_profile.md`](steps_profile.md).
+What an instance costs at scale is measured in
+[the steps operator resilience notes](https://github.com/flezha/flezha/blob/main/docs/resilience/steps_operator.md#how-many-instances-a-runner-holds).
 
 ## The C ABI
 
-A non-Rust host reaches the kernel through `flz_core_ffi`.
+An SDK other than Rust reaches the kernel through `flz_core_ffi`
+(`flz_core_ffi/src/lib.rs`). The life of a context:
 
-```mermaid
-flowchart LR
-    A["flz_core_context_new<br/>(shim_schema_version)"]:::ctrl
-    B["flz_core_declare_class<br/>JSON, deny_unknown_fields"]:::ctrl
-    C["flz_core_start<br/>(namespace)"]:::ctrl
-    D["flz_core_poll ⇄ flz_core_complete<br/>any thread, no affinity"]:::exec
-    E["flz_core_shutdown"]:::ctrl
-    F["flz_core_context_free"]:::ctrl
-    A --> B --> C --> D --> E --> F
+1. `flz_core_context_new(shim_schema_version)`: the version check happens
+   here. An SDK built against a different schema version gets NULL, and
+   `flz_core_init_error` names both versions, before any connection to the
+   controller.
+2. `flz_core_declare_class`, once per class, with the complete class as JSON.
+3. `flz_core_start(namespace)`.
+4. `flz_core_poll` and `flz_core_complete` (or `flz_core_abandon`), from any
+   thread. A host that can starve also calls `flz_core_wait_starvation`.
+5. `flz_core_shutdown`, then `flz_core_context_free`.
 
-    V{{"version negotiated HERE —<br/>a shim built against a different SCHEMA_VERSION<br/>gets NULL and both versions named,<br/>before any controller connection"}}:::prot
-    A -.-> V
+The class declaration is complete: the channel graph, cell modes, clocks, the
+settings tree, the record header's language byte, and the steps facts. Its
+JSON is parsed with unknown fields refused (`flz_core/src/host/decl.rs`), so a
+field the core does not know is an error, not a silent downgrade.
+`flz_core_check_class` returns the same verdict without registering anything,
+which is what a conformance run uses.
 
-    classDef ctrl fill:#dbeafe,stroke:#1e40af,color:#111
-    classDef exec fill:#dcfce7,stroke:#166534,color:#111
-    classDef prot fill:#dcfce7,stroke:#166534,color:#111
-```
-
-Silent runtime skew is impossible by construction. `flz_core_declare_class` takes the
-**complete** host-class declaration — the channel graph, cell modes, clock kinds, the
-effectively-once tier and its ack granularity, the correction window, the record-header
-lang/format bytes, and the steps lifecycle facts — so a field the core never learned is a
-refusal, not a silent degrade.
-
-Ownership is "whoever allocates frees"; activation buffers the core hands out are freed with
+Whoever allocates a buffer frees it; buffers the core hands out are freed with
 `flz_core_buf_free`.
 
-## What stays per-language, forever
+## What stays per language
 
-The authoring surface (Tasklet traits, the graph DSL), State and channel codecs, the poll
-loop's integration with the host's concurrency primitives, idiomatic errors, and the testing
-harness. An estimated 3–5k lines per SDK — the code that *should* feel native.
+The surface you write against (tasklets, the graph builder), the state and
+channel codecs, how the poll loop fits the language's concurrency, errors in
+the language's own style, and the test harness. This is the code that should
+feel native.
 
-Two host-code-on-core-thread seams remain for the crate-consuming Rust host and are invisible
-to the C ABI: `TypedBuffer<S>` serializes `S::Change` on the flusher's linger thread, and
-erased entry parsers and edge closures evaluate on the wire-reader/routing thread. Both are the
-documented in-process forms of what the byte boundary removes for FFI hosts.
+Two places remain where the in-process Rust SDK runs its own code on a core
+thread, and an FFI host never does: `TypedBuffer<S>` serializes changes on the
+flusher's thread, and entry parsers and edge closures run on the thread that
+reads the wire and routes. Both are the in-process form of what the byte
+boundary removes for the other SDKs.
 
 ## Running the graph without a controller
 
-A runner does not need a controller to execute a graph. Everything a tasklet
-does to a value is runner-side: the entry channel's decode and parse ladder,
-edge transforms and keying, one Cell per resolved key with its mailbox and
-overflow policy, the retry ladder, and the inter-tasklet hop —
-`route_to_consumers` is a mailbox push, and nothing about it crosses the wire.
+A runner does not need a controller to run a graph. Everything a tasklet does
+to a value happens in the runner: decoding and parsing on the entry channel,
+edge transforms and keying, one cell per key with its mailbox and overflow
+policy, retries, and the hop between tasklets, which is a mailbox push
+(`route_to_consumers` in `flz_core/src/routing.rs`) that never crosses the
+wire.
 
-**Local mode** is that fact made reachable. It builds the same `OperatorInstance`
-a deployed runner builds, feeds it through the same dispatch entry a stream
-reader uses, and differs in exactly one thing: the outbound sink. A
-`FlezhaStream::Local` takes what production writes and hands it to a callback in
-process, and a null `state_sink` discards every durable record at the outbound
-edge — so the record path still runs and still costs what it costs. There is no
-second routing path and no second cell implementation; the difference is
-supplied, never branched on.
+**Local mode** uses that. It builds the same `OperatorInstance` a deployed
+runner builds, feeds it through the same dispatch entry a stream reader uses,
+and differs in one thing: where output goes. A `FlezhaStream::Local` passes
+what production would write to a callback in the same process, and a null
+state sink discards every durable record at the outbound edge, so the record
+path still runs and still costs what it costs (`flz_core/src/local.rs`).
+There is no second routing path and no second cell implementation. Timers work
+through the core's own wake list.
 
-What is on the controller's side of that line, and therefore absent locally:
-durability of any kind (write-ahead log, snapshots, crash-resume, point-in-time
-query), effectively-once delivery (an output rides its effect record and the
-controller releases it once that record is durable — a declaration that asks for
-the tier is refused at local startup, naming it), plugins, placement, migration
-and rescale, partitioning (a member's key-group range arrives with
-`AddOperator`, so it is not declarable and a local run is unpartitioned by
-construction), the dead-letter queue, observability export, authz and
-multi-runner scale.
+What is on the controller's side of that line is absent locally: durability of
+any kind, the effectively-once tier (a class that asks for it is refused at
+local start, naming it), plugins, placement, moving and rescaling,
+partitioning (a member's range arrives with `AddOperator`, so a local run is
+unpartitioned), the dead-letter queue, observability export, authorization
+and running on several runners.
 
-Local mode ships in every SDK. The four that reach the kernel through the C ABI
-rather than the JNI glue bind the same six entry points and drive their own poll
-loop, which is what runs the tasklets; a host with one thread drives that loop
-from `runUntilIdle` rather than parking in the core. User-facing walk-through:
+Every SDK has local mode. The SDKs on `flz_core` reach it through six entry
+points (`flz_core_local_start`, `flz_core_local_on_sink`,
+`flz_core_local_feed`, `flz_core_local_next_output`,
+`flz_core_local_run_until_idle`, `flz_core_local_stop`). The user's side is in
 [`../topics/basics/local_mode.md`](../topics/basics/local_mode.md).
 
 ## One change, every SDK
 
-The kernel has six hosts today: the Rust SDK (the crate), the Java SDK (`flz_core_ffi` over
-JNI), the Node SDK (the same crate over N-API), the Ruby SDK (the same crate over magnus), the
-Python SDK (the same crate over PyO3) and the PHP SDK — the first to consume the C ABI *as* a C
-ABI, through `ext-ffi`, with no compiled veneer of its own (PHP has no stable ABI across minor
-versions, so one library per platform is the only distribution that does not multiply by the
-PHP matrix).
-**The Elixir SDK is the deliberate exception.** It is not a poll
-host ([`../sdk/elixir_sdk.md`](../sdk/elixir_sdk.md)): it re-expresses dispatch, overflow, the
-retry→park ladder and the partition guard in Elixir and inherits *nothing* from `flz_core`. So
-a change below the seam reaches Rust and Java for free and reaches Elixir only when someone
-writes it; a change above the seam reaches nobody for free.
+The kernel has six hosts today. The Rust SDK uses it as a crate. Java, Node,
+Ruby and Python load `flz_core_ffi` built with a thin binding layer of its own
+for each (JNI, N-API, magnus, PyO3), each a one-to-one layer over the C entry
+points. The PHP SDK calls the C ABI directly through `ext-ffi`, with no
+compiled layer of its own, because PHP has no stable binary interface across
+minor versions.
 
-The rule, normative for every binding:
+**The Elixir SDK is the exception.** It does not poll the core
+([Elixir SDK](https://github.com/flezha/flezha/blob/main/docs/sdk/elixir_sdk.md)):
+it expresses dispatch, overflow, retries and parking, and the partition check
+again in Elixir, and takes nothing from `flz_core`. So a change below the
+boundary reaches the six hosts at once and reaches Elixir only when someone
+writes it there; a change above the boundary reaches no SDK by itself.
 
-- **One change, every SDK.** Anything every SDK carries changes in the same change, in every
-  SDK: the authoring and declaration surface (builder, ctx, the `HostClassDecl` keys), the wire
-  protocol and its metadata keys, every default (overflow policy, retry ladder, mailbox
-  capacity, heartbeat keys), and the fixtures that prove them (the regression and round-trip
-  bench factories, the e2e runtime matrix).
-  **What a topology may be is no longer one of those things.** A builder records the links its
-  author declared and submits the record to `flz_core::host::register::check`, which holds the
-  named refusals and the derivation rules once
-  ([`../sdk/conformance.md`](../sdk/conformance.md) § The refusal table). So a new refusal is
-  one variant and one fixture row, not an edit to seven builders — and the Elixir SDK, which
-  inherits nothing, re-expresses the same check against the same fixture and is measured by the
-  same conformance run. The rule still binds; what it now rides on is a fixture rather than
-  seven diffs.
-- **A host that brings its own workers brings their replacement.** Whatever a host's unit of
-  work is — a poll thread, a fetcher, a per-Cell process — one that leaves for any reason
-  other than shutdown is replaced without user action, and its departure never consumes
-  capacity the host budgets for. Every activation a host takes is answered exactly once
-  (complete, fail, or abandon) through a guard that runs on an unwind, never a discipline at
-  each return site: per-cell exclusivity means an unanswered activation retires its cell
-  for the life of the process. **And it brings a starvation supervisor**: one thread parked in
-  `wait_starvation` that starts one more worker per observation, up to a declared ceiling. A
-  fixed worker count with no supervisor is a defect of that SDK, not a configuration choice —
-  with every worker held such a host processes nothing, recovers from nothing and reports
-  nothing (Java shipped that shape and measured 0 of 20 payloads delivered). Rust and Java both
-  carry it, keyed alike by `FLEZHA_WORKER_POOL_SIZE` / `FLEZHA_WORKER_POOL_MAX`, and so do
-  Node (whose replaceable unit is a dispatch worker thread, which is the reason its multi-loop
-  configuration is the recommended production posture — a wedged main thread cannot be
-  replaced), Ruby, Python (under *both* its executors — the supervisor's answer is a
-  fetch-and-run thread either way, because a stalled event loop cannot rescue itself), and the
-  PHP SDK's `SwooleExecutor`. **The PHP SDK's default `SyncExecutor`
-  is exempt, by name**: a non-thread-safe PHP process runs one thread of PHP code, so it has
-  one loop and no worker set to grow, and its replaceable unit is the process — which the
-  orchestrator already owns and the SDK deliberately does not
-  ([`../sdk/php_sdk.md`](../sdk/php_sdk.md#choosing-an-executor)). The Elixir SDK is exempt for
-  the same reason it is exempt from the seam — a BEAM process per Cell has no worker set to
-  starve. And every host reports handout liveness — `inflight` and
-  `inflight_oldest_ms` in the data heartbeat — because that is the only thing that makes ONE
-  wedged Cell visible while the runner keeps completing work; likewise every overflow outcome
-  (`blocked_parks`, `drops_newest`, `drops_oldest`, and the deferred-push pair `pending_pushes`
-  / `pending_push_oldest_ms`) rides the same heartbeat, because a drop no user can count is
-  a silent data loss — and neither is backpressure that withholds work, which holds no handout
-  for `inflight` to see. The obligations and the seam
-  are in [`../sdk/poll_core.md`](../sdk/poll_core.md); `pool_wedge` is a required conformance
-  capability precisely so no SDK can carry them on review alone — and the supervisor does not
-  satisfy it, since no ceiling outruns user code that never returns.
-- **No core call blocks a host thread.** Backpressure is expressed by withholding work from
-  the producer, never by holding the producer's caller: the core cannot know how many threads a
-  host has, whether it can make more, or whether its "threads" pin a shared carrier, so a park
-  that is safe on one host is a permanent stop on another. The converse binds the host: a host
-  whose unit of concurrency cannot migrate between threads keeps every blocking ABI call off
-  that thread. `flz_core_complete` is what makes that a correctness rule — under the default
-  overflow policy it parks until the consumer's mailbox drains, and the consumer drains only
-  when its handler runs, so a host that parks the one thread able to run that handler cannot
-  recover. The single exception is the
-  transport reader's park on the entry path — a core-owned thread with no producing Cell,
-  whose stalling is what carries ingress backpressure to the controller. This one reaches Rust
-  and Java **below the seam**, because both complete through `flz_core`; the **Elixir SDK needs
-  nothing, and that blank is a decision, not an oversight** — `Flezha.SDK.Cell` already
-  defers the caller's reply into a `waiters` FIFO instead of blocking a scheduler, which is the
-  design `flz_core` was brought up to. Elixir did take the reporting half (`pending_pushes`),
-  because that is a heartbeat key and heartbeat keys are a cross-SDK contract.
-- **Deferred is named, never silent.** An SDK that cannot carry a capability yet is recorded as
-  deferred *by name* — in the change's spec delta and in that SDK's scope matrix
-  (that SDK's `conformance.json` `deferred` list) — together with the follow-up that owes it. The crate is the dogfood host (a capability the
-  crate reaches and the C ABI does not is a defect); one level up the same holds: a capability
-  one SDK reaches that another neither reaches nor names as deferred is a defect of the change,
-  not a backlog item.
-- **Measured on one runtime is proven on one runtime.** A performance change is a controller
-  change, a kernel change or a host change — its dev note says which — and a number taken with
-  the Rust runner is not a number for Java or Elixir until the same bench has run on them.
-- **Every SDK holds one allocated language byte, and a factory is homogeneous in it.** Durable
-  `State` and `Change` bodies are per-SDK below the shared 16-byte envelope, and a restore ships
-  those bodies verbatim to whichever runner bound the Cell — so an operator is placed only on
-  a runner of its factory's language. The byte is an allocated identifier with one table of
-  record in `flz_core/src/header.rs`:
+The rules every SDK follows:
 
-  | value | SDK | stamps records |
-  |---|---|---|
-  | 0 | unspecified — never places | — |
-  | 1 | Rust | yes (postcard) |
-  | 2 | Java | yes (Kryo) |
-  | 3 | Elixir | yes (External Term Format, `format_id` 7) |
-  | 4 | Node | yes (MessagePack) |
-  | 5 | Ruby | yes (MessagePack) |
-  | 6 | PHP | yes (JSON) |
-  | 7 | Python | yes (MessagePack) |
-  | 8–254 | free, allocated in landing order | — |
-  | 255 | reserved | — |
+- **One change, every SDK.** Whatever every SDK carries changes in the same
+  change, in every SDK: the surface you write against and declare with, the
+  wire protocol and its metadata keys, every default (overflow policy, retries,
+  mailbox capacity, heartbeat keys), and the fixtures that prove them. What a
+  graph may look like is checked in one place: a builder submits the links its
+  author declared to `flz_core::host::register::check`
+  (`flz_core/src/host/register.rs`), which holds the refusals and the
+  derivation rules. A new refusal is one variant and one fixture row, not an
+  edit to seven builders; the Elixir SDK checks the same rules against the same
+  fixtures, and the same conformance run measures it.
+- **A host that brings its own workers replaces them.** A worker that leaves
+  for any reason other than shutdown is replaced without user action. Every
+  activation a host takes is answered exactly once (complete, fail or
+  abandon) through a guard that also runs when the code unwinds, because an
+  unanswered activation keeps its cell reserved for the life of the process.
+  A host with a worker set also runs a **starvation supervisor**: one thread
+  parked in `wait_starvation` that starts one more worker per observation, up
+  to a declared ceiling. Rust, Java, Node, Ruby, Python and the PHP SDK's
+  `SwooleExecutor` have one. The PHP SDK's default `SyncExecutor` runs one
+  loop per process, so its unit of replacement is the process, which the
+  orchestrator already restarts. The Elixir SDK runs one BEAM process per cell
+  and has no worker set to starve. Every host reports `inflight` and
+  `inflight_oldest_ms` in its data heartbeat, the only signal that shows one
+  stuck cell while the runner keeps completing other work, and every overflow
+  outcome (`blocked_parks`, `drops_newest`, `drops_oldest`, `pending_pushes`,
+  `pending_push_oldest_ms`), because a drop no one can count is silent data
+  loss. `pool_wedge` is a required conformance capability, so no SDK can claim
+  this on review alone.
+- **No core call holds a host thread for backpressure.** Backpressure holds
+  back the producing cell, not the thread that called: a full mailbox puts the
+  push in the producer's holdback, and that cell is handed no new work until
+  it drains. The core cannot know how many threads a host has or whether its
+  threads share a carrier, so a park that is safe on one host could stop
+  another for good. The one exception is the transport reader on an entry
+  channel, a core thread with no producing cell, whose waiting is what carries
+  backpressure back to the controller. Details are in
+  [the poll core notes](https://github.com/flezha/flezha/blob/main/docs/sdk/poll_core.md).
+- **A capability not carried yet is named.** An SDK that cannot carry a
+  capability yet lists it, by name, in the `deferred` list of its conformance
+  manifest, together with the change that owes it. A capability one SDK has
+  and another neither has nor names is a defect of the change.
+- **Measured on one runtime is proven on one runtime.** A number taken with
+  the Rust runner says nothing about Java or Elixir until the same bench has
+  run there.
+- **Each SDK has one language byte, and a factory uses one language.** The
+  durable bodies of `State` and `Change` are per SDK, below a shared 16-byte
+  header, and a restore sends them unchanged to whichever runner holds the
+  cell, so an operator is placed only on a runner of its factory's language.
+  The table is in `flz_core/src/header.rs`:
 
-  One value per SDK, taken when that SDK lands; a proposal never asserts a value it has not been
-  allocated, and a `flz_core` test refuses a duplicate. Every class declares it (the core refuses
-  one that does not), every factory advertisement carries it, and every restore path — typed and
-  host — refuses a record stamped with another language rather than handing it to its own codec.
-  The homogeneous unit is the **factory**, not the namespace: a namespace holding a Rust class and
-  a Java class is normal and each places on its own language. A conformance manifest declares its
-  runtime's byte and the gate pins uniqueness, so a new SDK is covered by construction.
+  | Value | SDK | Encoding of its records |
+  | --- | --- | --- |
+  | 0 | unspecified, never placed | none |
+  | 1 | Rust | postcard |
+  | 2 | Java | Kryo |
+  | 3 | Elixir | External Term Format |
+  | 4 | Node | MessagePack |
+  | 5 | Ruby | MessagePack |
+  | 6 | PHP | JSON |
+  | 7 | Python | MessagePack |
+  | 8 to 254 | free, given out as SDKs land | none |
+  | 255 | reserved | none |
 
-Where each SDK stands is not a table anyone maintains by hand. Each SDK's test app declares it
-in `test/apps/<sdk>_runner/conformance.json`: the capabilities it defers, by name, and the
-fixture ids it registers for the ones it carries. The static gate fails any pull request whose
-manifests do not account for every capability, and the nightly publishes a per-runtime
-capability report from the run itself. See [`../sdk/conformance.md`](../sdk/conformance.md).
+  Every class declares its byte (the core refuses one that does not), every
+  factory advertisement carries it, and every restore path refuses a record
+  written by another language instead of passing it to its own codec. The
+  unit is the **factory**, not the namespace: a namespace with a Rust class
+  and a Java class is normal, and each is placed on its own language.
 
-Today: **every FFI SDK carries the whole vocabulary** — Rust, Java, Node, Python, Ruby and
-PHP. The Rust app's manifest,
-[`test/apps/rust_runner/conformance.json`](../../test/apps/rust_runner/conformance.json), is
-the reference every other is checked against, and no veneer manifest defers a capability.
-An inter-tasklet `codec()` is owed to nobody: no SDK declares one. The runtime derives
-the journal codec — from the channel's kind for a host that ships bytes
-(`flz_core/src/host/register.rs`), from the declared `Output` type in Rust — and the
-declaration carries no codec key. The Elixir SDK is its own core: it carries `state_persistence`,
-`keyed_channels`, `dynamic_cell`, `schema_evolution`, `cell_timers` and
-`effectively_once` as re-expressions of the kernel's rules — the record header and the
-External Term Format body, the fold, compaction, the live read, the credit window, the
-shutdown notification, the identity stamps at its routing seam, the idle reaper with its cap
-and eviction trace, the per-Tasklet schema declaration with its migrations, the
-pending-timer set with its two firing paths and the clock kinds, the effect record with its
-staged interval, its consumed-offset floor and its park — and defers correction windows and
-the steps run, each owed to a re-expression in Elixir.
-`state_persistence`, `keyed_channels`, `dynamic_cell`, `schema_evolution`, `cell_timers`
-and `effectively_once` are carried by all seven and sit in the required set: their mechanisms
-live once in the shared core for the six `flz_core` hosts and are re-expressed in the Elixir
-SDK.
+Where each SDK stands is not a table kept by hand. Each SDK's test app
+declares it in `test/apps/<sdk>_runner/conformance.json`: the capabilities it
+defers, by name, and the fixtures it registers for the ones it carries. The
+Rust app's manifest, `test/apps/rust_runner/conformance.json`, is the
+reference the others are checked against. Today no manifest, Elixir's
+included, defers a capability. See
+[the conformance notes](https://github.com/flezha/flezha/blob/main/docs/sdk/conformance.md).
 
----
+## Limits and gotchas
 
-## Where to go next
+- **`poll` blocks inside the core.** Run it on threads the SDK owns, never on
+  a shared pool.
+- **A fixed worker count with no starvation supervisor is a defect**: with
+  every worker held by user code, such a host processes nothing and reports
+  nothing.
+- **The Elixir SDK takes nothing from `flz_core`.** A kernel change reaches it
+  only when it is written again in Elixir.
+- **An operator runs only on runners of its factory's language**, because
+  state bodies are encoded per SDK.
 
-- Running a graph with no controller → [`../topics/basics/local_mode.md`](../topics/basics/local_mode.md)
-- The poll boundary in mechanism detail → [`../sdk/poll_core.md`](../sdk/poll_core.md)
-- Authoring an operator → [`../sdk/rust_operator_architecture.md`](../sdk/rust_operator_architecture.md)
-- Proving an SDK still works → [`../sdk/conformance.md`](../sdk/conformance.md)
-- What the runner ships to the controller → [`kernel.md`](kernel.md)
-- The wire protocol → [`protocol_spec.md`](../sdk/protocol_spec.md)
-- Naming rules for a new SDK → [`naming_conventions.md`](../sdk/naming_conventions.md)
+## See also
+
+- [`overview.md`](overview.md): the roles and the kernel's rules.
+- [`kernel.md`](kernel.md): what the runner sends to the controller, and what the controller does with it.
+- [`flow_profile.md`](flow_profile.md) and [`steps_profile.md`](steps_profile.md): the two ways an operator runs.
+- [`../topics/basics/local_mode.md`](../topics/basics/local_mode.md): running a graph with no controller.
+- [Poll core](https://github.com/flezha/flezha/blob/main/docs/sdk/poll_core.md): the poll boundary in full detail.
+- [Conformance](https://github.com/flezha/flezha/blob/main/docs/sdk/conformance.md): how an SDK proves it still works.
+- [Wire protocol](https://github.com/flezha/flezha/blob/main/docs/sdk/protocol_spec.md): the frames between runner and controller.
+- [Naming conventions](https://github.com/flezha/flezha/blob/main/docs/sdk/naming_conventions.md): naming rules for a new SDK.

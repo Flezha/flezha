@@ -836,7 +836,7 @@ Git history and `openspec/changes/archive/**` are records of what was true when 
 - **THEN** it MUST describe that behaviour in the current vocabulary and MUST NOT reference the retired names
 
 ### Requirement: The architecture documentation states the model as a diagram
-`docs/architecture/README.md` SHALL carry a diagram of the containment model — Controller and Runner above, then Operator, then Tasklet, then Cell, with Channels as the edges between Tasklets — and SHALL show the three cell modes and what distinguishes them.
+`docs/architecture/overview.md` SHALL carry a diagram of the containment model — Controller and Runner above, then Operator, then Tasklet, then Cell, with Channels as the edges between Tasklets — and SHALL show the three cell modes and what distinguishes them.
 
 #### Scenario: The diagram shows containment
 - **WHEN** a reader opens the architecture documentation

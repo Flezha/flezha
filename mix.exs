@@ -312,6 +312,11 @@ defmodule Flezha.MixProject do
         "docs/topics/deploying/connecting_a_runner.md",
         "docs/topics/deploying/clustering.md",
         "docs/topics/deploying/kubernetes.md",
+        "docs/architecture/overview.md",
+        "docs/architecture/kernel.md",
+        "docs/architecture/flow_profile.md",
+        "docs/architecture/steps_profile.md",
+        "docs/architecture/runner.md",
         "docs/contributing/contributing.md",
         "docs/contributing/setting_up.md",
         "docs/contributing/testing.md",
@@ -372,6 +377,7 @@ defmodule Flezha.MixProject do
         ],
         Plugins: ~r"docs/topics/plugins/",
         "Plugin catalogue": ~r"docs/plugins/",
+        Architecture: ~r"docs/architecture/",
         Reference: ~r"docs/(errors|troubleshooting/)",
         Contributing: ~r"docs/contributing/"
       ]

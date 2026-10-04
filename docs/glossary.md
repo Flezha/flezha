@@ -4,7 +4,7 @@ The vocabulary every other document assumes, for operator authors, users and con
 In one sentence: **a Controller orchestrates Operators across Runners; each Operator contains
 Tasklets; each Tasklet contains Cells.** A runner hosts operators; an operator is the unit you
 start. Entries are short and point at the document that
-owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/flezha/blob/main/docs/architecture/README.md) wins.
+owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/flezha/blob/main/docs/architecture/overview.md) wins.
 
 ## Roles
 
@@ -434,7 +434,7 @@ ProcessHub's internal ring-node "operator" is ProcessHub's own word and is not t
 
 ## See also
 
-- [`architecture/README.md`](https://github.com/flezha/flezha/blob/main/docs/architecture/README.md) — roles, the workload model, the eight kernel invariants.
+- [`architecture/overview.md`](https://github.com/flezha/flezha/blob/main/docs/architecture/overview.md) — roles, the workload model, the eight kernel invariants.
 - [`sdk/rust_operator_architecture.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/rust_operator_architecture.md) — Operator/Tasklet/Cell authoring.
 - [`sdk/protocol_spec.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/protocol_spec.md) — the wire protocol between Runners and the Controller.
 - [`internals/process_hub.md`](internals/process_hub.md) — ProcessHub picks a node, the node picks a Runner.
